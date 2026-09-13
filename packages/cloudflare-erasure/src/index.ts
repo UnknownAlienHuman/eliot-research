@@ -1,5 +1,11 @@
 export * from "./canonical.js";
 export * from "./admission-policy.js";
+export {
+  createErasureAdmissionPolicyInsertStatement,
+  prepareErasureAdmissionPolicyInstall,
+  type ErasureAdmissionPolicyInstallInput,
+  type ErasureAdmissionPolicyInstallPlan,
+} from "./admission-policy-install.js";
 export * from "./types.js";
 export * from "./authority.js";
 export * from "./authority-reset.js";

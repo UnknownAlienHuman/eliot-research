@@ -22,6 +22,15 @@ import type {
   RegisteredDependencyRow,
   SourceRevisionInventoryRow,
 } from "./types.js";
+import { enumerateRawIngestDependencies } from "./raw-ingest-inventory.js";
+import {
+  applyPending,
+  earlierPending,
+  evidenceR2Key,
+  mergeTarget,
+  refreshR2SharedReferenceCount,
+  type RawPendingTargetOptions,
+} from "./erasure-targets.js";
 
 interface RevisionRow {
   readonly source_revision_ref: unknown;
@@ -255,7 +264,7 @@ async function projections(database: D1Database, revisionRef: string): Promise<r
   const result = await database.prepare(
     "SELECT source_revision_ref,projection_generation,work_manifest_ref,semantic_instance_id," +
     "semantic_generation,state FROM projection_generation WHERE source_revision_ref=?1 " +
-    `AND state<>'RETIRED' ORDER BY projection_generation LIMIT ${INVENTORY_FETCH_LIMIT}`,
+    `ORDER BY projection_generation LIMIT ${INVENTORY_FETCH_LIMIT}`,
   ).bind(revisionRef).all<ProjectionRow>();
   return boundedRows(result, "projection inventory").map(decodeProjection);
 }
@@ -293,20 +302,6 @@ async function registered(
     output.push(...rows.map(decodeRegistry));
   }
   return output;
-}
-
-async function sharedCount(
-  database: D1Database,
-  keyColumn: "original_r2_key" | "normalized_artifact_ref",
-  key: string,
-  selectedRevisions: ReadonlySet<string>,
-): Promise<number> {
-  const result = await database.prepare(
-    `SELECT source_revision_ref FROM source_revision WHERE ${keyColumn}=?1 AND purge_state='LIVE' ` +
-    `ORDER BY source_revision_ref LIMIT ${INVENTORY_FETCH_LIMIT}`,
-  ).bind(key).all<{ source_revision_ref: string }>();
-  return boundedRows(result, "shared-object inventory")
-    .filter((row) => !selectedRevisions.has(row.source_revision_ref)).length;
 }
 
 async function registeredSharedCount(
@@ -379,36 +374,63 @@ export function createD1ErasureInventory(
       }
 
       const selectedRevisions = new Set(revisions.map((entry) => entry.row.source_revision_ref));
+      const rawByRevision = new Map<string, Awaited<ReturnType<typeof enumerateRawIngestDependencies>>>();
+      const rawPendingBySubject = new Map<string, RawPendingTargetOptions>();
+      const rawBlobOwners = new Map<string, string>();
+      const rawBlobPending = new Map<string, RawPendingTargetOptions>();
+      for (const { subject, row } of revisions) {
+        if (!rawByRevision.has(row.source_revision_ref)) {
+          const raw = await enumerateRawIngestDependencies(dependencies.core_database, {
+            source_revision_ref: row.source_revision_ref,
+            content_sha256: row.content_sha256,
+            selected_source_revision_refs: selectedRevisions,
+          });
+          rawByRevision.set(row.source_revision_ref, raw);
+          if (raw !== null) {
+            for (const blob of raw.blobs) {
+              if (!rawBlobOwners.has(blob.object_key)) rawBlobOwners.set(blob.object_key, subject);
+              if (raw.pending !== undefined) rawBlobPending.set(blob.object_key, earlierPending(rawBlobPending.get(blob.object_key), raw.pending));
+            }
+          }
+        }
+        const raw = rawByRevision.get(row.source_revision_ref);
+        if (raw?.pending !== undefined) rawPendingBySubject.set(subject, earlierPending(rawPendingBySubject.get(subject), raw.pending));
+      }
       const generated: PurgeTarget[] = [...directTargets];
       const backupRows = request.required_locations.includes("BackupRestorePath")
         ? await backups(dependencies.core_database)
         : [];
 
       for (const { subject, row } of revisions) {
-        ensureClosureCapacity(generated.length, 3, "canonical erasure targets");
-        generated.push(await target(subject, "CanonicalPayload", `d1-core:source-revision:${row.source_revision_ref}`));
-        generated.push(await target(subject, "OperationalRecovery", `d1-core:operational:${row.source_revision_ref}`));
-        generated.push(await target(subject, "RouteContinuation", `d1-core:route:source-revision:${row.source_revision_ref}`));
+        const raw = rawByRevision.get(row.source_revision_ref) ?? null;
+        const rawPending = raw?.pending ?? {};
+        ensureClosureCapacity(generated.length, raw === null ? 3 : 4, "canonical erasure targets");
+        generated.push(await target(subject, "CanonicalPayload", `d1-core:source-revision:${row.source_revision_ref}`, rawPending));
+        generated.push(await target(subject, "OperationalRecovery", `d1-core:operational:${row.source_revision_ref}`, rawPending));
+        generated.push(await target(subject, "RouteContinuation", `d1-core:route:source-revision:${row.source_revision_ref}`, rawPending));
+        if (raw !== null) {
+          generated.push(await target(subject, "OperationalRecovery", raw.d1_canonical_ref, rawPending));
+          ensureClosureCapacity(generated.length, raw.blobs.length, "raw ingest R2 targets");
+          for (const blob of raw.blobs) {
+            if (rawBlobOwners.get(blob.object_key) !== subject) continue;
+            generated.push(await target(subject, "Blob", `r2-evidence:${blob.object_key}`, {
+              ...(rawBlobPending.get(blob.object_key) ?? rawPending),
+              shared_live_reference_count: blob.shared_live_reference_count,
+            }));
+          }
+        }
         if (row.original_r2_key !== undefined) {
           ensureClosureCapacity(generated.length, 1, "R2 erasure targets");
           generated.push(await target(subject, "Blob", `r2-evidence:${row.original_r2_key}`, {
-            shared_live_reference_count: await sharedCount(
-              dependencies.core_database,
-              "original_r2_key",
-              row.original_r2_key,
-              selectedRevisions,
-            ),
+            ...(rawBlobPending.get(row.original_r2_key) ?? rawPending),
+            shared_live_reference_count: 0,
           }));
         }
         if (row.normalized_artifact_ref !== undefined) {
           ensureClosureCapacity(generated.length, 1, "R2 erasure targets");
           generated.push(await target(subject, "Blob", `r2-evidence:${row.normalized_artifact_ref}`, {
-            shared_live_reference_count: await sharedCount(
-              dependencies.core_database,
-              "normalized_artifact_ref",
-              row.normalized_artifact_ref,
-              selectedRevisions,
-            ),
+            ...(rawBlobPending.get(row.normalized_artifact_ref) ?? rawPending),
+            shared_live_reference_count: 0,
           }));
         }
         for (const projection of await projections(dependencies.core_database, row.source_revision_ref)) {
@@ -418,6 +440,7 @@ export function createD1ErasureInventory(
               subject,
               "Projection",
               `r2-work-prefix:${workPrefix(projection.work_manifest_ref)}`,
+              rawPending,
             ));
           }
           ensureClosureCapacity(generated.length, 1, "index erasure targets");
@@ -425,6 +448,7 @@ export function createD1ErasureInventory(
             subject,
             "Index",
             `d1-search:${row.source_revision_ref}:${projection.projection_generation}`,
+            rawPending,
           ));
           if (projection.semantic_instance_id !== undefined) {
             if (projection.semantic_generation === undefined) {
@@ -442,7 +466,7 @@ export function createD1ErasureInventory(
                 subject,
                 "ProviderCopy",
                 `ai-search:${projection.semantic_instance_id}:${key}`,
-                { provider_ref: projection.semantic_generation },
+                { ...rawPending, provider_ref: projection.semantic_generation },
               ));
             }
           }
@@ -453,7 +477,7 @@ export function createD1ErasureInventory(
             subject,
             "BackupRestorePath",
             `backup:${backup.backup_epoch_id}`,
-            { provider_ref: backup.offsite_copy_ref },
+            { ...rawPending, provider_ref: backup.offsite_copy_ref },
           ));
         }
       }
@@ -463,6 +487,24 @@ export function createD1ErasureInventory(
       const registeredDependencies = await registered(dependencies.core_database, request.exact_subject_refs);
       ensureClosureCapacity(generated.length, registeredDependencies.length, "registered erasure targets");
       for (const dependency of registeredDependencies) {
+        const registryR2Key = evidenceR2Key(dependency.canonical_ref);
+        if (registryR2Key !== undefined && dependency.location !== "Blob") {
+          erasureFail("ERASURE_IDENTITY_CONFLICT", "registered R2 evidence target has an invalid location");
+        }
+        if (registryR2Key !== undefined) {
+          if (dependency.provider_ref !== undefined) {
+            erasureFail("ERASURE_IDENTITY_CONFLICT", "registered R2 evidence target has a provider identity");
+          }
+          const expectedIdentity = await erasureDigest({
+            exact_subject_ref: dependency.exact_subject_ref,
+            location: dependency.location,
+            canonical_ref: dependency.canonical_ref,
+            provider_ref: null,
+          });
+          if (dependency.object_identity_digest !== expectedIdentity) {
+            erasureFail("ERASURE_IDENTITY_CONFLICT", "registered R2 evidence target identity is not canonical");
+          }
+        }
         let liveSharedReferences = 0;
         if (dependency.shared_reference_key !== undefined) {
           const cached = registeredSharedCounts.get(dependency.shared_reference_key);
@@ -473,31 +515,45 @@ export function createD1ErasureInventory(
           );
           registeredSharedCounts.set(dependency.shared_reference_key, liveSharedReferences);
         }
-        generated.push(await target(
+        let rawPending = rawPendingBySubject.get(dependency.exact_subject_ref);
+        if (registryR2Key !== undefined) {
+          const blobPending = rawBlobPending.get(registryR2Key);
+          if (blobPending !== undefined) rawPending = earlierPending(rawPending, blobPending);
+        }
+        const registeredTarget = await target(
           dependency.exact_subject_ref,
           dependency.location,
           dependency.canonical_ref,
           {
             ...(dependency.provider_ref === undefined ? {} : { provider_ref: dependency.provider_ref }),
-            ...(dependency.retention_or_hold_ref === undefined
-              ? {}
-              : { retention_or_hold_ref: dependency.retention_or_hold_ref }),
+            ...(dependency.retention_or_hold_ref === undefined ? {} : { retention_or_hold_ref: dependency.retention_or_hold_ref }),
             ...(dependency.next_review_at === undefined ? {} : { next_review_at: dependency.next_review_at }),
             identity_digest: dependency.object_identity_digest,
             shared_live_reference_count: liveSharedReferences,
           },
+        );
+        generated.push(applyPending(
+          registeredTarget,
+          rawPending,
         ));
       }
 
       const requested = new Set(request.required_locations);
       const unique = new Map<string, PurgeTarget>();
+      const refreshed: PurgeTarget[] = [];
+      const r2Counts = new Map<string, number>();
       for (const item of generated.filter((candidate) => requested.has(candidate.location))) {
+        refreshed.push(await refreshR2SharedReferenceCount(
+          dependencies.core_database,
+          item,
+          selectedRevisions,
+          r2Counts,
+        ));
+      }
+      for (const item of refreshed) {
         const key = `${item.location}\u0000${item.canonical_ref}`;
         const existing = unique.get(key);
-        if (existing !== undefined && existing.identity_digest !== item.identity_digest) {
-          erasureFail("ERASURE_IDENTITY_CONFLICT", "one erasure target has conflicting exact identities");
-        }
-        unique.set(key, item);
+        unique.set(key, existing === undefined ? item : mergeTarget(existing, item));
       }
       const missing = request.required_locations.filter((location) =>
         ![...unique.values()].some((candidate) => candidate.location === location));

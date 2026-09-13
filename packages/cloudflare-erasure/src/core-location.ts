@@ -9,6 +9,10 @@ import {
   isoFromMs,
   stableErasureId,
 } from "./canonical.js";
+import {
+  createRawIngestErasureLocationPort,
+  isRawIngestErasureTarget,
+} from "./raw-ingest-location.js";
 import type { ErasureLocationPort } from "./types.js";
 
 function suffix(value: string, prefix: string): string | null {
@@ -62,9 +66,10 @@ export function createD1CoreErasureLocationPort(
 ): ErasureLocationPort {
   const database = dependencies.database;
   const clock = dependencies.now ?? Date.now;
+  const rawIngest = createRawIngestErasureLocationPort({ database, now: clock });
 
   return {
-    async purge(request, _fence, target): Promise<PurgeAttemptReceipt> {
+    async purge(request, fence, target): Promise<PurgeAttemptReceipt> {
       if (target.target_kind === "LOCATION_EMPTY_PROOF") {
         return {
           target_id: target.target_id,
@@ -72,6 +77,7 @@ export function createD1CoreErasureLocationPort(
           receipt_ref: await receipt("delete-empty", request, target, "absent"),
         };
       }
+      if (isRawIngestErasureTarget(target)) return rawIngest.purge(request, fence, target);
       const now = isoFromMs(clock());
       const sourceRevision = suffix(target.canonical_ref, "d1-core:source-revision:");
       const evidenceHandle = splitVersioned(target.canonical_ref, "d1-core:evidence-handle:");
@@ -179,10 +185,11 @@ export function createD1CoreErasureLocationPort(
       return { target_id: target.target_id, disposition: "DELETE_ACCEPTED", receipt_ref: deletionRef };
     },
 
-    async verifyAbsent(request, _fence, target): Promise<AbsenceVerificationReceipt> {
+    async verifyAbsent(request, fence, target, purgeReceipt): Promise<AbsenceVerificationReceipt> {
       const empty = target.target_kind === "LOCATION_EMPTY_PROOF";
       let absent = empty;
       if (!empty) {
+        if (isRawIngestErasureTarget(target)) return rawIngest.verifyAbsent(request, fence, target, purgeReceipt);
         const sourceRevision = suffix(target.canonical_ref, "d1-core:source-revision:");
         const evidenceHandle = splitVersioned(target.canonical_ref, "d1-core:evidence-handle:");
         const scopeSnapshot = splitVersioned(target.canonical_ref, "d1-core:scope-snapshot:");

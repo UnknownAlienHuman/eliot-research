@@ -322,6 +322,7 @@ function render(health: SystemHealth | null): void {
   const clearPrivateEvidence = (): void => { clearEvidenceRail(); retrieval?.clearPrivate(); researchRun?.clearPrivate(); exhaustive?.clearPrivate(); erasure?.clearPrivate(); libraryPanel?.clearPrivate(); };
   const sourceErased = (): void => { clearEvidenceRail(); retrieval?.clearPrivate(); researchRun?.clearPrivate(); exhaustive?.clearPrivate(); };
   erasureHost?.addEventListener("eliotr:source-erased", sourceErased);
+  erasureHost?.addEventListener("eliotr:source-erasure-requested", sourceErased);
   const clearEvidenceOnEvent = (): void => clearPrivateEvidence();
   const clearEvidenceOnQueryStart = (): void => clearEvidenceRail();
   const refreshHealth = (): void => {
@@ -377,7 +378,9 @@ function render(health: SystemHealth | null): void {
     exhaustive?.selectSource(id);
     return true;
   }) : undefined;
-  const cleanups = [orientation, retrieval, researchRun, exhaustive, diagnostic, erasure, () => erasureHost?.removeEventListener("eliotr:source-erased", sourceErased), importer ? mountBundleImportPanel(importer) : undefined,
+  const cleanups = [orientation, retrieval, researchRun, exhaustive, diagnostic, erasure,
+    () => erasureHost?.removeEventListener("eliotr:source-erased", sourceErased),
+    () => erasureHost?.removeEventListener("eliotr:source-erasure-requested", sourceErased), importer ? mountBundleImportPanel(importer) : undefined,
     namespacePanel, () => app.removeEventListener("eliotr:namespace-selected", namespaceSelected),
     rawUploadHost ? mountRawFilePanel(rawUploadHost, { generation: () => app.dataset.healthGeneration, ready: () => app.dataset.healthReady === "true", sourceNamespace: () => selectedNamespace }) : undefined,
     libraryPanel];

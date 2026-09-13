@@ -1,5 +1,6 @@
 import type { ErasureFence } from "@eliotr/contracts";
 import { erasureFail } from "./canonical.js";
+import { assertErasureLocatorsRetained, retainErasureLocatorsStatement } from "./closure-locators.js";
 
 function fencedDelete(
   database: D1Database,
@@ -19,6 +20,10 @@ export async function resetErasureAttempt(
   fence: ErasureFence,
   now: string,
 ): Promise<void> {
+  // Preserve locations from a partially completed older attempt before its
+  // transient target rows are removed. Source/raw rows may already be gone.
+  await database.batch([retainErasureLocatorsStatement(database, fence, now)]);
+  await assertErasureLocatorsRetained(database, fence, now);
   await database.batch([
     fencedDelete(database, "backup_purge_obligation", "erasure_revision", fence),
     fencedDelete(database, "erasure_dependent_invalidation", "erasure_revision", fence),

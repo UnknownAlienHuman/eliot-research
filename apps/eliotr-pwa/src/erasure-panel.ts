@@ -111,6 +111,7 @@ export function mountErasurePanel(
     <div class="workflow-actions">
       <button type="button" class="button" data-erasure-prepare disabled>Delete document</button>
       <button type="button" class="button button--quiet" data-erasure-refresh disabled>Refresh status</button>
+      <button type="button" class="button button--quiet" data-erasure-resume hidden disabled>Resume this deletion</button>
     </div>
     <section class="workflow-recovery" data-erasure-preview hidden aria-labelledby="erasure-review-title">
       <div class="workflow-recovery-head"><div><span class="eyebrow">Review deletion</span><h3 id="erasure-review-title">Confirm the exact document</h3></div></div>
@@ -138,6 +139,7 @@ export function mountErasurePanel(
   const countNode = element.querySelector<HTMLElement>("[data-erasure-count]");
   const prepareButton = element.querySelector<HTMLButtonElement>("[data-erasure-prepare]");
   const refreshButton = element.querySelector<HTMLButtonElement>("[data-erasure-refresh]");
+  const resumeButton = element.querySelector<HTMLButtonElement>("[data-erasure-resume]");
   const previewNode = element.querySelector<HTMLElement>("[data-erasure-preview]");
   const previewCopyNode = element.querySelector<HTMLElement>("[data-erasure-preview-copy]");
   const confirmationInput = element.querySelector<HTMLInputElement>("[data-erasure-confirmation]");
@@ -149,7 +151,7 @@ export function mountErasurePanel(
   const erasureRefNode = element.querySelector<HTMLElement>("[data-erasure-ref]");
   const traceNode = element.querySelector<HTMLElement>("[data-erasure-trace]");
   if (!stateNode || !introNode || !selectionNode || !titleNode || !selectionCopyNode || !sourceNode || !countNode ||
-      !prepareButton || !refreshButton || !previewNode || !previewCopyNode || !confirmationInput || !confirmButton ||
+      !prepareButton || !refreshButton || !resumeButton || !previewNode || !previewCopyNode || !confirmationInput || !confirmButton ||
       !cancelButton || !statusNode || !resultNode || !resultCopyNode || !erasureRefNode || !traceNode) {
     throw new Error("Erasure panel is incomplete");
   }
@@ -190,7 +192,7 @@ export function mountErasurePanel(
     if (phase === "executing") return { label: "Deleting", intro: "Submitting the prepared deletion request." };
     if (phase === "unknown") return { label: "Unknown", intro: "The deletion result is unknown. Refresh status to read the saved request." };
     if (phase === "terminal" && statusView?.state === "COMPLETE") return { label: "Complete", intro: "The exact document deletion is complete." };
-    if (phase === "terminal" && statusView?.state === "BLOCKED") return { label: "Blocked", intro: "Deletion was blocked; the result below explains the hold or policy." };
+    if (phase === "terminal" && statusView?.state === "BLOCKED") return { label: "Blocked", intro: "Deletion could not finish for every stored copy. Review the result below." };
     if (phase === "status" && statusView !== undefined) return { label: stageLabel(statusView.state), intro: "The saved deletion request is still processing. Refresh status for the latest result." };
     if (phase === "status") return { label: "Checking", intro: "Reading the saved deletion status." };
     return { label: "Ready", intro: "Review the selected document before any deletion is requested." };
@@ -212,7 +214,7 @@ export function mountErasurePanel(
     } else if (statusView?.state === "BLOCKED") {
       const blocked = statusView.receipt?.blocked_locations.length ?? 0;
       resultCopyNode.textContent = blocked > 0
-        ? `Deletion is blocked by ${blocked} retention policy or hold. The server has not claimed complete removal.`
+        ? `Deletion is blocked for ${blocked} storage location${blocked === 1 ? "" : "s"}. A copy may still be processing, shared, or retained. Complete removal is not confirmed.`
         : "Deletion is blocked. The server has not claimed complete removal.";
     }
     erasureRefNode.textContent = refText();
@@ -234,6 +236,9 @@ export function mountErasurePanel(
     prepareButton.disabled = selection === undefined || !canRequest() || phase === "preparing" || phase === "executing" ||
       phase === "confirming" || phase === "status" || phase === "unknown" || phase === "terminal" || executeAttempted;
     refreshButton.disabled = erasureRef === undefined || !canRequest() || controller !== undefined || phase === "preparing" || phase === "executing";
+    const resumable = phase === "unknown" && statusView?.state === "UNKNOWN" && prepared !== undefined && confirmationAccepted;
+    resumeButton.hidden = !resumable;
+    resumeButton.disabled = !resumable || !canRequest() || controller !== undefined;
     previewNode.hidden = prepared === undefined || phase !== "confirming";
     if (prepared !== undefined) {
       previewCopyNode.textContent = `The server prepared deletion of ${prepared.revision_targets.length} exact record${prepared.revision_targets.length === 1 ? "" : "s"} for “${prepared.source_title}”. Check the document name and confirm the irreversible action.`;
@@ -338,8 +343,11 @@ export function mountErasurePanel(
     }
   };
 
-  const execute = async (): Promise<void> => {
-    if (prepared === undefined || !confirmationAccepted || phase !== "confirming" || executeAttempted || !canRequest()) return;
+  const execute = async (resume = false): Promise<void> => {
+    const allowedPhase = resume
+      ? phase === "unknown" && statusView?.state === "UNKNOWN" && executeAttempted
+      : phase === "confirming" && !executeAttempted;
+    if (prepared === undefined || !confirmationAccepted || !allowedPhase || controller !== undefined || !canRequest()) return;
     const generation = currentGeneration();
     if (generation === undefined) {
       clearPrivate("The workspace changed. Select the document again before reviewing deletion.");
@@ -352,7 +360,11 @@ export function mountErasurePanel(
     const preparedRequest = prepared;
     executeAttempted = true;
     phase = "executing";
-    statusMessage = "Submitting the prepared deletion request…";
+    statusMessage = resume ? "Resuming the same saved deletion request…" : "Submitting the prepared deletion request…";
+    element.dispatchEvent(new CustomEvent("eliotr:source-erasure-requested", {
+      bubbles: true,
+      detail: { sourceId: selection?.id },
+    }));
     render();
     try {
       const receipt = await executePreparedErasure(preparedRequest, generation, local.signal);
@@ -419,7 +431,7 @@ export function mountErasurePanel(
           }));
         }
         statusMessage = response.state === "UNKNOWN"
-          ? "The saved deletion result is unknown. Refresh status again if the request should be durable."
+          ? "The request is saved, but complete removal is not confirmed. You can refresh its status or resume this same deletion."
           : response.state === "COMPLETE"
             ? "Deletion completed for the exact document."
             : response.state === "BLOCKED"
@@ -437,6 +449,7 @@ export function mountErasurePanel(
 
   prepareButton.onclick = () => { void prepare(); };
   refreshButton.onclick = () => { void refreshStatus(); };
+  resumeButton.onclick = () => { void execute(true); };
   confirmButton.onclick = () => { void execute(); };
   cancelButton.onclick = () => resetFlow("Deletion review cancelled. The document was not changed.");
   confirmationInput.onchange = () => {

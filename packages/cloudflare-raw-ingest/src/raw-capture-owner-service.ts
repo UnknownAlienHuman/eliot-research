@@ -52,6 +52,21 @@ function text(row: OwnerPolicyRow, key: keyof OwnerPolicyRow): string {
   return value;
 }
 
+async function assertSourceNotPurged(database: D1Database, sourceRevisionRef: string): Promise<void> {
+  let row: { readonly purge_state: unknown } | null;
+  try {
+    row = await database.prepare("SELECT purge_state FROM source_revision WHERE source_revision_ref=?1 LIMIT 1")
+      .bind(sourceRevisionRef).first<{ readonly purge_state: unknown }>();
+  } catch (cause) {
+    fail("RAW_CAPTURE_SETTLEMENT_UNCERTAIN", "source erasure state is unavailable", true, cause);
+  }
+  // Before admission there is no source revision. Once it exists, source
+  // quarantine or deletion also revokes access to its raw transport copies.
+  if (row !== null && row.purge_state !== "LIVE") {
+    fail("RAW_CAPTURE_OWNER_NOT_CURRENT", "source is quarantined or erased");
+  }
+}
+
 async function currentBinding(database: D1Database, principalRef: string, expected?: RawOwnerBinding,
   namespaceId: string | undefined = expected?.source_namespace_id): Promise<RawOwnerBinding> {
   if (namespaceId !== undefined && !IDENTIFIER.test(namespaceId)) fail("RAW_CAPTURE_OWNER_NOT_CURRENT", "source namespace locator is invalid");
@@ -152,6 +167,7 @@ export function createRawCaptureService(env: RawCaptureOwnerEnvironment) {
         max_size_bytes: MAX_APPLICATION_UPLOAD_BYTES,
         assertCurrent: async (input) => {
           const binding = await currentBinding(env.CORE_DB, context.principal_ref, undefined, input.source_namespace_id);
+          await assertSourceNotPurged(env.CORE_DB, input.source_revision_ref);
           if (!authorityMatches(input, binding)) fail("RAW_CAPTURE_OWNER_NOT_CURRENT", "raw capture authority is no longer current");
         },
       });
@@ -161,9 +177,11 @@ export function createRawCaptureService(env: RawCaptureOwnerEnvironment) {
       if (context.client_class !== "owner_pwa") fail("RAW_CAPTURE_OWNER_NOT_CURRENT", "raw capture requires an owner session");
       const binding = await currentBinding(env.CORE_DB, context.principal_ref, undefined, request.source_namespace_id);
       const ids = await sourceIdentity(context.principal_ref, binding, request.idempotency_key);
+      await assertSourceNotPurged(env.CORE_DB, ids.revisionRef);
       const rawResidency = residency(binding, context.principal_ref, request.content_sha256);
       const assertCurrent = async (input: RawCaptureAuthorityInput): Promise<void> => {
         const current = await currentBinding(env.CORE_DB, context.principal_ref, binding);
+        await assertSourceNotPurged(env.CORE_DB, input.source_revision_ref);
         if (!authorityMatches(input, current)) fail("RAW_CAPTURE_OWNER_NOT_CURRENT", "raw capture authority changed during settlement");
       };
       const port = createRawCapturePort({
@@ -192,6 +210,7 @@ export function createRawCaptureService(env: RawCaptureOwnerEnvironment) {
         max_size_bytes: MAX_APPLICATION_UPLOAD_BYTES,
         assertCurrent: async (input) => {
           const binding = await currentBinding(env.CORE_DB, context.principal_ref, undefined, input.source_namespace_id);
+          await assertSourceNotPurged(env.CORE_DB, input.source_revision_ref);
           if (!authorityMatches(input, binding)) fail("RAW_CAPTURE_OWNER_NOT_CURRENT", "raw capture authority is no longer current");
         },
       });
@@ -206,6 +225,7 @@ export function createRawCaptureService(env: RawCaptureOwnerEnvironment) {
         max_size_bytes: MAX_APPLICATION_UPLOAD_BYTES,
         assertCurrent: async (input) => {
           const binding = await currentBinding(env.CORE_DB, context.principal_ref, undefined, input.source_namespace_id);
+          await assertSourceNotPurged(env.CORE_DB, input.source_revision_ref);
           if (!authorityMatches(input, binding)) fail("RAW_CAPTURE_OWNER_NOT_CURRENT", "raw capture authority is no longer current");
         },
       });
