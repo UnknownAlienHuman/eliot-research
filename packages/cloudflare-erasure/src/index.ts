@@ -1,4 +1,5 @@
 export * from "./canonical.js";
+export * from "./admission-policy.js";
 export * from "./types.js";
 export * from "./authority.js";
 export * from "./authority-reset.js";

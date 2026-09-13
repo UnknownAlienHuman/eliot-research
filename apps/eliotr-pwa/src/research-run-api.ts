@@ -19,6 +19,19 @@ export interface ResearchRunStatusView {
   readonly deployment_generation: string;
 }
 
+export interface ResearchRunHistoryEntry {
+  readonly created_at: string;
+  readonly status: ResearchRunStatusView;
+}
+
+export interface ResearchRunHistoryView {
+  readonly protocol: "eliotr.research-runs.v1";
+  readonly runs: readonly ResearchRunHistoryEntry[];
+  readonly configuration_state: "INSTALLED" | "MISSING";
+  readonly checked_at: string;
+  readonly deployment_generation: string;
+}
+
 export interface ResearchArtifactSectionView {
   readonly artifact_ref: VersionedRef;
   readonly section_ref: VersionedRef;
@@ -67,6 +80,12 @@ function record(value: unknown, required: readonly string[], optional: readonly 
 function boundedString(value: unknown, label: string, maximum = 256): string {
   if (typeof value !== "string" || value.length === 0 || value.length > maximum || value !== value.trim() || /[\u0000-\u001f\u007f]/u.test(value)) invalid(`${label} is invalid`);
   return value;
+}
+
+function isoTimestamp(value: unknown, label: string): string {
+  const timestamp = boundedString(value, label, 64);
+  if (!Number.isFinite(Date.parse(timestamp)) || new Date(timestamp).toISOString() !== timestamp) invalid(`${label} is invalid`);
+  return timestamp;
 }
 
 function identifier(value: unknown, label: string): string {
@@ -168,6 +187,25 @@ export function decodeResearchRunStatus(raw: unknown, expectedDeploymentGenerati
   return { workflow_instance_id: workflowId, investigation_ref: versionedRef(data.investigation_ref, "investigation_ref"), execution_state: state, next_stage_index: stageIndex, answer: answer.availability === "draft" ? { availability: "draft", artifact_ref: versionedRef(answer.artifact_ref, "answer artifact_ref") } : { availability: "unavailable" }, ...(cancellation === undefined ? {} : { cancellation_receipt_ref: cancellation }), deployment_generation: parsed.deployment_generation };
 }
 
+export function decodeResearchRunHistory(raw: unknown, expectedDeploymentGeneration?: string): ResearchRunHistoryView {
+  const parsed = envelope(raw); checkGeneration(parsed.deployment_generation, expectedDeploymentGeneration);
+  const data = record(parsed.data, ["protocol", "runs", "configuration_state", "checked_at"]);
+  if (data.protocol !== "eliotr.research-runs.v1") invalid("research run history protocol is invalid");
+  if (data.configuration_state !== "INSTALLED" && data.configuration_state !== "MISSING") invalid("research run configuration state is invalid");
+  const checkedAt = isoTimestamp(data.checked_at, "checked_at");
+  if (!Array.isArray(data.runs) || data.runs.length > 8) invalid("research run history is invalid");
+  const seen = new Set<string>();
+  const runs = data.runs.map((value, index) => {
+    const entry = record(value, ["created_at", "status"]);
+    const createdAt = isoTimestamp(entry.created_at, `runs[${index}].created_at`);
+    const status = decodeResearchRunStatus({ data: entry.status, trace_id: "research-history", deployment_generation: parsed.deployment_generation }, parsed.deployment_generation);
+    if (seen.has(status.workflow_instance_id)) invalid("research run history contains a duplicate run");
+    seen.add(status.workflow_instance_id);
+    return { created_at: createdAt, status };
+  });
+  return { protocol: "eliotr.research-runs.v1", runs, configuration_state: data.configuration_state, checked_at: checkedAt, deployment_generation: parsed.deployment_generation };
+}
+
 export async function readResearchArtifact(artifactRef: { readonly id: string; readonly revision: number }, expectedDeploymentGeneration?: string, signal?: AbortSignal): Promise<ArtifactRevision> {
   const ref = versionedRef(artifactRef, "artifact_ref");
   const raw = await requestApi(`/api/v1/research/artifact/${encodeURIComponent(`${ref.id}:${ref.revision}`)}`, signal ? { signal } : {});
@@ -250,4 +288,9 @@ export async function readResearchRunStatus(workflowInstanceId: string, expected
   const view = decodeResearchRunStatus(raw, expectedDeploymentGeneration);
   if (view.workflow_instance_id !== id) invalid("research run identity does not match the requested run");
   return view;
+}
+
+export async function readResearchRunHistory(expectedDeploymentGeneration?: string, signal?: AbortSignal): Promise<ResearchRunHistoryView> {
+  const raw = await requestApi("/api/v1/research/runs", signal ? { signal } : {});
+  return decodeResearchRunHistory(raw, expectedDeploymentGeneration);
 }

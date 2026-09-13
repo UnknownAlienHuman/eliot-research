@@ -13,6 +13,7 @@ import { readGoogleExternalTransport } from "@eliotr/cloudflare-workspace-mcp";
 import { readJsonBodyWithinBytes } from "./bounded-json.js";
 import { createResearchChangesService } from "./research-changes.js";
 import { readReadiness } from "./readiness.js";
+import { readOwnerResearchRuns } from "./research-run-list.js";
 import {
   handleMcpClientDiagnosticIssue,
   handleMcpClientDiagnosticLatest,
@@ -51,6 +52,12 @@ export async function dispatchHttpSpecialRoute(input: {
     requireDriveExchangeTransport(input.env);
   }
   switch (input.match.route.operation) {
+    case "research.runs": {
+      requireNoQuery(input.url);
+      const readiness = await readReadiness(input.env);
+      if (!readiness.ready) throw new HttpRequestError("SCHEMA_NOT_READY", 503, "Required D1 migrations are not applied", true);
+      return apiResult(input.request, input.env, await readOwnerResearchRuns(input.env, input.context));
+    }
     case "system.mcp-diagnostic.issue":
       return handleMcpClientDiagnosticIssue(
         input.request,

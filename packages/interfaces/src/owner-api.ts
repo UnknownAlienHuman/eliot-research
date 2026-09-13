@@ -7,6 +7,8 @@ import type {
   LibraryReadiness,
 } from "@eliotr/contracts";
 import type { AuthenticatedRequestContext } from "./http.js";
+import type { ErasureOwnerApi } from "./erasure-owner-api.js";
+import type { WorkspaceOwnerApi } from "./workspace-owner-api.js";
 
 export interface PrepareBundleUploadRequest {
   readonly manifest: NormalizedBundleManifest;
@@ -247,7 +249,8 @@ export interface GoogleConnectionStatusResult {
   readonly state: "DISCONNECTED" | "AUTHORIZING" | "ACTIVE" | "DEGRADED" | "REAUTH_REQUIRED" | "REVOKED";
 }
 
-export interface OwnerApi {  sourceRevisions(context: AuthenticatedRequestContext, request: SourceRevisionsRequest): Promise<SourceRevisionsResult>;
+export interface OwnerApi extends ErasureOwnerApi, WorkspaceOwnerApi {
+  sourceRevisions(context: AuthenticatedRequestContext, request: SourceRevisionsRequest): Promise<SourceRevisionsResult>;
   libraryReadiness(context: AuthenticatedRequestContext, request: LibraryReadinessRequest): Promise<LibraryReadinessResult>;
   discoverBundle(context: AuthenticatedRequestContext, request: DiscoverBundleUploadRequest): Promise<BundleIngestRecovery>;
   getBundleRecovery(context: AuthenticatedRequestContext, operationId: string): Promise<BundleIngestRecovery>;
