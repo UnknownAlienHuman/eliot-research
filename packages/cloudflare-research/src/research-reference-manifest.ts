@@ -241,6 +241,27 @@ export interface ResearchReferenceManifestService {
   buildAndPersist(input: BuildReferenceManifestInput): Promise<BuiltReferenceManifest & { readonly manifest_ref: VersionedRef }>;
 }
 
+/** Recompile current evidence against an already frozen manifest without creating another manifest. */
+export function createFrozenResearchReferenceManifestService(
+  store: Pick<ReferenceManifestStore, "get">,
+): ResearchReferenceManifestService {
+  return Object.freeze({
+    async buildAndPersist(input: BuildReferenceManifestInput) {
+      const before = await store.get(input.manifest_ref);
+      if (before === null) fail("REFERENCE_MANIFEST_PERSISTENCE_UNCERTAIN", "frozen manifest is unavailable", true);
+      const built = await buildAllowedReferenceManifest(input);
+      if (canonicalEvidenceJson(built.manifest) !== canonicalEvidenceJson(before)) {
+        fail("REFERENCE_MANIFEST_SCOPE_STALE", "compiled evidence differs from the frozen manifest");
+      }
+      const after = await store.get(input.manifest_ref);
+      if (after === null || canonicalEvidenceJson(after) !== canonicalEvidenceJson(before)) {
+        fail("REFERENCE_MANIFEST_SCOPE_STALE", "frozen manifest changed during prompt compilation");
+      }
+      return { ...built, manifest_ref: after.manifest_ref };
+    },
+  });
+}
+
 export function createResearchReferenceManifestService(input: {
   readonly navigation: NavigationReadAuthority;
   readonly resolver?: CloudflareEvidenceResolver;
