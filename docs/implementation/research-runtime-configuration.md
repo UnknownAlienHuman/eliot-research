@@ -212,9 +212,14 @@ are configuration evidence, not proof of a completed model response or report.
 
 The owner subsequently selected Cloudflare `@cf/zai-org/glm-5.3-flash` for current
 document work, replacing Inkling and rejecting `gpt-oss-120b` for this integration.
-Both `owner-cloudflare-glm53-v1` routes and their published token pricing have been
-prepared. A direct Workers AI request reached GLM, while qualification through the
-application Gateway remains incomplete; preparation does not authorize ACTIVE promotion.
+Both `owner-cloudflare-glm53-v2` routes and their published token pricing have been
+prepared with explicit `reasoning_effort: "low"`. The parameter is included in the
+deployment digest; omission preserves provider defaults. GLM defaults to maximum
+reasoning, so short document work needs an explicit effort setting.
+A native Worker request on 2026-09-13 returned HTTP 200 with 1,240 output tokens in
+26.584 seconds. Application qualification remains incomplete until response
+provenance and immutable output persistence succeed; HTTP 200 alone does not
+authorize ACTIVE promotion.
 
 The setup input has this complete minimum shape. It is notation rather than a
 runnable file: every placeholder must be replaced by the corresponding
