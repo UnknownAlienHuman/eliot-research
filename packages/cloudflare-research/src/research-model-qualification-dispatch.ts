@@ -478,6 +478,7 @@ export function createResearchModelQualificationDispatch(
       try {
         observed = await executeObservedModelGatewayCall(native.createExecution(probe), probe.model_call);
       } catch (cause) {
+        if (cause instanceof ModelGatewayExecutionError) throw cause;
         modelFailure("MODEL_GATEWAY_TRANSPORT_FAILED", "qualification model execution failed; provider retry is forbidden", cause);
       }
       return completeDispatch(dependencies.core_database, input, observed, dependencies.now);

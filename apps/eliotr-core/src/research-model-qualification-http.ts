@@ -1,7 +1,9 @@
 import {
   canonicalModelGatewayJson,
+  ModelGatewayExecutionError,
   parseDynamicRouteQualificationProbeInput,
   type DynamicRouteQualificationProbeInput,
+  type ModelGatewayExecutionErrorCode,
 } from "@eliotr/cloudflare-ai";
 import {
   createResearchModelQualificationDispatch,
@@ -15,6 +17,22 @@ import { readJsonBodyWithinBytes } from "./bounded-json.js";
 import type { Env } from "./env.js";
 import { apiResult, HttpRequestError } from "./http.js";
 import { createResearchOwnerRoutePlan } from "./research-owner-route-plan.js";
+
+const QUALIFICATION_ERROR_CODES = new Set<ModelGatewayExecutionErrorCode>([
+  "MODEL_GATEWAY_DEPLOYMENT_MISSING", "MODEL_GATEWAY_PROMPT_COMPILE_FAILED",
+  "MODEL_GATEWAY_REQUEST_INVALID", "MODEL_GATEWAY_CREDENTIAL_INVALID",
+  "MODEL_GATEWAY_TRANSPORT_FAILED", "MODEL_GATEWAY_AUTH_REJECTED",
+  "MODEL_GATEWAY_LIMIT_REJECTED", "MODEL_GATEWAY_POLICY_REJECTED",
+  "MODEL_GATEWAY_UPSTREAM_REJECTED", "MODEL_GATEWAY_RESPONSE_INVALID",
+  "MODEL_GATEWAY_OUTPUT_TRUNCATED", "MODEL_GATEWAY_OUTPUT_PERSIST_FAILED",
+  "MODEL_GATEWAY_FINGERPRINT_PERSIST_FAILED", "MODEL_GATEWAY_PRICING_FAILED",
+]);
+
+function typedUpstreamStatus(error: unknown): number | undefined {
+  if (!(error instanceof ModelGatewayExecutionError)) return undefined;
+  const status = error.http_status;
+  return typeof status === "number" && Number.isInteger(status) && status >= 100 && status <= 599 ? status : undefined;
+}
 
 function invalid(): never {
   throw new HttpRequestError("RESEARCH_QUALIFICATION_INPUT_INVALID", 400,
@@ -94,10 +112,12 @@ export async function handleResearchModelQualification(
       credential_generation: context.credential_generation });
     return apiResult(request, env, observed);
   } catch (error) {
-    const code = error !== null && typeof error === "object" && "code" in error &&
-      typeof error.code === "string" && /^[A-Z][A-Z0-9_]{0,95}$/u.test(error.code)
+    const code = error instanceof ModelGatewayExecutionError && QUALIFICATION_ERROR_CODES.has(error.code)
       ? error.code : "RESEARCH_QUALIFICATION_DISPATCH_FAILED";
+    const status = typedUpstreamStatus(error);
     // A failed response does not authorize another model invocation.
-    throw new HttpRequestError(code, 409, "Document model qualification could not complete");
+    throw new HttpRequestError(code, 409, status === undefined
+      ? "Document model qualification could not complete"
+      : `Document model qualification could not complete (upstream HTTP ${status})`);
   }
 }
