@@ -3,10 +3,12 @@ import { modelGatewayRequestParametersSha256 } from "@eliotr/cloudflare-ai";
 import {
   createModelProfileDefinition,
   createResearchReportConfigSource,
+  readResearchOwnerSpendPolicyTemplate,
   readResearchModelSpendPolicy,
   type ModelProfileDefinitionInput,
   type ResearchArtifactReportPolicy,
   type ResearchModelSpendPolicy,
+  type ResearchOwnerSpendPolicyTemplate,
   type ResearchReportAdmissionPolicy,
 } from "@eliotr/cloudflare-research";
 import {
@@ -14,6 +16,12 @@ import {
   type ResearchOwnerReasoningEffort,
   type ResearchOwnerSemanticConfigurationInput,
 } from "./research-owner-semantic-config.js";
+import {
+  RESEARCH_OWNER_REPORT_ADMISSION_TEMPLATE_PROTOCOL,
+  readResearchOwnerReportArtifactPolicy,
+  readResearchOwnerReportAdmissionTemplate,
+  type ResearchOwnerReportAdmissionTemplate,
+} from "./research-owner-report-policy.js";
 import { RESEARCH_OWNER_MODEL_PROFILE } from "./research-owner-profile.js";
 
 type ResearchOwnerDeploymentInput = Omit<ModelProfileDefinitionInput["deployment"], "parameters_digest"> & {
@@ -28,9 +36,29 @@ type ResearchOwnerSpendRuleInput = Omit<ResearchModelSpendPolicy["rules"][number
   readonly deployment: ResearchOwnerDeploymentInput;
 };
 
-export type ResearchOwnerSpendPolicyInput = Omit<ResearchModelSpendPolicy, "rules"> & {
+type ResearchOwnerLegacySpendPolicyInput = Omit<ResearchModelSpendPolicy, "rules"> & {
   readonly rules: readonly ResearchOwnerSpendRuleInput[];
 };
+
+/**
+ * Operator-owned spend intent. Runtime binds the omitted credential and policy
+ * authority generations from the authenticated owner and current D1 state.
+ */
+export interface ResearchOwnerSpendPolicyTemplateInput {
+  readonly protocol: "eliotr.research-owner-spend-template.v1";
+  readonly approved: true;
+  readonly policy_ref: ResearchModelSpendPolicy["policy_ref"];
+  readonly config_provenance_ref: ResearchModelSpendPolicy["config_provenance_ref"];
+  readonly principal_ref: ResearchModelSpendPolicy["principal_ref"];
+  readonly client_class: ResearchModelSpendPolicy["client_class"];
+  readonly deployment_generation: ResearchModelSpendPolicy["deployment_generation"];
+  readonly expires_at: ResearchModelSpendPolicy["expires_at"];
+  readonly rules: readonly ResearchOwnerSpendRuleInput[];
+}
+
+export type ResearchOwnerSpendPolicyInput =
+  | ResearchOwnerLegacySpendPolicyInput
+  | ResearchOwnerSpendPolicyTemplateInput;
 
 export interface ResearchOwnerRuntimeConfigurationInput {
   readonly protocol: "eliotr.research-owner-setup.v1";
@@ -38,7 +66,7 @@ export interface ResearchOwnerRuntimeConfigurationInput {
   readonly model_profile: ResearchOwnerModelProfileDefinitionInput;
   readonly spend_policy: ResearchOwnerSpendPolicyInput;
   readonly report: {
-    readonly admission_policy: ResearchReportAdmissionPolicy;
+    readonly admission_policy: ResearchReportAdmissionPolicy | ResearchOwnerReportAdmissionTemplate;
     readonly artifact_policy: ResearchArtifactReportPolicy;
   };
 }
@@ -123,17 +151,40 @@ export async function createResearchOwnerRuntimeConfiguration(
       deployment: fillParametersDigest(rule.deployment, parametersDigest, `${rule.stage} deployment`),
     });
   }
-  const spend = readResearchModelSpendPolicy(canonicalJson({ ...input.spend_policy, rules: spendRules }), input.spend_policy.config_provenance_ref);
+  const spendJson = canonicalJson({ ...input.spend_policy, rules: spendRules });
+  const spend: ResearchModelSpendPolicy | ResearchOwnerSpendPolicyTemplate = input.spend_policy.protocol === "eliotr.research-owner-spend-template.v1"
+    ? readResearchOwnerSpendPolicyTemplate(spendJson, input.spend_policy.config_provenance_ref)
+    : readResearchModelSpendPolicy(spendJson, input.spend_policy.config_provenance_ref);
   const reportJson = canonicalJson({ schema: "eliotr.research.report-config.v1", ...input.report });
-  const report = createResearchReportConfigSource({
-    raw: reportJson, provenance_ref: input.report.admission_policy.config_provenance_ref,
-  });
-  const admission = await report.read();
-  const artifact = await report.readArtifactPolicy();
+  const reportIsTemplate = "protocol" in input.report.admission_policy &&
+    input.report.admission_policy.protocol === RESEARCH_OWNER_REPORT_ADMISSION_TEMPLATE_PROTOCOL;
+  let admission: ResearchReportAdmissionPolicy | ResearchOwnerReportAdmissionTemplate | null;
+  let artifact: ResearchArtifactReportPolicy | null;
+  if (reportIsTemplate) {
+    admission = readResearchOwnerReportAdmissionTemplate(
+      input.report.admission_policy,
+      input.report.admission_policy.config_provenance_ref,
+    );
+    artifact = readResearchOwnerReportArtifactPolicy(input.report.artifact_policy);
+  } else {
+    const report = createResearchReportConfigSource({
+      raw: reportJson, provenance_ref: input.report.admission_policy.config_provenance_ref,
+    });
+    admission = await report.read();
+    artifact = await report.readArtifactPolicy();
+  }
   if (!admission || !artifact) invalid("report policy is missing");
-  if (admission.principal_ref !== spend.principal_ref || admission.policy_generation !== spend.policy_generation ||
-      admission.policy_authority_ref !== spend.policy_authority_ref) {
+  const spendIsTemplate = spend.protocol === "eliotr.research-owner-spend-template.v1";
+  const authorityMatches = reportIsTemplate || spendIsTemplate ||
+    ((admission as ResearchReportAdmissionPolicy).policy_generation === spend.policy_generation &&
+      (admission as ResearchReportAdmissionPolicy).policy_authority_ref === spend.policy_authority_ref);
+  if (admission.principal_ref !== spend.principal_ref || admission.client_class !== spend.client_class ||
+      !authorityMatches) {
     invalid("report and model spend must belong to the same owner and policy");
+  }
+  const reportTemplate = reportIsTemplate ? admission as ResearchOwnerReportAdmissionTemplate : undefined;
+  if (reportTemplate !== undefined && reportTemplate.deployment_generation !== spend.deployment_generation) {
+    invalid("report template and model deployment differ");
   }
   const synthesis = spend.rules.find((rule) => rule.stage === "SYNTHESIZE");
   if (!synthesis || canonicalJson(synthesis.deployment) !== canonicalJson(profile.deployment)) {

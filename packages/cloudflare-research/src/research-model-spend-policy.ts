@@ -46,6 +46,14 @@ const PolicySchema = z.object({
 
 type SpendRule = Omit<z.infer<typeof RuleSchema>, "deployment"> & { readonly deployment: ModelRouteDeployment };
 export type ResearchModelSpendPolicy = Omit<z.infer<typeof PolicySchema>, "rules"> & { readonly rules: readonly SpendRule[] };
+const OwnerSpendPolicyTemplateSchema = PolicySchema.omit({
+  credential_generation: true,
+  policy_generation: true,
+  policy_authority_ref: true,
+}).extend({ protocol: z.literal("eliotr.research-owner-spend-template.v1") });
+export type ResearchOwnerSpendPolicyTemplate = Omit<z.infer<typeof OwnerSpendPolicyTemplateSchema>, "rules"> & {
+  readonly rules: readonly SpendRule[];
+};
 
 /** This is installed operator approval, never a public request or an inferred scope permission. */
 export function readResearchModelSpendPolicy(raw: string | undefined, provenance: string): ResearchModelSpendPolicy {
@@ -60,6 +68,22 @@ export function readResearchModelSpendPolicy(raw: string | undefined, provenance
     }))) });
   } catch (cause) {
     stale("installed model spend policy is invalid", cause);
+  }
+}
+
+/** Read the static owner approval whose session-varying authority is bound by the Worker. */
+export function readResearchOwnerSpendPolicyTemplate(raw: string | undefined, provenance: string): ResearchOwnerSpendPolicyTemplate {
+  if (!raw || new TextEncoder().encode(raw).byteLength > 65536) stale("installed owner spend template is missing or oversized");
+  try {
+    const parsed = OwnerSpendPolicyTemplateSchema.parse(JSON.parse(raw));
+    if (parsed.config_provenance_ref !== provenance || new Set(parsed.rules.map((rule) => rule.stage)).size !== 2) {
+      stale("installed owner spend template provenance or stage selection is invalid");
+    }
+    return Object.freeze({ ...parsed, rules: Object.freeze(parsed.rules.map((rule) => Object.freeze({
+      ...rule, quote: Object.freeze(rule.quote), deployment: decodeModelRouteDeployment(rule.deployment),
+    }))) });
+  } catch (cause) {
+    stale("installed owner spend template is invalid", cause);
   }
 }
 

@@ -21,9 +21,17 @@ The transport uses manual redirects because workerd rejects `redirect: "error"`,
 3xx responses before consuming the body. The dedicated AI Gateway Run token was authorized by
 the owner, installed as an encrypted Worker secret and independently read back by name.
 The first deployment of the seven semantic/model/spend/report settings hit Cloudflare's 5 KiB
-text-binding limit: the semantic configuration is 7,763 UTF-8 bytes. The transport now supports
-two bounded bindings, reconstructed before the existing strict parser. Next is deployment and an ordinary document question with saved output
-readback; qualification output alone is not a completed source-to-report run.
+text-binding limit: the semantic configuration is 7,763 UTF-8 bytes. Main `fdb7917` deployed
+two bounded bindings, reconstructed before the existing strict parser. The owner API read back
+all seven logical settings with no invalid fields. The first ordinary README question reached
+stage 12, before a model attempt or spend-admission write: its configured policy generation and
+authority did not match the actual frozen workflow authority. The browser also rejected the
+configuration's CLI-specific credential generation. Explicit owner spend and report templates now
+bind session-varying fields to authenticated Access and the exact current workflow's D1 authority,
+while legacy policies keep their original checks. A single-source question with no search hits now
+supplies a bounded prefix of pinned document locators to the existing exact Evidence resolver;
+the Russian README question previously produced an empty evidence pack. Saved-output readback remains open.
+Qualification output alone is not a completed source-to-report run.
 See [the runtime configuration procedure](research-runtime-configuration.md). Prepared routes,
 provider HTTP success and compilation do not qualify the application model path.
 

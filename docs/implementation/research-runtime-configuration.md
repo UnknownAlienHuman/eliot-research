@@ -92,6 +92,13 @@ The existing call sites use the same loader:
   generated deployment configuration has the same allowlisted values before
   the deployment path can proceed. A generated file by itself is not a live
   deployment receipt.
+* The generated Wrangler transport splits the canonical semantic JSON with
+  `splitResearchSemanticConfiguration` into
+  `ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON_0` and `_1`, with at most 4,000 UTF-8
+  bytes per chunk and 8,000 bytes total. The Worker reassembles these chunks
+  before its existing strict parser; chunking is only a transport encoding and
+  does not change the `eliotr.research-runtime.v1` envelope, its canonical JSON
+  identity, or its allowlisted keys.
 
 Install the envelope first, then use the existing entrypoint for the intended
 environment. Treat a loader error, Core schema error, provenance mismatch, or

@@ -11,7 +11,14 @@ import {
   type HeldResearchScope,
 } from "@eliotr/cloudflare-research";
 import { AI_SEARCH_PRIMARY_NAMESPACE, createD1BackedAiSearchManagedSearchPort } from "@eliotr/cloudflare-ai";
-import { createD1SearchExactPort, createD1SearchIdentPort, createD1SearchLexPort } from "@eliotr/cloudflare-projection";
+import {
+  createD1SearchExactPort,
+  createD1SearchIdentPort,
+  createD1SearchLexPort,
+  D1_SEARCH_LANE_MAX_LIMIT,
+  readD1SearchChannelReadback,
+  type PinnedGeneration,
+} from "@eliotr/cloudflare-projection";
 import {
   createD1RetrievalResultStore,
   createD1RetrievalTracePort,
@@ -64,6 +71,176 @@ const STALE_AUTHORITY_CODES: ReadonlySet<string> = new Set([
 
 function fail(code: "RETRIEVAL_RESOLUTION_UNCERTAIN" | "RETRIEVAL_AUTHORITY_STALE", message: string): never {
   throw new RetrievalQueryError(code, message, code === "RETRIEVAL_RESOLUTION_UNCERTAIN");
+}
+
+interface SelectedSourceProjectionRow {
+  readonly item_key: unknown;
+  readonly source_revision_ref: unknown;
+  readonly canonical_section_id: unknown;
+  readonly content_sha256: unknown;
+  readonly projection_generation: unknown;
+  readonly normalized_start_byte: unknown;
+  readonly normalized_end_byte: unknown;
+}
+
+function selectedFallbackInvalid(): never {
+  throw new RetrievalQueryError(
+    "RETRIEVAL_RESOLUTION_UNCERTAIN",
+    "selected source projection readback is unavailable",
+    true,
+  );
+}
+
+function selectedFallbackIdentity(value: unknown): string {
+  if (typeof value !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/u.test(value)) {
+    return selectedFallbackInvalid();
+  }
+  return value;
+}
+
+function selectedFallbackDigest(value: unknown): string {
+  if (typeof value !== "string" || !/^[a-f0-9]{64}$/u.test(value)) {
+    return selectedFallbackInvalid();
+  }
+  return value;
+}
+
+function sameProjectionPin(
+  left: PinnedGeneration,
+  right: PinnedGeneration,
+): boolean {
+  return left.source_revision_ref === right.source_revision_ref &&
+    left.projection_generation === right.projection_generation &&
+    left.receipt_ref === right.receipt_ref &&
+    left.readback_digest === right.readback_digest &&
+    left.item_set_digest === right.item_set_digest &&
+    left.item_count === right.item_count;
+}
+
+/**
+ * When a single selected source produces no lexical hit, expose bounded real
+ * projection sections as context. Every locator still goes through the
+ * existing Evidence resolver, so this never turns an index row into proof.
+ */
+async function selectedDocumentFallbackCandidates(
+  search: D1Database,
+  core: D1Database,
+  request: RetrievalRequest,
+  checkBudget: () => void,
+): Promise<readonly LocatorCandidate[]> {
+  const members = request.scope_snapshot.member_source_revision_refs;
+  if (members.length !== 1) return [];
+  const sourceRevisionRef = members[0];
+  if (sourceRevisionRef === undefined) return [];
+  let first: Awaited<ReturnType<typeof readD1SearchChannelReadback>>;
+  try {
+    checkBudget();
+    first = await readD1SearchChannelReadback(
+      search,
+      core,
+      "lexical",
+      members,
+      request.scope_snapshot.source_owner_generations,
+    );
+    checkBudget();
+  } catch {
+    checkBudget();
+    throw new RetrievalQueryError(
+      "RETRIEVAL_RESOLUTION_UNCERTAIN",
+      "selected source projection readback is unavailable",
+      true,
+    );
+  }
+  const pin = first.pinned[0];
+  if (pin === undefined || first.missing.length !== 0 || first.stale.length !== 0) {
+    throw new RetrievalQueryError(
+      "RETRIEVAL_RESOLUTION_UNCERTAIN",
+      "selected source projection changed during readback",
+      true,
+    );
+  }
+  const fallbackLimit = Math.min(
+    request.requested_limit,
+    pin.item_count,
+    D1_SEARCH_LANE_MAX_LIMIT,
+  );
+  let result: D1Result<SelectedSourceProjectionRow>;
+  try {
+    checkBudget();
+    result = await search.prepare(
+      "SELECT p.item_key, p.source_revision_ref, p.canonical_section_id, p.content_sha256, " +
+        "p.projection_generation, s.normalized_start_byte, s.normalized_end_byte " +
+        "FROM projection_item p JOIN projection_span s ON s.item_key = p.item_key " +
+        "AND s.source_revision_ref = p.source_revision_ref " +
+        "AND s.projection_generation = p.projection_generation " +
+        "WHERE p.source_revision_ref = ?1 AND p.projection_generation = ?2 AND p.active = 1 " +
+        "ORDER BY s.normalized_start_byte, p.item_key LIMIT ?3",
+    ).bind(sourceRevisionRef, pin.projection_generation, fallbackLimit).all<SelectedSourceProjectionRow>();
+    checkBudget();
+  } catch (error) {
+    if (error instanceof RetrievalQueryError) throw error;
+    return selectedFallbackInvalid();
+  }
+  if (!result.success || !Array.isArray(result.results) || result.results.length !== fallbackLimit) {
+    return selectedFallbackInvalid();
+  }
+  const candidates = result.results.map((row, index) => {
+    const itemKey = selectedFallbackIdentity(row.item_key);
+    const source = selectedFallbackIdentity(row.source_revision_ref);
+    const section = selectedFallbackIdentity(row.canonical_section_id);
+    const digest = selectedFallbackDigest(row.content_sha256);
+    const generation = selectedFallbackIdentity(row.projection_generation);
+    if (source !== sourceRevisionRef || generation !== pin.projection_generation ||
+        typeof row.normalized_start_byte !== "number" || typeof row.normalized_end_byte !== "number" ||
+        !Number.isSafeInteger(row.normalized_start_byte) || !Number.isSafeInteger(row.normalized_end_byte) ||
+        row.normalized_start_byte < 0 || row.normalized_end_byte <= row.normalized_start_byte) {
+      return selectedFallbackInvalid();
+    }
+    return {
+      candidate_id: itemKey,
+      lane: "LEX" as const,
+      source_revision_ref: source,
+      canonical_section_id: section,
+      preview: "",
+      raw_score: 0.25,
+      rank: index + 1,
+      index_generation: generation,
+      metadata: { item_key: itemKey, content_sha256: digest, selected_document_fallback: true },
+    } satisfies LocatorCandidate;
+  });
+  let settled: Awaited<ReturnType<typeof readD1SearchChannelReadback>>;
+  try {
+    checkBudget();
+    settled = await readD1SearchChannelReadback(
+      search,
+      core,
+      "lexical",
+      members,
+      request.scope_snapshot.source_owner_generations,
+    );
+    checkBudget();
+  } catch {
+    checkBudget();
+    throw new RetrievalQueryError(
+      "RETRIEVAL_RESOLUTION_UNCERTAIN",
+      "selected source projection changed during readback",
+      true,
+    );
+  }
+  const settledPin = settled.pinned[0];
+  if (
+    settledPin === undefined ||
+    settled.missing.length !== 0 ||
+    settled.stale.length !== 0 ||
+    !sameProjectionPin(pin, settledPin)
+  ) {
+    throw new RetrievalQueryError(
+      "RETRIEVAL_RESOLUTION_UNCERTAIN",
+      "selected source projection changed during readback",
+      true,
+    );
+  }
+  return candidates.slice(0, request.requested_limit);
 }
 
 export type { HeldResearchScope } from "@eliotr/cloudflare-research";
@@ -136,8 +313,16 @@ export async function retrieveWithHeldScope(
       throw new RetrievalQueryError("RETRIEVAL_RESOLUTION_UNCERTAIN", error instanceof Error ? error.message : "evidence resolution failed", true);
     }
   }
-  const ident = createIdentLaneExecutor(createD1SearchIdentPort({ search_database: env.SEARCH_DB, core_database: env.CORE_DB }));
-  const exact = createExactLaneExecutor(createD1SearchExactPort({
+  const directCandidatesSeen = new WeakMap<RetrievalRequest, true>();
+  const identPort = createD1SearchIdentPort({ search_database: env.SEARCH_DB, core_database: env.CORE_DB });
+  const ident = createIdentLaneExecutor({
+    async lookupIdentifiers(request) {
+      const candidates = await identPort.lookupIdentifiers(request);
+      if (candidates.length > 0) directCandidatesSeen.set(request, true);
+      return candidates;
+    },
+  });
+  const exactPort = createD1SearchExactPort({
     search_database: env.SEARCH_DB,
     core_database: env.CORE_DB,
     verifyExactPhrase: createExactPhraseVerifier({
@@ -146,8 +331,22 @@ export async function retrieveWithHeldScope(
       content: evidenceContent,
       checkBudget: () => queryBudget.checkBudget(),
     }),
-  }));
-  const lex = createLexLaneExecutor(createD1SearchLexPort({ search_database: env.SEARCH_DB, core_database: env.CORE_DB }));
+  });
+  const exact = createExactLaneExecutor({
+    async exactPhraseCandidates(request) {
+      const candidates = await exactPort.exactPhraseCandidates(request);
+      if (candidates.length > 0) directCandidatesSeen.set(request, true);
+      return candidates;
+    },
+  });
+  const lexPort = createD1SearchLexPort({ search_database: env.SEARCH_DB, core_database: env.CORE_DB });
+  const lex = createLexLaneExecutor({
+    async search(request, lane) {
+      const candidates = await lexPort.search(request, lane);
+      if (candidates.length > 0 || directCandidatesSeen.has(request)) return candidates;
+      return selectedDocumentFallbackCandidates(env.SEARCH_DB, env.CORE_DB, request, () => queryBudget.checkBudget());
+    },
+  });
   const sem = env.AI_SEARCH === undefined ? null : createSemLaneExecutor(createD1BackedAiSearchManagedSearchPort(
     env.SEARCH_DB,
     env.AI_SEARCH,

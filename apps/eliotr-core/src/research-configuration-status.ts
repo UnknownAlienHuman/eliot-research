@@ -4,12 +4,18 @@ import { IdentifierSchema, IsoDateTimeSchema, VersionedRefSchema } from "@eliotr
 import {
   createModelProfileBindingConfigSource,
   createResearchReportConfigSource,
+  readResearchOwnerSpendPolicyTemplate,
   readResearchModelSpendPolicy,
   type ResearchModelGatewayBinding,
 } from "@eliotr/cloudflare-research";
 import { readResearchSemanticConfiguration, type Env } from "./env.js";
 import type { AuthenticatedRequestContext } from "@eliotr/interfaces";
 import { parseResearchClaimAuditPolicy } from "@eliotr/cloudflare-research-stages";
+import {
+  RESEARCH_OWNER_REPORT_ADMISSION_TEMPLATE_PROTOCOL,
+  readResearchOwnerReportArtifactPolicy,
+  readResearchOwnerReportAdmissionTemplate,
+} from "./research-owner-report-policy.js";
 
 const MAX_CONFIGURATION_BYTES = 65_536;
 const RESEARCH_CONFIGURATION_PROTOCOL = "eliotr.research-configuration-status.v1" as const;
@@ -118,6 +124,30 @@ function embeddedProvenance(value: string, report: boolean): string | undefined 
   }
 }
 
+function embeddedProtocol(value: string): string | undefined {
+  try {
+    const parsed: unknown = JSON.parse(value);
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return undefined;
+    const protocol = (parsed as Record<string, unknown>).protocol;
+    return typeof protocol === "string" ? protocol : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function embeddedAdmissionProtocol(value: string): string | undefined {
+  try {
+    const parsed: unknown = JSON.parse(value);
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return undefined;
+    const admission = (parsed as Record<string, unknown>).admission_policy;
+    if (typeof admission !== "object" || admission === null || Array.isArray(admission)) return undefined;
+    const protocol = (admission as Record<string, unknown>).protocol;
+    return typeof protocol === "string" ? protocol : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * Reports installed configuration syntax, expiry, owner binding and transport presence. It does
  * not read D1/R2, contact a provider, or assert model qualification/readiness.
@@ -192,23 +222,46 @@ export function readResearchConfigurationStatus(
   if (spend !== undefined && !spendJsonValid) invalid.add("ELIOTR_MODEL_SPEND_POLICY_JSON");
   if (spendProvenance !== undefined && !spendProvenanceValid) invalid.add("ELIOTR_MODEL_SPEND_POLICY_PROVENANCE_REF");
   if (spend !== undefined && spendJsonValid) {
-    const parserProvenance = spendProvenance !== undefined && spendProvenanceValid
-      ? spendProvenance : embeddedProvenance(spend, false);
-    if (parserProvenance === undefined || !validProvenance(parserProvenance)) {
-      if (spendProvenance === undefined) missing.add("ELIOTR_MODEL_SPEND_POLICY_PROVENANCE_REF");
-      invalid.add("ELIOTR_MODEL_SPEND_POLICY_JSON");
-    } else {
-      try {
-        // With no installed companion, the embedded provenance is used only
-        // to exercise the existing strict parser; it grants no authority.
-        const policy = readResearchModelSpendPolicy(spend, parserProvenance);
-        if (Date.parse(policy.expires_at) <= now || policy.deployment_generation !== env.DEPLOYMENT_GENERATION ||
-            (owner !== undefined && (policy.principal_ref !== owner.principal_ref ||
-              policy.credential_generation !== owner.credential_generation || policy.client_class !== owner.client_class))) {
+    const isTemplate = embeddedProtocol(spend) === "eliotr.research-owner-spend-template.v1";
+    if (isTemplate) {
+      // The template's companion provenance is required. Embedded provenance
+      // remains a legacy-only parser fallback and never authorizes a template.
+      if (spendProvenance === undefined) {
+        missing.add("ELIOTR_MODEL_SPEND_POLICY_PROVENANCE_REF");
+        invalid.add("ELIOTR_MODEL_SPEND_POLICY_JSON");
+      } else if (spendProvenanceValid) {
+        try {
+          const template = readResearchOwnerSpendPolicyTemplate(spend, spendProvenance);
+          if (Date.parse(template.expires_at) <= now || template.deployment_generation !== env.DEPLOYMENT_GENERATION ||
+              (owner !== undefined && (template.principal_ref !== owner.principal_ref ||
+                template.client_class !== owner.client_class))) {
+            invalid.add("ELIOTR_MODEL_SPEND_POLICY_JSON");
+          }
+        } catch {
           invalid.add("ELIOTR_MODEL_SPEND_POLICY_JSON");
         }
-      } catch {
+      } else {
         invalid.add("ELIOTR_MODEL_SPEND_POLICY_JSON");
+      }
+    } else {
+      const parserProvenance = spendProvenance !== undefined && spendProvenanceValid
+        ? spendProvenance : embeddedProvenance(spend, false);
+      if (parserProvenance === undefined || !validProvenance(parserProvenance)) {
+        if (spendProvenance === undefined) missing.add("ELIOTR_MODEL_SPEND_POLICY_PROVENANCE_REF");
+        invalid.add("ELIOTR_MODEL_SPEND_POLICY_JSON");
+      } else {
+        try {
+          // With no installed companion, the embedded provenance is used only
+          // to exercise the existing strict parser; it grants no authority.
+          const policy = readResearchModelSpendPolicy(spend, parserProvenance);
+          if (Date.parse(policy.expires_at) <= now || policy.deployment_generation !== env.DEPLOYMENT_GENERATION ||
+              (owner !== undefined && (policy.principal_ref !== owner.principal_ref ||
+                policy.credential_generation !== owner.credential_generation || policy.client_class !== owner.client_class))) {
+            invalid.add("ELIOTR_MODEL_SPEND_POLICY_JSON");
+          }
+        } catch {
+          invalid.add("ELIOTR_MODEL_SPEND_POLICY_JSON");
+        }
       }
     }
   }
@@ -218,25 +271,55 @@ export function readResearchConfigurationStatus(
   if (report !== undefined && !reportJsonValid) invalid.add("ELIOTR_RESEARCH_REPORT_CONFIG_JSON");
   if (reportProvenance !== undefined && !reportProvenanceValid) invalid.add("ELIOTR_RESEARCH_REPORT_POLICY_PROVENANCE_REF");
   if (report !== undefined && reportJsonValid) {
-    const parserProvenance = reportProvenance !== undefined && reportProvenanceValid
-      ? reportProvenance : embeddedProvenance(report, true);
-    if (parserProvenance === undefined || !validProvenance(parserProvenance)) {
-      if (reportProvenance === undefined) missing.add("ELIOTR_RESEARCH_REPORT_POLICY_PROVENANCE_REF");
-      invalid.add("ELIOTR_RESEARCH_REPORT_CONFIG_JSON");
-    } else {
-      try {
-        // As above, report config parsing is synchronous; readArtifactPolicy
-        // would only decode the already parsed local snapshot.
-        createResearchReportConfigSource({ raw: report, provenance_ref: parserProvenance });
-        const { admission_policy: admission } = JSON.parse(report) as {
-          admission_policy: { expires_at: string; principal_ref: string; client_class: string };
-        };
-        if (Date.parse(admission.expires_at) <= now || (owner !== undefined &&
-            (admission.principal_ref !== owner.principal_ref || admission.client_class !== owner.client_class))) {
+    const isTemplate = embeddedAdmissionProtocol(report) === RESEARCH_OWNER_REPORT_ADMISSION_TEMPLATE_PROTOCOL;
+    if (isTemplate) {
+      // A report template must carry its installed companion provenance. It is
+      // bound to current policy authority only inside the request composition.
+      if (reportProvenance === undefined) {
+        missing.add("ELIOTR_RESEARCH_REPORT_POLICY_PROVENANCE_REF");
+        invalid.add("ELIOTR_RESEARCH_REPORT_CONFIG_JSON");
+      } else if (reportProvenanceValid) {
+        try {
+          const decoded = JSON.parse(report) as {
+            schema?: unknown;
+            admission_policy?: unknown;
+            artifact_policy?: unknown;
+          };
+          const admission = readResearchOwnerReportAdmissionTemplate(decoded.admission_policy, reportProvenance);
+          readResearchOwnerReportArtifactPolicy(decoded.artifact_policy);
+          if (decoded.schema !== "eliotr.research.report-config.v1" ||
+              Date.parse(admission.expires_at) <= now ||
+              admission.deployment_generation !== env.DEPLOYMENT_GENERATION || (owner !== undefined &&
+                (admission.principal_ref !== owner.principal_ref || admission.client_class !== owner.client_class))) {
+            invalid.add("ELIOTR_RESEARCH_REPORT_CONFIG_JSON");
+          }
+        } catch {
           invalid.add("ELIOTR_RESEARCH_REPORT_CONFIG_JSON");
         }
-      } catch {
+      } else {
         invalid.add("ELIOTR_RESEARCH_REPORT_CONFIG_JSON");
+      }
+    } else {
+      const parserProvenance = reportProvenance !== undefined && reportProvenanceValid
+        ? reportProvenance : embeddedProvenance(report, true);
+      if (parserProvenance === undefined || !validProvenance(parserProvenance)) {
+        if (reportProvenance === undefined) missing.add("ELIOTR_RESEARCH_REPORT_POLICY_PROVENANCE_REF");
+        invalid.add("ELIOTR_RESEARCH_REPORT_CONFIG_JSON");
+      } else {
+        try {
+          // As above, report config parsing is synchronous; readArtifactPolicy
+          // would only decode the already parsed local snapshot.
+          createResearchReportConfigSource({ raw: report, provenance_ref: parserProvenance });
+          const { admission_policy: admission } = JSON.parse(report) as {
+            admission_policy: { expires_at: string; principal_ref: string; client_class: string };
+          };
+          if (Date.parse(admission.expires_at) <= now || (owner !== undefined &&
+              (admission.principal_ref !== owner.principal_ref || admission.client_class !== owner.client_class))) {
+            invalid.add("ELIOTR_RESEARCH_REPORT_CONFIG_JSON");
+          }
+        } catch {
+          invalid.add("ELIOTR_RESEARCH_REPORT_CONFIG_JSON");
+        }
       }
     }
   }

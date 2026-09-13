@@ -8,12 +8,11 @@ import { createD1ScopeProfilePort } from "@eliotr/retrieval";
 import { fail, type WorkflowObject, type WorkflowPrincipal } from "@eliotr/cloudflare-workflows";
 import {
   createD1ModelGatewayDeploymentRegistry,
-  createResearchReportConfigSource,
   createResearchSynthesisPreparation,
   createResearchModelSpendPolicyService,
-  readResearchModelSpendPolicy,
   type ResearchModelGatewayBinding,
   type ResearchModelGatewayRuntimeConfig,
+  type ResearchModelSpendPolicy,
   type TrustedModelPromptParameters,
 } from "@eliotr/cloudflare-research";
 import {
@@ -23,7 +22,11 @@ import {
 } from "@eliotr/cloudflare-research-stages";
 import { readResearchSemanticConfiguration, type Env } from "./env.js";
 import { loadHeldResearchScope } from "./research-retrieval-composition.js";
-import { bindResearchOwnerReportPolicy } from "./research-owner-report-policy.js";
+import {
+  bindResearchOwnerReportPolicy,
+  createBoundResearchOwnerReportConfigSource,
+} from "./research-owner-report-policy.js";
+import { resolveResearchOwnerSpendPolicy } from "./research-owner-spend-policy.js";
 import { createResearchSemanticWorkflowHandlerFactory } from "./research-semantic-composition.js";
 import type { ResearchStageHandlerFactory } from "./research-stage-handlers.js";
 
@@ -68,6 +71,12 @@ function configurationMissing(): never { return fail("WORKFLOW_AUTHORITY_STALE")
 function installed(value: string | undefined): string {
   if (value === undefined || value.trim() === "") configurationMissing();
   return value;
+}
+
+interface CurrentInvestigationPolicyRow {
+  readonly policy_generation: unknown;
+  readonly policy_authority_ref: unknown;
+  readonly state: unknown;
 }
 
 function modelGatewayConfiguration(env: Env): ResearchModelGatewayRuntimeConfig {
@@ -115,7 +124,49 @@ export async function createResearchSemanticServerHandlers(input: ResearchSemant
   const parsed = ConfigurationSchema.safeParse(decoded);
   if (!parsed.success) configurationMissing();
   const config = parsed.data;
-  const policy = readResearchModelSpendPolicy(env.ELIOTR_MODEL_SPEND_POLICY_JSON, installed(env.ELIOTR_MODEL_SPEND_POLICY_PROVENANCE_REF));
+  let policy: ResearchModelSpendPolicy;
+  try {
+    if (navigation.access.principal_ref !== principal.principal_ref ||
+        navigation.access.credential_generation !== principal.credential_generation) {
+      throw new Error("navigation owner mismatch");
+    }
+    const beforeGrant = await navigation.current();
+    const authorityRef = IdentifierSchema.parse(navigation.scope.policy_authority_ref);
+    const currentPolicy = await env.CORE_DB.prepare(
+      "SELECT p.policy_generation,p.policy_authority_ref,p.state FROM research_workflow_current r " +
+      "JOIN investigation_current_policy p ON p.policy_generation=r.policy_generation " +
+      "AND p.policy_authority_ref=r.policy_authority_ref AND p.state='ACTIVE' " +
+      "WHERE r.operation_id=?1 AND r.principal_ref=?2 AND r.credential_generation=?3 " +
+      "AND r.deployment_generation=?4 AND r.scope_snapshot_id=?5 AND r.scope_snapshot_revision=?6 " +
+      "AND r.policy_authority_ref=?7 AND r.state='ACTIVE' LIMIT 1",
+    ).bind(input.operation_id, principal.principal_ref, principal.credential_generation,
+      principal.deployment_generation, navigation.scope.snapshot_id, navigation.scope.revision, authorityRef)
+      .first<CurrentInvestigationPolicyRow>();
+    const generation = IdentifierSchema.safeParse(currentPolicy?.policy_generation);
+    const rowAuthority = IdentifierSchema.safeParse(currentPolicy?.policy_authority_ref);
+    if (currentPolicy === null || currentPolicy.state !== "ACTIVE" || !generation.success || !rowAuthority.success ||
+        rowAuthority.data !== authorityRef) throw new Error("current investigation policy is unavailable");
+    const afterPolicy = await navigation.current();
+    if (canonicalJson(afterPolicy) !== canonicalJson(beforeGrant)) {
+      throw new Error("navigation grant changed while binding spend policy");
+    }
+    policy = resolveResearchOwnerSpendPolicy({
+      raw: env.ELIOTR_MODEL_SPEND_POLICY_JSON,
+      provenance: installed(env.ELIOTR_MODEL_SPEND_POLICY_PROVENANCE_REF),
+      access: navigation.access,
+      deployment_generation: principal.deployment_generation,
+      policy_generation: generation.data,
+      policy_authority_ref: authorityRef,
+      scope_expires_at: navigation.scope.expires_at,
+      authorization: afterPolicy,
+    }).policy;
+    const terminalGrant = await navigation.current();
+    if (canonicalJson(terminalGrant) !== canonicalJson(afterPolicy)) {
+      throw new Error("navigation grant changed after binding spend policy");
+    }
+  } catch {
+    configurationMissing();
+  }
   if (policy.principal_ref !== principal.principal_ref || policy.credential_generation !== principal.credential_generation ||
       policy.deployment_generation !== principal.deployment_generation || principal.deployment_generation !== env.DEPLOYMENT_GENERATION ||
       navigation.access.client_class !== "owner_pwa") configurationMissing();
@@ -129,8 +180,18 @@ export async function createResearchSemanticServerHandlers(input: ResearchSemant
     operation_id: input.operation_id, policy, deployment_registry: deploymentRegistry });
   const prepareSynthesis = createResearchSynthesisPreparation({ spend_admission: spend.admissions });
   const prepareAudit = createResearchClaimAuditPreparation({ spend_admission: spend.admissions });
-  const reportSource = createResearchReportConfigSource({ raw: env.ELIOTR_RESEARCH_REPORT_CONFIG_JSON,
-    provenance_ref: installed(env.ELIOTR_RESEARCH_REPORT_POLICY_PROVENANCE_REF) });
+  const reportSource = createBoundResearchOwnerReportConfigSource({
+    raw: env.ELIOTR_RESEARCH_REPORT_CONFIG_JSON,
+    provenance_ref: installed(env.ELIOTR_RESEARCH_REPORT_POLICY_PROVENANCE_REF),
+    current_spend_authority: {
+      principal_ref: policy.principal_ref,
+      client_class: policy.client_class,
+      deployment_generation: policy.deployment_generation,
+      policy_generation: policy.policy_generation,
+      policy_authority_ref: policy.policy_authority_ref,
+      expires_at: policy.expires_at,
+    },
+  });
   const reportPolicy = await reportSource.readArtifactPolicy();
   if (!reportPolicy) configurationMissing();
   try { await navigation.current(); }
