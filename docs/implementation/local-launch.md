@@ -11,8 +11,13 @@ it does not create citation evidence. Private content is not cached by the PWA.
 
 The minute scheduler dispatches admitted-source jobs to the queue. A completed D1 projection makes
 exact and lexical retrieval available; semantic retrieval remains unavailable without AI Search.
-The Research screen separately reports missing model configuration. A healthy Worker does not mean
-research agents are configured or running.
+The Research screen separately reports model configuration and actual run state. On 2026-09-13, the
+owner document path completed a real 17-stage SYNTHESIZE and AUDIT run with Cloudflare
+`@cf/zai-org/glm-5.3-flash` and saved a DRAFT in R2. The PWA displayed the draft, opened its answer
+section, loaded seven claim checks and verified a cited excerpt in Evidence Rail. This confirms the
+owner path without establishing full production readiness; historical reads remain bounded to the
+current owner session and deployment. Route qualification currently uses a 45-minute window and
+manual renewal, and remains WIP.
 
 **Document search** uses the selected Library source without a model. The deployed owner path was
 used to import and read `README.md`, search for `Cloudflare`, return four resolved excerpts and reopen
@@ -37,7 +42,7 @@ are counted. Focus text is retained in the trace but **is not semantic filtering
 Cards come from admitted source metadata. Maps explicitly report missing structure. There are no
 fabricated headings, source excerpts, summaries, citation handles or completeness claims. The returned
 EvidencePack contains zero resolved evidence. The separate Document search path resolves excerpts.
-Full Atlas/section expansion, model-backed research, independent-peer federation qualification,
+Full Atlas/section expansion, broader model-backed research, independent-peer federation qualification,
 Wiki/reports and Rust authority promotion remain mandatory unfinished launch work.
 
 ## Prepare and run

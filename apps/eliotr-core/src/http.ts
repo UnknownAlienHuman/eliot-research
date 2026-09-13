@@ -53,6 +53,11 @@ import { readOwnerNamespaceInitialization } from "./source-namespace-owner-http.
 import { readWorkspaceCandidateRequest, readWorkspaceAdmissionId } from "./workspace-owner-http.js";
 import { HttpRequestError, mapError } from "./http-errors.js";
 import { readResearchConfigurationStatus } from "./research-configuration-status.js";
+import {
+  reopenOwnerArtifactDraft,
+  reopenOwnerArtifactSection,
+  reopenOwnerArtifactSectionCitations,
+} from "./research-artifact-reauthorization-http.js";
 export { HttpRequestError } from "./http-errors.js";
 export interface HttpDependencies {
   readonly accessVerifier?: AccessVerifier;
@@ -400,6 +405,31 @@ async function dispatch(
       const ref = match.params.ref;
       if (ref === undefined) throw new OrientationError("ORIENTATION_TRACE_INVALID", 400);
       return apiResult(request, env, await application.services.semantic.trace(context, { id: ref, revision: 1 }));
+    }
+    case "research.artifact.reauthorize":
+    case "research.artifact.section.reauthorize": {
+      requireNoQuery(url);
+      if (request.body !== null) throw new ArtifactHttpInputError("Report reauthorization does not accept a request body");
+      const ref = match.params.ref;
+      if (ref === undefined) throw new ArtifactHttpInputError("artifact reference path parameter is missing");
+      const artifactRef = parseArtifactRef(ref);
+      if (match.route.operation === "research.artifact.section.reauthorize") {
+        const sectionRef = match.params.section_ref;
+        if (sectionRef === undefined) throw new ArtifactHttpInputError("section reference path parameter is missing");
+        return reopenOwnerArtifactSection(env, context, artifactRef, parseArtifactSectionRef(sectionRef));
+      }
+      return apiResult(request, env, await reopenOwnerArtifactDraft(env, context, artifactRef));
+    }
+    case "research.artifact.section.citations.reauthorize": {
+      requireNoQuery(url);
+      if (request.body !== null) throw new ArtifactHttpInputError("Citation reauthorization does not accept a request body");
+      const ref = match.params.ref;
+      const sectionRef = match.params.section_ref;
+      if (ref === undefined) throw new ArtifactHttpInputError("artifact reference path parameter is missing");
+      if (sectionRef === undefined) throw new ArtifactHttpInputError("section reference path parameter is missing");
+      return apiResult(request, env, await reopenOwnerArtifactSectionCitations(
+        env, context, parseArtifactRef(ref), parseArtifactSectionRef(sectionRef),
+      ));
     }
     case "research.artifact": {
       requireNoQuery(url);

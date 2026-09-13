@@ -1,9 +1,8 @@
 import { IdentifierSchema, ResearchWorkflowStageSchema, type ResearchWorkflowStage } from "@eliotr/contracts";
 import { ApiRequestError, isAuthorizationLoss } from "./api.js";
-import { readResearchRunHistory, researchRunBody, readResearchArtifact, readResearchArtifactSection, readResearchArtifactSectionCitations, readResearchRunStatus, startResearchRun, type ResearchArtifactSectionCitation, type ResearchArtifactSectionCitationAuditClaim, type ResearchEngineStatus, type ResearchRunHistoryEntry, type ResearchRunStatusView } from "./research-run-api.js";
+import { readResearchRunHistory, researchRunBody, readResearchArtifact, readReauthorizedResearchArtifact, readResearchArtifactSection, readReauthorizedResearchArtifactSection, readResearchArtifactSectionCitations, readResearchRunStatus, startResearchRun, type ResearchArtifactSectionCitationAuditClaim, type ResearchEngineStatus, type ResearchRunHistoryEntry, type ResearchRunHistoryView, type ResearchRunSavedDraft, type ResearchRunStatusView } from "./research-run-api.js"; import { readReauthorizedResearchArtifactSectionCitations } from "./research-run-reauthorization-api.js";
 import type { ArtifactRevision } from "@eliotr/contracts";
 import type { LibrarySelectionContext } from "./library-readiness-api.js";
-
 const RESEARCH_STAGE_LABELS: Record<ResearchWorkflowStage, string> = {
   FREEZE_PROTOCOL_AND_SCOPE: "Preparing the research plan",
   ORIENT: "Understanding the question",
@@ -33,7 +32,6 @@ const AUDIT_DISPOSITION_LABELS: Record<ResearchArtifactSectionCitationAuditClaim
   CONTRADICTED: "Contradicted",
   NOT_VERIFIABLE_IN_SCOPE: "Could not be verified in this scope",
 };
-
 function message(error: unknown): string {
   if (error instanceof ApiRequestError) {
     if (error.code === "RESEARCH_AGENT_NOT_CONFIGURED") return "Research agents are not configured on the server yet.";
@@ -44,7 +42,6 @@ function message(error: unknown): string {
   }
   return "The Research run could not be read. Check the query and session.";
 }
-
 function statusText(view: ResearchRunStatusView): string {
   switch (view.execution_state) {
     case "ACTIVE": {
@@ -62,7 +59,6 @@ function statusText(view: ResearchRunStatusView): string {
     case "ENGINE_COMPLETED": return view.answer.availability === "draft" ? "A draft report is ready for review." : "Processing finished. No answer has been generated.";
   }
 }
-
 function badgeText(view: ResearchRunStatusView): string {
   if (view.execution_state === "ACTIVE") {
     return view.engine_status === "errored" || view.engine_status === "terminated" ? "FAILED" : "RUNNING";
@@ -70,15 +66,12 @@ function badgeText(view: ResearchRunStatusView): string {
   if (view.execution_state === "CANCELLED") return "CANCELLED";
   return view.answer.availability === "draft" ? "DRAFT" : "COMPLETE";
 }
-
 function idleBadgeText(ready: boolean): string {
   return ready ? "READY" : "WAITING";
 }
-
 function idleProgressText(ready: boolean): string {
   return ready ? "Ready to start a research run." : "Waiting for the current owner session.";
 }
-
 function historyStageText(view: ResearchRunStatusView): string {
   if (view.execution_state === "ACTIVE") {
     if (view.engine_status === "errored") return "Engine stopped before completion";
@@ -91,19 +84,23 @@ function historyStageText(view: ResearchRunStatusView): string {
   if (view.execution_state === "CANCELLED") return "Cancelled";
   return view.answer.availability === "draft" ? "Draft available" : "Finished without a report";
 }
-
 function historyNoteText(view: ResearchRunStatusView): string {
-  return `${historyStageText(view)} · ${view.answer.availability === "draft" ? "Draft available" : "No draft available"}`;
+  const stage = historyStageText(view);
+  if (view.execution_state === "ENGINE_COMPLETED" && view.answer.availability === "draft") return stage;
+  return `${stage} · ${view.answer.availability === "draft" ? "Draft available" : "No draft available"}`;
 }
-
+function historyStatusText(view: ResearchRunHistoryView): string {
+  if (view.configuration_state === "MISSING") return "Research configuration is missing on the server. Install it before starting a research run.";
+  if (view.runs.length === 0 && view.saved_drafts.length === 0) return "Configuration installed; run research to confirm execution. No saved runs are available yet.";
+  const hasSavedDraft = view.saved_drafts.length > 0 || view.runs.some((entry) => entry.status.execution_state === "ENGINE_COMPLETED" && entry.status.answer.availability === "draft");
+  return hasSavedDraft ? "Configuration installed; a saved draft is available below." : "Configuration installed; recent runs below show actual execution.";
+}
 function shouldPollEngine(status: ResearchEngineStatus | undefined): boolean {
   return status === undefined || status === "queued" || status === "running" || status === "paused" || status === "waiting" || status === "waitingForPause";
 }
-
 function historyDate(value: string): string {
   return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
 }
-
 function historyErrorMessage(error: unknown): string {
   if (error instanceof ApiRequestError) {
     if (error.status === 401 || error.status === 403) return "Saved research is no longer available for this session.";
@@ -111,22 +108,21 @@ function historyErrorMessage(error: unknown): string {
   }
   return "Saved research could not be loaded. Refresh to try again.";
 }
-
 function decodeSectionBody(bytes: Uint8Array): string {
   try { return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes); }
   catch { throw new ApiRequestError({ status: 502, code: "RESEARCH_ARTIFACT_SECTION_INVALID", message: "The report section is not valid UTF-8" }); }
 }
-
 function codeRef(value: string): HTMLElement {
   const code = document.createElement("code");
   code.textContent = value;
   return code;
 }
-
 function citationRefKey(ref: { readonly id: string; readonly revision: number }): string {
   return `${ref.id}:${ref.revision}`;
 }
-
+function sameArtifact(left: { readonly id: string; readonly revision: number }, right: { readonly id: string; readonly revision: number }): boolean {
+  return left.id === right.id && left.revision === right.revision;
+}
 export function mountResearchRunPanel(
   element: HTMLElement,
   deploymentGeneration: () => string | undefined,
@@ -150,42 +146,21 @@ export function mountResearchRunPanel(
   const query = element.querySelector<HTMLTextAreaElement>('textarea[name="query"]');
   const scope = element.querySelector<HTMLSelectElement>('select[name="scope"]');
   const selectedOption = scope?.querySelector<HTMLOptionElement>('option[value="selected"]');
-  const submit = element.querySelector<HTMLButtonElement>('button[type="submit"]');
-  const refresh = element.querySelector<HTMLButtonElement>("[data-run-refresh]");
-  const workflowInput = element.querySelector<HTMLInputElement>("[data-workflow-id]");
-  const recover = element.querySelector<HTMLButtonElement>("[data-recover]");
-  const status = element.querySelector<HTMLElement>('[role="status"]');
-  const result = element.querySelector<HTMLElement>("[data-run-result]");
-  const historyRefresh = element.querySelector<HTMLButtonElement>("[data-research-history-refresh]");
-  const historyStatus = element.querySelector<HTMLElement>("[data-research-history-status]");
+  const submit = element.querySelector<HTMLButtonElement>('button[type="submit"]'); const refresh = element.querySelector<HTMLButtonElement>("[data-run-refresh]");
+  const workflowInput = element.querySelector<HTMLInputElement>("[data-workflow-id]"); const recover = element.querySelector<HTMLButtonElement>("[data-recover]");
+  const status = element.querySelector<HTMLElement>('[role="status"]'); const result = element.querySelector<HTMLElement>("[data-run-result]");
+  const historyRefresh = element.querySelector<HTMLButtonElement>("[data-research-history-refresh]"); const historyStatus = element.querySelector<HTMLElement>("[data-research-history-status]");
   const historyList = element.querySelector<HTMLElement>("[data-research-history-list]");
   if (!form || !badge || !progress || !query || !scope || !selectedOption || !submit || !refresh || !workflowInput || !recover || !status || !result || !historyRefresh || !historyStatus || !historyList) throw new Error("Research run panel is incomplete");
-
-  let serial = 0;
-  let controller: AbortController | undefined;
-  let workflowId: string | undefined;
-  let workflowGeneration: string | undefined;
-  let selectedSourceId: string | undefined;
-  let previousBody = "";
-  let idempotencyKey = "";
-  let progressTimer: number | undefined;
-  let lastExecutionState: ResearchRunStatusView["execution_state"] | undefined;
-  let lastEngineStatus: ResearchEngineStatus | undefined;
-  let lastAnswerAvailability: ResearchRunStatusView["answer"]["availability"] | undefined;
-  let historyController: AbortController | undefined;
-  let historySerial = 0;
-  let historyGeneration: string | undefined;
-  let historyView: Awaited<ReturnType<typeof readResearchRunHistory>> | undefined;
-  const historyRows = new Map<string, HTMLElement>();
-  let disposed = false;
-
+  let serial = 0; let controller: AbortController | undefined;
+  let workflowId: string | undefined; let workflowGeneration: string | undefined; let selectedSourceId: string | undefined;
+  let previousBody = ""; let idempotencyKey = ""; let progressTimer: number | undefined;
+  let lastExecutionState: ResearchRunStatusView["execution_state"] | undefined; let lastEngineStatus: ResearchEngineStatus | undefined; let lastAnswerAvailability: ResearchRunStatusView["answer"]["availability"] | undefined;
+  let historyController: AbortController | undefined; let historySerial = 0; let historyGeneration: string | undefined; let historyView: Awaited<ReturnType<typeof readResearchRunHistory>> | undefined;
+  const historyRows = new Map<string, HTMLElement>(); let disposed = false;
   const clearProgressTimer = (): void => {
-    if (progressTimer !== undefined) {
-      window.clearTimeout(progressTimer);
-      progressTimer = undefined;
-    }
+    if (progressTimer !== undefined) { window.clearTimeout(progressTimer); progressTimer = undefined; }
   };
-
   const updateButtons = (): void => {
     const available = healthReady();
     const startAvailable = available && researchConfigurationReady();
@@ -196,16 +171,11 @@ export function mountResearchRunPanel(
     historyRefresh.disabled = !available || historyController !== undefined;
   };
   const setReportActionsDisabled = (disabled: boolean): void => {
-    result.querySelectorAll<HTMLButtonElement>(".research-report-actions > button, .research-citation-actions > button").forEach((button) => {
-      button.disabled = disabled || button.dataset.reportActionUnavailable === "true";
-    });
+    result.querySelectorAll<HTMLButtonElement>(".research-report-actions > button, .research-citation-actions > button").forEach((button) => { button.disabled = disabled || button.dataset.reportActionUnavailable === "true"; });
   };
   const finishReportAction = (local: AbortController, renderSerial: number): void => {
     if (controller !== local) return;
-    controller = undefined;
-    if (disposed || renderSerial !== serial) return;
-    setReportActionsDisabled(false);
-    updateButtons();
+    controller = undefined; if (disposed || renderSerial !== serial) return; setReportActionsDisabled(false); updateButtons();
   };
   const refreshAvailability = (): void => {
     badge.textContent = lastExecutionState === undefined
@@ -297,27 +267,45 @@ export function mountResearchRunPanel(
     historyRows.set(entry.status.workflow_instance_id, row);
     return row;
   };
+  const renderSavedDraft = (draft: ResearchRunSavedDraft, generation: string): HTMLElement => {
+    const row = document.createElement("div"); row.className = "workflow-recovery-row";
+    const open = document.createElement("button"); open.type = "button"; open.className = "workflow-recovery-item";
+    const date = historyDate(draft.created_at); open.textContent = `Open saved research · ${date}`; open.setAttribute("aria-label", `Open saved research draft from ${date}`);
+    open.onclick = () => {
+      if (disposed || !open.isConnected || open.closest("[data-research-history-list]") !== historyList || !healthReady() || !navigator.onLine || deploymentGeneration() !== generation || historyView?.deployment_generation !== generation) return;
+      readSavedDraft(draft);
+    };
+    const note = document.createElement("p"); note.className = "workflow-recovery-note"; note.textContent = "Draft available";
+    row.append(open, note);
+    return row;
+  };
   const renderHistoryList = (view: Awaited<ReturnType<typeof readResearchRunHistory>>): void => {
     historyRows.clear();
     historyList.replaceChildren();
-    if (view.configuration_state === "MISSING") {
-      historyStatus.textContent = "Research configuration is missing on the server. Install it before starting a research run.";
-    } else if (view.runs.length === 0) {
-      historyStatus.textContent = "Configuration installed; run research to confirm execution. No saved runs are available yet.";
-      return;
-    } else {
-      historyStatus.textContent = "Configuration installed; run research to confirm execution.";
-    }
-    view.runs.forEach((entry) => historyList.append(renderHistory(entry)));
+    historyStatus.textContent = historyStatusText(view);
+    type HistoryCard = { readonly created_at: string; readonly entry: ResearchRunHistoryEntry } | { readonly created_at: string; readonly draft: ResearchRunSavedDraft };
+    const drafts = view.saved_drafts.filter((draft) => !view.runs.some((entry) => entry.status.answer.availability === "draft" && sameArtifact(entry.status.answer.artifact_ref, draft.artifact_ref)));
+    const cards: HistoryCard[] = [
+      ...view.runs.map((entry): HistoryCard => ({ created_at: entry.created_at, entry })),
+      ...drafts.map((draft): HistoryCard => ({ created_at: draft.created_at, draft })),
+    ].sort((left, right) => Date.parse(right.created_at) - Date.parse(left.created_at));
+    cards.forEach((card) => historyList.append("entry" in card ? renderHistory(card.entry) : renderSavedDraft(card.draft, view.deployment_generation)));
   };
   const updateHistoryStatus = (view: ResearchRunStatusView): void => {
     if (historyView === undefined || historyView.deployment_generation !== view.deployment_generation) return;
     const index = historyView.runs.findIndex((entry) => entry.status.workflow_instance_id === view.workflow_instance_id && entry.status.deployment_generation === view.deployment_generation);
     if (index < 0) return;
-    historyView = { ...historyView, runs: historyView.runs.map((entry, entryIndex) => entryIndex === index ? { ...entry, status: view } : entry) };
+    const updatedHistoryView = { ...historyView, runs: historyView.runs.map((entry, entryIndex) => entryIndex === index ? { ...entry, status: view } : entry) };
+    historyView = updatedHistoryView;
+    const draftAnswer = view.answer.availability === "draft" ? view.answer : undefined;
+    if (draftAnswer !== undefined && updatedHistoryView.saved_drafts.some((draft) => sameArtifact(draft.artifact_ref, draftAnswer.artifact_ref))) {
+      renderHistoryList(updatedHistoryView);
+      return;
+    }
     const row = historyRows.get(view.workflow_instance_id);
     const note = row?.querySelector<HTMLElement>(".workflow-recovery-note");
     if (note !== null && note !== undefined) note.textContent = historyNoteText(view);
+    historyStatus.textContent = historyStatusText(updatedHistoryView);
   };
   const loadHistory = (trigger: "automatic" | "manual" = "manual", force = false): void => {
     if (disposed) return;
@@ -347,6 +335,169 @@ export function mountResearchRunPanel(
       })
       .finally(() => { if (active === historySerial) { historyController = undefined; updateButtons(); } });
   };
+  type ReportRenderOptions = { readonly renderSerial: number; readonly deploymentGeneration: string; readonly historical: boolean; readonly workflowInstanceId?: string; readonly investigationRef?: string; readonly authorizationScopeSnapshotRef?: { readonly id: string; readonly revision: number } };
+  const renderArtifactReport = (artifact: ArtifactRevision, options: ReportRenderOptions): void => {
+    const reportHead = document.createElement("div"); reportHead.className = "research-report-heading";
+    const reportTitle = document.createElement("h3"); reportTitle.textContent = options.historical ? "Saved research draft" : "Research draft";
+    const draftBadge = document.createElement("span"); draftBadge.className = "research-draft-badge"; draftBadge.textContent = "DRAFT";
+    reportHead.append(reportTitle, draftBadge);
+    const technical = document.createElement("details"); technical.className = "research-technical-details";
+    const technicalSummary = document.createElement("summary"); technicalSummary.textContent = "Technical details";
+    const technicalFields = document.createElement("dl"); technicalFields.className = "research-technical-fields";
+    const technicalField = (label: string, value: string): void => {
+      const term = document.createElement("dt"); term.textContent = label;
+      const detail = document.createElement("dd"); detail.append(codeRef(value));
+      technicalFields.append(term, detail);
+    };
+    if (options.workflowInstanceId !== undefined) technicalField("Run ID", options.workflowInstanceId);
+    if (options.investigationRef !== undefined) technicalField("Investigation", options.investigationRef);
+    technicalField("Artifact", `${artifact.artifact_ref.id}:${artifact.artifact_ref.revision}`);
+    technicalField("Specification", `${artifact.spec_ref.id}:${artifact.spec_ref.revision}`);
+    technicalField("Evidence freeze", `${artifact.evidence_freeze_ref.id}:${artifact.evidence_freeze_ref.revision}`);
+    if (options.authorizationScopeSnapshotRef !== undefined) technicalField("Authorized scope", `${options.authorizationScopeSnapshotRef.id}:${options.authorizationScopeSnapshotRef.revision}`);
+    technicalField("Status", artifact.status);
+    technical.append(technicalSummary, technicalFields);
+    result.append(reportHead, technical);
+    const sections = document.createElement("ul"); sections.className = "research-report-sections";
+    artifact.sections.forEach((section, ordinal) => {
+      const item = document.createElement("li"); item.className = "research-report-section";
+      const sectionHeading = document.createElement("h4"); sectionHeading.textContent = `Section ${ordinal + 1}`;
+      const sectionTechnical = document.createElement("details"); sectionTechnical.className = "research-section-details";
+      const sectionTechnicalSummary = document.createElement("summary"); sectionTechnicalSummary.textContent = "Section details";
+      const sectionTechnicalFields = document.createElement("dl"); sectionTechnicalFields.className = "research-technical-fields";
+      const sectionField = (label: string, value: string): void => {
+        const term = document.createElement("dt"); term.textContent = label;
+        const detail = document.createElement("dd"); detail.append(codeRef(value));
+        sectionTechnicalFields.append(term, detail);
+      };
+      sectionField("Section ref", `${section.section_ref.id}:${section.section_ref.revision}`);
+      sectionField("Evidence ledger", section.evidence_ledger_ref);
+      sectionField("Verification receipt", section.verification_receipt_ref);
+      sectionTechnical.append(sectionTechnicalSummary, sectionTechnicalFields);
+      const open = document.createElement("button"); open.type = "button"; open.className = "button button--quiet"; open.textContent = "Open section";
+      open.onclick = () => {
+        if (options.renderSerial !== serial || controller !== undefined) return;
+        const local = new AbortController(); controller = local; setReportActionsDisabled(true); status.textContent = "Reading report section…";
+        const read = options.historical
+          ? readReauthorizedResearchArtifactSection(artifact.artifact_ref, section.section_ref, options.deploymentGeneration, local.signal)
+          : readResearchArtifactSection(artifact.artifact_ref, section, local.signal);
+        void read
+          .then((readback) => {
+            if (options.renderSerial !== serial || deploymentGeneration() !== options.deploymentGeneration) return;
+            if (readback.body_object_ref !== section.body_object_ref || readback.body_sha256 !== section.body_sha256) throw new ApiRequestError({ status: 502, code: "RESEARCH_ARTIFACT_SECTION_INVALID", message: "The report section changed during reauthorization" });
+            const body = document.createElement("pre"); body.className = "research-section-body"; body.textContent = decodeSectionBody(readback.bytes);
+            item.querySelector(".research-section-body")?.remove(); item.append(body); status.textContent = "Report section opened.";
+          })
+          .catch((error: unknown) => {
+            if (options.renderSerial !== serial || (error instanceof Error && error.name === "AbortError")) return;
+            if (error instanceof ApiRequestError && (isAuthorizationLoss(error) || error.status === 409 || error.status === 410)) { clearPrivate(); return; }
+            if (error instanceof ApiRequestError && error.status === 403) item.querySelector(".research-section-body")?.remove();
+            const failure = document.createElement("p"); failure.className = "research-section-error"; failure.textContent = message(error); item.querySelector(".research-section-error")?.remove(); item.append(failure);
+            status.textContent = "The report section could not be opened.";
+          })
+          .finally(() => finishReportAction(local, options.renderSerial));
+      };
+      const sources = document.createElement("button"); sources.type = "button"; sources.className = "button button--quiet"; sources.textContent = "Open sources"; sources.dataset.openSources = String(ordinal);
+      sources.onclick = () => {
+        if (options.renderSerial !== serial || controller !== undefined) return;
+        const local = new AbortController(); controller = local; setReportActionsDisabled(true); status.textContent = "Reading cited sources…";
+        item.querySelector(".research-citations")?.remove(); item.querySelector(".research-citation-error")?.remove();
+        const read = options.historical
+          ? readReauthorizedResearchArtifactSectionCitations(artifact.artifact_ref, section.section_ref, options.deploymentGeneration, local.signal, section.verification_receipt_ref)
+          : readResearchArtifactSectionCitations(artifact.artifact_ref, section.section_ref, options.deploymentGeneration, local.signal, section.verification_receipt_ref);
+        void read
+          .then((citations) => {
+            if (options.renderSerial !== serial) return;
+            const list = document.createElement("div"); list.className = "research-citations";
+            const state = document.createElement("p"); state.className = "research-citation-state";
+            state.textContent = citations.semantic_verification === "EXECUTED"
+              ? `Claim check complete: ${citations.audit.claims.length} claims checked. The verdicts describe the saved evidence; they do not mean every claim is true.`
+              : options.historical ? "Saved citations were reauthorized for this session; no claim check is recorded." : "Draft claims have not been checked. Opening a source checks its current bytes.";
+            list.append(state); const aliases = "original_scope_snapshot_ref" in citations ? citations.cited_evidence : citations.cited_evidence.map((citation) => ({ original_handle_ref: citation.handle_ref, handle_ref: citation.handle_ref, excerpt_sha256: citation.excerpt_sha256 }));
+            const citationByRef = new Map(aliases.map((citation) => [citationRefKey(citation.original_handle_ref), citation]));
+            const citationScope = "authorization_scope_snapshot_ref" in citations ? citations.authorization_scope_snapshot_ref : citations.scope_snapshot_ref;
+            const selectCitation = (citation: typeof aliases[number]): void => {
+              if (options.renderSerial !== serial || controller !== undefined) return;
+              element.dispatchEvent(new CustomEvent("research:evidence-selected", { bubbles: true, detail: { scopeSnapshotRef: citationScope, handleRef: citation.handle_ref, excerptSha256: citation.excerpt_sha256 } }));
+              status.textContent = "Source selected. Verify it in the Evidence rail.";
+            };
+            const appendClaimEvidenceButton = (container: HTMLElement, kind: "Support" | "Counterevidence", ref: ResearchArtifactSectionCitationAuditClaim["support_handle_refs"][number], ordinal: number): void => {
+              const citation = citationByRef.get(citationRefKey(ref));
+              const button = document.createElement("button"); button.type = "button"; button.className = "button button--quiet";
+              button.textContent = citation === undefined ? `${kind} evidence unavailable` : `${kind} evidence ${ordinal + 1}`;
+              if (citation === undefined) { button.disabled = true; button.dataset.reportActionUnavailable = "true"; }
+              else button.onclick = () => selectCitation(citation);
+              container.append(button);
+            };
+            if (citations.semantic_verification === "EXECUTED") {
+              const auditDetails = document.createElement("details"); auditDetails.className = "research-audit-details";
+              const auditSummary = document.createElement("summary"); auditSummary.textContent = "Claim check details";
+              const claimList = document.createElement("ol"); claimList.className = "research-audit-claims";
+              citations.audit.claims.forEach((claim) => {
+                const claimItem = document.createElement("li");
+                const claimText = document.createElement("p"); claimText.textContent = claim.claim_text;
+                const verdict = document.createElement("p"); verdict.textContent = `Verdict: ${AUDIT_DISPOSITION_LABELS[claim.disposition]}`;
+                claimItem.append(claimText, verdict);
+                const claimActions = document.createElement("div"); claimActions.className = "research-citation-actions";
+                claim.support_handle_refs.forEach((ref, index) => appendClaimEvidenceButton(claimActions, "Support", ref, index));
+                claim.counterevidence_handle_refs.forEach((ref, index) => appendClaimEvidenceButton(claimActions, "Counterevidence", ref, index));
+                if (claimActions.childElementCount > 0) claimItem.append(claimActions);
+                claimList.append(claimItem);
+              });
+              auditDetails.append(auditSummary, claimList); list.append(auditDetails);
+            }
+            if (citations.cited_evidence.length === 0) { const empty = document.createElement("p"); empty.textContent = "No cited source handles are available."; list.append(empty); } else {
+              const heading = document.createElement("p"); heading.textContent = "Open a cited source in the Evidence rail:"; list.append(heading);
+              const actions = document.createElement("div"); actions.className = "research-citation-actions";
+              aliases.forEach((citation, citationOrdinal) => {
+                const button = document.createElement("button"); button.type = "button"; button.className = "button button--quiet"; button.textContent = `Open source ${citationOrdinal + 1}`; button.dataset.openCitation = String(citationOrdinal); button.disabled = controller !== undefined;
+                button.onclick = () => selectCitation(citation);
+                actions.append(button);
+              });
+              list.append(actions);
+            }
+            item.append(list); status.textContent = citations.semantic_verification === "EXECUTED"
+              ? "Claim check loaded. Review each verdict and its evidence."
+              : "Cited sources loaded; fresh verification is still required.";
+          })
+          .catch((error: unknown) => {
+            if (options.renderSerial !== serial || (error instanceof Error && error.name === "AbortError")) return;
+            if (error instanceof ApiRequestError && (isAuthorizationLoss(error) || error.status === 409 || error.status === 410)) { clearPrivate(); return; }
+            if (error instanceof ApiRequestError && error.status === 403) item.querySelector(".research-citations")?.remove();
+            const failure = document.createElement("p"); failure.className = "research-citation-error"; failure.textContent = message(error); item.querySelector(".research-citation-error")?.remove(); item.append(failure);
+            status.textContent = "Cited sources could not be read.";
+          })
+          .finally(() => finishReportAction(local, options.renderSerial));
+      };
+      const actions = document.createElement("div"); actions.className = "research-report-actions"; actions.append(open, sources);
+      item.append(sectionHeading, sectionTechnical, actions); sections.append(item);
+    });
+    result.append(sections);
+  };
+  const readSavedDraft = (draft: ResearchRunSavedDraft): void => {
+    const generation = deploymentGeneration();
+    if (disposed || !healthReady() || !navigator.onLine || generation === undefined) { status.textContent = "Owner workspace is unavailable. Reconnect before opening saved research."; return; }
+    clearProgressTimer();
+    const active = ++serial; controller?.abort(); const local = new AbortController(); controller = local;
+    workflowId = undefined; workflowGeneration = undefined; workflowInput.value = "";
+    lastExecutionState = undefined; lastEngineStatus = undefined; lastAnswerAvailability = undefined;
+    result.replaceChildren(); result.hidden = true; badge.textContent = "WAITING"; progress.textContent = "Opening saved research…"; status.textContent = "Opening saved research…"; updateButtons();
+    void readReauthorizedResearchArtifact(draft.artifact_ref, generation, local.signal)
+      .then((reauthorized) => {
+        if (active !== serial || disposed) return;
+        lastExecutionState = "ENGINE_COMPLETED"; lastEngineStatus = "complete"; lastAnswerAvailability = "draft";
+        badge.textContent = "DRAFT"; progress.textContent = "Saved draft opened for review."; result.replaceChildren();
+        renderArtifactReport(reauthorized.artifact, { renderSerial: active, deploymentGeneration: reauthorized.deployment_generation, historical: true, authorizationScopeSnapshotRef: reauthorized.authorization_scope_snapshot_ref });
+        result.hidden = false; status.textContent = "Saved draft opened. Open a section to recheck its sources."; setReportActionsDisabled(true);
+      })
+      .catch((error: unknown) => {
+        if (active !== serial || (error instanceof Error && error.name === "AbortError")) return;
+        if (error instanceof ApiRequestError && (isAuthorizationLoss(error) || error.code === "RESEARCH_RUN_DEPLOYMENT_CHANGED")) { clearPrivate(); return; }
+        lastExecutionState = undefined; lastEngineStatus = undefined; lastAnswerAvailability = undefined; result.replaceChildren(); result.hidden = true;
+        badge.textContent = idleBadgeText(healthReady() && researchConfigurationReady()); progress.textContent = "Saved draft could not be opened."; status.textContent = message(error);
+      })
+      .finally(() => { if (active === serial) { controller = undefined; if (!disposed) setReportActionsDisabled(false); updateButtons(); } });
+  };
   const renderStatus = (view: ResearchRunStatusView, artifact?: ArtifactRevision, renderSerial = serial): void => {
     lastExecutionState = view.execution_state;
     lastEngineStatus = view.engine_status;
@@ -360,135 +511,7 @@ export function mountResearchRunPanel(
     const identity = document.createElement("p"); identity.append("Run ID ", codeRef(view.workflow_instance_id), " · investigation ", codeRef(view.investigation_ref.id));
     result.append(heading);
     if (view.answer.availability === "draft" && artifact !== undefined) {
-      const reportHead = document.createElement("div"); reportHead.className = "research-report-heading";
-      const reportTitle = document.createElement("h3"); reportTitle.textContent = "Research draft";
-      const draftBadge = document.createElement("span"); draftBadge.className = "research-draft-badge"; draftBadge.textContent = "DRAFT";
-      reportHead.append(reportTitle, draftBadge);
-      const technical = document.createElement("details"); technical.className = "research-technical-details";
-      const technicalSummary = document.createElement("summary"); technicalSummary.textContent = "Technical details";
-      const technicalFields = document.createElement("dl"); technicalFields.className = "research-technical-fields";
-      const technicalField = (label: string, value: string): void => {
-        const term = document.createElement("dt"); term.textContent = label;
-        const detail = document.createElement("dd"); detail.append(codeRef(value));
-        technicalFields.append(term, detail);
-      };
-      technicalField("Run ID", view.workflow_instance_id);
-      technicalField("Investigation", `${view.investigation_ref.id}:${view.investigation_ref.revision}`);
-      technicalField("Artifact", `${artifact.artifact_ref.id}:${artifact.artifact_ref.revision}`);
-      technicalField("Specification", `${artifact.spec_ref.id}:${artifact.spec_ref.revision}`);
-      technicalField("Evidence freeze", `${artifact.evidence_freeze_ref.id}:${artifact.evidence_freeze_ref.revision}`);
-      technicalField("Status", artifact.status);
-      technical.append(technicalSummary, technicalFields);
-      result.append(reportHead, technical);
-      const sections = document.createElement("ul"); sections.className = "research-report-sections";
-      artifact.sections.forEach((section, ordinal) => {
-        const item = document.createElement("li"); item.className = "research-report-section";
-        const sectionHeading = document.createElement("h4"); sectionHeading.textContent = `Section ${ordinal + 1}`;
-        const sectionTechnical = document.createElement("details"); sectionTechnical.className = "research-section-details";
-        const sectionTechnicalSummary = document.createElement("summary"); sectionTechnicalSummary.textContent = "Section details";
-        const sectionTechnicalFields = document.createElement("dl"); sectionTechnicalFields.className = "research-technical-fields";
-        const sectionField = (label: string, value: string): void => {
-          const term = document.createElement("dt"); term.textContent = label;
-          const detail = document.createElement("dd"); detail.append(codeRef(value));
-          sectionTechnicalFields.append(term, detail);
-        };
-        sectionField("Section ref", `${section.section_ref.id}:${section.section_ref.revision}`);
-        sectionField("Evidence ledger", section.evidence_ledger_ref);
-        sectionField("Verification receipt", section.verification_receipt_ref);
-        sectionTechnical.append(sectionTechnicalSummary, sectionTechnicalFields);
-        const open = document.createElement("button"); open.type = "button"; open.className = "button button--quiet"; open.textContent = "Open section";
-        open.onclick = () => {
-          if (renderSerial !== serial || controller !== undefined) return;
-          const local = new AbortController(); controller = local; setReportActionsDisabled(true); status.textContent = "Reading report section…";
-          void readResearchArtifactSection(artifact.artifact_ref, section, local.signal)
-            .then((readback) => {
-              if (renderSerial !== serial) return;
-              const body = document.createElement("pre"); body.className = "research-section-body"; body.textContent = decodeSectionBody(readback.bytes);
-              item.querySelector(".research-section-body")?.remove(); item.append(body); status.textContent = "Report section opened.";
-            })
-            .catch((error: unknown) => {
-              if (renderSerial !== serial || (error instanceof Error && error.name === "AbortError")) return;
-              if (error instanceof ApiRequestError && (isAuthorizationLoss(error) || error.status === 409 || error.status === 410)) { clearPrivate(); return; }
-              if (error instanceof ApiRequestError && error.status === 403) item.querySelector(".research-section-body")?.remove();
-              const failure = document.createElement("p"); failure.className = "research-section-error"; failure.textContent = message(error); item.querySelector(".research-section-error")?.remove(); item.append(failure);
-              status.textContent = "The report section could not be opened.";
-            })
-            .finally(() => finishReportAction(local, renderSerial));
-        };
-        const sources = document.createElement("button"); sources.type = "button"; sources.className = "button button--quiet"; sources.textContent = "Open sources"; sources.dataset.openSources = String(ordinal);
-        sources.onclick = () => {
-          if (renderSerial !== serial || controller !== undefined) return;
-          const local = new AbortController(); controller = local; setReportActionsDisabled(true); status.textContent = "Reading cited sources…";
-          item.querySelector(".research-citations")?.remove(); item.querySelector(".research-citation-error")?.remove();
-          void readResearchArtifactSectionCitations(artifact.artifact_ref, section.section_ref, view.deployment_generation, local.signal, section.verification_receipt_ref)
-            .then((citations) => {
-              if (renderSerial !== serial) return;
-              const list = document.createElement("div"); list.className = "research-citations";
-              const state = document.createElement("p"); state.className = "research-citation-state";
-              state.textContent = citations.semantic_verification === "EXECUTED"
-                ? `Claim check complete: ${citations.audit.claims.length} claims checked. The verdicts describe the saved evidence; they do not mean every claim is true.`
-                : "Draft claims have not been checked. Opening a source checks its current bytes.";
-              list.append(state);
-              const citationByRef = new Map(citations.cited_evidence.map((citation) => [citationRefKey(citation.handle_ref), citation]));
-              const selectCitation = (citation: ResearchArtifactSectionCitation): void => {
-                if (renderSerial !== serial || controller !== undefined) return;
-                element.dispatchEvent(new CustomEvent("research:evidence-selected", { bubbles: true, detail: { scopeSnapshotRef: citations.scope_snapshot_ref, handleRef: citation.handle_ref, excerptSha256: citation.excerpt_sha256 } }));
-                status.textContent = "Source selected. Verify it in the Evidence rail.";
-              };
-              const appendClaimEvidenceButton = (container: HTMLElement, kind: "Support" | "Counterevidence", ref: ResearchArtifactSectionCitationAuditClaim["support_handle_refs"][number], ordinal: number): void => {
-                const citation = citationByRef.get(citationRefKey(ref));
-                const button = document.createElement("button"); button.type = "button"; button.className = "button button--quiet";
-                button.textContent = citation === undefined ? `${kind} evidence unavailable` : `${kind} evidence ${ordinal + 1}`;
-                if (citation === undefined) { button.disabled = true; button.dataset.reportActionUnavailable = "true"; }
-                else button.onclick = () => selectCitation(citation);
-                container.append(button);
-              };
-              if (citations.semantic_verification === "EXECUTED") {
-                const auditDetails = document.createElement("details"); auditDetails.className = "research-audit-details";
-                const auditSummary = document.createElement("summary"); auditSummary.textContent = "Claim check details";
-                const claimList = document.createElement("ol"); claimList.className = "research-audit-claims";
-                citations.audit.claims.forEach((claim) => {
-                  const claimItem = document.createElement("li");
-                  const claimText = document.createElement("p"); claimText.textContent = claim.claim_text;
-                  const verdict = document.createElement("p"); verdict.textContent = `Verdict: ${AUDIT_DISPOSITION_LABELS[claim.disposition]}`;
-                  claimItem.append(claimText, verdict);
-                  const claimActions = document.createElement("div"); claimActions.className = "research-citation-actions";
-                  claim.support_handle_refs.forEach((ref, index) => appendClaimEvidenceButton(claimActions, "Support", ref, index));
-                  claim.counterevidence_handle_refs.forEach((ref, index) => appendClaimEvidenceButton(claimActions, "Counterevidence", ref, index));
-                  if (claimActions.childElementCount > 0) claimItem.append(claimActions);
-                  claimList.append(claimItem);
-                });
-                auditDetails.append(auditSummary, claimList); list.append(auditDetails);
-              }
-              if (citations.cited_evidence.length === 0) {
-                const empty = document.createElement("p"); empty.textContent = "No cited source handles are available."; list.append(empty);
-              } else {
-                const heading = document.createElement("p"); heading.textContent = "Open a cited source in the Evidence rail:"; list.append(heading);
-                const actions = document.createElement("div"); actions.className = "research-citation-actions";
-                citations.cited_evidence.forEach((citation, citationOrdinal) => {
-                  const button = document.createElement("button"); button.type = "button"; button.className = "button button--quiet"; button.textContent = `Open source ${citationOrdinal + 1}`; button.dataset.openCitation = String(citationOrdinal); button.disabled = controller !== undefined;
-                  button.onclick = () => selectCitation(citation);
-                  actions.append(button);
-                });
-                list.append(actions);
-              }
-              item.append(list); status.textContent = citations.semantic_verification === "EXECUTED"
-                ? "Claim check loaded. Review each verdict and its evidence."
-                : "Cited sources loaded; fresh verification is still required.";
-            })
-            .catch((error: unknown) => {
-              if (renderSerial !== serial || (error instanceof Error && error.name === "AbortError")) return;
-              if (error instanceof ApiRequestError && (isAuthorizationLoss(error) || error.status === 409 || error.status === 410)) { clearPrivate(); return; }
-              if (error instanceof ApiRequestError && error.status === 403) item.querySelector(".research-citations")?.remove();
-              const failure = document.createElement("p"); failure.className = "research-citation-error"; failure.textContent = message(error); item.querySelector(".research-citation-error")?.remove(); item.append(failure);
-              status.textContent = "Cited sources could not be read.";
-            })
-            .finally(() => finishReportAction(local, renderSerial));
-        };
-        const actions = document.createElement("div"); actions.className = "research-report-actions"; actions.append(open, sources);
-        item.append(sectionHeading, sectionTechnical, actions); sections.append(item);
-      });
-      result.append(sections);
+      renderArtifactReport(artifact, { renderSerial, deploymentGeneration: view.deployment_generation, historical: false, workflowInstanceId: view.workflow_instance_id, investigationRef: `${view.investigation_ref.id}:${view.investigation_ref.revision}` });
     } else {
       result.append(identity);
     }

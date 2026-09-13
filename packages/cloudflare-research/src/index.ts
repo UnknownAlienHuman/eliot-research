@@ -10,6 +10,23 @@ export {
   createD1ModelGatewayDeploymentRegistry,
   type D1DynamicRouteRegistryOptions,
 } from "./model-gateway-deployment-registry-d1.js";
+export {
+  createD1DynamicRouteQualificationProofStore,
+  decodeDynamicRouteCandidate,
+  decodeStoredDynamicRouteCandidate,
+  dynamicRouteCandidateArtifact,
+  dynamicRouteCandidateRefForSha,
+  type D1DynamicRouteQualificationProofOptions,
+  type DynamicRouteQualificationCandidateIdentity,
+  type DynamicRouteQualificationLatestExpectation,
+  type DynamicRouteQualificationLatestPointer,
+  type DynamicRouteQualificationLatestPromotionInput,
+  type DynamicRouteQualificationProof,
+  type DynamicRouteQualificationProofStorePort,
+  type DynamicRouteQualificationProofWriteInput,
+  type DynamicRouteQualificationProofWriteReceipt,
+  type StoredDynamicRouteCandidate,
+} from "./model-gateway-qualification-d1.js";
 export * from "./research-reference-manifest.js";
 export * from "./research-reference-manifest-store.js";
 export * from "./research-protocol-freeze.js";
@@ -29,6 +46,7 @@ export * from "./research-model-pricing-quote.js";
 export * from "./research-model-installation.js";
 export * from "./research-model-qualification-store.js";
 export * from "./research-model-qualification.js";
+export * from "./research-model-qualification-renewal.js";
 export * from "./research-model-qualification-dispatch.js";
 export * from "./research-qualification-prompt.js";
 export * from "./dynamic-route-rest-binding-store-d1.js";

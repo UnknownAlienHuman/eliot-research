@@ -8,6 +8,7 @@ import { createD1ScopeProfilePort } from "@eliotr/retrieval";
 import { fail, type WorkflowObject, type WorkflowPrincipal } from "@eliotr/cloudflare-workflows";
 import {
   createD1ModelGatewayDeploymentRegistry,
+  createD1DynamicRouteQualificationProofStore,
   createResearchSynthesisPreparation,
   createResearchModelSpendPolicyService,
   type ResearchModelGatewayBinding,
@@ -222,17 +223,21 @@ export async function createResearchSemanticServerHandlers(input: ResearchSemant
   async function readVerifier(): Promise<ResearchClaimAuditVerifierAuthority> {
     await navigation.current();
     const readCandidate = () => env.CORE_DB.prepare(
-      "SELECT c.candidate_json FROM dynamic_route_active_generation a JOIN dynamic_route_candidate c " +
+      "SELECT c.candidate_json,c.candidate_ref,c.candidate_sha256 FROM dynamic_route_active_generation a JOIN dynamic_route_candidate c " +
       "ON c.candidate_ref=a.candidate_ref AND c.candidate_sha256=a.candidate_sha256 " +
       "AND c.route_ref=a.route_ref AND c.route_version=a.route_version WHERE a.route_ref=?1 LIMIT 1",
-    ).bind(auditDeployment.route_ref).first<{ candidate_json: string }>();
+    ).bind(auditDeployment.route_ref).first<{ candidate_json: string; candidate_ref: string; candidate_sha256: string }>();
     const before = await readCandidate();
     const deployment = decodeModelRouteDeployment(await deploymentRegistry.resolve(auditDeployment.route_ref));
     if (!before || canonicalJson(deployment) !== canonicalJson(auditDeployment)) configurationMissing();
     let candidate: { execution_probe_ref?: unknown; qualification_expires_at?: unknown };
     try { candidate = JSON.parse(before.candidate_json) as typeof candidate; } catch { configurationMissing(); }
-    const receipt = IdentifierSchema.safeParse(candidate.execution_probe_ref);
-    const expires = IsoDateTimeSchema.safeParse(candidate.qualification_expires_at);
+    const proof = await createD1DynamicRouteQualificationProofStore(env.CORE_DB).readLatest({
+      route_ref: auditDeployment.route_ref, route_version: auditDeployment.route_version,
+      candidate_ref: before.candidate_ref, candidate_sha256: before.candidate_sha256,
+    });
+    const receipt = IdentifierSchema.safeParse(proof?.qualification.execution_probe_ref ?? candidate.execution_probe_ref);
+    const expires = IsoDateTimeSchema.safeParse(proof?.qualification.expires_at ?? candidate.qualification_expires_at);
     if (!receipt.success || !expires.success || Date.parse(expires.data) <= Date.now() ||
         !config.audit.allowed_verifier_refs.includes(config.audit.verifier_ref)) configurationMissing();
     const after = await readCandidate();

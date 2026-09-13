@@ -6,13 +6,17 @@
 
 **Private owner workspace is deployed:** [eliotr-core.kleymor-metal.workers.dev](https://eliotr-core.kleymor-metal.workers.dev).
 Owner sign-in, workspace selection, file capture and TXT/Markdown processing are live.
-Text documents are processed locally in the Worker without model calls. Library admission keeps
+Text documents are processed locally in the Worker before admission, and Library admission keeps
 its quality checks. Corpus Lens opens admitted documents for reading and download; the background
-queue builds their structure and D1 exact/lexical index. The Research screen reports whether its
-model configuration is installed, separately from the server's health. Model configuration,
-AI Search, Google and MCP integrations are not connected; model-backed research/Wiki, erasure,
-federation and production workload remain unavailable. [Local preparation and current launch
-limits](docs/implementation/local-launch.md).
+queue builds their structure and D1 exact/lexical index. On 2026-09-13, the owner document research
+path completed a real 17-stage SYNTHESIZE and AUDIT run with Cloudflare
+`@cf/zai-org/glm-5.3-flash` and saved a DRAFT in R2. The PWA displayed the draft, opened its answer
+section, loaded seven claim checks and verified a cited excerpt in Evidence Rail. This confirms the
+owner path without establishing full production readiness. Historical research reads remain bounded
+to the current session and deployment; route qualification currently uses a 45-minute window and
+manual renewal, and remains WIP. AI Search, Google and MCP integrations, Wiki, erasure, federation
+and broader production workload remain unavailable. [Local preparation
+and current launch limits](docs/implementation/local-launch.md).
 
 **Pluggable external research federation for ELIOT Memory OS.**
 

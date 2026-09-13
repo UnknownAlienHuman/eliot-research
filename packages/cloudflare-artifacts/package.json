@@ -8,6 +8,8 @@
     ".": "./src/index.ts",
     "./artifact-draft.js": "./src/artifact-draft.ts",
     "./artifact-draft-reader.js": "./src/artifact-draft-reader.ts",
+    "./artifact-draft-reauthorization.js": "./src/artifact-draft-reauthorization.ts",
+    "./artifact-draft-citations-reauthorization.js": "./src/artifact-draft-citations-reauthorization.ts",
     "./artifact-draft-types.js": "./src/artifact-draft-types.ts"
   },
   "types": "./src/index.ts",

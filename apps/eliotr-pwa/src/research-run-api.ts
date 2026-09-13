@@ -1,5 +1,5 @@
 import { ArtifactRevisionSchema, IdentifierSchema, ScopeExpressionSchema, Sha256Schema, VersionedRefSchema, type ArtifactRevision, type VersionedRef } from "@eliotr/contracts";
-import { ApiRequestError, requestApi, requestApiBytes } from "./api.js";
+import { ApiRequestError, requestApi, requestApiBytes, type ApiBytesResponse } from "./api.js";
 
 export interface ResearchRunLaunchView {
   readonly investigation_ref: { readonly id: string; readonly revision: number };
@@ -36,11 +36,35 @@ export interface ResearchRunHistoryEntry {
   readonly status: ResearchRunStatusView;
 }
 
+export interface ResearchRunSavedDraft {
+  readonly created_at: string;
+  readonly artifact_ref: VersionedRef;
+}
+
 export interface ResearchRunHistoryView {
-  readonly protocol: "eliotr.research-runs.v1";
+  readonly protocol: "eliotr.research-runs.v1" | "eliotr.research-runs.v2";
   readonly runs: readonly ResearchRunHistoryEntry[];
+  readonly saved_drafts: readonly ResearchRunSavedDraft[];
   readonly configuration_state: "INSTALLED" | "MISSING";
   readonly checked_at: string;
+  readonly deployment_generation: string;
+}
+
+export interface ResearchScopeAuthorizationView {
+  readonly authorization_receipt_ref: string;
+  readonly policy_authority_ref: string;
+  readonly allowed_use: readonly string[];
+  readonly disclosure_ceiling: string;
+  readonly expires_at: string;
+}
+
+export interface ResearchArtifactDraftReauthorizationView {
+  readonly protocol: "eliotr.artifact-draft-reauthorization.v1";
+  readonly artifact_ref: VersionedRef;
+  readonly artifact: ArtifactRevision;
+  readonly original_scope_snapshot_ref: VersionedRef;
+  readonly authorization_scope_snapshot_ref: VersionedRef;
+  readonly authorization: ResearchScopeAuthorizationView;
   readonly deployment_generation: string;
 }
 
@@ -125,7 +149,7 @@ const RESEARCH_ENGINE_STATUSES: readonly ResearchEngineStatus[] = [
   "queued", "running", "paused", "errored", "terminated", "complete", "waiting", "waitingForPause", "unknown",
 ];
 
-function invalid(message = "Research run response is invalid; try again"): never {
+export function invalid(message = "Research run response is invalid; try again"): never {
   throw new ApiRequestError({ status: 502, code: "RESEARCH_RUN_RESPONSE_INVALID", message });
 }
 
@@ -134,14 +158,14 @@ function objectRecord(value: unknown): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
-function record(value: unknown, required: readonly string[], optional: readonly string[] = []): Record<string, unknown> {
+export function record(value: unknown, required: readonly string[], optional: readonly string[] = []): Record<string, unknown> {
   const object = objectRecord(value);
   const allowed = new Set([...required, ...optional]);
   if (required.some((key) => !Object.hasOwn(object, key)) || Object.keys(object).some((key) => !allowed.has(key))) invalid();
   return object;
 }
 
-function boundedString(value: unknown, label: string, maximum = 256): string {
+export function boundedString(value: unknown, label: string, maximum = 256): string {
   if (typeof value !== "string" || value.length === 0 || value.length > maximum || value !== value.trim() || /[\u0000-\u001f\u007f]/u.test(value)) invalid(`${label} is invalid`);
   return value;
 }
@@ -152,26 +176,26 @@ function isoTimestamp(value: unknown, label: string): string {
   return timestamp;
 }
 
-function identifier(value: unknown, label: string): string {
+export function identifier(value: unknown, label: string): string {
   try { return IdentifierSchema.parse(value); } catch { invalid(`${label} is invalid`); }
 }
 
-function versionedRef(value: unknown, label: string): { readonly id: string; readonly revision: number } {
+export function versionedRef(value: unknown, label: string): { readonly id: string; readonly revision: number } {
   try { return VersionedRefSchema.parse(value); } catch { invalid(`${label} is invalid`); }
 }
 
-function sameRef(left: VersionedRef, right: VersionedRef): boolean {
+export function sameRef(left: VersionedRef, right: VersionedRef): boolean {
   return left.id === right.id && left.revision === right.revision;
 }
 
-function envelope(value: unknown): { readonly data: Record<string, unknown>; readonly deployment_generation: string } {
+export function envelope(value: unknown): { readonly data: Record<string, unknown>; readonly deployment_generation: string } {
   const outer = record(value, ["data", "trace_id", "deployment_generation"]);
   const trace = boundedString(outer.trace_id, "trace_id", 128);
   if (!SAFE_TRACE_ID.test(trace)) invalid("trace_id is invalid");
   return { data: objectRecord(outer.data), deployment_generation: identifier(outer.deployment_generation, "deployment_generation") };
 }
 
-function checkGeneration(actual: string, expected: string | undefined): void {
+export function checkGeneration(actual: string, expected: string | undefined): void {
   if (expected !== undefined && actual !== expected) {
     throw new ApiRequestError({ status: 409, code: "RESEARCH_RUN_DEPLOYMENT_CHANGED", message: "Application changed; refresh the Research run", retryable: true });
   }
@@ -194,7 +218,7 @@ const AUDIT_DISPOSITIONS: readonly ResearchArtifactSectionCitationAuditDispositi
 const MAX_AUDIT_CLAIMS = 512;
 const MAX_AUDIT_REFS = 512;
 
-function sha256Digest(value: unknown, label: string): string {
+export function sha256Digest(value: unknown, label: string): string {
   const digest = boundedString(value, label, 64);
   if (!Sha256Schema.safeParse(digest).success) invalid(`${label} is invalid`);
   return digest;
@@ -233,7 +257,7 @@ function decodeCitationAuditClaim(value: unknown, index: number): ResearchArtifa
   };
 }
 
-function decodeCitationAudit(value: unknown): ResearchArtifactSectionCitationAudit {
+export function decodeCitationAudit(value: unknown): ResearchArtifactSectionCitationAudit {
   const audit = record(value, ["stage_attempt_ref", "stage_request_sha256", "output_sha256", "synthesis_output_sha256", "normalization_binding_sha256", "verifier_ref", "verifier_schema_generation", "model_receipt_ref", "claims"]);
   if (!Array.isArray(audit.claims) || audit.claims.length < 1 || audit.claims.length > MAX_AUDIT_CLAIMS) invalid("audit claims are invalid");
   const claims = audit.claims.map((claim, index) => decodeCitationAuditClaim(claim, index));
@@ -254,6 +278,44 @@ function decodeCitationAudit(value: unknown): ResearchArtifactSectionCitationAud
 function artifactRevision(value: unknown): ArtifactRevision {
   try { return ArtifactRevisionSchema.parse(value); }
   catch { invalid("research artifact response is invalid"); }
+}
+
+export function scopeAuthorization(value: unknown): ResearchScopeAuthorizationView {
+  const authorization = record(value, ["authorization_receipt_ref", "policy_authority_ref", "allowed_use", "disclosure_ceiling", "expires_at"]);
+  if (!Array.isArray(authorization.allowed_use) || authorization.allowed_use.length > 32) invalid("authorization allowed_use is invalid");
+  return {
+    authorization_receipt_ref: boundedString(authorization.authorization_receipt_ref, "authorization_receipt_ref"),
+    policy_authority_ref: boundedString(authorization.policy_authority_ref, "policy_authority_ref"),
+    allowed_use: authorization.allowed_use.map((use, index) => boundedString(use, `authorization.allowed_use[${index}]`, 128)),
+    disclosure_ceiling: boundedString(authorization.disclosure_ceiling, "authorization.disclosure_ceiling", 128),
+    expires_at: isoTimestamp(authorization.expires_at, "authorization.expires_at"),
+  };
+}
+
+export function decodeResearchArtifactDraftReauthorization(
+  raw: unknown,
+  expectedArtifact: VersionedRef,
+  expectedDeploymentGeneration?: string,
+): ResearchArtifactDraftReauthorizationView {
+  const expected = versionedRef(expectedArtifact, "artifact_ref");
+  const parsed = envelope(raw); checkGeneration(parsed.deployment_generation, expectedDeploymentGeneration);
+  const data = record(parsed.data, ["protocol", "artifact_ref", "artifact", "original_scope_snapshot_ref", "authorization_scope_snapshot_ref", "authorization", "deployment_generation"]);
+  if (data.protocol !== "eliotr.artifact-draft-reauthorization.v1") invalid("artifact reauthorization protocol is invalid");
+  const generation = identifier(data.deployment_generation, "data.deployment_generation");
+  if (generation !== parsed.deployment_generation) invalid("artifact reauthorization generations differ");
+  const artifactRef = versionedRef(data.artifact_ref, "artifact_ref");
+  if (!sameRef(artifactRef, expected)) invalid("artifact reauthorization identity does not match the request");
+  const artifact = artifactRevision(data.artifact);
+  if (!sameRef(artifact.artifact_ref, artifactRef) || artifact.status !== "DRAFT") invalid("artifact reauthorization returned an invalid draft");
+  return {
+    protocol: "eliotr.artifact-draft-reauthorization.v1",
+    artifact_ref: artifactRef,
+    artifact,
+    original_scope_snapshot_ref: versionedRef(data.original_scope_snapshot_ref, "original_scope_snapshot_ref"),
+    authorization_scope_snapshot_ref: versionedRef(data.authorization_scope_snapshot_ref, "authorization_scope_snapshot_ref"),
+    authorization: scopeAuthorization(data.authorization),
+    deployment_generation: generation,
+  };
 }
 
 function header(headers: Headers, name: string, label: string): string {
@@ -322,8 +384,8 @@ export function decodeResearchRunStatus(raw: unknown, expectedDeploymentGenerati
 
 export function decodeResearchRunHistory(raw: unknown, expectedDeploymentGeneration?: string): ResearchRunHistoryView {
   const parsed = envelope(raw); checkGeneration(parsed.deployment_generation, expectedDeploymentGeneration);
-  const data = record(parsed.data, ["protocol", "runs", "configuration_state", "checked_at"]);
-  if (data.protocol !== "eliotr.research-runs.v1") invalid("research run history protocol is invalid");
+  const data = record(parsed.data, ["protocol", "runs", "configuration_state", "checked_at"], ["saved_drafts"]);
+  if (data.protocol !== "eliotr.research-runs.v1" && data.protocol !== "eliotr.research-runs.v2") invalid("research run history protocol is invalid");
   if (data.configuration_state !== "INSTALLED" && data.configuration_state !== "MISSING") invalid("research run configuration state is invalid");
   const checkedAt = isoTimestamp(data.checked_at, "checked_at");
   if (!Array.isArray(data.runs) || data.runs.length > 8) invalid("research run history is invalid");
@@ -336,7 +398,22 @@ export function decodeResearchRunHistory(raw: unknown, expectedDeploymentGenerat
     seen.add(status.workflow_instance_id);
     return { created_at: createdAt, status };
   });
-  return { protocol: "eliotr.research-runs.v1", runs, configuration_state: data.configuration_state, checked_at: checkedAt, deployment_generation: parsed.deployment_generation };
+  const savedDrafts: ResearchRunSavedDraft[] = [];
+  if (Object.hasOwn(data, "saved_drafts")) {
+    if (!Array.isArray(data.saved_drafts) || data.saved_drafts.length > 8) invalid("saved research drafts are invalid");
+    const draftRefs = new Set<string>();
+    data.saved_drafts.forEach((value, index) => {
+      const entry = record(value, ["created_at", "artifact_ref"]);
+      const createdAt = isoTimestamp(entry.created_at, `saved_drafts[${index}].created_at`);
+      const artifactRef = versionedRef(entry.artifact_ref, `saved_drafts[${index}].artifact_ref`);
+      const key = `${artifactRef.id}:${artifactRef.revision}`;
+      if (draftRefs.has(key)) invalid("saved research drafts contain a duplicate artifact");
+      draftRefs.add(key);
+      savedDrafts.push({ created_at: createdAt, artifact_ref: artifactRef });
+    });
+  }
+  if (data.protocol === "eliotr.research-runs.v2" && !Object.hasOwn(data, "saved_drafts")) invalid("research run history v2 is missing saved drafts");
+  return { protocol: data.protocol, runs, saved_drafts: savedDrafts, configuration_state: data.configuration_state, checked_at: checkedAt, deployment_generation: parsed.deployment_generation };
 }
 
 export async function readResearchArtifact(artifactRef: { readonly id: string; readonly revision: number }, expectedDeploymentGeneration?: string, signal?: AbortSignal): Promise<ArtifactRevision> {
@@ -349,6 +426,39 @@ export async function readResearchArtifact(artifactRef: { readonly id: string; r
   return artifact;
 }
 
+export async function readReauthorizedResearchArtifact(
+  artifactRef: { readonly id: string; readonly revision: number },
+  expectedDeploymentGeneration?: string,
+  signal?: AbortSignal,
+): Promise<ResearchArtifactDraftReauthorizationView> {
+  const ref = versionedRef(artifactRef, "artifact_ref");
+  const raw = await requestApi(`/api/v1/research/artifact/${encodeURIComponent(`${ref.id}:${ref.revision}`)}/reauthorize`, {
+    method: "POST",
+    ...(signal === undefined ? {} : { signal }),
+  });
+  return decodeResearchArtifactDraftReauthorization(raw, ref, expectedDeploymentGeneration);
+}
+
+async function decodeArtifactSectionResponse(
+  raw: ApiBytesResponse,
+  artifactRef: VersionedRef,
+  sectionRef: VersionedRef,
+  expectedDeploymentGeneration?: string,
+): Promise<ResearchArtifactSectionView> {
+  const returnedArtifact = headerRef(raw.headers, "x-eliotr-artifact-ref", "artifact");
+  const returnedSection = headerRef(raw.headers, "x-eliotr-section-ref", "section");
+  const objectRef = decodedHeader(raw.headers, "x-eliotr-section-object-ref", "section object");
+  const returnedSha = header(raw.headers, "x-eliotr-section-sha256", "section digest");
+  if (!Sha256Schema.safeParse(returnedSha).success) invalid("section digest header is invalid");
+  if (expectedDeploymentGeneration !== undefined) checkGeneration(header(raw.headers, "x-eliotr-deployment-generation", "deployment generation"), expectedDeploymentGeneration);
+  const length = header(raw.headers, "content-length", "content length");
+  if (!/^[0-9]+$/u.test(length) || Number(length) !== raw.bytes.byteLength) invalid("section content length does not match the response body");
+  if (!sameRef(returnedArtifact, artifactRef) || !sameRef(returnedSection, sectionRef) || objectRef.length === 0) invalid("section response identity does not match the requested section");
+  const actualSha = await sha256(raw.bytes);
+  if (actualSha !== returnedSha) invalid("section response digest does not match the response body");
+  return { artifact_ref: returnedArtifact, section_ref: returnedSection, body_object_ref: objectRef, body_sha256: returnedSha, size_bytes: raw.bytes.byteLength, bytes: raw.bytes };
+}
+
 export async function readResearchArtifactSection(
   artifactRef: { readonly id: string; readonly revision: number },
   section: ArtifactRevision["sections"][number],
@@ -357,17 +467,67 @@ export async function readResearchArtifactSection(
   const artifact = versionedRef(artifactRef, "artifact_ref");
   const sectionRef = versionedRef(section.section_ref, "section_ref");
   const raw = await requestApiBytes(`/api/v1/research/artifact/${encodeURIComponent(`${artifact.id}:${artifact.revision}`)}/sections/${encodeURIComponent(`${sectionRef.id}:${sectionRef.revision}`)}`, signal, 1024 * 1024);
-  const returnedArtifact = headerRef(raw.headers, "x-eliotr-artifact-ref", "artifact");
-  const returnedSection = headerRef(raw.headers, "x-eliotr-section-ref", "section");
-  const objectRef = decodedHeader(raw.headers, "x-eliotr-section-object-ref", "section object");
-  const returnedSha = header(raw.headers, "x-eliotr-section-sha256", "section digest");
-  if (!Sha256Schema.safeParse(returnedSha).success) invalid("section digest header is invalid");
-  const length = header(raw.headers, "content-length", "content length");
-  if (!/^[0-9]+$/u.test(length) || Number(length) !== raw.bytes.byteLength) invalid("section content length does not match the response body");
-  if (!sameRef(returnedArtifact, artifact) || !sameRef(returnedSection, sectionRef) || objectRef !== section.body_object_ref || returnedSha !== section.body_sha256) invalid("section response identity does not match the declared section");
-  const actualSha = await sha256(raw.bytes);
-  if (actualSha !== returnedSha) invalid("section response digest does not match the response body");
-  return { artifact_ref: returnedArtifact, section_ref: returnedSection, body_object_ref: objectRef, body_sha256: returnedSha, size_bytes: raw.bytes.byteLength, bytes: raw.bytes };
+  const readback = await decodeArtifactSectionResponse(raw, artifact, sectionRef);
+  if (readback.body_object_ref !== section.body_object_ref || readback.body_sha256 !== section.body_sha256) invalid("section response identity does not match the declared section");
+  return readback;
+}
+
+async function requestReauthorizedSectionBytes(path: string, signal?: AbortSignal): Promise<ApiBytesResponse> {
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  signal?.addEventListener("abort", abort, { once: true });
+  if (signal?.aborted) abort();
+  const timeout = setTimeout(abort, 30_000);
+  let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+  let completed = false;
+  try {
+    const response = await fetch(path, {
+      method: "POST", signal: controller.signal, redirect: "manual", credentials: "same-origin", cache: "no-store",
+      headers: { accept: "application/octet-stream" },
+    });
+    const redirected = response.type === "opaqueredirect" || response.redirected || (response.status >= 300 && response.status < 400);
+    if (redirected || response.status === 401) {
+      if (typeof window !== "undefined") window.dispatchEvent(new Event("eliotr:authorization-cleared"));
+      throw new ApiRequestError({ status: 401, code: "ACCESS_SESSION_REQUIRED", message: "Sign in to Cloudflare Access and reload this page" });
+    }
+    if (!response.body) throw new ApiRequestError({ status: 502, code: "API_RESPONSE_SCHEMA_MISMATCH", message: "Expected a bounded report section body" });
+    const length = response.headers.get("content-length");
+    if (length !== null && (!/^[0-9]+$/u.test(length) || Number(length) > 1024 * 1024)) throw new ApiRequestError({ status: 502, code: "API_RESPONSE_TOO_LARGE", message: "Report section exceeds its byte budget" });
+    reader = response.body.getReader();
+    const chunks: Uint8Array[] = []; let size = 0; let count = 0;
+    while (true) {
+      const next = await reader.read(); if (next.done) break;
+      size += next.value.byteLength;
+      if (++count > 4096 || size > 1024 * 1024) throw new ApiRequestError({ status: 502, code: "API_RESPONSE_TOO_LARGE", message: "Report section exceeds its byte budget" });
+      chunks.push(next.value);
+    }
+    const bytes = new Uint8Array(size); let offset = 0;
+    for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
+    if (!response.ok) throw new ApiRequestError({ status: response.status, code: response.status === 403 ? "ARTIFACT_DRAFT_READ_DENIED" : "ARTIFACT_DRAFT_READ_STALE", message: response.status === 403 ? "The saved report is not available for this session." : "The saved report section is no longer available." });
+    if (response.status !== 200 && response.status !== 206) throw new ApiRequestError({ status: 502, code: "API_STATUS_INVALID", message: "Unexpected report section completion status" });
+    if (response.headers.get("content-type")?.split(";")[0]?.trim() !== "application/octet-stream") throw new ApiRequestError({ status: 502, code: "API_RESPONSE_SCHEMA_MISMATCH", message: "Expected a report section response" });
+    completed = true;
+    return { bytes, headers: response.headers };
+  } catch (error) {
+    if (error instanceof ApiRequestError) throw error;
+    throw new ApiRequestError({ status: 503, code: controller.signal.aborted ? "API_REQUEST_ABORTED" : "API_UNREACHABLE", message: "Bounded report section read interrupted; retry with the same inputs", retryable: true });
+  } finally {
+    clearTimeout(timeout); signal?.removeEventListener("abort", abort);
+    if (completed) reader?.releaseLock();
+    else { controller.abort(); if (reader) void reader.cancel().catch(() => {}); }
+  }
+}
+
+export async function readReauthorizedResearchArtifactSection(
+  artifactRef: { readonly id: string; readonly revision: number },
+  sectionRef: { readonly id: string; readonly revision: number },
+  expectedDeploymentGeneration?: string,
+  signal?: AbortSignal,
+): Promise<ResearchArtifactSectionView> {
+  const artifact = versionedRef(artifactRef, "artifact_ref");
+  const section = versionedRef(sectionRef, "section_ref");
+  const raw = await requestReauthorizedSectionBytes(`/api/v1/research/artifact/${encodeURIComponent(`${artifact.id}:${artifact.revision}`)}/sections/${encodeURIComponent(`${section.id}:${section.revision}`)}/reauthorize`, signal);
+  return await decodeArtifactSectionResponse(raw, artifact, section, expectedDeploymentGeneration);
 }
 
 export function decodeResearchArtifactSectionCitations(raw: unknown, expectedArtifact: VersionedRef, expectedSection: VersionedRef, expectedDeploymentGeneration?: string, expectedVerificationReceiptRef?: string): ResearchArtifactSectionCitationsView {
