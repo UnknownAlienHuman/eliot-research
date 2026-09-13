@@ -17,6 +17,7 @@ import {
 } from "@eliotr/cloudflare-workflows";
 import {
   createD1ModelGatewayDeploymentRegistry,
+  createD1ResearchModelPricingQuotePort,
   createEvidenceFreezePostSynthesisContextReader,
   createEvidenceFreezeSynthesisContextReader,
   createEvidenceFreezeVerificationContextReader,
@@ -35,6 +36,9 @@ import {
 } from "@eliotr/cloudflare-research";
 import {
   createResearchClaimAuditInputReaderFromFreeze,
+  createResearchCoverageStageHandlerFromFreeze,
+  createResearchCoverageMaterializeStageHandlerFromFreeze,
+  type ResearchCoverageMaterializeStageDependencies,
   type ResearchClaimAuditInputReader,
   type ResearchClaimAuditNormalizationConfig,
   type ResearchClaimAuditPolicy,
@@ -50,6 +54,11 @@ import {
   createEvidenceFreezeWorkflowReaders,
 } from "./research-evidence-freeze-composition.js";
 import type { RetrieveBranchesStageDependencies } from "./research-retrieve-branches.js";
+import {
+  createResearchStageHandlerFactory,
+  SERVER_OWNED_FREEZE_HANDLER_GENERATION,
+  type ResearchStageHandlerFactory,
+} from "./research-stage-handlers.js";
 
 type SemanticPrincipal = Pick<
   WorkflowPrincipal,
@@ -65,7 +74,7 @@ type SemanticPrincipal = Pick<
 export interface ResearchSemanticSynthesisModelDependencies {
   readonly gateway: ResearchModelGatewayRuntimeConfig;
   readonly prompt: ResearchModelPromptCompilerDependencies;
-  readonly pricing: ModelGatewayPricingPort;
+  readonly pricing?: ModelGatewayPricingPort;
   readonly spend_authorization: SpendAuthorizationReader;
   readonly prepare: EvidenceFreezeSynthesisModelDependencies["prepare"];
 }
@@ -73,7 +82,7 @@ export interface ResearchSemanticSynthesisModelDependencies {
 export interface ResearchSemanticAuditModelDependencies {
   readonly gateway: ResearchModelGatewayRuntimeConfig;
   readonly prompt: ResearchClaimAuditPromptDependencies;
-  readonly pricing: ModelGatewayPricingPort;
+  readonly pricing?: ModelGatewayPricingPort;
   readonly spend_authorization: SpendAuthorizationReader;
   readonly prepare: ResearchClaimAuditStageDependencies["prepare"];
 }
@@ -240,13 +249,17 @@ function validateDependencies(input: ResearchSemanticCompositionDependencies): v
   requireFunction(input.model.synthesis.prompt.manifest_service?.buildAndPersist, "model.synthesis.prompt.manifest_service.buildAndPersist");
   requireFunction(input.model.synthesis.prompt.build_manifest_input, "model.synthesis.prompt.build_manifest_input");
   requireFunction(input.model.synthesis.prompt.resolve_trusted_parameters, "model.synthesis.prompt.resolve_trusted_parameters");
-  requireFunction(input.model.synthesis.pricing?.quote, "model.synthesis.pricing.quote");
+  if (input.model.synthesis.pricing !== undefined) {
+    requireFunction(input.model.synthesis.pricing.quote, "model.synthesis.pricing.quote");
+  }
   requireFunction(input.model.synthesis.spend_authorization?.read, "model.synthesis.spend_authorization.read");
   requireFunction(input.model.synthesis.prepare, "model.synthesis.prepare");
   requireFunction(input.model.audit.prompt.manifest_service?.buildAndPersist, "model.audit.prompt.manifest_service.buildAndPersist");
   requireFunction(input.model.audit.prompt.build_manifest_input, "model.audit.prompt.build_manifest_input");
   requireFunction(input.model.audit.prompt.resolve_trusted_parameters, "model.audit.prompt.resolve_trusted_parameters");
-  requireFunction(input.model.audit.pricing?.quote, "model.audit.pricing.quote");
+  if (input.model.audit.pricing !== undefined) {
+    requireFunction(input.model.audit.pricing.quote, "model.audit.pricing.quote");
+  }
   requireFunction(input.model.audit.spend_authorization?.read, "model.audit.spend_authorization.read");
   requireFunction(input.model.audit.prepare, "model.audit.prepare");
   requireFunction(input.audit.verifier?.read_current, "audit.verifier.read_current");
@@ -273,6 +286,7 @@ export function createResearchSemanticComposition(
 ): ResearchSemanticComposition {
   validateDependencies(input);
   const now = input.now ?? (() => Date.now());
+  const pricing = createD1ResearchModelPricingQuotePort(input.database, { now });
   const navigationAccess = snapshotAccess(input.navigation);
   const routeNow = (): string => new Date(now()).toISOString();
   const deploymentRegistry = createD1ModelGatewayDeploymentRegistry(input.database, {
@@ -348,7 +362,7 @@ export function createResearchSemanticComposition(
       deployment_environment: input.deployment_environment,
       gateway: input.model.synthesis.gateway,
       prompt: input.model.synthesis.prompt,
-      pricing: input.model.synthesis.pricing,
+      pricing: input.model.synthesis.pricing ?? pricing,
       spend_authorization: input.model.synthesis.spend_authorization,
       prepare: input.model.synthesis.prepare,
     },
@@ -387,7 +401,7 @@ export function createResearchSemanticComposition(
     deployment_environment: input.deployment_environment,
     gateway: input.model.audit.gateway,
     prompt: input.model.audit.prompt,
-    pricing: input.model.audit.pricing,
+    pricing: input.model.audit.pricing ?? pricing,
     spend_authorization: input.model.audit.spend_authorization,
     input: auditInput,
     prepare: input.model.audit.prepare,
@@ -422,5 +436,53 @@ export function createResearchSemanticComposition(
     verification,
     audit_claims,
     resolve_citations,
+  });
+}
+
+export interface ResearchSemanticWorkflowDependencies extends ResearchSemanticCompositionDependencies {
+  readonly report: Pick<ResearchCoverageMaterializeStageDependencies,
+    "policy_source" | "report_policy" | "expected_draft_head_revision">;
+}
+
+/** Connect the complete exploratory semantic path, including saved coverage and report output. */
+export function createResearchSemanticWorkflowHandlerFactory(
+  input: ResearchSemanticWorkflowDependencies,
+): ResearchStageHandlerFactory {
+  const semantic = createResearchSemanticComposition(input);
+  const environment = {
+    database: input.database,
+    work_bucket: input.work_bucket,
+    manifest_store: input.manifest.store,
+    read_stage_five: semantic.readers.read_stage_five,
+  };
+  return createResearchStageHandlerFactory({
+    kind: "server-owned-exploratory",
+    generation: SERVER_OWNED_FREEZE_HANDLER_GENERATION,
+    navigation: semantic.navigation,
+    ledger: semantic.ledger,
+    environment: {
+      CORE_DB: input.database,
+      SEARCH_DB: input.search_database,
+      WORK_BUCKET: input.work_bucket,
+      EVIDENCE_BUCKET: input.evidence_bucket,
+    },
+    freeze: semantic.freeze,
+    synthesis: semantic.synthesis,
+    verification: semantic.verification,
+    audit_claims: semantic.audit_claims,
+    resolve_citations: semantic.resolve_citations,
+    calculate_coverage: createResearchCoverageStageHandlerFromFreeze(
+      environment, semantic.navigation, semantic.readers, { ledger: semantic.ledger },
+    ),
+    materialize_handler: createResearchCoverageMaterializeStageHandlerFromFreeze(
+      environment, semantic.navigation, semantic.readers, {
+        ...input.report,
+        database: input.database,
+        work_bucket: input.work_bucket,
+        evidence_resolver: semantic.evidence_resolver,
+        recheck_authority: input.recheck_authority,
+        ...(input.now === undefined ? {} : { now: input.now }),
+      },
+    ),
   });
 }

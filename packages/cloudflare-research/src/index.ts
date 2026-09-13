@@ -24,6 +24,7 @@ export * from "./research-model-stage-handler.js";
 export * from "./research-model-profile-binding.js";
 export * from "./research-model-profile-config.js";
 export * from "./research-model-pricing-store.js";
+export * from "./research-model-pricing-quote.js";
 export * from "./research-model-attempt-revalidator.js";
 export * from "./research-held-scope.js";
 export * from "./research-run-status.js";
