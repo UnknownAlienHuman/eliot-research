@@ -3,6 +3,7 @@ import { canonicalJson } from "@eliotr/platform-cloudflare";
 
 const SHA256 = /^[a-f0-9]{64}$/u;
 const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9:._/@-]{0,255}$/u;
+const WORKERS_AI_MODEL_ID = /^@cf\/[A-Za-z0-9][A-Za-z0-9._-]*\/[A-Za-z0-9][A-Za-z0-9._:@-]*$/u;
 const RATE = /^(?:0|[1-9][0-9]{0,15})(?:\.[0-9]{1,12})?$/u;
 const PRICING_BASIS = "EXACT_TOKEN_RATES_V1" as const;
 const PRICING_PROTOCOL = "eliotr.research-model-pricing.v1" as const;
@@ -149,6 +150,13 @@ function identifier(value: unknown, label: string, code: ResearchModelPricingErr
   return value;
 }
 
+function exactModelId(value: unknown, label: string, code: ResearchModelPricingErrorCode): string {
+  if (typeof value !== "string" || value.length > 256 || (!IDENTIFIER.test(value) && !WORKERS_AI_MODEL_ID.test(value))) {
+    fail(code, `${label} is invalid`);
+  }
+  return value;
+}
+
 function digest(value: unknown, label: string, code: ResearchModelPricingErrorCode): string {
   if (typeof value !== "string" || !SHA256.test(value)) fail(code, `${label} is invalid`);
   return value;
@@ -179,7 +187,7 @@ function decodeDocument(value: unknown, code: ResearchModelPricingErrorCode): Re
     route_ref: identifier(record.route_ref, "route_ref", code),
     route_version: identifier(record.route_version, "route_version", code),
     provider: identifier(record.provider, "provider", code),
-    exact_model_id: identifier(record.exact_model_id, "exact_model_id", code),
+    exact_model_id: exactModelId(record.exact_model_id, "exact_model_id", code),
     pricing_basis: PRICING_BASIS,
     input_rate_usd_per_1k_tokens: rate(record.input_rate_usd_per_1k_tokens, "input token rate", code),
     output_rate_usd_per_1k_tokens: rate(record.output_rate_usd_per_1k_tokens, "output token rate", code),
@@ -197,7 +205,7 @@ function decodeIdentity(value: unknown, code: ResearchModelPricingErrorCode): Re
     route_ref: identifier(record.route_ref, "route_ref", code),
     route_version: identifier(record.route_version, "route_version", code),
     provider: identifier(record.provider, "provider", code),
-    exact_model_id: identifier(record.exact_model_id, "exact_model_id", code),
+    exact_model_id: exactModelId(record.exact_model_id, "exact_model_id", code),
   });
 }
 
