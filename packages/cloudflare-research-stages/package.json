@@ -18,6 +18,7 @@
     "@eliotr/cloudflare-research": "workspace:*",
     "@eliotr/cloudflare-workflows": "workspace:*",
     "@eliotr/contracts": "workspace:*",
+    "@eliotr/domain": "workspace:*",
     "@eliotr/research": "workspace:*",
     "zod": "4.4.3"
   }
