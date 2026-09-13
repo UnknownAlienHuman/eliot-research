@@ -20,6 +20,7 @@ import {
   createD1ResearchModelPricingQuotePort,
   createResearchReferenceManifestReader,
   createResearchReferenceManifestStore,
+  createFrozenResearchReferenceManifestService,
   createEvidenceFreezePostSynthesisContextReader,
   createEvidenceFreezeSynthesisContextReader,
   createEvidenceFreezeVerificationContextReader,
@@ -75,7 +76,9 @@ type SemanticPrincipal = Pick<
  */
 export interface ResearchSemanticSynthesisModelDependencies {
   readonly gateway: ResearchModelGatewayRuntimeConfig;
-  readonly prompt: ResearchModelPromptCompilerDependencies;
+  readonly prompt: Omit<ResearchModelPromptCompilerDependencies, "manifest_service"> & {
+    readonly manifest_service?: ResearchModelPromptCompilerDependencies["manifest_service"];
+  };
   readonly pricing?: ModelGatewayPricingPort;
   readonly spend_authorization: SpendAuthorizationReader;
   readonly prepare: EvidenceFreezeSynthesisModelDependencies["prepare"];
@@ -83,7 +86,9 @@ export interface ResearchSemanticSynthesisModelDependencies {
 
 export interface ResearchSemanticAuditModelDependencies {
   readonly gateway: ResearchModelGatewayRuntimeConfig;
-  readonly prompt: ResearchClaimAuditPromptDependencies;
+  readonly prompt: Omit<ResearchClaimAuditPromptDependencies, "manifest_service"> & {
+    readonly manifest_service?: ResearchClaimAuditPromptDependencies["manifest_service"];
+  };
   readonly pricing?: ModelGatewayPricingPort;
   readonly spend_authorization: SpendAuthorizationReader;
   readonly prepare: ResearchClaimAuditStageDependencies["prepare"];
@@ -248,7 +253,9 @@ function validateDependencies(input: ResearchSemanticCompositionDependencies): v
 
   requireGateway(input.model.synthesis.gateway, "model.synthesis.gateway");
   requireGateway(input.model.audit.gateway, "model.audit.gateway");
-  requireFunction(input.model.synthesis.prompt.manifest_service?.buildAndPersist, "model.synthesis.prompt.manifest_service.buildAndPersist");
+  if (input.model.synthesis.prompt.manifest_service !== undefined) {
+    requireFunction(input.model.synthesis.prompt.manifest_service.buildAndPersist, "model.synthesis.prompt.manifest_service.buildAndPersist");
+  }
   requireFunction(input.model.synthesis.prompt.build_manifest_input, "model.synthesis.prompt.build_manifest_input");
   requireFunction(input.model.synthesis.prompt.resolve_trusted_parameters, "model.synthesis.prompt.resolve_trusted_parameters");
   if (input.model.synthesis.pricing !== undefined) {
@@ -256,7 +263,9 @@ function validateDependencies(input: ResearchSemanticCompositionDependencies): v
   }
   requireFunction(input.model.synthesis.spend_authorization?.read, "model.synthesis.spend_authorization.read");
   requireFunction(input.model.synthesis.prepare, "model.synthesis.prepare");
-  requireFunction(input.model.audit.prompt.manifest_service?.buildAndPersist, "model.audit.prompt.manifest_service.buildAndPersist");
+  if (input.model.audit.prompt.manifest_service !== undefined) {
+    requireFunction(input.model.audit.prompt.manifest_service.buildAndPersist, "model.audit.prompt.manifest_service.buildAndPersist");
+  }
   requireFunction(input.model.audit.prompt.build_manifest_input, "model.audit.prompt.build_manifest_input");
   requireFunction(input.model.audit.prompt.resolve_trusted_parameters, "model.audit.prompt.resolve_trusted_parameters");
   if (input.model.audit.pricing !== undefined) {
@@ -292,6 +301,7 @@ export function createResearchSemanticComposition(
   const manifestStore = input.manifest.store ?? createResearchReferenceManifestReader({
     database: input.database, work_bucket: input.work_bucket, navigation: input.navigation,
   });
+  const manifestService = createFrozenResearchReferenceManifestService(manifestStore);
   const manifestFactory: EvidenceFreezeManifestStoreFactory = input.manifest.store_factory ?? {
     create: (context) => createResearchReferenceManifestStore({
       database: input.database, work_bucket: input.work_bucket, navigation: input.navigation, context,
@@ -371,7 +381,10 @@ export function createResearchSemanticComposition(
       operation_kind: "REPORT",
       deployment_environment: input.deployment_environment,
       gateway: input.model.synthesis.gateway,
-      prompt: input.model.synthesis.prompt,
+      prompt: {
+        ...input.model.synthesis.prompt,
+        manifest_service: input.model.synthesis.prompt.manifest_service ?? manifestService,
+      },
       pricing: input.model.synthesis.pricing ?? pricing,
       spend_authorization: input.model.synthesis.spend_authorization,
       prepare: input.model.synthesis.prepare,
@@ -410,7 +423,10 @@ export function createResearchSemanticComposition(
     work_bucket: input.work_bucket,
     deployment_environment: input.deployment_environment,
     gateway: input.model.audit.gateway,
-    prompt: input.model.audit.prompt,
+    prompt: {
+      ...input.model.audit.prompt,
+      manifest_service: input.model.audit.prompt.manifest_service ?? manifestService,
+    },
     pricing: input.model.audit.pricing ?? pricing,
     spend_authorization: input.model.audit.spend_authorization,
     input: auditInput,
