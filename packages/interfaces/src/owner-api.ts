@@ -9,6 +9,7 @@ import type {
 import type { AuthenticatedRequestContext } from "./http.js";
 import type { ErasureOwnerApi } from "./erasure-owner-api.js";
 import type { WorkspaceOwnerApi } from "./workspace-owner-api.js";
+import type { SourceNamespaceOwnerApi } from "./source-namespace-owner-api.js";
 
 export interface PrepareBundleUploadRequest {
   readonly manifest: NormalizedBundleManifest;
@@ -118,6 +119,8 @@ export interface BundleIngestRecovery {
 
 /** Owner-only raw transport. Source and storage authority are server-derived. */
 export interface RawFileCaptureRequest {
+  /** Optional namespace locator; current source ownership and policy remain server-derived. */
+  readonly source_namespace_id?: string;
   readonly idempotency_key: string;
   readonly original_file_name: string;
   readonly content_sha256: string;
@@ -249,7 +252,7 @@ export interface GoogleConnectionStatusResult {
   readonly state: "DISCONNECTED" | "AUTHORIZING" | "ACTIVE" | "DEGRADED" | "REAUTH_REQUIRED" | "REVOKED";
 }
 
-export interface OwnerApi extends ErasureOwnerApi, WorkspaceOwnerApi {
+export interface OwnerApi extends ErasureOwnerApi, WorkspaceOwnerApi, SourceNamespaceOwnerApi {
   sourceRevisions(context: AuthenticatedRequestContext, request: SourceRevisionsRequest): Promise<SourceRevisionsResult>;
   libraryReadiness(context: AuthenticatedRequestContext, request: LibraryReadinessRequest): Promise<LibraryReadinessResult>;
   discoverBundle(context: AuthenticatedRequestContext, request: DiscoverBundleUploadRequest): Promise<BundleIngestRecovery>;

@@ -34,6 +34,7 @@ export interface Env {
   readonly ELIOTR_RESEARCH_REPORT_POLICY_PROVENANCE_REF?: string;
   /** Installed owner-to-MCP import delegation, scoped to exact principals and namespace. */
   readonly ELIOTR_WORKSPACE_OWNER_BINDINGS_JSON?: string;
+  readonly ELIOTR_NAMESPACE_BOOTSTRAP_PROFILES_JSON?: string;
   readonly ACCESS_TEAM_DOMAIN?: string;
   readonly ACCESS_AUDIENCE?: string;
   readonly ACCESS_SERVICE_PRINCIPALS?: string;

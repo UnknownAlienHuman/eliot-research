@@ -50,6 +50,8 @@ import { ArtifactReadNotFoundError } from "./artifact-draft-http.js";
 import { createErasureOwnerService } from "./erasure-owner-service.js";
 import { readErasureOwnerStatus } from "./erasure-owner-status.js";
 import { prepareErasureForOwner } from "./erasure-owner-prepare.js";
+import { createSourceNamespaceOwnerService } from "./source-namespace-owner-service.js";
+import { parseNamespaceBootstrapProfiles } from "./source-namespace-bootstrap-profiles.js";
 import { createWorkspaceCandidateAdmissionService } from "./workspace-candidate-admission.js";
 import { createD1WorkspaceMcpCandidateStore } from "./workspace-mcp-candidate-store.js";
 import { parseWorkspaceOwnerBindings } from "./workspace-owner-authorization.js";
@@ -216,6 +218,10 @@ function ownerApi(env: Env): OwnerApi {
     },
   });
   const rawCapture = createRawCaptureService(env);
+  const sourceNamespaces = createSourceNamespaceOwnerService({
+    database: env.CORE_DB,
+    profiles: parseNamespaceBootstrapProfiles(env.ELIOTR_NAMESPACE_BOOTSTRAP_PROFILES_JSON),
+  });
   const convertRawMarkdown = createRawMarkdownOwnerConverter({
     database: env.CORE_DB, bucket: env.EVIDENCE_BUCKET, ...(env.AI === undefined ? {} : { ai: env.AI }), profile_generation: env.DEPLOYMENT_GENERATION,
     readCapture: (context, captureId) => rawCapture.readRawCaptureForServer(context, captureId),
@@ -223,6 +229,8 @@ function ownerApi(env: Env): OwnerApi {
   const ownerBase: Omit<OwnerApi, "admitRawFileToNormalized" | "getRawNormalizedAdmissionStatus" | "admitWorkspaceCandidate" | "workspaceCandidateStatus"> = {
     ...ingest,
     prepareErasure: (context, input) => prepareErasureForOwner(env, context, input),
+    sourceNamespaces: sourceNamespaces.list,
+    initializeSourceNamespace: sourceNamespaces.initialize,
     erase: (context, input) => createErasureOwnerService({ env, permission_ref: input.permission_ref }).execute(context, input.request),
     erasureStatus: (context, erasureRef) => readErasureOwnerStatus(env, context, erasureRef),
     captureRawFile: (context, request: RawFileCaptureRequest) => rawCapture.captureRawFile(context, request),

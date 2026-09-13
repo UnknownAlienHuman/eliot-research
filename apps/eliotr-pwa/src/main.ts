@@ -11,6 +11,7 @@ import { mountResearchRunPanel } from "./research-run-panel.js";
 import { mountRawFilePanel } from "./raw-file-panel.js";
 import { mountMcpClientDiagnosticPanel } from "./mcp-client-diagnostic-panel.js";
 import { mountErasurePanel } from "./erasure-panel.js";
+import { mountSourceNamespacePanel } from "./source-namespace-panel.js";
 import { escapeHtml } from "./html.js";
 import type { ResolvedEvidence, VersionedRef } from "@eliotr/contracts";
 
@@ -128,7 +129,7 @@ function render(health: SystemHealth | null): void {
             <article class="intro-card"><div class="intro-card-mark">◎</div><div><strong>Start with your sources</strong><p>Import a folder or choose an admitted source from the Library before opening its structure.</p><div class="intro-card-actions"><button class="button button--quiet workspace-jump" type="button" data-nav-target="#corpus-lens-card">Open Corpus Lens</button></div></div></article>
           </div>
           <div class="tool-stack">
-            <section class="tool-card tool-card--import"><div id="raw-upload"></div><div class="tool-divider"></div><div id="bundle-import"></div></section>
+            <section class="tool-card tool-card--import"><div id="source-namespace"></div><div class="tool-divider"></div><div id="raw-upload"></div><div class="tool-divider"></div><div id="bundle-import"></div></section>
             <section class="tool-card" id="corpus-lens-card"><div id="corpus-lens"></div></section>
             <details class="tool-card"><summary>Delete selected document</summary><div id="erasure"></div></details>
           </div>
@@ -173,6 +174,17 @@ function render(health: SystemHealth | null): void {
   const lens = app.querySelector<HTMLElement>("#corpus-lens");
   const importer = app.querySelector<HTMLElement>("#bundle-import");
   const rawUploadHost = app.querySelector<HTMLElement>("#raw-upload");
+  let selectedNamespace: string | undefined;
+  const namespaceSelected = (event: Event): void => {
+    const id = (event as CustomEvent<{ sourceNamespaceId?: unknown }>).detail?.sourceNamespaceId;
+    selectedNamespace = typeof id === "string" && /^[A-Za-z0-9][A-Za-z0-9._:@-]{0,255}$/u.test(id) ? id : undefined;
+  };
+  app.addEventListener("eliotr:namespace-selected", namespaceSelected);
+  const namespaceHost = app.querySelector<HTMLElement>("#source-namespace");
+  const namespacePanel = namespaceHost ? mountSourceNamespacePanel(namespaceHost, {
+    deploymentGeneration: () => app.dataset.healthGeneration,
+    healthReady: () => app.dataset.healthReady === "true",
+  }) : undefined;
   app.dataset.healthReady = health?.ready === true ? "true" : "false";
   renderGoogleConnector(health);
   const orientation = lens ? mountOrientationPanel(lens) : undefined;
@@ -366,7 +378,8 @@ function render(health: SystemHealth | null): void {
     return true;
   }) : undefined;
   const cleanups = [orientation, retrieval, researchRun, exhaustive, diagnostic, erasure, () => erasureHost?.removeEventListener("eliotr:source-erased", sourceErased), importer ? mountBundleImportPanel(importer) : undefined,
-    rawUploadHost ? mountRawFilePanel(rawUploadHost, { generation: () => app.dataset.healthGeneration, ready: () => app.dataset.healthReady === "true" }) : undefined,
+    namespacePanel, () => app.removeEventListener("eliotr:namespace-selected", namespaceSelected),
+    rawUploadHost ? mountRawFilePanel(rawUploadHost, { generation: () => app.dataset.healthGeneration, ready: () => app.dataset.healthReady === "true", sourceNamespace: () => selectedNamespace }) : undefined,
     libraryPanel];
   window.addEventListener("pagehide", () => { cleanups.forEach((cleanup) => cleanup?.()); googleOAuthCleanup?.(); googleOAuthCleanup = undefined; mountedGoogleTransport = null; evidenceRail?.dispose(); sourceChooserToggle?.removeEventListener("click", toggleSourceChooser); sourceChooserViewport.removeEventListener("change", handleSourceChooserViewport); rawUploadHost?.removeEventListener("eliotr:find-in-library", handleFindInLibrary); app.removeEventListener("library:scope-changed", clearPrivateEvidence); window.removeEventListener("offline", clearEvidenceOnEvent); window.removeEventListener("eliotr:authorization-cleared", clearEvidenceOnEvent); retrievalHost?.removeEventListener("retrieval:started", clearEvidenceOnQueryStart); researchRunHost?.removeEventListener("research:started", clearEvidenceOnQueryStart); exhaustiveHost?.removeEventListener("exhaustive:started", clearEvidenceOnQueryStart); app.removeEventListener("eliotr:health-lost", clearPrivateEvidence); window.removeEventListener("popstate", handleLocationChange); window.removeEventListener("hashchange", handleLocationChange); researchRunHost?.removeEventListener("research:evidence-selected", selectResearchEvidence); }, { once: true });
 }

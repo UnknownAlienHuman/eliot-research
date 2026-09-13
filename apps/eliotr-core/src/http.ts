@@ -49,6 +49,7 @@ import { readRawMarkdownConversionRequest } from "@eliotr/cloudflare-markdown";
 import { parseExhaustiveWorkflowJobsRequest } from "./research-query-http.js";
 import { readReadiness } from "./readiness.js";
 import { readOwnerErasurePreparation, readOwnerErasureRequest, readOwnerErasureRef } from "./erasure-owner-http.js";
+import { readOwnerNamespaceInitialization } from "./source-namespace-owner-http.js";
 import { readWorkspaceCandidateRequest, readWorkspaceAdmissionId } from "./workspace-owner-http.js";
 import { HttpRequestError, mapError } from "./http-errors.js";
 export { HttpRequestError } from "./http-errors.js";
@@ -324,6 +325,15 @@ async function dispatch(
       return apiResult(request, env, await application.services.owner.systemCapabilities(context));
     case "library.source.revisions": {
       return apiResult(request, env, await application.services.owner.sourceRevisions(context, parseSourceRevisionsRequest(url)));
+    }
+    case "library.namespaces.list": {
+      requireNoQuery(url);
+      return apiResult(request, env, await application.services.owner.sourceNamespaces(context));
+    }
+    case "library.namespaces.initialize": {
+      requireNoQuery(url);
+      return apiResult(request, env, await application.services.owner.initializeSourceNamespace(context,
+        await readOwnerNamespaceInitialization(request, match.route.maximum_request_bytes)));
     }
     case "library.erasure.prepare": {
       requireNoQuery(url);
