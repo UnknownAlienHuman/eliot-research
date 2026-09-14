@@ -5,14 +5,20 @@
 > boundaries are in [AGENTS.md](AGENTS.md).
 
 **Private owner workspace is deployed:** [eliotr-core.kleymor-metal.workers.dev](https://eliotr-core.kleymor-metal.workers.dev).
-The live owner path imports and reads TXT/Markdown documents, supports exact and lexical search,
-and runs a full scan of the selected scope. Owner research can execute all 17 stages with Cloudflare
-`@cf/zai-org/glm-5.3-flash`, save a DRAFT, reopen it from Research history, and verify its citations
-against current owner evidence readback. This demonstrates the deployed owner path without
-establishing full production readiness. Qualification renewal and policy/pricing expiry constraints
-are documented in [the local launch checkpoint](docs/implementation/local-launch.md). AI Search,
-Google and MCP integrations, Wiki, erasure, federation and broader production workloads remain
-unavailable.
+The live owner path imports and reads TXT, Markdown, PDF and DOCX documents, saves projects,
+supports exact and lexical search, and runs a full scan of the selected scope. Owner research
+executes the 18-stage workflow with Cloudflare `@cf/zai-org/glm-5.3-flash`, saves a DRAFT,
+reopens it from Research history, and verifies its citations against current owner evidence.
+The recorded two-document project run produced four `SUPPORTED` claim assessments while
+retaining incomplete scope coverage. Research drafts can also be saved as Wiki proposals,
+reviewed, published and reopened through the owner interface. The published Wiki page retains
+its coverage limits and the underlying artifact remains a DRAFT. See the
+[live document/project acceptance](docs/implementation/live-document-project-acceptance-2026-09-14.md).
+This establishes the bounded owner path, not full production readiness. Qualification renewal
+and policy/pricing expiry constraints are documented in
+[the local launch checkpoint](docs/implementation/local-launch.md). Managed semantic retrieval,
+Google/MCP admission, Wiki editing and the accepted-artifact lifecycle, erasure, federation, recovery and broader
+production workloads remain open.
 
 **Pluggable external research federation for ELIOT Memory OS.**
 

@@ -211,3 +211,45 @@ The recorded checks include green core and PWA TypeScript checks, a green PWA
 build, the remote D1 `EXPLAIN` of the emitted project UPDATE with 1,317 VM
 instructions, and one local SQLite `EXPLAIN` of the project update SQL. No
 broad test suite was used for this acceptance note.
+
+## Owner-reviewed Wiki publication
+
+Deployment `git-44ea8be` (Cloudflare version
+`3b7158f6-6ff2-4c4e-a0bb-e5b96289209c`) adds the owner publication API and UI.
+The existing proposal
+`wiki-proposal-5d2536e7ce210d96bfb92b764865bb72104a02618ff881d9:1`
+was opened, reviewed and published through the normal authenticated interface.
+D1 records `PUBLISHED` at `2026-09-14T07:43:53.976Z`; reopening the page in the UI
+returned the same report text with the Published badge and its limitations.
+
+The accepted Wiki revision is
+`research-wiki-092a593d6d61b82385988af0b6765a06dde1a22d98f5ee43:1`.
+Its immutable manifest was downloaded from R2 and independently matched SHA-256
+`9df2915b8525e0ed1289b7dbacd7a530c29d9704495a62b05cc20d15d81c4701`.
+The body retains SHA-256
+`c633bad3cac6d83cbf900439e30629423b29801bbd9090aab23acd1668230047`.
+The head references
+`wiki-outbox-a97cb1e531a0c03cb2f50af529a8deee3714754866583949`.
+The immutable owner-review receipt was also downloaded and matched SHA-256
+`164295e776c4c3b38af0296016b22d13f189d5d08a9a4d3982f6e26e60f1c5b1`.
+
+The same D1 publication transaction retained guard
+`wiki-guard-4463834e5246dece38dd4d0b52bc5c4968dfe621ab8fcecc`, observed at
+`2026-09-14T07:43:54.575Z` under `git-44ea8be`. It checks current owner grant,
+scope, source permissions, policy, deployment and purge/authority epochs before
+the head, revision, outbox and proposal effects commit. The review receipt
+records `coverage_complete: false`, `dependency_closure_complete: true` and
+`conflict_count: 0`. The original research artifact stays DRAFT with its
+UNRESOLVED statement label; manual publication does not assert complete coverage
+or promote the artifact to VERIFIED. The UI presents the old pending-review
+limitation as a historical draft note after publication.
+
+Core and PWA TypeScript checks and the PWA build passed. A single in-memory
+SQLite schema pass compiled all 58 migration files and the guard INSERT with
+its triggers. Migration `0059_wiki_owner_publication_guard.sql` was applied
+through the authenticated Cloudflare connector after Wrangler's D1 request
+returned account-authorization error 7403. Live schema readback confirmed 33
+columns, 10 triggers and two indexes; only then was the migration recorded in
+`d1_migrations`. Wrangler deployment and both R2 downloads succeeded. No broad
+test suite was run. This verifies this owner Wiki loop, not the remaining
+accepted-artifact, editing, erasure, recovery, federation or Rust launch scope.
