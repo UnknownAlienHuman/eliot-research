@@ -425,7 +425,7 @@ export function mountSourceNamespacePanel(
     statusMessage = `Workspace “${renewed.title}” access renewed until ${accessExpiryText(renewed.read_expires_at)}.`;
     render();
     dispatchSelection(renewed.source_namespace_id, renewed.title);
-    element.dispatchEvent(new Event("eliotr:health-updated", { bubbles: true }));
+    window.dispatchEvent(new Event("eliotr:raw-admission-completed"));
   };
 
   const applyCreated = (created: CreatedSourceNamespace, profile: SourceNamespaceProfile): void => {

@@ -30,6 +30,7 @@ import {
   renewResearchQualifications,
   type ResearchQualificationRenewalMarker,
 } from "./research-qualification-renewal.js";
+import { isResearchModelStage, researchStageBudgetLeaseMs } from "./research-runtime-duration.js";
 
 export interface ResearchWorkflowRunParams {
   readonly workflow_kind?: "RESEARCH";
@@ -158,7 +159,7 @@ function createServerPorts(
       }
       const grant = {
         receipt_ref: `w2-budget:${request.operation_id}:${request.stage}`,
-        expires_at_ms: Date.now() + 300_000,
+        expires_at_ms: Date.now() + researchStageBudgetLeaseMs(request.stage),
       };
       grants.set(key, grant);
       return grant;
@@ -303,7 +304,7 @@ export class ResearchWorkflow extends WorkflowEntrypoint<Env, ResearchWorkflowPa
         handler_generation: params.handler_generation,
         input_manifest,
       };
-      const receipt = await step.do(`w2-stage-${String(index).padStart(2, "0")}-${stage}`, async (): Promise<StageReceipt> => {
+      const executeStage = async (): Promise<StageReceipt> => {
         try {
           const outcome = await executor.execute(request, principal, handlers(stage));
           const text = JSON.stringify(outcome);
@@ -316,7 +317,16 @@ export class ResearchWorkflow extends WorkflowEntrypoint<Env, ResearchWorkflowPa
           }
           throw error;
         }
-      });
+      };
+      const stepName = `w2-stage-${String(index).padStart(2, "0")}-${stage}`;
+      const receipt = isResearchModelStage(stage)
+        ? await step.do(stepName, {
+          retries: { limit: 0, delay: 0 },
+          timeout: researchStageBudgetLeaseMs(stage),
+        }, executeStage)
+        : await step.do(stepName, {
+          retries: { limit: 0, delay: 0 },
+        }, executeStage);
       const expectedEngine = index === RESEARCH_WORKFLOW_STAGES.length - 1 ? "ENGINE_COMPLETED" : "CHECKPOINTED";
       if (receipt.engine_state !== expectedEngine || receipt.operation_id !== params.operation_id || receipt.stage !== stage) {
         failWorkflow("WORKFLOW_OUTPUT_CORRUPT");
