@@ -1,6 +1,7 @@
 import { IdentifierSchema, ResearchWorkflowStageSchema, type ResearchWorkflowStage } from "@eliotr/contracts";
 import { ApiRequestError, isAuthorizationLoss } from "./api.js";
 import { readResearchRunHistory, researchRunBody, readResearchArtifact, readReauthorizedResearchArtifact, readReauthorizedResearchArtifactSection, readResearchRunStatus, startResearchRun, type ResearchArtifactSectionCitationAuditClaim, type ResearchEngineStatus, type ResearchRunHistoryEntry, type ResearchRunHistoryView, type ResearchRunSavedDraft, type ResearchRunStatusView } from "./research-run-api.js"; import { readReauthorizedResearchArtifactSectionCitations } from "./research-run-reauthorization-api.js"; import { finishResearchStatusRead, readResearchStatusWithAuthorityRetry, shouldRetryResearchAuthority } from "./research-run-status-retry.js";
+import { downloadResearchDraftMarkdown, type ResearchMarkdownSection } from "./research-markdown-download.js";
 import type { ArtifactRevision } from "@eliotr/contracts";
 import type { LibrarySelectionContext } from "./library-readiness-api.js";
 const RESEARCH_STAGE_LABELS: Record<ResearchWorkflowStage, string> = {
@@ -383,7 +384,66 @@ export function mountResearchRunPanel(
     if (options.authorizationScopeSnapshotRef !== undefined) technicalField("Authorized scope", `${options.authorizationScopeSnapshotRef.id}:${options.authorizationScopeSnapshotRef.revision}`);
     technicalField("Status", artifact.status);
     technical.append(technicalSummary, technicalFields);
-    result.append(reportHead, technical);
+    const reportActions = document.createElement("div"); reportActions.className = "research-report-actions";
+    const download = document.createElement("button"); download.type = "button"; download.className = "button button--quiet"; download.textContent = "Download Markdown";
+    if (artifact.sections.length === 0) {
+      download.disabled = true; download.dataset.reportActionUnavailable = "true";
+      const empty = document.createElement("p"); empty.className = "research-download-status"; empty.textContent = "This draft has no report sections to download."; reportActions.append(empty);
+    }
+    download.onclick = () => {
+      if (options.renderSerial !== serial || controller !== undefined) return;
+      const local = new AbortController(); controller = local; setReportActionsDisabled(true); status.textContent = "Preparing Markdown download…";
+      void (async () => {
+        const sections: ResearchMarkdownSection[] = [];
+        for (const section of artifact.sections) {
+          if (options.renderSerial !== serial || deploymentGeneration() !== options.deploymentGeneration) return;
+          const readback = await readReauthorizedResearchArtifactSection(artifact.artifact_ref, section.section_ref, options.deploymentGeneration, local.signal);
+          if (readback.body_object_ref !== section.body_object_ref || readback.body_sha256 !== section.body_sha256) throw new ApiRequestError({ status: 502, code: "RESEARCH_ARTIFACT_SECTION_INVALID", message: "The report section changed during reauthorization" });
+          const citations = await readReauthorizedResearchArtifactSectionCitations(artifact.artifact_ref, section.section_ref, options.deploymentGeneration, local.signal, section.verification_receipt_ref);
+          if (citations.verification_receipt_ref !== section.verification_receipt_ref) throw new ApiRequestError({ status: 502, code: "RESEARCH_ARTIFACT_SECTION_INVALID", message: "The report verification receipt changed during reauthorization" });
+          sections.push({
+            sectionRef: citationRefKey(citations.section_ref),
+            originalScopeSnapshotRef: citationRefKey(citations.original_scope_snapshot_ref),
+            authorizationScopeSnapshotRef: citationRefKey(citations.authorization_scope_snapshot_ref),
+            body: decodeSectionBody(readback.bytes),
+            semanticVerification: citations.semantic_verification,
+            verificationReceiptRef: citations.verification_receipt_ref,
+            claims: citations.semantic_verification === "EXECUTED" ? citations.audit.claims.map((claim) => ({
+              claimText: claim.claim_text,
+              claimTextDigest: claim.claim_text_digest,
+              verdict: AUDIT_DISPOSITION_LABELS[claim.disposition],
+              supportRefs: claim.support_handle_refs.map(citationRefKey),
+              counterevidenceRefs: claim.counterevidence_handle_refs.map(citationRefKey),
+            })) : [],
+            audit: citations.semantic_verification === "EXECUTED" ? {
+              stageAttemptRef: citations.audit.stage_attempt_ref,
+              stageRequestSha256: citations.audit.stage_request_sha256,
+              outputSha256: citations.audit.output_sha256,
+              synthesisOutputSha256: citations.audit.synthesis_output_sha256,
+              normalizationBindingSha256: citations.audit.normalization_binding_sha256,
+              verifierRef: citations.audit.verifier_ref,
+              verifierSchemaGeneration: citations.audit.verifier_schema_generation,
+              modelReceiptRef: citations.audit.model_receipt_ref,
+            } : undefined,
+            citations: citations.cited_evidence.map((citation) => ({
+              originalHandleRef: citationRefKey(citation.original_handle_ref),
+              handleRef: citationRefKey(citation.handle_ref),
+              excerptSha256: citation.excerpt_sha256,
+            })),
+          });
+        }
+        if (options.renderSerial !== serial || deploymentGeneration() !== options.deploymentGeneration) return;
+        downloadResearchDraftMarkdown(citationRefKey(artifact.artifact_ref), artifact.created_at, sections);
+        status.textContent = "Research draft downloaded as Markdown.";
+      })()
+        .catch((error: unknown) => {
+          if (options.renderSerial !== serial || (error instanceof Error && error.name === "AbortError")) return;
+          if (error instanceof ApiRequestError && (isAuthorizationLoss(error) || error.status === 409 || error.status === 410)) { clearPrivate(); return; }
+          status.textContent = `Research draft could not be downloaded. ${message(error)}`;
+        })
+        .finally(() => finishReportAction(local, options.renderSerial));
+    };
+    reportActions.append(download); result.append(reportHead, technical, reportActions);
     const sections = document.createElement("ul"); sections.className = "research-report-sections";
     artifact.sections.forEach((section, ordinal) => {
       const item = document.createElement("li"); item.className = "research-report-section";
