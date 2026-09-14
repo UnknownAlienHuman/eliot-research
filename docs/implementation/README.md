@@ -60,6 +60,7 @@ from the tables below, so an unlisted file is a bug, not an omission you may ign
 | [cloudflare-usage-envelope.md](cloudflare-usage-envelope.md) | Usage envelope (80% guard), preflight admission receipt, SEALED/BLOCKED discipline. |
 | [local-launch.md](local-launch.md) | The owner loop that runs locally today, and its current limits. |
 | [live-document-project-acceptance-2026-09-14.md](live-document-project-acceptance-2026-09-14.md) | Deployed owner login, PDF/DOCX intake, project save, research draft, claim audit and citation readbacks. |
+| [audit-2026-09-14.md](audit-2026-09-14.md) | Dated deep audit: backend size and ceremony, D1 triggers, token-bound authority, gateway duplication, UI against NotebookLM, canonical conformance. |
 | [audit-2026-09-09.md](audit-2026-09-09.md) | Dated merged-work and Cloudflare OAuth readback audit, with the remaining launch blockers. |
 | [audit-2026-09-08.md](audit-2026-09-08.md) | Dated whole-repository audit against the documentation: what is consistent, what drifted, what is left. |
 | [deployment-audit-2026-09-04.md](deployment-audit-2026-09-04.md) | Dated readiness audit for a local-to-Cloudflare product trial. |
