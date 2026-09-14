@@ -210,10 +210,10 @@ function renderAuditPrompt(installedPrompt: string, audit: ResearchClaimAuditInp
       verifier_schema_generation: audit.verifier.verifier_schema_generation,
       deployment: audit.verifier.deployment,
     },
-    claims: audit.claims.claims.map((claim) => ({
-      claim_ref: claim.claim_ref,
+    claims: audit.claims.claims.map((claim, index) => ({
+      claim_ref: { id: `claim_${index + 1}`, revision: claim.claim_ref.revision },
+      claim_text_digest: claim.text_digest,
       text: claim.text,
-      text_digest: claim.text_digest,
       kind: claim.kind,
       span: claim.span,
       required_precision: claim.required_precision,
@@ -233,7 +233,7 @@ function renderAuditPrompt(installedPrompt: string, audit: ResearchClaimAuditInp
     source_verification: audit.verify.source_verification.resolved,
     audit_policy: audit.audit_policy,
   };
-  return `${installedPrompt}\n\nVerified claims and evidence for this audit:\n${canonicalEvidenceJson(verifiedAudit)}\n\nExact evidence excerpts are supplied once in the outer quoted evidence blocks; use their evidence_handle_ref values when applying the verified claim bindings.`;
+  return `${installedPrompt}\n\nVerified claims and evidence for this audit:\n${canonicalEvidenceJson(verifiedAudit)}\n\nFor each output observation, copy the request-local claim_ref object shown above (claim_1 through claim_N and its supplied revision). Never reproduce or guess the canonical claim identifier; the server resolves each alias against the expected claim set. Copy verifier identity, evidence_input_sha256, and claim_text_digest exactly. Exact evidence excerpts are supplied once in the outer quoted evidence blocks; use their evidence_handle_ref values when applying the verified claim bindings.`;
 }
 
 function stableAuditInput(audit: ResearchClaimAuditInputSnapshot): Record<string, unknown> {

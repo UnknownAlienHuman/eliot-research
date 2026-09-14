@@ -20,6 +20,7 @@ const MAX_NOTE_CHARS = 2048;
 const MAX_NOTES = 16;
 const MAX_CLAIMS = 512;
 const DIMENSION = z.enum(["PASS", "FAIL", "NOT_APPLICABLE"]);
+const CLAIM_ALIAS = /^claim_([1-9][0-9]{0,2})$/u;
 
 export const SemanticVerifierObservationSchema = z.object({
   claim_ref: VersionedRefSchema,
@@ -82,6 +83,41 @@ function uniqueRefs(refs: readonly VersionedRef[]): boolean {
   return new Set(refs.map(refKey)).size === refs.length;
 }
 
+/**
+ * Resolve the short request-local claim refs used by the owner prompt.  The
+ * order is server-owned: claim_1 maps to expected.claims[0], and so on.  A
+ * batch is either entirely aliased or entirely canonical; accepting a mixed
+ * shape would make an omitted alias indistinguishable from a legacy response.
+ */
+function resolveClaimAliases(
+  observations: SemanticVerifierObservation[],
+  expected: readonly MaterialClaim[],
+): SemanticVerifierObservation[] {
+  const canonicalKeys = new Set(expected.map((claim) => refKey(claim.claim_ref)));
+  const aliased = observations.filter((observation) => !canonicalKeys.has(refKey(observation.claim_ref)) &&
+    observation.claim_ref.id.startsWith("claim_"));
+  if (aliased.length === 0) return observations;
+  if (aliased.length !== observations.length) {
+    fail("SEMANTIC_VERIFIER_OUTPUT_BINDING_MISMATCH", "semantic verifier claim aliases are incomplete");
+  }
+
+  const seen = new Set<number>();
+  const resolved = observations.map((observation) => {
+    const match = CLAIM_ALIAS.exec(observation.claim_ref.id);
+    const index = match === null ? -1 : Number(match[1]) - 1;
+    const claim = index < 0 || index >= expected.length ? undefined : expected[index];
+    if (claim === undefined || observation.claim_ref.revision !== claim.claim_ref.revision || seen.has(index)) {
+      fail("SEMANTIC_VERIFIER_OUTPUT_BINDING_MISMATCH", "semantic verifier claim alias is unknown or duplicated");
+    }
+    seen.add(index);
+    return { ...observation, claim_ref: { ...claim.claim_ref } };
+  });
+  if (seen.size !== expected.length || [...Array(expected.length).keys()].some((index) => !seen.has(index))) {
+    fail("SEMANTIC_VERIFIER_OUTPUT_BINDING_MISMATCH", "semantic verifier claim aliases are missing");
+  }
+  return resolved;
+}
+
 function exactClaimSet(left: readonly SemanticVerifierObservation[], right: readonly MaterialClaim[]): boolean {
   if (left.length !== right.length) return false;
   if (new Set(left.map((observation) => refKey(observation.claim_ref))).size !== left.length) return false;
@@ -114,13 +150,14 @@ export function decodeSemanticVerifierBatch(
   try { value = parseSingleJsonContent(content); }
   catch (cause) { fail("SEMANTIC_VERIFIER_OUTPUT_INVALID", "semantic verifier batch is not JSON", cause); }
   const batch = parseBatch(value);
+  const claims = resolveClaimAliases(batch.claims, expected.claims);
   if (batch.verifier_ref !== expected.verifier_ref ||
       batch.verifier_schema_generation !== expected.verifier_schema_generation ||
       batch.evidence_input_sha256 !== expected.evidence_input_sha256 ||
-      !exactClaimSet(batch.claims, expected.claims)) {
+      !exactClaimSet(claims, expected.claims)) {
     fail("SEMANTIC_VERIFIER_OUTPUT_BINDING_MISMATCH", "semantic verifier batch is bound to another verifier or claim set");
   }
-  return batch;
+  return claims === batch.claims ? batch : { ...batch, claims };
 }
 
 export type SemanticAuditDimension =
