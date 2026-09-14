@@ -158,7 +158,7 @@ export function createProjectOwnerService(options: ProjectOwnerServiceOptions): 
     const responseJson = createReceiptJson(responseBase, input.source_ids);
     const responseSha = await sha256Utf8(responseJson);
     const sourceJson = JSON.stringify(input.source_ids);
-    const cte = eligibleSourceCte("?2", "?3", "?4");
+    const cte = eligibleSourceCte("?2", "?3", "?4", "?1");
     try {
       const results = await options.database.batch([
         options.database.prepare(
@@ -178,7 +178,7 @@ export function createProjectOwnerService(options: ProjectOwnerServiceOptions): 
           "WHERE p.project_id=?1 AND p.generation=1 AND g.principal_ref=?2 AND g.idempotency_key=?5",
         ).bind(projectId, owner.principal_ref, deploymentGeneration, clock.iso, key),
         options.database.prepare(
-          `${eligibleSourceCte("?2", "?3", "?4")} INSERT INTO project_source_membership(project_id,source_id,role,valid_from,valid_to,membership_generation) ` +
+          `${eligibleSourceCte("?2", "?3", "?4", "?1")} INSERT INTO project_source_membership(project_id,source_id,role,valid_from,valid_to,membership_generation) ` +
           "SELECT ?1,e.source_id,'member',?4,NULL,1 FROM eligible e JOIN project p ON p.project_id=?1 AND p.generation=1 " +
           "JOIN project_mutation_guard g ON g.project_id=p.project_id AND g.principal_ref=?3 AND g.idempotency_key=?5 " +
           "JOIN project_owner po ON po.project_id=p.project_id AND po.principal_ref=?3",
@@ -234,7 +234,7 @@ export function createProjectOwnerService(options: ProjectOwnerServiceOptions): 
     const responseJson = createReceiptJson(responseBase, input.source_ids);
     const responseSha = await sha256Utf8(responseJson);
     const sourceJson = JSON.stringify(input.source_ids);
-    const cte = eligibleSourceCte("?2", "?3", "?4");
+    const cte = eligibleSourceCte("?2", "?3", "?4", "?1");
     try {
       const results = await options.database.batch([
         options.database.prepare(
@@ -242,7 +242,7 @@ export function createProjectOwnerService(options: ProjectOwnerServiceOptions): 
           "AND EXISTS (SELECT 1 FROM project_owner po WHERE po.project_id=?1 AND po.principal_ref=?3) " +
           "AND NOT EXISTS (SELECT 1 FROM project_source_membership old WHERE old.project_id=?1 AND old.valid_to IS NULL " +
           "AND julianday(old.valid_from)>=julianday(?4)) " +
-          "AND " + currentMembershipsReadableGuard("?3", "?4") + " " +
+          "AND " + currentMembershipsReadableGuard() + " " +
           "AND (SELECT COUNT(*) FROM requested)=?8 AND (SELECT COUNT(*) FROM eligible)=?8",
         ).bind(projectId, sourceJson, owner.principal_ref, clock.iso, input.title, nextRevision, input.expected_revision, input.source_ids.length),
         options.database.prepare(
@@ -261,7 +261,7 @@ export function createProjectOwnerService(options: ProjectOwnerServiceOptions): 
           "AND EXISTS (SELECT 1 FROM project_owner WHERE project_id=?1 AND principal_ref=?4)",
         ).bind(projectId, clock.iso, nextRevision, owner.principal_ref, key),
         options.database.prepare(
-          `${eligibleSourceCte("?2", "?3", "?4")} INSERT INTO project_source_membership(project_id,source_id,role,valid_from,valid_to,membership_generation) ` +
+          `${eligibleSourceCte("?2", "?3", "?4", "?1")} INSERT INTO project_source_membership(project_id,source_id,role,valid_from,valid_to,membership_generation) ` +
           "SELECT ?1,e.source_id,'member',?4,NULL,?5 FROM eligible e JOIN project p ON p.project_id=?1 AND p.generation=?5 " +
           "JOIN project_mutation_guard g ON g.project_id=p.project_id AND g.principal_ref=?3 AND g.idempotency_key=?6 " +
           "JOIN project_owner po ON po.project_id=p.project_id AND po.principal_ref=?3",

@@ -118,9 +118,10 @@ function sameProjectionPin(
 }
 
 /**
- * When a single selected source produces no lexical hit, expose bounded real
- * projection sections as context. Every locator still goes through the
- * existing Evidence resolver, so this never turns an index row into proof.
+ * When selected sources produce no lexical hit, expose bounded real projection
+ * sections as context. Every locator still goes through the existing Evidence
+ * resolver, so this never turns an index row into proof or leaves the selected
+ * scope.
  */
 async function selectedDocumentFallbackCandidates(
   search: D1Database,
@@ -129,9 +130,7 @@ async function selectedDocumentFallbackCandidates(
   checkBudget: () => void,
 ): Promise<readonly LocatorCandidate[]> {
   const members = request.scope_snapshot.member_source_revision_refs;
-  if (members.length !== 1) return [];
-  const sourceRevisionRef = members[0];
-  if (sourceRevisionRef === undefined) return [];
+  if (members.length === 0) return [];
   let first: Awaited<ReturnType<typeof readD1SearchChannelReadback>>;
   try {
     checkBudget();
@@ -151,63 +150,71 @@ async function selectedDocumentFallbackCandidates(
       true,
     );
   }
-  const pin = first.pinned[0];
-  if (pin === undefined || first.missing.length !== 0 || first.stale.length !== 0) {
+  const memberSet = new Set(members);
+  const pinnedSet = new Set(first.pinned.map((pin) => pin.source_revision_ref));
+  if (first.pinned.length !== members.length || pinnedSet.size !== first.pinned.length ||
+      first.pinned.some((pin) => !memberSet.has(pin.source_revision_ref)) ||
+      first.missing.length !== 0 || first.stale.length !== 0) {
     throw new RetrievalQueryError(
       "RETRIEVAL_RESOLUTION_UNCERTAIN",
       "selected source projection changed during readback",
       true,
     );
   }
-  const fallbackLimit = Math.min(
-    request.requested_limit,
-    pin.item_count,
-    D1_SEARCH_LANE_MAX_LIMIT,
-  );
-  let result: D1Result<SelectedSourceProjectionRow>;
-  try {
-    checkBudget();
-    result = await search.prepare(
-      "SELECT p.item_key, p.source_revision_ref, p.canonical_section_id, p.content_sha256, " +
-        "p.projection_generation, s.normalized_start_byte, s.normalized_end_byte " +
-        "FROM projection_item p JOIN projection_span s ON s.item_key = p.item_key " +
-        "AND s.source_revision_ref = p.source_revision_ref " +
-        "AND s.projection_generation = p.projection_generation " +
-        "WHERE p.source_revision_ref = ?1 AND p.projection_generation = ?2 AND p.active = 1 " +
-        "ORDER BY s.normalized_start_byte, p.item_key LIMIT ?3",
-    ).bind(sourceRevisionRef, pin.projection_generation, fallbackLimit).all<SelectedSourceProjectionRow>();
-    checkBudget();
-  } catch (error) {
-    if (error instanceof RetrievalQueryError) throw error;
-    return selectedFallbackInvalid();
-  }
-  if (!result.success || !Array.isArray(result.results) || result.results.length !== fallbackLimit) {
-    return selectedFallbackInvalid();
-  }
-  const candidates = result.results.map((row, index) => {
-    const itemKey = selectedFallbackIdentity(row.item_key);
-    const source = selectedFallbackIdentity(row.source_revision_ref);
-    const section = selectedFallbackIdentity(row.canonical_section_id);
-    const digest = selectedFallbackDigest(row.content_sha256);
-    const generation = selectedFallbackIdentity(row.projection_generation);
-    if (source !== sourceRevisionRef || generation !== pin.projection_generation ||
-        typeof row.normalized_start_byte !== "number" || typeof row.normalized_end_byte !== "number" ||
-        !Number.isSafeInteger(row.normalized_start_byte) || !Number.isSafeInteger(row.normalized_end_byte) ||
-        row.normalized_start_byte < 0 || row.normalized_end_byte <= row.normalized_start_byte) {
+  const fallbackLimit = Math.min(request.requested_limit, D1_SEARCH_LANE_MAX_LIMIT);
+  const candidates: LocatorCandidate[] = [];
+  for (const [index, pin] of first.pinned.entries()) {
+    const remaining = fallbackLimit - candidates.length;
+    if (remaining <= 0) break;
+    const remainingSources = first.pinned.length - index;
+    const fairShare = Math.ceil(remaining / remainingSources);
+    const limit = Math.min(fairShare, pin.item_count, D1_SEARCH_LANE_MAX_LIMIT);
+    if (limit <= 0) continue;
+    let result: D1Result<SelectedSourceProjectionRow>;
+    try {
+      checkBudget();
+      result = await search.prepare(
+        "SELECT p.item_key, p.source_revision_ref, p.canonical_section_id, p.content_sha256, " +
+          "p.projection_generation, s.normalized_start_byte, s.normalized_end_byte " +
+          "FROM projection_item p JOIN projection_span s ON s.item_key = p.item_key " +
+          "AND s.source_revision_ref = p.source_revision_ref " +
+          "AND s.projection_generation = p.projection_generation " +
+          "WHERE p.source_revision_ref = ?1 AND p.projection_generation = ?2 AND p.active = 1 " +
+          "ORDER BY s.normalized_start_byte, p.item_key LIMIT ?3",
+      ).bind(pin.source_revision_ref, pin.projection_generation, limit).all<SelectedSourceProjectionRow>();
+      checkBudget();
+    } catch (error) {
+      if (error instanceof RetrievalQueryError) throw error;
       return selectedFallbackInvalid();
     }
-    return {
-      candidate_id: itemKey,
-      lane: "LEX" as const,
-      source_revision_ref: source,
-      canonical_section_id: section,
-      preview: "",
-      raw_score: 0.25,
-      rank: index + 1,
-      index_generation: generation,
-      metadata: { item_key: itemKey, content_sha256: digest, selected_document_fallback: true },
-    } satisfies LocatorCandidate;
-  });
+    if (!result.success || !Array.isArray(result.results) || result.results.length !== limit) {
+      return selectedFallbackInvalid();
+    }
+    for (const row of result.results) {
+      const itemKey = selectedFallbackIdentity(row.item_key);
+      const source = selectedFallbackIdentity(row.source_revision_ref);
+      const section = selectedFallbackIdentity(row.canonical_section_id);
+      const digest = selectedFallbackDigest(row.content_sha256);
+      const generation = selectedFallbackIdentity(row.projection_generation);
+      if (source !== pin.source_revision_ref || generation !== pin.projection_generation ||
+          typeof row.normalized_start_byte !== "number" || typeof row.normalized_end_byte !== "number" ||
+          !Number.isSafeInteger(row.normalized_start_byte) || !Number.isSafeInteger(row.normalized_end_byte) ||
+          row.normalized_start_byte < 0 || row.normalized_end_byte <= row.normalized_start_byte) {
+        return selectedFallbackInvalid();
+      }
+      candidates.push({
+        candidate_id: itemKey,
+        lane: "LEX",
+        source_revision_ref: source,
+        canonical_section_id: section,
+        preview: "",
+        raw_score: 0.25,
+        rank: candidates.length + 1,
+        index_generation: generation,
+        metadata: { item_key: itemKey, content_sha256: digest, selected_document_fallback: true },
+      });
+    }
+  }
   let settled: Awaited<ReturnType<typeof readD1SearchChannelReadback>>;
   try {
     checkBudget();
@@ -227,13 +234,12 @@ async function selectedDocumentFallbackCandidates(
       true,
     );
   }
-  const settledPin = settled.pinned[0];
-  if (
-    settledPin === undefined ||
-    settled.missing.length !== 0 ||
-    settled.stale.length !== 0 ||
-    !sameProjectionPin(pin, settledPin)
-  ) {
+  const settledBySource = new Map(settled.pinned.map((pin) => [pin.source_revision_ref, pin]));
+  if (settled.pinned.length !== first.pinned.length || settled.missing.length !== 0 || settled.stale.length !== 0 ||
+      first.pinned.some((pin) => {
+        const settledPin = settledBySource.get(pin.source_revision_ref);
+        return settledPin === undefined || !sameProjectionPin(pin, settledPin);
+      })) {
     throw new RetrievalQueryError(
       "RETRIEVAL_RESOLUTION_UNCERTAIN",
       "selected source projection changed during readback",

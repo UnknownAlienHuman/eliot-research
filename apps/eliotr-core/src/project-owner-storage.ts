@@ -25,8 +25,23 @@ export interface StoredProjectMembershipRow {
   readonly source_id: unknown;
 }
 
+function balancedAnd(predicates: readonly string[]): string {
+  let level = [...predicates];
+  while (level.length > 1) {
+    const next: string[] = [];
+    for (let index = 0; index < level.length; index += 2) {
+      const left = level[index];
+      if (left === undefined) continue;
+      const right = level[index + 1];
+      next.push(right === undefined ? left : `(${left} AND ${right})`);
+    }
+    level = next;
+  }
+  return level[0] ?? "1";
+}
+
 export function currentSourcePredicate(principal: string, observed: string): string {
-  return [
+  return balancedAnd([
     "r.source_revision_ref=s.head_rev",
     "r.purge_state='LIVE'",
     "o.source_namespace_id=s.source_namespace_id",
@@ -61,30 +76,37 @@ export function currentSourcePredicate(principal: string, observed: string): str
     "rp.client_class='owner_pwa'",
     "rp.state='ACTIVE'",
     "julianday(rp.expires_at)>julianday(" + observed + ")",
-  ].join(" AND ");
+  ]);
 }
 
-export function currentMembershipsReadableGuard(principal: string, observed: string): string {
+export function currentMembershipsReadableGuard(): string {
+  // Keep the authority predicate in the sibling CTE. Referencing its result
+  // here avoids nesting the full JSON/admission policy expression below the
+  // project UPDATE, which exceeds D1's expression-depth limit.
   return "NOT EXISTS (SELECT 1 FROM project_source_membership old " +
-    "WHERE old.project_id=?1 AND old.valid_to IS NULL AND NOT EXISTS (" +
-    "SELECT 1 FROM source s " +
-    "JOIN source_revision r ON r.source_id=s.source_id " +
-    "JOIN source_namespace_ownership o ON o.source_namespace_id=s.source_namespace_id " +
-    "JOIN source_admission_policy ap ON ap.source_namespace_id=o.source_namespace_id " +
-    "JOIN source_admission_decision d ON d.source_revision_ref=r.source_revision_ref " +
-    "JOIN scope_read_policy rp ON rp.source_namespace_id=s.source_namespace_id " +
-    `WHERE s.source_id=old.source_id AND ${currentSourcePredicate(principal, observed)}))`;
+    "WHERE old.project_id=?1 AND old.valid_to IS NULL " +
+    "AND NOT EXISTS (SELECT 1 FROM current_readable_sources readable " +
+    "WHERE readable.source_id=old.source_id))";
 }
 
-export function eligibleSourceCte(sourceJson: string, principal: string, observed: string): string {
-  return `WITH requested AS (SELECT value AS source_id FROM json_each(${sourceJson})), eligible AS (` +
-    "SELECT DISTINCT q.source_id FROM requested q JOIN source s ON s.source_id=q.source_id " +
+export function eligibleSourceCte(sourceJson: string, principal: string, observed: string, projectId?: string): string {
+  // Factor the complete authority/readability predicate once. The
+  // mutation statements only join this bounded projection, keeping their
+  // nested expression depth below the Cloudflare D1 limit.
+  const projectCandidates = projectId === undefined ? "NULL" : projectId;
+  return `WITH requested AS (SELECT value AS source_id FROM json_each(${sourceJson})), candidate_source_ids AS (` +
+    "SELECT source_id FROM requested UNION SELECT old.source_id FROM project_source_membership old " +
+    `WHERE old.project_id=${projectCandidates} AND old.valid_to IS NULL), current_readable_sources AS (` +
+    "SELECT DISTINCT s.source_id FROM candidate_source_ids candidate " +
+    "JOIN source s ON s.source_id=candidate.source_id " +
     "JOIN source_revision r ON r.source_id=s.source_id " +
     "JOIN source_namespace_ownership o ON o.source_namespace_id=s.source_namespace_id " +
     "JOIN source_admission_policy ap ON ap.source_namespace_id=o.source_namespace_id " +
     "JOIN source_admission_decision d ON d.source_revision_ref=r.source_revision_ref " +
     "JOIN scope_read_policy rp ON rp.source_namespace_id=s.source_namespace_id " +
-    `WHERE ${currentSourcePredicate(principal, observed)})`;
+    `WHERE ${currentSourcePredicate(principal, observed)}), eligible AS (` +
+    "SELECT DISTINCT q.source_id FROM requested q JOIN current_readable_sources readable " +
+    "ON readable.source_id=q.source_id)";
 }
 
 function sourceReadJoins(principal: string, observed: string): string {
