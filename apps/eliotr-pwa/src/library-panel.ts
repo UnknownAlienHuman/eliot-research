@@ -32,6 +32,12 @@ export function mountLibraryPanel(element: HTMLElement, onSelectSource: (id: str
   let readinessController: AbortController | undefined; let readinessSerial = 0;
   let project: string | undefined; let page: LibraryPage | undefined;
   let closeVersions: (() => void) | undefined;
+  const dispatchScopeChange = (reason: "project-filter" | "source-currentness", projectId?: string, title?: string): void => {
+    element.dispatchEvent(new CustomEvent("library:scope-changed", {
+      bubbles: true,
+      detail: { reason, ...(projectId === undefined ? {} : { projectId }), ...(title === undefined ? {} : { title }) },
+    }));
+  };
   const clearReadiness = (message = "Select a source to check active search readiness."): void => {
     readinessSerial++; readinessController?.abort(); readinessController = undefined;
     readiness.replaceChildren(); if (message) readiness.textContent = message;
@@ -53,7 +59,7 @@ export function mountLibraryPanel(element: HTMLElement, onSelectSource: (id: str
       status.textContent = `${received.generation} · ${received.sources.length} sources on this page. Not a completeness or index-readiness claim.`;
       for (const button of result.querySelectorAll<HTMLButtonElement>("[data-project]")) button.onclick = () => {
         const selected = received.projects[Number(button.dataset.project)];
-        if (selected && mine === serial && !disposed) { project = selected.id; element.dispatchEvent(new CustomEvent("library:scope-changed", { bubbles: true })); void load(); }
+        if (selected && mine === serial && !disposed) { project = selected.id; dispatchScopeChange("project-filter", selected.id, selected.title); void load(); }
       };
       for (const button of result.querySelectorAll<HTMLButtonElement>("[data-versions]")) button.onclick = () => {
         const selected = received.sources[Number(button.dataset.versions)];
@@ -104,7 +110,7 @@ export function mountLibraryPanel(element: HTMLElement, onSelectSource: (id: str
       if (mine !== readinessSerial || pageSerial !== serial || disposed) return;
       if (error instanceof ApiRequestError &&
           (error.code === "LIBRARY_DEPLOYMENT_CHANGED" || error.code === "LIBRARY_SOURCE_HEAD_CHANGED")) {
-        element.dispatchEvent(new CustomEvent("library:scope-changed", { bubbles: true }));
+        dispatchScopeChange("source-currentness");
         return;
       }
       readiness.textContent = error instanceof ApiRequestError
@@ -112,13 +118,14 @@ export function mountLibraryPanel(element: HTMLElement, onSelectSource: (id: str
         : "Active readiness could not be checked. Search can still be retried after refresh.";
     }
   };
-  const openProject = (projectId: string): void => {
+  const openProject = (projectId: string, title?: string): void => {
     if (disposed) return;
     project = projectId;
-    element.dispatchEvent(new CustomEvent("library:scope-changed", { bubbles: true }));
+    const observedTitle = title ?? page?.projects.find((item) => item.id === projectId)?.title;
+    dispatchScopeChange("project-filter", projectId, observedTitle);
     void load();
   };
-  first.onclick = () => { project = undefined; element.dispatchEvent(new CustomEvent("library:scope-changed", { bubbles: true })); void load(); };
+  first.onclick = () => { project = undefined; dispatchScopeChange("project-filter"); void load(); };
   next.onclick = () => { const cursor = page?.next_cursor; if (cursor) void load(cursor); };
   const offline = () => { clear("Offline. Private Library data cleared."); onSelectSource(""); };
   const denied = () => { clear("Authorization changed. Sign in or renew the read policy, then refresh."); onSelectSource(""); };
@@ -131,5 +138,5 @@ export function mountLibraryPanel(element: HTMLElement, onSelectSource: (id: str
     window.removeEventListener("offline", offline); window.removeEventListener("eliotr:authorization-cleared", denied);
     window.removeEventListener("eliotr:raw-admission-completed", admissionCompleted);
     window.removeEventListener("eliotr:source-erased", admissionCompleted); };
-  return Object.assign(cleanup, { clearPrivate: () => { clear("Library data cleared. Refresh to read permitted sources."); onSelectSource(""); }, openProject });
+  return Object.assign(cleanup, { clearPrivate: () => { project = undefined; clear("Library data cleared. Refresh to read permitted sources."); onSelectSource(""); }, openProject });
 }

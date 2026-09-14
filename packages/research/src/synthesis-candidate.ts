@@ -1,6 +1,7 @@
 import { IdentifierSchema, VersionedRefSchema, type VersionedRef } from "@eliotr/contracts";
 import { z } from "zod";
 import type { MaterialClaim } from "./claim-audit.js";
+import { parseSingleJsonContent } from "./json-content.js";
 
 const SECTION_PROTOCOL = "eliotr.research.synthesis-section-candidate.v1" as const;
 const PROTOCOL = "eliotr.research.synthesis-claims-candidate.v2" as const;
@@ -114,6 +115,15 @@ function validateRawCandidateStrings(value: unknown): void {
   });
 }
 
+/**
+ * Accept plain JSON or one complete JSON code fence, while keeping parsing
+ * document-shaped and rejecting prose or partial/multiple fences.
+ */
+function parseCandidateJson(content: string): unknown {
+  try { return parseSingleJsonContent(content); }
+  catch (error) { return fail("SYNTHESIS_CLAIMS_CANDIDATE_INPUT_INVALID", "synthesis claims candidate is not JSON", error); }
+}
+
 function parseCandidate(value: unknown): SynthesisClaimsCandidateV2 {
   validateRawCandidateStrings(value);
   const parsed = SynthesisClaimsCandidateV2Schema.safeParse(value);
@@ -134,10 +144,7 @@ export function decodeSynthesisSectionCandidateV1(content: string): SynthesisSec
 }
 
 export function decodeSynthesisClaimsCandidateV2(content: string): SynthesisClaimsCandidateV2 {
-  let value: unknown;
-  try { value = JSON.parse(content) as unknown; }
-  catch (error) { return fail("SYNTHESIS_CLAIMS_CANDIDATE_INPUT_INVALID", "synthesis claims candidate is not JSON", error); }
-  return parseCandidate(value);
+  return parseCandidate(parseCandidateJson(content));
 }
 
 function parseCandidateV3(value: unknown): SynthesisClaimsCandidateV3 {
@@ -151,17 +158,12 @@ function parseCandidateV3(value: unknown): SynthesisClaimsCandidateV3 {
 }
 
 export function decodeSynthesisClaimsCandidateV3(content: string): SynthesisClaimsCandidateV3 {
-  let value: unknown;
-  try { value = JSON.parse(content) as unknown; }
-  catch (error) { return fail("SYNTHESIS_CLAIMS_CANDIDATE_INPUT_INVALID", "synthesis claims candidate is not JSON", error); }
-  return parseCandidateV3(value);
+  return parseCandidateV3(parseCandidateJson(content));
 }
 
 /** Decodes either the legacy v2 candidate or the server-span v3 candidate. */
 export function decodeSynthesisClaimsCandidate(content: string): SynthesisClaimsCandidate {
-  let value: unknown;
-  try { value = JSON.parse(content) as unknown; }
-  catch (error) { return fail("SYNTHESIS_CLAIMS_CANDIDATE_INPUT_INVALID", "synthesis claims candidate is not JSON", error); }
+  const value = parseCandidateJson(content);
   if (typeof value === "object" && value !== null && !Array.isArray(value) &&
       (value as Record<string, unknown>).schema === PROTOCOL_V3) return parseCandidateV3(value);
   return parseCandidate(value);

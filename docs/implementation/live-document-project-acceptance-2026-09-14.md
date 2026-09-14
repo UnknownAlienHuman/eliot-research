@@ -1,11 +1,10 @@
 # Live document and project acceptance — 2026-09-14
 
-The later owner workspace deployment is `d54539f`, Cloudflare version
-`2d2bf002-5d17-4a3e-83da-8c65583f71ec`. Earlier evidence below was collected at
-generation `git-e027ebe`, deployment version `eb28deea-e5cd-422a-8a2e-8b3c06919b9a`,
-and remains historical. This note records the bounded document and first
-project slice evidence without claiming that the later changes solved either
-the project update or research workflow.
+The current owner workspace deployment is generation `git-2c160ce`, Cloudflare
+version `4800872e-234f-4a24-8af5-5e2c2a144191`. Earlier evidence below was
+collected under prior generations and remains historical. This note records
+the bounded document, project, and research evidence; the project save is now
+live, while no successful research result is claimed.
 
 ## Recorded implementation slices
 
@@ -13,15 +12,27 @@ the project update or research workflow.
 * `6cbed7b` — project title `oninput` handling.
 * `7a2c34a` — the project SQL missing-`AND` and membership-witness fixes,
   together with the owner session panel changes.
+* `2c160ce` — the bounded project-update SQL expression-depth fix and the
+  live project update readback recorded below.
 
 ## Live evidence
 
-* Empty project `project-cf376e32c6b61ca3be479e341db27110370e20d62355b0a2`
-  was created successfully at `2026-09-14T04:20:08.839Z`, revision 1.
-  Its first title update returned `PROJECT_SETTLEMENT_UNCERTAIN` and the
-  database remains at revision 1 with no active memberships and no update
-  receipt. The later failure tail was D1 `Expression tree too large (max depth
-  100)`; the project update fix remains pending.
+* Historical project state: empty project
+  `project-cf376e32c6b61ca3be479e341db27110370e20d62355b0a2` was created
+  successfully at `2026-09-14T04:20:08.839Z`, revision 1. Its first title
+  update returned `PROJECT_SETTLEMENT_UNCERTAIN`; at that point the database
+  remained at revision 1 with no active memberships and no update receipt.
+  The failure tail was D1 `Expression tree too large (max depth 100)`.
+* Live project update on deployment `git-2c160ce` succeeded from the owner UI:
+  title `Орбита · исследование документов`, revision 2, and two active
+  memberships for the admitted DOCX and PDF sources. The UPDATE receipt was
+  recorded at `2026-09-14T05:42:11.571Z` with deployment generation
+  `git-2c160ce`. The diagnostic tail also logged `ProjectOwnerError` because
+  the batch did not settle exactly while D1 metadata included trigger changes;
+  receipt readback recovered the successful result.
+* The final remote D1 `EXPLAIN` of the emitted UPDATE succeeded with
+  `success: true`, `errors: []`, and 1,317 VM instructions. Core TypeScript
+  typecheck was green.
 * PDF conversion operation
   `55fefa4ccb4711372300eacf96a421148fd59f2c4bfe085803435ebc103e064c`
   is `COMPLETE`, with 731 bytes and SHA-256
@@ -63,14 +74,16 @@ lifecycle-event fix, a reload showed three sources. No second live
 expired-workspace renewal has been observed after that deployment. The owner
 browser login succeeded through Gmail OTP; no Google IdP integration was
 present, so this was a one-time PIN flow. This does not change the pending
-project update state above.
+project update evidence above.
 
 ## Current deployment and limits
 
-Deployment `d54539f` carries the reviewed W2 configuration `retries.limit: 0`
-and a 600-second model-stage lease. No new run has yet produced a persisted W2
-readback under this deployment. These facts describe execution policy; they do
-not prove a successful project update or research result.
+Deployment `git-2c160ce` (Cloudflare version
+`4800872e-234f-4a24-8af5-5e2c2a144191`) carries the reviewed W2 configuration
+`retries.limit: 0` and a 600-second model-stage lease. The project save above is
+the live D1 readback for this deployment. No new run has yet produced a
+persisted W2 readback under it. These facts describe execution policy; they do
+not prove a successful research result.
 
 ## Owner namespace renewal contract
 
@@ -83,11 +96,24 @@ and schema-readiness path without an orientation-policy readiness gate.
 
 ## Research result boundary
 
-A subsequent research run failed during the first `VERIFY` at
+A historical research run failed during the first `VERIFY` at
 `2026-09-14T05:05:42Z` with `WORKFLOW_OUTPUT_CORRUPT`, before `AUDIT`. Retries
 were later surfaced as a budget stop, masking the original reason. Only the
 SYNTHESIS model call ran (about nine seconds); its output states contained no
 evidence. No successful research result or saved research DRAFT is claimed.
+
+The latest run `5917638b1d7ea333eec733aaba611b665e6bb95855afaa3e` on
+`git-2c160ce` read the entire library scope: three documents and a pack with
+14 resolved excerpts (DOCX 3, PDF 4, README 7), with coverage marked
+`SAMPLED`. SYNTHESIS succeeded from `2026-09-14T05:45:00.307Z` through
+`2026-09-14T05:45:22.748Z`; its 3,103-byte output has SHA-256
+`009cf7c8f8ade30de2ea2d18f0f8fe9f9af98a9e40a2bc21a5bfe41c507a55fb` and
+contained the actual `Орбита` facts and citations. The response was wrapped
+in one JSON Markdown fence. VERIFY then failed from `2026-09-14T05:45:23.540Z`
+through `2026-09-14T05:45:25.609Z` with `OUTPUT_CORRUPT` after exactly one
+attempt (`retries: 0`), so there was no AUDIT or saved DRAFT. The runtime
+normalizer for this fenced response remains pending. The prior single-document
+fallback issue was fixed; this run used all 14 resolved handles.
 
 The recorded checks were TypeScript typecheck, package build, and one local
 SQLite `EXPLAIN` of the project update SQL. No broad test suite was used for

@@ -374,7 +374,16 @@ function render(health: SystemHealth | null): void {
   const clearEvidenceOnEvent = (): void => clearPrivateEvidence();
   const clearEvidenceOnAuthorization = (): void => clearPrivateEvidence("Authorization changed. Sign in again or renew the read policy, then try again.");
   const clearEvidenceOnHealthLost = (): void => clearPrivateEvidence();
-  const clearEvidenceOnScopeChange = (): void => clearPrivateEvidence();
+  const clearEvidenceOnScopeChange = (event: Event): void => {
+    const detail = (event as CustomEvent<{ readonly reason?: unknown; readonly projectId?: unknown; readonly title?: unknown }>).detail;
+    if (detail?.reason === "project-filter") {
+      const projectId = typeof detail.projectId === "string" && detail.projectId.length > 0 ? detail.projectId : undefined;
+      const title = projectId !== undefined && typeof detail.title === "string" && detail.title.length > 0 ? detail.title : undefined;
+      researchRun?.setProject(projectId, title);
+      return;
+    }
+    clearPrivateEvidence();
+  };
   const clearResearchConfiguration = (): void => researchConfiguration?.clearPrivate();
   const refreshResearchConfiguration = (): void => researchConfiguration?.refresh();
   const refreshWiki = (): void => wiki?.refresh();

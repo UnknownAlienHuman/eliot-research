@@ -160,8 +160,10 @@ export function createOwnerScopeAuthority(db: D1Database, context: EvidenceAcces
           "AND julianday(t.valid_from)<=julianday(?2) AND (t.valid_to IS NULL OR julianday(t.valid_to)>julianday(?2)))");
         binds.push(atom.tag); break;
       case "PROJECT":
-        project = await db.prepare("SELECT project_id, generation, default_disclosure, default_source_policy_ref, " +
-          "retention_policy_ref FROM project WHERE project_id=?1").bind(atom.project_id).first();
+        project = await db.prepare("SELECT p.project_id, p.generation, p.default_disclosure, p.default_source_policy_ref, " +
+          "p.retention_policy_ref FROM project p WHERE p.project_id=?1 AND EXISTS " +
+          "(SELECT 1 FROM project_owner po WHERE po.project_id=p.project_id AND po.principal_ref=?2)")
+          .bind(atom.project_id, access.principal_ref).first();
         if (!project) orientationFail("ORIENTATION_PROJECT_UNAVAILABLE", 404);
         filters.push("EXISTS (SELECT 1 FROM project_source_membership m WHERE m.source_id=s.source_id AND m.project_id=?3 " +
           "AND julianday(m.valid_from)<=julianday(?2) AND (m.valid_to IS NULL OR julianday(m.valid_to)>julianday(?2)))");

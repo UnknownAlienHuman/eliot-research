@@ -382,12 +382,18 @@ async function sha256(bytes: Uint8Array): Promise<string> {
   return [...new Uint8Array(await crypto.subtle.digest("SHA-256", owned))].map((part) => part.toString(16).padStart(2, "0")).join("");
 }
 
-export function researchRunBody(query: string, sourceIds: readonly string[], maxResults = MAX_RESULTS): string {
+export function researchRunBody(query: string, sourceIds: readonly string[], maxResults = MAX_RESULTS, projectId?: string): string {
   if (typeof query !== "string" || query.trim().length === 0 || new TextEncoder().encode(query).byteLength > 1024 || /[\u0000-\u001f\u007f]/u.test(query)) invalid("query is invalid");
   if (!Number.isSafeInteger(maxResults) || maxResults < 1 || maxResults > MAX_RESULTS) invalid("max_results is invalid");
   if (sourceIds.length > 64 || new Set(sourceIds).size !== sourceIds.length) invalid("source scope is invalid");
   for (const sourceId of sourceIds) identifier(sourceId, "source id");
-  const scope = sourceIds.length ? { kind: "SELECTED_SOURCES" as const, source_ids: [...sourceIds] } : { kind: "GLOBAL_LIBRARY" as const };
+  if (projectId !== undefined) {
+    if (sourceIds.length !== 0) invalid("project scope cannot include source ids");
+    identifier(projectId, "project id");
+  }
+  const scope = projectId !== undefined
+    ? { kind: "PROJECT" as const, project_id: projectId }
+    : sourceIds.length ? { kind: "SELECTED_SOURCES" as const, source_ids: [...sourceIds] } : { kind: "GLOBAL_LIBRARY" as const };
   if (!ScopeExpressionSchema.safeParse(scope).success) invalid("source scope is invalid");
   return JSON.stringify({ query, product: "RESEARCH", scope_expression: scope, literals: [], evidence_grade: "E0", budget_ref: "research-budget-v1", max_results: maxResults });
 }

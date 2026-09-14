@@ -12,6 +12,7 @@ import {
 } from "@eliotr/contracts";
 import { z } from "zod";
 import type { MaterialClaim } from "./claim-audit.js";
+import { parseSingleJsonContent } from "./json-content.js";
 
 const PROTOCOL = "eliotr.research.semantic-verifier-observation.v1" as const;
 const MAX_OUTPUT_BYTES = 256 * 1024;
@@ -110,7 +111,7 @@ export function decodeSemanticVerifierBatch(
     fail("SEMANTIC_VERIFIER_OUTPUT_INVALID", "semantic verifier batch exceeds its byte bound");
   }
   let value: unknown;
-  try { value = JSON.parse(content) as unknown; }
+  try { value = parseSingleJsonContent(content); }
   catch (cause) { fail("SEMANTIC_VERIFIER_OUTPUT_INVALID", "semantic verifier batch is not JSON", cause); }
   const batch = parseBatch(value);
   if (batch.verifier_ref !== expected.verifier_ref ||

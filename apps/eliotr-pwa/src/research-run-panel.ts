@@ -166,12 +166,12 @@ export function mountResearchRunPanel(
   deploymentGeneration: () => string | undefined,
   healthReady: () => boolean = () => false,
   researchConfigurationReady: () => boolean = () => true,
-): (() => void) & { clearPrivate(notice?: string): void; refreshAvailability(): void; selectSource(id: string, context?: LibrarySelectionContext): void } {
+): (() => void) & { clearPrivate(notice?: string): void; refreshAvailability(): void; selectSource(id: string, context?: LibrarySelectionContext): void; setProject(projectId?: string, title?: string): void } {
   element.innerHTML = `<div class="workflow-head"><div><span class="eyebrow">Research run</span><h2>Prepare a research run</h2></div><span class="workflow-badge" data-run-badge>${idleBadgeText(healthReady(), researchConfigurationReady())}</span></div>
     <p class="workflow-status workflow-progress-summary" data-run-progress aria-live="polite">${idleProgressText(healthReady(), researchConfigurationReady())}</p>
     <p class="workflow-copy">Start research and open a saved draft when one is available.</p>
     <form><label>Question<textarea name="query" rows="5" maxlength="4096" autocomplete="off" required placeholder="Ask a research question" style="width:100%;min-height:120px;padding:10px 11px;border:1px solid var(--line);border-radius:8px;background:var(--surface);color:var(--ink);font:inherit;font-size:13px;resize:vertical"></textarea></label>
-    <label>Scope<select name="scope"><option value="library">Entire authorized Library</option><option value="selected" disabled>Selected source</option></select></label>
+    <label>Scope<select name="scope"><option value="library">Entire authorized Library</option><option value="project" disabled>Selected project</option><option value="selected" disabled>Selected source</option></select></label>
     <div class="workflow-actions"><button type="submit" class="button">Start research</button><button type="button" class="button button--quiet" data-run-refresh disabled>Refresh status</button></div></form>
     <section class="workflow-recovery" aria-labelledby="research-history-title"><div class="workflow-recovery-head"><div><span class="eyebrow">Saved research</span><h3 id="research-history-title">Recent research</h3></div><button type="button" class="button button--quiet" data-research-history-refresh disabled>Refresh</button></div>
       <p class="workflow-recovery-status" data-research-history-status>Recent research appears after the current session is ready.</p><div class="workflow-recovery-list" data-research-history-list></div></section>
@@ -183,15 +183,16 @@ export function mountResearchRunPanel(
   const progress = element.querySelector<HTMLElement>("[data-run-progress]");
   const query = element.querySelector<HTMLTextAreaElement>('textarea[name="query"]');
   const scope = element.querySelector<HTMLSelectElement>('select[name="scope"]');
+  const projectOption = scope?.querySelector<HTMLOptionElement>('option[value="project"]');
   const selectedOption = scope?.querySelector<HTMLOptionElement>('option[value="selected"]');
   const submit = element.querySelector<HTMLButtonElement>('button[type="submit"]'); const refresh = element.querySelector<HTMLButtonElement>("[data-run-refresh]");
   const workflowInput = element.querySelector<HTMLInputElement>("[data-workflow-id]"); const recover = element.querySelector<HTMLButtonElement>("[data-recover]");
   const status = element.querySelector<HTMLElement>('[role="status"]'); const result = element.querySelector<HTMLElement>("[data-run-result]");
   const historyRefresh = element.querySelector<HTMLButtonElement>("[data-research-history-refresh]"); const historyStatus = element.querySelector<HTMLElement>("[data-research-history-status]");
   const historyList = element.querySelector<HTMLElement>("[data-research-history-list]");
-  if (!form || !badge || !progress || !query || !scope || !selectedOption || !submit || !refresh || !workflowInput || !recover || !status || !result || !historyRefresh || !historyStatus || !historyList) throw new Error("Research run panel is incomplete");
+  if (!form || !badge || !progress || !query || !scope || !projectOption || !selectedOption || !submit || !refresh || !workflowInput || !recover || !status || !result || !historyRefresh || !historyStatus || !historyList) throw new Error("Research run panel is incomplete");
   let serial = 0; let controller: AbortController | undefined;
-  let workflowId: string | undefined; let workflowGeneration: string | undefined; let selectedSourceId: string | undefined;
+  let workflowId: string | undefined; let workflowGeneration: string | undefined; let selectedSourceId: string | undefined; let selectedProjectId: string | undefined;
   let previousBody = ""; let idempotencyKey = ""; let progressTimer: number | undefined;
   let lastExecutionState: ResearchRunStatusView["execution_state"] | undefined; let lastEngineStatus: ResearchEngineStatus | undefined; let lastAnswerAvailability: ResearchRunStatusView["answer"]["availability"] | undefined;
   let historyController: AbortController | undefined; let historySerial = 0; let historyGeneration: string | undefined; let historyView: Awaited<ReturnType<typeof readResearchRunHistory>> | undefined;
@@ -249,7 +250,7 @@ export function mountResearchRunPanel(
   };
   const clearPrivate = (notice = "Private research state cleared. Reconnect before starting or loading a run."): void => {
     stop(); clearHistory(); workflowId = undefined; workflowGeneration = undefined; selectedSourceId = undefined; previousBody = ""; idempotencyKey = "";
-    workflowInput.value = ""; result.replaceChildren(); result.hidden = true; query.value = ""; scope.value = "library"; selectedOption.disabled = true;
+    workflowInput.value = ""; result.replaceChildren(); result.hidden = true; query.value = ""; scope.value = "library"; projectOption.disabled = true; projectOption.textContent = "Selected project"; selectedOption.disabled = true; selectedProjectId = undefined;
     badge.textContent = idleBadgeText(healthReady(), researchConfigurationReady()); progress.textContent = idleProgressText(healthReady(), researchConfigurationReady());
     updateButtons(); status.textContent = notice;
   };
@@ -729,10 +730,11 @@ export function mountResearchRunPanel(
     const generation = deploymentGeneration();
     if (!healthReady() || !navigator.onLine || generation === undefined) { status.textContent = "Owner workspace is unavailable. Reconnect before starting research."; return; }
     if (!researchConfigurationReady()) { status.textContent = "Research configuration is not ready. Check the Research configuration card before starting a run."; return; }
+    if (scope.value === "project" && selectedProjectId === undefined) { status.textContent = "Select a project before starting research."; return; }
     if (scope.value === "selected" && selectedSourceId === undefined) { status.textContent = "Select a source before starting research."; return; }
     const ids = scope.value === "selected" ? [selectedSourceId as string] : [];
     let body: string;
-    try { body = researchRunBody(query.value, ids); } catch (error: unknown) { status.textContent = message(error); return; }
+    try { body = researchRunBody(query.value, ids, 16, scope.value === "project" ? selectedProjectId : undefined); } catch (error: unknown) { status.textContent = message(error); return; }
     clearProgressTimer(); lastExecutionState = undefined;
     const active = ++serial; controller?.abort(); const local = new AbortController(); controller = local;
     if (body !== previousBody) { previousBody = body; idempotencyKey = crypto.randomUUID(); }
@@ -756,6 +758,27 @@ export function mountResearchRunPanel(
   return Object.assign(cleanup, {
     clearPrivate,
     refreshAvailability,
+    setProject(projectId?: string, title?: string): void {
+      if (projectId !== undefined) IdentifierSchema.parse(projectId);
+      const desiredScope = projectId === undefined ? "library" : "project";
+      const changed = selectedProjectId !== projectId || scope.value !== desiredScope;
+      if (changed) {
+        stop(); workflowId = undefined; workflowGeneration = undefined; previousBody = ""; idempotencyKey = "";
+        workflowInput.value = ""; result.replaceChildren(); result.hidden = true;
+        badge.textContent = idleBadgeText(healthReady(), researchConfigurationReady());
+        progress.textContent = idleProgressText(healthReady(), researchConfigurationReady());
+      }
+      if (projectId === undefined) {
+        selectedProjectId = undefined; projectOption.disabled = true; projectOption.textContent = "Selected project";
+        scope.value = "library";
+        updateButtons();
+        return;
+      }
+      selectedProjectId = projectId; projectOption.disabled = false;
+      const projectTitle = typeof title === "string" && title.trim().length > 0 ? title.trim() : "Selected project";
+      projectOption.textContent = projectTitle;
+      scope.value = "project"; updateButtons(); status.textContent = "Selected project ready for a research run.";
+    },
     selectSource(id: string, context?: LibrarySelectionContext): void {
       IdentifierSchema.parse(id); stop(); workflowId = undefined; workflowGeneration = undefined; previousBody = ""; idempotencyKey = ""; result.replaceChildren(); result.hidden = true;
       selectedSourceId = id; workflowInput.value = ""; updateButtons(); selectedOption.disabled = false; scope.value = "selected"; status.textContent = context?.sourceRevisionRef ? "Selected source ready for a research run." : "Selected source loaded; refresh the Library before starting.";

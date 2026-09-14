@@ -278,13 +278,13 @@ export function createProjectOwnerService(options: ProjectOwnerServiceOptions): 
       ]);
       exactBatchResults(results, [1, 1, 1, null, input.source_ids.length, 1, 1]);
     } catch (cause) {
+      const raced = checkExisting(await readReceipt(options.database, owner.principal_ref, key), "UPDATE", projectId, requestSha);
+      if (raced !== null) return raced;
       const errorName = cause instanceof Error && cause.name.length > 0 && cause.name.length <= 128
         ? cause.name : "UNCLASSIFIED";
       const errorMessage = cause instanceof Error && cause.message.length > 0
         ? cause.message.slice(0, 500) : "UNCLASSIFIED";
       console.error("project-owner-update-failed", { name: errorName, message: errorMessage });
-      const raced = checkExisting(await readReceipt(options.database, owner.principal_ref, key), "UPDATE", projectId, requestSha);
-      if (raced !== null) return raced;
       const current = await readBase(options.database, owner.principal_ref, projectId);
       if (current === null) fail("PROJECT_SETTLEMENT_UNCERTAIN", 503, "project update lost its owner row", true, cause);
       if (current.revision !== input.expected_revision) fail("PROJECT_REVISION_CONFLICT", 409, "project revision changed concurrently");
