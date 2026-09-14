@@ -100,7 +100,7 @@ export function createD1R2WikiPublicationPort(
         row = await database.prepare(
           "SELECT proposal_id, proposal_revision, principal_ref, idempotency_key, request_sha256, page_id, " +
           "page_revision, page_sha256, page_json, risk_class, body_size, evidence_map_sha256, " +
-          "evidence_map_size, dependency_refs_sha256, state FROM wiki_publication_proposal " +
+          "evidence_map_size, dependency_refs_sha256, state, created_at FROM wiki_publication_proposal " +
           "WHERE principal_ref = ?1 AND idempotency_key = ?2 LIMIT 1",
         ).bind(principal, idempotencyKey).first<ProposalRow>();
       } catch (cause) {

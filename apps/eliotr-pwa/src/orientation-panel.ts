@@ -1,22 +1,85 @@
+import type { EvidenceHandle } from "@eliotr/contracts";
 import { ApiRequestError } from "./api.js";
 import { readAdmittedDocument, type AdmittedDocument } from "./document-reader-api.js";
 import { escapeHtml } from "./html.js";
-import { orientSources, orientationBody, readOrientationTrace, type OrientationView } from "./orientation-api.js";
+import {
+  expandNavigation,
+  type NavigationExpansionResult,
+  type NavigationSection,
+} from "./navigation-expand-api.js";
+import {
+  orientSources, orientationBody, readOrientationTrace, type OrientationView,
+} from "./orientation-api.js";
 
 export function renderOrientation(view: OrientationView): string {
   return `<p>Choose a source below to read its admitted document. ${view.cards.length} represented; ${view.omitted} omitted.</p>
-    ${view.cards.map((card, index) => `<article class="source-card"><h3>${escapeHtml(card.title)}</h3>
+    ${view.cards.map((card, index) => { const map = view.maps.find((candidate) => candidate.source_revision_ref === card.source_revision_ref); return `<article class="source-card"><h3>${escapeHtml(card.title)}</h3>
       <p>${escapeHtml(card.quality_status)}</p>
       <button class="button button--quiet" type="button" data-read-document="${index}">Read document</button>
+      ${map === undefined ? `<p>Sections are unavailable for this source.</p>` : `<button class="button button--quiet" type="button" data-expand-map="${index}">Expand sections</button><div data-navigation-expansion="${index}" aria-live="polite"></div>`}
       <details class="source-details"><summary>Source details</summary><div class="health-details-content">
         <span>Source type: ${escapeHtml(card.source_kind)}</span><span>Revision: <code>${escapeHtml(card.source_revision_ref)}</code></span>
         <span>Reason codes: ${escapeHtml(view.maps.find((map) => map.source_revision_ref === card.source_revision_ref)?.unresolved_structure.join(", ") ?? "DOCUMENT_MAP_MISSING")}</span>
-      </div></details></article>`).join("")}
+      </div></details></article>`; }).join("")}
     <details class="orientation-technical-details"><summary>Technical details</summary>
       <p><strong>Navigation only.</strong> This view shows source metadata and does not provide citation evidence, full document structure, or research synthesis.</p>
       <p>Scope: <code>${escapeHtml(view.scope.id)}</code></p><p>Trace: <code>${escapeHtml(view.trace.id)}</code></p>
       <button type="button" data-trace>Inspect trace</button>
     </details>`;
+}
+
+function textElement(tag: string, value: string, className?: string): HTMLElement {
+  const element = document.createElement(tag);
+  if (className !== undefined) element.className = className;
+  element.textContent = value;
+  return element;
+}
+
+function renderNavigationExpansion(
+  expansion: NavigationExpansionResult,
+  inspectSection: (section: NavigationSection, button: HTMLButtonElement) => void,
+  openEvidence: (handle: EvidenceHandle, button: HTMLButtonElement) => void,
+): HTMLElement {
+  const panel = document.createElement("div");
+  panel.className = "navigation-expansion";
+  if (expansion.kind === "DOCUMENT_MAP") {
+    panel.append(
+      textElement("h4", "Document sections"),
+      textElement("p", `${expansion.sections.length} section${expansion.sections.length === 1 ? "" : "s"} available for navigation.`),
+    );
+    const list = document.createElement("div");
+    list.className = "navigation-section-list";
+    for (const section of expansion.sections) {
+      const item = document.createElement("article");
+      item.className = "navigation-section";
+      const title = textElement("h5", section.label);
+      const ref = textElement("code", section.section_ref);
+      const button = document.createElement("button");
+      button.type = "button"; button.className = "button button--quiet"; button.textContent = "Inspect section";
+      button.addEventListener("click", () => inspectSection(section, button));
+      item.append(title, ref, button); list.append(item);
+    }
+    panel.append(list);
+    return panel;
+  }
+  if (expansion.kind === "SECTION") {
+    panel.append(textElement("h4", expansion.section.label), textElement("code", expansion.section.section_ref));
+    if (expansion.evidence_handle !== undefined) {
+      const button = document.createElement("button");
+      button.type = "button"; button.className = "button button--quiet"; button.textContent = "Open exact evidence";
+      button.addEventListener("click", () => openEvidence(expansion.evidence_handle as EvidenceHandle, button));
+      panel.append(textElement("p", "An exact evidence handle is available and will be verified in the Evidence rail."), button);
+    } else {
+      panel.append(textElement("p", "Navigation only. Exact evidence is unavailable for this section."));
+    }
+    return panel;
+  }
+  if (expansion.kind === "SOURCE_CARD") {
+    panel.append(textElement("h4", expansion.source_card.title), textElement("p", "Source card loaded. Expand its document map to browse sections."));
+    return panel;
+  }
+  panel.append(textElement("h4", expansion.node.label), textElement("p", `${expansion.source_revision_refs.length} source reference${expansion.source_revision_refs.length === 1 ? "" : "s"} in this navigation node.`));
+  return panel;
 }
 export function mountOrientationPanel(element: HTMLElement): (() => void) & { selectSource(id: string): Promise<boolean> } {
   element.innerHTML = `<h2>Read admitted documents</h2><p>Choose a source to read its admitted text.</p>
@@ -48,6 +111,7 @@ export function mountOrientationPanel(element: HTMLElement): (() => void) & { se
       !documentStatus || !documentBody || !closeDocument || !downloadDocument) throw new Error("Corpus Lens panel is incomplete");
   let controller: AbortController | undefined; let active = 0; let key = ""; let previous = "";
   let readerController: AbortController | undefined; let readerSerial = 0;
+  let navigationController: AbortController | undefined; let navigationSerial = 0;
   let openedDocument: AdmittedDocument | undefined; let downloadUrl: string | undefined;
   let lastReadButton: HTMLButtonElement | undefined;
   let pendingSelection: Promise<boolean> = Promise.resolve(true);
@@ -78,7 +142,14 @@ export function mountOrientationPanel(element: HTMLElement): (() => void) & { se
     documentReader.hidden = true; documentTitle.textContent = "Document"; documentSize.textContent = "";
     documentStatus.textContent = message; documentBody.textContent = ""; downloadDocument.hidden = true;
   };
-  const stop = () => { active += 1; controller?.abort(); controller = undefined; clearReader(); traceDetails.hidden = true; traceDetails.open = false; cancel.disabled = true; };
+  const stop = () => {
+    active += 1; navigationSerial += 1; controller?.abort(); navigationController?.abort();
+    controller = undefined; navigationController = undefined; clearReader(); traceDetails.hidden = true; traceDetails.open = false; cancel.disabled = true;
+  };
+  const clearPrivateOrientation = (): void => {
+    stop(); key = ""; previous = ""; result.replaceChildren(); traceResult.textContent = ""; traceResult.hidden = true;
+    traceDetails.hidden = true; traceDetails.open = false; status.textContent = "Access changed; reload sources.";
+  };
   const readDocument = (view: OrientationView, cardIndex: number, button: HTMLButtonElement): void => {
     const card = view.cards[cardIndex];
     if (card === undefined || readerController !== undefined || active < 1 || disposed) return;
@@ -102,6 +173,105 @@ export function mountOrientationPanel(element: HTMLElement): (() => void) & { se
       .finally(() => {
         if (mine === readerSerial) { readerController = undefined; button.disabled = false; }
       });
+  };
+  const dispatchEvidence = (handle: EvidenceHandle, button: HTMLButtonElement): void => {
+    button.disabled = true;
+    const eventTarget = document.querySelector<HTMLElement>("#research-run") ?? element;
+    eventTarget.dispatchEvent(new CustomEvent("research:evidence-selected", {
+      bubbles: true,
+      detail: { scopeSnapshotRef: handle.scope_snapshot_ref, handleRef: handle.handle_ref, excerptSha256: handle.excerpt_sha256 },
+    }));
+  };
+  const inspectSection = (
+    view: OrientationView,
+    section: NavigationSection,
+    output: HTMLElement,
+    button: HTMLButtonElement,
+    selectionSerial: number,
+  ): void => {
+    if (disposed || selectionSerial !== active || !navigator.onLine) {
+      if (!navigator.onLine) status.textContent = "Offline. Reconnect before expanding sections.";
+      return;
+    }
+    navigationController?.abort();
+    const local = new AbortController(); const mine = ++navigationSerial; navigationController = local;
+    button.disabled = true; output.replaceChildren(textElement("p", "Reading the selected section…"));
+    status.textContent = "Reading the selected section…";
+    void expandNavigation(view, {
+      kind: "SECTION", sourceRevisionRef: section.source_revision_ref, sectionRef: section.section_ref,
+    }, local.signal)
+      .then((expansion) => {
+        if (mine !== navigationSerial || selectionSerial !== active || local.signal.aborted || disposed) return;
+        output.replaceChildren(renderNavigationExpansion(expansion, () => undefined, dispatchEvidence));
+        status.textContent = expansion.kind === "SECTION" && expansion.evidence_handle !== undefined
+          ? "Section loaded. Exact evidence is ready for verification." : "Section loaded. Navigation only.";
+      })
+      .catch((error: unknown) => {
+        if (mine !== navigationSerial || selectionSerial !== active || local.signal.aborted || disposed) return;
+        if (error instanceof ApiRequestError && (error.status === 401 || error.status === 403)) {
+          clearPrivateOrientation();
+          return;
+        }
+        output.replaceChildren(textElement("p", errorText(error), "navigation-expansion-error"));
+        status.textContent = "The section could not be expanded. Retry while the source view is current.";
+      })
+      .finally(() => {
+        if (mine === navigationSerial) { navigationController = undefined; button.disabled = false; }
+      });
+  };
+  const expandMap = (view: OrientationView, cardIndex: number, button: HTMLButtonElement, selectionSerial: number): void => {
+    const card = view.cards[cardIndex];
+    const map = card === undefined ? undefined : view.maps.find((candidate) => candidate.source_revision_ref === card.source_revision_ref);
+    const output = result.querySelector<HTMLElement>(`[data-navigation-expansion="${cardIndex}"]`);
+    if (map === undefined || output === null || disposed || selectionSerial !== active) return;
+    if (!navigator.onLine) { status.textContent = "Offline. Reconnect before expanding sections."; return; }
+    navigationController?.abort();
+    const local = new AbortController(); const mine = ++navigationSerial; navigationController = local;
+    button.disabled = true; output.replaceChildren(textElement("p", "Loading current document sections…"));
+    status.textContent = "Loading current document sections…";
+    void expandNavigation(view, { kind: "DOCUMENT_MAP", sourceRevisionRef: map.source_revision_ref }, local.signal)
+      .then((expansion) => {
+        if (mine !== navigationSerial || selectionSerial !== active || local.signal.aborted || disposed) return;
+        output.replaceChildren(renderNavigationExpansion(expansion,
+          (section, sectionButton) => inspectSection(view, section, output, sectionButton, selectionSerial), dispatchEvidence));
+        status.textContent = expansion.kind === "DOCUMENT_MAP"
+          ? "Sections loaded. Choose a section to inspect its exact evidence availability." : "Navigation expanded.";
+      })
+      .catch((error: unknown) => {
+        if (mine !== navigationSerial || selectionSerial !== active || local.signal.aborted || disposed) return;
+        if (error instanceof ApiRequestError && (error.status === 401 || error.status === 403)) {
+          clearPrivateOrientation();
+          return;
+        }
+        if (error instanceof ApiRequestError &&
+            ["NAVIGATION_DEPLOYMENT_CHANGED", "ORIENTATION_DEPLOYMENT_CHANGED", "ORIENTATION_SCOPE_CHANGED"].includes(error.code)) {
+          key = ""; previous = ""; clearReader(); result.replaceChildren();
+          status.textContent = "The source view changed. Load sources again.";
+          return;
+        }
+        output.replaceChildren(textElement("p", errorText(error), "navigation-expansion-error"));
+        status.textContent = "Sections could not be expanded. Retry while the source view is current.";
+      })
+      .finally(() => {
+        if (mine === navigationSerial) { navigationController = undefined; button.disabled = false; }
+      });
+  };
+  const wireOrientation = (view: OrientationView, selectionSerial: number): void => {
+    for (const button of result.querySelectorAll<HTMLButtonElement>("[data-read-document]")) {
+      const cardIndex = Number(button.dataset.readDocument);
+      button.onclick = () => readDocument(view, cardIndex, button);
+    }
+    for (const button of result.querySelectorAll<HTMLButtonElement>("[data-expand-map]")) {
+      const cardIndex = Number(button.dataset.expandMap);
+      button.onclick = () => expandMap(view, cardIndex, button, selectionSerial);
+    }
+    const traceButton = result.querySelector<HTMLButtonElement>("[data-trace]");
+    if (traceButton) traceButton.onclick = () => {
+      traceButton.disabled = true;
+      void readOrientationTrace(view.trace, controller?.signal, view.generation).then((trace) => {
+        if (selectionSerial === active) { traceResult.textContent = JSON.stringify(trace, null, 2); traceResult.hidden = false; traceDetails.hidden = false; traceDetails.open = true; }
+      }).catch((error: unknown) => { if (selectionSerial === active) { result.replaceChildren(); status.textContent = errorText(error); } });
+    };
   };
   closeDocument.onclick = () => { const button = lastReadButton; clearReader(); button?.focus(); };
   downloadDocument.onclick = () => {
@@ -127,17 +297,7 @@ export function mountOrientationPanel(element: HTMLElement): (() => void) & { se
         if (serial !== active) return false;
         status.textContent = "Sources loaded. Choose a document to read.";
         result.innerHTML = renderOrientation(view);
-        for (const button of result.querySelectorAll<HTMLButtonElement>("[data-read-document]")) {
-          const cardIndex = Number(button.dataset.readDocument);
-          button.onclick = () => readDocument(view, cardIndex, button);
-        }
-        const traceButton = result.querySelector<HTMLButtonElement>("[data-trace]");
-        if (traceButton) traceButton.onclick = () => {
-          traceButton.disabled = true;
-          void readOrientationTrace(view.trace, controller?.signal).then((trace) => {
-            if (serial === active) { traceResult.textContent = JSON.stringify(trace, null, 2); traceResult.hidden = false; traceDetails.hidden = false; traceDetails.open = true; }
-          }).catch((error: unknown) => { if (serial === active) { result.replaceChildren(); status.textContent = errorText(error); } });
-        };
+        wireOrientation(view, serial);
         return true;
       }).catch((error: unknown) => {
         if (serial === active) {

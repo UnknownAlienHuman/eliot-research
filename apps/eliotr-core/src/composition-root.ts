@@ -5,10 +5,11 @@ import {
   createD1R2FederationBundleAuthority,
 } from "@eliotr/cloudflare-federation";
 import { createFederationService } from "./federation-service.js";
-import { createWikiProposalService } from "./wiki-service.js";
+import { createWikiProposalReaderService, createWikiProposalService } from "./wiki-service.js";
 import { createResearchChangesService } from "./research-changes.js";
 import { reconcileExpiredOutboxLeases } from "./outbox-reconciler.js";
 import { createD1ScopeService, createOrientationApi, createOwnerScopeAuthority, ORIENTATION_PROFILE, OrientationError } from "@eliotr/cloudflare-navigation";
+import { createNavigationExpandService } from "./navigation-expand-service.js";
 import type { ScopeSnapshot, VersionedRef } from "@eliotr/contracts";
 import type {
   ApplicationLifecycle,
@@ -93,10 +94,12 @@ function capabilities(env: Env): Record<string, unknown> {
 function semanticApi(env: Env): SemanticApi {
   const evidence = createEvidenceService(env);
   const orientation = createOrientationApi(env);
+  const navigationExpansion = createNavigationExpandService(env);
   const researchQuery = createResearchQueryService(env);
   const exhaustiveWorkflow = createExhaustiveWorkflowService(env);
   const researchRun = createResearchRunService(env);
   const researchChanges = createResearchChangesService(env);
+  const wikiReader = createWikiProposalReaderService(env);
   const artifactInput = (context: AuthenticatedRequestContext, artifactRef: VersionedRef) => {
     const now = Date.now;
     const authority = createOwnerScopeAuthority(env.CORE_DB, context, now);
@@ -109,6 +112,7 @@ function semanticApi(env: Env): SemanticApi {
   return {
     catalog: (context, request) => readCatalog(env.CORE_DB, context, request, env.DEPLOYMENT_GENERATION),
     orient: (context, request) => orientation.orient(context, request),
+    expandNavigation: (context, request) => navigationExpansion.expand(context, request),
     query: (context, request) => {
       const product = request !== null && typeof request === "object" && "product" in request
         ? (request as { readonly product?: unknown }).product
@@ -145,6 +149,7 @@ function semanticApi(env: Env): SemanticApi {
       return { protocol: "eliotr.artifact-section-citations.v1", ...citations };
     },
     proposeWiki: createWikiProposalService(env),
+    ...wikiReader,
     trace: (context, ref) => ref.id.startsWith("query-") ? readRetrievalTrace(env.CORE_DB, context, ref).then((r) => {
       if (r.status === "ok") return r.trace; throw new OrientationError(r.status === "invalid" ? "ORIENTATION_TRACE_INVALID" : r.status === "missing" ? "ORIENTATION_TRACE_NOT_FOUND" : r.status === "stale" ? "ORIENTATION_TRACE_CORRUPT" : "ORIENTATION_RESERVATION_UNCERTAIN", r.status === "invalid" ? 400 : r.status === "missing" ? 404 : r.status === "stale" ? 409 : 503, r.status === "uncertain"); }) : orientation.trace(context, ref),
     changes: (context, request) => researchChanges(context, request),

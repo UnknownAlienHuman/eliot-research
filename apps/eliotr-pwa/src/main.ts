@@ -8,6 +8,7 @@ import { mountRetrievalPanel } from "./retrieval-panel.js";
 import { mountEvidenceRail } from "./evidence-rail.js";
 import { mountExhaustiveWorkflowPanel } from "./exhaustive-workflow-panel.js";
 import { mountResearchRunPanel } from "./research-run-panel.js";
+import { mountWikiPanel } from "./wiki-panel.js";
 import { mountRawFilePanel } from "./raw-file-panel.js";
 import { mountMcpClientDiagnosticPanel } from "./mcp-client-diagnostic-panel.js";
 import { mountErasurePanel } from "./erasure-panel.js";
@@ -134,6 +135,7 @@ function render(health: SystemHealth | null): void {
         <nav class="workspace-nav" aria-label="Primary">
           <button class="nav-item nav-item--active" type="button" data-nav-target="#library" aria-controls="sources-view" aria-current="page"><span class="nav-icon">⌂</span><span>Sources</span></button>
           <button class="nav-item" type="button" data-nav-target="#research-card" aria-controls="research-view"><span class="nav-icon">⌕</span><span>Research</span></button>
+          <button class="nav-item" type="button" data-nav-target="#wiki-card" aria-controls="wiki-view"><span class="nav-icon">▤</span><span>Wiki</span></button>
           <button class="nav-item" type="button" data-nav-target="#connections-card" aria-controls="connections-card"><span class="nav-icon">◌</span><span>Connections</span></button>
         </nav>
         <button class="source-chooser-toggle" type="button" data-source-chooser-toggle aria-controls="library" aria-expanded="false"><span>Choose a source</span><span data-source-chooser-state>Show list</span></button>
@@ -160,6 +162,12 @@ function render(health: SystemHealth | null): void {
             <section class="tool-card research-configuration-card" id="research-configuration-card"><div id="research-configuration"></div></section>
             <section class="tool-card tool-card--research" id="research-card"><div id="retrieval"></div><div class="tool-divider"></div><div id="research-run"></div><div class="tool-divider"></div><div id="exhaustive-workflow"></div></section>
           </div>
+        </section>
+        <section id="wiki-view" class="workspace-view" data-workspace-view="wiki" tabindex="-1" aria-label="Wiki" hidden>
+          <div class="workspace-cards">
+            <article class="intro-card"><div class="intro-card-mark">▤</div><div><strong>Review saved Wiki proposals</strong><p>Review proposals and read saved page text.</p></div></article>
+          </div>
+          <div class="tool-stack"><section class="tool-card" id="wiki-card"><div id="wiki"></div></section></div>
         </section>
         <section id="connections-card" class="workspace-view" data-workspace-view="connections" tabindex="-1" aria-label="Connections" hidden>
           <div class="connection-stack">
@@ -227,7 +235,7 @@ function render(health: SystemHealth | null): void {
   const retrieval = retrievalHost ? mountRetrievalPanel(retrievalHost, () => app.dataset.healthReady === "true") : undefined;
   let researchConfigurationStartState: ResearchConfigurationStartState | null = null;
   const researchRunHost = app.querySelector<HTMLElement>("#research-run");
-  const researchRun = researchRunHost ? mountResearchRunPanel(researchRunHost, () => app.dataset.healthGeneration, () => app.dataset.healthReady === "true", () => researchConfigurationStartState?.configuration === "present" && researchConfigurationStartState.model_transport === "available") : undefined;
+  const researchRun = researchRunHost ? mountResearchRunPanel(researchRunHost, () => app.dataset.healthGeneration, () => app.dataset.healthReady === "true", () => researchConfigurationStartState?.configuration === "present" && researchConfigurationStartState.model_transport === "available" && researchConfigurationStartState.run_readiness !== "blocked") : undefined;
   const exhaustiveHost = app.querySelector<HTMLElement>("#exhaustive-workflow");
   const exhaustive = exhaustiveHost ? mountExhaustiveWorkflowPanel(exhaustiveHost, () => app.dataset.healthGeneration, () => app.dataset.healthReady === "true") : undefined;
   const researchConfigurationHost = app.querySelector<HTMLElement>("#research-configuration");
@@ -235,6 +243,8 @@ function render(health: SystemHealth | null): void {
     deploymentGeneration: () => app.dataset.healthGeneration,
     onStateChange: (state) => { researchConfigurationStartState = state; researchRun?.refreshAvailability(); },
   }) : undefined;
+  const wikiHost = app.querySelector<HTMLElement>("#wiki");
+  const wiki = wikiHost ? mountWikiPanel(wikiHost, () => app.dataset.healthGeneration, () => app.dataset.healthReady === "true") : undefined;
   const diagnosticHost = app.querySelector<HTMLElement>("#mcp-client-diagnostic");
   const erasureHost = app.querySelector<HTMLElement>("#erasure");
   const erasure = erasureHost ? mountErasurePanel(erasureHost, {
@@ -254,14 +264,15 @@ function render(health: SystemHealth | null): void {
     const detail = (event as CustomEvent<{ scopeSnapshotRef?: VersionedRef; handleRef?: VersionedRef; excerptSha256?: string }>).detail;
     if (detail?.scopeSnapshotRef !== undefined && detail.handleRef !== undefined) evidenceRail?.selectHandle(detail.scopeSnapshotRef, detail.handleRef, detail.excerptSha256);
   };
-  researchRunHost?.addEventListener("research:evidence-selected", selectResearchEvidence);
-  type WorkspaceViewName = "sources" | "research" | "connections";
+  app.addEventListener("research:evidence-selected", selectResearchEvidence);
+  type WorkspaceViewName = "sources" | "research" | "wiki" | "connections";
   type WorkspaceViewDefinition = { name: WorkspaceViewName; title: string; lede: string; sectionSelector: string; historyHash: string; anchorSelector: string };
   const sourcesView: WorkspaceViewDefinition = { name: "sources", title: "Sources", lede: "Import or select admitted sources, then open Corpus Lens for structure and readiness.", sectionSelector: "#sources-view", historyHash: "#library", anchorSelector: "#library" };
   const workspaceViews: Record<string, WorkspaceViewDefinition> = {
     "#library": sourcesView,
     "#corpus-lens-card": { ...sourcesView, anchorSelector: "#corpus-lens-card" },
     "#research-card": { name: "research", title: "Research", lede: "Search selected source bytes, inspect sampled coverage, and open only verified evidence.", sectionSelector: "#research-view", historyHash: "#research-card", anchorSelector: "#research-card" },
+    "#wiki-card": { name: "wiki", title: "Wiki", lede: "Review saved Wiki proposals and read their current owner-authorized page text.", sectionSelector: "#wiki-view", historyHash: "#wiki-card", anchorSelector: "#wiki-card" },
     "#connections-card": { name: "connections", title: "Connections", lede: "Check the server and workspace connection; client activity appears only after a manual check.", sectionSelector: "#connections-card", historyHash: "#connections-card", anchorSelector: "#connections-card" },
   };
   const locationSelector = (): string => {
@@ -269,6 +280,8 @@ function render(health: SystemHealth | null): void {
       case "#corpus-lens-card": return "#corpus-lens-card";
       case "#research":
       case "#research-card": return "#research-card";
+      case "#wiki":
+      case "#wiki-card": return "#wiki-card";
       case "#connections":
       case "#connections-card": return "#connections-card";
       case "#sources":
@@ -343,8 +356,8 @@ function render(health: SystemHealth | null): void {
       if (coverageNote) coverageNote.textContent = "Run Research to measure sampled resolution.";
     }
   };
-  const clearPrivateEvidence = (researchNotice?: string): void => { clearEvidenceRail(); retrieval?.clearPrivate(); exhaustive?.clearPrivate(); erasure?.clearPrivate(); libraryPanel?.clearPrivate(); researchRun?.clearPrivate(researchNotice); };
-  const sourceErased = (): void => { clearEvidenceRail(); retrieval?.clearPrivate(); researchRun?.clearPrivate(); exhaustive?.clearPrivate(); };
+  const clearPrivateEvidence = (researchNotice?: string): void => { clearEvidenceRail(); retrieval?.clearPrivate(); exhaustive?.clearPrivate(); erasure?.clearPrivate(); libraryPanel?.clearPrivate(); researchRun?.clearPrivate(researchNotice); wiki?.clearPrivate(); };
+  const sourceErased = (): void => { clearEvidenceRail(); retrieval?.clearPrivate(); researchRun?.clearPrivate(); exhaustive?.clearPrivate(); wiki?.clearPrivate(); };
   erasureHost?.addEventListener("eliotr:source-erased", sourceErased);
   erasureHost?.addEventListener("eliotr:source-erasure-requested", sourceErased);
   const clearEvidenceOnEvent = (): void => clearPrivateEvidence();
@@ -353,6 +366,7 @@ function render(health: SystemHealth | null): void {
   const clearEvidenceOnScopeChange = (): void => clearPrivateEvidence();
   const clearResearchConfiguration = (): void => researchConfiguration?.clearPrivate();
   const refreshResearchConfiguration = (): void => researchConfiguration?.refresh();
+  const refreshWiki = (): void => wiki?.refresh();
   const clearEvidenceOnQueryStart = (): void => clearEvidenceRail();
   const refreshHealth = (): void => {
     const previousGeneration = app.querySelector(".health-generation")?.textContent;
@@ -391,6 +405,7 @@ function render(health: SystemHealth | null): void {
   app.addEventListener("eliotr:health-lost", clearEvidenceOnHealthLost);
   app.addEventListener("eliotr:health-lost", clearResearchConfiguration);
   app.addEventListener("eliotr:health-updated", refreshResearchConfiguration);
+  app.addEventListener("eliotr:health-updated", refreshWiki);
   app.addEventListener("library:scope-changed", clearEvidenceOnScopeChange);
   window.addEventListener("offline", clearEvidenceOnEvent);
   window.addEventListener("eliotr:authorization-cleared", clearEvidenceOnAuthorization);
@@ -409,13 +424,13 @@ function render(health: SystemHealth | null): void {
     exhaustive?.selectSource(id);
     return true;
   }) : undefined;
-  const cleanups = [orientation, retrieval, researchRun, exhaustive, researchConfiguration, diagnostic, erasure,
+  const cleanups = [orientation, retrieval, researchRun, exhaustive, researchConfiguration, wiki, diagnostic, erasure,
     () => erasureHost?.removeEventListener("eliotr:source-erased", sourceErased),
     () => erasureHost?.removeEventListener("eliotr:source-erasure-requested", sourceErased), importer ? mountBundleImportPanel(importer) : undefined,
     namespacePanel, () => app.removeEventListener("eliotr:namespace-selected", namespaceSelected),
     rawUploadHost ? mountRawFilePanel(rawUploadHost, { generation: () => app.dataset.healthGeneration, ready: () => app.dataset.healthReady === "true", sourceNamespace: () => selectedNamespace }) : undefined,
     libraryPanel];
-  window.addEventListener("pagehide", () => { cleanups.forEach((cleanup) => cleanup?.()); googleOAuthCleanup?.(); googleOAuthCleanup = undefined; mountedGoogleTransport = null; evidenceRail?.dispose(); sourceChooserToggle?.removeEventListener("click", toggleSourceChooser); sourceChooserViewport.removeEventListener("change", handleSourceChooserViewport); rawUploadHost?.removeEventListener("eliotr:find-in-library", handleFindInLibrary); app.removeEventListener("library:scope-changed", clearEvidenceOnScopeChange); window.removeEventListener("offline", clearEvidenceOnEvent); window.removeEventListener("eliotr:authorization-cleared", clearEvidenceOnAuthorization); retrievalHost?.removeEventListener("retrieval:started", clearEvidenceOnQueryStart); researchRunHost?.removeEventListener("research:started", clearEvidenceOnQueryStart); exhaustiveHost?.removeEventListener("exhaustive:started", clearEvidenceOnQueryStart); app.removeEventListener("eliotr:health-lost", clearEvidenceOnHealthLost); app.removeEventListener("eliotr:health-lost", clearResearchConfiguration); app.removeEventListener("eliotr:health-updated", refreshResearchConfiguration); window.removeEventListener("popstate", handleLocationChange); window.removeEventListener("hashchange", handleLocationChange); researchRunHost?.removeEventListener("research:evidence-selected", selectResearchEvidence); }, { once: true });
+  window.addEventListener("pagehide", () => { cleanups.forEach((cleanup) => cleanup?.()); googleOAuthCleanup?.(); googleOAuthCleanup = undefined; mountedGoogleTransport = null; evidenceRail?.dispose(); sourceChooserToggle?.removeEventListener("click", toggleSourceChooser); sourceChooserViewport.removeEventListener("change", handleSourceChooserViewport); rawUploadHost?.removeEventListener("eliotr:find-in-library", handleFindInLibrary); app.removeEventListener("library:scope-changed", clearEvidenceOnScopeChange); window.removeEventListener("offline", clearEvidenceOnEvent); window.removeEventListener("eliotr:authorization-cleared", clearEvidenceOnAuthorization); retrievalHost?.removeEventListener("retrieval:started", clearEvidenceOnQueryStart); researchRunHost?.removeEventListener("research:started", clearEvidenceOnQueryStart); exhaustiveHost?.removeEventListener("exhaustive:started", clearEvidenceOnQueryStart); app.removeEventListener("eliotr:health-lost", clearEvidenceOnHealthLost); app.removeEventListener("eliotr:health-lost", clearResearchConfiguration); app.removeEventListener("eliotr:health-updated", refreshResearchConfiguration); app.removeEventListener("eliotr:health-updated", refreshWiki); window.removeEventListener("popstate", handleLocationChange); window.removeEventListener("hashchange", handleLocationChange); app.removeEventListener("research:evidence-selected", selectResearchEvidence); }, { once: true });
 }
 
 function updateHealth(health: SystemHealth, failure?: HealthFailure): void {

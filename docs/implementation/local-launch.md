@@ -65,6 +65,19 @@ configuration when their actual expiration is reached. Permission behavior was c
 and [gateway authentication documentation](https://developers.cloudflare.com/ai-gateway/configuration/authentication/)
 on 2026-09-13.
 
+Commit `abbce44` adds **Download Markdown** to saved and current DRAFT reports. The export reads every
+section and its recorded claim assessments through owner reauthorization, checks the stored body digest
+and verification receipt, and saves one dated file only after all reads succeed. It retains DRAFT status,
+recorded verdicts and citation references; it does not claim fresh source-byte verification. Empty reports
+cannot be downloaded. Browser download acceptance for this change remains pending deployment.
+
+The next owner UI checkpoint adds a Wiki proposal list, checked page/body readers, and fresh owner
+reauthorization for saved Wiki scopes. It preserves the original source set, owner generations and
+disclosure closure, and rechecks source authority after object reads. It does not add a draft-to-Wiki
+producer or publication admission. The deployed database currently has no Wiki proposals; this is not
+a populated Wiki lifecycle receipt. Corpus Lens also gains document-section expansion through the
+existing navigation service. A navigation candidate still requires exact resolution in Evidence Rail.
+
 Owner research steps: sign in through Access, choose the workspace, add and admit a TXT/Markdown
 document, select it in **Sources**, and ask the question in **Research**. When the run reaches **DRAFT**,
 open it from **Recent research**, open its answer section, then choose **Open sources** to reauthorize

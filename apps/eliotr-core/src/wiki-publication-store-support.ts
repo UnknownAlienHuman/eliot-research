@@ -39,6 +39,7 @@ export interface ProposalRow {
   evidence_map_size: number;
   dependency_refs_sha256: string;
   state: string;
+  created_at: string;
 }
 
 export interface AuthorityRow {
@@ -224,11 +225,37 @@ export async function loadProposalRow(database: D1Database, proposalRef: Version
     return await database.prepare(
       "SELECT proposal_id, proposal_revision, principal_ref, idempotency_key, request_sha256, page_id, " +
       "page_revision, page_sha256, page_json, risk_class, body_size, evidence_map_sha256, " +
-      "evidence_map_size, dependency_refs_sha256, state FROM wiki_publication_proposal " +
+      "evidence_map_size, dependency_refs_sha256, state, created_at FROM wiki_publication_proposal " +
       "WHERE proposal_id = ?1 AND proposal_revision = ?2 AND principal_ref = ?3 LIMIT 1",
     ).bind(proposalRef.id, proposalRef.revision, principalRef).first<ProposalRow>();
   } catch (cause) {
     fail("WIKI_SETTLEMENT_UNCERTAIN", "Wiki proposal readback is unavailable", true, cause);
+  }
+}
+
+export async function loadProposalRows(
+  database: D1Database,
+  principalRef: string,
+  limit: number,
+): Promise<readonly ProposalRow[]> {
+  const principal = validPrincipal(principalRef);
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > 20) {
+    fail("WIKI_INPUT_INVALID", "Wiki proposal list limit is invalid");
+  }
+  try {
+    const result = await database.prepare(
+      "SELECT proposal_id, proposal_revision, principal_ref, idempotency_key, request_sha256, page_id, " +
+      "page_revision, page_sha256, page_json, risk_class, body_size, evidence_map_sha256, " +
+      "evidence_map_size, dependency_refs_sha256, state, created_at FROM wiki_publication_proposal " +
+      "WHERE principal_ref = ?1 ORDER BY created_at DESC, proposal_id DESC LIMIT ?2",
+    ).bind(principal, limit + 1).all<ProposalRow>();
+    if (!result.success || !Array.isArray(result.results) || result.results.length > limit + 1) {
+      fail("WIKI_SETTLEMENT_UNCERTAIN", "Wiki proposal list readback is unavailable", true);
+    }
+    return result.results;
+  } catch (cause) {
+    if (cause instanceof WikiPublicationError) throw cause;
+    fail("WIKI_SETTLEMENT_UNCERTAIN", "Wiki proposal list readback is unavailable", true, cause);
   }
 }
 

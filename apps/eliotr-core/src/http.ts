@@ -52,8 +52,10 @@ import { readReadiness } from "./readiness.js";
 import { readOwnerErasurePreparation, readOwnerErasureRequest, readOwnerErasureRef } from "./erasure-owner-http.js";
 import { readOwnerNamespaceInitialization } from "./source-namespace-owner-http.js";
 import { readWorkspaceCandidateRequest, readWorkspaceAdmissionId } from "./workspace-owner-http.js";
+import { readNavigationExpansionRequest } from "./navigation-expand-http.js";
 import { HttpRequestError, mapError } from "./http-errors.js";
-import { readResearchConfigurationStatus } from "./research-configuration-status.js";
+import { readResearchConfigurationReadiness } from "./research-configuration-readiness.js";
+import { parseWikiProposalRef } from "./wiki-service.js";
 import {
   reopenOwnerArtifactDraft,
   reopenOwnerArtifactSection,
@@ -342,7 +344,7 @@ async function dispatch(
       return apiResult(request, env, await application.services.owner.systemCapabilities(context));
     case "system.research.configuration":
       requireNoQuery(url);
-      return apiResult(request, env, readResearchConfigurationStatus(env, context));
+      return apiResult(request, env, await readResearchConfigurationReadiness(env, context));
     case "library.source.content": {
       for (const key of url.searchParams.keys()) {
         if (key !== "source_revision_ref") {
@@ -410,6 +412,11 @@ async function dispatch(
       return apiResult(request, env, await application.services.semantic.orient(context,
         await readOrientationRequest(request, match.route.maximum_request_bytes)));
     }
+    case "research.navigation.expand": {
+      requireNoQuery(url);
+      return apiResult(request, env, await application.services.semantic.expandNavigation(context,
+        await readNavigationExpansionRequest(request, match.route.maximum_request_bytes)));
+    }
     case "research.trace": {
       requireNoQuery(url);
       const ref = match.params.ref;
@@ -470,6 +477,27 @@ async function dispatch(
           await readJsonBodyWithinBytes(request, match.route.maximum_request_bytes),
         ),
       );
+    }
+    case "research.wiki.proposal.list": {
+      requireNoQuery(url);
+      await requireEmptyRequestBody(request, "Wiki proposal listing does not accept a request body");
+      return apiResult(request, env, await application.services.semantic.listWikiProposals(context));
+    }
+    case "research.wiki.proposal.read": {
+      requireNoQuery(url);
+      await requireEmptyRequestBody(request, "Wiki proposal reading does not accept a request body");
+      const ref = match.params.ref;
+      if (ref === undefined) throw new HttpRequestError("WIKI_INPUT_INVALID", 400, "Wiki proposal reference is missing");
+      return apiResult(request, env, await application.services.semantic.readWikiProposal(context, parseWikiProposalRef(ref)));
+    }
+    case "research.wiki.proposal.body": {
+      requireNoQuery(url);
+      await requireEmptyRequestBody(request, "Wiki proposal body reading does not accept a request body");
+      const ref = match.params.ref;
+      if (ref === undefined) throw new HttpRequestError("WIKI_INPUT_INVALID", 400, "Wiki proposal reference is missing");
+      const response = await application.services.semantic.readWikiProposalBody(context, parseWikiProposalRef(ref));
+      response.headers.set("x-eliotr-deployment-generation", env.DEPLOYMENT_GENERATION);
+      return response;
     }
     case "research.verify": {
       return apiResult(

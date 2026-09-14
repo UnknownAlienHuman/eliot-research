@@ -12,6 +12,8 @@ import type {
 import type {
   EvidencePack,
   ExhaustiveReconcileStatus,
+  NavigationExpansionRequest,
+  NavigationExpansionResult,
   OrientationResult,
 } from "@eliotr/retrieval";
 import type { AuthenticatedRequestContext } from "./http.js";
@@ -19,12 +21,16 @@ import type { AuthenticatedRequestContext } from "./http.js";
 export const SEMANTIC_API_OPERATIONS = [
   "research.catalog",
   "research.orient",
+  "research.navigation.expand",
   "research.query",
   "research.open",
   "research.verify",
   "research.run",
   "research.artifact",
   "research.wiki.propose",
+  "research.wiki.proposal.read",
+  "research.wiki.proposal.list",
+  "research.wiki.proposal.body",
   "research.trace",
   "research.changes",
 ] as const;
@@ -142,6 +148,30 @@ export interface WikiProposalResult {
   readonly page_ref: VersionedRef;
   readonly risk_class: WikiDraftRiskClass;
   readonly state: "PROPOSED";
+}
+
+export interface WikiProposalReadResult {
+  readonly protocol: "eliotr.wiki-proposal-read.v1";
+  readonly proposal_ref: VersionedRef;
+  readonly page: WikiPageRevision;
+  readonly risk_class: WikiDraftRiskClass;
+  readonly state: "PROPOSED" | "PUBLISHED";
+}
+
+export interface WikiProposalSummary {
+  readonly proposal_ref: VersionedRef;
+  readonly page_ref: VersionedRef;
+  readonly title: string;
+  readonly page_type: WikiPageRevision["page_type"];
+  readonly risk_class: WikiDraftRiskClass;
+  readonly state: "PROPOSED" | "PUBLISHED";
+  readonly created_at: string;
+}
+
+export interface WikiProposalListResult {
+  readonly protocol: "eliotr.wiki-proposals.v1";
+  readonly items: readonly WikiProposalSummary[];
+  readonly has_more: boolean;
 }
 
 export type ResearchChangeKind =
@@ -270,6 +300,7 @@ export interface VerifyEvidenceResult {
 export interface SemanticApi {
   catalog(context: AuthenticatedRequestContext, request: CatalogRequest): Promise<CatalogResult>;
   orient(context: AuthenticatedRequestContext, request: QueryRequest): Promise<QueryResult>;
+  expandNavigation(context: AuthenticatedRequestContext, request: NavigationExpansionRequest): Promise<NavigationExpansionResult>;
   query(context: AuthenticatedRequestContext, request: QueryRequest): Promise<QueryResult | ExhaustiveQueryResult | ExhaustiveWorkflowResult>;
   queryStatus(context: AuthenticatedRequestContext, workflowInstanceId: string): Promise<ExhaustiveWorkflowResult>;
   queryCancel(context: AuthenticatedRequestContext, workflowInstanceId: string): Promise<ExhaustiveWorkflowResult>;
@@ -282,6 +313,9 @@ export interface SemanticApi {
   artifactSection(context: AuthenticatedRequestContext, artifactRef: VersionedRef, sectionRef: VersionedRef): Promise<Response>;
   artifactSectionCitations(context: AuthenticatedRequestContext, artifactRef: VersionedRef, sectionRef: VersionedRef): Promise<ResearchArtifactSectionCitations>;
   proposeWiki(context: AuthenticatedRequestContext, request: unknown): Promise<WikiProposalResult>;
+  readWikiProposal(context: AuthenticatedRequestContext, proposalRef: VersionedRef): Promise<WikiProposalReadResult>;
+  listWikiProposals(context: AuthenticatedRequestContext): Promise<WikiProposalListResult>;
+  readWikiProposalBody(context: AuthenticatedRequestContext, proposalRef: VersionedRef): Promise<Response>;
   trace(context: AuthenticatedRequestContext, traceRef: VersionedRef): Promise<RetrievalTrace>;
   changes(context: AuthenticatedRequestContext, request: ResearchChangesRequest): Promise<ResearchChangesResult>;
 }

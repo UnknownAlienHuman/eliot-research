@@ -1,6 +1,6 @@
 import {
-  DocumentMapRevisionSchema, IdentifierSchema, RetrievalTraceSchema, SourceCardSchema, VersionedRefSchema,
-  type DocumentMapRevision, type RetrievalTrace, type SourceCard, type VersionedRef,
+  DocumentMapRevisionSchema, IdentifierSchema, RetrievalTraceSchema, ScopeSnapshotSchema, SourceCardSchema, VersionedRefSchema,
+  type DocumentMapRevision, type RetrievalTrace, type ScopeSnapshot, type SourceCard, type VersionedRef,
 } from "@eliotr/contracts";
 import { ApiRequestError, requestApi } from "./api.js";
 
@@ -87,11 +87,36 @@ export async function orientSources(body: string, key: string, signal?: AbortSig
     headers: { "content-type": "application/json", "idempotency-key": key }, ...(signal ? { signal } : {}) });
   return decodeOrientation(value);
 }
-export async function readOrientationTrace(ref: VersionedRef, signal?: AbortSignal): Promise<RetrievalTrace> {
+export async function readOrientationTrace(ref: VersionedRef, signal?: AbortSignal,
+  expectedDeploymentGeneration?: string): Promise<RetrievalTrace> {
   if (ref.revision !== 1 || !/^orient-[0-9a-f]{64}$/u.test(ref.id)) mismatch();
-  const value = record(await requestApi(`/api/v1/research/trace/${encodeURIComponent(ref.id)}`, signal ? { signal } : {}),
-    ["data", "trace_id", "deployment_generation"]);
-  const trace = RetrievalTraceSchema.parse(value.data);
-  if (trace.trace_ref.id !== ref.id || trace.trace_ref.revision !== ref.revision) mismatch();
-  return trace;
+  try {
+    const envelope = record(await requestApi(`/api/v1/research/trace/${encodeURIComponent(ref.id)}`, signal ? { signal } : {}),
+      ["data", "trace_id", "deployment_generation"]);
+    const deployment = IdentifierSchema.parse(envelope.deployment_generation);
+    if (expectedDeploymentGeneration !== undefined && deployment !== expectedDeploymentGeneration) {
+      throw new ApiRequestError({ status: 409, code: "ORIENTATION_DEPLOYMENT_CHANGED", message: "Application changed; refresh the source view", retryable: true });
+    }
+    const trace = RetrievalTraceSchema.parse(envelope.data);
+    if (trace.trace_ref.id !== ref.id || trace.trace_ref.revision !== ref.revision) mismatch();
+    return trace;
+  } catch (error) {
+    if (error instanceof ApiRequestError) throw error;
+    mismatch();
+  }
+}
+
+/** Resolve the exact scope snapshot referenced by the orientation response trace. */
+export async function readOrientationScope(view: OrientationView, signal?: AbortSignal): Promise<ScopeSnapshot> {
+  try {
+    const trace = await readOrientationTrace(view.trace, signal, view.generation);
+    const scope = ScopeSnapshotSchema.parse(trace.scope_snapshot);
+    if (scope.snapshot_id !== view.scope.id || scope.revision !== view.scope.revision) {
+      throw new ApiRequestError({ status: 409, code: "ORIENTATION_SCOPE_CHANGED", message: "The source scope changed; reload sources", retryable: true });
+    }
+    return scope;
+  } catch (error) {
+    if (error instanceof ApiRequestError) throw error;
+    mismatch();
+  }
 }

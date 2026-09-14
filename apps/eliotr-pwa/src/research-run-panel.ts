@@ -401,7 +401,7 @@ export function mountResearchRunPanel(
           if (readback.body_object_ref !== section.body_object_ref || readback.body_sha256 !== section.body_sha256) throw new ApiRequestError({ status: 502, code: "RESEARCH_ARTIFACT_SECTION_INVALID", message: "The report section changed during reauthorization" });
           const citations = await readReauthorizedResearchArtifactSectionCitations(artifact.artifact_ref, section.section_ref, options.deploymentGeneration, local.signal, section.verification_receipt_ref);
           if (citations.verification_receipt_ref !== section.verification_receipt_ref) throw new ApiRequestError({ status: 502, code: "RESEARCH_ARTIFACT_SECTION_INVALID", message: "The report verification receipt changed during reauthorization" });
-          sections.push({
+          const markdownSection: ResearchMarkdownSection = {
             sectionRef: citationRefKey(citations.section_ref),
             originalScopeSnapshotRef: citationRefKey(citations.original_scope_snapshot_ref),
             authorizationScopeSnapshotRef: citationRefKey(citations.authorization_scope_snapshot_ref),
@@ -412,25 +412,28 @@ export function mountResearchRunPanel(
               claimText: claim.claim_text,
               claimTextDigest: claim.claim_text_digest,
               verdict: AUDIT_DISPOSITION_LABELS[claim.disposition],
-              supportRefs: claim.support_handle_refs.map(citationRefKey),
-              counterevidenceRefs: claim.counterevidence_handle_refs.map(citationRefKey),
-            })) : [],
-            audit: citations.semantic_verification === "EXECUTED" ? {
-              stageAttemptRef: citations.audit.stage_attempt_ref,
-              stageRequestSha256: citations.audit.stage_request_sha256,
-              outputSha256: citations.audit.output_sha256,
-              synthesisOutputSha256: citations.audit.synthesis_output_sha256,
-              normalizationBindingSha256: citations.audit.normalization_binding_sha256,
-              verifierRef: citations.audit.verifier_ref,
-              verifierSchemaGeneration: citations.audit.verifier_schema_generation,
-              modelReceiptRef: citations.audit.model_receipt_ref,
-            } : undefined,
-            citations: citations.cited_evidence.map((citation) => ({
-              originalHandleRef: citationRefKey(citation.original_handle_ref),
-              handleRef: citationRefKey(citation.handle_ref),
-              excerptSha256: citation.excerpt_sha256,
-            })),
-          });
+               supportRefs: claim.support_handle_refs.map(citationRefKey),
+               counterevidenceRefs: claim.counterevidence_handle_refs.map(citationRefKey),
+             })) : [],
+             citations: citations.cited_evidence.map((citation) => ({
+               originalHandleRef: citationRefKey(citation.original_handle_ref),
+               handleRef: citationRefKey(citation.handle_ref),
+               excerptSha256: citation.excerpt_sha256,
+             })),
+             ...(citations.semantic_verification === "EXECUTED" ? {
+               audit: {
+                 stageAttemptRef: citations.audit.stage_attempt_ref,
+                 stageRequestSha256: citations.audit.stage_request_sha256,
+                 outputSha256: citations.audit.output_sha256,
+                 synthesisOutputSha256: citations.audit.synthesis_output_sha256,
+                 normalizationBindingSha256: citations.audit.normalization_binding_sha256,
+                 verifierRef: citations.audit.verifier_ref,
+                 verifierSchemaGeneration: citations.audit.verifier_schema_generation,
+                 modelReceiptRef: citations.audit.model_receipt_ref,
+               },
+             } : {}),
+           };
+           sections.push(markdownSection);
         }
         if (options.renderSerial !== serial || deploymentGeneration() !== options.deploymentGeneration) return;
         downloadResearchDraftMarkdown(citationRefKey(artifact.artifact_ref), artifact.created_at, sections);
