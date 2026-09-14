@@ -160,7 +160,7 @@ export function mountWikiPanel(
   element: HTMLElement,
   deploymentGeneration: () => string | undefined,
   healthReady: () => boolean = () => false,
-): (() => void) & { clearPrivate(message?: string): void; refresh(): void } {
+): (() => void) & { clearPrivate(message?: string): void; refresh(force?: boolean): void } {
   element.innerHTML = `<div class="wiki-panel"><div class="tool-heading"><div><span class="eyebrow">Wiki</span><h2>Saved Wiki proposals</h2></div><button type="button" class="button button--quiet" data-wiki-refresh>Refresh</button></div>
     <p class="wiki-intro">Review proposals and read saved page text.</p>
     <p class="wiki-status" role="status" aria-live="polite">Wiki proposals appear after the owner session is ready.</p>
@@ -405,10 +405,10 @@ export function mountWikiPanel(
   const denied = (): void => clearPrivate("Authorization changed. Sign in again to view Wiki proposals.");
   const onProposalCreated = (): void => { if (!disposed) { listView = undefined; listGeneration = undefined; load(); } };
   window.addEventListener("offline", offline); window.addEventListener("eliotr:authorization-cleared", denied); window.addEventListener("eliotr:wiki-proposal-created", onProposalCreated);
-  const refresh = (): void => {
+  const refresh = (force = false): void => {
     const generation = deploymentGeneration();
     if (!healthReady() || !navigator.onLine || generation === undefined) { updateButtons(); return; }
-    if (listView !== undefined && listGeneration === generation) { updateButtons(); return; }
+    if (!force && listView !== undefined && listGeneration === generation) { updateButtons(); return; }
     load();
   };
   updateButtons();

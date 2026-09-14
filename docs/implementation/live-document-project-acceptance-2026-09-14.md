@@ -383,5 +383,36 @@ Local SQLite compiled all 65 migration files through `0066`; the actual raw
 capture INSERT compiled with 20 matching parameter bindings. Production D1
 `EXPLAIN INSERT` compiled 289 instructions for raw capture and 320 for the
 ingest commit guard with the new change-feed trigger, with zero data writes.
-These checks establish schema readiness; the new source-update browser flow
-has not yet been exercised in production.
+Implementation commit `66a0e20` was pushed and deployed as Cloudflare version
+`5227381a-c6d4-4e2a-b39a-0e69a270ce79`. D1 activated `git-66a0e20` at
+`2026-09-14T10:18:22.929Z`; the owner browser showed that generation.
+
+The normal owner UI uploaded `Orbit-document-workflow-v2.docx`, a copy of the
+agent-created sample with Review sources changed to Completed and the planned
+date changed from September 21 to September 28. The original sample was retained.
+The replacement was admitted at `2026-09-14T10:20:20.357Z`:
+
+| Item | Readback |
+| --- | --- |
+| Unchanged logical source | `raw-17ff19b637696fec16cea180d73727cd18518dbe29ec11d2` |
+| New head | `raw-revision-dc4b3b71519b8664c1ff09858a266456b08ab6ba4dd22c96` |
+| New normalized SHA-256 | `0a8ec9f21c7fca399f64a2c20fa8fc2ca47e0c3c0b8f7d68517dd225a5d7e8d6` |
+| Retained previous SHA-256 | `0c10f4b281d0a2d3267622bf42cfcdca50ec37de92bd65d3ae4c764d711af98c` |
+| Source revisions | Exactly two, both LIVE |
+| Project | Generation 2, two active source memberships |
+| Atomic change | Sequence 5, SOURCE_UPDATED, subject revision 2, new head and digest |
+
+Starting Add new version from the Wiki sidebar correctly opened the upload form
+in Sources without requiring a separate workspace selection. Its success message
+followed head readback. The admitted document reader displayed 573 normalized
+bytes, Completed, and September 28. An independently opened form retained the
+old expected head; submitting a different sample file there returned the explicit
+source-changed refusal. No third source revision or second update event appeared.
+
+The same live exercise exposed a historical-read integration failure: the existing
+source-update trigger invalidated both saved Wiki and Research scopes with
+`SCOPE_INPUT_CHANGED` at `2026-09-14T10:20:20.414Z`. Wiki returned HTTP 410 despite
+both revisions remaining LIVE. The first implementation rejected every invalidated
+original scope before issuing a fresh historical-read grant. Historical reopen
+acceptance remains pending correction of that read path; persisted invalidation
+flags and old grants must not be reset.

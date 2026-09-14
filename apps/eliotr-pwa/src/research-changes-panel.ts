@@ -9,6 +9,8 @@ const KIND_LABELS: Record<ResearchChangeFeedItem["kind"], string> = {
   RESEARCH_COMPLETED: "Research completed",
   ARTIFACT_DRAFTED: "Research report saved",
   WIKI_PUBLISHED: "Wiki page published",
+  SOURCE_ADMITTED: "Source admitted",
+  SOURCE_UPDATED: "Source updated",
 };
 
 function online(): boolean {

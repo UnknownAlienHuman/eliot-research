@@ -186,7 +186,7 @@ export function mountResearchRunPanel(
   deploymentGeneration: () => string | undefined,
   healthReady: () => boolean = () => false,
   researchConfigurationReady: () => boolean = () => true,
-): (() => void) & { clearPrivate(notice?: string): void; refreshAvailability(): void; selectSource(id: string, context?: LibrarySelectionContext): void; setProject(projectId?: string, title?: string): void } {
+): (() => void) & { clearPrivate(notice?: string): void; refreshAvailability(): void; invalidateSourceRevision(): void; selectSource(id: string, context?: LibrarySelectionContext): void; setProject(projectId?: string, title?: string): void } {
   element.innerHTML = `<div class="workflow-head"><div><span class="eyebrow">Research run</span><h2>Prepare a research run</h2></div><span class="workflow-badge" data-run-badge>${idleBadgeText(healthReady(), researchConfigurationReady())}</span></div>
     <p class="workflow-status workflow-progress-summary" data-run-progress aria-live="polite">${idleProgressText(healthReady(), researchConfigurationReady())}</p>
     <p class="workflow-copy">Start research and open a saved draft when one is available.</p>
@@ -785,6 +785,15 @@ export function mountResearchRunPanel(
   return Object.assign(cleanup, {
     clearPrivate,
     refreshAvailability,
+    invalidateSourceRevision(): void {
+      if (disposed || result.hidden || result.querySelector(".research-report-heading") === null) return;
+      stop(); workflowId = undefined; workflowGeneration = undefined; workflowInput.value = "";
+      result.replaceChildren(); result.hidden = true;
+      badge.textContent = idleBadgeText(healthReady(), researchConfigurationReady());
+      progress.textContent = "Source revisions changed. Reopen saved research to review the updated source versions.";
+      status.textContent = "Source revisions changed. Reopen saved research to review the updated source versions.";
+      updateButtons();
+    },
     setProject(projectId?: string, title?: string): void {
       if (projectId !== undefined) IdentifierSchema.parse(projectId);
       const desiredScope = projectId === undefined ? "library" : "project";
