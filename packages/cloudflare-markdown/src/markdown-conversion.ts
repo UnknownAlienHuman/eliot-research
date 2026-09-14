@@ -43,6 +43,14 @@ function exactRecord(value: unknown, keys: readonly string[]): Record<string, un
   return actual.length === expected.size && actual.every((key) => expected.has(key)) ? value : null;
 }
 
+function exactProviderRecord(value: unknown, keys: readonly string[]): Record<string, unknown> | null {
+  return exactRecord(value, [...keys, "mimetype"]) ?? exactRecord(value, [...keys, "mimeType"]);
+}
+
+function providerMimeType(value: Record<string, unknown>): unknown {
+  return Object.hasOwn(value, "mimetype") ? value.mimetype : value.mimeType;
+}
+
 function boundedText(value: unknown, maxBytes: number): value is string {
   return typeof value === "string" && value.length > 0 &&
     new TextEncoder().encode(value).byteLength <= maxBytes &&
@@ -223,17 +231,17 @@ function decodeProviderResult(raw: unknown, input: MarkdownConversionInput):
   | { readonly kind: "empty" }
   | { readonly kind: "output-limit" }
   | { readonly kind: "token-limit" } {
-  const result = exactRecord(raw, ["id", "name", "format", "mimetype", "tokens", "data"]);
-  const errorResult = exactRecord(raw, ["id", "name", "format", "mimetype", "error"]);
+  const result = exactProviderRecord(raw, ["id", "name", "format", "tokens", "data"]);
+  const errorResult = exactProviderRecord(raw, ["id", "name", "format", "error"]);
   if (errorResult !== null && errorResult.format === "error") {
     if (!boundedText(errorResult.id, MARKDOWN_CONVERSION_MAX_RESULT_ID_BYTES) ||
-        errorResult.name !== input.name || !boundedText(errorResult.mimetype, MARKDOWN_CONVERSION_MAX_MIME_BYTES) ||
+        errorResult.name !== input.name || !boundedText(providerMimeType(errorResult), MARKDOWN_CONVERSION_MAX_MIME_BYTES) ||
         !boundedText(errorResult.error, MARKDOWN_CONVERSION_MAX_ERROR_BYTES)) return { kind: "invalid" };
     return { kind: "provider-error" };
   }
   if (result === null || (result.format !== "markdown" && result.format !== "text") ||
       !boundedText(result.id, MARKDOWN_CONVERSION_MAX_RESULT_ID_BYTES) || result.name !== input.name ||
-      !boundedText(result.mimetype, MARKDOWN_CONVERSION_MAX_MIME_BYTES) ||
+      !boundedText(providerMimeType(result), MARKDOWN_CONVERSION_MAX_MIME_BYTES) ||
       typeof result.tokens !== "number" || !Number.isSafeInteger(result.tokens) || result.tokens < 0 ||
       typeof result.data !== "string") {
     return { kind: "invalid" };
@@ -248,7 +256,7 @@ function decodeProviderResult(raw: unknown, input: MarkdownConversionInput):
       id: result.id,
       name: result.name,
       format: result.format,
-      mimetype: result.mimetype,
+      mimetype: providerMimeType(result) as string,
       tokens: result.tokens,
       data: result.data,
     },
@@ -310,9 +318,8 @@ export function createWorkersAiMarkdownConversionAdapter(ai: WorkersAiMarkdownBi
       let raw: unknown;
       let dispatched = false;
       try {
-        // The pinned workers-types package still spells this result field `mimeType`;
-        // current binding documentation specifies the wire field `mimetype`. Decode
-        // the current documented shape at the untrusted provider boundary.
+        // Cloudflare runtimes have emitted both `mimeType` and `mimetype`; the
+        // decoder accepts exactly one spelling and normalizes it at this boundary.
         dispatched = true;
         const call = conversion_options === undefined
           ? ai.toMarkdown({ name, blob })

@@ -6,6 +6,7 @@ export * from "./owner-api.js";
 export * from "./erasure-owner-api.js";
 export * from "./workspace-owner-api.js";
 export * from "./source-namespace-owner-api.js";
+export * from "./project-owner-api.js";
 export * from "./routes.js";
 export * from "./application.js";
 export * from "./federation-api.js";

@@ -6,10 +6,13 @@ import type {
   ApplicationLifecycle,
   AuthenticatedRequestContext,
   CatalogRequest,
+  CreateProjectRequest,
+  ProjectOwnerListRequest,
   QueryRequest,
   SourceRevisionsRequest,
   RouteDefinition,
   RawMarkdownConversionRequest,
+  UpdateProjectRequest,
 } from "@eliotr/interfaces";
 import { ROUTES } from "@eliotr/interfaces";
 import {
@@ -291,6 +294,94 @@ function parseCatalogRequest(url: URL): CatalogRequest {
     ...(cursor === undefined ? {} : { cursor }),
   };
 }
+
+const SAFE_PROJECT_IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/u;
+const MAX_PROJECT_TITLE_BYTES = 4 * 1024;
+const MAX_PROJECT_SOURCES = 256;
+
+function projectText(value: unknown, label: string, maximumBytes: number): string {
+  if (typeof value !== "string" || value.length === 0 || value !== value.trim() ||
+      new TextEncoder().encode(value).byteLength > maximumBytes || /[\u0000-\u001f\u007f]/u.test(value)) {
+    throw new HttpRequestError("PROJECT_INPUT_INVALID", 400, `${label} is invalid`);
+  }
+  return value;
+}
+
+function projectIdentifier(value: unknown, label: string): string {
+  const identifier = projectText(value, label, 256);
+  if (!SAFE_PROJECT_IDENTIFIER.test(identifier)) {
+    throw new HttpRequestError("PROJECT_INPUT_INVALID", 400, `${label} is invalid`);
+  }
+  return identifier;
+}
+
+function parseProjectListRequest(url: URL): ProjectOwnerListRequest {
+  for (const key of url.searchParams.keys()) {
+    if (key !== "after_project_id") {
+      throw new HttpRequestError("UNKNOWN_QUERY_PARAMETER", 400, "project query contains an unknown parameter");
+    }
+  }
+  const afterProjectId = singleQueryValue(url, "after_project_id");
+  return afterProjectId === undefined ? {} : { after_project_id: projectIdentifier(afterProjectId, "after_project_id") };
+}
+
+function projectSourceIds(value: unknown): readonly string[] {
+  if (!Array.isArray(value) || value.length > MAX_PROJECT_SOURCES) {
+    throw new HttpRequestError("PROJECT_INPUT_INVALID", 400, "source_ids is invalid");
+  }
+  const sourceIds = value.map((source, index) => projectIdentifier(source, `source_ids[${index}]`));
+  if (new Set(sourceIds).size !== sourceIds.length) {
+    throw new HttpRequestError("PROJECT_INPUT_INVALID", 400, "source_ids contains duplicates");
+  }
+  return sourceIds;
+}
+
+function projectIdempotencyKey(request: Request): string {
+  const key = request.headers.get("idempotency-key");
+  if (key === null) {
+    throw new HttpRequestError("PROJECT_IDEMPOTENCY_REQUIRED", 400, "Idempotency-Key is required");
+  }
+  return projectIdentifier(key, "Idempotency-Key");
+}
+
+async function readCreateProjectRequest(request: Request, maximumBytes: number): Promise<CreateProjectRequest> {
+  const value = await readJsonBodyWithinBytes(request, maximumBytes);
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new HttpRequestError("PROJECT_INPUT_INVALID", 400, "project request must be an object");
+  }
+  const body = value as Record<string, unknown>;
+  if (Object.keys(body).some((key) => !["title", "source_ids"].includes(key)) ||
+      !Object.hasOwn(body, "title") || !Object.hasOwn(body, "source_ids")) {
+    throw new HttpRequestError("PROJECT_INPUT_INVALID", 400, "project request has missing or unknown fields");
+  }
+  return {
+    title: projectText(body.title, "title", MAX_PROJECT_TITLE_BYTES),
+    source_ids: projectSourceIds(body.source_ids),
+    idempotency_key: projectIdempotencyKey(request),
+  };
+}
+
+async function readUpdateProjectRequest(request: Request, maximumBytes: number): Promise<UpdateProjectRequest> {
+  const value = await readJsonBodyWithinBytes(request, maximumBytes);
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new HttpRequestError("PROJECT_INPUT_INVALID", 400, "project request must be an object");
+  }
+  const body = value as Record<string, unknown>;
+  if (Object.keys(body).some((key) => !["title", "source_ids", "expected_revision"].includes(key)) ||
+      !Object.hasOwn(body, "title") || !Object.hasOwn(body, "source_ids") ||
+      !Object.hasOwn(body, "expected_revision")) {
+    throw new HttpRequestError("PROJECT_INPUT_INVALID", 400, "project update has missing or unknown fields");
+  }
+  if (typeof body.expected_revision !== "number" || !Number.isSafeInteger(body.expected_revision) || body.expected_revision < 1) {
+    throw new HttpRequestError("PROJECT_INPUT_INVALID", 400, "expected_revision is invalid");
+  }
+  return {
+    title: projectText(body.title, "title", MAX_PROJECT_TITLE_BYTES),
+    source_ids: projectSourceIds(body.source_ids),
+    expected_revision: body.expected_revision,
+    idempotency_key: projectIdempotencyKey(request),
+  };
+}
 function parseSourceRevisionsRequest(url: URL): SourceRevisionsRequest {
   for (const key of url.searchParams.keys()) {
     if (!["source_id", "cursor", "limit"].includes(key)) {
@@ -406,6 +497,27 @@ async function dispatch(
         env,
         await application.services.semantic.catalog(context, parseCatalogRequest(url)),
       );
+    }
+    case "research.projects.list": {
+      await requireEmptyRequestBody(request, "Project listing does not accept a request body");
+      return apiResult(request, env, await application.services.owner.listProjects(context, parseProjectListRequest(url)));
+    }
+    case "research.projects.create": {
+      requireNoQuery(url);
+      return apiResult(request, env, await application.services.owner.createProject(
+        context,
+        await readCreateProjectRequest(request, match.route.maximum_request_bytes),
+      ), 201);
+    }
+    case "research.projects.update": {
+      requireNoQuery(url);
+      const projectId = match.params.project_id;
+      if (projectId === undefined) throw new HttpRequestError("PROJECT_INPUT_INVALID", 400, "project id is missing");
+      return apiResult(request, env, await application.services.owner.updateProject(
+        context,
+        projectIdentifier(projectId, "project id"),
+        await readUpdateProjectRequest(request, match.route.maximum_request_bytes),
+      ));
     }
     case "research.orient": {
       requireNoQuery(url);

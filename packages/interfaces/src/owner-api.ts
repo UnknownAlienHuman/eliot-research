@@ -10,6 +10,7 @@ import type { AuthenticatedRequestContext } from "./http.js";
 import type { ErasureOwnerApi } from "./erasure-owner-api.js";
 import type { WorkspaceOwnerApi } from "./workspace-owner-api.js";
 import type { SourceNamespaceOwnerApi } from "./source-namespace-owner-api.js";
+import type { ProjectOwnerApi } from "./project-owner-api.js";
 
 export interface PrepareBundleUploadRequest {
   readonly manifest: NormalizedBundleManifest;
@@ -252,7 +253,7 @@ export interface GoogleConnectionStatusResult {
   readonly state: "DISCONNECTED" | "AUTHORIZING" | "ACTIVE" | "DEGRADED" | "REAUTH_REQUIRED" | "REVOKED";
 }
 
-export interface OwnerApi extends ErasureOwnerApi, WorkspaceOwnerApi, SourceNamespaceOwnerApi {
+export interface OwnerApi extends ErasureOwnerApi, WorkspaceOwnerApi, SourceNamespaceOwnerApi, ProjectOwnerApi {
   sourceContent(context: AuthenticatedRequestContext, sourceRevisionRef: string): Promise<Response>;
   sourceRevisions(context: AuthenticatedRequestContext, request: SourceRevisionsRequest): Promise<SourceRevisionsResult>;
   libraryReadiness(context: AuthenticatedRequestContext, request: LibraryReadinessRequest): Promise<LibraryReadinessResult>;

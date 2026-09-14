@@ -43,6 +43,7 @@ import {
 import { createIngestService } from "./ingest-service.js";
 import { readReadiness } from "./readiness.js";
 import { createSourceAdmissionService } from "./source-admission-service.js";
+import { createProjectOwnerService } from "./project-owner-service.js";
 import { readGoogleExternalTransport } from "@eliotr/cloudflare-workspace-mcp";
 import { createRawCaptureService } from "@eliotr/cloudflare-raw-ingest";
 import { createRawMarkdownOwnerConverter } from "@eliotr/cloudflare-markdown";
@@ -233,6 +234,10 @@ function ownerApi(env: Env): OwnerApi {
     database: env.CORE_DB,
     profiles: parseNamespaceBootstrapProfiles(env.ELIOTR_NAMESPACE_BOOTSTRAP_PROFILES_JSON),
   });
+  const projects = createProjectOwnerService({
+    database: env.CORE_DB,
+    deployment_generation: env.DEPLOYMENT_GENERATION,
+  });
   const convertRawMarkdown = createRawMarkdownOwnerConverter({
     database: env.CORE_DB, bucket: env.EVIDENCE_BUCKET, ...(env.AI === undefined ? {} : { ai: env.AI }), profile_generation: env.DEPLOYMENT_GENERATION,
     readCapture: (context, captureId) => rawCapture.readRawCaptureForServer(context, captureId),
@@ -242,6 +247,9 @@ function ownerApi(env: Env): OwnerApi {
     prepareErasure: (context, input) => prepareErasureForOwner(env, context, input),
     sourceNamespaces: sourceNamespaces.list,
     initializeSourceNamespace: sourceNamespaces.initialize,
+    listProjects: (context, request) => projects.list(context, request ?? {}),
+    createProject: (context, request) => projects.create(context, request),
+    updateProject: (context, projectId, request) => projects.update(context, projectId, request),
     erase: (context, input) => createErasureOwnerService({ env, permission_ref: input.permission_ref }).execute(context, input.request),
     erasureStatus: (context, erasureRef) => readErasureOwnerStatus(env, context, erasureRef),
     captureRawFile: (context, request: RawFileCaptureRequest) => rawCapture.captureRawFile(context, request),

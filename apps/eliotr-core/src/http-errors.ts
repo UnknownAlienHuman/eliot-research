@@ -28,6 +28,7 @@ import { RawNormalizedAdmissionError } from "./raw-normalized-admission.js";
 import { WorkspaceOwnerAuthorizationError } from "./workspace-owner-authorization.js";
 import { NamespaceBootstrapProfileError } from "./source-namespace-bootstrap-profiles.js";
 import { SourceNamespaceOwnerError } from "./source-namespace-owner-service.js";
+import { ProjectOwnerError } from "./project-owner-contract.js";
 import { ErasureAdmissionError, ErasureRuntimeError } from "@eliotr/cloudflare-erasure";
 import { IngestServiceError } from "./ingest-service.js";
 import {
@@ -149,6 +150,13 @@ export function mapError(request: Request, error: unknown, problemResponse: Prob
   if (error instanceof RawNormalizedAdmissionError || error instanceof WorkspaceOwnerAuthorizationError ||
       error instanceof NamespaceBootstrapProfileError || error instanceof SourceNamespaceOwnerError) {
     return problemResponse(request, error.status, error.code, error.message, error.retryable);
+  }
+  if (error instanceof ProjectOwnerError) {
+    const status = error.code === "PROJECT_INPUT_INVALID" ? 400
+      : error.code === "PROJECT_OWNER_REQUIRED" || error.code === "PROJECT_SOURCE_DENIED" ? 403
+      : error.code === "PROJECT_NOT_FOUND" ? 404
+      : error.retryable ? 503 : 409;
+    return problemResponse(request, status, error.code, error.message, error.retryable);
   }
   if (error instanceof IngestServiceError) {
     return problemResponse(request, error.status, error.code, error.message, error.retryable);

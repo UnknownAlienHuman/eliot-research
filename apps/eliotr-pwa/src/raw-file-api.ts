@@ -6,13 +6,16 @@ export const RAW_MARKDOWN_MAX_INPUT_BYTES = 8 * 1024 * 1024;
 export const RAW_MARKDOWN_MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
 export const RAW_MARKDOWN_MAX_TOKENS = 1_000_000;
 export const RAW_MARKDOWN_TIMEOUT_MS = 300_000;
+export const RAW_MARKDOWN_TRANSPORT_TIMEOUT_MS = RAW_MARKDOWN_TIMEOUT_MS + 30_000;
 export const RAW_MARKDOWN_PROFILE = "raw-markdown-ui-v1";
+export const RAW_MARKDOWN_RETRY_PROFILE = "raw-markdown-ui-retry-v1";
 export const RAW_NORMALIZED_ADMISSION_PROFILE = "raw-normalized-admission-ui-v1";
 const RAW_FILE_PROTOCOL = "eliotr.raw-file-capture.v1";
 const RAW_MARKDOWN_PROTOCOL = "eliotr.raw-markdown-conversion.v1";
 const CAPTURE_ID = /^raw-capture-[a-f0-9]{48}$/u;
 const IDEMPOTENCY_KEY = /^raw-upload-[a-f0-9]{64}$/u;
 const CONVERSION_OPERATION_ID = /^[a-f0-9]{64}$/u;
+const MARKDOWN_IDEMPOTENCY_KEY = /^raw-markdown-[a-f0-9]{64}$/u;
 const ADMISSION_OPERATION_ID = /^[a-f0-9]{64}$/u;
 const CANDIDATE_REF = /^raw-normalized-candidate:[a-f0-9]{64}$/u;
 const SOURCE_VIEW_REF = /^snapshot-view:v1:[a-f0-9]{64}$/u;
@@ -133,8 +136,18 @@ async function idempotencyKey(name: string, contentSha256: string, contentType: 
   return `raw-upload-${await sha256(material.buffer)}`;
 }
 
-async function markdownIdempotencyKey(receipt: RawFileCaptureReceipt): Promise<string> {
-  const material = new TextEncoder().encode(`${RAW_MARKDOWN_PROFILE}\u0000${receipt.capture_id}\u0000${receipt.content_sha256}\u0000${receipt.content_type}`);
+export async function createRawMarkdownIdempotencyKey(
+  receipt: RawFileCaptureReceipt,
+  retryOfOperationId?: string,
+): Promise<string> {
+  if (retryOfOperationId !== undefined && !CONVERSION_OPERATION_ID.test(retryOfOperationId)) {
+    throw new ApiRequestError({ status: 400, code: "RAW_MARKDOWN_INPUT_INVALID", message: "The previous processing operation is invalid." });
+  }
+  // Preserve the original v1 identity exactly. A retry key is derived only from
+  // a server-returned terminal operation id, so STARTED/UNKNOWN keep reconciling.
+  const material = retryOfOperationId === undefined
+    ? new TextEncoder().encode(`${RAW_MARKDOWN_PROFILE}\u0000${receipt.capture_id}\u0000${receipt.content_sha256}\u0000${receipt.content_type}`)
+    : new TextEncoder().encode(`${RAW_MARKDOWN_RETRY_PROFILE}\u0000${receipt.capture_id}\u0000${receipt.content_sha256}\u0000${receipt.content_type}\u0000${retryOfOperationId}`);
   return `raw-markdown-${await sha256(material.buffer)}`;
 }
 
@@ -356,6 +369,7 @@ export async function convertRawFileToMarkdown(
   capture: RawFileCaptureReceipt,
   expectedGeneration: string,
   signal?: AbortSignal,
+  idempotencyKeyOverride?: string,
 ): Promise<RawMarkdownConversionResult> {
   if (!SAFE_GENERATION.test(expectedGeneration)) {
     throw new ApiRequestError({ status: 409, code: "API_GENERATION_MISMATCH", message: "Application generation is unavailable", retryable: true });
@@ -363,14 +377,17 @@ export async function convertRawFileToMarkdown(
   if (capture.size_bytes > RAW_MARKDOWN_MAX_INPUT_BYTES) {
     throw new ApiRequestError({ status: 413, code: "RAW_MARKDOWN_INPUT_TOO_LARGE", message: "This file is saved, but files over 8 MiB cannot be processed here." });
   }
-  const key = await markdownIdempotencyKey(capture);
+  const key = idempotencyKeyOverride ?? await createRawMarkdownIdempotencyKey(capture);
+  if (!MARKDOWN_IDEMPOTENCY_KEY.test(key)) {
+    throw new ApiRequestError({ status: 400, code: "RAW_MARKDOWN_INPUT_INVALID", message: "The processing operation identity is invalid." });
+  }
   const value = await requestApi(`/api/v1/ingest/raw/${encodeURIComponent(capture.capture_id)}/markdown`, {
     method: "POST",
     body: JSON.stringify({ idempotency_key: key, max_output_bytes: RAW_MARKDOWN_MAX_OUTPUT_BYTES,
       max_tokens: RAW_MARKDOWN_MAX_TOKENS, timeout_ms: RAW_MARKDOWN_TIMEOUT_MS, conversion_options: { output: { format: "markdown" } } }),
     ...(signal === undefined ? {} : { signal }),
     headers: { "content-type": "application/json" },
-  });
+  }, RAW_MARKDOWN_TRANSPORT_TIMEOUT_MS);
   return decodeRawMarkdownConversionEnvelope(value, expectedGeneration, capture);
 }
 

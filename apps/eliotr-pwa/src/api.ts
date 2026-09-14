@@ -63,6 +63,8 @@ type JsonRecord = Record<string, unknown>;
 
 const SAFE_IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/u;
 const SAFE_TRACE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
+const DEFAULT_API_TIMEOUT_MS = 30_000;
+const MAX_API_TIMEOUT_MS = 10 * 60 * 1000;
 
 function isRecord(value: unknown): value is JsonRecord {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -316,8 +318,8 @@ export function decodeApiProblem(value: unknown, fallbackStatus: number): ApiReq
 }
 
 /** Authenticated same-origin transport; the deadline includes streaming body consumption. */
-export function requestApi(path: string, init?: RequestInit): Promise<unknown> {
-  return requestApiWithStatuses(path, init, [200]);
+export function requestApi(path: string, init?: RequestInit, timeoutMs = DEFAULT_API_TIMEOUT_MS): Promise<unknown> {
+  return requestApiWithStatuses(path, init, [200], timeoutMs);
 }
 
 /** Same transport for endpoints whose successful response has an explicit alternate status. */
@@ -325,6 +327,7 @@ export async function requestApiWithStatuses(
   path: string,
   init: RequestInit = {},
   acceptedStatuses: readonly number[] = [200],
+  timeoutMs = DEFAULT_API_TIMEOUT_MS,
 ): Promise<unknown> {
   // Check the pathname, not dots in a valid identifier/query. Reject URL normalization
   // (including encoded parent segments) before attaching same-origin credentials.
@@ -334,11 +337,14 @@ export async function requestApiWithStatuses(
   if (!path.startsWith("/api/v1/") || /[\\#\u0000-\u0020\u007f]/u.test(path) || !unchangedPath) {
     throw new ApiRequestError({ status: 400, code: "API_PATH_INVALID", message: "Invalid API path" });
   }
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > MAX_API_TIMEOUT_MS) {
+    throw new ApiRequestError({ status: 400, code: "API_TIMEOUT_INVALID", message: "Invalid API timeout" });
+  }
   const controller = new AbortController();
   const abort = () => controller.abort();
   init.signal?.addEventListener("abort", abort, { once: true });
   if (init.signal?.aborted) abort();
-  const timeout = setTimeout(abort, 30000);
+  const timeout = setTimeout(abort, timeoutMs);
   let rejectAbort: (() => void) | undefined;
   const cancelled = new Promise<never>((_, reject) => {
     rejectAbort = () => reject(new Error("API request cancelled"));

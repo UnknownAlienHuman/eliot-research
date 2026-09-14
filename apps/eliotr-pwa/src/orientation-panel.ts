@@ -67,6 +67,21 @@ function renderSectionText(section: NavigationSection, content: string): HTMLEle
   return panel;
 }
 
+function sectionsInDocumentOrder(sections: readonly NavigationSection[]): NavigationSection[] {
+  return sections.map((section, index) => ({ section, index })).sort((left, right) => {
+    const leftStart = left.section.normalized_start_byte;
+    const rightStart = right.section.normalized_start_byte;
+    const leftHasOffset = Number.isSafeInteger(leftStart);
+    const rightHasOffset = Number.isSafeInteger(rightStart);
+    if (!leftHasOffset && !rightHasOffset) return left.index - right.index;
+    if (!leftHasOffset) return 1;
+    if (!rightHasOffset) return -1;
+    if ((leftStart as number) < (rightStart as number)) return -1;
+    if ((leftStart as number) > (rightStart as number)) return 1;
+    return left.index - right.index;
+  }).map(({ section }) => section);
+}
+
 function renderNavigationExpansion(
   expansion: NavigationExpansionResult,
   inspectSection: (section: NavigationSection, button: HTMLButtonElement) => void,
@@ -81,7 +96,7 @@ function renderNavigationExpansion(
     );
     const list = document.createElement("div");
     list.className = "navigation-section-list";
-    for (const section of expansion.sections) {
+    for (const section of sectionsInDocumentOrder(expansion.sections)) {
       const item = document.createElement("article");
       item.className = "navigation-section";
       const title = textElement("h5", section.label);

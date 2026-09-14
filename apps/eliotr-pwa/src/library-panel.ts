@@ -16,7 +16,7 @@ export function renderLibrary(page: LibraryPage): string {
        <button type="button" data-versions="${index}">Versions and readiness</button></article>`).join("") : "<p>No readable source heads on this page.</p>"}`;
 }
 
-export function mountLibraryPanel(element: HTMLElement, onSelectSource: (id: string, context?: LibrarySelectionContext) => void | boolean | Promise<void | boolean>): (() => void) & { clearPrivate(): void } {
+export function mountLibraryPanel(element: HTMLElement, onSelectSource: (id: string, context?: LibrarySelectionContext) => void | boolean | Promise<void | boolean>): (() => void) & { clearPrivate(): void; openProject(projectId: string): void } {
   element.innerHTML = `<h2>Library</h2><p>Only sources permitted by your current read policy are shown.</p>
     <p><button type="button" data-first>All sources / refresh</button> <button type="button" data-next disabled>Next page</button></p>
     <p data-scope></p><p role="status" aria-live="polite"></p><section data-library-result></section><section data-library-versions></section>
@@ -112,6 +112,12 @@ export function mountLibraryPanel(element: HTMLElement, onSelectSource: (id: str
         : "Active readiness could not be checked. Search can still be retried after refresh.";
     }
   };
+  const openProject = (projectId: string): void => {
+    if (disposed) return;
+    project = projectId;
+    element.dispatchEvent(new CustomEvent("library:scope-changed", { bubbles: true }));
+    void load();
+  };
   first.onclick = () => { project = undefined; element.dispatchEvent(new CustomEvent("library:scope-changed", { bubbles: true })); void load(); };
   next.onclick = () => { const cursor = page?.next_cursor; if (cursor) void load(cursor); };
   const offline = () => { clear("Offline. Private Library data cleared."); onSelectSource(""); };
@@ -125,5 +131,5 @@ export function mountLibraryPanel(element: HTMLElement, onSelectSource: (id: str
     window.removeEventListener("offline", offline); window.removeEventListener("eliotr:authorization-cleared", denied);
     window.removeEventListener("eliotr:raw-admission-completed", admissionCompleted);
     window.removeEventListener("eliotr:source-erased", admissionCompleted); };
-  return Object.assign(cleanup, { clearPrivate: () => { clear("Library data cleared. Refresh to read permitted sources."); onSelectSource(""); } });
+  return Object.assign(cleanup, { clearPrivate: () => { clear("Library data cleared. Refresh to read permitted sources."); onSelectSource(""); }, openProject });
 }

@@ -2,6 +2,7 @@ import { ApiRequestError } from "./api.js";
 import { escapeHtml } from "./html.js";
 import {
   captureRawFile,
+  createRawMarkdownIdempotencyKey,
   convertRawFileToMarkdown,
   admitRawFileToLibrary,
   prepareRawFileSelection,
@@ -97,6 +98,7 @@ export function mountRawFilePanel(element: HTMLElement, host: RawFilePanelHost):
   let selection: RawFileSelection | undefined;
   let receipt: RawFileCaptureReceipt | undefined;
   let conversion: RawMarkdownConversionResult | undefined;
+  let processingKey: string | undefined;
   let processingOutcomeUnknown = false;
   let admission: RawNormalizedAdmissionResult | undefined;
   let admissionOutcomeUnknown = false;
@@ -190,6 +192,7 @@ export function mountRawFilePanel(element: HTMLElement, host: RawFilePanelHost):
     selection = undefined;
     receipt = undefined;
     conversion = undefined;
+    processingKey = undefined;
     processingOutcomeUnknown = false;
     admission = undefined;
     admissionOutcomeUnknown = false;
@@ -258,6 +261,7 @@ export function mountRawFilePanel(element: HTMLElement, host: RawFilePanelHost):
         receipt = captured;
         stepComplete = true;
         conversion = undefined;
+        processingKey = undefined;
         processingOutcomeUnknown = false;
         admission = undefined;
         admissionOutcomeUnknown = false;
@@ -297,6 +301,7 @@ export function mountRawFilePanel(element: HTMLElement, host: RawFilePanelHost):
     const generation = host.generation();
     if (!generation) { status.textContent = "The current deployment is still being checked."; return; }
     const current = receipt;
+    const priorConversion = conversion;
     const active = ++serial;
     const local = new AbortController();
     controller = local;
@@ -315,7 +320,15 @@ export function mountRawFilePanel(element: HTMLElement, host: RawFilePanelHost):
     let stepComplete = false;
     void (async () => {
       try {
-        const result = await convertRawFileToMarkdown(current, generation, local.signal);
+        let requestKey = processingKey;
+        if (priorConversion?.state === "FAILED") {
+          requestKey = await createRawMarkdownIdempotencyKey(current, priorConversion.operation_id);
+        } else if (requestKey === undefined) {
+          requestKey = await createRawMarkdownIdempotencyKey(current);
+        }
+        if (active !== serial || disposed || local.signal.aborted) return;
+        processingKey = requestKey;
+        const result = await convertRawFileToMarkdown(current, generation, local.signal, requestKey);
         if (active !== serial || disposed) return;
         conversion = result;
         stepComplete = result.state === "COMPLETE";
@@ -418,6 +431,7 @@ export function mountRawFilePanel(element: HTMLElement, host: RawFilePanelHost):
     selection = undefined;
     receipt = undefined;
     conversion = undefined;
+    processingKey = undefined;
     processingOutcomeUnknown = false;
     admission = undefined;
     admissionOutcomeUnknown = false;
