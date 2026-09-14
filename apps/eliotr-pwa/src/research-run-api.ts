@@ -80,13 +80,28 @@ export interface ResearchScopeAuthorizationView {
   readonly expires_at: string;
 }
 
+export type ResearchSourceFreshnessState = "CURRENT_REVISIONS" | "PREVIOUS_REVISIONS" | "UNKNOWN";
+
+export interface ResearchSourceFreshnessChange {
+  readonly source_id: string;
+  readonly saved_revision_ref: string;
+  readonly head_revision_ref: string;
+}
+
+export interface ResearchSourceFreshness {
+  readonly state: ResearchSourceFreshnessState;
+  readonly checked_at?: string;
+  readonly changed_sources: readonly ResearchSourceFreshnessChange[];
+}
+
 export interface ResearchArtifactDraftReauthorizationView {
-  readonly protocol: "eliotr.artifact-draft-reauthorization.v1";
+  readonly protocol: "eliotr.artifact-draft-reauthorization.v1" | "eliotr.artifact-draft-reauthorization.v2";
   readonly artifact_ref: VersionedRef;
   readonly artifact: ArtifactRevision;
   readonly original_scope_snapshot_ref: VersionedRef;
   readonly authorization_scope_snapshot_ref: VersionedRef;
   readonly authorization: ResearchScopeAuthorizationView;
+  readonly source_freshness: ResearchSourceFreshness;
   readonly deployment_generation: string;
 }
 
@@ -333,6 +348,30 @@ export function scopeAuthorization(value: unknown): ResearchScopeAuthorizationVi
   };
 }
 
+const MAX_SOURCE_FRESHNESS_SOURCES = 64;
+
+function sourceFreshness(value: unknown): ResearchSourceFreshness {
+  const data = record(value, ["state", "checked_at", "changed_sources"]);
+  if (data.state !== "CURRENT_REVISIONS" && data.state !== "PREVIOUS_REVISIONS") invalid("source_freshness.state is invalid");
+  const checkedAt = isoTimestamp(data.checked_at, "source_freshness.checked_at");
+  if (!Array.isArray(data.changed_sources) || data.changed_sources.length > MAX_SOURCE_FRESHNESS_SOURCES) invalid("source_freshness.changed_sources is invalid");
+  const seen = new Set<string>();
+  const changedSources = data.changed_sources.map((value, index) => {
+    const row = record(value, ["source_id", "saved_revision_ref", "head_revision_ref"]);
+    const sourceId = identifier(row.source_id, `source_freshness.changed_sources[${index}].source_id`);
+    const savedRevision = identifier(row.saved_revision_ref, `source_freshness.changed_sources[${index}].saved_revision_ref`);
+    const headRevision = identifier(row.head_revision_ref, `source_freshness.changed_sources[${index}].head_revision_ref`);
+    if (seen.has(sourceId)) invalid("source_freshness.changed_sources contains duplicate sources");
+    seen.add(sourceId);
+    if (data.state === "CURRENT_REVISIONS" && savedRevision !== headRevision) invalid("current source revisions do not match");
+    if (data.state === "PREVIOUS_REVISIONS" && savedRevision === headRevision) invalid("previous source revisions must differ");
+    return { source_id: sourceId, saved_revision_ref: savedRevision, head_revision_ref: headRevision };
+  });
+  if (data.state === "CURRENT_REVISIONS" && changedSources.length !== 0) invalid("current source revisions must have no changed sources");
+  if (data.state === "PREVIOUS_REVISIONS" && changedSources.length === 0) invalid("previous source revisions must identify a changed source");
+  return { state: data.state, checked_at: checkedAt, changed_sources: changedSources };
+}
+
 export function decodeResearchArtifactDraftReauthorization(
   raw: unknown,
   expectedArtifact: VersionedRef,
@@ -340,8 +379,13 @@ export function decodeResearchArtifactDraftReauthorization(
 ): ResearchArtifactDraftReauthorizationView {
   const expected = versionedRef(expectedArtifact, "artifact_ref");
   const parsed = envelope(raw); checkGeneration(parsed.deployment_generation, expectedDeploymentGeneration);
-  const data = record(parsed.data, ["protocol", "artifact_ref", "artifact", "original_scope_snapshot_ref", "authorization_scope_snapshot_ref", "authorization", "deployment_generation"]);
-  if (data.protocol !== "eliotr.artifact-draft-reauthorization.v1") invalid("artifact reauthorization protocol is invalid");
+  const data = record(parsed.data, ["protocol", "artifact_ref", "artifact", "original_scope_snapshot_ref", "authorization_scope_snapshot_ref", "authorization", "deployment_generation"], ["source_freshness"]);
+  if (data.protocol !== "eliotr.artifact-draft-reauthorization.v1" && data.protocol !== "eliotr.artifact-draft-reauthorization.v2") invalid("artifact reauthorization protocol is invalid");
+  const freshness = data.protocol === "eliotr.artifact-draft-reauthorization.v2"
+    ? sourceFreshness(data.source_freshness)
+    : Object.hasOwn(data, "source_freshness")
+      ? invalid("v1 artifact reauthorization cannot include source freshness")
+      : { state: "UNKNOWN" as const, changed_sources: [] as const };
   const generation = identifier(data.deployment_generation, "data.deployment_generation");
   if (generation !== parsed.deployment_generation) invalid("artifact reauthorization generations differ");
   const artifactRef = versionedRef(data.artifact_ref, "artifact_ref");
@@ -349,12 +393,13 @@ export function decodeResearchArtifactDraftReauthorization(
   const artifact = artifactRevision(data.artifact);
   if (!sameRef(artifact.artifact_ref, artifactRef) || artifact.status !== "DRAFT") invalid("artifact reauthorization returned an invalid draft");
   return {
-    protocol: "eliotr.artifact-draft-reauthorization.v1",
+    protocol: data.protocol,
     artifact_ref: artifactRef,
     artifact,
     original_scope_snapshot_ref: versionedRef(data.original_scope_snapshot_ref, "original_scope_snapshot_ref"),
     authorization_scope_snapshot_ref: versionedRef(data.authorization_scope_snapshot_ref, "authorization_scope_snapshot_ref"),
     authorization: scopeAuthorization(data.authorization),
+    source_freshness: freshness,
     deployment_generation: generation,
   };
 }

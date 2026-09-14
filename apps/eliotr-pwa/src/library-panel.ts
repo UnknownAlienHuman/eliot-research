@@ -89,7 +89,7 @@ export function mountLibraryPanel(element: HTMLElement, onSelectSource: (id: str
       for (const button of result.querySelectorAll<HTMLButtonElement>("[data-versions]")) button.onclick = () => {
         const selected = received.sources[Number(button.dataset.versions)];
         if (selected && mine === serial && !disposed) {
-          closeVersions?.(); closeVersions = mountSourceRevisionsPanel(versions, selected.id, received.generation);
+          closeVersions?.(); closeVersions = mountSourceRevisionsPanel(versions, selected.id, received.generation, selected.title);
         }
       };
       for (const button of result.querySelectorAll<HTMLButtonElement>("[data-source]")) button.onclick = () => {

@@ -1,11 +1,14 @@
 import { VersionedRefSchema, type VersionedRef } from "@eliotr/contracts";
 import {
+  canonicalEvidenceJson,
   createNavigationReadAuthority,
   loadScopeAuthority,
   type NavigationReadAuthority,
   type ScopeAuthorization,
 } from "@eliotr/cloudflare-evidence";
-import { createD1ScopeService, createOwnerScopeAuthority } from "@eliotr/cloudflare-navigation";
+import {
+  reauthorizeOwnerHistoricalScope,
+} from "@eliotr/cloudflare-navigation";
 import {
   ArtifactDraftReadError,
   readReauthorizedArtifactDraft,
@@ -14,12 +17,15 @@ import {
 import { ArtifactReadNotFoundError, artifactSectionResponse, type AuthenticatedRequestContext } from "@eliotr/interfaces";
 import type { Env } from "./env.js";
 import { HttpRequestError } from "./http-errors.js";
+import { readSourceRevisionFreshness } from "./source-revision-freshness.js";
 
 interface OwnerArtifactReauthorization {
   readonly artifact_ref: VersionedRef;
+  readonly original_scope_snapshot_ref: VersionedRef;
   readonly navigation: NavigationReadAuthority;
   readonly authorization: ScopeAuthorization;
   readonly requireActiveRequest: () => void;
+  readonly requireCurrent: () => Promise<void>;
 }
 
 /** Original artifact authority is provenance; every reopen obtains a new owner read grant. */
@@ -43,27 +49,52 @@ async function prepareOwnerArtifactReauthorization(
   ).bind(ref.id, ref.revision, context.principal_ref)
     .first<{ scope_snapshot_id: string; scope_snapshot_revision: number }>();
   if (binding === null) throw new ArtifactReadNotFoundError();
-  const original = await loadScopeAuthority(env.CORE_DB, VersionedRefSchema.parse({
+  const originalScopeRef = VersionedRefSchema.parse({
     id: binding.scope_snapshot_id, revision: binding.scope_snapshot_revision,
-  }));
+  });
+  const original = await loadScopeAuthority(env.CORE_DB, originalScopeRef);
   if (original === null || original.invalidated_at !== null) {
     throw new ArtifactDraftReadError("ARTIFACT_DRAFT_READ_STALE", 410, "The saved report's sources are no longer available");
   }
   const now = Date.now;
-  const authority = createOwnerScopeAuthority(env.CORE_DB, context, now);
-  await authority.requireReadPolicy();
   requireActiveRequest();
-  const scopes = createD1ScopeService(env.CORE_DB, authority, { now, max_snapshot_members: 64 });
-  const fresh = await scopes.freeze(original.snapshot.resolved_scope_expression, context.credential_generation);
-  await scopes.requireCurrent(fresh);
+  const historical = await reauthorizeOwnerHistoricalScope({
+    database: env.CORE_DB,
+    access: context,
+    original_ref: {
+      id: binding.scope_snapshot_id,
+      revision: binding.scope_snapshot_revision,
+    },
+    original: original.snapshot,
+    now,
+    max_snapshot_members: 64,
+  });
   requireActiveRequest();
-  await authority.grant(fresh);
   const navigation = createNavigationReadAuthority({
-    database: env.CORE_DB, scope_snapshot: fresh, access: context,
-    require_current: (scope) => scopes.requireCurrent(scope), now,
+    database: env.CORE_DB,
+    scope_snapshot: historical.scope,
+    access: context,
+    require_current: historical.requireCurrent,
+    now,
   });
   const authorization = await navigation.current();
-  return { artifact_ref: ref, navigation, authorization, requireActiveRequest };
+  const requireCurrent = async (): Promise<void> => {
+    requireActiveRequest();
+    const currentAuthorization = await navigation.current();
+    if (canonicalEvidenceJson(currentAuthorization) !== canonicalEvidenceJson(authorization)) {
+      throw new ArtifactDraftReadError("ARTIFACT_DRAFT_READ_STALE", 410, "The saved report authorization changed during read");
+    }
+    await navigation.sources(historical.scope.member_source_revision_refs, currentAuthorization);
+    requireActiveRequest();
+  };
+  return {
+    artifact_ref: ref,
+    original_scope_snapshot_ref: originalScopeRef,
+    navigation,
+    authorization,
+    requireActiveRequest,
+    requireCurrent,
+  };
 }
 
 export async function reopenOwnerArtifactDraft(
@@ -81,7 +112,17 @@ export async function reopenOwnerArtifactDraft(
   });
   prepared.requireActiveRequest();
   if (result === null) throw new ArtifactReadNotFoundError();
-  return result;
+  if (sectionRef !== undefined) return result;
+  const sourceFreshness = await readSourceRevisionFreshness(env.CORE_DB, {
+    original_scope_snapshot_ref: prepared.original_scope_snapshot_ref,
+    navigation: prepared.navigation,
+    requireCurrent: prepared.requireCurrent,
+  });
+  return {
+    ...result,
+    protocol: "eliotr.artifact-draft-reauthorization.v2" as const,
+    source_freshness: sourceFreshness,
+  };
 }
 
 export async function reopenOwnerArtifactSection(

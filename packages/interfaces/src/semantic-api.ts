@@ -166,11 +166,20 @@ export interface WikiPublicationResult {
 }
 
 export interface WikiProposalReadResult {
-  readonly protocol: "eliotr.wiki-proposal-read.v1";
+  readonly protocol: "eliotr.wiki-proposal-read.v2";
   readonly proposal_ref: VersionedRef;
   readonly page: WikiPageRevision;
   readonly risk_class: WikiDraftRiskClass;
   readonly state: "PROPOSED" | "PUBLISHED";
+  readonly source_freshness: {
+    readonly state: "CURRENT_REVISIONS" | "PREVIOUS_REVISIONS";
+    readonly checked_at: string;
+    readonly changed_sources: readonly {
+      readonly source_id: string;
+      readonly saved_revision_ref: string;
+      readonly head_revision_ref: string;
+    }[];
+  };
 }
 
 export interface WikiProposalSummary {

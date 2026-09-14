@@ -11,6 +11,7 @@ export type {
   StructuralNavigationMaterializationResult,
 } from "./orientation-materialization.js";
 export { createOwnerScopeAuthority } from "./orientation-authority.js";
+export * from "./owner-historical-scope.js";
 export * from "./exhaustive-workflow-binding.js";
 export * from "./exhaustive-workflow-output.js";
 export * from "./exhaustive-workflow-service.js";

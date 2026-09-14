@@ -13,7 +13,11 @@ import {
   type NavigationReadAuthority,
   type ScopeAuthorization,
 } from "@eliotr/cloudflare-evidence";
-import { createD1ScopeService, createOwnerScopeAuthority } from "@eliotr/cloudflare-navigation";
+import {
+  createD1ScopeService,
+  createOwnerScopeAuthority,
+  reauthorizeOwnerHistoricalScope,
+} from "@eliotr/cloudflare-navigation";
 import { CatalogInputError } from "./catalog-service.js";
 import type { Env } from "./env.js";
 
@@ -207,10 +211,48 @@ export async function prepareOwnerScopeReadAuthorization(
   }
 }
 
+/**
+ * Read-only historical reopen. The fresh grant keeps the saved revision refs;
+ * current-head reauthorization remains the separate mutation path above.
+ */
+export async function prepareOwnerScopeHistoricalReadAuthorization(
+  env: Pick<Env, "CORE_DB">,
+  context: EvidenceAccessContext,
+  scopeRef: VersionedRef,
+): Promise<WikiProposalReadAuthorization> {
+  const { originalRef, original } = await loadOriginalScope(env, context, scopeRef);
+  const now = Date.now;
+  const historical = await reauthorizeOwnerHistoricalScope({
+    database: env.CORE_DB,
+    access: context,
+    original_ref: originalRef,
+    original,
+    now,
+    max_snapshot_members: 64,
+  });
+  const navigation = createNavigationReadAuthority({
+    database: env.CORE_DB,
+    scope_snapshot: historical.scope,
+    access: context,
+    require_current: historical.requireCurrent,
+    now,
+  });
+  const authorization = await navigation.current();
+  return bindAuthorization(originalRef, navigation, authorization);
+}
+
 export async function prepareWikiProposalReadAuthorization(
   env: Pick<Env, "CORE_DB">,
   context: EvidenceAccessContext,
   page: WikiPageRevision,
 ): Promise<WikiProposalReadAuthorization> {
   return prepareOwnerScopeReadAuthorization(env, context, page.scope_snapshot_ref);
+}
+
+export async function prepareWikiProposalHistoricalReadAuthorization(
+  env: Pick<Env, "CORE_DB">,
+  context: EvidenceAccessContext,
+  page: WikiPageRevision,
+): Promise<WikiProposalReadAuthorization> {
+  return prepareOwnerScopeHistoricalReadAuthorization(env, context, page.scope_snapshot_ref);
 }

@@ -303,7 +303,10 @@ D1, R2, Queue, Workflow, provider or model effect.
 
 ### 8.5 Wiki and artifact materialization — ER-11/ER-12
 
-- [ ] Implement immutable Wiki revisions with expected-head CAS.
+- [x] Implement immutable Wiki revisions with expected-head CAS. Owner editing and
+      publication of a second revision with preserved first-revision bytes were
+      [verified live on 2026-09-14](live-document-project-acceptance-2026-09-14.md#owner-edits-with-preserved-wiki-history).
+      Concurrent-client publication was not exercised in that acceptance.
 - [ ] Implement proposal, review, promotion and dependency closure.
 - [ ] Implement Artifact Compiler with copy-on-write section updates.
 - [ ] Require complete citation-resolution receipts before publication.

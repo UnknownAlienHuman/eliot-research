@@ -122,6 +122,10 @@ export interface BundleIngestRecovery {
 export interface RawFileCaptureRequest {
   /** Optional namespace locator; current source ownership and policy remain server-derived. */
   readonly source_namespace_id?: string;
+  /** Existing source replacement target; must be paired with expected_head_revision_ref. */
+  readonly target_source_id?: string;
+  /** The exact current source head expected by this capture and its later bundle commit. */
+  readonly expected_head_revision_ref?: string;
   readonly idempotency_key: string;
   readonly original_file_name: string;
   readonly content_sha256: string;

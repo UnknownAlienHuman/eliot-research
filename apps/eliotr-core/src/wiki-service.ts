@@ -23,11 +23,15 @@ import {
 } from "@eliotr/research";
 import { CatalogInputError } from "./catalog-service.js";
 import type { Env } from "./env.js";
-import { prepareWikiProposalReadAuthorization } from "./wiki-proposal-reauthorization.js";
+import {
+  prepareWikiProposalReadAuthorization,
+  prepareWikiProposalHistoricalReadAuthorization,
+} from "./wiki-proposal-reauthorization.js";
 import { admitWikiOwnerEditReview } from "./wiki-owner-edit-review-admission.js";
 import { admitWikiOwnerReview } from "./wiki-review-admission.js";
 import { createD1R2WikiPublicationPort } from "./wiki-publication-store.js";
 import type { WikiOwnerPublicationGuardWitness } from "./wiki-owner-publication-guard.js";
+import { readSourceRevisionFreshness } from "./source-revision-freshness.js";
 import {
   MAX_BODY_BYTES,
   MAX_EVIDENCE_MAP_BYTES,
@@ -50,7 +54,7 @@ const RISK_CLASSES = new Set<DraftRiskClass>([
 
 export const WIKI_PROPOSAL_PROTOCOL = "eliotr.wiki-proposal.v1";
 export const WIKI_PUBLICATION_PROTOCOL = "eliotr.wiki-publication.v1";
-export const WIKI_PROPOSAL_READ_PROTOCOL = "eliotr.wiki-proposal-read.v1";
+export const WIKI_PROPOSAL_READ_PROTOCOL = "eliotr.wiki-proposal-read.v2";
 export const WIKI_PROPOSAL_LIST_PROTOCOL = "eliotr.wiki-proposals.v1";
 const MAX_WIKI_PROPOSALS = 20;
 
@@ -295,6 +299,7 @@ async function propose(
 interface CheckedProposal {
   readonly row: ProposalRow;
   readonly proposal: ReturnType<typeof decodeProposal>;
+  readonly authorization: Awaited<ReturnType<typeof prepareWikiProposalHistoricalReadAuthorization>>;
   readonly requireCurrent: () => Promise<void>;
   readonly body?: Uint8Array;
 }
@@ -313,8 +318,8 @@ async function checkedProposal(
       await dependencyDigest(proposal.page) !== row.dependency_refs_sha256) {
     fail("WIKI_PROPOSAL_READBACK_MISMATCH", "Wiki proposal digest is corrupt", 409);
   }
-  const authorization = await prepareWikiProposalReadAuthorization(env, context, proposal.page);
-  if (!verifyObjects) return { row, proposal, requireCurrent: authorization.requireCurrent };
+  const authorization = await prepareWikiProposalHistoricalReadAuthorization(env, context, proposal.page);
+  if (!verifyObjects) return { row, proposal, authorization, requireCurrent: authorization.requireCurrent };
   const body = await readObject(env.WORK_BUCKET, proposal.page.body_object_ref, MAX_BODY_BYTES);
   const evidence = await readObject(env.WORK_BUCKET, proposal.page.evidence_map_ref, MAX_EVIDENCE_MAP_BYTES);
   if (body.sha256 !== proposal.page.body_sha256 || body.bytes.byteLength !== row.body_size ||
@@ -322,7 +327,7 @@ async function checkedProposal(
     fail("WIKI_PROPOSAL_READBACK_MISMATCH", "Wiki proposal object readback differs from its durable identity", 409);
   }
   await authorization.requireCurrent();
-  return { row, proposal, requireCurrent: authorization.requireCurrent, body: body.bytes };
+  return { row, proposal, authorization, requireCurrent: authorization.requireCurrent, body: body.bytes };
 }
 
 function errorCode(error: unknown): string | undefined {
@@ -353,6 +358,7 @@ async function readProposal(
       page: checked.proposal.page,
       risk_class: checked.proposal.risk_class,
       state: checked.row.state as "PROPOSED" | "PUBLISHED",
+      source_freshness: await readSourceRevisionFreshness(env.CORE_DB, checked.authorization),
     };
   } catch (error) { mapWiki(error); }
 }

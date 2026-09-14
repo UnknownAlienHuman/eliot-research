@@ -9,11 +9,24 @@ import {
   readRawFileByIdempotency,
   readRawFileAdmissionStatus,
   RAW_FILE_MAX_BYTES,
+  RAW_SOURCE_VERSION_REQUESTED_EVENT,
   type RawFileCaptureReceipt,
   type RawFileSelection,
   type RawMarkdownConversionResult,
   type RawNormalizedAdmissionResult,
+  type RawSourceVersionTarget,
 } from "./raw-file-api.js";
+import {
+  formatRawFileBytes,
+  parseSourceVersionRequest,
+  rawFileAdmissionCopy,
+  rawFileProcessingCopy,
+  rawFileReceiptCopy,
+  renderSourceVersionTarget,
+  SOURCE_VERSION_FORM_REQUESTED_EVENT,
+  type SourceVersionRequest,
+} from "./raw-file-version-view.js";
+import { readSourceRevisionsPage } from "./source-revisions-api.js";
 
 interface RawFilePanelHost {
   readonly generation: () => string | undefined;
@@ -23,35 +36,6 @@ interface RawFilePanelHost {
 
 type HealthLossReason = "initial-unavailable" | "connection-lost" | "generation-changed";
 
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KiB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MiB`;
-}
-
-function receiptCopy(recovered: boolean): string {
-  return `${recovered ? "Existing upload found" : "File uploaded"}. Continue to process it before adding it to Library.`;
-}
-
-function processingCopy(result: RawMarkdownConversionResult): string {
-  if (result.state === "COMPLETE") return "Processing complete. Ready to add to Library.";
-  if (result.state === "STARTED") return "Processing started. Continue when processing is ready.";
-  if (result.state === "UNKNOWN") return `Processing status is unknown (${result.failure_code}). Continue to check this step.`;
-  return `Processing failed (${result.failure_code}). Retry processing to continue.`;
-}
-
-function admissionCopy(result: RawNormalizedAdmissionResult): string {
-  if (result.state === "COMMITTED") {
-    return result.admission_receipt?.decision === "DUPLICATE"
-      ? "This document is already in Library. Search readiness is reported separately."
-      : "Added to Library. Search readiness is reported separately.";
-  }
-  if (result.state === "UNKNOWN") return "Library add status is unknown. Continue to check this step.";
-  if (result.state === "QUARANTINED") return "Library did not accept this document after its quality checks. See Import details for the recorded reasons.";
-  if (result.state === "REJECTED") return "Library rejected this document. See Import details for the recorded reasons.";
-  return `Library add is ${result.state.toLowerCase()}. Continue when it is ready.`;
-}
-
 export function mountRawFilePanel(element: HTMLElement, host: RawFilePanelHost): () => void {
   element.innerHTML = `<section class="raw-file-panel" aria-label="Add a document">
     <div class="tool-heading"><div><span class="eyebrow">Library</span><h2>Add a document</h2></div><span class="tool-badge">PRIVATE</span></div>
@@ -60,9 +44,11 @@ export function mountRawFilePanel(element: HTMLElement, host: RawFilePanelHost):
       <label>Source file<input type="file" data-raw-file accept=".pdf,.doc,.docx,.html,.htm,.txt,.md,.csv,.json,.png,.jpg,.jpeg,.webp,.svg,.gif,.bmp,application/pdf,text/plain,text/markdown,text/html,image/*" /></label>
       <div class="raw-file-actions"><button class="button button--primary" type="submit" data-raw-submit disabled>Add document</button>
         <button class="button button--quiet" type="button" data-raw-find-library hidden disabled>Open Library</button>
+        <button class="button button--quiet" type="button" data-raw-cancel-version hidden>Cancel version</button>
         <button class="button button--quiet" type="button" data-raw-stop hidden>Stop</button></div>
     </form>
-    <p class="raw-file-limit">Up to ${formatBytes(RAW_FILE_MAX_BYTES)} per file in this browser session; processing accepts up to 8.0 MiB.</p>
+    <p class="raw-file-limit">Up to ${formatRawFileBytes(RAW_FILE_MAX_BYTES)} per file in this browser session; processing accepts up to 8.0 MiB.</p>
+    <p class="raw-file-version" data-raw-version hidden></p>
     <p role="status" aria-live="polite" data-raw-status>Choose a file to begin.</p>
     <details><summary>Import details and recovery</summary>
     <div class="raw-file-actions">
@@ -70,6 +56,7 @@ export function mountRawFilePanel(element: HTMLElement, host: RawFilePanelHost):
       <button class="button button--quiet" type="button" data-raw-process hidden disabled>Process file</button>
       <button class="button button--quiet" type="button" data-raw-admit hidden disabled>Add to Library</button>
     </div>
+    <dl class="raw-file-version-details" data-raw-version-details hidden></dl>
     <dl class="raw-file-receipt" data-raw-receipt hidden></dl>
     <dl class="raw-file-processing" data-raw-processing hidden></dl>
     <dl class="raw-file-admission" data-raw-admission hidden></dl>
@@ -82,12 +69,16 @@ export function mountRawFilePanel(element: HTMLElement, host: RawFilePanelHost):
   const process = element.querySelector<HTMLButtonElement>("[data-raw-process]");
   const admit = element.querySelector<HTMLButtonElement>("[data-raw-admit]");
   const findLibrary = element.querySelector<HTMLButtonElement>("[data-raw-find-library]");
+  const cancelVersion = element.querySelector<HTMLButtonElement>("[data-raw-cancel-version]");
   const stopButton = element.querySelector<HTMLButtonElement>("[data-raw-stop]");
   const status = element.querySelector<HTMLElement>("[data-raw-status]");
+  const versionNode = element.querySelector<HTMLElement>("[data-raw-version]");
+  const versionDetails = element.querySelector<HTMLElement>("[data-raw-version-details]");
   const receiptNode = element.querySelector<HTMLElement>("[data-raw-receipt]");
   const processingNode = element.querySelector<HTMLElement>("[data-raw-processing]");
   const admissionNode = element.querySelector<HTMLElement>("[data-raw-admission]");
-  if (!form || !input || !submit || !recover || !process || !admit || !findLibrary || !stopButton || !status || !receiptNode || !processingNode || !admissionNode) {
+  if (!form || !input || !submit || !recover || !process || !admit || !findLibrary || !cancelVersion || !stopButton ||
+      !status || !versionNode || !versionDetails || !receiptNode || !processingNode || !admissionNode) {
     throw new Error("Raw file panel is incomplete");
   }
 
@@ -103,16 +94,19 @@ export function mountRawFilePanel(element: HTMLElement, host: RawFilePanelHost):
   let admission: RawNormalizedAdmissionResult | undefined;
   let admissionOutcomeUnknown = false;
   let admissionNeedsResume = false;
+  let versionTarget: SourceVersionRequest | undefined;
+  let versionHeadConfirmed = false;
   let healthLossStatus: string | undefined;
   let lastGeneration = host.ready() ? host.generation() : undefined;
   const hasSuccessfulAdmission = (): boolean => admission?.state === "COMMITTED" &&
-    (admission.admission_receipt?.decision === "ADMITTED" || admission.admission_receipt?.decision === "DUPLICATE");
+    (admission.admission_receipt?.decision === "ADMITTED" || admission.admission_receipt?.decision === "DUPLICATE") &&
+    (versionTarget === undefined || versionHeadConfirmed);
 
   const renderReceipt = (value: RawFileCaptureReceipt, recovered: boolean): void => {
     receiptNode.hidden = false;
     receiptNode.innerHTML = `<dt>Status</dt><dd>${recovered ? "Captured · recovered" : "Captured"}</dd>
       <dt>File</dt><dd>${escapeHtml(value.original_file_name)}</dd>
-      <dt>Size</dt><dd>${formatBytes(value.size_bytes)}</dd>
+      <dt>Size</dt><dd>${formatRawFileBytes(value.size_bytes)}</dd>
       <dt>Capture</dt><dd>${escapeHtml(value.capture_id)}</dd>
       <dt>Digest</dt><dd>${escapeHtml(value.content_sha256)}</dd>
       <dt>Captured</dt><dd>${escapeHtml(value.captured_at)}</dd>`;
@@ -123,7 +117,7 @@ export function mountRawFilePanel(element: HTMLElement, host: RawFilePanelHost):
     if (value.state === "COMPLETE") {
       processingNode.innerHTML = `<dt>Processing</dt><dd>Complete · conversion ready</dd>
         <dt>Operation</dt><dd>${escapeHtml(value.operation_id)}</dd>
-        <dt>Output</dt><dd>${escapeHtml(value.output_sha256 ?? "")} · ${formatBytes(value.output_bytes ?? 0)}</dd>
+        <dt>Output</dt><dd>${escapeHtml(value.output_sha256 ?? "")} · ${formatRawFileBytes(value.output_bytes ?? 0)}</dd>
         <dt>Detected</dt><dd>${escapeHtml(value.detected_mime ?? "")} · ${escapeHtml(value.format ?? "")}</dd>
         <dt>Tokens</dt><dd>${String(value.tokens ?? 0)}</dd>
         <dt>Library</dt><dd>Not admitted or indexed by this result.</dd>`;
@@ -161,7 +155,8 @@ export function mountRawFilePanel(element: HTMLElement, host: RawFilePanelHost):
     return "Add document";
   };
   const renderButtons = (): void => {
-    const ready = host.ready() && host.generation() !== undefined && (host.sourceNamespace === undefined || host.sourceNamespace() !== undefined);
+    const ready = host.ready() && host.generation() !== undefined &&
+      (versionTarget !== undefined || host.sourceNamespace === undefined || host.sourceNamespace() !== undefined);
     submit.disabled = busy || !selection || hasSuccessfulAdmission() || !ready;
     submit.textContent = primaryActionText();
     recover.disabled = busy || !selection || !ready;
@@ -180,7 +175,9 @@ export function mountRawFilePanel(element: HTMLElement, host: RawFilePanelHost):
           : "Add to Library";
     findLibrary.hidden = !hasSuccessfulAdmission();
     findLibrary.disabled = busy || !hasSuccessfulAdmission();
-    input.disabled = busy || (host.sourceNamespace !== undefined && host.sourceNamespace() === undefined);
+    cancelVersion.hidden = versionTarget === undefined;
+    cancelVersion.disabled = busy;
+    input.disabled = busy || (versionTarget === undefined && host.sourceNamespace !== undefined && host.sourceNamespace() === undefined);
     stopButton.hidden = !busy;
     stopButton.disabled = !busy;
   };
@@ -197,6 +194,8 @@ export function mountRawFilePanel(element: HTMLElement, host: RawFilePanelHost):
     admission = undefined;
     admissionOutcomeUnknown = false;
     admissionNeedsResume = false;
+    versionTarget = undefined;
+    versionHeadConfirmed = false;
     input.value = "";
     receiptNode.hidden = true;
     receiptNode.replaceChildren();
@@ -204,11 +203,16 @@ export function mountRawFilePanel(element: HTMLElement, host: RawFilePanelHost):
     processingNode.replaceChildren();
     admissionNode.hidden = true;
     admissionNode.replaceChildren();
+    renderSourceVersionTarget(versionNode, versionDetails, versionTarget);
     status.textContent = message;
     renderButtons();
   };
   const showError = (error: unknown): void => {
     if (error instanceof ApiRequestError) {
+      if (versionTarget !== undefined && error.status === 409) {
+        status.textContent = "The selected source changed before this version was admitted. Refresh versions and choose Add new version again; no overwrite was attempted.";
+        return;
+      }
       status.textContent = error.status === 401 || error.status === 403
         ? "Authorization changed. Sign in again, then choose the file again."
         : `${error.code}: ${error.message}`;
@@ -224,8 +228,13 @@ export function mountRawFilePanel(element: HTMLElement, host: RawFilePanelHost):
     if (!found || !isCurrent()) return false;
     receipt = found;
     renderReceipt(found, true);
-    status.textContent = receiptCopy(true);
+    status.textContent = rawFileReceiptCopy(true, current.target_source_id !== undefined);
     return true;
+  };
+  const confirmVersionHead = async (target: RawSourceVersionTarget, admittedRevision: string,
+    generation: string, signal: AbortSignal): Promise<boolean> => {
+    const received = await readSourceRevisionsPage(target.target_source_id, generation, undefined, signal);
+    return received.source_id === target.target_source_id && received.head_revision_ref === admittedRevision;
   };
   const runCapture = (recoverOnly: boolean, continueAfter?: () => void): void => {
     if (busy || !selection || !host.ready()) return;
@@ -266,7 +275,7 @@ export function mountRawFilePanel(element: HTMLElement, host: RawFilePanelHost):
         admission = undefined;
         admissionOutcomeUnknown = false;
         renderReceipt(captured, false);
-        status.textContent = receiptCopy(false);
+        status.textContent = rawFileReceiptCopy(false, current.target_source_id !== undefined);
       } catch (error) {
         if (active !== serial || disposed) return;
         if (local.signal.aborted) {
@@ -337,7 +346,7 @@ export function mountRawFilePanel(element: HTMLElement, host: RawFilePanelHost):
         admissionOutcomeUnknown = false;
         renderProcessing(result);
         renderAdmission(undefined);
-        status.textContent = processingCopy(result);
+        status.textContent = rawFileProcessingCopy(result);
       } catch (error) {
         if (active !== serial || disposed) return;
         if (local.signal.aborted) {
@@ -367,6 +376,7 @@ export function mountRawFilePanel(element: HTMLElement, host: RawFilePanelHost):
     if (!generation) { status.textContent = "The current deployment is still being checked."; return; }
     const currentReceipt = receipt;
     const currentConversion = conversion;
+    const currentVersionTarget = versionTarget;
     const active = ++serial;
     const local = new AbortController();
     controller = local;
@@ -386,7 +396,33 @@ export function mountRawFilePanel(element: HTMLElement, host: RawFilePanelHost):
         admissionOutcomeUnknown = false;
         admissionNeedsResume = result.state !== "COMMITTED";
         renderAdmission(result);
-        status.textContent = admissionCopy(result);
+        status.textContent = rawFileAdmissionCopy(result, currentVersionTarget);
+        if (result.state === "COMMITTED" && currentVersionTarget !== undefined) {
+          versionHeadConfirmed = false;
+          status.textContent = "Admission recorded. Confirming the new source head…";
+          try {
+            const confirmed = await confirmVersionHead(currentVersionTarget, result.source_revision_ref, generation, local.signal);
+            if (active !== serial || disposed) return;
+            if (!confirmed) {
+              status.textContent = "New version admission was recorded, but the new head was not confirmed. Refresh versions before retrying.";
+              return;
+            }
+            versionHeadConfirmed = true;
+            status.textContent = rawFileAdmissionCopy(result, currentVersionTarget);
+            window.dispatchEvent(new Event("eliotr:raw-admission-completed"));
+          } catch (confirmationError) {
+            if (active !== serial || disposed) return;
+            if (local.signal.aborted) {
+              status.textContent = "New version admission was recorded, but head confirmation was stopped. Refresh versions before retrying.";
+            } else if (confirmationError instanceof ApiRequestError &&
+                (confirmationError.code === "API_GENERATION_MISMATCH" || confirmationError.code === "CATALOG_GENERATION_CHANGED")) {
+              clear("Application changed. Private upload and processing state cleared; choose the file again.");
+            } else {
+              status.textContent = "New version admission was recorded, but its head could not be confirmed. Refresh versions before retrying.";
+            }
+          }
+          return;
+        }
         if (result.state === "COMMITTED") window.dispatchEvent(new Event("eliotr:raw-admission-completed"));
       } catch (error) {
         if (active !== serial || disposed) return;
@@ -409,7 +445,9 @@ export function mountRawFilePanel(element: HTMLElement, host: RawFilePanelHost):
   const runAddDocument = (): void => {
     if (busy || !selection || !host.ready()) return;
     if (hasSuccessfulAdmission()) {
-      status.textContent = "Ready. This document is in Library; search readiness is reported separately.";
+      status.textContent = versionTarget === undefined
+        ? "Ready. This document is in Library; search readiness is reported separately."
+        : "Ready. The new version is in Library; previous versions remain available. Search readiness is reported separately.";
       return;
     }
     if (receipt === undefined) {
@@ -436,6 +474,7 @@ export function mountRawFilePanel(element: HTMLElement, host: RawFilePanelHost):
     admission = undefined;
     admissionOutcomeUnknown = false;
     admissionNeedsResume = false;
+    versionHeadConfirmed = false;
     receiptNode.hidden = true;
     receiptNode.replaceChildren();
     renderProcessing(undefined);
@@ -443,15 +482,19 @@ export function mountRawFilePanel(element: HTMLElement, host: RawFilePanelHost):
     const file = input.files?.[0];
     if (!file) { status.textContent = "Choose a file to begin."; renderButtons(); return; }
     const active = serial;
+    const currentVersionTarget = versionTarget;
     const local = new AbortController();
     controller = local;
     busy = true;
     renderButtons();
     status.textContent = "Checking file size and digest…";
-    void prepareRawFileSelection(file, local.signal, host.sourceNamespace?.()).then((prepared) => {
+    const namespace = currentVersionTarget === undefined ? host.sourceNamespace?.() : undefined;
+    void prepareRawFileSelection(file, local.signal, namespace, currentVersionTarget).then((prepared) => {
       if (active !== serial || disposed) return;
       selection = prepared;
-      status.textContent = "Ready to add this document. Re-selecting the same file can recover its saved upload.";
+      status.textContent = currentVersionTarget === undefined
+        ? "Ready to add this document. Re-selecting the same file can recover its saved upload."
+        : "Ready to add this new version. The previous version remains available; submit to continue.";
     }).catch((error: unknown) => { if (active === serial && !disposed) showError(error); })
       .finally(() => { if (active === serial && !disposed) finish(local); });
   };
@@ -478,6 +521,25 @@ export function mountRawFilePanel(element: HTMLElement, host: RawFilePanelHost):
     if (libraryAddInFlight) admissionOutcomeUnknown = true;
     else if (receipt !== undefined) processingOutcomeUnknown = true;
     renderButtons();
+  };
+  const sourceVersionRequested = (event: Event): void => {
+    const requested = parseSourceVersionRequest(event);
+    if (requested === undefined || disposed) return;
+    if (busy) {
+      status.textContent = "Stop the current upload before choosing a new version.";
+      return;
+    }
+    clear("Choose the replacement file for this source.");
+    versionTarget = requested;
+    renderSourceVersionTarget(versionNode, versionDetails, versionTarget);
+    status.textContent = `Adding a new version of ${requested.source_title ?? "the selected document"}. The previous version remains available. Choose the replacement file.`;
+    renderButtons();
+    element.dispatchEvent(new Event(SOURCE_VERSION_FORM_REQUESTED_EVENT, { bubbles: true }));
+    element.scrollIntoView({ block: "start" });
+    input.focus();
+  };
+  cancelVersion.onclick = () => {
+    if (!busy && versionTarget !== undefined) clear("Version target cleared. Choose a file to begin.");
   };
   const healthUpdated = () => {
     const generation = host.generation();
@@ -512,17 +574,20 @@ export function mountRawFilePanel(element: HTMLElement, host: RawFilePanelHost):
   app?.addEventListener("eliotr:health-updated", healthUpdated);
   app?.addEventListener("eliotr:health-lost", clearOnHealthLost);
   window.addEventListener("eliotr:authorization-cleared", clearOnAuth);
+  window.addEventListener(RAW_SOURCE_VERSION_REQUESTED_EVENT, sourceVersionRequested);
   window.addEventListener("offline", clearOnOffline);
   window.addEventListener("pagehide", clearOnOffline);
   renderButtons();
   return () => {
     disposed = true;
     clear("Upload panel closed.");
-    form.onsubmit = null; input.onchange = null; recover.onclick = null; process.onclick = null; admit.onclick = null; findLibrary.onclick = null; stopButton.onclick = null;
+    form.onsubmit = null; input.onchange = null; recover.onclick = null; process.onclick = null; admit.onclick = null;
+    findLibrary.onclick = null; cancelVersion.onclick = null; stopButton.onclick = null;
     app?.removeEventListener("eliotr:health-updated", healthUpdated);
     app?.removeEventListener("eliotr:namespace-selected", namespaceSelected);
     app?.removeEventListener("eliotr:health-lost", clearOnHealthLost);
     window.removeEventListener("eliotr:authorization-cleared", clearOnAuth);
+    window.removeEventListener(RAW_SOURCE_VERSION_REQUESTED_EVENT, sourceVersionRequested);
     window.removeEventListener("offline", clearOnOffline);
     window.removeEventListener("pagehide", clearOnOffline);
   };

@@ -370,3 +370,18 @@ limit; the deployed EXPLAIN and normal UI retry resolved that live failure.
 No broad test suite was run. Concurrent-client and mid-edit revocation scenarios
 were not exercised live. Accepted-artifact semantics, source update/purge,
 recovery, federation and the mandatory Rust scope remain open.
+
+## Source versions and historical report freshness
+
+Schema commit `39ffd48` was pushed to main. Migrations `0065` and `0066`
+were applied atomically to production D1 and recorded at
+`2026-09-14 09:59:54` UTC. They add immutable target-source/expected-head
+fields to raw capture and record one owner-visible source change per admitted
+revision from the final ingest commit guard transaction.
+
+Local SQLite compiled all 65 migration files through `0066`; the actual raw
+capture INSERT compiled with 20 matching parameter bindings. Production D1
+`EXPLAIN INSERT` compiled 289 instructions for raw capture and 320 for the
+ingest commit guard with the new change-feed trigger, with zero data writes.
+These checks establish schema readiness; the new source-update browser flow
+has not yet been exercised in production.

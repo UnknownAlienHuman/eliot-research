@@ -72,6 +72,61 @@ async function existingSource(
   ).bind(sourceId).first<ExistingSourceRow>();
 }
 
+interface RawCaptureHeadBindingRow {
+  readonly state: unknown;
+  readonly principal_ref: unknown;
+  readonly owner_system_id: unknown;
+  readonly source_namespace_id: unknown;
+  readonly source_owner_generation: unknown;
+  readonly source_revision_ref: unknown;
+  readonly source_logical_id: unknown;
+  readonly target_source_id: unknown;
+  readonly expected_head_revision_ref: unknown;
+}
+
+async function rawCaptureExpectedHead(
+  database: D1Database,
+  input: Awaited<ReturnType<typeof normalizePrepareInput>>,
+  source: ExistingSourceRow | null,
+  requireCurrentHead = true,
+): Promise<string | null> {
+  let result: D1Result<RawCaptureHeadBindingRow>;
+  try {
+    result = await database.prepare(
+      "SELECT state,principal_ref,owner_system_id,source_namespace_id,source_owner_generation," +
+      "source_revision_ref,source_logical_id,target_source_id,expected_head_revision_ref " +
+      "FROM raw_file_capture WHERE source_revision_ref=?1 LIMIT 2",
+    ).bind(input.manifest.origin.source_revision_ref).all<RawCaptureHeadBindingRow>();
+  } catch (cause) {
+    authorityFail("INGEST_SETTLEMENT_UNCERTAIN", "raw capture source-head binding read failed", true, cause);
+  }
+  const rows = result.results ?? [];
+  if (rows.length === 0) return null;
+  if (rows.length !== 1) authorityFail("INGEST_AUTHORITY_CONFLICT", "source revision is bound to multiple raw captures");
+  const row = rows[0];
+  if (row === undefined || row.state !== "CAPTURED") {
+    authorityFail("INGEST_AUTHORITY_CONFLICT", "raw capture source-head binding is not settled");
+  }
+  if (row.principal_ref !== input.principal_ref || row.owner_system_id !== input.manifest.origin.owner_system_id ||
+      row.source_namespace_id !== input.manifest.origin.source_namespace_id ||
+      row.source_owner_generation !== input.manifest.origin.source_owner_generation ||
+      row.source_revision_ref !== input.manifest.origin.source_revision_ref ||
+      row.source_logical_id !== input.manifest.source.logical_id) {
+    authorityFail("INGEST_AUTHORITY_CONFLICT", "raw capture binding does not match the normalized source");
+  }
+  const target = row.target_source_id;
+  const expected = row.expected_head_revision_ref;
+  if (target === null && expected === null) return null;
+  if (typeof target !== "string" || typeof expected !== "string") {
+    authorityFail("INGEST_AUTHORITY_CONFLICT", "raw capture source-head binding is incomplete");
+  }
+  if (target !== input.manifest.source.logical_id || source === null || source.source_id !== target ||
+      (requireCurrentHead && source.head_rev !== expected)) {
+    authorityFail("INGEST_AUTHORITY_CONFLICT", "raw capture expected source head is stale");
+  }
+  return authorityIdentifier(expected, "expected raw source head");
+}
+
 function ensureExistingSource(
   row: ExistingSourceRow | null,
   input: Awaited<ReturnType<typeof normalizePrepareInput>>,
@@ -138,10 +193,9 @@ export function createD1IngestAdmissionAuthority(
         owner.source_admission_policy_revision,
       );
       ensureOwnerAndPolicy(input, owner, policy);
-      const expectedHead = ensureExistingSource(
-        await existingSource(database, input.manifest.source.logical_id),
-        input,
-      );
+      const existing = await existingSource(database, input.manifest.source.logical_id);
+      const currentHead = ensureExistingSource(existing, input);
+      const boundHead = await rawCaptureExpectedHead(database, input, existing, false);
       const manifestSha = await canonicalDigest(input.manifest);
       const residencyDigest = await objectResidencyKeyDigest(input.residency_key);
       const policySha = await canonicalDigest(policy);
@@ -152,7 +206,16 @@ export function createD1IngestAdmissionAuthority(
         policy_snapshot_sha256: policySha,
       });
       const prior = await readByIdempotency(database, input.principal_ref, input.idempotency_key);
-      if (prior !== null) return { disposition: "EXISTING", operation: exactReplay(prior, await fingerprintFor(prior.expected_head_revision_ref)) };
+      if (prior !== null) {
+        if (boundHead !== null && prior.expected_head_revision_ref !== boundHead) {
+          authorityFail("INGEST_AUTHORITY_CONFLICT", "raw capture head binding differs from the durable ingest operation");
+        }
+        return { disposition: "EXISTING", operation: exactReplay(prior, await fingerprintFor(prior.expected_head_revision_ref)) };
+      }
+      const expectedHead = boundHead ?? currentHead;
+      if (boundHead !== null && currentHead !== boundHead) {
+        authorityFail("INGEST_AUTHORITY_CONFLICT", "raw capture expected source head is stale");
+      }
       const fingerprint = await fingerprintFor(expectedHead);
       const operationId = await stableIngestId("ingest", input.principal_ref, input.idempotency_key);
       const candidateId = await stableIngestId("candidate", operationId);

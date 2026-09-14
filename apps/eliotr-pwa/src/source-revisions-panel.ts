@@ -1,6 +1,7 @@
 import { ReadinessChannelSchema } from "@eliotr/contracts";
 import { ApiRequestError } from "./api.js";
 import { escapeHtml } from "./html.js";
+import { RAW_SOURCE_VERSION_REQUESTED_EVENT } from "./raw-file-api.js";
 import { readSourceRevisionsPage, type SourceRevisionPage } from "./source-revisions-api.js";
 
 export function renderSourceRevisions(page: SourceRevisionPage): string {
@@ -18,21 +19,25 @@ export function renderSourceRevisions(page: SourceRevisionPage): string {
       }).join("")}</dl></article>`).join("") : "<p>No more permitted revisions on this page.</p>"}`;
 }
 
-export function mountSourceRevisionsPanel(element: HTMLElement, sourceId: string, generation: string): () => void {
-  element.innerHTML = `<h3>Versions of <code>${escapeHtml(sourceId)}</code></h3>
+export function mountSourceRevisionsPanel(element: HTMLElement, sourceId: string, generation: string, sourceTitle?: string): () => void {
+  const displayTitle = sourceTitle !== undefined && sourceTitle.length > 0 ? sourceTitle : "Selected document";
+  element.innerHTML = `<h3>Versions of ${escapeHtml(displayTitle)}</h3>
+    <details class="source-revision-identity"><summary>Source details</summary><p>Source ID: <code>${escapeHtml(sourceId)}</code></p></details>
     <p>Only currently permitted LIVE revisions are listed. Missing revisions are not a completeness claim.</p>
     <p><button type="button" data-revisions-first>Refresh versions</button>
+    <button type="button" data-revisions-add disabled>Add new version</button>
     <button type="button" data-revisions-next disabled>Older versions</button></p>
     <p role="status" aria-live="polite"></p><section data-revisions-result></section>`;
   const first = element.querySelector<HTMLButtonElement>("[data-revisions-first]");
+  const add = element.querySelector<HTMLButtonElement>("[data-revisions-add]");
   const next = element.querySelector<HTMLButtonElement>("[data-revisions-next]");
   const status = element.querySelector('[role="status"]');
   const result = element.querySelector("[data-revisions-result]");
-  if (!first || !next || !status || !result) throw new Error("Revision panel is incomplete");
+  if (!first || !add || !next || !status || !result) throw new Error("Revision panel is incomplete");
   let controller: AbortController | undefined; let serial = 0; let disposed = false;
   let page: SourceRevisionPage | undefined;
   const clear = (message: string) => { serial++; controller?.abort(); page = undefined;
-    result.replaceChildren(); next.disabled = true; status.textContent = message; };
+    result.replaceChildren(); add.disabled = true; next.disabled = true; status.textContent = message; };
   const load = async (cursor?: string) => {
     if (disposed) return;
     clear("Reading permitted versions…"); const mine = serial;
@@ -41,7 +46,7 @@ export function mountSourceRevisionsPanel(element: HTMLElement, sourceId: string
     try {
       const received = await readSourceRevisionsPage(sourceId, generation, cursor, controller.signal);
       if (mine !== serial || disposed) return;
-      page = received; result.innerHTML = renderSourceRevisions(received); next.disabled = !received.next_cursor;
+      page = received; result.innerHTML = renderSourceRevisions(received); add.disabled = false; next.disabled = !received.next_cursor;
       status.textContent = `${received.generation} · ${received.revisions.length} permitted revisions · trace ${received.trace}`;
     } catch (error) {
       if (mine !== serial || disposed) return;
@@ -50,12 +55,21 @@ export function mountSourceRevisionsPanel(element: HTMLElement, sourceId: string
     }
   };
   first.onclick = () => { void load(); };
+  add.onclick = () => {
+    const current = page;
+    if (!current || disposed) return;
+    window.dispatchEvent(new CustomEvent(RAW_SOURCE_VERSION_REQUESTED_EVENT, { detail: {
+      target_source_id: current.source_id,
+      expected_head_revision_ref: current.head_revision_ref,
+      ...(sourceTitle === undefined ? {} : { source_title: sourceTitle }),
+    } }));
+  };
   next.onclick = () => { const cursor = page?.next_cursor; if (cursor) void load(cursor); };
   const offline = () => clear("Offline. Private version data cleared.");
   const denied = () => clear("Authorization changed. Sign in or renew the read policy, then refresh.");
   window.addEventListener("offline", offline); window.addEventListener("eliotr:authorization-cleared", denied);
   void load();
   return () => { disposed = true; clear("Version session closed."); element.replaceChildren();
-    first.onclick = null; next.onclick = null;
+    first.onclick = null; add.onclick = null; next.onclick = null;
     window.removeEventListener("offline", offline); window.removeEventListener("eliotr:authorization-cleared", denied); };
 }

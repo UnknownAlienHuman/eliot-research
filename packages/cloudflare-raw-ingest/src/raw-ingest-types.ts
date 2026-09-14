@@ -31,6 +31,8 @@ export interface RawCaptureInput {
   readonly principal_ref: string;
   readonly owner_system_id: string;
   readonly source_namespace_id: string;
+  readonly target_source_id?: string;
+  readonly expected_head_revision_ref?: string;
   readonly source_revision_ref: string;
   readonly source_logical_id: string;
   readonly source_owner_generation: string;
@@ -51,6 +53,8 @@ export interface RawCaptureReceipt {
   readonly principal_ref: string;
   readonly owner_system_id: string;
   readonly source_namespace_id: string;
+  readonly target_source_id?: string;
+  readonly expected_head_revision_ref?: string;
   readonly source_revision_ref: string;
   readonly source_logical_id: string;
   readonly source_owner_generation: string;

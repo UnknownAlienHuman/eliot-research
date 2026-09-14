@@ -6,6 +6,7 @@ import {
   type WikiProposalListView,
   type WikiProposalReadView,
   type WikiProposalSummary,
+  type WikiSourceFreshness,
 } from "./wiki-api.js";
 import { expectedWikiHeadRevision, publishWikiProposal } from "./wiki-publish-api.js";
 import { mountWikiEditForm } from "./wiki-edit-form.js";
@@ -121,6 +122,40 @@ function renderReviewContext(proposal: WikiProposalReadView): HTMLElement {
   return review;
 }
 
+function renderSourceFreshnessNotice(freshness: WikiSourceFreshness): HTMLElement | undefined {
+  if (freshness.state === "UNKNOWN") return undefined;
+  const notice = document.createElement("p");
+  notice.className = "wiki-source-freshness";
+  notice.textContent = freshness.state === "PREVIOUS_REVISIONS"
+    ? "Source updated — this page uses an earlier version; review it against the updated document."
+    : "Source revisions matched the saved page when it was read.";
+  return notice;
+}
+
+function appendSourceFreshnessDetails(fields: HTMLElement, freshness: WikiSourceFreshness): void {
+  if (freshness.state === "UNKNOWN") return;
+  const add = (label: string, value: string): void => {
+    const term = document.createElement("dt"); term.textContent = label;
+    const detail = document.createElement("dd"); detail.append(codeRef(value)); fields.append(term, detail);
+  };
+  add("Source freshness", freshness.state);
+  add("Freshness checked", freshness.checked_at ?? "not recorded");
+  const term = document.createElement("dt"); term.textContent = "Changed sources";
+  const detail = document.createElement("dd");
+  if (freshness.changed_sources.length === 0) {
+    detail.textContent = "None recorded";
+  } else {
+    const list = document.createElement("ul");
+    freshness.changed_sources.forEach((source) => {
+      const item = document.createElement("li");
+      item.append(codeRef(`${source.source_id}: saved ${source.saved_revision_ref}; current ${source.head_revision_ref}`));
+      list.append(item);
+    });
+    detail.append(list);
+  }
+  fields.append(term, detail);
+}
+
 export function mountWikiPanel(
   element: HTMLElement,
   deploymentGeneration: () => string | undefined,
@@ -209,17 +244,23 @@ export function mountWikiPanel(
     const field = (label: string, value: string): void => { const term = document.createElement("dt"); term.textContent = label; const detail = document.createElement("dd"); detail.append(codeRef(value)); fields.append(term, detail); };
     field("Proposal", refKey(proposal.proposal_ref)); field("Page", refKey(proposal.page.page_ref)); field("Scope", refKey(proposal.page.scope_snapshot_ref));
     field("Body", `${proposal.page.body_sha256} · ${body.length} characters`); field("Deployment", proposal.deployment_generation);
-    details.append(summary, fields); reader.append(heading, meta, content, details, renderReviewContext(proposal));
+    appendSourceFreshnessDetails(fields, proposal.source_freshness);
+    details.append(summary, fields);
+    const freshnessNotice = renderSourceFreshnessNotice(proposal.source_freshness);
+    reader.append(heading, meta, ...(freshnessNotice === undefined ? [] : [freshnessNotice]), content, details, renderReviewContext(proposal));
     if (proposal.state === "PROPOSED") {
       const action = document.createElement("div"); action.className = "wiki-publication-action";
       const explanation = document.createElement("p");
-      explanation.textContent = isOwnerEditProposal(proposal)
-        ? "This manual edit remains UNRESOLVED. Publishing does not confirm new facts; review it before publishing."
-        : "Review this saved draft before publishing. The server will recheck its evidence and policy.";
+      const previousRevisions = proposal.source_freshness.state === "PREVIOUS_REVISIONS";
+      explanation.textContent = previousRevisions
+        ? "This page uses an earlier source version. Start new Research on the updated sources before publishing."
+        : isOwnerEditProposal(proposal)
+          ? "This manual edit remains UNRESOLVED. Publishing does not confirm new facts; review it before publishing."
+          : "Review this saved draft before publishing. The server will recheck its evidence and policy.";
       action.append(explanation);
-      if (proposal.page.status !== "DRAFT") {
+      if (!previousRevisions && proposal.page.status !== "DRAFT") {
         const note = document.createElement("p"); note.textContent = "This proposal is not a publishable draft."; action.append(note);
-      } else {
+      } else if (!previousRevisions) {
         try {
           publicationExpectedHeadRevision = expectedWikiHeadRevision(proposal.page);
           publicationIdempotencyKey = `wiki-publication:${proposal.proposal_ref.id}`;
@@ -241,19 +282,26 @@ export function mountWikiPanel(
       reader.append(action);
     }
     if (proposal.state === "PUBLISHED") {
-      const editHost = document.createElement("div");
-      reader.append(editHost);
-      editFormCleanup = mountWikiEditForm(editHost, {
-        proposal,
-        bodyText: body,
-        deploymentGeneration,
-        healthReady,
-        onSaved: ({ proposal: savedProposal, bodyText: savedBody }) => {
-          if (disposed || deploymentGeneration() !== savedProposal.deployment_generation) return;
-          renderProposal(savedProposal, savedBody);
-          status.textContent = "New draft saved. Review it before publishing.";
-        },
-      });
+      if (proposal.source_freshness.state === "PREVIOUS_REVISIONS") {
+        const note = document.createElement("p");
+        note.className = "wiki-source-freshness";
+        note.textContent = "This page uses an earlier source version. Start new Research on the updated sources before editing it.";
+        reader.append(note);
+      } else {
+        const editHost = document.createElement("div");
+        reader.append(editHost);
+        editFormCleanup = mountWikiEditForm(editHost, {
+          proposal,
+          bodyText: body,
+          deploymentGeneration,
+          healthReady,
+          onSaved: ({ proposal: savedProposal, bodyText: savedBody }) => {
+            if (disposed || deploymentGeneration() !== savedProposal.deployment_generation) return;
+            renderProposal(savedProposal, savedBody);
+            status.textContent = "New draft saved. Review it before publishing.";
+          },
+        });
+      }
     }
     updateButtons();
   };

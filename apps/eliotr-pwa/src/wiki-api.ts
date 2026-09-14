@@ -37,12 +37,27 @@ export interface WikiProposalListView {
 }
 
 export interface WikiProposalReadView {
-  readonly protocol: "eliotr.wiki-proposal-read.v1";
+  readonly protocol: "eliotr.wiki-proposal-read.v1" | "eliotr.wiki-proposal-read.v2";
   readonly proposal_ref: VersionedRef;
   readonly page: WikiPageRevision;
   readonly risk_class: WikiProposalRiskClass;
   readonly state: "PROPOSED" | "PUBLISHED";
+  readonly source_freshness: WikiSourceFreshness;
   readonly deployment_generation: string;
+}
+
+export type WikiSourceFreshnessState = "CURRENT_REVISIONS" | "PREVIOUS_REVISIONS" | "UNKNOWN";
+
+export interface WikiSourceFreshnessChange {
+  readonly source_id: string;
+  readonly saved_revision_ref: string;
+  readonly head_revision_ref: string;
+}
+
+export interface WikiSourceFreshness {
+  readonly state: WikiSourceFreshnessState;
+  readonly checked_at?: string;
+  readonly changed_sources: readonly WikiSourceFreshnessChange[];
 }
 
 export interface WikiProposalBodyView {
@@ -104,6 +119,28 @@ function state(value: unknown, label: string): "PROPOSED" | "PUBLISHED" {
   return value;
 }
 
+function sourceFreshness(value: unknown): WikiSourceFreshness {
+  const data = record(value, ["state", "checked_at", "changed_sources"]);
+  if (data.state !== "CURRENT_REVISIONS" && data.state !== "PREVIOUS_REVISIONS") invalid("source_freshness.state is invalid");
+  const checkedAt = timestamp(data.checked_at, "source_freshness.checked_at");
+  if (!Array.isArray(data.changed_sources) || data.changed_sources.length > 64) invalid("source_freshness.changed_sources is invalid");
+  const seen = new Set<string>();
+  const changedSources = data.changed_sources.map((value, index) => {
+    const row = record(value, ["source_id", "saved_revision_ref", "head_revision_ref"]);
+    const sourceId = identifier(row.source_id, `source_freshness.changed_sources[${index}].source_id`);
+    const savedRevision = identifier(row.saved_revision_ref, `source_freshness.changed_sources[${index}].saved_revision_ref`);
+    const headRevision = identifier(row.head_revision_ref, `source_freshness.changed_sources[${index}].head_revision_ref`);
+    if (seen.has(sourceId)) invalid("source_freshness.changed_sources contains duplicate sources");
+    seen.add(sourceId);
+    if (data.state === "CURRENT_REVISIONS" && savedRevision !== headRevision) invalid("current source revisions do not match");
+    if (data.state === "PREVIOUS_REVISIONS" && savedRevision === headRevision) invalid("previous source revisions must differ");
+    return { source_id: sourceId, saved_revision_ref: savedRevision, head_revision_ref: headRevision };
+  });
+  if (data.state === "CURRENT_REVISIONS" && changedSources.length !== 0) invalid("current source revisions must have no changed sources");
+  if (data.state === "PREVIOUS_REVISIONS" && changedSources.length === 0) invalid("previous source revisions must identify a changed source");
+  return { state: data.state, checked_at: checkedAt, changed_sources: changedSources };
+}
+
 function envelope(raw: unknown, expectedDeploymentGeneration?: string): { readonly data: unknown; readonly deployment_generation: string } {
   const parsed = record(raw, ["data", "trace_id", "deployment_generation"]);
   const trace = identifier(parsed.trace_id, "trace_id");
@@ -144,16 +181,22 @@ export function decodeWikiProposalList(raw: unknown, expectedDeploymentGeneratio
 
 export function decodeWikiProposalRead(raw: unknown, expectedDeploymentGeneration?: string): WikiProposalReadView {
   const checked = envelope(raw, expectedDeploymentGeneration);
-  const data = record(checked.data, ["protocol", "proposal_ref", "page", "risk_class", "state"]);
-  if (data.protocol !== "eliotr.wiki-proposal-read.v1") invalid("Wiki proposal read protocol is invalid");
+  const data = record(checked.data, ["protocol", "proposal_ref", "page", "risk_class", "state"], ["source_freshness"]);
+  if (data.protocol !== "eliotr.wiki-proposal-read.v1" && data.protocol !== "eliotr.wiki-proposal-read.v2") invalid("Wiki proposal read protocol is invalid");
+  const freshness = data.protocol === "eliotr.wiki-proposal-read.v2"
+    ? sourceFreshness(data.source_freshness)
+    : Object.hasOwn(data, "source_freshness")
+      ? invalid("v1 Wiki proposal read cannot include source freshness")
+      : { state: "UNKNOWN" as const, changed_sources: [] as const };
   const page = WikiPageRevisionSchema.safeParse(data.page);
   if (!page.success) invalid("Wiki proposal page is invalid");
   return {
-    protocol: "eliotr.wiki-proposal-read.v1",
+    protocol: data.protocol,
     proposal_ref: versionedRef(data.proposal_ref, "proposal_ref"),
     page: page.data,
     risk_class: riskClass(data.risk_class, "risk_class"),
     state: state(data.state, "state"),
+    source_freshness: freshness,
     deployment_generation: checked.deployment_generation,
   };
 }

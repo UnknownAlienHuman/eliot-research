@@ -10,6 +10,7 @@ export const RAW_MARKDOWN_TRANSPORT_TIMEOUT_MS = RAW_MARKDOWN_TIMEOUT_MS + 30_00
 export const RAW_MARKDOWN_PROFILE = "raw-markdown-ui-v1";
 export const RAW_MARKDOWN_RETRY_PROFILE = "raw-markdown-ui-retry-v1";
 export const RAW_NORMALIZED_ADMISSION_PROFILE = "raw-normalized-admission-ui-v1";
+export const RAW_SOURCE_VERSION_REQUESTED_EVENT = "eliotr:source-version-requested";
 const RAW_FILE_PROTOCOL = "eliotr.raw-file-capture.v1";
 const RAW_MARKDOWN_PROTOCOL = "eliotr.raw-markdown-conversion.v1";
 const CAPTURE_ID = /^raw-capture-[a-f0-9]{48}$/u;
@@ -35,6 +36,8 @@ export interface RawUploadFile {
 
 export interface RawFileSelection {
   readonly source_namespace_id?: string;
+  readonly target_source_id?: string;
+  readonly expected_head_revision_ref?: string;
   readonly file: RawUploadFile;
   readonly original_file_name: string;
   readonly content_sha256: string;
@@ -163,10 +166,24 @@ function fallbackContentType(fileName: string): string | undefined {
   return undefined;
 }
 
-export async function prepareRawFileSelection(file: RawUploadFile, signal?: AbortSignal, sourceNamespaceId?: string): Promise<RawFileSelection> {
+export interface RawSourceVersionTarget {
+  readonly target_source_id: string;
+  readonly expected_head_revision_ref: string;
+}
+
+function validateVersionTarget(targetSourceId: string | undefined, expectedHeadRevisionRef: string | undefined): void {
+  if ((targetSourceId === undefined) !== (expectedHeadRevisionRef === undefined) ||
+      targetSourceId !== undefined && (!SAFE_GENERATION.test(targetSourceId) || !SAFE_GENERATION.test(expectedHeadRevisionRef ?? ""))) {
+    throw new ApiRequestError({ status: 400, code: "RAW_FILE_INPUT_INVALID", message: "The selected source version target is invalid. Refresh versions and try again." });
+  }
+}
+
+export async function prepareRawFileSelection(file: RawUploadFile, signal?: AbortSignal, sourceNamespaceId?: string,
+  versionTarget?: RawSourceVersionTarget): Promise<RawFileSelection> {
   if (sourceNamespaceId !== undefined && !/^[A-Za-z0-9][A-Za-z0-9._:@-]{0,255}$/u.test(sourceNamespaceId)) {
     throw new ApiRequestError({ status: 400, code: "RAW_FILE_INPUT_INVALID", message: "Select a current workspace before adding a document." });
   }
+  validateVersionTarget(versionTarget?.target_source_id, versionTarget?.expected_head_revision_ref);
   if (!record(file) || typeof file.name !== "string" || file.name.length === 0 || file.name !== file.name.trim() ||
       new TextEncoder().encode(file.name).byteLength > 512 || /[\u0000-\u001f\u007f/\\]/u.test(file.name) ||
       file.name === "." || file.name === ".." ||
@@ -193,6 +210,10 @@ export async function prepareRawFileSelection(file: RawUploadFile, signal?: Abor
   const key = sourceNamespaceId === undefined ? originalKey : `raw-upload-${await sha256(
     new TextEncoder().encode(JSON.stringify(["eliotr.raw-file-upload.namespace.v1", sourceNamespaceId, originalKey])).buffer,
   )}`;
+  const versionKey = versionTarget === undefined ? key : `raw-upload-${await sha256(
+    new TextEncoder().encode(JSON.stringify(["eliotr.raw-file-upload.version.v1", versionTarget.target_source_id,
+      versionTarget.expected_head_revision_ref, key])).buffer,
+  )}`;
   if (signal?.aborted) throw new ApiRequestError({ status: 499, code: "RAW_FILE_UPLOAD_CANCELLED", message: "File preparation was cancelled." });
   return {
     file,
@@ -200,8 +221,10 @@ export async function prepareRawFileSelection(file: RawUploadFile, signal?: Abor
     content_sha256: contentSha256,
     size_bytes: file.size,
     content_type: contentType,
-    idempotency_key: key,
+    idempotency_key: versionKey,
     ...(sourceNamespaceId === undefined ? {} : { source_namespace_id: sourceNamespaceId }),
+    ...(versionTarget === undefined ? {} : { target_source_id: versionTarget.target_source_id,
+      expected_head_revision_ref: versionTarget.expected_head_revision_ref }),
   };
 }
 
@@ -263,6 +286,7 @@ export function decodeRawFileCaptureEnvelope(value: unknown, expectedGeneration?
 }
 
 export async function captureRawFile(selection: RawFileSelection, expectedGeneration: string, signal?: AbortSignal): Promise<RawFileCaptureReceipt> {
+  validateVersionTarget(selection.target_source_id, selection.expected_head_revision_ref);
   const value = await requestApi("/api/v1/ingest/raw", {
     method: "POST",
     body: selection.file as unknown as BodyInit,
@@ -273,6 +297,10 @@ export async function captureRawFile(selection: RawFileSelection, expectedGenera
       "x-eliotr-content-sha256": selection.content_sha256,
       "x-eliotr-original-file-name": encodeURIComponent(selection.original_file_name),
       ...(selection.source_namespace_id === undefined ? {} : { "x-eliotr-source-namespace-id": selection.source_namespace_id }),
+      ...(selection.target_source_id === undefined || selection.expected_head_revision_ref === undefined ? {} : {
+        "x-eliotr-target-source-id": selection.target_source_id,
+        "x-eliotr-expected-head-revision-ref": selection.expected_head_revision_ref,
+      }),
     },
   });
   return decodeRawFileCaptureEnvelope(value, expectedGeneration, selection);

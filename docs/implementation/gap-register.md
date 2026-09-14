@@ -32,6 +32,11 @@ created at `2026-09-14T08:15:05.223Z`, reached `ENGINE_COMPLETED` at
 opens in the Research run panel. This
 confirms the bounded real run only; artifact, corpus and project completion remain open. See
 [the live document/project acceptance](live-document-project-acceptance-2026-09-14.md).
+The next source-version implementation binds replacement uploads to the selected source/head,
+keeps historical reports readable with current owner authorization, and adds read-side freshness
+to Wiki and Research. Migrations `0065`/`0066` were applied at `2026-09-14 09:59:54` UTC
+(`39ffd48`); live D1 compiled the raw INSERT and final commit-guard trigger. Core/PWA typechecks
+and the PWA build passed. Its browser update/history/freshness acceptance is still pending.
 The selected model is Cloudflare `@cf/zai-org/glm-5.3-flash`; both installed routes use
 `owner-cloudflare-glm53-v6`. Run credentials are installed. Automatic qualification renewal is
 implemented, but its live Worker path still requires the missing `ELIOTR_MODEL_GATEWAY_READ_TOKEN`.

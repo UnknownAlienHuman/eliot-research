@@ -34,6 +34,8 @@ interface RawCaptureRow {
   readonly principal_ref: unknown;
   readonly owner_system_id: unknown;
   readonly source_namespace_id: unknown;
+  readonly target_source_id: unknown;
+  readonly expected_head_revision_ref: unknown;
   readonly source_revision_ref: unknown;
   readonly source_logical_id: unknown;
   readonly source_owner_generation: unknown;
@@ -55,7 +57,7 @@ interface RawCaptureRow {
 }
 
 const SELECT = "SELECT capture_id,principal_ref,owner_system_id,source_namespace_id,source_revision_ref," +
-  "source_logical_id,source_owner_generation,idempotency_key,original_file_name,request_digest,residency_key_json," +
+  "target_source_id,expected_head_revision_ref,source_logical_id,source_owner_generation,idempotency_key,original_file_name,request_digest,residency_key_json," +
   "residency_key_digest,content_sha256,size_bytes,content_type,state,object_key,receipt_json," +
   "receipt_sha256,created_at,updated_at,expires_at FROM raw_file_capture ";
 
@@ -112,6 +114,10 @@ function authorityFields(input: RawCaptureInput): Record<string, unknown> {
     principal_ref: input.principal_ref,
     owner_system_id: input.owner_system_id,
     source_namespace_id: input.source_namespace_id,
+    ...(input.target_source_id === undefined ? {} : {
+      target_source_id: input.target_source_id,
+      expected_head_revision_ref: input.expected_head_revision_ref,
+    }),
     source_revision_ref: input.source_revision_ref,
     source_logical_id: input.source_logical_id,
     source_owner_generation: input.source_owner_generation,
@@ -150,6 +156,11 @@ function validateInput(input: RawCaptureInput, maximum: number): void {
   if (input === null || typeof input !== "object" || typeof input.body?.getReader !== "function") {
     fail("RAW_CAPTURE_INPUT_INVALID", "raw capture input must contain a readable byte stream");
   }
+  if ((input.target_source_id === undefined) !== (input.expected_head_revision_ref === undefined)) {
+    fail("RAW_CAPTURE_INPUT_INVALID", "target source and expected head must be supplied together");
+  }
+  if (input.target_source_id !== undefined) identifier(input.target_source_id, "target_source_id");
+  if (input.expected_head_revision_ref !== undefined) identifier(input.expected_head_revision_ref, "expected_head_revision_ref");
   for (const [label, value] of Object.entries({
     principal_ref: input.principal_ref,
     owner_system_id: input.owner_system_id,
@@ -174,6 +185,8 @@ function validateInput(input: RawCaptureInput, maximum: number): void {
 function sameRequest(row: RawCaptureRow, input: RawCaptureInput, requestDigest: string, residencyDigest: string): boolean {
   return row.principal_ref === input.principal_ref && row.owner_system_id === input.owner_system_id &&
     row.source_namespace_id === input.source_namespace_id && row.source_revision_ref === input.source_revision_ref &&
+    (row.target_source_id ?? undefined) === input.target_source_id &&
+    (row.expected_head_revision_ref ?? undefined) === input.expected_head_revision_ref &&
     row.source_logical_id === input.source_logical_id && row.source_owner_generation === input.source_owner_generation &&
     row.idempotency_key === input.idempotency_key && row.original_file_name === input.original_file_name &&
     row.request_digest === requestDigest &&
@@ -222,10 +235,20 @@ function receiptFromRow(row: RawCaptureRow, input: RawCaptureInput, expectedKey:
     fail("RAW_CAPTURE_SETTLEMENT_UNCERTAIN", "captured raw file receipt has an invalid shape", true);
   }
   const value = parsed as Record<string, unknown>;
-  const expectedKeys = ["protocol", "capture_id", "principal_ref", "owner_system_id", "source_namespace_id", "source_revision_ref", "source_logical_id", "source_owner_generation", "idempotency_key", "original_file_name", "object_key", "residency_key_digest", "content_sha256", "size_bytes", "content_type", "etag", "captured_at"];
+  const targetSource = row.target_source_id ?? undefined;
+  const expectedHead = row.expected_head_revision_ref ?? undefined;
+  if ((targetSource === undefined) !== (expectedHead === undefined) ||
+      (targetSource !== undefined && (typeof targetSource !== "string" || !IDENTIFIER.test(targetSource))) ||
+      (expectedHead !== undefined && (typeof expectedHead !== "string" || !IDENTIFIER.test(expectedHead)))) {
+    fail("RAW_CAPTURE_SETTLEMENT_UNCERTAIN", "stored raw capture target binding is malformed", true);
+  }
+  const expectedKeys = ["protocol", "capture_id", "principal_ref", "owner_system_id", "source_namespace_id",
+    ...(targetSource === undefined ? [] : ["target_source_id", "expected_head_revision_ref"]),
+    "source_revision_ref", "source_logical_id", "source_owner_generation", "idempotency_key", "original_file_name", "object_key", "residency_key_digest", "content_sha256", "size_bytes", "content_type", "etag", "captured_at"];
   if (Object.keys(value).length !== expectedKeys.length || expectedKeys.some((key) => !Object.hasOwn(value, key)) ||
       value.protocol !== RAW_CAPTURE_PROTOCOL || value.capture_id !== row.capture_id || value.principal_ref !== input.principal_ref ||
       value.owner_system_id !== input.owner_system_id || value.source_namespace_id !== input.source_namespace_id ||
+      value.target_source_id !== input.target_source_id || value.expected_head_revision_ref !== input.expected_head_revision_ref ||
       value.source_revision_ref !== input.source_revision_ref || value.source_logical_id !== input.source_logical_id ||
       value.source_owner_generation !== input.source_owner_generation || value.idempotency_key !== input.idempotency_key ||
       value.original_file_name !== input.original_file_name ||
@@ -286,6 +309,10 @@ function receiptFromObject(input: RawCaptureInput, captureId: string, key: strin
     principal_ref: input.principal_ref,
     owner_system_id: input.owner_system_id,
     source_namespace_id: input.source_namespace_id,
+    ...(input.target_source_id === undefined ? {} : {
+      target_source_id: input.target_source_id,
+      expected_head_revision_ref: input.expected_head_revision_ref as string,
+    }),
     source_revision_ref: input.source_revision_ref,
     source_logical_id: input.source_logical_id,
     source_owner_generation: input.source_owner_generation,
@@ -312,13 +339,13 @@ async function insertIntent(
   try {
     await database.prepare(
       "INSERT INTO raw_file_capture(capture_id,principal_ref,owner_system_id,source_namespace_id,source_revision_ref," +
-      "source_logical_id,source_owner_generation,idempotency_key,original_file_name,request_digest,residency_key_json,residency_key_digest," +
+      "target_source_id,expected_head_revision_ref,source_logical_id,source_owner_generation,idempotency_key,original_file_name,request_digest,residency_key_json,residency_key_digest," +
       "content_sha256,size_bytes,content_type,state,object_key,receipt_json,receipt_sha256,created_at,updated_at,expires_at) " +
-      "VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,'INTENT',?16,NULL,NULL,?17,?17,?18)",
+      "VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,'INTENT',?18,NULL,NULL,?19,?19,?20)",
     ).bind(identity.captureId, input.principal_ref, input.owner_system_id, input.source_namespace_id,
-      input.source_revision_ref, input.source_logical_id, input.source_owner_generation, input.idempotency_key,
-      input.original_file_name, identity.requestDigest, residencyJson, identity.residencyDigest, input.content_sha256, input.size_bytes,
-      input.content_type, identity.objectKey, createdAt, expiresAt).run();
+      input.source_revision_ref, input.target_source_id ?? null, input.expected_head_revision_ref ?? null, input.source_logical_id,
+      input.source_owner_generation, input.idempotency_key, input.original_file_name, identity.requestDigest, residencyJson,
+      identity.residencyDigest, input.content_sha256, input.size_bytes, input.content_type, identity.objectKey, createdAt, expiresAt).run();
   } catch (error) {
     const raced = await readByCaptureId(database, identity.captureId);
     if (raced === null) {
@@ -401,10 +428,18 @@ export function createRawCapturePort(dependencies: RawCaptureDependencies): RawC
           typeof stored.content_type !== "string") {
         fail("RAW_CAPTURE_SETTLEMENT_UNCERTAIN", "stored raw capture authority fields are malformed", true);
       }
+      const targetSource = stored.target_source_id ?? undefined;
+      const expectedHead = stored.expected_head_revision_ref ?? undefined;
+      if ((targetSource === undefined) !== (expectedHead === undefined) ||
+          (targetSource !== undefined && (typeof targetSource !== "string" || !IDENTIFIER.test(targetSource))) ||
+          (expectedHead !== undefined && (typeof expectedHead !== "string" || !IDENTIFIER.test(expectedHead)))) {
+        fail("RAW_CAPTURE_SETTLEMENT_UNCERTAIN", "stored raw capture target binding is malformed", true);
+      }
       const authority = {
         principal_ref: lookup.principal_ref,
         owner_system_id: stored.owner_system_id,
         source_namespace_id: stored.source_namespace_id,
+        ...(targetSource === undefined ? {} : { target_source_id: targetSource, expected_head_revision_ref: expectedHead as string }),
         source_revision_ref: stored.source_revision_ref,
         source_logical_id: stored.source_logical_id,
         source_owner_generation: stored.source_owner_generation,

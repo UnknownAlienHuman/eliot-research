@@ -1,6 +1,6 @@
 import { IdentifierSchema, ResearchWorkflowStageSchema, type ResearchWorkflowStage } from "@eliotr/contracts";
 import { ApiRequestError, isAuthorizationLoss } from "./api.js";
-import { readResearchRunHistory, researchRunBody, readResearchArtifact, readReauthorizedResearchArtifact, readReauthorizedResearchArtifactSection, readResearchRunStatus, startResearchRun, type ResearchArtifactSectionCitationAuditClaim, type ResearchEngineStatus, type ResearchRunHistoryEntry, type ResearchRunHistoryView, type ResearchRunSavedDraft, type ResearchRunStatusView } from "./research-run-api.js"; import { readReauthorizedResearchArtifactSectionCitations } from "./research-run-reauthorization-api.js"; import { finishResearchStatusRead, readResearchStatusWithAuthorityRetry, shouldRetryResearchAuthority } from "./research-run-status-retry.js";
+import { readResearchRunHistory, researchRunBody, readResearchArtifact, readReauthorizedResearchArtifact, readReauthorizedResearchArtifactSection, readResearchRunStatus, startResearchRun, type ResearchArtifactSectionCitationAuditClaim, type ResearchEngineStatus, type ResearchRunHistoryEntry, type ResearchRunHistoryView, type ResearchRunSavedDraft, type ResearchRunStatusView, type ResearchSourceFreshness } from "./research-run-api.js"; import { readReauthorizedResearchArtifactSectionCitations } from "./research-run-reauthorization-api.js"; import { finishResearchStatusRead, readResearchStatusWithAuthorityRetry, shouldRetryResearchAuthority } from "./research-run-status-retry.js";
 import { downloadResearchDraftMarkdown, type ResearchMarkdownSection } from "./research-markdown-download.js";
 import { createWikiProposalFromRun } from "./wiki-proposal-create-api.js";
 import type { ArtifactRevision } from "@eliotr/contracts";
@@ -160,6 +160,26 @@ function citationRefKey(ref: { readonly id: string; readonly revision: number })
 }
 function sameArtifact(left: { readonly id: string; readonly revision: number }, right: { readonly id: string; readonly revision: number }): boolean {
   return left.id === right.id && left.revision === right.revision;
+}
+function renderResearchSourceFreshnessNotice(freshness: ResearchSourceFreshness): HTMLElement | undefined {
+  if (freshness.state === "UNKNOWN") return undefined;
+  const notice = document.createElement("p"); notice.className = "research-source-freshness";
+  notice.textContent = freshness.state === "PREVIOUS_REVISIONS"
+    ? "Source updated — this report uses an earlier source revision. Its saved text and citations remain available; review it against the updated document."
+    : "Source revisions matched when this saved report was reopened.";
+  return notice;
+}
+function appendResearchSourceFreshnessDetails(fields: HTMLElement, freshness: ResearchSourceFreshness): void {
+  if (freshness.state === "UNKNOWN") return;
+  const add = (label: string, value: string): void => {
+    const term = document.createElement("dt"); term.textContent = label;
+    const detail = document.createElement("dd"); detail.append(codeRef(value)); fields.append(term, detail);
+  };
+  add("Source freshness", freshness.state);
+  add("Freshness checked", freshness.checked_at ?? "not recorded");
+  add("Changed sources", freshness.changed_sources.length === 0
+    ? "None recorded"
+    : freshness.changed_sources.map((source) => `${source.source_id}: saved ${source.saved_revision_ref}; current ${source.head_revision_ref}`).join(" · "));
 }
 export function mountResearchRunPanel(
   element: HTMLElement,
@@ -374,7 +394,7 @@ export function mountResearchRunPanel(
       })
       .finally(() => { if (active === historySerial) { historyController = undefined; updateButtons(); } });
   };
-  type ReportRenderOptions = { readonly renderSerial: number; readonly deploymentGeneration: string; readonly historical: boolean; readonly workflowInstanceId?: string; readonly investigationRef?: string; readonly authorizationScopeSnapshotRef?: { readonly id: string; readonly revision: number } };
+  type ReportRenderOptions = { readonly renderSerial: number; readonly deploymentGeneration: string; readonly historical: boolean; readonly workflowInstanceId?: string; readonly investigationRef?: string; readonly authorizationScopeSnapshotRef?: { readonly id: string; readonly revision: number }; readonly sourceFreshness?: ResearchSourceFreshness };
   const renderArtifactReport = (artifact: ArtifactRevision, options: ReportRenderOptions): void => {
     const reportHead = document.createElement("div"); reportHead.className = "research-report-heading";
     const reportTitle = document.createElement("h3"); reportTitle.textContent = options.historical ? "Saved research draft" : "Research draft";
@@ -395,6 +415,7 @@ export function mountResearchRunPanel(
     technicalField("Evidence freeze", `${artifact.evidence_freeze_ref.id}:${artifact.evidence_freeze_ref.revision}`);
     if (options.authorizationScopeSnapshotRef !== undefined) technicalField("Authorized scope", `${options.authorizationScopeSnapshotRef.id}:${options.authorizationScopeSnapshotRef.revision}`);
     technicalField("Status", artifact.status);
+    if (options.sourceFreshness !== undefined) appendResearchSourceFreshnessDetails(technicalFields, options.sourceFreshness);
     technical.append(technicalSummary, technicalFields);
     const reportActions = document.createElement("div"); reportActions.className = "research-report-actions";
     const download = document.createElement("button"); download.type = "button"; download.className = "button button--quiet"; download.textContent = "Download Markdown";
@@ -403,8 +424,13 @@ export function mountResearchRunPanel(
       const empty = document.createElement("p"); empty.className = "research-download-status"; empty.textContent = "This draft has no report sections to download."; reportActions.append(empty);
     }
     const workflowInstanceId = options.workflowInstanceId;
-    const createWikiDraft = workflowInstanceId !== undefined ? document.createElement("button") : undefined;
+    const previousSourceRevisions = options.sourceFreshness?.state === "PREVIOUS_REVISIONS";
+    const createWikiDraft = workflowInstanceId !== undefined && !previousSourceRevisions ? document.createElement("button") : undefined;
     const wikiDraftStatus = createWikiDraft === undefined ? undefined : document.createElement("p");
+    if (workflowInstanceId !== undefined && previousSourceRevisions) {
+      const note = document.createElement("p"); note.className = "research-wiki-draft-status";
+      note.textContent = "Start new Research on the updated sources before creating a Wiki draft."; reportActions.append(note);
+    }
     if (workflowInstanceId !== undefined && createWikiDraft !== undefined && wikiDraftStatus !== undefined) {
       const capturedWorkflowInstanceId = workflowInstanceId;
       const idempotencyKey = `wiki-from-run:${workflowInstanceId}`;
@@ -517,7 +543,8 @@ export function mountResearchRunPanel(
     };
     reportActions.append(download);
     if (createWikiDraft !== undefined && wikiDraftStatus !== undefined) reportActions.append(createWikiDraft, wikiDraftStatus);
-    result.append(reportHead, technical, reportActions);
+    const freshnessNotice = options.sourceFreshness === undefined ? undefined : renderResearchSourceFreshnessNotice(options.sourceFreshness);
+    result.append(reportHead, ...(freshnessNotice === undefined ? [] : [freshnessNotice]), technical, reportActions);
     const sections = document.createElement("ul"); sections.className = "research-report-sections";
     artifact.sections.forEach((section, ordinal) => {
       const item = document.createElement("li"); item.className = "research-report-section";
@@ -643,7 +670,7 @@ export function mountResearchRunPanel(
         if (active !== serial || disposed) return;
         lastExecutionState = "ENGINE_COMPLETED"; lastEngineStatus = "complete"; lastAnswerAvailability = "draft";
         badge.textContent = "DRAFT"; progress.textContent = "Saved draft opened for review."; result.replaceChildren();
-        renderArtifactReport(reauthorized.artifact, { renderSerial: active, deploymentGeneration: reauthorized.deployment_generation, historical: true, ...(draft.workflow_instance_id === undefined ? {} : { workflowInstanceId: draft.workflow_instance_id }), authorizationScopeSnapshotRef: reauthorized.authorization_scope_snapshot_ref });
+        renderArtifactReport(reauthorized.artifact, { renderSerial: active, deploymentGeneration: reauthorized.deployment_generation, historical: true, ...(draft.workflow_instance_id === undefined ? {} : { workflowInstanceId: draft.workflow_instance_id }), authorizationScopeSnapshotRef: reauthorized.authorization_scope_snapshot_ref, sourceFreshness: reauthorized.source_freshness });
         result.hidden = false; status.textContent = "Saved draft opened. Open a section to recheck its sources."; setReportActionsDisabled(true);
       })
       .catch((error: unknown) => {
