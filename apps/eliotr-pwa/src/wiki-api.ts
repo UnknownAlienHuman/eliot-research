@@ -209,8 +209,11 @@ export async function readWikiProposalBody(
   if (returnedGeneration !== generation) throw new ApiRequestError({ status: 409, code: "WIKI_DEPLOYMENT_CHANGED", message: "The application changed; refresh Wiki proposals", retryable: true });
   const bodySha256 = header(response.headers, "x-eliotr-body-sha256");
   if (!Sha256Schema.safeParse(bodySha256).success || bodySha256 !== expectedBodySha256 || await sha256(response.bytes) !== bodySha256) invalid("Wiki body digest does not match the response body");
-  const length = header(response.headers, "content-length");
-  if (!/^(0|[1-9][0-9]*)$/u.test(length) || Number(length) !== response.bytes.byteLength) invalid("Wiki body length does not match the response body");
+  const length = response.headers.get("content-length");
+  if (length !== null && (length.length === 0 || length !== length.trim() || length.length > 1024 ||
+      /[\u0000-\u001f\u007f]/u.test(length) || !/^(0|[1-9][0-9]*)$/u.test(length))) {
+    invalid("Wiki response has an invalid content-length header");
+  }
   let text: string;
   try { text = new TextDecoder("utf-8", { fatal: true }).decode(response.bytes); }
   catch { invalid("Wiki body is not valid UTF-8"); }

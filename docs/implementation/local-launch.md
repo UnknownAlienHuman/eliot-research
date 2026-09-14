@@ -50,11 +50,15 @@ Route qualification uses a seven-day window in the current code, including the f
 Version `owner-cloudflare-glm53-v6` was qualified through real synthesis and audit calls at 23:44 UTC
 on September 13; its initial proofs expired at 00:29 UTC on September 14. Its new immutable pricing
 snapshots and owner configuration run until October 12; the model and rates are unchanged. These
-timestamps describe the release configuration, not continuing readiness. A fresh qualification and
-deployment are in progress and are not yet declared LIVE. Lazy renewal is implemented as the first
-durable Workflow step, with no automatic retries.
-Current proofs need neither a route-read credential nor another model call. Renewal still needs the
-credential described below; it has not been verified live in the Worker while that secret is absent.
+timestamps describe the release configuration, not continuing readiness. A live check on deployment
+`git-69fea18`, Worker version `ad307b61-05d0-43e3-a49a-1cffef0f79a9`, produced two fresh v6
+qualification proofs through real synthesis and audit calls; `putImmutable` and `promoteLatest` both
+completed. Their expiries are `2026-09-21T03:10:07.107Z` (synthesis) and
+`2026-09-21T03:10:07.110Z` (audit). The current proof result was observed live; no future automatic
+renewal is claimed here.
+The live check had no `ELIOTR_MODEL_GATEWAY_READ_TOKEN`, and the current proofs did not require it.
+The credential described below remains the configured route-read credential for a renewal when one is
+needed; its future operation is not established by this check.
 
 The required credential is the Worker secret `ELIOTR_MODEL_GATEWAY_READ_TOKEN`, with **Account →
 AI Gateway → Read** for the workspace's Cloudflare account. It is separate from the existing model
@@ -76,22 +80,25 @@ report through the PWA. The 8,290-byte file retained the exact 2,889-byte saved 
 claim assessments and DRAFT status (export SHA-256
 `4b3cf75cf3606dee56a4015c6884887de434f59373196dbb0a962c5d5da8e665`).
 
-Deployment `git-cad8970` adds a Wiki proposal list, checked page/body readers, and fresh owner
-reauthorization for saved Wiki scopes. It preserves the original source set, owner generations and
-disclosure closure, and rechecks source authority after object reads. It does not add a draft-to-Wiki
-producer or publication admission. The deployed database currently has no Wiki proposals; this is not
-a populated Wiki lifecycle receipt. The deployed Wiki screen successfully reads that empty list.
-Corpus Lens also gains document-section expansion through the existing navigation service. Live
-acceptance found that the metadata-only README map returns zero sections despite the stored document
-having nine scan sections; connecting expansion to that admitted structure remains open.
-A navigation candidate still requires exact resolution in Evidence Rail.
+Deployment `git-69fea18` adds creation of a PROPOSED Wiki draft from a completed saved research run.
+The owner created `wiki-proposal-a7c2c7da0cc5de1b25412cd5b18f5eb8cebc696bb4c155e1:1` from the
+September 14 00:20 UTC research draft through the PWA. The Wiki list displays one analytical proposal;
+its page and body endpoints returned HTTP 200 and the exact original 2,889-byte body, SHA-256
+`199f693b2a527b3237186dbe8f416624d78771021cefdf86115e11380e311c63`. Opening that body in the PWA
+still failed its client validation during this check and is being corrected. Publication admission
+remains separate; the saved page is a draft.
+Corpus Lens now reconstructs section navigation from the admitted normalized document when the
+stored map contains metadata only. On `git-69fea18`, README expansion returned all nine sections,
+and choosing **What this is** displayed that exact admitted section. This reading view preserves
+the navigation-only label; Evidence Rail still requires an independently resolved evidence handle.
 
-The configuration panel now reads both durable model qualification proofs without contacting the
-model provider. On `git-cad8970`, it reports `START BLOCKED` / `Renewal required`, preserves the actual
-proof expiry, and names the missing Read secret in Configuration details. Start research is disabled;
-saved draft reading and Markdown download remain available. Current proofs report ready, and a
-configured Read credential permits lazy renewal at run start. The panel refreshes when current proofs
-enter the same five-minute renewal window used by the runtime.
+The configuration panel now reads both durable model qualification proofs without contacting the model
+provider. Earlier on `git-cad8970`, it reported `START BLOCKED` / `Renewal required`, preserved the
+actual proof expiry, and named the missing Read secret in Configuration details. A live check on
+`git-69fea18` at 03:18:50 UTC on September 14 instead reported `READY TO RUN` / `Current` and enabled
+Start research; the current proofs were usable while `ELIOTR_MODEL_GATEWAY_READ_TOKEN` was absent.
+The panel still exposes proof expiry and refresh state. Saved draft reading and Markdown download
+remain available.
 
 Owner research steps: sign in through Access, choose the workspace, add and admit a TXT/Markdown
 document, select it in **Sources**, and ask the question in **Research**. When the run reaches **DRAFT**,

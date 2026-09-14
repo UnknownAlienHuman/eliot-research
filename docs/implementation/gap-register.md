@@ -18,7 +18,9 @@ recorded in [the local launch checkpoint](local-launch.md).
 The selected model is Cloudflare `@cf/zai-org/glm-5.3-flash`; both installed routes use
 `owner-cloudflare-glm53-v6`. Run credentials are installed. Automatic qualification renewal is
 implemented, but its live Worker path still requires the missing `ELIOTR_MODEL_GATEWAY_READ_TOKEN`.
-Initial route proof timestamps are not continuing readiness. Policy and pricing expiry remain explicit.
+Fresh v6 synthesis and audit proofs were promoted on September 14 with a seven-day lifetime through
+September 21, 03:10 UTC; the deployed PWA showed READY TO RUN with Start research enabled.
+Initial route proof timestamps are historical. Policy and pricing expiry remain explicit.
 The first successful full runs do not close representative-corpus quality, recovery, revocation or
 publication acceptance. See [the runtime configuration procedure](research-runtime-configuration.md).
 
