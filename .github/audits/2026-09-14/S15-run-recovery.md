@@ -1,33 +1,29 @@
-# S15 — восстановить тот же run после временного отказа чтения
+# S15 — восстановить run без повторного оплаченного синтеза
 
-База кода `a2aca1277b0edbbed04de66e0d44e383e1b815ef`; F10/F11. Исправление задания от 2026-09-14: запрещаются повторные платные эффекты завершённых этапов, а не первый вызов ещё не выполненного AUDIT_CLAIMS. Это одно восстановление, не новый retry engine.
+База a2aca127; ER-09/21/24. Proposed API согласован с #206. Это задание, не готовый endpoint.
 
 ## 1. Суть
-Стандартные стадии используют retries.limit=0. Нельзя включать слепой повтор неизвестного платного эффекта, но восстановимый отказ чтения после сохранённого SYNTHESIZE не должен заставлять создавать новое исследование. После VERIFY существует самостоятельный платный AUDIT_CLAIMS, поэтому прежний критерий «общее число платных попыток не меняется» был неверен.
+После committed SYNTHESIZE временный read failure в VERIFY должен восстанавливаться в том же run. Общий счётчик оплаченных вызовов не обязан оставаться прежним: ещё не выполненный AUDIT_CLAIMS законно вызывается впервые. Не допускать дублей уже исполненного и не отключать необходимый аудит ради теста.
 
 ## 2. Что сделать
-Восстановить один существующий run: SYNTHESIZE уже committed, следующий VERIFY прерван временной ошибкой чтения. Дойти до законного terminal outcome через неизменённые operation ID, frozen inputs и канонические D1/R2 checkpoints. Штатный первый AUDIT_CLAIMS выполнить под его собственной бюджетной и idempotency authority; уже выполненный этап не вызывать повторно.
+POST `/api/v1/research/run/:workflow_id/recover`, body `{}`, existing Idempotency-Key. Ответ200 — existing ResearchRunStatus, когда канонический outcome/восстановленный ACTIVE подтверждён; 503 retryable — ещё неопределённое settlement; 409 — canonical CANCELLED, incompatible state или недоказуемый повтор UNKNOWN provider effect. Already completed→200 с прежним статусом, без запуска. Foreign/missing→одинаковый404, revoked403, malformed/unknown input fields400. Endpoint создаётся в существующем run service, не новый job engine.
 
-## 3. Документация и точные ориентиры
+## 3. Документация / grep
 [Канон §7.7.2](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/architecture/ELIOT_RESEARCH.md), [Execution contract §3](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/implementation/launch-prs/execution-contract.md).
-
-[Реальная stage factory](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/apps/eliotr-core/src/research-stage-handlers.ts) отдельно собирает SYNTHESIZE, VERIFY и AUDIT_CLAIMS. [Audit handler](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/packages/cloudflare-research-stages/src/research-claim-audit-stage-handler.ts) использует operation_kind AUDIT.
-
 ```sh
 git grep -n -F 'A lost ACK is UNKNOWN' -- docs/implementation/launch-prs/execution-contract.md
 git grep -n -F 'recoverStartedAttempt' -- apps/eliotr-core/src packages/cloudflare-research/src packages/cloudflare-research-stages/src
 ```
-
-Актуальная внешняя справка, проверена 2026-09-14: [Workers API](https://developers.cloudflare.com/workflows/build/workers-api/), [Trigger Workflows](https://developers.cloudflare.com/workflows/build/trigger-workflows/). `resume()` относится к paused instance; обычный `restart()` сбрасывает промежуточное native state, тогда как документированный restart from step переиспользует результаты предыдущих шагов. Наличие конкретной формы API проверить по закреплённым в репозитории типам и runtime, а не только по свежей документации.
+[Cloudflare Workers API](https://developers.cloudflare.com/workflows/build/workers-api/), проверено2026-09-14: native resume применим к paused, restart сбрасывает state, restart-from-step сохраняет прошлые результаты. Проверить точную API-форму по закреплённым runtime/types, не обновлять зависимости молча.
 
 ## 4. Как сделать
-Переиспользовать W2/W3 readback и recoverStartedAttempt. Различить safe read retry, committed-output recovery и UNKNOWN model effect. Выбор native restart/resume согласовать с фактическим engine status: не называть resume восстановлением errored instance без проверки. Native state не заменяет D1/R2 authority. При restart ранее committed stages обязаны восстановиться из канонических receipts без новых provider effects. Не обновлять зависимости молча ради другой формы API.
+Проверить owner либо explicit recover grant #202. Переиспользовать W2/W3 attempt state и recoverStartedAttempt. Прежде native lifecycle action читать канонический current attempt/output/receipt и classify: safe read retry, recorded output recovery, UNKNOWN upstream. Одновременные recover запросы выбирают один recovery action через существующую attempt/CAS дисциплину; два restart одновременно не допускаются. Повтор Idempotency-Key возвращает текущий подтверждённый outcome прежнего action, не новый run.
 
-В существующем run API определить один recovery operation и его idempotent ответ; если такой маршрут отсутствует, добавить узко и документировать request/response. Не создавать replacement operation ID. Integrity/auth/cancel не считать transient. Новые последующие платные стадии допускаются только по прежним нормальным правилам policy/quote/reservation; recovery не является разрешением на расходы.
+Native engine status выбирает подходящий lifecycle вызов; D1/R2 остаются authoritative, ранее committed stages восстанавливаются из receipts без model calls даже при очистке native intermediate state. Recovery не снимает revoke/cancel, не меняет scope/freeze/handler или operation ID. Для несовместимого deployment использовать результат #197; истечение authority обрабатывает отдельный S33. Новые следующие model stages проходят прежнюю spend policy/quote/reservation, не новый финансовый контур.
 
 ## 5. Критерии выполнения
-- До инъекции сбоя в контролируемом успешном сценарии: SYNTHESIZE вызван ровно один раз и committed; AUDIT_CLAIMS ещё не вызывался. Qualification/config фиксированы, дополнительные служебные model calls исключены условиями fixture, а не скрыты из учёта.
-- После recovery: тот же run доходит до законного результата; SYNTHESIZE по-прежнему вызван один раз, его operation/receipt/output hash неизменны; AUDIT_CLAIMS впервые выполняется ровно один раз с отдельной штатной reservation. Общий счётчик не обязан оставаться прежним.
-- Повтор recovery после завершения, потерянный ответ и restart не создают дополнительных SYNTHESIZE/AUDIT provider calls, reservations или результатов.
-- UNKNOWN provider effect не повторяется до доказуемого readback; revoke/cancel/corruption остаются отказами. Недостаточный бюджет для ещё не начатого AUDIT даёт штатный budget outcome, а не обход.
-- Сохраняются persisted rows/objects и exact SHA, команды, before/after. Controlled-provider тест не объявляется живой приёмкой Cloudflare. Проверку выбранной native lifecycle-операции на разрешённом deployment указать отдельно.
+- Fixture: до read failure SYNTHESIZE=1 committed/AUDIT=0; qualification/config фиксированы. После recovery SYNTHESIZE=1 с тем же hash/receipt, AUDIT=1 со своей штатной reservation, тот же run до законного результата.
+- Concurrent/repeated recovery и lost ACK не повторяют synthesis/audit/restart effects; completed recovery повторно не оплачивается.
+- UNKNOWN provider effect остаётся unresolved до доказуемого readback. Invalid/cancelled/revoked/corrupt state не превращается в transient retry.
+- Недостаточный бюджет на ещё не начатый audit даёт штатный ограниченный outcome; audit не пропускается ради completion.
+- Persisted D1/R2 rows/objects, HTTP tests, exact SHA и результаты. Native Cloudflare lifecycle acceptance после разрешённого deployment отдельно от controlled-provider tests. S32 выводит те же действия в PWA/MCP.
