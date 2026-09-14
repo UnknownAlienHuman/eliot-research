@@ -139,6 +139,9 @@ export function createWorkflowCheckpointExecutor(
             await store.cancel(request.operation_id, principal);
             fail("WORKFLOW_CANCELLED");
           }
+          if (error instanceof WorkflowCheckpointError && error.code === "WORKFLOW_OUTPUT_CORRUPT") {
+            throw error;
+          }
           fail("WORKFLOW_EFFECT_UNCERTAIN");
         }
         if (!(bytes instanceof Uint8Array) || bytes.byteLength > MAX_WORKFLOW_OUTPUT_BYTES) fail("WORKFLOW_INPUT_INVALID");

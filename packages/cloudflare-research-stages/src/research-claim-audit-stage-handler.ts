@@ -3,6 +3,7 @@ import { canonicalEvidenceJson } from "@eliotr/cloudflare-evidence";
 import { type ClaimAuditItem, type VersionedRef } from "@eliotr/contracts";
 import {
   decodeSemanticVerifierBatch,
+  SemanticVerifierOutputError,
   translateSemanticVerifierBatch,
   type TrustedSemanticClaimAuditInput,
 } from "@eliotr/research";
@@ -45,6 +46,7 @@ import {
 
 const AUDIT_STAGE = "AUDIT_CLAIMS" as const;
 const MODEL_IDEMPOTENCY_PREFIX = "model-idempotency-";
+const MAX_COVERAGE_LIMITATIONS = 32;
 
 type PromptResolver = ResearchModelPromptCompilerDependencies["resolve_trusted_parameters"];
 
@@ -297,11 +299,15 @@ function trustedAuditInputs(audit: ResearchClaimAuditInputSnapshot): readonly Tr
 function compactClaims(
   audit: ResearchClaimAuditInputSnapshot,
   items: readonly ClaimAuditItem[],
+  modelOutputUnverifiedReason?: string,
 ): readonly ResearchClaimAuditClaimInput[] {
   const normalizedById = new Map(audit.claims.claims.map((claim) => [claim.claim_ref.id, claim]));
   return Object.freeze(items.map((item) => {
     const normalized = normalizedById.get(item.claim_id);
     if (normalized === undefined) return outputCorrupt();
+    if (modelOutputUnverifiedReason !== undefined && item.coverage_limitations.length >= MAX_COVERAGE_LIMITATIONS) {
+      return outputCorrupt();
+    }
     return {
       claim_ref: normalized.claim_ref,
       claim_text_digest: item.claim_text_digest,
@@ -316,7 +322,10 @@ function compactClaims(
       supplied_excerpt_supports_requirement: item.supplied_excerpt_supports_requirement,
       evidence_grade: item.evidence_grade,
       lane: item.lane,
-      coverage_limitations: Object.freeze([...item.coverage_limitations]),
+      coverage_limitations: Object.freeze([
+        ...item.coverage_limitations,
+        ...(modelOutputUnverifiedReason === undefined ? [] : [modelOutputUnverifiedReason]),
+      ]),
       unsupported_precision: Object.freeze(item.unsupported_precision.map((entry) => Object.freeze({
         ...entry,
         source_and_coverage_basis: Object.freeze([...entry.source_and_coverage_basis]),
@@ -337,7 +346,8 @@ async function encodeAuditOutput(input: {
   try { assistantContent = (await decodeModelGatewayBody(input.model_bytes)).assistant_content; }
   catch { return outputCorrupt(); }
 
-  let batch;
+  let batch: ReturnType<typeof decodeSemanticVerifierBatch> | null;
+  let modelOutputUnverifiedReason: string | undefined;
   try {
     batch = decodeSemanticVerifierBatch(assistantContent, {
       verifier_ref: input.audit.verifier.verifier_ref,
@@ -345,7 +355,15 @@ async function encodeAuditOutput(input: {
       evidence_input_sha256: input.audit.evidence_input_sha256,
       claims: input.audit.claims.claims,
     });
-  } catch { return outputCorrupt(); }
+  } catch (error) {
+    if (!(error instanceof SemanticVerifierOutputError)) return outputCorrupt();
+    console.warn(JSON.stringify({
+      event: "research_audit_model_output_unverified",
+      code: error.code,
+    }));
+    modelOutputUnverifiedReason = `Model audit output invalid (${error.code}); no semantic observations were accepted.`;
+    batch = null;
+  }
 
   let translated: readonly ClaimAuditItem[];
   try { translated = translateSemanticVerifierBatch(batch, trustedAuditInputs(input.audit)); }
@@ -357,7 +375,7 @@ async function encodeAuditOutput(input: {
       stage_attempt_ref: input.stage_attempt_ref,
       stage_request_sha256: input.stage_request_sha256,
       model_attempt: input.model_attempt,
-      claims: compactClaims(input.audit, translated),
+      claims: compactClaims(input.audit, translated, modelOutputUnverifiedReason),
     });
   } catch { return outputCorrupt(); }
 }

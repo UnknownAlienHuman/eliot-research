@@ -25,6 +25,17 @@ and RESEARCH was opened in the PWA and downloaded from R2; the section's SHA-256
 `9b29105cba039c1257227ebd78d6365d949883b534c29e4d97bb9664209e0a52` (3,444 bytes).
 The run is `run-a3e16ed5a246754e0a2a1f51c145727bc43242b2e5ac31e5` on deployment `git-ce08f3f`.
 
+The next run, `run-1cfe3e85d852277483a60c1a76ad40e038bb27f5678b826e` on `git-a447ea4`,
+verified the fresh-proof renewal step in 306 ms without a route-read credential or qualification call.
+Both model HTTP calls settled successfully, but the audit response added an unknown claim
+and included undeclared fields. The semantic validator rejected it with
+`WORKFLOW_OUTPUT_CORRUPT` at 23:58:59 UTC on September 13. This run produced no report; model-call
+success alone does not prove valid audit output. Earlier saved reports remain separate deliverables.
+The audit handler now discards an invalid observation batch and uses the existing conservative
+translation: all affected claims are `NOT_VERIFIABLE_IN_SCOPE`. It preserves the synthesis as a DRAFT
+with unresolved verification; no observation is repaired, accepted selectively or treated as PASS.
+Other corrupt workflow outputs stop immediately with an allowlisted error instead of exhausting retries.
+
 Route qualification uses a 45-minute window. Version `owner-cloudflare-glm53-v6` was qualified through
 real synthesis and audit calls at 23:44 UTC on September 13, with initial proofs valid until 00:29 UTC
 on September 14. Its new immutable pricing snapshots and owner configuration run until October 12;

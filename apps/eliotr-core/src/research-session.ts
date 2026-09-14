@@ -14,8 +14,9 @@ import { createResearchSemanticServerHandlers, researchSemanticConfigurationInst
 import { RESEARCH_QUALIFICATION_RENEWAL_MARKER } from "./research-qualification-renewal.js";
 import { ScopeExpressionSchema } from "@eliotr/contracts";
 import type { VersionedRef } from "@eliotr/contracts";
-import { inspectScopeExpression } from "@eliotr/domain";
+import { inspectScopeExpression, RESEARCH_WORKFLOW_STAGES } from "@eliotr/domain";
 import type { AuthenticatedRequestContext, QueryRequest, QueryResult, ResearchEngineStatus, ResearchRunStatus } from "@eliotr/interfaces";
+import type { ResearchRunFailureCode } from "@eliotr/interfaces";
 import { CatalogInputError } from "./catalog-service.js";
 import type { Env } from "./env.js";
 import { RESEARCH_OWNER_MODEL_PROFILE as MODEL_PROFILE } from "./research-owner-profile.js";
@@ -40,17 +41,45 @@ function requireOwner(context: AuthenticatedRequestContext): void { if (context.
 const RESEARCH_ENGINE_STATUSES = new Set<ResearchEngineStatus>([
   "queued", "running", "paused", "errored", "terminated", "complete", "waiting", "waitingForPause", "unknown",
 ]);
+const RESEARCH_NATIVE_FAILURE_CODES = new Set<string>([
+  "WORKFLOW_INPUT_INVALID", "WORKFLOW_CONFLICT", "WORKFLOW_AUTHORITY_STALE", "WORKFLOW_STAGE_OUT_OF_ORDER",
+  "WORKFLOW_CANCELLED", "WORKFLOW_BUDGET_STOP", "WORKFLOW_EFFECT_UNCERTAIN", "WORKFLOW_OUTPUT_UNAVAILABLE",
+  "WORKFLOW_OUTPUT_CORRUPT", "RESEARCH_QUALIFICATION_RENEWAL_READ_TOKEN_REQUIRED",
+  "RESEARCH_QUALIFICATION_RENEWAL_AUTHORITY_STALE", "RESEARCH_QUALIFICATION_RENEWAL_UNAVAILABLE",
+  "RESEARCH_QUALIFICATION_RENEWAL_ROUTE_UNAVAILABLE",
+]);
+interface ResearchEngineObservation {
+  readonly status: ResearchEngineStatus;
+  readonly failure_code?: ResearchRunFailureCode;
+}
 function readResearchEngineStatusValue(value: unknown): ResearchEngineStatus {
   return typeof value === "string" && RESEARCH_ENGINE_STATUSES.has(value as ResearchEngineStatus) ? value as ResearchEngineStatus : "unknown";
 }
-async function readResearchEngineStatus(env: Env, operationId: string): Promise<ResearchEngineStatus> {
+function readResearchNativeFailureCode(value: unknown): ResearchRunFailureCode | undefined {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const error = (value as { readonly error?: unknown }).error;
+  if (error === null || typeof error !== "object" || Array.isArray(error)) return undefined;
+  const message = (error as { readonly message?: unknown }).message;
+  if (typeof message !== "string") return undefined;
+  const workflowPrefix = "WorkflowCheckpointError: ";
+  const renewalPrefix = "ResearchQualificationRenewalError: ";
+  const code = message.startsWith(workflowPrefix)
+    ? message.slice(workflowPrefix.length)
+    : message.startsWith(renewalPrefix)
+      ? message.slice(renewalPrefix.length)
+      : message;
+  return RESEARCH_NATIVE_FAILURE_CODES.has(code) ? code as ResearchRunFailureCode : undefined;
+}
+async function readResearchEngineStatus(env: Env, operationId: string): Promise<ResearchEngineObservation> {
   try {
     const instance = await env.RESEARCH_WORKFLOW.get(operationId);
-    if (instance.id !== operationId) return "unknown";
-    const observed = await instance.status();
-    return readResearchEngineStatusValue(observed.status);
+    if (instance.id !== operationId) return { status: "unknown" };
+    const observed: unknown = await instance.status();
+    const status = readResearchEngineStatusValue((observed as { readonly status?: unknown }).status);
+    const failureCode = status === "errored" ? readResearchNativeFailureCode(observed) : undefined;
+    return { status, ...(failureCode === undefined ? {} : { failure_code: failureCode }) };
   } catch {
-    return "unknown";
+    return { status: "unknown" };
   }
 }
 // IMPLEMENTED_NOT_LIVE: ER-24 research.query retrieval composition over injected RetrievalQueryPorts with frozen 64-source scope-profile versioning; RETRIEVAL slice enablement remains separate.
@@ -172,7 +201,14 @@ async function readResearchRunStatus(env: Env, context: AuthenticatedRequestCont
     database: env.CORE_DB, operation_id: operationId, principal, recheck_authority: recheckAuthority,
   }).catch(mapRunStatusFailure);
   if (status === null) fail("RESEARCH_RUN_NOT_FOUND", "research run does not exist", 404);
-  const engineStatus = status.state === "ACTIVE" ? await readResearchEngineStatus(env, operationId) : undefined;
+  const engine = status.state === "ACTIVE" ? await readResearchEngineStatus(env, operationId) : undefined;
+  const failureStage = engine?.failure_code?.startsWith("RESEARCH_QUALIFICATION_RENEWAL_")
+    ? undefined
+    : RESEARCH_WORKFLOW_STAGES[status.next_stage_index];
+  const failure = engine?.failure_code === undefined ? undefined : {
+    code: engine.failure_code,
+    ...(failureStage === undefined ? {} : { stage: failureStage }),
+  };
   let answer: ResearchRunStatus["answer"] = { availability: "unavailable" };
   if (status.state === "ENGINE_COMPLETED") {
     const completed = await readCommittedResearchRunResult({
@@ -190,7 +226,10 @@ async function readResearchRunStatus(env: Env, context: AuthenticatedRequestCont
     workflow_instance_id: status.operation_id,
     investigation_ref: { id: status.investigation_id, revision: status.current_revision },
     execution_state: status.state,
-    ...(engineStatus === undefined ? {} : { engine_status: engineStatus }),
+    ...(engine === undefined ? {} : {
+      engine_status: engine.status,
+      ...(failure === undefined ? {} : { failure }),
+    }),
     next_stage_index: status.next_stage_index,
     answer,
     ...(status.cancellation_receipt_ref === null ? {} : { cancellation_receipt_ref: status.cancellation_receipt_ref }),

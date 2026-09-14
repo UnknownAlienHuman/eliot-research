@@ -47,7 +47,7 @@ function statusText(view: ResearchRunStatusView): string {
     case "ACTIVE": {
       const stage = RESEARCH_STAGE_ORDER[view.next_stage_index];
       const label = stage === undefined ? "Continuing through the research workflow" : RESEARCH_STAGE_LABELS[stage];
-      if (view.engine_status === "errored") return "The research engine stopped before finishing. No answer is available.";
+      if (view.engine_status === "errored") return failureText(view.failure) ?? "The research engine stopped before finishing. No answer is available.";
       if (view.engine_status === "terminated") return "The research engine was stopped. No answer is available.";
       if (view.engine_status === "complete") return "The research engine finished. The saved run is still being finalized.";
       if (view.engine_status === "unknown") return "Research execution status is unavailable. Refresh to check again.";
@@ -72,9 +72,35 @@ function idleBadgeText(ready: boolean): string {
 function idleProgressText(ready: boolean): string {
   return ready ? "Ready to start a research run." : "Waiting for the current owner session.";
 }
+function failureText(failure: ResearchRunStatusView["failure"]): string | undefined {
+  switch (failure?.code) {
+    case "WORKFLOW_OUTPUT_CORRUPT":
+      return "The model returned a result that did not match the required format. This run has no verified answer. Your saved reports are still available.";
+    case "WORKFLOW_OUTPUT_UNAVAILABLE":
+      return "The research result could not be read. This run has no verified answer. Your saved reports are still available.";
+    case "WORKFLOW_EFFECT_UNCERTAIN":
+      return "Research stopped before its result could be verified. Your saved reports are still available.";
+    case "WORKFLOW_BUDGET_STOP":
+      return "Research stopped before finishing within its execution window. Your saved reports are still available.";
+    case "WORKFLOW_AUTHORITY_STALE":
+      return "Research authority changed before this run finished. Your saved reports are still available.";
+    case "RESEARCH_QUALIFICATION_RENEWAL_READ_TOKEN_REQUIRED":
+      return "Research access cannot be renewed because the server Read token is missing. An administrator must renew the connection.";
+    case "RESEARCH_QUALIFICATION_RENEWAL_AUTHORITY_STALE":
+      return "Research policy has expired. An administrator must renew research access.";
+    default:
+      return undefined;
+  }
+}
+function auditStatusText(claims: readonly ResearchArtifactSectionCitationAuditClaim[]): string {
+  if (claims.some((claim) => claim.disposition === "NOT_VERIFIABLE_IN_SCOPE")) {
+    return `${claims.length} claim assessments are recorded. Some claims could not be verified. Review the draft and its sources.`;
+  }
+  return `${claims.length} claim assessments are recorded. The verdicts describe the saved evidence; they do not mean every claim is true.`;
+}
 function historyStageText(view: ResearchRunStatusView): string {
   if (view.execution_state === "ACTIVE") {
-    if (view.engine_status === "errored") return "Engine stopped before completion";
+    if (view.engine_status === "errored") return failureText(view.failure) ?? "Engine stopped before completion";
     if (view.engine_status === "terminated") return "Engine stopped";
     if (view.engine_status === "complete") return "Engine finished; saved state pending";
     if (view.engine_status === "unknown") return "Execution status unavailable";
@@ -407,7 +433,7 @@ export function mountResearchRunPanel(
             const list = document.createElement("div"); list.className = "research-citations";
             const state = document.createElement("p"); state.className = "research-citation-state";
             state.textContent = citations.semantic_verification === "EXECUTED"
-              ? `Claim check complete: ${citations.audit.claims.length} claims checked. The verdicts describe the saved evidence; they do not mean every claim is true.`
+              ? auditStatusText(citations.audit.claims)
               : options.historical ? "Saved citations were reauthorized for this session; no claim check is recorded." : "Draft claims have not been checked. Opening a source checks its current bytes.";
             list.append(state); const aliases = citations.cited_evidence;
             const citationByRef = new Map(aliases.map((citation) => [citationRefKey(citation.original_handle_ref), citation]));

@@ -1,5 +1,6 @@
 // IMPLEMENTED_NOT_LIVE: ER-09 monotone bounded Workflow executor over durable D1/R2 checkpoints; governed model/evidence handlers and live qualification remain separate.
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloudflare:workers";
+import { NonRetryableError } from "cloudflare:workflows";
 import { RESEARCH_WORKFLOW_STAGES } from "@eliotr/domain";
 import type { ResearchWorkflowStage, VersionedRef } from "@eliotr/contracts";
 import { createD1EvidenceAuthorityPort, createNavigationReadAuthority } from "@eliotr/cloudflare-evidence";
@@ -7,7 +8,7 @@ import {
   createWorkflowCheckpointExecutor, MAX_WORKFLOW_RECEIPT_BYTES, WorkflowObjectSchema,
   type StageReceipt, type WorkflowExecutionPorts, type WorkflowObject, type WorkflowPrincipal,
 } from "@eliotr/cloudflare-research";
-import type { WorkflowStartedAttemptRecovery } from "@eliotr/cloudflare-workflows";
+import { WorkflowCheckpointError, type WorkflowStartedAttemptRecovery } from "@eliotr/cloudflare-workflows";
 import { createD1ScopePorts } from "@eliotr/retrieval";
 import { createD1InvestigationLedgerStore } from "@eliotr/research";
 import type { LedgerD1Database } from "@eliotr/research";
@@ -303,11 +304,18 @@ export class ResearchWorkflow extends WorkflowEntrypoint<Env, ResearchWorkflowPa
         input_manifest,
       };
       const receipt = await step.do(`w2-stage-${String(index).padStart(2, "0")}-${stage}`, async (): Promise<StageReceipt> => {
-        const outcome = await executor.execute(request, principal, handlers(stage));
-        const text = JSON.stringify(outcome);
-        if (new TextEncoder().encode(text).byteLength > MAX_WORKFLOW_RECEIPT_BYTES) failWorkflow("WORKFLOW_INPUT_INVALID");
-        if ("completion_disposition" in outcome) failWorkflow("WORKFLOW_INPUT_INVALID");
-        return outcome;
+        try {
+          const outcome = await executor.execute(request, principal, handlers(stage));
+          const text = JSON.stringify(outcome);
+          if (new TextEncoder().encode(text).byteLength > MAX_WORKFLOW_RECEIPT_BYTES) failWorkflow("WORKFLOW_INPUT_INVALID");
+          if ("completion_disposition" in outcome) failWorkflow("WORKFLOW_INPUT_INVALID");
+          return outcome;
+        } catch (error) {
+          if (error instanceof WorkflowCheckpointError && error.code === "WORKFLOW_OUTPUT_CORRUPT") {
+            throw new NonRetryableError("WORKFLOW_OUTPUT_CORRUPT", "WorkflowCheckpointError");
+          }
+          throw error;
+        }
       });
       const expectedEngine = index === RESEARCH_WORKFLOW_STAGES.length - 1 ? "ENGINE_COMPLETED" : "CHECKPOINTED";
       if (receipt.engine_state !== expectedEngine || receipt.operation_id !== params.operation_id || receipt.stage !== stage) {

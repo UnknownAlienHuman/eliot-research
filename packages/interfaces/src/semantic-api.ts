@@ -7,6 +7,7 @@ import type {
   VersionedRef,
   ArtifactRevision,
   WikiPageRevision,
+  ResearchWorkflowStage,
 } from "@eliotr/contracts";
 import type {
   EvidencePack,
@@ -87,6 +88,27 @@ export type ResearchEngineStatus =
   | "waitingForPause"
   | "unknown";
 
+export type ResearchRunFailureCode =
+  | "WORKFLOW_INPUT_INVALID"
+  | "WORKFLOW_CONFLICT"
+  | "WORKFLOW_AUTHORITY_STALE"
+  | "WORKFLOW_STAGE_OUT_OF_ORDER"
+  | "WORKFLOW_CANCELLED"
+  | "WORKFLOW_BUDGET_STOP"
+  | "WORKFLOW_EFFECT_UNCERTAIN"
+  | "WORKFLOW_OUTPUT_UNAVAILABLE"
+  | "WORKFLOW_OUTPUT_CORRUPT"
+  | "RESEARCH_QUALIFICATION_RENEWAL_READ_TOKEN_REQUIRED"
+  | "RESEARCH_QUALIFICATION_RENEWAL_AUTHORITY_STALE"
+  | "RESEARCH_QUALIFICATION_RENEWAL_UNAVAILABLE"
+  | "RESEARCH_QUALIFICATION_RENEWAL_ROUTE_UNAVAILABLE";
+
+export interface ResearchRunFailure {
+  readonly code: ResearchRunFailureCode;
+  /** The durable checkpoint being attempted when the native Workflow stopped. */
+  readonly stage?: ResearchWorkflowStage;
+}
+
 export interface ResearchRunStatus {
   readonly protocol: "eliotr.research-run-status.v1";
   readonly workflow_instance_id: string;
@@ -94,6 +116,8 @@ export interface ResearchRunStatus {
   readonly execution_state: "ACTIVE" | "CANCELLED" | "ENGINE_COMPLETED";
   /** Native Workflow observation for an active run; execution_state remains the canonical D1 state. */
   readonly engine_status?: ResearchEngineStatus;
+  /** Safe, allowlisted native failure context; no provider or runtime message is exposed. */
+  readonly failure?: ResearchRunFailure;
   readonly next_stage_index: number;
   readonly answer:
     | { readonly availability: "unavailable" }
