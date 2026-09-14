@@ -29,6 +29,7 @@ export const SEMANTIC_API_OPERATIONS = [
   "research.artifact",
   "research.wiki.propose",
   "research.wiki.propose.from-run",
+  "research.wiki.propose.from-edit",
   "research.wiki.publish",
   "research.wiki.proposal.read",
   "research.wiki.proposal.list",
@@ -329,6 +330,7 @@ export interface SemanticApi {
   artifactSectionCitations(context: AuthenticatedRequestContext, artifactRef: VersionedRef, sectionRef: VersionedRef): Promise<ResearchArtifactSectionCitations>;
   proposeWiki(context: AuthenticatedRequestContext, request: unknown): Promise<WikiProposalResult>;
   proposeWikiFromResearchRun(context: AuthenticatedRequestContext, operationId: string): Promise<WikiProposalResult>;
+  proposeWikiFromOwnerEdit(context: AuthenticatedRequestContext, request: unknown): Promise<WikiProposalResult>;
   /** The owner service performs strict decoding of the bounded transport body. */
   publishWiki(context: AuthenticatedRequestContext, request: unknown): Promise<WikiPublicationResult>;
   readWikiProposal(context: AuthenticatedRequestContext, proposalRef: VersionedRef): Promise<WikiProposalReadResult>;

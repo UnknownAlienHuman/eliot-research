@@ -24,6 +24,7 @@ import {
 import { CatalogInputError } from "./catalog-service.js";
 import type { Env } from "./env.js";
 import { prepareWikiProposalReadAuthorization } from "./wiki-proposal-reauthorization.js";
+import { admitWikiOwnerEditReview } from "./wiki-owner-edit-review-admission.js";
 import { admitWikiOwnerReview } from "./wiki-review-admission.js";
 import { createD1R2WikiPublicationPort } from "./wiki-publication-store.js";
 import type { WikiOwnerPublicationGuardWitness } from "./wiki-owner-publication-guard.js";
@@ -458,7 +459,10 @@ export async function publishWikiProposal(
     read_owner_publication_guard_witness: (commit) => readWikiOwnerPublicationGuardWitness(env, context, commit),
   });
   try {
-    await admitWikiOwnerReview(env, context, input.proposal_ref);
+    const ownerEditReview = await admitWikiOwnerEditReview(env, context, input.proposal_ref);
+    if (ownerEditReview === null) {
+      await admitWikiOwnerReview(env, context, input.proposal_ref);
+    }
     const page = await createWikiPublisher(port).publish(
       input.proposal_ref,
       input.expected_head_revision,

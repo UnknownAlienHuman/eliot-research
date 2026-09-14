@@ -622,6 +622,17 @@ async function dispatch(
         await application.services.semantic.proposeWikiFromResearchRun(context, operationId),
       );
     }
+    case "research.wiki.propose.from-edit": {
+      requireNoQuery(url);
+      return apiResult(
+        request,
+        env,
+        await application.services.semantic.proposeWikiFromOwnerEdit(
+          context,
+          await readJsonBodyWithinBytes(request, match.route.maximum_request_bytes),
+        ),
+      );
+    }
     case "research.wiki.publish": {
       requireNoQuery(url);
       return apiResult(

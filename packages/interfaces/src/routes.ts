@@ -56,6 +56,7 @@ export const ROUTES: readonly RouteDefinition[] = [
   { method: "GET", path: "/api/v1/research/wiki/proposals", operation: "research.wiki.proposal.list", auth: "owner", maximum_request_bytes: 0, response_mode: "json" },
   { method: "POST", path: "/api/v1/research/wiki/proposals", operation: "research.wiki.propose", auth: "owner", maximum_request_bytes: 262144, response_mode: "json" },
   { method: "POST", path: "/api/v1/research/wiki/proposals/from-run", operation: "research.wiki.propose.from-run", auth: "owner", maximum_request_bytes: 2048, response_mode: "json" },
+  { method: "POST", path: "/api/v1/research/wiki/proposals/from-edit", operation: "research.wiki.propose.from-edit", auth: "owner", maximum_request_bytes: 8 * 1024 * 1024 + 256 * 1024, response_mode: "json" },
   { method: "POST", path: "/api/v1/research/wiki/publications", operation: "research.wiki.publish", auth: "owner", maximum_request_bytes: 2048, response_mode: "json" },
   { method: "GET", path: "/api/v1/research/wiki/proposals/:ref", operation: "research.wiki.proposal.read", auth: "owner", maximum_request_bytes: 0, response_mode: "json" },
   { method: "GET", path: "/api/v1/research/wiki/proposals/:ref/body", operation: "research.wiki.proposal.body", auth: "owner", maximum_request_bytes: 0, response_mode: "stream" },

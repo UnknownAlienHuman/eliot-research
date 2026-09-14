@@ -7,6 +7,7 @@ import {
 import { createFederationService } from "./federation-service.js";
 import { createWikiProposalReaderService, createWikiProposalService, publishWikiProposal, requireWikiIdempotencyKey } from "./wiki-service.js";
 import { proposeWikiFromResearchRun as proposeWikiFromResearchRunOperation } from "./wiki-proposal-from-research-run.js";
+import { proposeWikiFromOwnerEdit as proposeWikiFromOwnerEditOperation } from "./wiki-owner-edit-proposal.js";
 import { createResearchChangesService } from "./research-changes.js";
 import { reconcileExpiredOutboxLeases } from "./outbox-reconciler.js";
 import { createD1ScopeService, createOrientationApi, createOwnerScopeAuthority, ORIENTATION_PROFILE, OrientationError } from "@eliotr/cloudflare-navigation";
@@ -153,6 +154,9 @@ function semanticApi(env: Env): SemanticApi {
     proposeWiki: createWikiProposalService(env),
     proposeWikiFromResearchRun: (context, operationId) => proposeWikiFromResearchRunOperation(
       env, context, operationId, requireWikiIdempotencyKey(context),
+    ),
+    proposeWikiFromOwnerEdit: (context, request) => proposeWikiFromOwnerEditOperation(
+      env, context, request, requireWikiIdempotencyKey(context),
     ),
     publishWiki: (context, request) => publishWikiProposal(env, context, request),
     ...wikiReader,

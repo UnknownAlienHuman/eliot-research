@@ -19,7 +19,7 @@ export function renderLibrary(page: LibraryPage): string {
 export function mountLibraryPanel(element: HTMLElement, onSelectSource: (id: string, context?: LibrarySelectionContext) => void | boolean | Promise<void | boolean>): (() => void) & { clearPrivate(): void; openProject(projectId: string): void } {
   element.innerHTML = `<h2>Library</h2><p>Only sources permitted by your current read policy are shown.</p>
     <p><button type="button" data-first>All sources / refresh</button> <button type="button" data-next disabled>Next page</button></p>
-    <p data-scope></p><p role="status" aria-live="polite"></p><section data-library-result></section><section data-library-versions></section>
+    <div data-scope></div><p role="status" aria-live="polite"></p><section data-library-result></section><section data-library-versions></section>
     <section data-library-readiness aria-live="polite"></section>`;
   const first = element.querySelector<HTMLButtonElement>("[data-first]");
   const next = element.querySelector<HTMLButtonElement>("[data-next]");
@@ -30,8 +30,29 @@ export function mountLibraryPanel(element: HTMLElement, onSelectSource: (id: str
   if (!first || !next || !scope || !status || !result || !versions || !readiness) throw new Error("Library panel is incomplete");
   let controller: AbortController | undefined; let serial = 0; let disposed = false;
   let readinessController: AbortController | undefined; let readinessSerial = 0;
-  let project: string | undefined; let page: LibraryPage | undefined;
+  let project: string | undefined; let projectTitle: string | undefined; let page: LibraryPage | undefined;
   let closeVersions: (() => void) | undefined;
+  const renderScope = (generation?: string): void => {
+    scope.replaceChildren();
+    const label = document.createElement("span");
+    label.textContent = project === undefined ? "Authorized Library" : `Project: ${projectTitle?.trim() || "Selected project"}`;
+    scope.append(label);
+    const details = document.createElement("details");
+    const summary = document.createElement("summary"); summary.textContent = "View scope details";
+    const fields = document.createElement("dl");
+    if (project !== undefined) {
+      const term = document.createElement("dt"); term.textContent = "Project ID";
+      const value = document.createElement("dd"); const code = document.createElement("code"); code.textContent = project; value.append(code);
+      fields.append(term, value);
+    }
+    if (generation !== undefined) {
+      const term = document.createElement("dt"); term.textContent = "Generation";
+      const value = document.createElement("dd"); value.textContent = generation; fields.append(term, value);
+    }
+    const note = document.createElement("p"); note.textContent = "This is one bounded page, not a completeness or index-readiness claim.";
+    details.append(summary, fields, note);
+    scope.append(details);
+  };
   const dispatchScopeChange = (reason: "project-filter" | "source-currentness", projectId?: string, title?: string): void => {
     element.dispatchEvent(new CustomEvent("library:scope-changed", {
       bubbles: true,
@@ -48,18 +69,22 @@ export function mountLibraryPanel(element: HTMLElement, onSelectSource: (id: str
     if (disposed) return;
     const generation = cursor ? page?.generation : undefined;
     stop(); const mine = serial; page = undefined; result.replaceChildren();
-    scope.textContent = project ? `Project: ${project}` : "Authorized Library";
+    renderScope(generation);
     if (!navigator.onLine) { clear("Offline. Private Library data is not cached."); return; }
     controller = new AbortController(); status.textContent = "Reading permitted sources…";
     try {
       const received = await readLibraryPage({ ...(project ? { project } : {}), ...(cursor ? { cursor } : {}),
         ...(generation ? { generation } : {}) }, controller.signal);
       if (mine !== serial || disposed) return;
-      page = received; result.innerHTML = renderLibrary(received); next.disabled = !received.next_cursor;
-      status.textContent = `${received.generation} · ${received.sources.length} sources on this page. Not a completeness or index-readiness claim.`;
+      page = received;
+      const receivedProject = project === undefined ? undefined : received.projects.find((item) => item.id === project);
+      if (receivedProject !== undefined) projectTitle = receivedProject.title;
+      renderScope(received.generation);
+      result.innerHTML = renderLibrary(received); next.disabled = !received.next_cursor;
+      status.textContent = `${received.sources.length} source${received.sources.length === 1 ? "" : "s"} on this page.`;
       for (const button of result.querySelectorAll<HTMLButtonElement>("[data-project]")) button.onclick = () => {
         const selected = received.projects[Number(button.dataset.project)];
-        if (selected && mine === serial && !disposed) { project = selected.id; dispatchScopeChange("project-filter", selected.id, selected.title); void load(); }
+        if (selected && mine === serial && !disposed) { project = selected.id; projectTitle = selected.title; dispatchScopeChange("project-filter", selected.id, selected.title); void load(); }
       };
       for (const button of result.querySelectorAll<HTMLButtonElement>("[data-versions]")) button.onclick = () => {
         const selected = received.sources[Number(button.dataset.versions)];
@@ -121,11 +146,12 @@ export function mountLibraryPanel(element: HTMLElement, onSelectSource: (id: str
   const openProject = (projectId: string, title?: string): void => {
     if (disposed) return;
     project = projectId;
-    const observedTitle = title ?? page?.projects.find((item) => item.id === projectId)?.title;
+    projectTitle = title ?? page?.projects.find((item) => item.id === projectId)?.title;
+    const observedTitle = projectTitle;
     dispatchScopeChange("project-filter", projectId, observedTitle);
     void load();
   };
-  first.onclick = () => { project = undefined; dispatchScopeChange("project-filter"); void load(); };
+  first.onclick = () => { project = undefined; projectTitle = undefined; dispatchScopeChange("project-filter"); void load(); };
   next.onclick = () => { const cursor = page?.next_cursor; if (cursor) void load(cursor); };
   const offline = () => { clear("Offline. Private Library data cleared."); onSelectSource(""); };
   const denied = () => { clear("Authorization changed. Sign in or renew the read policy, then refresh."); onSelectSource(""); };
@@ -138,5 +164,5 @@ export function mountLibraryPanel(element: HTMLElement, onSelectSource: (id: str
     window.removeEventListener("offline", offline); window.removeEventListener("eliotr:authorization-cleared", denied);
     window.removeEventListener("eliotr:raw-admission-completed", admissionCompleted);
     window.removeEventListener("eliotr:source-erased", admissionCompleted); };
-  return Object.assign(cleanup, { clearPrivate: () => { project = undefined; clear("Library data cleared. Refresh to read permitted sources."); onSelectSource(""); }, openProject });
+  return Object.assign(cleanup, { clearPrivate: () => { project = undefined; projectTitle = undefined; clear("Library data cleared. Refresh to read permitted sources."); onSelectSource(""); }, openProject });
 }

@@ -8,6 +8,7 @@ import {
   type WikiProposalSummary,
 } from "./wiki-api.js";
 import { expectedWikiHeadRevision, publishWikiProposal } from "./wiki-publish-api.js";
+import { mountWikiEditForm } from "./wiki-edit-form.js";
 import type { EvidenceLabel, VersionedRef } from "@eliotr/contracts";
 
 const RISK_LABELS: Record<WikiProposalSummary["risk_class"], string> = {
@@ -27,6 +28,10 @@ const EVIDENCE_LABELS: Record<EvidenceLabel, string> = {
   REDACTED_DEPENDENCY: "Redacted dependency",
 };
 const HISTORICAL_DRAFT_LIMITATION = "This analytical research draft remains PROPOSED pending human review.";
+
+function isOwnerEditProposal(proposal: WikiProposalReadView): boolean {
+  return proposal.page.publication_metadata.protocol === "eliotr.wiki-owner-edit.v1";
+}
 
 function refKey(ref: VersionedRef): string {
   return `${ref.id}:${ref.revision}`;
@@ -80,6 +85,7 @@ function shouldClearAfterPublication(error: unknown): boolean {
 
 function renderReviewContext(proposal: WikiProposalReadView): HTMLElement {
   const review = document.createElement("section"); review.className = "wiki-review-context";
+  const ownerEdit = isOwnerEditProposal(proposal);
   const heading = document.createElement("h4"); heading.textContent = "Review notes"; review.append(heading);
   const limitationsHeading = document.createElement("h5"); limitationsHeading.textContent = "Limitations"; review.append(limitationsHeading);
   if (proposal.page.limitations.length === 0) {
@@ -106,9 +112,11 @@ function renderReviewContext(proposal: WikiProposalReadView): HTMLElement {
     review.append(labelList);
   }
   const note = document.createElement("p");
-  note.textContent = proposal.state === "PUBLISHED"
-    ? "Publication did not change the meaning of unresolved or contested statements."
-    : "Publishing does not change the meaning of unresolved or contested statements.";
+  note.textContent = ownerEdit
+    ? "Manual edits remain UNRESOLVED; publishing does not confirm new facts."
+    : proposal.state === "PUBLISHED"
+      ? "Publication did not change the meaning of unresolved or contested statements."
+      : "Publishing does not change the meaning of unresolved or contested statements.";
   review.append(note);
   return review;
 }
@@ -138,6 +146,7 @@ export function mountWikiPanel(
   let openedBody: string | undefined;
   let publicationExpectedHeadRevision: number | undefined;
   let publicationIdempotencyKey: string | undefined;
+  let editFormCleanup: ReturnType<typeof mountWikiEditForm> | undefined;
 
   const updateButtons = (): void => {
     const disabled = controller !== undefined || !healthReady() || !navigator.onLine;
@@ -156,6 +165,7 @@ export function mountWikiPanel(
     controller = undefined;
   };
   const clearReader = (): void => {
+    editFormCleanup?.(); editFormCleanup = undefined;
     reader.replaceChildren(); reader.hidden = true;
     openedProposal = undefined; openedBody = undefined;
     publicationExpectedHeadRevision = undefined; publicationIdempotencyKey = undefined;
@@ -185,6 +195,7 @@ export function mountWikiPanel(
   const renderProposal = (proposal: WikiProposalReadView, body: string): void => {
     openedProposal = proposal; openedBody = body;
     publicationExpectedHeadRevision = undefined; publicationIdempotencyKey = undefined;
+    editFormCleanup?.(); editFormCleanup = undefined;
     reader.replaceChildren(); reader.hidden = false;
     const heading = document.createElement("div"); heading.className = "wiki-reader-heading";
     const title = document.createElement("h3"); title.textContent = proposal.page.title;
@@ -202,7 +213,9 @@ export function mountWikiPanel(
     if (proposal.state === "PROPOSED") {
       const action = document.createElement("div"); action.className = "wiki-publication-action";
       const explanation = document.createElement("p");
-      explanation.textContent = "Review this saved draft before publishing. The server will recheck its evidence and policy.";
+      explanation.textContent = isOwnerEditProposal(proposal)
+        ? "This manual edit remains UNRESOLVED. Publishing does not confirm new facts; review it before publishing."
+        : "Review this saved draft before publishing. The server will recheck its evidence and policy.";
       action.append(explanation);
       if (proposal.page.status !== "DRAFT") {
         const note = document.createElement("p"); note.textContent = "This proposal is not a publishable draft."; action.append(note);
@@ -226,6 +239,21 @@ export function mountWikiPanel(
         }
       }
       reader.append(action);
+    }
+    if (proposal.state === "PUBLISHED") {
+      const editHost = document.createElement("div");
+      reader.append(editHost);
+      editFormCleanup = mountWikiEditForm(editHost, {
+        proposal,
+        bodyText: body,
+        deploymentGeneration,
+        healthReady,
+        onSaved: ({ proposal: savedProposal, bodyText: savedBody }) => {
+          if (disposed || deploymentGeneration() !== savedProposal.deployment_generation) return;
+          renderProposal(savedProposal, savedBody);
+          status.textContent = "New draft saved. Review it before publishing.";
+        },
+      });
     }
     updateButtons();
   };
@@ -336,6 +364,6 @@ export function mountWikiPanel(
     load();
   };
   updateButtons();
-  const cleanup = (): void => { disposed = true; cancel(); refreshButton.onclick = null; list.onclick = null; reader.onclick = null; window.removeEventListener("offline", offline); window.removeEventListener("eliotr:authorization-cleared", denied); window.removeEventListener("eliotr:wiki-proposal-created", onProposalCreated); element.replaceChildren(); };
+  const cleanup = (): void => { disposed = true; cancel(); editFormCleanup?.(); editFormCleanup = undefined; refreshButton.onclick = null; list.onclick = null; reader.onclick = null; window.removeEventListener("offline", offline); window.removeEventListener("eliotr:authorization-cleared", denied); window.removeEventListener("eliotr:wiki-proposal-created", onProposalCreated); element.replaceChildren(); };
   return Object.assign(cleanup, { clearPrivate, refresh });
 }
