@@ -1,27 +1,31 @@
-# S05 — совместимый deployment не должен обрывать Research run
+# S05 — продолжение Research при совместимой выкладке
 
-База `a2aca127`; F01. Тема #92, развёртывание #96. PR-задание, не исправление.
+База `a2aca1277b0edbbed04de66e0d44e383e1b815ef`; уточнённое PR-задание, не реализация. ER-24/26 и ER-13. Область: deployment authority → Workflow currentness, не переделка JWT.
 
 ## 1. Суть
-`synchronizeResearchDeploymentAuthority` переводит прежнюю deployment generation в RETIRED. View `research_workflow_current` требует ACTIVE generation исходного run. Поэтому выкладка даже совместимого изменения исключает старый run из current authority. Это не удаление результата, но блокировка продолжения/чтения через current-only пути.
+`research-deployment-authority.mjs` retire-ит старую deployment generation, а `research_workflow_current` требует её ACTIVE. Поэтому даже PWA-only change обрывает исполняемый run. Нельзя лечить это постоянным git ID или удалением всех generation checks.
 
 ## 2. Что сделать
-Обеспечить продолжение одного существующего run после совместимой выкладки без смены его operation ID, frozen inputs и receipts. Сначала поддержать сценарий изменения PWA при неизменных backend contracts; несовместимые изменения должны останавливаться явно.
+Разделить две сущности: точный build ID для диагностики/provenance и совместимость исполнения для разрешения продолжить старый run. **Выбранное решение:** сравнение воспроизводимого fingerprint backend, а не whitelist SHA и не новый version manager. В первой реализации доказанно совместимы только идентичные backend execution inputs; неизвестная совместимость не угадывается.
 
-## 3. Документация
-[ELIOT_RESEARCH §7, §7.7.2](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/architecture/ELIOT_RESEARCH.md).
+## 3. Документация / grep
+[Канон §7 и §7.7.2](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/architecture/ELIOT_RESEARCH.md), [языковой контракт §2](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/architecture/LANGUAGE_RUNTIME_CONTRACT.md).
 ```sh
 git grep -n -F 'The Investigation survives' -- docs/architecture/ELIOT_RESEARCH.md
-git grep -n -F '### 7.7.2. ResearchWorkflow' -- docs/architecture/ELIOT_RESEARCH.md
+git grep -n -F 'research_workflow_current' -- infra/d1/core/migrations/0020_research_workflow_checkpoints.sql
 git grep -n -F 'synchronizeResearchDeploymentAuthority' -- scripts
 ```
 
 ## 4. Как сделать
-Разделить provenance исходного execution и текущую совместимость runtime в существующих `research-deployment-authority.mjs`, `research-workflow.ts` и currentness-проверках. Использовать уже имеющиеся handler/schema/config generations, не считать любой git SHA новой несовместимой authority. Сделать минимальное additive schema изменение только при необходимости. Не менять исторические run/receipts и не удалять проверки purge, policy, cancellation, principal. Не создавать новый deployment manager или общую систему версий.
+1. В существующем deployment builder вычислить fingerprint из детерминированных backend module bytes до подстановки build ID, compatibility_date/flags, binding topology/resource identities, поддерживаемых handler generations, применённого SQL-schema manifest и несекретных frozen configuration refs. PWA assets, документацию и время сборки исключить. Secret values не хешировать/публиковать; фактическая credential authority проверяется отдельно.
+2. В existing deployment record/manifest добавить fingerprint (поле предлагаемое). `DEPLOYMENT_GENERATION` и старые run/receipt bytes сохранить. Currentness связывает исходный deployment run с текущим ACTIVE deployment через равный доказанный fingerprint; только deployment-предикат меняется. Все scope/purge/policy/principal/allowed_use/cancel predicates остаются.
+3. Workflow dispatch использует записанный handler и execution provenance, а не заменяет их новым env ID. Создание новых runs относится к текущему build. Изменить согласованно `research-workflow.ts`, `research-session.ts`, deployment synchronizer и versioned status decoder; не исправлять только SQL view.
+4. Переход для legacy `git-*`: fingerprint привязывать только по сохранённым/прочитанным точным deployed artifacts и конфигурации. Нет доказательства — старый run остаётся сохранённым с явной incompatible/needs-migration причиной, а его read-only история доступна через #198/#199. Не переписывать старые receipts и не восстанавливать REVOKED authority.
+5. При backend-change несовпавший fingerprint означает отсутствие автоматического продолжения. Поддержку конкретного старого handler доказывать versioned transition tests до разрешения этого upgrade; не разрешать arbitrary schema changes. Откат A←B с теми же execution inputs работает по тому же сравнению. Миграции только additive.
 
 ## 5. Критерии выполнения
-- Run на A переживает совместимый B: прежние ID, checkpoints, hashes; статус и продолжение доступны.
-- Завершённый платный шаг не выполняется второй раз.
-- Несовместимый handler/schema даёт явную причину, не ложный COMPLETED и не потерянный run.
-- Реальный revoke/purge останавливает работу и после совместимого deployment.
-- Regression выполняется на локальном Worker/D1/R2; exact SHA и результаты сохранены. Live deployment требует отдельного штатного запуска, не делается ради написания задания.
+- A→PWA-only B и B→A: прежний operation ID, checkpoints/output hashes; status и дальнейшие шаги работают. Два сборочных прогона одних inputs дают один fingerprint.
+- Изменение backend handler/schema/resource identity/config generation меняет fingerprint и не продолжает неизвестную семантику молча; run не удаляется.
+- Legacy transition имеет positive evidence-backed и negative unknown case; retired/revoked grants не воскрешаются.
+- Выполненные provider effects не повторяются; ещё не выполненные законные стадии допускаются по обычному бюджету.
+- Revoke/purge/cancel действуют при обоих builds. Локальные D1/R2/Workflow tests и exact SHA приложены; native deployment/rollback qualification выполняется отдельно на разрешённой цели.
