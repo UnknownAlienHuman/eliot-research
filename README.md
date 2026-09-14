@@ -18,10 +18,14 @@ Release `8b418fe` adds Recent work with the latest 20 owner-authorized report,
 research completion and Wiki publication events. A new two-document run completed in
 about 125 seconds, opened a saved DRAFT and displayed its events in this view. Historical
 Wiki events remain readable through current owner reauthorization after the original scope expires.
+Release `6f14c0c`, with D1 migration fix `acebeb9`, adds owner editing of published Wiki pages.
+Saving creates a separate draft revision; publishing preserves the previous version and records
+the edit as unresolved. Both versions of the Orbit page were reopened in the live owner interface.
+The Library now shows the project title, with technical scope identifiers in collapsed details.
 This establishes the bounded owner path, not full production readiness. Qualification renewal
 and policy/pricing expiry constraints are documented in
 [the local launch checkpoint](docs/implementation/local-launch.md). Managed semantic retrieval,
-Google/MCP admission, Wiki editing and the accepted-artifact lifecycle, erasure, federation, recovery and broader
+Google/MCP admission, the accepted-artifact lifecycle, erasure, federation, recovery and broader
 production workloads remain open.
 
 **Pluggable external research federation for ELIOT Memory OS.**

@@ -309,3 +309,64 @@ the Recent work owner view. New Wiki events use the migrated trigger but a
 second Wiki publication was not performed in this pass. Source admission,
 source update and erasure producers, accepted-artifact semantics, editing and
 the remaining production/Rust scope are still open.
+
+## Owner edits with preserved Wiki history
+
+Product commit `6f14c0c` was pushed to main and deployed as Cloudflare version
+`4f540e0b-4210-4b7d-802e-ceabe4d2bdfb`. The active D1 deployment and normal owner
+browser both read back `git-6f14c0c`; activation was recorded at
+`2026-09-14T09:12:33.879Z`. The Library now displays the selected project title
+and keeps scope identifiers in collapsed details.
+
+The owner opened the published Orbit page, changed its title to
+`Орбита — рабочая сводка`, and appended an editorial note without replacing the
+original report text. The new proposal is
+`wiki-proposal-c42dc117e360be2c2606025ec84dc8a713d342c972267a51:1`, created at
+`2026-09-14T09:13:43.764Z`, for revision 2 of
+`research-wiki-092a593d6d61b82385988af0b6765a06dde1a22d98f5ee43`.
+
+The first live save exposed a D1 expression-depth error in the metadata trigger:
+the proposal bytes had settled, but its edit binding had not. Migration `0064`
+replaces that one predicate with five shorter guards while preserving its
+checks. It was applied atomically and recorded at `2026-09-14 09:20:57` UTC;
+commit `acebeb9` contains the correction. Live `EXPLAIN INSERT` then compiled
+1,195 instructions and schema readback confirmed all 13 binding triggers.
+Retrying the same form completed the original proposal/binding, retaining its
+original creation time. No manual binding insertion or duplicate draft was used.
+
+After reviewing the saved draft, the owner published it through the normal UI.
+D1 records publication at `2026-09-14T09:21:45.961Z`. The head is revision 2 with
+outbox `wiki-outbox-18604c171d92b23095c600c116bf0ea3ff37efc077395c2a`.
+The new immutable manifest and owner-review receipt were downloaded from R2
+and independently matched these SHA-256 values:
+
+| Object | SHA-256 |
+| --- | --- |
+| Published revision 2 manifest | `f5764f83ecc4af1b2b3a8c10b02faeea7cb586ee391a9291adccd6e231a01d90` |
+| Owner edit review receipt | `089248e66a1a95288e841a2aeff1c4256072c75f1b6dbf6494fb129c2d1db644` |
+
+The new body is 1,861 UTF-8 bytes with digest
+`7931708ec32160b02023155836aa4f48bc8cda23e5b580c795a29f1d212cba9a`.
+Revision 1 retains manifest digest
+`9df2915b8525e0ed1289b7dbacd7a530c29d9704495a62b05cc20d15d81c4701`
+and its original body digest. Both proposals reopened in the owner browser:
+the original text remained intact and the new Published page included the
+editorial note. The receipt uses `eliotr.wiki.owner-edit-review.v1`, records
+incomplete coverage and zero supported claims, and binds a separate integrity
+receipt instead of reusing the original machine audit for edited text.
+
+The publication transaction retained currentness guard
+`wiki-guard-09f2e084c31ea001b6052135820afaae7a27b4777db5ce81`, observed at
+`2026-09-14T09:21:46.532Z`. Change-feed sequence 4 is `WIKI_PUBLISHED`, revision 2,
+with the new manifest digest and explicit owner/scope visibility. This also
+exercises the new Wiki visibility trigger from migration `0062`. Refreshing
+Recent work displayed the new publication at 5:21 AM local time. The selected
+Library showed `Project: Орбита · исследование документов` and its two sources.
+
+Core and PWA TypeScript checks and the PWA build passed. The first Core check
+found one missing parameter; it was fixed before deployment. Local SQLite
+compiled the migrations, but did not reproduce D1's lower expression-depth
+limit; the deployed EXPLAIN and normal UI retry resolved that live failure.
+No broad test suite was run. Concurrent-client and mid-edit revocation scenarios
+were not exercised live. Accepted-artifact semantics, source update/purge,
+recovery, federation and the mandatory Rust scope remain open.
