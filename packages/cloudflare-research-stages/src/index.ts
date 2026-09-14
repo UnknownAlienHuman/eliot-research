@@ -13,4 +13,5 @@ export * from "./research-coverage-result.js";
 export * from "./research-coverage-stage-handler.js";
 export * from "./research-coverage-materialize-stage-handler.js";
 export * from "./research-run-result-reader.js";
+export * from "./research-historical-coverage-reader.js";
 export * from "./research-owner-prompts.js";

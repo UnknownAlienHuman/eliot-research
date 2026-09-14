@@ -2,6 +2,7 @@ import { IdentifierSchema, ResearchWorkflowStageSchema, type ResearchWorkflowSta
 import { ApiRequestError, isAuthorizationLoss } from "./api.js";
 import { readResearchRunHistory, researchRunBody, readResearchArtifact, readReauthorizedResearchArtifact, readReauthorizedResearchArtifactSection, readResearchRunStatus, startResearchRun, type ResearchArtifactSectionCitationAuditClaim, type ResearchEngineStatus, type ResearchRunHistoryEntry, type ResearchRunHistoryView, type ResearchRunSavedDraft, type ResearchRunStatusView } from "./research-run-api.js"; import { readReauthorizedResearchArtifactSectionCitations } from "./research-run-reauthorization-api.js"; import { finishResearchStatusRead, readResearchStatusWithAuthorityRetry, shouldRetryResearchAuthority } from "./research-run-status-retry.js";
 import { downloadResearchDraftMarkdown, type ResearchMarkdownSection } from "./research-markdown-download.js";
+import { createWikiProposalFromRun } from "./wiki-proposal-create-api.js";
 import type { ArtifactRevision } from "@eliotr/contracts";
 import type { LibrarySelectionContext } from "./library-readiness-api.js";
 const RESEARCH_STAGE_LABELS: Record<ResearchWorkflowStage, string> = {
@@ -67,11 +68,21 @@ function badgeText(view: ResearchRunStatusView): string {
   if (view.execution_state === "CANCELLED") return "CANCELLED";
   return view.answer.availability === "draft" ? "DRAFT" : "COMPLETE";
 }
-function idleBadgeText(ready: boolean): string {
-  return ready ? "READY" : "WAITING";
+function idleBadgeText(healthReady: boolean, configurationReady: boolean): string {
+  if (!healthReady) return "WAITING";
+  return configurationReady ? "READY" : "BLOCKED";
 }
-function idleProgressText(ready: boolean): string {
-  return ready ? "Ready to start a research run." : "Waiting for the current owner session.";
+function idleProgressText(healthReady: boolean, configurationReady: boolean): string {
+  if (!healthReady) return "Waiting for the current owner session.";
+  return configurationReady ? "Ready to start a research run." : "Research configuration is not ready. Check the Research configuration card before starting a run.";
+}
+function wikiProposalErrorText(error: unknown): string {
+  if (error instanceof ApiRequestError) {
+    if (error.status === 401 || error.status === 403) return "Wiki draft creation is unavailable for the current owner session.";
+    if (error.code === "WIKI_DEPLOYMENT_CHANGED" || error.code === "RESEARCH_RUN_DEPLOYMENT_CHANGED") return "The workspace changed while saving the Wiki draft. Refresh the workspace and try again.";
+    if (error.retryable) return "Wiki draft creation is temporarily unavailable. Try again from this report.";
+  }
+  return "Wiki draft could not be saved. Try again from this report.";
 }
 function failureText(failure: ResearchRunStatusView["failure"]): string | undefined {
   switch (failure?.code) {
@@ -156,8 +167,8 @@ export function mountResearchRunPanel(
   healthReady: () => boolean = () => false,
   researchConfigurationReady: () => boolean = () => true,
 ): (() => void) & { clearPrivate(notice?: string): void; refreshAvailability(): void; selectSource(id: string, context?: LibrarySelectionContext): void } {
-  element.innerHTML = `<div class="workflow-head"><div><span class="eyebrow">Research run</span><h2>Prepare a research run</h2></div><span class="workflow-badge" data-run-badge>${idleBadgeText(healthReady() && researchConfigurationReady())}</span></div>
-    <p class="workflow-status workflow-progress-summary" data-run-progress aria-live="polite">${idleProgressText(healthReady() && researchConfigurationReady())}</p>
+  element.innerHTML = `<div class="workflow-head"><div><span class="eyebrow">Research run</span><h2>Prepare a research run</h2></div><span class="workflow-badge" data-run-badge>${idleBadgeText(healthReady(), researchConfigurationReady())}</span></div>
+    <p class="workflow-status workflow-progress-summary" data-run-progress aria-live="polite">${idleProgressText(healthReady(), researchConfigurationReady())}</p>
     <p class="workflow-copy">Start research and open a saved draft when one is available.</p>
     <form><label>Question<textarea name="query" rows="5" maxlength="4096" autocomplete="off" required placeholder="Ask a research question" style="width:100%;min-height:120px;padding:10px 11px;border:1px solid var(--line);border-radius:8px;background:var(--surface);color:var(--ink);font:inherit;font-size:13px;resize:vertical"></textarea></label>
     <label>Scope<select name="scope"><option value="library">Entire authorized Library</option><option value="selected" disabled>Selected source</option></select></label>
@@ -165,7 +176,7 @@ export function mountResearchRunPanel(
     <section class="workflow-recovery" aria-labelledby="research-history-title"><div class="workflow-recovery-head"><div><span class="eyebrow">Saved research</span><h3 id="research-history-title">Recent research</h3></div><button type="button" class="button button--quiet" data-research-history-refresh disabled>Refresh</button></div>
       <p class="workflow-recovery-status" data-research-history-status>Recent research appears after the current session is ready.</p><div class="workflow-recovery-list" data-research-history-list></div></section>
     <div class="workflow-recovery"><label>Run ID<input data-workflow-id maxlength="128" autocomplete="off" placeholder="Paste a known run ID"></label><button type="button" class="button button--quiet" data-recover>Load status</button></div>
-    <p class="workflow-status" role="status" aria-live="polite">${healthReady() ? "Ready when the current owner session is available." : "Waiting for the current owner session."}</p>
+    <p class="workflow-status" role="status" aria-live="polite">${idleProgressText(healthReady(), researchConfigurationReady())}</p>
     <section data-run-result hidden></section>`;
   const form = element.querySelector<HTMLFormElement>("form");
   const badge = element.querySelector<HTMLElement>("[data-run-badge]");
@@ -206,11 +217,11 @@ export function mountResearchRunPanel(
   };
   const refreshAvailability = (): void => {
     badge.textContent = lastExecutionState === undefined
-      ? idleBadgeText(healthReady() && researchConfigurationReady())
+      ? idleBadgeText(healthReady(), researchConfigurationReady())
       : lastExecutionState === "ACTIVE"
         ? (lastEngineStatus === "errored" || lastEngineStatus === "terminated" ? "FAILED" : "RUNNING")
         : lastExecutionState === "CANCELLED" ? "CANCELLED" : lastAnswerAvailability === "draft" ? "DRAFT" : "COMPLETE";
-    if (lastExecutionState === undefined) progress.textContent = idleProgressText(healthReady() && researchConfigurationReady());
+    if (lastExecutionState === undefined) progress.textContent = idleProgressText(healthReady(), researchConfigurationReady());
     updateButtons();
   };
   const stop = (): void => {
@@ -239,7 +250,7 @@ export function mountResearchRunPanel(
   const clearPrivate = (notice = "Private research state cleared. Reconnect before starting or loading a run."): void => {
     stop(); clearHistory(); workflowId = undefined; workflowGeneration = undefined; selectedSourceId = undefined; previousBody = ""; idempotencyKey = "";
     workflowInput.value = ""; result.replaceChildren(); result.hidden = true; query.value = ""; scope.value = "library"; selectedOption.disabled = true;
-    badge.textContent = idleBadgeText(healthReady() && researchConfigurationReady()); progress.textContent = idleProgressText(healthReady() && researchConfigurationReady());
+    badge.textContent = idleBadgeText(healthReady(), researchConfigurationReady()); progress.textContent = idleProgressText(healthReady(), researchConfigurationReady());
     updateButtons(); status.textContent = notice;
   };
   const showUnavailableRun = (error: ApiRequestError): void => {
@@ -390,6 +401,63 @@ export function mountResearchRunPanel(
       download.disabled = true; download.dataset.reportActionUnavailable = "true";
       const empty = document.createElement("p"); empty.className = "research-download-status"; empty.textContent = "This draft has no report sections to download."; reportActions.append(empty);
     }
+    const workflowInstanceId = options.workflowInstanceId;
+    const createWikiDraft = workflowInstanceId !== undefined ? document.createElement("button") : undefined;
+    const wikiDraftStatus = createWikiDraft === undefined ? undefined : document.createElement("p");
+    if (workflowInstanceId !== undefined && createWikiDraft !== undefined && wikiDraftStatus !== undefined) {
+      const capturedWorkflowInstanceId = workflowInstanceId;
+      const idempotencyKey = `wiki-from-run:${workflowInstanceId}`;
+      createWikiDraft.type = "button";
+      createWikiDraft.className = "button button--quiet";
+      createWikiDraft.textContent = "Create Wiki draft";
+      wikiDraftStatus.className = "research-wiki-draft-status";
+      wikiDraftStatus.hidden = true;
+      wikiDraftStatus.setAttribute("role", "status");
+      createWikiDraft.onclick = () => {
+        if (options.renderSerial !== serial || controller !== undefined || disposed) return;
+        const generation = deploymentGeneration();
+        if (generation === undefined || generation !== options.deploymentGeneration) {
+          clearPrivate("The Research workspace changed. Refresh before creating a Wiki draft.");
+          return;
+        }
+        const local = new AbortController();
+        controller = local;
+        setReportActionsDisabled(true);
+        wikiDraftStatus.hidden = false;
+        wikiDraftStatus.textContent = "Saving this report as a Wiki draft…";
+        status.textContent = "Saving this report as a Wiki draft…";
+        void createWikiProposalFromRun(capturedWorkflowInstanceId, idempotencyKey, generation, local.signal)
+          .then(() => {
+            if (options.renderSerial !== serial || disposed || deploymentGeneration() !== options.deploymentGeneration) return;
+            createWikiDraft.disabled = true;
+            createWikiDraft.dataset.reportActionUnavailable = "true";
+            wikiDraftStatus.textContent = "Saved as a Wiki draft. Open Wiki to review it.";
+            status.textContent = "Wiki draft saved.";
+            const openWiki = document.createElement("button");
+            openWiki.type = "button";
+            openWiki.className = "button button--quiet";
+            openWiki.textContent = "Open Wiki";
+            openWiki.onclick = () => { if (!disposed && options.renderSerial === serial) window.location.hash = "#wiki-card"; };
+            reportActions.append(openWiki);
+            window.dispatchEvent(new Event("eliotr:wiki-proposal-created"));
+          })
+          .catch((error: unknown) => {
+            if (options.renderSerial !== serial || disposed || local.signal.aborted) return;
+            if (deploymentGeneration() !== options.deploymentGeneration) {
+              clearPrivate("The Research workspace changed. Refresh before creating a Wiki draft.");
+              return;
+            }
+            if (error instanceof ApiRequestError && (isAuthorizationLoss(error) || error.code === "WIKI_DEPLOYMENT_CHANGED" || error.code === "RESEARCH_RUN_DEPLOYMENT_CHANGED")) {
+              clearPrivate(error.code === "WIKI_DEPLOYMENT_CHANGED" || error.code === "RESEARCH_RUN_DEPLOYMENT_CHANGED" ? "The Research workspace changed. Refresh before creating a Wiki draft." : "Authorization changed. Sign in again before creating a Wiki draft.");
+              return;
+            }
+            wikiDraftStatus.hidden = false;
+            wikiDraftStatus.textContent = wikiProposalErrorText(error);
+            status.textContent = "Wiki draft could not be saved.";
+          })
+          .finally(() => finishReportAction(local, options.renderSerial));
+      };
+    }
     download.onclick = () => {
       if (options.renderSerial !== serial || controller !== undefined) return;
       const local = new AbortController(); controller = local; setReportActionsDisabled(true); status.textContent = "Preparing Markdown download…";
@@ -446,7 +514,9 @@ export function mountResearchRunPanel(
         })
         .finally(() => finishReportAction(local, options.renderSerial));
     };
-    reportActions.append(download); result.append(reportHead, technical, reportActions);
+    reportActions.append(download);
+    if (createWikiDraft !== undefined && wikiDraftStatus !== undefined) reportActions.append(createWikiDraft, wikiDraftStatus);
+    result.append(reportHead, technical, reportActions);
     const sections = document.createElement("ul"); sections.className = "research-report-sections";
     artifact.sections.forEach((section, ordinal) => {
       const item = document.createElement("li"); item.className = "research-report-section";
@@ -572,14 +642,14 @@ export function mountResearchRunPanel(
         if (active !== serial || disposed) return;
         lastExecutionState = "ENGINE_COMPLETED"; lastEngineStatus = "complete"; lastAnswerAvailability = "draft";
         badge.textContent = "DRAFT"; progress.textContent = "Saved draft opened for review."; result.replaceChildren();
-        renderArtifactReport(reauthorized.artifact, { renderSerial: active, deploymentGeneration: reauthorized.deployment_generation, historical: true, authorizationScopeSnapshotRef: reauthorized.authorization_scope_snapshot_ref });
+        renderArtifactReport(reauthorized.artifact, { renderSerial: active, deploymentGeneration: reauthorized.deployment_generation, historical: true, ...(draft.workflow_instance_id === undefined ? {} : { workflowInstanceId: draft.workflow_instance_id }), authorizationScopeSnapshotRef: reauthorized.authorization_scope_snapshot_ref });
         result.hidden = false; status.textContent = "Saved draft opened. Open a section to recheck its sources."; setReportActionsDisabled(true);
       })
       .catch((error: unknown) => {
         if (active !== serial || (error instanceof Error && error.name === "AbortError")) return;
         if (error instanceof ApiRequestError && (isAuthorizationLoss(error) || error.code === "RESEARCH_RUN_DEPLOYMENT_CHANGED")) { clearPrivate(); return; }
         lastExecutionState = undefined; lastEngineStatus = undefined; lastAnswerAvailability = undefined; result.replaceChildren(); result.hidden = true;
-        badge.textContent = idleBadgeText(healthReady() && researchConfigurationReady()); progress.textContent = "Saved draft could not be opened."; status.textContent = message(error);
+        badge.textContent = idleBadgeText(healthReady(), researchConfigurationReady()); progress.textContent = "Saved draft could not be opened."; status.textContent = message(error);
       })
       .finally(() => { if (active === serial) { controller = undefined; if (!disposed) setReportActionsDisabled(false); updateButtons(); } });
   };
@@ -670,7 +740,7 @@ export function mountResearchRunPanel(
     element.dispatchEvent(new CustomEvent("research:started", { bubbles: true }));
     void startResearchRun(body, idempotencyKey, generation, local.signal)
       .then((view) => { if (active !== serial) return; workflowId = view.workflow_instance_id; workflowGeneration = view.deployment_generation; workflowInput.value = view.workflow_instance_id; lastExecutionState = "ACTIVE"; lastEngineStatus = undefined; lastAnswerAvailability = undefined; badge.textContent = "RUNNING"; progress.textContent = "Research started. Checking progress automatically."; refresh.disabled = false; status.textContent = "Research started. Checking progress automatically."; loadHistory("manual", true); })
-      .catch((error: unknown) => { if (active !== serial || (error instanceof Error && error.name === "AbortError")) return; if (error instanceof ApiRequestError && (isAuthorizationLoss(error) || error.code === "RESEARCH_RUN_DEPLOYMENT_CHANGED")) clearPrivate(); else { badge.textContent = idleBadgeText(healthReady() && researchConfigurationReady()); progress.textContent = "Research could not be started."; status.textContent = message(error); } })
+      .catch((error: unknown) => { if (active !== serial || (error instanceof Error && error.name === "AbortError")) return; if (error instanceof ApiRequestError && (isAuthorizationLoss(error) || error.code === "RESEARCH_RUN_DEPLOYMENT_CHANGED")) clearPrivate(); else { badge.textContent = idleBadgeText(healthReady(), researchConfigurationReady()); progress.textContent = "Research could not be started."; status.textContent = message(error); } })
       .finally(() => { if (active === serial) { controller = undefined; updateButtons(); scheduleStatusRefresh(); } });
   };
   refresh.onclick = () => readStatus("manual", workflowId);

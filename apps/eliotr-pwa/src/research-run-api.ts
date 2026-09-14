@@ -60,10 +60,11 @@ export interface ResearchRunHistoryEntry {
 export interface ResearchRunSavedDraft {
   readonly created_at: string;
   readonly artifact_ref: VersionedRef;
+  readonly workflow_instance_id?: string;
 }
 
 export interface ResearchRunHistoryView {
-  readonly protocol: "eliotr.research-runs.v1" | "eliotr.research-runs.v2";
+  readonly protocol: "eliotr.research-runs.v1" | "eliotr.research-runs.v2" | "eliotr.research-runs.v3";
   readonly runs: readonly ResearchRunHistoryEntry[];
   readonly saved_drafts: readonly ResearchRunSavedDraft[];
   readonly configuration_state: "INSTALLED" | "MISSING";
@@ -427,7 +428,7 @@ export function decodeResearchRunStatus(raw: unknown, expectedDeploymentGenerati
 export function decodeResearchRunHistory(raw: unknown, expectedDeploymentGeneration?: string): ResearchRunHistoryView {
   const parsed = envelope(raw); checkGeneration(parsed.deployment_generation, expectedDeploymentGeneration);
   const data = record(parsed.data, ["protocol", "runs", "configuration_state", "checked_at"], ["saved_drafts"]);
-  if (data.protocol !== "eliotr.research-runs.v1" && data.protocol !== "eliotr.research-runs.v2") invalid("research run history protocol is invalid");
+  if (data.protocol !== "eliotr.research-runs.v1" && data.protocol !== "eliotr.research-runs.v2" && data.protocol !== "eliotr.research-runs.v3") invalid("research run history protocol is invalid");
   if (data.configuration_state !== "INSTALLED" && data.configuration_state !== "MISSING") invalid("research run configuration state is invalid");
   const checkedAt = isoTimestamp(data.checked_at, "checked_at");
   if (!Array.isArray(data.runs) || data.runs.length > 8) invalid("research run history is invalid");
@@ -445,16 +446,17 @@ export function decodeResearchRunHistory(raw: unknown, expectedDeploymentGenerat
     if (!Array.isArray(data.saved_drafts) || data.saved_drafts.length > 8) invalid("saved research drafts are invalid");
     const draftRefs = new Set<string>();
     data.saved_drafts.forEach((value, index) => {
-      const entry = record(value, ["created_at", "artifact_ref"]);
+      const entry = record(value, ["created_at", "artifact_ref"], ["workflow_instance_id"]);
       const createdAt = isoTimestamp(entry.created_at, `saved_drafts[${index}].created_at`);
       const artifactRef = versionedRef(entry.artifact_ref, `saved_drafts[${index}].artifact_ref`);
+      const workflowInstanceId = Object.hasOwn(entry, "workflow_instance_id") ? checkWorkflowId(entry.workflow_instance_id) : undefined;
       const key = `${artifactRef.id}:${artifactRef.revision}`;
       if (draftRefs.has(key)) invalid("saved research drafts contain a duplicate artifact");
       draftRefs.add(key);
-      savedDrafts.push({ created_at: createdAt, artifact_ref: artifactRef });
+      savedDrafts.push({ created_at: createdAt, artifact_ref: artifactRef, ...(workflowInstanceId === undefined ? {} : { workflow_instance_id: workflowInstanceId }) });
     });
   }
-  if (data.protocol === "eliotr.research-runs.v2" && !Object.hasOwn(data, "saved_drafts")) invalid("research run history v2 is missing saved drafts");
+  if ((data.protocol === "eliotr.research-runs.v2" || data.protocol === "eliotr.research-runs.v3") && !Object.hasOwn(data, "saved_drafts")) invalid("research run history is missing saved drafts");
   return { protocol: data.protocol, runs, saved_drafts: savedDrafts, configuration_state: data.configuration_state, checked_at: checkedAt, deployment_generation: parsed.deployment_generation };
 }
 

@@ -12,14 +12,14 @@ it does not create citation evidence. Private content is not cached by the PWA.
 The minute scheduler dispatches admitted-source jobs to the queue. A completed D1 projection makes
 exact and lexical retrieval available; semantic retrieval remains unavailable without AI Search.
 The Research screen separately reports model configuration and actual run state. On 2026-09-13, the
-owner document path completed a real 17-stage SYNTHESIZE and AUDIT run with Cloudflare
+owner document path completed a real 18-stage SYNTHESIZE and AUDIT run with Cloudflare
 `@cf/zai-org/glm-5.3-flash` and saved a DRAFT in R2. The PWA displayed the draft, opened its answer
 section, loaded seven claim checks and verified a cited excerpt in Evidence Rail. This confirms the
 owner path without establishing full production readiness. After two deployments on the same date, the
 owner reopened that saved draft from Research history, opened its Russian answer section, loaded seven
 claim checks and verified a fresh cited excerpt in Evidence Rail. Each historical read obtains fresh
 authorization for the current owner session, including reports saved by earlier deployments.
-After migration `0057_model_spend_renewed_qualification.sql`, a second real run completed all 17 stages
+After migration `0057_model_spend_renewed_qualification.sql`, a second real run completed all 18 stages
 at 23:12 UTC on September 13 using renewed qualification proofs. Its Russian guide to LIBRARY, LENS
 and RESEARCH was opened in the PWA and downloaded from R2; the section's SHA-256 matched
 `9b29105cba039c1257227ebd78d6365d949883b534c29e4d97bb9664209e0a52` (3,444 bytes).
@@ -46,11 +46,13 @@ The run also exposed a status-read race across a checkpoint commit. Run, current
 active attempt are now read in one D1 transaction. A remaining `RESEARCH_RUN_STATUS_INVALID`
 response preserves the loaded run and history for manual refresh; actual authorization loss still clears them.
 
-Route qualification uses a 45-minute window. Version `owner-cloudflare-glm53-v6` was qualified through
-real synthesis and audit calls at 23:44 UTC on September 13, with initial proofs valid until 00:29 UTC
-on September 14. Its new immutable pricing snapshots and owner configuration run until October 12;
-the model and rates are unchanged. These timestamps describe the release configuration, not continuing
-readiness. Lazy renewal is implemented as the first durable Workflow step, with no automatic retries.
+Route qualification uses a seven-day window in the current code, including the future lazy-renewal path.
+Version `owner-cloudflare-glm53-v6` was qualified through real synthesis and audit calls at 23:44 UTC
+on September 13; its initial proofs expired at 00:29 UTC on September 14. Its new immutable pricing
+snapshots and owner configuration run until October 12; the model and rates are unchanged. These
+timestamps describe the release configuration, not continuing readiness. A fresh qualification and
+deployment are in progress and are not yet declared LIVE. Lazy renewal is implemented as the first
+durable Workflow step, with no automatic retries.
 Current proofs need neither a route-read credential nor another model call. Renewal still needs the
 credential described below; it has not been verified live in the Worker while that secret is absent.
 
@@ -69,14 +71,27 @@ Commit `abbce44` adds **Download Markdown** to saved and current DRAFT reports. 
 section and its recorded claim assessments through owner reauthorization, checks the stored body digest
 and verification receipt, and saves one dated file only after all reads succeed. It retains DRAFT status,
 recorded verdicts and citation references; it does not claim fresh source-byte verification. Empty reports
-cannot be downloaded. Browser download acceptance for this change remains pending deployment.
+cannot be downloaded. On deployment `git-cad8970`, the owner downloaded the September 14 00:20 UTC
+report through the PWA. The 8,290-byte file retained the exact 2,889-byte saved section, four recorded
+claim assessments and DRAFT status (export SHA-256
+`4b3cf75cf3606dee56a4015c6884887de434f59373196dbb0a962c5d5da8e665`).
 
-The next owner UI checkpoint adds a Wiki proposal list, checked page/body readers, and fresh owner
+Deployment `git-cad8970` adds a Wiki proposal list, checked page/body readers, and fresh owner
 reauthorization for saved Wiki scopes. It preserves the original source set, owner generations and
 disclosure closure, and rechecks source authority after object reads. It does not add a draft-to-Wiki
 producer or publication admission. The deployed database currently has no Wiki proposals; this is not
-a populated Wiki lifecycle receipt. Corpus Lens also gains document-section expansion through the
-existing navigation service. A navigation candidate still requires exact resolution in Evidence Rail.
+a populated Wiki lifecycle receipt. The deployed Wiki screen successfully reads that empty list.
+Corpus Lens also gains document-section expansion through the existing navigation service. Live
+acceptance found that the metadata-only README map returns zero sections despite the stored document
+having nine scan sections; connecting expansion to that admitted structure remains open.
+A navigation candidate still requires exact resolution in Evidence Rail.
+
+The configuration panel now reads both durable model qualification proofs without contacting the
+model provider. On `git-cad8970`, it reports `START BLOCKED` / `Renewal required`, preserves the actual
+proof expiry, and names the missing Read secret in Configuration details. Start research is disabled;
+saved draft reading and Markdown download remain available. Current proofs report ready, and a
+configured Read credential permits lazy renewal at run start. The panel refreshes when current proofs
+enter the same five-minute renewal window used by the runtime.
 
 Owner research steps: sign in through Access, choose the workspace, add and admit a TXT/Markdown
 document, select it in **Sources**, and ask the question in **Research**. When the run reaches **DRAFT**,

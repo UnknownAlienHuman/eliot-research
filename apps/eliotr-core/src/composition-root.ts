@@ -5,7 +5,8 @@ import {
   createD1R2FederationBundleAuthority,
 } from "@eliotr/cloudflare-federation";
 import { createFederationService } from "./federation-service.js";
-import { createWikiProposalReaderService, createWikiProposalService } from "./wiki-service.js";
+import { createWikiProposalReaderService, createWikiProposalService, requireWikiIdempotencyKey } from "./wiki-service.js";
+import { proposeWikiFromResearchRun as proposeWikiFromResearchRunOperation } from "./wiki-proposal-from-research-run.js";
 import { createResearchChangesService } from "./research-changes.js";
 import { reconcileExpiredOutboxLeases } from "./outbox-reconciler.js";
 import { createD1ScopeService, createOrientationApi, createOwnerScopeAuthority, ORIENTATION_PROFILE, OrientationError } from "@eliotr/cloudflare-navigation";
@@ -149,6 +150,9 @@ function semanticApi(env: Env): SemanticApi {
       return { protocol: "eliotr.artifact-section-citations.v1", ...citations };
     },
     proposeWiki: createWikiProposalService(env),
+    proposeWikiFromResearchRun: (context, operationId) => proposeWikiFromResearchRunOperation(
+      env, context, operationId, requireWikiIdempotencyKey(context),
+    ),
     ...wikiReader,
     trace: (context, ref) => ref.id.startsWith("query-") ? readRetrievalTrace(env.CORE_DB, context, ref).then((r) => {
       if (r.status === "ok") return r.trace; throw new OrientationError(r.status === "invalid" ? "ORIENTATION_TRACE_INVALID" : r.status === "missing" ? "ORIENTATION_TRACE_NOT_FOUND" : r.status === "stale" ? "ORIENTATION_TRACE_CORRUPT" : "ORIENTATION_RESERVATION_UNCERTAIN", r.status === "invalid" ? 400 : r.status === "missing" ? 404 : r.status === "stale" ? 409 : 503, r.status === "uncertain"); }) : orientation.trace(context, ref),

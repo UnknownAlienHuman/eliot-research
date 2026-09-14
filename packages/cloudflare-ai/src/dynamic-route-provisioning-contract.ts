@@ -3,7 +3,7 @@ import type { ModelRouteDeployment } from "@eliotr/platform-cloudflare";
 export const DYNAMIC_ROUTE_GATEWAY_ID = "eliotr-reasoning";
 export const DYNAMIC_ROUTE_DEFINITION_MAX_BYTES = 192 * 1024;
 export const DYNAMIC_ROUTE_ARTIFACT_MAX_BYTES = 256 * 1024;
-export const DYNAMIC_ROUTE_QUALIFICATION_MAX_AGE_MS = 60 * 60 * 1000;
+export const DYNAMIC_ROUTE_QUALIFICATION_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
 export type DynamicRouteAmbiguousEffect =
   | "NONE"

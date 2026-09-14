@@ -430,7 +430,9 @@ function qualificationDuration(
   if (!Number.isSafeInteger(duration) || duration < 1 || duration > DYNAMIC_ROUTE_QUALIFICATION_MAX_AGE_MS) {
     fail("RESEARCH_OWNER_QUALIFICATION_RENEWAL_AUTHORITY_STALE", "persisted qualification duration is outside its bound");
   }
-  return duration;
+  // A renewal gets the full configured seven-day window. The prior proof is
+  // validated above, while policy and pricing expiry remain the hard clamps.
+  return DYNAMIC_ROUTE_QUALIFICATION_MAX_AGE_MS;
 }
 
 export function createResearchOwnerQualificationRenewalAssembler(

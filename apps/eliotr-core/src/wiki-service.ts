@@ -1,4 +1,5 @@
 import {
+  IdentifierSchema,
   VersionedRefSchema,
   WikiPageRevisionSchema,
   type VersionedRef,
@@ -83,6 +84,10 @@ function idempotencyKey(context: AuthenticatedRequestContext): string {
   return value;
 }
 
+export function requireWikiIdempotencyKey(context: AuthenticatedRequestContext): string {
+  return idempotencyKey(context);
+}
+
 function strictRecord(raw: unknown, expected: readonly string[]): Record<string, unknown> {
   if (raw === null || typeof raw !== "object" || Array.isArray(raw)) fail("WIKI_INPUT_INVALID", "Wiki request must be an object");
   const record = raw as Record<string, unknown>;
@@ -91,6 +96,13 @@ function strictRecord(raw: unknown, expected: readonly string[]): Record<string,
     fail("WIKI_INPUT_INVALID", "Wiki request has unknown or missing fields");
   }
   return record;
+}
+
+export function parseWikiProposalFromResearchRunRequest(raw: unknown): string {
+  const record = strictRecord(raw, ["operation_id"]);
+  const operationId = IdentifierSchema.safeParse(record.operation_id);
+  if (!operationId.success) fail("WIKI_INPUT_INVALID", "research operation_id is invalid");
+  return operationId.data;
 }
 
 function proposalInput(raw: unknown): { page: WikiPageRevision; risk_class: DraftRiskClass } {

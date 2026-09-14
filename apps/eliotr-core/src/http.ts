@@ -55,7 +55,7 @@ import { readWorkspaceCandidateRequest, readWorkspaceAdmissionId } from "./works
 import { readNavigationExpansionRequest } from "./navigation-expand-http.js";
 import { HttpRequestError, mapError } from "./http-errors.js";
 import { readResearchConfigurationReadiness } from "./research-configuration-readiness.js";
-import { parseWikiProposalRef } from "./wiki-service.js";
+import { parseWikiProposalFromResearchRunRequest, parseWikiProposalRef } from "./wiki-service.js";
 import {
   reopenOwnerArtifactDraft,
   reopenOwnerArtifactSection,
@@ -476,6 +476,17 @@ async function dispatch(
           context,
           await readJsonBodyWithinBytes(request, match.route.maximum_request_bytes),
         ),
+      );
+    }
+    case "research.wiki.propose.from-run": {
+      requireNoQuery(url);
+      const operationId = parseWikiProposalFromResearchRunRequest(
+        await readJsonBodyWithinBytes(request, match.route.maximum_request_bytes),
+      );
+      return apiResult(
+        request,
+        env,
+        await application.services.semantic.proposeWikiFromResearchRun(context, operationId),
       );
     }
     case "research.wiki.proposal.list": {

@@ -87,9 +87,7 @@ export function mountWikiPanel(
 
   const renderList = (view: WikiProposalListView): void => {
     list.replaceChildren();
-    if (view.items.length === 0) {
-      const empty = document.createElement("p"); empty.textContent = "No saved Wiki proposals."; list.append(empty); return;
-    }
+    if (view.items.length === 0) return;
     view.items.forEach((item, index) => {
       const card = document.createElement("article"); card.className = "wiki-proposal-card";
       const heading = document.createElement("h3"); heading.textContent = item.title;
@@ -172,7 +170,8 @@ export function mountWikiPanel(
   };
   const offline = (): void => clearPrivate("Offline. Private Wiki data cleared.");
   const denied = (): void => clearPrivate("Authorization changed. Sign in again to view Wiki proposals.");
-  window.addEventListener("offline", offline); window.addEventListener("eliotr:authorization-cleared", denied);
+  const onProposalCreated = (): void => { if (!disposed) { listView = undefined; listGeneration = undefined; load(); } };
+  window.addEventListener("offline", offline); window.addEventListener("eliotr:authorization-cleared", denied); window.addEventListener("eliotr:wiki-proposal-created", onProposalCreated);
   const refresh = (): void => {
     const generation = deploymentGeneration();
     if (!healthReady() || !navigator.onLine || generation === undefined) { updateButtons(); return; }
@@ -180,6 +179,6 @@ export function mountWikiPanel(
     load();
   };
   updateButtons();
-  const cleanup = (): void => { disposed = true; cancel(); refreshButton.onclick = null; list.onclick = null; window.removeEventListener("offline", offline); window.removeEventListener("eliotr:authorization-cleared", denied); element.replaceChildren(); };
+  const cleanup = (): void => { disposed = true; cancel(); refreshButton.onclick = null; list.onclick = null; window.removeEventListener("offline", offline); window.removeEventListener("eliotr:authorization-cleared", denied); window.removeEventListener("eliotr:wiki-proposal-created", onProposalCreated); element.replaceChildren(); };
   return Object.assign(cleanup, { clearPrivate, refresh });
 }

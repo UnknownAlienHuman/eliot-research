@@ -1,6 +1,6 @@
 import type { EvidenceHandle } from "@eliotr/contracts";
 import { ApiRequestError } from "./api.js";
-import { readAdmittedDocument, type AdmittedDocument } from "./document-reader-api.js";
+import { MAX_DOCUMENT_BYTES, readAdmittedDocument, type AdmittedDocument } from "./document-reader-api.js";
 import { escapeHtml } from "./html.js";
 import {
   expandNavigation,
@@ -8,12 +8,11 @@ import {
   type NavigationSection,
 } from "./navigation-expand-api.js";
 import {
-  orientSources, orientationBody, readOrientationTrace, type OrientationView,
+  orientSources, orientationBody, readOrientationScope, readOrientationTrace, type OrientationView,
 } from "./orientation-api.js";
 
 export function renderOrientation(view: OrientationView): string {
-  return `<p>Choose a source below to read its admitted document. ${view.cards.length} represented; ${view.omitted} omitted.</p>
-    ${view.cards.map((card, index) => { const map = view.maps.find((candidate) => candidate.source_revision_ref === card.source_revision_ref); return `<article class="source-card"><h3>${escapeHtml(card.title)}</h3>
+  return `${view.cards.map((card, index) => { const map = view.maps.find((candidate) => candidate.source_revision_ref === card.source_revision_ref); return `<article class="source-card"><h3>${escapeHtml(card.title)}</h3>
       <p>${escapeHtml(card.quality_status)}</p>
       <button class="button button--quiet" type="button" data-read-document="${index}">Read document</button>
       ${map === undefined ? `<p>Sections are unavailable for this source.</p>` : `<button class="button button--quiet" type="button" data-expand-map="${index}">Expand sections</button><div data-navigation-expansion="${index}" aria-live="polite"></div>`}
@@ -23,6 +22,7 @@ export function renderOrientation(view: OrientationView): string {
       </div></details></article>`; }).join("")}
     <details class="orientation-technical-details"><summary>Technical details</summary>
       <p><strong>Navigation only.</strong> This view shows source metadata and does not provide citation evidence, full document structure, or research synthesis.</p>
+      <p>Represented sources: ${view.cards.length}; omitted sources: ${view.omitted}.</p>
       <p>Scope: <code>${escapeHtml(view.scope.id)}</code></p><p>Trace: <code>${escapeHtml(view.trace.id)}</code></p>
       <button type="button" data-trace>Inspect trace</button>
     </details>`;
@@ -33,6 +33,38 @@ function textElement(tag: string, value: string, className?: string): HTMLElemen
   if (className !== undefined) element.className = className;
   element.textContent = value;
   return element;
+}
+
+function readSectionText(admitted: AdmittedDocument, section: NavigationSection): string {
+  if (admitted.sourceRevisionRef !== section.source_revision_ref || admitted.sizeBytes !== admitted.bytes.byteLength ||
+      admitted.sizeBytes < 1 || admitted.sizeBytes > MAX_DOCUMENT_BYTES) {
+    throw new ApiRequestError({ status: 502, code: "DOCUMENT_SECTION_INVALID", message: "The admitted document does not match the selected section" });
+  }
+  const start = section.normalized_start_byte;
+  const end = section.normalized_end_byte;
+  if (start === undefined || end === undefined || !Number.isSafeInteger(start) || !Number.isSafeInteger(end) ||
+      start < 0 || end <= start || end > admitted.bytes.byteLength) {
+    throw new ApiRequestError({ status: 502, code: "DOCUMENT_SECTION_INVALID", message: "The selected section has no valid document range" });
+  }
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(admitted.bytes.slice(start, end));
+  } catch {
+    throw new ApiRequestError({ status: 502, code: "DOCUMENT_SECTION_INVALID", message: "The selected section is not aligned to valid UTF-8 text" });
+  }
+}
+
+function renderSectionText(section: NavigationSection, content: string): HTMLElement {
+  const panel = document.createElement("section");
+  panel.className = "navigation-section-text";
+  const body = document.createElement("pre");
+  body.className = "navigation-section-text-body";
+  body.textContent = content;
+  panel.append(
+    textElement("h5", `Selected text · ${section.label}`),
+    textElement("p", "Read-only text from the admitted document. It is not verified evidence."),
+    body,
+  );
+  return panel;
 }
 
 function renderNavigationExpansion(
@@ -82,7 +114,7 @@ function renderNavigationExpansion(
   return panel;
 }
 export function mountOrientationPanel(element: HTMLElement): (() => void) & { selectSource(id: string): Promise<boolean> } {
-  element.innerHTML = `<h2>Read admitted documents</h2><p>Choose a source to read its admitted text.</p>
+  element.innerHTML = `<h2>Read admitted documents</h2>
     <details class="orientation-advanced-selection"><summary>Advanced selection</summary>
       <form><label>Source IDs (optional, separated by commas)<input name="sources" maxlength="16000" autocomplete="off" placeholder="Blank: authorized library, at most 64 sources"></label>
       <label>Focus (metadata only)<input name="focus" maxlength="256" autocomplete="off"></label>
@@ -200,16 +232,33 @@ export function mountOrientationPanel(element: HTMLElement): (() => void) & { se
     void expandNavigation(view, {
       kind: "SECTION", sourceRevisionRef: section.source_revision_ref, sectionRef: section.section_ref,
     }, local.signal)
-      .then((expansion) => {
+      .then(async (expansion) => {
         if (mine !== navigationSerial || selectionSerial !== active || local.signal.aborted || disposed) return;
         output.replaceChildren(renderNavigationExpansion(expansion, () => undefined, dispatchEvidence));
-        status.textContent = expansion.kind === "SECTION" && expansion.evidence_handle !== undefined
-          ? "Section loaded. Exact evidence is ready for verification." : "Section loaded. Navigation only.";
+        if (expansion.kind !== "SECTION" || expansion.evidence_handle !== undefined ||
+            expansion.section.normalized_start_byte === undefined || expansion.section.normalized_end_byte === undefined) {
+          status.textContent = expansion.kind === "SECTION" && expansion.evidence_handle !== undefined
+            ? "Section loaded. Exact evidence is ready for verification." : "Section loaded. Navigation only.";
+          return;
+        }
+        status.textContent = "Section map loaded. Reading the selected document text…";
+        await readOrientationScope(view, local.signal);
+        if (mine !== navigationSerial || selectionSerial !== active || local.signal.aborted || disposed) return;
+        const admitted = await readAdmittedDocument(expansion.section.source_revision_ref, view.generation, local.signal);
+        if (mine !== navigationSerial || selectionSerial !== active || local.signal.aborted || disposed) return;
+        output.append(renderSectionText(expansion.section, readSectionText(admitted, expansion.section)));
+        status.textContent = "Section text loaded for reading. It is not verified evidence.";
       })
       .catch((error: unknown) => {
         if (mine !== navigationSerial || selectionSerial !== active || local.signal.aborted || disposed) return;
         if (error instanceof ApiRequestError && (error.status === 401 || error.status === 403)) {
           clearPrivateOrientation();
+          return;
+        }
+        if (error instanceof ApiRequestError &&
+            ["DOCUMENT_GENERATION_CHANGED", "NAVIGATION_DEPLOYMENT_CHANGED", "ORIENTATION_DEPLOYMENT_CHANGED", "ORIENTATION_SCOPE_CHANGED"].includes(error.code)) {
+          key = ""; previous = ""; clearReader(); result.replaceChildren();
+          status.textContent = "The source view changed. Load sources again.";
           return;
         }
         output.replaceChildren(textElement("p", errorText(error), "navigation-expansion-error"));
