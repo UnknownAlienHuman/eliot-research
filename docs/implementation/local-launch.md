@@ -84,9 +84,11 @@ Deployment `git-69fea18` adds creation of a PROPOSED Wiki draft from a completed
 The owner created `wiki-proposal-a7c2c7da0cc5de1b25412cd5b18f5eb8cebc696bb4c155e1:1` from the
 September 14 00:20 UTC research draft through the PWA. The Wiki list displays one analytical proposal;
 its page and body endpoints returned HTTP 200 and the exact original 2,889-byte body, SHA-256
-`199f693b2a527b3237186dbe8f416624d78771021cefdf86115e11380e311c63`. Opening that body in the PWA
-still failed its client validation during this check and is being corrected. Publication admission
-remains separate; the saved page is a draft.
+`199f693b2a527b3237186dbe8f416624d78771021cefdf86115e11380e311c63`. Deployment `git-c722b21`,
+Worker version `28bb994b-0b7d-4acd-812d-be9ee2da2946`, corrects the PWA reader for compressed
+responses without Content-Length. The owner opened the same proposal in the browser and read the
+full saved report with PROPOSED status. Decoded byte bounds, reference checks and SHA verification
+remain enforced. Publication admission remains separate; the saved page is a draft.
 Corpus Lens now reconstructs section navigation from the admitted normalized document when the
 stored map contains metadata only. On `git-69fea18`, README expansion returned all nine sections,
 and choosing **What this is** displayed that exact admitted section. This reading view preserves
