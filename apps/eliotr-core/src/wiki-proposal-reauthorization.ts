@@ -134,11 +134,14 @@ async function loadOriginalScope(
   env: Pick<Env, "CORE_DB">,
   context: EvidenceAccessContext,
   scopeRef: VersionedRef,
+  allowHeadInvalidation = false,
 ): Promise<{ readonly originalRef: VersionedRef; readonly original: ScopeSnapshot }> {
   if (context.client_class !== "owner_pwa") stale("Wiki access requires the owner profile", 403);
   const originalRef = VersionedRefSchema.parse(scopeRef);
   const originalAuthority = await loadScopeAuthority(env.CORE_DB, originalRef);
-  if (originalAuthority === null || originalAuthority.invalidated_at !== null) {
+  if (originalAuthority === null ||
+      (originalAuthority.invalidated_at !== null &&
+       (!allowHeadInvalidation || originalAuthority.invalidation_reason !== "SCOPE_INPUT_CHANGED"))) {
     stale("Wiki proposal scope is no longer available");
   }
   return { originalRef, original: ScopeSnapshotSchema.parse(originalAuthority.snapshot) };
@@ -220,7 +223,7 @@ export async function prepareOwnerScopeHistoricalReadAuthorization(
   context: EvidenceAccessContext,
   scopeRef: VersionedRef,
 ): Promise<WikiProposalReadAuthorization> {
-  const { originalRef, original } = await loadOriginalScope(env, context, scopeRef);
+  const { originalRef, original } = await loadOriginalScope(env, context, scopeRef, true);
   const now = Date.now;
   const historical = await reauthorizeOwnerHistoricalScope({
     database: env.CORE_DB,

@@ -9,7 +9,7 @@ import type {
 } from "@eliotr/interfaces";
 import { CatalogInputError } from "./catalog-service.js";
 import type { Env } from "./env.js";
-import { prepareOwnerScopeReadAuthorization } from "./wiki-proposal-reauthorization.js";
+import { prepareOwnerScopeHistoricalReadAuthorization } from "./wiki-proposal-reauthorization.js";
 import {
   createResearchChangesCursorCodec,
   normalizeResearchChangeKinds,
@@ -81,7 +81,7 @@ interface ChangeRow {
   readonly metadata_json: string;
 }
 
-type ScopeReadAuthorization = Awaited<ReturnType<typeof prepareOwnerScopeReadAuthorization>>;
+type ScopeReadAuthorization = Awaited<ReturnType<typeof prepareOwnerScopeHistoricalReadAuthorization>>;
 
 interface ScopeGrantStateRow {
   readonly state: unknown;
@@ -461,7 +461,7 @@ export function createResearchChangesService(
         return null;
       }
       try {
-        const authorization = await prepareOwnerScopeReadAuthorization(env, context, scopeRef);
+        const authorization = await prepareOwnerScopeHistoricalReadAuthorization(env, context, scopeRef);
         authorizations.set(key, authorization);
         return authorization;
       } catch (error) {

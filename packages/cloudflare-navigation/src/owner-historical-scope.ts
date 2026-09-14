@@ -40,6 +40,13 @@ export interface OwnerHistoricalScopeAuthorization {
 
 type OrientationSource = Awaited<ReturnType<OwnerScopeAuthority["exhaustiveSources"]>>[number];
 
+interface SourceHeadWitnessRow {
+  readonly source_revision_ref: unknown;
+  readonly source_owner_generation: unknown;
+  readonly purge_state: unknown;
+  readonly head_revision_ref: unknown;
+}
+
 function stale(): never {
   throw new ScopeServiceError(
     "SCOPE_SNAPSHOT_STALE",
@@ -139,6 +146,47 @@ function requireExactHistoricalIdentity(original: ScopeSnapshot, fresh: ScopeSna
       fresh.purge_ledger_revision < original.purge_ledger_revision) stale();
 }
 
+/** SCOPE_INPUT_CHANGED is reusable only when the persisted source revisions are
+ * still live and the source table proves an actual head advance. */
+async function provesSourceHeadAdvance(
+  database: D1Database,
+  original: ScopeSnapshot,
+): Promise<boolean> {
+  const refs = original.member_source_revision_refs;
+  if (refs.length === 0) return false;
+  const result = await database.prepare(
+    "SELECT sr.source_revision_ref AS source_revision_ref, sr.source_owner_generation AS source_owner_generation, " +
+      "sr.purge_state AS purge_state, s.head_rev AS head_revision_ref " +
+      "FROM source_revision sr JOIN source s ON s.source_id=sr.source_id " +
+      "WHERE sr.source_revision_ref IN (SELECT value FROM json_each(?1)) " +
+      "ORDER BY sr.source_revision_ref LIMIT 65",
+  ).bind(JSON.stringify(refs)).all<SourceHeadWitnessRow>();
+  if (!result.success || !Array.isArray(result.results) || result.results.length !== refs.length) return false;
+  const expected = new Set(refs);
+  let advanced = false;
+  for (const row of result.results) {
+    if (typeof row.source_revision_ref !== "string" || !expected.delete(row.source_revision_ref) ||
+        row.purge_state !== "LIVE" ||
+        row.source_owner_generation !== original.source_owner_generations[row.source_revision_ref] ||
+        typeof row.head_revision_ref !== "string" || row.head_revision_ref.length === 0) return false;
+    if (row.head_revision_ref !== row.source_revision_ref) advanced = true;
+  }
+  return expected.size === 0 && advanced;
+}
+
+async function requireOriginalGrantNotRevoked(
+  database: D1Database,
+  originalRef: VersionedRef,
+  access: EvidenceAccessContext,
+): Promise<void> {
+  const revoked = await database.prepare(
+    "SELECT state FROM scope_access_grant WHERE snapshot_id=?1 AND snapshot_revision=?2 " +
+      "AND principal_ref=?3 AND client_class=?4 AND state='REVOKED' LIMIT 1",
+  ).bind(originalRef.id, originalRef.revision, access.principal_ref, access.client_class)
+    .first<{ readonly state: unknown }>();
+  if (revoked !== null) stale();
+}
+
 /**
  * Reauthorize an expired or head-stale owner scope for historical reads.
  * Current atom resolution is used only to prove that the original source IDs
@@ -152,9 +200,13 @@ export async function reauthorizeOwnerHistoricalScope(
   const parsed = ScopeSnapshotSchema.safeParse(input.original);
   if (!originalRef.success || !parsed.success) stale();
   const persisted = await loadScopeAuthority(input.database, originalRef.data);
-  if (persisted === null || persisted.invalidated_at !== null ||
+  if (persisted === null ||
+      (persisted.invalidated_at !== null &&
+       (persisted.invalidation_reason !== "SCOPE_INPUT_CHANGED" ||
+        !(await provesSourceHeadAdvance(input.database, parsed.data)))) ||
       canonicalEvidenceJson(persisted.snapshot) !== canonicalEvidenceJson(parsed.data)) stale();
   const original = parsed.data;
+  await requireOriginalGrantNotRevoked(input.database, originalRef.data, input.access);
   const now = input.now ?? Date.now;
   const maximumMembers = validMaximum(input.max_snapshot_members);
   const owner = createOwnerScopeAuthority(input.database, input.access, now);
@@ -174,9 +226,14 @@ export async function reauthorizeOwnerHistoricalScope(
   requireExactHistoricalIdentity(original, fresh);
   await scopes.requireCurrent(fresh);
   await owner.grant(fresh);
+  await requireOriginalGrantNotRevoked(input.database, originalRef.data, input.access);
   const requireCurrent = async (scope: ScopeSnapshot): Promise<ScopeSnapshot> => {
+    await requireOriginalGrantNotRevoked(input.database, originalRef.data, input.access);
     const persistedOriginal = await loadScopeAuthority(input.database, originalRef.data);
-    if (persistedOriginal === null || persistedOriginal.invalidated_at !== null ||
+    if (persistedOriginal === null ||
+        (persistedOriginal.invalidated_at !== null &&
+         (persistedOriginal.invalidation_reason !== "SCOPE_INPUT_CHANGED" ||
+          !(await provesSourceHeadAdvance(input.database, original)))) ||
         canonicalEvidenceJson(persistedOriginal.snapshot) !== canonicalEvidenceJson(original)) stale();
     return scopes.requireCurrent(scope);
   };

@@ -472,7 +472,10 @@ async function readArtifactDraftCore(
   try { scope = await loadScopeAuthority(database, scopeRef); }
   catch (error) { return mapAuthorityFailure(error); }
   if (scope === null) fail("ARTIFACT_DRAFT_READ_STALE", 410, "draft read scope is unavailable");
-  if (scope.invalidated_at !== null) fail("ARTIFACT_DRAFT_READ_STALE", 410, "draft read scope was invalidated");
+  if (scope.invalidated_at !== null &&
+      (reauthorization === undefined || scope.invalidation_reason !== "SCOPE_INPUT_CHANGED")) {
+    fail("ARTIFACT_DRAFT_READ_STALE", 410, "draft read scope was invalidated");
+  }
   const storedScope = scope.snapshot;
   const wrapResult = <T extends ArtifactDraftCoreValue>(value: T): T | ArtifactDraftReauthorizedCoreRead<T> =>
     reauthorization === undefined ? value : { value, original_scope_snapshot_ref: scopeRef };

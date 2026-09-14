@@ -62,7 +62,8 @@ export async function readSourceRevisionFreshness(
     if (errorCode(cause) === "EVIDENCE_INPUT_INVALID") corrupt("saved Wiki scope is malformed");
     unavailable("saved Wiki scope freshness is unavailable");
   }
-  if (original === null || original.invalidated_at !== null) {
+  if (original === null ||
+      (original.invalidated_at !== null && original.invalidation_reason !== "SCOPE_INPUT_CHANGED")) {
     throw new CatalogInputError("WIKI_POLICY_DENIED", "saved Wiki scope is no longer available", 410);
   }
   const refs = original.snapshot.member_source_revision_refs.map((ref) => identifier(ref, "saved source revision"));
@@ -109,6 +110,9 @@ export async function readSourceRevisionFreshness(
       head_revision_ref: row.head_revision_ref,
     }];
   });
+  if (original.invalidated_at !== null && changedSources.length === 0) {
+    throw new CatalogInputError("WIKI_POLICY_DENIED", "saved Wiki scope invalidation is not a source head change", 410);
+  }
   await authorization.requireCurrent();
   return {
     state: changedSources.length === 0 ? "CURRENT_REVISIONS" : "PREVIOUS_REVISIONS",

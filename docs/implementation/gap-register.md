@@ -15,7 +15,15 @@ search, a complete selected-document scan, and model-backed document-to-DRAFT ru
 against the deployed Worker. The PWA opened saved report text, claim assessments and verified source
 excerpts, including after a deployment change. Exact run IDs, artifact digests and limitations are
 recorded in [the local launch checkpoint](local-launch.md).
-The deployed Worker is `git-6f14c0c` (Cloudflare version
+The owner stopped development after the source-version acceptance below. The live
+Worker is `git-66a0e20` (Cloudflare version `5227381a-c6d4-4e2a-b39a-0e69a270ce79`),
+with migrations through `0066`. Replacement upload and stale-client refusal worked;
+historical Wiki/Research reopening exposed an invalidated-scope error. Follow-up
+read-path and PWA activity fixes are saved to main with successful Core/PWA
+TypeScript and PWA build checks, but are not deployed or live-accepted. See the
+stop checkpoint in [the acceptance record](live-document-project-acceptance-2026-09-14.md).
+
+The previous Wiki-edit deployment was `git-6f14c0c` (Cloudflare version
 `4f540e0b-4210-4b7d-802e-ceabe4d2bdfb`), with D1 migrations `0063` and `0064`
 applied; the schema correction is main commit `acebeb9`. Owner Wiki editing saved a new
 DRAFT, published page revision 2 at `2026-09-14T09:21:45.961Z`, and reopened both revisions.
@@ -32,11 +40,12 @@ created at `2026-09-14T08:15:05.223Z`, reached `ENGINE_COMPLETED` at
 opens in the Research run panel. This
 confirms the bounded real run only; artifact, corpus and project completion remain open. See
 [the live document/project acceptance](live-document-project-acceptance-2026-09-14.md).
-The next source-version implementation binds replacement uploads to the selected source/head,
-keeps historical reports readable with current owner authorization, and adds read-side freshness
-to Wiki and Research. Migrations `0065`/`0066` were applied at `2026-09-14 09:59:54` UTC
-(`39ffd48`); live D1 compiled the raw INSERT and final commit-guard trigger. Core/PWA typechecks
-and the PWA build passed. Its browser update/history/freshness acceptance is still pending.
+The source-version implementation binds replacement uploads to the selected source/head
+and adds read-side freshness to Wiki and Research. Migrations `0065`/`0066` were applied
+at `2026-09-14 09:59:54` UTC (`39ffd48`). The owner browser admitted a replacement DOCX,
+retained both LIVE revisions and two project memberships, and rejected a stale second form.
+D1 recorded SOURCE_UPDATED sequence 5, revision 2. Historical report reopening requires
+the follow-up correction described in the stop checkpoint; this is not whole-project acceptance.
 The selected model is Cloudflare `@cf/zai-org/glm-5.3-flash`; both installed routes use
 `owner-cloudflare-glm53-v6`. Run credentials are installed. Automatic qualification renewal is
 implemented, but its live Worker path still requires the missing `ELIOTR_MODEL_GATEWAY_READ_TOKEN`.

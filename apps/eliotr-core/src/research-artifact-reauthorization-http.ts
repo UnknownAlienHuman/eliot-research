@@ -53,7 +53,8 @@ async function prepareOwnerArtifactReauthorization(
     id: binding.scope_snapshot_id, revision: binding.scope_snapshot_revision,
   });
   const original = await loadScopeAuthority(env.CORE_DB, originalScopeRef);
-  if (original === null || original.invalidated_at !== null) {
+  if (original === null ||
+      (original.invalidated_at !== null && original.invalidation_reason !== "SCOPE_INPUT_CHANGED")) {
     throw new ArtifactDraftReadError("ARTIFACT_DRAFT_READ_STALE", 410, "The saved report's sources are no longer available");
   }
   const now = Date.now;

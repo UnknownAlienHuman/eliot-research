@@ -416,3 +416,20 @@ both revisions remaining LIVE. The first implementation rejected every invalidat
 original scope before issuing a fresh historical-read grant. Historical reopen
 acceptance remains pending correction of that read path; persisted invalidation
 flags and old grants must not be reset.
+
+### Stop checkpoint requested by the owner
+
+The follow-up changes allow historical reads of `SCOPE_INPUT_CHANGED` provenance
+only after a real source-head change is observed, with exact historical LIVE
+revisions and current owner/policy checks. Explicitly revoked original grants
+remain denied. Wiki, saved Research, nested artifact reads and scoped activity
+use this separate read path; ordinary current-scope reads and mutations retain
+their invalidation checks. No persisted invalidation flags or old grants were
+changed. Core TypeScript passed after these corrections.
+
+Commit `4a6dd30` also clears cached report views after source admission and includes
+SOURCE_ADMITTED/SOURCE_UPDATED in the PWA activity request and display. PWA
+TypeScript and Astro build passed. At the owner's stop request these follow-up
+fixes are being saved to main only: the live Worker remains `git-66a0e20` and the
+historical reopen failure described above has not been verified as fixed there.
+No further deployment or model run was performed. The whole project is incomplete.
