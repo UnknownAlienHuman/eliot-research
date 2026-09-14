@@ -66,13 +66,14 @@ export function currentSourcePredicate(principal: string, observed: string): str
 
 export function currentMembershipsReadableGuard(principal: string, observed: string): string {
   return "NOT EXISTS (SELECT 1 FROM project_source_membership old " +
-    "JOIN source s ON s.source_id=old.source_id " +
+    "WHERE old.project_id=?1 AND old.valid_to IS NULL AND NOT EXISTS (" +
+    "SELECT 1 FROM source s " +
     "JOIN source_revision r ON r.source_id=s.source_id " +
     "JOIN source_namespace_ownership o ON o.source_namespace_id=s.source_namespace_id " +
     "JOIN source_admission_policy ap ON ap.source_namespace_id=o.source_namespace_id " +
     "JOIN source_admission_decision d ON d.source_revision_ref=r.source_revision_ref " +
     "JOIN scope_read_policy rp ON rp.source_namespace_id=s.source_namespace_id " +
-    `WHERE old.project_id=?1 AND old.valid_to IS NULL AND NOT (${currentSourcePredicate(principal, observed)}))`;
+    `WHERE s.source_id=old.source_id AND ${currentSourcePredicate(principal, observed)}))`;
 }
 
 export function eligibleSourceCte(sourceJson: string, principal: string, observed: string): string {

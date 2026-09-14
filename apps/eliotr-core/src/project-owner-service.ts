@@ -242,7 +242,7 @@ export function createProjectOwnerService(options: ProjectOwnerServiceOptions): 
           "AND EXISTS (SELECT 1 FROM project_owner po WHERE po.project_id=?1 AND po.principal_ref=?3) " +
           "AND NOT EXISTS (SELECT 1 FROM project_source_membership old WHERE old.project_id=?1 AND old.valid_to IS NULL " +
           "AND julianday(old.valid_from)>=julianday(?4)) " +
-          currentMembershipsReadableGuard("?3", "?4") + " " +
+          "AND " + currentMembershipsReadableGuard("?3", "?4") + " " +
           "AND (SELECT COUNT(*) FROM requested)=?8 AND (SELECT COUNT(*) FROM eligible)=?8",
         ).bind(projectId, sourceJson, owner.principal_ref, clock.iso, input.title, nextRevision, input.expected_revision, input.source_ids.length),
         options.database.prepare(

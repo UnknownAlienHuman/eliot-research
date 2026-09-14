@@ -46,7 +46,7 @@ function failureMessage(error: unknown): string {
     return "One or more selected sources are no longer readable. Refresh and choose current sources.";
   }
   if (error.code === "PROJECT_SETTLEMENT_UNCERTAIN" || error.code === "PROJECT_PENDING" || error.code === "PROJECT_OPERATION_PENDING") {
-    return "The project change is still settling. Refresh Projects to read its current state.";
+    return "The save could not be confirmed. Retry the same change or refresh the project list.";
   }
   if (error.code === "PROJECT_IDEMPOTENCY_CONFLICT") return "This save key is already bound to another change. Edit the project and try again.";
   if (error.code === "PROJECT_NOT_FOUND") return "This project is no longer available. Refresh Projects to read the current list.";

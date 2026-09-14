@@ -15,6 +15,7 @@ import { mountMcpClientDiagnosticPanel } from "./mcp-client-diagnostic-panel.js"
 import { mountErasurePanel } from "./erasure-panel.js";
 import { mountSourceNamespacePanel } from "./source-namespace-panel.js";
 import { mountResearchConfigurationPanel, type ResearchConfigurationStartState } from "./research-configuration-panel.js";
+import { mountOwnerSessionPanel } from "./owner-session-panel.js";
 import { escapeHtml } from "./html.js";
 import type { ResolvedEvidence, VersionedRef } from "@eliotr/contracts";
 
@@ -186,6 +187,7 @@ function render(health: SystemHealth | null): void {
               <p id="connection-transport-copy" class="connection-copy">${escapeHtml(googleTransportExplanation(health?.google_external_transport))}</p>
               <div class="connection-profile"><span class="eyebrow">Owner profile</span><strong>E0 · owner read</strong></div>
               <div id="google-oauth"></div>
+              <div id="owner-session"></div>
             </article>
           </div>
           <details class="access-boundary"><summary>Access and privacy</summary><p>All reads resolve through the owner API. Private data is never cached in the browser.</p></details>
@@ -254,6 +256,11 @@ function render(health: SystemHealth | null): void {
     healthReady: () => app.dataset.healthReady === "true",
   }) : undefined;
   const diagnostic = diagnosticHost ? mountMcpClientDiagnosticPanel(diagnosticHost, {
+    deploymentGeneration: () => app.dataset.healthGeneration,
+    healthReady: () => app.dataset.healthReady === "true",
+  }) : undefined;
+  const ownerSessionHost = app.querySelector<HTMLElement>("#owner-session");
+  const ownerSession = ownerSessionHost ? mountOwnerSessionPanel(ownerSessionHost, {
     deploymentGeneration: () => app.dataset.healthGeneration,
     healthReady: () => app.dataset.healthReady === "true",
   }) : undefined;
@@ -360,7 +367,7 @@ function render(health: SystemHealth | null): void {
   };
   let projectPanel: (() => void) & ProjectPanelHandle | undefined;
   let libraryPanel: ReturnType<typeof mountLibraryPanel> | undefined;
-  const clearPrivateEvidence = (researchNotice?: string): void => { clearEvidenceRail(); retrieval?.clearPrivate(); exhaustive?.clearPrivate(); erasure?.clearPrivate(); projectPanel?.clearPrivate(); libraryPanel?.clearPrivate(); researchRun?.clearPrivate(researchNotice); wiki?.clearPrivate(); };
+  const clearPrivateEvidence = (researchNotice?: string): void => { clearEvidenceRail(); retrieval?.clearPrivate(); exhaustive?.clearPrivate(); erasure?.clearPrivate(); ownerSession?.clearPrivate(); projectPanel?.clearPrivate(); libraryPanel?.clearPrivate(); researchRun?.clearPrivate(researchNotice); wiki?.clearPrivate(); };
   const sourceErased = (): void => { clearEvidenceRail(); retrieval?.clearPrivate(); researchRun?.clearPrivate(); exhaustive?.clearPrivate(); wiki?.clearPrivate(); };
   erasureHost?.addEventListener("eliotr:source-erased", sourceErased);
   erasureHost?.addEventListener("eliotr:source-erasure-requested", sourceErased);
@@ -436,7 +443,7 @@ function render(health: SystemHealth | null): void {
     exhaustive?.selectSource(id);
     return true;
   }) : undefined;
-  const cleanups = [orientation, retrieval, researchRun, exhaustive, researchConfiguration, wiki, diagnostic, erasure, projectPanel,
+  const cleanups = [orientation, retrieval, researchRun, exhaustive, researchConfiguration, wiki, diagnostic, erasure, ownerSession, projectPanel,
     () => erasureHost?.removeEventListener("eliotr:source-erased", sourceErased),
     () => erasureHost?.removeEventListener("eliotr:source-erasure-requested", sourceErased), importer ? mountBundleImportPanel(importer) : undefined,
     namespacePanel, () => app.removeEventListener("eliotr:namespace-selected", namespaceSelected),
