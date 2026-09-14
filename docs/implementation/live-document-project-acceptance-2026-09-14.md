@@ -253,3 +253,59 @@ columns, 10 triggers and two indexes; only then was the migration recorded in
 `d1_migrations`. Wrangler deployment and both R2 downloads succeeded. No broad
 test suite was run. This verifies this owner Wiki loop, not the remaining
 accepted-artifact, editing, erasure, recovery, federation or Rust launch scope.
+
+## Owner research activity history
+
+Product commit `8b418fe` was pushed to main and deployed as Cloudflare version
+`7ee92390-e3c7-4fb2-9e0b-54a7bccf1cf6`. The active D1 deployment was read back as
+`git-8b418fe`, admitted at `2026-09-14T08:14:39.175Z`; the normal owner browser
+reported that same generation and READY. The Research view now includes Recent
+work with the latest 20 visible events and manual refresh.
+
+Migrations `0060`–`0062` were applied through the Cloudflare connector. Live
+schema readback confirmed all three producers before their migration names
+were recorded. Artifact binding and final workflow checkpoint transactions now
+emit `ARTIFACT_DRAFTED` and `RESEARCH_COMPLETED`; the Wiki outbox trigger derives
+visibility from its proposal principal and published revision scope. The
+server signing secret was created securely and its name was read back without
+printing its value. One local SQLite pass compiled all 61 migration files and
+the source mutations with their triggers. Core and PWA TypeScript checks and
+the PWA build passed after fixing two type errors; no broad suite was run.
+
+The existing Wiki event, sequence 1 at `2026-09-14T07:43:53.976Z`, appeared in
+the live UI after its original scope expired. Its immutable legacy row retains
+NULL visibility columns; the reader derives the effective owner and scope
+from the canonical outbox/revision/proposal join and checks current source
+authority. Historical scope reauthorization retains exact source membership,
+owner generations and closure checks. Explicitly revoked grants are not
+renewed. This observation demonstrates the allowed historical read; a live
+cross-owner or revoke-between-pages negative scenario was not executed here.
+
+The owner started a new PROJECT-scoped run through the normal UI:
+`run-f1aab21e76884dab48b430cf2fedf64653c368615673b1eb`. It was created at
+`2026-09-14T08:15:05.223Z` and reached `ENGINE_COMPLETED`, revision 19,
+`next_stage_index: 18`, at `2026-09-14T08:17:10.002Z` (about 125 seconds).
+D1 readback and the refreshed UI showed these two new events:
+
+| Sequence | Kind | Subject revision | Recorded event time |
+| --- | --- | --- | --- |
+| 2 | `ARTIFACT_DRAFTED` | 1 | `2026-09-14T08:15:33.843Z` |
+| 3 | `RESEARCH_COMPLETED` | 19 | `2026-09-14T08:17:10.002Z` |
+
+Both new records bind owner `175e73bf-b10e-519f-a660-c582caee2f48` and scope
+`scope-300c9fdc0edf1bc98edeb56e022cd9938a86277bc1661cef:1`. The draft subject is
+`eliotr.research.artifact-ff49ade4bbc06c52b83fc504aa4f5cb4580b7f6652cc0292fab253d05ed11a92:1`;
+its recorded manifest digest is
+`1f443b4b7b7e6c503edb8751ab50f6b2b7136ccb9b15e84e1486447f1732bade`.
+The completion event points to the committed workflow output with digest
+`a287399cb6ec1a68260ef214ce2730e5f4582381b5f26f050d000b93d200bbc3`.
+
+Opening the saved section displayed a Russian summary of the project purpose,
+Collect documents / Ready, Review sources / In progress, and the planned
+21 September 2026 review, with quotations from the PDF/DOCX sources. The UI
+retains DRAFT and incomplete coverage, with two represented and cited sources
+and zero omitted. This run verifies the saved-report/completion producers and
+the Recent work owner view. New Wiki events use the migrated trigger but a
+second Wiki publication was not performed in this pass. Source admission,
+source update and erasure producers, accepted-artifact semantics, editing and
+the remaining production/Rust scope are still open.

@@ -14,6 +14,10 @@ retaining incomplete scope coverage. Research drafts can also be saved as Wiki p
 reviewed, published and reopened through the owner interface. The published Wiki page retains
 its coverage limits and the underlying artifact remains a DRAFT. See the
 [live document/project acceptance](docs/implementation/live-document-project-acceptance-2026-09-14.md).
+Release `8b418fe` adds Recent work with the latest 20 owner-authorized report,
+research completion and Wiki publication events. A new two-document run completed in
+about 125 seconds, opened a saved DRAFT and displayed its events in this view. Historical
+Wiki events remain readable through current owner reauthorization after the original scope expires.
 This establishes the bounded owner path, not full production readiness. Qualification renewal
 and policy/pricing expiry constraints are documented in
 [the local launch checkpoint](docs/implementation/local-launch.md). Managed semantic retrieval,
