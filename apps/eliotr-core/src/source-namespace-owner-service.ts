@@ -21,6 +21,12 @@ import {
   readNamespaceState,
   type NamespaceState,
 } from "./source-namespace-state.js";
+import {
+  renewSourceNamespaceReadScope,
+  SourceNamespaceReadScopeRenewalError,
+  type SourceNamespaceReadScopeRenewalRequest,
+  type SourceNamespaceReadScopeRenewalResult,
+} from "./source-namespace-read-scope-renewal.js";
 
 const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/u;
 const SHA256 = /^[a-f0-9]{64}$/u;
@@ -37,7 +43,10 @@ export type SourceNamespaceOwnerErrorCode =
   | "NAMESPACE_EXISTING_LINEAGE"
   | "NAMESPACE_IDEMPOTENCY_CONFLICT"
   | "NAMESPACE_STORAGE_UNAVAILABLE"
-  | "NAMESPACE_SETTLEMENT_UNCERTAIN";
+  | "NAMESPACE_SETTLEMENT_UNCERTAIN"
+  | "NAMESPACE_READ_SCOPE_UNAVAILABLE"
+  | "NAMESPACE_READ_SCOPE_REVOKED"
+  | "NAMESPACE_READ_SCOPE_CONFLICT";
 
 export class SourceNamespaceOwnerError extends Error {
   public readonly code: SourceNamespaceOwnerErrorCode;
@@ -296,18 +305,32 @@ function readRows(database: D1Database, principal: string, idempotencyKey: strin
   });
 }
 
-function listNamespaceRow(row: Record<string, unknown>, nowMs: number): { readonly source_namespace_id: string; readonly title: string } | null {
+function listNamespaceRow(row: Record<string, unknown>, nowMs: number): {
+  readonly source_namespace_id: string;
+  readonly title: string;
+  readonly read_policy_generation: number;
+  readonly read_expires_at: string;
+  readonly read_access: "ACTIVE" | "EXPIRED";
+} | null {
   let uses: unknown;
   try { uses = typeof row.scope_allowed_use_json === "string" ? JSON.parse(row.scope_allowed_use_json) : undefined; } catch { uses = undefined; }
+  const expiresAt = typeof row.scope_expires_at === "string" ? Date.parse(row.scope_expires_at) : Number.NaN;
   if (typeof row.source_namespace_id !== "string" || !IDENTIFIER.test(row.source_namespace_id) ||
       typeof row.title !== "string" || row.title.length === 0 || row.title.length > MAX_TITLE_BYTES ||
       row.owner_status !== "ACTIVE" || row.scope_client_class !== CLIENT_CLASS || row.scope_state !== "ACTIVE" ||
       row.scope_principal !== row.principal_ref || typeof row.scope_expires_at !== "string" ||
-      !Number.isSafeInteger(Date.parse(row.scope_expires_at)) || Date.parse(row.scope_expires_at) <= nowMs ||
+      !Number.isSafeInteger(expiresAt) || new Date(expiresAt).toISOString() !== row.scope_expires_at ||
+      typeof row.scope_generation !== "number" || !Number.isSafeInteger(row.scope_generation) || row.scope_generation < 1 ||
       !Array.isArray(uses) || !uses.includes("research")) {
     return null;
   }
-  return { source_namespace_id: row.source_namespace_id, title: row.title };
+  return {
+    source_namespace_id: row.source_namespace_id,
+    title: row.title,
+    read_policy_generation: row.scope_generation,
+    read_expires_at: row.scope_expires_at,
+    read_access: expiresAt > nowMs ? "ACTIVE" : "EXPIRED",
+  };
 }
 
 export function createSourceNamespaceOwnerService(options: SourceNamespaceOwnerServiceOptions) {
@@ -321,21 +344,21 @@ export function createSourceNamespaceOwnerService(options: SourceNamespaceOwnerS
       rows = (await options.database.prepare(
         "SELECT o.source_namespace_id,COALESCE(i.title,substr(o.source_namespace_id,1,120)) AS title,?1 AS principal_ref," +
         "o.status AS owner_status,s.principal_ref AS scope_principal,s.client_class AS scope_client_class,s.state AS scope_state," +
-        "s.expires_at AS scope_expires_at,s.allowed_use_json AS scope_allowed_use_json FROM source_namespace_ownership o JOIN scope_read_policy s " +
+        "s.generation AS scope_generation,s.expires_at AS scope_expires_at,s.allowed_use_json AS scope_allowed_use_json FROM source_namespace_ownership o JOIN scope_read_policy s " +
         "ON s.source_namespace_id=o.source_namespace_id AND s.principal_ref=?1 AND s.client_class='owner_pwa' " +
         "JOIN source_admission_policy p ON p.source_namespace_id=o.source_namespace_id AND p.revision=o.source_admission_policy_revision " +
         "LEFT JOIN source_namespace_initialization i ON i.source_namespace_id=o.source_namespace_id " +
-        "WHERE o.status='ACTIVE' AND s.state='ACTIVE' AND s.expires_at>?2 " +
+        "WHERE o.status='ACTIVE' AND s.state='ACTIVE' " +
         "AND EXISTS (SELECT 1 FROM json_each(s.allowed_use_json) WHERE json_each.value='research') " +
         "AND EXISTS (SELECT 1 FROM json_each(p.authorized_principal_refs_json) WHERE json_each.value=?1) " +
         "AND EXISTS (SELECT 1 FROM json_each(p.allowed_ownership_modes_json) WHERE json_each.value='immutable_import') " +
         "ORDER BY o.created_at,o.source_namespace_id LIMIT 257",
-      ).bind(context.principal_ref, clock.iso).all<Record<string, unknown>>()).results ?? [];
+      ).bind(context.principal_ref).all<Record<string, unknown>>()).results ?? [];
     } catch (cause) {
       fail("NAMESPACE_STORAGE_UNAVAILABLE", 503, "namespace list is unavailable", true, cause);
     }
     if (rows.length > 256) fail("NAMESPACE_STORAGE_UNAVAILABLE", 503, "namespace list exceeds its bounded envelope", true);
-    const namespaces = rows.map((row) => listNamespaceRow(row, clock.millis)).filter((row): row is { readonly source_namespace_id: string; readonly title: string } => row !== null);
+    const namespaces = rows.map((row) => listNamespaceRow(row, clock.millis)).filter((row): row is NonNullable<ReturnType<typeof listNamespaceRow>> => row !== null);
     return { protocol: "eliotr.owner-namespaces.v1", profiles, namespaces };
   };
   const initialize = async (
@@ -468,5 +491,29 @@ export function createSourceNamespaceOwnerService(options: SourceNamespaceOwnerS
     if (typeof storedCreatedAt !== "string") fail("NAMESPACE_SETTLEMENT_UNCERTAIN", 503, "namespace initialization timestamp is unavailable", true);
     return exactResult(after.byNamespace, targetsAt(target, storedCreatedAt));
   };
-  return Object.freeze({ list, initialize });
+  const renew = async (
+    requestContext: AuthenticatedRequestContext,
+    namespaceId: string,
+    input: SourceNamespaceReadScopeRenewalRequest,
+  ): Promise<SourceNamespaceReadScopeRenewalResult> => {
+    contextSnapshot(requestContext);
+    const clock = canonicalNow(now);
+    try {
+      return await renewSourceNamespaceReadScope({
+        database: options.database,
+        context: requestContext,
+        namespace_id: namespaceId,
+        request: input,
+        now_ms: clock.millis,
+      });
+    } catch (cause) {
+      if (cause instanceof SourceNamespaceReadScopeRenewalError) {
+        fail(cause.code, cause.status, cause.message, cause.retryable, cause.failureCause);
+      }
+      throw cause;
+    }
+  };
+  return Object.freeze({ list, initialize, renew });
 }
+
+export type { SourceNamespaceReadScopeRenewalRequest, SourceNamespaceReadScopeRenewalResult };

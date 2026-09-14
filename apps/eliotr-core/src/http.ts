@@ -53,7 +53,7 @@ import { readRawMarkdownConversionRequest } from "@eliotr/cloudflare-markdown";
 import { parseExhaustiveWorkflowJobsRequest } from "./research-query-http.js";
 import { readReadiness } from "./readiness.js";
 import { readOwnerErasurePreparation, readOwnerErasureRequest, readOwnerErasureRef } from "./erasure-owner-http.js";
-import { readOwnerNamespaceInitialization } from "./source-namespace-owner-http.js";
+import { readOwnerNamespaceInitialization, readOwnerNamespaceRenewal } from "./source-namespace-owner-http.js";
 import { readWorkspaceCandidateRequest, readWorkspaceAdmissionId } from "./workspace-owner-http.js";
 import { readNavigationExpansionRequest } from "./navigation-expand-http.js";
 import { HttpRequestError, mapError } from "./http-errors.js";
@@ -225,6 +225,11 @@ function authorize(
       : "owner_pwa",
     credential_generation: identity.credential_generation,
     trace_id: traceId(request),
+    access: {
+      principal_ref: identity.principal_ref,
+      credential_generation: identity.credential_generation,
+      expires_at: identity.expires_at,
+    },
   };
 }
 function validateContentLength(request: Request, route: RouteDefinition): void {
@@ -298,6 +303,14 @@ function parseCatalogRequest(url: URL): CatalogRequest {
 const SAFE_PROJECT_IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/u;
 const MAX_PROJECT_TITLE_BYTES = 4 * 1024;
 const MAX_PROJECT_SOURCES = 256;
+const SAFE_NAMESPACE_IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/u;
+
+function namespaceIdentifier(value: unknown): string {
+  if (typeof value !== "string" || !SAFE_NAMESPACE_IDENTIFIER.test(value)) {
+    throw new HttpRequestError("NAMESPACE_INPUT_INVALID", 400, "namespace id is invalid");
+  }
+  return value;
+}
 
 function projectText(value: unknown, label: string, maximumBytes: number): string {
   if (typeof value !== "string" || value.length === 0 || value !== value.trim() ||
@@ -457,6 +470,14 @@ async function dispatch(
       requireNoQuery(url);
       return apiResult(request, env, await application.services.owner.initializeSourceNamespace(context,
         await readOwnerNamespaceInitialization(request, match.route.maximum_request_bytes)));
+    }
+    case "library.namespaces.renew": {
+      requireNoQuery(url);
+      return apiResult(request, env, await application.services.owner.renewSourceNamespace(
+        context,
+        namespaceIdentifier(match.params.namespace_id),
+        await readOwnerNamespaceRenewal(request, match.route.maximum_request_bytes),
+      ));
     }
     case "library.erasure.prepare": {
       requireNoQuery(url);

@@ -9,6 +9,7 @@ import { ApiRequestError, requestApiWithStatuses } from "./api.js";
 const NAMESPACE_PATH = "/api/v1/library/namespaces";
 const CATALOG_PROTOCOL = "eliotr.owner-namespaces.v1";
 const NAMESPACE_PROTOCOL = "eliotr.owner-namespace.v1";
+const RENEWAL_PROTOCOL = "eliotr.owner-namespace-renewal.v1";
 const SAFE_TRACE = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
 const SAFE_GENERATION = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/u;
 const SAFE_IDEMPOTENCY = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/u;
@@ -23,6 +24,9 @@ export interface SourceNamespaceProfile {
 export interface SourceNamespaceSummary {
   readonly source_namespace_id: string;
   readonly title: string;
+  readonly read_policy_generation?: number;
+  readonly read_expires_at?: string;
+  readonly read_access?: "ACTIVE" | "EXPIRED";
 }
 
 export interface SourceNamespaceCatalog {
@@ -38,6 +42,17 @@ export interface CreatedSourceNamespace {
   readonly source_namespace_id: string;
   readonly title: string;
   readonly created_at: string;
+  readonly trace_id: string;
+  readonly deployment_generation: string;
+}
+
+export interface RenewedSourceNamespace {
+  readonly protocol: typeof RENEWAL_PROTOCOL;
+  readonly source_namespace_id: string;
+  readonly title: string;
+  readonly read_policy_generation: number;
+  readonly read_expires_at: string;
+  readonly read_access: "ACTIVE";
   readonly trace_id: string;
   readonly deployment_generation: string;
 }
@@ -93,10 +108,22 @@ function versionedRef(value: unknown, label: string): VersionedRef {
   return parsed.data;
 }
 
-function timestamp(value: unknown): string {
-  const text = boundedText(value, "created_at", 64);
-  if (!IsoDateTimeSchema.safeParse(text).success) schemaFailure("created_at is not a valid timestamp");
+function timestamp(value: unknown, label = "created_at"): string {
+  const text = boundedText(value, label, 64);
+  if (!IsoDateTimeSchema.safeParse(text).success) schemaFailure(`${label} is not a valid timestamp`);
   return text;
+}
+
+function policyGeneration(value: unknown, label: string): number {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
+    schemaFailure(`${label} is not a valid policy generation`);
+  }
+  return value;
+}
+
+function readAccess(value: unknown, label: string): "ACTIVE" | "EXPIRED" {
+  if (value !== "ACTIVE" && value !== "EXPIRED") schemaFailure(`${label} is invalid`);
+  return value;
 }
 
 function traceId(value: unknown): string {
@@ -132,10 +159,24 @@ function namespaceProfile(value: unknown, index: number): SourceNamespaceProfile
 }
 
 function namespaceSummary(value: unknown, index: number): SourceNamespaceSummary {
-  const namespace = exactRecord(value, ["source_namespace_id", "title"], `namespace ${index}`);
+  const namespace = exactRecord(value, ["source_namespace_id", "title"], `namespace ${index}`, [
+    "read_policy_generation", "read_expires_at", "read_access",
+  ]);
+  const hasPolicyGeneration = Object.hasOwn(namespace, "read_policy_generation");
+  const hasExpiresAt = Object.hasOwn(namespace, "read_expires_at");
+  const hasReadAccess = Object.hasOwn(namespace, "read_access");
+  if (hasPolicyGeneration !== hasExpiresAt || hasPolicyGeneration !== hasReadAccess) {
+    schemaFailure(`namespace ${index} read access fields must be provided together`);
+  }
+  const policy = hasPolicyGeneration ? policyGeneration(namespace.read_policy_generation, `namespace ${index} policy generation`) : undefined;
+  const expiresAt = hasExpiresAt ? timestamp(namespace.read_expires_at, `namespace ${index} read_expires_at`) : undefined;
+  const access = hasReadAccess ? readAccess(namespace.read_access, `namespace ${index} read_access`) : undefined;
   return {
     source_namespace_id: identifier(namespace.source_namespace_id, `namespace ${index} ID`),
     title: boundedText(namespace.title, `namespace ${index} title`, 120),
+    ...(policy === undefined ? {} : { read_policy_generation: policy }),
+    ...(expiresAt === undefined ? {} : { read_expires_at: expiresAt }),
+    ...(access === undefined ? {} : { read_access: access }),
   };
 }
 
@@ -165,6 +206,26 @@ function decodeCreated(value: unknown, expected: string): CreatedSourceNamespace
     source_namespace_id: identifier(data.source_namespace_id, "created namespace ID"),
     title: boundedText(data.title, "created namespace title", 120),
     created_at: timestamp(data.created_at),
+    trace_id: response.trace_id,
+    deployment_generation: response.deployment_generation,
+  };
+}
+
+function decodeRenewed(value: unknown, expected: string): RenewedSourceNamespace {
+  const response = responseEnvelope(value, expected);
+  const data = exactRecord(response.data, [
+    "protocol", "source_namespace_id", "title", "read_policy_generation", "read_expires_at", "read_access",
+  ], "renewed namespace");
+  if (data.protocol !== RENEWAL_PROTOCOL) schemaFailure("renewed namespace protocol is invalid");
+  const access = readAccess(data.read_access, "renewed namespace read_access");
+  if (access !== "ACTIVE") schemaFailure("renewed namespace must be active");
+  return {
+    protocol: RENEWAL_PROTOCOL,
+    source_namespace_id: identifier(data.source_namespace_id, "renewed namespace ID"),
+    title: boundedText(data.title, "renewed namespace title", 120),
+    read_policy_generation: policyGeneration(data.read_policy_generation, "renewed namespace policy generation"),
+    read_expires_at: timestamp(data.read_expires_at, "renewed namespace read_expires_at"),
+    read_access: "ACTIVE",
     trace_id: response.trace_id,
     deployment_generation: response.deployment_generation,
   };
@@ -204,4 +265,24 @@ export async function createSourceNamespace(
     ...(signal === undefined ? {} : { signal }),
   }, [200, 201]);
   return decodeCreated(raw, expected);
+}
+
+export async function renewSourceNamespace(
+  sourceNamespaceId: string,
+  expectedPolicyGeneration: number,
+  expectedDeploymentGeneration: string,
+  signal?: AbortSignal,
+): Promise<RenewedSourceNamespace> {
+  const expected = expectedGeneration(expectedDeploymentGeneration);
+  const namespaceId = identifier(sourceNamespaceId, "source_namespace_id");
+  const policy = policyGeneration(expectedPolicyGeneration, "expected_generation");
+  const raw = await requestApiWithStatuses(`${NAMESPACE_PATH}/${encodeURIComponent(namespaceId)}/renew`, {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-eliotr-csrf": "1" },
+    body: JSON.stringify({ expected_generation: policy }),
+    ...(signal === undefined ? {} : { signal }),
+  }, [200]);
+  const renewed = decodeRenewed(raw, expected);
+  if (renewed.source_namespace_id !== namespaceId) schemaFailure("renewed namespace ID does not match request");
+  return renewed;
 }

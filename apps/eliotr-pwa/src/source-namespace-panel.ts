@@ -1,8 +1,10 @@
 import { ApiRequestError } from "./api.js";
 import {
   createSourceNamespace,
+  renewSourceNamespace,
   readSourceNamespaces,
   type CreatedSourceNamespace,
+  type RenewedSourceNamespace,
   type SourceNamespaceCatalog,
   type SourceNamespaceProfile,
   type SourceNamespaceSummary,
@@ -22,7 +24,7 @@ function privateFailure(error: unknown): boolean {
     (error.status === 401 || error.status === 403 || error.status === 409 || error.code === "API_GENERATION_MISMATCH");
 }
 
-function failureText(error: unknown, operation: "load" | "create"): string {
+function failureText(error: unknown, operation: "load" | "create" | "renew"): string {
   if (error instanceof ApiRequestError && (error.status === 401 || error.status === 403)) {
     return "Authorization changed. Sign in again before managing workspaces.";
   }
@@ -33,7 +35,19 @@ function failureText(error: unknown, operation: "load" | "create"): string {
   if (error instanceof ApiRequestError && error.code.includes("PROFILE")) {
     return "Workspace creation is not configured on this server.";
   }
+  if (operation === "renew") return "Workspace access could not be renewed. Refresh workspaces and try again.";
   return "Workspace could not be created. Check the name and try again.";
+}
+
+function accessExpiryText(value: string | undefined): string {
+  if (value === undefined) return "Expiry unavailable";
+  const milliseconds = Date.parse(value);
+  if (!Number.isFinite(milliseconds)) return "Expiry unavailable";
+  return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(milliseconds);
+}
+
+function isExpired(namespace: SourceNamespaceSummary | undefined): boolean {
+  return namespace?.read_access === "EXPIRED";
 }
 
 function profileRefText(profile: SourceNamespaceProfile): string {
@@ -65,7 +79,15 @@ export function mountSourceNamespacePanel(
       <details data-namespace-details hidden><summary>Workspace details</summary><dl>
         <dt>Workspace ID</dt><dd><code data-namespace-id></code></dd>
         <dt>Profile</dt><dd><code data-namespace-profile-ref></code></dd>
+        <dt>Read access</dt><dd data-namespace-read-access></dd>
+        <dt>Access expires</dt><dd data-namespace-read-expires></dd>
+        <dt>Access policy generation</dt><dd data-namespace-read-generation></dd>
       </dl></details>
+      <div class="namespace-access" data-namespace-access hidden>
+        <div class="workflow-recovery-head"><div><span class="eyebrow">Workspace access</span><h3 data-namespace-access-title></h3></div><span class="workflow-badge" data-namespace-access-state></span></div>
+        <p class="field-hint" data-namespace-access-copy></p>
+        <div class="workflow-actions"><button type="button" class="button button--quiet" data-namespace-renew>Renew workspace access</button></div>
+      </div>
     </section>
     <section class="readiness-card" aria-labelledby="namespace-create-title" data-namespace-create-section>
       <span class="eyebrow">New workspace</span><h3 id="namespace-create-title">Create a workspace</h3>
@@ -87,6 +109,14 @@ export function mountSourceNamespacePanel(
   const details = element.querySelector<HTMLElement>("[data-namespace-details]");
   const namespaceIdNode = element.querySelector<HTMLElement>("[data-namespace-id]");
   const profileRefNode = element.querySelector<HTMLElement>("[data-namespace-profile-ref]");
+  const readAccessNode = element.querySelector<HTMLElement>("[data-namespace-read-access]");
+  const readExpiresNode = element.querySelector<HTMLElement>("[data-namespace-read-expires]");
+  const readGenerationNode = element.querySelector<HTMLElement>("[data-namespace-read-generation]");
+  const accessSection = element.querySelector<HTMLElement>("[data-namespace-access]");
+  const accessTitle = element.querySelector<HTMLElement>("[data-namespace-access-title]");
+  const accessState = element.querySelector<HTMLElement>("[data-namespace-access-state]");
+  const accessCopy = element.querySelector<HTMLElement>("[data-namespace-access-copy]");
+  const renewButton = element.querySelector<HTMLButtonElement>("[data-namespace-renew]");
   const form = element.querySelector<HTMLFormElement>("[data-namespace-form]");
   const titleInput = element.querySelector<HTMLInputElement>("[data-namespace-title]");
   const profileField = element.querySelector<HTMLElement>("[data-namespace-profile-field]");
@@ -97,8 +127,9 @@ export function mountSourceNamespacePanel(
   const createButton = element.querySelector<HTMLButtonElement>("[data-namespace-create]");
   const statusNode = element.querySelector<HTMLElement>("[data-namespace-status]");
   if (!stateNode || !introNode || !refreshButton || !select || !listCopy || !details || !namespaceIdNode ||
-      !profileRefNode || !form || !titleInput || !profileField || !profileSelect || !createCopy || !createUnavailable ||
-      !createUnavailableCopy || !createButton || !statusNode) {
+      !profileRefNode || !readAccessNode || !readExpiresNode || !readGenerationNode || !accessSection || !accessTitle ||
+      !accessState || !accessCopy || !renewButton || !form || !titleInput || !profileField || !profileSelect ||
+      !createCopy || !createUnavailable || !createUnavailableCopy || !createButton || !statusNode) {
     throw new Error("Source namespace panel is incomplete");
   }
 
@@ -108,10 +139,11 @@ export function mountSourceNamespacePanel(
   let catalog: SourceNamespaceCatalog | undefined;
   let selectedId: string | undefined;
   let selectedProfile: SourceNamespaceProfile | undefined;
+  let announcedSelectionId: string | undefined;
   let createProfileKey: string | undefined;
   let loadedGeneration: string | undefined;
   let statusMessage = "Workspaces appear when the owner service is ready.";
-  let operation: "idle" | "loading" | "creating" = "idle";
+  let operation: "idle" | "loading" | "creating" | "renewing" = "idle";
   let attemptPayload: string | undefined;
   let attemptKey: string | undefined;
 
@@ -128,13 +160,16 @@ export function mountSourceNamespacePanel(
   };
 
   const dispatchSelection = (id: string, title: string): void => {
+    announcedSelectionId = id;
     element.dispatchEvent(new CustomEvent("eliotr:namespace-selected", {
       bubbles: true,
       detail: { sourceNamespaceId: id, title },
     }));
   };
 
-  const dispatchSelectionClear = (): void => {
+  const dispatchSelectionClear = (force = false): void => {
+    if (!force && announcedSelectionId === undefined) return;
+    announcedSelectionId = undefined;
     element.dispatchEvent(new CustomEvent("eliotr:namespace-selected", {
       bubbles: true,
       detail: { sourceNamespaceId: "", title: "" },
@@ -147,7 +182,7 @@ export function mountSourceNamespacePanel(
     const profiles = catalog?.profiles ?? [];
     const setupMissing = catalog !== undefined && namespaces.length === 0 && profiles.length === 0;
     const existingWorkspaceWithoutProfile = catalog !== undefined && namespaces.length > 0 && profiles.length === 0;
-    stateNode.textContent = operation === "loading" ? "Refreshing" : operation === "creating" ? "Creating" : setupMissing ? "Setup required" : ready ? "Ready" : "Waiting";
+    stateNode.textContent = operation === "loading" ? "Refreshing" : operation === "creating" ? "Creating" : operation === "renewing" ? "Renewing" : setupMissing ? "Setup required" : ready ? "Ready" : "Waiting";
     introNode.textContent = setupMissing
       ? "No workspace is available yet. Server setup is required before adding documents."
       : ready
@@ -175,7 +210,7 @@ export function mountSourceNamespacePanel(
       for (const namespace of namespaces) {
         const option = document.createElement("option");
         option.value = namespace.source_namespace_id;
-        option.textContent = namespace.title;
+        option.textContent = isExpired(namespace) ? `${namespace.title} (access expired)` : namespace.title;
         select.append(option);
       }
       select.value = selectedId ?? "";
@@ -196,6 +231,22 @@ export function mountSourceNamespacePanel(
     details.hidden = chosen === undefined;
     namespaceIdNode.textContent = chosen?.source_namespace_id ?? "";
     profileRefNode.textContent = selectedProfile === undefined ? "" : profileRefText(selectedProfile);
+    readAccessNode.textContent = chosen === undefined ? "" : chosen.read_access ?? "ACTIVE";
+    readExpiresNode.textContent = chosen?.read_expires_at ?? "Unavailable";
+    readGenerationNode.textContent = chosen?.read_policy_generation === undefined ? "Unavailable" : String(chosen.read_policy_generation);
+    accessSection.hidden = chosen === undefined;
+    accessTitle.textContent = chosen?.title ?? "";
+    accessState.textContent = chosen === undefined ? "" : isExpired(chosen) ? "Expired" : "Active";
+    accessCopy.textContent = chosen === undefined
+      ? ""
+      : isExpired(chosen)
+      ? chosen.read_policy_generation === undefined
+        ? "Workspace access expired. Refresh workspaces before renewing access."
+        : `Workspace access expired on ${accessExpiryText(chosen.read_expires_at)}. Renew it before adding documents.`
+      : chosen.read_expires_at === undefined
+      ? "Workspace access is active."
+      : `Workspace access is active until ${accessExpiryText(chosen.read_expires_at)}.`;
+    renewButton.disabled = !ready || operation !== "idle" || !isExpired(chosen) || chosen?.read_policy_generation === undefined;
     if (catalog === undefined) {
       listCopy.textContent = ready ? "Loading workspaces…" : "Workspaces appear after the owner service is ready.";
       createCopy.textContent = "Workspace creation options appear when the owner service is ready.";
@@ -224,7 +275,7 @@ export function mountSourceNamespacePanel(
     attemptKey = undefined;
     statusMessage = message;
     render();
-    dispatchSelectionClear();
+    dispatchSelectionClear(true);
   };
 
   const load = async (automatic = false): Promise<void> => {
@@ -253,6 +304,10 @@ export function mountSourceNamespacePanel(
         selectedId = undefined;
         selectedProfile = undefined;
         if (previousSelectedId !== undefined) dispatchSelectionClear();
+      } else if (isExpired(chosen)) {
+        dispatchSelectionClear();
+      } else if (announcedSelectionId !== chosen.source_namespace_id) {
+        dispatchSelection(chosen.source_namespace_id, chosen.title);
       }
       if (createProfileKey === undefined || !received.profiles.some((profile) => profileRefText(profile) === createProfileKey)) {
         createProfileKey = received.profiles[0] === undefined ? undefined : profileRefText(received.profiles[0]);
@@ -261,7 +316,7 @@ export function mountSourceNamespacePanel(
         const onlyNamespace = received.namespaces[0];
         if (onlyNamespace !== undefined) {
           selectedId = onlyNamespace.source_namespace_id;
-          dispatchSelection(onlyNamespace.source_namespace_id, onlyNamespace.title);
+          if (!isExpired(onlyNamespace)) dispatchSelection(onlyNamespace.source_namespace_id, onlyNamespace.title);
         }
       }
       statusMessage = received.profiles.length === 0
@@ -274,6 +329,40 @@ export function mountSourceNamespacePanel(
       if (disposed || active !== serial || (error instanceof Error && error.name === "AbortError")) return;
       if (privateFailure(error)) clearPrivate(failureText(error, "load"));
       else { statusMessage = failureText(error, "load"); render(); }
+    } finally {
+      if (active === serial) { controller = undefined; operation = "idle"; render(); }
+    }
+  };
+
+  const renew = async (): Promise<void> => {
+    const chosen = selectedNamespace(catalog?.namespaces ?? [], selectedId);
+    if (!canRequest() || operation !== "idle" || chosen === undefined || !isExpired(chosen) ||
+        chosen.read_policy_generation === undefined) return;
+    const currentGeneration = generation();
+    if (currentGeneration === undefined) return;
+    const expectedPolicyGeneration = chosen.read_policy_generation;
+    stop();
+    const active = serial;
+    const local = new AbortController();
+    controller = local;
+    operation = "renewing";
+    statusMessage = `Renewing access for “${chosen.title}”…`;
+    render();
+    try {
+      const renewed = await renewSourceNamespace(chosen.source_namespace_id, expectedPolicyGeneration, currentGeneration, local.signal);
+      if (disposed || active !== serial) return;
+      if (generation() !== currentGeneration) {
+        clearPrivate("The workspace changed. Refresh before choosing a workspace.");
+        return;
+      }
+      applyRenewed(renewed);
+    } catch (error) {
+      if (disposed || active !== serial || (error instanceof Error && error.name === "AbortError")) return;
+      if (error instanceof ApiRequestError && error.status === 409 && error.code !== "API_GENERATION_MISMATCH") {
+        statusMessage = "Workspace access changed. Refresh workspaces and try again.";
+        render();
+      } else if (privateFailure(error)) clearPrivate(failureText(error, "renew"));
+      else { statusMessage = failureText(error, "renew"); render(); }
     } finally {
       if (active === serial) { controller = undefined; operation = "idle"; render(); }
     }
@@ -316,6 +405,29 @@ export function mountSourceNamespacePanel(
     }
   };
 
+  const applyRenewed = (renewed: RenewedSourceNamespace): void => {
+    const currentCatalog = catalog;
+    if (currentCatalog === undefined) return;
+    catalog = {
+      ...currentCatalog,
+      namespaces: currentCatalog.namespaces.map((namespace) => namespace.source_namespace_id === renewed.source_namespace_id
+        ? {
+          ...namespace,
+          title: renewed.title,
+          read_policy_generation: renewed.read_policy_generation,
+          read_expires_at: renewed.read_expires_at,
+          read_access: renewed.read_access,
+        }
+        : namespace),
+    };
+    selectedId = renewed.source_namespace_id;
+    loadedGeneration = renewed.deployment_generation;
+    statusMessage = `Workspace “${renewed.title}” access renewed until ${accessExpiryText(renewed.read_expires_at)}.`;
+    render();
+    dispatchSelection(renewed.source_namespace_id, renewed.title);
+    element.dispatchEvent(new Event("eliotr:health-updated", { bubbles: true }));
+  };
+
   const applyCreated = (created: CreatedSourceNamespace, profile: SourceNamespaceProfile): void => {
     const previousSelectedId = selectedId;
     const currentCatalog = catalog;
@@ -335,7 +447,9 @@ export function mountSourceNamespacePanel(
     attemptKey = undefined;
     statusMessage = `Workspace “${created.title}” created and selected.`;
     render();
-    if (previousSelectedId !== created.source_namespace_id) dispatchSelection(created.source_namespace_id, created.title);
+    if (previousSelectedId !== created.source_namespace_id || announcedSelectionId !== created.source_namespace_id) {
+      dispatchSelection(created.source_namespace_id, created.title);
+    }
   };
 
   select.onchange = () => {
@@ -352,9 +466,12 @@ export function mountSourceNamespacePanel(
     }
     selectedId = namespace.source_namespace_id;
     selectedProfile = undefined;
-    statusMessage = `Workspace “${namespace.title}” selected.`;
+    statusMessage = isExpired(namespace)
+      ? `Workspace “${namespace.title}” needs renewed access before adding documents.`
+      : `Workspace “${namespace.title}” selected.`;
     render();
-    dispatchSelection(namespace.source_namespace_id, namespace.title);
+    if (isExpired(namespace)) dispatchSelectionClear();
+    else dispatchSelection(namespace.source_namespace_id, namespace.title);
   };
   titleInput.oninput = () => render();
   profileSelect.onchange = () => {
@@ -362,6 +479,7 @@ export function mountSourceNamespacePanel(
     render();
   };
   refreshButton.onclick = () => { void load(false); };
+  renewButton.onclick = () => { void renew(); };
   form.onsubmit = (event) => { event.preventDefault(); void create(); };
 
   const onOffline = (): void => clearPrivate("Workspace data cleared while offline. Reconnect before managing workspaces.");

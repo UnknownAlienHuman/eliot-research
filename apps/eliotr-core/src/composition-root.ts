@@ -247,6 +247,7 @@ function ownerApi(env: Env): OwnerApi {
     prepareErasure: (context, input) => prepareErasureForOwner(env, context, input),
     sourceNamespaces: sourceNamespaces.list,
     initializeSourceNamespace: sourceNamespaces.initialize,
+    renewSourceNamespace: (context, sourceNamespaceId, input) => sourceNamespaces.renew(context, sourceNamespaceId, input),
     listProjects: (context, request) => projects.list(context, request ?? {}),
     createProject: (context, request) => projects.create(context, request),
     updateProject: (context, projectId, request) => projects.update(context, projectId, request),

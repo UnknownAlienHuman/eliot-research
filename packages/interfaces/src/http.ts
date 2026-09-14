@@ -18,6 +18,12 @@ export interface AuthenticatedRequestContext {
   readonly client_class: "owner_pwa" | "named_api_client" | "trusted_agent" | "federation_client";
   readonly credential_generation: string;
   readonly trace_id: string;
+  /** Server-authenticated Access identity metadata; never populated from request body or headers. */
+  readonly access?: {
+    readonly principal_ref: string;
+    readonly credential_generation: string;
+    readonly expires_at: string;
+  };
 }
 
 export interface ApiResponse<T> {
