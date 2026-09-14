@@ -4,6 +4,7 @@ import {
   type WikiPageRevision,
 } from "@eliotr/contracts";
 import {
+  WikiPublicationError,
   type WikiHeadCommit,
   type WikiHeadCommitDisposition,
   type WikiHeadReadback,
@@ -17,6 +18,7 @@ import {
   SAFE_REF,
   decodeProposal,
   dependencyDigest,
+  decodeWikiOwnerReviewReceipt,
   fail,
   loadAuthority,
   loadProposalRow,
@@ -34,6 +36,9 @@ import {
   type ProposalRow,
   type WikiStoreContext,
 } from "./wiki-publication-store-support.js";
+import {
+  buildWikiOwnerPublicationGuardStatement,
+} from "./wiki-owner-publication-guard.js";
 
 export {
   recordWikiPublicationAuthority,
@@ -142,6 +147,27 @@ export function createD1R2WikiPublicationPort(
       return authority !== null && authority.state === "VERIFIED" && authority.coverage_complete === 1
         && authority.conflict_count === 0 && authority.changes_current_state === 0
         && authority.verifier_receipt_ref.length > 0 && sameCoverage(page, authority.coverage_receipt_json);
+    },
+
+    async validateReviewedCoverage(page) {
+      const proposal = active;
+      const authority = await authorityFor(page);
+      if (proposal === null || authority === null || authority.state !== "VERIFIED" ||
+          authority.policy_receipt_ref === null || authority.conflict_count !== 0 ||
+          authority.changes_current_state !== 0 || authority.verifier_receipt_ref.length < 1 ||
+          !sameCoverage(page, authority.coverage_receipt_json)) return false;
+      const receiptObject = await readObject(bucket, authority.policy_receipt_ref, MAX_MANIFEST_BYTES);
+      const receipt = decodeWikiOwnerReviewReceipt(receiptObject.bytes);
+      return receipt !== null && receipt.proposal_ref.id === proposal.proposal_id &&
+        receipt.proposal_ref.revision === proposal.proposal_revision &&
+        receipt.page_ref.id === page.page_ref.id && receipt.page_ref.revision === page.page_ref.revision &&
+        receipt.principal_ref === principal && receipt.coverage_receipt_ref.id === page.coverage_receipt_ref.id &&
+        receipt.coverage_receipt_ref.revision === page.coverage_receipt_ref.revision &&
+        receipt.evidence_receipt_ref === authority.evidence_receipt_ref &&
+        receipt.dependency_closure_receipt_ref === authority.dependency_closure_receipt_ref &&
+        receipt.verifier_receipt_ref === authority.verifier_receipt_ref &&
+        receipt.coverage_complete === (authority.coverage_complete === 1) &&
+        receipt.dependency_closure_complete === (authority.dependency_closure_complete === 1);
     },
 
     async validateDependencyClosure(page) {
@@ -270,7 +296,20 @@ export function createD1R2WikiPublicationPort(
             proposal.proposal_revision,
           );
 
+        let guardStatement: D1PreparedStatement;
+        try {
+          if (context.read_owner_publication_guard_witness === undefined) {
+            fail("WIKI_POLICY_DENIED", "Wiki publication currentness witness is unavailable");
+          }
+          const witness = await context.read_owner_publication_guard_witness({ ...input, page_sha256: pageSha });
+          guardStatement = buildWikiOwnerPublicationGuardStatement(database, witness);
+        } catch (cause) {
+          if (cause instanceof WikiPublicationError) throw cause;
+          fail("WIKI_SETTLEMENT_UNCERTAIN", "Wiki publication currentness witness is unavailable", true, cause);
+        }
+
         const statements = [
+          guardStatement,
           revisionStatement,
           headStatement,
           database.prepare(

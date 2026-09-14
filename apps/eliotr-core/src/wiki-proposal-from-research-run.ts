@@ -41,7 +41,7 @@ import type { WikiProposalResult } from "./wiki-service.js";
 
 const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9:._/@-]{0,255}$/u;
 const SHA256 = /^[a-f0-9]{64}$/u;
-const GENERATOR = "wiki-from-research-run-v1";
+export const GENERATOR = "wiki-from-research-run-v1";
 
 interface DependencyObjectReceipt {
   readonly key: string;
@@ -50,7 +50,7 @@ interface DependencyObjectReceipt {
   readonly size_bytes: number;
 }
 
-interface DependencyManifestRead {
+export interface DependencyManifestRead {
   readonly object_ref: string;
   readonly physical_key: string;
   readonly sha256: string;
@@ -58,7 +58,7 @@ interface DependencyManifestRead {
   readonly manifest: ReturnType<typeof AllowedReferenceManifestSchema.parse>;
 }
 
-interface SectionRead {
+export interface SectionRead {
   readonly section_ref: VersionedRef;
   readonly body_object_ref: string;
   readonly body_sha256: string;
@@ -125,7 +125,7 @@ function mapResearchFailure(error: unknown): never {
   }
 }
 
-async function requireFreshOwnerScope(
+export async function requireFreshOwnerScope(
   env: Pick<Env, "CORE_DB">,
   context: AuthenticatedRequestContext,
   operationId: string,
@@ -201,7 +201,7 @@ function parseDependencyReceipt(raw: unknown): DependencyObjectReceipt {
   };
 }
 
-async function readDependencyManifest(
+export async function readDependencyManifest(
   env: Pick<Env, "CORE_DB" | "WORK_BUCKET">,
   artifact: ArtifactRevision,
 ): Promise<DependencyManifestRead> {
@@ -249,7 +249,7 @@ async function readDependencyManifest(
   };
 }
 
-async function readSection(
+export async function readSection(
   env: Env,
   context: AuthenticatedRequestContext,
   artifact: ArtifactRevision,
@@ -461,7 +461,7 @@ export async function proposeWikiFromResearchRun(
       evidence_map_ref: evidenceKey,
       counterposition_refs: [],
       coverage_receipt_ref: { ...historical.coverage_receipt_ref },
-      limitations: ["This analytical research draft remains PROPOSED pending human review."],
+      limitations: ["Coverage is incomplete: this page is limited to represented and cited frozen sources and makes no complete-scope or absence claim."],
       dependency_refs: [...dependencies].sort(),
       generator_generation: GENERATOR,
       status: "DRAFT",

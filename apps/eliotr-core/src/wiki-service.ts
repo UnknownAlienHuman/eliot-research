@@ -13,14 +13,20 @@ import type {
   WikiProposalSummary,
 } from "@eliotr/interfaces";
 import {
+  canonicalEvidenceJson,
+} from "@eliotr/cloudflare-evidence";
+import {
   createWikiPublisher,
   WikiPublicationError,
   type DraftRiskClass,
+  type WikiHeadCommit,
 } from "@eliotr/research";
 import { CatalogInputError } from "./catalog-service.js";
 import type { Env } from "./env.js";
 import { prepareWikiProposalReadAuthorization } from "./wiki-proposal-reauthorization.js";
+import { admitWikiOwnerReview } from "./wiki-review-admission.js";
 import { createD1R2WikiPublicationPort } from "./wiki-publication-store.js";
+import type { WikiOwnerPublicationGuardWitness } from "./wiki-owner-publication-guard.js";
 import {
   MAX_BODY_BYTES,
   MAX_EVIDENCE_MAP_BYTES,
@@ -68,6 +74,132 @@ function fail(code: string, message: string, status = 400, retryable = false): n
 
 function requireOwner(context: AuthenticatedRequestContext): void {
   if (context.client_class !== "owner_pwa") fail("WIKI_OWNER_REQUIRED", "Wiki access requires the owner profile", 403);
+}
+
+function guardFailure(message: string, cause?: unknown): never {
+  throw new WikiPublicationError("WIKI_SETTLEMENT_UNCERTAIN", message, true, cause);
+}
+
+function guardText(value: unknown, label: string): string {
+  if (typeof value !== "string" || value.length < 1 || value.length > 256) guardFailure(`${label} is unavailable`);
+  return value;
+}
+
+function guardInteger(value: unknown, label: string, minimum = 0): number {
+  if (!Number.isSafeInteger(value) || (value as number) < minimum) guardFailure(`${label} is unavailable`);
+  return value as number;
+}
+
+/** Build the server-owned witness immediately before the publication batch. */
+async function readWikiOwnerPublicationGuardWitness(
+  env: Env,
+  context: AuthenticatedRequestContext,
+  input: WikiHeadCommit & { readonly page_sha256: string },
+): Promise<WikiOwnerPublicationGuardWitness> {
+  requireOwner(context);
+  let authorization: Awaited<ReturnType<typeof prepareWikiProposalReadAuthorization>>;
+  try {
+    authorization = await prepareWikiProposalReadAuthorization(env, context, input.page);
+  } catch (cause) {
+    guardFailure("Wiki owner publication authorization is unavailable", cause);
+  }
+  const policyAuthorityRef = authorization.authorization.policy_authority_ref;
+  let policy: { readonly policy_generation: unknown; readonly state: unknown } | null;
+  let deployment: { readonly deployment_generation: unknown; readonly state: unknown } | null;
+  let orientation: { readonly generation: unknown } | null;
+  let ledger: { readonly generation: unknown } | null;
+  let purge: { readonly revision: unknown } | null;
+  try {
+    [policy, deployment, orientation, ledger, purge] = await Promise.all([
+      env.CORE_DB.prepare(
+        "SELECT policy_generation,state FROM investigation_current_policy " +
+        "WHERE policy_authority_ref=?1 AND state='ACTIVE' LIMIT 1",
+      ).bind(policyAuthorityRef).first<{ readonly policy_generation: unknown; readonly state: unknown }>(),
+      env.CORE_DB.prepare(
+        "SELECT deployment_generation,state FROM investigation_current_deployment " +
+        "WHERE deployment_generation=?1 AND state='ACTIVE' LIMIT 1",
+      ).bind(env.DEPLOYMENT_GENERATION).first<{ readonly deployment_generation: unknown; readonly state: unknown }>(),
+      env.CORE_DB.prepare("SELECT generation FROM orientation_authority_epoch WHERE singleton=1 LIMIT 1")
+        .first<{ readonly generation: unknown }>(),
+      env.CORE_DB.prepare("SELECT generation FROM investigation_ledger_epoch WHERE singleton=1 LIMIT 1")
+        .first<{ readonly generation: unknown }>(),
+      env.CORE_DB.prepare("SELECT COALESCE(MAX(ledger_revision),0) AS revision FROM purge_ledger")
+        .first<{ readonly revision: unknown }>(),
+    ]);
+  } catch (cause) {
+    guardFailure("Wiki publication current authority read is unavailable", cause);
+  }
+  if (policy === null || policy.state !== "ACTIVE" || deployment === null || deployment.state !== "ACTIVE") {
+    throw new WikiPublicationError("WIKI_POLICY_DENIED", "Wiki publication policy or deployment is not current");
+  }
+  const policyGeneration = guardText(policy.policy_generation, "current policy generation");
+  const deploymentGeneration = guardText(deployment.deployment_generation, "current deployment generation");
+  const globalPurgeRevision = guardInteger(purge?.revision, "global purge revision");
+  const orientationEpoch = guardInteger(orientation?.generation, "orientation epoch", 1);
+  const ledgerEpoch = guardInteger(ledger?.generation, "ledger epoch", 1);
+  const scope = authorization.navigation.scope;
+  const sourceRefs = [...scope.member_source_revision_refs].sort();
+  const sourceOwners: Record<string, string> = {};
+  for (const sourceRef of sourceRefs) {
+    const generation = scope.source_owner_generations[sourceRef];
+    if (typeof generation !== "string" || generation.length < 1) guardFailure("Wiki source ownership is unavailable");
+    sourceOwners[sourceRef] = generation;
+  }
+  try {
+    await authorization.requireCurrent();
+  } catch (cause) {
+    throw new WikiPublicationError("WIKI_POLICY_DENIED", "Wiki owner publication authority is no longer current", false, cause);
+  }
+  const observedAt = authorization.navigation.timestamp();
+  const scopeExpiry = Date.parse(scope.expires_at);
+  const grantExpiry = Date.parse(authorization.authorization.expires_at);
+  const observedMs = Date.parse(observedAt);
+  if (![scopeExpiry, grantExpiry, observedMs].every(Number.isSafeInteger) || Math.min(scopeExpiry, grantExpiry) <= observedMs) {
+    throw new WikiPublicationError("WIKI_POLICY_DENIED", "Wiki owner publication authorization has expired");
+  }
+  const guardId = `wiki-guard-${(await textDigest(canonicalEvidenceJson({
+    proposal_ref: input.proposal_ref,
+    page_ref: input.page.page_ref,
+    expected_head_revision: input.expected_head_revision,
+    manifest_ref: input.manifest_ref,
+    page_sha256: input.page_sha256,
+    principal_ref: context.principal_ref,
+  }))).slice(0, 48)}`;
+  return {
+    guard_id: guardId,
+    page_id: input.page.page_ref.id,
+    page_revision: input.page.page_ref.revision,
+    proposal_id: input.proposal_ref.id,
+    proposal_revision: input.proposal_ref.revision,
+    expected_head_revision: input.expected_head_revision,
+    manifest_ref: input.manifest_ref,
+    page_sha256: input.page_sha256,
+    body_object_ref: input.page.body_object_ref,
+    body_sha256: input.page.body_sha256,
+    committer_ref: input.committer_ref,
+    principal_ref: context.principal_ref,
+    client_class: "owner_pwa",
+    credential_generation: context.credential_generation,
+    authorization_receipt_ref: authorization.authorization.authorization_receipt_ref,
+    scope_snapshot_id: scope.snapshot_id,
+    scope_snapshot_revision: scope.revision,
+    scope_snapshot_digest: scope.digest,
+    policy_generation: policyGeneration,
+    policy_authority_ref: policyAuthorityRef,
+    deployment_generation: deploymentGeneration,
+    global_purge_revision: globalPurgeRevision,
+    scope_purge_revision: scope.purge_ledger_revision,
+    orientation_epoch: orientationEpoch,
+    ledger_epoch: ledgerEpoch,
+    source_revision_refs_json: canonicalEvidenceJson(sourceRefs),
+    source_owner_generations_json: canonicalEvidenceJson(sourceOwners),
+    allowed_use_json: canonicalEvidenceJson([...new Set(authorization.authorization.allowed_use)].sort()),
+    disclosure_ceiling: authorization.authorization.disclosure_ceiling,
+    scope_expires_at: scope.expires_at,
+    grant_expires_at: authorization.authorization.expires_at,
+    observed_at: observedAt,
+    expires_at: new Date(Math.min(scopeExpiry, grantExpiry)).toISOString(),
+  };
 }
 
 export function parseWikiProposalRef(value: string): VersionedRef {
@@ -312,9 +444,9 @@ export function createWikiProposalService(
   return (context: AuthenticatedRequestContext, raw: unknown) => propose(env, context, raw);
 }
 
-/** Server-side/manual review path; no public route is added until review receipt admission is composed. */
+/** Owner/manual review path; from-run proposals receive server-derived admission before publication. */
 export async function publishWikiProposal(
-  env: Pick<Env, "CORE_DB" | "WORK_BUCKET">,
+  env: Env,
   context: AuthenticatedRequestContext,
   raw: unknown,
 ): Promise<WikiPublicationResult> {
@@ -323,8 +455,10 @@ export async function publishWikiProposal(
   const port = createD1R2WikiPublicationPort(env.CORE_DB, env.WORK_BUCKET, {
     principal_ref: context.principal_ref,
     idempotency_key: idempotencyKey(context),
+    read_owner_publication_guard_witness: (commit) => readWikiOwnerPublicationGuardWitness(env, context, commit),
   });
   try {
+    await admitWikiOwnerReview(env, context, input.proposal_ref);
     const page = await createWikiPublisher(port).publish(
       input.proposal_ref,
       input.expected_head_revision,

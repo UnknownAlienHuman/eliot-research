@@ -7,8 +7,10 @@ import {
 import {
   WikiPublicationError,
   type DraftRiskClass,
+  type WikiHeadCommit,
   type WikiProposalRecord,
 } from "@eliotr/research";
+import type { WikiOwnerPublicationGuardWitness } from "./wiki-owner-publication-guard.js";
 
 export const MAX_BODY_BYTES = 8 * 1024 * 1024;
 export const MAX_EVIDENCE_MAP_BYTES = 1024 * 1024;
@@ -68,6 +70,10 @@ export interface WikiStoreContext {
   readonly principal_ref: string;
   readonly idempotency_key: string;
   readonly now?: () => string;
+  /** Build a fresh owner/source/policy/purge witness after R2 readback. */
+  readonly read_owner_publication_guard_witness?: (
+    input: WikiHeadCommit & { readonly page_sha256: string },
+  ) => Promise<WikiOwnerPublicationGuardWitness>;
 }
 
 export interface WikiAuthorityAdmission {
@@ -82,6 +88,28 @@ export interface WikiAuthorityAdmission {
   readonly conflict_count: number;
   readonly changes_current_state: boolean;
   readonly admitted_at?: string;
+}
+
+/** Immutable server-derived receipt which authorizes manual review coverage. */
+export interface WikiOwnerReviewReceipt {
+  readonly protocol: "eliotr.wiki.owner-review.v1";
+  readonly proposal_ref: VersionedRef;
+  readonly page_ref: VersionedRef;
+  readonly principal_ref: string;
+  readonly operation_id: string;
+  readonly artifact_ref: VersionedRef;
+  readonly coverage_receipt_ref: VersionedRef;
+  readonly evidence_receipt_ref: string;
+  readonly dependency_closure_receipt_ref: string;
+  readonly verifier_receipt_ref: string;
+  readonly coverage_complete: boolean;
+  readonly dependency_closure_complete: boolean;
+  readonly conflict_count: number;
+  readonly changes_current_state: boolean;
+  readonly supported_claim_count: number;
+  readonly limitations: readonly string[];
+  readonly provenance: Record<string, unknown>;
+  readonly admitted_at: string;
 }
 
 export function fail(code: ConstructorParameters<typeof WikiPublicationError>[0], message: string, retryable = false, cause?: unknown): never {
@@ -231,6 +259,39 @@ export async function loadProposalRow(database: D1Database, proposalRef: Version
   } catch (cause) {
     fail("WIKI_SETTLEMENT_UNCERTAIN", "Wiki proposal readback is unavailable", true, cause);
   }
+}
+
+export function decodeWikiOwnerReviewReceipt(bytes: Uint8Array): WikiOwnerReviewReceipt | null {
+  let parsed: unknown;
+  try { parsed = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)); }
+  catch { return null; }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+  const value = parsed as Record<string, unknown>;
+  const expected = [
+    "admitted_at", "artifact_ref", "changes_current_state", "conflict_count", "coverage_complete",
+    "coverage_receipt_ref", "dependency_closure_complete", "dependency_closure_receipt_ref",
+    "evidence_receipt_ref", "limitations", "operation_id", "page_ref", "principal_ref", "provenance",
+    "proposal_ref", "protocol", "supported_claim_count", "verifier_receipt_ref",
+  ].sort();
+  const keys = Object.keys(value).sort();
+  if (keys.length !== expected.length || keys.some((key, index) => key !== expected[index]) ||
+      value.protocol !== "eliotr.wiki.owner-review.v1" ||
+      typeof value.principal_ref !== "string" || !value.principal_ref.trim() ||
+      typeof value.operation_id !== "string" || !SAFE_REF.test(value.operation_id) ||
+      typeof value.evidence_receipt_ref !== "string" || !SAFE_REF.test(value.evidence_receipt_ref) ||
+      typeof value.dependency_closure_receipt_ref !== "string" || !SAFE_REF.test(value.dependency_closure_receipt_ref) ||
+      typeof value.verifier_receipt_ref !== "string" || !SAFE_REF.test(value.verifier_receipt_ref) ||
+      !VersionedRefSchema.safeParse(value.proposal_ref).success || !VersionedRefSchema.safeParse(value.page_ref).success ||
+      !VersionedRefSchema.safeParse(value.artifact_ref).success || !VersionedRefSchema.safeParse(value.coverage_receipt_ref).success ||
+      typeof value.coverage_complete !== "boolean" || typeof value.dependency_closure_complete !== "boolean" ||
+      value.conflict_count !== 0 || value.changes_current_state !== false ||
+      !Number.isSafeInteger(value.supported_claim_count) || (value.supported_claim_count as number) < 0 ||
+      !Array.isArray(value.limitations) || value.limitations.some((item) => typeof item !== "string") ||
+      value.provenance === null || typeof value.provenance !== "object" || Array.isArray(value.provenance) ||
+      typeof value.admitted_at !== "string" || Number.isNaN(Date.parse(value.admitted_at)) || !value.admitted_at.endsWith("Z")) {
+    return null;
+  }
+  return value as unknown as WikiOwnerReviewReceipt;
 }
 
 export async function loadProposalRows(

@@ -29,6 +29,7 @@ export const SEMANTIC_API_OPERATIONS = [
   "research.artifact",
   "research.wiki.propose",
   "research.wiki.propose.from-run",
+  "research.wiki.publish",
   "research.wiki.proposal.read",
   "research.wiki.proposal.list",
   "research.wiki.proposal.body",
@@ -149,6 +150,18 @@ export interface WikiProposalResult {
   readonly page_ref: VersionedRef;
   readonly risk_class: WikiDraftRiskClass;
   readonly state: "PROPOSED";
+}
+
+export interface WikiPublicationRequest {
+  readonly proposal_ref: VersionedRef;
+  readonly expected_head_revision: number;
+}
+
+export interface WikiPublicationResult {
+  readonly protocol: "eliotr.wiki-publication.v1";
+  readonly page_ref: VersionedRef;
+  readonly status: "PUBLISHED";
+  readonly reviewer_ref: string;
 }
 
 export interface WikiProposalReadResult {
@@ -315,6 +328,8 @@ export interface SemanticApi {
   artifactSectionCitations(context: AuthenticatedRequestContext, artifactRef: VersionedRef, sectionRef: VersionedRef): Promise<ResearchArtifactSectionCitations>;
   proposeWiki(context: AuthenticatedRequestContext, request: unknown): Promise<WikiProposalResult>;
   proposeWikiFromResearchRun(context: AuthenticatedRequestContext, operationId: string): Promise<WikiProposalResult>;
+  /** The owner service performs strict decoding of the bounded transport body. */
+  publishWiki(context: AuthenticatedRequestContext, request: unknown): Promise<WikiPublicationResult>;
   readWikiProposal(context: AuthenticatedRequestContext, proposalRef: VersionedRef): Promise<WikiProposalReadResult>;
   listWikiProposals(context: AuthenticatedRequestContext): Promise<WikiProposalListResult>;
   readWikiProposalBody(context: AuthenticatedRequestContext, proposalRef: VersionedRef): Promise<Response>;

@@ -7,7 +7,8 @@ import {
   type WikiProposalReadView,
   type WikiProposalSummary,
 } from "./wiki-api.js";
-import type { VersionedRef } from "@eliotr/contracts";
+import { expectedWikiHeadRevision, publishWikiProposal } from "./wiki-publish-api.js";
+import type { EvidenceLabel, VersionedRef } from "@eliotr/contracts";
 
 const RISK_LABELS: Record<WikiProposalSummary["risk_class"], string> = {
   D0_MECHANICAL: "Mechanical",
@@ -15,6 +16,17 @@ const RISK_LABELS: Record<WikiProposalSummary["risk_class"], string> = {
   D2_ANALYTICAL: "Analytical",
   D3_AUTHORITY_SENSITIVE: "Authority-sensitive",
 };
+
+const EVIDENCE_LABELS: Record<EvidenceLabel, string> = {
+  SOURCE_SUPPORTED: "Supported by source",
+  DERIVED_INFERENCE: "Derived inference",
+  HYPOTHESIS: "Hypothesis",
+  CONTESTED: "Contested",
+  UNRESOLVED: "Unresolved",
+  EDITORIAL_RECOMMENDATION: "Editorial recommendation",
+  REDACTED_DEPENDENCY: "Redacted dependency",
+};
+const HISTORICAL_DRAFT_LIMITATION = "This analytical research draft remains PROPOSED pending human review.";
 
 function refKey(ref: VersionedRef): string {
   return `${ref.id}:${ref.revision}`;
@@ -48,6 +60,59 @@ function errorText(error: unknown): string {
   return "Wiki proposals could not be read. Refresh to try again.";
 }
 
+function publicationErrorText(error: unknown): string {
+  if (error instanceof ApiRequestError) {
+    if (error.code === "WIKI_PUBLICATION_INCOMPLETE") return "This proposal is not ready to publish because its evidence, coverage, or dependency checks are incomplete.";
+    if (error.code === "WIKI_POLICY_DENIED") return "This proposal cannot be published under the current owner policy.";
+    if (error.code === "WIKI_HEAD_CONFLICT") return "The Wiki page changed before publishing. Refresh proposals and review the current draft.";
+    if (error.code === "WIKI_SETTLEMENT_UNCERTAIN") return "Publication could not be confirmed. Retry the same action or refresh Wiki proposals.";
+    if (error.status === 401) return "Sign in again to publish this Wiki proposal.";
+    if (error.status === 403) return "This proposal cannot be published under the current owner policy.";
+    if (error.status === 404) return "This Wiki proposal is no longer available.";
+    if (error.retryable) return "Wiki publication is temporarily unavailable. Retry the same action.";
+  }
+  return "This Wiki proposal could not be published. Refresh and try again.";
+}
+
+function shouldClearAfterPublication(error: unknown): boolean {
+  return isAuthorizationLoss(error) || error instanceof ApiRequestError && error.code === "WIKI_DEPLOYMENT_CHANGED";
+}
+
+function renderReviewContext(proposal: WikiProposalReadView): HTMLElement {
+  const review = document.createElement("section"); review.className = "wiki-review-context";
+  const heading = document.createElement("h4"); heading.textContent = "Review notes"; review.append(heading);
+  const limitationsHeading = document.createElement("h5"); limitationsHeading.textContent = "Limitations"; review.append(limitationsHeading);
+  if (proposal.page.limitations.length === 0) {
+    const empty = document.createElement("p"); empty.textContent = "No limitations were recorded for this page."; review.append(empty);
+  } else {
+    const limitations = document.createElement("ul"); limitations.className = "wiki-review-limitations";
+    proposal.page.limitations.forEach((limitation) => {
+      const item = document.createElement("li");
+      item.textContent = proposal.state === "PUBLISHED" && limitation === HISTORICAL_DRAFT_LIMITATION
+        ? "Historical draft note: the original page was awaiting human review." : limitation;
+      limitations.append(item);
+    });
+    review.append(limitations);
+  }
+  const labelsHeading = document.createElement("h5"); labelsHeading.textContent = "Statement labels"; review.append(labelsHeading);
+  const labels = Object.values(proposal.page.statement_labels);
+  if (labels.length === 0) {
+    const empty = document.createElement("p"); empty.textContent = "No statement labels were recorded for this page."; review.append(empty);
+  } else {
+    const labelList = document.createElement("ul"); labelList.className = "wiki-review-labels";
+    labels.forEach((label, index) => {
+      const item = document.createElement("li"); item.textContent = `Statement ${index + 1}: ${EVIDENCE_LABELS[label]}`; labelList.append(item);
+    });
+    review.append(labelList);
+  }
+  const note = document.createElement("p");
+  note.textContent = proposal.state === "PUBLISHED"
+    ? "Publication did not change the meaning of unresolved or contested statements."
+    : "Publishing does not change the meaning of unresolved or contested statements.";
+  review.append(note);
+  return review;
+}
+
 export function mountWikiPanel(
   element: HTMLElement,
   deploymentGeneration: () => string | undefined,
@@ -69,18 +134,32 @@ export function mountWikiPanel(
   let disposed = false;
   let listView: WikiProposalListView | undefined;
   let listGeneration: string | undefined;
+  let openedProposal: WikiProposalReadView | undefined;
+  let openedBody: string | undefined;
+  let publicationExpectedHeadRevision: number | undefined;
+  let publicationIdempotencyKey: string | undefined;
 
   const updateButtons = (): void => {
     const disabled = controller !== undefined || !healthReady() || !navigator.onLine;
     refreshButton.disabled = disabled;
     list.querySelectorAll<HTMLButtonElement>("[data-wiki-open]").forEach((button) => { button.disabled = disabled; });
+    const publishButton = reader.querySelector<HTMLButtonElement>("[data-wiki-publish]");
+    const confirmation = reader.querySelector<HTMLInputElement>("[data-wiki-publish-confirm]");
+    if (publishButton !== null) {
+      publishButton.disabled = disabled || openedProposal?.state !== "PROPOSED"
+        || publicationExpectedHeadRevision === undefined || confirmation?.checked !== true;
+    }
   };
   const cancel = (): void => {
     serial += 1;
     controller?.abort();
     controller = undefined;
   };
-  const clearReader = (): void => { reader.replaceChildren(); reader.hidden = true; };
+  const clearReader = (): void => {
+    reader.replaceChildren(); reader.hidden = true;
+    openedProposal = undefined; openedBody = undefined;
+    publicationExpectedHeadRevision = undefined; publicationIdempotencyKey = undefined;
+  };
   const clearPrivate = (message = "Private Wiki data cleared. Refresh to read saved proposals."): void => {
     cancel(); listView = undefined; listGeneration = undefined; list.replaceChildren(); clearReader(); status.textContent = message; updateButtons();
   };
@@ -104,6 +183,8 @@ export function mountWikiPanel(
   };
 
   const renderProposal = (proposal: WikiProposalReadView, body: string): void => {
+    openedProposal = proposal; openedBody = body;
+    publicationExpectedHeadRevision = undefined; publicationIdempotencyKey = undefined;
     reader.replaceChildren(); reader.hidden = false;
     const heading = document.createElement("div"); heading.className = "wiki-reader-heading";
     const title = document.createElement("h3"); title.textContent = proposal.page.title;
@@ -117,7 +198,78 @@ export function mountWikiPanel(
     const field = (label: string, value: string): void => { const term = document.createElement("dt"); term.textContent = label; const detail = document.createElement("dd"); detail.append(codeRef(value)); fields.append(term, detail); };
     field("Proposal", refKey(proposal.proposal_ref)); field("Page", refKey(proposal.page.page_ref)); field("Scope", refKey(proposal.page.scope_snapshot_ref));
     field("Body", `${proposal.page.body_sha256} · ${body.length} characters`); field("Deployment", proposal.deployment_generation);
-    details.append(summary, fields); reader.append(heading, meta, content, details);
+    details.append(summary, fields); reader.append(heading, meta, content, details, renderReviewContext(proposal));
+    if (proposal.state === "PROPOSED") {
+      const action = document.createElement("div"); action.className = "wiki-publication-action";
+      const explanation = document.createElement("p");
+      explanation.textContent = "Review this saved draft before publishing. The server will recheck its evidence and policy.";
+      action.append(explanation);
+      if (proposal.page.status !== "DRAFT") {
+        const note = document.createElement("p"); note.textContent = "This proposal is not a publishable draft."; action.append(note);
+      } else {
+        try {
+          publicationExpectedHeadRevision = expectedWikiHeadRevision(proposal.page);
+          publicationIdempotencyKey = `wiki-publication:${proposal.proposal_ref.id}`;
+          const label = document.createElement("label");
+          const confirmation = document.createElement("input");
+          confirmation.type = "checkbox"; confirmation.dataset.wikiPublishConfirm = "true";
+          confirmation.onchange = updateButtons;
+          label.append(confirmation, document.createTextNode(" I have reviewed this proposal and want to publish it."));
+          const publish = document.createElement("button");
+          publish.type = "button"; publish.className = "button"; publish.textContent = "Publish page";
+          publish.dataset.wikiPublish = "true";
+          action.append(label, publish);
+        } catch {
+          const note = document.createElement("p");
+          note.textContent = "This proposal's revision history is invalid, so it cannot be published.";
+          action.append(note);
+        }
+      }
+      reader.append(action);
+    }
+    updateButtons();
+  };
+
+  const publishLoadedProposal = (): void => {
+    const proposal = openedProposal;
+    const body = openedBody;
+    const expectedHeadRevision = publicationExpectedHeadRevision;
+    const idempotencyKey = publicationIdempotencyKey;
+    if (proposal === undefined || body === undefined || proposal.state !== "PROPOSED" || proposal.page.status !== "DRAFT"
+      || expectedHeadRevision === undefined || idempotencyKey === undefined || controller !== undefined
+      || !healthReady() || !navigator.onLine) return;
+    const generation = deploymentGeneration();
+    if (generation === undefined || proposal.deployment_generation !== generation) { load(); return; }
+    cancel(); const mine = serial; const local = new AbortController(); controller = local;
+    status.textContent = "Publishing Wiki page…"; updateButtons();
+    let refreshList = false;
+    void (async () => {
+      await publishWikiProposal(proposal.proposal_ref, proposal.page.page_ref, expectedHeadRevision, idempotencyKey, generation, local.signal);
+      const readback = await readWikiProposal(proposal.proposal_ref, generation, local.signal);
+      if (readback.state !== "PUBLISHED"
+        || !sameRef(readback.page.page_ref, proposal.page.page_ref)
+        || readback.page.body_sha256 !== proposal.page.body_sha256) {
+        throw new ApiRequestError({ status: 502, code: "WIKI_RESPONSE_INVALID", message: "Published Wiki page readback is invalid" });
+      }
+      if (mine !== serial || disposed || deploymentGeneration() !== generation) return;
+      renderProposal(readback, body); status.textContent = "Wiki page published.";
+      listView = undefined; listGeneration = undefined; refreshList = true;
+    })()
+      .catch((error: unknown) => {
+        if (mine !== serial || disposed || (error instanceof Error && error.name === "AbortError")) return;
+        if (shouldClearAfterPublication(error)) {
+          clearPrivate(error instanceof ApiRequestError && error.status === 403 ? "Wiki publication is unavailable under the current read policy." : "The Wiki workspace changed. Refresh to continue.");
+          return;
+        }
+        if (error instanceof ApiRequestError && error.status === 404) clearReader();
+        status.textContent = publicationErrorText(error);
+      })
+      .finally(() => {
+        if (mine === serial && controller === local) {
+          controller = undefined; updateButtons();
+          if (refreshList) load();
+        }
+      });
   };
 
   const load = (): void => {
@@ -168,6 +320,11 @@ export function mountWikiPanel(
     const item = Number.isSafeInteger(index) ? listView?.items[index] : undefined;
     if (item !== undefined) openProposal(item);
   };
+  reader.onclick = (event) => {
+    const target = event.target;
+    if (!(target instanceof Element) || target.closest<HTMLButtonElement>("[data-wiki-publish]") === null) return;
+    publishLoadedProposal();
+  };
   const offline = (): void => clearPrivate("Offline. Private Wiki data cleared.");
   const denied = (): void => clearPrivate("Authorization changed. Sign in again to view Wiki proposals.");
   const onProposalCreated = (): void => { if (!disposed) { listView = undefined; listGeneration = undefined; load(); } };
@@ -179,6 +336,6 @@ export function mountWikiPanel(
     load();
   };
   updateButtons();
-  const cleanup = (): void => { disposed = true; cancel(); refreshButton.onclick = null; list.onclick = null; window.removeEventListener("offline", offline); window.removeEventListener("eliotr:authorization-cleared", denied); window.removeEventListener("eliotr:wiki-proposal-created", onProposalCreated); element.replaceChildren(); };
+  const cleanup = (): void => { disposed = true; cancel(); refreshButton.onclick = null; list.onclick = null; reader.onclick = null; window.removeEventListener("offline", offline); window.removeEventListener("eliotr:authorization-cleared", denied); window.removeEventListener("eliotr:wiki-proposal-created", onProposalCreated); element.replaceChildren(); };
   return Object.assign(cleanup, { clearPrivate, refresh });
 }

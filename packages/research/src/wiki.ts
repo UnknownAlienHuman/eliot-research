@@ -76,6 +76,8 @@ export interface WikiPublicationPort {
   readProposal(proposalRef: VersionedRef): Promise<WikiProposalRecord | null>;
   validateEvidenceMap(page: WikiPageRevision): Promise<boolean>;
   validateCoverage(page: WikiPageRevision): Promise<boolean>;
+  /** Optional server-owned manual-review coverage; never used by auto promotion. */
+  validateReviewedCoverage?(page: WikiPageRevision): Promise<boolean>;
   validateDependencyClosure(page: WikiPageRevision): Promise<boolean>;
   writeImmutableRevision(page: WikiPageRevision): Promise<WikiImmutableRevisionReceipt>;
   readImmutableRevision(pageRef: VersionedRef, manifestRef: string): Promise<WikiPageRevision | null>;
@@ -264,18 +266,27 @@ async function readProposal(port: WikiPublicationPort, proposalRef: VersionedRef
   return { proposal_ref: storedRef, page, risk_class: riskClass };
 }
 
-async function validatePublication(port: WikiPublicationPort, page: WikiPageRevision): Promise<void> {
-  let results: readonly boolean[];
+async function validatePublication(
+  port: WikiPublicationPort,
+  page: WikiPageRevision,
+  allowReviewedCoverage: boolean,
+): Promise<void> {
+  let evidenceComplete = false;
+  let coverageComplete = false;
+  let dependenciesComplete = false;
   try {
-    results = await Promise.all([
+    [evidenceComplete, coverageComplete, dependenciesComplete] = await Promise.all([
       port.validateEvidenceMap(page),
       port.validateCoverage(page),
       port.validateDependencyClosure(page),
     ]);
+    if (!coverageComplete && allowReviewedCoverage && port.validateReviewedCoverage !== undefined) {
+      coverageComplete = await port.validateReviewedCoverage(page);
+    }
   } catch (cause) {
     fail("WIKI_SETTLEMENT_UNCERTAIN", "wiki publication authority readback is unavailable", true, cause);
   }
-  if (results.some((result) => result !== true)) {
+  if (evidenceComplete !== true || coverageComplete !== true || dependenciesComplete !== true) {
     fail("WIKI_PUBLICATION_INCOMPLETE", "wiki publication evidence, coverage, or dependency closure is incomplete");
   }
 }
@@ -331,6 +342,7 @@ async function publishStored(
   expectedHeadRevision: number,
   committerRef: string,
   autoPromotionPolicyReceiptRef?: string,
+  allowReviewedCoverage = false,
 ): Promise<WikiPageRevision> {
   const expected = expectedRevision(expectedHeadRevision);
   if (!wikiMayBePublished(stored.page)) {
@@ -352,7 +364,7 @@ async function publishStored(
     fail("WIKI_HEAD_CONFLICT", "wiki head no longer matches the expected revision");
   }
 
-  await validatePublication(port, stored.page);
+  await validatePublication(port, stored.page, allowReviewedCoverage);
 
   let immutable: WikiImmutableRevisionReceipt;
   try {
@@ -427,7 +439,7 @@ export function createWikiPublisher(port: WikiPublicationPort): WikiPublisher {
     async publish(rawProposalRef, expectedHeadRevision, committerRef) {
       const proposalRef = parseRef(rawProposalRef, "proposal reference");
       const stored = await readProposal(port, proposalRef);
-      return publishStored(port, stored, expectedHeadRevision, committerRef);
+      return publishStored(port, stored, expectedHeadRevision, committerRef, undefined, true);
     },
 
     async autoPromote(rawProposalRef, expectedHeadRevision, authority) {
@@ -443,6 +455,7 @@ export function createWikiPublisher(port: WikiPublicationPort): WikiPublisher {
         expectedHeadRevision,
         authority.publisher_ref,
         authority.policy_receipt_ref,
+        false,
       );
     },
   };
