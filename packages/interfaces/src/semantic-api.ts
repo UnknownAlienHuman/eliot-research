@@ -200,6 +200,7 @@ export interface ResearchChangesRequest {
   readonly after_cursor: string | null;
   readonly limit: number;
   readonly kinds: readonly ResearchChangeKind[];
+  readonly start_at?: "latest";
 }
 
 export interface ResearchChangeItem {

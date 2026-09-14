@@ -29,6 +29,18 @@ authority. The server derives visibility from the authenticated principal and cu
   non-invalidated `scope_snapshot` on every page.
 - Reject malformed, forged, expired, stale or authority-mismatched cursors before returning data.
 - Use the bounded JSON reader and an owner-only route; never accept `allowed_scopes` from callers.
+- The request may set `start_at: 'latest'` only when `after_cursor` is `null`. Select the latest visible
+  `limit` records in descending order, then return that bounded window in ascending order. In this
+  initial mode `has_more: false` describes the bounded starting window; cursor replay keeps its
+  existing ordering and semantics.
+- A scope-visible record retains its original scope reference as provenance. If its original grant has
+  expired, owner reauthorization must use that same scope and verify the exact closure, source set,
+  owner generations, current policy, purge state and grant, then retain `requireCurrent` checks across
+  asynchronous reads. Revocation or purge hides the record; storage uncertainty returns typed 503.
+- Change-feed writes are atomic with their source mutations: migration triggers `0060` (artifact draft),
+  `0061` (workflow `ENGINE_COMPLETED`) and `0062` (Wiki publication visibility) emit immutable rows.
+  Wiki visibility for new rows is canonical from the proposal principal and published revision scope;
+  historical legacy rows are not rewritten.
 
 ## Acceptance
 

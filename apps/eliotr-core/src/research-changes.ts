@@ -1,4 +1,4 @@
-import type { VersionedRef } from "@eliotr/contracts";
+import { VersionedRefSchema, type VersionedRef } from "@eliotr/contracts";
 import type {
   AuthenticatedRequestContext,
   ResearchChangeItem,
@@ -9,6 +9,7 @@ import type {
 } from "@eliotr/interfaces";
 import { CatalogInputError } from "./catalog-service.js";
 import type { Env } from "./env.js";
+import { prepareOwnerScopeReadAuthorization } from "./wiki-proposal-reauthorization.js";
 import {
   createResearchChangesCursorCodec,
   normalizeResearchChangeKinds,
@@ -21,10 +22,29 @@ export const RESEARCH_CHANGES_PROTOCOL = "eliotr.research-changes.v1";
 const MAX_CURSOR_BYTES = 4_096;
 const MAX_METADATA_BYTES = 65_536;
 const MAX_LIMIT = 100;
+const RESEARCH_CHANGES_SCAN_BATCH = 100;
 const SAFE_REF = /^[A-Za-z0-9][A-Za-z0-9:._/@%+-]{0,511}$/u;
 const SHA256 = /^[a-f0-9]{64}$/u;
 const ISO_MILLISECONDS = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u;
 const KIND_SET = new Set<string>(RESEARCH_CHANGE_KINDS);
+const EXPECTED_SCOPE_DENIAL_CODES = new Set([
+  "ORIENTATION_READ_POLICY_REQUIRED",
+  "ORIENTATION_SOURCE_DENIED",
+  "ORIENTATION_PROJECT_UNAVAILABLE",
+  "ORIENTATION_POLICY_CHANGED",
+  "ORIENTATION_MIXED_DISCLOSURE",
+  "WIKI_POLICY_DENIED",
+  "SCOPE_SNAPSHOT_STALE",
+  "NAVIGATION_SCOPE_NOT_CURRENT",
+  "NAVIGATION_SCOPE_MISMATCH",
+  "EVIDENCE_SCOPE_NOT_FOUND",
+  "EVIDENCE_SCOPE_INVALIDATED",
+  "EVIDENCE_SCOPE_EXPIRED",
+  "EVIDENCE_AUTHORIZATION_DENIED",
+  "EVIDENCE_SOURCE_NOT_LIVE",
+  "EVIDENCE_OWNER_GENERATION_MISMATCH",
+  "EVIDENCE_SCOPE_MISMATCH",
+]);
 
 type Metadata = Readonly<Record<string, string | number | boolean | null>>;
 
@@ -61,15 +81,79 @@ interface ChangeRow {
   readonly metadata_json: string;
 }
 
+type ScopeReadAuthorization = Awaited<ReturnType<typeof prepareOwnerScopeReadAuthorization>>;
+
+interface ScopeGrantStateRow {
+  readonly state: unknown;
+}
+
+function errorCode(error: unknown): string | undefined {
+  if (error === null || typeof error !== "object" || !("code" in error)) return undefined;
+  const code = (error as { readonly code?: unknown }).code;
+  return typeof code === "string" ? code : undefined;
+}
+
+function isExpectedScopeDenial(error: unknown): boolean {
+  const code = errorCode(error);
+  return code !== undefined && EXPECTED_SCOPE_DENIAL_CODES.has(code);
+}
+
+function rowScopeRef(row: ChangeRow): VersionedRef | null {
+  if (row.visibility_snapshot_id === null && row.visibility_snapshot_revision === null) return null;
+  const parsed = VersionedRefSchema.safeParse({
+    id: row.visibility_snapshot_id,
+    revision: row.visibility_snapshot_revision,
+  });
+  if (!parsed.success) fail("RESEARCH_CHANGES_READBACK_CORRUPT", "change scope is malformed", 409);
+  return parsed.data;
+}
+
+function scopeKey(scopeRef: VersionedRef): string {
+  return `${scopeRef.id}\u0000${scopeRef.revision}`;
+}
+
+async function readOriginalScopeGrantState(
+  database: D1Database,
+  context: AuthenticatedRequestContext,
+  scopeRef: VersionedRef,
+): Promise<string | null> {
+  let row: ScopeGrantStateRow | null;
+  try {
+    row = await database.prepare(
+      "SELECT state FROM scope_access_grant WHERE snapshot_id=?1 AND snapshot_revision=?2 " +
+      "AND principal_ref=?3 AND client_class=?4 AND credential_generation=?5 LIMIT 1",
+    ).bind(
+      scopeRef.id,
+      scopeRef.revision,
+      context.principal_ref,
+      context.client_class,
+      context.credential_generation,
+    ).first<ScopeGrantStateRow>();
+  } catch {
+    fail("RESEARCH_CHANGES_SETTLEMENT_UNCERTAIN", "changes scope authorization is unavailable", 503, true);
+  }
+  if (row === null) return null;
+  if (typeof row.state !== "string" || !["ACTIVE", "REVOKED", "EXPIRED"].includes(row.state)) {
+    fail("RESEARCH_CHANGES_SETTLEMENT_UNCERTAIN", "changes scope authorization readback is malformed", 503, true);
+  }
+  return row.state;
+}
+
 function fail(code: string, message: string, status = 400, retryable = false): never {
   throw new CatalogInputError(code, message, status, retryable);
 }
 
-function exactRecord(raw: unknown, fields: readonly string[], code: string): Record<string, unknown> {
+function exactRecord(
+  raw: unknown,
+  fields: readonly string[],
+  code: string,
+  optionalFields: readonly string[] = [],
+): Record<string, unknown> {
   if (raw === null || typeof raw !== "object" || Array.isArray(raw)) fail(code, "value must be an object");
   const record = raw as Record<string, unknown>;
   const keys = Object.keys(record);
-  if (keys.length !== fields.length || fields.some((field) => !Object.hasOwn(record, field))) {
+  const allowedFields = new Set([...fields, ...optionalFields]);
+  if (keys.some((key) => !allowedFields.has(key)) || fields.some((field) => !Object.hasOwn(record, field))) {
     fail(code, "value has unknown or missing fields");
   }
   return record;
@@ -83,7 +167,19 @@ function validRef(value: unknown, label: string, code = "RESEARCH_CHANGES_INPUT_
 }
 
 export function parseResearchChangesRequest(raw: unknown): ResearchChangesRequest {
-  const record = exactRecord(raw, ["after_cursor", "limit", "kinds"], "RESEARCH_CHANGES_INPUT_INVALID");
+  const record = exactRecord(
+    raw,
+    ["after_cursor", "limit", "kinds"],
+    "RESEARCH_CHANGES_INPUT_INVALID",
+    ["start_at"],
+  );
+  const hasLatestStart = Object.hasOwn(record, "start_at");
+  if (hasLatestStart && record.start_at !== "latest") {
+    fail("RESEARCH_CHANGES_INPUT_INVALID", "changes start_at must be 'latest'");
+  }
+  if (hasLatestStart && record.after_cursor !== null) {
+    fail("RESEARCH_CHANGES_INPUT_INVALID", "changes start_at='latest' requires a null cursor");
+  }
   if (record.after_cursor !== null && (typeof record.after_cursor !== "string" ||
       new TextEncoder().encode(record.after_cursor).byteLength > MAX_CURSOR_BYTES)) {
     fail("RESEARCH_CHANGES_CURSOR_INVALID", "changes cursor is invalid");
@@ -95,6 +191,7 @@ export function parseResearchChangesRequest(raw: unknown): ResearchChangesReques
     after_cursor: record.after_cursor as string | null,
     limit: record.limit as number,
     kinds: normalizeResearchChangeKinds(record.kinds),
+    ...(hasLatestStart ? { start_at: "latest" as const } : {}),
   };
 }
 
@@ -290,37 +387,186 @@ export function createResearchChangesService(
     }
     const kindClause = request.kinds.length === 0
       ? ""
-      : ` AND c.kind IN (${request.kinds.map((_, index) => `?${index + 7}`).join(",")})`;
-    const observedAt = observedDate.toISOString();
-    let rows: readonly ChangeRow[];
-    try {
-      const result = await env.CORE_DB.prepare(
-        "SELECT c.sequence,c.change_ref,c.kind,c.subject_ref,c.subject_revision,c.payload_ref,c.payload_sha256," +
-        "c.visibility_principal_ref,c.visibility_snapshot_id,c.visibility_snapshot_revision,c.occurred_at,c.metadata_json " +
-        "FROM research_change_feed c WHERE c.sequence>?1 " +
-        "AND (c.visibility_principal_ref IS NULL OR c.visibility_principal_ref=?2) " +
-        "AND (c.visibility_snapshot_id IS NULL OR EXISTS (" +
-        "SELECT 1 FROM scope_access_grant g JOIN scope_snapshot s " +
-        "ON s.snapshot_id=g.snapshot_id AND s.revision=g.snapshot_revision " +
-        "WHERE g.snapshot_id=c.visibility_snapshot_id AND g.snapshot_revision=c.visibility_snapshot_revision " +
-        "AND g.principal_ref=?2 AND g.client_class=?3 AND g.credential_generation=?4 " +
-        "AND g.state='ACTIVE' AND g.expires_at>?5 AND s.invalidated_at IS NULL AND s.expires_at>?5 " +
-        "AND EXISTS (SELECT 1 FROM json_each(g.allowed_use_json) u WHERE u.value='research')))" +
-        kindClause + " ORDER BY c.sequence ASC LIMIT ?6",
-      ).bind(
-        after, principalRef, "owner_pwa", credentialGeneration, observedAt,
-        request.limit + 1, ...request.kinds,
-      ).all<ChangeRow>();
-      if (result.success !== true || !Array.isArray(result.results)) {
-        fail("RESEARCH_CHANGES_SETTLEMENT_UNCERTAIN", "changes query did not settle", 503, true);
+      : ` AND c.kind IN (${request.kinds.map((_, index) => `?${index + 4}`).join(",")})`;
+    const latestStart = request.start_at === "latest";
+    const readBatch = async (boundary: number, batchLimit: number): Promise<readonly ChangeRow[]> => {
+      const sequenceClause = latestStart ? "c.sequence<?1" : "c.sequence>?1";
+      const order = latestStart ? "DESC" : "ASC";
+      try {
+        const result = await env.CORE_DB.prepare(
+          "SELECT c.sequence,c.change_ref,c.kind,c.subject_ref,c.subject_revision,c.payload_ref,c.payload_sha256," +
+          "CASE WHEN c.kind='WIKI_PUBLISHED' THEN p.principal_ref ELSE c.visibility_principal_ref END AS visibility_principal_ref," +
+          "CASE WHEN c.kind='WIKI_PUBLISHED' THEN json_extract(r.page_json,'$.scope_snapshot_ref.id') ELSE c.visibility_snapshot_id END AS visibility_snapshot_id," +
+          "CASE WHEN c.kind='WIKI_PUBLISHED' THEN json_extract(r.page_json,'$.scope_snapshot_ref.revision') ELSE c.visibility_snapshot_revision END AS visibility_snapshot_revision," +
+          "c.occurred_at,c.metadata_json " +
+          "FROM research_change_feed c " +
+          "LEFT JOIN wiki_publication_outbox o ON c.kind='WIKI_PUBLISHED' " +
+          "AND c.change_ref='wiki:' || o.outbox_ref " +
+          "LEFT JOIN wiki_publication_revision r ON c.kind='WIKI_PUBLISHED' " +
+          "AND r.page_id=o.page_id AND r.revision=o.revision AND r.manifest_ref=o.manifest_ref " +
+          "AND r.page_sha256=o.payload_sha256 AND json_valid(r.page_json) " +
+          "LEFT JOIN wiki_publication_proposal p ON c.kind='WIKI_PUBLISHED' " +
+          "AND p.proposal_id=r.proposal_id AND p.proposal_revision=r.proposal_revision " +
+          "AND p.page_id=r.page_id AND p.page_revision=r.revision " +
+          "WHERE " + sequenceClause +
+          " AND ((c.kind='WIKI_PUBLISHED' AND p.principal_ref=?2) OR " +
+          "(c.kind<>'WIKI_PUBLISHED' AND (c.visibility_principal_ref IS NULL OR c.visibility_principal_ref=?2)))" +
+          " AND (c.kind<>'WIKI_PUBLISHED' OR (" +
+          "o.outbox_ref IS NOT NULL AND r.page_id IS NOT NULL AND p.proposal_id IS NOT NULL " +
+          "AND c.change_ref='wiki:' || o.outbox_ref " +
+          "AND c.subject_ref IS ('wiki-page:' || r.page_id) " +
+          "AND c.subject_revision IS r.revision " +
+          "AND c.payload_ref IS r.manifest_ref " +
+          "AND c.payload_sha256 IS r.page_sha256 " +
+          "AND json_type(r.page_json,'$.scope_snapshot_ref.id')='text' " +
+          "AND json_type(r.page_json,'$.scope_snapshot_ref.revision')='integer' " +
+          "AND (c.visibility_principal_ref IS NULL OR c.visibility_principal_ref IS p.principal_ref) " +
+          "AND ((c.visibility_snapshot_id IS NULL AND c.visibility_snapshot_revision IS NULL) OR " +
+          "(c.visibility_snapshot_id IS json_extract(r.page_json,'$.scope_snapshot_ref.id') " +
+          "AND c.visibility_snapshot_revision IS json_extract(r.page_json,'$.scope_snapshot_ref.revision')))" +
+          "))" + kindClause + ` ORDER BY c.sequence ${order} LIMIT ?3`,
+        ).bind(boundary, principalRef, batchLimit, ...request.kinds).all<ChangeRow>();
+        if (result.success !== true || !Array.isArray(result.results)) {
+          fail("RESEARCH_CHANGES_SETTLEMENT_UNCERTAIN", "changes query did not settle", 503, true);
+        }
+        return result.results;
+      } catch (error) {
+        if (error instanceof CatalogInputError) throw error;
+        fail("RESEARCH_CHANGES_SETTLEMENT_UNCERTAIN", "changes query is unavailable", 503, true);
       }
-      rows = result.results;
-    } catch (error) {
-      if (error instanceof CatalogInputError) throw error;
-      fail("RESEARCH_CHANGES_SETTLEMENT_UNCERTAIN", "changes query is unavailable", 503, true);
+    };
+    const visibleRows: ChangeRow[] = [];
+    const authorizations = new Map<string, ScopeReadAuthorization | null>();
+    const deniedScopes = new Set<string>();
+    const dropScope = (key: string): void => {
+      for (let index = visibleRows.length - 1; index >= 0; index -= 1) {
+        const row = visibleRows[index];
+        if (row === undefined) continue;
+        const scopeRef = rowScopeRef(row);
+        if (scopeRef !== null && scopeKey(scopeRef) === key) visibleRows.splice(index, 1);
+      }
+    };
+    const denyScope = (key: string): void => {
+      deniedScopes.add(key);
+      authorizations.set(key, null);
+      dropScope(key);
+    };
+    const loadAuthorization = async (scopeRef: VersionedRef): Promise<ScopeReadAuthorization | null> => {
+      const key = scopeKey(scopeRef);
+      if (deniedScopes.has(key)) return null;
+      if (authorizations.has(key)) return authorizations.get(key) ?? null;
+      const originalGrantState = await readOriginalScopeGrantState(env.CORE_DB, context, scopeRef);
+      if (originalGrantState === "REVOKED") {
+        denyScope(key);
+        return null;
+      }
+      try {
+        const authorization = await prepareOwnerScopeReadAuthorization(env, context, scopeRef);
+        authorizations.set(key, authorization);
+        return authorization;
+      } catch (error) {
+        if (isExpectedScopeDenial(error)) {
+          denyScope(key);
+          return null;
+        }
+        fail("RESEARCH_CHANGES_SETTLEMENT_UNCERTAIN", "changes scope authorization is unavailable", 503, true);
+      }
+    };
+    const requireScopeCurrent = async (key: string, authorization: ScopeReadAuthorization): Promise<boolean> => {
+      const originalGrantState = await readOriginalScopeGrantState(
+        env.CORE_DB,
+        context,
+        authorization.original_scope_snapshot_ref,
+      );
+      if (originalGrantState === "REVOKED") {
+        denyScope(key);
+        return false;
+      }
+      try {
+        await authorization.requireCurrent();
+        return true;
+      } catch (error) {
+        if (isExpectedScopeDenial(error)) {
+          denyScope(key);
+          return false;
+        }
+        fail("RESEARCH_CHANGES_SETTLEMENT_UNCERTAIN", "changes scope authorization is unavailable", 503, true);
+      }
+    };
+    const authorizeBatch = async (batch: readonly ChangeRow[]): Promise<readonly ChangeRow[]> => {
+      const accepted: ChangeRow[] = [];
+      const scopeKeys = new Set<string>();
+      for (const row of batch) {
+        const scopeRef = rowScopeRef(row);
+        if (scopeRef === null) {
+          accepted.push(row);
+          continue;
+        }
+        const key = scopeKey(scopeRef);
+        const authorization = await loadAuthorization(scopeRef);
+        if (authorization !== null) {
+          accepted.push(row);
+          scopeKeys.add(key);
+        }
+      }
+      for (const key of scopeKeys) {
+        const authorization = authorizations.get(key);
+        if (authorization !== undefined && authorization !== null) await requireScopeCurrent(key, authorization);
+      }
+      return accepted.filter((row) => {
+        const scopeRef = rowScopeRef(row);
+        return scopeRef === null || !deniedScopes.has(scopeKey(scopeRef));
+      });
+    };
+    const recheckVisibleScopes = async (): Promise<boolean> => {
+      const scopeKeys = new Set<string>();
+      for (const row of visibleRows) {
+        const scopeRef = rowScopeRef(row);
+        if (scopeRef !== null) scopeKeys.add(scopeKey(scopeRef));
+      }
+      const before = visibleRows.length;
+      for (const key of scopeKeys) {
+        if (deniedScopes.has(key)) {
+          dropScope(key);
+          continue;
+        }
+        const authorization = authorizations.get(key);
+        if (authorization === undefined || authorization === null) {
+          fail("RESEARCH_CHANGES_READBACK_CORRUPT", "change scope authorization is missing", 409);
+        }
+        await requireScopeCurrent(key, authorization);
+      }
+      return visibleRows.length !== before;
+    };
+    const targetCount = latestStart ? request.limit : request.limit + 1;
+    let scanBoundary = latestStart ? Number.MAX_SAFE_INTEGER : after;
+    let exhausted = false;
+    const fetchUntilTarget = async (): Promise<void> => {
+      while (!exhausted && visibleRows.length < targetCount) {
+        const batchLimit = Math.min(RESEARCH_CHANGES_SCAN_BATCH, targetCount - visibleRows.length);
+        const batch = await readBatch(scanBoundary, batchLimit);
+        if (batch.length === 0) {
+          exhausted = true;
+          return;
+        }
+        const boundaryRow = batch.at(-1);
+        if (boundaryRow === undefined || !Number.isSafeInteger(boundaryRow.sequence) ||
+            (latestStart ? boundaryRow.sequence >= scanBoundary : boundaryRow.sequence <= scanBoundary)) {
+          fail("RESEARCH_CHANGES_READBACK_CORRUPT", "changes sequence ordering is invalid", 409);
+        }
+        scanBoundary = boundaryRow.sequence;
+        visibleRows.push(...await authorizeBatch(batch));
+      }
+    };
+    await fetchUntilTarget();
+    while (true) {
+      const removed = await recheckVisibleScopes();
+      if (!removed || visibleRows.length >= targetCount || exhausted) break;
+      await fetchUntilTarget();
     }
-    const hasMore = rows.length > request.limit;
-    const items = rows.slice(0, request.limit).map(decodeRow);
+    const orderedRows = latestStart ? [...visibleRows].reverse() : visibleRows;
+    const hasMore = latestStart ? false : orderedRows.length > request.limit;
+    const items = orderedRows.slice(0, request.limit).map(decodeRow);
     const last = items.at(-1);
     if (last !== undefined) {
       nextCursor = await codec.sign({ sequence: last.sequence, change_ref: last.change_ref });

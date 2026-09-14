@@ -126,19 +126,27 @@ function bindAuthorization(
     }));
 }
 
-/** Build a fresh owner authorization while retaining the saved scope as provenance. */
-export async function prepareWikiProposalReauthorization(
+async function loadOriginalScope(
   env: Pick<Env, "CORE_DB">,
   context: EvidenceAccessContext,
-  page: WikiPageRevision,
-): Promise<WikiProposalReadAuthorization> {
+  scopeRef: VersionedRef,
+): Promise<{ readonly originalRef: VersionedRef; readonly original: ScopeSnapshot }> {
   if (context.client_class !== "owner_pwa") stale("Wiki access requires the owner profile", 403);
-  const originalRef = VersionedRefSchema.parse(page.scope_snapshot_ref);
+  const originalRef = VersionedRefSchema.parse(scopeRef);
   const originalAuthority = await loadScopeAuthority(env.CORE_DB, originalRef);
   if (originalAuthority === null || originalAuthority.invalidated_at !== null) {
     stale("Wiki proposal scope is no longer available");
   }
-  const original = ScopeSnapshotSchema.parse(originalAuthority.snapshot);
+  return { originalRef, original: ScopeSnapshotSchema.parse(originalAuthority.snapshot) };
+}
+
+/** Build a fresh owner authorization while retaining the saved scope as provenance. */
+export async function prepareOwnerScopeReauthorization(
+  env: Pick<Env, "CORE_DB">,
+  context: EvidenceAccessContext,
+  scopeRef: VersionedRef,
+): Promise<WikiProposalReadAuthorization> {
+  const { originalRef, original } = await loadOriginalScope(env, context, scopeRef);
   const now = Date.now;
   const owner = createOwnerScopeAuthority(env.CORE_DB, context, now);
   await owner.requireReadPolicy();
@@ -160,23 +168,26 @@ export async function prepareWikiProposalReauthorization(
   return bindAuthorization(originalRef, navigation, authorization);
 }
 
+/** Preserve the page-based API while allowing history readers to authorize by scope. */
+export async function prepareWikiProposalReauthorization(
+  env: Pick<Env, "CORE_DB">,
+  context: EvidenceAccessContext,
+  page: WikiPageRevision,
+): Promise<WikiProposalReadAuthorization> {
+  return prepareOwnerScopeReauthorization(env, context, page.scope_snapshot_ref);
+}
+
 /**
  * Use the persisted grant while it is current, and reauthorize only on a
  * known scope/credential staleness result. Unknown storage failures remain
  * fatal and are never converted into a fresh authorization.
  */
-export async function prepareWikiProposalReadAuthorization(
+export async function prepareOwnerScopeReadAuthorization(
   env: Pick<Env, "CORE_DB">,
   context: EvidenceAccessContext,
-  page: WikiPageRevision,
+  scopeRef: VersionedRef,
 ): Promise<WikiProposalReadAuthorization> {
-  if (context.client_class !== "owner_pwa") stale("Wiki access requires the owner profile", 403);
-  const originalRef = VersionedRefSchema.parse(page.scope_snapshot_ref);
-  const stored = await loadScopeAuthority(env.CORE_DB, originalRef);
-  if (stored === null || stored.invalidated_at !== null) {
-    stale("Wiki proposal scope is no longer available");
-  }
-  const original = ScopeSnapshotSchema.parse(stored.snapshot);
+  const { originalRef, original } = await loadOriginalScope(env, context, scopeRef);
   const now = Date.now;
   const owner = createOwnerScopeAuthority(env.CORE_DB, context, now);
   const scopes = createD1ScopeService(env.CORE_DB, owner, { now, max_snapshot_members: 64 });
@@ -192,6 +203,14 @@ export async function prepareWikiProposalReadAuthorization(
     return await bindAuthorization(originalRef, navigation, authorization);
   } catch (error) {
     if (!canReauthorize(error)) throw error;
-    return prepareWikiProposalReauthorization(env, context, page);
+    return prepareOwnerScopeReauthorization(env, context, originalRef);
   }
+}
+
+export async function prepareWikiProposalReadAuthorization(
+  env: Pick<Env, "CORE_DB">,
+  context: EvidenceAccessContext,
+  page: WikiPageRevision,
+): Promise<WikiProposalReadAuthorization> {
+  return prepareOwnerScopeReadAuthorization(env, context, page.scope_snapshot_ref);
 }
