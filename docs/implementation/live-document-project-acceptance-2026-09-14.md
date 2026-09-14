@@ -1,11 +1,12 @@
 # Live document and project acceptance — 2026-09-14
 
-The current owner workspace deployment is generation `git-031c6fa`, Cloudflare
-version `c837f53b-d0b3-4c62-9cb6-092d63715a41`. Earlier evidence below was
+The current owner workspace deployment is generation `git-a68e21c`, Cloudflare
+version `55f91e25-e81b-470e-b977-f4a56e12e561`. Earlier evidence below was
 collected under prior generations and remains historical. This note records
-the bounded document, project, and research evidence; the project save and a
-saved research DRAFT are live, while full research completion and universal
-semantic PASS verdicts are not claimed.
+the bounded document, project, and research evidence; the project save is live,
+the `031c6fa` research DRAFT is historical, and the current `a68e21c` PROJECT
+run reached a bounded saved DRAFT. Full project or full-corpus completion is
+not claimed.
 
 ## Recorded implementation slices
 
@@ -15,8 +16,11 @@ semantic PASS verdicts are not claimed.
   together with the owner session panel changes.
 * `2c160ce` — the bounded project-update SQL expression-depth fix and the
   live project update readback recorded below.
-* `031c6fa` — the project-scoped research run reached a saved DRAFT under the
-  current deployment; its bounded stage readback is recorded below.
+* `031c6fa` — the project-scoped research run reached a saved DRAFT; its
+  bounded stage readback is recorded below as historical evidence.
+* `a68e21c` — the request-local audit claim-alias fix preserves canonical
+  persisted claim refs; one focused offline fixture passed 3/3 and core
+  TypeScript typecheck was green.
 
 ## Live evidence
 
@@ -81,13 +85,14 @@ project save and research run evidence below.
 
 ## Current deployment and limits
 
-Deployment `git-031c6fa` (Cloudflare version
-`c837f53b-d0b3-4c62-9cb6-092d63715a41`) carries the reviewed W2 configuration
-`retries.limit: 0` and a 600-second model-stage lease. The project save above is
-the live D1 readback for the prior `git-2c160ce` deployment; the saved DRAFT
-below is the live readback under this current deployment. These facts describe
-execution policy and a bounded DRAFT outcome; they do not prove full research
-completion or that every semantic verdict is PASS.
+Deployment `git-a68e21c` (Cloudflare version
+`55f91e25-e81b-470e-b977-f4a56e12e561`) is D1 `ACTIVE` and carries the
+reviewed W2 configuration with `retries.limit: 0` and a 600-second model-stage
+lease. The project save above is the live D1 readback for the prior
+`git-2c160ce` deployment; the earlier saved DRAFT below is historical evidence
+from `git-031c6fa`, while the current bounded DRAFT is recorded below. These
+facts describe execution policy and bounded prior evidence; they do not prove
+full project or full-corpus completion.
 
 ## Owner namespace renewal contract
 
@@ -126,7 +131,7 @@ plain-JSON equality was accepted, while prose-prefixed and multiple or
 malformed JSON fences were rejected. This fixture is parser evidence, not a
 live research result.
 
-The later run `run-fb3381dff43c416ca6e2f00f2548d5d4b69628649eb42b45` on
+The historical run `run-fb3381dff43c416ca6e2f00f2548d5d4b69628649eb42b45` on
 `git-031c6fa` completed with `ENGINE_COMPLETED`, `next_stage_index: 18`, and
 was created at `2026-09-14T06:07:58.375Z`. Its actual project scope was
 the UI-selected project `Орбита`; its sampled evidence pack contained seven
@@ -153,8 +158,54 @@ coverage. The saved artifact readback is
 with the same-hash artifact spec and evidence freeze
 `eliotr.evidence-freeze-6973036c2bef88182541878fad90ba97d2003d112d023d5ca48efd57e4859375:1`.
 The 3,697-byte AUDIT output was otherwise successful, but all four UI claim
-details remained `NOT_VERIFIABLE`; decoder/binding diagnosis is pending. No
-claim that all semantic verdicts are PASS is made.
+details remained `NOT_VERIFIABLE`; the saved Stage14/provider comparison below
+identifies the binding mismatch. No claim that all semantic verdicts are PASS
+is made. An exact comparison of the
+saved Stage14 output (`.eliotr-state/orbit-project-audit-stage-output.json`,
+SHA-256
+`3f90c0b5a8f7d891719b19758000ec452d1b48eb9eac3ff4cb6256daca747b5b`) found
+the second expected legacy claim ref contained `64457065` while the provider
+returned `64477065` at that position; all four claim-text digests, the verifier identity, and
+the evidence input SHA matched. The persisted result recorded
+`SEMANTIC_VERIFIER_OUTPUT_BINDING_MISMATCH`. Deployment `git-a68e21c` carries the two-file
+request-local alias fix, which maps `claim_1` through `claim_4` back to the
+trusted canonical refs without repairing that legacy value. No new live PASS
+was claimed from this historical run.
+
+A new UI run under `git-a68e21c` uses the same question and PROJECT `Орбита`
+scope; its result is recorded below.
+
+The current run `run-65c62850c6f012ddc67340faf6d2fa4bcde6354d1ba53bd8` on
+`git-a68e21c` was created at `2026-09-14T06:38:15.152Z` and reached
+`ENGINE_COMPLETED` with `next_stage_index: 18`. Cloudflare reported 19 workflow
+steps, at most one attempt per step, and no failed steps. Its PROJECT scope was `Орбита`; the sampled pack
+contained seven resolved excerpts (DOCX 3, PDF 4), with coverage `SAMPLED`.
+REPORT succeeded from `2026-09-14T06:38:45.584Z` through
+`2026-09-14T06:39:01.930Z` with a 2,583-byte output. AUDIT succeeded from
+`2026-09-14T06:39:13.107Z` through `2026-09-14T06:39:38.987Z` with a
+3,970-byte output. The provider response
+`.eliotr-state/orbit-alias-audit-output.json` has SHA-256
+`239f7dd06c6325b414c1fbd287b422aedda7d58f00b35253a8c909202c487bc5` and
+used request-local `claim_1` through `claim_4` aliases. Persisted Stage14
+output `.eliotr-state/orbit-alias-audit-stage-output.json` has SHA-256
+`b76a77d1b9b0d3dcee286bb4674f0e2e8a69c5a1f7cdbbde45a7618f4698a2a6` and
+contains four canonical claims with disposition `SUPPORTED`, without an
+invalid-output reason. The UI opened the saved DRAFT with actual Russian
+text, purpose/status/date 21 September 2026, and PDF/DOCX formats; it showed
+two represented sources, two cited sources, and zero omitted. Artifact readback
+is `eliotr.research.artifact-59bae356b18c894a4f75035ef6323f0475e03dc237f19485568eecfbf21da1e0:1`,
+with the same-hash artifact spec and evidence freeze
+`eliotr.evidence-freeze-c050bcd8403b44ad0a7042106919743b9c712962ddb7dc7393ed1ab29ec7517d:1`.
+The date-claim support readback opened the verified
+`Orbit-document-workflow.docx` excerpt at UTF-8 bytes 320–578 with SHA-256
+`af0349f078ecf34fecc548eedd7df758c30a1abfaec443f94ed6ddbefccf34ef`.
+Evidence receipt
+`evidence-resolution-1ce379fed019556eab6e752a789e032e6daa524e5f9a7c38:1`
+was `LIVE` and `DATA_ONLY`, matching the current scope and source revision;
+the actual milestone table and 21 September date were visible. The UI showed
+all four visible claim verdicts as `SUPPORTED`. Coverage remains incomplete,
+so this is bounded live evidence rather than full project or full-corpus
+completion.
 
 The recorded checks include green core and PWA TypeScript checks, a green PWA
 build, the remote D1 `EXPLAIN` of the emitted project UPDATE with 1,317 VM
