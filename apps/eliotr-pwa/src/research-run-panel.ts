@@ -575,6 +575,14 @@ export function mountResearchRunPanel(
       .catch((error: unknown) => {
         if (active !== serial || (error instanceof Error && error.name === "AbortError")) return;
         lastExecutionState = undefined; lastEngineStatus = undefined; clearProgressTimer();
+        const statusReadbackFailure = error instanceof ApiRequestError && error.status === 409 && error.code === "RESEARCH_RUN_STATUS_INVALID";
+        if (statusReadbackFailure) {
+          const notice = "Research status could not be read consistently. The run is still loaded; use Refresh status to try again.";
+          progress.textContent = notice;
+          status.textContent = notice;
+          console.warn("research_run_read_failed", JSON.stringify({ code: error.code, status: error.status }));
+          return;
+        }
         const privateFailure = error instanceof ApiRequestError && (error.status === 401 || error.status === 403 || error.status === 404 || error.status === 409 || error.code === "RESEARCH_RUN_DEPLOYMENT_CHANGED");
         if (!automatic || privateFailure) { result.replaceChildren(); result.hidden = true; }
         if (error instanceof ApiRequestError && (error.status === 401 || error.status === 403 || error.status === 404 || error.status === 409 || error.code === "RESEARCH_RUN_DEPLOYMENT_CHANGED")) {

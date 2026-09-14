@@ -88,18 +88,36 @@ export class WorkflowCheckpointStore {
    * current(), because cancelled and engine-completed runs remain readable.
    */
   async readRunStatus(operationId: string, principal: WorkflowPrincipal): Promise<WorkflowRunStatus | null> {
-    let run: RunRow | null;
+    let snapshot: readonly D1Result<unknown>[];
     try {
-      run = await this.db.prepare(
-        "SELECT operation_id, investigation_id, initial_revision, current_revision, principal_ref, " +
-        "credential_generation, deployment_generation, scope_snapshot_id, scope_snapshot_revision, " +
-        "next_stage_index, state, cancellation_receipt_ref, handler_generation, idempotency_key, " +
-        "policy_generation, policy_authority_ref, authorization_receipt_ref, purge_revision, initial_manifest_json " +
-        "FROM research_workflow_run WHERE operation_id = ?1 AND principal_ref = ?2 LIMIT 1",
-      ).bind(operationId, principal.principal_ref).first<RunRow>();
+      snapshot = await this.db.batch([
+        this.db.prepare(
+          "SELECT operation_id, investigation_id, initial_revision, current_revision, principal_ref, " +
+          "credential_generation, deployment_generation, scope_snapshot_id, scope_snapshot_revision, " +
+          "next_stage_index, state, cancellation_receipt_ref, handler_generation, idempotency_key, " +
+          "policy_generation, policy_authority_ref, authorization_receipt_ref, purge_revision, initial_manifest_json " +
+          "FROM research_workflow_run WHERE operation_id = ?1 AND principal_ref = ?2 LIMIT 1",
+        ).bind(operationId, principal.principal_ref),
+        this.db.prepare(
+          "SELECT operation_id, state, current_revision, next_stage_index, ledger_revision " +
+          "FROM research_workflow_current WHERE operation_id = ?1 LIMIT 1",
+        ).bind(operationId),
+        this.db.prepare(
+          "SELECT operation_id, stage_index, request_json, request_sha256, attempt_ref, expected_revision, " +
+          "budget_receipt_ref, budget_expires_at_ms, state, output_json, created_at " +
+          "FROM research_workflow_attempt WHERE operation_id = ?1 AND stage_index = " +
+          "(SELECT next_stage_index FROM research_workflow_run " +
+          "WHERE operation_id = ?1 AND principal_ref = ?2) LIMIT 1",
+        ).bind(operationId, principal.principal_ref),
+      ]);
     } catch {
       fail("WORKFLOW_EFFECT_UNCERTAIN");
     }
+    if (snapshot.length !== 3 || snapshot.some((result) => result.success !== true ||
+        !Array.isArray(result.results) || result.results.length > 1)) {
+      fail("WORKFLOW_OUTPUT_CORRUPT");
+    }
+    const run = (snapshot[0]?.results[0] as RunRow | undefined) ?? null;
     if (run === null) return null;
     const requiredStrings: readonly unknown[] = [run.operation_id, run.investigation_id, run.principal_ref,
       run.credential_generation, run.deployment_generation, run.scope_snapshot_id];
@@ -120,15 +138,7 @@ export class WorkflowCheckpointStore {
     }
     if (run.credential_generation === principal.credential_generation &&
         run.deployment_generation === principal.deployment_generation) {
-      let current: StoredCurrentRunRow | null;
-      try {
-        current = await this.db.prepare(
-          "SELECT operation_id, state, current_revision, next_stage_index, ledger_revision " +
-          "FROM research_workflow_current WHERE operation_id = ?1 LIMIT 1",
-        ).bind(operationId).first<StoredCurrentRunRow>();
-      } catch {
-        fail("WORKFLOW_EFFECT_UNCERTAIN");
-      }
+      const current = (snapshot[1]?.results[0] as StoredCurrentRunRow | undefined) ?? null;
       if (current === null) fail("WORKFLOW_AUTHORITY_STALE");
       if (current.operation_id !== operationId || current.state !== run.state ||
           current.current_revision !== run.current_revision || current.next_stage_index !== run.next_stage_index ||
@@ -136,15 +146,7 @@ export class WorkflowCheckpointStore {
     }
     let currentAttempt: AttemptRow | null = null;
     if (run.next_stage_index < RESEARCH_WORKFLOW_STAGES.length) {
-      try {
-        currentAttempt = await this.db.prepare(
-          "SELECT operation_id, stage_index, request_json, request_sha256, attempt_ref, expected_revision, " +
-          "budget_receipt_ref, budget_expires_at_ms, state, output_json, created_at " +
-          "FROM research_workflow_attempt WHERE operation_id = ?1 AND stage_index = ?2 LIMIT 1",
-        ).bind(operationId, run.next_stage_index).first<AttemptRow>();
-      } catch {
-        fail("WORKFLOW_EFFECT_UNCERTAIN");
-      }
+      currentAttempt = (snapshot[2]?.results[0] as AttemptRow | undefined) ?? null;
       if (currentAttempt !== null && (currentAttempt.operation_id !== operationId ||
           currentAttempt.stage_index !== run.next_stage_index || currentAttempt.expected_revision !== run.current_revision ||
           typeof currentAttempt.attempt_ref !== "string" || currentAttempt.attempt_ref.length < 1 ||

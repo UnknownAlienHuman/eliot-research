@@ -36,6 +36,16 @@ translation: all affected claims are `NOT_VERIFIABLE_IN_SCOPE`. It preserves the
 with unresolved verification; no observation is repaired, accepted selectively or treated as PASS.
 Other corrupt workflow outputs stop immediately with an allowlisted error instead of exhausting retries.
 
+On `git-0554a56`, `run-7228a1f8ec866129b832797fe48410a86b423f6ce992e1e8` completed at
+00:22:21 UTC on September 14 and saved a new three-part document guide. Its section was downloaded
+from R2 and matched SHA-256 `199f693b2a527b3237186dbe8f416624d78771021cefdf86115e11380e311c63`
+(2,889 bytes). This is another actual owner document run, independent of the earlier rejected audit.
+The PWA reopened its text and four claim assessments, then verified the source excerpt at bytes
+9043–10342 with digest `927bf6dfd6970de35d36b33bc322660113684f4ec25e834d1767d2ea5c486c5c`.
+The run also exposed a status-read race across a checkpoint commit. Run, current authority and
+active attempt are now read in one D1 transaction. A remaining `RESEARCH_RUN_STATUS_INVALID`
+response preserves the loaded run and history for manual refresh; actual authorization loss still clears them.
+
 Route qualification uses a 45-minute window. Version `owner-cloudflare-glm53-v6` was qualified through
 real synthesis and audit calls at 23:44 UTC on September 13, with initial proofs valid until 00:29 UTC
 on September 14. Its new immutable pricing snapshots and owner configuration run until October 12;
