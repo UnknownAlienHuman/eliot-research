@@ -365,6 +365,7 @@ export function mountProjectPanel(
     return [...new Set(values)].sort();
   };
 
+  titleInput.oninput = updateButtons;
   form.onsubmit = (event) => {
     event.preventDefault();
     if (operation !== "idle" || disposed) return;
@@ -443,6 +444,7 @@ export function mountProjectPanel(
     serial += 1;
     controller?.abort();
     controller = undefined;
+    titleInput.oninput = null;
     window.removeEventListener("offline", offline);
     window.removeEventListener("eliotr:authorization-cleared", denied);
   };
