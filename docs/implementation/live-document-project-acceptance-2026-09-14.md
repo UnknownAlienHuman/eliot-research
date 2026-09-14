@@ -1,10 +1,11 @@
 # Live document and project acceptance — 2026-09-14
 
-The current owner workspace deployment is generation `git-2c160ce`, Cloudflare
-version `4800872e-234f-4a24-8af5-5e2c2a144191`. Earlier evidence below was
+The current owner workspace deployment is generation `git-031c6fa`, Cloudflare
+version `c837f53b-d0b3-4c62-9cb6-092d63715a41`. Earlier evidence below was
 collected under prior generations and remains historical. This note records
-the bounded document, project, and research evidence; the project save is now
-live, while no successful research result is claimed.
+the bounded document, project, and research evidence; the project save and a
+saved research DRAFT are live, while full research completion and universal
+semantic PASS verdicts are not claimed.
 
 ## Recorded implementation slices
 
@@ -14,6 +15,8 @@ live, while no successful research result is claimed.
   together with the owner session panel changes.
 * `2c160ce` — the bounded project-update SQL expression-depth fix and the
   live project update readback recorded below.
+* `031c6fa` — the project-scoped research run reached a saved DRAFT under the
+  current deployment; its bounded stage readback is recorded below.
 
 ## Live evidence
 
@@ -73,17 +76,18 @@ remained stale until the page was reloaded. After `d54539f` deployed the
 lifecycle-event fix, a reload showed three sources. No second live
 expired-workspace renewal has been observed after that deployment. The owner
 browser login succeeded through Gmail OTP; no Google IdP integration was
-present, so this was a one-time PIN flow. This does not change the pending
-project update evidence above.
+present, so this was a one-time PIN flow. This is independent of the later
+project save and research run evidence below.
 
 ## Current deployment and limits
 
-Deployment `git-2c160ce` (Cloudflare version
-`4800872e-234f-4a24-8af5-5e2c2a144191`) carries the reviewed W2 configuration
+Deployment `git-031c6fa` (Cloudflare version
+`c837f53b-d0b3-4c62-9cb6-092d63715a41`) carries the reviewed W2 configuration
 `retries.limit: 0` and a 600-second model-stage lease. The project save above is
-the live D1 readback for this deployment. No new run has yet produced a
-persisted W2 readback under it. These facts describe execution policy; they do
-not prove a successful research result.
+the live D1 readback for the prior `git-2c160ce` deployment; the saved DRAFT
+below is the live readback under this current deployment. These facts describe
+execution policy and a bounded DRAFT outcome; they do not prove full research
+completion or that every semantic verdict is PASS.
 
 ## Owner namespace renewal contract
 
@@ -100,9 +104,10 @@ A historical research run failed during the first `VERIFY` at
 `2026-09-14T05:05:42Z` with `WORKFLOW_OUTPUT_CORRUPT`, before `AUDIT`. Retries
 were later surfaced as a budget stop, masking the original reason. Only the
 SYNTHESIS model call ran (about nine seconds); its output states contained no
-evidence. No successful research result or saved research DRAFT is claimed.
+evidence. For that failed run, no successful research result or saved research
+DRAFT is claimed.
 
-The latest run `5917638b1d7ea333eec733aaba611b665e6bb95855afaa3e` on
+The intermediate historical run `5917638b1d7ea333eec733aaba611b665e6bb95855afaa3e` on
 `git-2c160ce` read the entire library scope: three documents and a pack with
 14 resolved excerpts (DOCX 3, PDF 4, README 7), with coverage marked
 `SAMPLED`. SYNTHESIS succeeded from `2026-09-14T05:45:00.307Z` through
@@ -111,10 +116,47 @@ The latest run `5917638b1d7ea333eec733aaba611b665e6bb95855afaa3e` on
 contained the actual `Орбита` facts and citations. The response was wrapped
 in one JSON Markdown fence. VERIFY then failed from `2026-09-14T05:45:23.540Z`
 through `2026-09-14T05:45:25.609Z` with `OUTPUT_CORRUPT` after exactly one
-attempt (`retries: 0`), so there was no AUDIT or saved DRAFT. The runtime
-normalizer for this fenced response remains pending. The prior single-document
-fallback issue was fixed; this run used all 14 resolved handles.
+attempt (`retries: 0`), so there was no AUDIT or saved DRAFT. The fenced-response
+normalizer was subsequently fixed and deployed with `031c6fa`; the prior
+single-document fallback issue was fixed, and this run used all 14 resolved
+handles.
 
-The recorded checks were TypeScript typecheck, package build, and one local
-SQLite `EXPLAIN` of the project update SQL. No broad test suite was used for
-this acceptance note.
+An offline 3,103-byte parser fixture contained four claims and six references;
+plain-JSON equality was accepted, while prose-prefixed and multiple or
+malformed JSON fences were rejected. This fixture is parser evidence, not a
+live research result.
+
+The later run `run-fb3381dff43c416ca6e2f00f2548d5d4b69628649eb42b45` on
+`git-031c6fa` completed with `ENGINE_COMPLETED`, `next_stage_index: 18`, and
+was created at `2026-09-14T06:07:58.375Z`. Its actual project scope was
+the UI-selected project `Орбита`; its sampled evidence pack contained seven
+resolved excerpts (DOCX 3, PDF 4, README 0). REPORT
+succeeded from `2026-09-14T06:08:30.091Z` through
+`2026-09-14T06:08:52.595Z` with a 2,655-byte output. AUDIT succeeded from
+`2026-09-14T06:09:03.580Z` through `2026-09-14T06:09:24.874Z` with a
+3,697-byte output. The UI opened a saved DRAFT section containing four actual
+paragraphs about the goal, import, reading, and draft, with Ready/In progress
+statuses, a 21 September 2026 review date, and PDF/DOCX format details. Its
+footer reported two represented sources, two cited sources, and zero omitted,
+while coverage remained unknown/incomplete for the DRAFT. Citation readback
+then succeeded for one date claim: the verified `Orbit-document-workflow.docx`
+excerpt covered UTF-8 bytes 320–578 and had SHA-256
+`af0349f078ecf34fecc548eedd7df758c30a1abfaec443f94ed6ddbefccf34ef`.
+Evidence receipt
+`evidence-resolution-2598e88db6627a3c9db9cd0e7664ce1ba9c9ae1fa0e9b1d6:1`
+was `LIVE` and `DATA_ONLY`, matching the run scope and source revision; the
+readback showed the actual milestone table and the 21 September date. The
+details for all four claims still reported `Could not be verified in this
+scope`, so this does not establish semantic PASS verdicts or complete
+coverage. The saved artifact readback is
+`eliotr.research.artifact-0b2e55be285f24f29bb3f8da89de4b68feb50fc02d33f0c547f7c925cf4332b2:1`,
+with the same-hash artifact spec and evidence freeze
+`eliotr.evidence-freeze-6973036c2bef88182541878fad90ba97d2003d112d023d5ca48efd57e4859375:1`.
+The 3,697-byte AUDIT output was otherwise successful, but all four UI claim
+details remained `NOT_VERIFIABLE`; decoder/binding diagnosis is pending. No
+claim that all semantic verdicts are PASS is made.
+
+The recorded checks include green core and PWA TypeScript checks, a green PWA
+build, the remote D1 `EXPLAIN` of the emitted project UPDATE with 1,317 VM
+instructions, and one local SQLite `EXPLAIN` of the project update SQL. No
+broad test suite was used for this acceptance note.
