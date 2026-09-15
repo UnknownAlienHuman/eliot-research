@@ -1,26 +1,32 @@
-# S26 — один понятный Research экран: источники → вопрос → ответ → цитата
+# S26 — One understandable Research screen: sources → question → answer → citation
 
-База `a2aca127`; F19. Только Research view, не переписывание всего PWA.
+Baseline: `a2aca127`; finding F19. Scope: the Research view, not a rewrite of the entire PWA.
 
-## 1. Суть
-Перед вводом вопроса показаны Recent work, configuration и технические статусы; главное действие уходит за первый экран. Интерфейс заставляет изучать внутреннюю архитектуру.
+## 1. Problem
 
-## 2. Что сделать
-Перестроить существующий Research view: слева компактный выбор источников, в центре вопрос/ответ, справа точная цитата при выборе. Поле вопроса и основное действие доступны сразу. Конфигурацию/схемы/proof expiry убрать с основного пути в existing Connections/details.
+Recent work, configuration, and technical status appear before the question input. The main action falls below the first screen, forcing users to learn internal architecture before doing research.
 
-## 3. Документация
-[Канон §0 и §7](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/architecture/ELIOT_RESEARCH.md).
+## 2. Required change
+
+Reorganize the existing Research view: compact source selection on the left, question/answer in the center, and exact citation details on selection on the right. Make question input and the primary action immediately available. Move configuration, schema, and proof-expiry details to existing Connections/details views.
+
+## 3. Documentation and exact search anchors
+
+[Architecture, sections 0 and 7](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/architecture/ELIOT_RESEARCH.md).
+
 ```sh
 git grep -n -F 'Chat is an interface to an Investigation.' -- docs/architecture/ELIOT_RESEARCH.md
 git grep -n -F 'apps/eliotr-pwa' -- AGENTS.md
 ```
 
-## 4. Как сделать
-Переставить/переиспользовать existing panels в `main.ts`/Research panel/CSS. Не менять backend, не ставить новый UI framework и не имитировать отсутствующие функции. Recent work сделать компактной историей, technical states спрятать под details. При blocked run показать одну понятную причину и действие; готовность не скрывать декоративным READY. Сохранить стабильные data-атрибуты и keyboard/accessible labels.
+## 4. Implementation approach
 
-## 5. Критерии выполнения
-- На 1440×900 поле вопроса, выбранный scope и основная кнопка видны без прокрутки.
-- На узком экране источники/цитата доступны как раскрываемые панели, ввод не перекрыт.
-- Клик citation открывает exact evidence, не tooltip без источника.
-- Нет новых внешних сервисов/frameworks и дублированных forms; API-запросы прежние.
-- Browser test проходит выбор проекта→вопрос→ответ→цитата и blocked state; приложены скриншоты и exact SHA.
+Rearrange and reuse existing panels in main.ts, the Research panel, and CSS. Do not modify the backend, introduce a UI framework, or simulate missing functionality. Make Recent work a compact history. Put technical state behind details. For a blocked run, show a clear reason and actionable next step, not a decorative READY label. Preserve stable data attributes, keyboard navigation, and accessible labels.
+
+## 5. Acceptance criteria
+
+- [ ] At 1440×900, the question input, selected scope, and primary button are visible without scrolling.
+- [ ] On narrow screens, sources/citations become accessible collapsible panels without covering the input.
+- [ ] Selecting a citation opens exact evidence, not a source-free tooltip.
+- [ ] No new external services/frameworks or duplicate forms; existing API operations are reused.
+- [ ] A real browser scenario covers project selection → question → answer → citation and a blocked state. Attach screenshots, exact SHA, and test results.
