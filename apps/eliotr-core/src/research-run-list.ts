@@ -119,7 +119,7 @@ async function readReauthorizedHistoricalArtifact(
   }
   return {
     artifact_ref: reopened.artifact_ref,
-    original_scope_snapshot_ref: reopened.original_scope_snapshot_ref,
+    original_scope_snapshot_ref: reopenedScope(reopened),
     status: "DRAFT",
     evidence_freeze_ref: reopened.artifact.evidence_freeze_ref,
     dependency_manifest_ref: reopened.artifact.dependency_manifest_ref,
@@ -135,9 +135,9 @@ export async function readOwnerResearchRuns(env: Env, context: AuthenticatedRequ
   try {
     const result = await env.CORE_DB.prepare(
       "SELECT operation_id, created_at FROM research_workflow_run " +
-      "WHERE principal_ref=?1 AND credential_generation=?2 AND deployment_generation=?3 " +
+      "WHERE principal_ref=?1 AND deployment_generation=?2 " +
       "ORDER BY created_at DESC, operation_id DESC LIMIT 8",
-    ).bind(context.principal_ref, context.credential_generation, env.DEPLOYMENT_GENERATION)
+    ).bind(context.principal_ref, env.DEPLOYMENT_GENERATION)
       .all<{ operation_id: string; created_at: string }>();
     if (!result.success) throw new Error("Research history read failed");
     rows = result.results;
