@@ -1,24 +1,33 @@
-# S69 — проверить реальную цепочку disclosure и prompt injection
+# S69 — Verify actual disclosure and prompt-injection boundaries
 
-База a2aca127; ER-03/17/24. Это интеграция существующего evaluator/firewall, не новый security framework. Выполнять после появления соответствующего caller; не объявлять отсутствие уязвимостей по одним unit tests.
+Baseline: `a2aca127`; ER-03/17/24. Integrate existing evaluator/firewall behavior, not a new security framework. Test each path when its caller exists; unit tests alone cannot establish absence of vulnerabilities.
 
-## 1. Суть
-Право человека читать документ не даёт права раскрывать его любой модели/агенту. Source/model text не может назначать tools, verifier, grant, callback URL или публикацию.
+## 1. Problem
 
-## 2. Что сделать
-Проследить policy order и taint от admitted bytes через retrieval/EvidencePack/AllowedReferenceManifest до model dispatch, artifact и API/MCP/Google/federation disclosure. Закрыть реальные missing checks и сохранить отрицательные fixtures на actual caller chain.
+Permission to read a document does not authorize disclosure to every model or agent. Source/model text cannot select tools, verifiers, grants, callback destinations, or publication authority.
 
-## 3. Документация / grep
-[ER-03](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/agent-work/ER-03-policy-disclosure-and-injection-boundary.md), `## Required implementation`/`## Mandatory negative boundary`.
+## 2. Required change
+
+Trace policy order and taint from admitted bytes through retrieval/EvidencePack/AllowedReferenceManifest to model dispatch, artifacts, and API/MCP/Google/federation output. Repair demonstrated missing checks and retain negative fixtures through actual callers.
+
+## 3. Documentation and exact search anchors
+
+[ER-03: Required implementation and Mandatory negative boundary](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/agent-work/ER-03-policy-disclosure-and-injection-boundary.md).
+
 ```sh
 git grep -n -F 'Permission to view never implies model/client disclosure.' -- docs/agent-work/ER-03-policy-disclosure-and-injection-boundary.md
 ```
 
-## 4. Как сделать
-Использовать `packages/policy`, HTTP/MCP verified actor и existing context/output compiler. Матрица: viewer allowed/model denied; model allowed/client denied; revoked during read; untrusted text requests erase/publish/secret exfiltration; provider invents handle/tool/URL; forged audience/principal/Origin/cookie; unsafe redirect/private destination в acquisition S39. Проверять before/after external work, не только UI visibility. Запретить side-effect tools в generation surface, но сохранить явно авторизованные owner operations вне generation. Body/HTML/Markdown отображать без выполнения script/unsafe links. Content-free telemetry: token/cookie/source/model body не появляются в log/cause/metrics. Использовать существующие dependency/secret/license checks, точный результат классифицировать, не скрывать исключением папки.
+## 4. Implementation approach
 
-## 5. Критерии выполнения
-- Все матричные запреты дают отсутствие запрещённых network/provider/D1 effects и утечек; допустимый владелец/агент всё ещё работают.
-- Source instructions не меняют manifest/tools/verifier/policy; model-created citation не accepted; XSS не исполняется в PWA.
-- Currentness revoke во время stream/output отражён; разрешение чтения не становится declassification.
-- Негативы исполняют настоящие application services и D1/R2 с контролируемыми внешними границами; для публичной security декларации отдельно требуется T5 на выбранной платформе. Exact SHA, threat matrix и результаты прилагаются.
+Use packages/policy, verified HTTP/MCP actors, and existing context/output compilers. Cover viewer-allowed/model-denied, model-allowed/client-denied, mid-read revocation, injected erase/publish/exfiltration, fabricated handles/tools/URLs, forged audience/principal/Origin/cookies, and S39 unsafe redirects/private targets. Check before and after external work, not just UI visibility.
+
+Keep side-effect tools outside the generation surface while preserving separately authorized owner actions. Render body/HTML/Markdown without executing scripts or unsafe links. Tokens/cookies/source/model bodies must not leak into logs, nested causes, or metrics. Use existing dependency/secret/license checks and classify findings accurately instead of excluding directories to hide them.
+
+## 5. Acceptance criteria
+
+- [ ] Every specified denial case prevents forbidden network/provider/D1 effects and disclosure; legitimate owner/agent paths continue to work.
+- [ ] Source instructions cannot change manifests/tools/verifiers/policy; fabricated citations are not accepted and PWA XSS does not execute.
+- [ ] Revocation during stream/output remains enforced; read permission does not become declassification.
+- [ ] Negative tests exercise real application services and D1/R2 with controlled external boundaries.
+- [ ] Record exact SHA, threat matrix, and results. Native T5 qualification is separate; no universal vulnerability-free claim follows from this fixture set.
