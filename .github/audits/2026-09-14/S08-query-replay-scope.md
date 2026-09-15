@@ -1,26 +1,32 @@
-# S08 — исправить проверку scope при replay research.query
+# S08 — Bind research.query replay to the requested scope
 
-Перечитано на `a2aca127`, `research-session.ts:113–121`; F05. Это дефект привязки запроса, не установленная утечка: сохранённая authority дополнительно проверяется.
+Rechecked at `a2aca127`, `research-session.ts:113–121`; finding F05. This is a request-binding defect, not an established data leak: stored authority is also validated.
 
-## 1. Суть
-Replay вычисляет digest из нового query/product/limit, но берёт `scope.digest` из прежнего результата. Новая `parsed.scope_expression` в этой ветке не сравнивается. Один idempotency key может вернуть результат другого запрошенного scope.
+## 1. Problem
 
-## 2. Что сделать
-Зафиксировать request identity с канонической исходной scope expression. Одинаковый запрос replay-ить; изменённый scope под тем же ключом отклонять до новых writes.
+Replay computes a digest from the new query/product/limit but takes `scope.digest` from the previous result. It does not compare the new `parsed.scope_expression`. Reusing an idempotency key can therefore return a result for a different requested scope.
 
-## 3. Документация
-[Execution contract §3](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/implementation/launch-prs/execution-contract.md); [канон §6.12 Retrieval trace](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/architecture/ELIOT_RESEARCH.md).
+## 2. Required change
+
+Bind request identity to the canonical original scope expression. Replay an identical request; reject a changed scope under the same key before performing new writes.
+
+## 3. Documentation and exact search anchors
+
+[Execution contract, section 3](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/implementation/launch-prs/execution-contract.md); [architecture, section 6.12](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/architecture/ELIOT_RESEARCH.md).
+
 ```sh
 git grep -n -F '## 6.12. Retrieval trace' -- docs/architecture/ELIOT_RESEARCH.md
 git grep -n -F 'retrievalRequestDigest' -- apps/eliotr-core/src/research-session.ts packages/retrieval/src/query-persistence.ts
 ```
 
-## 4. Как сделать
-В существующем request/result store сохранить недостающую identity либо использовать уже сохранённое однозначное поле. Не делать re-freeze только ради сравнения: timestamp создаст новый snapshot. Определить каноническую эквивалентность expression существующим scope codec. Для старых записей без достаточной identity — явная несовместимость, не догадка. Не изменять historical digests задним числом.
+## 4. Implementation approach
 
-## 5. Критерии выполнения
-- Одинаковые query/key/expression дают те же evidence/trace, без новых scope/grant/model calls.
-- PROJECT A→B, selected-source замена и GLOBAL→PROJECT под тем же key дают conflict.
-- Изменение query/product/limit по-прежнему обнаруживается.
-- Несовместимый replay не создаёт никаких записей; текущие revoke/purge проверки остаются.
-- Integration tests через реальный HTTP/D1, исправляющий SHA и before/after.
+Persist the missing identity in the existing request/result store, or use an already stored unambiguous field. Do not refreeze merely to compare requests: a new timestamp would create a different snapshot. Use the existing scope codec to define canonical expression equivalence. For historical rows lacking sufficient identity, return an explicit incompatibility instead of guessing. Do not rewrite historical digests.
+
+## 5. Acceptance criteria
+
+- [ ] Identical query/key/expression returns the same evidence/trace without additional scopes, grants, or model calls.
+- [ ] PROJECT A→B, selected-source substitution, and GLOBAL→PROJECT under the same key conflict.
+- [ ] Query/product/limit changes remain detectable.
+- [ ] An incompatible replay performs no writes; current revoke/purge checks remain enforced.
+- [ ] Add real HTTP/D1 integration tests and retain implementing SHA and before/after results.
