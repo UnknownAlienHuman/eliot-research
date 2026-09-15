@@ -1,24 +1,32 @@
-# S91 — реальные D1 authority transactions вместо ложной SQLite-приёмки
+# S91 — Verify active authority transaction families on actual D1
 
-База a2aca127; F14/F15/F16, ER-13/27. S04/#196 покрывает Project/Wiki; этот checkpoint закрывает остальные active transaction families, сохраняя быстрые pure SQLite fixtures.
+Baseline `a2aca127`; F14/F15/F16, ER-13/27. S04/#196 covers Project/Wiki. This is an aggregate integration-coverage task for remaining active transaction families, not one small application change and not a wholesale replacement of useful pure SQLite tests.
 
-## 1. Суть
-node:sqlite полезен для unit tests, но не доказывает D1 limits/runtime behavior. Схема, которая успешно мигрировалась, ещё может падать на первом конкретном INSERT/UPDATE.
+## 1. Problem
 
-## 2. Что сделать
-В existing Workers test harness добавить actual-service transaction coverage для ingest/admission/owner grants, scope/currentness, outbox/inbox, W1/W2/W3, index promotion, publication/dependencies, erasure и backup. Реестр проверок — существующие packet tests; не новая тестовая платформа.
+node:sqlite unit tests do not establish D1 runtime compatibility. Applying a schema successfully does not prove that the first real INSERT/UPDATE and its triggers will execute correctly.
 
-## 3. Документация / grep
-[Language§7](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/architecture/LANGUAGE_RUNTIME_CONTRACT.md), [Execution contract§4](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/implementation/launch-prs/execution-contract.md).
+## 2. Required change
+
+Use the existing Workers harness to cover actual service transactions for ingest/admission/grants, scope/currentness, outbox/inbox, W1/W2/W3, index promotion, publication/dependencies, erasure, and backup. Reuse existing packet tests and real-D1 coverage rather than introducing another test platform.
+
+## 3. Documentation and exact search anchors
+
+[Language contract section 7](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/architecture/LANGUAGE_RUNTIME_CONTRACT.md); [Execution contract section 4](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/implementation/launch-prs/execution-contract.md).
 ```sh
 git grep -n -F '## 7. SQL authority contract' -- docs/architecture/LANGUAGE_RUNTIME_CONTRACT.md
 ```
 
-## 4. Как сделать
-По public mutating service определить emitted SQL family и existing test. Если уже выполняется на workerd-D1 — переиспользовать, не копировать. Для остальных запускать реальные migration chain и actual service, проверяя canonical row/head/outbox до/после. Fresh DB и upgrade с предыдущей поддерживаемой schema должны сходиться; номера/историю migrations не переписывать. Negative: unknown/invalid shapes, stale CAS, concurrent winner, lost ACK/readback, current policy/purge race, max payload при D1 expression/statement bindings. Сложные JSON shape-предикаты, не нужные для atomic authority, можно упростить общей structural validation, но final identity/revision/policy/purge/immutable guards не убирать. Различие TS/SQL само по себе не exploit: показать supported writer reachability, как в #217.
+## 4. Implementation approach
 
-## 5. Критерии выполнения
-- Каждая active authority transaction family имеет real-D1 commit и отказ с неизменным предшествующим state/outbox; отсутствующие families перечислены, не замолчаны.
-- D1 depth/parameter/batch ограничения ловятся до deployment, тест не вызывает DatabaseSync вместо D1.
-- После malformed/partial migration readiness закрыт; repeated/lost-ACK settlement не повторяет authority write.
-- Fast pure tests сохранены; actual runtime suites проходят Linux/Windows где применимо. Exact command/SHA/family→test mapping; no success from migration compile alone.
+Map each public mutating service to its emitted SQL family and existing test. Retain tests already executing under workerd-D1. For missing coverage, apply the real migration chain, invoke actual services, and compare canonical rows/heads/outbox before and after. Cover fresh databases and upgrades from supported previous schemas; never rewrite merged migration history.
+
+Negatives include malformed/unknown shapes, stale CAS, competing writers, lost acknowledgement/readback, policy/purge races, and maximum admitted payloads against D1 expression/binding/batch behavior. Do not copy application SQL into the test. Simplify repeated structural JSON checks only where they are not atomic authorization invariants; preserve final identity/revision/policy/purge/immutability guards. Predicate mismatch alone is not a proven API exploit: demonstrate supported-writer reachability, as in #217.
+
+## 5. Acceptance criteria
+
+- [ ] Every active family has actual-D1 successful commit and negative rollback coverage; missing families are named, not hidden.
+- [ ] Depth, parameter, and batch failures are detected before deployment; the test does not substitute DatabaseSync for D1.
+- [ ] Partial/malformed migrations do not yield readiness; retry/lost-ACK settlement does not duplicate writes.
+- [ ] Retain fast pure tests and applicable Linux/Windows runtime suites. Record exact SHA, commands/results, and family→service→test mapping.
+- [ ] Migration compilation alone is not completion; close this aggregate only after all applicable family checkpoints have passed.
