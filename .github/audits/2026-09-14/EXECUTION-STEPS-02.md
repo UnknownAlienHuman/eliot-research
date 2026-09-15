@@ -1,267 +1,193 @@
-# Execution steps 02 — Research, artifacts, integrations, and operations
+# Execution steps 02 — Research, products, integrations and operations
 
-This is the ordered implementation section for existing S35–S77, not new feature scope. Use the owning five-part PR for canonical references and exact accepted DTOs. Read [steps 01](EXECUTION-STEPS-01.md) for U/W/B commands and the important separation between root unit tests and actual core Workers tests. Baseline: `a2aca127`; implement the current-main delta, never replace working modules merely because a task mentions their topic.
+Ordered checkpoints for S35–S77; original five-part PRs retain the specified contracts, canonical anchors and additional negative cases. Use the corrected U/W/B/F commands in [steps 01](EXECUTION-STEPS-01.md), not guessed domain-name package scripts. Baseline a2aca127; retain working implementations on current main. Every path marked NEW is a required addition, not an existing test or a successful result.
 
-## Shared implementation decisions
+## Shared boundaries
 
-All Research products use the existing `packages/research` contracts, `cloudflare-research` model/freeze/materialization services, `cloudflare-research-stages` audit/citation/coverage handlers, and `apps/eliotr-core/src/research-stage-handlers.ts` factory. An output product selects a versioned schema and installed prompt/profile; it is not another engine, task ledger, or endpoint family. Additive input versions preserve legacy E0/E1/E2 behavior. New schema fields live in the existing contracts package and are decoded strictly.
+All products use packages/research, the existing model/evidence/stage services and core research-stage-handlers.ts. Products select installed versioned prompts/output schemas, not another engine or task ledger. Preserve legacy E0/E1/E2 request behavior. W1 protected portfolio/debt references cannot change via APPEND; CHECKPOINT does not rewrite acceptance/lineage. Initial immutable planning manifest precedes CREATE. Changed protected inputs use explicit supersession. W3 model attempts, W2 step receipts and W1 inquiry events keep their different identities.
 
-The actual W1 `LedgerHead` in `packages/research/src/ports.ts` and `assertAppendMutationMask` in `ledger-commands.ts` are binding: portfolio/debt references cannot change through APPEND, and CHECKPOINT cannot modify acceptance or lineage. Initial manifests precede CREATE; changed protected inputs use explicit supersession. Runtime observations use immutable checkpoint payloads. W3 model receipts, W2 stage receipts and W1 investigation events are different identities, not a defect to flatten.
+W filenames below are relative to apps/eliotr-core and run with `pnpm --dir apps/eliotr-core exec vitest run <paths>`. U runs root-included pure/PWA tests; B is actual automated `pnpm test:owner-e2e`, never the interactive Access launch. Existing cases are regression starting points: a new product must add the specified actual HTTP/factory/storage scenario. Zero tests, mocked application success and migration compilation alone are not acceptance. Actual external model/client quality and native platform behavior remain S93/S95.
 
-Each product test starts with actual admitted source bytes, not a preaccepted model output. Controlled model responses are appropriate for orchestration tests; actual semantic quality is S93. No finite fixture is a promise of universal factual accuracy.
+For all new product profiles, add one **NEW** core test file per task, `test/product-sNN.integration.test.ts` (NN=41–46), invoking the real shared run/factory and readers. Controlled provider output must not bypass parsing/audit/admission. Test the approved positive outcome, wrong scope, invalid output, lost response/replay, and exact persisted citations. This names the test addition rather than inventing an existing product command.
 
 ## S35 — inquiry protocol · [#227](https://github.com/UnknownAlienHuman/eliot-research/pull/227)
 
-1. Extend `research-session.ts::parseResearchRunRequest` with the explicit new version/profile reference from the passport. Keep the old strict decoder and its E0/E1/E2 semantics intact.
-2. Use `packages/research/src/ports.ts::ProtocolRegistry` and `cloudflare-research/src/research-protocol-freeze.ts` to resolve an installed profile. Build actual obligations with named verifier/certificate/stop rules, bind them to request identity and persist before execution through W1.
-3. Run contracts/research checks and W fixtures: lookup, evidence review, architecture decision; replay with changed profile; old E1/E2 input. **Done:** profiles yield distinct persisted obligations and no implicit grade downgrade or model-selected authority.
+1. Add the passport's strict versioned profile reference in parseResearchRunRequest; old E0/E1/E2 decoding remains unchanged.
+2. Resolve an installed ProtocolRegistry profile through existing research-protocol-freeze. Persist required verifier/certificate/grade/lane/source-mode/stop obligations before execution; bind protocol identity to replay.
+3. W: test/research-session.test.ts test/research-protocol-freeze.test.ts test/investigation-ledger-commands-d1.test.ts; add lookup/review/architecture-decision distinctions and profile-substitution negatives. Run `pnpm contracts:check`. Done: actual saved obligations, not model-chosen authority or technical PLAN acceptance.
 
-## S36 — portfolio and hypotheses · [#228](https://github.com/UnknownAlienHuman/eliot-research/pull/228)
+## S36 — initial planning manifest · [#228](https://github.com/UnknownAlienHuman/eliot-research/pull/228)
 
-1. Implement the single immutable planning-manifest builder specified in the revised S36 passport: QuestionGraph, hypotheses/falsifiers, represented/missing source classes, explicit lineage and unknown independence.
-2. Verify Work R2 readback before initial W1 CREATE using `portfolio_ref`; branches consume that exact ref. Hypothesis registration uses its existing event kind, not arbitrary head editing.
-3. Runtime observations do not rewrite initial portfolio/debt refs. Changed protected inputs use S40 supersession. **Done:** two rival hypotheses and ten copies of one origin retain correct identity/independence; forbidden APPEND remains rejected by TS and actual D1. Research/contracts checks, ledger-command U tests and W.
+36.1 build the deterministic immutable QuestionGraph/SourcePortfolio/HypothesisCard seed from literal input, supplied hypotheses and admitted metadata. 36.2 exact Work R2 readback then W1 CREATE using portfolio_ref. 36.3 branches consume that exact ref. 36.4 changed protected input uses S40 supersession; later model refinements use W3 and validated checkpoint/hypothesis observations, never protected APPEND.
 
-## S37 — actual branches · [#229](https://github.com/UnknownAlienHuman/eliot-research/pull/229)
+W: test/investigation-ledger-d1.test.ts test/investigation-ledger-commands-d1.test.ts test/research-protocol-freeze.test.ts; **NEW** test/research-planning-manifest.test.ts covers actual manifest readback/restart. Two rivals/shared premise survive; ten copies of one origin are not ten independent confirmations. Illegal mutation remains denied in TS and D1.
 
-Execute the revised passport's five commits: **37.1** shared branch envelope/exact read; **37.2** SUPPORT+COUNTER with S22; **37.3** ALTERNATIVE/CHRONOLOGY/IMPLEMENTATION/LITERATURE/SOURCE_AUDIT through the same executor where required; **37.4** W3/R2/W1 settlement and reconciliation; **37.5** actual factory and recovery. Start in `research-stage-handlers.ts` and existing stage packages. **Done:** typed role results reach EvidenceFreeze; failed/missing branches remain debts and repeated callbacks do not duplicate effects. Run research/workflow/model-admission/recovery checks and W. No loop of uncheckpointed paid calls inside one retryable step.
+## S37 — shared branch executor · [#229](https://github.com/UnknownAlienHuman/eliot-research/pull/229)
 
-## S38 — lanes and named verifiers · [#230](https://github.com/UnknownAlienHuman/eliot-research/pull/230)
+37.1 define the passport's common typed envelope and exact source read. 37.2 SUPPORT/COUNTER use S22 once. 37.3 ALTERNATIVE/CHRONOLOGY/IMPLEMENTATION/LITERATURE/SOURCE_AUDIT use the same executor only when required by installed protocol. 37.4 settle each model output through W3/R2, record W1 observations and deterministically reconcile. 37.5 dispatch from actual factory and recover stored attempts. Do not loop uncheckpointed paid calls inside one retryable native step; include declared branch work in the installed timeout/budget policy.
 
-1. Use W1 `LANE_REGISTERED`/`OBLIGATION_REGISTERED` and existing obligation fields in `ports.ts`; persist registration before the corresponding evidence exposure.
-2. Wire the installed verifier to `OBLIGATION_ACCEPTED`. Require the event actor to equal the registered verifier; preserve metric and exposure state. A model can propose a claim, never certify itself.
-3. **Done:** early independent verification succeeds; post-exposure metric edits require explicit deviation/supersession, mixed lanes stay separate, unsupported verifiers produce a named blocked obligation. U `ledger-commands.test.ts`, research/contracts checks and W. Missing external execution environments are not implemented by evaluating arbitrary code inside the Worker.
+W: test/research-retrieve-branches.test.ts test/research-model-stage-handler.test.ts test/research-evidence-freeze.test.ts test/research-workflow-recovery.test.ts; **NEW** test/research-branch-execution.test.ts asserts each role's real output and failed/missing debt. Done: role artifacts reach freeze, duplicates/restart reuse one output, handler-to-technical-stub mutation fails. No new swarm/queue/ledger.
 
-## S39 — controlled acquisition · [#231](https://github.com/UnknownAlienHuman/eliot-research/pull/231)
+## S38 — lanes and verifier · [#230](https://github.com/UnknownAlienHuman/eliot-research/pull/230)
 
-1. Bind the approved acquisition request to protocol/source mode, destination, revision expectations, disclosure policy and existing operation identity. Corpus-only returns without a network acquisition call.
-2. Use current source capture/normalization/admission ports; check every redirect/destination, reject private or unauthorized destinations and authentication/error-page responses. Preserve raw bytes, media type, observed origin, extraction gaps and parser generation.
-3. Only after exact immutable readback and admission may a locator enter the manifest. **Done:** real captured bytes become an admitted citation; a snippet, partial upload, unsafe redirect or post-freeze insertion cannot. Ingest/research/assurance checks plus W; no crawler framework or automatic external provider subscription.
+Register hypotheses/metrics/verifier before relevant exposure through existing W1 LANE_REGISTERED/OBLIGATION_REGISTERED. Only the registered verified actor issues acceptance; later metric changes become declared deviation/supersession. Confirmatory/mixed runtime dispatch must reach the required real handlers, not the baseline legacy-only lane guard. W: test/investigation-ledger-commands-d1.test.ts test/research-protocol-freeze.test.ts test/research-workflow.test.ts; **NEW** test/research-lane-verifier.test.ts includes valid independent verifier, wrong actor, late registration and mixed-lane separation. Missing external verifier yields a named unmet obligation; never execute arbitrary user code inside Worker.
 
-## S40 — debts, completion, reopen · [#232](https://github.com/UnknownAlienHuman/eliot-research/pull/232)
+## S39 — acquisition · [#231](https://github.com/UnknownAlienHuman/eliot-research/pull/231)
 
-1. Use existing `packages/research/src/coverage.ts`, `packages/domain/src/completion.ts` and W1 to calculate the existing terminal disposition from obligations, coverage, debts, waiver authority and next probes.
-2. Persist runtime debt observations as immutable referenced results; do not APPEND different `debt_refs` into a protected head. Read them through the corresponding checkpoint/result. A new initial debt/portfolio/scope/protocol requires supersession through the existing atomic old/new-head operation.
-3. Implement the passport's versioned reopen API: bind reason, affected claims and new input identity; preserve old result and revalidate changed premises plus dependent sections. Same-run transient recovery remains S15, not reopen. **Done:** replay makes one intended revision/run, changed input conflicts, old hashes remain unchanged, no sampled absence claim. Research/recovery checks, U ledger masks and W.
+Bind approved acquisition to source-mode/destination/disclosure/revision and one operation. Corpus-only returns without external request. Reuse capture/conversion/admission, checking every destination/redirect and rejecting private/auth/error/partial payloads. Retain raw/normalized identity, parser and coordinate precision. Admission does not expand frozen scope: an outside member remains pending for explicit subsequent authorized scope/supersession before evidence exposure. Same unchanged request cannot spawn an infinite chain of new runs.
 
-## S41 — ASK and BRIEF · [#233](https://github.com/UnknownAlienHuman/eliot-research/pull/233)
+W: test/raw-capture-http.test.ts test/raw-markdown-conversion-http.test.ts test/raw-normalized-admission-http.test.ts and **NEW** test/research-acquisition-scope.test.ts. Captured evidence exact-resolves only after admission and authorization; snippet/unsafe redirect/substitution/post-freeze insertion fails. Run `pnpm ingest:check` and `pnpm evidence:check`.
 
-1. Register ASK/BRIEF as output profiles in the existing model/profile configuration and strict output decoder; define the public-product-to-existing-execution mapping, leaving FAST_SEARCH model-free.
-2. ASK separates supported answer, inference and limitations with exact citations; follow-up references the previous investigation/result revision, not an unbounded chat log. BRIEF preserves source conditions, numbers, dissent and unknowns while shortening text.
-3. **Done:** two-turn English/Russian fixtures preserve project identity and exact support; no new source silently enters a frozen result. Research/artifact/Golden checks, actual W pipeline. Real quality is S93; no separate chat backend.
+## S40 — debt/completion/reopen · [#232](https://github.com/UnknownAlienHuman/eliot-research/pull/232)
+
+Compute the existing nine dispositions from obligations/coverage/debts/waiver authority using existing domain decisions. Persist runtime debts as immutable referenced observations, not forbidden head-ref APPEND. Implement the passport's versioned reopen through atomic old/new W1 supersession, preserving historical report and revalidating changed premises plus dependents; transient same-run recovery is S15.
+
+W: test/investigation-ledger-commands-d1.test.ts test/research-run-status.test.ts test/research-changes.test.ts and **NEW** test/research-reopen.test.ts. Replay produces one new intended revision, changed input conflicts, old hashes stay exact. Unknown denominator cannot support absence and unresolved debt is not silently waived.
+
+## S41 — ASK/BRIEF · [#233](https://github.com/UnknownAlienHuman/eliot-research/pull/233)
+
+Install output profiles over existing synthesis/audit/artifact path; FAST_SEARCH stays model-free. ASK separates observation/inference/limitations; follow-up binds prior investigation/result revision rather than unbounded chat. BRIEF preserves units, conditions, dissent and unknowns. W new product-s41 plus test/research-claim-audit-stage.test.ts test/artifact-draft-reader.test.ts. Two-turn RU/EN fixture keeps scope/support; outside post-freeze sources require reopen. U package tests and real semantic quality S93 are distinct.
 
 ## S42 — COMPARE · [#234](https://github.com/UnknownAlienHuman/eliot-research/pull/234)
 
-1. Freeze target refs and requested axes before retrieval. Add a comparison output profile over S41's shared execution, not a new run service.
-2. Each material cell has observed value, unit, conditions/time/version, exact evidence refs or explicit unknown. Unit conversion is a reproducible declared transformation; missing value is not zero and recommendation is separate from observation.
-3. **Done:** differing versions/units/populations and missing fields remain distinct in the saved artifact and its citations. Foreign targets and unsupported numeric cells fail. Research/numeric/artifact/Golden checks and W; replay returns the same result.
+Freeze target refs and axes, then select a shared-engine output profile. Each material cell has value/unit/conditions/time/version and exact support or explicit unknown. Missing is not zero; conversion must be declared/reproducible and recommendation separate from observation. W new product-s42 plus test/research-citations-stage.test.ts test/research-report-admission.test.ts. Different populations/versions/units remain different, unsupported numeric or foreign target fails, replay preserves artifact.
 
-## S43 — HYPOTHESIS_REVIEW · [#235](https://github.com/UnknownAlienHuman/eliot-research/pull/235)
+## S43 — hypothesis review · [#235](https://github.com/UnknownAlienHuman/eliot-research/pull/235)
 
-1. Read S36's stored cards; dispatch required support/counter/alternative roles through S37 with the declared verifier/lane rules from S38.
-2. Persist each hypothesis's support, counterevidence, rival explanation, test/falsifier and next probe, with conditions and exact source refs. Model confidence never replaces a result certificate.
-3. **Done:** a confound/rival fixture retains the losing explanation and does not promote exploratory evidence to confirmation or unknown to universally false. Research/Golden checks and W result/citation/replay tests. The product does not manufacture an experiment it has not executed.
+Read S36 cards; S37 support/counter/rival roles and S38 named verifier produce explicit falsifier/test/evidence/conditions/next probes. Preserve failed probes and losing alternatives, not model confidence as acceptance. W new product-s43 plus test/research-protocol-freeze.test.ts test/research-claim-audit-stage.test.ts. Rival/confound fixture cannot upgrade exploratory to confirmatory or unknown to universally false.
 
-## S44 — FACT_CHECK · [#236](https://github.com/UnknownAlienHuman/eliot-research/pull/236)
+## S44 — fact check · [#236](https://github.com/UnknownAlienHuman/eliot-research/pull/236)
 
-1. Preserve the original input bytes/hash and map proposed material claims to exact input spans. Record unresolved splitting regions; never silently drop hard-to-check claims.
-2. Reuse current retrieval→freeze→AUDIT_CLAIMS; use the existing verdict vocabulary and differentiate evidence in a whole source from support in the cited excerpt. Preserve negation, quantities, population and version.
-3. **Done:** all canonical verdict cases are covered, fabricated/wrong excerpts and omitted/weakened claims fail the fixture. Replay retains input-to-claim mapping. Research/artifact/Golden checks and W; semantic splitting accuracy is evaluated independently in S93.
+Preserve original input bytes/hash and exact claim spans; unresolved splitting remains visible, not omitted. Use existing retrieval→freeze→AUDIT_CLAIMS and verdict vocabulary; source-wide support is not support in an incorrectly selected excerpt. W new product-s44 plus test/research-claim-audit-input.test.ts test/research-claim-audit-result.test.ts test/research-citations-result.test.ts. Cover all canonical verdicts, weakening/omission/negation/quantity/population/version errors and exact replay. Semantic splitting quality also requires S93.
 
-## S45 — project versus literature · [#237](https://github.com/UnknownAlienHuman/eliot-research/pull/237)
+## S45 — project/literature audit · [#237](https://github.com/UnknownAlienHuman/eliot-research/pull/237)
 
-1. Freeze the project snapshot and external source portfolio; classify each input as specification, implementation snapshot, test/operational observation, primary literature or secondary/community claim.
-2. Use the existing branch/artifact path to save a claim-to-evidence matrix: support/counterevidence, gap, severity, alternative and next probe. Missing or inaccessible code stays unresolved.
-3. **Done:** an obsolete specification, unimplemented promise and independently observed result are not conflated; source-file existence never proves successful execution. Research/artifact/Golden checks and W. This product does not autonomously alter the audited client repository.
+Freeze project snapshot and literature portfolio, classify spec/code/runtime observation/primary/secondary claims. Through shared branches/artifact save claim→support/counterevidence/gap/severity/alternative/next-probe matrix. W new product-s45 plus test/research-evidence-freeze.test.ts test/artifact-draft-reader.test.ts. Obsolete spec/file existence/inaccessible code/no-hit cannot become proof of implementation or absence. No unsolicited mutation of audited repositories.
 
-## S46 — DEEP_RESEARCH · [#238](https://github.com/UnknownAlienHuman/eliot-research/pull/238)
+## S46 — DEEP · [#238](https://github.com/UnknownAlienHuman/eliot-research/pull/238)
 
-1. Compose the existing protocol/planning, role execution, acquisition, counter-search, freeze, audit, debt and materialization handlers under the DEEP profile; no new scheduler.
-2. Run one E2 fixture requiring independent sources/counterevidence and one E3 fixture requiring pre-registered evaluation and a named verifier. Requested grade remains separate from model capability.
-3. **Done:** actual obligations and output refs, not 18 stage names, justify the resulting disposition; missing requirements stay visible with next probes. Research/workflow/artifact/Golden checks and W recovery/citations; no silent grade lowering or unregistered post-freeze search.
+Compose S35–S40/S22 outputs under existing DEEP profile. W new product-s46 plus test/research-workflow.test.ts test/research-workflow-recovery.test.ts test/research-report-admission.test.ts. One E2 fixture requires independent evidence/countersearch; one E3 needs preregistered evaluation and named verifier. Missing requirement remains explicit, not grade downgrade or 18/18 illusion. Recovery keeps each completed model effect single; exact citations survive. No second scheduler.
 
-## S47 — extraction/admission quality · [#239](https://github.com/UnknownAlienHuman/eliot-research/pull/239)
+## S47 — extraction/admission · [#239](https://github.com/UnknownAlienHuman/eliot-research/pull/239)
 
-1. Use current raw capture/conversion, `packages/domain/src/source-admission.ts` and `qualification.ts`; classify supported declared formats using actual converter output and original bytes.
-2. Preserve extraction completeness, unsupported structures, taint, parser identity and qualified coordinate maps before guarded canonical admission/outbox. Reuse pre-normalized bundles for approved preprocessing; do not rerun a model on them by default.
-3. **Done:** valid, degraded and corrupt format cases produce the appropriate admission state without partial canonical writes, silent truncation or invented native accuracy. Ingest/source/assurance checks, W and `pnpm local:documents`. Actual format quality receipts remain distinct from controlled conversion tests.
+Classify actual raw conversion and normalized bundle against current source-admission/qualification contract: original bytes, parser, taint, omissions and qualified maps persist before canonical commit/outbox. Pre-normalized bundles do not require default model reprocessing. W Raw import/Intake from steps01; extend valid/degraded/corrupt/over-limit declared-format cases and run `pnpm ingest:check`, then B. No silent truncation/partial canonical success/fabricated native accuracy. Actual converter quality recorded separately.
 
-## S48 — native/normalized navigation · [#240](https://github.com/UnknownAlienHuman/eliot-research/pull/240)
+## S48 — exact navigation · [#240](https://github.com/UnknownAlienHuman/eliot-research/pull/240)
 
-1. Start in `cloudflare-navigation/src/native-coordinate-map-adapter.ts`, `navigation-service.ts` and the existing exact evidence resolver. Bind every map/anchor to the source revision and qualified producer.
-2. Complete source→DocumentMap→section→parent/neighbors→open with exact normalized byte intervals and native coordinates only where validated maps exist. Page/line numbers are never guessed from Markdown.
-3. **Done:** Unicode/table/code/page fixtures resolve exact content, corrupt/foreign maps fail, and neighbors remain within authorization. Source/retrieval/assurance checks, W plus Library/Lens/citation B. Missing native maps expose the honest lower-precision path, not fake coordinates.
+Bind native-coordinate-map-adapter and navigation-service to admitted revision/producer; normalized offsets plus only qualified native page/line/cell/region mappings. W: test/navigation-service.test.ts test/navigation-persistence.test.ts test/structural-navigation-q1.test.ts test/source-revisions.test.ts. Add Unicode/table/code/map corruption and foreign-neighbor negatives; B source→map→section→parent/neighbors→citation. Missing maps lower precision, not guessed coordinates. Run `pnpm evidence:check`.
 
-## S49 — ProjectAtlas · [#241](https://github.com/UnknownAlienHuman/eliot-research/pull/241)
+## S49 — Atlas · [#241](https://github.com/UnknownAlienHuman/eliot-research/pull/241)
 
-1. Extend existing orientation/navigation materialization (`orientation-service.ts`, `orientation-materialization.ts`) using exact project membership and SourceCard/DocumentMap revisions.
-2. Save one immutable Atlas with reading routes and represented/omitted members; unknown independence and omissions remain coverage/dependency inputs. Reuse S99 larger metadata scope, not a second source store.
-3. **Done:** two projects sharing a source retain distinct scope/policy, unrelated changes do not invalidate both, relevant or omitted-source updates invalidate appropriate views. Source/retrieval/research checks, W and navigation B; Atlas is navigation, not an EvidenceHandle.
+Use orientation-service/materialization and S99 metadata scope. Save immutable Atlas with exact SourceCard/DocumentMap refs and represented/omitted source members. W: test/orientation-http.test.ts test/orientation-resilience.test.ts test/navigation-persistence.test.ts. Shared-source projects remain isolated; relevant and omitted-source changes invalidate appropriate views, unrelated project does not reset. Atlas route is not evidence or permission; B validates readable navigation.
 
-## S50 — LOCATE and lanes · [#242](https://github.com/UnknownAlienHuman/eliot-research/pull/242)
+## S50 — LOCATE · [#242](https://github.com/UnknownAlienHuman/eliot-research/pull/242)
 
-1. In the existing retrieval planner/service, preserve raw literal/negative/identifier input and direct-first lookup; query rewriting is not silently enabled.
-2. Compose existing exact/lexical/structural/semantic lanes, section deduplication, source-family diversity and selective reranking. Use S09 for SEM, S48 for exact structural expansion; keep generations separate.
-3. **Done:** ID/quote/vague/tail/diversity fixtures reach exact authorized bytes with truthful executed/skipped lane trace; no unnecessary reasoning call or top-k absence claim. Retrieval/source/Golden checks and W; do not implement BM25 or embeddings again.
+Preserve raw literal/negative/ID query and direct-first lookup; rewriting off by default. Existing planner combines exact/lexical/structural/SEM, section dedup, family diversity and selective reranking with separate generations. W: test/retrieval-ident-lex.test.ts test/retrieval-generation-fences.test.ts test/research-query-sem.test.ts test/structural-navigation-q1.test.ts. ID/quote/vague/tail/diversity produce authorized exact bytes and truthful lane trace. No duplicate BM25/embedding engine or top-k absence. Quality S93.
 
-## S51 — exhaustive search · [#243](https://github.com/UnknownAlienHuman/eliot-research/pull/243)
+## S51 — exhaustive · [#243](https://github.com/UnknownAlienHuman/eliot-research/pull/243)
 
-1. Use existing `exhaustive-query-service.ts` and `exhaustive-workflow-service.ts`; bind complete eligible metadata and shard boundaries to the frozen scope, including S99 larger projects.
-2. Scan bounded ranges with overlap at text boundaries and persist shard counts/digests/cursors. Deduplicate identical redelivery, reject conflicting duplicates, and reconcile against all expected members before declaring complete.
-3. **Done:** an independent exact oracle matches tail/page/range-boundary results; missing/failed shards never become complete absence. Retrieval/workflow/recovery checks and W; large outputs are R2 handles, not whole-corpus buffering.
+Existing exhaustive-query/workflow services bind complete frozen denominator and shards. Bounded ranges overlap safely, persist exact counts/digests/cursors, deduplicate identical delivery and reject conflicting duplicate results. W: test/exhaustive-query-service.test.ts test/exhaustive-workflow-output.test.ts test/research-query-exhaustive.test.ts test/research-exhaustive-sections.test.ts. Independent oracle covers tail/page/range boundaries; missing shards cannot become complete absence. Include S99, cancel/restart/purge; large results are R2 handles.
 
 ## S52 — index lifecycle · [#244](https://github.com/UnknownAlienHuman/eliot-research/pull/244)
 
-1. Connect admitted source outbox to existing per-channel projection builders/receipts. Admission ACK is not index readiness; report missing/failed channels explicitly.
-2. Build shadow generation B while A serves; compare exact expected item set, model/parser/config identities and quality evidence before expected-head CAS promotion. Pin a run to its selected generation.
-3. **Done:** partially built B cannot serve; duplicate/lost events reconcile; rollback never restores purged data. Retrieval/source/delivery checks and W; actual managed index readback is S95. Keep existing generation registry rather than removing or duplicating it.
+Connect admitted outbox to existing channel builders/readiness receipts. A serves while B builds; activate only exact complete count/hash/generation/quality evidence with CAS, pin serving generation and preserve purge on rollback. W: test/retrieval-generation-fences.test.ts test/library-readiness.test.ts test/research-query-sem.test.ts test/outbox-reconciler.test.ts; **NEW** test/index-generation-promotion.test.ts exercises actual store/promotion, partial B, duplicate event and rollback. Run `pnpm projection:check` and `pnpm delivery:check`. Native AI Search readback is S95.
 
-## S53 — REPORT compiler/COW · [#245](https://github.com/UnknownAlienHuman/eliot-research/pull/245)
+## S53 — REPORT/COW · [#245](https://github.com/UnknownAlienHuman/eliot-research/pull/245)
 
-1. Implement the missing behavior behind `packages/research/src/artifact-compiler.ts::ArtifactCompiler` using current `cloudflare-research` report materialization and `cloudflare-artifacts` immutable readers. The interface alone is not an implementation.
-2. Compile an ArtifactSpec into individually identified sections with exact evidence/freeze dependencies and limitations. Reconcile all required sections before writing an ArtifactRevision; missing/unaudited output remains draft.
-3. Revise section B of A/B/C: reuse A/C only when premise/evidence/contract/residency dependencies are unchanged, verify changed B in the usual path, then CAS the artifact head after exact R2 readback. **Done:** lost ACK/replay/concurrent edit cannot produce a broken or duplicate head. Artifact/research/recovery checks and W; no second report engine.
+Implement existing ArtifactCompiler interface through current materialization/readers: ArtifactSpec→identified sections/evidence/premises→reconciliation→revision. Missing/unaudited output remains draft. A/B/C edit B reuses A/C only if all contract/residency/evidence/premise refs unchanged, then exact R2 readback and head CAS. W: test/artifact-draft-store.test.ts test/artifact-draft-reader.test.ts test/research-report-admission.test.ts; **NEW** test/artifact-cow-compile.test.ts covers real compiler/edit/concurrent/lost-ACK/partial/export. No second report engine.
 
 ## S54 — publication · [#246](https://github.com/UnknownAlienHuman/eliot-research/pull/246)
 
-1. Apply `packages/domain/src/publication.ts` and existing Wiki/report publisher to the exact revision, freeze, claim support, section completeness and current disclosure policy.
-2. Execute the documented D0–D3 review rules; explicit D1 policy is not blanket D2/D3 authority. Edited claims cannot inherit an old certificate merely because the document ID is unchanged.
-3. **Done:** accepted head changes only after exact body/dependency readback and guarded D1 CAS/outbox; cropped/stale/unsupported/wrong-value citations fail. Artifact/research/Golden checks and W concurrent publish/lost-ACK tests. Editorial publication is separately labeled from factual acceptance.
+Apply existing publication domain/Wiki publisher to exact revision/freeze/material claims/section completeness/dependencies/current policy. D0–D3 distinguish editorial publication and factual acceptance; edited claims cannot inherit previous audit. W: test/wiki-publication-store.test.ts test/wiki-service.test.ts test/research-report-admission.test.ts and **NEW** test/report-publication-barrier.test.ts. Cropped/unsupported/stale/wrong-value/revoked cases fail before head CAS; concurrent/replayed publish produces one correct head. Explicit D1 promotion policy is not D2/D3 authority.
 
-## S55 — derived dependencies · [#247](https://github.com/UnknownAlienHuman/eliot-research/pull/247)
+## S55 — dependencies · [#247](https://github.com/UnknownAlienHuman/eliot-research/pull/247)
 
-1. Complete existing `ArtifactDependencyManifest` production for source→Wiki→section→managed external copy, including omitted-source and premise dependencies, at the same canonical settlement as the derived revision.
-2. Existing change/outbox consumers mark targeted historical freshness for ordinary updates and deny/redact affected data for purge/revoke. Bind replay cursors to actor/scope; unchanged unrelated projects are untouched.
-3. **Done:** late notification/restart cannot miss a dependency or substitute a new source head; WIKI/ARTIFACT retrieval respects accepted state and original lineage. Artifact/delivery/erasure/retrieval checks and W. Uncontrolled prior downloads are outside enforceable deletion claims.
+Record source→Wiki→sections→managed copy ArtifactDependencyManifest, including omitted-source/premise refs, with canonical revision settlement/outbox. Ordinary update marks targeted freshness; purge/revoke denies/redacts. W: test/research-changes.test.ts test/artifact-draft-reader.test.ts test/wiki-service.test.ts; **NEW** test/derived-dependency-replay.test.ts verifies full chain, lost notice/restart/actor-scope cursor. WIKI/ARTIFACT lanes retain accepted state and original lineage, no self-citation independence. `pnpm delivery:check` and `pnpm erasure:check`. No promise to delete uncontrolled prior downloads.
 
-## S56 — selective EvidenceAtoms · [#248](https://github.com/UnknownAlienHuman/eliot-research/pull/248)
+## S56 — EvidenceAtoms · [#248](https://github.com/UnknownAlienHuman/eliot-research/pull/248)
 
-1. Use the existing `packages/research/src/distillation.ts` contract and admitted trigger policy; ordinary ingest makes no blanket atom-generation calls.
-2. Decode candidates strictly and resolve exact source spans, conditions, units, modality and time before atom admission; papers/project profiles preserve their distinct field semantics.
-3. **Done:** source unsupported stronger paraphrase, lost negation/unit and invented reference fail; accepted atoms reach the existing ATOM lane and purge invalidates them. Research/retrieval/Golden checks and W. Derived atoms are not independent source confirmations.
+Existing distillation contract accepts only authorized triggers, not blanket ingest calls. Decode candidates and verify exact spans/modality/units/time/conditions before atom admission and ATOM lane. **NEW** test/evidence-atom-admission.test.ts in W, plus test/research-reference-manifest.test.ts and test/research-query-retrieval.test.ts. Unsupported stronger paraphrase/negation loss/invented ref denied; accepted atom resolves exact original bytes, no independent-source inflation, idempotent trigger, purge respected. `pnpm evidence:check`; real semantics S93.
 
 ## S57 — ArgumentMap · [#249](https://github.com/UnknownAlienHuman/eliot-research/pull/249)
 
-1. Extend the existing `packages/research/src/argument-map.ts` relation path with explicit premise/claim/objection/source-span refs and native/parser/model/human-reviewed precision classes.
-2. Use current immutable navigation/dependency storage and bounded ARGUMENT traversal; source co-occurrence does not prove causal influence or entailment.
-3. **Done:** a premise/objection fixture opens exact evidence, invalid/foreign/cyclic expansion is bounded or rejected, and purge removes affected disclosure. Research/retrieval/Golden checks and W; no graph database or full-corpus distillation.
+Reuse existing relation contract and immutable navigation storage for typed premise/claim/objection/source refs and distinct native/parser/model/human-reviewed precision. Bounded ARGUMENT traversal does not convert co-occurrence into cause/entailment. **NEW** test/argument-map-query.test.ts in W plus test/structural-navigation-q1.test.ts. Exact source opening, foreign/fabricated relation, cycles, replay and purge verified. No graph database/full-corpus compilation.
 
-## S58 — selected Workspace ingress · [#250](https://github.com/UnknownAlienHuman/eliot-research/pull/250)
+## S58 — Workspace intake · [#250](https://github.com/UnknownAlienHuman/eliot-research/pull/250)
 
-1. Follow the revised passport through current `workspace-candidate-admission.ts` ports: official selected-client export→plan/observation→service capture/read→conversion→admission/status. Start with no preseeded owner capture.
-2. Apply S10's one grant and allowed namespace to raw capture, read, conversion and final admission. Retain signed caller/observation/byte identity; conversion spend requires its separate existing authorization.
-3. **Done:** the service creates its own capture and conversion and gets one admitted revision/outbox; wrong actor/bytes/namespace/revoke/unfunded conversion fail at their actual boundary. Google/ingest/model-admission checks and W; external official connector action is tested separately, not forged by a request body.
+Follow selected official-client export→plan/observation→service capture/read→conversion→admission/status using one S10/S31 grant and explicit namespaces. Conversion spend separate; no owner capture preseed. W Raw import plus test/workspace-mcp-candidate-store.test.ts and **NEW** test/workspace-service-intake.test.ts for the complete HTTP chain. Exact bytes produce one revision/outbox; actor/observation/digest/namespace/revoke/unfunded failures occur at actual boundaries. `pnpm gemini:check` and `pnpm ingest:check`; external Google action remains separate evidence, not a request-body assertion.
 
 ## S59 — Google delivery · [#251](https://github.com/UnknownAlienHuman/eliot-research/pull/251)
 
-1. Bind canonical artifact revision, destination parent and chosen export/readback representation in the existing Workspace action plan. Google I/O belongs to the authorized selected-client connector, not Worker OAuth.
-2. For an update, pin the existing object ID. For creation, retain the actual provider ID/operation evidence; do not invent unsupported ID reservation. Compare documented normalized native-Doc representation or byte-preserving export as appropriate.
-3. **Done:** verified copy has the right revision/content/parent; lost creation ACK is reconciled by demonstrated connector capabilities or stays UNKNOWN without blind recreation. Canonical report remains readable through outage. Google/artifact/recovery checks and controlled transport tests, then actual action/readback receipt. Managed copies feed S55.
+Bind artifact revision/destination/comparison representation to existing Workspace plan. Authorized official connector does Google I/O; update pins real object ID, creation retains actual provider ID and proven reconciliation capability. Native Doc representation cannot be compared to unrelated PDF/Markdown bytes. **NEW** test/workspace-artifact-delivery.test.ts in W plus test/workspace-mcp-candidate-store.test.ts and test/artifact-draft-reader.test.ts; `pnpm gemini:check`. Correct content/parent/labels read back; uncertain create is reconciled or remains UNKNOWN without blind duplication/new Research. Managed copy feeds S55; native action S95.
 
 ## S60 — federation execution · [#252](https://github.com/UnknownAlienHuman/eliot-research/pull/252)
 
-1. Keep the existing seven-operation wire contract and actual federation service; connect reserved jobs/outbox to existing retrieval/Research execution, not a second runner.
-2. Preserve server/peer fence, scope/manifest and W2/W3 identity; pack/read-only requests do not cause unnecessary synthesis. Store exact result bundle before reporting completion.
-3. **Done:** independent submission→status→result/read→cancel exercises real local state; repeated/lost/revoked requests do not duplicate jobs or strengthen a PARTIAL/UNKNOWN research disposition into success. `pnpm federation:check`, delivery/research/recovery checks and W. S61 tests independently encoded wire behavior.
+Existing seven-operation contract/service binds reserved jobs/outbox to actual retrieval/Research, exact result bundles and cancellation. Preserve peer fence/scope/manifest and W2/W3 identity; pack/read-only does not need synthesis. W: test/federation-service.test.ts test/federation-runtime-http.test.ts test/outbox-reconciler.test.ts; add actual execution completion/replay/lost-ACK/restart/cancel/revoke cases. `pnpm delivery:check`. Transport complete cannot strengthen research PARTIAL/UNKNOWN and candidate output cannot mutate client authority.
 
-## S61 — independent peer test · [#253](https://github.com/UnknownAlienHuman/eliot-research/pull/253)
+## S61 — independent wire client · [#253](https://github.com/UnknownAlienHuman/eliot-research/pull/253)
 
-1. Use a fetch-based test client that does not import server codecs/services; retain independent exact request/response fixtures for all seven operations.
-2. Test actor/fence/manifest, cursor/range identity, retention, truncated bytes and revocation against the actual server/storage. Inject a server encoding defect to prove the client test detects it.
-3. **Done:** foreign/stale/substituted/range failures remain safe and replay retains the same job; local versus actual authenticated peer qualification are separately recorded. Federation/contracts checks and existing `pnpm federation:client-fixture`; no runtime dependency on a client database/package.
+Extend test/federation-runtime-http.test.ts or add **NEW** test/federation-independent-wire.test.ts under core, with fetch-based requests and independent fixture bytes, not server codec imports. All seven operations, signatures/fence/manifest/cursor/range/retention/truncation/revoke tested; deliberately injected server encoding error must fail the oracle. W new/existing federation tests and `pnpm contracts:check`. Local test is not authenticated external-peer qualification; no invented federation package script/client database.
 
 ## S62 — erasure request · [#254](https://github.com/UnknownAlienHuman/eliot-research/pull/254)
 
-1. Find and wire `prepareErasureForOwner` in existing core services to owner prepare/permission/execute/status; preserve the exact source/namespace/case identity and current permission ceiling.
-2. Expose the existing lifecycle in PWA: requested/uncertain/blocked is not PURGED; Research access does not grant deletion rights.
-3. **Done:** owner request/reload/replay creates one case, while changed input/expired approval/foreign source cannot delete. `pnpm erasure:check`, W and B using disposable data. This task does not authorize deletion of the owner's real library.
+Wire prepareErasureForOwner and existing prepare/permission/execute/status to actual owner HTTP/PWA. Bind namespace/source/case/current permission; Research grant does not grant erase. W: test/erasure-admission-policy.test.ts test/erasure-runtime.test.ts test/erasure-coordinator.test.ts; add request/reload/stale/expired/changed-input assertions and B disposable-data control. Requested/UNKNOWN/BLOCKED is not PURGED. `pnpm erasure:check`.
 
-## S63 — full purge closure · [#255](https://github.com/UnknownAlienHuman/eliot-research/pull/255)
+## S63 — managed purge · [#255](https://github.com/UnknownAlienHuman/eliot-research/pull/255)
 
-1. Enumerate the existing managed dependency closure from S55 and actual manifests: original/normalized/work objects, indexes, derived sections, managed copies and backups. No new deletion engine.
-2. Fence late producers, invoke each existing deletion/absence adapter, preserve retention holds and collect exact object/version/domain absence evidence; duplicate observations do not cover a missing location.
-3. **Done:** no affected read/search/export can disclose purged data, late replay cannot resurrect it, locked/unobserved copies stay BLOCKED with a review condition. Erasure/backup/delivery/recovery checks and W; native closure receipt separately. Never claim deletion of uncontrolled downloads.
+Enumerate managed original/normalized/Work/index/derived/copy/backup dependencies; fence late producers and collect exact object-version/domain absence evidence through existing adapters. Hold/outage never pretends deletion. W test/erasure-coordinator.test.ts plus **NEW** test/erasure-derived-closure.test.ts extending actual manifests/stores and all affected readers. Duplicate observations cannot fill a missing location, late replay cannot resurrect/delete foreign data. `pnpm erasure:check`, `pnpm delivery:check`; native deletion/retention evidence separate.
 
-## S64 — Queue/DLQ recovery · [#256](https://github.com/UnknownAlienHuman/eliot-research/pull/256)
+## S64 — delivery recovery · [#256](https://github.com/UnknownAlienHuman/eliot-research/pull/256)
 
-1. Connect existing scheduled reconciler, outbox dispatcher and consumer inbox settlement; enqueue ACK is not consumer completion.
-2. Retry known safe transport only, using original operation/message identity and lease. Re-read current authority/receipt before effects. Poison follows existing DLQ policy; authorized replay does not bypass strict decode or invent a new paid attempt.
-3. **Done:** missing delivery is recovered, identical delivery is idempotent, stale lease/crash/lost ACK/revoke/purge do not strand or duplicate effects. `pnpm delivery:check`, `pnpm recovery:check` and W; actual native DLQ redelivery is S95.
+Connect existing scheduled reconciler/outbox/leases/consumer/inbox. Re-read receipt/current authority before effects; poison follows existing bounded native retry/DLQ, corrected authorized replay preserves original identity. W test/outbox-reconciler.test.ts and **NEW** test/queue-delivery-replay.test.ts with actual local producer/consumer/storage. `pnpm delivery:check`. Missing delivery recovered; duplicates/lost ACK/crash/stale lease/revoke/purge produce one result, never blind repeated UNKNOWN model call. Native DLQ test S95.
 
-## S65 — backup source/offsite adapters · [#257](https://github.com/UnknownAlienHuman/eliot-research/pull/257)
+## S65 — backup adapter · [#257](https://github.com/UnknownAlienHuman/eliot-research/pull/257)
 
-1. Reuse existing O2 `epoch.ts`, `coherent-cut.ts`, `offsite.ts` and encryption/nonce/replay authority; connect current D1/R2 source ports, including all current columns/tables.
-2. Implement the existing OffsiteCopyAdapter describe/put/get/delete contract for the approved destination; verify exact ciphertext readback and authenticated decoding before success.
-3. **Done:** a consistent portable epoch, no credentials/keys in export, partial/corrupt/restart/lost-ACK cases safe. `pnpm backup:check` and W source-port tests. A controlled local destination proves the adapter, not independent offsite availability; actual failure-domain/retention/delete evidence requires the real approved target.
+Reuse O2 epoch/coherent-cut/offsite/encryption/nonce/replay; source ports export all current classified authority columns and R2 manifests with bounded parts. OffsiteCopyAdapter uses an approved concrete destination and verifies ciphertext plus authenticated plaintext readback. U `packages/backup-o2`, plus **NEW** W test/backup-source-ports-d1.test.ts. Fresh/upgrade/current-schema/concurrent/corrupt/lost-ACK/expiry/nonce cases cannot yield partial receipt. No new crypto/export system. A controlled destination is not proof of independent offsite failure domain; approved target credentials are genuinely external input, not architectural guesswork.
 
-## S66 — clean restore · [#258](https://github.com/UnknownAlienHuman/eliot-research/pull/258)
+## S66 — purge-first restore · [#258](https://github.com/UnknownAlienHuman/eliot-research/pull/258)
 
-1. Reuse the epoch/manifest parsers and existing restore port on a verified isolated, non-serving target; validate all parts, schema and exact hashes.
-2. Apply the independent current purge/policy frontier before revealing restored bytes or rebuilding S52 projections. Do not reactivate old credentials. Missing current purge evidence keeps readiness false.
-3. **Done:** an epoch created before later purge restores permitted heads but never exposes later-purged content; interruption resumes the same operation and cannot enable traffic early. Backup/erasure/recovery checks and W; clean-target native restore and measured RPO/RTO separately. No production restore is implicit in writing the code.
+Implement the existing pending restore port against an explicitly isolated non-serving target. Verify epoch/parts/schema, apply independent current purge/policy before exposure/index upload, restore allowed objects/heads then rebuild S52. **NEW** W test/backup-isolated-restore.test.ts, plus S65 source-port and test/erasure-coordinator.test.ts. Pre-purge epoch cannot restore later-purged visibility; unknown frontier/partial/corrupt/restart keeps readiness closed. Old credentials never become active; native RPO/RTO receipt separate, no implicit production restore.
 
-## S67 — code/index rollback · [#259](https://github.com/UnknownAlienHuman/eliot-research/pull/259)
+## S67 — rollback · [#259](https://github.com/UnknownAlienHuman/eliot-research/pull/259)
 
-1. In existing deploy verification and expected-index-head switching, check the selected old build against current schema/config/handler/resource identities before switching.
-2. Preserve current source/artifact heads, purge and policy. Distinguish proven compatible continuation from unsupported backend transitions; the latter retain saved runs/history with explicit forward repair, not replacement execution.
-3. **Done:** compatible A→B→A and index B→A preserve canonical state and effect identity; wrong target/schema/CAS fails and purged data never returns. Local ordering/readback tests, workflow/recovery checks, then a separately approved native rollback. This is not restoration of an old data snapshot.
+Existing deploy/index switch verifies target build against current schema/config/handler/resources, then independent readback. Preserve source/artifact heads, purge and policy. W S05 continuity and S52 index-promotion tests, plus **NEW** tests/deployment-rollback-ordering.test.ts through U for orchestrator failures. Compatible A→B→A preserves old operation receipts; unknown compatibility does not delete/recreate runs. Wrong target/CAS/lost ACK safe. Native rollback separately authorized, never data-snapshot restore.
 
-## S68 — bounded Steward · [#260](https://github.com/UnknownAlienHuman/eliot-research/pull/260)
+## S68 — Steward · [#260](https://github.com/UnknownAlienHuman/eliot-research/pull/260)
 
-1. Wire the existing `packages/research/src/steward.ts` checks into a bounded scheduled pass with existing cursor/operation identity; inspect actual freshness, hashes, delivery, backup, purge, routes and usage observations.
-2. Persist actionable findings; semantic revalidation is a candidate only after an explicit new trigger. QueryHint/policy promotion requires the existing verifier/Golden path.
-3. **Done:** unchanged pass makes zero model calls, stale Wiki produces a candidate not a published revision, repeated triggers do not rewrite content, unknown observation is not healthy. `pnpm steward:check`, Golden/delivery checks and W. No autonomous permission expansion, hard deletion or new agent daemon.
+Existing steward.ts and scheduled handler run bounded deterministic cursor checks over actual freshness/hashes/delivery/backup/purge/routes/usage. New explicit trigger may produce a semantic candidate; QueryHint needs existing verifier/Golden comparison before activation. **NEW** W test/steward-scheduled-pass.test.ts plus test/outbox-reconciler.test.ts. Unchanged pass zero model calls, duplicate trigger one finding, stale Wiki not automatically published, unknown not healthy. No daemon/autonomous erase/permission expansion.
 
-## S69 — actual security boundary · [#261](https://github.com/UnknownAlienHuman/eliot-research/pull/261)
+## S69 — security · [#261](https://github.com/UnknownAlienHuman/eliot-research/pull/261)
 
-1. Trace the existing policy/reference-manifest/context/output chain from admitted bytes to model and client; write the allow/deny matrix for viewer, model and client separately.
-2. Add actual-boundary cases: revoke during I/O, source instructs erase/exfiltrate, forged citation/tool/actor, unsafe acquisition destination, PWA HTML/script injection, and secret-bearing error/log values.
-3. **Done:** prohibited network/storage/disclosure effects are absent while authorized paths work; no source prose grants authority. Model-admission/assurance/contracts/erasure checks, W and security B plus existing secrets/license/dependency checks. No blanket exclusions or new security framework; native T5 separately.
+Trace actual policy/manifest/context/output from source to model and client. Add **NEW** W test/research-disclosure-boundaries.test.ts, reusing test/research-reference-manifest.test.ts test/research-claim-audit-input.test.ts test/research-citation-attempt-binding.test.ts. Cases: viewer≠model/client, in-flight revoke, forged actor/citation/tool, injected erase/exfiltrate, unsafe acquisition URL and nested secret errors. PWA XSS checked by B. Permitted paths still work; prohibited effects/disclosure absent. `pnpm contracts:check`, `pnpm evidence:check`, `pnpm erasure:check`, existing repository lint/CI checks; do not invent a secret/license scan result or blanket exclusion. Native T5 separate.
 
-## S70 — ownership and residency · [#262](https://github.com/UnknownAlienHuman/eliot-research/pull/262)
+## S70 — source owner/residency · [#262](https://github.com/UnknownAlienHuman/eliot-research/pull/262)
 
-1. Use actual `packages/domain/src/source-ownership.ts`, `owner-cutover.ts`, `residency.ts` and admission adapters. Shared membership does not duplicate mutable ownership; equal bytes do not authorize cross-key/retention reuse.
-2. Bind bilateral cutover to exact owners, source set/view and fence; explicit unsaved snapshots need the existing origin/view/policy receipt, never implicit buffer capture.
-3. **Done:** valid cutover/restart converges to one active owner and old writers fail; unilateral/stale/wrong-residency/implicit-unsaved cases reject before writes. `pnpm owner:check`, `pnpm authority:check`, `pnpm ingest:check`, W. Preserve historical revisions, not a new ownership service.
+Use domain source-ownership/owner-cutover/residency and actual admission adapters. Shared project membership is not duplicate ownership; equal bytes do not authorize cross-key/retention reuse. W test/source-admission-service.test.ts test/source-revisions.test.ts test/ingest-promotion-authorization.test.ts plus **NEW** test/source-owner-cutover-d1.test.ts. Bilateral exact source-set/view/fence transfer converges under restart; stale/unilateral/implicit unsaved import denied. `pnpm ingest:check` and `pnpm contracts:check`. No separate ownership service.
 
-## S71 — operational visibility · [#263](https://github.com/UnknownAlienHuman/eliot-research/pull/263)
+## S71 — observability · [#263](https://github.com/UnknownAlienHuman/eliot-research/pull/263)
 
-1. Populate existing observability/readiness fields with actual operation/generation/trace/latency/error observations for model, index, outbox/DLQ, purge, backup and usage. No content/prompt/credential labels.
-2. Display one actionable diagnostic origin and recovery action in current Connections/details; unknown observation or missing alert sink is explicitly unknown, not zero errors/READY.
-3. **Done:** the owner diagnoses injected failures without SQL, repeated events do not double-count spend, and permitted evidence reads remain usable under model budget exhaustion. W metric/readiness tests and existing checks; actual configured sink/native control readback separately. No new monitoring/accounting backend.
+Populate existing content-free metrics/readiness/Connections with actual operation/generation/trace/error/latency and recovery action. Unknown or missing sink is not zero/healthy. **NEW** W test/operational-readiness-metrics.test.ts using actual model/outbox/purge readers; U PWA and B diagnostic view. Duplicate metrics do not double-charge; budget exhaustion preserves authorized evidence reads. Secrets/prompt/source text absent from output. Configured alert/native control receipt separate; no monitoring/accounting backend.
 
 ## S72 — session events · [#264](https://github.com/UnknownAlienHuman/eliot-research/pull/264)
 
-1. Implement the passport's authenticated events route over existing ResearchSession/W2/change receipts. D1 is replay authority; persist before notify, never issue a token-bearing URL.
-2. Use native hibernation of the pinned runtime and actor/run-bound cursors; frames contain state and refs, not full source/model bodies. Bound slow consumers with explicit resync/status fallback.
-3. **Done:** disconnect/eviction/lost notification recovers committed events without starting a run; stale/foreign cursors, revoke and late completion do not resurrect state. Workflow/recovery checks and W, then actual native hibernation proof. No broker or second task ledger.
+Implement specified authenticated route over existing ResearchSession/W2/change receipts, actor/run-bound cursor, persisted-before-notify and native hibernation. Frames hold status/refs, not corpus/token URL. **NEW** W test/research-session-events.test.ts plus test/research-session.test.ts test/research-changes.test.ts. Disconnect/eviction/lost event replay committed sequence, no new run; slow consumer resync bounded, revoked/foreign/stale/late completion denied. Native hibernation S95; no broker.
 
-## S73 — Library/project flow · [#265](https://github.com/UnknownAlienHuman/eliot-research/pull/265)
+## S73 — Library/project UX · [#265](https://github.com/UnknownAlienHuman/eliot-research/pull/265)
 
-1. Recompose existing `main.ts` project/library/raw-file panels into one project selector, one source list and one add-document flow. Give every button a stable accessible label.
-2. Keep capture, conversion, admission and index readiness distinct; multi-file work uses independent per-file operations. Reuse project CAS/membership and immutable source revisions for attach/detach/update/history.
-3. **Done:** empty account→two projects→import/shared source→revision→Lens→Research works without SQL or duplicate source; partial failure/reload/stale CAS states are clear. PWA U, W project/import tests and B; keyboard/mobile/dark/light screenshots. No frontend rewrite.
+One project selector/source list/import flow; distinguish capture/conversion/admission/readiness. Shared source and attach/detach/update/history use existing revisions/CAS. Independent per-file import outcomes, stable accessible controls. U `apps/eliotr-pwa`, W Raw import/Intake plus new project mutation tests from S04, then B. Empty→two projects→shared source→revision→Lens→Research works without SQL/duplicates; partial/stale/reload/denied states honest. Keyboard/mobile/dark/light screenshots required, not UI rewrite.
 
 ## S74 — Connections · [#266](https://github.com/UnknownAlienHuman/eliot-research/pull/266)
 
-1. Separate current server reachability, model readiness, project-client permission and selected Workspace action/readback using existing APIs and S31's grant form.
-2. Display the actual checked operation/time and a specific corrective action; status refresh is not paid qualification. A local ERC grant revoke does not revoke external Google consent.
-3. **Done:** wrong actor/project, expired proof, missing credential and unavailable external action are distinguishable, and permitted saved reads remain available. Google/model/authority checks, W and B. Do not enable unselected legacy OAuth routes just to increase API/UI parity.
+Separate server/model/agent grant/Workspace action using actual diagnostic/readiness APIs and S31 form. Display checked operation/time and exact correction. W Client/new grant/new proof renewal cases, `pnpm gemini:check`, U PWA and B. Status refresh is not paid qualification; ERC revoke not external Google-consent revoke. No unselected legacy OAuth requirement or secret values on screen.
 
-## S75 — Wiki/report flow · [#267](https://github.com/UnknownAlienHuman/eliot-research/pull/267)
+## S75 — Wiki/report UX · [#267](https://github.com/UnknownAlienHuman/eliot-research/pull/267)
 
-1. Reuse current report/Wiki panels/readers: clear draft versus published lists, selected revision body, claim verdicts, citations and history.
-2. Connect section edit/review/publish/export to S53/S54 CAS and exact revision; browsing history never changes head, edited claims do not inherit obsolete audits, partial export is not complete.
-3. **Done:** A/B/C→edit B→review→publish→v1/v2/citation/export preserves allowed unchanged hashes and honest evidence state across reconnect. Artifact/research checks, W and B; keyboard/mobile screenshots. No renderer/workflow library for layout changes.
+Clear draft/published/revision views with claims/citations/history and exact-revision edit/review/publish/export from S53/S54. U PWA, W Artifact/Wiki/new COW/publication cases then B. Browsing old revision does not change head; edited unsupported claim cannot inherit audit; partial export not complete. A/B/C→edit B→publish→v1/v2 preserves allowed hashes across reconnect. No new renderer/workflow library.
 
-## S76 — formatting · [#268](https://github.com/UnknownAlienHuman/eliot-research/pull/268)
+## S76 — readable formatting · [#268](https://github.com/UnknownAlienHuman/eliot-research/pull/268)
 
-1. Pin the chosen compatible local dev formatter and exclude immutable fixtures/migrations/generated evidence. First format compressed `research-session.ts` and model attempt/spend methods, separate from behavioral edits.
-2. Check semantic diff, especially string/template/SQL literal values, and run affected tests. Continue in bounded file batches; installing the tool alone is not completion.
-3. **Done:** product TS/JS follows one readable style without hiding long functions or minifying to satisfy source counts. Run formatter, affected tests and types. S90 owns actual build/runtime budgets; do not fragment packages merely to lower physical line counts.
+Pin the selected compatible local dev formatter; exclude immutable fixtures/migrations/generated bytes. First ResearchSession and model attempt/spend methods, then bounded product file batches. Mechanical change separate from behavior; literal/template/SQL values unchanged. Run formatter directly only after dependency installed, `pnpm typecheck`, relevant W Workflow/Model and U changed packages. No ignore/minify/package splitting to game LOC; S90 owns measured artifact/runtime budgets.
 
-## S77 — validation reuse · [#269](https://github.com/UnknownAlienHuman/eliot-research/pull/269)
+## S77 — shared text primitive · [#269](https://github.com/UnknownAlienHuman/eliot-research/pull/269)
 
-1. Start with `wiki-owner-edit-proposal.ts::boundedText`; characterize units, surrogate/NUL/empty/control behavior and domain error mapping against its reader.
-2. Reuse one pure Unicode/length primitive in an existing lower layer with explicit units; caller-specific allowed characters/errors remain local. Migrate only consumers whose before/after corpus proves equivalence, one caller at a time.
-3. **Done:** BMP/astral/surrogate/LF/CRLF/max/max+1 inputs retain exact accepted bytes/errors and existing IDs; the repeated primitive is removed, not wrapped by another copy. Artifact/contracts/boundaries checks, U and W writer/readback regression. No validator DSL or merging incompatible serializers; S28/S78 own canonical bytes.
+Begin actual wiki-owner-edit-proposal.ts boundedText and reader; characterize byte/UTF-16 units, empty/NUL/surrogates/control rules and errors. Extract one pure primitive in existing lower layer with explicit units; change equivalent callers individually after differential cases, never normalize bytes or merge incompatible wire contracts. W S04 new edit case and test/wiki-publication-store.test.ts, U changed package, `pnpm contracts:check` and `pnpm boundaries:check`. Exact historical IDs/errors preserved, duplicated primitive actually removed. S28/S78 own canonical bytes; no validator DSL.
