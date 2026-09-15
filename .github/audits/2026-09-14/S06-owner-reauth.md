@@ -1,27 +1,33 @@
-# S06 — читать свои исследования после повторного входа
+# S06 — Read existing Research history after signing in again
 
-База `a2aca127`; F02. Независимо от S05: здесь меняется JWT, а deployment остаётся прежним.
+Baseline: `a2aca127`; finding F02. Independent of S05: the JWT changes while the deployment stays unchanged.
 
-## 1. Суть
-Access возвращает credential_generation с kid/iat. `readResearchRunStatus` передаёт новый credential в `loadHeldResearchScope`, хотя run хранит прежний. Новая сессия того же principal не должна превращать его историю в чужую. Сам факт выдачи JWT не удаляет строку SQL view — не воспроизводить эту ошибочную формулировку аудита.
+## 1. Problem
 
-## 2. Что сделать
-Обеспечить чтение статуса и истории собственного run через новый валидный owner-сеанс. Отделить текущий read grant от неизменяемой execution provenance. Не менять всю систему JWT и не переписывать старые receipts.
+Access derives `credential_generation` from kid/iat. `readResearchRunStatus` supplies the new credential to `loadHeldResearchScope`, while the run retains its original credential. A new session for the same principal must not make that principal's history appear foreign. Issuing a JWT does not itself delete a SQL-view row; do not repeat that inaccurate audit formulation.
 
-## 3. Документация
-[ELIOT_RESEARCH §7](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/architecture/ELIOT_RESEARCH.md).
+## 2. Required change
+
+Allow a new valid owner session to read that owner's existing run status and history. Separate current read authorization from immutable execution provenance. Do not redesign the whole JWT system or rewrite historical receipts. Long-running execution authorization is a separate S33 concern.
+
+## 3. Documentation and exact search anchors
+
+[Architecture, section 7](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/architecture/ELIOT_RESEARCH.md).
+
 ```sh
 git grep -n -F 'The Investigation survives' -- docs/architecture/ELIOT_RESEARCH.md
 git grep -n -F 'readResearchRunStatus' -- apps/eliotr-core/src/research-session.ts
 git grep -n -F 'reauthorizeOwnerHistoricalScope' -- packages/cloudflare-navigation/src
 ```
 
-## 4. Как сделать
-В status/history readers использовать проверенную текущую identity/policy и существующий reauthorization механизм. Original run credential сохранять как provenance; новый запрос не получает права только по совпадению ID. Проверить тот же principal с другим iat/kid, другой principal и явно REVOKED grant. Не увеличивать TTL для маскировки причины, не делать credential_generation постоянной строкой и не вычищать fencing из SQL.
+## 4. Implementation approach
 
-## 5. Критерии выполнения
-- Два валидных owner JWT одного principal читают тот же run и checkpoints.
-- Foreign principal, просроченный JWT и действующий revoke отказаны без раскрытия данных.
-- Reauthorization не вызывает модель, не создаёт второй run и не меняет старые hashes.
-- Доступность истории не требует ручного SQL или продления срока через UI.
-- Есть integration regression текущего status/history HTTP с D1 и exact SHA/результаты.
+Use the verified current identity/policy and existing reauthorization mechanism in status/history readers. Keep the original run credential as provenance. Matching an operation ID alone grants no access. Test the same principal with a different iat/kid, a different principal, and an explicitly REVOKED grant. Do not mask the issue by extending TTL, making credential generation constant, or removing SQL fencing.
+
+## 5. Acceptance criteria
+
+- [ ] Two valid owner JWTs for the same principal read the same run and checkpoints.
+- [ ] A foreign principal, expired JWT, and active revocation are denied without disclosure.
+- [ ] Reauthorization invokes no model, creates no second run, and changes no historical hash.
+- [ ] Reading history needs neither manual SQL nor manual UI-based expiry extensions.
+- [ ] Add actual status/history HTTP and D1 integration regressions; record exact implementation SHA and results.
