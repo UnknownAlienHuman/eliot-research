@@ -1,26 +1,32 @@
-# S25 — проверить договорённость Wiki writer/reader для Unicode и references
+# S25 — Verify Wiki writer/reader agreement for Unicode and references
 
-База `a2aca127`; F15. P2, hardening. Разница SQL/TS предикатов доказана; создание сломанной записи через нормальный HTTP не доказано, поскольку parseInput уже валидирует заметку.
+Baseline: `a2aca127`; F15, P2 hardening. SQL/TypeScript predicates differ, but creating an unreadable row through normal HTTP is not established: parseInput already validates the edit note.
 
-## 1. Суть
-SQL length проверяет символы иначе, чем JS length; ref shape в 0064 слабее validRef. Нельзя объявлять каждую такую разницу уязвимостью, но успешная запись через поддерживаемый writer обязана читаться тем же приложением.
+## 1. Problem
 
-## 2. Что сделать
-Проверить edit_note и base_evidence_map_ref по цепочке supported writer→commit→reader. Исправить только доказанное расхождение и сделать структурную валидацию повторно используемой для этой операции.
+SQL length and JavaScript length use different units, and migration 0064's reference-shape check is weaker than validRef. Not every difference is an exploitable defect. However, every record accepted through a supported writer must be readable by the same application.
 
-## 3. Документация
-[LANGUAGE_RUNTIME_CONTRACT §3–4](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/architecture/LANGUAGE_RUNTIME_CONTRACT.md), [канон §9.5](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/architecture/ELIOT_RESEARCH.md).
+## 2. Required change
+
+Exercise edit_note and base_evidence_map_ref through supported writer → commit → reader. Correct demonstrated mismatches and reuse structural validation within this operation. Do not invent a reachable vulnerability when the writer already rejects the input.
+
+## 3. Documentation and exact search anchors
+
+[Language contract, sections 3–4](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/architecture/LANGUAGE_RUNTIME_CONTRACT.md); [architecture, section 9.5](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/architecture/ELIOT_RESEARCH.md).
+
 ```sh
 git grep -n -F '## 9.5. Proposal and publication' -- docs/architecture/ELIOT_RESEARCH.md
 git grep -n -F 'boundedText' -- apps/eliotr-core/src/wiki-owner-edit-proposal.ts
 ```
 
-## 4. Как сделать
-Corpus: BMP, emoji, NUL, lone surrogate, valid/invalid ref, граничная длина. Запускать через реальный service и D1, не только сравнение отдельно скопированных regex. Запись bad input должна отказать до effects; deliberately corrupted DB row должна безопасно отказать reader. Не удалять atomic guards, foreign keys, CAS и immutable constraints. Если нормальные writers уже защищены, закончить регрессионными tests и точным описанием границ SQL; не добавлять ненужные триггеры ради совпадения всех предикатов.
+## 4. Implementation approach
 
-## 5. Критерии выполнения
-- Любая принятая supported writer-ом запись успешно round-trips с теми же bytes/hashes.
-- Invalid input не оставляет новых head/receipt/outbox; corruption reader не маскируется.
-- Units длины и Unicode handling одинаково описаны и проверены.
-- Нет массового удаления SQL-защиты или изменения старых migrations.
-- Reachability каждого найденного дефекта показана; tests/SHA и отсутствие дефекта честно фиксируются.
+Use BMP text, emoji, NUL, lone surrogates, valid/invalid references, and boundary lengths. Execute the actual service against D1; comparing copied regexes alone is insufficient. Invalid input must fail before effects. Deliberately corrupted database rows must produce a safe reader failure. Preserve atomic guards, foreign keys, CAS, and immutability constraints. If all supported writers are already safe, finish with regression tests and precise SQL guarantees rather than adding redundant triggers solely to make every predicate identical.
+
+## 5. Acceptance criteria
+
+- [ ] Every accepted supported write round-trips with identical bytes/hashes.
+- [ ] Invalid input leaves no new head/receipt/outbox; corrupted readback is not concealed.
+- [ ] Length units and Unicode behavior are explicitly documented and tested.
+- [ ] No blanket removal of SQL protection or rewriting of historical migrations.
+- [ ] Demonstrate reachability for any defect claimed; record tests, exact SHA, and a negative finding honestly when no supported-path defect exists.
