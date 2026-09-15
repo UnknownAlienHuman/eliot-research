@@ -1,36 +1,43 @@
-# S37 — Execute Research branches instead of recording their names
+# S37 — Execute and reconcile the required Research branches
 
-Baseline: `a2aca127`; ER-08/09/10/16. Inputs: #227/#228. Reuse counter-search #214. This is a bounded branch-execution work package with incremental checkpoints, not permission for a single whole-engine rewrite.
+Baseline: `a2aca127`; ER-08/09/10/16. Inputs: S35's protocol, S36's immutable planning manifest, S09 retrieval, and S22 counter-search. This task has the five explicit implementation checkpoints below. They are sequential commits of one shared branch mechanism, not separate engines or an invitation to redesign scheduling.
 
 ## 1. Problem
 
-Branch scheduling remains open in the gap register. Individual synthesis/audit stages exist, but the selected profile needs actual SUPPORT, COUNTER, ALTERNATIVE, CHRONOLOGY, IMPLEMENTATION, LITERATURE, and SOURCE_AUDIT execution where required.
+The current `createResearchStageHandlerFactory` falls back to `deterministicWorkflowStageBytes` for READ_AND_EXTRACT and ANALYZE_BRANCHES. A named checkpoint therefore does not establish actual branch work. Synthesis, claim audit, citation resolution, freeze, and their recovery mechanisms already exist and must be reused.
 
 ## 2. Required change
 
-Execute required branches in the existing ResearchWorkflow/W1 ledger with actual READ_AND_EXTRACT and ANALYZE outputs. Start with a SUPPORT+COUNTER fixture. Reuse isolated branch prompts, resolved EvidencePacks, W3 attempts/reservations, and R2 outputs. Do not execute roles the protocol does not require.
+Connect the installed protocol's required roles to real retrieval/read/analysis outputs and deterministic reconciliation before EvidenceFreeze. Reuse W1/W2/W3, existing model execution/reservation ports, and Work R2. No separate workflow, agent SDK, queue, graph database, or role-specific model engine is required.
 
-## 3. Documentation and exact search anchors
+## 3. Documentation and entry points
 
-[Architecture, sections 7.7–7.9](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/architecture/ELIOT_RESEARCH.md).
+[Architecture §§7.7–7.9](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/architecture/ELIOT_RESEARCH.md); [actual factory](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/apps/eliotr-core/src/research-stage-handlers.ts); `packages/research/src/ports.ts`, `synthesis-candidate.ts`, `evidence-freeze.ts`, `claim-audit.ts`; `apps/eliotr-core/src/research-evidence-freeze-composition.ts`.
 
 ```sh
 git grep -n -F '## 7.8. Research branches' -- docs/architecture/ELIOT_RESEARCH.md
+git grep -n -e 'createResearchStageHandlerFactory' -e 'recoverStartedAttempt' -- apps/eliotr-core/src/research-stage-handlers.ts
 git grep -n -F 'Each expensive model call has a durable checkpoint.' -- docs/architecture/ELIOT_RESEARCH.md
 ```
 
-## 4. Implementation approach
+## 4. Ordered implementation checkpoints
 
-First implement branch identity/input/output persistence and one role through existing ports. Next integrate SUPPORT+COUNTER with deterministic reconciliation and failure recovery. Add the remaining required role handlers one at a time using that same contract; the work package is complete only when selected roles have real handlers and tests.
+**37.1 — One branch contract and exact read output.** Add a branch handler module under the existing `packages/cloudflare-research-stages/src/` and export it through that package. Use existing contract refs and candidate-claim types; add only the missing strict branch envelope. Its identity binds investigation revision, protocol revision, role, question/hypothesis refs, frozen scope/input digest, and prompt/schema generation. Its immutable output records resolved evidence refs, candidate claims with evidence, limitations/unknowns, and model-attempt receipt when a model was used. READ_AND_EXTRACT first resolves admitted bytes using the existing exact resolver; search snippets or source URLs alone are not branch evidence.
 
-Derive branch IDs deterministically from the existing Investigation/protocol revision, role, and input identity. Each expensive call gets its own step/attempt, never a loop of paid calls inside one retryable step. Follow the existing canonical execution envelope (default 2, maximum 4, no nested fan-out), not new procedural quotas. Branches receive bounded relevant context and the reference manifest, not the entire lead-agent conversation.
+**37.2 — SUPPORT plus COUNTER.** Implement one shared analysis executor with two installed role prompts. SUPPORT proposes supported answers; COUNTER consumes S22's actual counter-search candidates and records contradictions or unsuccessful probes. Both use the same bounded AllowedReferenceManifest and existing W3 budget/currentness/cancellation protocol. A branch role does not choose its own tools, verifier, or source scope. A plain lookup does not create either paid analysis branch unless its protocol requires it.
 
-Persist candidate claims, evidence references, unknowns, and lineage after each branch. RECONCILE deterministically preserves dissent and missing branches. Serialize W1 mutations with CAS; keep network I/O outside transactions. Deadline/cancellation prevents new dispatch while retaining completed output. UNKNOWN provider outcome does not authorize another branch attempt.
+**37.3 — Remaining declared roles, using the same executor.** ALTERNATIVE returns rival explanation/falsifier refs; CHRONOLOGY returns dated, source-bound event/uncertainty items; IMPLEMENTATION distinguishes specification/code snapshot/observed execution; LITERATURE distinguishes primary/secondary evidence and source lineage; SOURCE_AUDIT returns qualification, provenance, independence, and precision limitations. Each has one golden positive and one role-specific negative fixture. Do not implement these as seven scheduler classes. Roles absent from the selected profile are not dispatched.
+
+**37.4 — Settlement and reconciliation.** Derive stable branch and W3 operation IDs from the frozen identity. Before dispatch read the existing committed attempt/result; after execution verify immutable R2 readback and append an authorized W1 CHECKPOINT without mutating the head's protected portfolio/debt fields. Use the existing canonical concurrency envelope, with no nested fan-out. RECONCILE joins outputs by planned branch ID, retains contradictions and missing/failed branches, and feeds the existing freeze composition. An identical repeated result is a no-op; conflicting content for the same branch is an integrity conflict. A missing mandatory role makes its obligation unsatisfied, not completed.
+
+**37.5 — Factory and recovery.** Add explicit handler dependency fields to `ResearchStageHandlerFactoryMode`; wire them in the actual server composition and dispatch READ_AND_EXTRACT/ANALYZE_BRANCHES/RECONCILE through the new handler. Preserve legacy handler generations and historical receipts. The new executable generation must explicitly reject a missing required handler instead of falling through to technical bytes. Each paid branch call has a W3 checkpoint; a wrapper retry never blindly repeats several calls. `recoverStartedAttempt` recovers committed branch outputs before any new dispatch. Cancellation/deadline blocks new work; post-freeze new evidence uses S40 reopen.
+
+Use `pnpm research:check`, `pnpm workflow:check`, `pnpm model:admission:check`, and `pnpm recovery:check`. Add a focused `test/research-branch-execution.test.ts` under `apps/eliotr-core` and run from that package's Workers Vitest configuration. Keep controlled provider responses external to real W1/W2/W3/R2 storage.
 
 ## 5. Acceptance criteria
 
-- [ ] SUPPORT and COUNTER genuinely execute and their outputs enter the freeze; neither prompt includes unauthorized cross-scope context.
-- [ ] One failed branch produces explicit debt/coverage limitations, not all-complete status.
-- [ ] Crash/retry/concurrent callbacks do not duplicate outputs or charges; late evidence after freeze requires explicit reopen.
-- [ ] Every required selected role has a real handler; unavailable mandatory roles leave their obligations explicitly blocked.
-- [ ] Record actual W1/W2/W3/R2 and factory-readback tests with exact SHA. No new swarm/agent framework is introduced.
+- [ ] Every role required by the selected profile produces the stated typed output through the one executor; substituting technical bytes for a required role fails the integration test.
+- [ ] Fixture: supporting source + tail-section contradiction + duplicate-origin source. Freeze retains both sides and does not count the duplicate as independent support.
+- [ ] Crash after a provider result, lost result ACK, two concurrent completion callbacks, and repeated recovery produce one committed branch output and no repeated completed paid attempt.
+- [ ] Missing/failed mandatory branch remains explicit; currentness failure, foreign evidence, late cancellation, and evidence arriving after freeze cannot create accepted output.
+- [ ] Stage factory input/output refs match persisted records. Record exact implementation SHAs for 37.1–37.5, commands/results, branch IDs, and model-call counts. Controlled branch fixtures prove orchestration, not real-model research quality; that is S93.
