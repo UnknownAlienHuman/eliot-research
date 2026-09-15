@@ -1,24 +1,35 @@
-# S76 — читаемый TypeScript вместо методов в одну многотысячную строку
+# S76 — Make compressed TypeScript methods reviewable
 
-База a2aca127; F24/OVR-05, ER-00/24. Изменение форматирования отдельно от изменения поведения. Уточнена связь с S90/#282: source counts — диагностика сопровождения, не runtime performance и не основание минифицировать методы.
+Baseline: `a2aca1277b0edbbed04de66e0d44e383e1b815ef`. Findings F24/OVR-05; owners ER-00/24. Formatting changes must remain separate from behavior changes. S90/#282 owns measured runtime budgets; physical source counts are maintainability observations, not runtime performance.
 
-## 1. Суть
-В `research-session.ts` и model storage/admission есть длинные однострочные методы: затруднены ревью гонок и диагностика stack. Подсчёт физических строк до форматирования скрывает размер, но не доказывает производительность.
+## 1. Problem
 
-## 2. Что сделать
-Установить один root dev-formatter и применить его к существующим TypeScript/JavaScript исходникам, начиная с ResearchSession и model-attempt/spend-admission. Принятое средство: локально закреплённый Prettier, не formatter service и не новый MCP.
+ResearchSession and model-attempt/spend-admission modules contain extremely long single-line methods, obscuring races and diagnostic locations. Counting their physical lines does not measure complexity or deployed size.
 
-## 3. Документация / grep
-[AGENTS](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/AGENTS.md), `## Swarm edit protocol`; [официальная установка Prettier](https://prettier.io/docs/install), проверена 2026-09-14, версия3.9.6. Процедурные source-budget правила пересматриваются явно в [S90/#282](https://github.com/UnknownAlienHuman/eliot-research/pull/282), не тайным исключением форматируемых файлов.
+## 2. Required change
+
+Install one pinned root development formatter and format existing product TypeScript/JavaScript, starting with ResearchSession and model-attempt/spend-admission. Use Prettier, not a formatting service, MCP server, or background agent. Apply changes in reviewable batches; installing the tool alone is not completion.
+
+## 3. Documentation and exact search anchors
+
+[AGENTS](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/AGENTS.md), `## Swarm edit protocol`; [S90](https://github.com/UnknownAlienHuman/eliot-research/pull/282) explicitly revises misleading procedural source budgets. [Official Prettier installation](https://prettier.io/docs/install), rechecked 2026-09-15, specifies an exact local dependency and currently uses 3.9.6.
+
 ```sh
 git grep -n -F '## Swarm edit protocol' -- AGENTS.md
+pnpm add -Dw --save-exact prettier@3.9.6
+pnpm exec prettier --check <explicit-product-ts-js-paths>
 ```
 
-## 4. Как сделать
-Предлагаемые команды: `pnpm add -Dw --save-exact prettier@3.9.6`, затем `pnpm exec prettier --check <явные TS/JS paths>`. Проверить совместимость закреплённого pnpm/Node; dependency только dev. `.prettierignore` исключает immutable contract/vector fixtures, SQL migrations, generated bindings, receipts, source snapshots и golden bytes. Не форматировать документы/JSON с нормативными digest автоматически. Использовать `.prettierrc` с существующим стилем и LF; не добавлять Husky/watch daemon. Механические изменения отдельно от bug fixes; diff не меняет значения string/template literals или evaluated SQL. После первого принятого checkpoint использовать тот же formatter; наличие инструмента без устранения многотысячных code lines не завершает задачу. Когезию больших модулей улучшать по реальным ответственностям; не нарезать бессмысленные packages и не minify обратно. S77/#269 касается общей Unicode-validation primitive, а не общего бюджета размера.
+## 4. Implementation approach
 
-## 5. Критерии выполнения
-- ResearchSession и model-attempt/spend методы читаемы; product TS/JS соответствует одному format contract.
-- Literal/SQL/fixture bytes и runtime decisions сохранены; это подтверждают existing tests и проверка semantic diff, не только prettier exit0.
-- Нет prettier-ignore ради сокрытия больших методов, фоновых tools или форматирования immutable fixtures.
-- Счётчики source size не маскируются; фактические build/runtime budgets проверяются в S90/#282. Tool/lock changes и механический diff выделены, exact SHA/команды сохранены.
+Check compatibility with the repository's pinned Node/pnpm before installation. Keep Prettier development-only and use LF with a configuration matching existing style. Exclude immutable contract/vector fixtures, migrations, generated bindings, receipts, source snapshots, and golden bytes from automatic formatting. Do not rewrite normative JSON/document bytes.
+
+Keep tool/lock changes and mechanical formatting distinguishable from bug fixes. Compare literal/template-string and evaluated SQL values, not just formatter exit status. Preserve existing tests. Do not add Husky, a watcher, or formatter exclusions hiding large methods. Do not minify again or manufacture packages to satisfy physical line counts; improve module cohesion only by actual responsibility. S77/#269 concerns shared Unicode validation, not general source-size budgets.
+
+## 5. Acceptance criteria
+
+- [ ] ResearchSession and model-attempt/spend methods are readable; product TS/JS follows one format contract.
+- [ ] Literal, SQL, immutable fixture bytes, and runtime decisions are unchanged, with existing tests and semantic-diff review supporting the claim.
+- [ ] No large-method ignore workaround, background tooling, or formatting of immutable fixtures is introduced.
+- [ ] Source counts remain visible; actual build/runtime limits are measured through S90, not hidden by relocation or minification.
+- [ ] Record exact implementation SHA, commands, test results, and the separate tool/lock and mechanical change sets. This assignment contains no implementation or deployment authorization.
