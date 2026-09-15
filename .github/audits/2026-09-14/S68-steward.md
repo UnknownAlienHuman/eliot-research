@@ -1,24 +1,33 @@
-# S68 — закончить Research Steward без автономной порчи данных
+# S68 — Complete Research Steward without autonomous data mutation loops
 
-База a2aca127; ER-33/24. Использовать `packages/research/src/steward.ts`, existing scheduled handler и observability; не писать нового долговечного агента.
+Baseline: `a2aca127`; ER-33/24. Reuse packages/research/src/steward.ts, scheduled handling, and observability; do not create another persistent agent.
 
-## 1. Суть
-Система должна сама обнаруживать stale dependencies, застрявший outbox, несогласованные hashes и просроченный purge, но Steward не должен бесконечно переписывать документы или сам выдавать себе разрешения.
+## 1. Problem
 
-## 2. Что сделать
-Подключить детерминированные checks из ER-33 к bounded scheduled pass и owner-visible findings. Семантический revalidation/QueryHint — только candidate по явному trigger с verifier и Golden replay перед policy promotion.
+The system needs to detect stale dependencies, stuck outbox work, hash inconsistencies, and overdue purge. Steward must not repeatedly rewrite documents or grant itself permission.
 
-## 3. Документация / grep
-[ER-33 §Required implementation, Acceptance](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/agent-work/ER-33-research-steward.md).
+## 2. Required change
+
+Connect ER-33's deterministic checks to a bounded scheduled pass and owner-visible findings. Semantic revalidation/QueryHint proposals remain candidates triggered explicitly, with verifier and Golden replay before policy promotion.
+
+## 3. Documentation and exact search anchors
+
+[ER-33: Required implementation and Acceptance](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/agent-work/ER-33-research-steward.md).
+
 ```sh
 git grep -n -F 'Turn retrieval feedback into versioned QueryHint/policy generation followed by Golden replay.' -- docs/agent-work/ER-33-research-steward.md
 ```
 
-## 4. Как сделать
-Каждый pass читает ограниченную страницу current hashes/readiness/handles/watermarks/outbox/DLQ/backup/purge/route/usage и сохраняет cursor/findings по existing operation identity. Не сканировать весь corpus в одной Worker invocation. Повтор одного trigger не вызывает модель вновь; отсутствие изменений не генерирует «улучшения». Версии hints/policy меняются через текущий policy/verifier path, не напрямую Steward-ом. Issue erasure эскалируется в существующий операторский путь, не hard-delete. Наблюдение недоступной зависимости — unknown/degraded, не healthy и не автоматическая permission mutation.
+## 4. Implementation approach
 
-## 5. Критерии выполнения
-- Stale Wiki fixture даёт revalidation candidate с точной зависимостью/trigger/owner, но не новый published head; unchanged pass выполняет ноль semantic calls.
-- Outbox/DLQ/backup/purge/route failures видны в owner diagnostics; повтор/restart не дублирует findings/effects.
-- Embedded instruction не меняет scope/tools/policy; Steward не публикует D2/D3, не hard-delete и не расширяет grant.
-- QueryHint не активируется до Golden comparison, отрицательный replay сохраняет прежнюю policy generation. Actual scheduled/D1 tests и exact SHA приложены.
+Each pass reads a bounded page of current hashes/readiness/handles/watermarks/outbox/DLQ/backup/purge/routes/usage and persists cursor/findings using existing operation identity. Do not scan the whole corpus in one Worker invocation. Repeated triggers do not repeat settled model calls; unchanged state does not generate unsolicited improvements.
+
+Hints/policy generations change through existing policy/verifier paths, not direct Steward mutation. Erasure issues go to the existing operator path, not automatic hard deletion. An unavailable observation remains unknown/degraded rather than healthy or permission-changing.
+
+## 5. Acceptance criteria
+
+- [ ] Stale Wiki produces a revalidation candidate with exact dependency/trigger/owner, not a new published head; unchanged passes make zero semantic calls.
+- [ ] Outbox/DLQ/backup/purge/route failures appear in diagnostics; replay/restart does not duplicate findings/effects.
+- [ ] Embedded instructions cannot alter scope/tools/policy; Steward cannot auto-publish D2/D3, hard-delete, or broaden grants.
+- [ ] QueryHint cannot activate before Golden comparison; negative replay preserves the previous generation.
+- [ ] Record actual scheduled/D1 tests and exact SHA/results.
