@@ -1,27 +1,33 @@
-# S17 — различать причины runtime-отказа Research
+# S17 — Preserve distinct Research runtime failure causes
 
-База `a2aca127`; F13. Не дубликат S02: там test harness, здесь production error mapping.
+Baseline: `a2aca127`; finding F13. Unlike S02, which covers the test harness, this task covers application runtime error mapping.
 
-## 1. Суть
-Semantic configuration/currentness helpers сводят разные ошибки к WORKFLOW_AUTHORITY_STALE; другие wrappers теряют первоначальный cause. В live-журнале первоначальный OUTPUT_CORRUPT позднее выглядел как budget stop. Агент чинит не ту причину.
+## 1. Problem
 
-## 2. Что сделать
-Сохранить исходный тип/этап ошибки на пути semantic preparation → Workflow → status response. Отличать malformed configuration, missing credential, expired proof, real revoke, transient I/O и corrupt output, используя существующие error families.
+Semantic configuration/currentness helpers collapse different failures into WORKFLOW_AUTHORITY_STALE; other wrappers discard the original cause. In the recorded live incident, an initial OUTPUT_CORRUPT later appeared as a budget stop. This encourages repairing a secondary symptom instead of the original failure.
 
-## 3. Документация
-[Execution contract §5](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/implementation/launch-prs/execution-contract.md).
+## 2. Required change
+
+Preserve the original error type and stage through semantic preparation → Workflow → status response. Distinguish malformed configuration, missing credentials, expired proofs, actual revocation, transient I/O, and corrupt output using existing error families.
+
+## 3. Documentation and exact search anchors
+
+[Execution contract, section 5](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/implementation/launch-prs/execution-contract.md).
+
 ```sh
 git grep -n -F '## 5. What a good result is' -- docs/implementation/launch-prs/execution-contract.md
 git grep -n -F 'configurationMissing' -- apps/eliotr-core/src/research-semantic-server.ts
 git grep -n -F 'void message' -- apps/eliotr-core/src
 ```
 
-## 4. Как сделать
-Исправить узкий error mapping, не добавлять logger/framework или отдельный каталог сотен кодов. Сохранять первую failure reason для конкретной attempt; вторичные ошибки записывать как последствия, не замену. Наружу отдавать безопасные code/stage/trace_id и действие восстановления; secret values, provider payload и source text не выводить. Секрет можно назвать по имени переменной, но не показывать значение. Retryability отражает реальную безопасность повтора.
+## 4. Implementation approach
 
-## 5. Критерии выполнения
-- Изолированные injections перечисленных причин дают различимые безопасные результаты.
-- Первоначальный corrupt-output не превращается в budget failure при повторном чтении статуса.
-- Нет секретов/source body в message/cause/log/HTTP.
-- Fail-closed и UNKNOWN semantics сохранены; public CompletionDisposition не расширен.
-- Tests на реальном caller chain, exact SHA и before/after.
+Repair the existing error mapping; do not add a logger framework or another catalog of hundreds of codes. Retain the first failure reason for each attempt and record later failures as consequences rather than replacements. Expose safe code/stage/trace_id and an appropriate recovery action. Never expose secret values, provider payloads, or source text. Naming a missing environment variable is acceptable; revealing its value is not. Retryability must reflect whether retrying that operation is actually safe.
+
+## 5. Acceptance criteria
+
+- [ ] Isolated injections of each listed cause produce distinguishable, safe results.
+- [ ] Repeated status reads do not replace the original corrupt-output failure with a secondary budget failure.
+- [ ] No secret or source body appears in message/cause/log/HTTP output.
+- [ ] Fail-closed and UNKNOWN semantics remain intact; public CompletionDisposition is not expanded.
+- [ ] Test the actual caller chain and record exact implementation SHA and before/after results.
