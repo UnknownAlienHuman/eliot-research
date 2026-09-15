@@ -1,22 +1,34 @@
-# S39 — найденный URL проходит capture/admission до использования как evidence
+# S39 — Capture and admit discovered URLs before using them as evidence
 
-База a2aca127; ER-05/14/16/29/37, inputs #227, branch integration #229.
+Baseline: `a2aca127`; ER-05/14/16/29/37. Input: #227; branch integration: #229.
 
-## 1. Суть
-DEEP/web_discovery требует controlled acquisition, а не цитаты из snippets. Готовые raw/normalized admission и provider ports уже существуют; их надо соединить с ACQUIRE_AND_CAPTURE.
+## 1. Problem
 
-## 2. Что сделать
-Candidate→разрешённый provider capture→immutable R2 bytes/metadata→existing normalized qualification/admission→новая manifest revision. Начальный case: разрешённая публичная HTML страница и её изменившаяся ревизия. corpus_only не выполняет эту ветвь.
+DEEP/web_discovery requires controlled acquisition, not citations assembled from search snippets. Raw/normalized admission and provider ports already exist; connect them to ACQUIRE_AND_CAPTURE.
 
-## 3. Документация / grep
-[Канон §7.9 и §19.3](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/architecture/ELIOT_RESEARCH.md).
+## 2. Required change
+
+Connect candidate → authorized provider capture → immutable R2 bytes/metadata → existing normalized qualification/admission → new manifest revision. Start with an authorized public HTML page and a changed revision of that page. corpus_only does not execute this branch.
+
+## 3. Documentation and exact search anchors
+
+[Architecture, sections 7.9 and 19.3](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/architecture/ELIOT_RESEARCH.md).
+
 ```sh
 git grep -n -F 'A newly mentioned URL or identifier is an untrusted' -- docs/architecture/ELIOT_RESEARCH.md
 git grep -n -F 'uncaptured web result used as evidence' -- docs/architecture/ELIOT_RESEARCH.md
 ```
 
-## 4. Как сделать
-Reuse source acquisition/admission contracts, R2 capture, immutable import и outbox; не создавать crawler/index service. Provider/route/disclosure выбираются из approved protocol/AllowedReferenceManifest, не из source instructions. До каждого fetch и redirect проверить допустимую destination; loopback/private/link-local/credentials-bearing targets и неподтверждённые redirects отказаны. При изменении content hash — новая SourceRevision, старая не мутирует. Source metadata/URL/timestamp/quality/provenance сохраняются, auth страницы/пустой/усечённый контент не становится admitted evidence. Expensive preprocessing checkpoint-ится существующим attempt и budget, unknown не повторяется вслепую. Новые источники после EvidenceFreeze требуют reopen, не скрытое расширение scope. Native page/region claims только с qualified map.
+## 4. Implementation approach
 
-## 5. Критерии выполнения
-Snippet/незахваченный URL не попадает в synthesis; captured bytes→admitted revision→exact citation реально проходят. Redirect/private target/prompt-injection/foreign namespace/partial provider outcome отказаны до canonical writes. Duplicate/lost response не создаёт двойной SourceRevision; изменённая страница сохраняет обе версии. Corpus-only делает0 network acquisition calls. HTTP/provider-control+D1/R2 chain tests, exact SHA; real provider qualification отдельно.
+Reuse acquisition/admission contracts, R2 capture, immutable import, and outbox. Do not create a crawler/index service. Select provider/route/disclosure from approved protocol and AllowedReferenceManifest, not source instructions. Validate destinations before each fetch and redirect; reject loopback/private/link-local/credential-bearing targets and unverified redirects.
+
+A changed content hash creates a new SourceRevision without modifying the previous one. Retain source URL, timestamps, quality, metadata, and provenance. Authentication pages, empty/truncated payloads, and partial results are not admitted evidence. Expensive preprocessing uses existing checkpoint/attempt/budget mechanisms; UNKNOWN does not permit blind retry. New sources after EvidenceFreeze require explicit reopen, never silent scope expansion. Native page/region claims require qualified coordinate maps.
+
+## 5. Acceptance criteria
+
+- [ ] Snippets and uncaptured URLs never enter synthesis as evidence; actual capture→admission→exact citation succeeds.
+- [ ] Redirect/private-target/injection/foreign-namespace/partial-provider cases fail before canonical writes.
+- [ ] Duplicate/lost responses do not create duplicate SourceRevisions; changed content retains both versions.
+- [ ] corpus_only makes zero acquisition network calls.
+- [ ] Record HTTP/controlled-provider/D1/R2 chain tests and exact SHA; native provider qualification is separate.
