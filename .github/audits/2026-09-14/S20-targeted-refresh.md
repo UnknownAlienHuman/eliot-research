@@ -1,27 +1,33 @@
-# S20 — обновлять только зависимые от изменившегося источника представления
+# S20 — Refresh only views affected by a source revision
 
-База `a2aca127`; F18.
+Baseline: `a2aca127`; finding F18.
 
-## 1. Суть
-`refreshAfterSourceAdmission` вызывает `researchRun.invalidateSourceRevision()` при любом raw admission; метод удаляет открытый report и забывает workflow ID без проверки зависимости. Загрузка несвязанного документа закрывает текущую работу.
+## 1. Problem
 
-## 2. Что сделать
-Передать в существующее событие подтверждённые source/revision IDs и обновлять только затронутый report/Wiki. При изменении релевантного head показать previous-revision состояние и повторно проверить read authority, не уничтожать исторический текст.
+`refreshAfterSourceAdmission` calls `researchRun.invalidateSourceRevision()` after every raw admission. That method clears the open report and forgets its Workflow ID without checking dependencies. Importing an unrelated document therefore closes the user's current work.
 
-## 3. Документация
-[Канон §9.2 и §9.4](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/architecture/ELIOT_RESEARCH.md).
+## 2. Required change
+
+Include confirmed source/revision IDs in the existing event and refresh only affected reports/Wiki views. When a relevant head changes, display previous-revision status and recheck read authorization rather than destroying the historical report.
+
+## 3. Documentation and exact search anchors
+
+[Architecture, sections 9.2 and 9.4](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/architecture/ELIOT_RESEARCH.md).
+
 ```sh
 git grep -n -F '## 9.2. Copy-on-write section tree' -- docs/architecture/ELIOT_RESEARCH.md
 git grep -n -F 'refreshAfterSourceAdmission' -- apps/eliotr-pwa/src/main.ts
 git grep -n -F 'invalidateSourceRevision' -- apps/eliotr-pwa/src
 ```
 
-## 4. Как сделать
-Из actual admission response брать source identity; использовать dependencies/freshness уже прочитанного report. Не угадывать по имени файла и не добавлять глобальный event bus. Если dependency metadata отсутствует, выполнить проверку freshness без автоматического model rerun. При подлинном revoke/purge закрытие protected content остаётся обязательным. Исходный report ID и hashes не менять.
+## 4. Implementation approach
 
-## 5. Критерии выполнения
-- Admission несвязанного source не закрывает открытый report и не сбрасывает draft/selection.
-- Новая версия зависимого source показывает предыдущую revision и сохраняет original report.
-- Duplicate event не запускает дублированные refresh/model calls.
-- Revoke/purge нельзя обойти кэшированным view или поздним ответом.
-- Browser tests для двух независимых проектов и source update; exact SHA/results.
+Take source identity from the actual admission response and use the opened report's existing dependencies/freshness data. Do not infer identity from filenames or add a global event bus. If dependency metadata is unavailable, request a freshness check without automatically rerunning a model. Genuine revocation/purge must still hide protected content. Preserve the original report ID and hashes.
+
+## 5. Acceptance criteria
+
+- [ ] Unrelated source admission leaves the open report, draft, and selection intact.
+- [ ] Updating a dependent source shows previous-revision status while preserving the original report.
+- [ ] Duplicate events do not cause duplicate refresh work or model calls.
+- [ ] Cached views and late responses cannot bypass revocation/purge.
+- [ ] Browser tests cover two independent projects and a relevant source update; record exact SHA/results.
