@@ -1,32 +1,38 @@
-# S32 — Stop/Recover доступны человеку и агенту
+# S32 — Expose Stop/Recover to owners and agents
 
-База a2aca127; ER-21/24/25/36. Кодовые входы: S14/#206 cancel и S15/#207 recover; MCP leg использует S13/#205. Это не зависимость от закрытия их будущих live-checks. Planning only. Уточнение: запрещаются дубли завершённых paid effects, а не первый законный AUDIT после восстановления.
+Baseline: `a2aca127`; ER-21/24/25/36. Code dependencies: S14/#206 cancellation, S15/#207 recovery, and S13/#205 for MCP. These dependencies do not require closing future live checks. This is a planning assignment. The restriction concerns duplicate completed paid effects, not the first legitimate audit after recovery.
 
-## 1. Суть
-Endpoint сам по себе не даёт пользователю управлять работой. Закрытие вкладки не отменяет run, а повторная кнопка Start не является Recover. Прежняя формулировка PR body «нет дополнительных model effects» была чрезмерной: после сохранённого SYNTHESIZE может потребоваться ещё не выполненный AUDIT_CLAIMS.
+## 1. Problem
 
-## 2. Что сделать
-В existing research-run-panel/api добавить Stop для ACTIVE и Recover для сервером подтверждённой восстановимой failure. MCP tools eliotr_research_cancel и eliotr_research_recover делегируют тем же services; input workflow_instance_id/idempotency_key, auth не из body. REST paths и status DTO — ровно из #206/#207, не второй DO-control API.
+An endpoint alone does not give users control of a run. Closing a tab is not cancellation, and clicking Start again is not recovery. The previous blanket prohibition on additional model effects was too broad: committed SYNTHESIZE may still need its first AUDIT_CLAIMS stage.
 
-После принятой cancellation UI показывает подтверждённый статус; при uncertain response — отдельное состояние ожидания подтверждения. Recover продолжает тот же run, а explicit reopen/новое исследование остаётся другим действием.
+## 2. Required change
 
-## 3. Документация / grep
-[Канон §7.7.1–7.7.2](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/architecture/ELIOT_RESEARCH.md), [реальная stage factory](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/apps/eliotr-core/src/research-stage-handlers.ts).
+Add Stop for ACTIVE runs and Recover for a server-confirmed recoverable failure to the existing Research panel/API client. MCP tools eliotr_research_cancel and eliotr_research_recover delegate to the same services; inputs are workflow_instance_id/idempotency_key, not caller-supplied authentication. Use exactly #206/#207's REST paths/status DTOs, not another DO-control API.
+
+Show confirmed cancellation only after acceptance; an uncertain response has a distinct confirmation-pending state. Recovery continues the same run. Explicit reopen or a new investigation remains a different operation.
+
+## 3. Documentation and exact search anchors
+
+[Architecture 7.7.1–7.7.2](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/architecture/ELIOT_RESEARCH.md); [stage factory](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/apps/eliotr-core/src/research-stage-handlers.ts).
+
 ```sh
 git grep -n -F 'persist before notifying clients' -- docs/architecture/ELIOT_RESEARCH.md
 git grep -n -F 'AUDIT_CLAIMS' -- apps/eliotr-core/src/research-stage-handlers.ts
 ```
 
-## 4. Как сделать
-Переиспользовать existing panel lifecycle/status decoder, operation ID, action key и MCP dispatcher. Отправка действия не меняет состояние на optimistic CANCELLED. При lost response сохранить action key и выполнить status/readback; если исход не установлен, не отправлять новый Start или новый recovery с другим ключом. Double-click объединяется одной client action, но серверная идемпотентность обязательна независимо от UI.
+## 4. Implementation approach
 
-Cancelled/integrity-failed/incompatible run не получает кнопку ложного Recover; причина и допустимый следующий шаг приходят из серверного результата, а не вычисляются по подстроке сообщения. Tool annotations не readOnly; cancellation/recovery идемпотентны в своих допустимых состояниях. Поздний status старого run или отозванной сессии не меняет текущий экран. После cancellation не утверждать, что уже отправленный provider call физически остановлен: гарантируется отсутствие новых разрешённых стадий после принятого cancel.
+Reuse panel lifecycle/status decoding, the operation ID/action key, and MCP dispatcher. Sending a request must not optimistically show CANCELLED. After a lost response, retain the same action key and read status/receipts; do not issue a new Start or another recovery key while the outcome is unknown. Coalesce double-clicks, but server idempotency must remain independently correct.
 
-Счётчики effects сравнивать по операциям и стадиям. Completed SYNTHESIZE не повторяется; первый ещё не выполненный AUDIT после recovery разрешён по своей обычной policy/reservation. Нехватка бюджета на него отображается как budget outcome, а не обход проверки или fake completion. На простом status/readback число model calls не растёт.
+Do not offer false recovery for cancelled, integrity-failed, or incompatible runs. The server supplies the reason and permitted next step; the client must not infer retryability from message substrings. Tools are not readOnly and preserve server idempotency. Late responses for old runs/revoked sessions cannot change the active view. Cancellation does not claim physical termination of an already dispatched provider call; it prevents subsequent authorized stages after canonical acceptance.
 
-## 5. Критерии выполнения
-- PWA и MCP проходят start→stop→reload→подтверждённый CANCELLED; отправка/503/lost response сами не отображаются как подтверждённая отмена.
-- Recovery fixture до сбоя: SYNTHESIZE=1 committed, AUDIT=0. После успешного восстановления: тот же run и synthesis hash, SYNTHESIZE=1, AUDIT=1. Нет требования сохранить общий счётчик вызовов неизменным.
-- После завершения повтор Recover, double-click и lost response не создают дополнительных synthesis/audit attempts, reservations или новых runs.
-- Read-only delegation не отменяет/восстанавливает, revoked/foreign requests отвергаются сервером; late response не восстанавливает приватный view.
-- У Stop/Recover есть accessible names и различимые pending/confirmed/blocked states. Actual HTTP/D1/browser/MCP tests, exact SHA и результаты; никаких вторых control plane или client-side success fixtures.
+Compare paid effects per stage/operation. Never repeat committed synthesis. Permit a first unexecuted audit under its ordinary policy/reservation. Insufficient audit budget remains a budget outcome, not skipped verification or false completion. Ordinary status/readback calls invoke no model.
+
+## 5. Acceptance criteria
+
+- [ ] PWA/MCP start→stop→reload reaches confirmed CANCELLED; sending, 503, and lost response alone never count as confirmation.
+- [ ] Recovery fixture: SYNTHESIZE=1/AUDIT=0 before failure becomes SYNTHESIZE=1/AUDIT=1 with the same run/synthesis hash. Total call count need not remain unchanged.
+- [ ] Recovery replay, double-clicks, and lost responses after completion create no extra attempts, reservations, or runs.
+- [ ] Read-only/foreign/revoked requests fail server-side; late responses cannot restore private views.
+- [ ] Controls have accessible names and distinct pending/confirmed/blocked states. Record actual HTTP/D1/browser/MCP tests and exact SHA; no second control plane or client-faked success.
