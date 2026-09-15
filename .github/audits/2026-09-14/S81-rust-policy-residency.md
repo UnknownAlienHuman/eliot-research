@@ -1,24 +1,31 @@
-# S81 — Rust family: policy/disclosure/residency decisions
+# S81 — Port policy, disclosure, residency, and budget decisions to pure Rust
 
-База a2aca127; ER-03/40. Target `eliotr-policy`/`eliotr-residency` по языковому контракту; один shared pure policy input, не независимые повторные авторизации. Принятые #202/#261/#262 semantics обязательны.
+Baseline `a2aca127`; ER-03/40. Use the language contract's eliotr-policy/eliotr-residency targets and accepted #202/#261/#262 semantics. This task groups related pure decision checkpoints; it does not introduce independently competing authorizers. Runtime promotion remains separate.
 
-## 1. Суть
-Правильная сериализация policy не проверяет её применение. TS→Rust перенос должен сохранить порядок запретов, taint/effect ceilings, retention и ограничения model/client disclosure.
+## 1. Problem
 
-## 2. Что сделать
-Перенести чистый fixed-order evaluator, ObjectResidencyKey admissibility/reuse decision и существующее deterministic Budget Governor решение. Native Gateway requests, reservations/D1, JWT verification и encryption I/O остаются TS/платформе.
+Correct policy serialization does not establish correct evaluation. Migration must preserve denial order, taint/effect ceilings, retention constraints, and independent model/client disclosure permissions.
 
-## 3. Документация / grep
-[ER-03](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/agent-work/ER-03-policy-disclosure-and-injection-boundary.md), [Language§3/§10](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/architecture/LANGUAGE_RUNTIME_CONTRACT.md).
+## 2. Required change
+
+Port the existing pure fixed-order evaluator, ObjectResidencyKey admissibility/reuse decision, and deterministic Budget Governor decisions. Native Gateway calls, durable reservations, JWT verification, encryption I/O, and database mutations remain in TypeScript/platform adapters. Do not replace the existing budget system.
+
+## 3. Documentation and exact search anchors
+
+[ER-03](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/agent-work/ER-03-policy-disclosure-and-injection-boundary.md); [Language contract 3/10](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/architecture/LANGUAGE_RUNTIME_CONTRACT.md).
 ```sh
 git grep -n -F 'Implement fixed-order policy evaluation' -- docs/agent-work/ER-03-policy-disclosure-and-injection-boundary.md
 ```
 
-## 4. Как сделать
-Вход — validated explicit facts: principal/source/task/client/inference/retention/license/purge, receipt references, observed time, usage/quote. Сохранять existing numeric units, no float-rounding cost drift. Unknown load-bearing inputs fail closed. Viewer permit не усиливает model/client permit; receipt-based declassification не заменять boolean из request. Одинаковый content hash в разных residency/key/retention доменах не разрешает co-residency. Effective grant сохраняет issuer/grantor/grantee различие. Версионированные fixtures запускают один decision на TS/native/Wasm; no network, clock, global state или криптографическое доверие непроверенному input. Budget exhaustion не блокирует permitted exact evidence access.
+## 4. Implementation approach
 
-## 5. Критерии выполнения
-- Положительные/отрицательные matrix cases всех policy axes совпадают по decision/reason/order/receipt identity; no stronger Rust result.
-- Cross-residency/key reuse, hidden inference disclosure, late revoke и quote overflow/missing context отказаны; viewer-only и budget-stop evidence reads корректны.
-- Property/mutation tests ловят удаление любого load-bearing запрета; pure Rust gates проходят.
-- Existing SQL transactional enforcement сохраняется; runtime shadow/promotion S88/S89 отдельно. Exact fixtures/callers/SHA, не новый policy framework.
+Pass validated principal/source/task/client/inference/retention/license/purge facts, receipt references, observed time, usage, and quote explicitly. Preserve existing numeric units; avoid floating-point cost drift. Unknown load-bearing facts fail closed. Permission to view cannot strengthen model/client permission; a caller boolean cannot replace a declassification receipt.
+
+Equal content hashes across different residency, encryption-key, or retention domains do not authorize physical reuse. Preserve issuer/grantor/grantee distinctions. Run identical versioned inputs through TS/native/Wasm, comparing exact decisions and errors. Pure code performs no network, clock, global-state, or platform I/O, and cannot authenticate an unverified input by itself. Exhausted model budgets must still permit independently authorized exact-evidence reads. SQL retains final transactional checks.
+
+## 5. Acceptance criteria
+
+- [ ] Positive/negative policy-axis fixtures agree on decision, reason, evaluation order, and receipt identity; Rust never returns stronger authority.
+- [ ] Cross-residency/key reuse, hidden inference disclosure, late revocation, quote overflow, and missing context are rejected; viewer-only and permitted budget-stop reads remain correct.
+- [ ] Property/mutation checks detect removal of load-bearing restrictions; applicable pure Rust gates pass.
+- [ ] Preserve SQL enforcement and record exact functions, fixtures, SHAs, and results. S88/S89 separately establish actual Worker shadow/promotion; this task does not prove that by itself.
