@@ -1,39 +1,46 @@
-# S58 — Workspace export → разрешённый capture → conversion → admission
+# S58 — Workspace export → authorized capture → conversion → admission
 
-База a2aca127; ER-36/37/21/24. Вход — общий authorizer/schema S10/#202 и owner issuance S31/#223; не требуется готовность всего Research. Это doc-only задание. Повторная проверка нашла пропущенное звено: `workspace.admission` принимает готовые capture_id/conversion_operation_id, но обслуживающие их raw capture/read/conversion маршруты сейчас owner-only. Одного изменения последнего admission endpoint недостаточно.
+Baseline: `a2aca127`; ER-36/37/21/24. Requires the common S10/#202 authorizer/schema and S31/#223 owner issuance, not the entire Research engine. This is an assignment, not implemented code. Previous review found a missing link: workspace admission takes existing capture_id/conversion_operation_id, but their raw capture/read/conversion endpoints are owner-only. Authorizing only the final admission call does not complete headless import.
 
-## 1. Суть
-MCP connection, клиентский receipt и даже разрешённый admission не означают, что service-клиент способен передать и преобразовать файл. Нельзя добиться зелёного end-to-end теста подготовкой capture через привилегированный owner fixture за сценой.
+## 1. Problem
 
-## 2. Что сделать
-Завершить один существующий путь для selected gemini-mcp:
-`Drive export/read официальным connector → plan/observation v2 → raw capture/read → Markdown conversion → workspace admission/status → SourceRevision/readiness`.
+An MCP connection, client receipt, or authorized final admission does not establish that a service client can upload and convert the file. An end-to-end test must not hide this gap by creating privileged owner captures behind the scenes.
 
-Подключить project_client_grant с workspace.admit и явными ingest_namespace_ids ко всем необходимым звеньям, не только последнему. Нормализованный machine bundle S98 — самостоятельный путь; он не заменяет proof raw Workspace pipeline. Повторно importer/конвертер не писать.
+## 2. Required change
 
-## 3. Документация / grep
-[ADR-0006](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/adr/0006-google-external-transport-profiles.md), [Workspace service](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/apps/eliotr-core/src/workspace-candidate-admission.ts), [raw transport](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/packages/cloudflare-raw-ingest/src/raw-capture-http.ts).
+Complete this existing path for selected gemini-mcp:
+
+`official client connector Drive export/read → v2 plan/observation → raw capture/read → Markdown conversion → workspace admission/status → SourceRevision/readiness`.
+
+Apply project_client_grant with workspace.admit and explicit ingest_namespace_ids to every necessary boundary, not only the last call. S98's normalized-bundle path is separate and does not prove the raw Workspace pipeline. Do not write another importer or converter.
+
+## 3. Documentation and exact search anchors
+
+[ADR-0006](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/adr/0006-google-external-transport-profiles.md), [Workspace service](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/apps/eliotr-core/src/workspace-candidate-admission.ts), and [raw transport](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/packages/cloudflare-raw-ingest/src/raw-capture-http.ts).
+
 ```sh
 git grep -n -F 'does not receive Google credentials' -- docs/adr/0006-google-external-transport-profiles.md
 git grep -n -F 'parseRawFileCaptureRequest' -- packages/cloudflare-raw-ingest/src/raw-capture-http.ts
 git grep -n -F 'WorkspaceCandidateAdmissionRawNormalizedPort' -- apps/eliotr-core/src/workspace-candidate-admission.ts
 ```
 
-## 4. Как сделать
-**Transport:** сохранить existing raw routes и upload headers: Content-Length, Content-Type, Idempotency-Key, x-eliotr-original-file-name, x-eliotr-content-sha256, x-eliotr-source-namespace-id, а для source update — пару target-source/expected-head. Для service обязательны явный namespace и выбранный X-Eliotr-Client-Grant из S10. Owner-запрос без delegation остаётся совместимым. Не вводить второй uploader или upload-ticket service.
+## 4. Implementation approach
 
-**Workspace binding:** перед capture service указывает существующую observation через предлагаемый locator `X-Eliotr-Workspace-Observation-Id`. Это не proof: сервер восстанавливает plan/observation по существующему candidate store, проверяет доступ authenticated actor, WorkspaceOwnerAuthorization, транспорт/план, digest/length экспортированных bytes и namespace ceiling. Для legacy observation сохраняется исходная logical identity и отдельная owner authorization; static gemini-spark сам не авторизует нового клиента. Если binding нельзя доказать, capture не разрешается.
+**Transport.** Preserve existing raw routes and upload headers: Content-Length, Content-Type, Idempotency-Key, x-eliotr-original-file-name, x-eliotr-content-sha256, x-eliotr-source-namespace-id, and the paired target-source/expected-head headers for updates. Services must provide an explicit namespace and S10's X-Eliotr-Client-Grant locator. Existing owner requests without delegation remain compatible. Do not add another uploader or ticket service.
 
-**Storage/dispatch:** generalized raw capture, read, conversion и admission получают один типизированный авторизованный context с настоящим service principal, grant/observation binding и разрешённым namespace. Context создаётся только серверным authorizer; его нельзя передать как JSON от клиента или получить заменой client_class на owner_pwa. Связь capture с actor/observation/grant фиксируется в существующих immutable metadata/admission bindings; требуется additive migration, если нынешний формат не хранит достаточную связь. Исторические receipts не переписывать. Каждый последующий read/convert/admit/status восстанавливает эту связь из сохранённых данных и повторно проверяет текущие права, а не доверяет вновь присланному namespace.
+**Workspace binding.** Before capture, the service identifies an existing observation through the proposed X-Eliotr-Workspace-Observation-Id locator. This header is not proof. Load the plan/observation from the existing candidate store; check authenticated-actor access, WorkspaceOwnerAuthorization, transport/plan, exported-byte digest/length, and the namespace ceiling. Preserve legacy logical identity with its separate owner authorization. The static gemini-spark label alone does not authenticate a new client. Unprovable binding denies capture.
 
-**Расходы и приёмка:** workspace.admit само по себе не разрешает оплату модели. Если managed conversion требует spend authority, проверить существующую policy/reservation; отказ не маскировать повторной owner-конверсией. Original bytes immutable, converted bytes проходят действующую qualification, координаты не выдумываются. Caller receipt остаётся untrusted observation; byte readback доказывает принятый Eliot payload, но не автоматически факт Google действия. Само Google I/O выполняет отдельно авторизованный официальный connector; Worker не получает Google OAuth secrets и не создаёт custom OAuth/Cloud project.
+**Storage and dispatch.** Generalized capture/read/conversion/admission receive one server-created typed authorization context containing the actual service principal, grant/observation binding, and permitted namespace. It cannot be supplied as request JSON or obtained by changing client_class to owner_pwa. Persist capture/actor/observation/grant links through existing immutable metadata/admission bindings; use an additive migration only if current storage lacks the required linkage. Do not rewrite historical receipts. Each later read/convert/admit/status reconstructs the stored binding and rechecks current rights rather than trusting a newly supplied namespace.
 
-**Recovery:** partial upload, loss of response, conversion UNKNOWN и repeated admission используют исходные IDs. Не повторять неизвестный платный conversion/Google action вслепую. Новый source не прикрепляется автоматически к любому проекту: project.attach — отдельное разрешённое действие S98 над тем же project grant. Новую source identity не создавать ради обхода conflict.
+**Spend and admission.** workspace.admit alone does not authorize paid inference. Check existing policy/reservation when managed conversion requires spend authority; a rejected service conversion must not secretly fall back to privileged owner conversion. Preserve original immutable bytes and qualify converted output without fabricated coordinates. A caller receipt remains an untrusted observation. Eliot byte readback proves its received payload, not automatically the external Google action. Google I/O runs through the client's separately authorized official connector; no Google OAuth secrets, custom OAuth server, or Cloud project are introduced into the Worker.
 
-## 5. Критерии выполнения
-- End-to-end начинается без готового capture/конверсии: owner API выдаёт grant, service сам передаёт bytes, конвертирует, проходит admission и читает status. За сценой нет owner JWT, прямого INSERT или owner-only вызова.
-- Один экспорт даёт exact original capture hash и одну admitted revision/outbox; readback, повтор/restart/lost ACK не создают duplicates.
-- Reader-only grant, неизвестная/чужая observation, подмена grant/namespace/capture, altered bytes, revoke между upload и commit, expired policy и недостаточный conversion budget отказаны в соответствующем звене.
-- Stored grant/observation binding не может быть заменён заголовком при следующем запросе. Grant расширение не изменяет старую capture provenance; текущие запреты действуют.
-- Старый owner raw-upload/admission путь проходит regression; локальная application HTTP/D1/R2 проверка отделена от actual Antigravity/Spark export/readback. Unverified external action не называется LIVE_QUALIFIED.
-- Exact SHA, команды и наблюдённые identities/outcomes; без Google/provider secrets в Git/PWA/logs и без второго import framework.
+**Recovery.** Partial upload, lost response, UNKNOWN conversion, and repeated admission reconcile original IDs. Do not blindly repeat an unknown paid conversion or Google creation action. Project attachment is a separate authorized S98 action using the same grant; admission does not attach sources to arbitrary projects. Do not evade conflicts by inventing another source identity.
+
+## 5. Acceptance criteria
+
+- [ ] Start without a prepared capture/conversion: the owner API issues a grant and the service itself uploads, converts, admits, and reads status. No hidden owner JWT, direct INSERT, or owner-only call supplies missing steps.
+- [ ] One export produces the exact original capture digest and one admitted revision/outbox; readback/replay/restart/lost ACK do not create duplicates.
+- [ ] Read-only grants, unknown/foreign observations, substituted grant/namespace/capture, altered bytes, mid-operation revocation, expired policy, and insufficient conversion budget fail at the appropriate boundary.
+- [ ] A later header cannot replace stored grant/observation provenance. Grant expansion cannot rewrite old capture provenance; current denials remain effective.
+- [ ] Existing owner raw-upload/admission regressions pass. Local HTTP/D1/R2 acceptance is distinct from actual Antigravity/Spark export/readback; unverified external actions are not LIVE_QUALIFIED.
+- [ ] Record exact SHA, commands, observed identities/outcomes, and secret-free evidence. No second import framework is added.
