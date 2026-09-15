@@ -1,24 +1,33 @@
-# S71 — наблюдаемость, понятные отказы и штатные spend controls
+# S71 — Make operational failures and existing spend controls observable
 
-База a2aca127; ER-17/26. Опирается на ошибки S17/#209 и findings S68/#260, но instrumentation самостоятельных путей не ждёт всю систему.
+Baseline: `a2aca127`; ER-17/26. Reuse S17/#209 error causes and S68/#260 findings; instrument independent paths without waiting for the whole system.
 
-## 1. Суть
-Health READY означает только доступность проверенных компонентов, не качество Research. Пользователь должен отличать недоступную модель, заблокированную политику, stale индекс, DLQ и застрявший run без прямого SQL.
+## 1. Problem
 
-## 2. Что сделать
-Заполнить существующие content-free metrics/health/readiness: latency, conflicts, outbox age, retries/DLQ, индексная generation/readiness, citation failures, model/transport degradation, erasure deadlines, usage/cost. Связать их с единым existing Connections/details и доступным alert sink; не строить отдельный monitoring backend.
+READY describes checked component availability, not Research quality. The owner must distinguish unavailable models, denied policy, stale indexes, DLQ growth, and stuck runs without directly querying SQL.
 
-## 3. Документация / grep
-[Production readiness, Phase12](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/implementation/production-readiness-plan.md).
+## 2. Required change
+
+Complete existing content-free metrics/health/readiness for latency, conflicts, outbox age, retries/DLQ, index generations, citation failures, model/transport degradation, erasure deadlines, and usage/cost. Connect them to existing Connections/details and the configured alert sink. Do not build another monitoring backend.
+
+## 3. Documentation and exact search anchors
+
+[Production-readiness plan, Phase 12](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/implementation/production-readiness-plan.md).
+
 ```sh
 git grep -n -F '## 14. Phase 12 — establish observability, SLOs and spend controls' -- docs/implementation/production-readiness-plan.md
 ```
 
-## 4. Как сделать
-Переиспользовать `packages/platform-cloudflare/src/observability.ts`, Analytics Engine binding, health/diagnostic readers, native AI Gateway limits и имеющийся Budget Governor. Результат измерения указывает operation kind/generation/trace и длительность, но не prompt/source/private path/credential. Сохранить 100% наблюдение security/erasure/DEEP/AUDIT/REPORT failures по канону; обычную sampling policy не выдавать за полноту. SLO измерять для отдельных продуктов, не среднее всего Worker. Missing telemetry/sink явно unknown/degraded, не zero errors. Никакого нового финансового продукта: существующие usage/reservations/readback лишь сделать наблюдаемыми. Budget exhaustion оставляет разрешённые exact/open/trace операции доступными.
+## 4. Implementation approach
 
-## 5. Критерии выполнения
-- Инъекции auth/model/index/Queue/erasure failures дают правильный origin/trace и действие владельцу, не требуют SQL для диагноза.
-- Телеметрия различает unknown от zero; настроенный sink реально получает тестовое уведомление, отсутствие sink не скрыто.
-- Log/metric scanning fixtures не находят секретов/source/prompts; расходы согласованы с existing receipts, повтор не удваивает их.
-- Read-only evidence работает при исчерпанном модельном бюджете. Actual storage/HTTP metric tests, отдельный sink/native limit receipt, exact SHA.
+Reuse packages/platform-cloudflare/src/observability.ts, Analytics Engine, health/diagnostic readers, native AI Gateway limits, and Budget Governor. Observations contain operation kind/generation/trace/duration, not prompts, sources, private paths, or credentials. Preserve the architecture's complete observation requirement for security/erasure/DEEP/AUDIT/REPORT failures; sampled ordinary telemetry is not complete coverage.
+
+Measure per-product SLOs, not a single Worker-wide average. Missing telemetry/sinks are unknown/degraded, not zero errors. Expose existing usage/reservation/readback, without introducing another financial subsystem. Model-budget exhaustion must leave authorized exact/open/trace access available.
+
+## 5. Acceptance criteria
+
+- [ ] Injected auth/model/index/Queue/erasure failures show their actual origin/trace and an actionable owner explanation without SQL inspection.
+- [ ] Unknown differs from zero; a configured sink receives a real test alert and missing configuration is visible.
+- [ ] Log/metric fixtures contain no secrets, sources, or prompts; usage agrees with existing receipts and replay does not double count.
+- [ ] Read-only evidence remains usable after model-budget exhaustion.
+- [ ] Record actual storage/HTTP metric tests, exact SHA, and separate sink/native-limit receipts.
