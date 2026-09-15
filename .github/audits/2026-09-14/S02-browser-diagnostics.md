@@ -1,32 +1,32 @@
-# S02 — Сохранить первопричину падения owner browser acceptance
+# S02 — Preserve the root cause of owner-browser acceptance failures
 
-P1. ER-27; общий tooling — ER-00. Родитель #98. База `a2aca1277b0edbbed04de66e0d44e383e1b815ef`. Аудит F13/F20. Независимо от S01 по коду; выполнять последовательно. Это только паспорт задачи; не исправление и не разрешение deployment. Код — узким изменением main, без worktree.
+P1. Owner: ER-27; shared tooling: ER-00. Parent: #98. Baseline: `a2aca1277b0edbbed04de66e0d44e383e1b815ef`. Findings: F13/F20. Technically independent of S01; integrate changes sequentially on current main without local worktrees. This assignment is not an implemented fix or deployment authorization.
 
-## 1. Суть
+## 1. Problem
 
-В `tests/integration/browser/owner-e2e.mjs`, `preserveWorkerFailure`, новая Error содержит только safe class и runtime snapshot. Исходное expected/actual и содержательный assertion теряются. CI указывает на вызов raw-upload helper около строки 6037, но не сохраняет точную причину. `unknown:61` не означает 61 ошибку приложения.
+`preserveWorkerFailure` in `tests/integration/browser/owner-e2e.mjs` creates an Error containing only a safe classification and runtime snapshot. The meaningful assertion and its expected/actual values are lost. CI points to the raw-upload helper call near line 6037 without retaining the precise cause. `unknown:61` does not mean 61 application errors.
 
-## 2. Что сделать
+## 2. Required change
 
-Сохранить безопасную диагностическую идентичность исходного assertion, этап, точное место, ограниченные expected/actual для явно разрешённых тестовых значений. Сохранить наблюдаемую цепочку причины так, чтобы formatter/test runner не вывел токены или исходный документ. Не менять приложение, timeout, retries или успешность теста.
+Preserve the original assertion's safe identity, phase, source location, and bounded expected/actual values for explicitly permitted test data. Retain an observable cause chain without letting the formatter/test runner print tokens or private source content. Do not change application behavior, timeouts, retries, or whether the test succeeds.
 
-## 3. Документация / grep
+## 3. Documentation and exact search anchors
 
-[Execution contract §5](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/implementation/launch-prs/execution-contract.md): `## 5. What a good result is` — before/after, expected/actual, отсутствие секретов.
+[Execution contract, section 5](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/implementation/launch-prs/execution-contract.md): before/after, expected/actual, and secret-free evidence.
 
 ```sh
 git grep -n -F '## 5. What a good result is' -- docs/implementation/launch-prs/execution-contract.md
 git grep -n -F 'preserveWorkerFailure' -- tests/integration/browser/owner-e2e.mjs
 ```
 
-## 4. Как сделать
+## 4. Implementation approach
 
-Расширить существующий диагностический wrapper и его tests, не строить новый logger. Добавить стабильный ID проверки или phase; ограничить глубину cause, длину строк и allowlist полей. Не помещать необработанный Error в cause, если стандартный runner напечатает его целиком. На синтетических assertion и nested errors доказать сохранение причины; на секретных/больших значениях — redaction. Повторить исходный raw-upload сценарий один раз на том же коде и сохранить уже точный отказ для S03.
+Extend the existing diagnostic wrapper and tests; do not introduce a logging framework. Retain a stable assertion identifier or phase, with bounded cause depth/string length and an explicit set of safe fields. Do not attach an unprocessed Error as `cause` when the runner would print it verbatim. Use synthetic assertion/nested-error cases to prove that the cause survives, and secret-bearing/large values to prove redaction. Reproduce the original raw-upload scenario once on the same application code and give S03 the resulting precise failure.
 
-## 5. Критерии выполнения
+## 5. Acceptance criteria
 
-- [ ] Из вывода можно однозначно определить исходный assertion и безопасные expected/actual либо причину их redaction.
-- [ ] Token/cookie/Authorization, URL с токеном и приватное содержимое не появляются в логе, stack/cause или test artifacts.
-- [ ] Ошибка остаётся ошибкой; exit code не становится нулевым; cleanup выполняется.
-- [ ] Не увеличены timeout и retries, не удалены проверки raw-upload.
-- [ ] Приложены focused tests, exact SHA и фактический диагноз последнего воспроизведения. S03 исправляет поведение отдельно.
+- [ ] Output identifies the original assertion and safe expected/actual values, or explicitly explains their redaction.
+- [ ] Tokens, cookies, Authorization values, token-bearing URLs, and private content are absent from logs, stack/cause output, and test artifacts.
+- [ ] Failure remains non-zero and cleanup still runs.
+- [ ] No timeout/retry increases and no removed raw-upload assertions.
+- [ ] Attach focused-test results, exact implementation SHA, and the reproduced diagnosis. Behavioral repair belongs to S03.
