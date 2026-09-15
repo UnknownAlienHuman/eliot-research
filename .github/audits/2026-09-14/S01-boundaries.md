@@ -1,42 +1,42 @@
-# S01 — Устранить пять отказов package-boundary gate
+# S01 — Fix the five package-boundary failures
 
-Приоритет: P1, первый блокер проверочного конвейера. Владельцы: ER-00 и владельцы затронутых пакетов. Родительская тема: #96. База проверки: `a2aca1277b0edbbed04de66e0d44e383e1b815ef`, 2026-09-14. Связь со сводным аудитом: F20.
+Priority: P1; first verification-pipeline blocker. Owners: ER-00 and the affected package owners. Parent topic: #96. Audited baseline: `a2aca1277b0edbbed04de66e0d44e383e1b815ef`, 2026-09-14. Consolidated finding: F20.
 
-Это draft PR-задание, а не исправление. Паспорт не сливать как выполненный код. Реализация — один ограниченный change set актуального main, без worktree; закрытие только после ссылки на исправляющий commit и проверки. Ни deployment, ни ослабление gates этой задачей не разрешены.
+This is an implementation assignment, not an implemented fix. Merging this document does not complete the task. Implement a bounded change set on current main, without a local worktree; close against the implementing commit and verification results. This task does not authorize deployment or weaker checks.
 
-## 1. Суть
+## 1. Problem
 
-CI [34838617436](https://github.com/UnknownAlienHuman/eliot-research/actions/runs/34838617436) останавливает `verify` и `windows-tooling` на package boundaries. Последующие product tests в verify не исполняются. Проверка использует точные import specifiers; пять отказов не доказывают пять циклов зависимостей.
+[CI 34838617436](https://github.com/UnknownAlienHuman/eliot-research/actions/runs/34838617436) stops `verify` and `windows-tooling` at package boundaries. Later product tests in `verify` do not execute. The checker matches exact import specifiers; five failures do not establish five dependency cycles.
 
-## 2. Что сделать
+## 2. Required change
 
-Разобрать и устранить ровно следующие зависимости:
+Resolve these exact imports:
 
-- `cloudflare-research/src/artifact-draft-reader.ts` → `cloudflare-artifacts/artifact-draft-reauthorization.js` и `artifact-draft-citations-reauthorization.js`;
-- `cloudflare-research/src/research-qualification-prompt.ts` → `@eliotr/retrieval`;
-- `cloudflare-research-stages/src/research-coverage-result.ts` и `research-historical-coverage-reader.ts` → `@eliotr/domain`.
+- `cloudflare-research/src/artifact-draft-reader.ts` to `cloudflare-artifacts/artifact-draft-reauthorization.js` and `artifact-draft-citations-reauthorization.js`;
+- `cloudflare-research/src/research-qualification-prompt.ts` to `@eliotr/retrieval`;
+- `cloudflare-research-stages/src/research-coverage-result.ts` and `research-historical-coverage-reader.ts` to `@eliotr/domain`.
 
-Вне задачи: общий рефакторинг, повышение лимитов, обновление toolchain, переделка auth/Workflow, исправление browser harness.
+Out of scope: general refactoring, higher limits, toolchain upgrades, auth/Workflow redesign, and browser-harness repair.
 
-## 3. Документация и точный grep
+## 3. Documentation and exact search anchors
 
 [AGENTS.md](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/AGENTS.md): `## Dependency direction`.
 
-[Execution contract](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/implementation/launch-prs/execution-contract.md): `## 3. Implement each checkpoint this way`, `## 4. Commands and test environment`.
+[Execution contract](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/implementation/launch-prs/execution-contract.md): `## 3. Implement each checkpoint this way`; `## 4. Commands and test environment`.
 
 ```sh
 git grep -n -F '## Dependency direction' -- AGENTS.md
 git grep -n -F 'PACKAGE_RULES' -- scripts/check-boundaries.mjs
 ```
 
-## 4. Как сделать
+## 4. Implementation approach
 
-Сначала сохранить пять исходных отказов. Для каждого указать импортируемый символ, объявленную package dependency, export и допустимое направление. Если это пропущенный разрешённый export — зарегистрировать только обоснованный specifier; если это реальное нарушение — использовать существующий нижележащий порт/модуль. Не разрешать весь `@eliotr/*`, не скрывать файл от сканера и не добавлять обратную зависимость. Сохранить или расширить существующий `boundaries:negative`, в том числе отрицательный пример неправильного направления и неизвестного subpath. Совместно менять manifest/exports только когда это действительно требуется выбранным исправлением.
+Capture the five original failures. For each, identify the imported symbol, declared package dependency, export, and permitted dependency direction. Register only the justified specifier when a legitimate export is missing; use an existing lower-level port/module when the dependency is genuinely invalid. Do not allow all `@eliotr/*`, exclude the file from scanning, or add a reverse dependency. Preserve or extend `boundaries:negative`, including a forbidden-direction case and an unknown-subpath case. Change manifests/exports together only when required by the chosen correction.
 
-## 5. Критерии выполнения
+## 5. Acceptance criteria
 
-- [ ] `pnpm boundaries:check` и `pnpm boundaries:negative` проходят на Linux и Windows.
-- [ ] Все пять исходных отказов устранены с объяснением; намеренно запрещённый импорт по-прежнему даёт non-zero.
-- [ ] Typecheck затронутых пакетов проходит; публичные DTO и runtime-поведение не изменены.
-- [ ] CI больше не останавливается на boundary step. Следующий независимый failure записан отдельно, а не назван общим PASS.
-- [ ] Приложены exact SHA, команды/exit codes и before/after. Полный release остаётся заблокирован до остальных обязательных gates.
+- [ ] `pnpm boundaries:check` and `pnpm boundaries:negative` pass on Linux and Windows.
+- [ ] All five original failures are resolved with explanations; a deliberately forbidden import still exits non-zero.
+- [ ] Affected packages typecheck; public DTOs and runtime behavior are unchanged.
+- [ ] CI passes the boundary step. Any subsequent independent failure is reported separately, not called an overall pass.
+- [ ] Record exact implementation SHA, commands, exit codes, and before/after evidence. Other mandatory release checks remain applicable.
