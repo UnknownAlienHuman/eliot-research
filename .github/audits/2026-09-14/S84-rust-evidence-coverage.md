@@ -1,24 +1,34 @@
-# S84 — Rust family: exact evidence и coverage
+# S84 — Port exact-evidence and coverage invariants to Rust
 
-База a2aca127; ER-07/10/39/40. Targets `eliotr-evidence` и `eliotr-coverage`; identity/scope из #270/#272. Фактические чтения R2 и текущая авторизация остаются TS adapters.
+Baseline `a2aca127`; ER-07/10/39/40. Targets eliotr-evidence/eliotr-coverage; identity/scope prerequisites #270/#272. Real R2 reads and current authorization remain TS adapter responsibilities. Evidence and coverage are separate pure-family checkpoints within this task.
 
-## 1. Суть
-Результат поиска — locator, не proof. Migration должна сохранить привязку EvidenceHandle к точным admitted bytes и различие complete/sampled/unknown denominator; нельзя «исправлять» честный INCOMPLETE_COVERAGE на успех.
+## 1. Problem
 
-## 2. Что сделать
-Перенести pure invariants resolution (revision/owner/scope/purge/map/range/length/digest) и детерминированное вычисление coverage/absence/disposition из наблюдённых verified facts. Не переносить внешний resolver I/O и не генерировать новые citation IDs в модели.
+A search result is a locator, not proof. Migration must preserve exact admitted-byte binding and the distinction between complete, sampled, and unknown denominators. Honest INCOMPLETE_COVERAGE must not be changed to success merely to pass a test.
 
-## 3. Документация / grep
-[Канон§6.10](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/architecture/ELIOT_RESEARCH.md), [Launch09 K4](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/implementation/launch-prs/09-rust.md).
+## 2. Required change
+
+Port pure resolution invariants for revision/owner/scope/purge/map/range/length/digest and deterministic coverage/absence/disposition decisions over verified observations. Do not port resolver I/O or allow the model to invent citation IDs.
+
+## 3. Documentation and exact search anchors
+
+[Architecture 6.10](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/architecture/ELIOT_RESEARCH.md); [Launch09 K4](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/implementation/launch-prs/09-rust.md).
 ```sh
 git grep -n -F 'Only `NO_MATCH_IN_COMPLETE_SCOPE` permits a scoped absence claim.' -- docs/architecture/ELIOT_RESEARCH.md
 ```
 
-## 4. Как сделать
-Existing handle/coverage schemas и actual TS decisions — единственный reference до promotion. Вход фиксирует источник наблюдений, not caller-supplied success booleans: TS выполняет fetch/currentness и передаёт validated facts, Rust проверяет invariants. Preserve eligible/represented/cited/omitted sets, independence/family и failed/skipped lanes. Полное отсутствие допускается только после reconciled exhaustive denominator; no-hit/relevant-answer/sample — разные вещи. Unknown denominator не запрещает каждый узкий supported answer автоматически, но запрещает полный absence claim. Retention/purge во время read проверяются снова в adapter перед disclosure. Существующие девять CompletionDisposition не расширять.
+## 4. Implementation approach
 
-## 5. Критерии выполнения
-- TS/native/Wasm результаты/typed errors совпадают на exact Unicode/table/range positives и corrupt/foreign/stale/purged negatives.
-- Missing/duplicate shard, omitted member, unknown denominator и source-family duplication не дают ложной полноты/независимости.
-- Accepted citation invariants не ослаблены; mutation подмены hash/range/count/denominator обнаруживается.
-- Real resolver/exhaustive caller tests #240/#243 продолжают проходить, pure Rust gates/SHA и shared fixtures сохранены. Promotion только после S88/S89.
+Use existing handle/coverage schemas and accepted TS behavior as the reference until promotion. TS performs actual reads/currentness checks and supplies validated observations, not client-supplied success booleans. Preserve eligible/represented/cited/omitted sets, source families, independence, and failed/skipped lanes.
+
+An exhaustive absence claim requires a reconciled complete denominator. Sampled no-hit, a supported narrow answer, and complete absence are different outcomes: unknown coverage does not automatically forbid every narrow supported answer. Keep all nine CompletionDisposition values. Recheck retention/purge in the adapter before disclosure.
+
+Duplicate-delivery clarification: an identical retry is deduplicated and must not increase counts; a conflicting duplicate fails. An extra receipt cannot substitute for a missing shard. Receiving an identical duplicate alone must not invalidate an otherwise complete reconciled result.
+
+## 5. Acceptance criteria
+
+- [ ] TS/native/Wasm agree on exact Unicode/table/range positives and corrupt, foreign, stale, and purged negatives.
+- [ ] Missing/conflicting shards, omitted members, unknown denominators, and duplicated source families cannot establish false completeness or independence; identical replay remains idempotent.
+- [ ] Hash/range/count/denominator mutations are detected without weakening accepted-citation invariants.
+- [ ] Actual resolver/exhaustive regressions #240/#243 remain valid; retain pure Rust gates, shared fixtures, exact SHAs, and results.
+- [ ] S88/S89 separately establish actual shadow/promotion. Pure fixtures do not prove production operation.
