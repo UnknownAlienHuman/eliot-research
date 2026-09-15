@@ -1,24 +1,33 @@
-# S67 — безопасный откат code/index без отката данных
+# S67 — Roll back code/index generations without rolling back data authority
 
-База a2aca127; ER-26/24/38. Входы #197 (совместимость) и #244 (индексные generations). Restore #258 — другая операция, не предусловие разработки rollback.
+Baseline: `a2aca127`; ER-26/24/38. Inputs: #197 compatibility and #244 index generations. Restore #258 is a distinct operation, not a prerequisite for developing rollback.
 
-## 1. Суть
-Возврат старого Worker или индексного head не разрешает откатывать purge/policy/schema и resurrect отозванные данные. PWA-only continuity не доказывает upgrade/rollback backend.
+## 1. Problem
 
-## 2. Что сделать
-В существующем deploy orchestrator реализовать проверяемый rollback выбранного точного build/index generation с readback. Сначала поддержать backend build, совместимый с текущей schema и сохранёнными handler generations; несовместимый откат отклонять до переключения.
+Returning to an old Worker or index head does not authorize rolling back purge/policy/schema or resurrecting revoked data. PWA-only continuity does not establish backend upgrade/rollback compatibility.
 
-## 3. Документация / grep
-[Production plan §13](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/implementation/production-readiness-plan.md).
+## 2. Required change
+
+Implement verified rollback of an exact build/index generation through the existing deployment orchestrator with independent readback. First support a backend build compatible with the current schema and retained handler generations; reject incompatible rollback before switching.
+
+## 3. Documentation and exact search anchors
+
+[Production-readiness plan, section 13](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/implementation/production-readiness-plan.md).
+
 ```sh
 git grep -n -F 'Test Worker/index rollback independently from data restore.' -- docs/implementation/production-readiness-plan.md
 ```
 
-## 4. Как сделать
-Расширить existing deployment receipt/version readback и index expected-head switch. Проверить target code/schema/config/resource identities, current purge frontier и совместимость active runs. Исторический secret/config не восстанавливать по старому backup; использовать разрешённые текущие references. Не менять merged migrations, текущие source/Wiki/artifact heads или source ownership ради старого кода. Для несовместимого handler сохранить run и readable history, вывести конкретную причину/путь forward repair; не создавать replacement run. Native platform rollback — механизм, а не доказательство исправности приложения.
+## 4. Implementation approach
 
-## 5. Критерии выполнения
-- A→B→A на совместимой schema проходит с unchanged canonical heads/purge; активный совместимый run продолжает прежние checkpoints без повторных paid effects.
-- Index B→A сохраняет exact resolver/current policy, deleted members не возвращаются в выдачу.
-- Missing build, wrong resource/schema, несовместимый handler, stale CAS и lost ACK дают безопасное отказ/reaudit readback, не ложный успех.
-- Есть local ordering tests, dry-run/readback и отдельный разрешённый native rollback receipt. Runbook содержит exact build identity и проверку результата, не кнопку «вернуть всё назад».
+Extend existing deployment receipts/version readback and index expected-head switching. Verify target code/schema/config/resource identities, current purge state, and active-run compatibility. Use authorized current configuration/secret references rather than restoring obsolete secrets from backup. Do not rewrite merged migrations, current source/Wiki/artifact heads, or source ownership to satisfy old code.
+
+For incompatible handlers, preserve runs and authorized readable history with a specific reason/forward-repair action; do not create replacement runs. A native platform rollback is a mechanism, not proof of application correctness. Versioned transition tests must establish any compatibility beyond S05's identical-backend case.
+
+## 5. Acceptance criteria
+
+- [ ] Compatible A→B→A retains canonical heads/purge; compatible active runs continue original checkpoints without repeated committed paid effects.
+- [ ] Index B→A retains exact resolution/current policy and does not return erased members.
+- [ ] Missing build, wrong resource/schema, incompatible handlers, stale CAS, and lost ACK produce safe rejection or reconciled readback rather than false success.
+- [ ] Local ordering/dry-run/readback tests pass; separately record an authorized native rollback receipt.
+- [ ] The runbook identifies exact builds and result verification, not an undifferentiated revert-everything action; include implementation SHA/results.
