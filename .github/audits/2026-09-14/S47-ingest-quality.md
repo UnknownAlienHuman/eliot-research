@@ -1,22 +1,34 @@
-# S47 — приём PDF/Office/text с доказуемой extraction fidelity
+# S47 — Qualify PDF/Office/text ingestion with explicit extraction fidelity
 
-База a2aca127; ER-05/14/29/37; reuse cloudflare-raw-ingest, cloudflare-markdown, raw-normalized-admission и SourceAdmissionDecision. #195 исправляет browser regression, не все форматы/качество.
+Baseline: `a2aca127`; ER-05/14/29/37. Reuse cloudflare-raw-ingest, cloudflare-markdown, raw-normalized-admission, and SourceAdmissionDecision. #195 fixes a browser regression, not every format/quality path.
 
-## 1. Суть
-Capture transport и успешный toMarkdown не равны пригодному admitted document. Большие/повреждённые/табличные источники должны давать корректный результат или явное ограничение, а не усечённое evidence.
+## 1. Problem
 
-## 2. Что сделать
-Дописать недостающие переходы capture→conversion candidate→quality qualification→normalized bundle→admitted revision→projection outbox. Отдельно поддержать reuse уже нормализованного bundle, не гонять его через LLM повторно. Покрыть заявленные PDF/DOCX/HTML/TXT/Markdown/CSV/JSON и image inputs согласно реально доступной conversion precision.
+Successful capture or toMarkdown conversion does not establish a usable admitted source. Large, damaged, and structured documents need a correct result or an explicit limitation, not silently truncated evidence.
 
-## 3. Документация / grep
-[Канон §19.1/19.3 и Slice1](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/architecture/ELIOT_RESEARCH.md).
+## 2. Required change
+
+Complete missing transitions: capture → conversion candidate → quality qualification → normalized bundle → admitted revision → projection outbox. Reuse already normalized bundles without sending them through a model again. Cover declared PDF/DOCX/HTML/TXT/Markdown/CSV/JSON and image inputs at the conversion precision actually available.
+
+## 3. Documentation and exact search anchors
+
+[Architecture, sections 19.1/19.3 and Slice 1](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/architecture/ELIOT_RESEARCH.md).
+
 ```sh
 git grep -n -F 'uncaptured web result used as evidence' -- docs/architecture/ELIOT_RESEARCH.md
 git grep -n -F 'SourceAdmissionDecision' -- docs/architecture/ELIOT_RESEARCH.md apps/eliotr-core/src
 ```
 
-## 4. Как сделать
-Зафиксировать byte length/hash/format/parser generation, coverage of text/structure и explicit omissions. Пустой/login/truncated/corrupt/unsupported parser result не promoted. Raw16MiB и materialized conversion8MiB — разные существующие bounds: UI заранее объясняет доступный путь; для larger preprocessing использовать approved external normalized-bundle producer, не целиком буферизовать в Worker и не добавлять Python/OCR engine. Original immutable bytes сохраняются, successful conversion не приписывает native page coordinates без map. Commit SourceRevision/admission/outbox одним existing guarded path, unknown effect reconciles прежний ID. Source taint/ownership/residency не теряется при normalization.
+## 4. Implementation approach
 
-## 5. Критерии выполнения
-Representative valid и degraded format fixtures проходят полный actual Worker/D1/R2 path; отказ не создаёт partially admitted source/outbox. Replay/lost ACK/restart создают ровно одну intended revision; changed bytes конфликтуют или новая explicit revision. Long input не молча обрезан, normalized bundle не повторно оплачивается. Native precision claim не превышает карту. Код/fixture acceptance и реальные extraction-quality receipts разделены; exact SHA/results.
+Retain byte length/hash, format/parser generation, text/structure coverage, and explicit omissions. Empty/login/truncated/corrupt/unsupported parser output is not promoted as a successful complete conversion. A qualified degraded result must retain its permitted precision and limitations rather than claiming unavailable structure.
+
+Existing raw 16 MiB and materialized-conversion 8 MiB bounds are different. Explain the supported path before upload; larger preprocessing uses an approved external normalized-bundle producer, not whole-file Worker buffering or an embedded Python/OCR engine. Preserve immutable originals. Markdown conversion does not create native page coordinates without a map. Commit SourceRevision/admission/outbox through the existing guarded path; reconcile UNKNOWN against the original ID. Normalization retains source taint, ownership, and residency.
+
+## 5. Acceptance criteria
+
+- [ ] Representative valid and explicitly degraded format fixtures exercise the actual Worker/D1/R2 path. Rejected admission leaves no partial canonical source/outbox.
+- [ ] Replay/lost ACK/restart yields one intended revision; changed bytes conflict or create an explicit new revision.
+- [ ] Long inputs are not silently truncated and normalized bundles incur no repeated model processing.
+- [ ] Claimed native precision does not exceed qualified coordinate maps.
+- [ ] Record exact SHA/results and distinguish code/fixture acceptance from actual extraction-quality receipts.
