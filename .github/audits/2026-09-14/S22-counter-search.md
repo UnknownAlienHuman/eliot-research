@@ -1,26 +1,32 @@
-# S22 — реальный counter-search внутри выбранного корпуса
+# S22 — Perform actual counter-search within the selected corpus
 
-База `a2aca127`; F06. Детализация #92, не реализация всех исследовательских продуктов сразу.
+Baseline: `a2aca127`; finding F06. A bounded part of #92, not implementation of every Research product at once. Consume the agreed frozen protocol contract from S35 when integrating the complete pipeline.
 
-## 1. Суть
-COUNTER_SEARCH сейчас может закончиться техническим checkpoint без поиска опровержений. Для протокола, требующего counterevidence, это незавершённая функция; отметка 18/18 не закрывает её.
+## 1. Problem
 
-## 2. Что сделать
-Реализовать одну corpus-only ветвь контрпоиска через существующий retrieval и evidence ledger до FREEZE_EVIDENCE. Не добавлять web crawler, swarm framework или второй Workflow.
+COUNTER_SEARCH can currently finish as a technical checkpoint without searching for counterevidence. A protocol that requires counterevidence remains unimplemented regardless of an 18/18 checkpoint count.
 
-## 3. Документация
-[ELIOT_RESEARCH §7.2, §7.8, §7.9](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/architecture/ELIOT_RESEARCH.md).
+## 2. Required change
+
+Implement one corpus-only counter-search branch through existing retrieval and the evidence ledger before FREEZE_EVIDENCE. Do not add a web crawler, swarm framework, or second Workflow.
+
+## 3. Documentation and exact search anchors
+
+[Architecture, sections 7.2, 7.8, and 7.9](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/architecture/ELIOT_RESEARCH.md).
+
 ```sh
 git grep -n -F 'counter_search_required:' -- docs/architecture/ELIOT_RESEARCH.md
 git grep -n -F '## 7.8. Research branches' -- docs/architecture/ELIOT_RESEARCH.md
 ```
 
-## 4. Как сделать
-В existing stage factory подключить handler, который читает frozen protocol и сформулированный предмет проверки, ищет в разрешённом corpus и разрешает кандидатов в exact EvidenceHandles. Использовать текущую отмену/бюджет. Сохранить найденные counterevidence и неуспешные проверки в существующей модели; Synthesis/Audit должны получить этот материал после reconciliation/freeze. Не навязывать counter-search простому lookup, где protocol его не требует. Его успех сам по себе не делает E2/E3.
+## 4. Implementation approach
 
-## 5. Критерии выполнения
-- Fixture с явным противоречащим источником даёт counterevidence в freeze и итоговом audit/report.
-- Опровержение вне leading sections действительно найдено, а не заранее подставлено.
-- No-hit в sampled scope не превращается в доказанное отсутствие опровержений.
-- Foreign/purged hits и budget/cancel обработаны; replay не повторяет сохранённый этап.
-- Проверен реальный stage chain с D1/R2; незавершённые прочие stages не объявлены выполненными.
+Connect a handler through the existing stage factory. Read the frozen protocol and proposition under examination, search the authorized corpus, and resolve candidates into exact EvidenceHandles. Use current cancellation and budget mechanisms. Persist counterevidence and unsuccessful checks in the existing model; reconciliation/freeze must make this material available to synthesis and audit. Do not force counter-search onto simple lookup protocols that do not require it. Successful counter-search alone does not establish E2/E3.
+
+## 5. Acceptance criteria
+
+- [ ] A fixture containing a contradictory source produces counterevidence in the freeze and final audit/report.
+- [ ] Counterevidence outside leading sections is actually retrieved, not preinserted into the result.
+- [ ] No-hit in a sampled scope is not proof that counterevidence is absent.
+- [ ] Foreign/purged hits, budget exhaustion, and cancellation are handled; replay does not repeat a persisted stage.
+- [ ] Exercise the real D1/R2 stage chain and record exact SHA/results. Other unfinished stages are not declared implemented.
