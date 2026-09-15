@@ -1,27 +1,32 @@
-# S13 — тонкие Research tools в существующем MCP
+# S13 — Thin Research tools in the existing MCP server
 
-База `a2aca127`; F09. Зависимости: S11/#203 и S12/#204 для рабочего service API.
+Baseline: `a2aca127`; finding F09. Dependencies: S11/#203 and S12/#204 provide the working service API.
 
-## 1. Суть
-Текущий MCP предоставляет статус/диагностику и Google candidate plans, но не сквозное исследование. Проверка связи не означает возможность работать с корпусом.
+## 1. Problem
 
-## 2. Что сделать
-Добавить минимальные адаптеры для разрешённого каталога проекта, query/run/status и чтения результата/цитаты. Это представление существующих операций, не второй backend и не новый transport service.
+The current MCP surface exposes status/diagnostics and Google candidate plans, not a complete Research workflow. A successful connection check does not establish that an agent can work with the corpus.
 
-## 3. Документация
-[Канон §1.1 и §0](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/architecture/ELIOT_RESEARCH.md).
-[ADR-0006](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/adr/0006-google-external-transport-profiles.md).
+## 2. Required change
+
+Add minimal adapters for the authorized project catalog, query/run/status, and report/citation reads. They expose existing application operations; they are not another backend or a separate transport service.
+
+## 3. Documentation and exact search anchors
+
+[Architecture, sections 1.1 and 0](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/architecture/ELIOT_RESEARCH.md); [ADR-0006](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/adr/0006-google-external-transport-profiles.md).
+
 ```sh
 git grep -n -F 'private agent MCP' -- docs/architecture/ELIOT_RESEARCH.md
 git grep -n -F 'GEMINI_MCP_TOOLS' -- packages/cloudflare-workspace-mcp/src
 ```
 
-## 4. Как сделать
-Использовать existing JSON-RPC dispatcher и проверенный actor context; связать handlers с теми же application services, что HTTP. Длинный run возвращает handle, status читается отдельно. Каталог должен использовать разрешённый scope вместо обхода `MCP_CATALOG_SCOPE_REQUIRED`. Google candidate semantics не менять. Имена/схемы новых tools зафиксировать один раз в существующем контракте, annotations выставить по реальным эффектам.
+## 4. Implementation approach
 
-## 5. Критерии выполнения
-- initialize → tools/list → scoped catalog → run → status → report → citation проходит headless.
-- HTTP/MCP дают одинаковые durable IDs, hashes и dispositions для одного запроса.
-- read-only tools не запускают модель; run не объявлен readOnly; malformed/foreign/revoked input отказан.
-- Повтор после потери ответа не создаёт второй run.
-- Один MCP, никаких browser cookies или provider keys у клиента; exact tests/SHA и примеры запросов без секретов.
+Use the existing JSON-RPC dispatcher and verified actor context. Delegate handlers to the same application services used by HTTP. Long-running operations return a handle; status is read separately. The catalog needs real scoped authorization, not removal of `MCP_CATALOG_SCOPE_REQUIRED`. Preserve Google candidate semantics. Define tool names and schemas once in the existing contract and derive their behavior from the corresponding application DTOs; annotations must reflect actual side effects. Keep the later S32 control tools in this same namespace/dispatcher.
+
+## 5. Acceptance criteria
+
+- [ ] initialize → tools/list → scoped catalog → run → status → report → citation works headlessly.
+- [ ] HTTP and MCP return the same durable IDs, hashes, and dispositions for the same logical request.
+- [ ] Read-only tools invoke no model; run is not marked readOnly. Malformed, foreign, and revoked inputs fail.
+- [ ] Retrying after a lost response creates no second run.
+- [ ] One MCP server remains; clients need no browser cookies or provider keys. Record exact tests/SHA and secret-free request examples.
