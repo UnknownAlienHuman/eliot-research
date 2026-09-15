@@ -1,26 +1,32 @@
-# S30 — один непротиворечивый текущий статус, без нового реестра
+# S30 — Reconcile current product status without another registry
 
-База `a2aca127`; F22. Только owner import → retrieval → Research DRAFT и соответствующие entry documents, не перепись всей документации.
+Baseline: `a2aca127`; finding F22. Scope: owner import → retrieval → Research DRAFT and their entry documents, not a rewrite of all documentation.
 
-## 1. Суть
-START-HERE выводит из LIVE_QUALIFIED=0 отсутствие любых реальных платформенных проверок, хотя live-журналы описывают частные успешные операции. Это разные уровни подтверждения. Append-only журнал с несколькими словами current также быстро устаревает.
+## 1. Problem
 
-## 2. Что сделать
-Различить code implemented, конкретный retained live case, deployed version и полную qualification контура. Использовать существующий implementation-status.json и ссылки на evidence; не создавать status-v2 или ещё один master-report.
+START-HERE interprets LIVE_QUALIFIED=0 as the absence of any real platform checks, although retained live records describe successful individual operations. These are different levels of evidence. An append-only log containing several historical statements of what is current is not an authoritative current deployment record.
 
-## 3. Документация
-[START-HERE §7](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/START-HERE.md), [Production readiness §0](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/implementation/production-readiness-plan.md).
+## 2. Required change
+
+Distinguish implemented code, an individual retained live case, observed deployed version, and complete subsystem qualification. Reuse implementation-status.json and evidence links; do not create status-v2 or another master report.
+
+## 3. Documentation and exact search anchors
+
+[START-HERE, section 7](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/START-HERE.md); [production-readiness plan, section 0](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/implementation/production-readiness-plan.md).
+
 ```sh
 git grep -n -F '## 7. The four states, and what' -- docs/START-HERE.md
 git grep -n -F '### Mechanical release rule' -- docs/implementation/production-readiness-plan.md
 ```
 
-## 4. Как сделать
-Проверить названные owner-path entries против callers/tests и retained receipts. Убрать из entry docs неверное следствие «0 qualified → ни одного real round trip». Исторические audits и live records не переписывать как current truth; текущий deployment сообщать с наблюдённым временем/источником, не выводить из последнего main SHA. Не повышать state по наличию файла или по одному примеру. Для неисполненного gate оставить явный пробел.
+## 4. Implementation approach
 
-## 5. Критерии выполнения
-- Entry docs, registry и capabilities не делают несовместимых утверждений об owner-path.
-- Partial live case не назван полной квалификацией; отсутствие полной qualification не отрицает сам факт частного case.
-- Main-only fixes явно отличаются от deployed/live-accepted fixes.
-- Проверка документационных индексов проходит для затронутых документов.
-- Нет нового состояния CompletionDisposition, status registry или постоянного копирования счётчиков в prose; exact SHA/evidence links сохранены.
+Check the named owner-path entries against actual callers/tests and retained receipts. Remove the invalid implication that zero fully qualified subsystems means no successful real round trip. Keep historical audits/live records historical. Identify a current deployment only with an observation time and source, not by assuming it equals the latest main SHA. Do not promote a status merely because a file exists or one example passed. Leave an explicit gap for checks not executed.
+
+## 5. Acceptance criteria
+
+- [ ] Entry documents, registry, and capabilities make compatible claims about the owner path.
+- [ ] An individual live case is not described as full qualification, and incomplete qualification does not deny that the case happened.
+- [ ] Main-only fixes are clearly distinguished from deployed/live-accepted fixes.
+- [ ] Documentation-index checking passes for the affected documents.
+- [ ] No new CompletionDisposition, status registry, or repeatedly copied prose counters are introduced. Retain exact SHA and evidence links.
