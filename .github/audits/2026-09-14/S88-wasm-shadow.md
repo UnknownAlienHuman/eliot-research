@@ -1,61 +1,63 @@
-# S88 — Product ABI, explicit operation coverage, and differential shadow
+# S88 — Explicit product ABI and actual Worker shadow
 
-Baseline `a2aca127`; ER-40/24/00. Begin with an accepted canonical identity family, not completion of every pure-kernel family. Current `Cargo.toml` has three crates; `eliotr-kernel-wasm`'s CI self-tests are not product exports. Work in current main, preserving the existing TypeScript Worker.
+Baseline a2aca127; ER-40/24/00. Begin with a ready canonical identity family. Existing Cargo workspace has three crates and CI self-tests, not all future product functions. Keep the existing TypeScript Worker.
 
 ## 1. Problem
 
-Embedded vectors do not prove runtime marshalling or effect isolation. The earlier task also required every mandatory pure family while permitting only six initial export names, without explicitly assigning policy evaluation and structural projection to a product interface. That decision must be resolved before implementation, not improvised as an arbitrary dispatcher.
+Embedded vectors do not prove runtime marshalling, bounded memory or effect isolation. The original six exports also need an explicit scoped contract addition for the required policy and structural projection operations, not an arbitrary dispatcher.
 
 ## 2. Required change
 
-Implement one canonical byte envelope and one TypeScript-to-Wasm adapter. Preserve the six initial exports. First make the scoped, backward-compatible language-contract amendment below for two additional pure-operation exports, then implement its strict mapping. The task does not authorize new Cloudflare services or unlimited dynamic exports.
+One strict canonical byte envelope and one TS/Wasm adapter. Preserve the six existing product names/semantics, explicitly revise the existing language contract for exactly two additional exports, then implement the closed mapping below. No additional Cloudflare service or Rust RPC engine.
 
-## 3. Documentation and exact entry points
+## 3. Documentation and real commands
 
-[Language contract §§6.1–6.3](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/architecture/LANGUAGE_RUNTIME_CONTRACT.md), [current workspace](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/Cargo.toml), `crates/eliotr-canonical/src/lib.rs`, `crates/eliotr-test-vectors/src/lib.rs`, `crates/eliotr-kernel-wasm/src/lib.rs`.
+[Language §§6.1–6.3](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/architecture/LANGUAGE_RUNTIME_CONTRACT.md), Cargo.toml, root package.json and canonical/test-vectors/kernel-wasm lib.rs.
 
 ```sh
-git grep -n -F '### 6.3 Initial exports' -- docs/architecture/LANGUAGE_RUNTIME_CONTRACT.md
 git grep -n -F 'Additional exports require a contract revision or a scoped ADR.' -- docs/architecture/LANGUAGE_RUNTIME_CONTRACT.md
+pnpm rust:vectors
+pnpm rust:boundaries
+pnpm rust:wasm
 ```
 
-## 4. Ordered implementation checkpoints
+Add **NEW** apps/eliotr-core/test/kernel-wasm-bridge.test.ts; after implementing the compiled bridge invoke `pnpm --dir apps/eliotr-core exec vitest run test/kernel-wasm-bridge.test.ts`. Final Rust aggregate is `pnpm rust:check`, not nonexistent rust:check-contracts. The existing rust:wasm build/check script must be updated within this task for the admitted exports/glue where its old CI-only assumptions differ; preserving its self-tests does not mean rejecting valid new contract exports. No dummy script aliases or --passWithNoTests.
 
-### 88.1 — Close the operation contract first
+## 4. Four checkpoints
 
-Make the explicit scoped contract revision allowed by §6.3; retain all existing export semantics and legacy byte identities. The only new names selected by this assignment are `eliotr_evaluate_policy_v1` and `eliotr_transform_projection_v1`. Do not deploy them while pretending the old six-export contract already allowed them. Update the existing ABI fixtures and documentation together; no separate protocol registry.
+### 88.1 — Explicit contract revision
 
-| Export | Admitted operation family |
+Revise the existing contract as allowed by §6.3; preserve legacy byte identities. New names are exactly eliotr_evaluate_policy_v1 and eliotr_transform_projection_v1. Update strict operation schemas and ABI fixtures together; never claim the unchanged six-export contract already permitted the extension.
+
+| Export | Closed operation family |
 |---|---|
-| eliotr_canonicalize_v1 | S78 canonical/identity byte operations |
-| eliotr_validate_transition_v1 | S79 ownership, S85 W1/publication, S86 erasure closure, S87 fence/admissibility; separate strict operation schemas |
-| eliotr_resolve_scope_v1 | S80 normalization/algebra/currentness |
-| eliotr_qualify_bundle_v1 | S82 source/bundle qualification |
+| eliotr_canonicalize_v1 | S78 canonical/identity bytes |
+| eliotr_validate_transition_v1 | S79 owner, S85 W1/publication, S86 erasure, S87 fence/admissibility with separate strict operation payloads |
+| eliotr_resolve_scope_v1 | S80 scope normalization/algebra/currentness |
+| eliotr_qualify_bundle_v1 | S82 normalized source/bundle qualification |
 | eliotr_validate_evidence_resolution_v1 | S84 exact evidence invariants |
-| eliotr_map_completion_disposition_v1 | S84/S85/S87 completion mappings without stronger outcomes |
-| eliotr_evaluate_policy_v1 (added) | S81 policy/residency/budget admission; no Gateway I/O |
-| eliotr_transform_projection_v1 (added) | S83 structural byte/map/item transformation; no managed indexing/inference |
+| eliotr_map_completion_disposition_v1 | S84/S85/S87 existing outcomes, never stronger mappings |
+| eliotr_evaluate_policy_v1 — added | S81 policy/residency/budget decision, no model/network I/O |
+| eliotr_transform_projection_v1 — added | S83 pure byte/map/item transformation, no managed indexing |
 
-The fixed mapping reuses the language contract's protocol/operation/version/schema/input digest/observed time/policy-reference envelope. Each operation has one strict payload/result schema. Unknown operation/schema/version is rejected; code cannot load arbitrary functions by name. Generated memory/glue exports are implementation details, not extra domain operations.
+Reuse the contract's protocol/operation/version/schema/input-digest/observed-time/policy-reference envelope; unknown versions/operations/schema fail. No function loading from untrusted names. Generated memory plumbing is not another domain API.
 
-### 88.2 — Implement the bounded transport
+### 88.2 — Bounded transport
 
-Use the selected wasm-bindgen byte-array shell (`&[u8]` to `Vec<u8>`) with matching pinned crate/CLI and glue initialized from the imported precompiled Module in the existing TS Worker. Do not migrate the Worker to workers-rs or fetch latest tooling at runtime. Validate wire byte length before allocation/marshalling, then bounded schema/version/digest at the decoded boundary and output bounds/digest before acceptance. Domain callers pass bytes, not Request/D1/R2 objects, callbacks, or mutable JS graphs. Compiler-generated pointer handling stays inside glue.
+Selected implementation remains a wasm-bindgen byte-array shell (&[u8]→Vec<u8>), matching pinned crate/CLI and generated glue initialized from the imported precompiled Module. No workers-rs rewrite or runtime latest-tool download. Validate input byte bounds before marshalling, bounded decode/schema/version/digest after receipt, output bounds/digest before acceptance. Request/D1/R2 objects, callbacks and mutable JS graphs do not cross the domain ABI; pointer plumbing remains generated glue. Wire glue/build output into the existing Worker build, not a second deployment.
 
-### 88.3 — Prove an actual call before more families
+### 88.3 — One actual runtime operation
 
-Start with one existing canonical identity operation. A core Workers test supplies runtime bytes and invokes the compiled module, checking the result against independent fixture bytes and native Rust. Add malformed UTF-8, wrong operation/version/digest, size max/max+1, truncated result, trap and repeated-call memory cases. Retain CI self-tests, but do not count them as this integration test.
+The new core test sends runtime canonical input to compiled Wasm and compares independent literal fixtures plus native Rust. Wrong UTF-8/version/operation/digest, max/max+1, truncation/trap and repeated-call cleanup must be tested. The old embedded-vector export is insufficient. Only after this passes, add another ready operation through the same ABI.
 
-### 88.4 — Shadow without double effects
+### 88.4 — Differential shadow
 
-Evaluate TS and Rust against the same verified observations. Only one authoritative path may perform network/model/DB effects. A mismatch/trap blocks the affected authority operation, records a safe code and invalidates unsafe instance state; it does not trigger a permissive TS fallback. Add the next ready family through the same strict transport. No global private-byte cache, RPC service, or independent kernel clock/policy lookup.
-
-Run `pnpm rust:check-contracts`, `pnpm rust:wasm`, applicable existing Rust gates, and the new focused bridge regression from `apps/eliotr-core` using its real Workers Vitest configuration. Measure the same input family under TS and Wasm; S89 owns production promotion/removal.
+TS and Rust receive the same verified observations. Only the current authoritative path performs external/model/DB effects once; a mismatch/trap prevents affected authority settlement and gives content-free diagnosis, not a permissive fallback. Retain no global private-byte cache or independent domain clock/policy lookup. Measure the same input under both paths. Production owner switching/removal belongs to S89.
 
 ## 5. Acceptance criteria
 
-- [ ] The contract change and operation fixture explicitly cover all required pure families; the old six exports remain compatible and unknown mappings fail.
-- [ ] Actual workerd invokes compiled Wasm on runtime input, matching TS/native results and typed errors. A test that only calls an embedded-vector export cannot pass this requirement.
-- [ ] Invalid sizes/schema/digests/traps neither leak private input nor corrupt a following operation; memory is bounded and temporary allocations are released.
-- [ ] Shadow causes one set of external effects, never two. Mismatch cannot publish accepted output or invoke a hidden alternative authority path.
-- [ ] Record each checkpoint's implementation SHA, commands/results, compressed Wasm+glue size, startup/heap and per-family CPU measurements. No runtime-promotion or live qualification is claimed before its own test.
+- [ ] Existing contract explicitly covers the eight mapped exports with closed operations, compatible legacy identities and rejected unknown variants.
+- [ ] Real workerd calls compiled Wasm on runtime bytes through the shipped glue; independent/native fixtures and typed errors agree.
+- [ ] Invalid/trap/oversized/repeated calls neither leak input nor corrupt the next operation; temporary allocations are released and bounded.
+- [ ] Shadow produces one set of effects and cannot publish a mismatch or quietly use a different authority.
+- [ ] Actual vectors/boundaries/wasm/bridge tests and final rust:check pass with recorded checkpoint SHAs, artifact/glue size, startup/heap and per-family CPU. Tests are not declared run merely because this assignment now contains valid command names.
