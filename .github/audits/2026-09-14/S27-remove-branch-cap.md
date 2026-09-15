@@ -1,26 +1,32 @@
-# S27 — удалить искусственный потолок веток, не добавлять исключения
+# S27 — Remove the artificial branch ceiling instead of adding exceptions
 
-База `a2aca127`. Основание изменения политики — прямое указание владельца продолжать серию PR без искусственных ограничений. Создание остальных заданий не зависит от закрытия этого PR.
+Baseline: `a2aca127`. The owner explicitly directed continuation without artificial branch restrictions. Creating or translating the other assignments does not depend on this task being closed. This changes procedural policy, not product security invariants.
 
-## 1. Суть
-Лимит пяти counted branches и whitelist девяти имён с датой 20260905 блокируют нормальное разбиение работ на маленькие PR. Новые именные исключения только увеличат служебную сложность.
+## 1. Problem
 
-## 2. Что сделать
-Удалить численный потолок и датированный механизм reserved_open_pr_heads. Не удалять неслитые ветки автоматически по количеству или возрасту. Оставить безопасную уборку только подтверждённо интегрированных веток и явные операторские действия.
+A five-counted-branch ceiling and a whitelist of nine names dated 20260905 obstruct a series of small PRs. Adding named exceptions would increase administrative complexity rather than solve the cause.
 
-## 3. Документация
-[Действующие правила](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/implementation/branch-discipline.md), [AGENTS](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/AGENTS.md). Здесь требуется обновление старой процедурной политики по решению владельца, не изменение security-канона продукта.
+## 2. Required change
+
+Remove the numeric ceiling and dated reserved_open_pr_heads mechanism. Do not automatically remove unmerged work based on branch count or age. Retain safe cleanup of demonstrably integrated branches and explicit operator-directed actions.
+
+## 3. Documentation and exact search anchors
+
+[Branch discipline](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/implementation/branch-discipline.md); [AGENTS](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/AGENTS.md). Update the superseded procedure explicitly under the owner's direction.
+
 ```sh
 git grep -n -e max_non_default_branches -e reserved_open_pr_heads -e QUARANTINE_CEILING_EVICTION -- scripts infra/github
 git grep -n -F '## Swarm edit protocol' -- AGENTS.md
 ```
 
-## 4. Как сделать
-Упростить `branch-hygiene-lib.mjs`, его callers/tests и config: убрать cap, eviction и датированные исключения, а не отключать весь CI. Cleanup перед удалением проверяет merged/integrated статус, отсутствие открытого PR и неизменившийся head SHA. Closed-unmerged PR и неслитая ветка не считаются мусором. Устаревшие инструкции в START-HERE/branch-discipline/AGENTS привести к одному правилу без второго registry.
+## 4. Implementation approach
 
-## 5. Критерии выполнения
-- Любое количество открытых PR не даёт branch-ceiling failure.
-- Нет списков именных исключений и новых числовых квот.
-- Старые/неслитые/open-PR ветки сохраняются; default/protected branch не удаляется.
-- Race: появившийся PR или изменённый head отменяет cleanup.
-- Unit/negative hygiene tests проходят; data/security/runtime gates не ослаблены. Сам этот PR не удаляет пользовательские ветки.
+Simplify branch-hygiene-lib.mjs, its callers/tests, and configuration: remove the cap, count-based eviction, and dated exceptions without disabling all CI. Before cleanup, establish integration, absence of an open PR, and an unchanged head SHA. A closed-but-unmerged PR is not proof that its work is disposable. Align START-HERE, branch-discipline, and AGENTS with one coherent procedure, not another registry. Preserve the owner's main-only/no-local-worktree implementation rule.
+
+## 5. Acceptance criteria
+
+- [ ] Open-PR count cannot cause a branch-ceiling failure.
+- [ ] No replacement numeric quota or named/dated exception list is introduced.
+- [ ] Age alone does not delete work; unmerged/open-PR/default/protected branches remain safe.
+- [ ] A newly opened PR or changed head cancels cleanup of that candidate.
+- [ ] Unit/negative hygiene tests pass; data/security/runtime checks remain intact. This planning PR itself deletes no user branches.
