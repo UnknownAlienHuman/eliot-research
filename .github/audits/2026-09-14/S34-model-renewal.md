@@ -1,22 +1,34 @@
-# S34 — завершить renewal уже существующих model proofs
+# S34 — Complete the existing model-proof renewal path
 
-База a2aca127; ER-16/24/26. Реализация renewal уже есть; не писать её повторно. Source: текущий gap-register и research-runtime-configuration.
+Baseline: `a2aca127`; ER-16/24/26. Renewal code already exists; do not reimplement it. Source basis: the current gap register and research-runtime-configuration.
 
-## 1. Суть
-Сохранённые owner runs работали, но automatic qualification renewal не принят на Worker без ELIOTR_MODEL_GATEWAY_READ_TOKEN. Model proof expiry, pricing/policy expiry, browser JWT и deployment — разные причины. Новый финансовый контур владельцем отложен.
+## 1. Problem
 
-## 2. Что сделать
-Закрыть существующую цепочку readiness→lazy renewal→route exact readback→new proof→first model dispatch. Проверить корректную установку отдельно Run и Read credentials через текущий runtime/deploy tooling и диагностику missing/forbidden/revoked credentials.
+Retained owner runs succeeded, but automatic qualification renewal was not accepted on the Worker without ELIOTR_MODEL_GATEWAY_READ_TOKEN. Model-proof expiry, pricing/policy expiry, browser JWT lifetime, and deployment changes are distinct causes. A new financial subsystem is outside the owner's current scope.
 
-## 3. Документация / grep
-[Канон §8.5](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/architecture/ELIOT_RESEARCH.md), [Runtime configuration](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/implementation/research-runtime-configuration.md).
+## 2. Required change
+
+Complete readiness → lazy renewal → exact native-route readback → new proof → first model dispatch. Verify installation of distinct Run and Read credentials through existing runtime/deployment tooling and diagnose missing, forbidden, and revoked credentials clearly.
+
+## 3. Documentation and exact search anchors
+
+[Architecture 8.5](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/architecture/ELIOT_RESEARCH.md); [runtime configuration](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/implementation/research-runtime-configuration.md).
+
 ```sh
 git grep -n -F '## 8.5. Generation change gate' -- docs/architecture/ELIOT_RESEARCH.md
 git grep -n -F 'ELIOTR_MODEL_GATEWAY_READ_TOKEN' -- docs/implementation/research-runtime-configuration.md apps/eliotr-core/src
 ```
 
-## 4. Как сделать
-Использовать research-owner-qualification-renewal/research-model-qualification-renewal и установленный native Dynamic Route. Concurrent first runs должны делить один renewal по route/config identity, без повторной qualification модели на каждом status GET или login. Готовый proof привязать к фактическому model/prompt/schema; иной model не наследует proof. Missing Read token — понятное действие настройки, не скрытый fallback и не попытка сделать токен через account admin из приложения. Если upstream effect UNKNOWN, reconcile existing attempt. Pricing/policy не продлевать через model-proof renewal. Saved evidence/report read не блокировать отсутствием новых model credentials. Secrets не помещать в план/R2/Git.
+## 4. Implementation approach
 
-## 5. Критерии выполнения
-Fresh proof→0 renewal calls; expiry→ровно один разрешённый renewal при concurrent runs; same-key replay→тот же proof. Read401/403/revoked, changed route, UNKNOWN и expired policy различаются и не вызывают слепых платных повторов. Сохраняется чтение старого отчёта. Доказать local controlled provider+D1, затем отдельный разрешённый реальный round trip, без заявления live-success заранее. Exact SHA, calls по каждому operation kind и receipts без секретов.
+Reuse research-owner-qualification-renewal, research-model-qualification-renewal, and the configured native Dynamic Route. Concurrent initial runs share one renewal keyed by route/configuration identity. Neither status GET nor login requalifies the model automatically. Bind the resulting proof to the actual model/prompt/schema; a different model does not inherit it.
+
+Missing Read credentials produce a precise configuration action, not a hidden fallback or application-managed account-admin token creation. Reconcile UNKNOWN effects through the existing attempt. Model-proof renewal cannot renew pricing or upstream policy. Saved reports/evidence remain readable under valid read authority even when model credentials are missing. Secrets never enter plans, R2, or Git.
+
+## 5. Acceptance criteria
+
+- [ ] A fresh proof causes zero renewal calls; expiry with concurrent runs causes one authorized renewal; same-key replay returns the same proof.
+- [ ] Read 401/403/revocation, changed route, UNKNOWN, and expired policy remain distinguishable and cause no blind paid retries.
+- [ ] Saved report/evidence reading remains available under valid read permission.
+- [ ] Controlled-provider/D1 integration is proven locally; a subsequent authorized native round trip is recorded separately, not claimed in advance.
+- [ ] Record exact SHA, calls by operation kind, and secret-free receipts.
