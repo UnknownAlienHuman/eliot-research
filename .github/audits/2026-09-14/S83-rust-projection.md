@@ -1,24 +1,32 @@
-# S83 — Rust family: structural projection transforms
+# S83 — Port structural projection transforms to Rust
 
-База a2aca127; ER-05/38/40. Target `eliotr-projection-core`. Вход — утверждённые нормализованные bytes/maps, not raw PDF. Принятые navigation/index cases #240/#244 сохраняются.
+Baseline `a2aca127`; ER-05/38/40. Target eliotr-projection-core. Inputs are admitted normalized bytes and qualified maps, not raw PDF. Preserve accepted navigation/index behavior from #240/#244.
 
-## 1. Суть
-Deterministic segment/anchor/map transforms относятся к Rust kernel; управляемый поиск и запись проекций — к TS/Cloudflare. Перенос не должен создать встроенный search или parsing engine.
+## 1. Problem
 
-## 2. Что сделать
-Перенести чистую structural segmentation, byte-range/coordinate-map validation и deterministic projection-item construction, используемые текущим projector. D1/R2/Queue/AI Search effects остаются существующими adapters.
+Deterministic segmentation and coordinate transforms belong in the kernel; managed searching and projection effects remain in TS/Cloudflare. Migration must not introduce an embedded search or document-parsing engine.
 
-## 3. Документация / grep
+## 2. Required change
+
+Port pure structural segmentation, byte-range/coordinate-map validation, and deterministic projection-item construction used by the current projector. Leave D1/R2/Queue/AI Search effects in existing adapters.
+
+## 3. Documentation and exact search anchors
+
 [Language ownership matrix](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/architecture/LANGUAGE_RUNTIME_CONTRACT.md).
 ```sh
 git grep -n -F 'Structural projection algorithms' -- docs/architecture/LANGUAGE_RUNTIME_CONTRACT.md
 ```
 
-## 4. Как сделать
-Из existing projection/navigation builders выделить вход bytes+base offset+qualified map+generation и выход items/maps/typed gaps. При chunked input учитывать UTF-8 boundaries/overlap, не выдавать локальный offset за абсолютный. Для native coordinates отсутствие map остаётся unsupported precision; model coordinates не становятся verified. Reuse identity/canonical helpers #270, не добавлять tokenization/embedding/BM25 implementation. Item-set identity и channel activation проверяет прежний TS/D1 generation store. Никаких Cloudflare handles/файлов/clock в pure crate.
+## 4. Implementation approach
 
-## 5. Критерии выполнения
-- TS/native/Wasm item/map/ID bytes совпадают на prose/code/table/Unicode fixtures, включая chunk boundaries и reordered inputs.
-- Corrupt map, invalid ranges/parent cycles/foreign revision и over-limit input отказаны; native precision не изобретается.
-- Actual imported source→projector→exact locator regression #244 сохраняется; inactive/partial generation не serving.
-- Property/mutation tests и Rust gates проходят; измерены bounded allocation/CPU, effects не продублированы. Runtime switch S89, exact SHA/results.
+Extract bounded inputs of bytes, base offset, qualified map, and generation from existing builders; return items/maps/typed gaps. Handle UTF-8 boundaries and overlap correctly for chunked input. Local chunk offsets must not become absolute source offsets by accident.
+
+Missing native-coordinate maps retain an explicit precision limitation; model-generated coordinates are not verified observations. Reuse S78 canonical/identity primitives. Do not add tokenizer, embedding, or BM25 implementations. Existing TS/D1 generation stores still validate item-set identity and channel activation. Pure crates receive no platform handles, files, or hidden clock.
+
+## 5. Acceptance criteria
+
+- [ ] TS/native/Wasm agree on item/map/ID bytes for prose, code, tables, Unicode, chunk boundaries, and reordered inputs.
+- [ ] Corrupt maps, invalid ranges, parent cycles, foreign revisions, and oversized inputs fail without fabricated precision.
+- [ ] Actual import→projector→exact-locator regressions remain correct; inactive or incomplete generations never serve as complete.
+- [ ] Property/mutation checks and applicable Rust gates pass; allocation/CPU are measured and effects are not duplicated.
+- [ ] Record exact SHA and results. Actual runtime switching is S89, not implied by pure-code tests.
