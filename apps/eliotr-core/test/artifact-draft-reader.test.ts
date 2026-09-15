@@ -152,6 +152,7 @@ describe("actual D1/R2 artifact draft reader", () => {
       artifact_id: fixture.input.revision.artifact_ref.id,
       artifact_revision: 2,
       expected_head_revision: 1,
+      scope_snapshot_id: fixture.scope.snapshot_id,
     });
     await createArtifactDraftRuntime().prepare(later);
     const before = await draftHead(fixture.input.revision.artifact_ref.id);
