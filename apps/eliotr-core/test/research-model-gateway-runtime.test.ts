@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ModelGatewayExecutionError } from "@eliotr/cloudflare-ai";
+import type { ResearchModelGatewayBinding } from "@eliotr/cloudflare-research";
 import { createResearchModelGatewayRuntime } from "../../../packages/cloudflare-research/src/research-model-gateway-runtime.js";
 
 const ACCOUNT_ID = "a".repeat(32);
@@ -17,16 +18,19 @@ function requestInit(): RequestInit {
 
 describe("research model gateway runtime", () => {
   it("uses the account-bound Worker gateway without a token and preserves request policy", async () => {
-    let invocation: AIGatewayUniversalRequest | AIGatewayUniversalRequest[] | undefined;
-    let options: Parameters<AiGateway["run"]>[1];
+    let invocation: { model: string; inputs: Record<string, unknown> } | undefined;
+    let options: Parameters<ResearchModelGatewayBinding["run"]>[2] | undefined;
     const runtime = createResearchModelGatewayRuntime({
       reasoning_gateway_base_url: BASE_URL,
       ai_gateway_binding: { gateway(gatewayId) {
         expect(gatewayId).toBe("eliotr-reasoning");
-        return { getUrl: async () => BASE_URL, async run(request, requestOptions) {
-          invocation = request; options = requestOptions;
-          return new Response('{"ok":true}', { headers: { "cf-aig-log-id": "binding-log" } });
-        } };
+        return { getUrl: async () => BASE_URL,
+          getLog: async () => { throw new Error("fingerprinted response does not need a log read"); } };
+      }, async run(model, inputs, requestOptions) {
+        invocation = { model, inputs }; options = requestOptions;
+        return new Response('{"ok":true}', { headers: {
+          "cf-aig-log-id": "binding-log", "cf-aig-provider": "controlled", "cf-aig-model": "controlled",
+        } });
       } },
     });
     const query = { model: "dynamic/eliotr-balanced", messages: [{ role: "user", content: "fixture" }] };
@@ -34,8 +38,9 @@ describe("research model gateway runtime", () => {
       ...requestInit(), body: JSON.stringify(query),
       headers: { "cf-aig-request-timeout": "1000", "cf-aig-max-attempts": "1", "cf-aig-skip-cache": "true", "cf-aig-collect-log-payload": "false" },
     });
-    expect(invocation).toEqual({ provider: "compat", endpoint: "chat/completions", query,
-      headers: { "Content-Type": "application/json", Accept: "application/json" } });
+    expect(invocation).toEqual({ model: query.model, inputs: query });
+    expect(options?.gateway).toEqual({ id: "eliotr-reasoning" });
+    expect(options?.returnRawResponse).toBe(true);
     expect(options?.extraHeaders).toEqual({ "cf-aig-request-timeout": "1000", "cf-aig-max-attempts": "1", "cf-aig-skip-cache": "true", "cf-aig-collect-log-payload": "false" });
     expect(options?.signal).toBeInstanceOf(AbortSignal);
     expect(runtime).not.toHaveProperty("credentials");
@@ -53,8 +58,8 @@ describe("research model gateway runtime", () => {
         reasoning_gateway_base_url: BASE_URL, signal: controller.signal,
         ai_gateway_binding: { gateway: () => ({
           getUrl: async () => { if (cancel) controller.abort(); return cancel ? BASE_URL : BASE_URL.replace(ACCOUNT_ID, "b".repeat(32)); },
-          run: async () => { calls += 1; return new Response("unexpected"); },
-        }) },
+          getLog: async () => { throw new Error("denied account cannot read model logs"); },
+        }), run: async () => { calls += 1; return new Response("unexpected"); } },
       });
       await expect(runtime.binding_transport.fetch(ENDPOINT, requestInit()))
         .rejects.toMatchObject(cancel ? { name: "AbortError" } : { code: "MODEL_GATEWAY_REQUEST_INVALID" });
@@ -84,9 +89,21 @@ describe("research model gateway runtime", () => {
     expect(await response.text()).toBe("{\"ok\":true}");
     expect(requestedUrl).toBe(ENDPOINT);
     expect(requestedInit?.method).toBe("POST");
-    expect(requestedInit?.redirect).toBe("error");
+    expect(requestedInit?.redirect).toBe("manual");
     expect(requestedInit?.signal).toBeInstanceOf(AbortSignal);
     expect(new Headers(requestedInit?.headers).get("cf-aig-request-timeout")).toBe("1000");
+  });
+
+  it("does not follow an upstream redirect or expose its body", async () => {
+    let calls = 0;
+    const runtime = createResearchModelGatewayRuntime({ reasoning_gateway_base_url: BASE_URL,
+      gateway_token: "server-held-token", fetch: async (_url, init) => {
+        calls += 1;
+        expect(init?.redirect).toBe("manual");
+        return new Response("untrusted redirect body", { status: 302, headers: { location: "https://other.example/" } });
+      } });
+    await expect(runtime.transport.fetch(ENDPOINT, requestInit())).rejects.toMatchObject({ name: "AbortError" });
+    expect(calls).toBe(1);
   });
 
   it("rejects a noncanonical destination or request before invoking fetch", async () => {
