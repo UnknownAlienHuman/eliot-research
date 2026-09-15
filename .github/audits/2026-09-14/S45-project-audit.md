@@ -1,21 +1,33 @@
-# S45 — PROJECT_VS_LITERATURE_AUDIT с трассируемой матрицей
+# S45 — Implement PROJECT_VS_LITERATURE_AUDIT with a traceable matrix
 
-База a2aca127; ER-08/10/11; inputs #228/#229/#231/#232.
+Baseline: `a2aca127`; ER-08/10/11. Inputs: #228/#229/#231/#232.
 
-## 1. Суть
-Summary документации проекта не проверяет его утверждения относительно литературы, стандартов и operational evidence.
+## 1. Problem
 
-## 2. Что сделать
-Один approved product profile: строки project_claim/assumption → source version → external normative/empirical evidence → counterevidence → mismatch/gap/alternative/severity → exact support/next probe. Входные project docs/code snapshots и литература — admitted sources, не непроверенные live ссылки.
+Summarizing project documentation does not verify its claims against literature, standards, or operational evidence.
 
-## 3. Документация / grep
-[Канон §7.12](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/architecture/ELIOT_RESEARCH.md).
+## 2. Required change
+
+Implement one approved product profile with rows linking project claim/assumption → source version → external normative/empirical evidence → counterevidence → mismatch/gap/alternative/severity → exact support/next probe. Project documents, code snapshots, and literature must be admitted sources rather than unverified live links.
+
+## 3. Documentation and exact search anchors
+
+[Architecture, section 7.12](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/architecture/ELIOT_RESEARCH.md).
+
 ```sh
 git grep -n -F 'Project claims and assumptions are mapped to evidence' -- docs/architecture/ELIOT_RESEARCH.md
 ```
 
-## 4. Как сделать
-Existing branch executor/source portfolio/exact resolver и artifact schema. Различать нормативное требование, implementation claim, реально наблюдавшийся run и мнение автора. По design document нельзя утверждать, что feature реализована или измерена. При сравнении версий пинить commit/document edition/time, source-native code anchors только квалифицированным bridge; иначе normalized exact span и typed precision limitation. Недоступная external source становится acquisition debt, не реконструируется моделью. Severity — объяснённая оценка последствий, не автоматически подтверждённая уязвимость. Рекомендации не записываются в клиентский проект и не создают PR без explicit client authority.
+## 4. Implementation approach
 
-## 5. Критерии выполнения
-Fixture: заявленная, но не подтверждённая runtime feature, obsolete spec, конфликтующий первичный source и community claim получают разные статусы с evidence/limitations. Из наличия файла не получается execution PASS, из no-hit — доказанного отсутствия реализации. Source/excerpt sufficiency разделены, контрпозиция не пропущена. Same run/refs replay, scope isolation, artifact readback и exact SHA/tests.
+Use the existing branch executor, source portfolio, exact resolver, and artifact schema. Distinguish normative requirements, implementation claims, observed execution, and author opinion. A design document cannot establish implemented or measured behavior. Pin code commit/document edition/time. Native code anchors require a qualified bridge; otherwise use exact normalized spans with an explicit precision limitation.
+
+An inaccessible external source becomes acquisition debt, not model reconstruction. Severity is an explained assessment of consequences, not automatically a proven vulnerability. Recommendations do not mutate a client project or create PRs without explicit client authority.
+
+## 5. Acceptance criteria
+
+- [ ] Fixtures distinguish an unverified runtime claim, obsolete specification, conflicting primary evidence, and community opinion with appropriate evidence/limitations.
+- [ ] File existence does not become execution PASS; retrieval no-hit does not prove an implementation is absent.
+- [ ] Source-level and excerpt-level sufficiency remain distinct, and counterpositions are retained.
+- [ ] Replay preserves the run/references; scope isolation and artifact readback are verified.
+- [ ] Record actual chain tests and exact implementation SHA.
