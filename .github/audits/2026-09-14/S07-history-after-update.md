@@ -1,27 +1,34 @@
-# S07 — закрыть приёмку старого отчёта после новой версии источника
+# S07 — Accept historical reports after a source revision update
 
-База `a2aca127`; F03. Исправление уже внесено в `e5b5613`; не писать второй historical reader. По stop checkpoint работающий Worker оставался `git-66a0e20`, исправление не было live-принято.
+Baseline: `a2aca127`; finding F03. A correction already exists in `e5b5613`; do not implement a second historical reader. The recorded stop checkpoint still described Worker `git-66a0e20`, without live acceptance of that correction. This is historical evidence, not a fresh observation of the deployment.
 
-## 1. Суть
-Source update сохранял обе LIVE-ревизии, но invalidated scope приводил к HTTP 410 для старой Wiki/Research. В main добавлен отдельный historical read с проверкой source-head advance. Нужно проверить весь путь, а не только наличие helper.
+## 1. Problem
 
-## 2. Что сделать
-Regression: источник v1 → сохранённые report/Wiki → v2 → открыть старый текст и его цитату, увидеть признак предыдущей версии. После действительного revoke/purge чтение должно отказать.
+A source update retained both LIVE revisions, but scope invalidation caused HTTP 410 for old Wiki/Research results. Main now includes a historical-read path that checks source-head advancement. Verify the complete path, not merely the presence of its helper.
 
-## 3. Документация
-[Канон §7 и §9.2](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/architecture/ELIOT_RESEARCH.md).
-[Stop checkpoint](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/implementation/live-document-project-acceptance-2026-09-14.md).
+## 2. Required change
+
+Add this regression: source v1 → saved report/Wiki → source v2 → reopen the original text and citation, marked as using previous revisions. Genuine revocation or purge must still deny access.
+
+## 3. Documentation and exact search anchors
+
+[Architecture, sections 7 and 9.2](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/architecture/ELIOT_RESEARCH.md).
+
+[Recorded stop checkpoint](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/implementation/live-document-project-acceptance-2026-09-14.md).
+
 ```sh
 git grep -n -F '### Stop checkpoint requested by the owner' -- docs/implementation/live-document-project-acceptance-2026-09-14.md
 git grep -n -F '## 9.2. Copy-on-write section tree' -- docs/architecture/ELIOT_RESEARCH.md
 ```
 
-## 4. Как сделать
-Использовать `owner-historical-scope.ts`, `research-artifact-reauthorization-http.ts`, `wiki-proposal-reauthorization.ts` и `source-revision-freshness.ts`. Добавить test через API + реальные D1/R2, включая nested section/citations и activity. Исправлять только выявленные разрывы. Старые invalidation flags/grants не сбрасывать. Открытие отчёта не должно переписывать его текст под новый source head.
+## 4. Implementation approach
 
-## 5. Критерии выполнения
-- Старый body и citation совпадают с v1 hashes; v2 отдельно доступна.
-- UI/API честно показывают previous revisions, не подменяют старую цитату новой.
-- Новый source update не создаёт третий run или model call при чтении.
-- REVOKED, purged, foreign и повреждённая revision отказаны.
-- Local acceptance и последующий разрешённый live-check записаны отдельно; до live-check статус не объявляется live-fixed.
+Reuse `owner-historical-scope.ts`, `research-artifact-reauthorization-http.ts`, `wiki-proposal-reauthorization.ts`, and `source-revision-freshness.ts`. Exercise actual API and D1/R2 storage, including nested sections/citations and activity. Correct only demonstrated remaining gaps. Do not reset historical invalidation flags/grants. Reopening a report must not rewrite its text to match the new source head.
+
+## 5. Acceptance criteria
+
+- [ ] The historical body and citation retain v1 hashes; v2 remains separately accessible.
+- [ ] UI/API accurately report previous-revision use and do not substitute new citations for old ones.
+- [ ] Reading after a source update creates no additional run or model call.
+- [ ] REVOKED, purged, foreign, and corrupted revisions are denied.
+- [ ] Record local acceptance separately from a subsequent authorized live check. Do not label the fix live-accepted before that check; attach exact SHAs and results.
