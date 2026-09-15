@@ -1,30 +1,36 @@
-# S14 — подтверждённая отмена обычного run
+# S14 — Confirmed cancellation of an ordinary Research run
 
-База a2aca127; ER-09/21/24. Предлагаемый API, не уже существующий. EXHAUSTIVE_JOB не менять.
+Baseline: `a2aca127`; ER-09/21/24. Proposed API, not an existing endpoint. Do not change EXHAUSTIVE_JOB cancellation.
 
-## 1. Суть
-Закрытие вкладки и внутренний DO cancel не дают завершённой публичной отмены research.run. Native engine stop не равен канонической отмене.
+## 1. Problem
 
-## 2. Что сделать
-Добавить POST `/api/v1/research/run/:workflow_id/cancel` с existing Idempotency-Key, пустым JSON `{}` (неизвестные поля отказаны). Идентичность цели — path+verified principal+action+key. Ответ HTTP200 — существующий ResearchRunStatus после сохранённой CANCELLED; HTTP409 — уже канонически ENGINE_COMPLETED; HTTP503 retryable — settlement не подтверждён. GET существующего status остаётся путём сверки. Repeated cancel уже CANCELLED возвращает200 без новых effects. Новое значение CompletionDisposition не вводится.
+Closing a tab or calling an internal DO cancellation method does not provide a complete public research.run cancellation lifecycle. Native engine termination is not the canonical cancellation decision.
 
-## 3. Документация / grep
-[Канон §7.7.2, §7.11](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/architecture/ELIOT_RESEARCH.md).
+## 2. Required change
+
+Add POST `/api/v1/research/run/:workflow_id/cancel` with the existing Idempotency-Key header and an empty JSON body `{}`; reject unknown fields. Target identity is path+verified principal+action+key. Return existing ResearchRunStatus with HTTP 200 only after persisted CANCELLED; return HTTP 409 if canonical ENGINE_COMPLETED already won, and retryable HTTP 503 when settlement is unconfirmed. Existing GET status is the reconciliation path. Repeating cancellation of an already CANCELLED run returns 200 without new effects. Do not add a CompletionDisposition value.
+
+## 3. Documentation and exact search anchors
+
+[Architecture, sections 7.7.2 and 7.11](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/architecture/ELIOT_RESEARCH.md).
+
 ```sh
 git grep -n -F 'Each stage checks cancellation and budget' -- docs/architecture/ELIOT_RESEARCH.md
 git grep -n -F '## 7.11. Terminal dispositions and reopen' -- docs/architecture/ELIOT_RESEARCH.md
 ```
 
-## 4. Как сделать
-ROUTES/HTTP/research service вызывают existing monotone executor.cancel и W2 receipt readback; не добавлять отдельный cancellation ledger при наличии текущей записи. Доступ: owner собственного run либо явное cancel в #202; чужой/отсутствующий run дают одинаковый404, некорректный body400, отозванные права403 по действующей error policy.
+## 4. Implementation approach
 
-D1 сериализует cancel-versus-complete: победивший terminal outcome неизменяем. После канонического CANCELLED выполнить native stop best effort, сохранив безопасную диагностику; его timeout не отменяет подтверждённый D1 outcome. Если D1 ACK потерян, сначала читать тот же receipt, не возвращать fabricated CANCELLED. Поздний model output можно сохранить в attempt accounting, но не публиковать и не запускать следующую стадию. До каждой dispatch проверить D1 cancellation.
+ROUTES/HTTP/the Research service use existing monotone executor.cancel and W2 receipt readback. Do not add a second cancellation ledger when current authority already records the outcome. Access requires the run's owner or an explicit cancel delegation under #202. Foreign and nonexistent runs share the same 404 behavior; malformed body is 400 and revoked authorization is 403 under the existing error policy.
 
-S15/#207 использует соседний POST `/api/v1/research/run/:workflow_id/recover` с тем же пустым body, Idempotency-Key и существующим status response. Recovery отказан после канонического CANCELLED; ни один endpoint не создаёт replacement run. UI/MCP-кнопки — S32, не второй механизм.
+D1 serializes cancel versus completion; the winning terminal outcome is immutable. After canonical CANCELLED, attempt native termination and retain safe diagnostics. A native timeout does not undo a confirmed D1 outcome. If the D1 acknowledgement is lost, read back the same receipt before claiming cancellation. Late model output may be retained for attempt accounting, but cannot publish or start a subsequent stage. Check canonical cancellation before each dispatch.
 
-## 5. Критерии выполнения
-- Before-start, between-stages, in-flight-model cancel→200 с persisted CANCELLED; новые provider effects отсутствуют, уже отправленный вызов не изображается физически отменённым без proof.
-- Complete-first→409, cancel-first→неизменный CANCELLED; повтор/restart/lost ACK не дают второй cancel effect и не воскрешают run.
-- GET показывает тот же outcome; native stop failure не превращается в ложную потерю канонической отмены.
-- Foreign/expired/revoked requests и CSRF отказаны до effects; forged body principal игнорировать нельзя, он должен быть rejected как unknown field.
-- Real-local HTTP/D1/R2 race tests, исправляющий SHA, команды и результаты; live native stop проверяется отдельно на разрешённом target.
+S15/#207 uses the adjacent POST `/api/v1/research/run/:workflow_id/recover` with the same empty-body/idempotency/status conventions. Recovery is denied after canonical cancellation. Neither endpoint creates a replacement run. S32 provides UI/MCP controls over these same operations.
+
+## 5. Acceptance criteria
+
+- [ ] Before-start, between-stage, and in-flight-model cancellation returns 200 with persisted CANCELLED and prevents new provider effects. Do not claim an already dispatched call was physically stopped without proof.
+- [ ] Completion-first returns 409; cancellation-first remains CANCELLED. Replay/restart/lost ACK creates no duplicate cancellation effect and cannot revive the run.
+- [ ] GET status agrees with the durable outcome; native termination failure does not erase canonical cancellation.
+- [ ] Foreign, expired, revoked, and CSRF requests fail before effects. A body-supplied principal is rejected as an unknown field, not silently ignored.
+- [ ] Record actual local HTTP/D1/R2 race tests, exact SHA, commands, and results. Native termination is separately checked on an authorized live target.
