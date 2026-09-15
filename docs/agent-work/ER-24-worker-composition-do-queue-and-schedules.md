@@ -21,6 +21,8 @@ fail-closed. The Worker is a composition and transport boundary, not a second do
 - `apps/eliotr-core/src/scheduled.ts`
 - `apps/eliotr-core/src/readiness.ts`
 - `apps/eliotr-core/src/research-session.ts`
+- `apps/eliotr-core/src/research-run-read-authorization.ts`
+- `apps/eliotr-core/src/research-run-list.ts`
 - `apps/eliotr-core/test/research-run-status.test.ts`
 - `apps/eliotr-core/src/research-stage-handlers.ts`
 - `apps/eliotr-core/src/research-retrieve-branches.ts`
@@ -321,3 +323,22 @@ Focused Core tests cover the distinct digests and reject mismatched anchor, cand
 identities. The real two-section research fixture also reaches evidence resolution through admission,
 projection and retrieval. These are local controlled acceptance checks; they do not establish a
 live retrieval channel or enable a new public research generation.
+
+## S06 owner reauthentication read boundary
+
+The owner run-status and recent-runs routes authorize a refreshed Access session through the existing
+historical-scope and artifact readers. The run's original credential, frozen source references,
+W1/W2/W3 receipts and cancellation state remain execution provenance; reading does not renew the
+execution grant or rerun a model. Original grant revocation, current source-policy denial and purge
+still deny disclosure. Request expiry and currentness are rechecked after asynchronous native-status
+or result reads. A new credential does not imply compatibility with another deployment.
+
+Local acceptance uses `apps/eliotr-core/test/research-run-status.test.ts`: 13 cases, including a real
+D1/R2 v3 synthesis/audit/citation/coverage/materialization chain with controlled external AI responses,
+followed by HTTP reads using the original and refreshed owner sessions. The same draft reference is
+returned without another synthesis/audit; corrupt result bytes and revoke/expiry races fail closed.
+The focused combined suite also covers artifact readers, gateway runtime and workflow recovery
+(5 files, 41 tests). Core/PWA source and core-test TypeScript checks, package boundaries and their
+negative tests pass locally. This is not whole-project CI or live Cloudflare qualification; S05
+compatible deployment and S33 long-run execution renewal remain separate tasks. See PR #198 for
+implementation commits and exact commands; no schema migration or public DTO change is introduced.
