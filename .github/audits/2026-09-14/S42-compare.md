@@ -1,21 +1,31 @@
-# S42 — COMPARE по проверяемым измерениям
+# S42 — Compare sources along verifiable dimensions
 
-База a2aca127; ER-08/10/11; after #227, shared result path #233. Задача про один продукт.
+Baseline: `a2aca127`; ER-08/10/11. Requires #227 and the shared result path #233. Scope: one product.
 
-## 1. Суть
-Сравнение не равно двум summary рядом. Нужны фиксированные axes, версии, условия измерений и явно отсутствующие данные.
+## 1. Problem
 
-## 2. Что сделать
-Approved COMPARE profile: comparison targets из разрешённых source/version refs, axes из вопроса/протокола, outcome cells с value/unit/conditions/support refs/unknowns, итоговые differences отдельно от recommendations. Сохранить через existing artifact sections и audit.
+Comparison is not two summaries placed side by side. It needs defined axes, versions, measurement conditions, and explicit missing data.
 
-## 3. Документация / grep
-[Канон §7.12, §19.3](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/architecture/ELIOT_RESEARCH.md).
+## 2. Required change
+
+Implement an approved COMPARE profile. Targets are authorized source/version references; axes come from the question/protocol. Each outcome cell carries value, unit, conditions, support references, and unknowns. Separate observed differences from recommendations. Persist through existing artifact sections and audit.
+
+## 3. Documentation and exact search anchors
+
+[Architecture, sections 7.12 and 19.3](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/architecture/ELIOT_RESEARCH.md).
+
 ```sh
 git grep -n -F 'Dimension-based comparison of documents' -- docs/architecture/ELIOT_RESEARCH.md
 ```
 
-## 4. Как сделать
-Reuse existing protocol/prompt/model/output adapters; targets/axes bound in request digest и frozen inputs. Comparability проверять по recorded versions/population/time/units; unit conversion допустима только явной детерминированной операцией с исходными values, не тихой модельной заменой. Absent field = unknown/not comparable, не0/false. Источники обеих сторон включить в scope/coverage; single-source duplicate не выдавать за независимость. UI/MCP читают один persisted result и точные cell citations, без отдельного report engine.
+## 4. Implementation approach
 
-## 5. Критерии выполнения
-Fixture двух версий с изменённым условием, разных единиц и missing axis сохраняет правильные различия/unknowns. Число без точного excerpt не принимается. Sources A/B чужого scope отказаны; reorder/replay axes имеет определённую identity и не повторяет оплаченный result. End-to-end API→audit→artifact/citation тест, exact SHA; T3 реальная quality позже.
+Reuse protocol/prompt/model/output adapters. Bind targets/axes to request identity and frozen inputs. Assess comparability using recorded versions, populations, times, and units. Unit conversion requires an explicit reproducible deterministic operation retaining original values, not silent model substitution. Missing fields remain unknown/not comparable, never zero/false. Include both sides in authorized scope and coverage; duplicate copies are not independent evidence. UI/MCP read one persisted result with exact cell citations; do not create another report engine.
+
+## 5. Acceptance criteria
+
+- [ ] Fixtures with changed-version conditions, differing units, and missing axes preserve correct differences and unknowns.
+- [ ] Numbers without exact supporting excerpts cannot be accepted.
+- [ ] Foreign-scope targets fail; axis ordering/replay follows a documented request identity and does not repeat completed paid work.
+- [ ] Actual API→audit→artifact/citation tests pass with exact SHA/results.
+- [ ] Real T3 quality acceptance remains separate from controlled-model integration tests.
