@@ -1,21 +1,33 @@
-# S43 — HYPOTHESIS_REVIEW сохраняет проверяемые альтернативы
+# S43 — Preserve testable alternatives in HYPOTHESIS_REVIEW
 
-База a2aca127; ER-08/10/11; inputs #228/#229/#230/#232.
+Baseline: `a2aca127`; ER-08/10/11. Inputs: #228/#229/#230/#232.
 
-## 1. Суть
-Список гипотез без predictions/falsifiers/альтернатив и scoped outcome не является продуктом HYPOTHESIS_REVIEW.
+## 1. Problem
 
-## 2. Что сделать
-Установленный product profile читает persisted HypothesisCards, назначает discriminating checks existing obligations/branches, сохраняет support/counterevidence/alternatives и scoped status каждой гипотезы. Результат — section-versioned artifact с next probes, не новый knowledge graph.
+A list of hypotheses without predictions, falsifiers, alternatives, and scoped outcomes is not a completed HYPOTHESIS_REVIEW product.
 
-## 3. Документация / grep
-[Канон §7.6 и §7.12](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/architecture/ELIOT_RESEARCH.md).
+## 2. Required change
+
+Use an installed product profile to read persisted HypothesisCards, bind discriminating checks to existing obligations/branches, and preserve support, counterevidence, alternatives, and a scoped status for each hypothesis. Produce a section-versioned artifact with next probes, not another knowledge graph.
+
+## 3. Documentation and exact search anchors
+
+[Architecture, sections 7.6 and 7.12](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/architecture/ELIOT_RESEARCH.md).
+
 ```sh
 git grep -n -F '## 7.6. HypothesisCard' -- docs/architecture/ELIOT_RESEARCH.md
 ```
 
-## 4. Как сделать
-Existing card identities/W1 revision и model/audit/artifact adapters. Discriminating check обязан ссылаться на конкретную measurement/source/proof obligation и verifier; рассуждение модели не делает status supported/falsified authoritative само по себе. Сохранить origin/exposure lane; exploratory tuning на тех же данных не подтверждает confirmatory hypothesis. Поддержка при разных population/time/assumptions не автоматически противоречие. Unknown and failed probe видны; budget stop не удаляет проигравшую альтернативу. Новые результаты обновляют cards через #232, старые artifacts неизменны.
+## 4. Implementation approach
 
-## 5. Критерии выполнения
-Fixture с двумя rivals и неразрешённым confound сохраняет обе, predictions/falsifiers и next probe. Явное опровержение связано с точным span/измерением, не confidence score. Scoped unknown не стал universal false, discarded alternative не исчезла. Replay/cancel/reauth и source revision change безопасны. Actual branch→audit→artifact tests/SHA, не только schema test.
+Reuse card identities/W1 revisions and model/audit/artifact adapters. Each discriminating check references a concrete measurement/source/proof obligation and its verifier. Model reasoning alone cannot authoritatively assign supported/falsified status. Preserve origin and exposure lane; exploratory tuning on the same data does not confirm a preregistered hypothesis. Evidence involving different populations, times, or assumptions is not automatically contradictory.
+
+Retain unknowns and failed probes. Budget exhaustion cannot remove an unsuccessful alternative from history. New results update cards through #232's revision/reopen mechanism; old artifacts remain immutable.
+
+## 5. Acceptance criteria
+
+- [ ] Two rival hypotheses and an unresolved confound retain both alternatives, predictions/falsifiers, and a concrete next probe.
+- [ ] Refutation is linked to an exact source span or measurement, not a confidence score.
+- [ ] Scoped unknown does not become universally false; discarded alternatives remain recorded.
+- [ ] Replay/cancel/reauthorization and source-revision changes preserve correct authority/history.
+- [ ] Actual branch→audit→artifact tests, not schema tests alone, pass; record exact SHA/results.
