@@ -119,7 +119,7 @@ async function readReauthorizedHistoricalArtifact(
   }
   return {
     artifact_ref: reopened.artifact_ref,
-    original_scope_snapshot_ref: reopenedScope(reopened),
+    original_scope_snapshot_ref: reopened.original_scope_snapshot_ref,
     status: "DRAFT",
     evidence_freeze_ref: reopened.artifact.evidence_freeze_ref,
     dependency_manifest_ref: reopened.artifact.dependency_manifest_ref,
