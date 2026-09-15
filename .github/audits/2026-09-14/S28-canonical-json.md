@@ -1,25 +1,31 @@
-# S28 — удалить повторную сериализацию query digest внутри retrieval
+# S28 — Remove duplicate query-digest serialization inside retrieval
 
-База a2aca127; ER-04. Пара выбрана и перечитана, это не задание агенту искать произвольный дубль.
+Baseline: `a2aca127`; ER-04. The specific pair has been selected and read; this is not an instruction to search for an arbitrary duplicate.
 
-## 1. Суть
-`packages/retrieval/src/service.ts:106` локальная canonicalJson и `packages/retrieval/src/query-codec.ts` canonicalRetrievalJson имеют одинаковую рекурсию: null/bool/string, safe integer через String, массив в порядке, object entries без undefined и lexical-sort ключей. Отличается публичный error mapping. `query-persistence.ts` уже оборачивает codec — его wrapper не считать третьим алгоритмом. `canonicalEvidenceJson` НЕ эквивалентен на произвольных числах/undefined и в эту замену не входит.
+## 1. Problem
 
-## 2. Что сделать
-Service использует canonicalRetrievalJson из query-codec, сохраняя прежний RetrievalQueryError(RETRIEVAL_INPUT_INVALID, query digest input is not canonical) на отказе. Удалить локальную рекурсию, оставить только необходимую адаптацию ошибок. DTO и digest input поля не менять.
+The local canonicalJson in `packages/retrieval/src/service.ts:106` and canonicalRetrievalJson in `packages/retrieval/src/query-codec.ts` use equivalent recursion: null/boolean/string, safe integers via String, ordered arrays, and object entries excluding undefined with sorted keys. Public error mapping differs. query-persistence.ts already wraps the codec; its wrapper is not a third algorithm. canonicalEvidenceJson is not equivalent for arbitrary numbers/undefined and is outside this replacement.
 
-## 3. Документация / grep
-[Языковой контракт §3](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/architecture/LANGUAGE_RUNTIME_CONTRACT.md), [код сервиса](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/packages/retrieval/src/service.ts), [codec](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/packages/retrieval/src/query-codec.ts).
+## 2. Required change
+
+Use canonicalRetrievalJson in the service while preserving RetrievalQueryError(RETRIEVAL_INPUT_INVALID, "query digest input is not canonical") on rejection. Delete the local recursive algorithm and retain only necessary error adaptation. Do not change DTOs or digest-input fields.
+
+## 3. Documentation and exact search anchors
+
+[Language contract, section 3](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/architecture/LANGUAGE_RUNTIME_CONTRACT.md); [service](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/packages/retrieval/src/service.ts); [codec](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/packages/retrieval/src/query-codec.ts).
+
 ```sh
 git grep -n -F 'Canonical serialization rules' -- docs/architecture/LANGUAGE_RUNTIME_CONTRACT.md
 git grep -n -e 'function canonicalJson' -e 'function canonicalRetrievalJson' -- packages/retrieval/src/service.ts packages/retrieval/src/query-codec.ts
 ```
 
-## 4. Как сделать
-Сначала retained fixtures на реальные digest inputs raw_query/product/literals/requested_limit/scope_digest плюс permutation ключей, BMP/non-BMP/escapes, null,-0,safe-int extrema, nested arrays и undefined object field. Invalid fractional/NaN/Infinity/undefined root должны сохранить ошибку service boundary. Не объявлять sparse arrays/циклы/произвольные JS objects валидными wire inputs; отдельно проверить прежний отказ через parser, не нормализовать их в новые persisted bytes. query-codec импортирует service types через import type: сохранить type-only связь, не внести runtime cycle. TypeScript остаётся текущим authority до отдельной Rust promotion.
+## 4. Implementation approach
 
-## 5. Критерии выполнения
-- Старые request/result/trace fixtures дают byte-identical digests и IDs; replay прежних записей работает.
-- Service error code/message/retryability прежние; codec error contract отдельно не меняется.
-- Локальный recursive body удалён; query-persistence wrapper и evidence serializer не ошибочно удалены.
-- Boundary/typecheck/retrieval tests проходят. Показаны фактические before/after, exact SHA и команды, не заявлено «удалены все 26 реализаций».
+Retain fixtures for actual digest inputs raw_query/product/literals/requested_limit/scope_digest, key permutations, BMP/non-BMP/escapes, null, -0, safe-integer extrema, nested arrays, and undefined object fields. Invalid fractions/NaN/Infinity/undefined root must preserve the service-boundary error. Sparse arrays, cycles, and arbitrary JavaScript objects are not valid wire inputs; verify existing parser rejection rather than normalizing them into new persisted bytes. Keep query-codec's import of service types type-only to avoid a runtime cycle. TypeScript remains the authority until a separate Rust promotion.
+
+## 5. Acceptance criteria
+
+- [ ] Existing request/result/trace fixtures produce byte-identical digests and IDs; historical replay still works.
+- [ ] Service error code/message/retryability are unchanged; the codec's own error contract is also preserved.
+- [ ] The local recursive body is removed without deleting the necessary persistence wrapper or incompatible evidence serializer.
+- [ ] Boundary/typecheck/retrieval tests pass. Record exact before/after, SHA, and commands; do not claim all 26 serializers were removed.
