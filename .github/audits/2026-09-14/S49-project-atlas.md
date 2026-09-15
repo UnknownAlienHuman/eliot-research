@@ -1,22 +1,34 @@
-# S49 — ProjectAtlas отражает выбранный проект, а не случайный top-k
+# S49 — Build ProjectAtlas from the selected project, not arbitrary top-k results
 
-База a2aca127; ER-30/31/39. Existing SourceCard/DocumentMap/materialization переиспользовать; structural reading #240.
+Baseline: `a2aca127`; ER-30/31/39. Reuse SourceCard, DocumentMap, and materialization; structural reading is #240.
 
-## 1. Суть
-Metadata orientation и отдельный SourceCard не дают законченной карты проекта и объяснимого покрытия источников. Gap-register прямо оставляет полный Atlas открытым.
+## 1. Problem
 
-## 2. Что сделать
-Собрать immutable ProjectAtlas из доступных source cards/maps: frozen membership, тематические reading routes, represented/omitted refs с причинами и точные ссылки для structural expansion. Для первого checkpoint работать внутри текущего supported scope; масштабирование logical scope отдельная задача, не повышать лимиты вслепую.
+Metadata orientation and individual SourceCards do not complete a project map or explain source coverage. The gap register leaves the full Atlas path open.
 
-## 3. Документация / grep
-[Канон §6.5–6.7 и §19.5](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/architecture/ELIOT_RESEARCH.md).
+## 2. Required change
+
+Build an immutable ProjectAtlas from authorized source cards/maps: frozen membership, thematic reading routes, represented/omitted references with reasons, and exact references for structural expansion. Start within the current supported scope; full logical-scope integration is S99, not a blanket increase of constants.
+
+## 3. Documentation and exact search anchors
+
+[Architecture, sections 6.5–6.7 and 19.5](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/architecture/ELIOT_RESEARCH.md).
+
 ```sh
 git grep -n -F 'ProjectAtlas' -- docs/architecture/ELIOT_RESEARCH.md
 git grep -n -F '## 19.5. Projects and disclosure' -- docs/architecture/ELIOT_RESEARCH.md
 ```
 
-## 4. Как сделать
-Existing navigation stores, source refs и scope service; Atlas assembly deterministic over exact allowed membership, no graph DB. Две project memberships одного source не создают второй canonical SourceRevision. Missing parser/map/source class остаётся omission, не исчезает из denominator. Topic labels/routes navigation-only; evidence support требует exact resolver. Membership/head update создаёт новую Atlas revision, stale cached map не mixed с текущим scope. UI ORIENT открывает конкретный route→section→evidence, доступная metadata не выдаётся за полный source grant.
+## 4. Implementation approach
 
-## 5. Критерии выполнения
-Два проекта с общим source имеют правильные независимые Atlases и общую canonical revision без cross-project disclosure. Eligible set = represented плюс explicit omissions в выбранном scope; unknown denominator не становится complete. Change/purge даже source, упомянутого только в omissions, инвалидирует зависимый view. Replay/restart возвращают immutable Atlas hashes. Actual orientation/expand/API/browser tests и SHA.
+Use existing navigation stores, source references, and scope service. Assemble deterministically from exact authorized membership; no graph database. One source belonging to two projects does not create a second canonical SourceRevision. Missing parser/map/source classes remain explicit omissions rather than disappearing from the denominator. Topic labels/routes are navigation only; factual support requires exact Evidence resolution.
+
+Membership/source-head changes create new Atlas revisions. Do not mix stale cached maps with current scopes. UI ORIENT opens a specific route→section→evidence. Metadata visibility alone is not a grant to all source bytes.
+
+## 5. Acceptance criteria
+
+- [ ] Two projects sharing a source have correctly scoped Atlases and one canonical source revision without cross-project disclosure.
+- [ ] The eligible set is reconciled with represented members and explicit omissions; unknown denominator does not become complete.
+- [ ] Changes/purge affecting a source listed only in omissions still invalidate dependent views.
+- [ ] Replay/restart preserve immutable Atlas hashes.
+- [ ] Actual orientation/expand/API/browser tests pass; record exact SHA/results and integrate S99 before claiming large-project acceptance.
