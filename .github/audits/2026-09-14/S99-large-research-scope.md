@@ -1,26 +1,35 @@
-# S99 — Research по всему разрешённому проекту, а не только первым64 источникам
+# S99 — Use the complete authorized project scope, not only the first 64 sources
 
-База a2aca127; F08/ER30/24/31. Повторная проверка уточнила аудит: generic scope-service уже поддерживает до50000 members, selected IDs до1000 и canonical envelope до2MiB. Ограничение64 находится в owner ORIENT/Research/historical adapters, а не во всей scope architecture. Не строить второй storage/index.
+Baseline `a2aca127`; F08, ER-30/24/31. Reverification distinguishes the generic scope service, which already supports larger membership envelopes, from narrower owner ORIENT/Research/historical adapters. At the reviewed baseline the generic limits include 50,000 snapshot members, 1,000 selected IDs, and a 2 MiB canonical envelope. These different constraints are not a single universal capacity promise. Do not build another scope store or index.
 
-## 1. Суть
-Research run вызывает owner orientation с меньшим scope profile; исторический reader также использует default64 и head-witness LIMIT65. Preview/top-k ограничения не должны становиться невидимым потолком всего исследуемого проекта.
+## 1. Problem
 
-## 2. Что сделать
-Разделить navigation preview budget, количество retrieval results и полный frozen authorized member set. Провести существующий larger scope loader/profile через запуск Research, Workflow retrieval/freeze/coverage, report/historical reads; UI может показывать страницу, но запрос относится ко всему явно выбранному проекту.
+Research invokes owner orientation using a smaller scope profile; historical readers also use a 64-member default and a fixed 65-row witness. Preview/top-k limits must not silently cap the entire requested project.
 
-## 3. Документация / grep
-[Scope service](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/packages/cloudflare-navigation/src/scope-service.ts), [канон SourcePortfolio/denominator](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/architecture/ELIOT_RESEARCH.md).
+## 2. Required change
+
+Separate navigation-preview budget, retrieval-result count, and the full frozen authorized membership. Carry the existing larger scope loader/profile through Research launch, Workflow retrieval/freeze/coverage, and report/historical reads. A paginated UI must not silently turn an explicit full-project request into its first page.
+
+## 3. Documentation and exact search anchors
+
+[Scope service](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/packages/cloudflare-navigation/src/scope-service.ts); [Architecture section 7.5](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/architecture/ELIOT_RESEARCH.md).
 ```sh
 git grep -n -F 'DEFAULT_MAX_SNAPSHOT_MEMBERS' -- packages/cloudflare-navigation/src/scope-service.ts
 git grep -n -F '## 7.5. SourcePortfolio and coverage denominator' -- docs/architecture/ELIOT_RESEARCH.md
 ```
 
-## 4. Как сделать
-Использовать existing scope service options/profile binding и bounded member/authority queries; не просто заменить64 на большое число везде. ORIENT preview не является единственным источником full scope: freeze получает полный разрешённый набор metadata, а не все source bodies. Проверка каждой атомарной области/политики сохраняется, subset не подменяет исходную expression. Historical reauthorization использует фактический preserved scope profile и bounded paged witness вместо фиксированного LIMIT65; исходные member refs/ownership не меняются. Для данных, превышающих уже установленный canonical byte/member envelope, вернуть явный limit/result с предлагаемым разделением scope, не усекать silently и не выдумывать новый manifest protocol. Existing exhaustive sharding S51 и source portfolio S36 переиспользуются; no top-k absence и no mandatory model call на каждый документ. Saved 64-source artifacts читаются совместимо.
+## 4. Implementation approach
 
-## 5. Критерии выполнения
-- Проекты с65 и299 реальными admitted sources запускаются; полный membership зафиксирован, UI page/top16 retrieval не сокращают denominator молча.
-- Ответ/контрпример только за первым64-м источником находится разрешённым lane/exhaustive сценарием; trace различает retrieved subset и requested full scope, не обещает semantic completeness.
-- Report/history после JWT refresh/source update читает исходный exact member set; чужой один member, purge/revoke и mismatched profile отказаны.
-- Нет загрузки всех source bytes в память, второй search/storage или произвольного повышения всех limits. Max/max+1 реального envelope проверяется, legacy scope/IDs сохраняются.
-- Actual local ingest→project→run→report→history tests и последующий representative quality run #285; exact SHA/config/input sizes/результаты.
+Reuse scope-service options, profile binding, and bounded membership/authority queries; do not replace every 64 constant with an arbitrary large number. ORIENT preview is not the sole source of complete membership. Freeze the authorized metadata set, not all document bodies. Preserve every atom/policy check and the original scope expression.
+
+Historical reauthorization uses the recorded scope profile and bounded paged witness rather than a fixed LIMIT 65. Original member references and ownership stay unchanged. Requests exceeding the existing actual canonical byte/member envelope receive an explicit limit outcome and scope-partition guidance; do not silently truncate or invent another manifest protocol.
+
+Reuse S51 exhaustive sharding and S36 portfolio semantics. Top-k retrieval does not establish complete absence, and larger scope does not require one model call per document. Preserve compatibility with existing 64-source artifacts and immutable IDs.
+
+## 5. Acceptance criteria
+
+- [ ] Projects with 65 and 299 actually admitted sources start with full authorized membership recorded; UI pages and top-16 retrieval do not silently reduce the requested denominator.
+- [ ] A relevant answer/counterexample beyond the first 64 sources is available through the appropriate retrieval/exhaustive scenario; trace distinguishes requested scope from retrieved subset without claiming semantic completeness.
+- [ ] JWT refresh/source update/history tests preserve original membership and exact references; foreign members, revoke/purge, and incompatible profiles fail safely.
+- [ ] No whole-corpus body buffering, second store/index, or arbitrary blanket limit increase; test actual envelope boundaries and legacy compatibility.
+- [ ] Retain actual local ingest→project→run→report→history tests, exact SHA/config/input sizes, and subsequent representative quality results under #285.
