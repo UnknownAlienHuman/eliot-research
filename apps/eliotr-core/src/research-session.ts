@@ -22,6 +22,7 @@ import type { Env } from "./env.js";
 import { RESEARCH_OWNER_MODEL_PROFILE as MODEL_PROFILE } from "./research-owner-profile.js";
 import type { ResearchWorkflowRunParams } from "./research-workflow.js";
 import { researchStageBudgetLeaseMs } from "./research-runtime-duration.js";
+import { prepareReauthenticatedRunRead, readReauthenticatedRunAnswer } from "./research-run-read-authorization.js";
 export const RESEARCH_SESSION_PROTOCOL = "eliotr.research-session.v1";
 const RUN_BUDGET = "research-budget-v1";
 const POLICY_GEN = "research-policy-v1";
@@ -198,7 +199,8 @@ async function readResearchRunStatus(env: Env, context: AuthenticatedRequestCont
       scope_snapshot_revision: held.scope_snapshot_ref.revision,
     };
   };
-  const status = await readStoredResearchRunStatus({
+  const refreshed = await prepareReauthenticatedRunRead(env, context, operationId).catch(mapRunStatusFailure);
+  const status = refreshed?.status ?? await readStoredResearchRunStatus({
     database: env.CORE_DB, operation_id: operationId, principal, recheck_authority: recheckAuthority,
   }).catch(mapRunStatusFailure);
   if (status === null) fail("RESEARCH_RUN_NOT_FOUND", "research run does not exist", 404);
@@ -211,7 +213,11 @@ async function readResearchRunStatus(env: Env, context: AuthenticatedRequestCont
     ...(failureStage === undefined ? {} : { stage: failureStage }),
   };
   let answer: ResearchRunStatus["answer"] = { availability: "unavailable" };
-  if (status.state === "ENGINE_COMPLETED") {
+  if (refreshed !== null) {
+    answer = await readReauthenticatedRunAnswer(env, context, refreshed, SERVER_OWNED_FREEZE_HANDLER_GENERATION)
+      .catch(mapRunStatusFailure);
+    await refreshed.requireCurrent().catch(mapRunStatusFailure);
+  } else if (status.state === "ENGINE_COMPLETED") {
     const completed = await readCommittedResearchRunResult({
       database: env.CORE_DB,
       work_bucket: env.WORK_BUCKET,
