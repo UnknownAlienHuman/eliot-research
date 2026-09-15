@@ -1,24 +1,33 @@
-# S94 — exact build/resource readback и первая полная staging-выкладка
+# S94 — Attest the exact build and resources for the first complete staging deployment
 
-База a2aca127; ER-26/27/00. Не развёртывать ничего ради создания этого задания. Входы для первой полной попытки: code-complete выбранный профиль, #210/#281/#282/#284; реальные T4/T6 receipts ещё не могут быть её предусловием.
+Baseline `a2aca127`; ER-26/27/00. Writing this assignment does not authorize deployment. The first complete attempt requires implemented selected-profile code and applicable #210/#281/#282/#284 local evidence, not its own future T4/T6 receipts.
 
-## 1. Суть
-Git main SHA, Cloudflare version ID, schema generation и видимая PWA — разные identities. Наличие Worker в inventory или успешный wrangler deploy не доказывают нужные bindings/assets/code.
+## 1. Problem
 
-## 2. Что сделать
-Завершить проверку existing deploy orchestrator: preflight→exact build→аддитивные миграции→private staging deployment→независимый version/binding/schema/assets/Wasm readback. Привязать deployment receipt к фактическому tested tree и параметрам выбранного transport.
+Git SHA, Cloudflare version ID, schema generation, and visible PWA assets are different identities. Resource inventory or a successful deployment command does not establish the intended application, bindings, or assets.
 
-## 3. Документация / grep
-[Production plan Phase7](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/implementation/production-readiness-plan.md), [execution contract§6](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/implementation/launch-prs/execution-contract.md).
+## 2. Required change
+
+Complete the existing deployment orchestrator's preflight→exact build→additive migrations→private staging deployment→independent version/binding/schema/assets/Wasm readback. Bind the deployment receipt to the tested tree and selected transport configuration.
+
+## 3. Documentation and exact search anchors
+
+[Production plan Phase 7](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/implementation/production-readiness-plan.md); [Execution contract section 6](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/implementation/launch-prs/execution-contract.md).
 ```sh
 git grep -n -F '## 9. Phase 7 — provision a real staging environment' -- docs/implementation/production-readiness-plan.md
 ```
 
-## 4. Как сделать
-Existing `scripts/deploy-cloudflare.mjs`/preflight/deployment-verification, canonical resources.json и wrangler config; не raw CLI обход или второй deploy tool. Local fixtures отрицательных responses сначала. Живая цель задаётся оператором: account/resource IDs, hostname/jurisdiction, secret references, budget, разрешение на disposable data. Staging label не доказывает изоляции фиксированных имён; сверить реальную цель и serving production. Access должен защищать все выдающие private data routes; не выводить secrets в receipt. Проверить каждый required D1/R2/Queue/DLQ/DO/Workflow/AI binding, static asset marker и Wasm digest через соответствующий readback, не только список объектов. Отсутствующий mandatory код блокирует; отсутствие будущего T4 результата не создаёт циклический запрет первой staging-попытки.
+## 4. Implementation approach
 
-## 5. Критерии выполнения
-- Wrong target/version/binding/partial migration/config drift/fake health PASS обнаружены и не дают успешного deployment receipt.
-- Actual deployed build/assets/schema/Wasm соответствуют exact проверенному commit/tree/config, доступ защищён, production data не тронуты.
-- Local dry-run/preflight/order/negative tests проходят; actual staging receipt получен только после разрешённого запуска, со всеми identities и cleanup/rollback reference.
-- После выкладки запускаются S95/S93/S96, до этого project не объявлен production-ready. Missing credentials/approval локализованы здесь, не мешают писать/test-ить остальные code tasks.
+Reuse deploy-cloudflare.mjs, preflight/deployment verification, canonical resources.json, and Wrangler configuration. Do not bypass the orchestrator or create another deployment tool. First test negative readback/ordering cases locally.
+
+Live execution requires an approved target: account/resource identities, hostname/jurisdiction, secret references, budget, and permission for disposable data. A staging label alone does not prove isolation from serving production resources. Verify the actual target. Protect all private-data routes with Access; never include secret values in receipts.
+
+Independently verify every required D1/R2/Queue/DLQ/DO/Workflow/AI binding, static-asset marker, and Wasm digest rather than just listing resources. Missing required implementation blocks the complete deployment; missing results of future staging tests must not create a circular prerequisite.
+
+## 5. Acceptance criteria
+
+- [ ] Wrong target/version/binding, incomplete migration, configuration drift, and fake-positive health responses cannot yield a successful deployment receipt.
+- [ ] Actual deployed code/assets/schema/Wasm match the exact tested commit/tree/config; private access is protected and production data is untouched.
+- [ ] Local preflight/dry-run/ordering/negative tests pass; only an authorized live run supplies the staging receipt, identities, and cleanup/rollback reference.
+- [ ] S93/S95/S96 follow staging. Until required acceptance passes, do not declare production-ready. Missing live credentials or approval remains localized, not a blocker to unrelated local development.
