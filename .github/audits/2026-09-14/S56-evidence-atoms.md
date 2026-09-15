@@ -1,22 +1,34 @@
-# S56 — selective EvidenceAtoms, PaperProfile и project-document profile
+# S56 — Connect selective EvidenceAtoms and source-specific profiles
 
-База a2aca127; ER-32/10/39. Existing distillation/argument contracts/ports и exact resolver переиспользовать, нового graph/vector store не требуется.
+Baseline: `a2aca127`; ER-32/10/39. Reuse existing distillation/argument contracts/ports and exact resolution; no new graph/vector store.
 
-## 1. Суть
-Навигационные summary не сохраняют modality/conditions и не могут заменить exact source-local propositions. Полный LLM проход по всем абзацам при ingest запрещён каноном.
+## 1. Problem
 
-## 2. Что сделать
-Подключить только перечисленные в каноне triggers к existing extraction/admission path: core source, active inquiry, repeated retrieval, comparison/audit/report, suspected contradiction, accepted dependency, explicit owner request. Persist EvidenceAtom со span/hash/handle, polarity/modality/units/conditions/population/time/extractor generation. PaperProfile и project-document profile сохраняют разные semantic fields по §§5.6–5.7.
+Navigation summaries do not preserve the modality/conditions of exact source-local propositions. The architecture forbids a blanket LLM pass over every paragraph at ingest.
 
-## 3. Документация / grep
-[Канон §5.5–5.7](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/architecture/ELIOT_RESEARCH.md).
+## 2. Required change
+
+Connect only the specified triggers to existing extraction/admission: core source, active inquiry, repeated retrieval, comparison/audit/report, suspected contradiction, accepted dependency, or explicit owner request. Persist EvidenceAtoms with exact span/hash/handle, polarity, modality, units, conditions, population, time, and extractor generation. PaperProfile and project-document profiles retain their distinct semantic fields from sections 5.6–5.7.
+
+## 3. Documentation and exact search anchors
+
+[Architecture, sections 5.5–5.7](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/architecture/ELIOT_RESEARCH.md).
+
 ```sh
 git grep -n -F '## 5.5. EvidenceAtom' -- docs/architecture/ELIOT_RESEARCH.md
 git grep -n -F 'Full LLM compilation of every paragraph at ingest is prohibited.' -- docs/architecture/ELIOT_RESEARCH.md
 ```
 
-## 4. Как сделать
-Model candidate→deterministic strict schema+exact Evidence resolution→current scope/purge/residency→existing canonical write/outbox. Number/verbatim должны реально присутствовать; model cannot mint evidence ID. Scientific observations/inferences/recommendations/later review claims раздельны; project requirement/decision/implementation statement не взаимозаменяемы. ID содержит source/extractor/semantic identity и нужную residency, repeat trigger не оплачивает повторно тот же settled extraction. ATOM lane читает лишь admitted atoms с актуальными source refs и не считает derived atom независимым source. Rejected candidate сохраняется как отказ/diagnostic, не индексируется как fact.
+## 4. Implementation approach
 
-## 5. Критерии выполнения
-Recommendation→decision, hypothesis→finding, wrong unit/negation/population/time, fake span/foreign scope negatives отвергнуты. Positive paper/project atoms открывают exact source bytes; repeated trigger/restart converges. Ordinary unrelated ingest делает0 atom LLM calls; purge блокирует atom/ATOM retrieval. Actual source→trigger→candidate→admission→query tests, shared golden cases, exact SHA и measured quality позже.
+Model candidate → strict schema and exact Evidence resolution → current scope/purge/residency → existing canonical write/outbox. Numbers and quotations must occur in the cited material; models cannot mint evidence IDs. Keep scientific observation, inference, recommendation, and later review claims distinct. Likewise, a project requirement, decision, and implementation claim are not interchangeable.
+
+Identity binds source/extractor/semantic content and required residency. Repeating a trigger cannot re-pay for the same settled extraction. ATOM retrieval uses admitted atoms and current source references, without treating a derived atom as an independent source. Rejected candidates are not indexed as facts.
+
+## 5. Acceptance criteria
+
+- [ ] Recommendation→decision, hypothesis→finding, wrong unit/negation/population/time, fabricated span, and foreign-scope cases fail.
+- [ ] Valid paper/project atoms open exact source bytes; trigger replay/restart converges.
+- [ ] Ordinary unrelated ingest causes zero atom-extraction LLM calls.
+- [ ] Purge prevents atom/ATOM-lane disclosure.
+- [ ] Exercise source→trigger→candidate→admission→query and shared Golden cases; record exact SHA/results, with real quality measurements separately.
