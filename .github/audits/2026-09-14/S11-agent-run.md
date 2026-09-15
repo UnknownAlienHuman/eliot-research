@@ -1,26 +1,32 @@
-# S11 — machine query → run → status через существующий API
+# S11 — Machine query → run → status through the existing API
 
-База `a2aca127`; F09. Настоящая зависимость: project-scoped authorization S10 / #202. Не ждать остальных тем проекта.
+Baseline: `a2aca127`; finding F09. Technical dependency: S10/#202 project-scoped authorization. Do not wait for unrelated project themes.
 
-## 1. Суть
-Таблица ROUTES обещает owner_or_service для query/run, но `requireOwner` и semantic-server composition отказывают trusted_agent. Одного изменения labels маршрута недостаточно.
+## 1. Problem
 
-## 2. Что сделать
-Подключить S10 к существующим POST query/run и GET run-status. В этом PR завершить запуск/наблюдение, без артефактного reader и MCP.
+ROUTES declares owner_or_service for query/run, but `requireOwner` and semantic-server composition reject trusted_agent. Changing route labels alone is insufficient.
 
-## 3. Документация
-[Канон §0, §7.7.2](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/architecture/ELIOT_RESEARCH.md).
+## 2. Required change
+
+Connect S10 to the existing POST query/run and GET run-status operations. Complete machine launch and observation in this task; artifact readers and MCP are separate tasks.
+
+## 3. Documentation and exact search anchors
+
+[Architecture, sections 0 and 7.7.2](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/architecture/ELIOT_RESEARCH.md).
+
 ```sh
 git grep -n -F 'Trusted agents and optional client adapters use the direct semantic API.' -- docs/architecture/ELIOT_RESEARCH.md
 git grep -n -F 'requireOwner' -- apps/eliotr-core/src/research-session.ts
 ```
 
-## 4. Как сделать
-Пройти actual HTTP → scope/orientation → semantic preparation → Workflow: в нужных местах использовать одно решение S10, а не копировать owner checks. Scope, operation attribution и spend policy должны соответствовать настоящему service principal. Сохранить существующие QueryRequest, idempotency и budget contracts; новые поля добавлять только при реальной необходимости и с совместимостью. Не писать второй research engine и не запускать браузер.
+## 4. Implementation approach
 
-## 5. Критерии выполнения
-- Service token с проектным разрешением выполняет query, запускает run и получает status/operation ID через HTTP.
-- Повторный POST сохраняет один run; несовпавший input даёт conflict.
-- За пределами проекта/бюджета, при revoke и неверной identity нет модельных вызовов.
-- Owner flow проходит прежние тесты; проверки не сводятся к подставленному owner_pwa context.
-- End-to-end клиент без cookies/DOM проходит на локальном Worker/D1/R2 с явно контролируемым внешним provider; results/SHA приложены.
+Trace actual HTTP → scope/orientation → semantic preparation → Workflow. Use the shared S10 authorization decision at the relevant boundaries rather than copying owner-only checks. Scope, operation attribution, and spend policy must refer to the actual service principal. Preserve existing QueryRequest, idempotency, and budget contracts; add fields only when necessary and with explicit compatibility. Do not write a second Research engine or automate a browser as the machine interface.
+
+## 5. Acceptance criteria
+
+- [ ] A service token with project permission performs query, starts a run, and obtains status/operation ID through HTTP.
+- [ ] Repeated POST requests retain one run; conflicting input returns a conflict.
+- [ ] Requests outside the project/budget, revoked requests, and invalid identities cause no model calls.
+- [ ] Existing owner-flow tests pass; service tests do not merely inject owner_pwa context.
+- [ ] An end-to-end client without cookies/DOM passes against local Worker/D1/R2 with an explicitly controlled external provider. Record exact SHA and results.
