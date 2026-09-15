@@ -1,33 +1,43 @@
-# S10 — project-scoped делегирование агенту
+# S10 — единое проектное делегирование агенту
 
-База `a2aca1277b0edbbed04de66e0d44e383e1b815ef`; ER-03/13/24/30. Контракт ниже — выбранное решение задания, ещё не существующий API. Управление разрешением владельцем выделяется отдельным заданием S31.
+База a2aca127; ER-03/13/24/30. Это выбранный контракт к реализации, не существующий API. S31/#223 реализует owner CRUD; S58/#250 и S98/#290 подключают отдельные import paths к той же authority. Их кодовая интеграция не является предусловием разработки этого authorizer.
 
 ## 1. Суть
-`0011_owner_orientation.sql` ограничивает scope_read_policy классом owner_pwa; `createOwnerScopeAuthority` также отказывает trusted_agent и проверяет project_owner. Простого повторного использования owner grants недостаточно. В MCP service actor сейчас назван gemini-spark, а HTTP использует verified Client ID: без единой привязки это разные principals.
+`scope_read_policy` в 0011 и `createOwnerScopeAuthority` разрешают owner_pwa, а `project_owner` не выражает делегирование service principal. MCP logical label gemini-spark и реальная HTTP identity не взаимозаменяемы. Кроме того, исходные задания расходились по operations/namespace полям: нельзя позволить разным агентам создать несовместимые схемы grants.
 
 ## 2. Что сделать
-Добавить узкое проектное делегирование, не роль владельца. **Выбранное хранилище:** одна новая таблица `project_client_grant` в D1 Core; existing scope_read_policy остаётся верхней границей прав выдающего владельца, existing scope_access_grant — результатом разрешения конкретного frozen scope. Новая таблица нужна именно потому, что существующая owner-only policy не выражает project+service ограничения.
+Одна новая D1 Core таблица `project_client_grant`, одна strict DTO schema и один authorizer. Минимальные поля: grant_id, project_id, grantor_principal_ref, grantee (verified issuer/auth method/subject либо service Client ID), revision, ACTIVE/REVOKED, allowed_operations, ingest_namespace_ids, expires_at и optional existing spend_policy_ref. Уникальность одного logical grant на project+grantee; история/revoke/idempotency по существующему project mutation pattern. Секреты и произвольные роли не хранятся.
 
-Минимальные поля предлагаемой записи: grant_id, project_id, grantor_principal_ref, verified grantee identity (issuer/authentication method/subject или service Client ID), revision, ACTIVE/REVOKED, allowed_operations, expires_at и optional existing spend_policy_ref. Уникальность logical grant, CAS revision и durable idempotency — по существующему pattern project-owner service. Никаких групп/ролей/иерархий RBAC.
+Словарь операций единый для S10/S31/S58/S98:
+- Read/Research: catalog, query, run, status, report, evidence, cancel, recover.
+- Импорт нормализованного bundle: ingest.bundle, реализуется S98.
+- Workspace candidate capture/conversion/admission: workspace.admit, реализуется S58; paid conversion требует отдельной действующей spend authority.
+- Только добавление разрешённого source к своему проекту: project.attach, реализуется S98. Это не rename/detach/изменение владельца.
+
+Publication, erase, source-owner transfer и административные роли сюда не входят. ingest_namespace_ids по умолчанию []; пустой набор не означает wildcard. Поле не даёт read/query права на весь namespace: оно ограничивает только явно выданный import operation. Зарегистрированное имя операции само не означает реализованный handler; отсутствующий handler отвечает честным unsupported/not-ready, не success.
 
 ## 3. Документация / grep
-[Канон §0 и §19.5](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/architecture/ELIOT_RESEARCH.md).
+[Канон §0/§19.5](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/architecture/ELIOT_RESEARCH.md), [owner scope authority](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/packages/cloudflare-navigation/src/orientation-authority.ts).
 ```sh
-git grep -n -F 'Trusted agents and optional client adapters use the direct semantic API.' -- docs/architecture/ELIOT_RESEARCH.md
 git grep -n -F 'CREATE TABLE scope_read_policy' -- infra/d1/core/migrations/0011_owner_orientation.sql
 git grep -n -F 'createOwnerScopeAuthority' -- packages/cloudflare-navigation/src/orientation-authority.ts
+git grep -n -F '## 19.5. Projects and disclosure' -- docs/architecture/ELIOT_RESEARCH.md
 ```
-[Cloudflare application token](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/authorization-cookie/application-token/), проверено 2026-09-14: service identity берётся из подписанного common_name, не пустого sub; user identity из проверенного subject. Audience каждого HTTP/MCP endpoint проверяется отдельно.
+[Access application token](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/authorization-cookie/application-token/): service identity из подписанного common_name, не пустого sub; issuer/audience/signature проверяются для конкретного endpoint.
 
 ## 4. Как сделать
-1. Из AccessIdentity сохранить реальную проверенную identity в общем authorizer. Не использовать общий gemini-spark как proof индивидуального агента. Legacy candidate observations остаются неизменными; их чтение использует existing explicit Workspace owner binding, не автоматическую массовую alias-миграцию.
-2. Effective scope = запрошенное множество ∩ project membership ∩ действующие права grantor ∩ делегированные operations/disclosure. Запрос вне scope отклонять, не молча расширять/усекать. Для UNION/INTERSECT/EXCEPT авторизовать все участвующие atoms; один grant не открывает GLOBAL_LIBRARY.
-3. Извлечь общую resolution/byte-read логику из owner-specific factory; owner authorizer сохранить отдельным. Frozen grant записать на реального grantee с ссылкой на delegation revision; grantor — provenance/ceiling, не impersonated request principal. Каждое source/result чтение и платная dispatch повторно проверяют delegation, membership, upstream policy, purge и allowed operation. Revoke блокирует и уже issued derived grants.
-4. Начальный operation set: catalog/query/run/status/report/evidence/cancel/recover; не publication/erase/source-owner transfer. Run требует отдельно действующую существующую spend policy, read-only доступ её не подразумевает. Выполнять только модельные расходы, которые ею уже разрешены; новый accounting не нужен.
+Из AccessIdentity сохранить проверенную identity в request context одинаково для HTTP/MCP. Locator, введённый владельцем, не proof владения secret. Не использовать общий gemini-spark как авторизацию индивидуального агента и не переписывать legacy Workspace observations. Чтение последних требует существующего WorkspaceOwnerAuthorization и проверенной привязки к вызывающему actor.
+
+Для маршрутов с явным project scope выбрать единственный grant по project+authenticated grantee. Для import путей без project path предлагается один transport locator `X-Eliotr-Client-Grant` (grant_id); он не credential, а указатель на запись, которую authorizer перечитывает и проверяет. Сохранять выбранный grant в operation context; ни header, ни tool argument не назначают principal или allowed_operations. Если project указан и в запросе, и в grant, несовпадение — отказ. Не объединять права нескольких grants автоматически.
+
+Read/execution scope целиком должен укладываться в запрошенные atoms, project membership, current grantor policy, delegation operation/disclosure и purge. Out-of-scope запрос отклоняется, не молча усекается. При выдаче import права S31 дополнительно проверяет namespace writer/admission ceiling grantor; при применении проверить его повторно. Извлечь общую resolution/byte-read логику из owner-specific factory, а не подставить owner_pwa. Existing scope_access_grant хранит реального grantee, исходную delegation revision и frozen scope; current delegation проверяется заново, её расширение не расширяет уже frozen scope. Revoked grant блокирует derived uses; regrant не оживляет старую execution authority автоматически.
+
+Модельный dispatch требует отдельно действующей spend policy/sponsor, не выводит её из права чтения. Public DTO strict/versioned, неизвестные операции/поля отклоняются. Общие contracts/migration/authorizer внедряются одним согласованным checkpoint, consumers используют imports из него; S58/S98 не копируют алгоритм или SQL-схему.
 
 ## 5. Критерии выполнения
-- Реальный service JWT через HTTP и тот же проверенный actor через MCP нормализуются согласованно; forged issuer/audience/common_name и legacy label без verified identity отказаны.
-- PROJECT A разрешён, PROJECT B/GLOBAL и чужие atoms отказаны; owner path не меняется. Membership change и revoke grantor/grantee действуют на ранее созданные grants.
-- Read-only delegation не запускает платную модель; run attribution остаётся service, spend sponsor проверен явно.
-- Migration и D1 tests проверяют CAS/idempotency/revoke, полномочия grantor и отсутствие побочных данных при отказе. Завершение этого kernel не выдаётся за подключение пользователя: S31 обеспечивает выдачу/отзыв без ручного SQL.
-- Exact SHA/команды/результаты; секретов в записи/Git/browser нет. Runtime product code реализовывать в main; этот PR хранит только задание.
+- Реальный service actor согласован HTTP/MCP; forged common_name/issuer/audience и неподтверждённый logical label отказаны.
+- Project A разрешён, B/GLOBAL/foreign atoms отказаны; нет silent scope truncation или union нескольких grants. Owner path сохранён.
+- Operations/namespace набор одной DTO одинаков в owner CRUD, Research, normalized ingest и Workspace integration. Unknown operation и пустой namespace для import отказаны.
+- Read-only не даёт model/write/attach; import не даёт namespace-wide read, rename/detach/erase/cutover. Spend sponsor проверен отдельно.
+- Delegation/upstream policy revoke и membership change действуют на derived access; подмена transport grant locator не меняет identity и не даёт доступ к чужому capture/project.
+- Additive migration, real D1/auth tests, CAS/replay/ceiling negatives и exact SHA. S31 отдельно доказывает owner-issued grant без ручного SQL; реализация source handlers S58/S98 не засчитывается по наличию имени в enum.
