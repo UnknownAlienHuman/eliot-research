@@ -1,25 +1,35 @@
-# S95 — реальные T4/T5 round trips, не повтор локальных mocks
+# S95 — Run actual T4/T5 platform and selected-client conformance
 
-База a2aca127; ER-27/26 и владельцы проверяемых контуров. Живое выполнение после #286; подготовка probe-кода/fixtures не зависит от наличия аккаунта. Проверять на разрешённых disposable данных, не ломать рабочую библиотеку владельца.
+Baseline `a2aca127`; ER-27/26 and participating component owners. This is aggregate live acceptance after S94/#286. Prepare probes locally beforehand, but execute live tests only on approved disposable targets, not the owner's working library.
 
-## 1. Суть
-Локальный Worker и отдельный успешный provider call не доказывают native Workflow restart, Queue redelivery/DLQ, Access/MCP/Workspace и восстановление после реального сетевого отказа.
+## 1. Problem
 
-## 2. Что сделать
-Собрать короткие operation-specific probes из существующих integration suites в один воспроизводимый conformance запуск. Выполнить на exact attested staging build: Access/API/MCP, D1/R2, Queue/DLQ, DO reconnect/hibernation, Workflow/cancel/recovery, model/gateway settlement, AI Search generation, selected Workspace и independent federation. Security/erasure/restore/rollback проверяются через подготовленные S63/S66/S67/S69, не реализуются заново в runner.
+A local Worker or isolated successful provider call does not establish native Workflow recovery, Queue redelivery/DLQ, DO hibernation, Access/MCP/Workspace integration, or failure behavior on the deployed platform.
 
-## 3. Документация / grep
-[Production readiness Phase8/10](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/implementation/production-readiness-plan.md), [handoff](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/implementation/launch-prs/cloudflare-handoff.md).
+## 2. Required change
+
+Compose short operation-specific probes from existing integration suites into one reproducible run against the attested build: Access/API/MCP, D1/R2, Queue/DLQ, DO reconnect/hibernation, Workflow cancellation/recovery, model/gateway settlement, AI Search generation, selected Workspace, and independent federation. Reuse S63/S66/S67/S69 erasure/restore/rollback/security cases rather than implementing those systems again inside a test runner.
+
+## 3. Documentation and exact search anchors
+
+[Production readiness Phases 8/10](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/implementation/production-readiness-plan.md); [Cloudflare handoff](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/implementation/launch-prs/cloudflare-handoff.md).
 ```sh
 git grep -n -F '## 10. Phase 8 — execute T4 live platform conformance' -- docs/implementation/production-readiness-plan.md
 git grep -n -F '## 12. Phase 10 — execute T5 security, privacy and failure hardening' -- docs/implementation/production-readiness-plan.md
 ```
 
-## 4. Как сделать
-Использовать current integration/provisioning/readback helpers; если единого runner ещё нет, создать тонкий CLI orchestrator над ними, не библиотеку вторых implementations. Вход: exact target/build/config/schema/corpus digest, suite и secret references; live flag и target approval явно отличны от fixture mode. В fixture mode нет account calls. Для каждой проверки сохранить ожидаемый/наблюдённый durable state и identities, не только HTTP200/ACK. Native resume/restart поведение сверить с закреплёнными runtime/types, paused и errored не смешивать. Контролируемый response-loss proxy может терять только ACK: он не подменяет provider/application state. Model UNKNOWN не повторяется слепо; lawful первый audit отделён от повторной synthesis. Независимый читатель получает реальные R2/D1/provider receipts, проверяет hashes/generations. Выбран gemini-mcp; не требовать legacy Drive OAuth. Missing external credential/peer/action permission — NOT_EXECUTED с точным prerequisite, не синтетический PASS. Probe cleanup idempotent, fenced собственными IDs; он не удаляет чужие данные.
+## 4. Implementation approach
 
-## 5. Критерии выполнения
-- Native duplicate/lost ACK/restart/cancel/expiry/revoke/partial-output сценарии сохраняют одну logical operation и не дают запрещённых disclosure/paid duplicates.
-- AI Search serving generation и exact evidence проверены; Workspace external action/readback не подменён клиентским receipt; federation проверена независимым wire клиентом.
-- Erasure/clean restore/rollback доказаны на disposable targets; obsolete grant/purged bytes не возвращаются.
-- Fake/stale/wrong-target receipt и недостающие наблюдения отклоняются validator; fixture и live результаты различимы, каждый связан с exact SHA/target/config/time. Не писать LIVE_QUALIFIED, пока обязательная строка соответствующего контура не выполнена.
+Reuse integration/provisioning/readback helpers. Any missing runner is a thin CLI composition, not another implementation library. Inputs identify approved target, build, config, schema, corpus, suite, and secret references. Explicit fixture mode makes no account calls; live execution requires established authorization and budget.
+
+Retain expected/observed durable state and identities, not merely HTTP success. Verify native lifecycle semantics against pinned runtime/types; do not treat every errored instance as paused. Response-loss injection may drop acknowledgement but must not fabricate application/provider state. UNKNOWN paid effects are not retried blindly; a first legitimate audit remains distinct from repeated synthesis. Independently read actual storage/provider evidence and validate hashes/generations.
+
+Use the selected gemini-mcp profile, not mandatory legacy Drive OAuth. Missing credentials, independent peer, or external action permission yields NOT_EXECUTED with a precise prerequisite. Cleanup is idempotent and restricted to approved test-owned identities.
+
+## 5. Acceptance criteria
+
+- [ ] Duplicate/lost-ACK/restart/cancel/expiry/revoke/partial-output cases preserve one logical operation without forbidden disclosure or duplicate paid effects.
+- [ ] Actual serving search generation, exact evidence, external Workspace action/readback, and independent federation wire behavior are verified.
+- [ ] Disposable erasure, clean restore, and rollback do not resurrect obsolete grants or purged content.
+- [ ] Fake, stale, wrong-target, and incomplete evidence fails validation; fixture/live results remain distinct and bound to exact SHA/target/config/time.
+- [ ] LIVE_QUALIFIED is recorded only when every applicable required observation for that component was actually obtained. No planning or local-only result substitutes for live acceptance.
