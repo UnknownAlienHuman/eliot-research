@@ -1,24 +1,33 @@
-# S73 — простой Library/project пользовательский цикл
+# S73 — Complete a simple Library/project user flow
 
-База a2aca127; ER-25/30. S03/#195 чинит один browser regression; здесь оставшийся целостный сценарий Sources, не новый backend. Переиспользовать existing project/catalog/admission/revision APIs.
+Baseline: `a2aca127`; ER-25/30. S03/#195 repairs one browser regression. This task completes the Sources experience through existing project/catalog/admission/revision APIs, not another backend.
 
-## 1. Суть
-Sources показывает пересекающиеся workspace/project/import панели, несколько refresh-кнопок и плохо обозначенные действия. Частично сохранённый upload выглядит готовым источником; новый пользователь не понимает следующий шаг.
+## 1. Problem
 
-## 2. Что сделать
-Один project selector, один список источников, одно «Добавить документ» с последовательными состояниями upload/processing/admission/index readiness. Создать/переименовать проект, attach/detach существующего source, открыть revision, заменить файл, перейти к Lens/Research. Возможность выбора нескольких файлов делать очередью per-file operations, без unbounded batch или общей ложной успешности.
+Sources has overlapping workspace/project/import panels, competing refresh controls, and poorly labeled actions. A partially stored upload can look ready, leaving users unsure what to do next.
 
-## 3. Документация / grep
-[Production plan §8.7](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/implementation/production-readiness-plan.md), [ER-25](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/agent-work/ER-25-owner-pwa.md).
+## 2. Required change
+
+Provide one project selector, one source list, and one Add document flow with distinct upload/processing/admission/index-readiness states. Support project creation/rename, attaching/detaching existing sources, revision opening/replacement, and navigation to Lens/Research. Multiple-file selection uses bounded per-file operations, not an unlimited batch or false all-success result.
+
+## 3. Documentation and exact search anchors
+
+[Production plan 8.7](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/implementation/production-readiness-plan.md); [ER-25](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/agent-work/ER-25-owner-pwa.md).
+
 ```sh
 git grep -n -F '### 8.7 Owner PWA' -- docs/implementation/production-readiness-plan.md
 ```
 
-## 4. Как сделать
-Перестроить existing `main.ts`, project/library/raw-file panels и API clients, не создавать React rewrite/новый store framework. Каждое действие имеет подпись/accessible name и привязано к exact project/source/revision. Изменение membership использует expected revision/CAS; shared source не загружается повторно ради второго проекта. Search readiness не равно admission. Сохранить idempotency после lost response/reselect; partial failure одного файла не стирает успешные другие. Empty/error/blocked states объясняют действие, технические IDs остаются в details. Keyboard/mobile и dark/light проверять на реальных controls, не screenshots-only.
+## 4. Implementation approach
 
-## 5. Критерии выполнения
-- Empty account→workspace→два проекта→import→attach shared source→revision update→Lens→Research выполняется без ручного SQL и без дублирования source.
-- Stale membership conflict, failed conversion, reload/lost ACK, forbidden source и purge отражены честно; тексты кнопок/labels не пусты.
-- На desktop/mobile основные действия видимы, нет нескольких конкурирующих import/refresh forms; focus и keyboard navigation работают.
-- Existing API/storage identities сохранены; короткие real-browser сценарии используют общий harness. Скриншоты dark/light/mobile, exact SHA и результаты tests приложены.
+Reorganize existing main.ts, project/library/raw-file panels, and API clients. No React rewrite or state-management framework. Every action has an accessible label and exact project/source/revision identity. Membership mutations retain expected-revision/CAS; sharing a source with a second project does not upload it again. Index readiness is distinct from admission.
+
+Preserve idempotency after lost responses and reselection. One file's failure must not discard other successful imports. Empty/error/blocked states explain the next action; technical IDs stay in details. Test keyboard/focus, mobile, and dark/light behavior on actual controls, not screenshots alone.
+
+## 5. Acceptance criteria
+
+- [ ] Empty account→workspace→two projects→import→attach shared source→revision update→Lens→Research works without manual SQL or canonical-source duplication.
+- [ ] Stale membership, conversion failure, reload/lost ACK, forbidden source, and purge states are truthful; buttons have nonempty labels.
+- [ ] Main actions remain visible on desktop/mobile without competing import/refresh forms; focus and keyboard navigation work.
+- [ ] Existing API/storage identities are preserved in short real-browser scenarios using the shared harness.
+- [ ] Attach dark/light/mobile screenshots, exact SHA, and test results.
