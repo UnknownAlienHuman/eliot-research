@@ -1,21 +1,33 @@
-# S48 — DocumentMap/parent/neighbor приводят к точному месту источника
+# S48 — Resolve DocumentMap, parent, and neighbor navigation to exact source locations
 
-База a2aca127; ER-06/07/31/39. Normalized map и table-cell adapter уже есть; gap остаётся в native page/region/code и полном source-span navigation. Reuse existing navigation-expand-service и Evidence resolver.
+Baseline: `a2aca127`; ER-06/07/31/39. Normalized maps and the table-cell adapter already exist. Native page/region/code mapping and the full source-span navigation path need completion. Reuse navigation-expand-service and the Evidence resolver.
 
-## 1. Суть
-Section preview — навигация, не доказательство исходной координаты. Нельзя приписывать page/line/region обычному Markdown без карты преобразования.
+## 1. Problem
 
-## 2. Что сделать
-Завершить qualified coordinate-map adapters и structural expansion source→section→parent/neighbor→exact open/verify. Каждый поддержанный native anchor должен независимо отображаться в записанный normalized/source region. Неподдержанные precision kinds дают typed limitation с доступным exact normalized span.
+A section preview is navigation, not proof of a native coordinate. Ordinary Markdown cannot establish page/line/region positions without a qualified transformation map.
 
-## 3. Документация / grep
-[Канон §6.7 и §19.4](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/architecture/ELIOT_RESEARCH.md).
+## 2. Required change
+
+Complete qualified map adapters and source → section → parent/neighbor → exact open/verify. Every supported native anchor maps independently to the recorded source/normalized region. Unsupported precision returns a typed limitation and, where separately verified and authorized, an exact normalized span.
+
+## 3. Documentation and exact search anchors
+
+[Architecture, sections 6.7 and 19.4](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/architecture/ELIOT_RESEARCH.md).
+
 ```sh
 git grep -n -F 'resolves the native/normalized anchor through the recorded coordinate map' -- docs/architecture/ELIOT_RESEARCH.md
 ```
 
-## 4. Как сделать
-Use imported qualified maps from existing bundle contracts; native processing stays with external producer, not PDF/OCR engine in Worker. Validate revision/map/offset/length/hash, UTF-8 versus codepoint units, table/line/page parent identities before/after R2 reads. Parent expansion не пересекает authorisation boundary, invalid neighbor not guessed. Map is immutable by source/parser generation; head changed cannot rebind old citation. UI target Evidence Rail uses resolved handle, not DOM position/preview text. Дописать missing adapters по одному типу внутри текущего package; общая карта/reader одна.
+## 4. Implementation approach
 
-## 5. Критерии выполнения
-RU emoji/CRLF/nested table/code/page fixtures reproduce exact source bytes and native anchors where maps supplied. Missing/corrupt/foreign/stale map refuses unsupported precision rather than useful normalized access. Unauthorized neighbor, mid-read purge/revoke и new head не дают подмены. Library→Lens→section→citation actual HTTP/D1/R2/browser test и SHA; native producer qualification отдельно.
+Use qualified maps imported through existing bundle contracts. Native processing stays in the external producer, not an embedded PDF/OCR engine. Validate source revision, map identity, offsets, length, digest, UTF-8 versus codepoint units, and table/line/page parent identities before and after R2 reads. Parent expansion cannot cross authorization boundaries; missing neighbors are not invented.
+
+Maps are immutable per source/parser generation. A new source head cannot rebind an old citation. Evidence Rail uses a resolved handle, not DOM positions or preview text. Add missing adapters one anchor type at a time within current packages; retain one common map/reader contract. A corrupt map is not permission to accept unverified bytes through a fallback path.
+
+## 5. Acceptance criteria
+
+- [ ] Russian/emoji/CRLF/nested-table/code/page fixtures reproduce exact bytes and native anchors wherever qualified maps exist.
+- [ ] Missing/corrupt/foreign/stale maps never fabricate precision; independently valid authorized normalized access remains available where supported.
+- [ ] Unauthorized neighbors, mid-read purge/revocation, and source-head changes cannot substitute evidence.
+- [ ] Library→Lens→section→citation works through actual HTTP/D1/R2/browser tests.
+- [ ] Record exact SHA/results and separate native-producer qualification evidence.
