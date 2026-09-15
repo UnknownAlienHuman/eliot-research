@@ -1,3 +1,4 @@
+import { modelGatewayDynamicRouteTarget } from "@eliotr/cloudflare-ai";
 import type { VersionedRef } from "@eliotr/contracts";
 import { canonicalEvidenceJson, evidenceSha256Bytes } from "@eliotr/cloudflare-evidence";
 import type { ModelRouteDeployment } from "@eliotr/platform-cloudflare";
@@ -331,8 +332,12 @@ export async function researchClaimAuditStageFixture(
           if (gatewayId !== "eliotr-reasoning") throw new Error("unexpected audit gateway binding");
           return {
             getUrl: async () => `https://gateway.ai.cloudflare.com/v1/${"b".repeat(32)}/eliotr-reasoning`,
-            run: async (request, options) => {
-              if (Array.isArray(request) || request.provider !== "compat" || request.endpoint !== "chat/completions") {
+            getLog: async () => { throw new Error("fingerprinted audit response must not request a log"); },
+          };
+        },
+        run: async (model, inputs, options) => {
+              if (model !== (await modelGatewayDynamicRouteTarget(deployment)).model || inputs.model !== model || options.gateway.id !== "eliotr-reasoning" ||
+                  options.returnRawResponse !== true) {
                 throw new Error("unexpected audit binding request");
               }
               const headers = new Headers(options?.extraHeaders as Record<string, string>);
@@ -340,7 +345,7 @@ export async function researchClaimAuditStageFixture(
                   headers.get("cf-aig-collect-log-payload") !== "false") {
                 throw new Error("audit binding policy changed");
               }
-              const query = request.query as { readonly messages?: readonly { readonly role?: unknown; readonly content?: unknown }[] };
+              const query = inputs as { readonly messages?: readonly { readonly role?: unknown; readonly content?: unknown }[] };
               const user = query.messages?.find((message) => message.role === "user");
               if (typeof user?.content !== "string") throw new Error("audit prompt payload is missing");
               const payload = JSON.parse(user.content) as { readonly prompt?: unknown };
@@ -363,8 +368,6 @@ export async function researchClaimAuditStageFixture(
                   "cf-aig-log-id": "freeze-audit-gateway-log",
                 },
               });
-            },
-          };
         },
       },
     },
