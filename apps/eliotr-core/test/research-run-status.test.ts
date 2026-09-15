@@ -3,6 +3,11 @@ import { reset } from "cloudflare:test";
 import { createD1ScopeService, createOwnerScopeAuthority } from "@eliotr/cloudflare-navigation";
 import { createD1InvestigationLedgerStore, createInvestigationLedgerService, type LedgerD1Database } from "@eliotr/research";
 import { createMonotoneStageExecutor, digest, WorkflowCheckpointStore, type StageRequest } from "@eliotr/cloudflare-research";
+import { createEvidenceFreezePostSynthesisContextReader, type ResearchArtifactReportPolicy } from "@eliotr/cloudflare-research";
+import { createResearchCoverageStageHandlerFromFreeze, createResearchCoverageMaterializeStageHandlerFromFreeze } from "@eliotr/cloudflare-research-stages";
+import { createResearchStageHandlerFactory, SERVER_OWNED_FREEZE_HANDLER_GENERATION } from "../src/research-stage-handlers.js";
+import { researchClaimAuditStageFixture } from "./research-claim-audit-fixture.js";
+import { principal as freezePrincipal } from "./research-evidence-freeze-fixture.js";
 import type { AccessVerifier } from "@eliotr/cloudflare-access";
 import type { ResearchRunStatus } from "@eliotr/interfaces";
 import { handleHttp } from "../src/http.js";
@@ -205,6 +210,86 @@ describe("owner run status after reauthentication over real HTTP/D1/R2", () => {
       {} as ExecutionContext, { accessVerifier: refreshed() });
     expect(response.status).toBe(409);
   });
+
+  it("reopens an actual synthesized, audited and materialized v3 draft after login without rerunning the models", async () => {
+    const audited = await researchClaimAuditStageFixture({ include_counterevidence: true });
+    const freeze = audited.fixture.freeze;
+    const environment = { database: freeze.db, work_bucket: freeze.bucket,
+      manifest_store: freeze.freeze_store, read_stage_five: freeze.readers.read_stage_five };
+    const workflow = new WorkflowCheckpointStore(freeze.db);
+    const recheck = async () => {
+      const state = await workflow.readRunStatus(freeze.operation_id, freezePrincipal);
+      if (state === null) throw new Error("materialized fixture lost its run");
+      return { investigation_id: state.investigation_id, scope_snapshot_id: state.scope_snapshot_id,
+        scope_snapshot_revision: state.scope_snapshot_revision };
+    };
+    let previous = await freeze.executor.execute(audited.stage14, freezePrincipal, audited.auditHandler);
+    const domains = { scope_domain_id: freeze.scope.snapshot_id, access_domain_id: freezePrincipal.principal_ref,
+      confidentiality_domain_id: "status-private", encryption_key_domain_id: "status-key",
+      retention_domain_id: "status-retention", erasure_domain_id: "status-erasure" };
+    const reportPolicy: ResearchArtifactReportPolicy = {
+      kind: "technical_audit", title: "Historical draft", audience: "owner", language: "en",
+      section_contract: { section_id: "summary", title: "Summary", purpose: "Exact preserved evidence",
+        required_claim_kinds: ["claim"], required_evidence_classes: ["source"], maximum_utf8_bytes: 4096 },
+      statement_labels: { claim: "UNRESOLVED" }, citation_policy_ref: "status-citations-v1",
+      verification_policy_ref: "status-verification-v1", length_policy_ref: "status-length-v1",
+      export_formats: ["markdown"], include_counterevidence: true, include_methodology: true,
+      budget_ref: "status-report-budget", section_residency: domains, manifest_residency: domains,
+    };
+    const policy = await freeze.db.prepare("SELECT policy_generation,policy_authority_ref FROM research_workflow_run WHERE operation_id=?1")
+      .bind(freeze.operation_id).first<{ policy_generation: string; policy_authority_ref: string }>();
+    if (policy === null) throw new Error("materialized fixture lost its report policy");
+    const handlers = createResearchStageHandlerFactory({ kind: "server-owned-exploratory",
+      generation: SERVER_OWNED_FREEZE_HANDLER_GENERATION, navigation: freeze.navigation, ledger: freeze.ledger,
+      resolve_citations: { database: freeze.db, navigation: freeze.navigation, evidence_resolver: freeze.resolver,
+        context: createEvidenceFreezePostSynthesisContextReader(environment, freeze.navigation, freeze.readers, "RESOLVE_CITATIONS") },
+      calculate_coverage: createResearchCoverageStageHandlerFromFreeze(environment, freeze.navigation, freeze.readers, { ledger: freeze.ledger }),
+      materialize_handler: createResearchCoverageMaterializeStageHandlerFromFreeze(environment, freeze.navigation, freeze.readers, {
+        database: freeze.db, work_bucket: freeze.bucket, evidence_resolver: freeze.resolver, recheck_authority: recheck,
+        report_policy: reportPolicy, policy_source: { provenance_ref: "status-report-policy-source",
+          read: async () => ({ schema: "eliotr.research.report-admission.v1", policy_ref: "status-report-policy", policy_revision: 1,
+            config_provenance_ref: "status-report-policy-source", principal_ref: freezePrincipal.principal_ref,
+            client_class: "owner_pwa", policy_generation: policy.policy_generation, policy_authority_ref: policy.policy_authority_ref,
+            allowed_use: ["research"], disclosure_ceiling: "owner-only", requested_output_class: "private-draft",
+            purpose: "research-report-materialization", expires_at: freeze.scope.expires_at }) },
+      }),
+    });
+    for (const stage of ["RESOLVE_CITATIONS", "CALCULATE_COVERAGE", "MATERIALIZE"] as const) {
+      const request: StageRequest = { ...audited.stage14, stage,
+        investigation_ref: previous.investigation_ref, input_manifest: previous.output_manifest };
+      let cause: unknown;
+      const handler = handlers(stage);
+      previous = await freeze.executor.execute(request, freezePrincipal, async (input) => {
+        try { return await handler(input); } catch (error) { cause = error; throw error; }
+      }).catch((error: unknown) => { throw cause ?? error; });
+    }
+    expect(previous.engine_state).toBe("ENGINE_COMPLETED");
+    expect(audited.fixture.provider_calls()).toBe(1);
+    expect(audited.auditProviderCalls()).toBe(1);
+    const readEnv = { ...runtime, DEPLOYMENT_GENERATION: freezePrincipal.deployment_generation };
+    const statusUrl = `https://research.example/api/v1/research/run/${freeze.operation_id}`;
+    const oldAccess: AccessVerifier = { verify: async () => ({ ...freezePrincipal,
+      authentication_method: "cloudflare_access", expires_at: new Date(Date.now() + 60_000).toISOString() }) };
+    const before = await executionSnapshot();
+    const first = await handleHttp(new Request(statusUrl), readEnv, {} as ExecutionContext, { accessVerifier: oldAccess });
+    expect(first.status, JSON.stringify(await first.clone().json())).toBe(200);
+    const original = (await body<ResearchRunStatus>(first)).data;
+    expect(original.answer.availability).toBe("draft");
+    for (let i = 0; i < 2; i += 1) {
+      const response = await handleHttp(new Request(statusUrl), readEnv, {} as ExecutionContext,
+        { accessVerifier: refreshed(freezePrincipal.principal_ref) });
+      expect(response.status, JSON.stringify(await response.clone().json())).toBe(200);
+      expect((await body<ResearchRunStatus>(response)).data).toEqual(original);
+    }
+    expect(await executionSnapshot()).toEqual(before);
+    expect(audited.fixture.provider_calls()).toBe(1);
+    expect(audited.auditProviderCalls()).toBe(1);
+    await freeze.bucket.put(previous.output_manifest.object_ref, new TextEncoder().encode("corrupt saved materialization"));
+    const corrupt = await handleHttp(new Request(statusUrl), readEnv, {} as ExecutionContext,
+      { accessVerifier: refreshed(freezePrincipal.principal_ref) });
+    expect(corrupt.status).toBe(409);
+    expect((await body(corrupt)).code).toBe("RESEARCH_RUN_STATUS_INVALID");
+  }, 60_000);
 
   it("classifies a mismatched current-view read as corruption, using the store's real batch contract", async () => {
     const row = { operation_id: "run-corrupt", investigation_id: "investigation", initial_revision: 1, current_revision: 1,
