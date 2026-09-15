@@ -1,25 +1,33 @@
-# S63 — удалить все управляемые зависимости, не только original
+# S63 — Erase all managed dependencies, not only the original file
 
-База a2aca127; ER-28/34. Вход: case S62/#254 и dependency producers S55/#247. Существующий erasure coordinator/closure store остаётся единственным исполнителем.
+Baseline: `a2aca127`; ER-28/34. Inputs: S62/#254 cases and S55/#247 dependency producers. Keep the existing erasure coordinator/closure store as the sole executor.
 
-## 1. Суть
-Удаление R2 original не убирает normalized text, projection, Wiki/report, model intermediate и управляемые delivery/backup copies. Ложный PURGED опаснее явно незавершённого удаления.
+## 1. Problem
 
-## 2. Что сделать
-Завершить перечисление и удаление точной closure всех зарегистрированных мест; учесть одновременно создаваемые производные. Для retention/legal hold — существующий BLOCKED с причиной и review date. Срок хранения отчёта, provider logs и backup должен быть описан отдельно от срока JWT.
+Deleting an R2 original does not remove normalized text, indexes, Wiki/reports, model intermediates, or managed delivery/backup copies. A false PURGED result is more dangerous than explicit incomplete deletion.
 
-## 3. Документация / grep
-[ER-28](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/agent-work/ER-28-privacy-erasure-and-purge-closure.md) и [ER-34](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/agent-work/ER-34-backup-restore-and-platform-exit.md).
+## 2. Required change
+
+Complete exact closure enumeration and deletion/redaction across all registered locations, including concurrently produced derivatives. Retention/legal holds use the existing BLOCKED outcome with reason and review date. Document report/provider-log/backup retention independently of JWT lifetime.
+
+## 3. Documentation and exact search anchors
+
+[ER-28](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/agent-work/ER-28-privacy-erasure-and-purge-closure.md) and [ER-34](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/agent-work/ER-34-backup-restore-and-platform-exit.md).
+
 ```sh
 git grep -n -F 'Locked backup conflict reports PURGE_BLOCKED.' -- docs/agent-work/ER-34-backup-restore-and-platform-exit.md
 ```
 
-## 4. Как сделать
-Переиспользовать `packages/cloudflare-erasure`, canonical purge ledger и S55 manifests. Producer fence должен запрещать поздний новый derived copy после принятого purge. Для каждого места сохранить identity/generation и реальное отсутствие, а не ACK удаления. Не превращать разные source revisions/residencies в один объект по совпадению hash. Cursor/checkpoint удаления устойчив к restart и повтору. Offsite/Google adapters подключаются через уже существующие provider closure ports; отсутствие доказательства сохраняет BLOCKED, не заставляет ждать всю другую тему для разработки локальной части. Не обещать удалять неконтролируемые файлы, скачанные пользователем; обозначить границу управляемых копий.
+## 4. Implementation approach
 
-## 5. Критерии выполнения
-- Fixture source→normalized→index→Wiki→artifact→managed export/backup удаляется или редактируется по канону; exact open, semantic search, historical readers и exports не раскрывают purged bytes/влияние.
-- Purge во время synthesis/upload/notification не позволяет воскресить данные; lost ACK/restart не теряет оставшиеся места и не удаляет чужие объекты.
-- Locked backup/provider outage/неподтверждённое отсутствие оставляют BLOCKED с review condition; снятие hold продолжает тот же case.
-- Минимальные tombstones/receipts не содержат удалённый текст. Проверены текущие policy и residency; результат интеграции с backup/Google отмечен отдельно от локальной closure.
-- Existing erasure tests плюс реальные D1/R2 fixtures, exact SHA и результаты. Случаи на живой платформе выполняются только на разрешённых disposable данных.
+Reuse packages/cloudflare-erasure, the canonical purge ledger, and S55 manifests. Producer fencing prevents late derivatives after accepted purge. For each location retain exact identity/generation and independently verified absence, not merely a delete ACK. Equal hashes do not collapse distinct revisions/residencies into one object. Deletion cursors/checkpoints survive restart/replay.
+
+Connect offsite/Google adapters through existing provider-closure ports. Missing evidence retains the appropriate blocked/unconfirmed state; it does not block development of local components or justify fake completion. State the boundary of managed copies and do not promise deletion of uncontrolled user downloads.
+
+## 5. Acceptance criteria
+
+- [ ] A source→normalized→index→Wiki→artifact→managed-export/backup fixture is erased/redacted according to the architecture. Exact, semantic, historical, and export paths cannot disclose purged bytes or active supporting influence.
+- [ ] Purge during synthesis/upload/notification cannot resurrect data; restart/lost ACK preserves remaining work and cannot delete foreign objects.
+- [ ] Locked backups, provider outages, and unconfirmed absence remain BLOCKED with a review condition. Removing a hold continues the same case.
+- [ ] Minimal tombstones/receipts contain no erased text; current policy/residency remain enforced.
+- [ ] Record existing and actual D1/R2 tests, exact SHA, and separate backup/Google integration evidence. Live cases use only explicitly authorized disposable data.
