@@ -1,21 +1,33 @@
-# S51 — EXHAUSTIVE действительно проходит весь frozen scope
+# S51 — Exhaustively scan the complete frozen scope
 
-База a2aca127; ER-04/07/09/30. Existing exhaustive-workflow-service, durable shard/cursor paths и cancel/status уже есть; дописывать только недостающий end-to-end loop.
+Baseline: `a2aca127`; ER-04/07/09/30. Existing exhaustive-workflow-service, durable shards/cursors, cancellation, and status already exist. Complete the missing end-to-end path. Dependency correction: larger logical scope integration is S99/#291; S80 is the separate Rust scope migration.
 
-## 1. Суть
-Top-k no-hit не доказывает отсутствие. Полный scan должен учесть каждый eligible source/section, включая результаты за первой страницей и совпадения на границе чтения.
+## 1. Problem
 
-## 2. Что сделать
-Admitted source→existing outbox/projection→EXHAUSTIVE_JOB→все shards→reconciled denominator→result artifact→status/open. Отсутствие разрешается только при complete authoritative scope, все остальные случаи явно partial/unknown.
+Top-k no-hit does not prove absence. Exhaustive scanning must account for every eligible source/section, including results beyond the first page and matches spanning read boundaries.
 
-## 3. Документация / grep
-[Канон §6.10 и §19.4](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/architecture/ELIOT_RESEARCH.md).
+## 2. Required change
+
+Connect admitted source → existing outbox/projection → EXHAUSTIVE_JOB → all shards → reconciled denominator → result artifact → status/open. Permit a scoped-absence result only for a complete authoritative scope. Other outcomes retain explicit partial/unknown coverage.
+
+## 3. Documentation and exact search anchors
+
+[Architecture, sections 6.10 and 19.4](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/architecture/ELIOT_RESEARCH.md).
+
 ```sh
 git grep -n -F '## 6.10. Exhaustive operations' -- docs/architecture/ELIOT_RESEARCH.md
 ```
 
-## 4. Как сделать
-Reuse immutable scope/shard manifest/cursors, exact R2 scanner и Workflow checkpoint. Не использовать reranking/LLM для исключения denominator members. Streaming UTF-8/literal scan сохраняет overlap на границах ranges, canonical offsets и deterministic dedup. Reconcile проверяет уникальные shard identities, expected source set, failed/omitted shards и manifest hashes до COMPLETE_SCOPE. Сборка большого результата в R2, HTTP возвращает handles/cursor, не весь корпус в памяти. Existing cancellation и real currentness проверяются между порциями. Catalog pagination не может превратиться в denominator без доказанной последней страницы.
+## 4. Implementation approach
 
-## 5. Критерии выполнения
-Совпадение после top-k/page и на границе UTF-8 range найдено; independent oracle даёт100% exact all-occurrence recall на fixture. Missing/duplicate/failed shard не даёт complete; restart/lost ACK сходятся без двойных counts. Purge/revoke/deadline/cancel не produce false absence. Actual imported corpus+D1/R2/Workflow/API tests, compact result readback и SHA. Existing schema/profile bound не повышать произвольным числом: larger logical scopes отдельный S80.
+Reuse immutable scope/shard manifests, cursors, exact R2 scanning, and Workflow checkpoints. Reranking or model output cannot exclude denominator members. Streaming UTF-8/literal scanning retains overlap across ranges, canonical offsets, and deterministic deduplication.
+
+Reconciliation verifies unique expected shard identities, the full source set, omitted/failed shards, and manifest hashes before COMPLETE_SCOPE. Re-delivery of the same verified shard result is idempotent, not an automatic failure; it cannot count twice or stand in for a missing shard. Conflicting results under one shard identity must fail. Assemble large results in R2 and return handles/cursors, not a whole-corpus in-memory response. Check cancellation/currentness between batches. A catalog page is not the full denominator without proved end-of-pagination.
+
+## 5. Acceptance criteria
+
+- [ ] Matches beyond top-k/pages and across UTF-8 range boundaries are found; an independent fixture oracle gives 100% exact all-occurrence recall.
+- [ ] Missing or failed shards cannot produce completeness. Identical duplicate delivery is safely deduplicated; conflicting duplicates fail and never inflate counts.
+- [ ] Restart/lost ACK converges without duplicate counts; purge/revoke/deadline/cancel cannot produce false absence.
+- [ ] Exercise an actually imported corpus through D1/R2/Workflow/API and result readback; record exact SHA/results.
+- [ ] Preserve existing schema envelopes; integrate larger scopes through S99 rather than arbitrary limits or waiting for unrelated Rust migration.
