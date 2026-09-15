@@ -1,27 +1,33 @@
-# S03 — восстановить реальный browser-сценарий добавления документа
+# S03 — Restore the real document-import browser scenario
 
-База проверки: `a2aca1277b0edbbed04de66e0d44e383e1b815ef`. Связь: F20, #98; диагностика #194 полезна, но отдельного разрешения на начало не требуется. Это задание, не выполненное исправление.
+Audited baseline: `a2aca1277b0edbbed04de66e0d44e383e1b815ef`. References: F20, #98. Diagnostics from #194 are useful, but no separate approval is required to start. This assignment is not an implemented fix.
 
-## 1. Суть
-CI 34838617436 падает в `runRawFileUploadOwnerScenario`, вызванном из `owner-e2e.mjs:6037`. Helper ожидает `File saved`, тогда как текущий интерфейс запускает upload → processing → admission и использует другие состояния. Это подтверждённое расхождение; считать его единственной причиной всего падения без воспроизведения нельзя.
+## 1. Problem
 
-## 2. Что сделать
-Восстановить один сценарий: выбрать файл → добавить документ → увидеть сохранённый источник → reload → открыть те же данные без дубликатов. Согласовать момент снимков D1/R2 с реальной автоматической обработкой, а не с прежним captured-only UI.
+CI 34838617436 fails in `runRawFileUploadOwnerScenario`, called from `owner-e2e.mjs:6037`. The helper expects `File saved`, whereas the UI now runs upload → processing → admission with different states. This mismatch is established; it must not be called the only cause of the failure without reproducing the original assertion.
 
-## 3. Документация
-[Execution contract, §3–5](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/implementation/launch-prs/execution-contract.md).
+## 2. Required change
+
+Restore one complete scenario: select a file → add the document → see the persisted source → reload → reopen the same data without duplicates. Align D1/R2 snapshots with actual automatic processing, rather than the old captured-only UI phase.
+
+## 3. Documentation and exact search anchors
+
+[Execution contract, sections 3–5](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/implementation/launch-prs/execution-contract.md).
+
 ```sh
 git grep -n -F 'D1/R2/runtime, crypto, transactions' -- docs/implementation/launch-prs/execution-contract.md
 git grep -n -F 'runRawFileUploadOwnerScenario' -- tests/integration/browser
 git grep -n -F 'rawFileReceiptCopy' -- apps/eliotr-pwa/src
 ```
 
-## 4. Как сделать
-Работать в `tests/integration/browser/raw-file-browser.mjs`, его tests и непосредственно затронутом участке `owner-e2e.mjs`. Сначала получить исходный assertion. До действия сохранить базовое состояние, после окончания — фактические capture/admission/revision/outbox. Проверять стабильное состояние и идентификаторы, не промежуточную фразу. Использовать существующий Worker/browser harness; внешнюю конверсию можно контролировать, application HTTP и хранилища не подменять. Отдельный доказанный дефект приложения исправлять только вместе с воспроизводящим тестом.
+## 4. Implementation approach
 
-## 5. Критерии выполнения
-- Linux и Windows owner-browser сценарий проходит; исходный отказ показан до исправления.
-- Импорт и reload сохраняют одну логическую операцию и ожидаемое число ревизий; чужой источник не появился.
-- Контрольный отказ admission не изображается успешным импортом.
-- Сохранены отрицательные проверки, cleanup и реальные D1/R2 readback; нет skip или бессмысленного увеличения timeout.
-- В PR указан исправляющий SHA, команды и exit codes; оставшиеся независимые CI-ошибки перечислены отдельно.
+Work in `tests/integration/browser/raw-file-browser.mjs`, its tests, and the directly affected section of `owner-e2e.mjs`. Obtain the original assertion first. Capture the baseline before the action; after completion, read actual capture/admission/revision/outbox state. Assert stable state and identifiers, not an intermediate phrase. Use the existing Worker/browser harness. External conversion may be controlled in the test, but application HTTP and storage must remain real. Fix a separately demonstrated application defect only with a reproducing regression test.
+
+## 5. Acceptance criteria
+
+- [ ] The owner-browser scenario passes on Linux and Windows; demonstrate the original failure before the correction.
+- [ ] Import and reload preserve one logical operation and the expected revision count; no foreign source appears.
+- [ ] A controlled admission failure is not presented as a successful import.
+- [ ] Preserve negative assertions, cleanup, and actual D1/R2 readback; no skipped tests or arbitrary timeout increases.
+- [ ] Record implementation SHA, commands, and exit codes. List remaining independent CI failures separately.
