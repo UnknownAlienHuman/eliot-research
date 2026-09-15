@@ -1,204 +1,128 @@
 # Execution steps 03 — deterministic kernel and final acceptance
 
-These are the ordered checkpoints for S78–S97. Existing PRs remain the work items; this document removes the need to invent a family split or a second verification system. Baseline `a2aca127`; use current main when implementing.
+S78–S97, baseline a2aca127; use current main. Existing work items remain the completion records. This revision removes nonexistent verification commands and points the formerly open-ended identity/D1 groups to their finite consumer/test tables. U/W/B/F are defined by [steps 01](EXECUTION-STEPS-01.md). NEW means required test/tool addition, not an already working capability.
 
-## Verified starting state and reusable commands
+## Actual starting point and commands
 
-`Cargo.toml` currently includes exactly `eliotr-canonical`, `eliotr-test-vectors`, and `eliotr-kernel-wasm`. The actual `eliotr-canonical/src/lib.rs` exports canonical JSON/errors, generation, owner-token, residency-key, scope-snapshot-identity, SHA-256 and stable-ID primitives. It does **not** establish that owner transitions, policy, coverage or the entire research kernel already exist in Rust. Conversely, those existing primitives must not be rewritten just because a broad migration task mentions them. Target crates named by the language contract are intended additions, not existing files.
+Current Cargo workspace contains eliotr-canonical, eliotr-test-vectors and eliotr-kernel-wasm. Canonical primitives/vectors include canonical JSON, generations, owner token, residency key, scope snapshot identity, SHA-256 and stable ID. They are not proof that all intended domain crates exist or are invoked in production; do not rewrite completed K1/K2a.
 
-The matching vector crate currently contains canonical-body, owner-token, residency-key, scope-snapshot-identity and stable-ID families. Preserve those fixtures and completed K1/K2a results. New family cases extend the same conformance system.
+Use these actual package scripts: `pnpm rust:boundaries`, `pnpm rust:vectors`, `pnpm rust:fmt`, `pnpm rust:clippy`, `pnpm rust:test`, `pnpm rust:deny`, `pnpm rust:wasm`, `pnpm rust:coverage`; final aggregate `pnpm rust:check`. rust:test runs nextest and doctests. Target one actual crate during editing with `cargo test --locked -p <actual-crate>`. There are no rust:nextest/rust:check-contracts aliases. Preserve pinned toolchains/lockfiles; a new domain crate is explicitly added where required by the language contract.
 
-During a pure family checkpoint use the existing pinned toolchain and `cargo test --locked -p <actual-crate>`, plus its shared-vector comparison. Before accepting the family run `pnpm rust:fmt`, `pnpm rust:clippy`, `pnpm rust:nextest`, `pnpm rust:deny`, `pnpm rust:check-contracts` and the applicable existing coverage/mutation gates. `pnpm rust:wasm` builds the existing shell; self-test success alone is not runtime integration. W means the actual core Workers test command defined in steps01, not root Vitest or node:sqlite. Run broad mutation/load gates at their intended checkpoint, not after every formatting edit.
+Pure-family sequence: A capture the named current TS input/output/error contract with independent fixture bytes; B add missing Rust decision using shared primitives; C native/TS/compiled-Wasm parity and negative/property/mutation cases; D actual caller switch/removal under S89. Domain code has no I/O, implicit time, platform handles or hidden authority globals. Fix a genuine reference defect explicitly rather than promote parity with a bug. Run broad mutation/performance gates at the family checkpoint, not after every formatting edit.
 
-For every family use this finite sequence: **A** capture the existing TS input/output/error contract and independent fixtures; **B** implement the pure Rust function in the language-contract target crate, reusing canonical primitives; **C** run TS/native/Wasm parity and mutation negatives; **D** switch actual callers and remove replaced TS decisions under S89. A/C may discover a real reference defect; correct it explicitly rather than silently blessing it as parity. Domain Rust uses `forbid(unsafe_code)`, no network, platform handles, implicit clock or hidden authority globals.
+## S78 — fixed identity inventory · [#270](https://github.com/UnknownAlienHuman/eliot-research/pull/270)
 
-## S78 — remaining canonical identities · [#270](https://github.com/UnknownAlienHuman/eliot-research/pull/270)
+Follow the rewritten passport's **finite named producer table**, not the old instruction to find unspecified active codecs. Checkpoints:
 
-Perform these named checkpoints independently, in order; each ends with exact before/after bytes/errors and the shared native/Wasm vector result:
+- 78.1 canonical body: existing canonical_body implementation/vectors, exact numeric subset/UTF-16 key ordering/Unicode/bounds.
+- 78.2 stable IDs/owner token: existing primitives and K1 domain separation/error fixtures.
+- 78.3 residency/cutover: existing residency primitive plus domain owner-cutover serialized identity.
+- 78.4 scope: existing K2a and actual scope-service/S08 request identity, not set algebra.
+- 78.5a–d intake/projection/navigation/query: ingest-validation.ts; structural-projector.ts; navigation-codec.ts/navigation-identity.ts; query-codec.ts/query-persistence.ts/service.ts. Each consumer and core replay test is named in the passport.
+- 78.6a–g outputs: evidence canonical/registry/resolution; reference/protocol/evidence freeze; artifact V1/V2 verification; Wiki publication; federation persisted/wire mapping; backup/model intent fingerprints; W1/W2 identity. The passport supplies exact producer files and test paths, not a grep count.
 
-| Checkpoint | Existing starting point | Required delta and negative oracle |
-|---|---|---|
-| 78.1 | canonical JSON modules exported by `crates/eliotr-canonical/src/lib.rs`; vector `canonical_body` | Close remaining canonical-body.v1 cases: admitted numeric domain, UTF-16 key ordering, Unicode escaping, malformed/lone-surrogate and bound failures. Do not impose this numeric subset on a different wire format. |
-| 78.2 | exported `stable_id` and its existing vectors | Verify domain-separated hash/ID inputs including empty, changed domain, max/max+1 and malformed encoding. Preserve existing persisted IDs. |
-| 78.3 | exported `residency_key` and owner-token primitives | Verify complete residency/cutover serialized identities against actual TS contracts. Equal content with different owner/key/retention cannot produce an interchangeable authority key. Keep K1 unchanged. |
-| 78.4 | `scope_snapshot_identity` and existing K2a vectors | Retain K2a; extend only genuinely missing scope identity cases after S08/S99 input changes. This is identity, not S80's set algebra. |
-| 78.5 | actual ingest/projection request codecs located by their imports from domain/contracts | Add only missing serialization identities to the existing conformance corpus. Same logical operation has one ID; changed revision, parser or generation must not replay the old identity. |
-| 78.6 | exact active evidence/freeze/artifact/federation codec callers | Record each active family's actual function and reuse-compatible primitive; incompatible byte formats keep distinct named codecs. Compare all stored golden digests. Delete only the specific equivalent TS duplicate authorized by S28 or later S89. |
+For every row preserve accepted and invalid bytes/errors through the actual producer and native/Wasm; record existing coverage/reuse instead of implementing a duplicate. New identity fields from earlier accepted feature tasks add their fixture to this same corresponding family before that feature closes. Different admitted wire contracts keep their semantics; canonical-body numeric rules do not overwrite others. Run real vectors/boundaries/wasm and row-specific W tests, then R. Existing #176 mutation debt remains. No production-owner claim before S89.
 
-**Done:** each named active family has caller→function→fixture→TS/native/Wasm result, stored in the existing Launch09 family table. Unfinished mutation work in #176 remains visible; a line-count or Rust percentage is not acceptance. No new serializer registry or wholesale 26-function replacement.
+## S79 — owner transitions · [#271](https://github.com/UnknownAlienHuman/eliot-research/pull/271)
 
-## S79 — owner lifecycle · [#271](https://github.com/UnknownAlienHuman/eliot-research/pull/271)
+79.1 use domain/source-ownership.ts and owner-cutover.ts actual transition inputs, owner/incarnation/fence and verified bilateral facts. 79.2 implement pure decisions in the documented eliotr-state-machines target using S78 identity. 79.3 test valid transfer/retire and stale/foreign/unilateral/changed-set/replay/dual-owner negatives through TS/native/Wasm. 79.4 S89 switches actual admission/cutover callers while SQL CAS still decides current commit. W test/source-admission-service.test.ts test/ingest-promotion-authorization.test.ts and S70 NEW source-owner-cutover-d1.test.ts. Pure success is not a commit receipt.
 
-**79.1:** use `packages/domain/src/source-ownership.ts::validateOwnershipTransition` and `assertSingleActiveOwner`, then `owner-cutover.ts` and their real adapter callers, as the initial TS decision boundary. Preserve exact namespace/revision/status/generation/error semantics; an unverified boolean from a client is not a bilateral receipt.
+## S80 — scope algebra · [#272](https://github.com/UnknownAlienHuman/eliot-research/pull/272)
 
-**79.2:** implement pure typed owner transition/cutover decisions in the documented `eliotr-state-machines` target, sharing S78 tokens/IDs. **79.3:** valid ACTIVE/cutover/fenced/retired, stale fence, changed namespace, foreign unilateral transfer, replay and dual-active-owner fixtures must match TS/native/Wasm. SQL CAS still validates the current state at commit. **79.4:** S89 switches this family only after actual owner-adapter W tests; no new ownership service.
-
-## S80 — scope algebra/currentness · [#272](https://github.com/UnknownAlienHuman/eliot-research/pull/272)
-
-**80.1:** use `packages/domain/src/scope.ts`, `scope/deterministic-resolver.ts`, and current navigation scope-service callers to capture normalization, UNION/INTERSECT/EXCEPT, ordering and explicit currentness inputs. Scope serialization already in S78 is reused.
-
-**80.2:** implement pure algebra/currentness in documented `eliotr-scope`, with explicit authorized atom/member/policy/purge/time facts. **80.3:** nested sets, empty/duplicate/permuted input, forbidden atom, member/policy/head changes and historical versus active scope must preserve TS outcomes. No silent truncation or wider scope after renewal. **80.4:** integrate through S89, running S08/S33/S99 W regressions. Enumeration/grant writes stay TS/D1.
+80.1 domain/scope.ts, scope/deterministic-resolver.ts and navigation scope-service define actual set order/algebra/currentness. 80.2 implement eliotr-scope over explicit authorized atom/member/policy/purge/time observations. 80.3 nested UNION/INTERSECT/EXCEPT, duplicates/permutations, empty/forbidden/member changes and historical-vs-active cases must match; no silent truncation/expanded renewal. 80.4 S89 replaces pure decision; enumeration/grant writes stay TS/D1. W test/scope-service.test.ts test/scope-persistence.test.ts test/research-held-scope.test.ts and S99 NEW large-project-history case.
 
 ## S81 — policy/residency/budget · [#273](https://github.com/UnknownAlienHuman/eliot-research/pull/273)
 
-**81.1:** isolate the existing fixed-order policy evaluator, `packages/domain/src/residency.ts`, and the pure decision used by `cloudflare-research/src/research-model-spend-admission.ts`. Do not port native Gateway HTTP, JWT verification, reservations or encryption I/O.
+81.1 isolate fixed-order evaluator, domain/residency.ts and pure spend-admission decision; keep JWT/network/encryption/reservation I/O outside. 81.2 add documented pure policy/residency functions with exact monetary units and explicit time/facts/receipts. 81.3 viewer/model/client, declassification, residency/key/retention, expiry/revoke, quote/overflow and permitted evidence at budget stop must match. 81.4 S89 switches actual authorizer/spend caller, preserving final SQL guards. W Model and new S10/S69 authorization/disclosure cases. No second permissions/budget framework.
 
-**81.2:** implement the documented `eliotr-policy`/`eliotr-residency` pure functions over verified observations and explicit time, reusing exact monetary units. **81.3:** viewer/model/client combinations, declassification receipts, wrong residency/key/retention, expired policy, insufficient quote and numeric overflow match the TS decision/reason. Budget exhaustion still allows permitted exact reads. **81.4:** S89 switches the real authorization/spend callers with W tests; no new budget or permissions framework.
+## S82 — source qualification/CLI · [#274](https://github.com/UnknownAlienHuman/eliot-research/pull/274)
 
-## S82 — source qualification and CLI · [#274](https://github.com/UnknownAlienHuman/eliot-research/pull/274)
-
-**82.1:** extract the actual decision inputs from `packages/domain/src/source-admission.ts` and `qualification.ts`; preserve original/normalized identities, coordinate-map precision and ownership/residency observations.
-
-**82.2:** implement pure qualification/admission in documented `eliotr-qualification`, not an OCR/PDF engine. **82.3:** add the thin `eliotr-bundle-cli` adapter over the same functions: stream native file hashing, validate a local bundle, print a bounded machine-readable verdict, and return failure status for invalid bundles. CLI success neither admits a source nor issues a grant. **82.4:** valid/degraded/corrupt/foreign/missing-map Windows/Linux fixtures and actual S47/S98 ingress tests pass; S89 performs Worker promotion separately.
+82.1 capture domain/source-admission.ts and qualification.ts original/normalized identity, ownership/residency and precision. 82.2 pure eliotr-qualification validates supplied observations, not an OCR/PDF engine. 82.3 thin documented bundle CLI streams local file hashing and calls the same rules, returning bounded machine-readable results and failure status; it cannot issue grants or admit sources. 82.4 TS/native/Wasm malformed/degraded/foreign/missing-map cases and Windows/Linux CLI tested. W Intake/Raw import plus S98. Actual Worker promotion S89; no remote call or bundle mutation in offline verifier.
 
 ## S83 — structural projection · [#275](https://github.com/UnknownAlienHuman/eliot-research/pull/275)
 
-**83.1:** take inputs/outputs from the existing structural materialization path exported by `cloudflare-navigation/src/index.ts` and qualified coordinate-map adapter; distinguish source bytes from parser-provided maps.
+83.1 capture actual projection/navigation materialization and qualified map inputs. 83.2 pure documented eliotr-projection-core transforms bounded bytes/base offsets/maps/generation into items. 83.3 prose/code/table/Unicode/chunk-boundary and corrupt range/map/parent cycle/foreign revision cases match exact output. 83.4 expose through S88's explicit added transformation export and switch real projector in S89; Queue/D1/R2/index effects remain TS. W test/navigation-persistence.test.ts test/structural-navigation-q1.test.ts test/retrieval-generation-fences.test.ts plus S52 NEW promotion case. No embedding/BM25/parser replacement; measure bounded allocation.
 
-**83.2:** implement pure segmentation/range/map/item transforms in documented `eliotr-projection-core` using explicit base offsets and generation refs. **83.3:** prose/code/table/Unicode/chunk-boundary fixtures match items/maps/IDs, and invalid parent cycles/ranges/foreign maps fail. No embeddings/tokenizer/BM25 replacement. **83.4:** the explicit ABI extension in S88 exposes this transformation; S89 replaces the real projector decision, while TS retains Queue/R2/D1/index activation. Run S48/S52 W regressions and bounded-memory measurements.
+## S84 — evidence/coverage · [#276](https://github.com/UnknownAlienHuman/eliot-research/pull/276)
 
-## S84 — evidence and coverage · [#276](https://github.com/UnknownAlienHuman/eliot-research/pull/276)
+84.1 domain evidence/coverage/completion and actual resolver decisions define observed inputs. 84.2 pure documented evidence/coverage retains revision/hash/length/range/map/owner/scope/purge plus eligible/represented/cited/omitted/family sets. 84.3 exact positives and corrupt/foreign/purged/partial denominator negatives match; identical redelivery deduplicates, conflicts fail and duplicates never fill missing members. 84.4 S89 switches real resolver/exhaustive decision while TS performs reads and final pre-disclosure currentness. W test/research-citations-result.test.ts test/research-citation-attempt-binding.test.ts test/research-query-exhaustive.test.ts. Unknown/sampled cannot prove full absence, but a narrow supported answer is not automatically invalid.
 
-**84.1:** capture pure invariants in `packages/domain/src/evidence.ts`, `coverage.ts`, `completion.ts` and actual resolver/coverage callers. TS first obtains and validates the observations from real storage.
+## S85 — Research/publication · [#277](https://github.com/UnknownAlienHuman/eliot-research/pull/277)
 
-**84.2:** implement pure exact resolution and coverage in documented `eliotr-evidence`/`eliotr-coverage`; retain revision/hash/length/range/map/owner/scope/purge checks, eligible/represented/cited/omitted sets and source-family independence.
+85.1 use corrected W1 ledger-commands mutation masks, ports and domain investigation/completion/publication rules after S35–S40/S54, not technical placeholders. 85.2 pure documented research-core decisions bind protocol/lanes/verifier/freeze/debts/waiver/grade. 85.3 all legal transitions/nine dispositions/D0–D3 cases match; model self-approval, post-exposure metric edits, changed freeze and inherited audit on edited claim denied. 85.4 S89 replaces domain decision only, not Workflow/models/CAS/bytes. W W1/Evidence/report groups and S36/S40/S54 NEW cases. Protected portfolio/debt fields stay immutable outside supersession.
 
-**84.3:** positive evidence and wrong digest/range/foreign/purged/partial denominator cases match. Identical shard redelivery is deduplicated; conflicting duplicates fail and never replace missing shards. Sampled no-hit cannot prove complete absence. **84.4:** S89 switches actual resolver/exhaustive callers with S48/S51 W regressions. Storage reads and final currentness before disclosure stay TS.
+## S86 — erasure · [#278](https://github.com/UnknownAlienHuman/eliot-research/pull/278)
 
-## S85 — Research/acceptance/publication · [#277](https://github.com/UnknownAlienHuman/eliot-research/pull/277)
+86.1 capture S63 expected exact closure versus authenticated observations, not deletion-ACK count. 86.2 documented pure erasure-core normalizes identities/holds/injected time and evaluates terminal admissibility. 86.3 full/missing/foreign/conflicting/locked/late-dependency cases match; repeated identical observation deduplicates. 86.4 S89 changes coordinator decision; deletion/readback/purge append remains TS. W test/erasure-coordinator.test.ts plus S63/S66 NEW closure/restore cases. No new deletion engine or rewritten old receipts.
 
-**85.1:** use `packages/research/src/ledger-commands.ts` mutation masks, `ports.ts` W1 states and actual domain investigation/completion/publication decisions after S35–S40/S54 fixes. Do not port old technical placeholders as completed research.
+## S87 — federation · [#279](https://github.com/UnknownAlienHuman/eliot-research/pull/279)
 
-**85.2:** implement pure transitions, freeze lineage, required verifier/grade/waiver/coverage and publication decisions in documented `eliotr-research-core`, reusing other pure families.
+87.1 current S60 verified peer/fence/bridge/manifest and completion contract; preserve S61 independent fixture oracle. 87.2 pure federation-core handles admissibility/transition/disposition only. 87.3 stale/foreign/version/manifest substitutions deny; transport COMPLETED cannot strengthen research PARTIAL/UNKNOWN and candidate is not admission. 87.4 switch actual S60 caller in S89; HTTP auth, jobs, streaming and provider remain TS. W test/federation-service.test.ts test/federation-runtime-http.test.ts plus S61 NEW independent-wire case. W2/W3 separation retained.
 
-**85.3:** all allowed W1 transitions and existing nine dispositions match; model self-certification, changed metric after exposure, changed freeze, edited claim inheriting an old audit and stale head fail. **85.4:** S89 replaces only the domain decisions. Existing W1 SQL commands/CAS, Workflow, models and R2 effects stay TS/platform. S36's protected portfolio/debt masks and S40's supersession tests remain mandatory.
+## S88 — ABI in four checkpoints · [#280](https://github.com/UnknownAlienHuman/eliot-research/pull/280)
 
-## S86 — erasure closure · [#278](https://github.com/UnknownAlienHuman/eliot-research/pull/278)
+88.1 explicitly revise existing language contract for exactly added eliotr_evaluate_policy_v1 and eliotr_transform_projection_v1, preserving six initial names/semantics. The owning passport has the closed eight-export mapping and strict operation schemas; no arbitrary dispatcher or silent contract change.
 
-**86.1:** take the current S63 coordinator's expected closure and actual observation contract, not a count of deletion ACKs. Bind domain/object/version/residency, retention hold and explicit current time.
+88.2 one pinned wasm-bindgen byte-array shell/glue over imported precompiled Module, bounded canonical versioned bytes, no platform objects/implicit clock/RPC. Update existing Wasm build/check expectations for the documented admitted exports while retaining CI self-tests; no new no-op aliases.
 
-**86.2:** implement pure close/pending/blocked admissibility in documented `eliotr-erasure-core`. **86.3:** exact full closure succeeds, missing/foreign/locked/conflicting observations do not; legal repeated observations deduplicate and late dependencies invalidate insufficient proof. **86.4:** S89 changes the actual coordinator decision and repeats S63/S66 W tests. Deletion, remote readback and purge-ledger append are not Rust I/O and no old receipt is rewritten.
+88.3 **NEW** W test/kernel-wasm-bridge.test.ts sends runtime input to compiled code and checks independent/native output plus malformed/schema/version/hash/size/truncation/trap/repeated-call cleanup. 88.4 shadow ready families with the same facts and exactly one side-effect path; mismatch blocks authority settlement, no permissive fallback. `pnpm rust:vectors`, `pnpm rust:boundaries`, `pnpm rust:wasm` plus the new W test; final R and actual compressed size/startup/heap/CPU. Promotion is S89.
 
-## S87 — federation fence and mapping · [#279](https://github.com/UnknownAlienHuman/eliot-research/pull/279)
+## S89 — ten caller switches · [#281](https://github.com/UnknownAlienHuman/eliot-research/pull/281)
 
-**87.1:** use the existing S60 federation service's verified request/fence/bridge/manifest and result mapping contract. Keep independent S61 wire fixtures as the oracle; don't import the server codec into both sides of the test.
+Use owning passport units 89.1–89.10: identity, owner, scope, policy/residency/budget, admission, projection, evidence/coverage, Research/publication, erasure, federation. Each unit selects its accepted family and the actual caller identified above; do not switch the whole repository in one commit.
 
-**87.2:** implement pure fence/admissibility and internal-to-wire disposition mapping in documented `eliotr-federation-core`. **87.3:** stale/foreign/unknown-version/substituted-manifest cases fail, transport COMPLETED never strengthens PARTIAL/INCONCLUSIVE/UNKNOWN, and a peer candidate never becomes admitted authority by itself. **87.4:** switch under S89 and rerun independent client tests. HTTP auth, job storage, streaming and provider execution remain TS; W2/W3 identity separation stays intact.
+For one unit: retain parity/negative/shadow/mutation/performance evidence and exact ABI version; switch caller to Rust decision while keeping TS bounds/platform I/O and SQL CAS; disable the old TS decision and run the identical actual service regression; remove that replaced production algorithm and rerun; record SHA/result in existing Launch09. Reference fixtures remain, not a second runtime authority. Wrong ABI/trap fails closed; rollback/old runs/history/purge/idempotency retain exact identities. Use relevant W rows in S91 and new bridge test, then R/B/F at appropriate integration boundaries. Aggregate closes only after all mandatory families; no Rust-percentage target or hidden TS fallback.
 
-## S88 — finite ABI design and actual shadow · [#280](https://github.com/UnknownAlienHuman/eliot-research/pull/280)
+## S90 — measured artifacts · [#282](https://github.com/UnknownAlienHuman/eliot-research/pull/282)
 
-The language contract explicitly permits six initial exports, not an unspecified universal dispatcher. Required policy evaluation and projection transformation need an explicit interface decision, not naming games. Use these checkpoints:
+90.1 change scripts/check-budgets.mjs to emitted Worker JS+Wasm and initial PWA asset measures, not raw source count as quota. Source-size/LOC remains honest diagnostic under the explicit procedural change. 90.2 use existing build/dry-run metadata and actual runtime measurement; preserve repository targets/security envelopes, record NOT_MEASURED where appropriate. 90.3 **NEW** U tests/build-budget-artifacts.test.ts covers tiny source/large dependency, over-limit output, accidental test shipping and source-file relocation. Run `pnpm build`, `pnpm cf:dry-run`, `pnpm budgets:check`, `pnpm typecheck` and that U test. No wrangler:dry-run alias, target inflation, minification or pointless package splits. Live load is S96.
 
-**88.1 — Contract amendment before implementation.** In the existing LANGUAGE_RUNTIME_CONTRACT, make a scoped backward-compatible revision documenting the two added product exports below. Preserve all six initial exports and their meanings. This is the chosen amendment for mandatory families, not permission for arbitrary extra exports. Keep one strict versioned envelope and per-operation input/output schemas in the existing contracts package; no new registry/service.
+## S91 — named D1 transaction rows · [#283](https://github.com/UnknownAlienHuman/eliot-research/pull/283)
 
-| Product export | Closed operation family |
-|---|---|
-| `eliotr_canonicalize_v1` | S78 canonical/identity serialization operations |
-| `eliotr_validate_transition_v1` | S79 ownership, S85 W1/publication, S86 erasure-close, and S87 fence/admissibility transitions, each with its own admitted `operation` and schema |
-| `eliotr_resolve_scope_v1` | S80 scope normalization/algebra/currentness |
-| `eliotr_qualify_bundle_v1` | S82 normalized bundle/source qualification |
-| `eliotr_validate_evidence_resolution_v1` | S84 exact evidence invariants |
-| `eliotr_map_completion_disposition_v1` | S84/S85/S87 completion mappings without stronger outcomes |
-| **added:** `eliotr_evaluate_policy_v1` | S81 policy/residency/budget admission decisions; not native model routing |
-| **added:** `eliotr_transform_projection_v1` | S83 structural byte/map/item transformation; not managed indexing or inference |
+The rewritten five-part passport now lists the exact existing core filenames and explicitly NEW additions from owning features; it supersedes its old table of nonexistent owner/authority/research/etc scripts. Eight rows:
 
-The added exports cannot be silently deployed under the old export contract. The revision and its ABI fixture are part of this task, reviewed before switching callers. Unknown export/operation/schema is rejected, never dynamically loaded.
+91.1 bundle/source/owner/grant/append-only project attach; 91.2 scope freeze/persist/currentness/renewal/history; 91.3 W1 masks/CAS and W2 lifecycle; 91.4 W3 attempt/reservation/fingerprint/pricing/output; 91.5 outbox/inbox/lease/DLQ settlement; 91.6 index readiness/shadow/serving CAS; 91.7 freeze/report/artifact/Wiki/dependencies; 91.8 erasure/hold/backup nonce/replay/isolated readiness.
 
-**88.2 — Transport shell.** Use the existing kernel-wasm crate and one TS adapter with the selected pinned wasm-bindgen byte-array glue initialized from the imported precompiled Module. Keep generated technical pointer/memory plumbing inside glue; domain callers pass canonical bytes, not platform objects. Validate byte bounds before marshalling; validate schema/version/hash at the appropriate decoded boundary and output bounds afterward. No workers-rs rewrite or Rust RPC service.
+For each named operation: actual service with real core DB before/after rows/heads/receipts/outbox, valid commit, same-key replay, stale/malformed/foreign/concurrent/lost-ACK/currentness negatives, maximum admitted shape and fresh/upgrade migrations. Existing sufficient W cases are reused; helper-only/DatabaseSync is not actual-D1 proof. NEW test names only count after implemented. Failed write cannot partially publish; final SQL invariants remain. Run exact W file selection and listed real supplemental checks, then full W suite. One positive representative cannot close an entire row; no second coverage registry.
 
-**88.3 — One real family first.** Call canonical identity on runtime input through actual workerd, then compare TS/native/Wasm output. Embedded-vector self-tests alone do not close this checkpoint. Add size/version/hash/truncation/trap cases and repeated-call memory cleanup.
+## S92 — local product acceptance · [#284](https://github.com/UnknownAlienHuman/eliot-research/pull/284)
 
-**88.4 — Side-effect-free shadow.** Shadow the same observed input for a ready family; only the existing authoritative path performs effects. Mismatch/trap blocks the affected authority operation and produces content-free diagnostics; never silently use a permissive fallback. Then add each remaining admitted family to the closed operation mapping without a new transport.
+92.1 intake: empty owner→project→raw/normalized admission/readiness→exact Library/Lens. 92.2 delegation: owner-issued grant→independent machine ingest/append-only attach→query/run/status→report/citation, including S98/S99. 92.3 products: registered ASK/COMPARE/FACT_CHECK/DEEP/REPORT through actual W1/W2/W3/storage and controlled external model. 92.4 continuity: JWT refresh/compatible deploy/source v1→v2/offline/cancel/same-run recover. 92.5 COW review/publish/history/verified export. 92.6 negative actor/scope/revoke/purge/corrupt/CAS/late replies.
 
-**Done:** actual workerd reaches compiled Wasm, inputs/errors agree, effects occur once, memory stays bounded, and compressed JS+Wasm/glue, startup/heap and CPU are measured. S89 owns production switching. The explicit amendment removes an implementation choice the earlier six-export-only task left unresolved.
+Split these into named scenario functions/modules under the existing browser harness and register actual node:test assertions in tests/integration/browser/library.spec.ts; each new scenario must be reached by the real runner, not stored as unused code. Share safe setup/cleanup, preserve infrastructure/security negatives, no new browser framework. Focused W/U while editing; automated B is `pnpm test:owner-e2e`. For exact original browser reproduction use its known L6 real-browser owner harness name filter as documented in steps01. Interactive local:owner is separate manual inspection, not PASS.
 
-## S89 — caller switch and deletion, one family at a time · [#281](https://github.com/UnknownAlienHuman/eliot-research/pull/281)
+Done: one build/schema/config, true owner/API-issued grants, actual app/storage/Queue/DO/Wasm, same allowed IDs/hashes/dispositions, zero repeated completed effects. Run `pnpm test:local-launch`, `pnpm test:local-owner`, `pnpm local:prepare`, `pnpm local:smoke`, B, `pnpm cf:types`, `pnpm build`, `pnpm cf:dry-run` and full F at final local acceptance on applicable CI platforms. No local:documents or base-filter assumption. Controlled external tests do not establish native/live behavior.
 
-Use the following repeatable unit, not a whole-project language migration commit:
+## S93 — adjudicated quality · [#285](https://github.com/UnknownAlienHuman/eliot-research/pull/285)
 
-1. Select exactly one accepted S78–S87 family and its actual TS caller; retain native/Wasm/parity/negative/mutation/Worker/performance evidence and the approved ABI revision.
-2. Change that caller to consume the Rust decision; keep TS strict wire bounds and platform I/O, and keep SQL's final currentness/CAS. Wrong ABI or trap fails the affected operation rather than executing a hidden TS fallback.
-3. Run the same caller test with the old TS decision disabled. Confirm digest/ID/error/replay/history and denial behavior, then remove the replaced TS production decision and rerun. Reference fixtures are retained.
-4. Record the per-family implementing SHA/result in existing Launch09. Repeat for the next named family. The aggregate stays open until every mandatory family has one demonstrated runtime owner.
+93.1 start with actual tests/golden-corpus/manifest.json, cases/sources and packages/testkit/src/golden.ts; preserve GC-009–012 and the established fixture LF hashing rules. Executable local check: `pnpm exec vitest run tests/golden-corpus/golden-harness.test.ts`. This is the real starting command, not golden:check. Fix fixture/test expected case counts when intentionally expanding the manifested corpus; do not silently drop old cases.
 
-**Done:** actual owner/scope/policy/admission/projection/evidence/Research/erasure/federation paths use their accepted kernel decisions without duplicate effects or changed historical bytes. Unknown upgrade compatibility is not assumed; preserve saved runs, use proven transition/rollback behavior, and test affected old runs. Existing #176 mutation debt, Rust deep checks, W/B/headless regressions and S90 budgets remain applicable. Do not measure success by language percentage.
+93.2 independently label exact spans/claims/conditions/denominators before tuning; separate holdout and cover RU/EN, long/mixed/code/table, contradiction/versions/tail/no-answer/injection/larger scopes. Execute each declared LOCATE/ASK/BRIEF/COMPARE/HYPOTHESIS_REVIEW/FACT_CHECK/PROJECT_VS_LITERATURE_AUDIT/DEEP/REPORT product against its accepted version. Extend existing testkit adjudication/promotion functions; live adapter must call actual authorized API/model/index, not fabricate results from fixture output.
 
-## S90 — measured budgets · [#282](https://github.com/UnknownAlienHuman/eliot-research/pull/282)
+93.3 record samples/repetitions/corpus/model/prompt/parser/index/build identities and per-product recall, citation validity, support/counterevidence/abstention/coverage, latency/cost when measured. Apply each canonical threshold to its metric, not 'overall accuracy'. Failing collapse/unsupported accepted evidence blocks corresponding promotion. Done means actual authorized measurements, retained failures/uncertainty and rollback target; NOT_EXECUTED is not PASS. This is evaluated-version quality, not universal truth.
 
-**90.1:** correct `scripts/check-budgets.mjs` to measure emitted Worker JS+Wasm and initial first-party PWA JS rather than present raw source bytes as runtime quota. Keep readable source counts diagnostic, with the explicit procedural-doc change already requested by the owner.
+## S94 — first full staging · [#286](https://github.com/UnknownAlienHuman/eliot-research/pull/286)
 
-**90.2:** use existing build/dry-run/runtime measurement tools for compressed size, startup, heap and operation CPU. Preserve documented repository targets and actual security envelopes; do not substitute vendor maxima or raise targets to manufacture PASS.
+94.1 existing deploy orchestrator/preflight/resource manifest uses explicit approved isolated target, secret references and spend budget; reuse valid prior configuration rather than ask again. 94.2 local wrong-target/missing-binding/partial-migration/stale-asset ordering regressions via `pnpm test:provisioners`, `pnpm cf:types`, `pnpm build`, `pnpm cf:dry-run` and relevant U additions. Future T4/T6 receipts cannot block the staging deployment that enables them.
 
-**90.3:** test a small source importing a large dependency, an oversized emitted artifact, test-only bundle leakage and pure source-file relocation. **Done:** actual artifacts decide the result; missing measurement is NOT_MEASURED and files are not minified/split pointlessly. `pnpm build`, `pnpm wrangler:dry-run`, `pnpm budgets:check`, affected tests and recorded measurement identities. Real workload is S96.
+94.3 authorized actual `pnpm cf:deploy` through existing orchestrator, not raw CLI bypass, then independent Worker tree/version/schema/R2/Queue/DLQ/DO/Workflow/AI/PWA/Wasm readback and Access protection. Done: all identities match tested build/config and unrelated production data untouched. Only then S93/S95/S96. Missing live approval/credential blocks that action only; writing this assignment does not authorize deployment.
 
-## S91 — finite D1 transaction coverage · [#283](https://github.com/UnknownAlienHuman/eliot-research/pull/283)
+## S95 — native conformance · [#287](https://github.com/UnknownAlienHuman/eliot-research/pull/287)
 
-S04 already covers project membership and Wiki owner edit. Complete the following batches through **actual application services in W**, not copied SQL or root node:sqlite fixtures:
+Prepared existing probes, one thin runner, six explicit batches: 95.1 Access/API/MCP/storage readback; 95.2 Queue duplicate/lost-ACK/DLQ and DO eviction/hibernation/cursor; 95.3 native Workflow cancel/recovery and model UNKNOWN settlement; 95.4 active AI Search exact locator/generation; 95.5 selected Workspace action/readback and independent authenticated federation; 95.6 approved disposable purge/restore/code-index rollback.
 
-| Batch | Transaction families | Existing entry points/check commands |
-|---|---|---|
-| 91.1 | source admission, owner/cutover, project-client grants | `domain` admission/ownership plus core ingest/project routes; ingest/owner/authority checks |
-| 91.2 | scope freeze/profile/currentness and renewal | `cloudflare-navigation/src/scope-service.ts`, `d1-scope-service.ts`, historical/owner authorization; source/retrieval checks |
-| 91.3 | W1 commands and W2 checkpoints | `research/src/ledger-commands.ts`, `investigation-service.ts`; research/workflow checks |
-| 91.4 | W3 attempt/reservation/readback | `cloudflare-research/src/model-attempt-store.ts`, spend-admission and recovery callers; model-admission/recovery checks |
-| 91.5 | outbox/inbox/lease settlement | existing delivery stores/consumer/reconciler; delivery/recovery checks |
-| 91.6 | index serving-generation CAS | existing S52 generation stores; retrieval/source checks |
-| 91.7 | artifact publication/dependency state | current report/Wiki publisher and manifest producers; artifact/research checks |
-| 91.8 | purge/closure/holds and backup nonce/replay authority | existing erasure coordinator and O2 stores; erasure/backup/recovery checks |
+Runner extension is part of this task where absent, not an already available magic conformance command. Pin target/build/config/time and intended effect identity. ACK-loss injection may discard response, not substitute execution. Native API version/status is checked against pinned runtime; paused and errored differ. Wrong/stale/fake receipt denied; missing input NOT_EXECUTED. Cleanup only probe-owned resources; lawful first audit after saved synthesis allowed, duplicate synthesis not. Complete all applicable actual observations before live qualification.
 
-For each batch reuse an existing real-D1 test where it already exists. Add only missing positive commit plus stale/invalid/concurrent/lost-ACK negative cases, reading canonical row/head/receipt/outbox after execution. Check fresh-schema and supported upgrade paths without rewriting merged migrations. **Done:** no active family is counted merely because migration SQL compiles; D1 depth/bind/batch issues are caught locally and refusals leave no partial authority effects. Keep fast pure tests for their real purpose, and report exact service→test→result within the existing task, not another registry.
+## S96 — measured workload · [#288](https://github.com/UnknownAlienHuman/eliot-research/pull/288)
 
-## S92 — executable local product acceptance · [#284](https://github.com/UnknownAlienHuman/eliot-research/pull/284)
+96.1 existing workload/probe driver or thin missing adapter implements canonical mix: 5/20/50 readers, 5 interactive sessions, 10 queued jobs, 2 long Workflows. Record corpus/cache/cold-warm/build/duration/sample and approved spend/stop conditions. Do not state a runner exists solely because its plan names one.
 
-Split the existing owner browser harness into these scenario modules with shared fixture setup/cleanup, preserving security tests rather than writing a second harness:
+96.2 measure read/open, model run, indexing and recovery separately: percentiles/errors/throughput/CPU/heap/queue lag and actual usage, estimates separately from bills. 96.3 bounded overload/cancel/restart/drain and model budget-stop preserving permitted exact reads. Done: applicable repository/profile targets evidenced or concrete failing owning-task regression remains open. No unlimited buffers, blind paid retry, indefinite stress loop or local fixture advertised as a measured live workload.
 
-- **92.1 intake:** empty owner→project→raw/normalized import→admission/readiness→exact Library/Lens source.
-- **92.2 delegation:** owner-issued grant→independent service normalized ingest→append-only attach→query/run/status→report/citation, including S98/S99.
-- **92.3 products:** protocol-bound ASK/COMPARE/FACT_CHECK/DEEP/REPORT through controlled external model responses, actual W1/W2/W3/R2 and exact saved output.
-- **92.4 continuity:** JWT refresh, PWA-only deploy, source v1→v2, offline/reconnect, cancel and same-run recover; no duplicate completed effects.
-- **92.5 publication:** section edit/review/publish/history/export, with stable unchanged sections and honest claim verdicts.
-- **92.6 rejection:** wrong scope/actor, in-flight revoke/purge, corrupt result, stale CAS and late response reveal no private data or false success.
+## S97 — release closeout · [#289](https://github.com/UnknownAlienHuman/eliot-research/pull/289)
 
-Use exact one-build/schema/config identities, owner API-issued grants rather than manually inserting authority, and controlled external IdP/provider boundaries only. **Done:** focused W/U then complete B/local-documents, current typechecks/build/dry-run/affected checks and both applicable Linux/Windows jobs pass on the same final commit. Native platform semantics are not proven by this local run.
+97.1 reconcile existing implementation-status/gaps/checklists with actual callers, negative/replay evidence and current generation-specific results for mandatory selected v1 Slices0–6, Rust and S98/S99. No new registry or optional legacy Google/Slice7 scope.
 
-## S93 — quality, not response existence · [#285](https://github.com/UnknownAlienHuman/eliot-research/pull/285)
+97.2 require S92 actual local, S93 real quality, S94 attested deployment, S95 native/security, S96 measured workload. Changes invalidate only affected evidence; missing behavior cannot close by editing Markdown. Independent reviewers/readback compare artifacts and results, not trust a green status claimed by the implementing agent.
 
-**93.1:** extend existing Golden fixtures, retaining GC-009–012, with independently labeled exact spans, acceptable claims/conditions and expected omissions before tuning the candidate. Include multilingual long/mixed/table/code/contradictory/tail/no-answer/injection and larger-scope cases.
-
-**93.2:** execute per-product LOCATE/ASK/BRIEF/COMPARE/HYPOTHESIS_REVIEW/FACT_CHECK/PROJECT_VS_LITERATURE_AUDIT/DEEP/REPORT using separate tuning and holdout sets. Record corpus/model/prompt/parser/index generations and actual sample sizes/repetitions.
-
-**93.3:** compare the documented recall, citation, support/contra, coverage/abstention and forbidden-collapse requirements separately; a retrieval threshold is not a guarantee that every generated answer is correct. **Done:** real authorized model/index measurements meet the applicable selected-profile criteria with failures/limitations retained; regressions block the affected generation. `pnpm golden:check` is the local start, not the final live-quality proof. No fabricated external measurements.
-
-## S94 — first complete staging · [#286](https://github.com/UnknownAlienHuman/eliot-research/pull/286)
-
-**94.1:** use existing deploy orchestrator/preflight/resource manifest with a single approved target/secret-reference/budget configuration. Reuse already supplied valid approvals; do not ask for the same optional preference at every checkpoint.
-
-**94.2:** test wrong target, missing binding, partial migration and stale asset markers locally. Build and provision using existing scripts; no raw bypass or second deploy system. Future T4/T6 receipts cannot be prerequisites of the deployment that enables them.
-
-**94.3:** independently read back exact Worker version/tree, D1 schema, R2/Queue/DLQ/DO/Workflow/AI bindings, PWA asset marker and Wasm digest, plus Access protection. **Done:** all actual identities match the tested configuration and production data is untouched; only then run S93/S95/S96. Missing external parameters block this live step, not local implementation of unrelated tasks.
-
-## S95 — native and selected-client conformance · [#287](https://github.com/UnknownAlienHuman/eliot-research/pull/287)
-
-Use prepared existing probes as a thin sequential runner, in these batches:
-
-**95.1** verified Access/API/MCP and exact D1/R2 identity/readback; **95.2** Queue duplicate/lost ACK/DLQ replay and DO eviction/hibernation/cursor replay; **95.3** native Workflow cancellation/recovery and model/gateway UNKNOWN settlement without repeated completed synthesis; **95.4** actual AI Search serving generation/exact locator; **95.5** selected Workspace action/readback and independent authenticated federation peer; **95.6** prepared purge/isolated restore/code-index rollback on approved disposable data.
-
-Each batch binds exact build/target/config/time and expected durable effects. Response-loss injection may discard an ACK, not replace actual execution with success. Fake/stale/wrong-target receipts fail validation; missing credentials/peer capability is NOT_EXECUTED, not a fixture-generated PASS. **Done:** all applicable native failure/denial/replay observations are retained, with idempotent cleanup of only probe-owned resources. Existing approvals suffice; no implicit deletion of real user data.
-
-## S96 — workload and cost · [#288](https://github.com/UnknownAlienHuman/eliot-research/pull/288)
-
-**96.1:** configure the existing load driver for the documented 5/20/50 readers, five interactive sessions, ten queued jobs and two long Workflows. Record actual corpus/cache/cold-warm/build/duration/sample conditions and the approved spend stop rule.
-
-**96.2:** measure operations separately: read/open, model-backed run, ingestion/indexing, recovery. Collect percentiles/errors/throughput/CPU/heap/queue lag and actual usage; estimated costs and later bills are distinct.
-
-**96.3:** test bounded overload, cancel/restart, draining the queue and model-budget exhaustion while authorized exact reads remain usable. **Done:** applicable repository/profile targets pass or a concrete measured owning-task regression remains open; no target inflation, blind retry of paid UNKNOWN, indefinite stress loop or local simulation labeled live qualification.
-
-## S97 — finite release closeout · [#289](https://github.com/UnknownAlienHuman/eliot-research/pull/289)
-
-**97.1:** reconcile existing implementation-status/gap/release/security records against actual callers, negative/replay tests, and current generation-specific evidence. All mandatory selected-profile Slices0–6, S98/S99 and required Rust families are included; optional legacy Google/Slice7 items are not silently added.
-
-**97.2:** check S92 local, S93 quality, S94 exact deployment, S95 native/security and S96 workload results. A component change invalidates affected evidence, not every unrelated result. Missing mandatory behavior cannot be closed by a Markdown status change.
-
-**97.3:** execute the documented source→evidence→Research→accepted publication→federation→Workspace→disposable erasure/clean-restore canaries and retained rollback checks during the approved observation window. Verify current Access/secrets/budget controls, DLQ and overdue erasure conditions.
-
-**Done:** the existing-format release receipt records exact build/schema/search/AI Search/Wasm/assets/auth/transport/model/rollback identities and the release owner's actual acceptance. The result is a qualified version/profile, not an absolute claim that no future bug can exist. This task performs acceptance; it does not absorb unspecified missing implementation into a giant final rewrite.
+97.3 execute approved canaries source→exact evidence→Research→accepted publication→federation→Workspace→disposable erasure/clean restore plus rollback during agreed observation. Check actual Access/budget, DLQ/overdue erasure and owner approval. Done: existing-format release receipt with exact build/schema/search/Wasm/assets/auth/transport/model/rollback identities and accepted version/profile. This can close the known v1 project scope; it is not a promise that no future defect exists and it does not absorb an unspecified rewrite at the end.
