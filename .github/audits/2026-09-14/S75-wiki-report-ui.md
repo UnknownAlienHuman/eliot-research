@@ -1,24 +1,33 @@
-# S75 — Wiki/report: прочитать, проверить, исправить, опубликовать
+# S75 — Read, review, edit, and publish Wiki/reports clearly
 
-База a2aca127; ER-25/11/12. Использовать реализуемые compiler/publication/dependencies #245–#247 и historical read #199; Research layout #218 не переписывать.
+Baseline: `a2aca127`; ER-25/11/12. Use compiler/publication/dependencies #245–#247 and historical reading #199. Do not rewrite Research layout #218.
 
-## 1. Суть
-Смешение Published/Proposed/DRAFT и повторяющихся технических пояснений делает состояние документа непонятным. Пользователь не должен угадывать, опубликован ли текст и какие утверждения проверены.
+## 1. Problem
 
-## 2. Что сделать
-В existing Wiki/report view разделить список черновиков, опубликованные версии и просмотр выбранной revision. Для выбранного документа: текст, claim verdicts/цитаты, history, edit section, review/publish доступные по реальной роли, download/export. Source freshness и editorial publication показывать отдельно от evidence acceptance.
+Mixed Published/Proposed/DRAFT labels and repeated technical explanations make document status unclear. Users must be able to tell whether content is published and which claims were actually verified.
 
-## 3. Документация / grep
-[Канон §9.2](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/architecture/ELIOT_RESEARCH.md) и [production plan §8.5](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/implementation/production-readiness-plan.md).
+## 2. Required change
+
+Separate draft listings, published versions, and selected-revision viewing in the existing Wiki/report UI. Provide text, claim verdicts/citations, history, section edits, authorized review/publication, and export. Show source freshness, editorial publication, and evidence acceptance as distinct properties.
+
+## 3. Documentation and exact search anchors
+
+[Architecture 9.2](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/architecture/ELIOT_RESEARCH.md); [production plan 8.5](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/implementation/production-readiness-plan.md).
+
 ```sh
 git grep -n -F '### 8.5 Wiki and artifact materialization' -- docs/implementation/production-readiness-plan.md
 ```
 
-## 4. Как сделать
-Переиспользовать Wiki/artifact APIs и panels. Переключение revision не меняет canonical head. Edit создаёт новую COW revision; inherited audit не присваивается изменённому утверждению. Показывать причину недоступного publish, не disabled без объяснения; confirm dialog относится к точной revision. При stale CAS предложить сравнить/перечитать, не перезаписать автоматически. Download проверяет все части и сохраняет DRAFT/limitations/verdicts. В длинном отчёте грузить section по мере запроса, не весь corpus/report в браузер одним JSON. Общее оформление/keyboard/mobile из existing UI.
+## 4. Implementation approach
 
-## 5. Критерии выполнения
-- Draft→read exact citation→edit B→review→publish→reopen v1/v2 проходит; A/C hashes сохраняются при неизменных dependencies.
-- Edited unsupported claim не выглядит проверенным; no permission/stale source/purge/CAS conflict не обходятся кнопкой.
-- History/download после reconnect отражают тот же artifact и claims; partial download не выдаётся полным.
-- Actual browser/HTTP/storage tests, accessible controls и desktop/mobile/dark/light screenshots; exact SHA. Никакой новой workflow/renderer библиотеки ради перестановки элементов.
+Reuse Wiki/artifact APIs and panels. Selecting a revision does not mutate the canonical head. Editing creates a COW revision; changed statements do not inherit the previous audit. Explain unavailable publication rather than leaving an unexplained disabled button, and bind confirmation to the exact revision.
+
+On stale CAS, offer comparison/reload instead of automatic overwrite. Export verifies every part and preserves DRAFT/limitations/verdicts. Read long reports by requested sections rather than a single whole-report/corpus JSON payload. Reuse existing styling, accessibility, and mobile conventions; no new workflow/renderer library.
+
+## 5. Acceptance criteria
+
+- [ ] Draft→exact citation→edit B→review→publish→reopen v1/v2 succeeds; valid unchanged A/C dependencies retain their hashes.
+- [ ] Edited unsupported claims cannot look verified; lack of permission, purge, stale source, and CAS conflict cannot be bypassed by UI actions.
+- [ ] History/export after reconnect refer to the same artifact and claims; incomplete export is not called complete.
+- [ ] Actual browser/HTTP/storage tests and accessible desktop/mobile/dark/light screenshots are recorded.
+- [ ] Include exact SHA/results and preserve one existing renderer/API implementation.
