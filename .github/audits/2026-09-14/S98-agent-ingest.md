@@ -1,35 +1,39 @@
-# S98 — machine bundle ingest и явное добавление source в проект
+# S98 — Complete machine bundle ingestion and explicit project attachment
 
-База a2aca127; ER-24/29/14. Входы: S10/#202 common grant, S31/#223 owner issuance и действующий normalized-bundle importer. Это задание, не реализованный маршрут. S58/#250 отдельно обслуживает Workspace raw export/conversion; обычный machine ingest не требует Google.
+Baseline `a2aca127`; ER-24/29/14. Inputs: common S10/#202 grant, owner issuance S31/#223, and the existing normalized-bundle importer. This is proposed implementation, not an already working path. S58/#250 separately covers Workspace raw export/conversion; ordinary machine ingest requires no Google integration.
 
-## 1. Суть
-Read/query/run API недостаточен без добавления источника. В прежнем паспорте project.attach оставался решением «если понадобится», хотя для полного source→project→research цикла нужно определить его поведение заранее. Import permission не должен превращаться в общее право редактировать проект или source ownership.
+## 1. Problem
 
-## 2. Что сделать
-Замкнуть existing bundle discover/prepare/parts/file-complete/commit/status/recovery для service с ingest.bundle и явными ingest_namespace_ids. Затем отдельным авторизованным действием project.attach прикрепить admitted source к проекту. Обе операции используют project_client_grant и DTO S10, не создают собственные таблицы разрешений.
+Machine read/query/run is incomplete without adding a source. The earlier optional project.attach wording left the final source→project→research step undefined. Ingestion permission must not become unrestricted project editing or source ownership.
 
-Выбранный attach interface: существующий `PUT /api/v1/research/projects/:project_id` и существующий UpdateProjectRequest — title, source_ids, expected_revision, idempotency_key. Для service с project.attach разрешено только монотонное добавление source IDs: title неизменен, ни один текущий source не удаляется, owner/project metadata не меняются. Другие project mutations остаются owner-only. Новый `/projects` namespace или ещё один membership API не нужен.
+## 2. Required change
 
-## 3. Документация / grep
-[Маршруты](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/packages/interfaces/src/routes.ts), [точный UpdateProjectRequest](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/packages/interfaces/src/project-owner-api.ts), [project service](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/apps/eliotr-core/src/project-owner-service.ts), [ER-29](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/agent-work/ER-29-source-acquisition-admission-and-qualification.md).
+Complete existing bundle discover/prepare/parts/file-complete/commit/status/recovery for a service with ingest.bundle and explicit ingest_namespace_ids. Then attach the admitted source through separately granted project.attach. Both use the shared project_client_grant/DTO from S10.
+
+Use existing `PUT /api/v1/research/projects/:project_id` and UpdateProjectRequest: title, source_ids, expected_revision, idempotency_key. For service project.attach, permit only additions: title unchanged, all current sources retained, and no owner/project metadata changes. Other project mutations remain owner-only. Do not add another project namespace or membership API.
+
+## 3. Documentation and exact search anchors
+
+[Routes](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/packages/interfaces/src/routes.ts), [Project DTO](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/packages/interfaces/src/project-owner-api.ts), [project service](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/apps/eliotr-core/src/project-owner-service.ts), [ER-29](https://github.com/UnknownAlienHuman/eliot-research/blob/a2aca1277b0edbbed04de66e0d44e383e1b815ef/docs/agent-work/ER-29-source-acquisition-admission-and-qualification.md).
 ```sh
 git grep -n -F '/api/v1/ingest/bundles/prepare' -- packages/interfaces/src/routes.ts
 git grep -n -F 'export interface UpdateProjectRequest' -- packages/interfaces/src/project-owner-api.ts
 ```
 
-## 4. Как сделать
-**Ingest:** использовать выбранный transport grant locator X-Eliotr-Client-Grant из S10; это не credential. Сравнить verified caller, grant project, namespace из bundle, current grantor writer/admission policy и owner generation до upload и перед commit. Пустой namespace set не wildcard. Capture/bundle операции сохраняют выбранный grant/actor/namespace; последующий status/recovery не может заменить их новым header. Делегат не становится mutable owner. Проверить существующие schema/storage ограничения principal/client_class: если они owner-only, обобщить caller boundary и применить необходимую additive migration; запрещено подставлять owner context для обхода.
+## 4. Implementation approach
 
-**Attach:** обычный PUT декодируется тем же DTO. Для service получить текущий project head/memberships и сравнить expected_revision; разрешить только unchanged title и superset текущего source set. Каждый добавляемый source должен быть уже admitted, доступен grantor и находиться в разрешённом ingest namespace с допустимой residency/disclosure. Проверка project.attach не требует, чтобы новый source уже состоял в проекте — это сделало бы добавление невозможным; она проверяет отдельный namespace/source ceiling. При этом read/query по namespace не выдаётся: после успешного CAS новый source становится членом проекта, а новый query фиксирует новый scope. Исторические runs сохраняют прежний member set.
+**Ingest:** X-Eliotr-Client-Grant is a locator, not a credential. Check verified caller, grant/project, bundle namespace, current grantor writer/admission policy, and owner generation before upload and canonical commit. An empty namespace set is not a wildcard. Bind operations durably to the authorized actor/grant/namespace; later status/recovery cannot substitute another binding through headers. Generalize genuinely owner-only storage/caller restrictions with additive migration where required, never by forging owner_pwa context. The delegate does not become mutable owner.
 
-Переиспользовать project service и его guarded CAS/membership/outbox transaction. Не копировать SQL update в новый сервис. Проверять монотонность и source permissions при фактическом settlement, не только до внешнего await. Запрос на rename/detach/foreign source отклоняется целиком; не удалять запрещённые поля из body молча. На concurrent project edit вернуть штатный conflict, не перезаписать head. Повтор с исходным idempotency key возвращает прежний receipt и не создаёт новую temporal membership.
+**Attach:** decode the existing PUT DTO, read the current project head, check expected_revision, and permit only unchanged title plus a superset of current members. Every addition must already be admitted, authorized to the grantor, in a permitted ingest namespace, and compatible with residency/disclosure rules. A new source need not already be a project member—that would make attachment impossible. The separate source/namespace ceiling authorizes adding it; it does not grant namespace-wide read access.
 
-Normalized bundle проходит existing quality/admission/residency и точный byte readback. Offline preprocessing не является admission proof. Partial uploads не входят в retrieval/model context. Unknown conversion или внешнее действие не повторять под новой identity. Paid preprocessing и source-owner cutover не разрешены автоматически ни ingest.bundle, ни project.attach.
+Reuse the existing guarded project CAS/membership/outbox transaction rather than copying its SQL into a new service. Recheck permissions and append-only semantics at settlement, not only before external I/O. Reject rename, removal, metadata changes, or foreign additions as an entire request; never silently strip disallowed changes. Concurrent edits conflict rather than overwrite. Identical replay returns its existing receipt without new temporal membership.
 
-## 5. Критерии выполнения
-- Clean database: owner API выдаёт явные ingest.bundle/project.attach/catalog/query/run права; independent service импортирует источник, выполняет разрешённый PUT attach, затем query/run/citation без browser cookies/Google/manual SQL.
-- Ровно одна admitted revision/outbox и ожидаемая membership revision; repeated upload/attach/lost ACK/restart не дублируют source или temporal membership.
-- Reader-only grant, wrong namespace, revoked owner/delegation, changed source owner, wrong bytes/maps, stale source/project head и недопустимая residency отказаны до canonical commit.
-- Service rename/detach/изменение metadata, добавление чужого либо неadmitted source отвергаются целиком. Source, ещё не состоящий в проекте, успешно добавляется при наличии именно attach permission и namespace ceiling.
-- Query до attach не видит новый source; после attach получает новый scoped результат; старый run/history не расширяется задним числом.
-- Actual HTTP/D1/R2 tests, owner-regression, пример существующего wire DTO, exact SHA и результаты. Наличие enum operation не считается реализацией этого пути.
+Preserve bundle validation, quality/admission/residency, exact byte readback, and partial-upload exclusion from retrieval/context. Offline processing is not admission proof. New queries see newly committed membership; historical runs retain original frozen members. Neither permission automatically authorizes paid preprocessing or ownership cutover.
+
+## 5. Acceptance criteria
+
+- [ ] From a clean database, the owner issues explicit grants through the API; an independent service imports, attaches through the existing PUT, then queries/runs/opens citations without browser cookies, Google, or manual SQL.
+- [ ] One admitted revision/outbox and expected membership revision survive repeated upload/attach, lost ACK, and restart without duplication.
+- [ ] Read-only grants, wrong namespace, revoked authority, changed owner, corrupt bytes/maps, stale heads, and invalid residency fail before canonical mutation.
+- [ ] Service rename/detach/metadata changes and foreign/unadmitted additions fail atomically; a not-yet-member source succeeds only with valid attachment permission and source ceiling.
+- [ ] Before/after queries reflect the membership change without expanding old run/history scopes. Retain actual HTTP/D1/R2 tests, owner regression, a wire example, exact SHA, and results; declaring an operation enum is not completion.
