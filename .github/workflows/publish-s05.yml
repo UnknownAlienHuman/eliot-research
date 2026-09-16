@@ -18,7 +18,7 @@ jobs:
           ref: main
           fetch-depth: 2
           persist-credentials: true
-      - name: Reconstruct and apply the reviewed S05 patch
+      - name: Reconstruct the reviewed S05 candidate commit
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
@@ -26,7 +26,7 @@ jobs:
           set -euo pipefail
           test "$(git branch --show-current)" = main
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
-          test "$(git rev-parse HEAD^)" = b37ec3ae99c4dea45bd2a897c78469f1f9dc3b5b
+          test "$(git rev-parse HEAD^)" = fa3a577f118723866869c0955b5b38cb3384d11e
           python3 - <<'PY'
           import base64, hashlib, json, os, pathlib, urllib.request
 
@@ -82,8 +82,14 @@ jobs:
           PY
           git add apps/eliotr-core/test/research-deployment-compatibility.test.ts
           git rm .github/workflows/publish-s05.yml
-          git write-tree > /tmp/s05-candidate-tree
+          git diff --cached --name-only -- '*.ts' > /tmp/s05-changed-ts
+          test -s /tmp/s05-changed-ts
           git diff --cached --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'fix: continue Research across identical backend deployments (S05)'
+          git rev-parse 'HEAD^{tree}' > /tmp/s05-candidate-tree
+          test -z "$(git status --porcelain)"
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
           node-version: 22
@@ -96,7 +102,7 @@ jobs:
           mkdir -p /tmp/s05-validation
           pnpm exec tsc -b apps/eliotr-pwa/tsconfig.json apps/eliotr-core/tsconfig.json --pretty false
           pnpm exec tsc -p apps/eliotr-core/test/tsconfig.json --pretty false
-          changed_ts="$(git diff --cached --name-only -- '*.ts')"
+          changed_ts="$(cat /tmp/s05-changed-ts)"
           test -n "$changed_ts"
           pnpm exec eslint $changed_ts
           node scripts/check-boundaries.mjs
@@ -108,18 +114,14 @@ jobs:
           node scripts/test-deployment-verification.mjs
           pnpm --dir apps/eliotr-core exec vitest run test/research-deployment-compatibility.test.ts 2>&1 | tee /tmp/s05-validation/compatibility.log
           pnpm --dir apps/eliotr-core exec vitest run test/research-run-status.test.ts -t 'keeps the original run readable under an equal-backend PWA-only deployment' 2>&1 | tee /tmp/s05-validation/status.log
-          test "$(git write-tree)" = "$(cat /tmp/s05-candidate-tree)"
-          git diff --cached --check
-      - name: Publish the exact tested tree to main
+          test "$(git rev-parse 'HEAD^{tree}')" = "$(cat /tmp/s05-candidate-tree)"
+          test -z "$(git status --porcelain)"
+      - name: Publish the exact tested commit to main
         shell: bash
         run: |
           set -euo pipefail
-          candidate_tree="$(cat /tmp/s05-candidate-tree)"
-          test "$(git write-tree)" = "$candidate_tree"
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git commit -m 'fix: continue Research across identical backend deployments (S05)'
-          test "$(git rev-parse 'HEAD^{tree}')" = "$candidate_tree"
+          test "$(git rev-parse 'HEAD^{tree}')" = "$(cat /tmp/s05-candidate-tree)"
+          test -z "$(git status --porcelain)"
           git push origin HEAD:main
       - uses: actions/upload-artifact@v4
         if: always()
