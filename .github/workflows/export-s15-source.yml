@@ -1,0 +1,33 @@
+name: export-s15-source
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/export-s15-source.yml]
+permissions:
+  contents: read
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Export committed sources only
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git branch --show-current)" = main
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          mkdir -p /tmp/s15-source
+          git bundle create /tmp/s15-source/main.bundle main
+          git rev-parse HEAD > /tmp/s15-source/SOURCE_SHA
+          (cd /tmp/s15-source && sha256sum main.bundle > SHA256SUMS)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: s15-source
+          path: /tmp/s15-source/
+          retention-days: 1
+          if-no-files-found: error
