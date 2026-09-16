@@ -134,9 +134,10 @@ export async function readOwnerResearchRuns(env: Env, context: AuthenticatedRequ
   let rows: { operation_id: string; created_at: string }[];
   try {
     const result = await env.CORE_DB.prepare(
-      "SELECT operation_id, created_at FROM research_workflow_run " +
-      "WHERE principal_ref=?1 AND deployment_generation=?2 " +
-      "ORDER BY created_at DESC, operation_id DESC LIMIT 8",
+      "SELECT r.operation_id, r.created_at FROM research_workflow_run r " +
+      "JOIN research_deployment_compatible c ON c.origin_deployment_generation=r.deployment_generation " +
+      "AND c.active_deployment_generation=?2 WHERE r.principal_ref=?1 " +
+      "ORDER BY r.created_at DESC, r.operation_id DESC LIMIT 8",
     ).bind(context.principal_ref, env.DEPLOYMENT_GENERATION)
       .all<{ operation_id: string; created_at: string }>();
     if (!result.success) throw new Error("Research history read failed");

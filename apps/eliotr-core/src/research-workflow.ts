@@ -31,6 +31,7 @@ import {
   type ResearchQualificationRenewalMarker,
 } from "./research-qualification-renewal.js";
 import { isResearchModelStage, researchStageBudgetLeaseMs } from "./research-runtime-duration.js";
+import { requireResearchDeploymentCompatibility } from "./research-deployment-compatibility.js";
 
 export interface ResearchWorkflowRunParams {
   readonly workflow_kind?: "RESEARCH";
@@ -207,6 +208,7 @@ export class ResearchWorkflow extends WorkflowEntrypoint<Env, ResearchWorkflowPa
       });
       return result;
     }
+    await requireResearchDeploymentCompatibility(this.env.CORE_DB, params.deployment_generation, this.env.DEPLOYMENT_GENERATION);
     const principal: WorkflowPrincipal = {
       principal_ref: params.principal_ref,
       credential_generation: params.credential_generation,

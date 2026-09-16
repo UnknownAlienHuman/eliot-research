@@ -91,6 +91,7 @@ function harness(overrides = {}) {
   const calls = [];
   const receipts = [];
   const provisionerEnvs = [];
+  const deploymentRows = new Map();
   let reads = 0;
   const options = { confirmLive: true, verifyCode: async () => {}, environment, usageSnapshot: defaultUsageSnapshot, now: () => now, log: () => {},
     execute(command, args, cwd, env) {
@@ -104,14 +105,44 @@ function harness(overrides = {}) {
     archive: async () => { calls.push("archive"); },
     read: async () => { reads += 1; return overrides.driftAt === reads ? Buffer.from("{}") : bytes; },
     save: async (receipt) => { calls.push("save"); receipts.push(receipt); },
-    fetchImpl: async (url) => {
-      calls.push(`GET ${url}`);
+    fetchImpl: async (url, init = {}) => {
+      const method = init.method ?? "GET";
+      calls.push(`${method} ${url}`);
+      if (method === "POST" && String(url).includes("/d1/database/")) {
+        const batch = JSON.parse(init.body).batch;
+        const result = batch.map(({ sql, params }) => {
+          let changes = 0;
+          let results = [];
+          if (sql.startsWith("SELECT deployment_generation,state,created_at,backend_fingerprint")) {
+            const selected = new Set(params);
+            results = [...deploymentRows.values()].filter((row) => row.state === "ACTIVE" || selected.has(row.deployment_generation));
+          } else if (sql.startsWith("UPDATE investigation_current_deployment SET state='RETIRED'")) {
+            const row = deploymentRows.get(params[0]);
+            if (row?.state === "ACTIVE") { row.state = "RETIRED"; changes = 1; }
+          } else if (sql.startsWith("INSERT INTO investigation_current_deployment")) {
+            const [generation, created_at, backend_fingerprint] = params;
+            const row = deploymentRows.get(generation);
+            if (row === undefined) {
+              deploymentRows.set(generation, { deployment_generation: generation, state: "ACTIVE", created_at, backend_fingerprint });
+              changes = 1;
+            } else if (row.state === "RETIRED" && row.backend_fingerprint === backend_fingerprint) {
+              row.state = "ACTIVE";
+              row.created_at = created_at;
+              changes = 1;
+            }
+          } else {
+            throw new Error(`unexpected deployment authority SQL: ${sql}`);
+          }
+          return { success: true, results, meta: { changes } };
+        });
+        return globalThis.Response.json({ success: true, result });
+      }
       if (overrides.failReadback) return new globalThis.Response("login", { headers: { "content-type": "text/html" } });
-      if (url.endsWith("/workers/scripts")) return globalThis.Response.json({ success: true, result: [
+      if (String(url).endsWith("/workers/scripts")) return globalThis.Response.json({ success: true, result: [
         { id: "eliotr-core", compatibility_date: "2026-08-28", has_assets: true,
           exports: { ResearchSession: { type: "durable-object" } } },
       ] });
-      if (url.endsWith("/healthz")) return globalThis.Response.json({ ready: true,
+      if (String(url).endsWith("/healthz")) return globalThis.Response.json({ ready: true,
         deployment_generation: "git-test", checked_at: new Date(now).toISOString() });
       return globalThis.Response.json({ trace_id: "trace-test", deployment_generation: "git-test", data: {
         protocol: "eliotr.capabilities.v1", deployment_generation: "git-test", enabled_slices: ["HEALTH", "ACCESS"],
@@ -143,7 +174,12 @@ await check("successful ordering and no implicit live qualification", async () =
   assert.equal(test.receipts.length, 1);
   assert.ok(!JSON.stringify(receipt).includes("secret-"));
   const schema = JSON.parse(await readFile(new URL("../infra/cloudflare/deployment-receipt.schema.json", import.meta.url), "utf8"));
-  assert.deepEqual(Object.keys(receipt).sort(), schema.required.slice().sort());
+  for (const key of schema.required) assert.ok(Object.hasOwn(receipt, key), `required receipt field is missing: ${key}`);
+  for (const key of Object.keys(receipt)) assert.ok(Object.hasOwn(schema.properties, key), `receipt field is absent from schema: ${key}`);
+  assert.match(receipt.backend_fingerprint, /^[0-9a-f]{64}$/u);
+  assert.equal(receipt.deployment_authority_sync.backend_fingerprint, receipt.backend_fingerprint);
+  assert.equal(receipt.deployment_authority_sync.deployment_generation, receipt.deployment_generation);
+  assert.equal(receipt.deployment_authority_sync.readback, "PASS");
   const itemSchema = schema.properties.remote_http_smoke.oneOf.find((branch) => branch.properties.state.const === "PASS").properties.results.items;
   assert.deepEqual(Object.keys(receipt.remote_http_smoke.results[0]).sort(), itemSchema.required.slice().sort());
 });

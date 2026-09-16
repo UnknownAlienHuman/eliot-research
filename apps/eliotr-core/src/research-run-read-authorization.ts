@@ -8,6 +8,7 @@ import { NavigationError } from "@eliotr/retrieval";
 import type { VersionedRef } from "@eliotr/contracts";
 import type { Env } from "./env.js";
 import { reopenOwnerArtifactDraft } from "./research-artifact-reauthorization-http.js";
+import { requireResearchDeploymentCompatibility } from "./research-deployment-compatibility.js";
 
 interface RunBinding {
   readonly credential_generation: string;
@@ -79,17 +80,20 @@ export async function prepareReauthenticatedRunRead(
     "WHERE operation_id=?1 AND principal_ref=?2 LIMIT 1",
   ).bind(operationId, context.principal_ref).first<RunBinding>();
   if (binding === null) return null;
-  if (binding.deployment_generation !== env.DEPLOYMENT_GENERATION) {
+  try {
+    await requireResearchDeploymentCompatibility(env.CORE_DB, binding.deployment_generation, env.DEPLOYMENT_GENERATION);
+  } catch {
     if (forControl) stale();
     return null;
   }
-  if (!forControl && binding.credential_generation === context.credential_generation) return null;
+  if (!forControl && binding.credential_generation === context.credential_generation &&
+      binding.deployment_generation === env.DEPLOYMENT_GENERATION) return null;
   if (typeof binding.credential_generation !== "string" || typeof binding.handler_generation !== "string") corrupt();
 
   const principal = {
     principal_ref: context.principal_ref,
     credential_generation: context.credential_generation,
-    deployment_generation: env.DEPLOYMENT_GENERATION,
+    deployment_generation: binding.deployment_generation,
   };
   const store = new WorkflowCheckpointStore(env.CORE_DB);
   // The store filters by owner and validates the recorded state/receipts. Its
@@ -117,12 +121,14 @@ export async function prepareReauthenticatedRunRead(
     if (head.principal_ref !== context.principal_ref || head.scope_snapshot_id !== originalRef.id ||
         head.scope_snapshot_revision !== originalRef.revision) stale();
     if (forControl) {
-      const active = await env.CORE_DB.prepare(
-        "SELECT 1 AS present FROM investigation_current_deployment d JOIN investigation_current_policy p " +
-        "ON p.policy_generation=?2 AND p.policy_authority_ref=?3 AND p.state='ACTIVE' " +
-        "WHERE d.deployment_generation=?1 AND d.state='ACTIVE' LIMIT 1",
-      ).bind(binding.deployment_generation, head.policy_generation, head.policy_authority_ref).first();
-      if (active === null) stale();
+      await requireResearchDeploymentCompatibility(
+        env.CORE_DB, binding.deployment_generation, env.DEPLOYMENT_GENERATION,
+      ).catch(stale);
+      const activePolicy = await env.CORE_DB.prepare(
+        "SELECT 1 AS present FROM investigation_current_policy " +
+        "WHERE policy_generation=?1 AND policy_authority_ref=?2 AND state='ACTIVE' LIMIT 1",
+      ).bind(head.policy_generation, head.policy_authority_ref).first();
+      if (activePolicy === null) stale();
     }
     requireActiveRequest(context);
     const validUntil = Math.min(Date.parse(historical.scope.expires_at), Date.parse(authorization.expires_at),

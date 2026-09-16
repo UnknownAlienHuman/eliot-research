@@ -101,7 +101,7 @@ export async function cancelResearchRun(
     let writeUnknown = false;
     try {
       const result = await env.CORE_DB.prepare(CANCEL_SQL).bind(operationId, context.principal_ref,
-        env.DEPLOYMENT_GENERATION, fence.ledger_epoch, fence.orientation_epoch, fence.valid_until_ms,
+        read.status.deployment_generation, fence.ledger_epoch, fence.orientation_epoch, fence.valid_until_ms,
         fence.scope_ref.id, fence.scope_ref.revision, context.credential_generation, fence.authorization_receipt_ref).run();
       if (!result.success) writeUnknown = true;
       else changed = result.meta.changes === 1;
@@ -110,7 +110,7 @@ export async function cancelResearchRun(
     // never by minting another cancellation or rerunning a possibly paid stage.
     const after = await new WorkflowCheckpointStore(env.CORE_DB).readRunStatus(operationId, {
       principal_ref: context.principal_ref, credential_generation: context.credential_generation,
-      deployment_generation: env.DEPLOYMENT_GENERATION,
+      deployment_generation: read.status.deployment_generation,
     }, "owner-read");
     await read.requireCurrent();
     validateResearchRunControl(context, operationId, body);
@@ -186,7 +186,7 @@ async function latestAuthorizedStatus(
   const latest = await new WorkflowCheckpointStore(env.CORE_DB).readRunStatus(authorized.status.operation_id, {
     principal_ref: context.principal_ref,
     credential_generation: context.credential_generation,
-    deployment_generation: env.DEPLOYMENT_GENERATION,
+    deployment_generation: authorized.status.deployment_generation,
   }, "owner-read");
   await authorized.requireCurrent();
   if (latest === null || !sameRunIdentity(authorized.status, latest)) fail("RESEARCH_RUN_STATUS_INVALID", 409);

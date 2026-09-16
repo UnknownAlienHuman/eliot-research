@@ -30,6 +30,10 @@ retrieval, authentication semantics, or database schemas.
 - `scripts/provision-ai-gateways.mjs`
 - `scripts/test-cloudflare-mcp-oauth.mjs`
 - `scripts/test-cloudflare-provisioners.mjs`
+- `scripts/lib/research-backend-fingerprint.mjs`
+- `scripts/lib/research-deployment-authority.mjs`
+- `scripts/test-research-backend-fingerprint.mjs`
+- `scripts/test-research-deployment-authority.mjs`
 - `infra/cloudflare/resources.json`
 - `infra/cloudflare/access.json`
 - `infra/cloudflare/foundation-receipt.schema.json`

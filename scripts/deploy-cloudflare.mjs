@@ -14,6 +14,7 @@ import { loadResearchRuntimeEnvironment, RESEARCH_RUNTIME_CONFIGURATION_KEYS,
   RESEARCH_RUNTIME_SEMANTIC_CONFIGURATION_CHUNK_KEYS, RESEARCH_RUNTIME_SEMANTIC_CONFIGURATION_KEY,
   splitResearchSemanticConfiguration } from "./lib/research-runtime-config.mjs";
 import { synchronizeResearchDeploymentAuthority } from "./lib/research-deployment-authority.mjs";
+import { computeResearchBackendFingerprint } from "./lib/research-backend-fingerprint.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const core = resolve(root, "apps/eliotr-core");
@@ -183,6 +184,7 @@ export async function deployCloudflare({ confirmLive = false, environment = proc
   const config = validateGeneratedDeployment(bytes, env, input);
   verifyGeneratedSemanticConfiguration(config, env);
   const digest = createHash("sha256").update(bytes).digest("hex");
+  const backendFingerprint = computeResearchBackendFingerprint({ root, generated_config: config });
   const requireUnchangedConfig = async () => {
     if (createHash("sha256").update(await read(configPath)).digest("hex") !== digest) {
       throw new Error("Generated deployment config changed during release");
@@ -210,6 +212,7 @@ export async function deployCloudflare({ confirmLive = false, environment = proc
     api_token: env.CLOUDFLARE_API_TOKEN,
     api_base_url: input.apiBase,
     deployment_generation: env.ELIOTR_DEPLOYMENT_GENERATION,
+    backend_fingerprint: backendFingerprint,
     fetch_impl: fetchImpl,
     now,
   });
@@ -219,6 +222,7 @@ export async function deployCloudflare({ confirmLive = false, environment = proc
     environment: env.ELIOTR_ENVIRONMENT,
     worker,
     generated_config_sha256: digest,
+    backend_fingerprint: backendFingerprint,
     remote_http_smoke: remoteHttpSmoke,
     deployment_authority_sync: deploymentAuthority,
     live_conformance: {

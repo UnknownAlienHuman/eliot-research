@@ -151,7 +151,7 @@ export function createResearchModelSpendPolicyService(input: ResearchModelSpendP
       "AND g.state='ACTIVE' AND g.client_class='owner_pwa' AND g.credential_generation=r.credential_generation " +
       "AND g.authorization_receipt_ref=r.authorization_receipt_ref AND g.policy_authority_ref=r.policy_authority_ref " +
       "AND EXISTS(SELECT 1 FROM investigation_current_policy p WHERE p.policy_generation=r.policy_generation AND p.policy_authority_ref=r.policy_authority_ref AND p.state='ACTIVE') " +
-      "AND EXISTS(SELECT 1 FROM investigation_current_deployment d WHERE d.deployment_generation=r.deployment_generation AND d.state='ACTIVE') LIMIT 1",
+      "AND EXISTS(SELECT 1 FROM research_deployment_compatible c WHERE c.origin_deployment_generation=r.deployment_generation) LIMIT 1",
     ).bind(input.operation_id, attempt, requestSha).first<CurrentStage>();
     if (row === null || row.principal_ref !== policy.principal_ref || row.credential_generation !== policy.credential_generation ||
         row.deployment_generation !== policy.deployment_generation || row.policy_generation !== policy.policy_generation ||

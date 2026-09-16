@@ -7,6 +7,8 @@ await import("./test-cloudflare-mcp-oauth.mjs");
 await import("./test-launch-code.mjs");
 await import("./test-local-runtime.mjs");
 await import("./test-deployment-verification.mjs");
+await import("./test-research-backend-fingerprint.mjs");
+await import("./test-research-deployment-authority.mjs");
 await import("./test-deployment-orchestration.mjs");
 await import("./test-cloudflare-provisioners.mjs");
 await import("./test-ai-search-provisioning-readback.mjs");

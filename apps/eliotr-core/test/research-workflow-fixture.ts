@@ -46,7 +46,7 @@ export async function workflowFixture(tag: string, lane: "confirmatory" | "explo
   const hash = await digest(bytes);
   await db.batch([
     db.prepare("INSERT INTO investigation_current_policy VALUES ('workflow-policy','workflow-policy-authority','ACTIVE',?1)").bind(now),
-    db.prepare("INSERT INTO investigation_current_deployment VALUES ('workflow-deployment','ACTIVE',?1)").bind(now),
+    db.prepare("INSERT INTO investigation_current_deployment(deployment_generation,state,created_at) VALUES ('workflow-deployment','ACTIVE',?1)").bind(now),
     db.prepare(`INSERT INTO scope_snapshot (snapshot_id, revision, resolved_scope_expression_json,
       participant_generations_json, member_source_revision_refs_json, source_owner_generations_json,
       policy_authority_ref, disclosure_closure_digest, purge_ledger_revision, snapshot_digest, created_at, expires_at)

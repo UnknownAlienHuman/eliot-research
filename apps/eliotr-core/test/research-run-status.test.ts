@@ -32,7 +32,7 @@ async function storedRun(completed = false) {
   await db.batch([
     db.prepare("INSERT INTO investigation_current_policy VALUES ('status-policy',?1,'ACTIVE',?2)")
       .bind(scope.policy_authority_ref, createdAt),
-    db.prepare("INSERT INTO investigation_current_deployment VALUES (?1,'ACTIVE',?2)")
+    db.prepare("INSERT INTO investigation_current_deployment(deployment_generation,state,created_at) VALUES (?1,'ACTIVE',?2)")
       .bind(runtime.DEPLOYMENT_GENERATION, createdAt),
   ]);
   const bytes = new TextEncoder().encode("status fixture, not a model result");
@@ -109,6 +109,30 @@ describe("owner run status after reauthentication over real HTTP/D1/R2", () => {
     expect(response.status, JSON.stringify(await response.clone().json())).toBe(200);
     const result = await body<{ runs: { status: ResearchRunStatus }[] }>(response);
     expect(result.data.runs.map((item) => item.status.workflow_instance_id)).toEqual(["status-run"]);
+  });
+
+  it("keeps the original run readable under an equal-backend PWA-only deployment", async () => {
+    await storedRun();
+    const before = await executionSnapshot();
+    const fingerprint = "a".repeat(64);
+    const nextDeployment = "status-pwa-only";
+    await db.prepare("UPDATE investigation_current_deployment SET state='RETIRED',backend_fingerprint=?2 WHERE deployment_generation=?1")
+      .bind(runtime.DEPLOYMENT_GENERATION, fingerprint).run();
+    await db.prepare("INSERT INTO investigation_current_deployment(deployment_generation,state,created_at,backend_fingerprint) VALUES (?1,'ACTIVE',?2,?3)")
+      .bind(nextDeployment, new Date().toISOString(), fingerprint).run();
+    const nextRuntime = { ...runtime, DEPLOYMENT_GENERATION: nextDeployment };
+    const status = await handleHttp(statusRequest(), nextRuntime, {} as ExecutionContext, { accessVerifier: verifier() });
+    expect(status.status, JSON.stringify(await status.clone().json())).toBe(200);
+    const history = await handleHttp(new Request("https://research.example/api/v1/research/runs"), nextRuntime,
+      {} as ExecutionContext, { accessVerifier: verifier() });
+    expect(history.status, JSON.stringify(await history.clone().json())).toBe(200);
+    expect((await body<{ runs: { status: ResearchRunStatus }[] }>(history)).data.runs
+      .map((item) => item.status.workflow_instance_id)).toContain("status-run");
+    expect(await executionSnapshot()).toEqual(before);
+    await db.prepare("UPDATE investigation_current_deployment SET backend_fingerprint=?2 WHERE deployment_generation=?1")
+      .bind(nextDeployment, "b".repeat(64)).run();
+    const incompatible = await handleHttp(statusRequest(), nextRuntime, {} as ExecutionContext, { accessVerifier: verifier() });
+    expect(incompatible.status).toBe(409);
   });
 
   it("preserves durable cancellation across login and does not resume the run", async () => {

@@ -261,15 +261,16 @@ async function readRun(database: D1Database, operationId: string, principal: Wor
 }
 
 interface CurrentPolicyRow { readonly policy_generation: unknown; readonly policy_authority_ref: unknown; readonly state: unknown; }
-interface CurrentDeploymentRow { readonly deployment_generation: unknown; readonly state: unknown; }
+interface CurrentDeploymentRow { readonly origin_deployment_generation: unknown; readonly active_deployment_generation: unknown; }
 
 async function assertCurrentPolicyAndDeployment(database: D1Database, run: RunAuthority): Promise<void> {
   const [policy, deployment] = await Promise.all([
     database.prepare("SELECT policy_generation,policy_authority_ref,state FROM investigation_current_policy WHERE policy_generation=?1 LIMIT 1").bind(run.policy_generation).first<CurrentPolicyRow>(),
-    database.prepare("SELECT deployment_generation,state FROM investigation_current_deployment WHERE deployment_generation=?1 LIMIT 1").bind(run.deployment_generation).first<CurrentDeploymentRow>(),
+    database.prepare("SELECT origin_deployment_generation,active_deployment_generation FROM research_deployment_compatible WHERE origin_deployment_generation=?1 LIMIT 1").bind(run.deployment_generation).first<CurrentDeploymentRow>(),
   ]);
   if (policy === null || policy.state !== "ACTIVE" || policy.policy_authority_ref !== run.policy_authority_ref ||
-      deployment === null || deployment.state !== "ACTIVE" || deployment.deployment_generation !== run.deployment_generation) {
+      deployment === null || deployment.origin_deployment_generation !== run.deployment_generation ||
+      typeof deployment.active_deployment_generation !== "string") {
     fail("REPORT_ADMISSION_AUTHORITY_STALE", "current policy or deployment changed during REPORT admission");
   }
 }

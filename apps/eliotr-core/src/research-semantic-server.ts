@@ -31,6 +31,7 @@ import {
 import { resolveResearchOwnerSpendPolicy } from "./research-owner-spend-policy.js";
 import { createResearchSemanticWorkflowHandlerFactory } from "./research-semantic-composition.js";
 import type { ResearchStageHandlerFactory } from "./research-stage-handlers.js";
+import { requireResearchDeploymentCompatibility } from "./research-deployment-compatibility.js";
 
 const PromptSchema = z.object({
   prompt: z.string().min(1), max_tokens: z.number().int().positive().safe(),
@@ -139,6 +140,8 @@ export interface ResearchSemanticServerInput {
 export async function createResearchSemanticServerHandlers(input: ResearchSemanticServerInput): Promise<ResearchStageHandlerFactory> {
   const { env, navigation, principal } = input;
   if (!researchSemanticConfigurationInstalled(env)) configurationMissing();
+  await requireResearchDeploymentCompatibility(env.CORE_DB, principal.deployment_generation, env.DEPLOYMENT_GENERATION)
+    .catch(configurationMissing);
   const runBinding = await env.CORE_DB.prepare(
     "SELECT handler_generation FROM research_workflow_run WHERE operation_id=?1 AND investigation_id=?2 " +
     "AND principal_ref=?3 AND credential_generation=?4 AND deployment_generation=?5",
@@ -191,7 +194,7 @@ export async function createResearchSemanticServerHandlers(input: ResearchSemant
     configurationMissing();
   }
   if (policy.principal_ref !== principal.principal_ref || policy.credential_generation !== principal.credential_generation ||
-      policy.deployment_generation !== principal.deployment_generation || principal.deployment_generation !== env.DEPLOYMENT_GENERATION ||
+      policy.deployment_generation !== principal.deployment_generation ||
       navigation.access.client_class !== "owner_pwa") configurationMissing();
   const synthesisRule = policy.rules.find((rule) => rule.stage === "SYNTHESIZE");
   const auditRule = policy.rules.find((rule) => rule.stage === "AUDIT_CLAIMS");
