@@ -1,8 +1,8 @@
 name: publish-reviewed-backend-checkpoint
 
 # One-shot transport for the owner's explicit direct-main implementation request.
-# Applies only the exact locally reviewed/tested plaintext patch below. No deployment.
-# Deletes this temporary bootstrap workflow in the resulting code commit.
+# Exact reviewed plaintext patch only; no deployment. The connector removes this
+# temporary bootstrap workflow after verifying the resulting application commit.
 on:
   push:
     branches: [main]
@@ -28,9 +28,9 @@ jobs:
           set -euo pipefail
           test "$(git branch --show-current)" = main
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
-          test "$(git rev-parse HEAD^)" = 7608c4c2268da636645e21ca02a61fbfab2607ef
+          test "$(git rev-parse HEAD^)" = c74d1375e518ee196aac3ea6ec684495491ba992
           cat > /tmp/verify-backend.py <<'PY'
-          import hashlib, json, pathlib, subprocess, sys
+          import hashlib, pathlib, subprocess, sys
           hashes = {
             'apps/eliotr-core/src/research-retrieve-branches.ts': ('f48fabcb6fb5f0e826a6ea6eb2eed8062b7c70f024d6fd396baa510dfa4a288a','aedb6d23b76bab9f55481d9581f51d43841903c4f12c7b2051d9886b6b72e63b'),
             'apps/eliotr-core/src/research-semantic-composition.ts': ('a2176bec33dd082d112c67a8addacaba9b13c1f1709386016da20efbbda22e27','988bbeada047e23c43b57d7aa21b361a979cf8c244914bf904d04741c3cb9f3f'),
@@ -51,9 +51,7 @@ jobs:
           for name, pair in hashes.items():
             assert hashlib.sha256(pathlib.Path(name).read_bytes()).hexdigest() == pair[int(after)], name
           actual = set(subprocess.check_output(['git','diff','--name-only','HEAD'],text=True).splitlines())
-          expected = set(hashes) if after else set()
-          if sys.argv[1] == 'final': expected.add('.github/workflows/export-federation-base.yml')
-          assert actual == expected, (actual, expected)
+          assert actual == (set(hashes) if after else set()), actual
           print('Exact reviewed files verified:', len(hashes), sys.argv[1])
           PY
           python3 /tmp/verify-backend.py before
@@ -88,7 +86,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p /tmp/backend-validation
-          pnpm exec tsc -b apps/eliotr-core/tsconfig.json --pretty false
+          pnpm exec tsc -b apps/eliotr-core/tsconfig.json apps/eliotr-pwa/tsconfig.json --pretty false
           pnpm exec tsc -p apps/eliotr-core/test/tsconfig.json --pretty false
           pnpm exec eslint $(git diff --name-only -- '*.ts')
           node scripts/check-boundaries.mjs
@@ -96,7 +94,7 @@ jobs:
           pnpm --dir apps/eliotr-core exec vitest run test/research-retrieve-branches.test.ts test/research-workflow-recovery.test.ts test/research-run-status.test.ts 2>&1 | tee /tmp/backend-validation/core.log
           pnpm --dir apps/eliotr-core exec vitest run test/research-query-retrieval.test.ts -t 'binds replay to the normalized requested expression' 2>&1 | tee /tmp/backend-validation/replay.log
           python3 /tmp/verify-backend.py after
-      - name: Publish the exact tested patch to main and remove this temporary workflow
+      - name: Publish the exact tested application patch to main
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -106,8 +104,7 @@ jobs:
           auth="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
           remote="$(git -c http.https://github.com/.extraheader="AUTHORIZATION: basic $auth" ls-remote origin refs/heads/main | cut -f1)"
           test "$remote" = "$GITHUB_SHA"
-          rm .github/workflows/export-federation-base.yml
-          python3 /tmp/verify-backend.py final
+          python3 /tmp/verify-backend.py after
           git diff --check
           git add --update
           git config user.name 'github-actions[bot]'
