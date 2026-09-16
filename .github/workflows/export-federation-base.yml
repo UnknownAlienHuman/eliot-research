@@ -1,6 +1,7 @@
-name: export-local-test-dependencies
+name: export-current-main
 
-# Temporary offline-development bootstrap. No application deployment or secrets.
+# Temporary read-only source snapshot for the offline implementation environment.
+# No dependency execution, deployment, repository mutation, or cloud credentials.
 on:
   push:
     branches: [main]
@@ -12,41 +13,25 @@ permissions:
 jobs:
   export:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
-    env:
-      COREPACK_HOME: /tmp/eliotr-corepack
+    timeout-minutes: 5
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           ref: main
+          fetch-depth: 0
           persist-credentials: false
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: 22
-      - run: corepack enable
-      - run: corepack prepare pnpm@11.23.0 --activate
-      - name: Install the unchanged frozen dependency graph
-        run: pnpm install --frozen-lockfile
-      - name: Archive only public dependencies and the local test runtime
+      - name: Snapshot the actual main history and tracked sources
         shell: bash
         run: |
           set -euo pipefail
           test "$(git branch --show-current)" = main
-          test -z "$(git status --porcelain -- pnpm-lock.yaml package.json)"
-          mkdir -p /tmp/eliotr-offline/runtime/bin /tmp/eliotr-offline-artifacts
-          cp "$(command -v node)" /tmp/eliotr-offline/runtime/bin/node
-          cp -a "$COREPACK_HOME" /tmp/eliotr-offline/runtime/corepack
-          find . -type d -name node_modules -prune -print0 | tar --null -T - -czf /tmp/eliotr-offline-artifacts/dependencies.tar.gz
-          tar -C /tmp/eliotr-offline/runtime -czf /tmp/eliotr-offline-artifacts/runtime.tar.gz .
-          git rev-parse HEAD > /tmp/eliotr-offline-artifacts/SOURCE_SHA
-          sha256sum pnpm-lock.yaml > /tmp/eliotr-offline-artifacts/LOCKFILE_SHA256
-          node --version > /tmp/eliotr-offline-artifacts/VERSIONS
-          pnpm --version >> /tmp/eliotr-offline-artifacts/VERSIONS
-          (cd /tmp/eliotr-offline-artifacts && sha256sum dependencies.tar.gz runtime.tar.gz > SHA256SUMS)
-          du -h /tmp/eliotr-offline-artifacts/*.tar.gz
+          mkdir -p /tmp/eliotr-main-snapshot
+          git bundle create /tmp/eliotr-main-snapshot/main.bundle main
+          git rev-parse HEAD > /tmp/eliotr-main-snapshot/SOURCE_SHA
+          (cd /tmp/eliotr-main-snapshot && sha256sum main.bundle > SHA256SUMS)
       - uses: actions/upload-artifact@v4
         with:
-          name: s06-frozen-local-test-dependencies
-          path: /tmp/eliotr-offline-artifacts/
+          name: current-main-backend-inputs
+          path: /tmp/eliotr-main-snapshot/
           if-no-files-found: error
           retention-days: 1
