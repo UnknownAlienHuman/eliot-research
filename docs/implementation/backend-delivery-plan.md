@@ -25,9 +25,32 @@ Paid-effect/authentication/cancellation changes still need a focused negative/re
 
 ## Checkpoint ledger
 
-- S01 boundary repair and S06 historical reading: already on baseline main. Their earlier focused results are recorded in PRs #193 and #198; full/live acceptance is separate.
-- Next: S08 query replay must compare the requested canonical scope expression with the persisted one, without creating a replacement snapshot or widening scope.
-- Subsequent completed checkpoints will be recorded here and in their existing planning PRs with implementation commits and the local agent's remaining acceptance work.
+- **Already on the baseline:** S01 boundary repair and S06 historical reading. Their earlier focused results are recorded in PRs #193 and #198; full/live acceptance is separate.
+- **Implemented, code commit [e15afeee](https://github.com/UnknownAlienHuman/eliot-research/commit/e15afeeec65b8e3304abc3cb802e1fbbab52ed60): S08 replay.** Compare normalized requested scope against the original persisted expression before returning cached bytes. Equivalent redundant expressions replay; changed PROJECT/GLOBAL/SELECTED expression conflicts even when current members happen to match. Preserve old result digests and recheck currentness after asynchronous hashing; no replacement snapshot or new authority writes.
+- **Implemented in the same checkpoint: S16 internal DO terminal settlement.** A missing or failed canonical D1 cancel cannot produce a successful CANCELLED response. Verify the actual cancellation receipt, then update the short-lived DO projection in a storage-only transaction. A stale execute snapshot cannot overwrite another terminal state. Confirm canonical completion before projecting it. This does not implement the separate public S14 cancel endpoint or S15 native recovery API.
+- **Implemented in the same checkpoint: S09 versioned semantic retrieval.** Passing AI_SEARCH was necessary but not sufficient: FAST_SEARCH's plan does not run SEM. New exploratory runs select `research-handlers.exploratory.v4` and the existing RESEARCH retrieval plan. Existing v1/v2/v3 runs retain their old behavior and immutable receipts. Carry AI_SEARCH through environment and explicit-dependency factories and the real semantic server. Read the stored generation for status, materialization and recovery; v3/v4 share the existing synthesis/audit/citation/coverage machinery without rewriting old results. Missing managed binding remains an explicit skipped lane, not a claimed semantic success.
+- **Next key work:** public cancellation/recovery (S14/S15), compatible deployment and long-run authority (S05/S33), then the one delegated-machine grant (S10/S31). Do not mark these complete because S06 history, S16 internal cancellation or v4 retrieval now works.
+
+### Retained verification for e15afeee
+
+[Clean-checkout validation and direct-main publication run](https://github.com/UnknownAlienHuman/eliot-research/actions/runs/35053788872), artifact `backend-checkpoint-validation`:
+
+- Core and PWA declaration builds, core test typecheck, changed-file ESLint, package boundaries and work-packet ownership passed.
+- `research-retrieve-branches.test.ts`: 8 passed; `research-workflow-recovery.test.ts`: 8 passed; `research-run-status.test.ts`: 14 passed. Aggregate: **30/30**, no skipped tests in these three files.
+- Separately selected S08 regression in `research-query-retrieval.test.ts`: **1 passed**, 9 other tests not selected. This is not a claim that the entire query-retrieval file passes.
+- Actual local D1/R2/DO and persisted W1/W2/W3 are exercised. External model/search responses are controlled. Both v3 and v4 synthesized/audited/materialized report fixtures reopen after login with their original bytes and one synthesis plus one audit; reading does not pay again.
+- Source before/after hashes were checked for exactly the 14 changed files before applying and publishing the patch. No migration, fixture normalization, dependency/lock change or cloud deployment was needed.
+
+The first clean-checkout attempt stopped before tests because the test project imports PWA declarations that had not been built. The corrected invocation builds both core and PWA references before checking the core test project; it does not suppress TypeScript errors or change the reviewed application patch. The temporary source/dependency/publication workflow was removed after the verified code push; it is not permanent application infrastructure.
+
+### Concrete local-agent handoff
+
+1. Run the full baseline-relative suites and distinguish inherited failures from new regressions. The aggregate checks above are not a full CI/Rust/browser acceptance.
+2. `research-session.test.ts` contains a legacy fixture expecting successful cancellation without an actual W2 run. Create valid canonical W2 authority for its success case and retain a separate missing-run refusal. Never restore best-effort cancellation to satisfy that fixture.
+3. Inspect existing query no-hit/selected-document-fallback expectations against the real product behavior; the targeted S08 pass does not resolve their pre-existing mismatch. Do not merely remove assertions or skip the file.
+4. Expand SEM tests with representative tail-only evidence, outage, foreign/purged hits and native configured bindings. The new controlled test proves binding propagation, lane selection, exact readback and replay, not live recall or full-corpus quality. Keep v3 compatibility tests alongside v4.
+5. Native Workflow warnings in the focused fixtures (`Engine was never started` / `instance.not_found`) and missing env.test AI binding warnings were retained in the logs, not hidden. Resolve their fixture/native-observation setup during full acceptance without configuring real paid providers for deterministic tests.
+6. Complete the existing UI and documentation/source-budget tasks separately. S05/S33/S10, S99 large scope and real provider qualification remain actual implementation/acceptance work, not test-only cleanup.
 
 ## Completion boundary
 
