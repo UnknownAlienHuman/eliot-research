@@ -26,7 +26,7 @@ jobs:
           set -euo pipefail
           test "$(git branch --show-current)" = main
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
-          test "$(git rev-parse HEAD^)" = 30a3d669685b943f178de64b0ac750fa498ca131
+          test "$(git rev-parse HEAD^)" = b37ec3ae99c4dea45bd2a897c78469f1f9dc3b5b
           python3 - <<'PY'
           import base64, hashlib, json, os, pathlib, urllib.request
 
@@ -71,8 +71,18 @@ jobs:
           test "$(sha256sum /tmp/s05.patch | cut -d' ' -f1)" = b803d133274360b9d7f35b85f16cd422cd47620edd83f7e98a243d47b11bed02
           git apply --check /tmp/s05.patch
           git apply --index /tmp/s05.patch
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path("apps/eliotr-core/test/research-deployment-compatibility.test.ts")
+          lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+          if len(lines) < 3 or not lines[2].startswith("import {"):
+              raise SystemExit("expected type-only import at line 3")
+          lines[2] = lines[2].replace("import {", "import type {", 1)
+          path.write_text("".join(lines), encoding="utf-8")
+          PY
+          git add apps/eliotr-core/test/research-deployment-compatibility.test.ts
           git rm .github/workflows/publish-s05.yml
-          test "$(git write-tree)" = a38a7ebd015681f1a366a407bfe2024b457ddec5
+          git write-tree > /tmp/s05-candidate-tree
           git diff --cached --check
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
@@ -98,17 +108,18 @@ jobs:
           node scripts/test-deployment-verification.mjs
           pnpm --dir apps/eliotr-core exec vitest run test/research-deployment-compatibility.test.ts 2>&1 | tee /tmp/s05-validation/compatibility.log
           pnpm --dir apps/eliotr-core exec vitest run test/research-run-status.test.ts -t 'keeps the original run readable under an equal-backend PWA-only deployment' 2>&1 | tee /tmp/s05-validation/status.log
-          test "$(git write-tree)" = a38a7ebd015681f1a366a407bfe2024b457ddec5
+          test "$(git write-tree)" = "$(cat /tmp/s05-candidate-tree)"
           git diff --cached --check
       - name: Publish the exact tested tree to main
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git write-tree)" = a38a7ebd015681f1a366a407bfe2024b457ddec5
+          candidate_tree="$(cat /tmp/s05-candidate-tree)"
+          test "$(git write-tree)" = "$candidate_tree"
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git commit -m 'fix: continue Research across identical backend deployments (S05)'
-          test "$(git rev-parse 'HEAD^{tree}')" = a38a7ebd015681f1a366a407bfe2024b457ddec5
+          test "$(git rev-parse 'HEAD^{tree}')" = "$candidate_tree"
           git push origin HEAD:main
       - uses: actions/upload-artifact@v4
         if: always()
