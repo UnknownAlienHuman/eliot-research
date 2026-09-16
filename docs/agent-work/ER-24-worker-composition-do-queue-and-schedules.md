@@ -366,3 +366,34 @@ Access/native lifecycle boundaries. Concurrent callers, revoke-at-settlement, fa
 refreshed JWT, completion-first and late in-flight output are covered. This does not qualify
 native Cloudflare termination. S15 public recovery, S10 machine delegation, S32 client controls
 and S05/S33 lifetime changes remain separate. See PR #206 for the code commit and commands.
+
+## S15 public run recovery
+
+`POST /api/v1/research/run/:workflow_id/recover` accepts only `{}` and a
+bounded `Idempotency-Key`. It authorizes the current owner over the run's
+original frozen source set, then acts on the same native Workflow instance;
+it never creates a replacement run or rewrites the stored scope, handler,
+source revisions or W1/W2/W3 identities. Active and completed runs are
+read-only responses. Paused runs use native resume; errored or terminated
+runs use one durable restart action, from the current Workflow step when an
+attempt already exists. A lost native acknowledgement is reconciled by
+status and cannot issue a second restart for the same run/stage.
+
+Recovery of an existing W2 attempt keeps its original spend receipt. While
+that receipt is current the normal Budget Governor check remains mandatory.
+After expiry, settlement is allowed only when the exact owner-authorized
+`research.run.recover.v1` action exists for that run and stage. The executor
+then invokes only the registered readback recovery callback, never the paid
+handler. The D1 output/checkpoint guards independently require the same
+recovery action before accepting an expired-reservation settlement. VERIFY
+recovery replays the deterministic verifier over the exact persisted
+synthesis bytes; SYNTHESIZE, AUDIT_CLAIMS, RESOLVE_CITATIONS and MATERIALIZE
+reuse their existing recovery adapters. Unknown provider effects remain
+unresolved and cancelled/revoked/corrupt state stays closed.
+
+Focused local acceptance covers five public HTTP recovery cases, a real
+STARTED VERIFY recovery with no second synthesis, and four W3 lost-ACK
+readback cases including expiry of the original spend reservation. Core/PWA
+and test TypeScript, changed-file ESLint, package boundaries and ownership
+checks pass locally. Native Cloudflare lifecycle acceptance, UI/MCP controls,
+delegated service recovery and the full product suite remain separate gates.

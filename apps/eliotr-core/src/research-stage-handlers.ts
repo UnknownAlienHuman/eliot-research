@@ -14,6 +14,7 @@ import {
   createResearchReportMaterializeStageHandler,
   type ResearchReportMaterializeStageDependencies,
   createResearchMaterializeRecovery,
+  readWorkflowObject,
 } from "@eliotr/cloudflare-research";
 import {
   createResearchVerificationStageHandler,
@@ -135,6 +136,7 @@ export function createResearchStageHandlerFactory(
   const explicitSemantic = mode.kind === "server-owned-exploratory" &&
     isSemanticResearchHandlerGeneration(mode.generation);
   let synthesisAdapter: ReturnType<typeof createEvidenceFreezeSynthesisHandler> | undefined;
+  let verificationHandler: ReturnType<typeof createResearchVerificationStageHandler> | undefined;
   let auditAdapter: ReturnType<typeof createResearchClaimAuditStageHandler> | undefined;
   let citationsAdapter: ReturnType<typeof createResearchCitationsStageHandler> | undefined;
   let materializeRecovery: WorkflowStartedAttemptRecovery | undefined;
@@ -151,6 +153,12 @@ export function createResearchStageHandlerFactory(
         !isSemanticResearchHandlerGeneration(mode.generation) || mode.synthesis === undefined) return undefined;
     synthesisAdapter ??= createEvidenceFreezeSynthesisHandler(mode.synthesis);
     return synthesisAdapter;
+  }
+  function getVerificationHandler(): ReturnType<typeof createResearchVerificationStageHandler> | undefined {
+    if (mode.kind !== "server-owned-exploratory" ||
+        !isSemanticResearchHandlerGeneration(mode.generation) || mode.verification === undefined) return undefined;
+    verificationHandler ??= createResearchVerificationStageHandler(mode.verification);
+    return verificationHandler;
   }
   function getAuditAdapter(): ReturnType<typeof createResearchClaimAuditStageHandler> | undefined {
     if (mode.kind !== "server-owned-exploratory" ||
@@ -186,7 +194,7 @@ export function createResearchStageHandlerFactory(
       return adapter === undefined ? async () => fail("WORKFLOW_AUTHORITY_STALE") : adapter.handler;
     }
     if (stage === "VERIFY" && mode.kind === "server-owned-exploratory" && isSemanticResearchHandlerGeneration(mode.generation)) {
-      return mode.verification === undefined ? async () => fail("WORKFLOW_AUTHORITY_STALE") : createResearchVerificationStageHandler(mode.verification);
+      return getVerificationHandler() ?? (async () => fail("WORKFLOW_AUTHORITY_STALE"));
     }
     if (stage === "AUDIT_CLAIMS" && mode.kind === "server-owned-exploratory" && isSemanticResearchHandlerGeneration(mode.generation)) {
       const adapter = getAuditAdapter();
@@ -210,6 +218,17 @@ export function createResearchStageHandlerFactory(
     const recoverStartedAttempt: WorkflowStartedAttemptRecovery = async (input) => {
       if (input.request.handler_generation !== mode.generation) return null;
       if (input.request.stage === "SYNTHESIZE") return getSynthesisAdapter()?.recoverStartedAttempt(input) ?? null;
+      if (input.request.stage === "VERIFY") {
+        const handler = getVerificationHandler();
+        if (handler === undefined || mode.kind !== "server-owned-exploratory" || mode.environment === undefined) return null;
+        const inputBytes = await readWorkflowObject(mode.environment.WORK_BUCKET, input.request.input_manifest, true);
+        return handler({
+          request: input.request,
+          principal: { principal_ref: input.principal_ref, credential_generation: input.credential_generation,
+            deployment_generation: input.deployment_generation },
+          input_bytes: inputBytes, attempt_ref: input.attempt_ref, budget_receipt_ref: input.budget_receipt_ref,
+        });
+      }
       if (input.request.stage === "AUDIT_CLAIMS") return getAuditAdapter()?.recoverStartedAttempt(input) ?? null;
       if (input.request.stage === "RESOLVE_CITATIONS") return getCitationsAdapter()?.recoverStartedAttempt(input) ?? null;
       if (input.request.stage === "MATERIALIZE") return materializeRecovery?.(input) ?? null;

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { NavigationReadAuthority } from "@eliotr/cloudflare-evidence";
 import type { InvestigationLedgerStore } from "@eliotr/research";
-import type { StageRequest, WorkflowPrincipal } from "@eliotr/cloudflare-research";
+import { createWorkflowCheckpointExecutor, textDigest, WorkflowCheckpointStore, type StageRequest, type WorkflowPrincipal } from "@eliotr/cloudflare-research";
 import { RESEARCH_WORKFLOW_STAGES } from "@eliotr/domain";
 import { freezeFixture, principal } from "./research-evidence-freeze-fixture.js";
 import { committedFreezeSynthesisFixture } from "./research-synthesis-fixture.js";
@@ -178,6 +178,55 @@ describe("FREEZE_EVIDENCE over committed exploratory W2 stages", () => {
       "SELECT COUNT(*) AS n FROM research_workflow_checkpoint WHERE operation_id=?1 AND stage_index=?2",
     ).bind(f.freeze.operation_id, RESEARCH_WORKFLOW_STAGES.indexOf("VERIFY")).first<{ readonly n: number }>();
     expect(replayCheckpoints?.n).toBe(1);
+  }, 30_000);
+
+
+  it("recovers a durable STARTED VERIFY attempt without repeating synthesis", async () => {
+    const f = await committedFreezeSynthesisFixture();
+    const synthesis = await f.freeze.executor.execute(f.stage_twelve, principal, f.handler.handler);
+    const stage13: StageRequest = { ...f.stage_twelve, stage: "VERIFY", investigation_ref: synthesis.investigation_ref,
+      input_manifest: synthesis.output_manifest };
+    const factory = createResearchStageHandlerFactory({
+      kind: "server-owned-exploratory", generation: SERVER_OWNED_FREEZE_HANDLER_GENERATION,
+      navigation: f.freeze.navigation, ledger: f.freeze.ledger,
+      environment: { CORE_DB: f.freeze.db, SEARCH_DB: f.freeze.retrieve.search_database,
+        WORK_BUCKET: f.freeze.bucket, EVIDENCE_BUCKET: f.freeze.retrieve.evidence_bucket },
+      verification: {
+        database: f.freeze.db, work_bucket: f.freeze.bucket, navigation: f.freeze.navigation,
+        evidence_resolver: f.freeze.resolver,
+        recheck_authority: async () => ({ investigation_id: f.freeze.investigation_id,
+          scope_snapshot_id: f.freeze.scope.snapshot_id, scope_snapshot_revision: f.freeze.scope.revision }),
+        context: createEvidenceFreezeVerificationContextReader({
+          database: f.freeze.db, work_bucket: f.freeze.bucket, manifest_store: f.freeze.freeze_store,
+          read_stage_five: f.freeze.readers.read_stage_five,
+        }, f.freeze.navigation, f.freeze.readers),
+      },
+    });
+    if (factory.recoverStartedAttempt === undefined) throw new Error("verification recovery adapter is missing");
+    const store = new WorkflowCheckpointStore(f.freeze.db);
+    const requestSha = await textDigest(JSON.stringify(stage13));
+    const budget = await f.freeze.ports.checkBudget(stage13, principal);
+    await store.reserve(stage13, requestSha, "verify-started-before-read-failure", budget);
+    let handlerCalls = 0;
+    const recoveringExecutor = createWorkflowCheckpointExecutor(f.freeze.db, f.freeze.bucket, {
+      ...f.freeze.ports, recoverStartedAttempt: factory.recoverStartedAttempt,
+    });
+    const receipt = await recoveringExecutor.execute(stage13, principal, async () => {
+      handlerCalls += 1;
+      throw new Error("VERIFY handler must not be invoked for a durable STARTED attempt");
+    });
+    expect(handlerCalls).toBe(0);
+    expect(f.provider_calls()).toBe(1);
+    const result = decodeResearchVerificationResult(await readWorkflowObject(f.freeze.bucket, receipt.output_manifest, true));
+    expect(result.stage).toBe("VERIFY");
+    expect(result.synthesis.stage_attempt_ref).toBe(synthesis.attempt_ref);
+    const replay = await recoveringExecutor.execute(stage13, principal, async () => {
+      handlerCalls += 1;
+      throw new Error("committed verification replay must not invoke the handler");
+    });
+    expect(replay.receipt_ref).toBe(receipt.receipt_ref);
+    expect(handlerCalls).toBe(0);
+    expect(f.provider_calls()).toBe(1);
   }, 30_000);
 
   it("refuses v1 synthesis content when a v2 config is present without creating VERIFY state", async () => {

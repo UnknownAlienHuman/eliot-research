@@ -748,12 +748,14 @@ async function dispatch(
           return apiResult(request, env, data, data && typeof data === "object" &&
             "workflow_instance_id" in data && !Object.hasOwn(data, "job") ? 202 : 200);
         }
-        if (match.route.operation === "research.run.cancel") {
+        if (match.route.operation === "research.run.cancel" || match.route.operation === "research.run.recover") {
           requireNoQuery(url);
           const workflowId = match.params.workflow_id;
           if (workflowId === undefined) throw new HttpRequestError("RESEARCH_RUN_ID_INVALID", 400, "workflow id is missing");
           const body = await readJsonBodyWithinBytes(request, match.route.maximum_request_bytes);
-          return apiResult(request, env, await application.services.semantic.runCancel(context, workflowId, body));
+          return apiResult(request, env, match.route.operation === "research.run.cancel"
+            ? await application.services.semantic.runCancel(context, workflowId, body)
+            : await application.services.semantic.runRecover(context, workflowId, body));
         }
         if (match.route.operation === "research.run") {
           requireNoQuery(url);

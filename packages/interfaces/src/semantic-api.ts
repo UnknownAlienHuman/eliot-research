@@ -27,6 +27,7 @@ export const SEMANTIC_API_OPERATIONS = [
   "research.verify",
   "research.run",
   "research.run.cancel",
+  "research.run.recover",
   "research.artifact",
   "research.wiki.propose",
   "research.wiki.propose.from-run",
@@ -331,6 +332,7 @@ export interface SemanticApi {
   queryStatus(context: AuthenticatedRequestContext, workflowInstanceId: string): Promise<ExhaustiveWorkflowResult>;
   queryCancel(context: AuthenticatedRequestContext, workflowInstanceId: string): Promise<ExhaustiveWorkflowResult>;
   runCancel(context: AuthenticatedRequestContext, workflowInstanceId: string, body: unknown): Promise<ResearchRunStatus>;
+  runRecover(context: AuthenticatedRequestContext, workflowInstanceId: string, body: unknown): Promise<ResearchRunStatus>;
   runStatus(context: AuthenticatedRequestContext, workflowInstanceId: string): Promise<ResearchRunStatus>;
   queryJobs(context: AuthenticatedRequestContext, request: ExhaustiveWorkflowJobsRequest): Promise<ExhaustiveWorkflowPage>;
   open(context: AuthenticatedRequestContext, handleRef: VersionedRef, range?: { start: number; end: number }): Promise<Response>;

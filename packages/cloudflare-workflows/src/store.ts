@@ -300,6 +300,28 @@ export class WorkflowCheckpointStore {
     if (row !== null && (row.request_sha256 !== requestDigest || row.request_json !== JSON.stringify(request))) fail("WORKFLOW_CONFLICT");
     return row;
   }
+  async requireRecoveryAuthorization(request: StageRequest, principal: WorkflowPrincipal): Promise<void> {
+    const stageIndex = workflowStageIndex(request);
+    let row: { readonly ok: number } | null;
+    try {
+      row = await this.db.prepare(`SELECT 1 AS ok FROM operation_intent i
+        JOIN operation_attempt a ON a.intent_id=i.intent_id AND a.intent_revision=i.revision
+        JOIN research_workflow_run r ON r.operation_id=?1
+        WHERE i.intent_id='research-recover:' || ?1 || ':' || ?2
+          AND i.revision=1 AND i.operation_kind='research.run.recover.v1'
+          AND i.principal_ref=?3 AND i.principal_ref=r.principal_ref
+          AND i.payload_ref='research-run:' || ?1 || ':' || ?2
+          AND i.policy_decision_ref='research-recovery-authorized:' || ?1 || ':' || ?2
+          AND i.budget_reservation_ref IS NULL AND i.cancellation_ref='workflow:' || ?1
+          AND a.attempt_id='research-recover-attempt:' || ?1 || ':' || ?2
+          AND a.attempt_number=1 AND a.state IN ('CHECKPOINTED','SUCCEEDED')
+          AND a.checkpoint_ref IN ('resume:' || i.intent_id, 'restart:' || i.intent_id)
+        LIMIT 1`).bind(request.operation_id, String(stageIndex), principal.principal_ref).first<{ readonly ok: number }>();
+    } catch {
+      fail("WORKFLOW_EFFECT_UNCERTAIN");
+    }
+    if (row?.ok !== 1) fail("WORKFLOW_AUTHORITY_STALE");
+  }
   async reserve(request: StageRequest, requestDigest: string, attemptRef: string, budget: WorkflowBudgetGrant): Promise<AttemptRow> {
     try {
       await this.db.prepare(`INSERT INTO research_workflow_attempt

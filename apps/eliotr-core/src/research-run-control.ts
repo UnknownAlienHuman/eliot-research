@@ -1,9 +1,11 @@
-import { WorkflowCheckpointError, WorkflowCheckpointStore } from "@eliotr/cloudflare-research";
+import { textDigest, WorkflowCheckpointError, WorkflowCheckpointStore } from "@eliotr/cloudflare-research";
 import type { WorkflowRunStatus } from "@eliotr/cloudflare-research";
-import type { AuthenticatedRequestContext, ResearchRunStatus } from "@eliotr/interfaces";
+import { RESEARCH_WORKFLOW_STAGES } from "@eliotr/domain";
+import type { AuthenticatedRequestContext, ResearchEngineStatus, ResearchRunStatus } from "@eliotr/interfaces";
 import { CatalogInputError } from "./catalog-service.js";
 import type { Env } from "./env.js";
 import { prepareReauthenticatedRunRead, type ReauthenticatedRunRead } from "./research-run-read-authorization.js";
+import { isSemanticResearchHandlerGeneration } from "./research-stage-handlers.js";
 
 function fail(code: string, status: number, retryable = false): never {
   throw new CatalogInputError(code, "Research run control could not be confirmed", status, retryable);
@@ -42,10 +44,11 @@ function mapControlFailure(error: unknown): never {
   fail("RESEARCH_CONTROL_UNCONFIRMED", 503, true);
 }
 
-export function runControlStatus(status: WorkflowRunStatus): ResearchRunStatus {
+export function runControlStatus(status: WorkflowRunStatus, engineStatus?: ResearchEngineStatus): ResearchRunStatus {
   return { protocol: "eliotr.research-run-status.v1", workflow_instance_id: status.operation_id,
     investigation_ref: { id: status.investigation_id, revision: status.current_revision },
-    execution_state: status.state, next_stage_index: status.next_stage_index, answer: { availability: "unavailable" },
+    execution_state: status.state, ...(engineStatus === undefined ? {} : { engine_status: engineStatus }),
+    next_stage_index: status.next_stage_index, answer: { availability: "unavailable" },
     ...(status.cancellation_receipt_ref === null ? {} : { cancellation_receipt_ref: status.cancellation_receipt_ref }) };
 }
 
@@ -131,5 +134,254 @@ export async function cancelResearchRun(
     }
     await read.requireCurrent();
     return runControlStatus(after);
+  } catch (error) { return mapControlFailure(error); }
+}
+
+type RecoveryAction = "RESUME" | "RESTART";
+type RecoveryActionState = "STARTED" | "CHECKPOINTED" | "SUCCEEDED" | "FAILED" | "CANCELLED";
+interface RecoveryActionRow {
+  readonly intent_id: string;
+  readonly operation_kind: string;
+  readonly principal_ref: string;
+  readonly idempotency_key: string;
+  readonly payload_ref: string;
+  readonly policy_decision_ref: string;
+  readonly attempt_id: string;
+  readonly state: RecoveryActionState;
+  readonly checkpoint_ref: string | null;
+  readonly error_code: string | null;
+}
+
+const RECOVERABLE_STARTED_STAGES = new Set([
+  "SYNTHESIZE", "VERIFY", "AUDIT_CLAIMS", "RESOLVE_CITATIONS", "MATERIALIZE",
+]);
+const ACTIVE_NATIVE_STATES = new Set<ResearchEngineStatus>([
+  "queued", "running", "waiting", "waitingForPause",
+]);
+
+function sameRunIdentity(left: WorkflowRunStatus, right: WorkflowRunStatus): boolean {
+  return left.operation_id === right.operation_id && left.investigation_id === right.investigation_id &&
+    left.initial_revision === right.initial_revision && left.principal_ref === right.principal_ref &&
+    left.credential_generation === right.credential_generation &&
+    left.deployment_generation === right.deployment_generation &&
+    left.scope_snapshot_id === right.scope_snapshot_id &&
+    left.scope_snapshot_revision === right.scope_snapshot_revision;
+}
+
+function stepName(index: number): string {
+  const stage = RESEARCH_WORKFLOW_STAGES[index];
+  if (stage === undefined) fail("RESEARCH_RUN_STATUS_INVALID", 409);
+  return `w2-stage-${String(index).padStart(2, "0")}-${stage}`;
+}
+
+function nativeState(value: Awaited<ReturnType<WorkflowInstance["status"]>>): ResearchEngineStatus {
+  return value.status;
+}
+
+async function latestAuthorizedStatus(
+  env: Env,
+  context: AuthenticatedRequestContext,
+  authorized: ReauthenticatedRunRead,
+): Promise<WorkflowRunStatus> {
+  const latest = await new WorkflowCheckpointStore(env.CORE_DB).readRunStatus(authorized.status.operation_id, {
+    principal_ref: context.principal_ref,
+    credential_generation: context.credential_generation,
+    deployment_generation: env.DEPLOYMENT_GENERATION,
+  }, "owner-read");
+  await authorized.requireCurrent();
+  if (latest === null || !sameRunIdentity(authorized.status, latest)) fail("RESEARCH_RUN_STATUS_INVALID", 409);
+  return latest;
+}
+
+function recoveryIdentity(operationId: string, stageIndex: number): {
+  readonly intent_id: string;
+  readonly attempt_id: string;
+  readonly payload_ref: string;
+  readonly policy_decision_ref: string;
+} {
+  return {
+    intent_id: `research-recover:${operationId}:${stageIndex}`,
+    attempt_id: `research-recover-attempt:${operationId}:${stageIndex}`,
+    payload_ref: `research-run:${operationId}:${stageIndex}`,
+    policy_decision_ref: `research-recovery-authorized:${operationId}:${stageIndex}`,
+  };
+}
+
+async function recoveryIdempotencyKey(context: AuthenticatedRequestContext, operationId: string): Promise<string> {
+  const supplied = context.request.headers.get("idempotency-key");
+  if (supplied === null) fail("RESEARCH_INPUT_INVALID", 400);
+  return `research-recover:${await textDigest(`${operationId}\u0000${supplied}`)}`;
+}
+
+async function readRecoveryAction(database: D1Database, intentId: string): Promise<RecoveryActionRow | null> {
+  const row = await database.prepare(`SELECT i.intent_id, i.operation_kind, i.principal_ref, i.idempotency_key,
+    i.payload_ref, i.policy_decision_ref, a.attempt_id, a.state, a.checkpoint_ref, a.error_code
+    FROM operation_intent i JOIN operation_attempt a
+      ON a.intent_id=i.intent_id AND a.intent_revision=i.revision
+    WHERE i.intent_id=?1 AND i.revision=1 AND a.attempt_number=1 LIMIT 1`).bind(intentId).first<RecoveryActionRow>();
+  return row ?? null;
+}
+
+function validateRecoveryAction(
+  row: RecoveryActionRow,
+  expected: ReturnType<typeof recoveryIdentity> & { readonly principal_ref: string; readonly idempotency_key: string },
+): void {
+  if (row.intent_id !== expected.intent_id || row.attempt_id !== expected.attempt_id ||
+      row.operation_kind !== "research.run.recover.v1" || row.principal_ref !== expected.principal_ref ||
+      row.idempotency_key !== expected.idempotency_key || row.payload_ref !== expected.payload_ref ||
+      row.policy_decision_ref !== expected.policy_decision_ref) {
+    fail("RESEARCH_RUN_RECOVERY_CONFLICT", 409);
+  }
+}
+
+async function ensureRecoveryAction(
+  database: D1Database,
+  context: AuthenticatedRequestContext,
+  status: WorkflowRunStatus,
+): Promise<RecoveryActionRow> {
+  const identity = recoveryIdentity(status.operation_id, status.next_stage_index);
+  const expected = {
+    ...identity,
+    principal_ref: context.principal_ref,
+    idempotency_key: await recoveryIdempotencyKey(context, status.operation_id),
+  };
+  const createdAt = new Date().toISOString();
+  try {
+    await database.batch([
+      database.prepare(`INSERT OR IGNORE INTO operation_intent(intent_id,revision,operation_kind,principal_ref,
+        idempotency_key,payload_ref,policy_decision_ref,budget_reservation_ref,cancellation_ref,created_at)
+        VALUES(?1,1,'research.run.recover.v1',?2,?3,?4,?5,NULL,?6,?7)`)
+        .bind(identity.intent_id, context.principal_ref, expected.idempotency_key, identity.payload_ref,
+          identity.policy_decision_ref, `workflow:${status.operation_id}`, createdAt),
+      database.prepare(`INSERT OR IGNORE INTO operation_attempt(attempt_id,intent_id,intent_revision,attempt_number,
+        state,checkpoint_ref,error_code,started_at,ended_at) VALUES(?1,?2,1,1,'STARTED',NULL,NULL,?3,NULL)`)
+        .bind(identity.attempt_id, identity.intent_id, createdAt),
+    ]);
+  } catch { fail("RESEARCH_CONTROL_UNCONFIRMED", 503, true); }
+  const row = await readRecoveryAction(database, identity.intent_id);
+  if (row === null) fail("RESEARCH_CONTROL_UNCONFIRMED", 503, true);
+  validateRecoveryAction(row, expected);
+  return row;
+}
+
+async function claimRecoveryAction(
+  database: D1Database,
+  row: RecoveryActionRow,
+  action: RecoveryAction,
+): Promise<{ readonly row: RecoveryActionRow; readonly claimed: boolean }> {
+  const checkpointRef = `${action.toLowerCase()}:${row.intent_id}`;
+  let result: D1Result;
+  try {
+    result = await database.prepare(`UPDATE operation_attempt SET state='CHECKPOINTED', checkpoint_ref=?2
+      WHERE attempt_id=?1 AND intent_id=?3 AND intent_revision=1 AND attempt_number=1 AND state='STARTED'`)
+      .bind(row.attempt_id, checkpointRef, row.intent_id).run();
+  } catch { fail("RESEARCH_CONTROL_UNCONFIRMED", 503, true); }
+  const current = await readRecoveryAction(database, row.intent_id);
+  if (current === null) fail("RESEARCH_CONTROL_UNCONFIRMED", 503, true);
+  if (current.state === "CHECKPOINTED" && current.checkpoint_ref !== checkpointRef) {
+    fail("RESEARCH_RUN_RECOVERY_CONFLICT", 409);
+  }
+  return { row: current, claimed: result.success && result.meta.changes === 1 };
+}
+
+async function settleRecoveryAction(database: D1Database, row: RecoveryActionRow): Promise<void> {
+  const endedAt = new Date().toISOString();
+  try {
+    await database.prepare(`UPDATE operation_attempt SET state='SUCCEEDED', ended_at=?2
+      WHERE attempt_id=?1 AND intent_id=?3 AND intent_revision=1 AND state='CHECKPOINTED'`)
+      .bind(row.attempt_id, endedAt, row.intent_id).run();
+  } catch { fail("RESEARCH_CONTROL_UNCONFIRMED", 503, true); }
+  const after = await readRecoveryAction(database, row.intent_id);
+  if (after?.state !== "SUCCEEDED") fail("RESEARCH_CONTROL_UNCONFIRMED", 503, true);
+}
+
+function requireSafeRestart(status: WorkflowRunStatus, handlerGeneration: string): void {
+  const stage = RESEARCH_WORKFLOW_STAGES[status.next_stage_index];
+  if (stage === undefined || (status.current_attempt !== null &&
+      status.current_attempt.stage_index !== status.next_stage_index)) fail("RESEARCH_RUN_STATUS_INVALID", 409);
+  if (status.current_attempt?.state === "STARTED" &&
+      (!isSemanticResearchHandlerGeneration(handlerGeneration) || !RECOVERABLE_STARTED_STAGES.has(stage))) {
+    fail("RESEARCH_RUN_RECOVERY_UNSAFE", 409);
+  }
+}
+
+async function observeNative(instance: WorkflowInstance): Promise<ResearchEngineStatus> {
+  try { return nativeState(await instance.status()); }
+  catch { fail("RESEARCH_CONTROL_UNCONFIRMED", 503, true); }
+}
+
+/**
+ * Recovers the same native Workflow instance. The durable W2/W3 checkpoint and
+ * attempt stores remain authoritative; a native restart is never permission to
+ * repeat an unknown paid effect or to mint a replacement run.
+ */
+export async function recoverResearchRun(
+  env: Env,
+  context: AuthenticatedRequestContext,
+  operationId: string,
+  body: unknown,
+): Promise<ResearchRunStatus> {
+  try {
+    validateResearchRunControl(context, operationId, body);
+    const read = await authorize(env, context, operationId);
+    if (read.status.state === "CANCELLED") fail("RESEARCH_RUN_CANCELLED", 409);
+    if (read.status.state === "ENGINE_COMPLETED") {
+      await read.requireCurrent();
+      return runControlStatus(read.status);
+    }
+    let instance: WorkflowInstance;
+    try {
+      instance = await env.RESEARCH_WORKFLOW.get(operationId);
+      if (instance.id !== operationId) fail("RESEARCH_RUN_STATUS_INVALID", 409);
+    } catch (error) {
+      if (error instanceof CatalogInputError) throw error;
+      fail("RESEARCH_CONTROL_UNCONFIRMED", 503, true);
+    }
+    let observed = await observeNative(instance);
+    await read.requireCurrent();
+    validateResearchRunControl(context, operationId, body);
+    if (ACTIVE_NATIVE_STATES.has(observed)) {
+      return runControlStatus(await latestAuthorizedStatus(env, context, read), observed);
+    }
+    if (observed === "complete") {
+      const latest = await latestAuthorizedStatus(env, context, read);
+      if (latest.state === "ENGINE_COMPLETED") return runControlStatus(latest, observed);
+      fail("RESEARCH_RUN_STATUS_INVALID", 409);
+    }
+    if (observed === "unknown") fail("RESEARCH_CONTROL_UNCONFIRMED", 503, true);
+    const action: RecoveryAction = observed === "paused" ? "RESUME" : "RESTART";
+    if (action === "RESTART") requireSafeRestart(read.status, read.handler_generation);
+    const durable = await ensureRecoveryAction(env.CORE_DB, context, read.status);
+    if (durable.state === "SUCCEEDED") fail("RESEARCH_RUN_RECOVERY_EXHAUSTED", 409);
+    const claim = durable.state === "STARTED"
+      ? await claimRecoveryAction(env.CORE_DB, durable, action)
+      : { row: durable, claimed: false };
+    if (claim.row.state !== "CHECKPOINTED") fail("RESEARCH_RUN_RECOVERY_CONFLICT", 409);
+    await read.requireCurrent();
+    validateResearchRunControl(context, operationId, body);
+    if (claim.claimed) {
+      try {
+        if (action === "RESUME") await instance.resume();
+        else if (read.status.current_attempt === null) await instance.restart();
+        else await instance.restart({ from: { name: stepName(read.status.next_stage_index), type: "do" } });
+      } catch {
+        // A lost native ACK is reconciled by status below. Never issue a second
+        // resume/restart for the same durable stage action.
+      }
+    }
+    observed = await observeNative(instance);
+    await read.requireCurrent();
+    validateResearchRunControl(context, operationId, body);
+    const latest = await latestAuthorizedStatus(env, context, read);
+    if (latest.state === "CANCELLED") fail("RESEARCH_RUN_CANCELLED", 409);
+    if (latest.state === "ENGINE_COMPLETED") {
+      await settleRecoveryAction(env.CORE_DB, claim.row);
+      return runControlStatus(latest, observed);
+    }
+    if (ACTIVE_NATIVE_STATES.has(observed)) {
+      await settleRecoveryAction(env.CORE_DB, claim.row);
+      return runControlStatus(latest, observed);
+    }
+    fail("RESEARCH_CONTROL_UNCONFIRMED", 503, true);
   } catch (error) { return mapControlFailure(error); }
 }

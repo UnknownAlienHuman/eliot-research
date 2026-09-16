@@ -24,15 +24,53 @@ describe("W3 started model attempt recovery", () => {
     const bytes = modelBytes();
     const sha256 = await digest(bytes);
     let handlerCalls = 0;
-    await expect(f.executor.execute(f.request, principal, async () => {
+    const expiringBudget = { receipt_ref: "recover-started-expiring-budget", expires_at_ms: Date.now() + 1_000 };
+    const initial = createWorkflowCheckpointExecutor(f.db, f.bucket, {
+      ...f.ports, checkBudget: async () => expiringBudget,
+    });
+    await expect(initial.execute(f.request, principal, async () => {
       handlerCalls += 1;
       await f.bucket.put(durableModelKey, bytes, { sha256 });
       throw new Error("model settlement ACK lost");
     })).rejects.toMatchObject({ code: "WORKFLOW_EFFECT_UNCERTAIN" });
+    await new Promise((resolve) => setTimeout(resolve, 1_100));
+    let unauthorizedRecoveryCalls = 0;
+    const unauthorized = createWorkflowCheckpointExecutor(f.db, f.bucket, {
+      ...f.ports,
+      checkBudget: async () => { throw new Error("expired recovery must not create a new spend reservation"); },
+      recoverStartedAttempt: async () => { unauthorizedRecoveryCalls += 1; return readObject(f.bucket, durableModelKey); },
+    });
+    await expect(unauthorized.execute(f.request, principal, async () => bytes))
+      .rejects.toMatchObject({ code: "WORKFLOW_AUTHORITY_STALE" });
+    expect(unauthorizedRecoveryCalls).toBe(0);
 
+    const recoveryIntent = `research-recover:${f.request.operation_id}:0`;
+    const createdAt = new Date().toISOString();
+    await f.db.batch([
+      f.db.prepare(`INSERT INTO operation_intent(intent_id,revision,operation_kind,principal_ref,idempotency_key,
+        payload_ref,policy_decision_ref,budget_reservation_ref,cancellation_ref,created_at)
+        VALUES(?1,1,'research.run.recover.v1',?2,?3,?4,?5,NULL,?6,?7)`).bind(
+          recoveryIntent, principal.principal_ref, `test-recover:${f.request.operation_id}`,
+          `research-run:${f.request.operation_id}:0`, `research-recovery-authorized:${f.request.operation_id}:0`,
+          `workflow:${f.request.operation_id}`, createdAt),
+      f.db.prepare(`INSERT INTO operation_attempt(attempt_id,intent_id,intent_revision,attempt_number,state,
+        checkpoint_ref,error_code,started_at,ended_at) VALUES(?1,?2,1,1,'CHECKPOINTED',?3,NULL,?4,NULL)`).bind(
+          `research-recover-attempt:${f.request.operation_id}:0`, recoveryIntent, `restart:${recoveryIntent}`, createdAt),
+    ]);
+    const recoveryRow = await f.db.prepare(`SELECT i.intent_id, i.operation_kind, i.principal_ref, i.payload_ref,
+      i.policy_decision_ref, i.budget_reservation_ref, i.cancellation_ref, a.attempt_id, a.state, a.checkpoint_ref
+      FROM operation_intent i JOIN operation_attempt a ON a.intent_id=i.intent_id AND a.intent_revision=i.revision
+      WHERE i.intent_id=?1`).bind(recoveryIntent).first<Record<string, unknown>>();
+    expect(recoveryRow).toMatchObject({ intent_id: recoveryIntent, operation_kind: "research.run.recover.v1",
+      principal_ref: principal.principal_ref, payload_ref: `research-run:${f.request.operation_id}:0`,
+      policy_decision_ref: `research-recovery-authorized:${f.request.operation_id}:0`, budget_reservation_ref: null,
+      cancellation_ref: `workflow:${f.request.operation_id}`, attempt_id: `research-recover-attempt:${f.request.operation_id}:0`,
+      state: "CHECKPOINTED", checkpoint_ref: `restart:${recoveryIntent}` });
     let recoveryCalls = 0;
+    let budgetChecks = 0;
     const resumed = createWorkflowCheckpointExecutor(f.db, f.bucket, {
       ...f.ports,
+      checkBudget: async () => { budgetChecks += 1; throw new Error("existing attempt recovery must not reserve spend again"); },
       recoverStartedAttempt: async (input) => {
         recoveryCalls += 1;
         expect(input.request_sha256).toMatch(/^[a-f0-9]{64}$/u);
@@ -46,7 +84,7 @@ describe("W3 started model attempt recovery", () => {
     });
     expect(receipt.engine_state).toBe("CHECKPOINTED");
     expect(await readWorkflowObject(f.bucket, receipt.output_manifest, true)).toEqual(bytes);
-    expect({ handlerCalls, recoveryCalls }).toEqual({ handlerCalls: 1, recoveryCalls: 1 });
+    expect({ handlerCalls, recoveryCalls, budgetChecks }).toEqual({ handlerCalls: 1, recoveryCalls: 1, budgetChecks: 0 });
   });
 
   it("repairs an OUTPUT_RECORDED attempt whose workflow object disappeared before checkpointing", async () => {

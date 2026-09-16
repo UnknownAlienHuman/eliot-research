@@ -1,4 +1,4 @@
-import { cancelResearchRun } from "./research-run-control.js";
+import { cancelResearchRun, recoverResearchRun } from "./research-run-control.js";
 import {
   createD1FederationChangeAuthority,
   createD1FederationJobAuthority,
@@ -128,6 +128,7 @@ function semanticApi(env: Env): SemanticApi {
     queryStatus: (context, workflowInstanceId) => exhaustiveWorkflow.status(context, workflowInstanceId),
     queryCancel: (context, workflowInstanceId) => exhaustiveWorkflow.cancel(context, workflowInstanceId),
     runCancel: (context, workflowInstanceId, body) => cancelResearchRun(env, context, workflowInstanceId, body),
+    runRecover: (context, workflowInstanceId, body) => recoverResearchRun(env, context, workflowInstanceId, body),
     runStatus: (context, workflowInstanceId) => researchRun.runStatus(context, workflowInstanceId),
     queryJobs: (context, request) => exhaustiveWorkflow.list(context, request),
     open: (context, ref, range) => evidence.open(context, ref, range),

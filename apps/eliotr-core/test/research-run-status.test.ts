@@ -9,7 +9,7 @@ import { createResearchStageHandlerFactory, SERVER_OWNED_FREEZE_HANDLER_GENERATI
 import { researchClaimAuditStageFixture } from "./research-claim-audit-fixture.js";
 import { principal as freezePrincipal } from "./research-evidence-freeze-fixture.js";
 import type { AccessVerifier } from "@eliotr/cloudflare-access";
-import type { ResearchRunStatus } from "@eliotr/interfaces";
+import type { ResearchEngineStatus, ResearchRunStatus } from "@eliotr/interfaces";
 import { handleHttp } from "../src/http.js";
 import { body, db, principal, credential, run, runtime, seedSource, setupOrientationDatabase, verifier, observeDatabase } from "./orientation-fixture.js";
 
@@ -319,6 +319,24 @@ function controlledNative(core = db, terminate = vi.fn(async () => {})) {
   return { call, get, terminate };
 }
 
+function recoverRequest(body: unknown = {}, key: string | null = "recover-key", extra: Record<string, string> = {}) {
+  return new Request("https://research.example/api/v1/research/run/status-run/recover", {
+    method: "POST", headers: { "content-type": "application/json", ...(key === null ? {} : { "idempotency-key": key }), ...extra },
+    body: JSON.stringify(body),
+  });
+}
+function controlledRecoveryNative(initial: ResearchEngineStatus, options: { readonly throw_after_restart?: boolean } = {}) {
+  let state = initial;
+  const status = vi.fn(async () => ({ status: state, output: null, error: null }));
+  const resume = vi.fn(async () => { state = "running"; });
+  const restart = vi.fn(async (_input?: unknown) => { state = "running"; if (options.throw_after_restart === true) throw new Error("lost native ACK"); });
+  const get = vi.fn(async (id: string) => ({ id, status, resume, restart }));
+  const controls = { ...runtime, RESEARCH_WORKFLOW: { get } as unknown as typeof runtime.RESEARCH_WORKFLOW };
+  const call = (request = recoverRequest(), auth = verifier()) =>
+    handleHttp(request, controls, {} as ExecutionContext, { accessVerifier: auth });
+  return { call, get, status, resume, restart, current: () => state };
+}
+
 describe("public ordinary-run cancellation over HTTP/D1", () => {
   it("cancels before execution, returns the existing receipt and replays without another native call", async () => {
     const f = await storedRun();
@@ -429,6 +447,88 @@ describe("public ordinary-run cancellation over HTTP/D1", () => {
     expect((await c.call(cancelRequest(), refreshed())).status).toBe(403);
     expect(c.get).not.toHaveBeenCalled();
     expect(await db.prepare("SELECT state FROM research_workflow_run").first<string>("state")).toBe("ACTIVE");
+  });
+});
+
+
+describe("public ordinary-run recovery over HTTP/D1", () => {
+  it("returns active and completed runs without issuing a native recovery action", async () => {
+    await storedRun();
+    const active = controlledRecoveryNative("running");
+    expect((await active.call()).status).toBe(200);
+    expect(active.resume).not.toHaveBeenCalled();
+    expect(active.restart).not.toHaveBeenCalled();
+    expect(await db.prepare("SELECT COUNT(*) AS n FROM operation_intent WHERE operation_kind='research.run.recover.v1'").first<number>("n")).toBe(0);
+
+    await reset();
+    await setupOrientationDatabase();
+    await seedSource("run-status");
+    await storedRun(true);
+    const complete = controlledRecoveryNative("errored");
+    const response = await complete.call();
+    expect(response.status).toBe(200);
+    expect((await body<ResearchRunStatus>(response)).data.execution_state).toBe("ENGINE_COMPLETED");
+    expect(complete.get).not.toHaveBeenCalled();
+  }, 30_000);
+
+  it("resumes a paused instance once and reconciles repeats from durable state", async () => {
+    await storedRun();
+    const c = controlledRecoveryNative("paused");
+    const first = await c.call();
+    expect(first.status, JSON.stringify(await first.clone().json())).toBe(200);
+    expect(c.resume).toHaveBeenCalledTimes(1);
+    expect(c.restart).not.toHaveBeenCalled();
+    expect(c.current()).toBe("running");
+    expect((await c.call()).status).toBe(200);
+    expect(c.resume).toHaveBeenCalledTimes(1);
+    expect(await db.prepare("SELECT state FROM operation_attempt WHERE intent_id='research-recover:status-run:0'").first<string>("state")).toBe("SUCCEEDED");
+  });
+
+  it("restarts an errored instance without a current attempt and reconciles a lost native ACK", async () => {
+    await storedRun();
+    const c = controlledRecoveryNative("errored", { throw_after_restart: true });
+    const first = await c.call();
+    expect(first.status, JSON.stringify(await first.clone().json())).toBe(200);
+    expect(c.restart).toHaveBeenCalledTimes(1);
+    expect(c.restart).toHaveBeenCalledWith();
+    expect(c.current()).toBe("running");
+    expect((await c.call()).status).toBe(200);
+    expect(c.restart).toHaveBeenCalledTimes(1);
+    expect(await db.prepare("SELECT state FROM operation_attempt WHERE intent_id='research-recover:status-run:0'").first<string>("state")).toBe("SUCCEEDED");
+  });
+
+  it("refuses cancellation and a started stage with no registered safe recovery", async () => {
+    const cancelled = await storedRun();
+    await cancelled.store.cancel(cancelled.request.operation_id, cancelled.actor);
+    const cancelledNative = controlledRecoveryNative("terminated");
+    expect((await cancelledNative.call()).status).toBe(409);
+    expect(cancelledNative.get).not.toHaveBeenCalled();
+
+    await reset();
+    await setupOrientationDatabase();
+    await seedSource("run-status");
+    const uncertain = await storedRun();
+    const requestSha = await digest(new TextEncoder().encode(JSON.stringify(uncertain.request)));
+    await uncertain.store.reserve(uncertain.request, requestSha, "unsafe-started", {
+      receipt_ref: "unsafe-budget", expires_at_ms: Date.now() + 60_000,
+    });
+    const errored = controlledRecoveryNative("errored");
+    const response = await errored.call();
+    expect(response.status).toBe(409);
+    expect((await body(response)).code).toBe("RESEARCH_RUN_RECOVERY_UNSAFE");
+    expect(errored.restart).not.toHaveBeenCalled();
+  });
+
+  it("applies the same owner, body, origin and idempotency boundaries as cancellation", async () => {
+    await storedRun();
+    const c = controlledRecoveryNative("errored");
+    expect((await c.call(recoverRequest(), refreshed("stranger"))).status).toBe(404);
+    expect((await c.call(recoverRequest(), verifier(principal, "service_token"))).status).toBe(403);
+    expect((await c.call(recoverRequest({ principal_ref: principal }))).status).toBe(400);
+    expect((await c.call(recoverRequest({}, null))).status).toBe(400);
+    expect((await c.call(recoverRequest({}, "recover", { origin: "https://foreign.example" }))).status).toBe(403);
+    expect(c.restart).not.toHaveBeenCalled();
+    expect(await db.prepare("SELECT COUNT(*) AS n FROM operation_intent WHERE operation_kind='research.run.recover.v1'").first<number>("n")).toBe(0);
   });
 });
 
