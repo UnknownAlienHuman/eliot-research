@@ -31,6 +31,7 @@ export type ApprovalMode = "approved" | "missing" | "malformed";
 export type SynthesisCandidateProtocol = "v1" | "v2";
 
 export interface CommittedFreezeSynthesisFixtureOptions {
+  readonly handler_generation?: "research-handlers.exploratory.v3" | "research-handlers.exploratory.v4";
   readonly candidate_protocol?: SynthesisCandidateProtocol;
   readonly synthesis_prompt?: string;
   /** Optional manifest admission used by later committed-stage reader fixtures. */
@@ -345,6 +346,7 @@ function freezePrompt(
 
 export async function committedFreezeSynthesisFixture(options: CommittedFreezeSynthesisFixtureOptions = {}) {
   const freeze = await committedEvidenceFreezeFixture({
+    ...(options.handler_generation === undefined ? {} : { handler_generation: options.handler_generation }),
     ...(options.allowed_verifier_refs === undefined ? {} : { allowed_verifier_refs: options.allowed_verifier_refs }),
     ...(options.include_counterevidence === true ? { include_counterevidence: true } : {}),
   });

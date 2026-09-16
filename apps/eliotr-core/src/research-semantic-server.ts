@@ -1,3 +1,4 @@
+import { isSemanticResearchHandlerGeneration } from "./research-stage-handlers.js";
 import { z } from "zod";
 import { validateModelGatewayToken } from "@eliotr/cloudflare-ai";
 import { IdentifierSchema, IsoDateTimeSchema, VersionedRefSchema } from "@eliotr/contracts";
@@ -138,6 +139,13 @@ export interface ResearchSemanticServerInput {
 export async function createResearchSemanticServerHandlers(input: ResearchSemanticServerInput): Promise<ResearchStageHandlerFactory> {
   const { env, navigation, principal } = input;
   if (!researchSemanticConfigurationInstalled(env)) configurationMissing();
+  const runBinding = await env.CORE_DB.prepare(
+    "SELECT handler_generation FROM research_workflow_run WHERE operation_id=?1 AND investigation_id=?2 " +
+    "AND principal_ref=?3 AND credential_generation=?4 AND deployment_generation=?5",
+  ).bind(input.operation_id, input.investigation_id, principal.principal_ref,
+    principal.credential_generation, principal.deployment_generation).first<{ handler_generation: unknown }>();
+  if (!isSemanticResearchHandlerGeneration(runBinding?.handler_generation)) configurationMissing();
+  const handlerGeneration = runBinding.handler_generation;
   const config = parseResearchSemanticConfiguration(installed(readResearchSemanticConfiguration(env)));
   let policy: ResearchModelSpendPolicy;
   try {
@@ -266,6 +274,7 @@ export async function createResearchSemanticServerHandlers(input: ResearchSemant
   const gateway = modelGatewayConfiguration(env);
   return createResearchSemanticWorkflowHandlerFactory({
     database: env.CORE_DB, search_database: env.SEARCH_DB, work_bucket: env.WORK_BUCKET, evidence_bucket: env.EVIDENCE_BUCKET,
+    ai_search: env.AI_SEARCH, handler_generation: handlerGeneration,
     navigation, ledger: input.ledger, operation_id: input.operation_id, investigation_id: input.investigation_id,
     principal, retrieval_profile: retrievalProfile,
     model_profile: { raw: env.ELIOTR_MODEL_PROFILE_DEFINITION_JSON, provenance_ref: installed(env.ELIOTR_MODEL_PROFILE_PROVENANCE_REF) },

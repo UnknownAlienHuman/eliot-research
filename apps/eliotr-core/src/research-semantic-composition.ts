@@ -7,6 +7,7 @@ import {
   type EvidenceContentPort,
   type NavigationReadAuthority,
 } from "@eliotr/cloudflare-evidence";
+import type { AiSearchNamespaceLike } from "@eliotr/platform-cloudflare";
 import type { ModelGatewayPricingPort } from "@eliotr/cloudflare-ai";
 import type { ReferenceManifestStore } from "@eliotr/policy";
 import type { InvestigationLedgerStore } from "@eliotr/research";
@@ -63,6 +64,7 @@ import type { RetrieveBranchesStageDependencies } from "./research-retrieve-bran
 import {
   createResearchStageHandlerFactory,
   SERVER_OWNED_FREEZE_HANDLER_GENERATION,
+  type SERVER_OWNED_SEMANTIC_HANDLER_GENERATION,
   type ResearchStageHandlerFactory,
 } from "./research-stage-handlers.js";
 
@@ -139,6 +141,8 @@ export interface ResearchSemanticCompositionDependencies {
   readonly search_database: D1Database;
   readonly work_bucket: R2Bucket;
   readonly evidence_bucket: R2Bucket;
+  /** The managed search binding must survive the semantic factory as well as direct retrieval. */
+  readonly ai_search?: AiSearchNamespaceLike | undefined;
   /** Server-created owner navigation; request DTOs must never supply this. */
   readonly navigation: NavigationReadAuthority;
   readonly ledger: Pick<InvestigationLedgerStore, "read">;
@@ -591,6 +595,8 @@ export function createResearchSemanticComposition(
 }
 
 export interface ResearchSemanticWorkflowDependencies extends ResearchSemanticCompositionDependencies {
+  /** Explicitly pinned by the stored run; omitted only by legacy v3 fixtures. */
+  readonly handler_generation?: typeof SERVER_OWNED_FREEZE_HANDLER_GENERATION | typeof SERVER_OWNED_SEMANTIC_HANDLER_GENERATION;
   readonly report: Pick<ResearchCoverageMaterializeStageDependencies,
     "policy_source" | "report_policy" | "expected_draft_head_revision">;
 }
@@ -608,7 +614,7 @@ export function createResearchSemanticWorkflowHandlerFactory(
   };
   return createResearchStageHandlerFactory({
     kind: "server-owned-exploratory",
-    generation: SERVER_OWNED_FREEZE_HANDLER_GENERATION,
+    generation: input.handler_generation ?? SERVER_OWNED_FREEZE_HANDLER_GENERATION,
     navigation: semantic.navigation,
     ledger: semantic.ledger,
     environment: {
@@ -616,6 +622,7 @@ export function createResearchSemanticWorkflowHandlerFactory(
       SEARCH_DB: input.search_database,
       WORK_BUCKET: input.work_bucket,
       EVIDENCE_BUCKET: input.evidence_bucket,
+      ...(input.ai_search === undefined ? {} : { AI_SEARCH: input.ai_search }),
     },
     freeze: semantic.freeze,
     synthesis: semantic.synthesis,

@@ -21,7 +21,7 @@ import {
   createResearchStageHandlerFactory,
   SERVER_OWNED_RESEARCH_HANDLER_GENERATION,
   SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION,
-  SERVER_OWNED_FREEZE_HANDLER_GENERATION,
+  isSemanticResearchHandlerGeneration,
   type ResearchStageHandlerFactory,
 } from "./research-stage-handlers.js";
 import { createResearchSemanticServerHandlers } from "./research-semantic-server.js";
@@ -219,7 +219,7 @@ export class ResearchWorkflow extends WorkflowEntrypoint<Env, ResearchWorkflowPa
       failWorkflow("WORKFLOW_AUTHORITY_STALE");
     }
     const lane = investigation.head.lane;
-    const semanticOwned = params.handler_generation === SERVER_OWNED_FREEZE_HANDLER_GENERATION;
+    const semanticOwned = isSemanticResearchHandlerGeneration(params.handler_generation);
     const serverOwned = semanticOwned || params.handler_generation === SERVER_OWNED_RESEARCH_HANDLER_GENERATION || params.handler_generation === SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION;
     const retrievalOwned = params.handler_generation === SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION;
     let handlers: ResearchStageHandlerFactory;

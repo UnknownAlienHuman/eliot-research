@@ -30,6 +30,11 @@ import {
   type RetrieveBranchesStageDependencies,
 } from "../src/research-retrieve-branches.js";
 import type { ScopeSnapshot } from "@eliotr/contracts";
+import { AI_SEARCH_PRIMARY_NAMESPACE, AI_SEARCH_PRIMARY_PROJECTION_PROFILE,
+  createAiSearchGenerationRegistryService, createD1AiSearchGenerationRegistryStore } from "@eliotr/cloudflare-ai";
+import { createD1ScopeProfilePort } from "@eliotr/retrieval";
+import type { AiSearchNamespaceLike } from "@eliotr/platform-cloudflare";
+import { createResearchStageHandlerFactory, SERVER_OWNED_SEMANTIC_HANDLER_GENERATION, SERVER_OWNED_FREEZE_HANDLER_GENERATION } from "../src/research-stage-handlers.js";
 import { importAndProject, prepareQ1Namespace, type Q1Namespace, type Q1Runtime } from "./retrieval-q1-fixture.js";
 
 const runtime = env as unknown as Q1Runtime;
@@ -48,7 +53,7 @@ interface Fixture {
   readonly executor: ReturnType<typeof createWorkflowCheckpointExecutor>;
 }
 
-async function fixture(): Promise<Fixture> {
+async function fixture(handlerGeneration = "retrieve-branches-v1"): Promise<Fixture> {
   await reset();
   const db = runtime.CORE_DB;
   const bucket = runtime.WORK_BUCKET;
@@ -113,7 +118,7 @@ async function fixture(): Promise<Fixture> {
   const navigation = createNavigationReadAuthority({ database: db, scope_snapshot: scope, access, require_current: (requested) => scopes.requireCurrent(requested), now: () => nowMs });
   const stage0: StageRequest = {
     protocol: "eliotr.workflow-stage.v1", operation_id: payload.operation_id, investigation_ref: { id: payload.investigation_id, revision: 1 },
-    stage: "FREEZE_PROTOCOL_AND_SCOPE", idempotency_key: "retrieve-branches-stage", handler_generation: "retrieve-branches-v1",
+    stage: "FREEZE_PROTOCOL_AND_SCOPE", idempotency_key: "retrieve-branches-stage", handler_generation: handlerGeneration,
     input_manifest: { object_ref: payloadKey, sha256: payloadDigest, byte_length: payloadBytes.byteLength,
       residency: { scope_domain_id: scope.snapshot_id, access_domain_id: principal.principal_ref, confidentiality_domain_id: "private",
         encryption_key_domain_id: "retrieve-key-v1", retention_domain_id: "retrieve-retention-v1", erasure_domain_id: "retrieve-erasure-v1",
@@ -170,6 +175,64 @@ async function rowCounts(db: D1Database): Promise<{ readonly snapshots: number; 
 }
 
 describe("RETRIEVE_BRANCHES over the persisted protocol scope", () => {
+
+  it.each([
+    { path: "environment", generation: SERVER_OWNED_SEMANTIC_HANDLER_GENERATION, sem: true },
+    { path: "explicit", generation: SERVER_OWNED_SEMANTIC_HANDLER_GENERATION, sem: true },
+    { path: "legacy", generation: SERVER_OWNED_FREEZE_HANDLER_GENERATION, sem: false },
+    { path: "missing-binding", generation: SERVER_OWNED_SEMANTIC_HANDLER_GENERATION, sem: false },
+  ] as const)("pins SEM behavior to $generation through the $path factory path", async ({ path, generation, sem }) => {
+    const f = await fixture(generation);
+    const { request, dependencies } = await prepareRetrieveStage(f);
+    await createD1ScopeProfilePort(f.db).recordBinding(f.scope, profile);
+    const item = await runtime.SEARCH_DB.prepare(
+      "SELECT item_key, canonical_section_id, content_sha256, instruction_taint, projection_generation, source_revision_ref FROM projection_item WHERE active=1 LIMIT 1",
+    ).first<{ item_key: string; canonical_section_id: string; content_sha256: string;
+      instruction_taint: string; projection_generation: string; source_revision_ref: string }>();
+    if (item === null) throw new Error("missing projected fixture");
+    const registry = createAiSearchGenerationRegistryService(createD1AiSearchGenerationRegistryStore(runtime.SEARCH_DB));
+    const now = new Date().toISOString();
+    const prior = await registry.read(AI_SEARCH_PRIMARY_NAMESPACE);
+    await registry.declare({ namespace: AI_SEARCH_PRIMARY_NAMESPACE, profile: {
+      ...AI_SEARCH_PRIMARY_PROJECTION_PROFILE, id: "stage-sem", generation: item.projection_generation,
+    }, expected_item_count: 1, declared_at: now });
+    await registry.observe(AI_SEARCH_PRIMARY_NAMESPACE, { generation: item.projection_generation,
+      indexed_item_count: 1, readback_item_count: 1, failed_item_count: 0, mismatch_count: 0,
+      golden_set_result_ref: "stage-sem-controlled-provider", observed_at: now });
+    await registry.promote(AI_SEARCH_PRIMARY_NAMESPACE, { expected_active_head_generation: prior?.artifact.registry.active_head_generation ?? null,
+      target_generation: item.projection_generation, promoted_at: now });
+    let calls = 0;
+    const ai = { get(id: string) {
+      expect(id).toBe("stage-sem");
+      return { search: async () => {
+        calls++;
+        return { search_query: "Pinned", chunks: [{ id: "sem-chunk", type: "text", score: 0.9,
+          text: "Provider preview is not evidence", item: { key: `${item.item_key}.md`, metadata: {
+            canonical_section_id: item.canonical_section_id, content_sha256: item.content_sha256,
+            instruction_taint: item.instruction_taint, projection_generation: item.projection_generation,
+            source_revision_ref: item.source_revision_ref,
+          } }, scoring_details: { vector_score: 0.9, vector_rank: 1 } }] };
+      } };
+    } } as unknown as AiSearchNamespaceLike;
+    const base = { kind: "server-owned-exploratory" as const, generation,
+      navigation: f.navigation, ledger: f.ledger } as const;
+    const factory = createResearchStageHandlerFactory(path === "explicit"
+      ? { ...base, retrieval: { ...dependencies, ai_search: ai } }
+      : { ...base, environment: { CORE_DB: f.db, SEARCH_DB: runtime.SEARCH_DB,
+        WORK_BUCKET: f.bucket, EVIDENCE_BUCKET: runtime.EVIDENCE_BUCKET,
+        ...(path === "missing-binding" ? {} : { AI_SEARCH: ai }) } });
+    const receipt = await f.executor.execute(request, principal, factory("RETRIEVE_BRANCHES"));
+    const result = await readRetrieveBranchesCheckpoint(dependencies, request, principal);
+    expect(calls, JSON.stringify(result.checkpoint.trace)).toBe(sem ? 1 : 0);
+    expect(result.checkpoint.trace.lanes_used.includes("SEM")).toBe(sem);
+    expect(result.checkpoint.trace.query_product).toBe(path === "legacy" ? "FAST_SEARCH" : "RESEARCH");
+    expect(result.checkpoint.trace.candidates_by_lane["SEM"]).toBe(sem ? 1 : 0);
+    if (path === "missing-binding") expect(result.checkpoint.trace.lanes_skipped).toContainEqual({ lane: "SEM", reason: "LANE_UNAVAILABLE" });
+    expect(result.checkpoint.evidence_pack.resolved_evidence[0]?.exact_excerpt).toBe("# Evidence\n\nPinned content.\n");
+    expect(await f.executor.execute(request, principal, factory("RETRIEVE_BRANCHES"))).toEqual(receipt);
+    expect(calls).toBe(sem ? 1 : 0);
+  });
+
   it("reads stage-0 authority, searches the same scope, and replays exact evidence refs", async () => {
     const f = await fixture();
     const { request: retrieveRequest, handler, dependencies } = await prepareRetrieveStage(f);

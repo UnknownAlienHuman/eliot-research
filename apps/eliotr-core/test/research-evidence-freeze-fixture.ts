@@ -59,6 +59,7 @@ export interface FreezeFixture {
 }
 
 export interface FreezeFixtureOptions {
+  readonly handler_generation?: "research-handlers.exploratory.v3" | "research-handlers.exploratory.v4";
   /** Optional committed-manifest admission used by later-stage reader fixtures. */
   readonly allowed_verifier_refs?: readonly string[];
   /** Add two real top-level evidence sections for multi-handle downstream fixtures. */
@@ -167,7 +168,7 @@ export async function freezeFixture(options: FreezeFixtureOptions = {}): Promise
     require_current: (requested) => scopes.requireCurrent(requested), now: () => nowMs });
   const stage_zero: StageRequest = {
     protocol: "eliotr.workflow-stage.v1", operation_id: operationId, investigation_ref: { id: investigationId, revision: 1 },
-    stage: "FREEZE_PROTOCOL_AND_SCOPE", idempotency_key: "freeze-workflow-idempotency", handler_generation: SERVER_OWNED_FREEZE_HANDLER_GENERATION,
+    stage: "FREEZE_PROTOCOL_AND_SCOPE", idempotency_key: "freeze-workflow-idempotency", handler_generation: options.handler_generation ?? SERVER_OWNED_FREEZE_HANDLER_GENERATION,
     input_manifest: { object_ref: payloadKey, sha256: payloadDigest, byte_length: payloadBytes.byteLength,
       residency: { scope_domain_id: scope.snapshot_id, access_domain_id: principal.principal_ref, confidentiality_domain_id: "private",
         encryption_key_domain_id: "freeze-key-v1", retention_domain_id: "freeze-retention-v1", erasure_domain_id: "freeze-erasure-v1",

@@ -184,12 +184,14 @@ function auditPrompt(
 }
 
 export interface ResearchClaimAuditStageFixtureOptions {
+  readonly handler_generation?: "research-handlers.exploratory.v3" | "research-handlers.exploratory.v4";
   /** Include a second real projected counterevidence section in the committed pack. */
   readonly include_counterevidence?: boolean;
 }
 
 async function committedAuditInputFixture(options: ResearchClaimAuditStageFixtureOptions = {}) {
   const fixture = await committedFreezeSynthesisFixture({
+    ...(options.handler_generation === undefined ? {} : { handler_generation: options.handler_generation }),
     candidate_protocol: "v2",
     synthesis_prompt: "Produce eliotr.research.synthesis-claims-candidate.v2 from the frozen evidence.",
     allowed_verifier_refs: [AUDIT_VERIFIER_REF],
@@ -204,7 +206,7 @@ async function committedAuditInputFixture(options: ResearchClaimAuditStageFixtur
   };
   const verification = createResearchStageHandlerFactory({
     kind: "server-owned-exploratory",
-    generation: SERVER_OWNED_FREEZE_HANDLER_GENERATION,
+    generation: options.handler_generation ?? SERVER_OWNED_FREEZE_HANDLER_GENERATION,
     navigation: fixture.freeze.navigation,
     ledger: fixture.freeze.ledger,
     verification: {
@@ -426,7 +428,7 @@ export async function researchClaimAuditStageFixture(
   };
   const auditFactory = createResearchStageHandlerFactory({
     kind: "server-owned-exploratory",
-    generation: SERVER_OWNED_FREEZE_HANDLER_GENERATION,
+    generation: options.handler_generation ?? SERVER_OWNED_FREEZE_HANDLER_GENERATION,
     navigation: prepared.fixture.freeze.navigation,
     ledger: prepared.fixture.freeze.ledger,
     audit_claims: auditModel,

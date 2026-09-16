@@ -35,6 +35,12 @@ import {
   type ResearchRetrievalEnvironment,
 } from "./research-retrieval-composition.js";
 
+/** First generation whose retrieval plan includes managed SEM. Legacy runs retain FAST_SEARCH. */
+export const SEMANTIC_RETRIEVAL_HANDLER_GENERATION = "research-handlers.exploratory.v4";
+function retrievalProduct(handlerGeneration: string): "FAST_SEARCH" | "RESEARCH" {
+  return handlerGeneration === SEMANTIC_RETRIEVAL_HANDLER_GENERATION ? "RESEARCH" : "FAST_SEARCH";
+}
+
 const RETRIEVE_BRANCHES_PROTOCOL = "eliotr.research.retrieve-branches.v1" as const;
 
 export interface RetrieveBranchesStageDependencies {
@@ -42,6 +48,8 @@ export interface RetrieveBranchesStageDependencies {
   readonly search_database: D1Database;
   readonly work_bucket: R2Bucket;
   readonly evidence_bucket: R2Bucket;
+  /** Managed semantic search is optional; its absence remains explicit in the trace. */
+  readonly ai_search?: ResearchRetrievalEnvironment["AI_SEARCH"];
   /** Server-verified access identity; never copied from stage input bytes. */
   readonly access: RetrievalQueryAccess;
   /** Pinned to the same persisted scope as the workflow run. */
@@ -165,7 +173,7 @@ export async function readRetrieveBranchesCheckpoint(
       checkpoint.protocol_digest !== protocolScope.protocol_digest ||
       checkpoint.denominator_digest !== protocolScope.denominator_digest ||
       checkpoint.coverage_claim === "COMPLETE_SCOPE" ||
-      checkpoint.trace.query_product !== "FAST_SEARCH" ||
+      checkpoint.trace.query_product !== retrievalProduct(persisted.stage_request.handler_generation) ||
       checkpoint.trace.raw_query !== protocolScope.protocol_profile.question ||
       (checkpoint.trace.evidence_pack_ref !== undefined && checkpoint.trace.evidence_pack_ref !== checkpoint.evidence_pack.pack_ref.id)) {
     fail("WORKFLOW_AUTHORITY_STALE");
@@ -248,7 +256,7 @@ export function createRetrieveBranchesStageHandler(
       access: dependencies.access,
       scope_snapshot: held.scope_snapshot,
       raw_query: checkpoint.protocol_profile.question,
-      product: "FAST_SEARCH" as const,
+      product: retrievalProduct(request.handler_generation),
       literals: [],
       requested_limit: dependencies.profile.max_results,
       deadline_ms: Date.now() + 30_000,
@@ -257,7 +265,8 @@ export function createRetrieveBranchesStageHandler(
       profile: dependencies.profile,
     } as const;
     const result = await retrieveWithHeldScope(
-      { CORE_DB: dependencies.database, SEARCH_DB: dependencies.search_database, EVIDENCE_BUCKET: dependencies.evidence_bucket } satisfies ResearchRetrievalEnvironment,
+      { CORE_DB: dependencies.database, SEARCH_DB: dependencies.search_database, EVIDENCE_BUCKET: dependencies.evidence_bucket,
+        ...(dependencies.ai_search === undefined ? {} : { AI_SEARCH: dependencies.ai_search }) } satisfies ResearchRetrievalEnvironment,
       retrievalInput,
     );
     const requestDigest = await retrievalRequestDigest({

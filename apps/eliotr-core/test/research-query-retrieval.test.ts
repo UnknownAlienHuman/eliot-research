@@ -267,6 +267,50 @@ describe("research.query retrieval over real D1/R2", () => {
     expect(await tableCount("retrieval_query_trace")).toBe(persistedBeforeInvalidation.trace);
   });
 
+  it("binds replay to the normalized requested expression, not just its old member set", async () => {
+    const owner = "rq-scope-replay-owner";
+    const world = await worldWithPolicy(owner);
+    const transport = q1Transport(runtime, owner);
+    const key = "rq-scope-replay";
+    const request = fastSearchQueryFor(world, "Pinned");
+    const run = (body: QueryRequest) => transport("/api/v1/research/query", {
+      method: "POST",
+      headers: { "content-type": "application/json", "idempotency-key": key },
+      body: JSON.stringify(body),
+    });
+    const first = await run(request) as { readonly data: QueryResult };
+    const counts = async () => Promise.all([
+      "scope_snapshot", "scope_access_grant", "retrieval_scope_profile",
+      "retrieval_query_result", "retrieval_query_trace", "outbox",
+    ].map(tableCount));
+    const before = await counts();
+    const source = `source-${world.namespace}`;
+    // Duplicated selected IDs and redundant UNION have one canonical expression.
+    const equivalent: QueryRequest = { ...request, scope_expression: {
+      kind: "UNION",
+      left: { kind: "SELECTED_SOURCES", source_ids: [source, source] },
+      right: { kind: "SELECTED_SOURCES", source_ids: [source] },
+    } };
+    const replay = await run(equivalent) as { readonly data: QueryResult };
+    expect(replay.data).toEqual(first.data);
+    // GLOBAL may currently resolve to the same members, but is a different request.
+    for (const scope_expression of [
+      { kind: "GLOBAL_LIBRARY" },
+      { kind: "PROJECT", project_id: "another-project" },
+      { kind: "SELECTED_SOURCES", source_ids: ["another-source"] },
+    ] satisfies QueryRequest["scope_expression"][]) {
+      await expect(run({ ...request, scope_expression })).rejects.toMatchObject({
+        status: 409, code: "RESEARCH_CONFLICT",
+      });
+    }
+    expect(await counts()).toEqual(before);
+    // Matching expression is not authority: a real revoke still denies replay.
+    await db.prepare("UPDATE scope_access_grant SET state='REVOKED' WHERE principal_ref=?1")
+      .bind(owner).run();
+    await expect(run(equivalent)).rejects.toMatchObject({ code: "RESEARCH_AUTHORITY_STALE" });
+    expect(await counts()).toEqual(before);
+  });
+
   it("persists a no-hit NONE result with trace and profile row; replays without duplication and conflicts on changed input", async () => {
     const owner = "rq-retrieval-owner";
     const world = await worldWithPolicy(owner);

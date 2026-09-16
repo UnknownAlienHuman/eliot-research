@@ -5,7 +5,7 @@ import { createD1InvestigationLedgerStore, createInvestigationLedgerService, typ
 import { createMonotoneStageExecutor, digest, WorkflowCheckpointStore, type StageRequest } from "@eliotr/cloudflare-research";
 import { createEvidenceFreezePostSynthesisContextReader, type ResearchArtifactReportPolicy } from "@eliotr/cloudflare-research";
 import { createResearchCoverageStageHandlerFromFreeze, createResearchCoverageMaterializeStageHandlerFromFreeze } from "@eliotr/cloudflare-research-stages";
-import { createResearchStageHandlerFactory, SERVER_OWNED_FREEZE_HANDLER_GENERATION } from "../src/research-stage-handlers.js";
+import { createResearchStageHandlerFactory, SERVER_OWNED_FREEZE_HANDLER_GENERATION, SERVER_OWNED_SEMANTIC_HANDLER_GENERATION } from "../src/research-stage-handlers.js";
 import { researchClaimAuditStageFixture } from "./research-claim-audit-fixture.js";
 import { principal as freezePrincipal } from "./research-evidence-freeze-fixture.js";
 import type { AccessVerifier } from "@eliotr/cloudflare-access";
@@ -211,8 +211,8 @@ describe("owner run status after reauthentication over real HTTP/D1/R2", () => {
     expect(response.status).toBe(409);
   });
 
-  it("reopens an actual synthesized, audited and materialized v3 draft after login without rerunning the models", async () => {
-    const audited = await researchClaimAuditStageFixture({ include_counterevidence: true });
+  it.each([SERVER_OWNED_FREEZE_HANDLER_GENERATION, SERVER_OWNED_SEMANTIC_HANDLER_GENERATION] as const)("reopens an actual synthesized, audited and materialized %s draft after login without rerunning the models", async (generation) => {
+    const audited = await researchClaimAuditStageFixture({ include_counterevidence: true, handler_generation: generation });
     const freeze = audited.fixture.freeze;
     const environment = { database: freeze.db, work_bucket: freeze.bucket,
       manifest_store: freeze.freeze_store, read_stage_five: freeze.readers.read_stage_five };
@@ -240,7 +240,7 @@ describe("owner run status after reauthentication over real HTTP/D1/R2", () => {
       .bind(freeze.operation_id).first<{ policy_generation: string; policy_authority_ref: string }>();
     if (policy === null) throw new Error("materialized fixture lost its report policy");
     const handlers = createResearchStageHandlerFactory({ kind: "server-owned-exploratory",
-      generation: SERVER_OWNED_FREEZE_HANDLER_GENERATION, navigation: freeze.navigation, ledger: freeze.ledger,
+      generation, navigation: freeze.navigation, ledger: freeze.ledger,
       resolve_citations: { database: freeze.db, navigation: freeze.navigation, evidence_resolver: freeze.resolver,
         context: createEvidenceFreezePostSynthesisContextReader(environment, freeze.navigation, freeze.readers, "RESOLVE_CITATIONS") },
       calculate_coverage: createResearchCoverageStageHandlerFromFreeze(environment, freeze.navigation, freeze.readers, { ledger: freeze.ledger }),

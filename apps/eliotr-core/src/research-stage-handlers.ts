@@ -25,6 +25,7 @@ import {
 } from "@eliotr/cloudflare-research-stages";
 import {
   createRetrieveBranchesStageHandler,
+  SEMANTIC_RETRIEVAL_HANDLER_GENERATION,
   type RetrieveBranchesStageDependencies,
 } from "./research-retrieve-branches.js";
 import {
@@ -39,6 +40,12 @@ export const SERVER_OWNED_RESEARCH_HANDLER_GENERATION = "research-handlers.explo
 export const SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION = "research-handlers.exploratory.v2";
 /** Generation for the explicit stage-10/11 evidence-freeze composition. */
 export const SERVER_OWNED_FREEZE_HANDLER_GENERATION = "research-handlers.exploratory.v3";
+/** New runs use SEM; v3's committed results and pending stage behavior remain readable. */
+export const SERVER_OWNED_SEMANTIC_HANDLER_GENERATION = SEMANTIC_RETRIEVAL_HANDLER_GENERATION;
+export function isSemanticResearchHandlerGeneration(generation: unknown): generation is
+  typeof SERVER_OWNED_FREEZE_HANDLER_GENERATION | typeof SERVER_OWNED_SEMANTIC_HANDLER_GENERATION {
+  return generation === SERVER_OWNED_FREEZE_HANDLER_GENERATION || generation === SERVER_OWNED_SEMANTIC_HANDLER_GENERATION;
+}
 export const SERVER_RETRIEVAL_SCOPE_PROFILE = {
   version: "retrieval-scope-v1",
   max_sources: 64,
@@ -51,8 +58,8 @@ export type ResearchStageHandlerFactoryMode =
       readonly navigation: NavigationReadAuthority;
       readonly ledger: Pick<InvestigationLedgerStore, "read">;
       /** Server-owned bindings used to compose retrieval for v2. */
-      readonly environment?: Pick<Env, "CORE_DB" | "SEARCH_DB" | "WORK_BUCKET" | "EVIDENCE_BUCKET">;
-      readonly generation?: typeof SERVER_OWNED_RESEARCH_HANDLER_GENERATION | typeof SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION | typeof SERVER_OWNED_FREEZE_HANDLER_GENERATION;
+      readonly environment?: Pick<Env, "CORE_DB" | "SEARCH_DB" | "WORK_BUCKET" | "EVIDENCE_BUCKET"> & Partial<Pick<Env, "AI_SEARCH">>;
+      readonly generation?: typeof SERVER_OWNED_RESEARCH_HANDLER_GENERATION | typeof SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION | typeof SERVER_OWNED_FREEZE_HANDLER_GENERATION | typeof SERVER_OWNED_SEMANTIC_HANDLER_GENERATION;
       readonly retrieval?: Omit<RetrieveBranchesStageDependencies, "navigation" | "ledger" | "profile">;
       readonly freeze?: EvidenceFreezeCompositionDependencies;
       readonly synthesis?: Parameters<typeof createEvidenceFreezeSynthesisHandler>[0];
@@ -87,11 +94,11 @@ export function createResearchStageHandlerFactory(
     : undefined;
   const retrieval = mode.kind === "server-owned-exploratory" && mode.environment !== undefined
     ? { database: mode.environment.CORE_DB, search_database: mode.environment.SEARCH_DB, work_bucket: mode.environment.WORK_BUCKET,
-      evidence_bucket: mode.environment.EVIDENCE_BUCKET, access: mode.navigation.access }
+      evidence_bucket: mode.environment.EVIDENCE_BUCKET, ai_search: mode.environment.AI_SEARCH, access: mode.navigation.access }
     : mode.kind === "server-owned-exploratory" ? mode.retrieval : undefined;
   let retrievalHandler: WorkflowStageHandler | undefined;
   if (mode.kind === "server-owned-exploratory" &&
-      (mode.generation === SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION || mode.generation === SERVER_OWNED_FREEZE_HANDLER_GENERATION) && retrieval !== undefined) {
+      (mode.generation === SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION || isSemanticResearchHandlerGeneration(mode.generation)) && retrieval !== undefined) {
     const { navigation, ledger } = mode;
     retrievalHandler = async (input) => {
       let profile;
@@ -109,11 +116,11 @@ export function createResearchStageHandlerFactory(
     };
   }
   const freezeComposition = mode.kind === "server-owned-exploratory" &&
-    mode.generation === SERVER_OWNED_FREEZE_HANDLER_GENERATION && mode.freeze !== undefined
+    isSemanticResearchHandlerGeneration(mode.generation) && mode.freeze !== undefined
     ? createEvidenceFreezeComposition(mode.freeze)
     : undefined;
   let materializeHandler: WorkflowStageHandler | undefined;
-  if (mode.kind === "server-owned-exploratory" && mode.generation === SERVER_OWNED_FREEZE_HANDLER_GENERATION) {
+  if (mode.kind === "server-owned-exploratory" && isSemanticResearchHandlerGeneration(mode.generation)) {
     const materializerCount = [mode.materialize, mode.report_materialize, mode.materialize_handler]
       .filter((value) => value !== undefined).length;
     if (materializerCount === 1 && mode.materialize_handler !== undefined) {
@@ -125,35 +132,35 @@ export function createResearchStageHandlerFactory(
     }
   }
 
-  const explicitV3 = mode.kind === "server-owned-exploratory" &&
-    mode.generation === SERVER_OWNED_FREEZE_HANDLER_GENERATION;
+  const explicitSemantic = mode.kind === "server-owned-exploratory" &&
+    isSemanticResearchHandlerGeneration(mode.generation);
   let synthesisAdapter: ReturnType<typeof createEvidenceFreezeSynthesisHandler> | undefined;
   let auditAdapter: ReturnType<typeof createResearchClaimAuditStageHandler> | undefined;
   let citationsAdapter: ReturnType<typeof createResearchCitationsStageHandler> | undefined;
   let materializeRecovery: WorkflowStartedAttemptRecovery | undefined;
-  if (explicitV3 && materializeHandler !== undefined && mode.kind === "server-owned-exploratory" && mode.environment !== undefined) {
+  if (explicitSemantic && materializeHandler !== undefined && mode.kind === "server-owned-exploratory" && mode.environment !== undefined) {
     materializeRecovery = createResearchMaterializeRecovery({
       database: mode.environment.CORE_DB,
       work_bucket: mode.environment.WORK_BUCKET,
       navigation: mode.navigation,
-      materialize_handler_generation: SERVER_OWNED_FREEZE_HANDLER_GENERATION,
+      materialize_handler_generation: mode.generation ?? SERVER_OWNED_FREEZE_HANDLER_GENERATION,
     });
   }
   function getSynthesisAdapter(): ReturnType<typeof createEvidenceFreezeSynthesisHandler> | undefined {
     if (mode.kind !== "server-owned-exploratory" ||
-        mode.generation !== SERVER_OWNED_FREEZE_HANDLER_GENERATION || mode.synthesis === undefined) return undefined;
+        !isSemanticResearchHandlerGeneration(mode.generation) || mode.synthesis === undefined) return undefined;
     synthesisAdapter ??= createEvidenceFreezeSynthesisHandler(mode.synthesis);
     return synthesisAdapter;
   }
   function getAuditAdapter(): ReturnType<typeof createResearchClaimAuditStageHandler> | undefined {
     if (mode.kind !== "server-owned-exploratory" ||
-        mode.generation !== SERVER_OWNED_FREEZE_HANDLER_GENERATION || mode.audit_claims === undefined) return undefined;
+        !isSemanticResearchHandlerGeneration(mode.generation) || mode.audit_claims === undefined) return undefined;
     auditAdapter ??= createResearchClaimAuditStageHandler(mode.audit_claims);
     return auditAdapter;
   }
   function getCitationsAdapter(): ReturnType<typeof createResearchCitationsStageHandler> | undefined {
     if (mode.kind !== "server-owned-exploratory" ||
-        mode.generation !== SERVER_OWNED_FREEZE_HANDLER_GENERATION || mode.resolve_citations === undefined) return undefined;
+        !isSemanticResearchHandlerGeneration(mode.generation) || mode.resolve_citations === undefined) return undefined;
     citationsAdapter ??= createResearchCitationsStageHandler(mode.resolve_citations);
     return citationsAdapter;
   }
@@ -163,45 +170,45 @@ export function createResearchStageHandlerFactory(
       return protocolScopeHandler;
     }
     if (stage === "RETRIEVE_BRANCHES" && mode.kind === "server-owned-exploratory" &&
-        (mode.generation === SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION || mode.generation === SERVER_OWNED_FREEZE_HANDLER_GENERATION)) {
+        (mode.generation === SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION || isSemanticResearchHandlerGeneration(mode.generation))) {
       if (retrievalHandler === undefined) return async () => fail("WORKFLOW_AUTHORITY_STALE");
       return retrievalHandler;
     }
     if ((stage === "RECONCILE" || stage === "FREEZE_EVIDENCE") && freezeComposition !== undefined) {
       return stage === "RECONCILE" ? freezeComposition.reconcile : freezeComposition.freeze;
     }
-    if (mode.kind === "server-owned-exploratory" && mode.generation === SERVER_OWNED_FREEZE_HANDLER_GENERATION &&
+    if (mode.kind === "server-owned-exploratory" && isSemanticResearchHandlerGeneration(mode.generation) &&
         (stage === "RECONCILE" || stage === "FREEZE_EVIDENCE")) {
       return async () => fail("WORKFLOW_AUTHORITY_STALE");
     }
-    if (stage === "SYNTHESIZE" && mode.kind === "server-owned-exploratory" && mode.generation === SERVER_OWNED_FREEZE_HANDLER_GENERATION) {
+    if (stage === "SYNTHESIZE" && mode.kind === "server-owned-exploratory" && isSemanticResearchHandlerGeneration(mode.generation)) {
       const adapter = getSynthesisAdapter();
       return adapter === undefined ? async () => fail("WORKFLOW_AUTHORITY_STALE") : adapter.handler;
     }
-    if (stage === "VERIFY" && mode.kind === "server-owned-exploratory" && mode.generation === SERVER_OWNED_FREEZE_HANDLER_GENERATION) {
+    if (stage === "VERIFY" && mode.kind === "server-owned-exploratory" && isSemanticResearchHandlerGeneration(mode.generation)) {
       return mode.verification === undefined ? async () => fail("WORKFLOW_AUTHORITY_STALE") : createResearchVerificationStageHandler(mode.verification);
     }
-    if (stage === "AUDIT_CLAIMS" && mode.kind === "server-owned-exploratory" && mode.generation === SERVER_OWNED_FREEZE_HANDLER_GENERATION) {
+    if (stage === "AUDIT_CLAIMS" && mode.kind === "server-owned-exploratory" && isSemanticResearchHandlerGeneration(mode.generation)) {
       const adapter = getAuditAdapter();
       return adapter === undefined ? async () => fail("WORKFLOW_AUTHORITY_STALE") : adapter.handler;
     }
-    if (stage === "RESOLVE_CITATIONS" && mode.kind === "server-owned-exploratory" && mode.generation === SERVER_OWNED_FREEZE_HANDLER_GENERATION) {
+    if (stage === "RESOLVE_CITATIONS" && mode.kind === "server-owned-exploratory" && isSemanticResearchHandlerGeneration(mode.generation)) {
       const adapter = getCitationsAdapter();
       return adapter === undefined ? async () => fail("WORKFLOW_AUTHORITY_STALE") : adapter;
     }
-    if (stage === "CALCULATE_COVERAGE" && mode.kind === "server-owned-exploratory" && mode.generation === SERVER_OWNED_FREEZE_HANDLER_GENERATION) {
+    if (stage === "CALCULATE_COVERAGE" && mode.kind === "server-owned-exploratory" && isSemanticResearchHandlerGeneration(mode.generation)) {
       return mode.calculate_coverage ?? (async () => fail("WORKFLOW_AUTHORITY_STALE"));
     }
-    if (stage === "MATERIALIZE" && mode.kind === "server-owned-exploratory" && mode.generation === SERVER_OWNED_FREEZE_HANDLER_GENERATION) {
+    if (stage === "MATERIALIZE" && mode.kind === "server-owned-exploratory" && isSemanticResearchHandlerGeneration(mode.generation)) {
       return materializeHandler === undefined ? async () => fail("WORKFLOW_AUTHORITY_STALE") : materializeHandler;
     }
     return ({ request, input_bytes, attempt_ref }) =>
       deterministicWorkflowStageBytes(request.operation_id, request.stage, input_bytes, attempt_ref);
   }) as ResearchStageHandlerFactory;
 
-  if (explicitV3) {
+  if (explicitSemantic) {
     const recoverStartedAttempt: WorkflowStartedAttemptRecovery = async (input) => {
-      if (input.request.handler_generation !== SERVER_OWNED_FREEZE_HANDLER_GENERATION) return null;
+      if (input.request.handler_generation !== mode.generation) return null;
       if (input.request.stage === "SYNTHESIZE") return getSynthesisAdapter()?.recoverStartedAttempt(input) ?? null;
       if (input.request.stage === "AUDIT_CLAIMS") return getAuditAdapter()?.recoverStartedAttempt(input) ?? null;
       if (input.request.stage === "RESOLVE_CITATIONS") return getCitationsAdapter()?.recoverStartedAttempt(input) ?? null;
