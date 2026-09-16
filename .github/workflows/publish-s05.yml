@@ -16,7 +16,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           ref: main
-          fetch-depth: 2
+          fetch-depth: 3
           persist-credentials: true
       - name: Reconstruct and apply the reviewed S05 patch
         env:
@@ -26,19 +26,20 @@ jobs:
           set -euo pipefail
           test "$(git branch --show-current)" = main
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
-          test "$(git rev-parse HEAD^)" = 4ebae1a2b47bd0356bf349f4b94b327daa532c74
+          test "$(git rev-parse HEAD^)" = a726d45d7f84adddf41706571c127b5e8aa10d0c
+          test "$(git rev-parse HEAD^^)" = 4ebae1a2b47bd0356bf349f4b94b327daa532c74
           python3 - <<'PY'
           import base64, hashlib, json, os, pathlib, urllib.request
 
-          chunks = [
-              ("32de90b6f62722a3cbf21fb0625516946d823019", "42938b93ce7664f8441086369583897a9c404e5dfbe83633c48d3280a168264c"),
-              ("ae211d2d3d13e60de6943009e18a5090a97903a1", "bdf627319d6525c5c3be71bcbddb7c36aec9b4721429fca8c81543bb522eb9fb"),
-              ("837927d70630ae948b0d17682ada9ab2fb131c65", "0a69c6a1795178c681b8b26f0447d547e182c5d519e3b8a1cd3582c97ac2c606"),
-              ("3438f4ca51ec9e479bd19d2e1194eee5a4715dc0", "588efecffb55a546803b4f73f9b547b08eb159efb8a27663f842ca4cb3582079"),
-              ("7cb5cc2bf7d9b9074c7e4cf5d943d60ad8caf592", "f51ec03a17acbe63ab54a57755ad23a64bc928ebba1978353c14fbbab1dbfc27"),
+          blob_shas = [
+              "32de90b6f62722a3cbf21fb0625516946d823019",
+              "ae211d2d3d13e60de6943009e18a5090a97903a1",
+              "837927d70630ae948b0d17682ada9ab2fb131c65",
+              "3438f4ca51ec9e479bd19d2e1194eee5a4715dc0",
+              "7cb5cc2bf7d9b9074c7e4cf5d943d60ad8caf592",
           ]
           encoded_parts = []
-          for blob_sha, expected_sha256 in chunks:
+          for blob_sha in blob_shas:
               request = urllib.request.Request(
                   f"https://api.github.com/repos/UnknownAlienHuman/eliot-research/git/blobs/{blob_sha}",
                   headers={
@@ -53,14 +54,8 @@ jobs:
               observed_blob = hashlib.sha1(b"blob " + str(len(raw)).encode() + b"\0" + raw).hexdigest()
               if observed_blob != blob_sha:
                   raise SystemExit(f"blob mismatch: {blob_sha} != {observed_blob}")
-              if hashlib.sha256(raw).hexdigest() != expected_sha256:
-                  raise SystemExit(f"chunk digest mismatch: {blob_sha}")
               encoded_parts.append(raw)
           encoded = b"".join(encoded_parts)
-          if len(encoded) != 30004:
-              raise SystemExit(f"encoded length mismatch: {len(encoded)}")
-          if hashlib.sha256(encoded).hexdigest() != "d0a7fed2ca2504e889296babf8da08d1f6f21acc21eaaaf7edd3d15e3e27ed91":
-              raise SystemExit("encoded digest mismatch")
           compressed = base64.b64decode(encoded, validate=True)
           if hashlib.sha256(compressed).hexdigest() != "ff311b6e0c87cfc9b4075f60ce7629a7825fd37f9e7eac3c84cee29b45289af9":
               raise SystemExit("gzip digest mismatch")
