@@ -22,6 +22,7 @@ fail-closed. The Worker is a composition and transport boundary, not a second do
 - `apps/eliotr-core/src/readiness.ts`
 - `apps/eliotr-core/src/research-session.ts`
 - `apps/eliotr-core/src/research-run-read-authorization.ts`
+- `apps/eliotr-core/src/research-run-control.ts`
 - `apps/eliotr-core/src/research-run-list.ts`
 - `apps/eliotr-core/test/research-run-status.test.ts`
 - `apps/eliotr-core/src/research-stage-handlers.ts`
@@ -342,3 +343,26 @@ The focused combined suite also covers artifact readers, gateway runtime and wor
 negative tests pass locally. This is not whole-project CI or live Cloudflare qualification; S05
 compatible deployment and S33 long-run execution renewal remain separate tasks. See PR #198 for
 implementation commits and exact commands; no schema migration or public DTO change is introduced.
+
+
+## S14 public run cancellation
+
+`POST /api/v1/research/run/:workflow_id/cancel` accepts only `{}` and a bounded
+`Idempotency-Key`. The verified current owner is authorized independently of the original
+execution credential. The action uses the existing W2 run and deterministic cancellation
+receipt: it does not create a second job, change frozen inputs or renew execution authority.
+The existing ledger/orientation epochs and current grant/deadline predicates fence the
+conditional cancellation write. Failed or lost D1 acknowledgements are reconciled by reading
+that same run; only confirmed CANCELLED returns success. A completion that won first returns
+409. Native termination is attempted only after durable cancellation and cannot undo it.
+
+The shared store's explicit `owner-read` mode returns owner-filtered, structurally validated
+metadata, not an authorization result. Current reader/action authorization is mandatory
+before disclosure or mutation; the default execution mode and all executor guards remain.
+
+Focused local acceptance: 32 tests across run status and workflow recovery, including 10 new
+public-cancellation scenarios. These use the actual HTTP/application/D1/R2 path and controlled
+Access/native lifecycle boundaries. Concurrent callers, revoke-at-settlement, failure/lost ACK,
+refreshed JWT, completion-first and late in-flight output are covered. This does not qualify
+native Cloudflare termination. S15 public recovery, S10 machine delegation, S32 client controls
+and S05/S33 lifetime changes remain separate. See PR #206 for the code commit and commands.
