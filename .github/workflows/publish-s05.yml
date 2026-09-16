@@ -26,15 +26,17 @@ jobs:
           set -euo pipefail
           test "$(git branch --show-current)" = main
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
-          test "$(git rev-parse HEAD^)" = b1bf0cb67091ad6c0356e521f2595482ba7c24ca
+          test "$(git rev-parse HEAD^)" = 30a3d669685b943f178de64b0ac750fa498ca131
           python3 - <<'PY'
           import base64, hashlib, json, os, pathlib, urllib.request
 
           blob_shas = [
-              "32de90b6f62722a3cbf21fb0625516946d823019",
-              "ae211d2d3d13e60de6943009e18a5090a97903a1",
-              "837927d70630ae948b0d17682ada9ab2fb131c65",
-              "3438f4ca51ec9e479bd19d2e1194eee5a4715dc0",
+              "867facb7e59b675d4473b83f91cf726048e04c8e",
+              "bcff261f3ecba8284ed530d6b5163f499115c0d6",
+              "c1e0cfa16eb4f5b62504213ed7ca155ffd944cf0",
+              "ad9076a3d385e938b44a6b0aaf3f0a95566e3b01",
+              "dce2d18aac8ea438bb91897e361194d920cb8065",
+              "a56ce8e2d2a698f5d68b28b6d9981914499f6a05",
               "7cb5cc2bf7d9b9074c7e4cf5d943d60ad8caf592",
           ]
           encoded_parts = []
@@ -49,12 +51,16 @@ jobs:
               )
               with urllib.request.urlopen(request, timeout=30) as response:
                   item = json.load(response)
-              transported = base64.b64decode(item["content"])
-              observed_blob = hashlib.sha1(b"blob " + str(len(transported)).encode() + b"\0" + transported).hexdigest()
+              raw = base64.b64decode(item["content"])
+              observed_blob = hashlib.sha1(b"blob " + str(len(raw)).encode() + b"\0" + raw).hexdigest()
               if observed_blob != blob_sha:
                   raise SystemExit(f"blob mismatch: {blob_sha} != {observed_blob}")
-              encoded_parts.append(b"".join(transported.split()))
+              encoded_parts.append(raw)
           encoded = b"".join(encoded_parts)
+          if len(encoded) != 30004:
+              raise SystemExit(f"encoded length mismatch: {len(encoded)}")
+          if hashlib.sha256(encoded).hexdigest() != "d0a7fed2ca2504e889296babf8da08d1f6f21acc21eaaaf7edd3d15e3e27ed91":
+              raise SystemExit("encoded digest mismatch")
           compressed = base64.b64decode(encoded, validate=True)
           if hashlib.sha256(compressed).hexdigest() != "ff311b6e0c87cfc9b4075f60ce7629a7825fd37f9e7eac3c84cee29b45289af9":
               raise SystemExit("gzip digest mismatch")
