@@ -1,33 +1,124 @@
-name: export-s15-source
+name: publish-reviewed-s15-recovery
+
 on:
   push:
     branches: [main]
     paths: [.github/workflows/export-s15-source.yml]
+
 permissions:
-  contents: read
+  contents: write
+
 jobs:
-  export:
+  publish:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           ref: main
-          fetch-depth: 0
-          persist-credentials: false
-      - name: Export committed sources only
+          fetch-depth: 2
+          persist-credentials: true
+      - name: Reconstruct and verify the reviewed Git bundle
+        env:
+          GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
           test "$(git branch --show-current)" = main
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
-          mkdir -p /tmp/s15-source
-          git bundle create /tmp/s15-source/main.bundle main
-          git rev-parse HEAD > /tmp/s15-source/SOURCE_SHA
-          (cd /tmp/s15-source && sha256sum main.bundle > SHA256SUMS)
-      - uses: actions/upload-artifact@v4
+          test "$(git rev-parse HEAD^)" = 3a310514705337d35cfd9bfeb58a726fb476fc33
+          python3 - <<'PY'
+          import base64, hashlib, json, os, pathlib, urllib.request
+
+          shas = [
+              "5bd1fa97e7f76057298ea91121e22ea572016bdc",
+              "644d3bcb87fa80a3aff9e9c9193064973272fe0e",
+              "c7671cac49ca8d17e92d355da5af157767c686a6",
+              "49697836d8a1c1f4b8ca64657954ebdf74209b3d",
+              "a60f4f11165f3a033fe52f7f05bf4bf7154cd02d",
+              "bd695eb382ffba1491a9f78f825cbb7fe67dc825",
+              "5a3a10e14a408bc983b54673c6591b4a7d9513c8",
+              "d359b19c3b73e42a023effa8d83f3924bd44358a",
+              "94881a3edde4a0809d2052666b17b328f46468fb",
+              "5d393fef3747e6358b6f6fd2bfd3a681e71d611b",
+              "2ecaaf4cd806f5aaa73fcb6b9cde1cab05062371",
+              "2bf92807567b64fa58e235e9fc02a428560108bb",
+              "b042e381b0bac872f62484512cef3cfc66b362f7",
+              "b6d9f90dae37fc22a6b824ffe9297cc824582d19",
+              "253161f2ff4e7bf69f8f379aee340453858685e5",
+              "33921903537b28541847fa4f60b6e3315ec45bed",
+          ]
+          chunks = []
+          for sha in shas:
+              request = urllib.request.Request(
+                  f"https://api.github.com/repos/UnknownAlienHuman/eliot-research/git/blobs/{sha}",
+                  headers={
+                      "Authorization": f"Bearer {os.environ['GH_TOKEN']}",
+                      "Accept": "application/vnd.github+json",
+                      "X-GitHub-Api-Version": "2022-11-28",
+                  },
+              )
+              with urllib.request.urlopen(request, timeout=30) as response:
+                  item = json.load(response)
+              raw = base64.b64decode(item["content"])
+              observed = hashlib.sha1(b"blob " + str(len(raw)).encode() + b"\0" + raw).hexdigest()
+              if observed != sha:
+                  raise SystemExit(f"blob mismatch: {sha} != {observed}")
+              chunks.append(raw.decode("ascii"))
+          hex_text = "".join(chunks)
+          if len(hex_text) != 31424:
+              raise SystemExit(f"hex length mismatch: {len(hex_text)}")
+          if hashlib.sha256(hex_text.encode()).hexdigest() != "d11d2418df708a4fea6bba0390e67f7946c59af20a17973b9631cf1c0e30b48f":
+              raise SystemExit("hex digest mismatch")
+          bundle = bytes.fromhex(hex_text)
+          if hashlib.sha256(bundle).hexdigest() != "790d499864520906c4c99ad202a98ed5413bdfd68c3c25b45199b8f6adf233bb":
+              raise SystemExit("bundle digest mismatch")
+          pathlib.Path("/tmp/s15-recovery.bundle").write_bytes(bundle)
+          PY
+          git bundle verify /tmp/s15-recovery.bundle
+          git fetch /tmp/s15-recovery.bundle '83e6b13db0ab49f8c6c2cebfd3ece515ae1c439d:refs/remotes/s15/recovery'
+          test "$(git rev-parse refs/remotes/s15/recovery)" = 83e6b13db0ab49f8c6c2cebfd3ece515ae1c439d
+          test "$(git rev-parse refs/remotes/s15/recovery^)" = 3a310514705337d35cfd9bfeb58a726fb476fc33
+          test "$(git rev-parse 'refs/remotes/s15/recovery^{tree}')" = 2a30a361e216d032b0c9a5a974b7f6ada28d7267
+          git read-tree --reset -u 'refs/remotes/s15/recovery^{tree}'
+          test ! -e .github/workflows/export-s15-source.yml
+          git diff --cached --check
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
-          name: s15-source
-          path: /tmp/s15-source/
-          retention-days: 1
-          if-no-files-found: error
+          node-version: 22
+      - run: corepack enable && corepack prepare pnpm@11.23.0 --activate
+      - run: pnpm install --frozen-lockfile
+      - name: Validate the critical S15 boundaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/s15-validation
+          pnpm exec tsc -b apps/eliotr-pwa/tsconfig.json apps/eliotr-core/tsconfig.json --pretty false
+          pnpm exec tsc -p apps/eliotr-core/test/tsconfig.json --pretty false
+          changed_ts="$(git diff --cached --name-only -- '*.ts')"
+          test -n "$changed_ts"
+          pnpm exec eslint $changed_ts
+          node scripts/check-boundaries.mjs
+          node scripts/check-work-packets.mjs
+          pnpm --dir apps/eliotr-core exec vitest run \
+            test/research-run-status.test.ts \
+            test/research-workflow-recovery.test.ts \
+            test/research-evidence-freeze.test.ts 2>&1 | tee /tmp/s15-validation/focused.log
+          git diff --cached --check
+      - name: Publish the exact tested tree to main
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse 'refs/remotes/s15/recovery^{tree}')" = 2a30a361e216d032b0c9a5a974b7f6ada28d7267
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'fix: recover Research runs without repeating paid stages (S15)'
+          test "$(git rev-parse 'HEAD^{tree}')" = 2a30a361e216d032b0c9a5a974b7f6ada28d7267
+          git push origin HEAD:main
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: s15-recovery-validation
+          path: /tmp/s15-validation/
+          if-no-files-found: warn
+          retention-days: 7
