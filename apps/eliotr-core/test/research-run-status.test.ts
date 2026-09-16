@@ -11,7 +11,7 @@ import { principal as freezePrincipal } from "./research-evidence-freeze-fixture
 import type { AccessVerifier } from "@eliotr/cloudflare-access";
 import type { ResearchRunStatus } from "@eliotr/interfaces";
 import { handleHttp } from "../src/http.js";
-import { body, db, principal, credential, run, runtime, seedSource, setupOrientationDatabase, verifier } from "./orientation-fixture.js";
+import { body, db, principal, credential, run, runtime, seedSource, setupOrientationDatabase, verifier, observeDatabase } from "./orientation-fixture.js";
 
 beforeEach(async () => {
   await reset();
@@ -301,5 +301,179 @@ describe("owner run status after reauthentication over real HTTP/D1/R2", () => {
     await expect(new WorkflowCheckpointStore(fake).readRunStatus("run-corrupt", {
       principal_ref: "owner", credential_generation: "credential", deployment_generation: "deployment",
     })).rejects.toMatchObject({ code: "WORKFLOW_OUTPUT_CORRUPT" });
+  });
+});
+
+
+function cancelRequest(body: unknown = {}, key: string | null = "cancel-key", extra: Record<string, string> = {}) {
+  return new Request("https://research.example/api/v1/research/run/status-run/cancel", {
+    method: "POST", headers: { "content-type": "application/json", ...(key === null ? {} : { "idempotency-key": key }), ...extra },
+    body: JSON.stringify(body),
+  });
+}
+function controlledNative(core = db, terminate = vi.fn(async () => {})) {
+  const get = vi.fn(async (id: string) => ({ id, terminate }));
+  const controls = { ...runtime, CORE_DB: core, RESEARCH_WORKFLOW: { get } as unknown as typeof runtime.RESEARCH_WORKFLOW };
+  const call = (request = cancelRequest(), auth = verifier()) =>
+    handleHttp(request, controls, {} as ExecutionContext, { accessVerifier: auth });
+  return { call, get, terminate };
+}
+
+describe("public ordinary-run cancellation over HTTP/D1", () => {
+  it("cancels before execution, returns the existing receipt and replays without another native call", async () => {
+    const f = await storedRun();
+    const c = controlledNative();
+    const response = await c.call();
+    expect(response.status, JSON.stringify(await response.clone().json())).toBe(200);
+    const result = (await body<ResearchRunStatus>(response)).data;
+    expect(result).toMatchObject({ execution_state: "CANCELLED", cancellation_receipt_ref: "workflow-cancelled:status-run",
+      workflow_instance_id: "status-run", next_stage_index: 0, answer: { availability: "unavailable" } });
+    expect((await f.store.readRunStatus("status-run", f.actor))?.state).toBe("CANCELLED");
+    expect((await body<ResearchRunStatus>(await run(statusRequest()))).data).toEqual(result);
+    expect((await body<ResearchRunStatus>(await c.call())).data).toEqual(result);
+    expect(c.terminate).toHaveBeenCalledTimes(1);
+    expect(await db.prepare("SELECT COUNT(*) AS n FROM research_workflow_attempt").first<number>("n")).toBe(0);
+  });
+
+  it("authorizes the same owner with a new JWT, without replacing the recorded execution identity", async () => {
+    const f = await storedRun();
+    const before = await db.prepare("SELECT * FROM research_workflow_run").first();
+    const c = controlledNative();
+    expect((await c.call(cancelRequest(), refreshed())).status).toBe(200);
+    const after = await db.prepare("SELECT * FROM research_workflow_run").first();
+    expect(after).toEqual({ ...before, state: "CANCELLED", cancellation_receipt_ref: "workflow-cancelled:status-run" });
+    expect((await body<ResearchRunStatus>(await run(statusRequest(), refreshed()))).data.execution_state).toBe("CANCELLED");
+    expect((await f.store.readRunStatus("status-run", f.actor))?.next_stage_index).toBe(0);
+  });
+
+  it("rejects completion-first without undoing checkpoints", async () => {
+    await storedRun(true);
+    const snapshot = await executionSnapshot();
+    const c = controlledNative();
+    expect((await c.call()).status).toBe(409);
+    expect(c.get).not.toHaveBeenCalled();
+    expect(await executionSnapshot()).toEqual(snapshot);
+  });
+
+  it("does not confuse a failed write with cancellation, and reconciles a lost D1 acknowledgement", async () => {
+    await storedRun();
+    await db.exec("CREATE TRIGGER fail_public_cancel BEFORE UPDATE OF state ON research_workflow_run WHEN NEW.state='CANCELLED' BEGIN SELECT RAISE(ABORT, 'test failure'); END;");
+    const c = controlledNative();
+    try {
+      expect((await c.call()).status).toBe(503);
+      expect(await db.prepare("SELECT state FROM research_workflow_run").first<string>("state")).toBe("ACTIVE");
+      expect(c.get).not.toHaveBeenCalled();
+    } finally { await db.exec("DROP TRIGGER fail_public_cancel"); }
+    let lost = false;
+    const observed = observeDatabase(async (sql, phase) => {
+      if (!lost && phase === "after" && sql.startsWith("UPDATE research_workflow_run SET state='CANCELLED'")) {
+        lost = true; throw new Error("lost acknowledgement, durable write already happened");
+      }
+    });
+    const reconciled = controlledNative(observed);
+    expect((await reconciled.call()).status).toBe(200);
+    expect(lost).toBe(true);
+    expect(reconciled.terminate).toHaveBeenCalledTimes(1);
+    expect((await reconciled.call()).status).toBe(200);
+    expect(reconciled.terminate).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps canonical CANCELLED when native termination fails", async () => {
+    await storedRun();
+    const c = controlledNative(db, vi.fn(async () => { throw new Error("native timeout"); }));
+    const response = await c.call();
+    expect(response.status).toBe(200);
+    expect((await body<ResearchRunStatus>(response)).data.execution_state).toBe("CANCELLED");
+    expect((await body<ResearchRunStatus>(await run(statusRequest()))).data.execution_state).toBe("CANCELLED");
+  });
+
+  it("rejects foreign/missing/service/expired/CSRF and unknown-body requests before effects", async () => {
+    await storedRun();
+    const c = controlledNative();
+    const snapshot = await executionSnapshot();
+    expect((await c.call(cancelRequest(), refreshed("stranger"))).status).toBe(404);
+    expect((await c.call(new Request("https://research.example/api/v1/research/run/missing/cancel", {
+      method: "POST", headers: { "content-type": "application/json", "idempotency-key": "cancel" }, body: "{}",
+    }))).status).toBe(404);
+    expect((await c.call(cancelRequest(), verifier(principal, "service_token"))).status).toBe(403);
+    expect((await c.call(cancelRequest(), refreshed(principal, Date.now() - 1000))).status).toBe(403);
+    expect((await c.call(cancelRequest({ principal_ref: principal }))).status).toBe(400);
+    expect((await c.call(cancelRequest({}, null))).status).toBe(400);
+    expect((await c.call(cancelRequest({}, "cancel", { origin: "https://foreign.example" }))).status).toBe(403);
+    expect((await c.call(cancelRequest({}, "cancel", { "sec-fetch-site": "cross-site" }))).status).toBe(403);
+    expect(c.get).not.toHaveBeenCalled();
+    expect(await executionSnapshot()).toEqual(snapshot);
+  });
+
+  it("fences a read-policy revoke immediately before cancellation SQL", async () => {
+    await storedRun();
+    let revoked = false;
+    const observed = observeDatabase(async (sql, phase) => {
+      if (!revoked && phase === "before" && sql.startsWith("UPDATE research_workflow_run SET state='CANCELLED'")) {
+        revoked = true;
+        await db.prepare("UPDATE scope_read_policy SET state='REVOKED'").run();
+      }
+    });
+    const c = controlledNative(observed);
+    const response = await c.call();
+    expect(revoked).toBe(true);
+    expect(response.status).toBe(403);
+    expect(await db.prepare("SELECT state FROM research_workflow_run").first<string>("state")).toBe("ACTIVE");
+    expect(c.get).not.toHaveBeenCalled();
+  });
+
+  it("does not revive explicitly revoked original grants after a new login", async () => {
+    const f = await storedRun();
+    await db.prepare("UPDATE scope_access_grant SET state='REVOKED' WHERE snapshot_id=?1").bind(f.scope.snapshot_id).run();
+    const c = controlledNative();
+    expect((await c.call(cancelRequest(), refreshed())).status).toBe(403);
+    expect(c.get).not.toHaveBeenCalled();
+    expect(await db.prepare("SELECT state FROM research_workflow_run").first<string>("state")).toBe("ACTIVE");
+  });
+});
+
+
+describe("public cancellation ordering", () => {
+  it("concurrent requests converge on one receipt and never restart the native engine", async () => {
+    await storedRun();
+    const c = controlledNative();
+    const responses = await Promise.all([c.call(), c.call(cancelRequest({}, "second-cancel-key"))]);
+    expect(responses.map((response) => response.status).every((status) => status === 200 || status === 503)).toBe(true);
+    const reconciled = await c.call();
+    expect(reconciled.status).toBe(200);
+    expect((await body<ResearchRunStatus>(reconciled)).data.cancellation_receipt_ref).toBe("workflow-cancelled:status-run");
+    expect(c.terminate).toHaveBeenCalledTimes(1);
+    expect(await db.prepare("SELECT COUNT(*) AS n FROM research_workflow_run").first<number>("n")).toBe(1);
+    expect(await db.prepare("SELECT COUNT(*) AS n FROM research_workflow_attempt").first<number>("n")).toBe(0);
+  });
+
+  it("cancel-first forbids a late in-flight stage from committing output", async () => {
+    const f = await storedRun();
+    let entered!: () => void;
+    const started = new Promise<void>((resolve) => { entered = resolve; });
+    let release!: () => void;
+    const waiting = new Promise<void>((resolve) => { release = resolve; });
+    let calls = 0;
+    const budget = { receipt_ref: "cancellation-fixture-budget", expires_at_ms: Date.now() + 60_000 };
+    const executor = createMonotoneStageExecutor(db, runtime.WORK_BUCKET, {
+      authorizeResidency: async () => {},
+      checkBudget: async () => budget,
+    });
+    const execution = executor.executeOperation({ operation_id: f.request.operation_id,
+      investigation_id: f.request.investigation_ref.id, initial_revision: 1, idempotency_key: f.request.idempotency_key,
+      handler_generation: f.request.handler_generation, initial_input_manifest: f.request.input_manifest }, f.actor,
+      () => async () => { calls += 1; entered(); await waiting; return new TextEncoder().encode("late output"); });
+    // Observe rejection immediately; a pre-dispatch failure must not hang this test.
+    const stopped = execution.then(
+      () => ({ error: null }),
+      (error: unknown) => ({ error }),
+    );
+    await Promise.race([started, stopped.then(({ error }) => { throw error ?? new Error("Stage completed before the barrier"); })]);
+    try { expect((await controlledNative().call()).status).toBe(200); }
+    finally { release(); }
+    expect((await stopped).error).toMatchObject({ code: "WORKFLOW_CANCELLED" });
+    expect(calls).toBe(1);
+    expect(await db.prepare("SELECT COUNT(*) AS n FROM research_workflow_checkpoint").first<number>("n")).toBe(0);
+    expect(await db.prepare("SELECT state FROM research_workflow_attempt").first<string>("state")).toBe("STARTED");
   });
 });

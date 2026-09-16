@@ -87,7 +87,10 @@ export class WorkflowCheckpointStore {
    * Read the owner-bound durable run state. This deliberately does not call
    * current(), because cancelled and engine-completed runs remain readable.
    */
-  async readRunStatus(operationId: string, principal: WorkflowPrincipal): Promise<WorkflowRunStatus | null> {
+  async readRunStatus(
+    operationId: string, principal: WorkflowPrincipal,
+    mode: "execution" | "owner-read" = "execution",
+  ): Promise<WorkflowRunStatus | null> {
     let snapshot: readonly D1Result<unknown>[];
     try {
       snapshot = await this.db.batch([
@@ -136,7 +139,9 @@ export class WorkflowCheckpointStore {
     if (run.state === "ACTIVE" && run.next_stage_index === RESEARCH_WORKFLOW_STAGES.length) {
       fail("WORKFLOW_OUTPUT_CORRUPT");
     }
-    if (run.credential_generation === principal.credential_generation &&
+    // owner-read only reads owner-filtered metadata. The application must
+    // independently authorize the current reader before disclosure or control.
+    if (mode === "execution" && run.credential_generation === principal.credential_generation &&
         run.deployment_generation === principal.deployment_generation) {
       const current = (snapshot[1]?.results[0] as StoredCurrentRunRow | undefined) ?? null;
       if (current === null) fail("WORKFLOW_AUTHORITY_STALE");

@@ -5,6 +5,7 @@ import type { WorkflowRunStatus } from "@eliotr/cloudflare-research";
 import { readHistoricalResearchCoverage } from "@eliotr/cloudflare-research-stages";
 import type { AuthenticatedRequestContext, ResearchRunStatus } from "@eliotr/interfaces";
 import { NavigationError } from "@eliotr/retrieval";
+import type { VersionedRef } from "@eliotr/contracts";
 import type { Env } from "./env.js";
 import { reopenOwnerArtifactDraft } from "./research-artifact-reauthorization-http.js";
 
@@ -17,6 +18,16 @@ export interface ReauthenticatedRunRead {
   readonly status: WorkflowRunStatus;
   readonly handler_generation: string;
   readonly requireCurrent: () => Promise<void>;
+  /** Captured only after current policy/source checks; used as a SQL TOCTOU
+   * fence, never as a new source of permission or execution renewal. */
+  readonly controlFence: () => Promise<ResearchRunControlFence>;
+}
+export interface ResearchRunControlFence {
+  readonly scope_ref: VersionedRef;
+  readonly authorization_receipt_ref: string;
+  readonly ledger_epoch: number;
+  readonly orientation_epoch: number;
+  readonly valid_until_ms: number;
 }
 
 function stale(): never { throw new WorkflowCheckpointError("WORKFLOW_AUTHORITY_STALE"); }
@@ -59,6 +70,7 @@ export async function prepareReauthenticatedRunRead(
   env: Env,
   context: AuthenticatedRequestContext,
   operationId: string,
+  forControl = false,
 ): Promise<ReauthenticatedRunRead | null> {
   if (context.client_class !== "owner_pwa") stale();
   requireActiveRequest(context);
@@ -66,8 +78,12 @@ export async function prepareReauthenticatedRunRead(
     "SELECT credential_generation, deployment_generation, handler_generation FROM research_workflow_run " +
     "WHERE operation_id=?1 AND principal_ref=?2 LIMIT 1",
   ).bind(operationId, context.principal_ref).first<RunBinding>();
-  if (binding === null || binding.credential_generation === context.credential_generation ||
-      binding.deployment_generation !== env.DEPLOYMENT_GENERATION) return null;
+  if (binding === null) return null;
+  if (binding.deployment_generation !== env.DEPLOYMENT_GENERATION) {
+    if (forControl) stale();
+    return null;
+  }
+  if (!forControl && binding.credential_generation === context.credential_generation) return null;
   if (typeof binding.credential_generation !== "string" || typeof binding.handler_generation !== "string") corrupt();
 
   const principal = {
@@ -78,7 +94,7 @@ export async function prepareReauthenticatedRunRead(
   const store = new WorkflowCheckpointStore(env.CORE_DB);
   // The store filters by owner and validates the recorded state/receipts. Its
   // returned metadata is not disclosed until independent current authorization.
-  const first = await store.readRunStatus(operationId, principal);
+  const first = await store.readRunStatus(operationId, principal, "owner-read");
   if (first === null || first.credential_generation !== binding.credential_generation ||
       first.deployment_generation !== binding.deployment_generation) corrupt();
   const originalRef = { id: first.scope_snapshot_id, revision: first.scope_snapshot_revision };
@@ -91,23 +107,50 @@ export async function prepareReauthenticatedRunRead(
     database: env.CORE_DB, access: context, scope_snapshot: historical.scope,
     require_current: historical.requireCurrent,
   });
-  const requireCurrent = async () => {
+  const currentAuthorization = async () => {
     requireActiveRequest(context);
     const authorization = await navigation.current().catch(mapReadFailure);
-    await navigation.sources(historical.scope.member_source_revision_refs, authorization).catch(mapReadFailure);
+    const sources = await navigation.sources(historical.scope.member_source_revision_refs, authorization).catch(mapReadFailure);
     // Keep the recorded W1/W2 owner and scope linkage. Current read permission
     // does not authorize substitution of another investigation or source set.
     const head = await store.head(first.investigation_id);
     if (head.principal_ref !== context.principal_ref || head.scope_snapshot_id !== originalRef.id ||
         head.scope_snapshot_revision !== originalRef.revision) stale();
+    if (forControl) {
+      const active = await env.CORE_DB.prepare(
+        "SELECT 1 AS present FROM investigation_current_deployment d JOIN investigation_current_policy p " +
+        "ON p.policy_generation=?2 AND p.policy_authority_ref=?3 AND p.state='ACTIVE' " +
+        "WHERE d.deployment_generation=?1 AND d.state='ACTIVE' LIMIT 1",
+      ).bind(binding.deployment_generation, head.policy_generation, head.policy_authority_ref).first();
+      if (active === null) stale();
+    }
     requireActiveRequest(context);
+    const validUntil = Math.min(Date.parse(historical.scope.expires_at), Date.parse(authorization.expires_at),
+      context.access === undefined ? Infinity : Date.parse(context.access.expires_at),
+      ...sources.flatMap((source) => source.admission_expires_at === undefined ? [] : [Date.parse(source.admission_expires_at)]));
+    if (!Number.isSafeInteger(validUntil) || validUntil <= Date.now()) stale();
+    return { authorization, validUntil };
+  };
+  const requireCurrent = async () => { await currentAuthorization(); };
+  const controlFence = async (): Promise<ResearchRunControlFence> => {
+    // Capture before the read-only recheck: a mutation during validation must
+    // invalidate the final SQL, not become an accidentally trusted newer epoch.
+    const epochs = await env.CORE_DB.prepare(
+      "SELECT (SELECT generation FROM investigation_ledger_epoch WHERE singleton=1) AS ledger_epoch, " +
+      "(SELECT generation FROM orientation_authority_epoch WHERE singleton=1) AS orientation_epoch",
+    ).first<{ ledger_epoch: number; orientation_epoch: number }>();
+    if (epochs === null || !Number.isSafeInteger(epochs.ledger_epoch) || epochs.ledger_epoch < 1 ||
+        !Number.isSafeInteger(epochs.orientation_epoch) || epochs.orientation_epoch < 1) corrupt();
+    const current = await currentAuthorization();
+    return { ...epochs, scope_ref: { id: historical.scope.snapshot_id, revision: historical.scope.revision },
+      authorization_receipt_ref: current.authorization.authorization_receipt_ref, valid_until_ms: current.validUntil };
   };
   await requireCurrent();
-  const status = await store.readRunStatus(operationId, principal);
+  const status = await store.readRunStatus(operationId, principal, "owner-read");
   if (status === null) corrupt();
   sameIdentity(first, status);
   await requireCurrent();
-  return { status, handler_generation: binding.handler_generation, requireCurrent };
+  return { status, handler_generation: binding.handler_generation, requireCurrent, controlFence };
 }
 
 /** Reuse the historical coverage and artifact readers, never impersonate the
