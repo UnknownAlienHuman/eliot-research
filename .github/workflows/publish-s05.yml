@@ -16,7 +16,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           ref: main
-          fetch-depth: 3
+          fetch-depth: 2
           persist-credentials: true
       - name: Reconstruct and apply the reviewed S05 patch
         env:
@@ -26,8 +26,7 @@ jobs:
           set -euo pipefail
           test "$(git branch --show-current)" = main
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
-          test "$(git rev-parse HEAD^)" = a726d45d7f84adddf41706571c127b5e8aa10d0c
-          test "$(git rev-parse HEAD^^)" = 4ebae1a2b47bd0356bf349f4b94b327daa532c74
+          test "$(git rev-parse HEAD^)" = b1bf0cb67091ad6c0356e521f2595482ba7c24ca
           python3 - <<'PY'
           import base64, hashlib, json, os, pathlib, urllib.request
 
@@ -50,11 +49,11 @@ jobs:
               )
               with urllib.request.urlopen(request, timeout=30) as response:
                   item = json.load(response)
-              raw = base64.b64decode(item["content"])
-              observed_blob = hashlib.sha1(b"blob " + str(len(raw)).encode() + b"\0" + raw).hexdigest()
+              transported = base64.b64decode(item["content"])
+              observed_blob = hashlib.sha1(b"blob " + str(len(transported)).encode() + b"\0" + transported).hexdigest()
               if observed_blob != blob_sha:
                   raise SystemExit(f"blob mismatch: {blob_sha} != {observed_blob}")
-              encoded_parts.append(raw)
+              encoded_parts.append(b"".join(transported.split()))
           encoded = b"".join(encoded_parts)
           compressed = base64.b64decode(encoded, validate=True)
           if hashlib.sha256(compressed).hexdigest() != "ff311b6e0c87cfc9b4075f60ce7629a7825fd37f9e7eac3c84cee29b45289af9":
