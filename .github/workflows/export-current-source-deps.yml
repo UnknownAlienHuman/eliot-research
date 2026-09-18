@@ -1,0 +1,44 @@
+name: export-current-source-deps
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/export-current-source-deps.yml]
+permissions:
+  contents: read
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      COREPACK_HOME: /tmp/eliotr-corepack
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 22
+      - run: corepack enable && corepack prepare pnpm@11.23.0 --activate
+      - run: pnpm install --frozen-lockfile
+      - name: Export exact committed source and public dependency graph
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git branch --show-current)" = main
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          mkdir -p /tmp/eliotr-export/source /tmp/eliotr-export/deps
+          git bundle create /tmp/eliotr-export/source/main.bundle main
+          git rev-parse HEAD > /tmp/eliotr-export/source/SOURCE_SHA
+          find . -type d -name node_modules -prune -print0 | tar --null -T - -czf /tmp/eliotr-export/deps/node_modules.tar.gz
+          node --version > /tmp/eliotr-export/deps/VERSIONS
+          pnpm --version >> /tmp/eliotr-export/deps/VERSIONS
+          sha256sum pnpm-lock.yaml > /tmp/eliotr-export/deps/LOCKFILE_SHA256
+          (cd /tmp/eliotr-export && find source deps -type f -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: current-source-deps
+          path: /tmp/eliotr-export/
+          if-no-files-found: error
+          retention-days: 1
