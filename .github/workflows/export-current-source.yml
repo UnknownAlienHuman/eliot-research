@@ -1,0 +1,33 @@
+name: export-current-source
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/export-current-source.yml]
+permissions:
+  contents: read
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Export committed sources only
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git branch --show-current)" = main
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          mkdir -p /tmp/current-source
+          git bundle create /tmp/current-source/main.bundle main
+          git rev-parse HEAD > /tmp/current-source/SOURCE_SHA
+          (cd /tmp/current-source && sha256sum main.bundle > SHA256SUMS)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: current-source
+          path: /tmp/current-source/
+          retention-days: 1
+          if-no-files-found: error
