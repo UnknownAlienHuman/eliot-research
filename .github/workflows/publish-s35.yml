@@ -16,7 +16,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: main
-          fetch-depth: 2
+          fetch-depth: 3
           persist-credentials: true
 
       - name: Reconstruct and apply the reviewed S35 patch
@@ -27,28 +27,39 @@ jobs:
           set -euo pipefail
           test "$(git branch --show-current)" = main
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
-          test "$(git rev-parse HEAD^)" = 6a692e536ea1a15fc4d5717bc8ec0078194806c5
+          test "$(git rev-parse HEAD^^)" = 6a692e536ea1a15fc4d5717bc8ec0078194806c5
           python3 - <<'PY'
           import base64, hashlib, json, os, pathlib, urllib.request
 
-          blob_sha = "921c5dcb31447bfb07be7ce6361e9a4036096162"
-          request = urllib.request.Request(
-              f"https://api.github.com/repos/UnknownAlienHuman/eliot-research/git/blobs/{blob_sha}",
-              headers={
-                  "Authorization": f"Bearer {os.environ['GH_TOKEN']}",
-                  "Accept": "application/vnd.github+json",
-                  "X-GitHub-Api-Version": "2022-11-28",
-              },
-          )
-          with urllib.request.urlopen(request, timeout=30) as response:
-              item = json.load(response)
-          transported = base64.b64decode(item["content"])
-          observed_blob = hashlib.sha1(
-              b"blob " + str(len(transported)).encode() + b"\0" + transported
-          ).hexdigest()
-          if observed_blob != blob_sha:
-              raise SystemExit(f"blob mismatch: {blob_sha} != {observed_blob}")
-          encoded = b"".join(transported.split())
+          blob_shas = [
+              "921c5dcb31447bfb07be7ce6361e9a4036096162",
+              "4d1caa5cf46c6feee1670ec01bcdc9c57a24d377",
+              "f6f3d10ba416a4521d5487152de2bb1d3c972cc6",
+              "4957472be6240793185d101734612f0a019033fd",
+              "6ad0a282cdee697d81eb318c7f351d7b3745095d",
+          ]
+          parts = []
+          for blob_sha in blob_shas:
+              request = urllib.request.Request(
+                  f"https://api.github.com/repos/UnknownAlienHuman/eliot-research/git/blobs/{blob_sha}",
+                  headers={
+                      "Authorization": f"Bearer {os.environ['GH_TOKEN']}",
+                      "Accept": "application/vnd.github+json",
+                      "X-GitHub-Api-Version": "2022-11-28",
+                  },
+              )
+              with urllib.request.urlopen(request, timeout=30) as response:
+                  item = json.load(response)
+              transported = base64.b64decode(item["content"])
+              observed_blob = hashlib.sha1(
+                  b"blob " + str(len(transported)).encode() + b"\0" + transported
+              ).hexdigest()
+              if observed_blob != blob_sha:
+                  raise SystemExit(f"blob mismatch: {blob_sha} != {observed_blob}")
+              parts.append(transported)
+          encoded = b"".join(parts)
+          if hashlib.sha256(encoded).hexdigest() != "66582ff1a921ea5c347003065758ec99de0972cec2ff13e512ac3b1ecf738010":
+              raise SystemExit("encoded transport digest mismatch")
           compressed = base64.b64decode(encoded, validate=True)
           if hashlib.sha256(compressed).hexdigest() != "3ce214b76d8130b0de7733dc7d4fbaed6c4ac75cbb0bfb62807ac552e3044415":
               raise SystemExit("gzip digest mismatch")
