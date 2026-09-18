@@ -16,7 +16,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: main
-          fetch-depth: 3
+          fetch-depth: 4
           persist-credentials: true
 
       - name: Reconstruct and apply the reviewed S35 patch
@@ -27,12 +27,13 @@ jobs:
           set -euo pipefail
           test "$(git branch --show-current)" = main
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
-          test "$(git rev-parse HEAD^^)" = 6a692e536ea1a15fc4d5717bc8ec0078194806c5
+          test "$(git rev-parse HEAD^^^)" = 6a692e536ea1a15fc4d5717bc8ec0078194806c5
           python3 - <<'PY'
           import base64, hashlib, json, os, pathlib, urllib.request
 
           blob_shas = [
-              "921c5dcb31447bfb07be7ce6361e9a4036096162",
+              "e988e52174eab6faa8937adb424834c45b369e95",
+              "f261258cbc06c0b46ba88d3f3d6b417695cef558",
               "4d1caa5cf46c6feee1670ec01bcdc9c57a24d377",
               "f6f3d10ba416a4521d5487152de2bb1d3c972cc6",
               "4957472be6240793185d101734612f0a019033fd",
