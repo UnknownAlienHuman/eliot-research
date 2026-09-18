@@ -16,6 +16,7 @@ import {
   RESEARCH_RUN_REQUEST_V2,
   compileInquiryLedgerObligations,
   installedInquiryProtocolDefinition,
+  createResearchPlanningManifest,
 } from "@eliotr/cloudflare-research";
 import { readCommittedResearchRunResult } from "@eliotr/cloudflare-research-stages";
 import type { StageReceipt, StageRequest, WorkflowExecutionPorts, WorkflowObject, WorkflowPrincipal } from "@eliotr/cloudflare-research";
@@ -85,6 +86,45 @@ export function parseResearchRunRequest(raw: unknown): QueryRequest {
 }
 function idempotencyKey(context: AuthenticatedRequestContext): string { const key = context.request.headers.get("idempotency-key"); if (typeof key !== "string" || key.length < 1 || key.length > 256 || /[\u0000-\u0020\u007f]/u.test(key)) fail("RESEARCH_INPUT_INVALID", "idempotency-key header is required"); return key; }
 function requireOwner(context: AuthenticatedRequestContext): void { if (context.client_class !== "owner_pwa") fail("RESEARCH_OWNER_REQUIRED", "research query/run requires the owner profile", 403); }
+interface ResearchPlanningSourceRow {
+  readonly source_revision_ref: string;
+  readonly source_id: string;
+  readonly source_class: string;
+  readonly source_namespace_id: string;
+  readonly source_owner_generation: string;
+  readonly origin_uri: string | null;
+  readonly purge_state: string;
+  readonly current_owner_generation: string | null;
+  readonly owner_status: string | null;
+}
+async function loadResearchPlanningSources(
+  database: D1Database,
+  sourceRevisionRefs: readonly string[],
+  sourceOwnerGenerations: Readonly<Record<string, string>>,
+): Promise<readonly ResearchPlanningSourceRow[]> {
+  if (sourceRevisionRefs.length === 0) return [];
+  const rows = await database.prepare(
+    "SELECT sr.source_revision_ref, sr.source_id, s.source_class, s.source_namespace_id, " +
+    "sr.source_owner_generation, s.origin_uri, sr.purge_state, " +
+    "own.source_owner_generation AS current_owner_generation, own.status AS owner_status " +
+    "FROM json_each(?1) requested " +
+    "JOIN source_revision sr ON sr.source_revision_ref=requested.value " +
+    "JOIN source s ON s.source_id=sr.source_id " +
+    "LEFT JOIN source_namespace_ownership own ON own.source_namespace_id=s.source_namespace_id AND own.status='ACTIVE' " +
+    "ORDER BY sr.source_revision_ref",
+  ).bind(JSON.stringify(sourceRevisionRefs)).all<ResearchPlanningSourceRow>();
+  if (!rows.success || rows.results.length !== sourceRevisionRefs.length) {
+    fail("RESEARCH_AUTHORITY_STALE", "planning source portfolio is unavailable", 409);
+  }
+  for (const row of rows.results) {
+    if (row.purge_state !== "LIVE" || row.owner_status !== "ACTIVE" ||
+        row.current_owner_generation !== row.source_owner_generation ||
+        sourceOwnerGenerations[row.source_revision_ref] !== row.source_owner_generation) {
+      fail("RESEARCH_AUTHORITY_STALE", "planning source portfolio is not current", 409);
+    }
+  }
+  return rows.results;
+}
 const RESEARCH_ENGINE_STATUSES = new Set<ResearchEngineStatus>([
   "queued", "running", "paused", "errored", "terminated", "complete", "waiting", "waitingForPause", "unknown",
 ]);
@@ -338,19 +378,52 @@ export function createResearchRunService(env: Env): { run(context: Authenticated
         await db.prepare("INSERT OR IGNORE INTO investigation_current_policy (policy_generation, policy_authority_ref, state, created_at) VALUES (?1,?2,'ACTIVE',?3)").bind(newPolicyGeneration, snapshotRow.policy_authority_ref, now).run().catch(mapLedger);
       }
       await db.prepare("INSERT OR IGNORE INTO investigation_current_deployment (deployment_generation, state, created_at) VALUES (?1,'ACTIVE',?2)").bind(env.DEPLOYMENT_GENERATION, now).run().catch(mapLedger);
+      const installedProtocol = request.inquiry_protocol_ref === undefined
+        ? null
+        : installedInquiryProtocolDefinition(request.inquiry_protocol_ref);
+      const evidenceAuthority = createD1EvidenceAuthorityPort({ core_database: db, search_database: env.SEARCH_DB });
+      const scopeAuthority = await evidenceAuthority.loadScope(scopeRef);
+      if (scopeAuthority === null) fail("RESEARCH_AUTHORITY_STALE", "scope snapshot is unavailable", 409);
+      const planningSources = installedProtocol === null
+        ? []
+        : await loadResearchPlanningSources(
+          db,
+          scopeAuthority.snapshot.member_source_revision_refs,
+          scopeAuthority.snapshot.source_owner_generations,
+        );
+      const planningManifest = installedProtocol === null
+        ? undefined
+        : await createResearchPlanningManifest({
+          investigation_id,
+          operation_id,
+          question: request.query,
+          inquiry_protocol_ref: installedProtocol.definition_ref,
+          scope_snapshot_ref: scopeRef,
+          scope_created_at: scopeAuthority.snapshot.created_at,
+          definition: installedProtocol,
+          sources: planningSources,
+        });
       const payloadKey = `research-payload-${hex}`;
       const payloadBytes = new TextEncoder().encode(JSON.stringify({
         investigation_id, operation_id, query: request.query, scope_snapshot_ref: scopeRef,
         evidence_grade: request.evidence_grade, principal_ref: context.principal_ref,
         ...(request.inquiry_protocol_ref === undefined ? {} : { inquiry_protocol_ref: request.inquiry_protocol_ref }),
+        ...(planningManifest === undefined ? {} : { planning_manifest: planningManifest }),
       }));
+      if (payloadBytes.byteLength > MAX_WORKFLOW_RECEIPT_BYTES) {
+        fail("RESEARCH_INPUT_LIMIT", "research planning manifest exceeds the workflow input bound", 413);
+      }
       const payloadHash = await digest(payloadBytes);
-      if ((await bucket.head(payloadKey).catch(() => null)) === null) { await bucket.put(payloadKey, payloadBytes, { sha256: payloadHash }); }
-      else { const current = await bucket.get(payloadKey).catch(() => null); if (current === null) fail("RESEARCH_SETTLEMENT_UNCERTAIN", "payload readback is unavailable", 503, true); if ((await digest(new Uint8Array(await current.arrayBuffer()))) !== payloadHash) fail("RESEARCH_CONFLICT", "idempotency identity is bound to different bytes", 409); }
+      if ((await bucket.head(payloadKey).catch(() => null)) === null) {
+        await bucket.put(payloadKey, payloadBytes, { sha256: payloadHash });
+      }
+      const currentPayload = await bucket.get(payloadKey).catch(() => null);
+      if (currentPayload === null) fail("RESEARCH_SETTLEMENT_UNCERTAIN", "payload readback is unavailable", 503, true);
+      const currentPayloadBytes = new Uint8Array(await currentPayload.arrayBuffer());
+      if ((await digest(currentPayloadBytes)) !== payloadHash || currentPayloadBytes.byteLength !== payloadBytes.byteLength) {
+        fail("RESEARCH_CONFLICT", "idempotency identity is bound to different bytes", 409);
+      }
       const principal: WorkflowPrincipal = { principal_ref: context.principal_ref, credential_generation: context.credential_generation, deployment_generation: env.DEPLOYMENT_GENERATION };
-      const installedProtocol = request.inquiry_protocol_ref === undefined
-        ? null
-        : installedInquiryProtocolDefinition(request.inquiry_protocol_ref);
       const installedObligations = installedProtocol === null ? [] : compileInquiryLedgerObligations(installedProtocol);
       // Existing confirmatory heads retain their original generation for historical replay;
       // new server-owned runs use the authority-bound generation above.
@@ -381,7 +454,7 @@ export function createResearchRunService(env: Env): { run(context: Authenticated
       const eventId = checkId(`evt-${hex}`, "event_id");
       if (!skipCreate) {
         try {
-          await ledger.create({ investigation_id, goal: request.query, scope_snapshot_id: scopeRef.id, scope_snapshot_revision: scopeRef.revision, evidence_grade: request.evidence_grade, lane, lane_registrations: [], obligations: installedObligations, hypotheses: [], portfolio_ref: payloadKey, debt_refs: [], principal_ref: context.principal_ref, input_digest: payloadHash, policy_generation: policyGeneration, policy_authority_ref: snapshotRow.policy_authority_ref, deployment_generation: env.DEPLOYMENT_GENERATION, idempotency_key: key, model_profile_ref: MODEL_PROFILE, event_id: eventId, payload_handle_ref: payloadKey, payload_digest: payloadHash, created_at: now });
+          await ledger.create({ investigation_id, goal: request.query, scope_snapshot_id: scopeRef.id, scope_snapshot_revision: scopeRef.revision, evidence_grade: request.evidence_grade, lane, lane_registrations: [], obligations: installedObligations, hypotheses: planningManifest?.hypotheses.map((item) => item.hypothesis_id) ?? [], portfolio_ref: payloadKey, debt_refs: [], principal_ref: context.principal_ref, input_digest: payloadHash, policy_generation: policyGeneration, policy_authority_ref: snapshotRow.policy_authority_ref, deployment_generation: env.DEPLOYMENT_GENERATION, idempotency_key: key, model_profile_ref: MODEL_PROFILE, event_id: eventId, payload_handle_ref: payloadKey, payload_digest: payloadHash, created_at: now });
         } catch (error) {
           if (error instanceof LedgerError && (error.code === "LEDGER_CONFLICT" || error.code === "LEDGER_STALE_HEAD")) {
             const existing = await store.readByIdempotency(key).catch(() => null);
@@ -402,9 +475,7 @@ export function createResearchRunService(env: Env): { run(context: Authenticated
         input_manifest: initialManifest,
       };
       if (lane === "exploratory" && (handlerGeneration === SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION || isSemanticResearchHandlerGeneration(handlerGeneration))) {
-        const authority = await createD1EvidenceAuthorityPort({ core_database: db, search_database: env.SEARCH_DB }).loadScope(scopeRef);
-        if (authority === null) fail("RESEARCH_AUTHORITY_STALE", "scope snapshot is unavailable", 409);
-        await createD1ScopeProfilePort(db).recordBinding(authority.snapshot, {
+        await createD1ScopeProfilePort(db).recordBinding(scopeAuthority.snapshot, {
           ...SERVER_RETRIEVAL_SCOPE_PROFILE,
           max_results: request.max_results,
         }).catch(mapRetrievalError);

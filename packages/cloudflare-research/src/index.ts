@@ -71,3 +71,5 @@ export * from "./research-materialize-recovery.js";
 export { decodeSynthesisSectionCandidate, sameEvidence } from "./research-artifact-draft.js";
 
 export * from "./research-inquiry-protocol.js";
+
+export * from "./research-planning-manifest.js";

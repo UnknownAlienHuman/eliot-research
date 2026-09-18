@@ -3,7 +3,9 @@ import {
   InquiryProtocolProfileSchema,
   ScopeSnapshotSchema,
   VersionedRefSchema,
+  parseResearchPlanningManifest,
   type InquiryProtocolProfile,
+  type ResearchPlanningManifest,
   type ScopeSnapshot,
   type VersionedRef,
 } from "@eliotr/contracts";
@@ -31,6 +33,7 @@ import {
   defaultInquiryProtocolRef,
   installedInquiryProtocolDefinition,
 } from "./research-inquiry-protocol.js";
+import { assertResearchPlanningManifestIdentity } from "./research-planning-manifest.js";
 
 /** The legacy server-owned profile family for bounded corpus-only lookup. */
 export const CORPUS_EXPLORATORY_LOOKUP_PROFILE_REF = INSTALLED_INQUIRY_PROTOCOL_REFS.lookup;
@@ -83,6 +86,8 @@ const ProtocolScopeCheckpointSchema = z.object({
   coverage_denominator: CorpusCoverageDenominatorSchema,
   denominator_identity_digest: z.string().regex(/^[a-f0-9]{64}$/u),
   denominator_digest: z.string().regex(/^[a-f0-9]{64}$/u),
+  planning_manifest_ref: VersionedRefSchema.optional(),
+  planning_manifest_digest: z.string().regex(/^[a-f0-9]{64}$/u).optional(),
   observed_at: z.string().datetime({ offset: true }),
 }).strict();
 export type ProtocolScopeCheckpoint = z.infer<typeof ProtocolScopeCheckpointSchema>;
@@ -95,8 +100,11 @@ const RunPayloadSchema = z.object({
   evidence_grade: EvidenceGradeSchema,
   principal_ref: z.string().min(1).max(256),
   inquiry_protocol_ref: VersionedRefSchema.optional(),
+  planning_manifest: z.unknown().optional(),
 }).strict();
-type RunPayload = z.infer<typeof RunPayloadSchema>;
+type RunPayload = Omit<z.infer<typeof RunPayloadSchema>, "planning_manifest"> & {
+  readonly planning_manifest?: ResearchPlanningManifest;
+};
 
 export interface ResearchProtocolFreezeStageDependencies {
   readonly navigation: NavigationReadAuthority;
@@ -138,7 +146,17 @@ function parsePayload(bytes: Uint8Array): RunPayload {
   }
   const parsed = RunPayloadSchema.safeParse(value);
   if (!parsed.success) fail("RESEARCH_PROTOCOL_FREEZE_INPUT_INVALID", "run payload shape is invalid", parsed.error);
-  return parsed.data;
+  if (parsed.data.planning_manifest === undefined) {
+    const { planning_manifest: _planningManifest, ...payload } = parsed.data;
+    return payload;
+  }
+  try {
+    const planning = parseResearchPlanningManifest(parsed.data.planning_manifest);
+    const { planning_manifest: _planningManifest, ...payload } = parsed.data;
+    return { ...payload, planning_manifest: planning };
+  } catch (cause) {
+    fail("RESEARCH_PROTOCOL_FREEZE_INPUT_INVALID", "research planning manifest is invalid", cause);
+  }
 }
 
 function assertDefinitionSet(definitionRef: VersionedRef, profile: InquiryProtocolProfile): void {
@@ -202,16 +220,20 @@ function assertHeadBinding(head: LedgerHead, payload: RunPayload, request: Stage
   }
 }
 
-async function denominatorFor(scope: ScopeSnapshot): Promise<{ denominator: CorpusCoverageDenominator; identity_digest: string }> {
+async function denominatorFor(
+  scope: ScopeSnapshot,
+  definitionRef: VersionedRef,
+): Promise<{ denominator: CorpusCoverageDenominator; identity_digest: string }> {
   const refs = assertScopeMembers(scope);
+  const definition = installedInquiryProtocolDefinition(definitionRef);
   const fields: Omit<CorpusCoverageDenominator, "denominator_ref"> = {
     frozen_scope_snapshot_ref: scopeRef(scope),
     eligible_source_revision_refs: [...refs],
-    required_source_classes: [],
-    required_question_branches: [],
+    required_source_classes: [...definition.required_source_classes].sort(),
+    required_question_branches: [...definition.required_question_branches].sort(),
     acquisition_method_generations: {},
     excluded_sources: [],
-    completeness_test_ref: CORPUS_EXPLORATORY_LOOKUP_DEFINITIONS.completeness_test_ref,
+    completeness_test_ref: definition.completeness_test_ref,
     expires_at: scope.expires_at,
   };
   const identity_digest = await evidenceSha256(fields);
@@ -219,11 +241,13 @@ async function denominatorFor(scope: ScopeSnapshot): Promise<{ denominator: Corp
   return { denominator: CorpusCoverageDenominatorSchema.parse({ denominator_ref: denominatorRef, ...fields }), identity_digest };
 }
 
-function assertDenominatorDefinition(value: CorpusCoverageDenominator): void {
-  if (value.required_source_classes.length !== 0 || value.required_question_branches.length !== 0 ||
+function assertDenominatorDefinition(value: CorpusCoverageDenominator, definitionRef: VersionedRef): void {
+  const definition = installedInquiryProtocolDefinition(definitionRef);
+  if (canonicalEvidenceJson(value.required_source_classes) !== canonicalEvidenceJson([...definition.required_source_classes].sort()) ||
+      canonicalEvidenceJson(value.required_question_branches) !== canonicalEvidenceJson([...definition.required_question_branches].sort()) ||
       Object.keys(value.acquisition_method_generations).length !== 0 || value.excluded_sources.length !== 0 ||
-      value.completeness_test_ref !== CORPUS_EXPLORATORY_LOOKUP_DEFINITIONS.completeness_test_ref) {
-    fail("RESEARCH_PROTOCOL_FREEZE_AUTHORITY_INVALID", "denominator is outside the exploratory corpus definition");
+      value.completeness_test_ref !== definition.completeness_test_ref) {
+    fail("RESEARCH_PROTOCOL_FREEZE_AUTHORITY_INVALID", "denominator is outside the installed corpus protocol definition");
   }
 }
 
@@ -282,6 +306,10 @@ function assertReadbackBinding(
 function checkpointBytes(value: ProtocolScopeCheckpoint): Uint8Array {
   const parsed = ProtocolScopeCheckpointSchema.parse(value);
   assertDefinitionSet(parsed.profile_definition_ref, parsed.protocol_profile);
+  assertDenominatorDefinition(parsed.coverage_denominator, parsed.profile_definition_ref);
+  if ((parsed.planning_manifest_ref === undefined) !== (parsed.planning_manifest_digest === undefined)) {
+    fail("RESEARCH_PROTOCOL_FREEZE_AUTHORITY_INVALID", "planning manifest checkpoint binding is incomplete");
+  }
   if (parsed.protocol_profile.profile_ref.id !== `eliotr.research.compiled-profile-${parsed.profile_identity_digest}` ||
       parsed.coverage_denominator.denominator_ref.id !== `eliotr.coverage.compiled-membership-${parsed.denominator_identity_digest}`) {
     fail("RESEARCH_PROTOCOL_FREEZE_AUTHORITY_INVALID", "checkpoint content identities do not match their definitions");
@@ -315,6 +343,28 @@ export function createFreezeProtocolAndScopeStageHandler(
     const inputDigest = await digest(input_bytes);
     assertHeadBinding(initial.head, payload, request, principal, inputDigest, scope);
     const definitionRef = payload.inquiry_protocol_ref ?? defaultInquiryProtocolRef();
+    let planningManifest: ResearchPlanningManifest | undefined;
+    if (payload.inquiry_protocol_ref === undefined) {
+      if (payload.planning_manifest !== undefined) fail("RESEARCH_PROTOCOL_FREEZE_INPUT_INVALID", "legacy run payload cannot carry a planning manifest");
+    } else {
+      if (payload.planning_manifest === undefined) fail("RESEARCH_PROTOCOL_FREEZE_AUTHORITY_INVALID", "installed inquiry protocol requires a planning manifest");
+      let parsedPlanningManifest: ResearchPlanningManifest;
+      try { parsedPlanningManifest = await assertResearchPlanningManifestIdentity(payload.planning_manifest); }
+      catch (cause) { fail("RESEARCH_PROTOCOL_FREEZE_AUTHORITY_INVALID", "planning manifest identity is invalid", cause); }
+      planningManifest = parsedPlanningManifest;
+      const definition = installedInquiryProtocolDefinition(definitionRef);
+      const memberRefs = parsedPlanningManifest.source_portfolio.members.map((item) => item.source_revision_ref).sort();
+      if (parsedPlanningManifest.investigation_id !== payload.investigation_id || parsedPlanningManifest.operation_id !== payload.operation_id ||
+          !sameRef(parsedPlanningManifest.inquiry_protocol_ref, definitionRef) || !sameRef(parsedPlanningManifest.scope_snapshot_ref, scopeRef(scope)) ||
+          parsedPlanningManifest.questions.find((item) => item.question_id === parsedPlanningManifest.primary_question_id)?.text !== payload.query ||
+          canonicalEvidenceJson(memberRefs) !== canonicalEvidenceJson(assertScopeMembers(scope)) ||
+          canonicalEvidenceJson(parsedPlanningManifest.required_branch_roles) !== canonicalEvidenceJson([...definition.required_question_branches].sort()) ||
+          canonicalEvidenceJson(parsedPlanningManifest.source_portfolio.required_source_classes) !== canonicalEvidenceJson([...definition.required_source_classes].sort()) ||
+          parsedPlanningManifest.source_portfolio.members.some((item) => scope.source_owner_generations[item.source_revision_ref] !== item.source_owner_generation) ||
+          canonicalEvidenceJson(initial.head.hypotheses) !== canonicalEvidenceJson(parsedPlanningManifest.hypotheses.map((item) => item.hypothesis_id))) {
+        fail("RESEARCH_PROTOCOL_FREEZE_AUTHORITY_STALE", "planning manifest does not match the frozen W1 authority");
+      }
+    }
     const profileResult = await profileFor(
       payload.query,
       initial.head.evidence_grade,
@@ -326,7 +376,7 @@ export function createFreezeProtocolAndScopeStageHandler(
         canonicalEvidenceJson(initial.head.obligations) !== canonicalEvidenceJson(profileResult.ledger_obligations)) {
       fail("RESEARCH_PROTOCOL_FREEZE_AUTHORITY_STALE", "W1 obligations do not match the installed inquiry protocol");
     }
-    const denominatorResult = await denominatorFor(scope);
+    const denominatorResult = await denominatorFor(scope, definitionRef);
     const protocolDigest = await evidenceSha256(profileResult.profile);
     const denominatorDigest = await evidenceSha256(denominatorResult.denominator);
     await dependencies.navigation.current();
@@ -355,6 +405,10 @@ export function createFreezeProtocolAndScopeStageHandler(
       coverage_denominator: denominatorResult.denominator,
       denominator_identity_digest: denominatorResult.identity_digest,
       denominator_digest: denominatorDigest,
+      ...(planningManifest === undefined ? {} : {
+        planning_manifest_ref: planningManifest.manifest_ref,
+        planning_manifest_digest: planningManifest.identity_digest,
+      }),
       observed_at: observedAt,
     });
   };
@@ -377,7 +431,7 @@ export function decodeProtocolScopeCheckpoint(bytes: Uint8Array): ProtocolScopeC
       fail("RESEARCH_PROTOCOL_FREEZE_AUTHORITY_INVALID", "protocol scope checkpoint is not the server-owned corpus profile");
     }
     assertDefinitionSet(parsed.profile_definition_ref, parsed.protocol_profile);
-    assertDenominatorDefinition(parsed.coverage_denominator);
+    assertDenominatorDefinition(parsed.coverage_denominator, parsed.profile_definition_ref);
     return parsed;
   } catch (cause) {
     if (cause instanceof ResearchProtocolFreezeError) throw cause;

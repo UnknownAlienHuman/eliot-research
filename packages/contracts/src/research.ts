@@ -80,6 +80,121 @@ export const InquiryProtocolProfileSchema = z.object({
 }).strict();
 export type InquiryProtocolProfile = z.infer<typeof InquiryProtocolProfileSchema>;
 
+const ResearchQuestionNodeCodec = z.object({
+  question_id: IdentifierSchema,
+  text: z.string().min(1).max(8192),
+  kind: z.enum(["primary", "support", "counter", "alternative", "chronology", "implementation", "literature", "source_audit"]),
+  dependency_question_ids: z.array(IdentifierSchema).max(16),
+}).strict();
+
+const ResearchHypothesisCardCodec = z.object({
+  hypothesis_id: IdentifierSchema,
+  question_id: IdentifierSchema,
+  statement: z.string().min(1).max(8192),
+  origin: z.enum(["protocol_required", "explicit"]),
+  prediction: z.string().min(1).max(4096),
+  falsifier: z.string().min(1).max(4096),
+  alternative_hypothesis_ids: z.array(IdentifierSchema).max(16),
+}).strict();
+
+const ResearchSourcePortfolioMemberCodec = z.object({
+  source_revision_ref: IdentifierSchema,
+  source_id: IdentifierSchema,
+  source_class: IdentifierSchema,
+  source_namespace_id: IdentifierSchema,
+  source_owner_generation: IdentifierSchema,
+  source_family_ref: IdentifierSchema,
+  independence: z.enum(["KNOWN_SHARED_ORIGIN", "UNKNOWN"]),
+}).strict();
+
+const ResearchPlanningManifestCodec = z.object({
+  protocol: z.literal("eliotr.research-planning-manifest.v1"),
+  manifest_ref: VersionedRefSchema,
+  identity_digest: Sha256Schema,
+  investigation_id: IdentifierSchema,
+  operation_id: IdentifierSchema,
+  inquiry_protocol_ref: VersionedRefSchema,
+  scope_snapshot_ref: VersionedRefSchema,
+  primary_question_id: IdentifierSchema,
+  questions: z.array(ResearchQuestionNodeCodec).min(1).max(32),
+  hypotheses: z.array(ResearchHypothesisCardCodec).max(32),
+  source_portfolio: z.object({
+    members: z.array(ResearchSourcePortfolioMemberCodec).max(4096),
+    required_source_classes: z.array(IdentifierSchema).max(32),
+    represented_source_classes: z.array(IdentifierSchema).max(256),
+    missing_source_classes: z.array(IdentifierSchema).max(32),
+    independence_limitations: z.array(z.string().min(1).max(1024)).max(64),
+  }).strict(),
+  required_branch_roles: z.array(IdentifierSchema).max(16),
+  created_at: IsoDateTimeSchema,
+}).strict().superRefine((value, context) => {
+  if (value.manifest_ref.id !== `eliotr.research.planning-${value.identity_digest}` || value.manifest_ref.revision !== 1) {
+    context.addIssue({ code: "custom", path: ["manifest_ref"], message: "planning manifest reference does not match identity" });
+  }
+  const questionIds = value.questions.map((item) => item.question_id);
+  if (new Set(questionIds).size !== questionIds.length || !questionIds.includes(value.primary_question_id)) {
+    context.addIssue({ code: "custom", path: ["questions"], message: "planning questions have duplicate or missing primary identity" });
+  }
+  const questionSet = new Set(questionIds);
+  for (const [index, question] of value.questions.entries()) {
+    if (question.dependency_question_ids.some((ref) => ref === question.question_id || !questionSet.has(ref))) {
+      context.addIssue({ code: "custom", path: ["questions", index, "dependency_question_ids"], message: "question dependency is invalid" });
+    }
+  }
+  const visiting = new Set<string>();
+  const visited = new Set<string>();
+  const questions = new Map(value.questions.map((item) => [item.question_id, item]));
+  const visit = (id: string): boolean => {
+    if (visiting.has(id)) return false;
+    if (visited.has(id)) return true;
+    visiting.add(id);
+    const node = questions.get(id);
+    if (node === undefined || node.dependency_question_ids.some((dependency) => !visit(dependency))) return false;
+    visiting.delete(id);
+    visited.add(id);
+    return true;
+  };
+  if (questionIds.some((id) => !visit(id))) {
+    context.addIssue({ code: "custom", path: ["questions"], message: "question graph is cyclic" });
+  }
+  const hypothesisIds = value.hypotheses.map((item) => item.hypothesis_id);
+  const hypothesisSet = new Set(hypothesisIds);
+  if (hypothesisSet.size !== hypothesisIds.length) {
+    context.addIssue({ code: "custom", path: ["hypotheses"], message: "hypothesis identities are duplicated" });
+  }
+  for (const [index, hypothesis] of value.hypotheses.entries()) {
+    if (!questionSet.has(hypothesis.question_id) || hypothesis.alternative_hypothesis_ids.some((ref) => ref === hypothesis.hypothesis_id || !hypothesisSet.has(ref))) {
+      context.addIssue({ code: "custom", path: ["hypotheses", index], message: "hypothesis binding is invalid" });
+    }
+  }
+  const members = value.source_portfolio.members.map((item) => item.source_revision_ref);
+  if (new Set(members).size !== members.length) {
+    context.addIssue({ code: "custom", path: ["source_portfolio", "members"], message: "source revisions are duplicated" });
+  }
+  for (const field of ["required_source_classes", "represented_source_classes", "missing_source_classes", "required_branch_roles"] as const) {
+    const values = field === "required_branch_roles" ? value.required_branch_roles : value.source_portfolio[field];
+    if (new Set(values).size !== values.length) context.addIssue({ code: "custom", path: field === "required_branch_roles" ? [field] : ["source_portfolio", field], message: `${field} contains duplicates` });
+  }
+  const represented = new Set(value.source_portfolio.represented_source_classes);
+  const missing = new Set(value.source_portfolio.missing_source_classes);
+  for (const required of value.source_portfolio.required_source_classes) {
+    if (represented.has(required) === missing.has(required)) {
+      context.addIssue({ code: "custom", path: ["source_portfolio"], message: "required source classes must be represented or missing exactly once" });
+    }
+  }
+});
+
+export type ResearchPlanningManifest = z.infer<typeof ResearchPlanningManifestCodec>;
+
+export function parseResearchPlanningManifest(value: unknown): ResearchPlanningManifest {
+  return ResearchPlanningManifestCodec.parse(value);
+}
+
+export function researchPlanningManifestIdentityPayload(value: ResearchPlanningManifest) {
+  const { manifest_ref: _manifestRef, identity_digest: _identityDigest, ...identity } = value;
+  return identity;
+}
+
 export const ResearchDebtSchema = z.object({
   debt_ref: VersionedRefSchema,
   kind: z.enum(["epistemic", "verification", "replication", "coverage", "contradiction", "fidelity", "provenance", "authority"]),

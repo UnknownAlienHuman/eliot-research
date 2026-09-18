@@ -16,6 +16,7 @@ import {
 import {
   INSTALLED_INQUIRY_PROTOCOL_REFS,
   compileInquiryLedgerObligations,
+  createResearchPlanningManifest,
   createWorkflowCheckpointExecutor,
   digest,
   fail,
@@ -111,6 +112,26 @@ async function createProtocolFreezeFixture(
   ]);
 
   const payloadKey = `protocol-freeze-input-${tag}`;
+  const installedDefinition = protocolRef === undefined ? null : installedInquiryProtocolDefinition(protocolRef);
+  const sourceRow = await db.prepare(
+    "SELECT sr.source_revision_ref, sr.source_id, s.source_class, s.source_namespace_id, " +
+    "sr.source_owner_generation, s.origin_uri FROM source_revision sr JOIN source s ON s.source_id=sr.source_id " +
+    "WHERE sr.source_revision_ref=?1 LIMIT 1",
+  ).bind(world.revision).first<{
+    source_revision_ref: string; source_id: string; source_class: string; source_namespace_id: string;
+    source_owner_generation: string; origin_uri: string | null;
+  }>();
+  if (sourceRow === null) throw new Error("Missing planning source row");
+  const planningManifest = installedDefinition === null ? undefined : await createResearchPlanningManifest({
+    investigation_id: `protocol-investigation-${tag}`,
+    operation_id: `protocol-run-${tag}`,
+    question,
+    inquiry_protocol_ref: protocolRef as VersionedRef,
+    scope_snapshot_ref: { id: scope.snapshot_id, revision: scope.revision },
+    scope_created_at: scope.created_at,
+    definition: installedDefinition,
+    sources: [sourceRow],
+  });
   const payload = {
     investigation_id: `protocol-investigation-${tag}`,
     operation_id: `protocol-run-${tag}`,
@@ -119,6 +140,7 @@ async function createProtocolFreezeFixture(
     evidence_grade: evidenceGrade,
     principal_ref: principal.principal_ref,
     ...(protocolRef === undefined ? {} : { inquiry_protocol_ref: protocolRef }),
+    ...(planningManifest === undefined ? {} : { planning_manifest: planningManifest }),
   } as const;
   const payloadBytes = new TextEncoder().encode(canonicalEvidenceJson(payload));
   const payloadDigest = await digest(payloadBytes);
@@ -135,7 +157,7 @@ async function createProtocolFreezeFixture(
     obligations: protocolRef === undefined
       ? []
       : compileInquiryLedgerObligations(installedInquiryProtocolDefinition(protocolRef)),
-    hypotheses: [],
+    hypotheses: planningManifest?.hypotheses.map((item) => item.hypothesis_id) ?? [],
     portfolio_ref: payloadKey,
     debt_refs: [],
     principal_ref: principal.principal_ref,
@@ -319,12 +341,23 @@ describe("research protocol freeze stage over actual admitted/indexed D1/R2", ()
     expect(checkpoint.requested_evidence_grade).toBe("E1");
     expect(checkpoint.protocol_profile.protocol).toBe("evidence_review");
     expect(checkpoint.protocol_profile.counter_search_required).toBe(true);
+    expect(checkpoint.planning_manifest_ref?.id).toMatch(/^eliotr\.research\.planning-[a-f0-9]{64}$/u);
+    expect(checkpoint.planning_manifest_digest).toMatch(/^[a-f0-9]{64}$/u);
+    expect(checkpoint.coverage_denominator.required_source_classes).toEqual(["counterevidence", "supporting-evidence"]);
+    expect(checkpoint.coverage_denominator.required_question_branches).toEqual(["COUNTER", "SUPPORT"]);
     expect(checkpoint.protocol_profile.obligations?.map((item) => item.obligation_id)).toEqual([
       "evidence_review:grounding",
       "evidence_review:counterevidence",
       "evidence_review:coverage",
     ]);
     expect(head?.evidence_grade).toBe("E1");
+    const payloadObject = await fixture.bucket.get(fixture.request.input_manifest.object_ref);
+    if (payloadObject === null) throw new Error("Missing planning payload");
+    const payload = JSON.parse(await payloadObject.text()) as {
+      planning_manifest: { required_branch_roles: string[]; hypotheses: Array<{ hypothesis_id: string }> };
+    };
+    expect(payload.planning_manifest.required_branch_roles).toEqual(["COUNTER", "SUPPORT"]);
+    expect(payload.planning_manifest.hypotheses).toEqual([]);
     expect(JSON.parse(head?.obligations_json ?? "[]")).toMatchObject([
       { obligation_id: "evidence_review:grounding", status: "REGISTERED", blocking: true },
       { obligation_id: "evidence_review:counterevidence", status: "REGISTERED", blocking: true },
