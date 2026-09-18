@@ -1,0 +1,45 @@
+name: export-dev-state
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/export-dev-state.yml]
+permissions:
+  contents: read
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      COREPACK_HOME: /tmp/eliotr-corepack
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 22
+      - run: corepack enable
+      - run: corepack prepare pnpm@11.23.0 --activate
+      - name: Install frozen dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Export source and dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git branch --show-current)" = main
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          mkdir -p /tmp/eliotr-dev-state
+          git bundle create /tmp/eliotr-dev-state/main.bundle main
+          git rev-parse HEAD > /tmp/eliotr-dev-state/SOURCE_SHA
+          sha256sum pnpm-lock.yaml > /tmp/eliotr-dev-state/LOCKFILE_SHA256
+          find . -type d -name node_modules -prune -print0 | tar --null -T - -czf /tmp/eliotr-dev-state/dependencies.tar.gz
+          (cd /tmp/eliotr-dev-state && sha256sum main.bundle dependencies.tar.gz > SHA256SUMS)
+          du -h /tmp/eliotr-dev-state/*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: eliot-dev-state
+          path: /tmp/eliotr-dev-state/
+          retention-days: 1
+          if-no-files-found: error
