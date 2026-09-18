@@ -4,15 +4,27 @@ import { createOrientationApi, ORIENTATION_PROFILE, createD1ScopeService, create
 import { createD1ScopePorts, createD1ScopeProfilePort, createD1RetrievalResultStore, retrievalRequestDigest, RetrievalQueryError } from "@eliotr/retrieval";
 import { createD1EvidenceAuthorityPort, createNavigationReadAuthority } from "@eliotr/cloudflare-evidence";
 import { loadHeldResearchScope, retrieveWithHeldScope } from "./research-retrieval-composition.js";
-import { createMonotoneStageExecutor, WorkflowCheckpointStore, digest, WorkflowObjectSchema, MAX_WORKFLOW_RECEIPT_BYTES, WorkflowCheckpointError, readResearchRunStatus as readStoredResearchRunStatus, ResearchMaterializeOutputError } from "@eliotr/cloudflare-research";
+import {
+  createMonotoneStageExecutor,
+  WorkflowCheckpointStore,
+  digest,
+  WorkflowObjectSchema,
+  MAX_WORKFLOW_RECEIPT_BYTES,
+  WorkflowCheckpointError,
+  readResearchRunStatus as readStoredResearchRunStatus,
+  ResearchMaterializeOutputError,
+  RESEARCH_RUN_REQUEST_V2,
+  compileInquiryLedgerObligations,
+  installedInquiryProtocolDefinition,
+} from "@eliotr/cloudflare-research";
 import { readCommittedResearchRunResult } from "@eliotr/cloudflare-research-stages";
 import type { StageReceipt, StageRequest, WorkflowExecutionPorts, WorkflowObject, WorkflowPrincipal } from "@eliotr/cloudflare-research";
 import { createD1InvestigationLedgerStore, createInvestigationLedgerService, LedgerError } from "@eliotr/research";
 import type { LedgerD1Database } from "@eliotr/research";
-import { createResearchStageHandlerFactory, SERVER_OWNED_RESEARCH_HANDLER_GENERATION, SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION, SERVER_OWNED_FREEZE_HANDLER_GENERATION, SERVER_OWNED_SEMANTIC_HANDLER_GENERATION, isSemanticResearchHandlerGeneration, SERVER_RETRIEVAL_SCOPE_PROFILE } from "./research-stage-handlers.js";
+import { createResearchStageHandlerFactory, SERVER_OWNED_RESEARCH_HANDLER_GENERATION, SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION, SERVER_OWNED_FREEZE_HANDLER_GENERATION, SERVER_OWNED_SEMANTIC_HANDLER_GENERATION, SERVER_OWNED_PROTOCOL_HANDLER_GENERATION, isSemanticResearchHandlerGeneration, SERVER_RETRIEVAL_SCOPE_PROFILE } from "./research-stage-handlers.js";
 import { createResearchSemanticServerHandlers, researchSemanticConfigurationInstalled } from "./research-semantic-server.js";
 import { RESEARCH_QUALIFICATION_RENEWAL_MARKER } from "./research-qualification-renewal.js";
-import { ScopeExpressionSchema } from "@eliotr/contracts";
+import { ScopeExpressionSchema, VersionedRefSchema } from "@eliotr/contracts";
 import type { VersionedRef } from "@eliotr/contracts";
 import { inspectScopeExpression, scopeExpressionIdentity, RESEARCH_WORKFLOW_STAGES } from "@eliotr/domain";
 import type { AuthenticatedRequestContext, QueryRequest, QueryResult, ResearchEngineStatus, ResearchRunStatus } from "@eliotr/interfaces";
@@ -34,11 +46,43 @@ function fail(code: string, message: string, status = 400, retryable = false): n
 function checkId(value: unknown, label: string): string { if (typeof value !== "string" || !ID_RE.test(value)) fail("RESEARCH_INPUT_INVALID", `${label} is invalid`); return value as string; }
 function checkQuery(value: unknown): string { if (typeof value !== "string" || value.length === 0 || new TextEncoder().encode(value).byteLength > 1024 || /[\u0000-\u001f\u007f]/u.test(value)) fail("RESEARCH_INPUT_INVALID", "query is invalid"); return value as string; }
 function checkScope(value: unknown): QueryRequest["scope_expression"] { const parsed = ScopeExpressionSchema.safeParse(value); if (!parsed.success) fail("RESEARCH_INPUT_INVALID", "scope_expression is invalid"); const m = inspectScopeExpression(parsed.data); if (m.depth > 8 || m.atom_count > 16 || m.selected_source_count > 64) fail("RESEARCH_INPUT_LIMIT", "scope_expression exceeds its bounds", 413); return parsed.data; }
-function exactKeys(record: Record<string, unknown>): void { const expected = ["query", "product", "scope_expression", "literals", "evidence_grade", "budget_ref", "max_results"]; if (Object.keys(record).length !== expected.length || expected.some((k) => !Object.hasOwn(record, k))) fail("RESEARCH_INPUT_INVALID", "request has unknown or missing fields"); }
+const BASE_REQUEST_KEYS = ["query", "product", "scope_expression", "literals", "evidence_grade", "budget_ref", "max_results"] as const;
+const RUN_V2_REQUEST_KEYS = [...BASE_REQUEST_KEYS, "request_version", "inquiry_protocol_ref"] as const;
+function exactKeys(record: Record<string, unknown>, expected: readonly string[] = BASE_REQUEST_KEYS): void {
+  if (Object.keys(record).length !== expected.length || expected.some((key) => !Object.hasOwn(record, key))) {
+    fail("RESEARCH_INPUT_INVALID", "request has unknown or missing fields");
+  }
+}
 function checkLiteralsMax(record: Record<string, unknown>): number { if (!Array.isArray(record.literals) || record.literals.length !== 0) fail("RESEARCH_INPUT_INVALID", "literals must be empty"); if (!Number.isSafeInteger(record.max_results) || (record.max_results as number) < 1 || (record.max_results as number) > 16) fail("RESEARCH_INPUT_INVALID", "max_results is invalid"); return record.max_results as number; }
 export const FAST_SEARCH_PROFILE = "retrieval-fast-v1";
 export function parseResearchQueryRequest(raw: unknown): QueryRequest { if (typeof raw !== "object" || raw === null || Array.isArray(raw)) fail("RESEARCH_INPUT_INVALID", "query request must be an object"); const r = raw as Record<string, unknown>; exactKeys(r); const product = r.product === "FAST_SEARCH" ? "FAST_SEARCH" : "ORIENT"; const profile = product === "FAST_SEARCH" ? FAST_SEARCH_PROFILE : ORIENTATION_PROFILE; if (r.product !== product || r.evidence_grade !== "E0" || r.budget_ref !== profile) fail("RESEARCH_PROFILE_UNSUPPORTED", product === "FAST_SEARCH" ? "research.query FAST_SEARCH requires the bounded retrieval profile" : "research.query supports only the ORIENT metadata profile or FAST_SEARCH retrieval profile", 422); return { query: checkQuery(r.query), product, scope_expression: checkScope(r.scope_expression), literals: [], evidence_grade: "E0", budget_ref: profile, max_results: checkLiteralsMax(r) }; }
-export function parseResearchRunRequest(raw: unknown): QueryRequest { if (typeof raw !== "object" || raw === null || Array.isArray(raw)) fail("RESEARCH_INPUT_INVALID", "run request must be an object"); const r = raw as Record<string, unknown>; exactKeys(r); if (r.product !== "RESEARCH") fail("RESEARCH_PROFILE_UNSUPPORTED", "research.run requires product RESEARCH", 422); if (r.evidence_grade !== "E0" && r.evidence_grade !== "E1" && r.evidence_grade !== "E2") fail("RESEARCH_PROFILE_UNSUPPORTED", "research.run supports grades E0-E2", 422); if (r.budget_ref !== RUN_BUDGET) fail("RESEARCH_PROFILE_UNSUPPORTED", "research.run requires the bounded research budget profile", 422); return { query: checkQuery(r.query), product: "RESEARCH", scope_expression: checkScope(r.scope_expression), literals: [], evidence_grade: r.evidence_grade as QueryRequest["evidence_grade"], budget_ref: RUN_BUDGET, max_results: checkLiteralsMax(r) }; }
+export function parseResearchRunRequest(raw: unknown): QueryRequest {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) fail("RESEARCH_INPUT_INVALID", "run request must be an object");
+  const r = raw as Record<string, unknown>;
+  const explicitV2 = Object.hasOwn(r, "request_version") || Object.hasOwn(r, "inquiry_protocol_ref");
+  exactKeys(r, explicitV2 ? RUN_V2_REQUEST_KEYS : BASE_REQUEST_KEYS);
+  if (r.product !== "RESEARCH") fail("RESEARCH_PROFILE_UNSUPPORTED", "research.run requires product RESEARCH", 422);
+  if (r.evidence_grade !== "E0" && r.evidence_grade !== "E1" && r.evidence_grade !== "E2") fail("RESEARCH_PROFILE_UNSUPPORTED", "research.run supports grades E0-E2", 422);
+  if (r.budget_ref !== RUN_BUDGET) fail("RESEARCH_PROFILE_UNSUPPORTED", "research.run requires the bounded research budget profile", 422);
+  const base = {
+    query: checkQuery(r.query), product: "RESEARCH" as const, scope_expression: checkScope(r.scope_expression), literals: [] as const,
+    evidence_grade: r.evidence_grade as QueryRequest["evidence_grade"], budget_ref: RUN_BUDGET, max_results: checkLiteralsMax(r),
+  };
+  if (!explicitV2) return base;
+  if (r.request_version !== RESEARCH_RUN_REQUEST_V2) fail("RESEARCH_PROFILE_UNSUPPORTED", "research.run request version is unsupported", 422);
+  const parsedRef = VersionedRefSchema.safeParse(r.inquiry_protocol_ref);
+  if (!parsedRef.success) fail("RESEARCH_INPUT_INVALID", "inquiry_protocol_ref is invalid");
+  try {
+    const definition = installedInquiryProtocolDefinition(parsedRef.data);
+    if (!definition.allowed_grades.includes(base.evidence_grade)) {
+      fail("RESEARCH_PROFILE_UNSUPPORTED", "installed inquiry protocol does not support the requested grade", 422);
+    }
+  } catch (error) {
+    if (error instanceof ResearchServiceError) throw error;
+    fail("RESEARCH_PROFILE_UNSUPPORTED", "inquiry protocol is not installed", 422);
+  }
+  return { ...base, request_version: RESEARCH_RUN_REQUEST_V2, inquiry_protocol_ref: parsedRef.data };
+}
 function idempotencyKey(context: AuthenticatedRequestContext): string { const key = context.request.headers.get("idempotency-key"); if (typeof key !== "string" || key.length < 1 || key.length > 256 || /[\u0000-\u0020\u007f]/u.test(key)) fail("RESEARCH_INPUT_INVALID", "idempotency-key header is required"); return key; }
 function requireOwner(context: AuthenticatedRequestContext): void { if (context.client_class !== "owner_pwa") fail("RESEARCH_OWNER_REQUIRED", "research query/run requires the owner profile", 403); }
 const RESEARCH_ENGINE_STATUSES = new Set<ResearchEngineStatus>([
@@ -278,7 +322,7 @@ export function createResearchRunService(env: Env): { run(context: Authenticated
       const pre = await store.readByIdempotency(key).catch(() => null);
       const priorWorkflow = pre === null ? null : await db.prepare("SELECT handler_generation FROM research_workflow_run WHERE idempotency_key = ?1")
         .bind(key).first<{ handler_generation: string }>();
-      const supportedGenerations = new Set([HANDLER_GEN, SERVER_OWNED_RESEARCH_HANDLER_GENERATION, SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION, SERVER_OWNED_FREEZE_HANDLER_GENERATION, SERVER_OWNED_SEMANTIC_HANDLER_GENERATION]);
+      const supportedGenerations = new Set([HANDLER_GEN, SERVER_OWNED_RESEARCH_HANDLER_GENERATION, SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION, SERVER_OWNED_FREEZE_HANDLER_GENERATION, SERVER_OWNED_SEMANTIC_HANDLER_GENERATION, SERVER_OWNED_PROTOCOL_HANDLER_GENERATION]);
       if (pre === null && !researchSemanticConfigurationInstalled(env)) {
         fail("RESEARCH_AGENT_NOT_CONFIGURED", "Research agents require the installed model, prompt and report configuration", 503);
       }
@@ -295,15 +339,24 @@ export function createResearchRunService(env: Env): { run(context: Authenticated
       }
       await db.prepare("INSERT OR IGNORE INTO investigation_current_deployment (deployment_generation, state, created_at) VALUES (?1,'ACTIVE',?2)").bind(env.DEPLOYMENT_GENERATION, now).run().catch(mapLedger);
       const payloadKey = `research-payload-${hex}`;
-      const payloadBytes = new TextEncoder().encode(JSON.stringify({ investigation_id, operation_id, query: request.query, scope_snapshot_ref: scopeRef, evidence_grade: request.evidence_grade, principal_ref: context.principal_ref }));
+      const payloadBytes = new TextEncoder().encode(JSON.stringify({
+        investigation_id, operation_id, query: request.query, scope_snapshot_ref: scopeRef,
+        evidence_grade: request.evidence_grade, principal_ref: context.principal_ref,
+        ...(request.inquiry_protocol_ref === undefined ? {} : { inquiry_protocol_ref: request.inquiry_protocol_ref }),
+      }));
       const payloadHash = await digest(payloadBytes);
       if ((await bucket.head(payloadKey).catch(() => null)) === null) { await bucket.put(payloadKey, payloadBytes, { sha256: payloadHash }); }
       else { const current = await bucket.get(payloadKey).catch(() => null); if (current === null) fail("RESEARCH_SETTLEMENT_UNCERTAIN", "payload readback is unavailable", 503, true); if ((await digest(new Uint8Array(await current.arrayBuffer()))) !== payloadHash) fail("RESEARCH_CONFLICT", "idempotency identity is bound to different bytes", 409); }
       const principal: WorkflowPrincipal = { principal_ref: context.principal_ref, credential_generation: context.credential_generation, deployment_generation: env.DEPLOYMENT_GENERATION };
+      const installedProtocol = request.inquiry_protocol_ref === undefined
+        ? null
+        : installedInquiryProtocolDefinition(request.inquiry_protocol_ref);
+      const installedObligations = installedProtocol === null ? [] : compileInquiryLedgerObligations(installedProtocol);
       // Existing confirmatory heads retain their original generation for historical replay;
       // new server-owned runs use the authority-bound generation above.
       const policyGeneration = pre?.head.policy_generation === POLICY_GEN ? POLICY_GEN : newPolicyGeneration;
-      const lane = pre === null ? "exploratory" : pre.head.lane === "confirmatory" || pre.head.lane === "exploratory" ? pre.head.lane : null;
+      const lane = pre === null ? installedProtocol?.lane ?? "exploratory" :
+        pre.head.lane === "confirmatory" || pre.head.lane === "exploratory" || pre.head.lane === "mixed_with_declared_split" ? pre.head.lane : null;
       if (lane === null) fail("RESEARCH_CONFLICT", "idempotency identity has an unsupported investigation lane", 409);
       if (pre !== null && lane === "exploratory" && priorWorkflow?.handler_generation === HANDLER_GEN) {
         fail("RESEARCH_CONFLICT", "exploratory workflow uses a confirmatory handler generation", 409);
@@ -311,7 +364,11 @@ export function createResearchRunService(env: Env): { run(context: Authenticated
       if (pre !== null && lane === "confirmatory" && priorWorkflow?.handler_generation !== HANDLER_GEN) {
         fail("RESEARCH_CONFLICT", "confirmatory workflow uses a server-owned handler generation", 409);
       }
-      const handlerGeneration = lane === "exploratory" ? priorWorkflow?.handler_generation ?? SERVER_OWNED_SEMANTIC_HANDLER_GENERATION : HANDLER_GEN;
+      const handlerGeneration = lane === "exploratory"
+        ? priorWorkflow?.handler_generation ?? (request.inquiry_protocol_ref === undefined
+          ? SERVER_OWNED_SEMANTIC_HANDLER_GENERATION
+          : SERVER_OWNED_PROTOCOL_HANDLER_GENERATION)
+        : HANDLER_GEN;
       const wantHead = { investigation_id, goal: request.query, scope_snapshot_id: scopeRef.id, scope_snapshot_revision: scopeRef.revision, evidence_grade: request.evidence_grade, lane, portfolio_ref: payloadKey, principal_ref: context.principal_ref, input_digest: payloadHash, policy_generation: policyGeneration, policy_authority_ref: snapshotRow.policy_authority_ref, deployment_generation: env.DEPLOYMENT_GENERATION, idempotency_key: key };
       let skipCreate = false;
       if (pre !== null) {
@@ -324,7 +381,7 @@ export function createResearchRunService(env: Env): { run(context: Authenticated
       const eventId = checkId(`evt-${hex}`, "event_id");
       if (!skipCreate) {
         try {
-          await ledger.create({ investigation_id, goal: request.query, scope_snapshot_id: scopeRef.id, scope_snapshot_revision: scopeRef.revision, evidence_grade: request.evidence_grade, lane, lane_registrations: [], obligations: [], hypotheses: [], portfolio_ref: payloadKey, debt_refs: [], principal_ref: context.principal_ref, input_digest: payloadHash, policy_generation: policyGeneration, policy_authority_ref: snapshotRow.policy_authority_ref, deployment_generation: env.DEPLOYMENT_GENERATION, idempotency_key: key, model_profile_ref: MODEL_PROFILE, event_id: eventId, payload_handle_ref: payloadKey, payload_digest: payloadHash, created_at: now });
+          await ledger.create({ investigation_id, goal: request.query, scope_snapshot_id: scopeRef.id, scope_snapshot_revision: scopeRef.revision, evidence_grade: request.evidence_grade, lane, lane_registrations: [], obligations: installedObligations, hypotheses: [], portfolio_ref: payloadKey, debt_refs: [], principal_ref: context.principal_ref, input_digest: payloadHash, policy_generation: policyGeneration, policy_authority_ref: snapshotRow.policy_authority_ref, deployment_generation: env.DEPLOYMENT_GENERATION, idempotency_key: key, model_profile_ref: MODEL_PROFILE, event_id: eventId, payload_handle_ref: payloadKey, payload_digest: payloadHash, created_at: now });
         } catch (error) {
           if (error instanceof LedgerError && (error.code === "LEDGER_CONFLICT" || error.code === "LEDGER_STALE_HEAD")) {
             const existing = await store.readByIdempotency(key).catch(() => null);

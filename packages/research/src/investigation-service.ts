@@ -43,6 +43,8 @@ const LANE = z.enum(["confirmatory", "exploratory", "mixed_with_declared_split"]
 const ObligationSchema = z.object({
   obligation_id: ID, verifier_ref: REF256, lane: OBL_LANE, metric_ref: REF256,
   status: z.enum(["REGISTERED", "ACCEPTED", "DEVIATED"]), exposed: z.boolean(),
+  kind: REF256.optional(), dependency_obligation_ids: z.array(ID).max(16).optional(),
+  certificate_kind: REF256.optional(), blocking: z.boolean().optional(),
 }).strict();
 const CreateInputSchema = z.object({
   investigation_id: ID, goal: GOAL, scope_snapshot_id: REF256, scope_snapshot_revision: z.number().int().min(1).max(1000000), evidence_grade: GRADE, lane: LANE,

@@ -681,6 +681,16 @@
       "structural_strictness": "NON_OBJECT"
     },
     {
+      "export_name": "InquiryObligationSchema",
+      "family": "research",
+      "json_schema_sha256": "9699f180feccd773b0275e56c581a372e768521d09909ffc6498c21ce02a5c84",
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:research:inquiry-obligation:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
       "export_name": "InquiryProtocolKindSchema",
       "family": "research",
       "json_schema_sha256": "159a488d9490f743d9d84d6c48edd119166412a01a072cb0912ff96180684d75",
@@ -693,10 +703,10 @@
     {
       "export_name": "InquiryProtocolProfileSchema",
       "family": "research",
-      "json_schema_sha256": "bdd83f9525c6fa1c8e5b3def1fcfb72f07eda437e5913224c1dabda7aed92c41",
+      "json_schema_sha256": "b5a5756a3ec79bbdcb87780078c6f7514aabffc0be177338b9e10a3420ad554c",
       "kind": "OBJECT",
-      "schema_generation": 1,
-      "schema_id": "urn:eliotr:contracts:research:inquiry-protocol-profile:v1:g1",
+      "schema_generation": 2,
+      "schema_id": "urn:eliotr:contracts:research:inquiry-protocol-profile:v1:g2",
       "schema_version": 1,
       "structural_strictness": "CLOSED_OBJECT"
     },
@@ -1463,6 +1473,6 @@
   ],
   "json_schema_dialect": "https://json-schema.org/draft/2020-12/schema",
   "protocol": "eliotr.contract-schema-index.v1",
-  "registry_generation": 4,
-  "schema_count": 146
+  "registry_generation": 5,
+  "schema_count": 147
 }

@@ -24,12 +24,16 @@ import {
 import { readWorkflowObject } from "@eliotr/cloudflare-workflows";
 import { WorkflowCheckpointStore } from "@eliotr/cloudflare-workflows";
 import { z } from "zod";
+import {
+  INSTALLED_INQUIRY_PROTOCOL_REFS,
+  assertInstalledInquiryProtocolProfile,
+  compileInstalledInquiryProtocol,
+  defaultInquiryProtocolRef,
+  installedInquiryProtocolDefinition,
+} from "./research-inquiry-protocol.js";
 
-/** The server-owned profile family for bounded corpus-only lookup. */
-export const CORPUS_EXPLORATORY_LOOKUP_PROFILE_REF = Object.freeze({
-  id: "eliotr.research.profile.corpus-exploratory-lookup",
-  revision: 1,
-}) satisfies VersionedRef;
+/** The legacy server-owned profile family for bounded corpus-only lookup. */
+export const CORPUS_EXPLORATORY_LOOKUP_PROFILE_REF = INSTALLED_INQUIRY_PROTOCOL_REFS.lookup;
 export const CORPUS_EXPLORATORY_PROFILE_DEFINITION_REF = CORPUS_EXPLORATORY_LOOKUP_PROFILE_REF;
 
 /**
@@ -46,12 +50,6 @@ export const CORPUS_EXPLORATORY_LOOKUP_DEFINITIONS = Object.freeze({
   completeness_test_ref: "eliotr.research.coverage.exploratory-membership-observation-v1",
   external_acquisition: "none",
 } as const);
-
-type CorpusDefinitionRef = keyof typeof CORPUS_EXPLORATORY_LOOKUP_DEFINITIONS;
-const DEFINITION_REFS: readonly CorpusDefinitionRef[] = [
-  "independence_policy_ref", "chronology_policy_ref", "fidelity_ceiling",
-  "stop_rule_ref", "output_contract_ref", "completeness_test_ref", "external_acquisition",
-];
 
 export const CorpusCoverageDenominatorSchema = z.object({
   denominator_ref: VersionedRefSchema,
@@ -96,6 +94,7 @@ const RunPayloadSchema = z.object({
   scope_snapshot_ref: VersionedRefSchema,
   evidence_grade: EvidenceGradeSchema,
   principal_ref: z.string().min(1).max(256),
+  inquiry_protocol_ref: VersionedRefSchema.optional(),
 }).strict();
 type RunPayload = z.infer<typeof RunPayloadSchema>;
 
@@ -142,74 +141,42 @@ function parsePayload(bytes: Uint8Array): RunPayload {
   return parsed.data;
 }
 
-function assertDefinitionSet(profile: InquiryProtocolProfile): void {
-  for (const key of DEFINITION_REFS) {
-    const value = CORPUS_EXPLORATORY_LOOKUP_DEFINITIONS[key];
-    if (typeof value !== "string" || value.length === 0) fail("RESEARCH_PROTOCOL_FREEZE_AUTHORITY_INVALID", `profile definition ${key} is unavailable`);
+function assertDefinitionSet(definitionRef: VersionedRef, profile: InquiryProtocolProfile): void {
+  try {
+    assertInstalledInquiryProtocolProfile(definitionRef, profile);
+  } catch (cause) {
+    fail("RESEARCH_PROTOCOL_FREEZE_AUTHORITY_INVALID", "profile does not match an installed server definition", cause);
   }
-  if (profile.independence_policy_ref !== CORPUS_EXPLORATORY_LOOKUP_DEFINITIONS.independence_policy_ref ||
-      profile.chronology_policy_ref !== CORPUS_EXPLORATORY_LOOKUP_DEFINITIONS.chronology_policy_ref ||
-      profile.fidelity_ceiling !== CORPUS_EXPLORATORY_LOOKUP_DEFINITIONS.fidelity_ceiling ||
-      profile.stop_rule_ref !== CORPUS_EXPLORATORY_LOOKUP_DEFINITIONS.stop_rule_ref ||
-      profile.output_contract_ref !== CORPUS_EXPLORATORY_LOOKUP_DEFINITIONS.output_contract_ref) {
-    fail("RESEARCH_PROTOCOL_FREEZE_AUTHORITY_INVALID", "profile references an unknown server definition");
-  }
-  if (profile.intended_decision_or_artifact !== "bounded corpus lookup draft with exact evidence handles" ||
-      profile.protocol !== "lookup" || profile.lane !== "exploratory" || profile.source_mode !== "corpus_only" ||
-      canonicalEvidenceJson(profile.admissible_provider_classes) !== canonicalEvidenceJson(["admitted-corpus"]) ||
-      canonicalEvidenceJson(profile.truth_surfaces) !== canonicalEvidenceJson(["admitted-source-revisions"]) ||
-      profile.source_policy.primary_required !== false || profile.source_policy.peer_reviewed_preferred !== false ||
-      canonicalEvidenceJson(profile.source_policy.authority_classes) !== canonicalEvidenceJson(["owner-admitted-source"]) ||
-      profile.source_policy.excluded_classes.length !== 0 || profile.coverage_goal !== "exploratory" ||
-      profile.alternatives_required || profile.counter_search_required || profile.falsification_required ||
-      profile.budget_ref !== "research-budget-v1") {
-    fail("RESEARCH_PROTOCOL_FREEZE_AUTHORITY_INVALID", "profile does not match the server-owned exploratory definition");
+  const definition = installedInquiryProtocolDefinition(definitionRef);
+  if (definition.external_acquisition !== "none" ||
+      definition.independence_policy_ref !== CORPUS_EXPLORATORY_LOOKUP_DEFINITIONS.independence_policy_ref ||
+      definition.chronology_policy_ref !== CORPUS_EXPLORATORY_LOOKUP_DEFINITIONS.chronology_policy_ref ||
+      definition.fidelity_ceiling !== CORPUS_EXPLORATORY_LOOKUP_DEFINITIONS.fidelity_ceiling ||
+      definition.stop_rule_ref !== CORPUS_EXPLORATORY_LOOKUP_DEFINITIONS.stop_rule_ref ||
+      definition.output_contract_ref !== CORPUS_EXPLORATORY_LOOKUP_DEFINITIONS.output_contract_ref ||
+      definition.completeness_test_ref !== CORPUS_EXPLORATORY_LOOKUP_DEFINITIONS.completeness_test_ref) {
+    fail("RESEARCH_PROTOCOL_FREEZE_AUTHORITY_INVALID", "installed profile is outside the supported corpus execution definition");
   }
 }
 
-function profileFields(question: string, grade: RunPayload["evidence_grade"], modelProfileRef: string): Omit<InquiryProtocolProfile, "profile_ref"> {
-  return {
-    question,
-    intended_decision_or_artifact: "bounded corpus lookup draft with exact evidence handles",
-    protocol: "lookup",
-    evidence_grade: grade,
-    lane: "exploratory",
-    source_mode: "corpus_only",
-    admissible_provider_classes: ["admitted-corpus"],
-    truth_surfaces: ["admitted-source-revisions"],
-    source_policy: {
-      primary_required: false,
-      peer_reviewed_preferred: false,
-      authority_classes: ["owner-admitted-source"],
-      excluded_classes: [],
-    },
-    coverage_goal: "exploratory",
-    alternatives_required: false,
-    counter_search_required: false,
-    falsification_required: false,
-    independence_policy_ref: CORPUS_EXPLORATORY_LOOKUP_DEFINITIONS.independence_policy_ref,
-    chronology_policy_ref: CORPUS_EXPLORATORY_LOOKUP_DEFINITIONS.chronology_policy_ref,
-    fidelity_ceiling: CORPUS_EXPLORATORY_LOOKUP_DEFINITIONS.fidelity_ceiling,
-    model_profile_ref: modelProfileRef,
-    budget_ref: "research-budget-v1",
-    stop_rule_ref: CORPUS_EXPLORATORY_LOOKUP_DEFINITIONS.stop_rule_ref,
-    output_contract_ref: CORPUS_EXPLORATORY_LOOKUP_DEFINITIONS.output_contract_ref,
-    reopen_conditions: [
-      "A changed ScopeSnapshot requires a new W1 investigation revision.",
-      "Exploratory output cannot be promoted to a confirmatory claim without a declared protocol.",
-    ],
-  };
-}
-
-async function profileFor(question: string, grade: RunPayload["evidence_grade"], modelProfileRef: string): Promise<{ profile: InquiryProtocolProfile; identity_digest: string }> {
-  const fields = profileFields(question, grade, modelProfileRef);
-  const identity_digest = await evidenceSha256(fields);
-  const profile = InquiryProtocolProfileSchema.parse({
-    profile_ref: { id: `eliotr.research.compiled-profile-${identity_digest}`, revision: 1 },
-    ...fields,
-  });
-  assertDefinitionSet(profile);
-  return { profile, identity_digest };
+async function profileFor(
+  question: string,
+  grade: RunPayload["evidence_grade"],
+  modelProfileRef: string,
+  definitionRef: VersionedRef,
+  includeObligations: boolean,
+): Promise<Awaited<ReturnType<typeof compileInstalledInquiryProtocol>>> {
+  try {
+    return await compileInstalledInquiryProtocol({
+      definition_ref: definitionRef,
+      question,
+      evidence_grade: grade,
+      model_profile_ref: modelProfileRef,
+      include_obligations: includeObligations,
+    });
+  } catch (cause) {
+    fail("RESEARCH_PROTOCOL_FREEZE_AUTHORITY_INVALID", "installed inquiry protocol cannot compile this run", cause);
+  }
 }
 
 function scopeRef(scope: ScopeSnapshot): VersionedRef {
@@ -314,8 +281,8 @@ function assertReadbackBinding(
 
 function checkpointBytes(value: ProtocolScopeCheckpoint): Uint8Array {
   const parsed = ProtocolScopeCheckpointSchema.parse(value);
-  if (!sameRef(parsed.profile_definition_ref, CORPUS_EXPLORATORY_PROFILE_DEFINITION_REF) ||
-      parsed.protocol_profile.profile_ref.id !== `eliotr.research.compiled-profile-${parsed.profile_identity_digest}` ||
+  assertDefinitionSet(parsed.profile_definition_ref, parsed.protocol_profile);
+  if (parsed.protocol_profile.profile_ref.id !== `eliotr.research.compiled-profile-${parsed.profile_identity_digest}` ||
       parsed.coverage_denominator.denominator_ref.id !== `eliotr.coverage.compiled-membership-${parsed.denominator_identity_digest}`) {
     fail("RESEARCH_PROTOCOL_FREEZE_AUTHORITY_INVALID", "checkpoint content identities do not match their definitions");
   }
@@ -347,7 +314,18 @@ export function createFreezeProtocolAndScopeStageHandler(
     if (initial === null) fail("RESEARCH_PROTOCOL_FREEZE_AUTHORITY_STALE", "W1 investigation is unavailable");
     const inputDigest = await digest(input_bytes);
     assertHeadBinding(initial.head, payload, request, principal, inputDigest, scope);
-    const profileResult = await profileFor(payload.query, initial.head.evidence_grade, initial.head.model_profile_ref);
+    const definitionRef = payload.inquiry_protocol_ref ?? defaultInquiryProtocolRef();
+    const profileResult = await profileFor(
+      payload.query,
+      initial.head.evidence_grade,
+      initial.head.model_profile_ref,
+      definitionRef,
+      payload.inquiry_protocol_ref !== undefined,
+    );
+    if (payload.inquiry_protocol_ref !== undefined &&
+        canonicalEvidenceJson(initial.head.obligations) !== canonicalEvidenceJson(profileResult.ledger_obligations)) {
+      fail("RESEARCH_PROTOCOL_FREEZE_AUTHORITY_STALE", "W1 obligations do not match the installed inquiry protocol");
+    }
     const denominatorResult = await denominatorFor(scope);
     const protocolDigest = await evidenceSha256(profileResult.profile);
     const denominatorDigest = await evidenceSha256(denominatorResult.denominator);
@@ -370,7 +348,7 @@ export function createFreezeProtocolAndScopeStageHandler(
       w1_revision: final.head.revision,
       requested_evidence_grade: payload.evidence_grade,
       external_acquisition: CORPUS_EXPLORATORY_LOOKUP_DEFINITIONS.external_acquisition,
-      profile_definition_ref: CORPUS_EXPLORATORY_PROFILE_DEFINITION_REF,
+      profile_definition_ref: definitionRef,
       profile_identity_digest: profileResult.identity_digest,
       protocol_profile: profileResult.profile,
       protocol_digest: protocolDigest,
@@ -391,15 +369,14 @@ export function decodeProtocolScopeCheckpoint(bytes: Uint8Array): ProtocolScopeC
   try {
     const parsed = ProtocolScopeCheckpointSchema.parse(value);
     if (canonicalEvidenceJson(parsed) !== new TextDecoder().decode(bytes)) fail("RESEARCH_PROTOCOL_FREEZE_INPUT_INVALID", "protocol scope checkpoint is not canonical");
-    if (!sameRef(parsed.profile_definition_ref, CORPUS_EXPLORATORY_PROFILE_DEFINITION_REF) ||
-        parsed.protocol_profile.profile_ref.revision !== 1 ||
+    if (parsed.protocol_profile.profile_ref.revision !== 1 ||
         parsed.protocol_profile.profile_ref.id !== `eliotr.research.compiled-profile-${parsed.profile_identity_digest}` ||
         parsed.coverage_denominator.denominator_ref.id !== `eliotr.coverage.compiled-membership-${parsed.denominator_identity_digest}` ||
         parsed.coverage_denominator.denominator_ref.revision !== 1 ||
         parsed.external_acquisition !== CORPUS_EXPLORATORY_LOOKUP_DEFINITIONS.external_acquisition) {
       fail("RESEARCH_PROTOCOL_FREEZE_AUTHORITY_INVALID", "protocol scope checkpoint is not the server-owned corpus profile");
     }
-    assertDefinitionSet(parsed.protocol_profile);
+    assertDefinitionSet(parsed.profile_definition_ref, parsed.protocol_profile);
     assertDenominatorDefinition(parsed.coverage_denominator);
     return parsed;
   } catch (cause) {

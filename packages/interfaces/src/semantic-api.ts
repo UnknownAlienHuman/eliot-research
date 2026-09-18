@@ -60,6 +60,9 @@ export interface QueryRequest {
   readonly evidence_grade: "E0" | "E1" | "E2" | "E3";
   readonly budget_ref: string;
   readonly max_results: number;
+  /** Present only on the explicit v2 research.run contract. */
+  readonly request_version?: "eliotr.research-run-request.v2";
+  readonly inquiry_protocol_ref?: VersionedRef;
 }
 export interface QueryResult {
   /** Present only for ORIENT; navigation is never publication evidence. */

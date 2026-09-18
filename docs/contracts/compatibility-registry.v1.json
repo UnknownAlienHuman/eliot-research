@@ -2011,8 +2011,33 @@
       "schema_id": "urn:eliotr:contracts:workspace-mcp:mcp-diagnostic-latest-status:v1:g1",
       "schema_version": 1,
       "structural_strictness": "NON_OBJECT"
+    },
+    {
+      "compatibility": "INITIAL",
+      "export_name": "InquiryObligationSchema",
+      "family": "research",
+      "json_schema_sha256": "9699f180feccd773b0275e56c581a372e768521d09909ffc6498c21ce02a5c84",
+      "kind": "OBJECT",
+      "note": "Initial publication of the strict installed InquiryProtocol obligation contract.",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:research:inquiry-obligation:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "compatibility": "BACKWARD_COMPATIBLE",
+      "export_name": "InquiryProtocolProfileSchema",
+      "family": "research",
+      "json_schema_sha256": "b5a5756a3ec79bbdcb87780078c6f7514aabffc0be177338b9e10a3420ad554c",
+      "kind": "OBJECT",
+      "note": "Add optional strict InquiryObligation records for explicit v2 research.run requests; historical profiles without obligations remain valid.",
+      "schema_generation": 2,
+      "schema_id": "urn:eliotr:contracts:research:inquiry-protocol-profile:v1:g2",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT",
+      "supersedes_schema_id": "urn:eliotr:contracts:research:inquiry-protocol-profile:v1:g1"
     }
   ],
   "protocol": "eliotr.contract-compatibility-registry.v1",
-  "registry_generation": 4
+  "registry_generation": 5
 }

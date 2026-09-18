@@ -124,6 +124,11 @@ export interface LedgerObligation {
   readonly metric_ref: string;
   readonly status: "REGISTERED" | "ACCEPTED" | "DEVIATED";
   readonly exposed: boolean;
+  /** Additive v2 fields: absent on historical v1 ledger rows. */
+  readonly kind?: string | undefined;
+  readonly dependency_obligation_ids?: readonly string[] | undefined;
+  readonly certificate_kind?: string | undefined;
+  readonly blocking?: boolean | undefined;
 }
 
 export interface LedgerHead {
@@ -206,6 +211,10 @@ export const LedgerObligationSchema = z.object({
   obligation_id: LedgerIdSchema, verifier_ref: LedgerRefSchema,
   lane: z.enum(["confirmatory", "exploratory"]), metric_ref: LedgerRefSchema,
   status: z.enum(["REGISTERED", "ACCEPTED", "DEVIATED"]), exposed: z.boolean(),
+  kind: LedgerRefSchema.optional(),
+  dependency_obligation_ids: z.array(LedgerIdSchema).max(16).optional(),
+  certificate_kind: LedgerRefSchema.optional(),
+  blocking: z.boolean().optional(),
 }).strict();
 export const LedgerHeadSchema = z.object({
   investigation_id: LedgerIdSchema, revision: z.number().int().min(1).max(1000000),

@@ -35,6 +35,18 @@ export const ResearchWorkflowStageSchema = z.enum([
 ]);
 export type ResearchWorkflowStage = z.infer<typeof ResearchWorkflowStageSchema>;
 
+export const InquiryObligationSchema = z.object({
+  obligation_id: IdentifierSchema,
+  kind: IdentifierSchema,
+  dependency_obligation_ids: z.array(IdentifierSchema).max(16),
+  verifier_ref: IdentifierSchema,
+  certificate_kind: IdentifierSchema,
+  lane: z.enum(["confirmatory", "exploratory"]),
+  metric_ref: IdentifierSchema,
+  blocking: z.boolean(),
+}).strict();
+export type InquiryObligation = z.infer<typeof InquiryObligationSchema>;
+
 export const InquiryProtocolProfileSchema = z.object({
   profile_ref: VersionedRefSchema,
   question: z.string().min(1),
@@ -64,6 +76,7 @@ export const InquiryProtocolProfileSchema = z.object({
   stop_rule_ref: IdentifierSchema,
   output_contract_ref: IdentifierSchema,
   reopen_conditions: z.array(z.string()),
+  obligations: z.array(InquiryObligationSchema).max(32).optional(),
 }).strict();
 export type InquiryProtocolProfile = z.infer<typeof InquiryProtocolProfileSchema>;
 

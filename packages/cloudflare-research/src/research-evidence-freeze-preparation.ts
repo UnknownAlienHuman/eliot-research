@@ -19,6 +19,7 @@ import {
   type ResearchEvidencePack,
 } from "./research-reference-manifest.js";
 import { CORPUS_EXPLORATORY_LOOKUP_DEFINITIONS } from "./research-protocol-freeze.js";
+import { compileInquiryLedgerObligations, installedInquiryProtocolDefinition } from "./research-inquiry-protocol.js";
 import type { ProtocolScopeCheckpoint } from "./research-protocol-freeze.js";
 import type {
   ModelProfileBinding as EvidenceFreezeModelBinding,
@@ -107,14 +108,20 @@ function validId(value: string, label: string): void {
 }
 
 function cleanW1(head: LedgerHead, checkpoint: ProtocolScopeCheckpoint, currentRef?: VersionedRef): void {
-  if (head.status !== "OPEN" || head.lane !== "exploratory" || head.protocol_version !== checkpoint.w1_protocol_version ||
+  const expectedObligations = checkpoint.protocol_profile.obligations === undefined
+    ? []
+    : compileInquiryLedgerObligations(installedInquiryProtocolDefinition(checkpoint.profile_definition_ref));
+  if (head.status !== "OPEN" || head.lane !== checkpoint.protocol_profile.lane ||
+      head.protocol_version !== checkpoint.w1_protocol_version ||
       head.investigation_id !== checkpoint.investigation_ref.id || head.revision < checkpoint.w1_revision ||
       (currentRef !== undefined && (head.investigation_id !== currentRef.id || head.revision !== currentRef.revision)) ||
       head.principal_ref !== checkpoint.principal_ref || head.evidence_grade !== checkpoint.requested_evidence_grade ||
       head.goal !== checkpoint.protocol_profile.question || head.model_profile_ref !== checkpoint.protocol_profile.model_profile_ref ||
       head.scope_snapshot_id !== checkpoint.scope_snapshot_ref.id || head.scope_snapshot_revision !== checkpoint.scope_snapshot_ref.revision ||
-      head.lane_registrations.length !== 0 || head.obligations.length !== 0 || head.hypotheses.length !== 0 || head.debt_refs.length !== 0) {
-    throw new Error("exploratory W1 authority is not eligible for evidence freeze");
+      head.lane_registrations.length !== 0 ||
+      canonicalEvidenceJson(head.obligations) !== canonicalEvidenceJson(expectedObligations) ||
+      head.hypotheses.length !== 0 || head.debt_refs.length !== 0) {
+    throw new Error("W1 authority is not eligible for evidence freeze");
   }
 }
 

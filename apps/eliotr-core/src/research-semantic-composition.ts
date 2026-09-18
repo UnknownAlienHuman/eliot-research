@@ -65,6 +65,7 @@ import {
   createResearchStageHandlerFactory,
   SERVER_OWNED_FREEZE_HANDLER_GENERATION,
   type SERVER_OWNED_SEMANTIC_HANDLER_GENERATION,
+  type SERVER_OWNED_PROTOCOL_HANDLER_GENERATION,
   type ResearchStageHandlerFactory,
 } from "./research-stage-handlers.js";
 
@@ -596,7 +597,7 @@ export function createResearchSemanticComposition(
 
 export interface ResearchSemanticWorkflowDependencies extends ResearchSemanticCompositionDependencies {
   /** Explicitly pinned by the stored run; omitted only by legacy v3 fixtures. */
-  readonly handler_generation?: typeof SERVER_OWNED_FREEZE_HANDLER_GENERATION | typeof SERVER_OWNED_SEMANTIC_HANDLER_GENERATION;
+  readonly handler_generation?: typeof SERVER_OWNED_FREEZE_HANDLER_GENERATION | typeof SERVER_OWNED_SEMANTIC_HANDLER_GENERATION | typeof SERVER_OWNED_PROTOCOL_HANDLER_GENERATION;
   readonly report: Pick<ResearchCoverageMaterializeStageDependencies,
     "policy_source" | "report_policy" | "expected_draft_head_revision">;
 }

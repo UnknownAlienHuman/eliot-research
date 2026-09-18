@@ -41,11 +41,16 @@ export const SERVER_OWNED_RESEARCH_HANDLER_GENERATION = "research-handlers.explo
 export const SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION = "research-handlers.exploratory.v2";
 /** Generation for the explicit stage-10/11 evidence-freeze composition. */
 export const SERVER_OWNED_FREEZE_HANDLER_GENERATION = "research-handlers.exploratory.v3";
-/** New runs use SEM; v3's committed results and pending stage behavior remain readable. */
+/** Legacy semantic generation; committed v4 runs remain readable. */
 export const SERVER_OWNED_SEMANTIC_HANDLER_GENERATION = SEMANTIC_RETRIEVAL_HANDLER_GENERATION;
+/** Explicit installed InquiryProtocol/obligation generation for v2 run requests. */
+export const SERVER_OWNED_PROTOCOL_HANDLER_GENERATION = "research-handlers.exploratory.v5";
 export function isSemanticResearchHandlerGeneration(generation: unknown): generation is
-  typeof SERVER_OWNED_FREEZE_HANDLER_GENERATION | typeof SERVER_OWNED_SEMANTIC_HANDLER_GENERATION {
-  return generation === SERVER_OWNED_FREEZE_HANDLER_GENERATION || generation === SERVER_OWNED_SEMANTIC_HANDLER_GENERATION;
+  typeof SERVER_OWNED_FREEZE_HANDLER_GENERATION | typeof SERVER_OWNED_SEMANTIC_HANDLER_GENERATION |
+  typeof SERVER_OWNED_PROTOCOL_HANDLER_GENERATION {
+  return generation === SERVER_OWNED_FREEZE_HANDLER_GENERATION ||
+    generation === SERVER_OWNED_SEMANTIC_HANDLER_GENERATION ||
+    generation === SERVER_OWNED_PROTOCOL_HANDLER_GENERATION;
 }
 export const SERVER_RETRIEVAL_SCOPE_PROFILE = {
   version: "retrieval-scope-v1",
@@ -60,7 +65,7 @@ export type ResearchStageHandlerFactoryMode =
       readonly ledger: Pick<InvestigationLedgerStore, "read">;
       /** Server-owned bindings used to compose retrieval for v2. */
       readonly environment?: Pick<Env, "CORE_DB" | "SEARCH_DB" | "WORK_BUCKET" | "EVIDENCE_BUCKET"> & Partial<Pick<Env, "AI_SEARCH">>;
-      readonly generation?: typeof SERVER_OWNED_RESEARCH_HANDLER_GENERATION | typeof SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION | typeof SERVER_OWNED_FREEZE_HANDLER_GENERATION | typeof SERVER_OWNED_SEMANTIC_HANDLER_GENERATION;
+      readonly generation?: typeof SERVER_OWNED_RESEARCH_HANDLER_GENERATION | typeof SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION | typeof SERVER_OWNED_FREEZE_HANDLER_GENERATION | typeof SERVER_OWNED_SEMANTIC_HANDLER_GENERATION | typeof SERVER_OWNED_PROTOCOL_HANDLER_GENERATION;
       readonly retrieval?: Omit<RetrieveBranchesStageDependencies, "navigation" | "ledger" | "profile">;
       readonly freeze?: EvidenceFreezeCompositionDependencies;
       readonly synthesis?: Parameters<typeof createEvidenceFreezeSynthesisHandler>[0];

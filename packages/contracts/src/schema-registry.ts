@@ -36,7 +36,7 @@ import {
   type ContractStructuralStrictness,
 } from "./registry-contracts.js";
 
-export const CONTRACT_SCHEMA_REGISTRY_GENERATION = 4 as const;
+export const CONTRACT_SCHEMA_REGISTRY_GENERATION = 5 as const;
 
 export type ContractJsonPrimitive = string | number | boolean | null;
 export type ContractJsonValue =
@@ -292,9 +292,11 @@ function buildRegistry(): readonly ContractSchemaDescriptor[] {
       // table-cell contract; publish that breaking schema as v2 while retaining protocol v1.
       const version = ["ScopeSnapshotSchema", "RetrievalTraceSchema", "InvestigationSchema"].includes(exportName)
         ? { schema_version: 1, schema_generation: 2 }
-        : ["CoordinateMapEntrySchema", "CoordinateMapSchema"].includes(exportName)
-          ? { schema_version: 2, schema_generation: 1 }
-          : familyVersion;
+        : exportName === "InquiryProtocolProfileSchema"
+          ? { schema_version: 1, schema_generation: 2 }
+          : ["CoordinateMapEntrySchema", "CoordinateMapSchema"].includes(exportName)
+            ? { schema_version: 2, schema_generation: 1 }
+            : familyVersion;
       const schemaId = buildContractSchemaId(
         module.family,
         exportName,

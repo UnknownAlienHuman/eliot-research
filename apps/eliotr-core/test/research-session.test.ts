@@ -1,16 +1,22 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { reset } from "cloudflare:test";
 import { ORIENTATION_PROFILE } from "@eliotr/cloudflare-navigation";
-import { decodeProtocolScopeCheckpoint, WorkflowCheckpointStore } from "@eliotr/cloudflare-research";
+import {
+  INSTALLED_INQUIRY_PROTOCOL_REFS,
+  RESEARCH_RUN_REQUEST_V2,
+  decodeProtocolScopeCheckpoint,
+  WorkflowCheckpointStore,
+} from "@eliotr/cloudflare-research";
 import { retrievalRequestDigest } from "@eliotr/retrieval";
 import { body, count, db, principal, run, runtime, seedSource, setupOrientationDatabase, verifier } from "./orientation-fixture.js";
 import { importAndProject, prepareQ1Namespace, type Q1Namespace } from "./retrieval-q1-fixture.js";
 import { principal as workflowPrincipal, workflowFixture } from "./research-workflow-fixture.js";
 import { SERVER_OWNED_RESEARCH_HANDLER_GENERATION, SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION } from "../src/research-stage-handlers.js";
+import { parseResearchRunRequest } from "../src/research-session.js";
 
 beforeAll(async () => {
   await setupOrientationDatabase();
-  for (const sourceId of ["rs-query", "rs-query-neg", "rs-shared", "rs-second", "rs-revoked"]) await seedSource(sourceId);
+  for (const sourceId of ["rs-query", "rs-query-neg", "rs-shared", "rs-second", "rs-revoked", "rs-protocol", "rs-legacy-e2"]) await seedSource(sourceId);
 });
 
 function queryBody(id: string, fields: Record<string, unknown> = {}) {
@@ -109,6 +115,39 @@ describe("research.run over real D1/R2 with W1 ledger and W2 checkpoints", () =>
     expect(replayed.data).toEqual(payload.data);
     expect(await workflowCounts()).toEqual(counts);
   }, 30_000);
+  it("parses the explicit v2 protocol contract strictly while preserving legacy E2", () => {
+    const explicit = parseResearchRunRequest(runBody("rs-protocol", {
+      request_version: RESEARCH_RUN_REQUEST_V2,
+      inquiry_protocol_ref: INSTALLED_INQUIRY_PROTOCOL_REFS.evidence_review,
+    }));
+    expect(explicit.request_version).toBe(RESEARCH_RUN_REQUEST_V2);
+    expect(explicit.inquiry_protocol_ref).toEqual(INSTALLED_INQUIRY_PROTOCOL_REFS.evidence_review);
+    expect(explicit.evidence_grade).toBe("E1");
+
+    const legacy = parseResearchRunRequest(runBody("rs-legacy-e2", { evidence_grade: "E2" }));
+    expect(legacy.evidence_grade).toBe("E2");
+    expect(legacy).not.toHaveProperty("request_version");
+    expect(legacy).not.toHaveProperty("inquiry_protocol_ref");
+
+    expect(() => parseResearchRunRequest(runBody("rs-protocol", {
+      request_version: RESEARCH_RUN_REQUEST_V2,
+      inquiry_protocol_ref: { id: "uninstalled-profile", revision: 1 },
+    }))).toThrowError(/inquiry protocol is not installed/u);
+    expect(() => parseResearchRunRequest(runBody("rs-protocol", {
+      inquiry_protocol_ref: INSTALLED_INQUIRY_PROTOCOL_REFS.lookup,
+    }))).toThrowError(/unknown or missing fields/u);
+    expect(() => parseResearchRunRequest(runBody("rs-protocol", {
+      request_version: RESEARCH_RUN_REQUEST_V2,
+      inquiry_protocol_ref: INSTALLED_INQUIRY_PROTOCOL_REFS.evidence_review,
+      evidence_grade: "E0",
+    }))).toThrowError(/does not support the requested grade/u);
+    expect(() => parseResearchRunRequest(runBody("rs-protocol", {
+      request_version: RESEARCH_RUN_REQUEST_V2,
+      inquiry_protocol_ref: INSTALLED_INQUIRY_PROTOCOL_REFS.lookup,
+      unexpected: true,
+    }))).toThrowError(/unknown or missing fields/u);
+  });
+
   it("creates an independent second source run with its own current policy authority", async () => {
     const response = await run(runRequest("rs-second", {}, "rs-run-second"));
     const payload = await body<{ investigation_ref: { id: string; revision: number }; workflow_instance_id: string }>(response);

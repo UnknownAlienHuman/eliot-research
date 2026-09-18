@@ -1,8 +1,8 @@
 {
   "json_schema_dialect": "https://json-schema.org/draft/2020-12/schema",
   "protocol": "eliotr.contract-schema-corpus.v1",
-  "registry_generation": 4,
-  "schema_count": 146,
+  "registry_generation": 5,
+  "schema_count": 147,
   "schemas": [
     {
       "export_name": "AllowedReferenceManifestSchema",
@@ -7060,6 +7060,77 @@
       "structural_strictness": "NON_OBJECT"
     },
     {
+      "export_name": "InquiryObligationSchema",
+      "family": "research",
+      "json_schema": {
+        "$defs": {
+          "__schema0": {
+            "maxLength": 256,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "$id": "urn:eliotr:contracts:research:inquiry-obligation:v1:g1",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "blocking": {
+            "type": "boolean"
+          },
+          "certificate_kind": {
+            "$ref": "#/$defs/__schema0"
+          },
+          "dependency_obligation_ids": {
+            "items": {
+              "$ref": "#/$defs/__schema0"
+            },
+            "maxItems": 16,
+            "type": "array"
+          },
+          "kind": {
+            "$ref": "#/$defs/__schema0"
+          },
+          "lane": {
+            "enum": [
+              "confirmatory",
+              "exploratory"
+            ],
+            "type": "string"
+          },
+          "metric_ref": {
+            "$ref": "#/$defs/__schema0"
+          },
+          "obligation_id": {
+            "$ref": "#/$defs/__schema0"
+          },
+          "verifier_ref": {
+            "$ref": "#/$defs/__schema0"
+          }
+        },
+        "required": [
+          "obligation_id",
+          "kind",
+          "dependency_obligation_ids",
+          "verifier_ref",
+          "certificate_kind",
+          "lane",
+          "metric_ref",
+          "blocking"
+        ],
+        "title": "InquiryObligation",
+        "type": "object",
+        "x-eliotr-family": "research",
+        "x-eliotr-schema-generation": 1,
+        "x-eliotr-schema-version": 1,
+        "x-eliotr-semantic-authority": "zod-runtime"
+      },
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:research:inquiry-obligation:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
       "export_name": "InquiryProtocolKindSchema",
       "family": "research",
       "json_schema": {
@@ -7099,9 +7170,57 @@
             "maxLength": 256,
             "minLength": 1,
             "type": "string"
+          },
+          "__schema1": {
+            "additionalProperties": false,
+            "properties": {
+              "blocking": {
+                "type": "boolean"
+              },
+              "certificate_kind": {
+                "$ref": "#/$defs/__schema0"
+              },
+              "dependency_obligation_ids": {
+                "items": {
+                  "$ref": "#/$defs/__schema0"
+                },
+                "maxItems": 16,
+                "type": "array"
+              },
+              "kind": {
+                "$ref": "#/$defs/__schema0"
+              },
+              "lane": {
+                "enum": [
+                  "confirmatory",
+                  "exploratory"
+                ],
+                "type": "string"
+              },
+              "metric_ref": {
+                "$ref": "#/$defs/__schema0"
+              },
+              "obligation_id": {
+                "$ref": "#/$defs/__schema0"
+              },
+              "verifier_ref": {
+                "$ref": "#/$defs/__schema0"
+              }
+            },
+            "required": [
+              "obligation_id",
+              "kind",
+              "dependency_obligation_ids",
+              "verifier_ref",
+              "certificate_kind",
+              "lane",
+              "metric_ref",
+              "blocking"
+            ],
+            "type": "object"
           }
         },
-        "$id": "urn:eliotr:contracts:research:inquiry-protocol-profile:v1:g1",
+        "$id": "urn:eliotr:contracts:research:inquiry-protocol-profile:v1:g2",
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
         "properties": {
@@ -7169,6 +7288,13 @@
           },
           "model_profile_ref": {
             "$ref": "#/$defs/__schema0"
+          },
+          "obligations": {
+            "items": {
+              "$ref": "#/$defs/__schema1"
+            },
+            "maxItems": 32,
+            "type": "array"
           },
           "output_contract_ref": {
             "$ref": "#/$defs/__schema0"
@@ -7291,13 +7417,13 @@
         "title": "InquiryProtocolProfile",
         "type": "object",
         "x-eliotr-family": "research",
-        "x-eliotr-schema-generation": 1,
+        "x-eliotr-schema-generation": 2,
         "x-eliotr-schema-version": 1,
         "x-eliotr-semantic-authority": "zod-runtime"
       },
       "kind": "OBJECT",
-      "schema_generation": 1,
-      "schema_id": "urn:eliotr:contracts:research:inquiry-protocol-profile:v1:g1",
+      "schema_generation": 2,
+      "schema_id": "urn:eliotr:contracts:research:inquiry-protocol-profile:v1:g2",
       "schema_version": 1,
       "structural_strictness": "CLOSED_OBJECT"
     },
