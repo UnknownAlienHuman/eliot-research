@@ -1,0 +1,74 @@
+name: publish-s36
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/publish-s36.yml]
+permissions:
+  contents: write
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      COREPACK_HOME: /tmp/eliotr-corepack
+      PATCH_BLOB_SHA: 5f324022d31b0b4fb1f24f6cf10415fb82207c9d
+      PATCH_SHA256: f32d618d419b9b7ec1b8bb48ce63b467ad7817c1421c67f92c7682b84830f475
+      PATCH_GZIP_SHA256: b3cb07a81632f68bb727ee39b662b61447bb35b80bd26c02fd4d105366169957
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 22
+      - run: corepack enable
+      - run: corepack prepare pnpm@11.23.0 --activate
+      - name: Reconstruct and apply reviewed S36 patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error \
+            -H "Authorization: Bearer ${{ github.token }}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${{ github.repository }}/git/blobs/${PATCH_BLOB_SHA}" \
+            | jq -r '.content' | tr -d '\n' | base64 -d > /tmp/s36.patch.gz
+          echo "${PATCH_GZIP_SHA256}  /tmp/s36.patch.gz" | sha256sum -c -
+          gzip -dc /tmp/s36.patch.gz > /tmp/s36.patch
+          echo "${PATCH_SHA256}  /tmp/s36.patch" | sha256sum -c -
+          git apply --check /tmp/s36.patch
+          git apply --index /tmp/s36.patch
+          git rm .github/workflows/publish-s36.yml
+          test ! -e .github/workflows/export-dev-state.yml
+          git diff --cached --check
+      - name: Install frozen dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Validate S36
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm exec tsc -b packages/contracts packages/cloudflare-research apps/eliotr-core --pretty false
+          pnpm exec eslint \
+            apps/eliotr-core/src/research-session.ts \
+            apps/eliotr-core/test/research-protocol-freeze.test.ts \
+            packages/cloudflare-research/src/index.ts \
+            packages/cloudflare-research/src/research-planning-manifest.ts \
+            packages/cloudflare-research/src/research-planning-manifest.test.ts \
+            packages/cloudflare-research/src/research-protocol-freeze.ts \
+            packages/contracts/src/research.ts
+          node scripts/check-boundaries.mjs
+          node scripts/check-work-packets.mjs
+          node scripts/check-contract-fixtures.mjs
+          pnpm exec vitest run \
+            packages/contracts/src/schema-registry.test.ts \
+            packages/cloudflare-research/src/research-inquiry-protocol.test.ts \
+            packages/cloudflare-research/src/research-planning-manifest.test.ts
+          pnpm --dir apps/eliotr-core exec vitest run test/research-protocol-freeze.test.ts
+      - name: Commit exact tested tree to main
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "feat: persist immutable research planning manifests (S36)"
+          git push origin HEAD:main
