@@ -1,0 +1,81 @@
+name: publish-s37-branch-foundation
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/publish-s37.yml
+      - .github/payloads/s37/**
+permissions:
+  contents: write
+jobs:
+  validate-and-publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      COREPACK_HOME: /tmp/eliotr-corepack
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: true
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 22
+      - name: Apply exact reviewed S37 patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          cat .github/payloads/s37/*.part | base64 -d | gzip -dc > /tmp/s37.patch
+          test "$(sha256sum /tmp/s37.patch | cut -d' ' -f1)" = "3435bfaf96248258aa4904737e0092ad37c365501c5dbb15913c545ac378bf43"
+          git am --3way /tmp/s37.patch
+      - name: Install frozen dependencies
+        run: |
+          corepack enable
+          corepack prepare pnpm@11.23.0 --activate
+          pnpm install --frozen-lockfile
+      - name: Typecheck product and tests
+        run: |
+          node node_modules/typescript/bin/tsc -b --pretty false
+          node node_modules/typescript/bin/tsc -p apps/eliotr-core/tsconfig.test.json --noEmit --pretty false
+      - name: Validate branch contracts and actual Worker boundaries
+        run: |
+          node node_modules/vitest/vitest.mjs run packages/contracts/src/research-branch.test.ts
+          (cd apps/eliotr-core && node ../../node_modules/vitest/vitest.mjs run test/research-protocol-freeze.test.ts)
+          (cd apps/eliotr-core && node ../../node_modules/vitest/vitest.mjs run test/research-retrieve-branches.test.ts)
+          (cd apps/eliotr-core && node ../../node_modules/vitest/vitest.mjs run test/research-evidence-freeze.test.ts)
+          (cd apps/eliotr-core && node ../../node_modules/vitest/vitest.mjs run test/research-workflow-recovery.test.ts)
+      - name: Validate static boundaries
+        run: |
+          node node_modules/eslint/bin/eslint.js \
+            apps/eliotr-core/src/research-evidence-freeze-composition.ts \
+            apps/eliotr-core/src/research-retrieve-branches.ts \
+            apps/eliotr-core/src/research-semantic-composition.ts \
+            apps/eliotr-core/src/research-session.ts \
+            apps/eliotr-core/src/research-stage-handlers.ts \
+            apps/eliotr-core/test/research-evidence-freeze-fixture.ts \
+            apps/eliotr-core/test/research-evidence-freeze.test.ts \
+            apps/eliotr-core/test/research-retrieve-branches.test.ts \
+            packages/cloudflare-research/src/index.ts \
+            packages/cloudflare-research/src/research-evidence-freeze-composition.ts \
+            packages/cloudflare-research/src/research-evidence-freeze-preparation.ts \
+            packages/cloudflare-research/src/research-branch-execution.ts \
+            packages/contracts/src/index.ts \
+            packages/contracts/src/research-branch.ts \
+            packages/contracts/src/research-branch.test.ts
+          node scripts/check-boundaries.mjs
+          node scripts/check-work-packets.mjs
+          node docs/contracts/generate.mjs --check
+          git diff --check HEAD~1
+      - name: Commit exact tested tree and remove transport files
+        shell: bash
+        run: |
+          set -euo pipefail
+          git rm -rf .github/payloads/s37 .github/workflows/publish-s37.yml
+          git rm -f .github/workflows/export-current-source-deps.yml .github/workflows/export-current-source.yml || true
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "feat: execute evidence-bound research branches (S37 checkpoint)"
+          git push origin HEAD:main
