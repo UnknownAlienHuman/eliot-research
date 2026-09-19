@@ -1,5 +1,5 @@
 name: export-current-source-deps
-# Refreshed 2026-09-19 for direct S37+ implementation from current main.
+# Refreshed 2026-09-19 after S37 transport recovery for direct implementation.
 on:
   push:
     branches: [main]
