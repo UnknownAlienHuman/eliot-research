@@ -1,0 +1,44 @@
+name: export-s41-dev
+
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/export-s41-dev.yml]
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      COREPACK_HOME: /tmp/eliotr-corepack
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: main
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 22
+      - run: corepack enable
+      - run: corepack prepare pnpm@11.23.0 --activate
+      - run: pnpm install --frozen-lockfile
+      - name: Archive frozen dependency tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/s41-dev
+          find . -type d -name node_modules -prune -print0 | tar --null -T - -czf /tmp/s41-dev/node_modules.tar.gz
+          git rev-parse HEAD > /tmp/s41-dev/SOURCE_SHA
+          sha256sum pnpm-lock.yaml > /tmp/s41-dev/LOCK_SHA256
+          node --version > /tmp/s41-dev/VERSIONS
+          pnpm --version >> /tmp/s41-dev/VERSIONS
+          sha256sum /tmp/s41-dev/node_modules.tar.gz > /tmp/s41-dev/SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: s41-frozen-dependencies
+          path: /tmp/s41-dev/
+          if-no-files-found: error
+          retention-days: 1
