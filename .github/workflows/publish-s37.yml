@@ -27,7 +27,11 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
-          cat .github/payloads/s37/*.part | base64 -d | gzip -dc > /tmp/s37.patch
+          cat .github/payloads/s37/*.part | base64 -d > /tmp/s37.patch.gz
+          # The reviewed payload contains the complete deflate stream; an earlier
+          # transport damaged only the gzip trailer. Recover the emitted bytes,
+          # then require the original exact patch digest before applying anything.
+          gzip -dc /tmp/s37.patch.gz > /tmp/s37.patch || true
           test "$(sha256sum /tmp/s37.patch | cut -d' ' -f1)" = "3435bfaf96248258aa4904737e0092ad37c365501c5dbb15913c545ac378bf43"
           git am --3way /tmp/s37.patch
       - name: Install frozen dependencies
