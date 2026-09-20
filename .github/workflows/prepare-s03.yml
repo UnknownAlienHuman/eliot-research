@@ -33,7 +33,7 @@ jobs:
           set -euo pipefail
           test "$(git branch --show-current)" = main
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
-          test "$(git rev-parse HEAD^)" = 88c910ed0d992c2894e35fe1e15bf4c2617737b2
+          test "$(git rev-parse HEAD^)" = fce1129d51447a7bb336da25c964d5fcad038f0d
           python - <<'PY'
           import base64, gzip, hashlib, json, os, pathlib, urllib.request
           groups = [
@@ -63,6 +63,16 @@ jobs:
           done
           git rm .github/workflows/prepare-s03.yml
           test "$(git write-tree)" = 34f58299749031a47a4f48534dfccec157334b6b
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('tests/integration/browser/raw-file-browser.mjs')
+          s = p.read_text()
+          old = 'const details = panel.locator("details").filter({ has: panel.locator("[data-raw-recover]") });'
+          assert s.count(old) == 1
+          p.write_text(s.replace(old, 'const details = panel.locator("details:has([data-raw-recover])");'), newline='\n')
+          PY
+          git add tests/integration/browser/raw-file-browser.mjs
+          test "$(git write-tree)" = 04662ab8cb32526a283572044af51f42851387f9
       - name: Install frozen dependencies
         run: |
           corepack enable
@@ -102,7 +112,7 @@ jobs:
           const git = (...args) => execFileSync('git', args);
           const text = (...args) => git(...args).toString().trim();
           const tree = text('write-tree');
-          if (tree !== '34f58299749031a47a4f48534dfccec157334b6b') throw new Error('Tree changed during verification');
+          if (tree !== '04662ab8cb32526a283572044af51f42851387f9') throw new Error('Tree changed during verification');
           git('diff', '--exit-code');
           const entries = [];
           for (const path of git('diff', '--cached', '--name-only', '-z', 'HEAD').toString().split('\0').filter(Boolean)) {
