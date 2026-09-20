@@ -1,0 +1,136 @@
+name: verify-s03-continuation
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/verify-s03-continuation.yml]
+permissions:
+  contents: write
+jobs:
+  verify:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - run: git config --global core.autocrlf false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 22.23.2
+      - name: Restore only the checksum-bound reviewed candidate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$(git branch --show-current)" = main
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          mkdir -p "$RUNNER_TEMP/s03-result"
+          git rm .github/workflows/verify-s03-continuation.yml
+          test "$(git write-tree)" = 60e72f2ad5257a9c9ef97860fe7dd9e3f58daeeb
+          python - <<'PY'
+          import ast, base64, gzip, hashlib, json, os, pathlib, subprocess, textwrap, urllib.request
+          historical = subprocess.check_output(['git','show','008bb3e40cc97856c2689e7115e21fc87ab1b156:.github/workflows/prepare-s03.yml'], text=True, encoding='utf-8')
+          # Read literal data only from the retained reconstruction passport.
+          snippet = textwrap.dedent(historical.split("python - <<'PY'\n",1)[1].split('\n          PY',1)[0])
+          assignment = next(n for n in ast.parse(snippet).body if isinstance(n, ast.Assign) and any(isinstance(t, ast.Name) and t.id == 'groups' for t in n.targets))
+          groups = ast.literal_eval(assignment.value)
+          assert [g[0] for g in groups] == ['s03','s03-diag','s03-bridge']
+          def apply(group):
+              name, ids, zipped_sha, patch_sha = group
+              chunks = []
+              for sha in ids:
+                  request = urllib.request.Request(f"{os.environ['GITHUB_API_URL']}/repos/{os.environ['GITHUB_REPOSITORY']}/git/blobs/{sha}", headers={'Authorization':'Bearer '+os.environ['GH_TOKEN'], 'Accept':'application/vnd.github+json'})
+                  with urllib.request.urlopen(request, timeout=30) as response:
+                      result = json.load(response)
+                  data = base64.b64decode(result['content'])
+                  assert hashlib.sha1(f'blob {len(data)}\0'.encode()+data).hexdigest() == sha
+                  chunks.append(data)
+              zipped = b''.join(chunks)
+              assert hashlib.sha256(zipped).hexdigest() == zipped_sha
+              patch = gzip.decompress(zipped)
+              assert hashlib.sha256(patch).hexdigest() == patch_sha
+              path = pathlib.Path(os.environ['RUNNER_TEMP'], name+'.patch')
+              path.write_bytes(patch)
+              subprocess.run(['git','apply','--check',str(path)],check=True)
+              subprocess.run(['git','apply','--index',str(path)],check=True)
+          for group in groups[:2]:
+              apply(group)
+          # The ER-44 bridge fix is already in main; never replay it.
+          path = pathlib.Path('tests/integration/browser/raw-file-browser.mjs')
+          content = path.read_text(encoding='utf-8')
+          old = 'const details = panel.locator("details").filter({ has: panel.locator("[data-raw-recover]") });'
+          assert content.count(old) == 1
+          path.write_text(content.replace(old, 'const details = panel.locator("details:has([data-raw-recover])");'), encoding='utf-8', newline='\n')
+          subprocess.run(['git','add',str(path)],check=True)
+          assert subprocess.check_output(['git','write-tree'],text=True).strip() == '7f5edccce667be7ad9a8ea1189bc6b8b83c168be'
+          apply(('s03-console',['1e59ff9b2998364b75b3208a163b7a8800b55657'],'1dfcd043da0f2e8afc7d5b88dad7afafd49ae059775a552d54288b268cbda684','fccc098a30ae05aaf58d3fad69a8336884c08722e6a1300def3d6e90095c3132'))
+          assert subprocess.check_output(['git','write-tree'],text=True).strip() == '31cca9fcfb1e9b716af3fce068392e2f261a7bd4'
+          PY
+      - name: Install frozen toolchain
+        run: |
+          corepack enable
+          corepack prepare pnpm@11.23.0 --activate
+          pnpm install --frozen-lockfile
+          node --version > "$RUNNER_TEMP/s03-result/versions.txt"
+          pnpm --version >> "$RUNNER_TEMP/s03-result/versions.txt"
+      - name: Verify strict regression and product boundaries
+        run: |
+          set -euo pipefail
+          node --test tests/integration/browser/raw-file-browser.test.mjs | tee "$RUNNER_TEMP/s03-result/raw-tests.log"
+          node --test --test-name-pattern 'L6 (?!real-browser)' tests/integration/browser/library.spec.ts | tee "$RUNNER_TEMP/s03-result/ledger-tests.log"
+          node node_modules/eslint/bin/eslint.js tests/integration/browser/assertion-diagnostic.mjs tests/integration/browser/raw-file-browser.mjs tests/integration/browser/raw-file-browser.test.mjs tests/integration/browser/owner-e2e.mjs tests/integration/browser/library.spec.ts
+          node node_modules/typescript/bin/tsc -b --pretty false
+          node node_modules/typescript/bin/tsc -p apps/eliotr-core/test/tsconfig.json --pretty false
+          node scripts/check-boundaries.mjs
+          node scripts/test-boundary-negative.mjs
+          node scripts/check-work-packets.mjs
+          node scripts/check-implementation-status.mjs
+          node docs/contracts/generate.mjs --check
+          git diff --cached --check
+          git diff --exit-code
+      - name: Actual browser and local Worker D1 R2 acceptance
+        run: |
+          set -euo pipefail
+          pnpm test:owner-e2e | tee "$RUNNER_TEMP/s03-result/browser.log"
+      - name: Store verified Git objects without publishing any ref
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node --input-type=module <<'JS'
+          import { execFileSync } from 'node:child_process';
+          import { writeFileSync } from 'node:fs';
+          import { join } from 'node:path';
+          const git = (...args) => execFileSync('git', args);
+          const text = (...args) => git(...args).toString().trim();
+          const tree = text('write-tree');
+          if (tree !== '31cca9fcfb1e9b716af3fce068392e2f261a7bd4') throw new Error('Tree identity changed');
+          git('diff','--exit-code');
+          const entries = [];
+          for (const path of git('diff','--cached','--name-only','-z','HEAD').toString().split('\0').filter(Boolean)) {
+            const index = text('ls-files','--stage','--',path);
+            if (!index) { entries.push({path,mode:'100644',type:'blob',sha:null}); continue; }
+            const [mode,sha] = index.split(/\s+/);
+            const data = git('cat-file','blob',sha);
+            const response = await fetch(`${process.env.GITHUB_API_URL}/repos/${process.env.GITHUB_REPOSITORY}/git/blobs`, {method:'POST',headers:{authorization:`Bearer ${process.env.GH_TOKEN}`,accept:'application/vnd.github+json','content-type':'application/json'},body:JSON.stringify({content:data.toString('base64'),encoding:'base64'})});
+            if (!response.ok) throw new Error(`Git blob creation failed: ${response.status}`);
+            if ((await response.json()).sha !== sha) throw new Error('Blob identity changed');
+            entries.push({path,mode,type:'blob',sha});
+          }
+          writeFileSync(join(process.env.RUNNER_TEMP,'s03-result','verified-tree.json'),JSON.stringify({base_sha:process.env.GITHUB_SHA,base_tree_sha:text('rev-parse','HEAD^{tree}'),tree_sha:tree,ref_updated:false,entries},null,2));
+          JS
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: s03-continuation-${{ matrix.os }}
+          path: ${{ runner.temp }}/s03-result/
+          if-no-files-found: error
+          retention-days: 3
