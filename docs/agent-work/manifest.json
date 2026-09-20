@@ -283,7 +283,8 @@
         "apps/eliotr-core/src/wiki-publication-store-support.ts",
         "apps/eliotr-core/test/wiki-publication-store.test.ts",
         "apps/eliotr-core/src/wiki-service.ts",
-        "apps/eliotr-core/test/wiki-service.test.ts"
+        "apps/eliotr-core/test/wiki-service.test.ts",
+        "apps/eliotr-core/test/wiki-owner-edit-parity.test.ts"
       ],
       "mandatory_negative_case": "Race two publishers against one expected head; exactly one becomes active and the loser receives typed conflict.",
       "document": "ER-12-research-wiki-and-draft-promotion.md",
