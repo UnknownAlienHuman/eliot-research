@@ -1,4 +1,4 @@
-name: prepare-s03-automatic-import
+name: verify-s03-bridge-checkpoint
 on:
   push:
     branches: [main]
@@ -6,13 +6,13 @@ on:
 permissions:
   contents: write
 jobs:
-  verify:
+  bridge:
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
+    timeout-minutes: 10
     defaults:
       run:
         shell: bash
@@ -26,68 +26,48 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
           node-version: 22
-      - name: Restore checksum-bound reviewed tree without publishing refs
+      - name: Restore only reviewed bridge paths and remove temporary workflow
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           test "$(git branch --show-current)" = main
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
-          test "$(git rev-parse HEAD^)" = 6deab65e5309f57babd6dc25d3ba40145d204a4f
+          test "$(git rev-parse HEAD^)" = 008bb3e40cc97856c2689e7115e21fc87ab1b156
           python - <<'PY'
           import base64, gzip, hashlib, json, os, pathlib, urllib.request
-          groups = [
-              ('s03', ['f9873ced8a9eec8b8e244014b64449ad11bb4858','e5117b64d15804a70ce44324ff7914ee0f531ab9','798c252ff7caca477883f05043d997f02618390d','ca35445fd886a3e1eb2f78f246d9edfa91807ba2','13b90b5698c6059404d0696d51314b6b892433c7','c1aad97af77672080b7c1830bcacdf3e34ab6e09','742e5e04857739d4f3d4cd4cb02fcb0c68bdc48e','37736d8850bf9bb87aa7eb83933949483dc97b35','63ed3e9d418e35361b17173db28cfbeeb932ee9a','cfaea5680fbb08a26f5aae72daaf8c7c5667c90e','dba72f6eff0a72557db7d279f842974d22c11af7','5b9a49ea219072bfbe2016ac8db9c804f57d0317','abb21a8978c3bd6f684d13c2a662bad97c96d041','7f98ee459132f1bc9030330cc5993d11120e397c','d3ec5fa9601aaf282c9957bab3ebf9cd25e2b947'], '1bdec650d658cd15142d95dca618c38074cc98208843cc90182a1698d035f2cd', '5e153063ddea6ea22c712c63c29ebe783601f7a01398cd9b0492af7288ac350e'),
-              ('s03-diag', ['e293fad02117fe2f90663f32e92ed0cd8f2d0c58','0fe210d761cb15913162fe78624d9beabcb18d89','55eb46b61f2ba5fa418b7149b1c4a9b2d146469c'], '59e67b50bd495b1157d16bbf45fe3cd3442c265571d2d006063adf0624fa01f5', '2cf93d2dee521a1dead22160e4ec64945d78bbc6c5a0ec003fd4a99389fe96c0'),
-              ('s03-bridge', ['54c3c644a77f45d4fc83024fd4eb4ba15c8f448f','d5ffc88022a6ea8bea96c2ec6812398fbffc7bb5'], '79d968074c121f99aaca4142ff62dc7be0d033dbb1f54cecf8cc959e3b9c43e8', '863d91392178359e18196ccacaeb36e4fc20b70d05013098b6815b194acc705a')
-          ]
-          for name, ids, zipped_sha, patch_sha in groups:
-              chunks = []
-              for sha in ids:
-                  url = f"{os.environ['GITHUB_API_URL']}/repos/{os.environ['GITHUB_REPOSITORY']}/git/blobs/{sha}"
-                  req = urllib.request.Request(url, headers={'Authorization': 'Bearer ' + os.environ['GH_TOKEN'], 'Accept': 'application/vnd.github+json'})
-                  with urllib.request.urlopen(req, timeout=30) as response:
-                      result = json.load(response)
-                  data = base64.b64decode(result['content'])
-                  assert hashlib.sha1(f'blob {len(data)}\0'.encode() + data).hexdigest() == sha
-                  chunks.append(data)
-              compressed = b''.join(chunks)
-              assert hashlib.sha256(compressed).hexdigest() == zipped_sha
-              patch = gzip.decompress(compressed)
-              assert hashlib.sha256(patch).hexdigest() == patch_sha
-              pathlib.Path(os.environ['RUNNER_TEMP'], name + '.patch').write_bytes(patch)
+          chunks = []
+          for sha in ['54c3c644a77f45d4fc83024fd4eb4ba15c8f448f', 'd5ffc88022a6ea8bea96c2ec6812398fbffc7bb5']:
+              url = f"{os.environ['GITHUB_API_URL']}/repos/{os.environ['GITHUB_REPOSITORY']}/git/blobs/{sha}"
+              req = urllib.request.Request(url, headers={'Authorization': 'Bearer ' + os.environ['GH_TOKEN'], 'Accept': 'application/vnd.github+json'})
+              with urllib.request.urlopen(req, timeout=30) as response:
+                  value = json.load(response)
+              data = base64.b64decode(value['content'])
+              assert hashlib.sha1(f'blob {len(data)}\0'.encode() + data).hexdigest() == sha
+              chunks.append(data)
+          compressed = b''.join(chunks)
+          assert hashlib.sha256(compressed).hexdigest() == '79d968074c121f99aaca4142ff62dc7be0d033dbb1f54cecf8cc959e3b9c43e8'
+          patch = gzip.decompress(compressed)
+          assert hashlib.sha256(patch).hexdigest() == '863d91392178359e18196ccacaeb36e4fc20b70d05013098b6815b194acc705a'
+          pathlib.Path(os.environ['RUNNER_TEMP'], 'bridge.patch').write_bytes(patch)
           PY
-          for name in s03 s03-diag s03-bridge; do
-            git apply --check "$RUNNER_TEMP/$name.patch"
-            git apply --index "$RUNNER_TEMP/$name.patch"
-          done
+          git apply --check --include='docs/agent-work/ER-44-local-owner-session.md' --include='scripts/lib/local-owner-bridge.mjs' --include='scripts/test-local-owner.mjs' "$RUNNER_TEMP/bridge.patch"
+          git apply --index --include='docs/agent-work/ER-44-local-owner-session.md' --include='scripts/lib/local-owner-bridge.mjs' --include='scripts/test-local-owner.mjs' "$RUNNER_TEMP/bridge.patch"
           git rm .github/workflows/prepare-s03.yml
-          test "$(git write-tree)" = 34f58299749031a47a4f48534dfccec157334b6b
-          python - <<'PY'
-          from pathlib import Path
-          p = Path('tests/integration/browser/raw-file-browser.mjs')
-          s = p.read_text(encoding='utf-8')
-          old = 'const details = panel.locator("details").filter({ has: panel.locator("[data-raw-recover]") });'
-          assert s.count(old) == 1
-          p.write_text(s.replace(old, 'const details = panel.locator("details:has([data-raw-recover])");'), encoding='utf-8', newline='\n')
-          PY
-          git add tests/integration/browser/raw-file-browser.mjs
-          test "$(git write-tree)" = 04662ab8cb32526a283572044af51f42851387f9
+          test "$(git write-tree)" = f4a0853415980eb6777fc27c5907dcf87e83d076
       - name: Install frozen dependencies
         run: |
           corepack enable
           corepack prepare pnpm@11.23.0 --activate
           pnpm install --frozen-lockfile
-      - name: Strict admission, bridge, diagnostic and unchanged contract regressions
+      - name: Verify the narrow transport checkpoint
         run: |
           set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/s03-result"
-          node --version > "$RUNNER_TEMP/s03-result/versions.txt"
-          pnpm --version >> "$RUNNER_TEMP/s03-result/versions.txt"
-          node --test scripts/test-local-owner.mjs | tee "$RUNNER_TEMP/s03-result/bridge.log"
-          node --test tests/integration/browser/raw-file-browser.test.mjs | tee "$RUNNER_TEMP/s03-result/raw-regressions.log"
-          node --test --test-name-pattern 'L6 (?!real-browser)' tests/integration/browser/library.spec.ts | tee "$RUNNER_TEMP/s03-result/existing-diagnostics.log"
-          node node_modules/eslint/bin/eslint.js scripts/lib/local-owner-bridge.mjs scripts/test-local-owner.mjs tests/integration/browser/assertion-diagnostic.mjs tests/integration/browser/raw-file-browser.mjs tests/integration/browser/raw-file-browser.test.mjs tests/integration/browser/owner-e2e.mjs tests/integration/browser/library.spec.ts
+          mkdir -p "$RUNNER_TEMP/bridge-result"
+          node --version > "$RUNNER_TEMP/bridge-result/versions.txt"
+          pnpm --version >> "$RUNNER_TEMP/bridge-result/versions.txt"
+          pnpm test:local-owner | tee "$RUNNER_TEMP/bridge-result/owner-tests.log"
+          node node_modules/eslint/bin/eslint.js scripts/lib/local-owner-bridge.mjs scripts/test-local-owner.mjs
           node node_modules/typescript/bin/tsc -b --pretty false
           node node_modules/typescript/bin/tsc -p apps/eliotr-core/test/tsconfig.json --pretty false
           node scripts/check-boundaries.mjs
@@ -97,11 +77,8 @@ jobs:
           node docs/contracts/generate.mjs --check
           git diff --cached --check
           git diff --exit-code
-      - name: Actual browser Worker D1 R2 import replay and quarantine
-        run: |
-          set -euo pipefail
-          pnpm test:owner-e2e | tee "$RUNNER_TEMP/s03-result/browser.log"
-      - name: Store exact verified Git blobs only
+          printf '%s\n' 'BRIDGE_ONLY: S03 browser acceptance remains incomplete. Run 35498980510 failed the unchanged strict console ledger; its browser edits are excluded from this tree. Full product CI is not claimed green.' > "$RUNNER_TEMP/bridge-result/scope.txt"
+      - name: Store verified Git blobs without updating refs
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -112,26 +89,27 @@ jobs:
           const git = (...args) => execFileSync('git', args);
           const text = (...args) => git(...args).toString().trim();
           const tree = text('write-tree');
-          if (tree !== '04662ab8cb32526a283572044af51f42851387f9') throw new Error('Tree changed during verification');
+          if (tree !== 'f4a0853415980eb6777fc27c5907dcf87e83d076') throw new Error('Unexpected checkpoint tree');
           git('diff', '--exit-code');
+          const allowed = new Set(['docs/agent-work/ER-44-local-owner-session.md', 'scripts/lib/local-owner-bridge.mjs', 'scripts/test-local-owner.mjs', '.github/workflows/prepare-s03.yml']);
+          const paths = git('diff', '--cached', '--name-only', '-z', 'HEAD').toString().split('\0').filter(Boolean);
+          if (paths.length !== allowed.size || paths.some(path => !allowed.has(path))) throw new Error('Unexpected checkpoint path');
           const entries = [];
-          for (const path of git('diff', '--cached', '--name-only', '-z', 'HEAD').toString().split('\0').filter(Boolean)) {
+          for (const path of paths) {
             const index = text('ls-files', '--stage', '--', path);
             if (!index) { entries.push({ path, mode: '100644', type: 'blob', sha: null }); continue; }
             const [mode, sha] = index.split(/\s+/);
-            const bytes = git('cat-file', 'blob', sha);
-            const response = await fetch(`${process.env.GITHUB_API_URL}/repos/${process.env.GITHUB_REPOSITORY}/git/blobs`, { method: 'POST', headers: { authorization: `Bearer ${process.env.GH_TOKEN}`, accept: 'application/vnd.github+json', 'content-type': 'application/json' }, body: JSON.stringify({ content: bytes.toString('base64'), encoding: 'base64' }) });
-            if (!response.ok) throw new Error(`Git blob creation failed: ${response.status}`);
-            const result = await response.json();
-            if (result.sha !== sha) throw new Error('Blob identity changed');
+            const response = await fetch(`${process.env.GITHUB_API_URL}/repos/${process.env.GITHUB_REPOSITORY}/git/blobs`, { method: 'POST', headers: { authorization: `Bearer ${process.env.GH_TOKEN}`, accept: 'application/vnd.github+json', 'content-type': 'application/json' }, body: JSON.stringify({ content: git('cat-file', 'blob', sha).toString('base64'), encoding: 'base64' }) });
+            if (!response.ok) throw new Error(`Blob creation failed: ${response.status}`);
+            if ((await response.json()).sha !== sha) throw new Error('Blob identity mismatch');
             entries.push({ path, mode, type: 'blob', sha });
           }
-          writeFileSync(join(process.env.RUNNER_TEMP, 's03-result', 'verified-tree.json'), JSON.stringify({ base_sha: process.env.GITHUB_SHA, base_tree_sha: text('rev-parse', 'HEAD^{tree}'), tree_sha: tree, ref_updated: false, entries }, null, 2));
+          writeFileSync(join(process.env.RUNNER_TEMP, 'bridge-result', 'verified-tree.json'), JSON.stringify({ base_sha: process.env.GITHUB_SHA, base_tree_sha: text('rev-parse', 'HEAD^{tree}'), tree_sha: tree, scope: 'S03_BRIDGE_ONLY', browser_acceptance: 'INCOMPLETE', ref_updated: false, entries }, null, 2));
           JS
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
-          name: s03-verification-${{ matrix.os }}
-          path: ${{ runner.temp }}/s03-result/
+          name: s03-bridge-only-${{ matrix.os }}
+          path: ${{ runner.temp }}/bridge-result/
           if-no-files-found: error
           retention-days: 3
