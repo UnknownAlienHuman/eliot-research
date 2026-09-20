@@ -1,0 +1,49 @@
+name: export-s03-recovery
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/export-s03-recovery.yml]
+permissions:
+  contents: read
+jobs:
+  recover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Restore previously reviewed candidate and export source only
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git branch --show-current)" = main
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git rev-parse HEAD^)" = f7d4cc498a647e60c226acfbab16e6191ff25cd8
+          git rm .github/workflows/export-s03-recovery.yml
+          python - <<'PY'
+          import os, pathlib, subprocess, textwrap
+          source = subprocess.check_output(['git','show','f7d4cc498a647e60c226acfbab16e6191ff25cd8:.github/workflows/verify-s03-continuation.yml'], text=True, encoding='utf-8')
+          restore = source.split('      - name: Restore only the checksum-bound reviewed candidate\n',1)[1].split('        run: |\n',1)[1].split('      - name: Install frozen toolchain\n',1)[0]
+          path = pathlib.Path(os.environ['RUNNER_TEMP'], 'restore-reviewed.sh')
+          path.write_text(textwrap.dedent(restore), encoding='utf-8')
+          subprocess.run(['bash', str(path)], check=True)
+          PY
+          test "$(git write-tree)" = af74c3ed23257c5cf12ea9bd86ccc0e3362926be
+          mkdir -p "$RUNNER_TEMP/recovered-source"
+          git bundle create "$RUNNER_TEMP/recovered-source/main.bundle" main
+          git diff --cached --binary > "$RUNNER_TEMP/recovered-source/candidate.patch"
+          git rev-parse HEAD > "$RUNNER_TEMP/recovered-source/SOURCE_SHA"
+          git write-tree > "$RUNNER_TEMP/recovered-source/CANDIDATE_TREE"
+          cd "$RUNNER_TEMP/recovered-source"
+          sha256sum main.bundle candidate.patch > SHA256SUMS
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: s03-recovered-source
+          path: ${{ runner.temp }}/recovered-source/
+          if-no-files-found: error
+          retention-days: 3
