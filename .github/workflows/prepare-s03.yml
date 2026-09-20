@@ -33,12 +33,13 @@ jobs:
           set -euo pipefail
           test "$(git branch --show-current)" = main
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
-          test "$(git rev-parse HEAD^)" = a56306b36a8fcaa5136fcb3e0580eeb9ac25732c
+          test "$(git rev-parse HEAD^)" = 88c910ed0d992c2894e35fe1e15bf4c2617737b2
           python - <<'PY'
           import base64, gzip, hashlib, json, os, pathlib, urllib.request
           groups = [
               ('s03', ['f9873ced8a9eec8b8e244014b64449ad11bb4858','e5117b64d15804a70ce44324ff7914ee0f531ab9','798c252ff7caca477883f05043d997f02618390d','ca35445fd886a3e1eb2f78f246d9edfa91807ba2','13b90b5698c6059404d0696d51314b6b892433c7','c1aad97af77672080b7c1830bcacdf3e34ab6e09','742e5e04857739d4f3d4cd4cb02fcb0c68bdc48e','37736d8850bf9bb87aa7eb83933949483dc97b35','63ed3e9d418e35361b17173db28cfbeeb932ee9a','cfaea5680fbb08a26f5aae72daaf8c7c5667c90e','dba72f6eff0a72557db7d279f842974d22c11af7','5b9a49ea219072bfbe2016ac8db9c804f57d0317','abb21a8978c3bd6f684d13c2a662bad97c96d041','7f98ee459132f1bc9030330cc5993d11120e397c','d3ec5fa9601aaf282c9957bab3ebf9cd25e2b947'], '1bdec650d658cd15142d95dca618c38074cc98208843cc90182a1698d035f2cd', '5e153063ddea6ea22c712c63c29ebe783601f7a01398cd9b0492af7288ac350e'),
-              ('s03-diag', ['e293fad02117fe2f90663f32e92ed0cd8f2d0c58','0fe210d761cb15913162fe78624d9beabcb18d89','55eb46b61f2ba5fa418b7149b1c4a9b2d146469c'], '59e67b50bd495b1157d16bbf45fe3cd3442c265571d2d006063adf0624fa01f5', '2cf93d2dee521a1dead22160e4ec64945d78bbc6c5a0ec003fd4a99389fe96c0')
+              ('s03-diag', ['e293fad02117fe2f90663f32e92ed0cd8f2d0c58','0fe210d761cb15913162fe78624d9beabcb18d89','55eb46b61f2ba5fa418b7149b1c4a9b2d146469c'], '59e67b50bd495b1157d16bbf45fe3cd3442c265571d2d006063adf0624fa01f5', '2cf93d2dee521a1dead22160e4ec64945d78bbc6c5a0ec003fd4a99389fe96c0'),
+              ('s03-bridge', ['54c3c644a77f45d4fc83024fd4eb4ba15c8f448f','d5ffc88022a6ea8bea96c2ec6812398fbffc7bb5'], '79d968074c121f99aaca4142ff62dc7be0d033dbb1f54cecf8cc959e3b9c43e8', '863d91392178359e18196ccacaeb36e4fc20b70d05013098b6815b194acc705a')
           ]
           for name, ids, zipped_sha, patch_sha in groups:
               chunks = []
@@ -56,26 +57,27 @@ jobs:
               assert hashlib.sha256(patch).hexdigest() == patch_sha
               pathlib.Path(os.environ['RUNNER_TEMP'], name + '.patch').write_bytes(patch)
           PY
-          git apply --check "$RUNNER_TEMP/s03.patch"
-          git apply --index "$RUNNER_TEMP/s03.patch"
-          git apply --check "$RUNNER_TEMP/s03-diag.patch"
-          git apply --index "$RUNNER_TEMP/s03-diag.patch"
+          for name in s03 s03-diag s03-bridge; do
+            git apply --check "$RUNNER_TEMP/$name.patch"
+            git apply --index "$RUNNER_TEMP/$name.patch"
+          done
           git rm .github/workflows/prepare-s03.yml
-          test "$(git write-tree)" = 5232a22a76566ea24feddd1edcf416c65b2fb67d
+          test "$(git write-tree)" = 34f58299749031a47a4f48534dfccec157334b6b
       - name: Install frozen dependencies
         run: |
           corepack enable
           corepack prepare pnpm@11.23.0 --activate
           pnpm install --frozen-lockfile
-      - name: Strict admission, diagnostic and unchanged contract regressions
+      - name: Strict admission, bridge, diagnostic and unchanged contract regressions
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/s03-result"
           node --version > "$RUNNER_TEMP/s03-result/versions.txt"
           pnpm --version >> "$RUNNER_TEMP/s03-result/versions.txt"
+          node --test scripts/test-local-owner.mjs | tee "$RUNNER_TEMP/s03-result/bridge.log"
           node --test tests/integration/browser/raw-file-browser.test.mjs | tee "$RUNNER_TEMP/s03-result/raw-regressions.log"
           node --test --test-name-pattern 'L6 (?!real-browser)' tests/integration/browser/library.spec.ts | tee "$RUNNER_TEMP/s03-result/existing-diagnostics.log"
-          node node_modules/eslint/bin/eslint.js tests/integration/browser/assertion-diagnostic.mjs tests/integration/browser/raw-file-browser.mjs tests/integration/browser/raw-file-browser.test.mjs tests/integration/browser/owner-e2e.mjs tests/integration/browser/library.spec.ts
+          node node_modules/eslint/bin/eslint.js scripts/lib/local-owner-bridge.mjs scripts/test-local-owner.mjs tests/integration/browser/assertion-diagnostic.mjs tests/integration/browser/raw-file-browser.mjs tests/integration/browser/raw-file-browser.test.mjs tests/integration/browser/owner-e2e.mjs tests/integration/browser/library.spec.ts
           node node_modules/typescript/bin/tsc -b --pretty false
           node node_modules/typescript/bin/tsc -p apps/eliotr-core/test/tsconfig.json --pretty false
           node scripts/check-boundaries.mjs
@@ -100,7 +102,7 @@ jobs:
           const git = (...args) => execFileSync('git', args);
           const text = (...args) => git(...args).toString().trim();
           const tree = text('write-tree');
-          if (tree !== '5232a22a76566ea24feddd1edcf416c65b2fb67d') throw new Error('Tree changed during verification');
+          if (tree !== '34f58299749031a47a4f48534dfccec157334b6b') throw new Error('Tree changed during verification');
           git('diff', '--exit-code');
           const entries = [];
           for (const path of git('diff', '--cached', '--name-only', '-z', 'HEAD').toString().split('\0').filter(Boolean)) {
