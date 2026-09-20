@@ -21,6 +21,7 @@ import { runExhaustiveWorkflowBrowser } from "./exhaustive-workflow-browser.mjs"
 import { runExhaustiveWorkflowCompleteBrowser } from "./exhaustive-workflow-complete.mjs";
 import { runRawFileUploadOwnerScenario, recoverRawFileUploadOwnerScenario, processRawFileOwnerScenario, waitForRawResponses } from "./raw-file-browser.mjs";
 import { installLocalCancellationSeam } from "./local-cancellation-seam.mjs";
+import { annotateBrowserAssertion, browserAssertionDiagnostic, diagnosticErrorChain, diagnosticProperty } from "./assertion-diagnostic.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "../../..");
@@ -122,7 +123,9 @@ function attachOwnerD1Provenance(error, context) {
 }
 
 function safeOwnerD1Provenance(error) {
-  const value = error?.ownerD1Provenance;
+  const raw = diagnosticProperty(error, "ownerD1Provenance");
+  const value = raw && Object.fromEntries(["protocol", "operation", "phase", "binding", "command_family"]
+    .map((key) => [key, diagnosticProperty(raw, key)]));
   if (!value || value.protocol !== OWNER_D1_PROVENANCE_PROTOCOL ||
       !Number.isSafeInteger(value.operation) || value.operation < 1 ||
       !OWNER_D1_PROVENANCE_PHASES.has(value.phase) || !OWNER_D1_PROVENANCE_BINDINGS.has(value.binding) ||
@@ -1186,7 +1189,8 @@ const OWNER_WORKER_DIAGNOSTIC_ROUTES = new Set([
 ]);
 const OWNER_WORKER_DIAGNOSTIC_CONTEXT = new WeakMap();
 const OWNER_WORKER_DIAGNOSTIC_STACK_BASENAMES = new Set([
-  "owner-e2e.mjs", "local-worker.mjs", "local-launch.mjs", "local-owner-bridge.mjs", "deployment-verification.mjs",
+  "owner-e2e.mjs", "raw-file-browser.mjs", "exhaustive-workflow-browser.mjs", "exhaustive-workflow-complete.mjs",
+  "local-worker.mjs", "local-launch.mjs", "local-owner-bridge.mjs", "deployment-verification.mjs",
 ]);
 
 function workerDiagnosticPhase(value) {
@@ -1212,9 +1216,9 @@ function workerDiagnosticRoute(path) {
 
 function safeHarnessSourceStack(error) {
   let stack;
-  try { stack = error?.stack; } catch { return null; }
+  try { stack = diagnosticProperty(error, "stack"); } catch { return null; }
   if (typeof stack !== "string") return null;
-  for (const line of stack.split(/\r?\n/u)) {
+  for (const line of stack.slice(0, 16384).split(/\r?\n/u)) {
     const match = line.match(/([^()\r\n]+):(\d+):\d+\)?$/u);
     if (!match) continue;
     const location = match[1].trim();
@@ -1236,16 +1240,11 @@ function safeHarnessSourceStackValue(value) {
 }
 
 function workerErrorCandidates(error) {
-  try {
-    return [error, error?.cause, error?.cause?.cause, error?.cause?.original_error]
-      .filter((item) => item && typeof item === "object");
-  } catch {
-    return [];
-  }
+  return diagnosticErrorChain(error);
 }
 
 function safeHarnessSourceStackFromError(error) {
-  for (const candidate of workerErrorCandidates(error)) {
+  for (const candidate of workerErrorCandidates(error).reverse()) {
     const sourceStack = safeHarnessSourceStack(candidate);
     if (sourceStack) return sourceStack;
   }
@@ -1253,7 +1252,9 @@ function safeHarnessSourceStackFromError(error) {
 }
 
 function safeWorkerErrorClass(error) {
-  const candidates = workerErrorCandidates(error);
+  const candidates = workerErrorCandidates(error).map((item) => ({
+    name: diagnosticProperty(item, "name"), code: diagnosticProperty(item, "code"),
+  }));
   const assertion = candidates.find((item) => item.name === "AssertionError" && item.code === "ERR_ASSERTION");
   if (assertion) return Object.freeze({ name: "AssertionError", code: "ERR_ASSERTION" });
   const name = candidates.find((item) => typeof item.name === "string" &&
@@ -1439,7 +1440,8 @@ function verifyPreservedWorkerFailureOutput() {
   });
   const nested = safeWorkerDiagnosticError(sentinel, diagnostic.message, diagnostic.context);
   const wrapped = preserveWorkerFailure(nested, worker);
-  assert.equal(wrapped.cause, undefined, "the original failure must not remain available as an Error cause");
+  assert.equal(wrapped.cause instanceof Error, false, "the original failure must not remain available as an Error cause");
+  assert.equal(wrapped.cause.name, "UnknownError", "the bounded cause keeps only the safe classification");
   assert.match(wrapped.message, /original_error=/u);
   assert.match(wrapped.message, /"name":"UnknownError","code":"UNSPECIFIED"/u,
     "only the fixed unknown error class may reach the reported Error");
@@ -1577,7 +1579,8 @@ export function verifyD1FailureProvenanceRegression() {
   const wrapped = preserveWorkerFailure(sentinel, {
     diagnostics: () => ({ pid: 42, port: 43123, exitCode: null, stderrTail: "controlled diagnostics", stdoutEvents: "ready" }),
   });
-  assert.equal(wrapped.cause, undefined, "D1 provenance must not expose the original Error as the outer cause");
+  assert.equal(wrapped.cause instanceof Error, false, "D1 provenance must not expose the original Error as the outer cause");
+  assert.ok(!JSON.stringify(wrapped.cause).includes("private-token"), "sanitized D1 cause must not expose captured output");
   assert.equal(sentinel.cause.code, 1, "D1 provenance must preserve the original command code internally");
   assert.equal(sentinel.message, "Local command failed (1) :: internal reference=controlled-d1",
     "D1 provenance must not rewrite the original Error message");
@@ -1940,19 +1943,34 @@ function createOwnerBridgeDiagnosticFetch(events, fetchImpl = globalThis.fetch) 
   };
 }
 
-function preserveWorkerFailure(error, worker) {
-  if (!worker) return error;
+export function preserveWorkerFailure(error, worker) {
   const diagnostics = workerDiagnosticSnapshot(worker);
-  const d1Provenance = safeOwnerD1Provenance(error) ?? safeOwnerD1Provenance(error?.cause);
-  const workerContext = OWNER_WORKER_DIAGNOSTIC_CONTEXT.get(error);
+  const candidates = workerErrorCandidates(error);
+  const d1Provenance = candidates.map(safeOwnerD1Provenance).find(Boolean);
+  const workerContext = candidates.map((candidate) => OWNER_WORKER_DIAGNOSTIC_CONTEXT.get(candidate)).find(Boolean);
   const original = workerContext?.error_class ?? safeWorkerErrorClass(error);
   const sourceStack = workerContext?.source_stack ?? safeHarnessSourceStackFromError(error);
   const catchAllContext = workerContext ?? Object.freeze({
     error_class: original, ...(sourceStack ? { source_stack: sourceStack } : {}),
   });
+  const assertion = browserAssertionDiagnostic(error);
+  const assertionText = assertion ? `; assertion_diagnostic=${JSON.stringify(assertion)}`
+    : original.code === "ERR_ASSERTION" ? "; assertion_values=REDACTED_UNREGISTERED_ASSERTION" : "";
   const contextText = `; worker_diagnostic_context=${JSON.stringify(catchAllContext)}`;
   const provenanceText = d1Provenance ? `; d1_provenance=${JSON.stringify(d1Provenance)}` : "";
-  return new Error(`owner-e2e failed; original_error=${JSON.stringify(original)}; worker_diagnostics=${JSON.stringify(diagnostics)}${contextText}${provenanceText}`);
+  const chain = Object.freeze(candidates.map((candidate) => {
+    const classification = safeWorkerErrorClass({ name: diagnosticProperty(candidate, "name"),
+      code: diagnosticProperty(candidate, "code") });
+    const source = safeHarnessSourceStack(candidate);
+    return Object.freeze({ ...classification, ...(source ? { source_stack: source } : {}) });
+  }));
+  const message = `owner-e2e failed; original_error=${JSON.stringify(original)}; worker_diagnostics=${JSON.stringify(diagnostics)}${contextText}${provenanceText}${assertionText}`;
+  // A plain bounded snapshot is observable as cause, never the original Error.
+  // Suppress the new wrapper's absolute machine path; exact safe source is above.
+  const wrapped = new Error(message, { cause: Object.freeze({ ...original, chain }) });
+  wrapped.stack = `Error: ${message}`;
+  if (assertion) annotateBrowserAssertion(wrapped, assertion.id, assertion.actual, assertion.expected);
+  return wrapped;
 }
 
 function ownerBridgeWorkerDiagnosticSnapshot(worker) {

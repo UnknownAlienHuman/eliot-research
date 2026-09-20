@@ -1,3 +1,6 @@
+import { inspect } from "node:util";
+import { annotateBrowserAssertion, browserAssertionDiagnostic, diagnosticErrorChain } from "./assertion-diagnostic.mjs";
+import { preserveWorkerFailure } from "./owner-e2e.mjs";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { waitForRawResponse, waitForRawResponses } from "./raw-file-browser.mjs";
@@ -294,4 +297,102 @@ test("cancels an overflowing batch reader and observes action rejection immediat
       { key: "orientation", method: "POST", path: "/orient", expectedStatus: 200 },
     ], rejectedFixture.action), /fixture action failed/u);
   } finally { rejectedFixture.restore(); }
+});
+
+
+const worker = { diagnostics: () => ({ pid: 42, port: 43123, exitCode: 1 }) };
+const actual = "Processing the captured file…";
+function statusFailure(value = actual) {
+  try { assert.match(value, /File saved/u); }
+  catch (error) {
+    error.stack = "AssertionError: PRIVATE\n    at fixture (C:\\private\\raw-file-browser.mjs:597:10)";
+    return annotateBrowserAssertion(error, "raw-upload.status", value, "File saved");
+  }
+  throw new Error("fixture must fail");
+}
+function exposed(error) { return JSON.stringify(error) + inspect(error, { depth: 10 }) + error.stack; }
+
+test("S02: nested original assertion retains its registered values, phase and source", () => {
+  const original = statusFailure();
+  const nested = new Error("Authorization: Bearer SECRET", { cause: new Error("PRIVATE", { cause: original }) });
+  const result = preserveWorkerFailure(nested, worker);
+  assert.match(result.message, /raw-upload\.status/u);
+  assert.match(result.message, /"phase":"raw-upload"/u);
+  assert.match(result.message, /"expected":"File saved"/u);
+  assert.match(result.message, /"actual":"Processing the captured file…"/u);
+  assert.match(result.message, /"basename":"raw-file-browser\.mjs","line":597/u);
+  assert.ok(result.cause && !(result.cause instanceof Error));
+  assert.equal(result.cause.chain.at(-1).name, "AssertionError");
+  assert.doesNotMatch(exposed(result), /SECRET|PRIVATE|C:\\private/u);
+});
+
+test("S02: no Worker at early failure still returns only redacted diagnostics", () => {
+  const result = preserveWorkerFailure(new Error("Cookie: SECRET; private document"));
+  assert.notEqual(result.message, "Cookie: SECRET; private document");
+  assert.doesNotMatch(exposed(result), /SECRET|private document/u);
+  assert.match(result.message, /owner-e2e failed/u);
+});
+
+test("S02: opaque, oversized, token-bearing and partial-match values are redacted", () => {
+  for (const value of ["Authorization: Bearer SECRET", "Cookie: SECRET", "https://private.invalid?token=SECRET",
+    "File uploaded. SECRET", "x".repeat(100_000)]) {
+    const original = new assert.AssertionError({ actual: value, expected: "SECRET", operator: "strictEqual", message: "SECRET" });
+    annotateBrowserAssertion(original, "raw-upload.status", value, "SECRET");
+    const result = preserveWorkerFailure(original, worker);
+    assert.match(result.message, /REDACTED_UNREGISTERED_VALUE/u);
+    assert.doesNotMatch(exposed(result), /SECRET|private\.invalid|xxxxxxxxxx/u);
+    assert.ok(exposed(result).length < 12000);
+  }
+});
+
+test("S02: unregistered assertions explain redaction without inventing identity", () => {
+  const original = new assert.AssertionError({ actual: "SECRET", expected: "SECRET2", operator: "strictEqual" });
+  annotateBrowserAssertion(original, "unknown.assertion", "SECRET", "SECRET2");
+  assert.equal(browserAssertionDiagnostic(original), undefined);
+  const result = preserveWorkerFailure(original, worker);
+  assert.match(result.message, /REDACTED_UNREGISTERED_ASSERTION/u);
+  assert.doesNotMatch(exposed(result), /SECRET|unknown\.assertion/u);
+});
+
+test("S02: cyclic/aggregate/deep causes are bounded and metadata cannot be forged", () => {
+  const original = statusFailure();
+  const cyclic = new AggregateError([original, original], "SECRET");
+  cyclic.cause = cyclic;
+  assert.equal(diagnosticErrorChain(cyclic).length, 2);
+  assert.equal(browserAssertionDiagnostic(cyclic).id, "raw-upload.status");
+  const result = preserveWorkerFailure(cyclic, worker);
+  assert.ok(result.cause.chain.length <= 8);
+  assert.doesNotMatch(exposed(result), /SECRET/u);
+  const forged = new Error("SECRET");
+  forged.assertion_diagnostic = { id: "raw-upload.status", actual: "SECRET" };
+  assert.equal(browserAssertionDiagnostic(forged), undefined);
+  let deep = original;
+  for (let index = 0; index < 20; index += 1) deep = new Error("SECRET", { cause: deep });
+  assert.equal(diagnosticErrorChain(deep).length, 6);
+  assert.equal(browserAssertionDiagnostic(deep), undefined);
+});
+
+test("S02: throwing getters/proxies cannot leak or replace the original failure", () => {
+  let getterCalls = 0;
+  const foreign = {};
+  for (const key of ["cause", "name", "code", "stack", "errors", "original_error", "ownerD1Provenance"]) {
+    Object.defineProperty(foreign, key, { get() { getterCalls += 1; throw new Error("SECRET"); } });
+  }
+  const result = preserveWorkerFailure(foreign, worker);
+  assert.equal(getterCalls, 0);
+  assert.doesNotMatch(exposed(result), /SECRET/u);
+  const proxy = new Proxy({}, { getOwnPropertyDescriptor() { throw new Error("SECRET"); } });
+  assert.doesNotThrow(() => preserveWorkerFailure(proxy, worker));
+  const revoked = Proxy.revocable([], {});
+  revoked.revoke();
+  assert.doesNotThrow(() => preserveWorkerFailure({ errors: revoked.proxy }, worker));
+});
+
+test("S02: a failing registered assertion remains a rejection and executes cleanup", async () => {
+  let cleaned = false;
+  await assert.rejects(async () => {
+    try { throw preserveWorkerFailure(statusFailure(), worker); }
+    finally { cleaned = true; }
+  }, /raw-upload\.status/u);
+  assert.equal(cleaned, true);
 });

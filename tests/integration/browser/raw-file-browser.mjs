@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { annotateBrowserAssertion } from "./assertion-diagnostic.mjs";
 import { createServer } from "node:http";
 import { readFile, mkdtemp, rm, access } from "node:fs/promises";
 import { createHash } from "node:crypto";
@@ -593,7 +594,9 @@ export async function runRawFileUploadOwnerScenario({ page, expectedGeneration, 
   ledger?.record({ client: "browser", method: "POST", path: "/api/v1/ingest/raw", status: postSnapshot.status,
     correlation: "e2e-raw-upload/post", token_present: false });
   await page.waitForFunction(() => document.querySelector("#raw-upload [data-raw-receipt]")?.hidden === false, null, { timeout: 15000 });
-  assert.match(await panel.locator("[data-raw-status]").textContent(), /File saved/u);
+  const statusText = await panel.locator("[data-raw-status]").textContent();
+  try { assert.match(statusText, /File saved/u); }
+  catch (error) { throw annotateBrowserAssertion(error, "raw-upload.status", statusText, "File saved"); }
   return { expected, receipt, idempotencyKey: receipt.idempotency_key, captureId: receipt.capture_id };
 }
 
@@ -615,7 +618,9 @@ export async function recoverRawFileUploadOwnerScenario({ page, expectedGenerati
   ledger?.record({ client: "browser", method: "GET", path: "/api/v1/ingest/raw", status: responseSnapshot.status,
     correlation: "e2e-raw-upload/recovery", token_present: false });
   await page.waitForFunction(() => document.querySelector("#raw-upload [data-raw-receipt]")?.hidden === false, null, { timeout: 15000 });
-  assert.match(await panel.locator("[data-raw-status]").textContent(), /Existing upload found/u);
+  const statusText = await panel.locator("[data-raw-status]").textContent();
+  try { assert.match(statusText, /Existing upload found/u); }
+  catch (error) { throw annotateBrowserAssertion(error, "raw-recovery.status", statusText, "Existing upload found"); }
   return receipt;
 }
 

@@ -123,3 +123,19 @@ Produce:
 The PR must state contract/generation impact, migration/backfill impact, exact commands, negative-case
 result, live receipts (or `NOT EXECUTED`), and any follow-up packet. Do not mark this packet complete
 with placeholders, TODO authority paths, mocked live gates, or a stronger disposition than observed.
+
+## S02 owner-browser failure diagnostics
+
+The existing owner wrapper retains registered raw-upload/recovery assertion IDs,
+phases, allowlisted source basenames/lines and only exact, bounded public UI
+status strings. Unknown values/assertions explicitly report redaction. Native
+Error causes are replaced with a bounded plain classification chain; foreign
+getters, cyclic/aggregate causes and early failures without a Worker cannot
+expose source text, tokens or absolute machine paths. These tests are registered
+in the existing raw-file-browser.test.mjs / test:owner-e2e entry.
+
+This diagnostic checkpoint does not change the raw-upload assertion, application
+behavior, retries, deadlines or cleanup. The captured-only `File saved` assertion
+remains an S03 behavioral blocker until the actual import/reload/receipt lifecycle
+is updated and proven against Worker/D1/R2. No browser or live-product PASS is
+inferred from diagnostic test success.
