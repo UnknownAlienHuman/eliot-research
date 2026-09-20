@@ -44,7 +44,7 @@ jobs:
           assignment = next(n for n in ast.parse(snippet).body if isinstance(n, ast.Assign) and any(isinstance(t, ast.Name) and t.id == 'groups' for t in n.targets))
           groups = ast.literal_eval(assignment.value)
           assert [g[0] for g in groups] == ['s03','s03-diag','s03-bridge']
-          def apply(group):
+          def apply(group, include=None):
               name, ids, zipped_sha, patch_sha = group
               chunks = []
               for sha in ids:
@@ -60,18 +60,23 @@ jobs:
               assert hashlib.sha256(patch).hexdigest() == patch_sha
               path = pathlib.Path(os.environ['RUNNER_TEMP'], name+'.patch')
               path.write_bytes(patch)
-              subprocess.run(['git','apply','--check',str(path)],check=True)
-              subprocess.run(['git','apply','--index',str(path)],check=True)
+              selected = ['--include='+include] if include else []
+              subprocess.run(['git','apply','--check',*selected,str(path)],check=True)
+              subprocess.run(['git','apply','--index',*selected,str(path)],check=True)
           for group in groups[:2]:
               apply(group)
-          # The ER-44 bridge fix is already in main; never replay it.
+          # Restore the S03 investigation note only. ER-44 source/tests are already in main.
+          apply(groups[2], 'docs/agent-work/ER-27-vertical-integration-and-live-conformance.md')
           path = pathlib.Path('tests/integration/browser/raw-file-browser.mjs')
           content = path.read_text(encoding='utf-8')
           old = 'const details = panel.locator("details").filter({ has: panel.locator("[data-raw-recover]") });'
           assert content.count(old) == 1
           path.write_text(content.replace(old, 'const details = panel.locator("details:has([data-raw-recover])");'), encoding='utf-8', newline='\n')
           subprocess.run(['git','add',str(path)],check=True)
-          assert subprocess.check_output(['git','write-tree'],text=True).strip() == '7f5edccce667be7ad9a8ea1189bc6b8b83c168be'
+          actual = subprocess.check_output(['git','write-tree'],text=True).strip()
+          if actual != '7f5edccce667be7ad9a8ea1189bc6b8b83c168be':
+              pathlib.Path(os.environ['RUNNER_TEMP'],'s03-result','reconstruction.txt').write_bytes(subprocess.check_output(['git','diff','--cached','--raw','HEAD']))
+              raise AssertionError('Reconstructed candidate tree mismatch: '+actual)
           apply(('s03-console',['1e59ff9b2998364b75b3208a163b7a8800b55657'],'1dfcd043da0f2e8afc7d5b88dad7afafd49ae059775a552d54288b268cbda684','fccc098a30ae05aaf58d3fad69a8336884c08722e6a1300def3d6e90095c3132'))
           assert subprocess.check_output(['git','write-tree'],text=True).strip() == '31cca9fcfb1e9b716af3fce068392e2f261a7bd4'
           PY
