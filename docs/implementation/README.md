@@ -44,7 +44,7 @@ from the tables below, so an unlisted file is a bug, not an omission you may ign
 
 | Document | Purpose |
 |---|---|
-| [branch-discipline.md](branch-discipline.md) | Branch and worktree lifecycle, the five-branch ceiling, the 24-hour TTL, naming. |
+| [branch-discipline.md](branch-discipline.md) | Main-only implementation and exact-head, integration-proven branch cleanup. |
 | [toolchain.md](toolchain.md) | Pinned bootstrap tools. Leaf agents must not upgrade these; toolchain changes are ER-00. |
 | [launch-prs/README.md](launch-prs/README.md) | Theme map and the checkpoint dependency graph. |
 | [launch-prs/agent-start.md](launch-prs/agent-start.md) | How to select a checkpoint and the claim block to post before editing. |

@@ -1,5 +1,14 @@
 # Implementation gap register
 
+## S27 checkpoint — integration-proven branch cleanup (2026-09-19)
+
+The former count/age/closed-PR deletion rules are removed under the owner's explicit direction.
+`eliotr.branch-hygiene.v2` permits cleanup only for an exact head proven in current main, with no open
+PR or protection, repeat observations and a conditional Git deletion against that SHA. A real local
+Git race test confirms a newly advanced head survives. Agent implementation remains main-only.
+This procedural checkpoint does not qualify product launch, erase other code gaps, or approve live deployment.
+
+
 This register prevents agents from confusing broad architecture coverage with executable coverage.
 It supplements the per-agent packets; it does not create a second ownership system. The dependency order,
 production definition and final exit evidence are specified in

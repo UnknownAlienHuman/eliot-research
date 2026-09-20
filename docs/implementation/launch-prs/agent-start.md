@@ -3,7 +3,7 @@
 New to the repository? Read [`docs/START-HERE.md`](../../START-HERE.md) first; this file covers only
 the launch-checkpoint procedure.
 
-Start from current `main` plus the selected existing theme PR head. Task refresh changes documentation
+Start from current `main`; read the selected existing theme PR as a specification, not a branch to merge. Task refresh changes documentation
 only; it launches no agent, implements no missing feature, and authorizes no deployment.
 
 Read [execution-contract.md](execution-contract.md), the selected numbered plan and its cited canonical
@@ -27,10 +27,9 @@ checked box plus a merged checkpoint PR is done. The dependency graph in [README
 which checkpoint outputs release which downstream work — a blocked integration task never authorizes
 a stub service; take an independent predecessor or report the precise missing dependency.
 
-Concurrency is bounded by [`branch-discipline.md`](../branch-discipline.md), not by the number of open
-themes: one agent holds one theme, one branch and one worktree at a time. The nine reserved branch
-names in `infra/github/branch-hygiene.json` are planning reservations, not authorized parallel
-worktrees. All UI belongs to ER-25; all shared code is integrator-serialized.
+Follow [`branch-discipline.md`](../branch-discipline.md): one active checkpoint per agent, implemented
+on `main` without additional worktrees or task branches. There is no branch-count quota or reservation
+list. All UI belongs to ER-25; all shared code is integrator-serialized.
 
 ## Start/finish message an agent must post in its PR
 

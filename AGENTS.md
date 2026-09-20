@@ -54,10 +54,11 @@ Agents should not reread the whole architecture for normal work. Start from the 
 ## Swarm edit protocol
 
 - Claim exactly one work packet. Edit only its `owned_paths`.
-- One agent = one worktree = one branch = one task.
-- Do not start another task while the current worktree or branch remains open.
-- Merge, quarantine, or delete the branch immediately on completion.
-- At most five non-default branches may exist; a branch without an open PR expires after 24 hours.
+- Owner-directed implementation is on `main` only, without additional worktrees or task branches.
+- One agent holds one checkpoint; finish or explicitly hand it off before taking another.
+- Publish tested commits without rewriting history; preserve concurrent main changes.
+- Branch count, age, and a closed PR never authorize deletion. Automated cleanup requires the exact
+  head already in main, no open PR, no protection, and an expected-head conditional deletion.
 - Do not edit another agent's barrel file, package manifest, migration, or shared fixture unless the
   packet grants ownership.
 - Add implementation behind existing interfaces; do not rename public fields or enums.

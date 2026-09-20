@@ -73,8 +73,8 @@ an unindexed document is one nobody will find, which is the same as not writing 
 4. Edit only your packet's `owned_paths`. If you need a file you do not own, that is a handoff, not
    permission.
 
-One agent holds one packet, one branch, one worktree, one task at a time. Finish or explicitly hand
-off before taking another.
+One agent holds one packet/checkpoint at a time. Work directly on `main`, with no additional
+worktrees or task branches, under the owner's instruction. Finish or explicitly hand off before taking another.
 
 ## 4. Implement in this order
 
@@ -145,22 +145,18 @@ contract change.
 
 From `branch-discipline.md`, because these are the rules most often broken:
 
-- **Ceiling: five counted non-default branches**, repository-wide. The nine reserved launch heads are
-  exempt only while their own pull request is open.
-- A branch with no open PR has a **24-hour TTL**, and the hourly `branch-hygiene` workflow evicts the
-  oldest excess branches automatically. A branch that exists only on your disk is invisible to CI and
-  protects nothing.
-- **Push early.** Work that lives in one local worktree is one disk failure from gone, and its PR
-  silently misrepresents the state of the theme.
-- Never force-push, reset, or rewrite a pushed branch. Fix a bad commit message *before* the first
-  push; afterwards you cannot.
-- Incorporate current `main` by ordinary merge. Resolve conflicts, then re-run CI on the exact head.
-- Delete a worktree when its task is done. Evidence belongs in commits, PRs, CI logs and named
-  artifacts — never in an untracked scratch directory.
+- Work directly on `main`; do not create implementation branches or additional worktrees.
+- There is no numeric branch ceiling, age-based eviction, or named reservation list.
+- Preserve default/protected branches and all open PR heads. Closed-but-unmerged work is not disposable.
+- Cleanup requires exact-head ancestry in the current default branch, refreshed protection/PR checks,
+  and an expected-SHA conditional deletion. A changed head must survive.
+- Never rewrite pushed history. Publish bounded, tested commits; reconcile a concurrent main advance
+  before publication instead of forcing the reference.
+- Record results in the existing theme PR and commits. A planning PR is not evidence of implemented code.
 
-Theme PRs stay **draft** until every mandatory code acceptance item in their plan is complete. Work
-reaches `main` through a separate, bounded `agent/checkpoint-<id>-integration-<date>` branch and its
-own PR. Green CI on a theme draft is not permission to merge the theme.
+Theme PRs stay **draft** until every mandatory code acceptance item in their plan is complete.
+Do not merge stale theme heads or close them for docs-only CI. Record each direct-main checkpoint's
+exact commit, tests and remaining acceptance separately.
 
 One integrator serializes `composition-root.ts`, HTTP routes and `Env`, barrel files, package and
 Cargo manifests, lockfiles, CI, generated bindings, the schema registry and migration numbers. ER-13

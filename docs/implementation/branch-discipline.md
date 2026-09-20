@@ -1,55 +1,54 @@
 ---
 title: "Eliot Research branch discipline"
-protocol: "eliotr.branch-discipline.v1"
-version: "1.1"
-date: 2026-09-05
+protocol: "eliotr.branch-discipline.v2"
+version: "2.0"
+date: 2026-09-19
 status: "normative"
 ---
 
 # Branch discipline
 
-## Rules
+## Owner-directed implementation
 
-1. One agent owns one active worktree, one branch, and one task.
-2. An agent must not start another implementation task while it owns an active worktree or branch.
-3. A completed task is immediately merged to `main`, explicitly quarantined, or deleted.
-4. The ordinary ceiling remains **5 counted non-default branches system-wide**.
-5. A non-default branch without an open pull request has a **24-hour TTL**.
-6. An open pull request protects its head branch from automated deletion.
-7. Closing or merging a pull request removes that protection; the branch is then deleted.
-8. `main` is never deleted or force-updated by branch-hygiene automation.
-9. Evidence belongs in commits, PRs, CI logs, immutable receipts, or named artifacts, not abandoned tips.
-10. Archive evidence with a tag/release or committed manifest before removing a branch needed for audit.
+The owner's S27 instruction supersedes the former branch ceiling, dated launch reservations, and
+age-based deletion procedure. Work directly on `main`; do not create implementation branches or
+additional local worktrees. One agent holds one checkpoint at a time. Claim exact paths and base SHA
+in the existing theme PR, test the change, publish without rewriting history, and record its acceptance.
+Preserve concurrent main changes; do not force an implementation update over them.
 
-## Naming
+Existing planning and salvage PRs remain specifications/evidence, not permission to merge stale trees.
+An open theme is not automatically unfinished in every detail: compare each checkpoint against main.
+Keep a theme open until all of its mandatory code acceptance is met; live acceptance stays separate.
 
-```text
-agent/<packet>-<short-task>-YYYYMMDD
-docs/<short-task>-YYYYMMDD
-fix/<short-task>-YYYYMMDD
-quarantine/<reason>-YYYYMMDD
-```
+## Cleanup authority
 
-No `final`, `v2`, `v3`, `retry`, `strict`, or similar suffix chains. Replace the branch through a clean
-commit or close it; do not create serial abandoned variants.
+There is no numeric quota, expiry, or named/dated exception list. Branch age, count, and a closed PR
+are not evidence of integration. In particular, closed-but-unmerged work must survive.
 
-## Automation
+Automated cleanup must establish all of the following:
 
-`.github/workflows/branch-hygiene.yml` runs on `main`, hourly, and manually. It preserves main and open
-PR heads; deletes pre-contract legacy branches, closed/merged heads, and expired no-PR branches; evicts
-excess recent orphan branches; and fails if more than five counted non-default branches remain after
-cleanup. It rechecks PR protection and the exact head before deletion, and reloads open PRs before the
-final ceiling count. The automation never treats a branch as evidence that implementation was merged.
+1. The configured default branch is still the repository's actual default branch.
+2. The candidate is neither the default nor a protected branch and has no open same-repository PR.
+3. The exact candidate head is an ancestor of the observed default-branch head. A squash/rebase merge
+   without this ancestry is conservatively preserved for explicit operator review.
+4. Immediately before deletion, repeat default/integration, head, protection and open-PR observations.
+   Any changed head, new PR or protection cancels that candidate.
+5. Delete only the named ref under an explicit expected-SHA lease. REST DELETE has no such precondition
+   and is not used. Confirm absence before recording a successful deletion; do not blindly retry an
+   unknown outcome or a recreated branch.
 
-## Owner-requested launch PR series — 2026-09-05
+The lease is limited to deletion of the exact candidate; it is not permission to rewrite `main` or
+force-update another branch. GitHub protection remains enforced by the server. PR metadata and Git refs
+are separate resources: PR protection is an observation immediately before deletion, not an atomic
+cross-resource lock. A branch-head race after observation is rejected by the Git server's exact lease.
 
-The owner explicitly requested one PR for each of the nine remaining launch themes. This bounded
-exception qualifies the five-branch summary in AGENTS.md; it does not increase ordinary quarantine or
-implementation WIP. The exact nine branch names in `infra/github/branch-hygiene.json` are planning
-reservations, not additional active worktrees. They are excluded from the ceiling only while their
-same-repository PR is open. There is no prefix exemption or exemption for a closed/missing PR.
+## Automation and evidence
 
-Only one theme may be actively claimed by one agent at a time. A queued draft contains its plan but
-has no active implementation worktree. Keep a theme draft until every mandatory code acceptance item
-in its plan is complete; green docs-only CI is not feature completion. Refresh from current main before
-implementation and re-run exact-head CI. See `launch-prs/README.md` for ordering and integration rules.
+`.github/workflows/branch-hygiene.yml` runs on main, hourly, and manually. The planner, executable API
+rechecks, and real local Git lease behavior are covered by `node scripts/test-branch-hygiene.mjs`.
+The job reports confirmed deletions and preserved/skipped work; branch count is informational only.
+It does not replace data/security/runtime checks or qualify product launch. No implementation branch
+or worktree is created by the cleanup job.
+
+Archive explicitly required non-integrated evidence before an operator-directed removal. Never infer
+that a branch is disposable merely because its PR was closed or its commit is old.

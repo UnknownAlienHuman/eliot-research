@@ -92,8 +92,9 @@ workspace, shared differential vectors, and mechanical merge/deep-verification g
 - Inspect the default Wasm artifact before the feature build overwrites it; keep it free of product ABI
   exports and keep the scalar M1 self-test feature-gated.
 - Enforce pure-core exclusions for I/O, clocks, environment, randomness and platform runtime imports.
-- Preserve open PR heads, immediately remove closed PR heads, expire no-PR branches after 24 hours,
-  and evict the oldest quarantine heads before enforcing the five-branch ceiling.
+- Preserve default/protected/open-PR and unintegrated heads regardless of branch count or age.
+  Cleanup requires exact-head ancestry in the current default branch, refreshed PR/protection reads,
+  and conditional deletion against the expected SHA; closed PR state is not integration proof.
 - Run merge-blocking format, lint, native tests, doctests, dependency policy, Wasm, size and coverage
   gates; schedule pinned Miri, fuzz and mutation jobs.
 - Update readiness documentation without claiming M2 canonical JSON or any live qualification.

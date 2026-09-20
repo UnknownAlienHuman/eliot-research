@@ -31,10 +31,10 @@ work to create, not an assertion they already run. Do not copy contract SQL sket
 ## 2. Claim, branch and integration procedure
 
 Post in the existing theme PR: checkpoint ID, current main SHA, exact files, ER owner, predecessors'
-accepted SHAs and intended tests. Read other active claims. One agent = one task/worktree/branch.
-Reuse the theme's reserved head; incorporate current main without force/reset or dropping other work.
-Resolve conflicts before implementation and verify the resulting tree. The nine planning reservations
-in branch-discipline.md do not authorize nine simultaneous implementation worktrees.
+accepted SHAs and intended tests. Read other active claims. One agent holds one checkpoint at a time.
+The owner requires direct-main implementation without extra worktrees or task branches. Read existing
+theme heads as specifications; do not merge their stale trees. Preserve concurrent main commits and
+verify the exact resulting tree. Branch count and age are not cleanup authority; see branch-discipline.md.
 
 One integrator serializes `composition-root.ts`, HTTP/routes/Env, barrels, package/Cargo manifests,
 lockfiles, CI, generated bindings, schema registry and migration numbers. ER-13 allocates additive

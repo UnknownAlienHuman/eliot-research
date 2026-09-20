@@ -212,7 +212,7 @@ family whose earlier stage for that same family is still open.
 | Worker integration, composition root, routes, runtime | ER-24 | application services and composition; owns the K5b bridge side and K6 composition |
 | Family behavior (owner tokens, scope, residency, evidence, projection, federation, research) | Respective family ER owners | TypeScript behavior is the reference until a promotion packet moves one named family |
 
-Rules: one family per claim; one agent, one worktree, one branch, one task.
+Rules: one family per claim; one active checkpoint per agent, directly on main without additional worktrees.
 Shared files (composition root, barrels, manifests, lockfiles, CI, bindings,
 schema registry, migration numbers) require the designated integrator; an
 unclaimed shared edit is not permission. Permanent duplicate TypeScript/Rust
