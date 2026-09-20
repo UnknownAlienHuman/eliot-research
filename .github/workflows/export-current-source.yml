@@ -1,5 +1,5 @@
 name: export-current-source
-# Refresh exact main after S24/S25/S27/S28 for local regression repair.
+# Refresh exact main after S02 and the verified S03 bridge checkpoint.
 on:
   push:
     branches: [main]
