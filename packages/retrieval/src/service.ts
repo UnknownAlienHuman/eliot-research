@@ -1,5 +1,6 @@
 import type { ResolvedEvidence, RetrievalTrace, VersionedRef } from "@eliotr/contracts";
 import type { RetrievalRequest } from "./ports.js";
+import { canonicalRetrievalJson } from "./query-codec.js";
 
 export interface EvidencePack {
   readonly pack_ref: VersionedRef;
@@ -103,22 +104,13 @@ export interface RetrievalQueryService {
 
 const SHA256_HEX_48 = 48;
 
-function canonicalJson(value: unknown): string {
-  if (value === null || typeof value === "boolean" || typeof value === "string") {
-    return JSON.stringify(value);
+/** Adapt the shared codec failure to the existing public query error. */
+function canonicalQueryInput(value: unknown): string {
+  try {
+    return canonicalRetrievalJson(value);
+  } catch {
+    failQuery("RETRIEVAL_INPUT_INVALID", "query digest input is not canonical");
   }
-  if (typeof value === "number") {
-    if (!Number.isSafeInteger(value)) failQuery("RETRIEVAL_INPUT_INVALID", "query digest input is not canonical");
-    return String(value);
-  }
-  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
-  if (typeof value === "object") {
-    const entries = Object.entries(value as Record<string, unknown>)
-      .filter((entry) => entry[1] !== undefined)
-      .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0));
-    return `{${entries.map(([key, entry]) => `${JSON.stringify(key)}:${canonicalJson(entry)}`).join(",")}}`;
-  }
-  failQuery("RETRIEVAL_INPUT_INVALID", "query digest input is not canonical");
 }
 
 async function sha256Hex(text: string): Promise<string> {
@@ -144,7 +136,7 @@ export function createRetrievalQueryService(ports: RetrievalQueryPorts): Retriev
       // Freeze an explicitly authorized scope before any lane reads.
       const scope = await ports.freezeScope(request);
       await ports.requireCurrentScope(scope);
-      const digest = await sha256Hex(canonicalJson({
+      const digest = await sha256Hex(canonicalQueryInput({
         raw_query: request.raw_query,
         product: request.product,
         literals: [...request.literals],

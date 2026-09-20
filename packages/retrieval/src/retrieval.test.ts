@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import * as queryCodec from "./query-codec.js";
 import type {
   LocatorCandidate,
   ResolvedEvidence,
@@ -433,5 +434,82 @@ describe("Q3 query orchestration", () => {
       .query({ request: q3Request(), idempotency_key: "q3-key-nopol" });
     expect(result.coverage_claim).toBe("SAMPLED");
     expect(result.evidence_pack.resolved_evidence).toHaveLength(1);
+  });
+});
+
+
+describe("S28 canonical query identity compatibility", () => {
+  it.each([
+    { raw_query: "needle", literals: ["needle"], digest: "390a36bcac39a9a8faff9d12c2839ee3b673a9a5e64fd775ebfb4166cc4b3544" },
+    { raw_query: 'Что "😀"?\r\n\tpath\\file', literals: ["😀", "ключ", '"\\'], digest: "19e993d80649d3838abca6cc1af104cdfa6599cb8e1ec783425aa5d4501853ef" },
+  ])("preserves golden request digest, IDs and historical replay: $raw_query", async ({ raw_query, literals, digest }) => {
+    const harness = q3Harness();
+    const service = createRetrievalQueryService(harness.ports);
+    const request = q3Request({ raw_query, literals });
+    const result = await service.query({ request, idempotency_key: "golden" });
+    expect(harness.store.get("golden")?.request_digest).toBe(digest);
+    expect(result.trace.trace_ref).toEqual({ id: `query-${digest.slice(0, 48)}`, revision: 1 });
+    expect(result.evidence_pack.pack_ref).toEqual({ id: `pack-${digest.slice(0, 48)}`, revision: 1 });
+    expect(queryCodec.decodeRetrievalResult(queryCodec.decodeCanonicalRetrievalJson(
+      queryCodec.canonicalRetrievalJson(result),
+    ))).toEqual(result);
+    const calls = [...harness.calls];
+    // Reverse insertion order, changing neither values nor persisted request identity.
+    const reordered = Object.fromEntries(Object.entries(request).reverse()) as unknown as RetrievalRequest;
+    await expect(service.query({ request: reordered, idempotency_key: "golden" })).resolves.toEqual(result);
+    expect(harness.calls).toEqual([...calls, "freeze", "current"]);
+    expect(harness.store.size).toBe(1);
+  });
+
+  it("delegates the digest input to the existing codec", async () => {
+    const spy = vi.spyOn(queryCodec, "canonicalRetrievalJson");
+    try {
+      await createRetrievalQueryService(q3Harness().ports).query({ request: q3Request(), idempotency_key: "shared" });
+      expect(spy).toHaveBeenCalledExactlyOnceWith({
+        raw_query: "needle", product: "RESEARCH", literals: ["needle"], requested_limit: 10,
+        scope_digest: "b".repeat(64),
+      });
+    } finally { spy.mockRestore(); }
+  });
+
+  it("retains canonical bytes for nested values and UTF-16 key ordering", () => {
+    const value = { "\uE000": false, "😀": true, z: undefined, b: [null, -0,
+      Number.MIN_SAFE_INTEGER, Number.MAX_SAFE_INTEGER, ["\"\\\n", { z: 1, a: "ключ", gone: undefined }]] };
+    const expected = '{"b":[null,0,-9007199254740991,9007199254740991,["\\"\\\\\\n",{"a":"ключ","z":1}]],"😀":true,"\uE000":false}';
+    expect(queryCodec.canonicalRetrievalJson(value)).toBe(expected);
+    expect(queryCodec.canonicalRetrievalJson(Object.fromEntries(Object.entries(value).reverse()))).toBe(expected);
+    expect(queryCodec.decodeCanonicalRetrievalJson(expected)).toEqual(JSON.parse(expected));
+    // Invalid JSON containers cannot be promoted into newly canonical persisted bytes.
+    for (const malformed of ["[,]", "[undefined]", "{\"self\":undefined}", "{\"x\":NaN}"]) {
+      expect(queryCodec.decodeCanonicalRetrievalJson(malformed)).toBeUndefined();
+    }
+  });
+
+  it.each([0.5, NaN, Infinity, -Infinity, Number.MAX_SAFE_INTEGER + 1])(
+    "keeps service and codec number errors distinct: %s", async (requestedLimit) => {
+      const harness = q3Harness();
+      const error = await q3Error(createRetrievalQueryService(harness.ports).query({
+        request: q3Request({ requested_limit: requestedLimit }), idempotency_key: "invalid-number",
+      }));
+      expect(error).toMatchObject({ code: "RETRIEVAL_INPUT_INVALID", retryable: false,
+        message: "query digest input is not canonical" });
+      expect(harness.calls).toEqual(["freeze", "current"]);
+      expect(harness.store.size).toBe(0);
+      expect(() => queryCodec.canonicalRetrievalJson(requestedLimit)).toThrow(
+        "retrieval JSON contains a non-canonical number",
+      );
+    },
+  );
+
+  it("preserves unsupported-value rejection instead of silently hashing undefined", async () => {
+    expect(() => queryCodec.canonicalRetrievalJson(undefined)).toThrow("retrieval JSON contains an unsupported value");
+    const harness = q3Harness();
+    const error = await q3Error(createRetrievalQueryService(harness.ports).query({
+      request: q3Request({ literals: [undefined] as unknown as string[] }), idempotency_key: "invalid-value",
+    }));
+    expect(error).toMatchObject({ code: "RETRIEVAL_INPUT_INVALID", retryable: false,
+      message: "query digest input is not canonical" });
+    expect(harness.calls).toEqual(["freeze", "current"]);
+    expect(harness.store.size).toBe(0);
   });
 });
