@@ -26,7 +26,7 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
           node-version: 22.23.2
-      - name: Restore exact candidate and reviewed producer corrections
+      - name: Restore exact candidate and finite network contract correction
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -34,31 +34,29 @@ jobs:
           test "$(git branch --show-current)" = main
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           mkdir -p "$RUNNER_TEMP/s03-result"
-          git rm .github/workflows/export-s03-recovery.yml
           python - <<'PY'
           import os, pathlib, subprocess, textwrap
-          source = subprocess.check_output(['git','show','f7d4cc498a647e60c226acfbab16e6191ff25cd8:.github/workflows/verify-s03-continuation.yml'], text=True, encoding='utf-8')
-          restore = source.split('      - name: Restore only the checksum-bound reviewed candidate\n',1)[1].split('        run: |\n',1)[1].split('      - name: Install frozen toolchain\n',1)[0]
-          script = pathlib.Path(os.environ['RUNNER_TEMP'], 'restore-reviewed.sh')
-          script.write_text(textwrap.dedent(restore), encoding='utf-8', newline='\n')
+          source = subprocess.check_output(['git','show','4803720be3c8b0e6487b003f617f337380bd11ae:.github/workflows/verify-s03-continuation.yml'], text=True, encoding='utf-8')
+          restore = source.split('      - name: Restore exact candidate and reviewed producer corrections\n',1)[1].split('        run: |\n',1)[1].split('      - name: Install frozen toolchain\n',1)[0]
+          pathlib.Path(os.environ['RUNNER_TEMP'], 'restore-producers.sh').write_text(textwrap.dedent(restore), encoding='utf-8', newline='\n')
           PY
-          "$BASH" "$RUNNER_TEMP/restore-reviewed.sh"
+          "$BASH" "$RUNNER_TEMP/restore-producers.sh"
           python - <<'PY'
           import base64, gzip, hashlib, json, os, pathlib, subprocess, urllib.request
-          assert subprocess.check_output(['git','write-tree'],text=True).strip() == 'af74c3ed23257c5cf12ea9bd86ccc0e3362926be'
-          sha = 'dec903ada432ea6d023b89f0fdfe607af11e7d4e'
+          assert subprocess.check_output(['git','write-tree'],text=True).strip() == '41dbf0cb8e6633622be21b9da30dbba971db37a5'
+          sha = '18fbe89bcff09957252d23beb14e3de02eb7a0b5'
           request = urllib.request.Request(f"{os.environ['GITHUB_API_URL']}/repos/{os.environ['GITHUB_REPOSITORY']}/git/blobs/{sha}", headers={'Authorization':'Bearer '+os.environ['GH_TOKEN'],'Accept':'application/vnd.github+json'})
           with urllib.request.urlopen(request, timeout=30) as response:
               result = json.load(response)
           data = base64.b64decode(result['content'])
           assert hashlib.sha1(f'blob {len(data)}\0'.encode()+data).hexdigest() == sha
           patch = gzip.decompress(base64.b64decode(data))
-          assert hashlib.sha256(patch).hexdigest() == '73b06337dd580672a13be83fc76540e07b2585302b900491abc8dac3f7b23117'
-          path = pathlib.Path(os.environ['RUNNER_TEMP'], 's03-producers.patch')
+          assert hashlib.sha256(patch).hexdigest() == '088225b3de6217aece0c82c0d206a12ac96341acf32c1800d50d709221232edf'
+          path = pathlib.Path(os.environ['RUNNER_TEMP'], 's03-network.patch')
           path.write_bytes(patch)
           subprocess.run(['git','apply','--check','--unidiff-zero',str(path)],check=True)
           subprocess.run(['git','apply','--index','--unidiff-zero',str(path)],check=True)
-          assert subprocess.check_output(['git','write-tree'],text=True).strip() == '41dbf0cb8e6633622be21b9da30dbba971db37a5'
+          assert subprocess.check_output(['git','write-tree'],text=True).strip() == 'a381d383946650f42cb402eed13d6c56489761a0'
           PY
       - name: Install frozen toolchain
         run: |
@@ -99,7 +97,7 @@ jobs:
           const git = (...args) => execFileSync('git', args);
           const text = (...args) => git(...args).toString().trim();
           const tree = text('write-tree');
-          if (tree !== '41dbf0cb8e6633622be21b9da30dbba971db37a5') throw new Error('Tree identity changed');
+          if (tree !== 'a381d383946650f42cb402eed13d6c56489761a0') throw new Error('Tree identity changed');
           git('diff','--exit-code');
           const entries = [];
           for (const path of git('diff','--cached','--name-only','-z','HEAD').toString().split('\0').filter(Boolean)) {
