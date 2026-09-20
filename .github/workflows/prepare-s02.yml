@@ -1,0 +1,128 @@
+name: prepare-s02-diagnostics
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/prepare-s02.yml]
+permissions:
+  contents: write
+jobs:
+  verify:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - run: git config --global core.autocrlf false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: main
+          fetch-depth: 2
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 22
+      - name: Restore checksum-bound reviewed tree without publishing refs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$(git branch --show-current)" = main
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git rev-parse HEAD^)" = 4a5522d1497f5dc60e8b34672be6bf1b069f0d44
+          python - <<'PY'
+          import base64, gzip, hashlib, json, os, pathlib, urllib.request
+          ids = ['d134e3dbec251654ec34cf7d005dff6a294c5f34', 'fd17390edf64bed863ae9528ec34bca92101b322', 'dfda63c8f78719e7fffc738043f7295b74b2ebd8', '71ae6224d89a191e04c3b378d0d4eb9cf740534b', '30a030ad7019e7f569bb69cc5fdf2ee010da2617', '6398c10027ce8f37afc5254c07d470436c5cd328', '60d291909d780d4698764abd6a5d3da31c01b670']
+          chunks = []
+          for sha in ids:
+              url = f"{os.environ['GITHUB_API_URL']}/repos/{os.environ['GITHUB_REPOSITORY']}/git/blobs/{sha}"
+              req = urllib.request.Request(url, headers={'Authorization': 'Bearer ' + os.environ['GH_TOKEN'], 'Accept': 'application/vnd.github+json'})
+              with urllib.request.urlopen(req, timeout=30) as response:
+                  result = json.load(response)
+              data = base64.b64decode(result['content'])
+              assert hashlib.sha1(f'blob {len(data)}\0'.encode() + data).hexdigest() == sha
+              chunks.append(data)
+          compressed = b''.join(chunks)
+          assert hashlib.sha256(compressed).hexdigest() == '1780f74bd3cb961d1f271996f1b0498efb3f2f2c626f0a132f17935ddd320b26'
+          patch = gzip.decompress(compressed)
+          assert hashlib.sha256(patch).hexdigest() == 'adea6971bde9d6c71ba8a1b17a10f9f33065784f4299bdd0f8ca699924f6610c'
+          pathlib.Path(os.environ['RUNNER_TEMP'], 's02.patch').write_bytes(patch)
+          PY
+          git apply --check "$RUNNER_TEMP/s02.patch"
+          git apply --index "$RUNNER_TEMP/s02.patch"
+          git rm .github/workflows/prepare-s02.yml
+          test "$(git write-tree)" = 03d4e45a4d5d31359fdffd078746fa13d4e3ff70
+      - name: Install frozen dependencies
+        run: |
+          corepack enable
+          corepack prepare pnpm@11.23.0 --activate
+          pnpm install --frozen-lockfile
+      - name: Diagnostic privacy, cause, cleanup and existing contract regressions
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/s02-result"
+          node --version > "$RUNNER_TEMP/s02-result/versions.txt"
+          pnpm --version >> "$RUNNER_TEMP/s02-result/versions.txt"
+          node --test tests/integration/browser/raw-file-browser.test.mjs | tee "$RUNNER_TEMP/s02-result/diagnostics.log"
+          node --test --test-name-pattern 'L6 (?!real-browser)' tests/integration/browser/library.spec.ts | tee "$RUNNER_TEMP/s02-result/existing-diagnostics.log"
+          node node_modules/eslint/bin/eslint.js tests/integration/browser/assertion-diagnostic.mjs tests/integration/browser/raw-file-browser.mjs tests/integration/browser/raw-file-browser.test.mjs tests/integration/browser/owner-e2e.mjs
+          node node_modules/typescript/bin/tsc -b --pretty false
+          node node_modules/typescript/bin/tsc -p apps/eliotr-core/test/tsconfig.json --pretty false
+          node scripts/check-boundaries.mjs
+          node scripts/test-boundary-negative.mjs
+          node scripts/check-work-packets.mjs
+          node scripts/check-implementation-status.mjs
+          node docs/contracts/generate.mjs --check
+          git diff --cached --check
+          git diff --exit-code
+      - name: Reproduce unchanged browser failure and require its exact diagnostic
+        run: |
+          node --input-type=module <<'JS'
+          import { spawnSync } from 'node:child_process';
+          import { writeFileSync } from 'node:fs';
+          import { join } from 'node:path';
+          const result = spawnSync(process.execPath, ['--test', 'tests/integration/browser/library.spec.ts', 'tests/integration/browser/raw-file-browser.test.mjs'], { encoding: 'utf8', timeout: 600000, maxBuffer: 16777216 });
+          const output = (result.stdout ?? '') + (result.stderr ?? '');
+          writeFileSync(join(process.env.RUNNER_TEMP, 's02-result', 'browser-still-failing.log'), output);
+          process.stdout.write(output);
+          if (result.error || result.status !== 1 || !output.includes('"id":"raw-upload.status"') || !output.includes('"expected":"File saved"') || !output.includes('"basename":"raw-file-browser.mjs"') || !output.includes('# pass 29') || !output.includes('# fail 1') || !output.includes('# cancelled 0')) throw new Error('Unexpected browser outcome; S02 scope not proven');
+          writeFileSync(join(process.env.RUNNER_TEMP, 's02-result', 'browser-disposition.json'), JSON.stringify({ state: 'DIAGNOSTICS_VERIFIED_BROWSER_STILL_FAILING', browser_exit_code: result.status, implementation_task: 'S03', assertion: 'raw-upload.status', application_changed: false }, null, 2));
+          JS
+      - name: Store exact verified Git blobs only
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node --input-type=module <<'JS'
+          import { execFileSync } from 'node:child_process';
+          import { writeFileSync } from 'node:fs';
+          import { join } from 'node:path';
+          const git = (...args) => execFileSync('git', args);
+          const text = (...args) => git(...args).toString().trim();
+          const tree = text('write-tree');
+          if (tree !== '03d4e45a4d5d31359fdffd078746fa13d4e3ff70') throw new Error('Tree changed during verification');
+          git('diff', '--exit-code');
+          const entries = [];
+          for (const path of git('diff', '--cached', '--name-only', '-z', 'HEAD').toString().split('\0').filter(Boolean)) {
+            const index = text('ls-files', '--stage', '--', path);
+            if (!index) { entries.push({ path, mode: '100644', type: 'blob', sha: null }); continue; }
+            const [mode, sha] = index.split(/\s+/);
+            const bytes = git('cat-file', 'blob', sha);
+            const response = await fetch(`${process.env.GITHUB_API_URL}/repos/${process.env.GITHUB_REPOSITORY}/git/blobs`, { method: 'POST', headers: { authorization: `Bearer ${process.env.GH_TOKEN}`, accept: 'application/vnd.github+json', 'content-type': 'application/json' }, body: JSON.stringify({ content: bytes.toString('base64'), encoding: 'base64' }) });
+            if (!response.ok) throw new Error(`Git blob creation failed: ${response.status}`);
+            const result = await response.json();
+            if (result.sha !== sha) throw new Error('Blob identity changed');
+            entries.push({ path, mode, type: 'blob', sha });
+          }
+          writeFileSync(join(process.env.RUNNER_TEMP, 's02-result', 'verified-tree.json'), JSON.stringify({ base_sha: process.env.GITHUB_SHA, base_tree_sha: text('rev-parse', 'HEAD^{tree}'), tree_sha: tree, ref_updated: false, entries }, null, 2));
+          JS
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: s02-verification-${{ matrix.os }}
+          path: ${{ runner.temp }}/s02-result/
+          if-no-files-found: error
+          retention-days: 3
