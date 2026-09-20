@@ -33,7 +33,7 @@ jobs:
           set -euo pipefail
           test "$(git branch --show-current)" = main
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
-          test "$(git rev-parse HEAD^)" = fce1129d51447a7bb336da25c964d5fcad038f0d
+          test "$(git rev-parse HEAD^)" = 6deab65e5309f57babd6dc25d3ba40145d204a4f
           python - <<'PY'
           import base64, gzip, hashlib, json, os, pathlib, urllib.request
           groups = [
@@ -66,10 +66,10 @@ jobs:
           python - <<'PY'
           from pathlib import Path
           p = Path('tests/integration/browser/raw-file-browser.mjs')
-          s = p.read_text()
+          s = p.read_text(encoding='utf-8')
           old = 'const details = panel.locator("details").filter({ has: panel.locator("[data-raw-recover]") });'
           assert s.count(old) == 1
-          p.write_text(s.replace(old, 'const details = panel.locator("details:has([data-raw-recover])");'), newline='\n')
+          p.write_text(s.replace(old, 'const details = panel.locator("details:has([data-raw-recover])");'), encoding='utf-8', newline='\n')
           PY
           git add tests/integration/browser/raw-file-browser.mjs
           test "$(git write-tree)" = 04662ab8cb32526a283572044af51f42851387f9
