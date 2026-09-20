@@ -1,4 +1,5 @@
 name: export-current-source
+# Refresh exact main after S24/S25/S27/S28 for local regression repair.
 on:
   push:
     branches: [main]
