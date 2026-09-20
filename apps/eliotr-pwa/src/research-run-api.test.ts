@@ -84,3 +84,34 @@ describe("research run transport", () => {
     await expect(readResearchArtifactSection(artifactRef, section)).rejects.toMatchObject({ code: "RESEARCH_RUN_RESPONSE_INVALID" });
   });
 });
+
+
+describe("S24 exact Research question transport", () => {
+  it.each(["Line one\n\n- item\n\t> quoted", "Строка один\r\n\r\n- пункт\r\n\t> цитата 😀", "x".repeat(9000), "я😀".repeat(2000), "  keep spaces  "])(
+    "preserves accepted question bytes without a separate character ceiling", (query) => {
+      expect(JSON.parse(researchRunBody(query, [])).query).toBe(query);
+    },
+  );
+  it.each(["", "a\u0000b", "a\u0001b", "a\u0008b", "a\u000bb", "a\u000cb", "a\u001fb", "a\u007fb", "a\rb", "a\ud800b", "a\udc00b", "\ud800\ud800"])(
+    "rejects prohibited controls and unpaired UTF-16 before serialization", (query) => {
+      expect(() => researchRunBody(query, [])).toThrow();
+    },
+  );
+  it("uses the complete serialized HTTP envelope, in UTF-8 bytes, at max and max+1", () => {
+    const maximum = 262144; // Existing /research/run route envelope; not a query allowance.
+    const overhead = new TextEncoder().encode(researchRunBody("x", [])).length - 1;
+    const remaining = maximum - overhead;
+    const query = "😀".repeat(Math.floor(remaining / 4)) + "x".repeat(remaining % 4);
+    const body = researchRunBody(query, []);
+    expect(new TextEncoder().encode(body).length).toBe(maximum);
+    expect(JSON.parse(body).query).toBe(query);
+    expect(() => researchRunBody(`${query}x`, [])).toThrow(/HTTP request.*262144/u);
+    // The scope and JSON escaping also consume this same complete envelope.
+    expect(() => researchRunBody(query, ["source-1"])).toThrow(/HTTP request/u);
+    expect(() => researchRunBody("\t".repeat(remaining), [])).toThrow(/HTTP request/u);
+  });
+  it("leaves the existing short request wire identity unchanged", () => {
+    expect(researchRunBody("What changed?", ["source-1"])).toBe('{"query":"What changed?","product":"RESEARCH","scope_expression":{"kind":"SELECTED_SOURCES","source_ids":["source-1"]},"literals":[],"evidence_grade":"E0","budget_ref":"research-budget-v1","max_results":16}');
+    expect(researchRunBody("a\nb", [])).not.toBe(researchRunBody("a\r\nb", []));
+  });
+});

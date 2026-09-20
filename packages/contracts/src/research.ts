@@ -4,6 +4,21 @@ import { EvidenceHandleSchema } from "./evidence.js";
 import { ScopeSnapshotSchema } from "./scope.js";
 
 
+/** Complete Research HTTP JSON envelope; never a character or query-only quota. */
+export const RESEARCH_REQUEST_MAX_BYTES = 262144;
+
+/** Validate original UTF-16 before hashing/encoding; accept LF, CRLF and HT without rewriting. */
+export function isResearchQuestionText(value: unknown): value is string {
+  if (typeof value !== "string" || value.length === 0 ||
+      /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u.test(value) || /\r(?!\n)/u.test(value)) return false;
+  // for-of combines valid pairs but leaves lone surrogate code units observable.
+  for (const scalar of value) {
+    const code = scalar.codePointAt(0);
+    if (code === undefined || (code >= 0xd800 && code <= 0xdfff)) return false;
+  }
+  return true;
+}
+
 export const EvidenceGradeSchema = z.enum(["E0", "E1", "E2", "E3"]);
 export type EvidenceGrade = z.infer<typeof EvidenceGradeSchema>;
 
@@ -82,7 +97,7 @@ export type InquiryProtocolProfile = z.infer<typeof InquiryProtocolProfileSchema
 
 const ResearchQuestionNodeCodec = z.object({
   question_id: IdentifierSchema,
-  text: z.string().min(1).max(8192),
+  text: z.string().min(1).refine(isResearchQuestionText, "question text is invalid"),
   kind: z.enum(["primary", "support", "counter", "alternative", "chronology", "implementation", "literature", "source_audit"]),
   dependency_question_ids: z.array(IdentifierSchema).max(16),
 }).strict();

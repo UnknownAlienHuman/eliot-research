@@ -1,7 +1,8 @@
+import { TextEncoder } from "node:util";
 import { describe, expect, it, vi } from "vitest";
 
 import {
-  ModelGatewayExecutionError,
+  ModelGatewayExecutionError, modelGatewayDynamicRouteTarget, validateModelGatewayRequestBody,
   canonicalModelGatewayJson,
   createModelGatewayFetchAdapter,
   decodeModelGatewayResponse,
@@ -716,5 +717,36 @@ describe("ER-16 reasoning gateway fetch execution boundary", () => {
       ),
       "MODEL_GATEWAY_POLICY_REJECTED",
     );
+  });
+});
+
+
+describe("S24 prepared model question envelope", () => {
+  it("preserves LF/CRLF/tab and enforces reserved full canonical UTF-8 bytes at max/max+1", async () => {
+    const question = "  Question\r\n\tРусский 😀\n".repeat(400);
+    const body = requestBody({ messages: [{ role: "system", content: "Trusted instructions" }, { role: "user", content: question }] });
+    const deployed = await deployment(body);
+    body.model = (await modelGatewayDynamicRouteTarget(deployed)).model;
+    const maximum = new TextEncoder().encode(canonicalModelGatewayJson(body)).byteLength;
+    const exact = await validateModelGatewayRequestBody(body, deployed, maximum, 8192);
+    expect(new TextEncoder().encode(exact.body).byteLength).toBe(maximum);
+    expect(JSON.parse(exact.body).messages[1].content).toBe(question);
+    const larger = { ...body, messages: [body.messages[0], { role: "user", content: `${question}x` }] };
+    await expect(validateModelGatewayRequestBody(larger, deployed, maximum, 8192)).rejects.toMatchObject({
+      code: "MODEL_GATEWAY_REQUEST_INVALID", message: "canonical model request exceeds the reserved input byte budget",
+    });
+    // This is the actual validation used by HTTP preparation before dispatch, not a question-only cap.
+    const prepared = await prepareModelGatewayHttpRequest(input({ max_input_bytes: maximum }), deployed, await compiled(body), BASE_URL, TOKEN);
+    expect(prepared.body).toBe(exact.body);
+    await expect(prepareModelGatewayHttpRequest(input({ max_input_bytes: maximum }), deployed, await compiled(larger), BASE_URL, TOKEN))
+      .rejects.toMatchObject({ code: "MODEL_GATEWAY_REQUEST_INVALID", message: "canonical model request exceeds the reserved input byte budget" });
+  });
+  it.each(["a\ud800b", "a\udc00b", "a\rb", "a\u0000b", "a\u0001b"])("rejects malformed question text before identity/transport", async (question) => {
+    const body = requestBody({ messages: [{ role: "system", content: "Trusted instructions" }, { role: "user", content: question }] });
+    const deployed = await deployment(body);
+    body.model = (await modelGatewayDynamicRouteTarget(deployed)).model;
+    await expect(validateModelGatewayRequestBody(body, deployed, 262144, 8192)).rejects.toMatchObject({
+      code: "MODEL_GATEWAY_REQUEST_INVALID", message: "model request messages[1].content is invalid",
+    });
   });
 });

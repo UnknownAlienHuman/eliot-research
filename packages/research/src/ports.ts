@@ -1,3 +1,4 @@
+import { isResearchQuestionText, RESEARCH_REQUEST_MAX_BYTES } from "@eliotr/contracts";
 import type {
   ClaimAuditItem,
   CompletionDisposition,
@@ -202,7 +203,8 @@ export interface InvestigationLedgerStore {
 
 export const LedgerIdSchema = z.string().min(1).max(128);
 export const LedgerRefSchema = z.string().min(1).max(256);
-const LedgerGoalSchema = z.string().min(1).max(2000);
+export const LedgerGoalSchema = z.string().min(1).refine(isResearchQuestionText, "goal text is invalid")
+  .pipe(z.string().refine((value) => new TextEncoder().encode(value).byteLength <= RESEARCH_REQUEST_MAX_BYTES, "goal exceeds the Research HTTP envelope"));
 const LedgerHandleSchema = z.string().min(1).max(256);
 const LedgerDigestSchema = z.string().regex(/^[a-f0-9]{64}$/);
 const LedgerIsoSchema = z.string().datetime({ offset: true });

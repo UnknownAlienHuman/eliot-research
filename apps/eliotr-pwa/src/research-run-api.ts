@@ -1,3 +1,4 @@
+import { isResearchQuestionText, RESEARCH_REQUEST_MAX_BYTES } from "@eliotr/contracts";
 import { ArtifactRevisionSchema, IdentifierSchema, ResearchWorkflowStageSchema, ScopeExpressionSchema, Sha256Schema, VersionedRefSchema, type ArtifactRevision, type ResearchWorkflowStage, type VersionedRef } from "@eliotr/contracts";
 import { ApiRequestError, requestApi, requestApiBytes, type ApiBytesResponse } from "./api.js";
 
@@ -428,7 +429,7 @@ async function sha256(bytes: Uint8Array): Promise<string> {
 }
 
 export function researchRunBody(query: string, sourceIds: readonly string[], maxResults = MAX_RESULTS, projectId?: string): string {
-  if (typeof query !== "string" || query.trim().length === 0 || new TextEncoder().encode(query).byteLength > 1024 || /[\u0000-\u001f\u007f]/u.test(query)) invalid("query is invalid");
+  if (!isResearchQuestionText(query)) throw new ApiRequestError({ status: 400, code: "RESEARCH_INPUT_INVALID", message: "query is invalid" });
   if (!Number.isSafeInteger(maxResults) || maxResults < 1 || maxResults > MAX_RESULTS) invalid("max_results is invalid");
   if (sourceIds.length > 64 || new Set(sourceIds).size !== sourceIds.length) invalid("source scope is invalid");
   for (const sourceId of sourceIds) identifier(sourceId, "source id");
@@ -440,7 +441,12 @@ export function researchRunBody(query: string, sourceIds: readonly string[], max
     ? { kind: "PROJECT" as const, project_id: projectId }
     : sourceIds.length ? { kind: "SELECTED_SOURCES" as const, source_ids: [...sourceIds] } : { kind: "GLOBAL_LIBRARY" as const };
   if (!ScopeExpressionSchema.safeParse(scope).success) invalid("source scope is invalid");
-  return JSON.stringify({ query, product: "RESEARCH", scope_expression: scope, literals: [], evidence_grade: "E0", budget_ref: "research-budget-v1", max_results: maxResults });
+  const body = JSON.stringify({ query, product: "RESEARCH", scope_expression: scope, literals: [], evidence_grade: "E0", budget_ref: "research-budget-v1", max_results: maxResults });
+  if (new TextEncoder().encode(body).byteLength > RESEARCH_REQUEST_MAX_BYTES) {
+    throw new ApiRequestError({ status: 413, code: "RESEARCH_INPUT_LIMIT",
+      message: `Research HTTP request exceeds ${RESEARCH_REQUEST_MAX_BYTES} UTF-8 bytes` });
+  }
+  return body;
 }
 
 export function decodeResearchRunLaunch(raw: unknown, expectedDeploymentGeneration?: string): ResearchRunLaunchView {

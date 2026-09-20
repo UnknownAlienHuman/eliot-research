@@ -348,3 +348,31 @@ describe("ER-31 Corpus Lens navigation service", () => {
     })).rejects.toMatchObject({ code: "NAVIGATION_SOURCE_MISMATCH" });
   });
 });
+
+
+describe("S24 Research question versus bounded literal navigation probes", () => {
+  it("preserves old short-question ranking and accepts formatted questions without lowering probe limits", async () => {
+    const { store } = await populatedStore();
+    const service = createNavigationService(store);
+    const base = { scope_snapshot: store.scopeSnapshot, project_ref: { id: "project-1", revision: 1 }, maximum_sources: 2 };
+    const legacy = await service.orient({ ...base, focus_terms: ["memory"] });
+    expect(await service.orient({ ...base, focus_terms: [], question: " memory " })).toEqual(legacy);
+    for (const question of ["", "line 1\r\n\tРусский 😀\n".repeat(500)]) {
+      expect((await service.orient({ ...base, focus_terms: [], question })).navigation_authority).toBe("NAVIGATION_ONLY");
+    }
+    await expect(service.orient({ ...base, focus_terms: ["x".repeat(1025)] })).rejects.toMatchObject({ code: "NAVIGATION_INPUT_INVALID" });
+    await expect(service.orient({ ...base, focus_terms: ["memory"], question: "question" })).rejects.toMatchObject({ code: "NAVIGATION_INPUT_INVALID" });
+  });
+  it.each(["bad\ud800", "bad\udc00", "bad\rtext", "bad\u0000", "bad\u007f"])("rejects malformed question before artifact reads", async (question) => {
+    const { store } = await populatedStore();
+    await expect(createNavigationService(store).orient({ scope_snapshot: store.scopeSnapshot, focus_terms: [], question, maximum_sources: 2 }))
+      .rejects.toMatchObject({ code: "NAVIGATION_INPUT_INVALID" });
+    expect(store.artifactReads).toBe(0);
+  });
+  it("retains the HTTP UTF-8 envelope rather than replacing it with a character quota", async () => {
+    const { store } = await populatedStore();
+    await expect(createNavigationService(store).orient({ scope_snapshot: store.scopeSnapshot, focus_terms: [], question: "я".repeat(131073), maximum_sources: 2 }))
+      .rejects.toMatchObject({ code: "NAVIGATION_LIMIT_EXCEEDED" });
+    expect(store.artifactReads).toBe(0);
+  });
+});

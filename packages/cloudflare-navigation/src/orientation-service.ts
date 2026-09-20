@@ -70,7 +70,7 @@ export function createOrientationApi(env: OrientationEnvironment, now: () => num
     }
     checkpoint();
     const navigation = await createNavigationService(store).orient({ scope_snapshot: snapshot,
-      focus_terms: request.query.trim() ? [request.query.trim()] : [], maximum_sources: request.max_results });
+      focus_terms: [], question: request.query, maximum_sources: request.max_results });
     const traceRef = { id: operation.operation_id, revision: 1 };
     const packRef = { id: `${operation.operation_id}:pack`, revision: 1 };
     const scopeRef = { id: snapshot.snapshot_id, revision: snapshot.revision };

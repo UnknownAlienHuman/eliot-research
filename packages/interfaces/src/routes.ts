@@ -1,3 +1,4 @@
+import { RESEARCH_REQUEST_MAX_BYTES } from "@eliotr/contracts";
 export interface RouteDefinition {
   readonly method: "GET" | "POST" | "PUT" | "DELETE";
   readonly path: string;
@@ -61,11 +62,11 @@ export const ROUTES: readonly RouteDefinition[] = [
   { method: "GET", path: "/api/v1/research/wiki/proposals/:ref", operation: "research.wiki.proposal.read", auth: "owner", maximum_request_bytes: 0, response_mode: "json" },
   { method: "GET", path: "/api/v1/research/wiki/proposals/:ref/body", operation: "research.wiki.proposal.body", auth: "owner", maximum_request_bytes: 0, response_mode: "stream" },
   { method: "POST", path: "/api/v1/research/changes", operation: "research.changes", auth: "owner", maximum_request_bytes: 8192, response_mode: "json" },
-  { method: "POST", path: "/api/v1/research/query", operation: "research.query", auth: "owner_or_service", maximum_request_bytes: 262144, response_mode: "json" },
+  { method: "POST", path: "/api/v1/research/query", operation: "research.query", auth: "owner_or_service", maximum_request_bytes: RESEARCH_REQUEST_MAX_BYTES, response_mode: "json" },
   { method: "GET", path: "/api/v1/research/query/jobs", operation: "research.query", auth: "owner", maximum_request_bytes: 0, response_mode: "json" },
   { method: "GET", path: "/api/v1/research/query/:workflow_id", operation: "research.query", auth: "owner_or_service", maximum_request_bytes: 0, response_mode: "json" },
   { method: "DELETE", path: "/api/v1/research/query/:workflow_id", operation: "research.query", auth: "owner_or_service", maximum_request_bytes: 0, response_mode: "json" },
-  { method: "POST", path: "/api/v1/research/run", operation: "research.run", auth: "owner_or_service", maximum_request_bytes: 262144, response_mode: "handle" },
+  { method: "POST", path: "/api/v1/research/run", operation: "research.run", auth: "owner_or_service", maximum_request_bytes: RESEARCH_REQUEST_MAX_BYTES, response_mode: "handle" },
   { method: "GET", path: "/api/v1/research/runs", operation: "research.runs", auth: "owner", maximum_request_bytes: 0, response_mode: "json" },
   { method: "GET", path: "/api/v1/research/run/:workflow_id", operation: "research.run", auth: "owner", maximum_request_bytes: 0, response_mode: "json" },
   { method: "POST", path: "/api/v1/research/run/:workflow_id/cancel", operation: "research.run.cancel", auth: "owner", maximum_request_bytes: 1024, response_mode: "json" },

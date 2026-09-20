@@ -16,6 +16,8 @@ outside the paths below.
 - `packages/research/src/investigation-service.ts`
 - `packages/research/src/ledger-commands.ts`
 - `packages/research/src/research.test.ts`
+- `packages/research/src/research-test-fixture.ts`
+- `packages/research/src/research-question-migration.test.ts`
 - `packages/research/src/ledger-commands.test.ts`
 - `packages/research/package.json`
 - `packages/research/tsconfig.json`

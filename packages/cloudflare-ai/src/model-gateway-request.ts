@@ -1,3 +1,4 @@
+import { isResearchQuestionText } from "@eliotr/contracts";
 import type { ModelRouteDeployment } from "@eliotr/platform-cloudflare";
 import { modelGatewayExecutionFailure } from "./model-gateway-execution-contract.js";
 
@@ -70,10 +71,8 @@ function boundedText(
   maximum = MAX_STRING_BYTES,
 ): string {
   if (
-    typeof value !== "string" ||
-    value.length < 1 ||
-    utf8Bytes(value) > maximum ||
-    /[\u0000\u0008\u000b\u000c\u000e-\u001f\u007f]/u.test(value)
+    !isResearchQuestionText(value) ||
+    utf8Bytes(value) > maximum
   ) {
     modelGatewayExecutionFailure(
       "MODEL_GATEWAY_REQUEST_INVALID",

@@ -103,3 +103,23 @@ describe("research planning manifest", () => {
     })).toThrow("question graph is cyclic");
   });
 });
+
+
+describe("S24 multiline planning identity", () => {
+  it("retains a long multilingual primary question and distinguishes LF from CRLF", async () => {
+    const ref = INSTALLED_INQUIRY_PROTOCOL_REFS.lookup;
+    const question = "  Сравнить 😀\n\t> quoted evidence\n".repeat(400);
+    const input = { ...BASE, question, inquiry_protocol_ref: ref, definition: installedInquiryProtocolDefinition(ref), sources: [] };
+    const first = await createResearchPlanningManifest(input);
+    expect(first.questions[0]?.text).toBe(question);
+    await expect(assertResearchPlanningManifestIdentity(first)).resolves.toEqual(first);
+    const second = await createResearchPlanningManifest({ ...input, question: question.replaceAll("\n", "\r\n") });
+    expect(second.primary_question_id).not.toBe(first.primary_question_id);
+    expect(second.identity_digest).not.toBe(first.identity_digest);
+  });
+  it.each(["a\ud800b", "a\udc00b", "a\rb", "a\u0000b"])("rejects malformed text before assigning its identity", async (question) => {
+    const ref = INSTALLED_INQUIRY_PROTOCOL_REFS.lookup;
+    await expect(createResearchPlanningManifest({ ...BASE, question, inquiry_protocol_ref: ref,
+      definition: installedInquiryProtocolDefinition(ref), sources: [] })).rejects.toThrow();
+  });
+});

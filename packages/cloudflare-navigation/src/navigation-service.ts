@@ -1,5 +1,5 @@
 import {
-  VersionedRefSchema,
+  VersionedRefSchema, isResearchQuestionText, RESEARCH_REQUEST_MAX_BYTES,
   type DocumentMapRevision,
   type ProjectAtlasRevision,
   type ScopeSnapshot,
@@ -70,6 +70,16 @@ function normalizeFocusTerms(values: readonly string[]): string[] {
     return value.toLocaleLowerCase("und");
   });
   return [...new Set(terms)].sort(compareText);
+}
+
+/** Metadata relevance is derived; the authoritative question/digest retain the original bytes. */
+function questionFocusTerms(request: OrientationRequest): string[] {
+  if (request.question === undefined) return normalizeFocusTerms(request.focus_terms);
+  const question = request.question;
+  if (!Array.isArray(request.focus_terms) || request.focus_terms.length !== 0 ||
+      (question !== "" && !isResearchQuestionText(question))) fail("NAVIGATION_INPUT_INVALID", "question is invalid or mixed with focus probes");
+  if (utf8Length(question) > RESEARCH_REQUEST_MAX_BYTES) fail("NAVIGATION_LIMIT_EXCEEDED", "question exceeds the Research HTTP envelope");
+  return question.trim() === "" ? [] : [question.trim().toLocaleLowerCase("und")];
 }
 
 function normalizeSourceClasses(values: readonly string[] | undefined): string[] {
@@ -322,7 +332,7 @@ function omissionReason(
 async function orient(store: NavigationStore, request: OrientationRequest): Promise<OrientationResult> {
   const scope = await requireCurrentScope(store, request.scope_snapshot);
   const limit = maximumSources(request.maximum_sources);
-  const focusTerms = normalizeFocusTerms(request.focus_terms);
+  const focusTerms = questionFocusTerms(request);
   const expectedClasses = normalizeSourceClasses(request.expected_source_classes);
   const projectRef = request.project_ref === undefined
     ? undefined

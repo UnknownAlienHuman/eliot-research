@@ -476,3 +476,22 @@ describe("research protocol freeze stage over actual admitted/indexed D1/R2", ()
     expect((await identity.db.prepare("SELECT COUNT(*) AS n FROM research_workflow_checkpoint WHERE operation_id=?1").bind(identity.request.operation_id).first<{ n: number }>())?.n).toBe(1);
   }, 30_000);
 });
+
+
+describe("S24 exact long question protocol freeze", () => {
+  it("freezes and replays the formatted question through existing ledger/R2/checkpoints", async () => {
+    const question = "  English question\r\n\t- Русский пункт 😀\n> quoted evidence\n".repeat(180);
+    const fixture = await createProtocolFreezeFixture("s24-long", question, INSTALLED_INQUIRY_PROTOCOL_REFS.lookup);
+    const handler = createFreezeProtocolAndScopeStageHandler({ navigation: fixture.navigation, ledger: fixture.ledger });
+    const first = await fixture.executor.execute(fixture.request, principal, handler);
+    const bytes = await readWorkflowObject(fixture.bucket, first.output_manifest, true);
+    const checkpoint = decodeProtocolScopeCheckpoint(bytes);
+    expect(checkpoint.protocol_profile.question).toBe(question);
+    expect((await fixture.ledger.read(fixture.request.investigation_ref.id))?.head.goal).toBe(question);
+    expect(await fixture.executor.execute(fixture.request, principal, handler)).toEqual(first);
+    expect(await readWorkflowObject(fixture.bucket, first.output_manifest, true)).toEqual(bytes);
+    const readback = await readFreezeProtocolAndScopeCheckpoint({ request: fixture.request, principal, database: fixture.db,
+      bucket: fixture.bucket, navigation: fixture.navigation, ledger: fixture.ledger });
+    expect(readback.protocol_profile.question).toBe(question);
+  });
+});

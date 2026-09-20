@@ -47,3 +47,17 @@ describe("bounded JSON request reader", () => {
     )).rejects.toMatchObject({ code: "REQUEST_MEDIA_TYPE_INVALID", status: 415 });
   });
 });
+
+
+it("S24 accepts the actual Research HTTP UTF-8 envelope at max and rejects max+1", async () => {
+  const maximum = 262144;
+  const overhead = new TextEncoder().encode(JSON.stringify({ query: "" })).length;
+  const left = maximum - overhead;
+  const query = "😀".repeat(Math.floor(left / 4)) + "x".repeat(left % 4);
+  const encoded = new TextEncoder().encode(JSON.stringify({ query }));
+  expect(encoded.length).toBe(maximum);
+  const exact = streamed(encoded);
+  await expect(readJsonBodyWithinBytes(exact, maximum)).resolves.toEqual({ query });
+  const overflow = streamed(new TextEncoder().encode(JSON.stringify({ query: `${query}x` })));
+  await expect(readJsonBodyWithinBytes(overflow, maximum)).rejects.toMatchObject({ code: "LIMIT_EXCEEDED", actual: 262145, limit: 262144 });
+});

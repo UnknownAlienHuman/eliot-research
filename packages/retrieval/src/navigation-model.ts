@@ -45,6 +45,8 @@ export interface OrientationRequest {
   readonly scope_snapshot: ScopeSnapshot;
   readonly project_ref?: VersionedRef;
   readonly focus_terms: readonly string[];
+  /** Exact Research question, distinct from bounded literal focus probes. Mutually exclusive with probes. */
+  readonly question?: string;
   readonly expected_source_classes?: readonly string[];
   readonly maximum_sources: number;
 }

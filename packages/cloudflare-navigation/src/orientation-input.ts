@@ -1,4 +1,4 @@
-import { IdentifierSchema, QueryProductSchema, ScopeExpressionSchema } from "@eliotr/contracts";
+import { isResearchQuestionText, IdentifierSchema, QueryProductSchema, ScopeExpressionSchema } from "@eliotr/contracts";
 import { inspectScopeExpression } from "@eliotr/domain";
 import type { QueryRequest } from "@eliotr/interfaces";
 import { readStreamWithinBytes } from "@eliotr/platform-cloudflare";
@@ -47,8 +47,8 @@ export function parseOrientationRequest(value: unknown): QueryRequest {
       record.evidence_grade !== "E0" || record.budget_ref !== ORIENTATION_PROFILE) {
     orientationFail("ORIENTATION_PROFILE_UNSUPPORTED", 422);
   }
-  if (typeof record.query !== "string" || new TextEncoder().encode(record.query).byteLength > 1024 ||
-      /[\u0000-\u001f\u007f]/u.test(record.query) || !Array.isArray(record.literals) || record.literals.length !== 0 ||
+  if (typeof record.query !== "string" || (record.query !== "" && !isResearchQuestionText(record.query)) ||
+      !Array.isArray(record.literals) || record.literals.length !== 0 ||
       !Number.isSafeInteger(record.max_results) || (record.max_results as number) < 1 ||
       (record.max_results as number) > ORIENTATION_MAX_RESULTS) orientationFail("ORIENTATION_INPUT_INVALID", 400);
   const expression = ScopeExpressionSchema.safeParse(record.scope_expression);

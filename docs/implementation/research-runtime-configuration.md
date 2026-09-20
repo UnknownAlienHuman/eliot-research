@@ -370,3 +370,54 @@ surface. The runtime file cannot mint those authorities, turn a route LIVE,
 or establish billing approval. A workspace binding likewise does not prove
 that the current capture, namespace, ledger, or source is readable; the
 workspace admission path rechecks those facts.
+
+## Research question input: migration 0069
+
+Research questions preserve their original text: LF, CRLF, tabs, leading/trailing
+spaces, Cyrillic and supplementary Unicode remain byte-distinct inputs. The
+shared contracts predicate rejects empty strings, NUL, prohibited C0/DEL controls,
+lone CR and unpaired UTF-16 surrogates before encoding or identity calculation.
+The metadata-only orientation API retains its existing empty-query behavior.
+There is no independent 1,024-byte question quota or textarea character ceiling.
+Literal navigation probes remain independently bounded; a whole Research question
+is not a literal probe and cannot be combined with one on the internal port.
+
+Existing execution envelopes still apply, including all serialized overhead:
+
+- The complete `/research/query` or `/research/run` HTTP JSON body is at most
+  262,144 UTF-8 bytes. The PWA measures the same complete body, including scope,
+  protocol, fields and JSON escaping, before sending it.
+- The immutable initial workflow payload is at most 65,536 UTF-8 bytes. This
+  includes the planning manifest and its question copy, when present. Overflow
+  returns `RESEARCH_INPUT_LIMIT` naming this bound before R2 input publication,
+  ledger/run creation or model reservation. It is not a 65,536-character promise.
+- The complete prepared model request must fit both the existing 262,144-byte
+  gateway envelope and the explicitly reserved input budget, with trusted
+  instructions, evidence and parameters included. Input validation does not
+  authorize spending or qualify a provider route.
+
+Apply Core migration `0069_research_question_envelopes.sql` **before** deploying
+these readers/writers. It atomically replaces the old 2,000-character ledger-goal
+constraint with the existing HTTP UTF-8 envelope, restores the original index and
+all owned command/immutability triggers, and leaves historical heads, events,
+workflow foreign keys and their identities unchanged. It records
+`research_question_generation=research-question-v2-utf8-envelopes`; the run
+entrypoint refuses a missing/old generation with `RESEARCH_INPUT_SCHEMA_MISMATCH`
+before scope or ledger effects. Applied migrations are not edited. Run migration
+0069 through the normal transactional D1 migration path, never by manually
+executing selected statements without a transaction.
+
+No public wire version, short-request digest, planning/profile identity algorithm,
+canonical serialization or historical R2 object changes. Once long questions have
+been stored, rolling back to pre-0069 *application readers* is unsupported: those
+readers still impose the obsolete 2,000/8,192-character codecs. A transaction
+failure during migration rolls back to the original schema/data; application
+rollback after successful writes instead requires a forward-compatible reader.
+
+Verification includes populated SQLite success/rollback with linked workflows,
+unchanged head/event bytes and trigger definitions; fresh migration application
+and long-question admission/freeze/replay in local Workers D1/R2; full-JSON HTTP
+and workflow max/max+1 tests; and selected-model prepared-request boundaries.
+The HTTP admission fixture compiles explicit local configuration through the
+production installer but does not install a route or qualify live execution.
+No live D1 migration or paid model execution was performed for this checkpoint.

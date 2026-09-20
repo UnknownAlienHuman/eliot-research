@@ -25,7 +25,7 @@ import type { LedgerD1Database } from "@eliotr/research";
 import { createResearchStageHandlerFactory, SERVER_OWNED_RESEARCH_HANDLER_GENERATION, SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION, SERVER_OWNED_FREEZE_HANDLER_GENERATION, SERVER_OWNED_SEMANTIC_HANDLER_GENERATION, SERVER_OWNED_PROTOCOL_HANDLER_GENERATION, isSemanticResearchHandlerGeneration, SERVER_RETRIEVAL_SCOPE_PROFILE } from "./research-stage-handlers.js";
 import { createResearchSemanticServerHandlers, researchSemanticConfigurationInstalled } from "./research-semantic-server.js";
 import { RESEARCH_QUALIFICATION_RENEWAL_MARKER } from "./research-qualification-renewal.js";
-import { ScopeExpressionSchema, VersionedRefSchema } from "@eliotr/contracts";
+import { isResearchQuestionText, ScopeExpressionSchema, VersionedRefSchema } from "@eliotr/contracts";
 import type { VersionedRef } from "@eliotr/contracts";
 import { inspectScopeExpression, scopeExpressionIdentity, RESEARCH_WORKFLOW_STAGES } from "@eliotr/domain";
 import type { AuthenticatedRequestContext, QueryRequest, QueryResult, ResearchEngineStatus, ResearchRunStatus } from "@eliotr/interfaces";
@@ -45,7 +45,7 @@ const ID_RE = /^[A-Za-z0-9][A-Za-z0-9:._-]{0,127}$/u;
 export class ResearchServiceError extends CatalogInputError {}
 function fail(code: string, message: string, status = 400, retryable = false): never { throw new ResearchServiceError(code, message, status, retryable); }
 function checkId(value: unknown, label: string): string { if (typeof value !== "string" || !ID_RE.test(value)) fail("RESEARCH_INPUT_INVALID", `${label} is invalid`); return value as string; }
-function checkQuery(value: unknown): string { if (typeof value !== "string" || value.length === 0 || new TextEncoder().encode(value).byteLength > 1024 || /[\u0000-\u001f\u007f]/u.test(value)) fail("RESEARCH_INPUT_INVALID", "query is invalid"); return value as string; }
+function checkQuery(value: unknown): string { if (!isResearchQuestionText(value)) fail("RESEARCH_INPUT_INVALID", "query is invalid"); return value; }
 function checkScope(value: unknown): QueryRequest["scope_expression"] { const parsed = ScopeExpressionSchema.safeParse(value); if (!parsed.success) fail("RESEARCH_INPUT_INVALID", "scope_expression is invalid"); const m = inspectScopeExpression(parsed.data); if (m.depth > 8 || m.atom_count > 16 || m.selected_source_count > 64) fail("RESEARCH_INPUT_LIMIT", "scope_expression exceeds its bounds", 413); return parsed.data; }
 const BASE_REQUEST_KEYS = ["query", "product", "scope_expression", "literals", "evidence_grade", "budget_ref", "max_results"] as const;
 const RUN_V2_REQUEST_KEYS = [...BASE_REQUEST_KEYS, "request_version", "inquiry_protocol_ref"] as const;
@@ -345,6 +345,8 @@ export function createResearchRunService(env: Env): { run(context: Authenticated
     async run(context, raw) {
       requireOwner(context);
       const request = parseResearchRunRequest(raw);
+      const inputGeneration = await env.CORE_DB.prepare("SELECT value FROM schema_state WHERE key='research_question_generation'").first<string>("value");
+      if (inputGeneration !== "research-question-v2-utf8-envelopes") fail("RESEARCH_INPUT_SCHEMA_MISMATCH", "Research input requires Core migration 0069", 503);
       const key = idempotencyKey(context);
       const requestDigest = await shaHex(JSON.stringify(request));
       const base = await shaHex(`${context.principal_ref}|${key}|${requestDigest}`);
@@ -411,7 +413,7 @@ export function createResearchRunService(env: Env): { run(context: Authenticated
         ...(planningManifest === undefined ? {} : { planning_manifest: planningManifest }),
       }));
       if (payloadBytes.byteLength > MAX_WORKFLOW_RECEIPT_BYTES) {
-        fail("RESEARCH_INPUT_LIMIT", "research planning manifest exceeds the workflow input bound", 413);
+        fail("RESEARCH_INPUT_LIMIT", `research workflow input exceeds ${MAX_WORKFLOW_RECEIPT_BYTES} UTF-8 bytes`, 413);
       }
       const payloadHash = await digest(payloadBytes);
       if ((await bucket.head(payloadKey).catch(() => null)) === null) {

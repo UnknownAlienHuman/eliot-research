@@ -1,5 +1,5 @@
 import {
-  EvidenceGradeSchema,
+  EvidenceGradeSchema, isResearchQuestionText,
   InquiryProtocolProfileSchema,
   ScopeSnapshotSchema,
   VersionedRefSchema,
@@ -95,7 +95,7 @@ export type ProtocolScopeCheckpoint = z.infer<typeof ProtocolScopeCheckpointSche
 const RunPayloadSchema = z.object({
   investigation_id: z.string().min(1).max(256),
   operation_id: z.string().min(1).max(128),
-  query: z.string().min(1).max(8192),
+  query: z.string().min(1).refine(isResearchQuestionText, "query text is invalid"),
   scope_snapshot_ref: VersionedRefSchema,
   evidence_grade: EvidenceGradeSchema,
   principal_ref: z.string().min(1).max(256),
