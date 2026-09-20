@@ -39,7 +39,6 @@ jobs:
           python - <<'PY'
           import ast, base64, gzip, hashlib, json, os, pathlib, subprocess, textwrap, urllib.request
           historical = subprocess.check_output(['git','show','008bb3e40cc97856c2689e7115e21fc87ab1b156:.github/workflows/prepare-s03.yml'], text=True, encoding='utf-8')
-          # Read literal data only from the retained reconstruction passport.
           snippet = textwrap.dedent(historical.split("python - <<'PY'\n",1)[1].split('\n          PY',1)[0])
           assignment = next(n for n in ast.parse(snippet).body if isinstance(n, ast.Assign) and any(isinstance(t, ast.Name) and t.id == 'groups' for t in n.targets))
           groups = ast.literal_eval(assignment.value)
@@ -65,7 +64,7 @@ jobs:
               subprocess.run(['git','apply','--index',*selected,str(path)],check=True)
           for group in groups[:2]:
               apply(group)
-          # Restore the S03 investigation note only. ER-44 source/tests are already in main.
+          # Restore investigation notes only; accepted ER-44 code is already in main.
           apply(groups[2], 'docs/agent-work/ER-27-vertical-integration-and-live-conformance.md')
           path = pathlib.Path('tests/integration/browser/raw-file-browser.mjs')
           content = path.read_text(encoding='utf-8')
@@ -73,12 +72,11 @@ jobs:
           assert content.count(old) == 1
           path.write_text(content.replace(old, 'const details = panel.locator("details:has([data-raw-recover])");'), encoding='utf-8', newline='\n')
           subprocess.run(['git','add',str(path)],check=True)
-          actual = subprocess.check_output(['git','write-tree'],text=True).strip()
-          if actual != '7f5edccce667be7ad9a8ea1189bc6b8b83c168be':
-              pathlib.Path(os.environ['RUNNER_TEMP'],'s03-result','reconstruction.txt').write_bytes(subprocess.check_output(['git','diff','--cached','--raw','HEAD']))
-              raise AssertionError('Reconstructed candidate tree mismatch: '+actual)
+          assert subprocess.check_output(['git','write-tree'],text=True).strip() == '7f5edccce667be7ad9a8ea1189bc6b8b83c168be'
           apply(('s03-console',['1e59ff9b2998364b75b3208a163b7a8800b55657'],'1dfcd043da0f2e8afc7d5b88dad7afafd49ae059775a552d54288b268cbda684','fccc098a30ae05aaf58d3fad69a8336884c08722e6a1300def3d6e90095c3132'))
           assert subprocess.check_output(['git','write-tree'],text=True).strip() == '31cca9fcfb1e9b716af3fce068392e2f261a7bd4'
+          apply(('s03-routes',['62c527106e55636ade0de2367271962ebf8a094e'],'b68cb188168d5c11f9632e5df162532a1289ce51573a27f2dedef7cbfc790658','5d5aef43dd9a86b41305abfcc3a16423782452430ab468254f7e5a80fb209166'))
+          assert subprocess.check_output(['git','write-tree'],text=True).strip() == 'af74c3ed23257c5cf12ea9bd86ccc0e3362926be'
           PY
       - name: Install frozen toolchain
         run: |
@@ -117,7 +115,7 @@ jobs:
           const git = (...args) => execFileSync('git', args);
           const text = (...args) => git(...args).toString().trim();
           const tree = text('write-tree');
-          if (tree !== '31cca9fcfb1e9b716af3fce068392e2f261a7bd4') throw new Error('Tree identity changed');
+          if (tree !== 'af74c3ed23257c5cf12ea9bd86ccc0e3362926be') throw new Error('Tree identity changed');
           git('diff','--exit-code');
           const entries = [];
           for (const path of git('diff','--cached','--name-only','-z','HEAD').toString().split('\0').filter(Boolean)) {
