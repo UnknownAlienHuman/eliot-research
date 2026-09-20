@@ -269,10 +269,13 @@ export async function startOwnerBridge({ workerOrigin, token, generation, port =
         forwarded.set("content-length", request.headers["content-length"]);
       }
       // The raw capture parser binds the original bytes to these exact
-      // metadata headers. Keep them route-specific; no caller-controlled
+      // metadata and namespace/expected-head headers. The Worker remains the
+      // authority for these locators; dropping them loses the selected scope.
+      // Keep them route-specific; no caller-controlled
       // headers are admitted to other owner requests.
       if (url.pathname === "/api/v1/ingest/raw" && request.method === "POST") {
-        for (const name of ["x-eliotr-content-sha256", "x-eliotr-original-file-name"]) {
+        for (const name of ["x-eliotr-content-sha256", "x-eliotr-original-file-name",
+          "x-eliotr-source-namespace-id", "x-eliotr-target-source-id", "x-eliotr-expected-head-revision-ref"]) {
           if (typeof request.headers[name] === "string") forwarded.set(name, request.headers[name]);
         }
       }

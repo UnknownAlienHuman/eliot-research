@@ -120,27 +120,43 @@ test("one-time pairing sets a private cookie; proxy sends only the server-held t
     assert.equal(replay.status, 403);
   } finally { await value.close(); }
 });
-test("raw capture metadata stays route-scoped while forwarding the browser file headers", async () => {
+test("raw capture metadata stays route-scoped while forwarding namespace and expected-head identity", async () => {
   const value = await bridge();
   try {
     const cookie = await pair(value);
-    const fileHeaders = {
-      cookie,
-      origin: value.origin,
-      "content-type": "text/plain",
-      "content-length": "4",
+    const metadata = {
       "x-eliotr-content-sha256": "a".repeat(64),
       "x-eliotr-original-file-name": encodeURIComponent("исследование.txt"),
+      "x-eliotr-source-namespace-id": "owner-library-selected",
+      "x-eliotr-target-source-id": "source-existing",
+      "x-eliotr-expected-head-revision-ref": "revision-original",
     };
+    const fileHeaders = { cookie, origin: value.origin, "content-type": "text/plain",
+      "content-length": "4", ...metadata, "x-ignored": "never-forward" };
     const uploaded = await fetch(`${value.origin}/api/v1/ingest/raw`, { method: "POST", headers: fileHeaders, body: "data" });
     assert.equal(uploaded.status, 200);
-    assert.equal(requests.at(-1).headers["x-eliotr-content-sha256"], fileHeaders["x-eliotr-content-sha256"]);
-    assert.equal(requests.at(-1).headers["x-eliotr-original-file-name"], fileHeaders["x-eliotr-original-file-name"]);
+    for (const [name, expected] of Object.entries(metadata)) assert.equal(requests.at(-1).headers[name], expected,
+      "the exact selected namespace and source-head contract must reach the Worker unchanged");
     assert.equal(requests.at(-1).headers["content-length"], "4");
-    const ordinary = await fetch(`${value.origin}/api/private`, { method: "POST", headers: { ...fileHeaders, "content-length": "4" }, body: "data" });
-    assert.equal(ordinary.status, 200);
-    assert.equal(requests.at(-1).headers["x-eliotr-content-sha256"], undefined);
-    assert.equal(requests.at(-1).headers["x-eliotr-original-file-name"], undefined);
+    assert.equal(requests.at(-1).headers["x-ignored"], undefined);
+    assert.equal(requests.at(-1).headers.cookie, undefined);
+    assert.equal(requests.at(-1).headers["cf-access-jwt-assertion"], TOKEN);
+    // Other routes/methods cannot acquire the raw capture header surface.
+    for (const [path, method] of [["/api/private", "POST"], ["/api/v1/ingest/raw/capture/markdown", "POST"],
+      ["/api/v1/ingest/raw", "GET"], ["/api/v1/ingest/raw", "PUT"]]) {
+      const headers = { ...fileHeaders };
+      if (method === "GET") delete headers["content-length"];
+      const response = await fetch(`${value.origin}${path}`, { method, headers,
+        ...(method === "GET" ? {} : { body: "data" }) });
+      assert.equal(response.status, 200);
+      for (const name of Object.keys(metadata)) assert.equal(requests.at(-1).headers[name], undefined);
+    }
+    // Existing callers without optional namespace/target locators are not assigned invented ones.
+    const legacyHeaders = { ...fileHeaders };
+    for (const name of ["x-eliotr-source-namespace-id", "x-eliotr-target-source-id", "x-eliotr-expected-head-revision-ref"]) delete legacyHeaders[name];
+    const legacy = await fetch(`${value.origin}/api/v1/ingest/raw`, { method: "POST", headers: legacyHeaders, body: "data" });
+    assert.equal(legacy.status, 200);
+    for (const name of ["x-eliotr-source-namespace-id", "x-eliotr-target-source-id", "x-eliotr-expected-head-revision-ref"]) assert.equal(requests.at(-1).headers[name], undefined);
   } finally { await value.close(); }
 });
 test("cross-origin, DNS rebinding, cookie duplication and credential substitution never reach Worker", async () => {
