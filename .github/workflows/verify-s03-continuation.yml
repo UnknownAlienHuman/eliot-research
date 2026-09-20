@@ -36,12 +36,15 @@ jobs:
           mkdir -p "$RUNNER_TEMP/s03-result"
           git rm .github/workflows/export-s03-recovery.yml
           python - <<'PY'
-          import base64, gzip, hashlib, json, os, pathlib, subprocess, textwrap, urllib.request
+          import os, pathlib, subprocess, textwrap
           source = subprocess.check_output(['git','show','f7d4cc498a647e60c226acfbab16e6191ff25cd8:.github/workflows/verify-s03-continuation.yml'], text=True, encoding='utf-8')
           restore = source.split('      - name: Restore only the checksum-bound reviewed candidate\n',1)[1].split('        run: |\n',1)[1].split('      - name: Install frozen toolchain\n',1)[0]
           script = pathlib.Path(os.environ['RUNNER_TEMP'], 'restore-reviewed.sh')
           script.write_text(textwrap.dedent(restore), encoding='utf-8', newline='\n')
-          subprocess.run(['bash', str(script)], check=True)
+          PY
+          "$BASH" "$RUNNER_TEMP/restore-reviewed.sh"
+          python - <<'PY'
+          import base64, gzip, hashlib, json, os, pathlib, subprocess, urllib.request
           assert subprocess.check_output(['git','write-tree'],text=True).strip() == 'af74c3ed23257c5cf12ea9bd86ccc0e3362926be'
           sha = 'dec903ada432ea6d023b89f0fdfe607af11e7d4e'
           request = urllib.request.Request(f"{os.environ['GITHUB_API_URL']}/repos/{os.environ['GITHUB_REPOSITORY']}/git/blobs/{sha}", headers={'Authorization':'Bearer '+os.environ['GH_TOKEN'],'Accept':'application/vnd.github+json'})
