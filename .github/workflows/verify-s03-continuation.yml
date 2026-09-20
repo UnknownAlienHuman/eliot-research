@@ -44,19 +44,23 @@ jobs:
           python - <<'PY'
           import base64, gzip, hashlib, json, os, pathlib, subprocess, urllib.request
           assert subprocess.check_output(['git','write-tree'],text=True).strip() == '41dbf0cb8e6633622be21b9da30dbba971db37a5'
-          sha = '18fbe89bcff09957252d23beb14e3de02eb7a0b5'
-          request = urllib.request.Request(f"{os.environ['GITHUB_API_URL']}/repos/{os.environ['GITHUB_REPOSITORY']}/git/blobs/{sha}", headers={'Authorization':'Bearer '+os.environ['GH_TOKEN'],'Accept':'application/vnd.github+json'})
-          with urllib.request.urlopen(request, timeout=30) as response:
-              result = json.load(response)
-          data = base64.b64decode(result['content'])
-          assert hashlib.sha1(f'blob {len(data)}\0'.encode()+data).hexdigest() == sha
-          patch = gzip.decompress(base64.b64decode(data))
-          assert hashlib.sha256(patch).hexdigest() == '088225b3de6217aece0c82c0d206a12ac96341acf32c1800d50d709221232edf'
-          path = pathlib.Path(os.environ['RUNNER_TEMP'], 's03-network.patch')
-          path.write_bytes(patch)
-          subprocess.run(['git','apply','--check','--unidiff-zero',str(path)],check=True)
-          subprocess.run(['git','apply','--index','--unidiff-zero',str(path)],check=True)
-          assert subprocess.check_output(['git','write-tree'],text=True).strip() == 'a381d383946650f42cb402eed13d6c56489761a0'
+          patches = [
+            ('18fbe89bcff09957252d23beb14e3de02eb7a0b5','088225b3de6217aece0c82c0d206a12ac96341acf32c1800d50d709221232edf','a381d383946650f42cb402eed13d6c56489761a0'),
+            ('be144b9ad9d98cec8d561989f2b1573ea7269f75','1c559b4659a73753be8d48a7be87f6b7d2ceea8663fa19d3e2f83bf10a03e334','74f8364d3f7f4e22a97f5da03f5f4aaa48ff8785')
+          ]
+          for sha, digest, tree in patches:
+              request = urllib.request.Request(f"{os.environ['GITHUB_API_URL']}/repos/{os.environ['GITHUB_REPOSITORY']}/git/blobs/{sha}", headers={'Authorization':'Bearer '+os.environ['GH_TOKEN'],'Accept':'application/vnd.github+json'})
+              with urllib.request.urlopen(request, timeout=30) as response:
+                  result = json.load(response)
+              data = base64.b64decode(result['content'])
+              assert hashlib.sha1(f'blob {len(data)}\0'.encode()+data).hexdigest() == sha
+              patch = gzip.decompress(base64.b64decode(data))
+              assert hashlib.sha256(patch).hexdigest() == digest
+              path = pathlib.Path(os.environ['RUNNER_TEMP'], 's03-network.patch')
+              path.write_bytes(patch)
+              subprocess.run(['git','apply','--check','--unidiff-zero',str(path)],check=True)
+              subprocess.run(['git','apply','--index','--unidiff-zero',str(path)],check=True)
+              assert subprocess.check_output(['git','write-tree'],text=True).strip() == tree
           PY
       - name: Install frozen toolchain
         run: |
@@ -97,7 +101,7 @@ jobs:
           const git = (...args) => execFileSync('git', args);
           const text = (...args) => git(...args).toString().trim();
           const tree = text('write-tree');
-          if (tree !== 'a381d383946650f42cb402eed13d6c56489761a0') throw new Error('Tree identity changed');
+          if (tree !== '74f8364d3f7f4e22a97f5da03f5f4aaa48ff8785') throw new Error('Tree identity changed');
           git('diff','--exit-code');
           const entries = [];
           for (const path of git('diff','--cached','--name-only','-z','HEAD').toString().split('\0').filter(Boolean)) {
