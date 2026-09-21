@@ -1,5 +1,5 @@
 name: export-current-source
-# Refresh exact main after S02 and the verified S03 bridge checkpoint.
+# Refresh exact main after completed S03 for S04 actual-D1 regressions.
 on:
   push:
     branches: [main]
