@@ -591,6 +591,7 @@
         "apps/eliotr-core/vitest.config.ts",
         "apps/eliotr-core/src/catalog-service.ts",
         "apps/eliotr-core/test/catalog-service.test.ts",
+        "apps/eliotr-core/test/project-owner-service.test.ts",
         "apps/eliotr-core/src/catalog-queries.ts",
         "apps/eliotr-core/test/catalog-http.test.ts",
         "apps/eliotr-core/src/source-revisions.ts",

@@ -90,6 +90,32 @@ jobs:
       - name: Dry-run Worker deployment
         run: pnpm cf:dry-run
 
+  # These native SQL regressions must still run when an unrelated lint/budget
+  # gate blocks the full suite. The existing verify and release gates remain.
+  d1-mutations:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+      - run: corepack enable
+      - run: corepack prepare pnpm@11.23.0 --activate
+      - run: pnpm install --frozen-lockfile
+      - name: Typecheck production and strict Worker tests
+        run: |
+          pnpm typecheck
+          pnpm exec tsc -p apps/eliotr-core/test/tsconfig.json --pretty false
+      - name: Project and Wiki mutations on actual workerd D1 and R2
+        # Keep independent cold workerd/migration pools from competing for the
+        # same Windows host; per-test deadlines and in-test races stay intact.
+        run: pnpm --dir apps/eliotr-core exec vitest run test/project-owner-service.test.ts test/wiki-owner-edit-parity.test.ts --no-file-parallelism
+
   rust:
     runs-on: ubuntu-latest
     timeout-minutes: 25

@@ -106,8 +106,9 @@ pnpm exec tsc -p apps/eliotr-core/test/tsconfig.json --pretty false
 node scripts/check-docs-index.mjs   # if you added or moved a document or a packet
 ```
 
-CI runs five jobs — `verify`, `rust`, `windows-tooling`, and `local-launch` on both Ubuntu and
-Windows. `verify` alone runs contract fixtures, package boundaries plus their negative proof, source
+CI runs `verify`, `rust`, `windows-tooling`, and the `local-launch` and `d1-mutations` matrices
+on both Ubuntu and Windows. The latter runs Project/Wiki SQL regressions on real local D1
+even when an unrelated gate blocks the main test suite. `verify` alone runs contract fixtures, package boundaries plus their negative proof, source
 budgets, work-packet ownership, branch hygiene, six authority fixtures, lint, typecheck, the full test
 suites, the implementation-status registry, the PWA build, a Chromium Library test, local D1
 preparation, binding-type generation and a Worker deployment dry-run.

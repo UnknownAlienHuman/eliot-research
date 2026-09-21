@@ -3,7 +3,7 @@ import { reset } from "cloudflare:test";
 import type { WikiPageRevision } from "@eliotr/contracts";
 import type { AuthenticatedRequestContext } from "@eliotr/interfaces";
 import { canonicalEvidenceJson, loadScopeAuthority } from "@eliotr/cloudflare-evidence";
-import { db, principal, runtime, seedSource, setupOrientationDatabase, successful, request } from "./orientation-fixture.js";
+import { db, principal, runtime, seedSource, setupOrientationDatabase, successful, request, observeDatabase } from "./orientation-fixture.js";
 import { createWikiProposalService, createWikiProposalReaderService, publishWikiProposal } from "../src/wiki-service.js";
 import { recordWikiPublicationAuthority } from "../src/wiki-publication-store.js";
 import { textDigest, validRef, pageJson, loadProposalRow } from "../src/wiki-publication-store-support.js";
@@ -62,6 +62,10 @@ function edit(value: Awaited<ReturnType<typeof base>>, editNote = "", title = "E
 }
 
 describe("S25 actual owner-edit writer/commit/reader parity", () => {
+  let value: Awaited<ReturnType<typeof base>>;
+  // Construct the published input in the fixture hook, separately from the
+  // timed owner-edit operation. Every case still has fresh real D1/R2 state.
+  beforeEach(async () => { value = await base("first"); });
   it.each([
     { name: "empty note", note: "", title: "Edited title" },
     { name: "BMP maximum", note: "я".repeat(4096), title: "Б".repeat(512) },
@@ -70,7 +74,6 @@ describe("S25 actual owner-edit writer/commit/reader parity", () => {
     { name: "combining without normalization", note: "e\u0301".repeat(2048), title: "e\u0301 / é" },
     { name: "escaped multiline", note: "note 😀\r\n\tПримечание \" \\", title: "Multiline note" },
   ])("round-trips $name through D1, R2, review and publication", async ({ note, title }) => {
-    const value = await base("first");
     const input = edit(value, note, title);
     const ctx = context("edit-first");
     const proposed = await proposeWikiFromOwnerEdit(runtime, ctx, input, "edit-first");
@@ -222,5 +225,105 @@ describe("S25 invalid inputs and safe readback", () => {
     expect(await effects()).toEqual(before);
     expect(await db.prepare("SELECT revision FROM wiki_publication_head WHERE page_id=?1")
       .bind(value.page.page_ref.id).first<number>("revision")).toBe(1);
+  });
+});
+
+
+async function publicationSnapshot() {
+  const tables = ["wiki_publication_revision", "wiki_publication_head", "wiki_publication_outbox",
+    "wiki_publication_proposal", "wiki_owner_edit_binding", "wiki_owner_publication_guard", "research_change_feed"] as const;
+  return Promise.all(tables.map(async (table) => {
+    const rows = await db.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all();
+    expect(rows.success).toBe(true);
+    return { table, rows: rows.results };
+  }));
+}
+
+describe("S04 Wiki owner edits on actual Workers D1", () => {
+  let value: Awaited<ReturnType<typeof base>>;
+  beforeEach(async () => { value = await base("s04"); });
+  it("rejects a stale edit before writing any additional proposal, binding or object", async () => {
+    const ctx = context("winner-edit");
+    const proposed = await proposeWikiFromOwnerEdit(runtime, ctx, edit(value), "winner-edit");
+    await publishWikiProposal(runtime, ctx, { proposal_ref: proposed.proposal_ref, expected_head_revision: 1 });
+    const before = await publicationSnapshot();
+    const objectsBefore = await effects();
+    await expect(proposeWikiFromOwnerEdit(runtime, context("stale-edit"), edit(value, "stale"), "stale-edit"))
+      .rejects.toMatchObject({ code: "WIKI_HEAD_CONFLICT" });
+    expect(await publicationSnapshot()).toEqual(before);
+    expect(await effects()).toEqual(objectsBefore);
+  });
+
+  it("reconciles the actual owner-edit binding when its write acknowledgement is lost", async () => {
+    const ctx = context("binding-ack-edit");
+    const input = edit(value);
+    let writes = 0;
+    const lostAck = observeDatabase(async (sql, phase) => {
+      if (!sql.startsWith("INSERT OR IGNORE INTO wiki_owner_edit_binding ") || phase !== "after") return;
+      writes += 1;
+      throw new Error("simulated lost binding acknowledgement after actual D1 insert");
+    });
+    const proposed = await proposeWikiFromOwnerEdit({ ...runtime, CORE_DB: lostAck }, ctx, input, "binding-ack-edit");
+    expect(writes).toBe(1);
+    expect(await db.prepare("SELECT count(*) AS n FROM wiki_owner_edit_binding").first<number>("n")).toBe(1);
+    const before = await publicationSnapshot();
+    const objectsBefore = await effects();
+    await expect(proposeWikiFromOwnerEdit(runtime, ctx, input, "binding-ack-edit")).resolves.toEqual(proposed);
+    expect(await publicationSnapshot()).toEqual(before);
+    expect(await effects()).toEqual(objectsBefore);
+  });
+
+  describe("competing publication", () => {
+    const winnerCtx = context("winner-edit");
+    const loserCtx = context("loser-edit");
+    let winner: Awaited<ReturnType<typeof proposeWikiFromOwnerEdit>>;
+    let loser: Awaited<ReturnType<typeof proposeWikiFromOwnerEdit>>;
+    beforeEach(async () => {
+      // The two unpublished inputs are prepared through the real writer. The
+      // timed test below races their actual publications, not their creation.
+      winner = await proposeWikiFromOwnerEdit(runtime, winnerCtx, edit(value, "winner", "Winner"), "winner-edit");
+      loser = await proposeWikiFromOwnerEdit(runtime, loserCtx, edit(value, "loser", "Loser"), "loser-edit");
+    });
+    it("lets exactly one owner edit publish when the head changes immediately before the native batch", async () => {
+      let batches = 0;
+      let winningState: Awaited<ReturnType<typeof publicationSnapshot>> | undefined;
+      const racing = observeDatabase(async (sql, phase) => {
+        if (sql !== "BATCH" || phase !== "before") return;
+        batches += 1;
+        expect(batches).toBe(1);
+        // Both callers have already read head 1. Only scheduling is controlled:
+        // both mutations still execute the production SQL and real D1 batches.
+        await publishWikiProposal(runtime, winnerCtx, { proposal_ref: winner.proposal_ref, expected_head_revision: 1 });
+        winningState = await publicationSnapshot();
+      });
+      await expect(publishWikiProposal({ ...runtime, CORE_DB: racing }, loserCtx,
+        { proposal_ref: loser.proposal_ref, expected_head_revision: 1 })).rejects.toMatchObject({ code: "WIKI_HEAD_CONFLICT" });
+      expect(batches).toBe(1);
+      expect(await publicationSnapshot()).toEqual(winningState);
+      const reader = createWikiProposalReaderService(runtime);
+      expect(await reader.readWikiProposal(winnerCtx, winner.proposal_ref)).toMatchObject({ state: "PUBLISHED", page: { title: "Winner" } });
+      expect(await reader.readWikiProposal(loserCtx, loser.proposal_ref)).toMatchObject({ state: "PROPOSED", page: { title: "Loser" } });
+      const committed = await publicationSnapshot();
+      await expect(publishWikiProposal(runtime, winnerCtx, { proposal_ref: winner.proposal_ref, expected_head_revision: 1 }))
+        .resolves.toMatchObject({ status: "PUBLISHED", page_ref: { id: value.page.page_ref.id, revision: 2 } });
+      expect(await publicationSnapshot()).toEqual(committed);
+      expect(await db.prepare("SELECT count(*) AS n FROM wiki_publication_revision").first<number>("n")).toBe(2);
+      expect(await db.prepare("SELECT count(*) AS n FROM wiki_publication_outbox").first<number>("n")).toBe(2);
+      const closure = await db.prepare("SELECT h.revision,h.manifest_ref,h.outbox_ref,r.proposal_id,o.payload_sha256,r.page_sha256 " +
+        "FROM wiki_publication_head h JOIN wiki_publication_revision r ON r.page_id=h.page_id AND r.revision=h.revision " +
+        "JOIN wiki_publication_outbox o ON o.outbox_ref=h.outbox_ref WHERE h.page_id=?1").bind(value.page.page_ref.id)
+        .first<{ revision: number; manifest_ref: string; outbox_ref: string; proposal_id: string; payload_sha256: string; page_sha256: string }>();
+      if (closure === null) throw new Error("missing published Wiki closure");
+      expect(closure.revision).toBe(2);
+      expect(closure.proposal_id).toBe(winner.proposal_ref.id);
+      expect(closure.payload_sha256).toBe(closure.page_sha256);
+      expect(closure.manifest_ref).toBeTruthy();
+      const manifest = await runtime.WORK_BUCKET.get(closure.manifest_ref);
+      if (manifest === null) throw new Error("missing immutable Wiki manifest");
+      const bytes = await manifest.text();
+      expect(await textDigest(bytes)).toBe(closure.page_sha256);
+      expect(JSON.parse(bytes)).toMatchObject({ title: "Winner", status: "PUBLISHED",
+        page_ref: { id: value.page.page_ref.id, revision: 2 } });
+    });
   });
 });

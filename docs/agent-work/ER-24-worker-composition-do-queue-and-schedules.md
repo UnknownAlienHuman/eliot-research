@@ -54,6 +54,7 @@ fail-closed. The Worker is a composition and transport boundary, not a second do
 - `apps/eliotr-core/vitest.config.ts`
 - `apps/eliotr-core/src/catalog-service.ts`
 - `apps/eliotr-core/test/catalog-service.test.ts`
+- `apps/eliotr-core/test/project-owner-service.test.ts`
 - `apps/eliotr-core/src/catalog-queries.ts`
 - `apps/eliotr-core/test/catalog-http.test.ts`
 - `apps/eliotr-core/src/source-revisions.ts`
@@ -400,3 +401,19 @@ readback cases including expiry of the original spend reservation. Core/PWA
 and test TypeScript, changed-file ESLint, package boundaries and ownership
 checks pass locally. Native Cloudflare lifecycle acceptance, UI/MCP controls,
 delegated service recovery and the full product suite remain separate gates.
+
+
+## S04 Project mutation runtime regression
+
+`test/project-owner-service.test.ts` calls the actual project-owner service through
+local workerd/D1 after the full current migrations. It verifies membership history,
+immutable response digests, replay after a new service instance, stale-head rejection,
+a concurrent service commit between preflight and batch, in-transaction policy
+revocation fencing, rollback of earlier statements after a late constraint failure,
+and readback after a lost commit acknowledgement. Scheduling/fault hooks delegate to
+the native D1 batch; no application SQL or D1 results are reimplemented in the test.
+The depth-100/max+1 negative explicitly distinguishes D1 from permissive host SQLite.
+Project mutations currently have no outbox producer; tests assert no invented events.
+The independent `d1-mutations` CI job uses the existing Workers configuration on Linux
+and Windows, alongside ER-12's Wiki edit/publication regressions. It does not bypass
+or replace the full CI gates, enable a feature, or qualify a live deployment.

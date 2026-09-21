@@ -93,3 +93,31 @@ owner edits retain UNRESOLVED labels and do not acquire research evidence
 strength. Local fixture authority is not a live publication or model
 qualification receipt. No historical migration or public wire schema is
 changed by these regressions.
+
+
+## S04 Wiki mutation runtime regression
+
+The same real-runtime parity file also races two actual owner-edit publishers by
+committing a competing service call immediately before the loser's native D1 batch.
+The winner's revision, head, outbox, change-feed event, proposal states and R2 manifest
+remain exact after the loser receives `WIKI_HEAD_CONFLICT`; replay adds no mutation.
+A stale edit is rejected before additional proposal/binding/object writes. A lost
+binding acknowledgement reconciles from the real D1 row without a duplicate insert.
+The `d1-mutations` CI job runs this file with the Project runtime regressions on Linux
+and Windows, using the complete existing migrations without modified triggers.
+
+Published base-input construction runs in the existing per-test fixture hooks,
+not inside the timed owner-edit assertion. The database and objects are reset
+for each case; production calls, replay/race assertions and default test/hook
+deadlines remain unchanged. This keeps fixture construction distinct from the
+operation under test on slower native Windows runners.
+
+The targeted CI command uses `--no-file-parallelism` for these two migration-heavy
+files. Each case retains isolated D1/R2 state and the explicit transaction races;
+this only serializes independent runtime pools, not competing application writes.
+The full Worker-suite configuration and test/hook deadlines are unchanged.
+
+For the competing-publication case, the two unpublished owner-edit inputs are
+created through the real writer in a scoped fixture hook. The timed assertion
+still executes both actual publications at the controlled pre-batch race point
+and verifies every canonical row, receipt, manifest digest and replay outcome.
