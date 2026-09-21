@@ -3,6 +3,8 @@ import { annotateBrowserAssertion, browserAssertionDiagnostic, diagnosticErrorCh
 import { preserveWorkerFailure } from "./owner-e2e.mjs";
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import * as rawBrowser from "./raw-file-browser.mjs";
+import { createHash } from "node:crypto";
 import { waitForRawResponse, waitForRawResponses } from "./raw-file-browser.mjs";
 /* global Buffer:readonly, Response:readonly, TextEncoder:readonly, URL:readonly, setTimeout:readonly */
 
@@ -395,4 +397,201 @@ test("S02: a failing registered assertion remains a rejection and executes clean
     finally { cleaned = true; }
   }, /raw-upload\.status/u);
   assert.equal(cleaned, true);
+});
+
+
+function rawProcessingFixture(state = "COMMITTED") {
+  const expected = { bytes: Buffer.from("# Recorded raw owner fixture\n"), type: "text/plain" };
+  expected.digest = createHash("sha256").update(expected.bytes).digest("hex");
+  const captureId = `raw-capture-${"a".repeat(48)}`;
+  const conversionKey = `raw-markdown-${createHash("sha256").update(`raw-markdown-ui-v1\0${captureId}\0${expected.digest}\0text/plain`).digest("hex")}`;
+  const operationId = createHash("sha256").update(JSON.stringify(["eliotr.raw-markdown-conversion.v1", "e2e-owner", captureId, conversionKey])).digest("hex");
+  const admissionKey = `raw-admission-${createHash("sha256").update(`raw-normalized-admission-ui-v1\0${captureId}\0${operationId}`).digest("hex")}`;
+  const conversion = { protocol: "eliotr.raw-markdown-conversion.v1", state: "COMPLETE", operation_id: operationId,
+    capture_id: captureId, content_sha256: expected.digest, output_sha256: expected.digest,
+    output_bytes: expected.bytes.length, detected_mime: "text/plain", format: "markdown", tokens: Math.ceil(expected.bytes.length / 4) };
+  const admission = { protocol: "eliotr.raw-normalized-admission.v1", state, capture_id: captureId,
+    conversion_operation_id: operationId, admission_operation_id: "b".repeat(64),
+    candidate_ref: `raw-normalized-candidate:${"c".repeat(64)}`, source_view_ref: `snapshot-view:v1:${"d".repeat(64)}`,
+    source_revision_ref: "raw-revision-fixture", conversion_state: "COMPLETE",
+    reason_codes: state === "QUARANTINED" ? ["QUALITY_BELOW_POLICY_MINIMUM"] : [],
+    admission_receipt: { decision: state === "COMMITTED" ? "ADMITTED" : state, source_revision_ref: "raw-revision-fixture" } };
+  const snapshot = (path, data, body) => ({ status: 200, responsePath: path, payload: { trace_id: "trace-fixture",
+    deployment_generation: "generation-fixture", data }, requestBody: JSON.stringify(body) });
+  return { expected, captureId, expectedGeneration: "generation-fixture", expectedAdmissionState: state,
+    snapshots: {
+      conversion: snapshot(`/api/v1/ingest/raw/${captureId}/markdown`, conversion,
+        { idempotency_key: conversionKey, max_output_bytes: 8 * 1024 * 1024, max_tokens: 1_000_000,
+          timeout_ms: 300_000, conversion_options: { output: { format: "markdown" } } }),
+      admission: snapshot(`/api/v1/ingest/raw/${captureId}/admission`, admission,
+        { conversion_operation_id: operationId, idempotency_key: admissionKey }),
+    } };
+}
+
+test("S03 actual automatic snapshots retain exact text, identities and terminal admission", () => {
+  const input = rawProcessingFixture();
+  const result = rawBrowser.assertRawProcessingSnapshots(input);
+  assert.equal(result.conversionOperationId, input.snapshots.conversion.payload.data.operation_id);
+  assert.equal(result.admissionOperationId, input.snapshots.admission.payload.data.admission_operation_id);
+  assert.deepEqual(result.conversion, input.snapshots.conversion.payload.data);
+  const replay = rawProcessingFixture();
+  replay.snapshots.admission.payload.data.admission_receipt.decision = "DUPLICATE";
+  assert.equal(rawBrowser.assertRawProcessingSnapshots(replay).admissionOperationId, result.admissionOperationId);
+});
+
+test("S03 never accepts only capture/conversion or an uncommitted admission as import success", () => {
+  for (const state of ["UNKNOWN", "PREPARING", "REJECTED", "QUARANTINED"]) {
+    const input = rawProcessingFixture(state); input.expectedAdmissionState = "COMMITTED";
+    assert.throws(() => rawBrowser.assertRawProcessingSnapshots(input), { code: "ERR_ASSERTION" });
+  }
+  const input = rawProcessingFixture(); delete input.snapshots.admission;
+  assert.throws(() => rawBrowser.assertRawProcessingSnapshots(input), { code: "ERR_ASSERTION" });
+});
+
+test("S03 rejects substituted capture, conversion, request and deployment identities", () => {
+  const mutations = [
+    (x) => { x.snapshots.conversion.responsePath = `/api/v1/ingest/raw/foreign/markdown`; },
+    (x) => { x.snapshots.conversion.payload.data.capture_id = "foreign"; },
+    (x) => { x.snapshots.conversion.payload.data.operation_id = "e".repeat(64); },
+    (x) => { x.snapshots.admission.payload.deployment_generation = "foreign"; },
+    (x) => { x.snapshots.admission.payload.data.conversion_operation_id = "e".repeat(64); },
+    (x) => { x.snapshots.admission.requestBody = JSON.stringify({ conversion_operation_id: "e".repeat(64), idempotency_key: "other" }); },
+    (x) => { x.snapshots.admission.payload.data.admission_receipt.source_revision_ref = "foreign"; },
+  ];
+  for (const mutate of mutations) { const input = rawProcessingFixture(); mutate(input);
+    assert.throws(() => rawBrowser.assertRawProcessingSnapshots(input), { code: "ERR_ASSERTION" }); }
+});
+
+test("S03 pass-through conversion checks bytes, profile and observed token estimate", () => {
+  for (const [key, value] of [["output_sha256", "f".repeat(64)], ["output_bytes", 1], ["tokens", 100], ["format", "text"]]) {
+    const input = rawProcessingFixture(); input.snapshots.conversion.payload.data[key] = value;
+    assert.throws(() => rawBrowser.assertRawProcessingSnapshots(input), { code: "ERR_ASSERTION" });
+  }
+  const input = rawProcessingFixture();
+  const body = JSON.parse(input.snapshots.conversion.requestBody); body.max_tokens = 0;
+  input.snapshots.conversion.requestBody = JSON.stringify(body);
+  assert.throws(() => rawBrowser.assertRawProcessingSnapshots(input), { code: "ERR_ASSERTION" });
+});
+
+test("S03 a quality-policy refusal is explicit and cannot share success acceptance", () => {
+  const input = rawProcessingFixture("QUARANTINED");
+  const result = rawBrowser.assertRawProcessingSnapshots(input);
+  assert.equal(result.admission.state, "QUARANTINED");
+  input.snapshots.admission.payload.data.reason_codes = [];
+  assert.throws(() => rawBrowser.assertRawProcessingSnapshots(input), { code: "ERR_ASSERTION" });
+});
+
+
+test("S03 pipeline diagnostics retain only closed stages/statuses and reject arbitrary payloads", async () => {
+  const { annotateRawPipelineFailure, browserAssertionDiagnostic } = await import("./assertion-diagnostic.mjs");
+  const error = new Error("SECRET");
+  annotateRawPipelineFailure(error, { capture: { phase: "complete", status: 200, outcome: "CAPTURED" },
+    conversion: { phase: "complete", status: 409, outcome: "FAILED", code: "IDEMPOTENCY_CONFLICT" },
+    admission: { phase: "SECRET", status: "SECRET", outcome: "SECRET", code: "SECRET", body: "SECRET" } });
+  const value = browserAssertionDiagnostic(error);
+  assert.equal(value.id, "raw-pipeline.responses");
+  assert.deepEqual(value.responses[1], { operation: "conversion", phase: "complete", status: 409,
+    outcome: "FAILED", code: "IDEMPOTENCY_CONFLICT" });
+  assert.doesNotMatch(JSON.stringify(value), /SECRET/u);
+  let calls = 0;
+  const foreign = Object.defineProperty({}, "capture", { get() { calls++; throw new Error("SECRET"); } });
+  annotateRawPipelineFailure(error, foreign); assert.equal(calls, 0);
+  assert.equal(browserAssertionDiagnostic(error).responses.every((row) => row.status === null), true);
+});
+
+test("S03 console diagnosis does not weaken the authenticated rejection", async () => {
+  const { assertAuthedLedger } = await import("./owner-e2e.mjs");
+  const origin = "http://127.0.0.1:4321";
+  const consoleErrors = [
+    `Failed to load resource: the server responded with a status of 403 (Forbidden) @${origin}/__local/pair`,
+    `Failed to load resource: net::ERR_CONNECTION_REFUSED @${origin}/api/v1/research/catalog?limit=20`,
+  ];
+  let failure;
+  try { assertAuthedLedger({ consoleErrors, pageErrors: [], failedRequests: [] }, "authed", origin); }
+  catch (error) { failure = error; }
+  assert.ok(failure instanceof assert.AssertionError);
+  const diagnostic = browserAssertionDiagnostic(failure);
+  assert.equal(diagnostic?.id, "authed.console");
+  assert.equal(diagnostic?.count, 2);
+  assert.deepEqual(diagnostic.entries, [
+    { route: "pair", status: 403, transport: null, template: "http-status" },
+    { route: "catalog", status: null, transport: "ERR_CONNECTION_REFUSED", template: "network-error" },
+  ]);
+});
+
+test("S03 console diagnosis redacts private values and bounds hostile input", async () => {
+  const { annotateAuthedConsoleFailure } = await import("./assertion-diagnostic.mjs");
+  const error = new Error("SECRET");
+  const origin = "http://127.0.0.1:4321";
+  const values = [
+    `Failed to load resource: the server responded with a status of 409 (Conflict) @${origin}/api/v1/ingest/raw/raw-capture-${"a".repeat(48)}/admission?token=SECRET`,
+    "Authorization: Bearer SECRET",
+    "Failed to load resource: net::ERR_ABORTED @https://private.invalid/SECRET",
+    "x".repeat(10000),
+    ...Array.from({ length: 20 }, () => "Cookie: SECRET"),
+  ];
+  annotateAuthedConsoleFailure(error, values, origin);
+  const diagnostic = browserAssertionDiagnostic(error);
+  assert.equal(diagnostic.count, 24);
+  assert.equal(diagnostic.entries.length, 8);
+  assert.deepEqual(diagnostic.entries[0], { route: "raw-admission", status: 409, transport: null, template: "http-status" });
+  assert.doesNotMatch(exposed(preserveWorkerFailure(error, worker)), /SECRET|private\.invalid|xxxxxxx/u);
+  let getters = 0;
+  const foreign = { get length() { getters += 1; throw new Error("SECRET"); } };
+  annotateAuthedConsoleFailure(error, foreign, origin);
+  assert.equal(getters, 0);
+  assert.equal(browserAssertionDiagnostic(error).count, null);
+});
+
+
+test("S03 console diagnosis identifies closed UI routes and browser policy templates", async () => {
+  const { annotateAuthedConsoleFailure } = await import("./assertion-diagnostic.mjs");
+  const origin = "http://127.0.0.1:4321";
+  const error = new Error("SECRET");
+  const paths = [
+    ["/api/v1/system/research-configuration", "configuration"],
+    ["/api/v1/research/changes", "changes"],
+    ["/api/v1/research/wiki/proposals", "wiki-proposals"],
+    ["/api/v1/research/projects", "projects"],
+    ["/api/v1/library/readiness", "readiness"],
+    ["/api/v1/library/namespaces", "namespaces"],
+  ];
+  for (const [path, route] of paths) {
+    annotateAuthedConsoleFailure(error, [
+      `Failed to load resource: the server responded with a status of 503 (Service Unavailable) @${origin}${path}?private=SECRET`,
+    ], origin);
+    const entry = browserAssertionDiagnostic(error).entries[0];
+    assert.equal(entry.route, route);
+    assert.equal(entry.status, 503);
+    assert.equal(entry.template, "http-status");
+  }
+  annotateAuthedConsoleFailure(error, [
+    `Executing inline script violates the following Content Security Policy directive: SECRET @${origin}/`,
+    `The Content Security Policy directive 'frame-ancestors' is ignored SECRET @${origin}/__local/`,
+    `Error while trying to use the following icon from the Manifest: SECRET @${origin}/`,
+    `Arbitrary SECRET @${origin}/private/SECRET`,
+  ], origin);
+  assert.deepEqual(browserAssertionDiagnostic(error).entries.map(({ route, template }) => ({ route, template })), [
+    { route: "shell-document", template: "csp-inline-script" },
+    { route: "pairing", template: "csp-meta-frame-ancestors" },
+    { route: "shell-document", template: "manifest-icon" },
+    { route: "unregistered", template: "unregistered" },
+  ]);
+  assert.doesNotMatch(exposed(preserveWorkerFailure(error, worker)), /SECRET|private=/u);
+});
+
+
+test("S03 network diagnostics preserve closed categories without private response data", async () => {
+  const { annotatePhaseNetworkFailure } = await import("./assertion-diagnostic.mjs");
+  const origin = "http://127.0.0.1:4321";
+  const error = new Error("Authorization: Bearer SECRET");
+  annotatePhaseNetworkFailure(error, { origin, path: "/api/v1/research/changes?token=SECRET",
+    method: "POST", status: 503, body: "SECRET" }, new Set([200]), origin);
+  assert.deepEqual(browserAssertionDiagnostic(error), { id: "phase.application-response", phase: "network-closure",
+    route: "changes", method: "POST", status: 503, expected_statuses: [200], reason: "STATUS_DRIFT" });
+  assert.doesNotMatch(exposed(preserveWorkerFailure(error, worker)), /SECRET|token=|127\.0\.0\.1/u);
+  let getters = 0;
+  annotatePhaseNetworkFailure(error, { get path() { getters++; throw new Error("SECRET"); } }, null, origin);
+  assert.equal(getters, 0);
+  assert.equal(browserAssertionDiagnostic(error).route, "unregistered");
 });

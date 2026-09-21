@@ -21,7 +21,7 @@ import { runExhaustiveWorkflowBrowser } from "./exhaustive-workflow-browser.mjs"
 import { runExhaustiveWorkflowCompleteBrowser } from "./exhaustive-workflow-complete.mjs";
 import { runRawFileUploadOwnerScenario, recoverRawFileUploadOwnerScenario, processRawFileOwnerScenario, waitForRawResponses } from "./raw-file-browser.mjs";
 import { installLocalCancellationSeam } from "./local-cancellation-seam.mjs";
-import { annotateBrowserAssertion, browserAssertionDiagnostic, diagnosticErrorChain, diagnosticProperty } from "./assertion-diagnostic.mjs";
+import { annotateBrowserAssertion, annotateAuthedConsoleFailure, annotatePhaseNetworkFailure, browserAssertionDiagnostic, diagnosticErrorChain, diagnosticProperty } from "./assertion-diagnostic.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "../../..");
@@ -504,51 +504,6 @@ function sqlText(value) {
   return `'${String(value).replaceAll("'", "''")}'`;
 }
 
-/**
- * Install a recorded COMPLETE conversion at the provider boundary. This is a
- * real local D1/R2 fixture consumed by the production replay path; no live
- * Workers AI call and no HTTP response interception are involved.
- */
-async function seedRawMarkdownConversionFixture(paths, input) {
-  const profile = "raw-markdown-ui-v1";
-  const idempotencyKey = `raw-markdown-${await sha256Hex(Buffer.from(
-    `${profile}\u0000${input.captureId}\u0000${input.contentSha256}\u0000${input.contentType}`, "utf8"))}`;
-  const operationId = await sha256Hex(Buffer.from(JSON.stringify([
-    "eliotr.raw-markdown-conversion.v1", "e2e-owner", input.captureId, idempotencyKey,
-  ]), "utf8"));
-  const output = Buffer.from("# Recorded raw owner fixture\n", "utf8");
-  const outputSha256 = await sha256Hex(output);
-  const request = {
-    idempotency_key: idempotencyKey,
-    max_output_bytes: 8 * 1024 * 1024,
-    max_tokens: 1_000_000,
-    timeout_ms: 300_000,
-    conversion_options: { output: { format: "markdown" } },
-  };
-  const requestJson = JSON.stringify(request);
-  const requestSha256 = await sha256Hex(Buffer.from(canonicalJson(request), "utf8"));
-  const authoritySha256 = await sha256Hex(Buffer.from(JSON.stringify([
-    input.credentialGeneration, input.expectedGeneration, input.expectedGeneration,
-    input.captureId, input.contentSha256, input.sourceOwnerGeneration,
-  ]), "utf8"));
-  const result = {
-    protocol: "eliotr.raw-markdown-conversion.v1", state: "COMPLETE", operation_id: operationId,
-    capture_id: input.captureId, content_sha256: input.contentSha256, output_sha256: outputSha256,
-    output_bytes: output.byteLength, detected_mime: "text/plain", format: "markdown", tokens: 5,
-  };
-  const resultJson = JSON.stringify(result);
-  const resultSha256 = await sha256Hex(Buffer.from(resultJson, "utf8"));
-  const outputObjectKey = `raw-markdown/${operationId}/output.md`;
-  const receiptObjectKey = `raw-markdown/${operationId}/receipt.json`;
-  const fixtureFile = resolve(paths.directory, `raw-markdown-fixture-${operationId}.md`);
-  await writeFile(fixtureFile, output, { mode: 0o600 });
-  const evidenceBucket = await resolveEvidenceBucket(paths);
-  await executeLocalAsync(wranglerArgs(paths, ["r2", "object", "put", `${evidenceBucket}/${outputObjectKey}`, "--file", fixtureFile]), { capture: true });
-  await d1Query(paths, "CORE_DB", `INSERT INTO raw_markdown_conversion
-    (operation_id,principal_ref,capture_id,content_sha256,size_bytes,request_sha256,request_json,authority_sha256,attempt_id,state,result_json,result_sha256,output_object_key,receipt_object_key,created_at,updated_at)
-    VALUES(${sqlText(operationId)},${sqlText("e2e-owner")},${sqlText(input.captureId)},${sqlText(input.contentSha256)},${input.sizeBytes},${sqlText(requestSha256)},${sqlText(requestJson)},${sqlText(authoritySha256)},${sqlText(`recorded-${operationId}`)},'COMPLETE',${sqlText(resultJson)},${sqlText(resultSha256)},${sqlText(outputObjectKey)},${sqlText(receiptObjectKey)},${sqlText("2026-09-09T00:00:00.000Z")},${sqlText("2026-09-09T00:00:00.000Z")})`);
-  return { idempotencyKey, operationId, outputObjectKey, outputSha256, resultSha256, fixtureFile };
-}
 
 async function verifyMigrationLedgers(paths) {
   const counts = {};
@@ -3016,26 +2971,30 @@ function assertNoPrivateStorage(storage, label) {
 
 export function assertAuthedLedger(harness, label, origin) {
   const { consoleErrors, pageErrors } = harness;
-  assert.deepEqual(pageErrors, [], `${label}: pageerror must be empty`);
-  // Contract: /manifest.webmanifest is an exact public shell asset proxied
-  // without a session and served exact 200 (see authedNetworkSpec). A manifest
-  // 401 here is drift and must fail, never be allowlisted as noise.
-  for (const text of consoleErrors) {
-    assert.ok(!text.includes("/manifest.webmanifest"),
-      `${label}: manifest must serve exact 200, got authed console: ${text.slice(0, 300)}`);
-  }
-  const pair403 = `Failed to load resource: the server responded with a status of 403 (Forbidden) @${origin}/__local/pair`;
-  const allowedConsole = new Set([pair403]);
-  assert.ok(consoleErrors.length <= 1, `${label}: at most the exact one-use reuse noise may log, got: ${consoleErrors.slice(0, 5).join("; ")}`);
-  for (const text of consoleErrors) {
-    assert.ok(allowedConsole.has(text), `${label}: unexpected authed console, got: ${text.slice(0, 300)}`);
-    assert.ok(!text.includes("eyJ") && !text.includes("/api/"),
-      `${label}: authed console must hold no JWT and no private API 401, got: ${text.slice(0, 200)}`);
-  }
-  const allowedFailedAnchor = buildAuthedAbortAnchor(label, harness, origin);
-  const failures = Array.isArray(harness.failedRequestEntries) ? harness.failedRequestEntries : [];
-  for (const entry of failures) {
-    allowedFailedAnchor(entry);
+  try {
+    assert.deepEqual(pageErrors, [], `${label}: pageerror must be empty`);
+    // Contract: /manifest.webmanifest is an exact public shell asset proxied
+    // without a session and served exact 200 (see authedNetworkSpec). A manifest
+    // 401 here is drift and must fail, never be allowlisted as noise.
+    for (const text of consoleErrors) {
+      assert.ok(!text.includes("/manifest.webmanifest"),
+        `${label}: manifest must serve exact 200, got authed console: ${text.slice(0, 300)}`);
+    }
+    const pair403 = `Failed to load resource: the server responded with a status of 403 (Forbidden) @${origin}/__local/pair`;
+    const allowedConsole = new Set([pair403]);
+    assert.ok(consoleErrors.length <= 1, `${label}: at most the exact one-use reuse noise may log, got: ${consoleErrors.slice(0, 5).join("; ")}`);
+    for (const text of consoleErrors) {
+      assert.ok(allowedConsole.has(text), `${label}: unexpected authed console, got: ${text.slice(0, 300)}`);
+      assert.ok(!text.includes("eyJ") && !text.includes("/api/"),
+        `${label}: authed console must hold no JWT and no private API 401, got: ${text.slice(0, 200)}`);
+    }
+    const allowedFailedAnchor = buildAuthedAbortAnchor(label, harness, origin);
+    const failures = Array.isArray(harness.failedRequestEntries) ? harness.failedRequestEntries : [];
+    for (const entry of failures) {
+      allowedFailedAnchor(entry);
+    }
+  } catch (error) {
+    throw annotateAuthedConsoleFailure(error, consoleErrors, origin);
   }
 }
 
@@ -4795,10 +4754,24 @@ function unauthNetworkSpec(origin) {
   };
 }
 
+// main.ts refreshes these mounted panels after verified health and admission.
+// The changes feed uses POST for its bounded read, not for launching Research.
+function authenticatedPanelApi() {
+  return [
+    { method: "GET", path: "/api/v1/system/research-configuration", status: 200 },
+    { method: "GET", path: "/api/v1/research/runs", status: 200 },
+    { method: "POST", path: "/api/v1/research/changes", status: 200 },
+    { method: "GET", path: "/api/v1/research/wiki/proposals", status: 200 },
+    { method: "GET", path: "/api/v1/research/projects", status: 200 },
+    { method: "GET", path: "/api/v1/library/namespaces", status: 200 },
+  ];
+}
+
 function authedNetworkSpec(origin) {
   return {
     origins: [origin],
     api: [
+      ...authenticatedPanelApi(),
       { method: "GET", path: "/__local/", status: 200 },
       { method: "POST", path: "/__local/pair", status: 204 },
       { method: "POST", path: "/__local/pair", status: 403 },
@@ -4811,7 +4784,7 @@ function authedNetworkSpec(origin) {
       // any other status is drift and fails below.
       { method: "GET", path: "/manifest.webmanifest", status: 200 },
     ],
-    mutations: ["/__local/pair"],
+    mutations: ["/__local/pair", "/api/v1/research/changes"],
     aborts: [
       `GET ${origin}/api/v1/research/catalog?limit=20 :: net::ERR_ABORTED`,
       `POST ${origin}/__local/pair :: net::ERR_ABORTED`,
@@ -4823,6 +4796,7 @@ function bridgeRepairNetworkSpec(origin) {
   return {
     origins: [origin],
     api: [
+      ...authenticatedPanelApi(),
       { method: "GET", path: "/__local/", status: 200 },
       { method: "POST", path: "/__local/pair", status: 204 },
       { method: "GET", path: "/api/v1/research/catalog?limit=20", status: 200 },
@@ -4830,10 +4804,35 @@ function bridgeRepairNetworkSpec(origin) {
       { method: "GET", path: "/api/v1/research/query/jobs?limit=20", status: 200 },
       { method: "GET", path: "/manifest.webmanifest", status: 200 },
     ],
-    mutations: ["/__local/pair"],
+    mutations: ["/__local/pair", "/api/v1/research/changes"],
     aborts: [
       `GET ${origin}/api/v1/research/catalog?limit=20 :: net::ERR_ABORTED`,
       `POST ${origin}/__local/pair :: net::ERR_ABORTED`,
+    ],
+  };
+}
+
+function rotationNetworkSpec(workerOrigin, bridgeOrigin, sourceId) {
+  const authed = authedNetworkSpec(bridgeOrigin);
+  return {
+    origins: [workerOrigin, bridgeOrigin],
+    api: [
+      { method: "GET", path: "/api/v1/research/catalog?limit=20", status: 401 },
+      { method: "GET", path: "/api/v1/system/health", status: 401 },
+      { method: "GET", path: "/api/v1/system/session", status: 401 },
+      { method: "GET", path: "/api/v1/system/session", status: 200 },
+      { method: "GET", path: "/api/v1/research/catalog?limit=20", status: 200 },
+      ...authed.api,
+      { method: "GET", path: `/api/v1/library/revisions?source_id=${encodeURIComponent(sourceId)}&limit=10`, status: 200 },
+    ],
+    // The rotation re-pair remounts the same authenticated panels, including
+    // the exact POST changes read. Preserve its method permission with its API.
+    mutations: authed.mutations,
+    aborts: [
+      `GET ${workerOrigin}/api/v1/research/catalog?limit=20 :: net::ERR_ABORTED`,
+      `GET ${workerOrigin}/api/v1/system/health :: net::ERR_ABORTED`,
+      `GET ${bridgeOrigin}/api/v1/research/catalog?limit=20 :: net::ERR_ABORTED`,
+      `POST ${bridgeOrigin}/__local/pair :: net::ERR_ABORTED`,
     ],
   };
 }
@@ -4927,10 +4926,14 @@ export function assertPhaseNetwork(harness, label, { origins, api, mutations = [
     const isAppRoute = apiIndex.has(key) || response.path.startsWith("/api/") || response.path.startsWith("/federation/") ||
       response.path.startsWith("/oauth/") || response.path.startsWith("/__local");
     if (isAppRoute) {
-      assert.ok(apiIndex.has(key),
-        `${label}: unexpected application traffic (successful or not): ${key} -> ${response.status}`);
-      assert.ok(apiIndex.get(key).has(response.status),
-        `${label}: application route status drift: ${key} -> ${response.status}, expected ${[...apiIndex.get(key)].join("/")}`);
+      try {
+        assert.ok(apiIndex.has(key),
+          `${label}: unexpected application traffic (successful or not): ${key} -> ${response.status}`);
+        assert.ok(apiIndex.get(key).has(response.status),
+          `${label}: application route status drift: ${key} -> ${response.status}, expected ${[...apiIndex.get(key)].join("/")}`);
+      } catch (error) {
+        throw annotatePhaseNetworkFailure(error, response, apiIndex.get(key), origins[0]);
+      }
     } else {
       assert.ok(["GET", "HEAD"].includes(response.method),
         `${label}: unexpected mutation outside application routes: ${key}`);
@@ -5020,6 +5023,53 @@ export function assertPhaseNetwork(harness, label, { origins, api, mutations = [
   const serialized = JSON.stringify({ requests: harness.requests, responses: harness.networkResponses });
   assert.ok(!/eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/.test(serialized) && !serialized.includes("cf-access"),
     `${label}: network ledger must never contain JWT or access credentials`);
+}
+
+// Exact requests emitted by the mounted panels, not a prefix/status exemption.
+export function verifyAuthenticatedPanelNetworkRegression(origin = "http://127.0.0.1:43123") {
+  const routes = [
+    { method: "GET", path: "/api/v1/system/research-configuration", status: 200 },
+    { method: "GET", path: "/api/v1/research/runs", status: 200 },
+    { method: "POST", path: "/api/v1/research/changes", status: 200 },
+    { method: "GET", path: "/api/v1/research/wiki/proposals", status: 200 },
+    { method: "GET", path: "/api/v1/research/projects", status: 200 },
+    { method: "GET", path: "/api/v1/library/namespaces", status: 200 },
+  ];
+  function harnessFor(route) {
+    const { status, ...identity } = route;
+    const request = { reqId: 1, origin, resourceType: "fetch", epoch: 1, serial: 1,
+      opId: 1, docId: 1, role: "catalog-read", slotId: null, ...identity };
+    return { websockets: [], pageWorkers: [], requests: [request],
+      networkResponses: [{ ...request, status, contentType: "application/json" }],
+      failedRequestEntries: [], context: { serviceWorkers: () => [] } };
+  }
+  let negatives = 0;
+  for (const spec of [authedNetworkSpec(origin), bridgeRepairNetworkSpec(origin),
+    rotationNetworkSpec("http://127.0.0.1:43125", origin, "source")]) {
+    for (const route of routes) {
+      assert.doesNotThrow(() => assertPhaseNetwork(harnessFor(route), "panel-network-positive", spec));
+      for (const changed of [
+        { ...route, status: 503 }, { ...route, status: 302 },
+        { ...route, method: route.method === "GET" ? "POST" : "GET" },
+        { ...route, path: `${route.path}?limit=1` }, { ...route, path: `${route.path}/foreign` },
+        { ...route, origin: "http://127.0.0.1:43124" },
+      ]) {
+        assert.throws(() => assertPhaseNetwork(harnessFor(changed), "panel-network-negative", spec));
+        negatives += 1;
+      }
+      const incomplete = harnessFor(route);
+      incomplete.networkResponses = [];
+      assert.throws(() => assertPhaseNetwork(incomplete, "panel-network-unsettled", spec));
+      negatives += 1;
+      // These panels must not become an unauthenticated/private-read exception.
+      assert.throws(() => assertPhaseNetwork(harnessFor(route), "unauth-panel-network", unauthNetworkSpec(origin)));
+      negatives += 1;
+    }
+  }
+  const changes = routes.find((route) => route.method === "POST");
+  const noPost = { ...authedNetworkSpec(origin), mutations: ["/__local/pair"] };
+  assert.throws(() => assertPhaseNetwork(harnessFor(changes), "panel-network-unlisted-post", noPost), /unlisted mutation/);
+  return { state: "PASS", negatives: negatives + 1 };
 }
 
 export function verifyPhaseLedgerIdentityRegression(origin = "http://127.0.0.1:43123") {
@@ -5837,8 +5887,8 @@ export async function runOwnerE2E() {
         disclosure_ceiling: "owner-only", license_policy_ref: "e2e-license",
         default_storage_policy: "NORMALIZED_CLOUD_ONLY", default_residency_profile_id: "e2e-residency",
         default_retention_policy_id: "e2e-retention",
-        // This controlled raw fixture has no source quality mapping; its
-        // minimum mirrors the raw admission fixture while production policy stays unchanged.
+        // Normal TXT import is tested with the existing local pass-through
+        // converter. A separate strict namespace below rejects its quality.
         minimum_quality_state: "degraded" } };
     // Setup/replay at an offline boundary: the identity was verified by the
     // first Worker, which is now stopped before any CLI D1 mutation/readback.
@@ -5863,6 +5913,15 @@ export async function runOwnerE2E() {
       expected_generation: 0, allowed_use: ["research"], disclosure: grant.policy.disclosure_ceiling,
       expires_at: grant.policy.expires_at }, identity, query: localPolicyQuery(paths) });
     assert.equal(grantReplay.policy.generation, 1, "same grant must replay without a new generation");
+    // A separate, explicitly initialized high-fidelity namespace exercises a
+    // real admission refusal. No completed source/conversion/admission is seeded.
+    const strictNamespace = "e2e-library-strict";
+    await initializeLocalNamespace({ command: { ...namespaceCommand, namespace: strictNamespace,
+      policy: { ...namespaceCommand.policy, minimum_quality_state: "high_fidelity" } },
+      identity, query: localPolicyQuery(paths) });
+    await applyLocalReadPolicy({ command: { action: "GRANT", namespace: strictNamespace,
+      expected_generation: 0, allowed_use: ["research"], disclosure: "owner-only",
+      expires_at: grant.policy.expires_at }, identity, query: localPolicyQuery(paths) });
     const ownerGeneration = namespaceReceipt.ownership.source_owner_generation;
     const bundle = await buildBundleFiles(namespace, ownerGeneration, revisionRef);
     // Namespace/policy writes above were completed while the first Worker was
@@ -6046,25 +6105,12 @@ export async function runOwnerE2E() {
     let readPolicyRowsBeforeRaw;
     let sourceRows;
     let revisionRows;
-    // Real raw-file owner flow: the PWA selects a UTF-8 filename and sends the
-    // file through the paired browser session to the live Worker. Recovery is
-    // completed after the existing authenticated reload below, so this phase
-    // proves POST -> reload/reselect -> idempotency GET without minting a new
-    // capture identity. D1/R2 are read back only after the Worker is stopped.
-    await showWorkspaceView(playwright.page, "#library", "sources", "raw upload");
-    rawUpload = await runRawFileUploadOwnerScenario({
-      page: playwright.page, expectedGeneration: paths.generation, ledger,
-    });
+    // Freeze source/authority baselines BEFORE the primary UI action, which
+    // now performs capture, conversion and admission automatically.
     await settleLedger(playwright.page, playwright);
-    const rawFixtureWorkerPort = worker.port;
-    // The browser bridge stays bound across this deliberate offline pause;
-    // Auth's exact-port Worker restart keeps its origin/listener unchanged.
+    const rawBaselineWorkerPort = worker.port;
     await worker.stop();
     worker = undefined;
-    // This is the true pre-raw source/authority baseline: the capture has
-    // settled, but no conversion seed or normalized admission has run yet.
-    // Keep full rows so the later post-admission comparison proves identity
-    // preservation rather than comparing two post-change snapshots.
     ownerRowsBeforeRaw = await d1Query(paths, "CORE_DB",
       `SELECT * FROM source_namespace_ownership WHERE source_namespace_id='${namespace}' ORDER BY ownership_record_revision`);
     admissionPolicyRowsBeforeRaw = await d1Query(paths, "CORE_DB",
@@ -6088,26 +6134,24 @@ export async function runOwnerE2E() {
         { phase: "owner-d1-replay-after", commandFamily: "bundle-replay-count" });
       assert.deepEqual({ sourceCount: replaySourceCountAfter[0]?.n, operationCount: replayOperationCountAfter[0]?.n },
         { sourceCount: replayBaseline.sourceCount, operationCount: replayBaseline.operationCount },
-        "duplicate prepare must not add a source or ingest operation before raw seed");
+        "duplicate prepare must not add a source or ingest operation before raw import");
       assert.deepEqual(replayOperationIdentityAfter, [replayBaseline.operationIdentity],
         "duplicate prepare must preserve the exact imported operation identity");
     }
-    const rawConversionFixture = await seedRawMarkdownConversionFixture(paths, {
-      captureId: rawUpload.captureId, contentSha256: rawUpload.expected.digest,
-      contentType: rawUpload.expected.type, sizeBytes: rawUpload.expected.bytes.length,
-      credentialGeneration: identity.credential_generation, expectedGeneration: paths.generation,
-      sourceOwnerGeneration: ownerGeneration,
+    worker = await startLocalWorker(paths, { testScheduled: true, port: rawBaselineWorkerPort });
+    assert.equal(worker.port, rawBaselineWorkerPort, "raw baseline restart must preserve the paired Worker port");
+    workerPortEvidence.push(`raw-baseline-restart=${worker.port}/startAttempts=${worker.startAttempts}`);
+    await showWorkspaceView(playwright.page, "#library", "sources", "raw upload");
+    rawUpload = await runRawFileUploadOwnerScenario({
+      page: playwright.page, expectedGeneration: paths.generation, ledger, namespace,
     });
-    worker = await startLocalWorker(paths, { testScheduled: true, port: rawFixtureWorkerPort });
-    assert.equal(worker.port, rawFixtureWorkerPort, "offline raw fixture restart must preserve the paired Worker port");
-    workerPortEvidence.push(`raw-fixture-restart=${worker.port}/startAttempts=${worker.startAttempts}`);
     const rawProcessed = await processRawFileOwnerScenario({
       page: playwright.page, expectedGeneration: paths.generation, expected: rawUpload.expected,
-      captureId: rawUpload.captureId, conversionOperationId: rawConversionFixture.operationId, ledger,
+      captureId: rawUpload.captureId, snapshots: rawUpload.snapshots, ledger,
     });
     rawUpload = { ...rawUpload, conversionOperationId: rawProcessed.conversionOperationId,
-      admissionOperationId: rawProcessed.admissionOperationId, conversionFixture: rawConversionFixture };
-    receipt.raw_file_conversion_admission = "PASS (recorded provider-boundary conversion fixture, browser COMPLETE candidate, server-composed COMMITTED admission; live Workers AI NOT_EXECUTED)";
+      admissionOperationId: rawProcessed.admissionOperationId, conversionExpectation: rawProcessed.conversionExpectation };
+    receipt.raw_file_conversion_admission = "PASS (automatic browser capture -> real local TXT conversion -> server-composed COMMITTED admission; no preseeded completion or external model call)";
     rawProjectionFastSearch = await runRawProjectionFastSearchCheckpoint({
       paths, worker, page: playwright.page, ledger, token,
       sourceRevisionRef: rawProcessed.admission.source_revision_ref,
@@ -6188,13 +6232,46 @@ export async function runOwnerE2E() {
     await playwright.page.waitForFunction(bodyIncludes, sourceId, { timeout: 15000 });
     await recoverRawFileUploadOwnerScenario({
       page: playwright.page, expectedGeneration: paths.generation, expected: rawUpload.expected,
-      idempotencyKey: rawUpload.idempotencyKey, captureId: rawUpload.captureId, ledger,
+      idempotencyKey: rawUpload.idempotencyKey, captureId: rawUpload.captureId, ledger, namespace,
     });
+    // Recover using the original UI identities, not replacement POSTs. The
+    // exact receipts are later matched against unchanged durable D1/R2 state.
+    const rawReplaySnapshots = await waitForRawResponses(playwright.page, [
+      { key: "conversion", method: "POST", path: `/api/v1/ingest/raw/${rawUpload.captureId}/markdown`, expectedStatus: 200 },
+      { key: "admission", method: "POST", path: `/api/v1/ingest/raw/${rawUpload.captureId}/admission`, expectedStatus: 200 },
+    ], () => playwright.page.locator("#raw-upload [data-raw-submit]").click());
+    const rawReplay = await processRawFileOwnerScenario({ page: playwright.page, expectedGeneration: paths.generation,
+      expected: rawUpload.expected, captureId: rawUpload.captureId, snapshots: rawReplaySnapshots, ledger,
+      correlation: "e2e-raw-upload/replay", handoff: false });
+    assert.deepEqual(rawReplay.conversion, rawProcessed.conversion, "reload must replay the exact committed conversion");
+    assert.deepEqual(rawReplay.admission, rawProcessed.admission, "reload must replay the exact committed admission");
+    const rawBrowserRevisionPath = `/api/v1/library/revisions?source_id=${encodeURIComponent(rawProjectionFastSearch.sourceId)}&limit=10`;
+    const rawBrowserRevisions = await browserJson(playwright.page, ledger, rawBrowserRevisionPath,
+      { correlation: "e2e-raw-upload/revisions" });
+    assert.equal(rawBrowserRevisions.status, 200);
+    assert.equal(rawBrowserRevisions.data?.data?.source_id, rawProjectionFastSearch.sourceId);
+    assert.equal(rawBrowserRevisions.data?.data?.head_revision_ref, rawProcessed.admission.source_revision_ref);
+    assert.ok(JSON.stringify(rawBrowserRevisions.data).includes(rawUpload.expected.digest));
+
+    // Capture and conversion succeed, but this namespace requires higher
+    // fidelity. Real admission must quarantine the candidate, not show Ready.
+    const rawRejected = await runRawFileUploadOwnerScenario({ page: playwright.page, expectedGeneration: paths.generation,
+      ledger, namespace: strictNamespace, fileName: "отклонено.txt", text: "# Rejected raw owner fixture\n",
+      correlation: "e2e-raw-rejected" });
+    const rejectedProcessed = await processRawFileOwnerScenario({ page: playwright.page, expectedGeneration: paths.generation,
+      expected: rawRejected.expected, captureId: rawRejected.captureId, snapshots: rawRejected.snapshots, ledger,
+      correlation: "e2e-raw-rejected", expectedAdmissionState: "QUARANTINED" });
     const browserCatalog = await browserJson(playwright.page, ledger, "/api/v1/research/catalog?limit=20",
       { correlation: "e2e-import-1/browser-catalog" });
     assert.equal(browserCatalog.status, 200, "browser-originated Library catalog must list the admitted source");
     assert.ok((browserCatalog.data?.data?.sources ?? []).some((entry) => entry.id === sourceId),
       "browser catalog must contain the admitted source id");
+    const listedRaw = (browserCatalog.data?.data?.sources ?? []).filter((entry) => entry.id === rawProjectionFastSearch.sourceId);
+    assert.equal(listedRaw.length, 1, "reload and replay must retain one raw Library source");
+    assert.equal(listedRaw[0].readiness_ref, `readiness:${rawProjectionFastSearch.sourceId}:${rawProcessed.admission.source_revision_ref}`);
+    assert.ok(!(browserCatalog.data?.data?.sources ?? []).some((entry) =>
+      entry.readiness_ref?.endsWith(`:${rejectedProcessed.admission.source_revision_ref}`)),
+    "a quarantined candidate must not appear in the owner's Library");
     const browserRevisions = await browserJson(playwright.page, ledger,
       `/api/v1/library/revisions?source_id=${encodeURIComponent(sourceId)}&limit=10`,
       { correlation: "e2e-import-1/browser-revisions" });
@@ -6221,6 +6298,9 @@ export async function runOwnerE2E() {
         { method: "GET", path: `/api/v1/library/revisions?source_id=${encodeURIComponent(sourceId)}&limit=10`, status: 200 },
         { method: "POST", path: "/api/v1/ingest/raw", status: 200 },
         { method: "GET", path: "/api/v1/ingest/raw", status: 200 },
+        { method: "GET", path: rawBrowserRevisionPath, status: 200 },
+        { method: "POST", path: `/api/v1/ingest/raw/${rawRejected.captureId}/markdown`, status: 200 },
+        { method: "POST", path: `/api/v1/ingest/raw/${rawRejected.captureId}/admission`, status: 200 },
         { method: "POST", path: `/api/v1/ingest/raw/${encodeURIComponent(rawUpload.captureId)}/markdown`, status: 200 },
         { method: "POST", path: `/api/v1/ingest/raw/${encodeURIComponent(rawUpload.captureId)}/admission`, status: 200 },
         { method: "POST", path: rawProjectionFastSearch.orientationPath, status: 200 },
@@ -6395,10 +6475,9 @@ export async function runOwnerE2E() {
       sourceRows, "raw admission must preserve every original source row exactly");
     assert.deepEqual(revisionRowsAfterRaw.filter((row) => revisionRows.some((original) => original.source_revision_ref === row.source_revision_ref)),
       revisionRows, "raw admission must preserve every original revision row exactly");
-    // Once the Worker is stopped, reconcile the capture, recorded conversion,
-    // server-composed admission and their immutable R2 readbacks from the
-    // authoritative local stores. The conversion fixture stands in for the
-    // provider boundary; live Workers AI remains explicitly unqualified.
+    // Reconcile actual capture, local conversion, server-composed admission
+    // and immutable R2 bytes only after stopping the Worker. No completed
+    // rows or output objects were seeded to make this acceptance pass.
     const rawRows = await d1Query(paths, "CORE_DB",
       "SELECT capture_id,principal_ref,owner_system_id,source_namespace_id,source_revision_ref,source_logical_id,source_owner_generation,idempotency_key,original_file_name,request_digest,residency_key_digest,content_sha256,size_bytes,content_type,state,object_key " +
       `FROM raw_file_capture WHERE principal_ref='e2e-owner' AND idempotency_key='${rawUpload.idempotencyKey.replaceAll("'", "''")}'`);
@@ -6416,8 +6495,8 @@ export async function runOwnerE2E() {
     assert.equal(rawRow.content_type, rawUpload.expected.type, "D1 raw MIME must match selected file");
     assert.equal(rawRow.state, "CAPTURED", "raw upload must settle as CAPTURED");
     assert.ok(typeof rawRow.object_key === "string" && rawRow.object_key.length > 0, "D1 raw row must retain its R2 key");
-    assert.deepEqual(await d1Query(paths, "CORE_DB", "SELECT COUNT(*) AS n FROM raw_file_capture WHERE principal_ref='e2e-owner'"), [{ n: 1 }],
-      "same-file recovery must not create an extra raw capture row");
+    assert.deepEqual(await d1Query(paths, "CORE_DB", "SELECT COUNT(*) AS n FROM raw_file_capture WHERE principal_ref='e2e-owner'"), [{ n: 2 }],
+      "success and refused imports each create one capture; reload adds none");
     const rawObject = await tryR2ObjectGet(paths, evidenceBucket, rawRow.object_key);
     assert.equal(rawObject.ok, true, "original raw bytes must be readable from EVIDENCE_BUCKET");
     const rawBytes = Buffer.from(rawObject.output ?? "", "utf8");
@@ -6426,7 +6505,7 @@ export async function runOwnerE2E() {
     const conversionRows = await d1Query(paths, "CORE_DB",
       "SELECT operation_id,principal_ref,capture_id,content_sha256,size_bytes,request_sha256,request_json,authority_sha256,state,result_json,result_sha256,output_object_key,receipt_object_key " +
       `FROM raw_markdown_conversion WHERE operation_id='${rawUpload.conversionOperationId}'`);
-    assert.equal(conversionRows.length, 1, "raw conversion fixture must leave exactly one durable conversion row");
+    assert.equal(conversionRows.length, 1, "real local conversion must leave exactly one durable conversion row");
     assert.deepEqual({
       operation_id: conversionRows[0].operation_id, principal_ref: conversionRows[0].principal_ref,
       capture_id: conversionRows[0].capture_id, content_sha256: conversionRows[0].content_sha256,
@@ -6436,16 +6515,16 @@ export async function runOwnerE2E() {
     }, {
       operation_id: rawUpload.conversionOperationId, principal_ref: "e2e-owner", capture_id: rawUpload.captureId,
       content_sha256: rawUpload.expected.digest, size_bytes: rawUpload.expected.bytes.length, state: "COMPLETE",
-      result_sha256: rawUpload.conversionFixture.resultSha256,
-      output_object_key: rawUpload.conversionFixture.outputObjectKey, receipt_object_key: `raw-markdown/${rawUpload.conversionOperationId}/receipt.json`,
-    }, "conversion row must retain the recorded provider-boundary identity");
+      result_sha256: rawUpload.conversionExpectation.resultSha256,
+      output_object_key: rawUpload.conversionExpectation.outputObjectKey, receipt_object_key: `raw-markdown/${rawUpload.conversionOperationId}/receipt.json`,
+    }, "conversion row must retain the actual browser and local converter identity");
     const conversionRequest = JSON.parse(conversionRows[0].request_json);
     assert.equal(conversionRows[0].request_sha256,
       await sha256Hex(Buffer.from(canonicalJson(conversionRequest), "utf8")),
       "conversion request digest must use the production canonical JSON contract");
     assert.equal(conversionRows[0].request_sha256,
       await sha256Hex(Buffer.from(canonicalJson({
-        idempotency_key: rawUpload.conversionFixture.idempotencyKey,
+        idempotency_key: rawUpload.conversionExpectation.idempotencyKey,
         max_output_bytes: 8 * 1024 * 1024, max_tokens: 1_000_000, timeout_ms: 300_000,
         conversion_options: { output: { format: "markdown" } },
       }), "utf8")), "conversion request must bind the fixed processing profile");
@@ -6457,13 +6536,22 @@ export async function runOwnerE2E() {
     assert.equal(conversionRows[0].result_sha256,
       await sha256Hex(Buffer.from(conversionRows[0].result_json, "utf8")),
       "conversion result digest must match the persisted converter serialization");
-    const convertedObject = await tryR2ObjectGet(paths, evidenceBucket, rawUpload.conversionFixture.outputObjectKey);
-    assert.equal(convertedObject.ok, true, "recorded conversion output must be readable from EVIDENCE_BUCKET");
+    const convertedObject = await tryR2ObjectGet(paths, evidenceBucket, rawUpload.conversionExpectation.outputObjectKey);
+    assert.equal(convertedObject.ok, true, "actual conversion output must be readable from EVIDENCE_BUCKET");
     const convertedBytes = Buffer.from(convertedObject.output ?? "", "utf8");
-    assert.equal(await sha256Hex(convertedBytes), rawUpload.conversionFixture.outputSha256,
+    assert.equal(await sha256Hex(convertedBytes), rawUpload.conversionExpectation.outputSha256,
       "conversion output R2 bytes must match the recorded result digest");
-    assert.notEqual(rawUpload.conversionFixture.outputSha256, rawUpload.expected.digest,
-      "recorded conversion fixture must keep the normalized output digest distinct from the original capture digest");
+    assert.deepEqual(convertedBytes, rawUpload.expected.bytes,
+      "the actual TXT converter must preserve bytes, not substitute a preseeded output");
+    const conversionReceiptObject = await tryR2ObjectGet(paths, evidenceBucket, conversionRows[0].receipt_object_key);
+    assert.equal(conversionReceiptObject.ok, true, "conversion must write its immutable result receipt");
+    assert.equal(conversionReceiptObject.output, conversionRows[0].result_json);
+    assert.deepEqual(await d1Query(paths, "CORE_DB",
+      `SELECT COUNT(*) AS n FROM raw_markdown_conversion WHERE capture_id=${sqlText(rawUpload.captureId)}`), [{ n: 1 }],
+    "replay must not create a new conversion attempt");
+    assert.deepEqual(await d1Query(paths, "CORE_DB",
+      `SELECT COUNT(*) AS n FROM raw_normalized_admission WHERE capture_id=${sqlText(rawUpload.captureId)}`), [{ n: 1 }],
+    "replay must not create a new admission operation");
     const admissionRows = await d1Query(paths, "CORE_DB",
       "SELECT admission_operation_id,principal_ref,capture_id,conversion_operation_id,idempotency_key,input_fingerprint,candidate_ref,source_revision_ref,source_view_ref,snapshot_view_json,snapshot_view_sha256,policy_snapshot_json,policy_snapshot_sha256,policy_revision,state,ingest_operation_id,reason_codes_json,receipt_json " +
       `FROM raw_normalized_admission WHERE admission_operation_id='${rawUpload.admissionOperationId}'`);
@@ -6548,7 +6636,7 @@ export async function runOwnerE2E() {
       `FROM source_revision r WHERE r.source_revision_ref='${String(admissionRow.source_revision_ref).replaceAll("'", "''")}'`);
     assert.equal(rawRevisionRows.length, 1, "raw admission must persist one bound Library revision");
     assert.equal(rawRevisionRows[0].source_owner_generation, rawRow.source_owner_generation, "raw Library revision must retain the capture owner generation");
-    assert.equal(rawRevisionRows[0].content_sha256, rawUpload.conversionFixture.outputSha256,
+    assert.equal(rawRevisionRows[0].content_sha256, rawUpload.conversionExpectation.outputSha256,
       "raw Library revision must retain the normalized conversion output digest");
     assert.equal(rawRevisionRows[0].source_view_ref, admissionRow.source_view_ref, "raw Library revision must retain the admission witness reference");
     assert.equal(rawRevisionRows[0].object_residency_key_digest, admissionReceipt.object_residency_key_digest,
@@ -6563,7 +6651,24 @@ export async function runOwnerE2E() {
     assert.equal(rawSourceRows[0].ownership_mode, "immutable_import", "raw Library source must use the admitted immutable import mode");
     assert.equal(sourceRowsAfterRaw.length, sourceRows.length + 1, "raw admission must add one Library source");
     assert.equal(revisionRowsAfterRaw.length, revisionRows.length + 1, "raw admission must add one Library revision");
-    receipt.raw_file_capture = `PASS (browser POST + reload/reselect idempotency GET, one D1 capture row, original R2 bytes)`;
+    const rejectedRows = await d1Query(paths, "CORE_DB",
+      `SELECT state,source_revision_ref,ingest_operation_id,reason_codes_json FROM raw_normalized_admission WHERE admission_operation_id=${sqlText(rejectedProcessed.admissionOperationId)}`);
+    assert.equal(rejectedRows.length, 1);
+    assert.equal(rejectedRows[0].state, "QUARANTINED");
+    assert.equal(rejectedRows[0].source_revision_ref, rejectedProcessed.admission.source_revision_ref);
+    assert.ok(JSON.parse(rejectedRows[0].reason_codes_json).includes("QUALITY_BELOW_POLICY_MINIMUM"));
+    assert.deepEqual(await d1Query(paths, "CORE_DB", `SELECT COUNT(*) AS n FROM source WHERE source_namespace_id=${sqlText(strictNamespace)}`), [{ n: 0 }]);
+    assert.deepEqual(await d1Query(paths, "CORE_DB", `SELECT COUNT(*) AS n FROM source_revision WHERE source_revision_ref=${sqlText(rejectedRows[0].source_revision_ref)}`), [{ n: 0 }]);
+    assert.deepEqual(await d1Query(paths, "CORE_DB", `SELECT COUNT(*) AS n FROM outbox WHERE topic='source.revision.admitted' AND payload_ref=${sqlText(rejectedRows[0].source_revision_ref)}`), [{ n: 0 }]);
+    const rejectedCaptureRows = await d1Query(paths, "CORE_DB", `SELECT state,content_sha256,object_key FROM raw_file_capture WHERE capture_id=${sqlText(rawRejected.captureId)}`);
+    assert.equal(rejectedCaptureRows.length, 1);
+    assert.equal(rejectedCaptureRows[0].state, "CAPTURED");
+    assert.equal(rejectedCaptureRows[0].content_sha256, rawRejected.expected.digest);
+    const rejectedObject = await tryR2ObjectGet(paths, evidenceBucket, rejectedCaptureRows[0].object_key);
+    assert.equal(rejectedObject.ok, true);
+    assert.deepEqual(Buffer.from(rejectedObject.output ?? "", "utf8"), rawRejected.expected.bytes);
+    receipt.raw_admission_refusal = "PASS (real high-fidelity policy quarantines TXT candidate; UI not Ready; no source/revision/projection outbox)";
+    receipt.raw_file_capture = `PASS (automatic import + reload/reselect + same-identity processing/admission replay, one successful capture and one quarantined capture, exact D1/R2 bytes)`;
     assert.equal(paths.generation, (await prepareLocal({ stateDirectory: directory, log: () => {} })).generation,
       "isolated generation must be stable for the same directory");
     await applyOwnerE2EProfile(paths, jwks.url);
@@ -6670,8 +6775,8 @@ export async function runOwnerE2E() {
     await settleLedger(playwright.page, playwright);
     assertPhaseNetwork(playwright, "exhaustive_workflow", {
       origins: [bridge.origin],
-      api: exhaustiveWorkflow.api,
-      mutations: exhaustiveWorkflow.mutations,
+      api: [...authenticatedPanelApi(), ...exhaustiveWorkflow.api],
+      mutations: ["/api/v1/research/changes", ...exhaustiveWorkflow.mutations],
       aborts: exhaustiveWorkflow.aborts,
       workerOrigins: trackOrigin(bridge.origin),
     });
@@ -6845,30 +6950,14 @@ export async function runOwnerE2E() {
       assert.ok(JSON.stringify(rotationRetrieval.data).includes(revisionRef), "rotation retrieval must include the revision");
       await settleLedger(playwright.page, playwright);
       {
-        const rotationOrigins = [worker.origin, bridge.origin];
-        const rotationApi = [
-          { method: "GET", path: "/api/v1/research/catalog?limit=20", status: 401 },
-          { method: "GET", path: "/api/v1/system/health", status: 401 },
-          { method: "GET", path: "/api/v1/system/session", status: 401 },
-          { method: "GET", path: "/api/v1/system/session", status: 200 },
-          { method: "GET", path: "/api/v1/research/catalog?limit=20", status: 200 },
-          ...authedNetworkSpec(bridge.origin).api,
-          { method: "GET", path: `/api/v1/library/revisions?source_id=${encodeURIComponent(sourceId)}&limit=10`, status: 200 },
-        ];
-        const rotationAborts = [
-          `GET ${worker.origin}/api/v1/research/catalog?limit=20 :: net::ERR_ABORTED`,
-          `GET ${worker.origin}/api/v1/system/health :: net::ERR_ABORTED`,
-          `GET ${bridge.origin}/api/v1/research/catalog?limit=20 :: net::ERR_ABORTED`,
-          `POST ${bridge.origin}/__local/pair :: net::ERR_ABORTED`,
-        ];
         // The rotation Worker rebound to a fresh port that Chromium visited
         // (goto + pairing + retrieval above) but no earlier phase tracked: record
         // it alongside the rotation bridge so the one-shell-worker-per-visited-
         // origin rule counts exactly the visited origins — no more, no fewer.
         trackOrigin(worker.origin);
         assertPhaseNetwork(playwright, "rotation",
-          { origins: rotationOrigins, api: rotationApi, mutations: ["/__local/pair"],
-            aborts: rotationAborts, workerOrigins: trackOrigin(bridge.origin) });
+          { ...rotationNetworkSpec(worker.origin, bridge.origin, sourceId),
+            workerOrigins: trackOrigin(bridge.origin) });
       }
       receipt.network_ledger_phases.rotation = summarizePhaseLedger(playwright);
       receipt.jwks_rotation = `PASS (v1 denied 401/ACCESS_JWT_KEY_UNKNOWN, v2 allowed 200 via Node+Chromium, re-paired in Chromium, D1/R2 unchanged, jwks=v${jwks.version})`;
@@ -6916,6 +7005,12 @@ export async function runOwnerE2E() {
         "e2e-raw-upload/recovery",
         "e2e-raw-upload/markdown",
         "e2e-raw-upload/admission",
+        "e2e-raw-upload/replay/markdown",
+        "e2e-raw-upload/replay/admission",
+        "e2e-raw-upload/revisions",
+        "e2e-raw-rejected/post",
+        "e2e-raw-rejected/markdown",
+        "e2e-raw-rejected/admission",
         "e2e-raw-projection/scheduled",
         "e2e-raw-projection/orient",
         "e2e-raw-projection/readiness",
@@ -6962,9 +7057,9 @@ export async function runOwnerE2E() {
         }
       }
       const ingestEntries = ledger.entries.filter((entry) => entry.path.startsWith("/api/v1/ingest/"));
-      assert.equal(ingestEntries.length, imported.artifactPaths.length + 5,
-        "ingest ledger must hold the normalized lifecycle, DUPLICATE replay, raw capture/recovery, conversion and admission");
-      receipt.artifact_ledger = `PASS (${imported.artifactPaths.length} lifecycle + 1 DUPLICATE replay + raw capture/recovery/conversion/admission, all browser-origin, exact status/ordering/correlation)`;
+      assert.equal(ingestEntries.length, imported.artifactPaths.length + 10,
+        "ingest ledger must hold normalized replay, automatic raw import/replay and the three rejected-import stages");
+      receipt.artifact_ledger = `PASS (${imported.artifactPaths.length} lifecycle + 1 DUPLICATE replay + raw capture/recovery/conversion/admission/replay and quality refusal, all browser-origin, exact status/ordering/correlation)`;
       receipt.cross_client_ledger = `PASS (${structural.entries} entries, gapless, no JWT material)`;
     }
     receipt.worker_ports = `PASS (${workerPortEvidence.join(", ")})`;

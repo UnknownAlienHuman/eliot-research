@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { annotateBrowserAssertion } from "./assertion-diagnostic.mjs";
+import { annotateBrowserAssertion, annotateRawPipelineFailure } from "./assertion-diagnostic.mjs";
 import { createServer } from "node:http";
 import { readFile, mkdtemp, rm, access } from "node:fs/promises";
 import { createHash } from "node:crypto";
@@ -8,7 +8,7 @@ import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
 import { resolveLocalBrowserExecutable } from "../../../scripts/lib/local-launch.mjs";
-/* global URL:readonly, Buffer:readonly, btoa:readonly, document:readonly, window:readonly, Event:readonly, MutationObserver:readonly,
+/* global URL:readonly, Buffer:readonly, btoa:readonly, atob:readonly, document:readonly, window:readonly, Event:readonly, MutationObserver:readonly,
   Request:readonly, TextDecoder:readonly, location:readonly, process:readonly, console:readonly */
 
 const root = resolve(import.meta.dirname, "../../..");
@@ -471,6 +471,30 @@ export async function waitForRawResponses(page, targets, action) {
       }
     }
     return result;
+  } catch (error) {
+    let observations;
+    try {
+      observations = await page.evaluate(() => {
+        const states = window.__eliotrRawResponseBatchCapture?.states;
+        const result = {};
+        for (const key of ["capture", "conversion", "admission"]) {
+          const state = states?.[key];
+          if (!state) continue;
+          let payload;
+          try {
+            if (typeof state.bodyBase64 === "string" && state.bodyBase64.length <= 700000) {
+              const bytes = Uint8Array.from(atob(state.bodyBase64), (character) => character.charCodeAt(0));
+              payload = JSON.parse(new TextDecoder().decode(bytes));
+            }
+          } catch { /* The original batch failure remains primary. */ }
+          result[key] = { phase: state.phase, status: state.status,
+            outcome: payload?.data?.state ?? payload?.data?.disposition,
+            code: state.errorCode ?? payload?.data?.failure_code ?? payload?.code ?? payload?.data?.code };
+        }
+        return result;
+      });
+    } catch { /* Closed pages leave an explicit unobserved diagnostic. */ }
+    throw annotateRawPipelineFailure(error, observations);
   } finally { if (browserCapture) await finishRawResponseBatchCapture(page); }
 }
 
@@ -559,18 +583,84 @@ export async function waitForRawResponse(page, method, action, path = "/api/v1/i
   }
 }
 
+/** Validate the three-stage import at its real browser response boundary.
+ * This TXT fixture has independently known pass-through bytes and no provider I/O.
+ */
+export function assertRawProcessingSnapshots({ snapshots, expectedGeneration, expected, captureId,
+  expectedAdmissionState = "COMMITTED" }) {
+  assert.ok(["COMMITTED", "QUARANTINED"].includes(expectedAdmissionState));
+  assert.ok(snapshots?.conversion && snapshots?.admission, "conversion and admission responses are both required");
+  const hash = (value) => createHash("sha256").update(value).digest("hex");
+  const idempotencyKey = `raw-markdown-${hash(`raw-markdown-ui-v1\0${captureId}\0${expected.digest}\0${expected.type}`)}`;
+  const conversionOperationId = hash(JSON.stringify(["eliotr.raw-markdown-conversion.v1", "e2e-owner", captureId, idempotencyKey]));
+  for (const [key, suffix] of [["conversion", "markdown"], ["admission", "admission"]]) {
+    const snapshot = snapshots[key];
+    assert.equal(snapshot.status, 200, `${key} response must be successful HTTP transport`);
+    assert.equal(snapshot.responsePath, `/api/v1/ingest/raw/${encodeURIComponent(captureId)}/${suffix}`);
+    assert.equal(snapshot.payload?.deployment_generation, expectedGeneration);
+    assert.equal(typeof snapshot.payload?.trace_id, "string");
+  }
+  assert.deepEqual(JSON.parse(snapshots.conversion.requestBody ?? "{}"), {
+    idempotency_key: idempotencyKey, max_output_bytes: 8 * 1024 * 1024, max_tokens: 1_000_000,
+    timeout_ms: 300_000, conversion_options: { output: { format: "markdown" } },
+  }, "conversion request must bind the existing UI profile");
+  const conversion = snapshots.conversion.payload.data;
+  assert.deepEqual(conversion, {
+    protocol: "eliotr.raw-markdown-conversion.v1", state: "COMPLETE", operation_id: conversionOperationId,
+    capture_id: captureId, content_sha256: expected.digest, output_sha256: expected.digest,
+    output_bytes: expected.bytes.length, detected_mime: "text/plain", format: "markdown",
+    tokens: Math.max(1, Math.ceil(expected.bytes.length / 4)),
+  }, "actual local TXT conversion must preserve the selected bytes and lineage");
+  const admissionKey = `raw-admission-${hash(`raw-normalized-admission-ui-v1\0${captureId}\0${conversionOperationId}`)}`;
+  assert.deepEqual(JSON.parse(snapshots.admission.requestBody ?? "{}"), {
+    conversion_operation_id: conversionOperationId, idempotency_key: admissionKey,
+  });
+  const admission = snapshots.admission.payload.data;
+  assert.equal(admission?.protocol, "eliotr.raw-normalized-admission.v1");
+  assert.equal(admission?.state, expectedAdmissionState, "processing completion alone cannot establish admission");
+  assert.equal(admission?.capture_id, captureId);
+  assert.equal(admission?.conversion_operation_id, conversionOperationId);
+  assert.match(admission?.admission_operation_id ?? "", /^[a-f0-9]{64}$/u);
+  assert.match(admission?.candidate_ref ?? "", /^raw-normalized-candidate:[a-f0-9]{64}$/u);
+  assert.match(admission?.source_view_ref ?? "", /^snapshot-view:v1:[a-f0-9]{64}$/u);
+  assert.equal(admission?.conversion_state, "COMPLETE");
+  assert.equal(typeof admission?.source_revision_ref, "string");
+  assert.equal(admission?.admission_receipt?.source_revision_ref, admission.source_revision_ref);
+  if (expectedAdmissionState === "COMMITTED") {
+    assert.ok(["ADMITTED", "DUPLICATE"].includes(admission.admission_receipt?.decision));
+  } else {
+    assert.equal(admission.admission_receipt?.decision, "QUARANTINED");
+    assert.ok(admission.reason_codes?.includes("QUALITY_BELOW_POLICY_MINIMUM"));
+  }
+  return { conversion, admission, conversionOperationId, admissionOperationId: admission.admission_operation_id,
+    conversionExpectation: { idempotencyKey, operationId: conversionOperationId,
+      outputObjectKey: `raw-markdown/${conversionOperationId}/output.md`, outputSha256: expected.digest,
+      resultSha256: hash(JSON.stringify(conversion)) } };
+}
+
+async function selectRawNamespace(page, namespace) {
+  if (namespace === undefined) return;
+  await page.waitForFunction((id) => {
+    const select = document.querySelector("#source-namespace [data-namespace-select]");
+    return select?.disabled === false && [...select.options].some((option) => option.value === id);
+  }, namespace, { timeout: 15000 });
+  await page.locator("#source-namespace [data-namespace-select]").selectOption(namespace);
+}
+
 /**
  * Real Worker owner scenario. The browser drives the actual PWA panel and
  * same-origin owner session; this helper never intercepts or fabricates API
  * responses. The caller supplies the current generation and later performs
  * stopped-Worker D1/R2 readback.
  */
-export async function runRawFileUploadOwnerScenario({ page, expectedGeneration, ledger }) {
+export async function runRawFileUploadOwnerScenario({ page, expectedGeneration, ledger,
+  fileName = "исследование.txt", text = "# Recorded raw owner fixture\n", correlation = "e2e-raw-upload", namespace }) {
   assert.ok(page && typeof page.waitForSelector === "function", "raw owner scenario requires a Playwright page");
   assert.ok(typeof expectedGeneration === "string" && expectedGeneration.length > 0, "raw owner scenario requires a deployment generation");
-  const bytes = Buffer.from("raw upload owner fixture\n", "utf8");
+  await selectRawNamespace(page, namespace);
+  const bytes = Buffer.from(text, "utf8");
   const expected = {
-    name: "исследование.txt",
+    name: fileName,
     type: "text/plain",
     bytes,
     digest: createHash("sha256").update(bytes).digest("hex"),
@@ -581,7 +671,12 @@ export async function runRawFileUploadOwnerScenario({ page, expectedGeneration, 
   const setFile = async () => input.setInputFiles({ name: expected.name, mimeType: expected.type, buffer: expected.bytes });
   await setFile();
   await page.waitForFunction(() => document.querySelector("#raw-upload [data-raw-submit]")?.disabled === false, null, { timeout: 15000 });
-  const postSnapshot = await waitForRawResponse(page, "POST", () => panel.locator("[data-raw-submit]").click());
+  const snapshots = await waitForRawResponses(page, [
+    { key: "capture", method: "POST", path: "/api/v1/ingest/raw", expectedStatus: 200 },
+    { key: "conversion", method: "POST", pathPattern: "^/api/v1/ingest/raw/raw-capture-[a-f0-9]{48}/markdown$", expectedStatus: 200 },
+    { key: "admission", method: "POST", pathPattern: "^/api/v1/ingest/raw/raw-capture-[a-f0-9]{48}/admission$", expectedStatus: 200 },
+  ], () => panel.locator("[data-raw-submit]").click());
+  const postSnapshot = snapshots.capture;
   const postHeaders = postSnapshot.requestHeaders;
   assert.equal(decodeURIComponent(postHeaders["x-eliotr-original-file-name"] ?? ""), expected.name,
     "browser upload must preserve the UTF-8 original filename header");
@@ -592,16 +687,14 @@ export async function runRawFileUploadOwnerScenario({ page, expectedGeneration, 
   const postEnvelope = postSnapshot.payload;
   const receipt = assertRawEnvelope(postEnvelope, expectedGeneration, expected);
   ledger?.record({ client: "browser", method: "POST", path: "/api/v1/ingest/raw", status: postSnapshot.status,
-    correlation: "e2e-raw-upload/post", token_present: false });
+    correlation: `${correlation}/post`, token_present: false });
   await page.waitForFunction(() => document.querySelector("#raw-upload [data-raw-receipt]")?.hidden === false, null, { timeout: 15000 });
-  const statusText = await panel.locator("[data-raw-status]").textContent();
-  try { assert.match(statusText, /File saved/u); }
-  catch (error) { throw annotateBrowserAssertion(error, "raw-upload.status", statusText, "File saved"); }
-  return { expected, receipt, idempotencyKey: receipt.idempotency_key, captureId: receipt.capture_id };
+  return { expected, receipt, snapshots, idempotencyKey: receipt.idempotency_key, captureId: receipt.capture_id };
 }
 
 /** Complete the real browser reload/reselect leg with the same selection. */
-export async function recoverRawFileUploadOwnerScenario({ page, expectedGeneration, expected, idempotencyKey, captureId, ledger }) {
+export async function recoverRawFileUploadOwnerScenario({ page, expectedGeneration, expected, idempotencyKey, captureId, ledger, namespace }) {
+  await selectRawNamespace(page, namespace);
   assert.ok(expected && Buffer.isBuffer(expected.bytes), "raw recovery requires the original selected bytes");
   assert.equal(typeof idempotencyKey, "string");
   assert.equal(typeof captureId, "string");
@@ -610,6 +703,8 @@ export async function recoverRawFileUploadOwnerScenario({ page, expectedGenerati
   await page.waitForSelector("#raw-upload [data-raw-file]", { timeout: 15000 });
   await input.setInputFiles({ name: expected.name, mimeType: expected.type, buffer: expected.bytes });
   await page.waitForFunction(() => document.querySelector("#raw-upload [data-raw-recover]")?.disabled === false, null, { timeout: 15000 });
+  const details = panel.locator("details:has([data-raw-recover])");
+  if (await details.getAttribute("open") === null) await details.locator("summary").first().click();
   const responseSnapshot = await waitForRawResponse(page, "GET", () => panel.locator("[data-raw-recover]").click());
   const requestHeaders = responseSnapshot.requestHeaders;
   assert.equal(requestHeaders["idempotency-key"], idempotencyKey, "recovery GET must use the original idempotency key");
@@ -697,61 +792,32 @@ async function assertRawLibraryHandoff(page, panel, admitted = false) {
   }
 }
 
-/**
- * Real Worker processing/admission leg. The caller may seed one recorded,
- * complete conversion candidate into the authoritative local stores before
- * this function runs; the browser still exercises the production conversion
- * replay and raw admission routes, including the server-composed witness.
+/** Assert the actual automatic responses. Never seed completion or click a second
+ * processing sequence merely to observe an intermediate label from the old UI.
  */
-export async function processRawFileOwnerScenario({ page, expectedGeneration, expected, captureId, conversionOperationId, ledger }) {
-  assert.ok(expected && Buffer.isBuffer(expected.bytes), "raw processing requires the original selected bytes");
-  assert.ok(typeof expectedGeneration === "string" && expectedGeneration.length > 0, "raw processing requires a deployment generation");
-  assert.equal(typeof captureId, "string");
-  assert.match(conversionOperationId, /^[a-f0-9]{64}$/u);
+export async function processRawFileOwnerScenario({ page, expectedGeneration, expected, captureId, snapshots,
+  ledger, correlation = "e2e-raw-upload", expectedAdmissionState = "COMMITTED", handoff = true }) {
+  const result = assertRawProcessingSnapshots({ snapshots, expectedGeneration, expected, captureId, expectedAdmissionState });
+  for (const [key, suffix] of [["conversion", "markdown"], ["admission", "admission"]]) {
+    ledger?.record({ client: "browser", method: "POST", path: snapshots[key].responsePath, status: snapshots[key].status,
+      correlation: `${correlation}/${suffix}`, token_present: false });
+  }
   const panel = page.locator("#raw-upload");
-  const conversionPath = `/api/v1/ingest/raw/${encodeURIComponent(captureId)}/markdown`;
-  await page.waitForFunction(() => document.querySelector("#raw-upload [data-raw-process]")?.hidden === false &&
-    document.querySelector("#raw-upload [data-raw-process]")?.disabled === false, null, { timeout: 15000 });
-  const conversionSnapshot = await waitForRawResponse(page, "POST", () => panel.locator("[data-raw-process]").click(), conversionPath);
-  assert.equal(JSON.parse(conversionSnapshot.requestBody ?? "{}").conversion_options?.output?.format, "markdown");
-  const conversion = conversionSnapshot.payload?.data;
-  assert.equal(conversion?.protocol, "eliotr.raw-markdown-conversion.v1");
-  assert.equal(conversion?.state, "COMPLETE", "recorded conversion fixture must replay as COMPLETE");
-  assert.equal(conversion?.operation_id, conversionOperationId);
-  assert.equal(conversion?.capture_id, captureId);
-  assert.equal(conversion?.content_sha256, expected.digest);
-  assert.match(conversion?.output_sha256 ?? "", /^[a-f0-9]{64}$/u);
-  assert.equal(conversion?.format, "markdown");
-  ledger?.record({ client: "browser", method: "POST", path: conversionPath, status: conversionSnapshot.status,
-    correlation: "e2e-raw-upload/markdown", token_present: false });
-  await page.waitForFunction(() => document.querySelector("#raw-upload [data-raw-processing]")?.hidden === false, null, { timeout: 15000 });
-  assert.match(await panel.locator("[data-raw-status]").textContent(), /Processed/u);
-  assert.match(await panel.locator("[data-raw-processing]").textContent(), /Not admitted or indexed/u);
-  await assertRawLibraryHandoff(page, panel);
-
-  const admissionPath = `/api/v1/ingest/raw/${encodeURIComponent(captureId)}/admission`;
-  const admissionSnapshot = await waitForRawResponse(page, "POST", () => panel.locator("[data-raw-admit]").click(), admissionPath);
-  const admissionBody = JSON.parse(admissionSnapshot.requestBody ?? "{}");
-  assert.deepEqual(Object.keys(admissionBody).sort(), ["conversion_operation_id", "idempotency_key"]);
-  assert.equal(admissionBody.conversion_operation_id, conversionOperationId);
-  const admission = admissionSnapshot.payload?.data;
-  assert.equal(admission?.protocol, "eliotr.raw-normalized-admission.v1");
-  assert.equal(admission?.state, "COMMITTED");
-  assert.equal(admission?.capture_id, captureId);
-  assert.equal(admission?.conversion_operation_id, conversionOperationId);
-  assert.match(admission?.admission_operation_id ?? "", /^[a-f0-9]{64}$/u);
-  assert.match(admission?.candidate_ref ?? "", /^raw-normalized-candidate:[a-f0-9]{64}$/u);
-  assert.match(admission?.source_view_ref ?? "", /^snapshot-view:v1:[a-f0-9]{64}$/u);
-  assert.equal(admission?.conversion_state, "COMPLETE");
-  assert.ok(admission?.admission_receipt && ["ADMITTED", "DUPLICATE"].includes(admission.admission_receipt.decision));
-  ledger?.record({ client: "browser", method: "POST", path: admissionPath, status: admissionSnapshot.status,
-    correlation: "e2e-raw-upload/admission", token_present: false });
-  await page.waitForFunction(() => document.querySelector("#raw-upload [data-raw-admission]")?.hidden === false, null, { timeout: 15000 });
-  const admissionStatus = await panel.locator("[data-raw-status]").textContent();
-  assert.match(admissionStatus, admission.admission_receipt.decision === "DUPLICATE" ? /already in Library/u : /Added to Library/u);
-  assert.match(await panel.locator("[data-raw-admission]").textContent(), /COMMITTED/u);
-  await assertRawLibraryHandoff(page, panel, true);
-  return { conversion, admission, conversionOperationId, admissionOperationId: admission.admission_operation_id };
+  await page.waitForFunction((state) => {
+    const admission = document.querySelector("#raw-upload [data-raw-admission]");
+    return admission?.hidden === false && admission.textContent.includes(state);
+  }, expectedAdmissionState, { timeout: 15000 });
+  const status = await panel.locator("[data-raw-status]").textContent();
+  if (expectedAdmissionState === "COMMITTED") {
+    assert.match(status, result.admission.admission_receipt.decision === "DUPLICATE" ? /already in Library/u : /Added to Library/u);
+    if (handoff) await assertRawLibraryHandoff(page, panel, true);
+  } else {
+    assert.match(status, /Library did not accept this document after its quality checks/u);
+    assert.match(await panel.locator("[data-raw-admission]").textContent(), /QUALITY_BELOW_POLICY_MINIMUM/u);
+    assert.notEqual(await panel.locator("[data-raw-submit]").textContent(), "Ready");
+    await assertRawLibraryHandoff(page, panel, false);
+  }
+  return result;
 }
 
 function contentType(path) {

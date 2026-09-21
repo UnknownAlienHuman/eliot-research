@@ -139,3 +139,60 @@ behavior, retries, deadlines or cleanup. The captured-only `File saved` assertio
 remains an S03 behavioral blocker until the actual import/reload/receipt lifecycle
 is updated and proven against Worker/D1/R2. No browser or live-product PASS is
 inferred from diagnostic test success.
+
+
+## S03 — automatic raw-import browser acceptance
+
+The raw owner scenario observes one primary action across actual capture, local
+TXT conversion and governed admission. It never inserts a completed conversion
+row or substitutes output bytes. Baselines precede the action. The returned
+capture/conversion/admission/revision identities and immutable result bytes are
+reconciled after Worker shutdown. Reload/reselection and same-key processing
+replay must preserve the original receipts and one operation per capture.
+
+A separately initialized local namespace requires `high_fidelity`, above the
+identity-text candidate's `standard` quality. The browser must show the real
+`QUARANTINED` result, not Ready; stored policy reasons, retained raw bytes and
+absence of Source/SourceRevision/projection outbox are asserted. This does not
+weaken production policy or qualify external conversion. The exact request ledger
+includes both replay and refusal legs. Linux/Windows and remaining independent
+gate results belong in PR #195; no live qualification follows from this fixture.
+
+
+S03 diagnostic audit: the first automatic browser attempt timed out awaiting the later stages.
+The next checksum-bound diagnostic attempt identified capture HTTP 403 with both later stages
+unobserved; a separate real Worker TXT conversion probe passed. The cause was the existing local
+bridge dropping the selected namespace header after the fixture gained a second valid namespace.
+The ER-44 adapter regression reproduced that missing value before the route-specific repair.
+This does not justify a wider header surface, an authorizer fallback or larger test timeouts.
+
+The authenticated-console failure wrapper retains only eight closed route/status
+categories and an observed count. It does not grant console exceptions, change
+request accounting or serialize private URLs/text. The exact existing console
+and network assertions still determine acceptance; diagnostics remain evidence
+of a failure, not permission to classify it as harmless.
+
+## S03 resumed producer corrections
+
+The strict console diagnostic identified inline-style CSP rejection in the Research question control
+and `research.changes` HTTP 503 due to missing local cursor signing configuration. ER-25 moves the
+identical textarea style into the existing external stylesheet. ER-43/26 initializes and validates a
+profile-local secret in `.dev.vars`, preserving Access settings and the key across preparation. No
+CSP, source authorization, cursor signature, console allowance, timeout or retry is relaxed. Existing
+runtime tests cover independent keys, stable restart, secret transport isolation and malformed keys;
+the existing Library test registers the CSS regression and still requires the complete real browser,
+D1/R2 import/replay/quarantine lifecycle. These local checks are not live qualification.
+
+The recovered console failure is separate from the stale phase-network contract. The existing
+main.ts and the Research panel health/admission refreshes issue six exact panel requests: configuration
+GET, saved-run history GET, changes POST, Wiki proposals GET, projects GET and namespaces GET, with no query and HTTP 200. Authenticated,
+re-paired and exhaustive-reload phases enumerate those operations; no prefix, arbitrary status,
+unauthenticated allowance or new abort exemption is accepted. Regression cases reject changed
+method, path/query, status, origin and unsettled requests. Read-only changes POST still requires
+explicit phase authorization; an absent local key remains a rejected 503, not an allowed response.
+
+Rotation re-pairing uses the same authenticated panel method declarations as initial pairing.
+Its network specification retains the existing v1-token denials and both visited origins; it does
+not discard the exact POST changes-feed permission when composing the API list. The panel
+regression executes all three real phase-spec builders, including mutation, status, foreign-route,
+origin and unobserved-response negatives. This does not broaden unauthenticated access.

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { tmpdir } from "node:os";
-import { devArguments, executeLocal, localConfig, localEnvironment, localPaths, prepareLocal, ROOT, signalLocalProcess, wranglerArgs } from "./lib/local-launch.mjs";
+import { devArguments, executeLocal, localConfig, localEnvironment, localPaths, prepareLocal, ROOT, signalLocalProcess, validateLocalVars, wranglerArgs } from "./lib/local-launch.mjs";
 import { classifyRuntimeDiagnostic, sanitizeRuntimeDiagnostic } from "./lib/local-worker.mjs";
 
 const canonical = JSON.parse(await readFile(resolve(ROOT, "apps/eliotr-core/wrangler.jsonc"), "utf8"));
@@ -25,7 +25,8 @@ assert.ok(config.d1_databases.every((db) => db.database_name.endsWith("-local"))
 assert.throws(() => localConfig({ ...canonical, main: "another-worker.ts" }));
 assert.throws(() => localConfig({ ...canonical, d1_databases: [canonical.d1_databases[0], canonical.d1_databases[0]] }));
 const env = localEnvironment({ PATH: "path", SystemRoot: "windows", CLOUDFLARE_API_TOKEN: "secret",
-  CF_API_KEY: "secret", WRANGLER_ENV: "production", ELIOTR_CONFIRM_LIVE_DEPLOY: "1", ACCESS_AUDIENCE: "production" });
+  CF_API_KEY: "secret", WRANGLER_ENV: "production", ELIOTR_CONFIRM_LIVE_DEPLOY: "1", ACCESS_AUDIENCE: "production", RESEARCH_CHANGES_CURSOR_KEY: "parent-cursor-secret" });
+assert.equal(env.RESEARCH_CHANGES_CURSOR_KEY, undefined, "parent signing keys cannot enter local subprocesses");
 assert.equal(env.PATH, "path"); assert.equal(env.SystemRoot, "windows");
 assert.ok(!JSON.stringify(env).includes("secret")); assert.ok(!JSON.stringify(env).includes("production"));
 assert.equal(env.CLOUDFLARE_LOAD_DEV_VARS_FROM_DOT_ENV, "false");
@@ -50,10 +51,18 @@ try {
     assert.ok(args.includes(prepared.persist) && args.includes("--local") && !args.includes("--remote"));
     assert.deepEqual(options, { capture: true, diagnosticContext: { binding: args[4], phase: "d1-migrations" } });
   }
-  assert.equal(await readFile(vars, "utf8"), 'ACCESS_AUDIENCE="retain-local-settings"\n');
+  const savedVars = await readFile(vars, "utf8");
+  assert.ok(savedVars.startsWith('ACCESS_AUDIENCE="retain-local-settings"\n'));
+  const localKey = /^RESEARCH_CHANGES_CURSOR_KEY="([A-Za-z0-9_-]{43})"$/mu.exec(savedVars)?.[1];
+  assert.ok(localKey, "local preparation must persist a usable changes cursor signing key");
+  assert.equal(Buffer.from(localKey, "base64url").byteLength, 32);
+  assert.equal(Buffer.from(localKey, "base64url").toString("base64url"), localKey);
+  assert.equal(JSON.parse(await readFile(prepared.config, "utf8")).vars.RESEARCH_CHANGES_CURSOR_KEY, undefined,
+    "signing key must stay in masked .dev.vars, not printable config vars");
   const first = await readFile(prepared.config, "utf8");
   await prepareLocal({ stateDirectory: directory, log: () => {}, execute: () => {} });
   assert.equal(await readFile(prepared.config, "utf8"), first);
+  assert.equal(await readFile(vars, "utf8"), savedVars, "restart preserves exact key and Access settings");
   const failures = [];
   await assert.rejects(prepareLocal({ stateDirectory: directory, log: () => {}, execute: (args) => {
     failures.push(args); throw new Error("injected build failure");
@@ -66,7 +75,27 @@ try {
   await assert.rejects(prepareLocal({ stateDirectory: directory, log: () => {}, execute: () => assert.fail() }));
   const fresh = resolve(directory, "fresh"); await mkdir(fresh);
   await prepareLocal({ stateDirectory: fresh, log: () => {}, execute: () => {} });
-  assert.equal(await readFile(resolve(fresh, ".dev.vars"), "utf8"), "");
+  const freshVars = await readFile(resolve(fresh, ".dev.vars"), "utf8");
+  const freshKey = /^RESEARCH_CHANGES_CURSOR_KEY="([A-Za-z0-9_-]{43})"$/mu.exec(freshVars)?.[1];
+  assert.ok(freshKey && freshKey !== localKey, "different state directories have independent random keys");
+  await validateLocalVars(resolve(fresh, ".dev.vars"));
+  const explicitKey = Buffer.alloc(32, 7).toString("base64url");
+  const explicit = `# retained local settings\nRESEARCH_CHANGES_CURSOR_KEY="${explicitKey}"\nACCESS_AUDIENCE="local"`;
+  await writeFile(vars, explicit);
+  await prepareLocal({ stateDirectory: directory, environment: { RESEARCH_CHANGES_CURSOR_KEY: "ignored-parent" }, log: () => {}, execute: () => {} });
+  assert.equal(await readFile(vars, "utf8"), explicit, "never replace a valid explicit local key");
+  for (const bad of ["", "a".repeat(42), "a".repeat(44), `${explicitKey}=`, "!".repeat(43), "A".repeat(42) + "B"]) {
+    const malformed = `RESEARCH_CHANGES_CURSOR_KEY="${bad}"\n`;
+    await writeFile(vars, malformed);
+    await assert.rejects(prepareLocal({ stateDirectory: directory, log: () => {},
+      execute: () => assert.fail("invalid key cannot start a subprocess") }), /Local changes cursor key/u);
+    assert.equal(await readFile(vars, "utf8"), malformed, "invalid persisted keys are not silently replaced");
+  }
+  await writeFile(vars, `RESEARCH_CHANGES_CURSOR_KEY="${explicitKey}"\nRESEARCH_CHANGES_CURSOR_KEY="${explicitKey}"\n`);
+  await assert.rejects(prepareLocal({ stateDirectory: directory, log: () => {}, execute: () => assert.fail() }));
+  // The existing complete-file limit still applies after adding a missing key.
+  await writeFile(vars, "#" + "x".repeat(8190) + "\n");
+  await assert.rejects(prepareLocal({ stateDirectory: directory, log: () => {}, execute: () => assert.fail() }), /8192 bytes/u);
 } finally { await rm(directory, { recursive: true, force: true }); }
 
 assert.throws(

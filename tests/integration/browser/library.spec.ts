@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { readFile } from "node:fs/promises";
 
 type E2EReceipt = {
   readonly isolated_setup: string;
@@ -32,6 +33,8 @@ type E2EReceipt = {
   readonly exhaustive_workflow_complete: string;
   readonly exhaustive_workflow_complete_d1: string;
   readonly raw_file_capture: string;
+  readonly raw_file_conversion_admission: string;
+  readonly raw_admission_refusal: string;
   readonly raw_projection_fast_search: string;
   readonly early_cleanup: string;
   readonly teardown_inventory: unknown;
@@ -169,6 +172,8 @@ test("L6 real-browser owner harness: isolated Worker/PWA, denial, authorized Lib
     "completed exhaustive workflow must retain its owner-bound D1 binding and job receipt");
   assert.ok(typeof receipt.raw_file_capture === "string" && receipt.raw_file_capture.startsWith("PASS"),
     "real browser raw upload must settle one capture, recover by idempotency and read back original R2 bytes");
+  assert.ok(receipt.raw_file_conversion_admission.startsWith("PASS"), "automatic raw import must execute actual conversion and admission");
+  assert.ok(receipt.raw_admission_refusal.startsWith("PASS"), "quality refusal must retain capture but create no admitted source or projection");
   assert.ok(typeof receipt.raw_projection_fast_search === "string" && receipt.raw_projection_fast_search.startsWith("PASS"),
     "real scheduled Queue projection and Chromium FAST_SEARCH readback must pass");
   assert.equal(receipt.early_cleanup, "PASS", "forced early-migration failure must leave zero run-owned residue");
@@ -177,4 +182,21 @@ test("L6 real-browser owner harness: isolated Worker/PWA, denial, authorized Lib
   assert.equal(receipt.live, "NOT_EXECUTED", "remote/live remains NOT_EXECUTED");
   assert.ok(typeof receipt.browser === "string" && receipt.browser.length > 0, "real Chromium executable must be recorded");
   console.warn(`owner-e2e: ${receipt.isolated_setup}/${receipt.unauth_denied}/${receipt.authorized_library}/${receipt.logout} live=${receipt.live}`);
+});
+
+// The full owner test also enforces the actual unchanged CSP in Chromium.
+test("L6 Research question control uses external styles under the existing CSP", async () => {
+  const panel = await readFile(new URL("../../../apps/eliotr-pwa/src/research-run-panel.ts", import.meta.url), "utf8");
+  const css = await readFile(new URL("../../../apps/eliotr-pwa/src/styles.css", import.meta.url), "utf8");
+  const textarea = panel.match(/<textarea\b[^>]*name="query"[^>]*>/u)?.[0];
+  assert.ok(textarea);
+  assert.doesNotMatch(textarea, /\bstyle=/u, "question textarea must not trigger an inline-style CSP violation");
+  assert.match(textarea, /class="research-question-input"/u);
+  assert.match(css, /\.research-question-input\s*\{[^}]*min-height:\s*120px[^}]*resize:\s*vertical/u);
+});
+
+
+test("L6 authenticated panels keep exact method/path/status and negative phase boundaries", async () => {
+  const harness = await loadHarness();
+  assert.equal(harness.verifyAuthenticatedPanelNetworkRegression().state, "PASS");
 });

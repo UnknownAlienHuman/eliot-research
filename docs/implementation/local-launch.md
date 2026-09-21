@@ -149,9 +149,19 @@ pnpm local:dev
 `.eliotr-state/local/wrangler.json` and `.eliotr-state/local/state/` are ignored. The config is
 allowlisted; remote bindings, credentials, environment selectors and parent dotenv files cannot leak
 into local preparation. Local resources use separate names and one absolute persistence path.
-Only explicit local Access settings are accepted; authentication is never disabled. External providers
+Only explicit local Access settings and the local changes-cursor signing key are accepted; authentication is never disabled. External providers
 are disabled, not simulated. This isolated profile does not import or erase state from the earlier
 `wrangler.local.jsonc` profile; that old state remains untouched.
+
+Local preparation generates a random 32-byte `RESEARCH_CHANGES_CURSOR_KEY` in the profile's ignored,
+permission-restricted `.dev.vars` when missing. Wrangler masks it as a secret; it is not copied into
+printable `wrangler.json` vars, CLI arguments or browser storage. Repeat preparation and owner-settings
+reconciliation preserve the existing key, including a valid explicitly supplied local key. Separate
+profiles generate independent keys. A malformed, duplicate or oversized persisted setting fails before
+build/migration subprocesses and is not silently replaced. The complete `.dev.vars` remains limited to
+8192 bytes. As with the existing owner-settings writer, prepare one profile serially; an observed
+concurrent edit is rejected. Parent process keys are stripped rather than imported. This local key
+signs change-feed cursors only: it grants no Access identity, source admission or live qualification.
 
 Run `pnpm local:smoke` for a disposable loopback test. It applies every tracked migration, checks both
 migration ledgers and SQLite foreign-key/quick integrity checks, loads the actual PWA JavaScript asset,

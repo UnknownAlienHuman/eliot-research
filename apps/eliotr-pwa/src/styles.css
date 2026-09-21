@@ -257,3 +257,5 @@ pre { padding: 12px; border: 1px solid var(--line); border-radius: 8px; backgrou
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; }
 }
+
+.research-question-input { width: 100%; min-height: 120px; padding: 10px 11px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--ink); font: inherit; font-size: 13px; resize: vertical; }
