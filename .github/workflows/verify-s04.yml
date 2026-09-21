@@ -33,24 +33,28 @@ jobs:
           set -euo pipefail
           test "$(git branch --show-current)" = main
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
-          test "$(git rev-parse HEAD^)" = 256ddd70b05ed9d2fb9b481280d79618f8370156
+          test "$(git rev-parse HEAD^)" = 8fca64e77bf42913749b681f99c0deec4ac14645
           mkdir -p "$RUNNER_TEMP/s04-result"
           python - <<'PY'
           import base64, gzip, hashlib, json, os, pathlib, subprocess, urllib.request
-          sha = '4bd7366a25fe6ef099c986aa83df2ceacd648663'
-          request = urllib.request.Request(f"{os.environ['GITHUB_API_URL']}/repos/{os.environ['GITHUB_REPOSITORY']}/git/blobs/{sha}", headers={'Authorization':'Bearer '+os.environ['GH_TOKEN'],'Accept':'application/vnd.github+json'})
-          with urllib.request.urlopen(request, timeout=30) as response:
-              result = json.load(response)
-          data = base64.b64decode(result['content'])
-          assert hashlib.sha1(f'blob {len(data)}\0'.encode()+data).hexdigest() == sha
-          patch = gzip.decompress(base64.b64decode(data))
-          assert hashlib.sha256(patch).hexdigest() == 'f13a825fb4e475e3e6924082f985d24deec0d756fb891fc96bdfb84226c60f0d'
-          path = pathlib.Path(os.environ['RUNNER_TEMP'], 's04.patch')
-          path.write_bytes(patch)
-          subprocess.run(['git','apply','--check',str(path)],check=True)
-          subprocess.run(['git','apply','--index',str(path)],check=True)
+          patches = [
+              ('4bd7366a25fe6ef099c986aa83df2ceacd648663','f13a825fb4e475e3e6924082f985d24deec0d756fb891fc96bdfb84226c60f0d'),
+              ('568d3e44f87cfe46764a184f2e11d9abd7110601','ef9dc251562e498e966e919a99b3581a83bb70947e245c2b85278568345ea3f6'),
+          ]
+          for sha, digest in patches:
+              request = urllib.request.Request(f"{os.environ['GITHUB_API_URL']}/repos/{os.environ['GITHUB_REPOSITORY']}/git/blobs/{sha}", headers={'Authorization':'Bearer '+os.environ['GH_TOKEN'],'Accept':'application/vnd.github+json'})
+              with urllib.request.urlopen(request, timeout=30) as response:
+                  result = json.load(response)
+              data = base64.b64decode(result['content'])
+              assert hashlib.sha1(f'blob {len(data)}\0'.encode()+data).hexdigest() == sha
+              patch = gzip.decompress(base64.b64decode(data))
+              assert hashlib.sha256(patch).hexdigest() == digest
+              path = pathlib.Path(os.environ['RUNNER_TEMP'], 's04.patch')
+              path.write_bytes(patch)
+              subprocess.run(['git','apply','--check',str(path)],check=True)
+              subprocess.run(['git','apply','--index',str(path)],check=True)
           subprocess.run(['git','rm','.github/workflows/verify-s04.yml'],check=True)
-          assert subprocess.check_output(['git','write-tree'],text=True).strip() == '4b7e70652fcf7f4250f90fe0ef76968b38d6c745'
+          assert subprocess.check_output(['git','write-tree'],text=True).strip() == '134fd0f40bdc90135797a530f623449e8d07dd63'
           PY
       - name: Install frozen toolchain
         run: |
@@ -87,7 +91,7 @@ jobs:
           const git = (...args) => execFileSync('git', args);
           const text = (...args) => git(...args).toString().trim();
           const tree = text('write-tree');
-          if (tree !== '4b7e70652fcf7f4250f90fe0ef76968b38d6c745') throw new Error('Tree identity changed');
+          if (tree !== '134fd0f40bdc90135797a530f623449e8d07dd63') throw new Error('Tree identity changed');
           git('diff','--exit-code');
           const entries = [];
           for (const path of git('diff','--cached','--name-only','-z','HEAD').toString().split('\0').filter(Boolean)) {
