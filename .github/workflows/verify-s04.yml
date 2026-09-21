@@ -33,7 +33,7 @@ jobs:
           set -euo pipefail
           test "$(git branch --show-current)" = main
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
-          test "$(git rev-parse HEAD^)" = fa3ba811e9e860722c5fd6601dca89d833c7d2b2
+          test "$(git rev-parse HEAD^)" = 2d8b5a31f771100a7f261b14c861dda3b64f09a5
           mkdir -p "$RUNNER_TEMP/s04-result"
           python - <<'PY'
           import base64, gzip, hashlib, json, os, pathlib, subprocess, urllib.request
@@ -41,6 +41,7 @@ jobs:
               ('4bd7366a25fe6ef099c986aa83df2ceacd648663','f13a825fb4e475e3e6924082f985d24deec0d756fb891fc96bdfb84226c60f0d'),
               ('568d3e44f87cfe46764a184f2e11d9abd7110601','ef9dc251562e498e966e919a99b3581a83bb70947e245c2b85278568345ea3f6'),
               ('740b184bcff18eeea43baafdaa0265443b96104e','c0346ee5a21bdfb4c91bf7519352cea650bac260e1e01a3b5f0999ce28f76068'),
+              ('966f4bc04b03351d6821112c631ea6ebce3bbe9c','181220702050012a4c2cd9811ee791f48a1fedc0e4b267f7cf866fe784ccd698'),
           ]
           for sha, digest in patches:
               request = urllib.request.Request(f"{os.environ['GITHUB_API_URL']}/repos/{os.environ['GITHUB_REPOSITORY']}/git/blobs/{sha}", headers={'Authorization':'Bearer '+os.environ['GH_TOKEN'],'Accept':'application/vnd.github+json'})
@@ -55,7 +56,7 @@ jobs:
               subprocess.run(['git','apply','--check',str(path)],check=True)
               subprocess.run(['git','apply','--index',str(path)],check=True)
           subprocess.run(['git','rm','.github/workflows/verify-s04.yml'],check=True)
-          assert subprocess.check_output(['git','write-tree'],text=True).strip() == 'fa237acf1fc937c3318324a2d17f803040a6a20c'
+          assert subprocess.check_output(['git','write-tree'],text=True).strip() == '478b5444fb16ea2b4fa58a780f2a8f87a3a6568d'
           PY
       - name: Install frozen toolchain
         run: |
@@ -92,7 +93,7 @@ jobs:
           const git = (...args) => execFileSync('git', args);
           const text = (...args) => git(...args).toString().trim();
           const tree = text('write-tree');
-          if (tree !== 'fa237acf1fc937c3318324a2d17f803040a6a20c') throw new Error('Tree identity changed');
+          if (tree !== '478b5444fb16ea2b4fa58a780f2a8f87a3a6568d') throw new Error('Tree identity changed');
           git('diff','--exit-code');
           const entries = [];
           for (const path of git('diff','--cached','--name-only','-z','HEAD').toString().split('\0').filter(Boolean)) {
