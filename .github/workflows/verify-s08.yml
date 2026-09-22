@@ -1,0 +1,116 @@
+name: verify-s08-query-replay
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/verify-s08.yml]
+permissions:
+  contents: write
+jobs:
+  verify:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 12
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - run: git config --global core.autocrlf false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 22.23.2
+      - name: Restore only the reviewed exact S08 tree
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$(git branch --show-current)" = main
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          mkdir -p "$RUNNER_TEMP/s08-result"
+          git rm .github/workflows/verify-s08.yml
+          python - <<'PY'
+          import base64, gzip, hashlib, json, os, pathlib, subprocess, urllib.request
+          shas = ['203419dbd3ed71577940e016ac8ca3cd8b8a1cb5','49a968c3b88dc6fe4efcc69f2f22e3fc883852c3','9127a9f6873400ebbb77d6077843ea5b4d53ad3f','464edcaf55758d8676d5dac41151d71989d09a7f','a45e8f469f5428b66b2231ccc2593705355b9b86','8b21be096f27470d43b48dd8c1b45f0805a44d18']
+          parts = []
+          for sha in shas:
+              request = urllib.request.Request(f"{os.environ['GITHUB_API_URL']}/repos/{os.environ['GITHUB_REPOSITORY']}/git/blobs/{sha}", headers={'Authorization':'Bearer '+os.environ['GH_TOKEN'],'Accept':'application/vnd.github+json'})
+              with urllib.request.urlopen(request, timeout=30) as response:
+                  data = base64.b64decode(json.load(response)['content'])
+              assert hashlib.sha1(f'blob {len(data)}\0'.encode()+data).hexdigest() == sha
+              parts.append(data)
+          patch = gzip.decompress(base64.b64decode(b''.join(parts)))
+          assert hashlib.sha256(patch).hexdigest() == 'd66251f6a7c80d323f1320c3f31cb52e89e5759acbfec6fe1806571fe363d85d'
+          path = pathlib.Path(os.environ['RUNNER_TEMP'], 's08.patch')
+          path.write_bytes(patch)
+          subprocess.run(['git','apply','--check',str(path)],check=True)
+          subprocess.run(['git','apply','--index',str(path)],check=True)
+          assert subprocess.check_output(['git','write-tree'],text=True).strip() == 'b27d870e14d13e4c92c43dbd5dd0895e49c1c774'
+          PY
+      - name: Install frozen toolchain
+        run: |
+          corepack enable
+          corepack prepare pnpm@11.23.0 --activate
+          pnpm install --frozen-lockfile
+          node --version > "$RUNNER_TEMP/s08-result/versions.txt"
+          pnpm --version >> "$RUNNER_TEMP/s08-result/versions.txt"
+      - name: Strict types lint ownership and unchanged contracts
+        run: |
+          set -euo pipefail
+          pnpm typecheck
+          pnpm exec tsc -p apps/eliotr-core/test/tsconfig.json --pretty false
+          pnpm exec eslint packages/retrieval/src/query-persistence.ts packages/retrieval/src/query-persistence.test.ts apps/eliotr-core/test/research-query-replay.test.ts
+          node scripts/check-boundaries.mjs
+          node scripts/test-boundary-negative.mjs
+          node scripts/check-work-packets.mjs
+          node scripts/check-implementation-status.mjs
+          node docs/contracts/generate.mjs --check
+          git diff --cached --check
+          git diff --exit-code
+      - name: Complete retrieval package regression
+        run: |
+          set -euo pipefail
+          pnpm exec vitest run packages/retrieval/src 2>&1 | tee "$RUNNER_TEMP/s08-result/retrieval.log"
+      - name: Actual HTTP D1 R2 query replay and rejection
+        run: |
+          set -euo pipefail
+          pnpm --dir apps/eliotr-core exec vitest run test/research-query-replay.test.ts --no-file-parallelism 2>&1 | tee "$RUNNER_TEMP/s08-result/replay.log"
+      - name: Store verified Git blobs without publishing refs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node --input-type=module <<'JS'
+          import { execFileSync } from 'node:child_process';
+          import { writeFileSync } from 'node:fs';
+          import { join } from 'node:path';
+          const git = (...args) => execFileSync('git', args);
+          const text = (...args) => git(...args).toString().trim();
+          const tree = text('write-tree');
+          if (tree !== 'b27d870e14d13e4c92c43dbd5dd0895e49c1c774') throw new Error('Tree identity changed');
+          git('diff','--exit-code');
+          const entries = [];
+          for (const path of git('diff','--cached','--name-only','-z','HEAD').toString().split('\0').filter(Boolean)) {
+            const index = text('ls-files','--stage','--',path);
+            if (!index) { entries.push({path,mode:'100644',type:'blob',sha:null}); continue; }
+            const [mode,sha] = index.split(/\s+/);
+            const data = git('cat-file','blob',sha);
+            const response = await fetch(`${process.env.GITHUB_API_URL}/repos/${process.env.GITHUB_REPOSITORY}/git/blobs`, {method:'POST',headers:{authorization:`Bearer ${process.env.GH_TOKEN}`,accept:'application/vnd.github+json','content-type':'application/json'},body:JSON.stringify({content:data.toString('base64'),encoding:'base64'})});
+            if (!response.ok) throw new Error(`Git blob creation failed: ${response.status}`);
+            if ((await response.json()).sha !== sha) throw new Error('Blob identity changed');
+            entries.push({path,mode,type:'blob',sha});
+          }
+          writeFileSync(join(process.env.RUNNER_TEMP,'s08-result','verified-tree.json'),JSON.stringify({base_sha:process.env.GITHUB_SHA,base_tree_sha:text('rev-parse','HEAD^{tree}'),tree_sha:tree,ref_updated:false,entries},null,2));
+          JS
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: s08-verified-${{ matrix.os }}
+          path: ${{ runner.temp }}/s08-result/
+          retention-days: 3
+          if-no-files-found: error
