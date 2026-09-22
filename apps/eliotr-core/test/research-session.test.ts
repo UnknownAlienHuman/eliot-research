@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, it } from "vitest";
-import { reset } from "cloudflare:test";
+import { evictDurableObject, reset } from "cloudflare:test";
 import { ORIENTATION_PROFILE } from "@eliotr/cloudflare-navigation";
 import {
   INSTALLED_INQUIRY_PROTOCOL_REFS,
@@ -43,11 +43,11 @@ function doStub(name: string) {
   return ns.get(ns.idFromName(name));
 }
 function doHeaders(who = principal) {
-  return { "x-research-principal": who, "x-research-credential": "credential-v1", "x-research-deployment": "test-generation" };
+  return { "x-research-principal": who, "x-research-credential": "credential-v1", "x-research-deployment": runtime.DEPLOYMENT_GENERATION };
 }
 function sessionStartBody(tag: string, who = principal) {
   const hash = "a".repeat(64);
-  return { session_id: `sess-${tag}`, investigation_id: `inv-${tag}`, investigation_revision: 1, operation_id: `op-${tag}`, idempotency_key: `key-${tag}`, handler_generation: "research-handlers.v1", initial_input_manifest: { object_ref: `obj-${tag}`, sha256: hash, byte_length: 10, residency: { scope_domain_id: `scope-${tag}`, access_domain_id: who, confidentiality_domain_id: "private", encryption_key_domain_id: "key-1", retention_domain_id: "retention-1", erasure_domain_id: "erasure-1", content_digest: { algorithm: "sha256", digest: hash } } }, principal_ref: who, credential_generation: "credential-v1", deployment_generation: "test-generation" };
+  return { session_id: `sess-${tag}`, investigation_id: `inv-${tag}`, investigation_revision: 1, operation_id: `op-${tag}`, idempotency_key: `key-${tag}`, handler_generation: "research-handlers.v1", initial_input_manifest: { object_ref: `obj-${tag}`, sha256: hash, byte_length: 10, residency: { scope_domain_id: `scope-${tag}`, access_domain_id: who, confidentiality_domain_id: "private", encryption_key_domain_id: "key-1", retention_domain_id: "retention-1", erasure_domain_id: "erasure-1", content_digest: { algorithm: "sha256", digest: hash } } }, principal_ref: who, credential_generation: "credential-v1", deployment_generation: runtime.DEPLOYMENT_GENERATION };
 }
 
 describe("research.query over real HTTP/D1", () => {
@@ -204,6 +204,13 @@ describe("research.run over real D1/R2 with W1 ledger and W2 checkpoints", () =>
 });
 
 describe("ResearchSession DO over real DO storage and D1/R2", () => {
+  beforeAll(async () => {
+    // Session reads require an installed deployment even when unrelated
+    // run-admission tests above have not reached their configuration gate.
+    await db.prepare("INSERT INTO investigation_current_deployment(deployment_generation,state,created_at) " +
+      "VALUES (?1,'ACTIVE',?2) ON CONFLICT(deployment_generation) DO NOTHING")
+      .bind(runtime.DEPLOYMENT_GENERATION, new Date().toISOString()).run();
+  });
   it("starts, reads, replays lost ACKs and rejects stale/foreign identities", async () => {
     const tag = "do-lifecycle";
     const stub = doStub(`research-${tag}`);
@@ -222,17 +229,6 @@ describe("ResearchSession DO over real DO storage and D1/R2", () => {
     expect((await stub.fetch(new Request("https://do/session/start", { method: "POST", headers: { "content-type": "application/json", ...doHeaders() }, body: JSON.stringify(staleBody) }))).status).toBe(409);
     expect((await stub.fetch(new Request("https://do/status", {}))).status).toBe(200);
   });
-  it("persists cancellation and refuses later execution", async () => {
-    const tag = "do-cancel";
-    const stub = doStub(`research-${tag}`);
-    expect((await stub.fetch(new Request("https://do/session/start", { method: "POST", headers: { "content-type": "application/json", ...doHeaders() }, body: JSON.stringify(sessionStartBody(tag)) }))).status).toBe(200);
-    const cancelled = await stub.fetch(new Request(`https://do/session/sess-${tag}/cancel`, { method: "POST", headers: doHeaders() }));
-    expect(cancelled.status).toBe(200);
-    expect(((await cancelled.json()) as { state: string }).state).toBe("CANCELLED");
-    expect((await stub.fetch(new Request(`https://do/session/sess-${tag}/run`, { method: "POST", headers: doHeaders() }))).status).toBe(409);
-    const again = await stub.fetch(new Request(`https://do/session/sess-${tag}/cancel`, { method: "POST", headers: doHeaders() }));
-    expect(again.status).toBe(200);
-  });
   it("executes W2 checkpoints for a run-created investigation and resumes without duplicate paid effects", async () => {
     const probeResponse = await run(runRequest("rs-shared", {}, "rs-run-first"));
     const probe = await body<{ investigation_ref: { id: string; revision: number }; workflow_instance_id: string }>(probeResponse);
@@ -247,7 +243,7 @@ describe("ResearchSession DO over real DO storage and D1/R2", () => {
     const stub = doStub(`research-${tag}`);
     const runBinding = await db.prepare("SELECT handler_generation FROM research_workflow_run WHERE operation_id = ?1").bind(payload.workflow_instance_id).first<{ handler_generation: string }>();
     expect(runBinding?.handler_generation).toBe(SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION);
-    const sessionBody = { session_id: `sess-${tag}`, investigation_id: payload.investigation_ref.id, investigation_revision: 1, operation_id: payload.workflow_instance_id, idempotency_key: "rs-run-first", handler_generation: runBinding?.handler_generation ?? "", initial_input_manifest: manifest, principal_ref: principal, credential_generation: "credential-v1", deployment_generation: "test-generation" };
+    const sessionBody = { session_id: `sess-${tag}`, investigation_id: payload.investigation_ref.id, investigation_revision: 1, operation_id: payload.workflow_instance_id, idempotency_key: "rs-run-first", handler_generation: runBinding?.handler_generation ?? "", initial_input_manifest: manifest, principal_ref: principal, credential_generation: "credential-v1", deployment_generation: runtime.DEPLOYMENT_GENERATION };
     expect((await stub.fetch(new Request("https://do/session/start", { method: "POST", headers: { "content-type": "application/json", ...doHeaders() }, body: JSON.stringify(sessionBody) }))).status).toBe(200);
     const before = await workflowCounts();
     const first = await stub.fetch(new Request(`https://do/session/sess-${tag}/run`, { method: "POST", headers: doHeaders() }));
@@ -459,4 +455,75 @@ describe("ResearchSession DO over real DO storage and D1/R2", () => {
     expect(replay.data).toEqual(first.data);
     expect(await workflowCounts()).toEqual(counts);
   }, 30_000);
+});
+
+
+// Each case owns a fresh W1 scope/ledger and a real W2 run. Keep this isolated
+// from older run-admission fixtures above; cancellation must not invent W2.
+describe("ResearchSession canonical cancellation persistence", () => {
+  async function canonicalSession(tag: string, createRun = true) {
+    const fixture = await workflowFixture(tag);
+    const request = { ...fixture.request, handler_generation: "research-handlers.v1" };
+    const store = new WorkflowCheckpointStore(fixture.db);
+    if (createRun) await store.ensureRun(request, workflowPrincipal);
+    const stub = doStub(tag);
+    const sid = `session-${tag}`;
+    const headers = { "content-type": "application/json",
+      "x-research-principal": workflowPrincipal.principal_ref,
+      "x-research-credential": workflowPrincipal.credential_generation,
+      "x-research-deployment": workflowPrincipal.deployment_generation };
+    const start = await stub.fetch(new Request("https://internal/session/start", { method: "POST", headers,
+      body: JSON.stringify({ session_id: sid, investigation_id: request.investigation_ref.id,
+        investigation_revision: 1, operation_id: request.operation_id, idempotency_key: request.idempotency_key,
+        handler_generation: request.handler_generation, initial_input_manifest: request.input_manifest, ...workflowPrincipal }),
+    }));
+    expect(start.status).toBe(200);
+    await start.json(); // Drain the start response before attempting native eviction.
+    const call = (suffix = "", method = "GET") => stub.fetch(new Request(`https://internal/session/${sid}${suffix}`, { method, headers }));
+    return { ...fixture, request, store, stub, call };
+  }
+
+  it("persists canonical cancellation through actual DO eviction and refuses later execution", async () => {
+    const f = await canonicalSession("s16-canonical-cancel");
+    const initial = await f.store.readRunStatus(f.request.operation_id, workflowPrincipal);
+    expect(initial?.state).toBe("ACTIVE");
+    const counts = await workflowCounts();
+    const response = await f.call("/cancel", "POST");
+    expect(response.status).toBe(200);
+    const receipt = await response.json() as { state: string; cancellation_receipt_ref: string };
+    expect(receipt).toMatchObject({ state: "CANCELLED",
+      cancellation_receipt_ref: `workflow-cancelled:${f.request.operation_id}` });
+    const committed = await f.store.readRunStatus(f.request.operation_id, workflowPrincipal);
+    expect(committed).toMatchObject({ state: "CANCELLED", cancellation_receipt_ref: receipt.cancellation_receipt_ref });
+    expect(await workflowCounts()).toEqual(counts);
+    await evictDurableObject(f.stub);
+    const read = await f.call();
+    expect(read.status).toBe(200);
+    expect(await read.json()).toMatchObject({ state: "CANCELLED", operation_id: f.request.operation_id });
+    const replay = await f.call("/cancel", "POST");
+    expect(replay.status).toBe(200);
+    expect(await replay.json()).toEqual(receipt);
+    const denied = await f.call("/run", "POST");
+    expect(denied.status).toBe(409);
+    await denied.json();
+    expect(await f.store.readRunStatus(f.request.operation_id, workflowPrincipal)).toEqual(committed);
+    expect(await workflowCounts()).toEqual(counts);
+    expect(await count("research_model_attempt")).toBe(0);
+  });
+
+  it("keeps an unregistered W2 run uncertain before and after actual DO eviction", async () => {
+    const f = await canonicalSession("s16-missing-canonical", false);
+    const counts = await workflowCounts();
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const response = await f.call("/cancel", "POST");
+      expect(response.status).toBe(503);
+      expect(await response.json()).toMatchObject({ code: "SESSION_SETTLEMENT_UNCERTAIN", retryable: true });
+      const read = await f.call();
+      expect(read.status).toBe(200);
+      expect(await read.json()).toMatchObject({ state: "ACTIVE" });
+      expect(await f.store.readRunStatus(f.request.operation_id, workflowPrincipal)).toBeNull();
+      expect(await workflowCounts()).toEqual(counts);
+      if (attempt === 0) await evictDurableObject(f.stub);
+    }
+  });
 });

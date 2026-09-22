@@ -1,12 +1,12 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import {
   createWorkflowCheckpointExecutor, digest, readWorkflowObject,
   createMonotoneStageExecutor, deterministicWorkflowStageBytes, WorkflowCheckpointStore,
 } from "@eliotr/cloudflare-research";
-import { runInDurableObject } from "cloudflare:test";
+import { evictDurableObject, runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import type { ResearchSession } from "../src/research-session.js";
-import { principal, workflowFixture } from "./research-workflow-fixture.js";
+import { faultDatabase, principal, workflowFixture } from "./research-workflow-fixture.js";
 
 const modelBytes = () => new TextEncoder().encode("known model result — восстановление🙂");
 
@@ -18,8 +18,11 @@ async function readObject(bucket: R2Bucket, key: string): Promise<Uint8Array> {
 }
 
 describe("W3 started model attempt recovery", () => {
+  let f: Awaited<ReturnType<typeof workflowFixture>>;
+  // Schema/authority preparation is not a recovery operation. Every case still
+  // gets real, fresh D1/R2; the timed body retains every fault and readback.
+  beforeEach(async () => { f = await workflowFixture("model-recovery"); });
   it("rebuilds the W2 output from a durably known model result without a second handler", async () => {
-    const f = await workflowFixture("recover-started");
     const durableModelKey = `model-result/${f.request.operation_id}`;
     const bytes = modelBytes();
     const sha256 = await digest(bytes);
@@ -88,7 +91,6 @@ describe("W3 started model attempt recovery", () => {
   });
 
   it("repairs an OUTPUT_RECORDED attempt whose workflow object disappeared before checkpointing", async () => {
-    const f = await workflowFixture("recover-output-recorded");
     const durableModelKey = `model-result/${f.request.operation_id}`;
     const bytes = modelBytes();
     const sha256 = await digest(bytes);
@@ -125,7 +127,6 @@ describe("W3 started model attempt recovery", () => {
   });
 
   it("keeps an ambiguous STARTED attempt uncertain and never invokes the handler again", async () => {
-    const f = await workflowFixture("recover-unknown");
     let handlerCalls = 0;
     await expect(f.executor.execute(f.request, principal, async () => {
       handlerCalls += 1;
@@ -144,7 +145,6 @@ describe("W3 started model attempt recovery", () => {
   });
 
   it("does not replace a corrupt existing workflow object with recovered model bytes", async () => {
-    const f = await workflowFixture("recover-corrupt-output");
     const bytes = modelBytes();
     const wrong = new TextEncoder().encode("different durable bytes");
     const wrongSha256 = await digest(wrong);
@@ -198,6 +198,7 @@ async function session(tag: string, createRun = true) {
       handler_generation: request.handler_generation, initial_input_manifest: request.input_manifest, ...principal }),
   }));
   expect(start.status).toBe(200);
+  await start.json(); // Native eviction waits for outstanding response streams.
   const cancel = (extra: Record<string, string> = {}) => stub.fetch(new Request(`https://internal/session/${sid}/cancel`, {
     method: "POST", headers: { ...headers, ...extra },
   }));
@@ -241,6 +242,42 @@ describe("ResearchSession canonical terminal settlement", () => {
     expect((await f.cancel({ "x-research-principal": "other-owner" })).status).toBe(403);
   });
 
+  it("confirms a lost native D1 commit acknowledgement by readback, including after eviction", async () => {
+    const f = await session("terminal-lost-ack");
+    let committedWrites = 0;
+    const result = await runInDurableObject(f.stub, async (instance) => {
+      const internal = instance as unknown as { env: { CORE_DB: D1Database } };
+      const original = internal.env.CORE_DB;
+      // All SQL still reaches the native database. Only its acknowledgement
+      // is lost after the real cancellation UPDATE has committed.
+      internal.env.CORE_DB = faultDatabase(original, { afterRun: async (sql) => {
+        if (sql.startsWith("UPDATE research_workflow_run SET state = 'CANCELLED'")) {
+          committedWrites += 1;
+          throw new Error("controlled lost commit acknowledgement");
+        }
+      } });
+      try {
+        const response = await instance.fetch(new Request(`https://internal/session/${f.sid}/cancel`, {
+          method: "POST", headers,
+        }));
+        return { status: response.status, value: await response.json() };
+      } finally { internal.env.CORE_DB = original; }
+    });
+    expect(committedWrites).toBe(1);
+    expect(result.status).toBe(200);
+    expect(result.value).toMatchObject({ state: "CANCELLED",
+      cancellation_receipt_ref: `workflow-cancelled:${f.request.operation_id}` });
+    const committed = await f.store.readRunStatus(f.request.operation_id, principal);
+    expect(committed?.state).toBe("CANCELLED");
+    await evictDurableObject(f.stub);
+    expect((await f.read()).state).toBe("CANCELLED");
+    const replay = await f.cancel();
+    expect(replay.status).toBe(200);
+    expect(await replay.json()).toEqual(result.value);
+    expect(await f.store.readRunStatus(f.request.operation_id, principal)).toEqual(committed);
+    expect(await f.db.prepare("SELECT COUNT(*) AS n FROM research_workflow_attempt").first<number>("n")).toBe(0);
+  });
+
   it("rejects a late completion of an old DO snapshot after canonical cancellation", async () => {
     const f = await session("terminal-late-completion");
     const previous = await runInDurableObject(f.stub, async (_instance, state) =>
@@ -259,16 +296,36 @@ describe("ResearchSession canonical terminal settlement", () => {
     expect((await f.store.readRunStatus(f.request.operation_id, principal))?.state).toBe("CANCELLED");
   });
 
-  it("does not confirm cancellation once canonical completion has won", async () => {
-    const f = await session("terminal-completed-first");
-    await createMonotoneStageExecutor(f.db, f.bucket, f.ports).executeOperation({
-      operation_id: f.request.operation_id, investigation_id: f.request.investigation_ref.id,
-      initial_revision: 1, idempotency_key: f.request.idempotency_key,
-      handler_generation: f.request.handler_generation, initial_input_manifest: f.request.input_manifest,
-    }, principal, () => ({ request, input_bytes, attempt_ref }) =>
-      deterministicWorkflowStageBytes(request.operation_id, request.stage, input_bytes, attempt_ref));
-    expect((await f.store.readRunStatus(f.request.operation_id, principal))?.state).toBe("ENGINE_COMPLETED");
-    expect((await f.cancel()).status).toBe(409);
-    expect((await f.read()).state).not.toBe("CANCELLED");
+  describe("completed canonical run", () => {
+    let f: Awaited<ReturnType<typeof session>>;
+    // Build the prior completed run through all eighteen real stages, rather
+    // than fabricating a completed row or charging fixture setup to cancellation.
+    beforeEach(async () => {
+      f = await session("terminal-completed-first");
+      await createMonotoneStageExecutor(f.db, f.bucket, f.ports).executeOperation({
+        operation_id: f.request.operation_id, investigation_id: f.request.investigation_ref.id,
+        initial_revision: 1, idempotency_key: f.request.idempotency_key,
+        handler_generation: f.request.handler_generation, initial_input_manifest: f.request.input_manifest,
+      }, principal, () => ({ request, input_bytes, attempt_ref }) =>
+        deterministicWorkflowStageBytes(request.operation_id, request.stage, input_bytes, attempt_ref));
+    });
+
+    it("does not confirm cancellation once canonical completion has won", async () => {
+      expect((await f.store.readRunStatus(f.request.operation_id, principal))?.state).toBe("ENGINE_COMPLETED");
+      const denied = await f.cancel();
+      expect(denied.status).toBe(409);
+      await denied.json(); // Eviction waits for response streams to finish.
+      expect((await f.read()).state).not.toBe("CANCELLED");
+      const projected = await f.stub.fetch(new Request(`https://internal/session/${f.sid}/run`, { method: "POST", headers }));
+      expect(projected.status).toBe(200);
+      expect(await projected.json()).toMatchObject({ state: "ENGINE_COMPLETED" });
+      await evictDurableObject(f.stub);
+      expect((await f.read()).state).toBe("ENGINE_COMPLETED");
+      const repeated = await f.cancel();
+      expect(repeated.status).toBe(409);
+      await repeated.json();
+      expect((await f.store.readRunStatus(f.request.operation_id, principal))?.state).toBe("ENGINE_COMPLETED");
+      expect(await f.db.prepare("SELECT COUNT(*) AS n FROM research_workflow_attempt").first<number>("n")).toBe(18);
+    });
   });
 });
