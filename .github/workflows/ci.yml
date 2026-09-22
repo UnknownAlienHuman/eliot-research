@@ -116,6 +116,13 @@ jobs:
         # same Windows host; per-test deadlines and in-test races stay intact.
         run: pnpm --dir apps/eliotr-core exec vitest run test/project-owner-service.test.ts test/wiki-owner-edit-parity.test.ts --no-file-parallelism
 
+      - name: Backend execution fingerprint and deployment authority
+        run: |
+          node scripts/test-research-backend-fingerprint.mjs
+          node scripts/test-research-deployment-authority.mjs
+      - name: Research continuation on actual workerd D1 and R2
+        run: pnpm --dir apps/eliotr-core exec vitest run test/research-deployment-compatibility.test.ts --no-file-parallelism
+
   rust:
     runs-on: ubuntu-latest
     timeout-minutes: 25
