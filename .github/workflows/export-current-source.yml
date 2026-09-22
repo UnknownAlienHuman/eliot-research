@@ -1,5 +1,5 @@
 name: export-current-source
-# Refresh exact main after completed S03 for S04 actual-D1 regressions.
+# Refresh exact main after S04 for the remaining deployment and recovery tasks.
 on:
   push:
     branches: [main]
