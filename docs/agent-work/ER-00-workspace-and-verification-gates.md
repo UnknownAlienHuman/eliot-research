@@ -44,6 +44,7 @@ workspace, shared differential vectors, and mechanical merge/deep-verification g
 - `scripts/lib/miniflare-port-guard.mjs`
 - `scripts/test-miniflare-port-guard.mjs`
 - `docs/agent-work/manifest.json`
+- `docs/agent-work/README.md`
 - `docs/agent-work/ER-00-workspace-and-verification-gates.md`
 - `docs/implementation/toolchain.md`
 - `docs/implementation/README.md`
@@ -105,8 +106,9 @@ workspace, shared differential vectors, and mechanical merge/deep-verification g
 - `pnpm work-packets:check` rejects owned-path overlaps, unknown dependencies, duplicate IDs, and DAG cycles.
 - `node scripts/test-miniflare-port-guard.mjs` proves the Windows-only loopback reservation, bounded
   `EADDRINUSE` handling and cleanup without affecting an existing listener.
-- Branch hygiene preserves open PRs, deletes closed PR heads immediately, rechecks head identity before
-  deletion, and deterministically evicts the oldest recent no-PR branches above the ceiling.
+- Branch hygiene preserves default/protected/open-PR and unintegrated heads. Deletion requires exact
+  head ancestry in the current default branch, refreshed protection/PR checks and an expected-head
+  conditional deletion. Count, age or a closed PR never authorizes deletion; a changed head survives.
 - `pnpm boundaries:negative` injects a forbidden import and proves the existing boundary gate fails.
 - Unknown protocol/error codes, duplicate IDs, blank rows, over-limit frames/cases/IDs/payloads and
   architecture-dependent numeric values fail in both TypeScript and Rust parsers.

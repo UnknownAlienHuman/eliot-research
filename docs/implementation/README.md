@@ -60,6 +60,8 @@ from the tables below, so an unlisted file is a bug, not an omission you may ign
 | [cloudflare-runbook.md](cloudflare-runbook.md) | Provision, migrate, dry-run, deploy, verify, roll back. |
 | [cloudflare-usage-envelope.md](cloudflare-usage-envelope.md) | Usage envelope (80% guard), preflight admission receipt, SEALED/BLOCKED discipline. |
 | [local-launch.md](local-launch.md) | The owner loop that runs locally today, and its current limits. |
+| [owner-workspace-setup.md](owner-workspace-setup.md) | Operator-provisioned namespace bootstrap and first owner workspace setup. |
+| [research-runtime-configuration.md](research-runtime-configuration.md) | Server-owned Research configuration envelope, provenance and local/deployment input validation. |
 | [live-document-project-acceptance-2026-09-14.md](live-document-project-acceptance-2026-09-14.md) | Deployed owner login, PDF/DOCX intake, project save, research draft, claim audit and citation readbacks. |
 | [audit-2026-09-14.md](audit-2026-09-14.md) | Consolidated deep audit: coordinator pass, Antigravity Opus 4.6 swarm pass and independent re-verification — authority model, D1 triggers and test-harness depth limits, AI Gateway and canon, UI against NotebookLM, refuted claims. |
 | [audit-2026-09-09.md](audit-2026-09-09.md) | Dated merged-work and Cloudflare OAuth readback audit, with the remaining launch blockers. |

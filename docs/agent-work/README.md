@@ -79,6 +79,8 @@ appendix.
 | [ER-41](ER-41-federation-d1-runtime.md) | — | Federation D1 runtime authority | ER-13, ER-22, ER-24 |
 | [ER-43](ER-43-local-launch.md) | — | Local runtime isolation and restart regression | ER-00, ER-24, ER-26 |
 | [ER-44](ER-44-local-owner-session.md) | — | Local signed owner session and explicit read-policy setup | ER-21, ER-24, ER-26, ER-43 |
+| [ER-45](ER-45-authenticated-research-changes.md) | — | Authenticated research changes feed | ER-13, ER-21, ER-24, ER-36 |
+| [ER-46](ER-46-outbox-lifecycle-reconciliation.md) | — | Outbox lifecycle reconciliation | ER-13, ER-15, ER-24 |
 
 Slice is left unset for packets that were introduced against an existing slice plan rather than as a
 new vertical slice. `pnpm work-packets:check` is authoritative for the full set: it prints the merged

@@ -50,6 +50,7 @@
         "scripts/lib/miniflare-port-guard.mjs",
         "scripts/test-miniflare-port-guard.mjs",
         "docs/agent-work/manifest.json",
+        "docs/agent-work/README.md",
         "docs/agent-work/ER-00-workspace-and-verification-gates.md",
         "docs/implementation/toolchain.md",
         "docs/implementation/README.md",
