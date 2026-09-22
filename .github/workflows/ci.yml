@@ -108,6 +108,7 @@ jobs:
       - run: corepack prepare pnpm@11.23.0 --activate
       - run: pnpm install --frozen-lockfile
       - name: Typecheck production and strict Worker tests
+        id: d1-types
         run: |
           pnpm typecheck
           pnpm exec tsc -p apps/eliotr-core/test/tsconfig.json --pretty false
@@ -116,11 +117,15 @@ jobs:
         # same Windows host; per-test deadlines and in-test races stay intact.
         run: pnpm --dir apps/eliotr-core exec vitest run test/project-owner-service.test.ts test/wiki-owner-edit-parity.test.ts --no-file-parallelism
 
+      # Independent regressions still run after a Project/Wiki failure; no
+      # continue-on-error is used, so the job retains every failing result.
       - name: Backend execution fingerprint and deployment authority
+        if: ${{ !cancelled() && steps.d1-types.outcome == 'success' }}
         run: |
           node scripts/test-research-backend-fingerprint.mjs
           node scripts/test-research-deployment-authority.mjs
       - name: Research continuation on actual workerd D1 and R2
+        if: ${{ !cancelled() && steps.d1-types.outcome == 'success' }}
         run: pnpm --dir apps/eliotr-core exec vitest run test/research-deployment-compatibility.test.ts --no-file-parallelism
 
   rust:
