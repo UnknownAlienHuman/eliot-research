@@ -1,5 +1,5 @@
 name: export-current-source
-# Refresh exact main after S04 for the remaining deployment and recovery tasks.
+# Refresh exact main after S05/S16 for the next launch checkpoint.
 on:
   push:
     branches: [main]
