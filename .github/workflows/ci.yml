@@ -137,6 +137,13 @@ jobs:
         # This independent S16 check does not claim the unrelated admission fixtures pass.
         run: pnpm --dir apps/eliotr-core exec vitest run test/research-session.test.ts --no-file-parallelism -t 'canonical cancellation persistence|starts, reads'
 
+      - name: Query persistence compatibility rejection and integrity
+        if: ${{ !cancelled() && steps.d1-types.outcome == 'success' }}
+        run: pnpm exec vitest run packages/retrieval/src/query-persistence.test.ts
+      - name: Exact query replay and scope substitution on actual D1 and R2
+        if: ${{ !cancelled() && steps.d1-types.outcome == 'success' }}
+        run: pnpm --dir apps/eliotr-core exec vitest run test/research-query-replay.test.ts --no-file-parallelism
+
   rust:
     runs-on: ubuntu-latest
     timeout-minutes: 25

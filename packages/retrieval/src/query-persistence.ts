@@ -12,7 +12,7 @@ import {
   type RetrievalQueryErrorCode,
   type StoredRetrievalResult,
 } from "./service.js";
-import { canonicalRetrievalJson as canonicalJson, decodeCanonicalRetrievalJson, decodeRetrievalResult } from "./query-codec.js";
+import { canonicalRetrievalJson as canonicalJson, decodeCanonicalRetrievalJson, decodeEvidencePack, decodeRetrievalResult } from "./query-codec.js";
 
 export function canonicalRetrievalJson(value: unknown): string {
   try {
@@ -182,6 +182,24 @@ interface StoredResultRow {
   readonly state: unknown;
 }
 
+// Rejection-only shape: an old record missing its original expression cannot
+// prove replay identity. Never fill it from today's membership or decode it as
+// an accepted result. Unknown fields and other malformed shapes stay uncertain.
+const traceWithoutExpression = RetrievalTraceSchema.extend({
+  scope_snapshot: ScopeSnapshotSchema.omit({ resolved_scope_expression: true }),
+});
+function lacksOriginalExpression(value: unknown): boolean {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  if (Object.keys(record).sort().join(",") !== "coverage_claim,evidence_pack,trace") return false;
+  const trace = traceWithoutExpression.safeParse(record.trace);
+  const pack = decodeEvidencePack(record.evidence_pack);
+  return trace.success && pack !== null && (record.coverage_claim === "NONE" || record.coverage_claim === "SAMPLED") &&
+    pack.scope_snapshot_ref.id === trace.data.scope_snapshot.snapshot_id &&
+    pack.scope_snapshot_ref.revision === trace.data.scope_snapshot.revision &&
+    pack.trace_ref.id === trace.data.trace_ref.id && pack.trace_ref.revision === trace.data.trace_ref.revision;
+}
+
 function decodeStoredResult(row: StoredResultRow, idempotencyKey: string): StoredRetrievalResult {
   if (row.state === "INVALIDATED") {
     failQuery("RETRIEVAL_SCOPE_STALE", "stored query scope is invalidated");
@@ -196,6 +214,9 @@ function decodeStoredResult(row: StoredResultRow, idempotencyKey: string): Store
   const parsed = decodeCanonicalRetrievalJson(row.result_json);
   const result = parsed === undefined ? null : decodeRetrievalResult(parsed);
   if (result === null) {
+    if (lacksOriginalExpression(parsed)) {
+      failQuery("RETRIEVAL_IDEMPOTENCY_CONFLICT", "stored query cannot prove its original scope expression");
+    }
     failQuery("RETRIEVAL_RESOLUTION_UNCERTAIN", "stored query result is malformed or not a strict retrieval result", true);
   }
   return { request_digest: row.request_digest, idempotency_key: idempotencyKey, result };
@@ -230,8 +251,14 @@ export function createD1RetrievalResultStore(
         failQuery("RETRIEVAL_RESOLUTION_UNCERTAIN", "stored query result is unavailable", true);
       }
       if (row === null) return null;
+      // Integrity precedes compatibility classification: damaged bytes are not
+      // evidence of a legacy identity, even when their JSON has a legacy shape.
+      if (row.state === "COMPLETE" && typeof row.result_json === "string" &&
+          row.result_digest !== await sha256Hex(row.result_json)) {
+        failQuery("RETRIEVAL_RESOLUTION_UNCERTAIN", "stored query result metadata is not bound to its result", true);
+      }
       const stored = decodeStoredResult(row, idempotencyKey);
-      if (typeof row.result_json !== "string" || row.result_digest !== await sha256Hex(row.result_json) ||
+      if (typeof row.result_json !== "string" ||
           row.scope_snapshot_id !== stored.result.trace.scope_snapshot.snapshot_id ||
           row.scope_snapshot_revision !== stored.result.trace.scope_snapshot.revision ||
           row.scope_snapshot_id !== stored.result.evidence_pack.scope_snapshot_ref.id ||

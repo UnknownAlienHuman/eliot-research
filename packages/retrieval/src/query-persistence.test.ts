@@ -469,3 +469,36 @@ describe("Q3 D1 query persistence over migration 0021", () => {
     expect(count(raw, "retrieval_query_trace")).toBe(1);
   });
 });
+
+// SQL compatibility fixtures preserve the real immutable original row and all
+// migration triggers. This rejection matrix does not admit legacy data.
+describe("S08 unprovable historical scope identity", () => {
+  it.each(["missing-expression", "wrong-digest", "null-expression", "unknown-scope-field", "unknown-result-field", "wrong-pack-ref"] as const)(
+    "classifies %s without weakening canonical decoding or changing bytes", async (kind) => {
+      const { raw, d1 } = openDatabase();
+      const scope = scopeFixture();
+      seedAuthority(raw, scope, true);
+      await createRetrievalQueryService(portsFor(d1, scope)).query({ request: requestFor(scope), idempotency_key: "original" });
+      const original = raw.prepare("SELECT * FROM retrieval_query_result").get() as Record<string, string | number | null>;
+      const result = JSON.parse(original.result_json as string) as Record<string, unknown> & {
+        trace: { scope_snapshot: Record<string, unknown> }; evidence_pack: { scope_snapshot_ref: { id: string } };
+      };
+      delete result.trace.scope_snapshot.resolved_scope_expression;
+      if (kind === "null-expression") result.trace.scope_snapshot.resolved_scope_expression = null;
+      if (kind === "unknown-scope-field") result.trace.scope_snapshot.unknown = true;
+      if (kind === "unknown-result-field") result.unknown = true;
+      if (kind === "wrong-pack-ref") result.evidence_pack.scope_snapshot_ref.id = "different-snapshot";
+      const resultJson = canonicalRetrievalJson(result);
+      const row = { ...original, operation_id: `legacy-${kind}`, idempotency_key: kind, result_json: resultJson,
+        result_digest: kind === "wrong-digest" ? "0".repeat(64) : await shaHex(resultJson) };
+      raw.prepare(`INSERT INTO retrieval_query_result (${Object.keys(row).join(",")}) VALUES (${Object.keys(row).map(() => "?").join(",")})`)
+        .run(...Object.values(row));
+      const before = raw.prepare("SELECT * FROM retrieval_query_result ORDER BY operation_id").all();
+      const error = await queryError(createD1RetrievalResultStore(d1, ACCESS).load(kind));
+      expect(error.code).toBe(kind === "missing-expression" ? "RETRIEVAL_IDEMPOTENCY_CONFLICT" : "RETRIEVAL_RESOLUTION_UNCERTAIN");
+      expect(error.retryable).toBe(kind !== "missing-expression");
+      expect(raw.prepare("SELECT * FROM retrieval_query_result ORDER BY operation_id").all()).toEqual(before);
+      expect(await createD1RetrievalResultStore(d1, ACCESS).load("original")).not.toBeNull();
+    },
+  );
+});
