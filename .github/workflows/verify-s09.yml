@@ -1,0 +1,117 @@
+name: verify-s09-semantic-stage
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/verify-s09.yml]
+permissions:
+  contents: write
+jobs:
+  verify:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 12
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - run: git config --global core.autocrlf false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 22.23.2
+      - name: Restore only the reviewed exact S09 tree
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$(git branch --show-current)" = main
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          mkdir -p "$RUNNER_TEMP/s09-result"
+          git rm .github/workflows/verify-s09.yml
+          python - <<'PY'
+          import base64, gzip, hashlib, json, os, pathlib, subprocess, urllib.request
+          shas = ['f43fbc2b3f22e11e2744c7f42350112aed7f2c97', 'a08e2015fc267eed91b60c6a876f64a52083a19c', 'de5350432c82ad1aeac452918e3af77fafd6fc27']
+          parts = []
+          for sha in shas:
+              request = urllib.request.Request(f"{os.environ['GITHUB_API_URL']}/repos/{os.environ['GITHUB_REPOSITORY']}/git/blobs/{sha}", headers={'Authorization':'Bearer '+os.environ['GH_TOKEN'],'Accept':'application/vnd.github+json'})
+              with urllib.request.urlopen(request, timeout=30) as response:
+                  data = base64.b64decode(json.load(response)['content'])
+              assert hashlib.sha1(f'blob {len(data)}\0'.encode()+data).hexdigest() == sha
+              parts.append(data)
+          patch = gzip.decompress(base64.b64decode(b''.join(parts)))
+          assert hashlib.sha256(patch).hexdigest() == 'a261faf0e091b72a61b41b7ef3f5107d1ff0f460e4aa0d7cafa7218d7ae0e349'
+          path = pathlib.Path(os.environ['RUNNER_TEMP'], 's09.patch')
+          path.write_bytes(patch)
+          subprocess.run(['git','apply','--check',str(path)],check=True)
+          subprocess.run(['git','apply','--index',str(path)],check=True)
+          assert subprocess.check_output(['git','write-tree'],text=True).strip() == 'edbba89d21d86c7b12e5300366d335b5f7e1b4f6'
+          PY
+      - name: Install frozen toolchain
+        run: |
+          corepack enable
+          corepack prepare pnpm@11.23.0 --activate
+          pnpm install --frozen-lockfile
+          node --version > "$RUNNER_TEMP/s09-result/versions.txt"
+          pnpm --version >> "$RUNNER_TEMP/s09-result/versions.txt"
+      - name: Strict types lint ownership and unchanged contracts
+        run: |
+          set -euo pipefail
+          pnpm typecheck
+          pnpm exec tsc -p apps/eliotr-core/test/tsconfig.json --pretty false
+          pnpm exec eslint apps/eliotr-core/test/research-retrieve-branches.test.ts apps/eliotr-core/test/research-retrieve-fixture.ts apps/eliotr-core/test/research-retrieve-semantic.test.ts
+          node scripts/check-boundaries.mjs
+          node scripts/test-boundary-negative.mjs
+          node scripts/check-work-packets.mjs
+          node scripts/check-implementation-status.mjs
+          node docs/contracts/generate.mjs --check
+          node scripts/check-docs-index.mjs
+          git diff --cached --check
+          git diff --exit-code
+      - name: Preserved retrieval factory and legacy generation regressions
+        run: |
+          set -euo pipefail
+          pnpm --dir apps/eliotr-core exec vitest run test/research-retrieve-branches.test.ts --no-file-parallelism 2>&1 | tee "$RUNNER_TEMP/s09-result/branches.log"
+      - name: Semantic tail exact evidence and fail-closed mutation matrix
+        run: |
+          set -euo pipefail
+          pnpm --dir apps/eliotr-core exec vitest run test/research-retrieve-semantic.test.ts --no-file-parallelism 2>&1 | tee "$RUNNER_TEMP/s09-result/semantic.log"
+      - name: Store verified Git blobs without publishing refs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node --input-type=module <<'JS'
+          import { execFileSync } from 'node:child_process';
+          import { writeFileSync } from 'node:fs';
+          import { join } from 'node:path';
+          const git = (...args) => execFileSync('git', args);
+          const text = (...args) => git(...args).toString().trim();
+          const tree = text('write-tree');
+          if (tree !== 'edbba89d21d86c7b12e5300366d335b5f7e1b4f6') throw new Error('Tree identity changed');
+          git('diff','--exit-code');
+          const entries = [];
+          for (const path of git('diff','--cached','--name-only','-z','HEAD').toString().split('\0').filter(Boolean)) {
+            const index = text('ls-files','--stage','--',path);
+            if (!index) { entries.push({path,mode:'100644',type:'blob',sha:null}); continue; }
+            const [mode,sha] = index.split(/\s+/);
+            const data = git('cat-file','blob',sha);
+            const response = await fetch(`${process.env.GITHUB_API_URL}/repos/${process.env.GITHUB_REPOSITORY}/git/blobs`, {method:'POST',headers:{authorization:`Bearer ${process.env.GH_TOKEN}`,accept:'application/vnd.github+json','content-type':'application/json'},body:JSON.stringify({content:data.toString('base64'),encoding:'base64'})});
+            if (!response.ok) throw new Error(`Git blob creation failed: ${response.status}`);
+            if ((await response.json()).sha !== sha) throw new Error('Blob identity changed');
+            entries.push({path,mode,type:'blob',sha});
+          }
+          writeFileSync(join(process.env.RUNNER_TEMP,'s09-result','verified-tree.json'),JSON.stringify({base_sha:process.env.GITHUB_SHA,base_tree_sha:text('rev-parse','HEAD^{tree}'),tree_sha:tree,ref_updated:false,entries},null,2));
+          JS
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: s09-verified-${{ matrix.os }}
+          path: ${{ runner.temp }}/s09-result/
+          retention-days: 3
+          if-no-files-found: error
