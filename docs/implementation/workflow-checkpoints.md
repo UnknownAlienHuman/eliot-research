@@ -13,6 +13,23 @@ The owner's current priority is composing the existing protocol, retrieval, evid
 stages into the usable document-to-answer flow. New financial budgeting/accounting work is deferred
 (2026-09-10); existing provider authorization, cancellation and duplicate-call guards are preserved.
 
+## Operation-bound execution scopes (S33 code checkpoint, 2026-09-23)
+
+New owner runs require additive migration `0070_research_execution_scope.sql`.
+The existing orientation reservation stores a unique execution operation ID and immutable deadline;
+its request digest binds the complete Research input. Only the server run-admission path selects
+this mode, with a maximum lifetime of 24 hours. Public ORIENT keeps its 15-minute lease.
+The original ScopeSnapshot/grant is frozen once, with access capped by current read policies,
+source-admission expiry and scheduled membership changes. W1/W2 retain the originating principal,
+credential generation, scope and receipt; no browser token is stored or needed for background work.
+The canonical W2 current-view additionally requires the matching completed execution reservation.
+Policy revocation, source invalidation/purge/cutover, cancellation, deployment compatibility and
+paid-stage controls still apply. The operation deadline never slides on replay or recovery.
+Repeated POSTs reuse the recorded scope instead of resolving current source heads. Historical
+short-scope runs are not silently extended or upgraded; reauthenticated reads remain read-only.
+Code is integrated separately from acceptance: compilation/schema checks are not D1/Workflow,
+Windows, time-boundary or live qualification. Those remain pending in PR #225.
+
 ## Configured exploratory evidence freeze
 
 The explicit `research-handlers.exploratory.v3` factory now composes stage 10 (`RECONCILE`) and

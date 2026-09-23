@@ -37,7 +37,7 @@ export interface OwnerScopeAuthority extends Pick<ScopeRepository, "resolveAtom"
    * admission, owner-generation, and purge checks performed by `sources`.
    */
   exhaustiveSources(refs: readonly string[]): Promise<readonly OrientationSource[]>;
-  grant(snapshot: ScopeSnapshot): Promise<void>;
+  grant(snapshot: ScopeSnapshot, expiresAtCeilingMs?: number): Promise<void>;
   exhaustiveGrant(snapshot: ScopeSnapshot): Promise<void>;
   exhaustiveRequireReadPolicy(): Promise<void>;
 }
@@ -218,13 +218,17 @@ export function createOwnerScopeAuthority(db: D1Database, context: EvidenceAcces
     snapshot: ScopeSnapshot,
     load: (refs: readonly string[]) => Promise<readonly OrientationSource[]>,
     maximumPolicyRows: number,
+    expiresAtCeilingMs?: number,
   ): Promise<void> {
     const loaded = await load(snapshot.member_source_revision_refs);
     const allowedUses = [...new Set(loaded.flatMap((source) => source.authority.allowed_use))].sort();
     if (!allowedUses.length) allowedUses.push("research");
     const disclosure = loaded[0]?.policy.disclosure_ceiling ?? "private";
     const policyExpiry = Math.min(...[...(await policies(maximumPolicyRows)).values()].map((policy) => Date.parse(policy.expires_at)));
-    const expiresAt = new Date(Math.min(Date.parse(snapshot.expires_at), policyExpiry)).toISOString();
+    if (expiresAtCeilingMs !== undefined && (!Number.isSafeInteger(expiresAtCeilingMs) ||
+        expiresAtCeilingMs <= now())) orientationFail("ORIENTATION_OPERATION_EXPIRED", 409);
+    const expiresAt = new Date(Math.min(Date.parse(snapshot.expires_at), policyExpiry,
+      expiresAtCeilingMs ?? Infinity)).toISOString();
     const receipt = `grant-${await evidenceSha256({ scope: snapshot.digest, access })}`;
     const values: Bind[] = [snapshot.snapshot_id, snapshot.revision, access.principal_ref, access.client_class,
       access.credential_generation, snapshot.policy_authority_ref, JSON.stringify(allowedUses), disclosure,
@@ -246,7 +250,7 @@ export function createOwnerScopeAuthority(db: D1Database, context: EvidenceAcces
   }
   return {
     resolveAtom, exhaustiveResolveAtom, resolveAuthorityClosure, exhaustiveResolveAuthorityClosure, sources, exhaustiveSources,
-    grant: (snapshot) => grantWithLoader(snapshot, sources, ORIENTATION_MAX_SOURCES),
+    grant: (snapshot, expiresAtCeilingMs) => grantWithLoader(snapshot, sources, ORIENTATION_MAX_SOURCES, expiresAtCeilingMs),
     exhaustiveGrant: (snapshot) => grantWithLoader(snapshot, exhaustiveSources, 4096),
     exhaustiveRequireReadPolicy: async () => { await policies(4096); },
     requireReadPolicy: async () => { await policies(); },

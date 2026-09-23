@@ -8,19 +8,22 @@ import { createOwnerScopeAuthority } from "./orientation-authority.js";
 import { ORIENTATION_MAX_SOURCES, ORIENTATION_PROFILE, orientationFail, parseOrientationRequest } from "./orientation-input.js";
 import { materializeMetadataNavigation } from "./orientation-materialization.js";
 import { createNavigationService } from "./navigation-service.js";
+import type { ResearchExecutionScopeBinding } from "./orientation-storage.js";
 import { orientationStorage } from "./orientation-storage.js";
 import { createD1ScopeService } from "./d1-scope-service.js";
 
 interface OrientationEnvironment { readonly CORE_DB: D1Database; readonly SEARCH_DB: D1Database; }
 // IMPLEMENTED_NOT_LIVE: ER-24 owner metadata orientation requires retained deployed D1/Access receipts.
-export function createOrientationApi(env: OrientationEnvironment, now: () => number = Date.now) {
+export function createOrientationApi(env: OrientationEnvironment, now: () => number = Date.now,
+  execution?: ResearchExecutionScopeBinding) {
+  const executionBinding = execution === undefined ? undefined : Object.freeze({ ...execution });
   function services(context: AuthenticatedRequestContext) {
     if (context.client_class !== "owner_pwa") orientationFail("ORIENTATION_OWNER_REQUIRED", 403);
     const authority = createOwnerScopeAuthority(env.CORE_DB, context, now);
     const scopes = createD1ScopeService(env.CORE_DB, authority, { now, max_snapshot_members: ORIENTATION_MAX_SOURCES });
     const requireCurrent = orientationCurrentness(env.CORE_DB, scopes, context.principal_ref, now);
     const evidence = createD1EvidenceAuthorityPort({ core_database: env.CORE_DB, search_database: env.SEARCH_DB, now });
-    const storage = orientationStorage(env.CORE_DB, context, now);
+    const storage = orientationStorage(env.CORE_DB, context, now, executionBinding);
     const current = async (ref: VersionedRef): Promise<ScopeSnapshot> => {
       const stored = await evidence.loadScope(ref);
       if (!stored || stored.invalidated_at !== null) orientationFail("ORIENTATION_SCOPE_UNAVAILABLE", 409);
@@ -34,6 +37,16 @@ export function createOrientationApi(env: OrientationEnvironment, now: () => num
     const { authority, evidence, storage, current, requireCurrent } = services(context);
     const checkpoint = () => {
       if (context.request.signal.aborted) orientationFail("ORIENTATION_REQUEST_ABORTED", 409);
+      if (executionBinding !== undefined) {
+        const access = context.access;
+        // Fresh execution authority must be issued by a still-authenticated owner.
+        // Only this admission checks JWT expiry; background stages use the durable grant.
+        if (access === undefined || access.principal_ref !== context.principal_ref ||
+            access.credential_generation !== context.credential_generation ||
+            !Number.isFinite(Date.parse(access.expires_at)) || Date.parse(access.expires_at) <= now()) {
+          orientationFail("ORIENTATION_OWNER_REQUIRED", 403);
+        }
+      }
     };
     checkpoint();
     // Read authorization before reserving work. No body or existing admission policy can grant access.
@@ -59,7 +72,13 @@ export function createOrientationApi(env: OrientationEnvironment, now: () => num
     }
     checkpoint();
     await requireCurrent(snapshot);
-    await authority.grant(snapshot);
+    // Execution keeps its admission-time deadline, never a sliding browser lease.
+    // Include the actual frozen members here so source-admission expiry and future
+    // membership boundaries also cap the grant used by every W1/W2/paid stage.
+    const executionGrantCeiling = executionBinding === undefined ? undefined : await nextOrientationBoundary(
+      env.CORE_DB, context.principal_ref, snapshot, Date.parse(snapshot.created_at),
+    );
+    await authority.grant(snapshot, executionGrantCeiling);
     await requireCurrent(snapshot);
     const store = createD1NavigationStore({ database: env.CORE_DB, scope_snapshot: snapshot, access: context,
       require_current: requireCurrent, now });
@@ -93,7 +112,10 @@ export function createOrientationApi(env: OrientationEnvironment, now: () => num
     await evidence.authorizeScope({ snapshot, invalidated_at: null, invalidation_reason: null }, context);
     await storage.complete(operation, snapshot, { result, trace, budget: { receipt_ref: budgetRef, profile: ORIENTATION_PROFILE,
       maximum_sources: ORIENTATION_MAX_SOURCES, represented_sources: navigation.represented_source_revision_refs.length,
-      provider_calls: 0, cost_measurement: "NOT_MEASURED" } });
+      provider_calls: 0, cost_measurement: "NOT_MEASURED" },
+      ...(executionBinding === undefined ? {} : {
+        execution: { ...executionBinding, deadline: operation.expires_at },
+      }) });
     await current(scopeRef);
     await evidence.authorizeScope({ snapshot, invalidated_at: null, invalidation_reason: null }, context);
     return result;

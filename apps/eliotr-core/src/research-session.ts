@@ -1,6 +1,6 @@
 // IMPLEMENTED_NOT_LIVE: ER-24 ResearchSession executes durable sessions over DO storage with W2 D1/R2 checkpoints; research.query/run are composed; hibernation WebSocket transport and live receipts remain separate.
 import { DurableObject } from "cloudflare:workers";
-import { createOrientationApi, ORIENTATION_PROFILE, createD1ScopeService, createOwnerScopeAuthority } from "@eliotr/cloudflare-navigation";
+import { ORIENTATION_PROFILE, createD1ScopeService, createOwnerScopeAuthority } from "@eliotr/cloudflare-navigation";
 import { createD1ScopePorts, createD1ScopeProfilePort, createD1RetrievalResultStore, retrievalRequestDigest, RetrievalQueryError } from "@eliotr/retrieval";
 import { createD1EvidenceAuthorityPort, createNavigationReadAuthority } from "@eliotr/cloudflare-evidence";
 import { loadHeldResearchScope, retrieveWithHeldScope } from "./research-retrieval-composition.js";
@@ -30,7 +30,9 @@ import type { VersionedRef } from "@eliotr/contracts";
 import { inspectScopeExpression, scopeExpressionIdentity, RESEARCH_WORKFLOW_STAGES } from "@eliotr/domain";
 import type { AuthenticatedRequestContext, QueryRequest, QueryResult, ResearchEngineStatus, ResearchRunStatus } from "@eliotr/interfaces";
 import type { ResearchRunFailureCode } from "@eliotr/interfaces";
-import { CatalogInputError } from "./catalog-service.js";
+import { ResearchServiceError, failResearch as fail } from "./research-service-error.js";
+export { ResearchServiceError } from "./research-service-error.js";
+import { loadResearchPlanningSources, prepareResearchRunScope } from "./research-run-admission.js";
 import type { Env } from "./env.js";
 import { RESEARCH_OWNER_MODEL_PROFILE as MODEL_PROFILE } from "./research-owner-profile.js";
 import type { ResearchWorkflowRunParams } from "./research-workflow.js";
@@ -42,8 +44,6 @@ const RUN_BUDGET = "research-budget-v1";
 const POLICY_GEN = "research-policy-v1";
 const HANDLER_GEN = "research-handlers.v1";
 const ID_RE = /^[A-Za-z0-9][A-Za-z0-9:._-]{0,127}$/u;
-export class ResearchServiceError extends CatalogInputError {}
-function fail(code: string, message: string, status = 400, retryable = false): never { throw new ResearchServiceError(code, message, status, retryable); }
 function checkId(value: unknown, label: string): string { if (typeof value !== "string" || !ID_RE.test(value)) fail("RESEARCH_INPUT_INVALID", `${label} is invalid`); return value as string; }
 function checkQuery(value: unknown): string { if (!isResearchQuestionText(value)) fail("RESEARCH_INPUT_INVALID", "query is invalid"); return value; }
 function checkScope(value: unknown): QueryRequest["scope_expression"] { const parsed = ScopeExpressionSchema.safeParse(value); if (!parsed.success) fail("RESEARCH_INPUT_INVALID", "scope_expression is invalid"); const m = inspectScopeExpression(parsed.data); if (m.depth > 8 || m.atom_count > 16 || m.selected_source_count > 64) fail("RESEARCH_INPUT_LIMIT", "scope_expression exceeds its bounds", 413); return parsed.data; }
@@ -86,45 +86,6 @@ export function parseResearchRunRequest(raw: unknown): QueryRequest {
 }
 function idempotencyKey(context: AuthenticatedRequestContext): string { const key = context.request.headers.get("idempotency-key"); if (typeof key !== "string" || key.length < 1 || key.length > 256 || /[\u0000-\u0020\u007f]/u.test(key)) fail("RESEARCH_INPUT_INVALID", "idempotency-key header is required"); return key; }
 function requireOwner(context: AuthenticatedRequestContext): void { if (context.client_class !== "owner_pwa") fail("RESEARCH_OWNER_REQUIRED", "research query/run requires the owner profile", 403); }
-interface ResearchPlanningSourceRow {
-  readonly source_revision_ref: string;
-  readonly source_id: string;
-  readonly source_class: string;
-  readonly source_namespace_id: string;
-  readonly source_owner_generation: string;
-  readonly origin_uri: string | null;
-  readonly purge_state: string;
-  readonly current_owner_generation: string | null;
-  readonly owner_status: string | null;
-}
-async function loadResearchPlanningSources(
-  database: D1Database,
-  sourceRevisionRefs: readonly string[],
-  sourceOwnerGenerations: Readonly<Record<string, string>>,
-): Promise<readonly ResearchPlanningSourceRow[]> {
-  if (sourceRevisionRefs.length === 0) return [];
-  const rows = await database.prepare(
-    "SELECT sr.source_revision_ref, sr.source_id, s.source_class, s.source_namespace_id, " +
-    "sr.source_owner_generation, s.origin_uri, sr.purge_state, " +
-    "own.source_owner_generation AS current_owner_generation, own.status AS owner_status " +
-    "FROM json_each(?1) requested " +
-    "JOIN source_revision sr ON sr.source_revision_ref=requested.value " +
-    "JOIN source s ON s.source_id=sr.source_id " +
-    "LEFT JOIN source_namespace_ownership own ON own.source_namespace_id=s.source_namespace_id AND own.status='ACTIVE' " +
-    "ORDER BY sr.source_revision_ref",
-  ).bind(JSON.stringify(sourceRevisionRefs)).all<ResearchPlanningSourceRow>();
-  if (!rows.success || rows.results.length !== sourceRevisionRefs.length) {
-    fail("RESEARCH_AUTHORITY_STALE", "planning source portfolio is unavailable", 409);
-  }
-  for (const row of rows.results) {
-    if (row.purge_state !== "LIVE" || row.owner_status !== "ACTIVE" ||
-        row.current_owner_generation !== row.source_owner_generation ||
-        sourceOwnerGenerations[row.source_revision_ref] !== row.source_owner_generation) {
-      fail("RESEARCH_AUTHORITY_STALE", "planning source portfolio is not current", 409);
-    }
-  }
-  return rows.results;
-}
 const RESEARCH_ENGINE_STATUSES = new Set<ResearchEngineStatus>([
   "queued", "running", "paused", "errored", "terminated", "complete", "waiting", "waitingForPause", "unknown",
 ]);
@@ -353,21 +314,27 @@ export function createResearchRunService(env: Env): { run(context: Authenticated
       const hex = base.slice(0, 48);
       const investigation_id = checkId(`research-${hex}`, "investigation_id");
       const operation_id = checkId(`run-${hex}`, "operation_id");
-      const orientation = createOrientationApi({ CORE_DB: env.CORE_DB, SEARCH_DB: env.SEARCH_DB });
-      const oriented = await orientation.orient(context, { query: request.query, product: "ORIENT", scope_expression: request.scope_expression, literals: [], evidence_grade: "E0", budget_ref: ORIENTATION_PROFILE, max_results: request.max_results });
-      const scopeRef = oriented.evidence_pack.scope_snapshot_ref;
       const db = env.CORE_DB;
       const bucket = env.WORK_BUCKET;
-      const snapshotRow = await db.prepare("SELECT policy_authority_ref, purge_ledger_revision FROM scope_snapshot WHERE snapshot_id = ?1 AND revision = ?2").bind(scopeRef.id, scopeRef.revision).first<{ policy_authority_ref: string; purge_ledger_revision: number }>();
-      if (!snapshotRow || typeof snapshotRow.policy_authority_ref !== "string") fail("RESEARCH_AUTHORITY_STALE", "scope snapshot is unavailable", 409);
       const store = createD1InvestigationLedgerStore(db as unknown as LedgerD1Database);
-      const pre = await store.readByIdempotency(key).catch(() => null);
-      const priorWorkflow = pre === null ? null : await db.prepare("SELECT handler_generation FROM research_workflow_run WHERE idempotency_key = ?1")
-        .bind(key).first<{ handler_generation: string }>();
-      const supportedGenerations = new Set([HANDLER_GEN, SERVER_OWNED_RESEARCH_HANDLER_GENERATION, SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION, SERVER_OWNED_FREEZE_HANDLER_GENERATION, SERVER_OWNED_SEMANTIC_HANDLER_GENERATION, SERVER_OWNED_LEGACY_PROTOCOL_HANDLER_GENERATION, SERVER_OWNED_PROTOCOL_HANDLER_GENERATION]);
+      // An unavailable identity lookup is not permission to freeze another scope.
+      const pre = await store.readByIdempotency(key).catch(() =>
+        fail("RESEARCH_SETTLEMENT_UNCERTAIN", "research identity readback is unavailable", 503, true));
+      if (pre !== null && (pre.head.investigation_id !== investigation_id ||
+          pre.head.principal_ref !== context.principal_ref)) {
+        fail("RESEARCH_CONFLICT", "idempotency identity is bound to a different request", 409);
+      }
       if (pre === null && !researchSemanticConfigurationInstalled(env)) {
         fail("RESEARCH_AGENT_NOT_CONFIGURED", "Research agents require the installed model, prompt and report configuration", 503);
       }
+      const scopeRef = await prepareResearchRunScope(env, context, request, operation_id, requestDigest,
+        pre === null ? undefined : { id: pre.head.scope_snapshot_id, revision: pre.head.scope_snapshot_revision })
+        .catch(mapRetrievalError);
+      const snapshotRow = await db.prepare("SELECT policy_authority_ref, purge_ledger_revision FROM scope_snapshot WHERE snapshot_id = ?1 AND revision = ?2").bind(scopeRef.id, scopeRef.revision).first<{ policy_authority_ref: string; purge_ledger_revision: number }>();
+      if (!snapshotRow || typeof snapshotRow.policy_authority_ref !== "string") fail("RESEARCH_AUTHORITY_STALE", "scope snapshot is unavailable", 409);
+      const priorWorkflow = pre === null ? null : await db.prepare("SELECT handler_generation FROM research_workflow_run WHERE idempotency_key = ?1")
+        .bind(key).first<{ handler_generation: string }>();
+      const supportedGenerations = new Set([HANDLER_GEN, SERVER_OWNED_RESEARCH_HANDLER_GENERATION, SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION, SERVER_OWNED_FREEZE_HANDLER_GENERATION, SERVER_OWNED_SEMANTIC_HANDLER_GENERATION, SERVER_OWNED_LEGACY_PROTOCOL_HANDLER_GENERATION, SERVER_OWNED_PROTOCOL_HANDLER_GENERATION]);
       if (pre !== null && (priorWorkflow === null || !supportedGenerations.has(priorWorkflow.handler_generation))) {
         fail("RESEARCH_CONFLICT", "persisted workflow handler generation is unsupported", 409);
       }
