@@ -3,6 +3,9 @@ import {
   canonicalEvidenceJson, evidenceSha256, loadSourceAuthorities,
   type EvidenceAccessContext, type EvidenceSourceAuthority,
 } from "@eliotr/cloudflare-evidence";
+import type { AuthenticatedRequestContext } from "@eliotr/interfaces";
+import { authorizeProjectClientGrant, readClientProjectMembers } from "./client-grant-authority.js";
+import { grantFail } from "./client-grant-store.js";
 import type { DeterministicScopeAtom } from "@eliotr/domain";
 import type { ScopeAuthorityRequest, ScopeRepository } from "./scope-service.js";
 import { ORIENTATION_MAX_SOURCES, orientationFail, orientationId } from "./orientation-input.js";
@@ -59,10 +62,16 @@ const columns = "r.source_revision_ref, s.source_id, s.source_namespace_id, s.so
 /** Read policy is explicit and independent of both Access authentication and ingestion admission. */
 export function createOwnerScopeAuthority(db: D1Database, context: EvidenceAccessContext,
   now: () => number = Date.now): OwnerScopeAuthority {
+  if (context.client_class !== "owner_pwa") orientationFail("ORIENTATION_OWNER_REQUIRED", 403);
+  return createReadPolicyAuthority(db, context, context.principal_ref, now);
+}
+
+/** The policy subject is separate from the authenticated actor. Not exported as an impersonation factory. */
+function createReadPolicyAuthority(db: D1Database, context: EvidenceAccessContext,
+  policyPrincipal: string, now: () => number): OwnerScopeAuthority {
   const access: EvidenceAccessContext = { principal_ref: context.principal_ref,
     client_class: context.client_class, credential_generation: context.credential_generation };
-  if (access.client_class !== "owner_pwa") orientationFail("ORIENTATION_OWNER_REQUIRED", 403);
-  orientationId(access.principal_ref); orientationId(access.credential_generation);
+  orientationId(access.principal_ref); orientationId(access.credential_generation); orientationId(policyPrincipal);
   const clock = () => {
     const value = now();
     if (!Number.isSafeInteger(value) || value < 0) orientationFail("ORIENTATION_CLOCK_INVALID", 503);
@@ -79,7 +88,7 @@ export function createOwnerScopeAuthority(db: D1Database, context: EvidenceAcces
       "CASE WHEN length(CAST(allowed_use_json AS BLOB))<=4096 THEN allowed_use_json ELSE NULL END AS allowed_use_json, " +
       "disclosure_ceiling, expires_at FROM scope_read_policy WHERE principal_ref=?1 AND client_class=?2 " +
       "AND state='ACTIVE' AND julianday(expires_at)>julianday(?3) ORDER BY source_namespace_id LIMIT ?4",
-    [access.principal_ref, access.client_class, clock(), maximumRows + 1], maximumRows);
+    [policyPrincipal, "owner_pwa", clock(), maximumRows + 1], maximumRows);
     if (!rows.length) orientationFail("ORIENTATION_READ_POLICY_REQUIRED", 403);
     for (const row of rows) {
       orientationId(row.source_namespace_id); orientationId(row.policy_ref); orientationId(row.disclosure_ceiling);
@@ -163,7 +172,7 @@ export function createOwnerScopeAuthority(db: D1Database, context: EvidenceAcces
         project = await db.prepare("SELECT p.project_id, p.generation, p.default_disclosure, p.default_source_policy_ref, " +
           "p.retention_policy_ref FROM project p WHERE p.project_id=?1 AND EXISTS " +
           "(SELECT 1 FROM project_owner po WHERE po.project_id=p.project_id AND po.principal_ref=?2)")
-          .bind(atom.project_id, access.principal_ref).first();
+          .bind(atom.project_id, policyPrincipal).first();
         if (!project) orientationFail("ORIENTATION_PROJECT_UNAVAILABLE", 404);
         filters.push("EXISTS (SELECT 1 FROM project_source_membership m WHERE m.source_id=s.source_id AND m.project_id=?3 " +
           "AND julianday(m.valid_from)<=julianday(?2) AND (m.valid_to IS NULL OR julianday(m.valid_to)>julianday(?2)))");
@@ -254,5 +263,28 @@ export function createOwnerScopeAuthority(db: D1Database, context: EvidenceAcces
     exhaustiveGrant: (snapshot, expiresAtCeilingMs) => grantWithLoader(snapshot, exhaustiveSources, 4096, expiresAtCeilingMs),
     exhaustiveRequireReadPolicy: async () => { await policies(4096); },
     requireReadPolicy: async () => { await policies(); },
+  };
+}
+
+/** Metadata-only delegation: no scope creation, grants, mutation, paid effects or global resolver escapes. */
+export async function createProjectClientCatalogAuthority(db: D1Database, context: AuthenticatedRequestContext,
+  projectId: string, now: () => number = Date.now) {
+  const lease = await authorizeProjectClientGrant(db, context, { operation: "catalog", project_id: projectId }, now);
+  const refs = await readClientProjectMembers(db, projectId, now());
+  const members = new Set(refs);
+  const shared = createReadPolicyAuthority(db, context, lease.grant.grantor_principal_ref, now);
+  // Check ALL requested members. Filtering inaccessible rows out of a full-project request is not authorization.
+  await shared.exhaustiveSources(refs);
+  await lease.requireCurrent();
+  return {
+    lease,
+    policy_principal_ref: lease.grant.grantor_principal_ref,
+    requireReadPolicy: shared.exhaustiveRequireReadPolicy,
+    async sources(requested: readonly string[]) {
+      if (requested.some((ref) => !members.has(ref))) grantFail("CLIENT_GRANT_SCOPE_DENIED", 403, "Source is outside the delegated project");
+      const result = await shared.exhaustiveSources(requested);
+      await lease.requireCurrent();
+      return result;
+    },
   };
 }

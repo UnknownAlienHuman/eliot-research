@@ -5,6 +5,7 @@ import type {
 } from "@eliotr/interfaces";
 import type { AccessIdentity } from "@eliotr/cloudflare-access";
 import { apiResult, HttpRequestError, requireNoQuery, type HttpDependencies } from "./http.js";
+import { handleClientGrantHttp } from "./client-grant-http.js";
 import { handleGoogleOAuthBegin } from "./google-oauth-begin.js";
 import { handleGoogleOAuthCallback } from "./google-oauth-callback.js";
 import { handleGoogleConnectionDisconnect, handleGoogleConnectionStatus, handleGoogleOAuthReconnectBegin } from "./google-oauth-lifecycle.js";
@@ -22,6 +23,7 @@ import {
 
 interface SpecialRouteMatch {
   readonly route: RouteDefinition;
+  readonly params: Readonly<Record<string, string>>;
 }
 
 function requireDriveExchangeTransport(env: Env): void {
@@ -53,6 +55,11 @@ export async function dispatchHttpSpecialRoute(input: {
     requireDriveExchangeTransport(input.env);
   }
   switch (input.match.route.operation) {
+    case "research.client-grants.list":
+    case "research.client-grants.put":
+    case "research.client-grants.revoke":
+      return handleClientGrantHttp(input.request, input.env, input.context, input.match.params,
+        input.match.route.maximum_request_bytes);
     case "system.research.model-qualification":
       requireNoQuery(input.url);
       return handleResearchModelQualification(input.request, input.env, input.context,

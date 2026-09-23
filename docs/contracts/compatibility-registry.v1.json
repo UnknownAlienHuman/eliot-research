@@ -2036,8 +2036,56 @@
       "schema_version": 1,
       "structural_strictness": "CLOSED_OBJECT",
       "supersedes_schema_id": "urn:eliotr:contracts:research:inquiry-protocol-profile:v1:g1"
+    },
+    {
+      "compatibility": "INITIAL",
+      "export_name": "ProjectClientGrantListSchema",
+      "family": "scope",
+      "json_schema_sha256": "01b5340248ba5d33b355364af02951ac13be1a5f4625b0ef4003934b48d33eaf",
+      "kind": "OBJECT",
+      "note": "S10 initial project-client delegation contract; operation vocabulary does not enable uncomposed handlers or paid effects.",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:scope:project-client-grant-list:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "compatibility": "INITIAL",
+      "export_name": "ProjectClientGrantPutSchema",
+      "family": "scope",
+      "json_schema_sha256": "c7b4145800c3465ebee4b55dfef2305a6deb809fe83fa6e339bf93563fde12e4",
+      "kind": "OBJECT",
+      "note": "S10 initial project-client delegation contract; operation vocabulary does not enable uncomposed handlers or paid effects.",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:scope:project-client-grant-put:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "compatibility": "INITIAL",
+      "export_name": "ProjectClientGrantRevokeSchema",
+      "family": "scope",
+      "json_schema_sha256": "59d6c1f594a0bf21bca89d553dc6975cca20af70f760dce14960b87a089d4538",
+      "kind": "OBJECT",
+      "note": "S10 initial project-client delegation contract; operation vocabulary does not enable uncomposed handlers or paid effects.",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:scope:project-client-grant-revoke:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "compatibility": "INITIAL",
+      "export_name": "ProjectClientGrantSchema",
+      "family": "scope",
+      "json_schema_sha256": "e999443dc0c10a7297cd964ec064473e660ce4bc57002fb11851cf715f108484",
+      "kind": "OBJECT",
+      "note": "S10 initial project-client delegation contract; operation vocabulary does not enable uncomposed handlers or paid effects.",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:scope:project-client-grant:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
     }
   ],
   "protocol": "eliotr.contract-compatibility-registry.v1",
-  "registry_generation": 5
+  "registry_generation": 6
 }

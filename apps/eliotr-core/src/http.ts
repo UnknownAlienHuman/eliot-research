@@ -229,6 +229,8 @@ function authorize(
       principal_ref: identity.principal_ref,
       credential_generation: identity.credential_generation,
       expires_at: identity.expires_at,
+      authentication_method: identity.authentication_method,
+      ...(identity.issuer === undefined ? {} : { issuer: identity.issuer }),
     },
   };
 }

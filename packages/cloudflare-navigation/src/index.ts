@@ -18,3 +18,8 @@ export * from "./exhaustive-workflow-output.js";
 export * from "./exhaustive-workflow-service.js";
 export * from "./exhaustive-query-service.js";
 export * from "./native-coordinate-map-adapter.js";
+
+export { ClientGrantError } from "./client-grant-store.js";
+export { createProjectClientGrantService, type ClientGrantServiceOptions } from "./client-grant-service.js";
+export { authorizeProjectClientGrant, type ClientGrantLease } from "./client-grant-authority.js";
+export { createProjectClientCatalogAuthority } from "./orientation-authority.js";

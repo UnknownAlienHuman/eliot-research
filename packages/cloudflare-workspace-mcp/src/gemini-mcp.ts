@@ -11,6 +11,7 @@ import {
   sha256,
   stable,
   type McpClientDiagnosticConsume,
+  type GeminiMcpToolDependencies,
 } from "./gemini-mcp-tool-common.js";
 import {
   handleGeminiMcpProtocol,
@@ -38,6 +39,7 @@ export interface WorkspaceMcpRuntime {
   readonly ACCESS_AUDIENCE?: string | undefined;
   readonly mcpClientDiagnosticConsume?: McpClientDiagnosticConsume;
   readonly workspaceCandidateStore?: WorkspaceMcpCandidateStore;
+  readonly projectCatalog?: GeminiMcpToolDependencies["catalog"];
   readonly readReadiness: () => Promise<{
     readonly ready: boolean;
     readonly blocking_reason_codes: readonly string[];
@@ -245,6 +247,7 @@ export async function authenticatedContext(
       trace_id: trace,
       deployment_generation: deploymentGeneration,
       verified_actor: verifiedActor,
+      ...(identity.issuer === undefined ? {} : { verified_access: Object.freeze({ ...identity }) }),
     });
   }
 
@@ -286,6 +289,7 @@ function serverDependencies(
   now: () => number,
 ): GeminiMcpServerDependencies {
   const diagnosticEnabled = typeof env.mcpClientDiagnosticConsume === "function";
+  const catalogEnabled = profile === "service-token" && typeof env.projectCatalog === "function";
   const toolDependencies = {
     google_transport: googleTransport(env),
     now,
@@ -301,19 +305,21 @@ function serverDependencies(
         enabled_surfaces: [
           "system_status",
           "google_sync_planning",
+          ...(catalogEnabled ? ["project_catalog"] : []),
           ...(diagnosticEnabled ? ["client_diagnostic_confirmation"] : []),
         ],
-        disabled_surfaces: [{ surface: "catalog", reason: "MCP_CATALOG_SCOPE_REQUIRED" }],
+        disabled_surfaces: catalogEnabled ? [] : [{ surface: "catalog", reason: "MCP_CATALOG_SCOPE_REQUIRED" }],
         google_external_transport: googleTransport(env),
         mcp_access_auth_profile: profile,
         exact_readback_required: true,
         canonical_mutation_available_through_mcp: false,
       };
     },
-    async catalog(): Promise<never> {
-      // A dedicated Access token proves the caller, not authorization to every owner's library.
-      // The current read-policy schema is owner-only. Never impersonate an owner for a service token.
-      throw new GeminiMcpToolError("MCP_CATALOG_SCOPE_REQUIRED", "An explicit service catalog scope is required");
+    async catalog(input: Parameters<GeminiMcpToolDependencies["catalog"]>[0], context: McpToolCallContext): Promise<unknown> {
+      if (!catalogEnabled || !env.projectCatalog || !context.verified_access || !input.project_id) {
+        throw new GeminiMcpToolError("MCP_CATALOG_SCOPE_REQUIRED", "A verified service and explicit delegated project are required");
+      }
+      return env.projectCatalog(input, context);
     },
     mcp_auth_profile: profile,
     ...(diagnosticEnabled ? { mcpClientDiagnosticConsume: env.mcpClientDiagnosticConsume } : {}),
@@ -323,7 +329,7 @@ function serverDependencies(
     server_version: "0.1.0",
     deployment_generation: env.DEPLOYMENT_GENERATION,
     listTools: () => GEMINI_MCP_TOOLS.filter((tool) =>
-      tool.name !== "eliotr_catalog" &&
+      (tool.name !== "eliotr_catalog" || catalogEnabled) &&
       (tool.name !== "eliotr_confirm_client_diagnostic" || diagnosticEnabled),
     ),
     callTool: (name, input, context) =>

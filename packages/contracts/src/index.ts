@@ -5,6 +5,7 @@ export * from "./source.js";
 export * from "./snapshot-view.js";
 export * from "./owner-cutover.js";
 export * from "./scope.js";
+export * from "./project-client-grant.js";
 export * from "./normalized-bundle.js";
 export * from "./evidence.js";
 export * from "./coordinate-map.js";

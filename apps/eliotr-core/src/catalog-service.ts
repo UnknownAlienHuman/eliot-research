@@ -1,5 +1,5 @@
 import type { AuthenticatedRequestContext, CatalogRequest, CatalogResult } from "@eliotr/interfaces";
-import { createOwnerScopeAuthority } from "@eliotr/cloudflare-navigation";
+import { createOwnerScopeAuthority, createProjectClientCatalogAuthority } from "@eliotr/cloudflare-navigation";
 import { evidenceSha256 } from "@eliotr/cloudflare-evidence";
 import { catalogStatements, catalogTimeFrontier } from "./catalog-queries.js";
 
@@ -206,14 +206,17 @@ interface CatalogReadFence {
   readonly generation: number;
   readonly identity: string;
   readonly frontier: number;
-  readonly authority: ReturnType<typeof createOwnerScopeAuthority>;
+  readonly authority: Pick<ReturnType<typeof createOwnerScopeAuthority>, "requireReadPolicy" | "sources">;
+  readonly policy_principal_ref: string;
   finish(): Promise<void>;
 }
 
-/** Shared primary mutation/time fence for owner-only Library metadata reads. */
+/** Shared primary mutation/time fence; non-owner reads additionally require one delegated project. */
 export async function beginCatalogRead(database: D1Database, context: AuthenticatedRequestContext,
-  deploymentGeneration: string, now: () => number): Promise<CatalogReadFence> {
-  if (context.client_class !== "owner_pwa") throw new CatalogInputError("CATALOG_OWNER_REQUIRED", "Owner read policy required", 403);
+  deploymentGeneration: string, now: () => number, projectId?: string): Promise<CatalogReadFence> {
+  if (context.client_class !== "owner_pwa" && projectId === undefined) {
+    throw new CatalogInputError("CATALOG_PROJECT_REQUIRED", "A service read requires one explicit delegated project", 403);
+  }
   validateRequestIdentifier(context.principal_ref, "principal");
   validateRequestIdentifier(context.credential_generation, "credential generation");
   validateRequestIdentifier(deploymentGeneration, "deployment generation");
@@ -234,12 +237,19 @@ export async function beginCatalogRead(database: D1Database, context: Authentica
   };
   const started = clock();
   const generation = await epoch();
+  const delegated = context.client_class === "owner_pwa" ? null :
+    await createProjectClientCatalogAuthority(database, context, projectId ?? "", now);
+  const policyPrincipal = delegated?.policy_principal_ref ?? context.principal_ref;
   const identity = await evidenceSha256({ principal: context.principal_ref, client_class: context.client_class,
-    credential: context.credential_generation, deployment: deploymentGeneration });
-  const frontier = await catalogTimeFrontier(database, context.principal_ref, started);
-  const authority = createOwnerScopeAuthority(database, context, now);
-  return { started, generation, identity, frontier, authority,
+    credential: context.credential_generation, deployment: deploymentGeneration,
+    ...(delegated === null ? {} : { project_client_grant: { grant_id: delegated.lease.grant.grant_id,
+      revision: delegated.lease.grant.revision, grantee: delegated.lease.grant.grantee } }) });
+  const frontier = Math.min(await catalogTimeFrontier(database, policyPrincipal, started),
+    delegated?.lease.expires_at_ms ?? Infinity);
+  const authority = delegated ?? createOwnerScopeAuthority(database, context, now);
+  return { started, generation, identity, frontier, authority, policy_principal_ref: policyPrincipal,
     async finish() {
+      await delegated?.lease.requireCurrent();
       if (await epoch() !== generation || clock() < started || clock() >= frontier) {
         throw new CatalogInputError("CATALOG_AUTHORITY_CHANGED", "Catalog changed while reading; reload", 409, true);
       }
@@ -253,7 +263,7 @@ export async function beginCatalogRead(database: D1Database, context: Authentica
 export async function readCatalog(database: D1Database, context: AuthenticatedRequestContext,
   request: CatalogRequest, deploymentGeneration: string, now: () => number = Date.now): Promise<CatalogResult> {
   const validated = validateCatalogRequest(request);
-  const fence = await beginCatalogRead(database, context, deploymentGeneration, now);
+  const fence = await beginCatalogRead(database, context, deploymentGeneration, now, validated.projectId);
   const { started, generation, identity, frontier, authority } = fence;
   const cursor = validated.cursor;
   if (cursor && cursor.context_sha256 !== identity) {
@@ -264,7 +274,7 @@ export async function readCatalog(database: D1Database, context: AuthenticatedRe
   }
   await authority.requireReadPolicy();
   const [projectResult, sourceResult] = await database.batch<ProjectRow | SourceRow>(catalogStatements(database, {
-    principal: context.principal_ref, observed: new Date(started).toISOString(), project: validated.projectId ?? null,
+    principal: fence.policy_principal_ref, observed: new Date(started).toISOString(), project: validated.projectId ?? null,
     projectAfter: cursor?.project_after ?? "", sourceAfter: cursor?.source_after ?? "", limit: validated.limit + 1,
   }));
   if (!projectResult?.success || !sourceResult?.success || !Array.isArray(projectResult.results) ||

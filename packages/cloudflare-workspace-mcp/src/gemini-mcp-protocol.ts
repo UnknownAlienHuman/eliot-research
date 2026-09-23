@@ -1,3 +1,4 @@
+import type { AccessIdentity } from "@eliotr/cloudflare-access";
 import {
   RuntimeLimitError,
   readRequestBodyWithinBytes,
@@ -61,6 +62,8 @@ export interface McpToolCallContext {
   readonly deployment_generation: string;
   /** Present on live HTTP contexts; legacy pure-tool fixtures may omit it. */
   readonly verified_actor?: McpVerifiedActorContext;
+  /** Actual verified service identity for project delegation. Never copied from tool arguments. */
+  readonly verified_access?: AccessIdentity;
 }
 
 export interface McpToolCallResult {

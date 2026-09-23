@@ -9,6 +9,8 @@ import {
   type WorkspaceMcpRuntime,
 } from "@eliotr/cloudflare-workspace-mcp";
 import { handleHttp } from "./http.js";
+import { ClientGrantError, OrientationError } from "@eliotr/cloudflare-navigation";
+import { CatalogInputError, readCatalog } from "./catalog-service.js";
 import { handleQueue } from "./queue.js";
 import { readReadiness } from "./readiness.js";
 import { createD1WorkspaceMcpCandidateStore } from "./workspace-mcp-candidate-store.js";
@@ -169,7 +171,7 @@ function configuredMcpClientDiagnosticConsume(env: Env): McpClientDiagnosticCons
   };
 }
 
-function workspaceMcpRuntime(env: Env): WorkspaceMcpRuntime {
+function workspaceMcpRuntime(env: Env, request: Request): WorkspaceMcpRuntime {
   const mcpClientDiagnosticConsume = configuredMcpClientDiagnosticConsume(env);
   return {
     DEPLOYMENT_GENERATION: env.DEPLOYMENT_GENERATION,
@@ -182,6 +184,24 @@ function workspaceMcpRuntime(env: Env): WorkspaceMcpRuntime {
     MCP_ACCESS_SERVICE_TOKEN_CLIENT_ID: env.MCP_ACCESS_SERVICE_TOKEN_CLIENT_ID,
     ACCESS_AUDIENCE: env.ACCESS_AUDIENCE,
     workspaceCandidateStore: createD1WorkspaceMcpCandidateStore(env.CORE_DB),
+    async projectCatalog(input, context) {
+      const identity = context.verified_access;
+      if (!identity || identity.authentication_method !== "service_token" || !identity.issuer) {
+        throw new GeminiMcpToolError("CLIENT_GRANT_IDENTITY_INVALID", "Verified service identity required");
+      }
+      const readiness = await readReadiness(env);
+      if (!readiness.ready) throw new GeminiMcpToolError("SCHEMA_NOT_READY", "Required migrations are not applied");
+      try {
+        return await readCatalog(env.CORE_DB, { request, principal_ref: identity.principal_ref,
+          client_class: "trusted_agent", credential_generation: identity.credential_generation,
+          trace_id: context.trace_id, access: identity }, input, env.DEPLOYMENT_GENERATION);
+      } catch (error) {
+        if (error instanceof ClientGrantError || error instanceof CatalogInputError || error instanceof OrientationError) {
+          throw new GeminiMcpToolError(error.code, "Project catalog request is not authorized or no longer current");
+        }
+        throw new GeminiMcpToolError("CLIENT_GRANT_STORAGE_UNAVAILABLE", "Project catalog is temporarily unavailable");
+      }
+    },
     readReadiness: () => readReadiness(env),
     ...(mcpClientDiagnosticConsume === undefined ? {} : { mcpClientDiagnosticConsume }),
   };
@@ -190,7 +210,7 @@ function workspaceMcpRuntime(env: Env): WorkspaceMcpRuntime {
 export default {
   fetch(request: Request, env: Env, executionContext: ExecutionContext): Promise<Response> {
     if (new URL(request.url).pathname === "/mcp") {
-      return handleGeminiMcp(request, workspaceMcpRuntime(env), executionContext);
+      return handleGeminiMcp(request, workspaceMcpRuntime(env, request), executionContext);
     }
     return handleHttp(request, env, executionContext);
   },

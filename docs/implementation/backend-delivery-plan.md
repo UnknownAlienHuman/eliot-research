@@ -72,3 +72,13 @@ The first clean-checkout attempt stopped before tests because the test project i
 ## Completion boundary
 
 The target is the known mandatory v1/Slices 0–6 with `gemini-mcp`. Completion requires both implemented paths and the existing final acceptance in S92–S97. Do not label every PR complete after a code-only pass. Preserve explicit pending live configuration, independent client, offsite destination and release approval requirements; do not fabricate credentials or receipts.
+
+
+### S10 / S31 grant-backend checkpoint
+
+The current implementation adds owner project-client grant GET/PUT/DELETE plus the shared
+project-scoped HTTP/service-token MCP catalog path. Grant records contain no secrets; configured
+is not a verified connection. Migration 0072 and the common strict DTO are shared by future
+query/run/import consumers. Those consumers and the Connections grant form are not implemented
+by this checkpoint. A supplied spend-policy reference fails explicitly until sponsorship is composed.
+Native/behavioral acceptance remains pending; this code-first checkpoint does not claim it.

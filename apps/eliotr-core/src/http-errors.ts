@@ -5,7 +5,7 @@ import {
 import { FederationServiceError } from "./federation-service.js";
 import { FederationHttpError } from "./federation-http.js";
 import { NavigationError } from "@eliotr/retrieval";
-import { OrientationError, ScopeServiceError } from "@eliotr/cloudflare-navigation";
+import { ClientGrantError, OrientationError, ScopeServiceError } from "@eliotr/cloudflare-navigation";
 import { EvidenceRuntimeError } from "@eliotr/cloudflare-evidence";
 import {
   IngestAuthorityError,
@@ -106,6 +106,7 @@ export function mapError(request: Request, error: unknown, problemResponse: Prob
     return problemResponse(request, error.retryable ? 503 : error.code === "ERASURE_INPUT_INVALID" ? 400 : 409,
       error.code, error.message, error.retryable);
   }
+  if (error instanceof ClientGrantError) return problemResponse(request, error.status, error.code, error.message, error.retryable);
   if (error instanceof OrientationError) return problemResponse(request, error.status, error.code, "Orientation request cannot be completed", error.retryable);
   if (error instanceof ScopeServiceError) return problemResponse(request, 409, error.code, "Current scope authority could not be established", false);
   if (error instanceof NavigationError) return problemResponse(request, error.code === "NAVIGATION_LIMIT_EXCEEDED" ? 413 : 409,

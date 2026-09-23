@@ -4,6 +4,8 @@ export interface AccessIdentity {
   readonly principal_ref: string;
   readonly credential_generation: string;
   readonly authentication_method: "cloudflare_access" | "service_token";
+  /** Exact issuer validated against the endpoint configuration; not a caller claim. */
+  readonly issuer?: string;
   readonly expires_at: string;
 }
 export interface AccessVerifier { verify(request: Request): Promise<AccessIdentity>; }
@@ -396,6 +398,7 @@ export function createCloudflareAccessVerifier(
       }
       return {
         principal_ref: principal,
+        issuer: expected.issuer,
         credential_generation: `cf-access-jwt:${parsed.kid}:${parsed.payload.iat}`,
         authentication_method: service ? "service_token" : "cloudflare_access",
         expires_at: new Date(parsed.payload.exp * 1000).toISOString(),

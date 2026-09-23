@@ -22,6 +22,7 @@ import * as research from "./research.js";
 import * as residency from "./residency.js";
 import * as retrieval from "./retrieval.js";
 import * as scope from "./scope.js";
+import * as projectClientGrant from "./project-client-grant.js";
 import * as security from "./security.js";
 import * as snapshotView from "./snapshot-view.js";
 import * as source from "./source.js";
@@ -36,7 +37,7 @@ import {
   type ContractStructuralStrictness,
 } from "./registry-contracts.js";
 
-export const CONTRACT_SCHEMA_REGISTRY_GENERATION = 5 as const;
+export const CONTRACT_SCHEMA_REGISTRY_GENERATION = 6 as const;
 
 export type ContractJsonPrimitive = string | number | boolean | null;
 export type ContractJsonValue =
@@ -84,6 +85,7 @@ const SCHEMA_MODULES: readonly SchemaModule[] = [
   { family: "residency", exports: residency },
   { family: "retrieval", exports: retrieval },
   { family: "scope", exports: scope },
+  { family: "scope", exports: projectClientGrant },
   { family: "security", exports: security },
   { family: "source", exports: snapshotView },
   { family: "source", exports: source },

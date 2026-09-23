@@ -11,6 +11,11 @@ fail-closed. The Worker is a composition and transport boundary, not a second do
 
 ## Owned paths
 
+- `apps/eliotr-core/src/client-grant-http.ts`
+- `packages/cloudflare-navigation/src/client-grant-store.ts`
+- `packages/cloudflare-navigation/src/client-grant-service.ts`
+- `packages/cloudflare-navigation/src/client-grant-authority.ts`
+
 - `apps/eliotr-core/src/env.ts`
 - `apps/eliotr-core/src/index.ts`
 - `apps/eliotr-core/src/http.ts`
@@ -433,3 +438,30 @@ the current admission default. Existing v3/v4 behavior also remains unchanged.
 The shared generation predicate keeps v3-v6 report readback, cancellation, recovery
 and materialization on the existing services. This is a new-run correction, not
 an automatic upgrade of old checkpoints or a live search-quality qualification.
+
+## Project-client delegation backend (S10 / S31)
+
+Migration 0072 introduces one append-only `project_client_grant` authority/receipt table.
+One project and verified issuer/method/Client ID tuple owns one immutable logical grant ID;
+changes append CAS revisions and revocation retains the tombstone. Owner issuance checks
+project ownership, the complete current source-read ceiling and explicit import namespaces.
+Grant identifiers are lookup keys, never credentials. A spend-policy locator is currently rejected
+with `CLIENT_GRANT_SPEND_NOT_SUPPORTED`; no model budget is delegated by a read grant.
+
+Owner GET/PUT/DELETE routes live under `/api/v1/research/projects/:project_id/client-grants`.
+Creation requires expected_revision=0; changes and revocation require the previous revision and
+Idempotency-Key. Same-key replay reads the original immutable receipt even after later mutations;
+authorization always reads the latest revision. No receipt replay itself reactivates access.
+
+`GET /api/v1/research/catalog?project_id=...` and service-token MCP `eliotr_catalog` share
+the same delegation gate and existing source-authority decoder. The actual signed actor is
+preserved separately from the grantor's read-policy subject and the legacy Workspace logical label.
+Every requested project member must pass the read ceiling; the result stays bounded metadata,
+not evidence or an implicit frozen-scope grant. Cursors bind actor, delegation revision and epoch;
+expiry, membership, purge and current authority are checked before disclosure.
+
+This is a code checkpoint: runtime/native acceptance, Connections management UI, delegated
+query/run/control/history/evidence and actual import handlers remain separate. Operation enum
+membership never enables one of those handlers. No existing execution grant is renewed or
+reinterpreted; later execution integration must pin the originating delegation revision. Migration
+0072 is required at deployment; no database was changed remotely by this checkpoint.

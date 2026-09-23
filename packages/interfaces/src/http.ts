@@ -23,6 +23,8 @@ export interface AuthenticatedRequestContext {
     readonly principal_ref: string;
     readonly credential_generation: string;
     readonly expires_at: string;
+    readonly issuer?: string;
+    readonly authentication_method?: "cloudflare_access" | "service_token";
   };
 }
 

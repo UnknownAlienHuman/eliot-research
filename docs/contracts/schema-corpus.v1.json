@@ -1,8 +1,8 @@
 {
   "json_schema_dialect": "https://json-schema.org/draft/2020-12/schema",
   "protocol": "eliotr.contract-schema-corpus.v1",
-  "registry_generation": 5,
-  "schema_count": 147,
+  "registry_generation": 6,
+  "schema_count": 151,
   "schemas": [
     {
       "export_name": "AllowedReferenceManifestSchema",
@@ -10159,6 +10159,450 @@
       "kind": "OBJECT",
       "schema_generation": 1,
       "schema_id": "urn:eliotr:contracts:navigation:project-atlas-revision:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "ProjectClientGrantListSchema",
+      "family": "scope",
+      "json_schema": {
+        "$defs": {
+          "__schema0": {
+            "additionalProperties": false,
+            "properties": {
+              "allowed_operations": {
+                "items": {
+                  "$ref": "#/$defs/__schema2"
+                },
+                "maxItems": 11,
+                "minItems": 1,
+                "type": "array"
+              },
+              "created_at": {
+                "$ref": "#/$defs/__schema3"
+              },
+              "expires_at": {
+                "$ref": "#/$defs/__schema3"
+              },
+              "grant_id": {
+                "$ref": "#/$defs/__schema1"
+              },
+              "grantee": {
+                "additionalProperties": false,
+                "properties": {
+                  "authentication_method": {
+                    "const": "service_token",
+                    "type": "string"
+                  },
+                  "issuer": {
+                    "maxLength": 256,
+                    "pattern": "^https:\\/\\/[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\\.cloudflareaccess\\.com$",
+                    "type": "string"
+                  },
+                  "subject": {
+                    "maxLength": 256,
+                    "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,254}\\.access$",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "issuer",
+                  "authentication_method",
+                  "subject"
+                ],
+                "type": "object"
+              },
+              "grantor_principal_ref": {
+                "$ref": "#/$defs/__schema1"
+              },
+              "ingest_namespace_ids": {
+                "items": {
+                  "$ref": "#/$defs/__schema1"
+                },
+                "maxItems": 64,
+                "type": "array"
+              },
+              "project_id": {
+                "$ref": "#/$defs/__schema1"
+              },
+              "protocol": {
+                "const": "eliotr.project-client-grant.v1",
+                "type": "string"
+              },
+              "revision": {
+                "maximum": 2147483647,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "spend_policy_ref": {
+                "$ref": "#/$defs/__schema1"
+              },
+              "state": {
+                "enum": [
+                  "ACTIVE",
+                  "REVOKED"
+                ],
+                "type": "string"
+              },
+              "updated_at": {
+                "$ref": "#/$defs/__schema3"
+              }
+            },
+            "required": [
+              "protocol",
+              "grant_id",
+              "project_id",
+              "grantor_principal_ref",
+              "revision",
+              "state",
+              "grantee",
+              "allowed_operations",
+              "ingest_namespace_ids",
+              "expires_at",
+              "created_at",
+              "updated_at"
+            ],
+            "type": "object"
+          },
+          "__schema1": {
+            "maxLength": 256,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$",
+            "type": "string"
+          },
+          "__schema2": {
+            "enum": [
+              "catalog",
+              "query",
+              "run",
+              "status",
+              "report",
+              "evidence",
+              "cancel",
+              "recover",
+              "ingest.bundle",
+              "workspace.admit",
+              "project.attach"
+            ],
+            "type": "string"
+          },
+          "__schema3": {
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+            "type": "string"
+          }
+        },
+        "$id": "urn:eliotr:contracts:scope:project-client-grant-list:v1:g1",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "grants": {
+            "items": {
+              "$ref": "#/$defs/__schema0"
+            },
+            "maxItems": 20,
+            "type": "array"
+          },
+          "next_grant_id": {
+            "$ref": "#/$defs/__schema1"
+          },
+          "protocol": {
+            "const": "eliotr.project-client-grants.v1",
+            "type": "string"
+          }
+        },
+        "required": [
+          "protocol",
+          "grants"
+        ],
+        "title": "ProjectClientGrantList",
+        "type": "object",
+        "x-eliotr-family": "scope",
+        "x-eliotr-schema-generation": 1,
+        "x-eliotr-schema-version": 1,
+        "x-eliotr-semantic-authority": "zod-runtime"
+      },
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:scope:project-client-grant-list:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "ProjectClientGrantPutSchema",
+      "family": "scope",
+      "json_schema": {
+        "$defs": {
+          "__schema0": {
+            "enum": [
+              "catalog",
+              "query",
+              "run",
+              "status",
+              "report",
+              "evidence",
+              "cancel",
+              "recover",
+              "ingest.bundle",
+              "workspace.admit",
+              "project.attach"
+            ],
+            "type": "string"
+          },
+          "__schema1": {
+            "maxLength": 256,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$",
+            "type": "string"
+          }
+        },
+        "$id": "urn:eliotr:contracts:scope:project-client-grant-put:v1:g1",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "allowed_operations": {
+            "items": {
+              "$ref": "#/$defs/__schema0"
+            },
+            "maxItems": 11,
+            "minItems": 1,
+            "type": "array"
+          },
+          "expected_revision": {
+            "maximum": 2147483646,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+            "type": "string"
+          },
+          "grantee": {
+            "additionalProperties": false,
+            "properties": {
+              "authentication_method": {
+                "const": "service_token",
+                "type": "string"
+              },
+              "issuer": {
+                "maxLength": 256,
+                "pattern": "^https:\\/\\/[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\\.cloudflareaccess\\.com$",
+                "type": "string"
+              },
+              "subject": {
+                "maxLength": 256,
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,254}\\.access$",
+                "type": "string"
+              }
+            },
+            "required": [
+              "issuer",
+              "authentication_method",
+              "subject"
+            ],
+            "type": "object"
+          },
+          "ingest_namespace_ids": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/__schema1"
+            },
+            "maxItems": 64,
+            "type": "array"
+          },
+          "spend_policy_ref": {
+            "$ref": "#/$defs/__schema1"
+          }
+        },
+        "required": [
+          "grantee",
+          "allowed_operations",
+          "expires_at",
+          "expected_revision"
+        ],
+        "title": "ProjectClientGrantPut",
+        "type": "object",
+        "x-eliotr-family": "scope",
+        "x-eliotr-schema-generation": 1,
+        "x-eliotr-schema-version": 1,
+        "x-eliotr-semantic-authority": "zod-runtime"
+      },
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:scope:project-client-grant-put:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "ProjectClientGrantRevokeSchema",
+      "family": "scope",
+      "json_schema": {
+        "$id": "urn:eliotr:contracts:scope:project-client-grant-revoke:v1:g1",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "expected_revision": {
+            "maximum": 2147483646,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "expected_revision"
+        ],
+        "title": "ProjectClientGrantRevoke",
+        "type": "object",
+        "x-eliotr-family": "scope",
+        "x-eliotr-schema-generation": 1,
+        "x-eliotr-schema-version": 1,
+        "x-eliotr-semantic-authority": "zod-runtime"
+      },
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:scope:project-client-grant-revoke:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "ProjectClientGrantSchema",
+      "family": "scope",
+      "json_schema": {
+        "$defs": {
+          "__schema0": {
+            "maxLength": 256,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$",
+            "type": "string"
+          },
+          "__schema1": {
+            "enum": [
+              "catalog",
+              "query",
+              "run",
+              "status",
+              "report",
+              "evidence",
+              "cancel",
+              "recover",
+              "ingest.bundle",
+              "workspace.admit",
+              "project.attach"
+            ],
+            "type": "string"
+          },
+          "__schema2": {
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+            "type": "string"
+          }
+        },
+        "$id": "urn:eliotr:contracts:scope:project-client-grant:v1:g1",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "allowed_operations": {
+            "items": {
+              "$ref": "#/$defs/__schema1"
+            },
+            "maxItems": 11,
+            "minItems": 1,
+            "type": "array"
+          },
+          "created_at": {
+            "$ref": "#/$defs/__schema2"
+          },
+          "expires_at": {
+            "$ref": "#/$defs/__schema2"
+          },
+          "grant_id": {
+            "$ref": "#/$defs/__schema0"
+          },
+          "grantee": {
+            "additionalProperties": false,
+            "properties": {
+              "authentication_method": {
+                "const": "service_token",
+                "type": "string"
+              },
+              "issuer": {
+                "maxLength": 256,
+                "pattern": "^https:\\/\\/[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\\.cloudflareaccess\\.com$",
+                "type": "string"
+              },
+              "subject": {
+                "maxLength": 256,
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,254}\\.access$",
+                "type": "string"
+              }
+            },
+            "required": [
+              "issuer",
+              "authentication_method",
+              "subject"
+            ],
+            "type": "object"
+          },
+          "grantor_principal_ref": {
+            "$ref": "#/$defs/__schema0"
+          },
+          "ingest_namespace_ids": {
+            "items": {
+              "$ref": "#/$defs/__schema0"
+            },
+            "maxItems": 64,
+            "type": "array"
+          },
+          "project_id": {
+            "$ref": "#/$defs/__schema0"
+          },
+          "protocol": {
+            "const": "eliotr.project-client-grant.v1",
+            "type": "string"
+          },
+          "revision": {
+            "maximum": 2147483647,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "spend_policy_ref": {
+            "$ref": "#/$defs/__schema0"
+          },
+          "state": {
+            "enum": [
+              "ACTIVE",
+              "REVOKED"
+            ],
+            "type": "string"
+          },
+          "updated_at": {
+            "$ref": "#/$defs/__schema2"
+          }
+        },
+        "required": [
+          "protocol",
+          "grant_id",
+          "project_id",
+          "grantor_principal_ref",
+          "revision",
+          "state",
+          "grantee",
+          "allowed_operations",
+          "ingest_namespace_ids",
+          "expires_at",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "ProjectClientGrant",
+        "type": "object",
+        "x-eliotr-family": "scope",
+        "x-eliotr-schema-generation": 1,
+        "x-eliotr-schema-version": 1,
+        "x-eliotr-semantic-authority": "zod-runtime"
+      },
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:scope:project-client-grant:v1:g1",
       "schema_version": 1,
       "structural_strictness": "CLOSED_OBJECT"
     },
