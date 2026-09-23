@@ -144,6 +144,13 @@ jobs:
         if: ${{ !cancelled() && steps.d1-types.outcome == 'success' }}
         run: pnpm --dir apps/eliotr-core exec vitest run test/research-query-replay.test.ts --no-file-parallelism
 
+      - name: Research retrieval factory and legacy generation compatibility
+        if: ${{ !cancelled() && steps.d1-types.outcome == 'success' }}
+        run: pnpm --dir apps/eliotr-core exec vitest run test/research-retrieve-branches.test.ts --no-file-parallelism
+      - name: Research semantic retrieval and exact evidence on actual D1 and R2
+        if: ${{ !cancelled() && steps.d1-types.outcome == 'success' }}
+        run: pnpm --dir apps/eliotr-core exec vitest run test/research-retrieve-semantic.test.ts --no-file-parallelism
+
   rust:
     runs-on: ubuntu-latest
     timeout-minutes: 25

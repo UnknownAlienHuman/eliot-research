@@ -45,6 +45,8 @@ outside the paths below.
 - `apps/eliotr-core/test/research-protocol-freeze.test.ts`
 - `apps/eliotr-core/test/research-protocol-fixture.ts`
 - `apps/eliotr-core/test/research-retrieve-branches.test.ts`
+- `apps/eliotr-core/test/research-retrieve-fixture.ts`
+- `apps/eliotr-core/test/research-retrieve-semantic.test.ts`
 - `apps/eliotr-core/test/erasure-admission-policy.test.ts`
 - `apps/eliotr-core/test/raw-markdown-conversion-http.test.ts`
 - `apps/eliotr-core/test/raw-normalized-admission-http.test.ts`
@@ -196,3 +198,20 @@ Its network specification retains the existing v1-token denials and both visited
 not discard the exact POST changes-feed permission when composing the API list. The panel
 regression executes all three real phase-spec builders, including mutation, status, foreign-route,
 origin and unobserved-response negatives. This does not broaden unauthenticated access.
+
+## S09 semantic-stage acceptance
+
+`research-retrieve-semantic.test.ts` uses the shared native fixture in
+`research-retrieve-fixture.ts`: real source import/outbox/projection, D1 migrations,
+protocol freeze and W2 checkpoint execution. The semantic test calls the actual
+Research stage factory and reads its saved result and trace. The provider response
+is controlled; it is not live recall, index-readiness or model-quality qualification.
+The existing test-only ORIENT through PLAN predecessors supply valid persisted W2
+lineage, not a claim that the entire exploratory pipeline ran end-to-end.
+
+The tail passage is outside the first 16 lexical fallback sections and resolves
+only with SEM. Exact UTF-8 bytes and immutable replay, unavailable/shadow/drifting
+indexes, invalid locators, response/preview max and max+1 bounds, and grant/purge
+withdrawal during provider return are checked without accepting provider previews
+as evidence. A rejected in-flight stage retains W2's existing uncertain-attempt
+semantics and cannot create an evidence pack, retrieval trace or checkpoint.
