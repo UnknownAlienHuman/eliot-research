@@ -1,0 +1,109 @@
+name: stage-client-recovery-code
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/stage-client-recovery-code.yml]
+permissions:
+  contents: write
+jobs:
+  stage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: main
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Stage reviewed source blobs without publishing a ref
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'JS'
+          import { execFileSync } from 'node:child_process';
+          import { createHash } from 'node:crypto';
+          import { mkdirSync, writeFileSync } from 'node:fs';
+          import { join } from 'node:path';
+          import { gunzipSync } from 'node:zlib';
+          const git = (...args) => execFileSync('git', args);
+          const text = (...args) => git(...args).toString().trim();
+          const assert = (condition, message) => { if (!condition) throw new Error(message); };
+          const hash = (algorithm, bytes) => createHash(algorithm).update(bytes).digest('hex');
+          const blobHash = (bytes) => hash('sha1', Buffer.concat([Buffer.from(`blob ${bytes.length}\0`), bytes]));
+          const root = `${process.env.GITHUB_API_URL}/repos/${process.env.GITHUB_REPOSITORY}`;
+          async function api(path, method = 'GET', body) {
+            const response = await fetch(`${root}/${path}`, {
+              method,
+              headers: { authorization: `Bearer ${process.env.GH_TOKEN}`, accept: 'application/vnd.github+json', 'content-type': 'application/json' },
+              ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+              signal: AbortSignal.timeout(30000),
+            });
+            if (!response.ok) throw new Error(`Git API ${method} ${path}: HTTP ${response.status}`);
+            return response.json();
+          }
+          const baseTree = 'e163da6a2274d1319cccbe4aa6926ee56f36a891';
+          const expectedTree = 'b99665d602392d46f5717caf2d5653a5636a7471';
+          const transporter = '.github/workflows/stage-client-recovery-code.yml';
+          assert(text('branch', '--show-current') === 'main', 'Not on main');
+          assert(text('rev-parse', 'HEAD') === process.env.GITHUB_SHA, 'Concurrent main change');
+          const parentTree = text('rev-parse', 'HEAD^{tree}');
+          git('rm', '--', transporter);
+          assert(text('write-tree') === baseTree, 'Unexpected base contents');
+          const shas = [
+            'ce6683e39d4150a90711420af7f446a778a067a1',
+            '14bd98c2bf6569f64acd94ce8fccbd0deffec64c',
+            '81573f8ea222ec44459606a12c384068ec138c0b',
+            '818aebb95bb303cc913e05ba6d082eb07f07ef6c',
+            'fcd57e43f22b1fd5c47a2158e969d3922fd9a35f',
+            '5d02903ee330755e3e0b6dd4f85fa2a5fb3b0317',
+            '418bddf719c5504e283d16a56bb6e8b4ba88e943',
+          ];
+          const chunks = [];
+          for (const sha of shas) {
+            const blob = await api(`git/blobs/${sha}`);
+            assert(blob.encoding === 'base64', 'Unexpected blob encoding');
+            const bytes = Buffer.from(blob.content, 'base64');
+            assert(blobHash(bytes) === sha, 'Transfer chunk mismatch');
+            chunks.push(bytes.toString('utf8'));
+          }
+          const patch = gunzipSync(Buffer.from(chunks.join(''), 'base64'));
+          assert(hash('sha256', patch) === '2a58592c84ee73d51a797ab1b266c728be73eeccfc49c9cf934cdc276579bfb8', 'Patch checksum mismatch');
+          const patchPath = join(process.env.RUNNER_TEMP, 'client-recovery.patch');
+          writeFileSync(patchPath, patch);
+          git('apply', '--unidiff-zero', '--check', patchPath);
+          git('apply', '--unidiff-zero', '--index', patchPath);
+          git('diff', '--cached', '--check');
+          git('diff', '--exit-code');
+          assert(text('write-tree') === expectedTree, 'Reviewed tree mismatch');
+          const paths = git('diff', '--cached', '--name-only', '-z', 'HEAD').toString().split('\0').filter(Boolean);
+          assert(paths.length === 27, 'Unexpected changed path count');
+          const entries = [];
+          for (const path of paths) {
+            const index = text('ls-files', '--stage', '--', path);
+            if (!index) {
+              assert(path === transporter, 'Unexpected deletion');
+              entries.push({ path, mode: '100644', type: 'blob', sha: null });
+              continue;
+            }
+            const [mode, sha] = index.split(/\s+/);
+            assert(mode === '100644', 'Unexpected file mode');
+            const bytes = git('cat-file', 'blob', sha);
+            const created = await api('git/blobs', 'POST', { content: bytes.toString('base64'), encoding: 'base64' });
+            assert(created.sha === sha, `Published blob mismatch: ${path}`);
+            entries.push({ path, mode, type: 'blob', sha });
+          }
+          mkdirSync('publication-manifest');
+          writeFileSync('publication-manifest/manifest.json', JSON.stringify({
+            base_commit: process.env.GITHUB_SHA, parent_tree: parentTree, original_tree: baseTree,
+            reviewed_tree: expectedTree, patch_sha256: hash('sha256', patch), entries,
+          }, null, 2));
+          console.log(`STAGED_TREE=${expectedTree}; source blobs only, no ref update`);
+          JS
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: client-recovery-code-manifest
+          path: publication-manifest/
+          retention-days: 3
+          if-no-files-found: error
