@@ -1,5 +1,5 @@
 import {
-  canonicalEvidenceJson,
+  canonicalEvidenceJson, type EvidenceAccessContext,
 } from "@eliotr/cloudflare-evidence";
 import {
   VersionedRefSchema,
@@ -32,7 +32,7 @@ export interface HistoricalResearchCoverageOwner {
   readonly client_class: "owner_pwa";
 }
 
-/** The result of a fresh, owner-authorized read of the Stage17 artifact. */
+/** The result of a fresh, independently authorized read of the Stage17 artifact. */
 export interface HistoricalResearchArtifactBinding {
   readonly artifact_ref: VersionedRef;
   readonly original_scope_snapshot_ref: VersionedRef;
@@ -54,6 +54,12 @@ export interface HistoricalResearchCoverageReaderInput {
     readonly artifact_ref: VersionedRef;
     readonly original_scope_snapshot_ref: VersionedRef;
   }) => Promise<HistoricalResearchArtifactBinding>;
+}
+
+/** Recorded authorship is a lookup constraint, not an authenticated reader. */
+export interface ProjectClientHistoricalCoverageReaderInput extends Omit<HistoricalResearchCoverageReaderInput, "owner"> {
+  readonly reader: EvidenceAccessContext;
+  readonly original_principal_ref: string;
 }
 
 export interface HistoricalResearchCoverageProvenance {
@@ -113,7 +119,7 @@ function unavailable(): never {
   fail("WORKFLOW_OUTPUT_UNAVAILABLE");
 }
 
-function text(value: unknown, label: string): string {
+function text(value: unknown, _label: string): string {
   if (typeof value !== "string" || !IDENTIFIER.test(value)) corrupt();
   return value;
 }
@@ -195,8 +201,31 @@ function parseArtifactBinding(
 export async function readHistoricalResearchCoverage(
   input: HistoricalResearchCoverageReaderInput,
 ): Promise<HistoricalResearchCoverageReadback | null> {
-  if (input === null || typeof input !== "object" || input.owner?.client_class !== "owner_pwa" ||
-      typeof input.owner.principal_ref !== "string" || !IDENTIFIER.test(input.owner.principal_ref) ||
+  if (input === null || typeof input !== "object" || input.owner?.client_class !== "owner_pwa") {
+    fail("WORKFLOW_INPUT_INVALID");
+  }
+  return readHistoricalCoverage(input, input.owner.principal_ref);
+}
+
+/** The composed callbacks must authorize the actual service for this exact run
+ * and artifact. No stored credential is promoted into a reader identity. */
+export async function readProjectClientHistoricalResearchCoverage(
+  input: ProjectClientHistoricalCoverageReaderInput,
+): Promise<HistoricalResearchCoverageReadback | null> {
+  if (input === null || typeof input !== "object" ||
+      (input.reader?.client_class !== "trusted_agent" && input.reader?.client_class !== "named_api_client") ||
+      typeof input.reader.principal_ref !== "string" || !IDENTIFIER.test(input.reader.principal_ref) ||
+      typeof input.reader.credential_generation !== "string" || !IDENTIFIER.test(input.reader.credential_generation)) {
+    fail("WORKFLOW_INPUT_INVALID");
+  }
+  return readHistoricalCoverage(input, input.original_principal_ref);
+}
+
+async function readHistoricalCoverage(
+  input: Omit<HistoricalResearchCoverageReaderInput, "owner">,
+  originalPrincipal: string,
+): Promise<HistoricalResearchCoverageReadback | null> {
+  if (typeof originalPrincipal !== "string" || !IDENTIFIER.test(originalPrincipal) ||
       typeof input.operation_id !== "string" || !IDENTIFIER.test(input.operation_id) ||
       typeof input.require_current !== "function" || typeof input.require_artifact !== "function") {
     fail("WORKFLOW_INPUT_INVALID");
@@ -210,7 +239,7 @@ export async function readHistoricalResearchCoverage(
       "credential_generation, deployment_generation, scope_snapshot_id, scope_snapshot_revision, " +
       "next_stage_index, state, handler_generation FROM research_workflow_run " +
       "WHERE operation_id=?1 AND principal_ref=?2 LIMIT 1",
-    ).bind(input.operation_id, input.owner.principal_ref).first<StoredRunRow>();
+    ).bind(input.operation_id, originalPrincipal).first<StoredRunRow>();
   } catch {
     unavailable();
   }
@@ -226,7 +255,7 @@ export async function readHistoricalResearchCoverage(
   const currentRevision = positive(row.current_revision);
   const nextStageIndex = Number(row.next_stage_index);
   const handlerGeneration = text(row.handler_generation, "handler_generation");
-  if (operationId !== input.operation_id || principalRef !== input.owner.principal_ref ||
+  if (operationId !== input.operation_id || principalRef !== originalPrincipal ||
       row.state !== "ENGINE_COMPLETED" || nextStageIndex !== RESEARCH_WORKFLOW_STAGES.length ||
       currentRevision !== initialRevision + nextStageIndex) return null;
 
@@ -289,13 +318,13 @@ export async function readHistoricalResearchCoverage(
       "manifest_r2_key, manifest_sha256, manifest_size_bytes FROM artifact_draft_binding " +
       "WHERE artifact_id=?1 AND revision=?2 AND principal_ref=?3 AND scope_snapshot_id=?4 " +
       "AND scope_snapshot_revision=?5 LIMIT 1",
-    ).bind(artifactRef.id, artifactRef.revision, input.owner.principal_ref, scope.id, scope.revision).first<StoredArtifactManifestRow>();
+    ).bind(artifactRef.id, artifactRef.revision, originalPrincipal, scope.id, scope.revision).first<StoredArtifactManifestRow>();
   } catch {
     unavailable();
   }
   if (artifactManifest === null ||
       artifactManifest.artifact_id !== artifactRef.id || artifactManifest.revision !== artifactRef.revision ||
-      artifactManifest.principal_ref !== input.owner.principal_ref ||
+      artifactManifest.principal_ref !== originalPrincipal ||
       artifactManifest.scope_snapshot_id !== scope.id || artifactManifest.scope_snapshot_revision !== scope.revision ||
       artifactManifest.manifest_r2_key !== materialized.draft.manifest.key ||
       artifactManifest.manifest_sha256 !== materialized.draft.manifest.sha256 ||

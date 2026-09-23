@@ -24,4 +24,4 @@ export { createProjectClientGrantService, type ClientGrantServiceOptions } from 
 export { authorizeProjectClientGrant, type ClientGrantLease } from "./client-grant-authority.js";
 export { createProjectClientCatalogAuthority } from "./orientation-authority.js";
 
-export { createProjectClientScopeAuthority } from "./orientation-authority.js";
+export { createProjectClientScopeAuthority, createProjectClientRunReadAuthority } from "./orientation-authority.js";

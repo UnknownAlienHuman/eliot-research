@@ -30,6 +30,7 @@ fail-closed. The Worker is a composition and transport boundary, not a second do
 - `apps/eliotr-core/src/research-service-error.ts`
 - `apps/eliotr-core/src/research-run-admission.ts`
 - `apps/eliotr-core/src/research-run-read-authorization.ts`
+- `apps/eliotr-core/src/research-client-run-read.ts`
 - `apps/eliotr-core/src/research-deployment-compatibility.ts`
 - `apps/eliotr-core/test/research-deployment-compatibility.test.ts`
 - `apps/eliotr-core/src/research-run-control.ts`
@@ -506,3 +507,20 @@ existing serializer/digests are retained. **Apply migrations through 0073 before
 code**, including owner paths that now read the effective-grant view. Code compilation and static
 SQL/ownership checks are not native D1/R2, concurrency, browser or live acceptance. Machine run,
 status, control, paid sponsorship and import/attach remain implementation work.
+
+## Delegated run status (S11 code checkpoint)
+
+`research-client-run-read.ts` composes model-free HTTP/MCP status for a known owner-authored
+run originally scoped to one explicit delegated project. It requires `status`, the actual signed
+service actor, current grantor/project authority and all original-source policies, membership,
+ownership, disclosure and purge checks. Original owner grants may expire but may not be revoked;
+only the existing proven source-head-advance invalidation can be reauthorized. Compatible
+deployment readback and W1/W2 identity remain mandatory; no execution grant is issued or renewed.
+
+`report` separately permits discovery of the completed DRAFT reference through the shared historical
+coverage reader and delegated artifact reader. Without it, answer availability stays `unavailable`.
+The common reader keeps recorded authorship separate from the actual service identity and preserves
+all original manifests, references, hashes and lineage checks. No new reader engine or storage schema.
+GET run status alone admits owner-or-service; admission/cancel/recover handlers are not broadened.
+Machine run creation, controls, sponsorship and machine-authored history remain code work.
+Compilation/static review only; native/behavioral acceptance and live qualification remain pending.

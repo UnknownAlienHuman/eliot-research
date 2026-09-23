@@ -567,6 +567,7 @@
         "apps/eliotr-core/src/research-service-error.ts",
         "apps/eliotr-core/src/research-run-admission.ts",
         "apps/eliotr-core/src/research-run-read-authorization.ts",
+        "apps/eliotr-core/src/research-client-run-read.ts",
         "apps/eliotr-core/src/research-deployment-compatibility.ts",
         "apps/eliotr-core/test/research-deployment-compatibility.test.ts",
         "apps/eliotr-core/src/research-run-control.ts",

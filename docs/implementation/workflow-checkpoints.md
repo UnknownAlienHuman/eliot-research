@@ -675,3 +675,27 @@ fingerprint readback and the six-field deployment pin bind the model result to t
 The provider, verifier qualification reader and zero-price accounting are explicit controlled fixture
 inputs. Public exploratory.v3 activation, live verifier qualification and stages 15–17 integration
 remain separate work; these tests do not establish a complete production research run.
+
+### Delegated read of a known owner run (S11)
+
+GET `/api/v1/research/run/:workflow_id` also accepts a signed service token plus the non-secret
+`X-Eliotr-Client-Grant` locator. The grant must include `status`. Only a grantor-authored run whose
+original frozen expression is that one explicit PROJECT is eligible; unrelated projects, global or
+compound scopes and machine-authored runs are not implicitly shared. No run-list authority is added.
+
+The response remains `eliotr.research-run-status.v1`. Progress, terminal cancellation and engine
+observations reuse the existing checkpoint/status implementation. Current delegated access to every
+original source is required even after the original session/snapshot expires. Original-revision,
+source-owner, policy/disclosure, purge, grant revision and deployment fences remain enforced;
+source updates never replace recorded evidence. These reads do not renew execution or resume stages.
+
+With separate `report` permission, completed semantic runs use the same exact Stage0/15/16/17,
+coverage and DRAFT-artifact readback to discover `answer.artifact_ref`. Without `report`, the answer
+is `unavailable` and no result reference is disclosed. `evidence` remains separate for citation opens.
+A known run ID therefore suffices to locate its authorized result, not to list all runs or reports.
+The MCP `eliotr_run_status` tool delegates to this exact application service. It creates no run and
+invokes no model; completed report discovery can issue fresh read-authority records.
+
+No new migration; the complete existing chain through0074 is still required. This code checkpoint
+is compile/static reviewed only. Behavioral/native and signed live acceptance remain pending;
+service run admission, cancellation/recovery and spending sponsorship are not implemented here.

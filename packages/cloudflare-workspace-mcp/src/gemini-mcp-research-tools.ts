@@ -40,6 +40,14 @@ export const MCP_RESEARCH_TOOLS = {
     },
     annotations: annotations(true),
   },
+  eliotr_run_status: {
+    name: "eliotr_run_status",
+    description: "Read an existing grantor-authored explicit-project run with status permission. Returns the unchanged HTTP run-status DTO, not a new run. Only separate report permission permits discovery of a completed DRAFT reference through exact historical readback; this may issue read authority. No model, restart or execution renewal.",
+    inputSchema: { type: "object", additionalProperties: false, required: ["client_grant_id", "workflow_instance_id"],
+      properties: { ...grant, workflow_instance_id: { type: "string", minLength: 1, maxLength: 128,
+        pattern: "^[A-Za-z0-9][A-Za-z0-9:._-]{0,127}$" } } },
+    annotations: annotations(false),
+  },
   eliotr_report: {
     name: "eliotr_report",
     description: "Reopen a known grantor-authored DRAFT report originally scoped to this explicit project. Requires report permission. Returns the same versioned HTTP reauthorization envelope, preserving hashes, freshness and DRAFT status. Issues fresh read authority, no model or artifact mutation.",

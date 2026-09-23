@@ -201,6 +201,7 @@ agree with any supplied `X-Eliotr-Client-Grant` header. It selects a delegation,
 | Tool | Required permission | Result / boundary |
 | --- | --- | --- |
 | `eliotr_query` | `query` | Original FAST_SEARCH evidence pack and trace reference; no synthesized answer or exhaustive-coverage claim. |
+| `eliotr_run_status` | `status`; additionally `report` for a DRAFT result reference | Existing run-status DTO for a known grantor-authored explicit-project run; never starts/resumes execution. |
 | `eliotr_report` | `report` | Existing versioned report-reauthorization envelope, with original artifact metadata and freshness. Known reference required; not report discovery. |
 | `eliotr_section` | `report` | Exact saved section bytes in the transport wrapper below. |
 | `eliotr_citations` | `report` and `evidence` | Existing reauthorization envelope pairing original citations with fresh authorized handles. |
@@ -231,6 +232,19 @@ substitute a new source head. `eliotr_citations` requires `artifact_ref` and `se
 handle/snapshot references supply `eliotr_verify`, and `eliotr_open` accepts the same `handle_ref`.
 `client_grant_id` must authorize the handle's original delegation revision.
 
+To read a known owner's project run, call:
+
+```json
+{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"eliotr_run_status","arguments":{"client_grant_id":"grant-example","workflow_instance_id":"run-example"}}}
+```
+
+Use the actual run ID verbatim. The service must have `status`; `report` independently permits the
+returned DRAFT artifact reference after exact historical readback. Pass that reference to
+`eliotr_report`. Without `report`, `answer.availability` is `unavailable`. This is known-run result
+discovery, not an enumeration endpoint, a service-created investigation or a spending permission.
+Expired original sessions do not become current execution authority. Revocation/current source
+checks remain enforced on every request; managed-oauth does not inherit these service tools.
+
 Section/open responses use transport envelope `eliotr.mcp.http-body.v1`:
 `{ protocol, status, headers, body: { encoding: "utf-8", text, byte_length, sha256 } }`.
 The body digest identifies exactly the returned bytes, including a requested range. Original section,
@@ -245,13 +259,13 @@ reaches 512 KiB. Overflow is an explicit error, not truncation; use a smaller re
 or the existing authorized HTTP section endpoint for a section too large for MCP. Persisted work may
 already exist when output cannot be delivered. Errors do not claim that canonical state was unchanged.
 
-All six annotations use `readOnlyHint=false`: search can persist scope/result/trace; report reopening
-can issue read grants/handles; evidence resolution can record a verification receipt. Only query has
+All seven Research-tool annotations use `readOnlyHint=false`: search can persist scope/result/trace; report reopening
+and completed run-result discovery can issue read grants/handles; evidence resolution can record a verification receipt. Only query has
 `idempotentHint=true`, under its required stable key. None dispatches a model or alters source/report
 content. Status distinguishes read/search persistence from content mutation and model dispatch.
 
 Apply existing Core migrations through **0074** before deploying; this transport checkpoint adds no
-migration or public domain-schema revision. Run/status/control and spend sponsorship remain code
+migration or public domain-schema revision. Service run admission/control and spend sponsorship remain code
 work, not hidden or successful stubs. S13 does not qualify a full Research lifecycle or either live
 client. No behavioral test suite, remote service call, deployment or paid call was executed here.
 

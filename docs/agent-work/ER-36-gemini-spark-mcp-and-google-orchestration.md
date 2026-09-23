@@ -143,11 +143,13 @@ the actual verified issuer/method/Client ID; the logical Workspace label remains
 Query input and versioned references use the existing validators. HTTP classifier error codes and
 retryability are retained with redacted messages. Grant revision is pinned across each tool call.
 
-The six tools are `eliotr_query`, `eliotr_report`, `eliotr_section`, `eliotr_citations`,
+The seven tools are `eliotr_query`, `eliotr_run_status`, `eliotr_report`, `eliotr_section`, `eliotr_citations`,
 `eliotr_verify` and `eliotr_open`. Their annotations acknowledge persisted search results, scopes,
 read grants, handles and verification receipts. They do not dispatch models, mutate source/report
 content, or treat a transport digest as evidence authority. Google candidate operations are unchanged.
 
 This is a compilation/static-review checkpoint only. Behavioral/native and live acceptance is pending.
-Machine Research run/status/control, sponsorship, managed-oauth delegation, report discovery and
-other artifact origins remain separate code work; no placeholder tool is advertised for them.
+Known owner-project run status and, with separate report permission, its DRAFT result-reference
+discovery are now composed through the existing HTTP service. This never creates/resumes execution.
+Machine Research admission/control, sponsorship, managed-oauth delegation, general report discovery
+and other artifact origins remain separate code work; no placeholder tool is advertised for them.

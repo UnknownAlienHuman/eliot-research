@@ -2,7 +2,7 @@ import { createNavigationReadAuthority, loadScopeAuthority } from "@eliotr/cloud
 import { OrientationError, ScopeServiceError, reauthorizeOwnerHistoricalScope } from "@eliotr/cloudflare-navigation";
 import { ArtifactDraftReadError, WorkflowCheckpointError, WorkflowCheckpointStore } from "@eliotr/cloudflare-research";
 import type { WorkflowRunStatus } from "@eliotr/cloudflare-research";
-import { readHistoricalResearchCoverage } from "@eliotr/cloudflare-research-stages";
+import { readHistoricalResearchCoverage, type HistoricalResearchArtifactBinding } from "@eliotr/cloudflare-research-stages";
 import type { AuthenticatedRequestContext, ResearchRunStatus } from "@eliotr/interfaces";
 import { NavigationError } from "@eliotr/retrieval";
 import type { VersionedRef } from "@eliotr/contracts";
@@ -15,10 +15,12 @@ interface RunBinding {
   readonly deployment_generation: string;
   readonly handler_generation: string;
 }
-export interface ReauthenticatedRunRead {
+export interface ResearchRunRead {
   readonly status: WorkflowRunStatus;
   readonly handler_generation: string;
   readonly requireCurrent: () => Promise<void>;
+}
+export interface ReauthenticatedRunRead extends ResearchRunRead {
   /** Captured only after current policy/source checks; used as a SQL TOCTOU
    * fence, never as a new source of permission or execution renewal. */
   readonly controlFence: () => Promise<ResearchRunControlFence>;
@@ -54,7 +56,7 @@ function mapReadFailure(error: unknown): never {
   throw error;
 }
 
-function sameIdentity(left: WorkflowRunStatus, right: WorkflowRunStatus): void {
+export function requireRunStatusContinuity(left: WorkflowRunStatus, right: WorkflowRunStatus): void {
   if (left.operation_id !== right.operation_id || left.investigation_id !== right.investigation_id ||
       left.initial_revision !== right.initial_revision || left.principal_ref !== right.principal_ref ||
       left.credential_generation !== right.credential_generation ||
@@ -154,9 +156,29 @@ export async function prepareReauthenticatedRunRead(
   await requireCurrent();
   const status = await store.readRunStatus(operationId, principal, "owner-read");
   if (status === null) corrupt();
-  sameIdentity(first, status);
+  requireRunStatusContinuity(first, status);
   await requireCurrent();
   return { status, handler_generation: binding.handler_generation, requireCurrent, controlFence };
+}
+
+/** Current caller authorization stays in the shared artifact service. */
+export function createRunArtifactReadback(
+  env: Env, context: AuthenticatedRequestContext, read: ResearchRunRead,
+): (input: { artifact_ref: VersionedRef; original_scope_snapshot_ref: VersionedRef }) => Promise<HistoricalResearchArtifactBinding> {
+  return async ({ artifact_ref, original_scope_snapshot_ref }) => {
+    if (original_scope_snapshot_ref.id !== read.status.scope_snapshot_id ||
+        original_scope_snapshot_ref.revision !== read.status.scope_snapshot_revision) corrupt();
+    const reopened = await reopenOwnerArtifactDraft(env, context, artifact_ref).catch(mapReadFailure);
+    if (!("sections" in reopened.artifact) || reopened.artifact.status !== "DRAFT" ||
+        reopened.artifact_ref.id !== artifact_ref.id || reopened.artifact_ref.revision !== artifact_ref.revision ||
+        reopened.original_scope_snapshot_ref.id !== original_scope_snapshot_ref.id ||
+        reopened.original_scope_snapshot_ref.revision !== original_scope_snapshot_ref.revision) corrupt();
+    return {
+      artifact_ref: reopened.artifact_ref, original_scope_snapshot_ref: reopened.original_scope_snapshot_ref,
+      status: "DRAFT", evidence_freeze_ref: reopened.artifact.evidence_freeze_ref,
+      dependency_manifest_ref: reopened.artifact.dependency_manifest_ref,
+    };
+  };
 }
 
 /** Reuse the historical coverage and artifact readers, never impersonate the
@@ -174,20 +196,7 @@ export async function readReauthenticatedRunAnswer(
     database: env.CORE_DB, work_bucket: env.WORK_BUCKET, operation_id: read.status.operation_id,
     owner: { principal_ref: context.principal_ref, client_class: "owner_pwa" },
     require_current: read.requireCurrent,
-    require_artifact: async ({ artifact_ref, original_scope_snapshot_ref }) => {
-      if (original_scope_snapshot_ref.id !== read.status.scope_snapshot_id ||
-          original_scope_snapshot_ref.revision !== read.status.scope_snapshot_revision) corrupt();
-      const reopened = await reopenOwnerArtifactDraft(env, context, artifact_ref).catch(mapReadFailure);
-      if (!("sections" in reopened.artifact) || reopened.artifact.status !== "DRAFT" ||
-          reopened.artifact_ref.id !== artifact_ref.id || reopened.artifact_ref.revision !== artifact_ref.revision ||
-          reopened.original_scope_snapshot_ref.id !== original_scope_snapshot_ref.id ||
-          reopened.original_scope_snapshot_ref.revision !== original_scope_snapshot_ref.revision) corrupt();
-      return {
-        artifact_ref: reopened.artifact_ref, original_scope_snapshot_ref: reopened.original_scope_snapshot_ref,
-        status: "DRAFT", evidence_freeze_ref: reopened.artifact.evidence_freeze_ref,
-        dependency_manifest_ref: reopened.artifact.dependency_manifest_ref,
-      };
-    },
+    require_artifact: createRunArtifactReadback(env, context, read),
   });
   await read.requireCurrent();
   if (historical === null) corrupt();

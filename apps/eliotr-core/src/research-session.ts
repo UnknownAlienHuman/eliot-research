@@ -38,6 +38,7 @@ import { RESEARCH_OWNER_MODEL_PROFILE as MODEL_PROFILE } from "./research-owner-
 import type { ResearchWorkflowRunParams } from "./research-workflow.js";
 import { researchStageBudgetLeaseMs } from "./research-runtime-duration.js";
 import { prepareReauthenticatedRunRead, readReauthenticatedRunAnswer } from "./research-run-read-authorization.js";
+import { prepareProjectClientRunRead, readProjectClientRunAnswer } from "./research-client-run-read.js";
 import { requireResearchDeploymentCompatibility } from "./research-deployment-compatibility.js";
 export const RESEARCH_SESSION_PROTOCOL = "eliotr.research-session.v1";
 const RUN_BUDGET = "research-budget-v1";
@@ -246,7 +247,6 @@ function mapRunStatusFailure(error: unknown): never {
   throw error;
 }
 async function readResearchRunStatus(env: Env, context: AuthenticatedRequestContext, workflowInstanceId: string): Promise<ResearchRunStatus> {
-  requireOwner(context);
   const operationId = checkId(workflowInstanceId, "workflow_instance_id");
   const principal: WorkflowPrincipal = {
     principal_ref: context.principal_ref,
@@ -264,8 +264,11 @@ async function readResearchRunStatus(env: Env, context: AuthenticatedRequestCont
       scope_snapshot_revision: held.scope_snapshot_ref.revision,
     };
   };
-  const refreshed = await prepareReauthenticatedRunRead(env, context, operationId).catch(mapRunStatusFailure);
-  const status = refreshed?.status ?? await readStoredResearchRunStatus({
+  const isOwner = context.client_class === "owner_pwa";
+  const delegated = isOwner ? null : await prepareProjectClientRunRead(env, context, operationId).catch(mapRunStatusFailure);
+  if (!isOwner && delegated === null) fail("RESEARCH_RUN_NOT_FOUND", "research run does not exist", 404);
+  const refreshed = isOwner ? await prepareReauthenticatedRunRead(env, context, operationId).catch(mapRunStatusFailure) : null;
+  const status = delegated?.status ?? refreshed?.status ?? await readStoredResearchRunStatus({
     database: env.CORE_DB, operation_id: operationId, principal, recheck_authority: recheckAuthority,
   }).catch(mapRunStatusFailure);
   if (status === null) fail("RESEARCH_RUN_NOT_FOUND", "research run does not exist", 404);
@@ -277,11 +280,16 @@ async function readResearchRunStatus(env: Env, context: AuthenticatedRequestCont
     code: engine.failure_code,
     ...(failureStage === undefined ? {} : { stage: failureStage }),
   };
-  const generation = refreshed?.handler_generation ?? (await env.CORE_DB.prepare(
+  const generation = delegated?.handler_generation ?? refreshed?.handler_generation ?? (await env.CORE_DB.prepare(
     "SELECT handler_generation FROM research_workflow_run WHERE operation_id=?1 AND principal_ref=?2",
   ).bind(operationId, context.principal_ref).first<{ handler_generation: string }>())?.handler_generation;
   let answer: ResearchRunStatus["answer"] = { availability: "unavailable" };
-  if (refreshed !== null) {
+  if (delegated !== null) {
+    if (isSemanticResearchHandlerGeneration(generation)) {
+      answer = await readProjectClientRunAnswer(env, context, delegated, generation).catch(mapRunStatusFailure);
+    }
+    await delegated.requireCurrent().catch(mapRunStatusFailure);
+  } else if (refreshed !== null) {
     if (isSemanticResearchHandlerGeneration(generation)) {
       answer = await readReauthenticatedRunAnswer(env, context, refreshed, generation).catch(mapRunStatusFailure);
     }

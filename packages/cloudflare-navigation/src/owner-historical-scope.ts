@@ -186,6 +186,19 @@ async function provesSourceHeadAdvance(
   return expected.size === 0 && advanced;
 }
 
+/** Check immutable original bytes and the one supported head-advance invalidation.
+ * Expiry is not renewal: callers must independently authorize every current read. */
+export async function requireHistoricalScopeOrigin(
+  database: D1Database, originalRef: VersionedRef, original: ScopeSnapshot,
+): Promise<void> {
+  const persisted = await loadScopeAuthority(database, originalRef);
+  if (persisted === null ||
+      (persisted.invalidated_at !== null &&
+       (persisted.invalidation_reason !== "SCOPE_INPUT_CHANGED" ||
+        !(await provesSourceHeadAdvance(database, original)))) ||
+      canonicalEvidenceJson(persisted.snapshot) !== canonicalEvidenceJson(original)) stale();
+}
+
 async function requireOriginalGrantNotRevoked(
   database: D1Database,
   originalRef: VersionedRef,
@@ -228,12 +241,7 @@ async function reauthorizeHistoricalScope(
   const profile = await readOwnerScopeProfile(input.database, parsed.data);
   const maximumMembers = validMaximum(input.max_snapshot_members, profile.max_sources);
   if (parsed.data.member_source_revision_refs.length > maximumMembers) stale();
-  const persisted = await loadScopeAuthority(input.database, originalRef.data);
-  if (persisted === null ||
-      (persisted.invalidated_at !== null &&
-       (persisted.invalidation_reason !== "SCOPE_INPUT_CHANGED" ||
-        !(await provesSourceHeadAdvance(input.database, parsed.data)))) ||
-      canonicalEvidenceJson(persisted.snapshot) !== canonicalEvidenceJson(parsed.data)) stale();
+  await requireHistoricalScopeOrigin(input.database, originalRef.data, parsed.data);
   const original = parsed.data;
   await requireOriginalGrantNotRevoked(input.database, originalRef.data,
     client?.original_principal_ref ?? input.access.principal_ref, client === undefined ? input.access.client_class : "owner_pwa");
@@ -270,12 +278,7 @@ async function reauthorizeHistoricalScope(
   const requireCurrent = async (scope: ScopeSnapshot): Promise<ScopeSnapshot> => {
     await requireOriginalGrantNotRevoked(input.database, originalRef.data,
       client?.original_principal_ref ?? input.access.principal_ref, client === undefined ? input.access.client_class : "owner_pwa");
-    const persistedOriginal = await loadScopeAuthority(input.database, originalRef.data);
-    if (persistedOriginal === null ||
-        (persistedOriginal.invalidated_at !== null &&
-         (persistedOriginal.invalidation_reason !== "SCOPE_INPUT_CHANGED" ||
-          !(await provesSourceHeadAdvance(input.database, original)))) ||
-        canonicalEvidenceJson(persistedOriginal.snapshot) !== canonicalEvidenceJson(original)) stale();
+    await requireHistoricalScopeOrigin(input.database, originalRef.data, original);
     const checked = await scopes.requireCurrent(scope);
     if (delegated !== undefined && client !== undefined) {
       await delegated.requireOrigin();

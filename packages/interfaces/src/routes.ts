@@ -71,7 +71,7 @@ export const ROUTES: readonly RouteDefinition[] = [
   { method: "DELETE", path: "/api/v1/research/query/:workflow_id", operation: "research.query", auth: "owner_or_service", maximum_request_bytes: 0, response_mode: "json" },
   { method: "POST", path: "/api/v1/research/run", operation: "research.run", auth: "owner_or_service", maximum_request_bytes: RESEARCH_REQUEST_MAX_BYTES, response_mode: "handle" },
   { method: "GET", path: "/api/v1/research/runs", operation: "research.runs", auth: "owner", maximum_request_bytes: 0, response_mode: "json" },
-  { method: "GET", path: "/api/v1/research/run/:workflow_id", operation: "research.run", auth: "owner", maximum_request_bytes: 0, response_mode: "json" },
+  { method: "GET", path: "/api/v1/research/run/:workflow_id", operation: "research.run", auth: "owner_or_service", maximum_request_bytes: 0, response_mode: "json" },
   { method: "POST", path: "/api/v1/research/run/:workflow_id/cancel", operation: "research.run.cancel", auth: "owner", maximum_request_bytes: 1024, response_mode: "json" },
   { method: "POST", path: "/api/v1/research/run/:workflow_id/recover", operation: "research.run.recover", auth: "owner", maximum_request_bytes: 1024, response_mode: "json" },
   { method: "GET", path: "/api/v1/research/open/:ref", operation: "research.open", auth: "owner_or_service", maximum_request_bytes: 0, response_mode: "stream" },
