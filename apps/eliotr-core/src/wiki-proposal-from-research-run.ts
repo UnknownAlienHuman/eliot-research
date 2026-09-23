@@ -6,12 +6,8 @@ import {
   type VersionedRef,
   type WikiPageRevision,
 } from "@eliotr/contracts";
-import {
-  canonicalEvidenceJson,
-  createNavigationReadAuthority,
-  loadScopeAuthority,
-} from "@eliotr/cloudflare-evidence";
-import { createD1ScopeService, createOwnerScopeAuthority } from "@eliotr/cloudflare-navigation";
+import { canonicalEvidenceJson } from "@eliotr/cloudflare-evidence";
+import { prepareOwnerScopeReauthorization } from "./wiki-proposal-reauthorization.js";
 import {
   createWikiPublisher,
   WikiPublicationError,
@@ -106,22 +102,22 @@ function mapResearchFailure(error: unknown): never {
   switch (errorCode(error)) {
     case "WORKFLOW_OUTPUT_CORRUPT":
     case "MATERIALIZE_OUTPUT_CORRUPT":
-      fail("WIKI_RESEARCH_OUTPUT_CORRUPT", "saved research output is inconsistent", 409);
+      return fail("WIKI_RESEARCH_OUTPUT_CORRUPT", "saved research output is inconsistent", 409);
     case "WORKFLOW_AUTHORITY_STALE":
     case "MATERIALIZE_OUTPUT_AUTHORITY_STALE":
     case "ARTIFACT_DRAFT_READ_STALE":
-      fail("WIKI_POLICY_DENIED", "saved research authority is no longer current", 410);
+      return fail("WIKI_POLICY_DENIED", "saved research authority is no longer current", 410);
     case "ARTIFACT_DRAFT_READ_INVALID":
     case "ARTIFACT_DRAFT_READ_INTEGRITY":
-      fail("WIKI_RESEARCH_OUTPUT_CORRUPT", "saved research output is inconsistent", 409);
+      return fail("WIKI_RESEARCH_OUTPUT_CORRUPT", "saved research output is inconsistent", 409);
     case "ARTIFACT_DRAFT_READ_DENIED":
-      fail("WIKI_POLICY_DENIED", "saved research is not readable by this owner", 403);
+      return fail("WIKI_POLICY_DENIED", "saved research is not readable by this owner", 403);
     case "WORKFLOW_OUTPUT_UNAVAILABLE":
     case "MATERIALIZE_OUTPUT_UNCERTAIN":
     case "ARTIFACT_DRAFT_READ_UNAVAILABLE":
-      fail("WIKI_SETTLEMENT_UNCERTAIN", "saved research output is temporarily unavailable", 503, true);
+      return fail("WIKI_SETTLEMENT_UNCERTAIN", "saved research output is temporarily unavailable", 503, true);
     default:
-      fail("WIKI_SETTLEMENT_UNCERTAIN", "saved research readback is unavailable", 503, true);
+      return fail("WIKI_SETTLEMENT_UNCERTAIN", "saved research readback is unavailable", 503, true);
   }
 }
 
@@ -131,46 +127,20 @@ export async function requireFreshOwnerScope(
   operationId: string,
 ): Promise<void> {
   if (context.request.signal.aborted) fail("WIKI_RESEARCH_CANCELLED", "Wiki proposal was cancelled", 409);
-  let row: { readonly scope_snapshot_id: unknown; readonly scope_snapshot_revision: unknown } | null;
-  try {
-    row = await env.CORE_DB.prepare(
-      "SELECT scope_snapshot_id, scope_snapshot_revision FROM research_workflow_run " +
-      "WHERE operation_id=?1 AND principal_ref=?2 LIMIT 1",
-    ).bind(operationId, context.principal_ref)
-      .first<{ readonly scope_snapshot_id: unknown; readonly scope_snapshot_revision: unknown }>();
-  } catch (error) {
-    throw error;
-  }
+  const row = await env.CORE_DB.prepare(
+    "SELECT scope_snapshot_id, scope_snapshot_revision FROM research_workflow_run " +
+    "WHERE operation_id=?1 AND principal_ref=?2 LIMIT 1",
+  ).bind(operationId, context.principal_ref)
+    .first<{ readonly scope_snapshot_id: unknown; readonly scope_snapshot_revision: unknown }>();
   if (row === null) fail("WIKI_RESEARCH_RUN_NOT_FOUND", "research run is unavailable", 404);
   const scopeRef = VersionedRefSchema.safeParse({
     id: row.scope_snapshot_id,
     revision: row.scope_snapshot_revision,
   });
   if (!scopeRef.success) fail("WIKI_RESEARCH_OUTPUT_CORRUPT", "research scope binding is malformed", 409);
-  const stored = await loadScopeAuthority(env.CORE_DB, scopeRef.data);
-  if (stored === null || stored.invalidated_at !== null) {
-    fail("WIKI_POLICY_DENIED", "research scope is no longer available", 410);
-  }
-  const access = {
-    principal_ref: context.principal_ref,
-    client_class: context.client_class,
-    credential_generation: context.credential_generation,
-  } as const;
-  const now = Date.now;
-  const owner = createOwnerScopeAuthority(env.CORE_DB, access, now);
-  await owner.requireReadPolicy();
-  const scopes = createD1ScopeService(env.CORE_DB, owner, { now, max_snapshot_members: 64 });
-  const fresh = await scopes.freeze(stored.snapshot.resolved_scope_expression, context.credential_generation);
-  await scopes.requireCurrent(fresh);
-  await owner.grant(fresh);
-  const navigation = createNavigationReadAuthority({
-    database: env.CORE_DB,
-    scope_snapshot: fresh,
-    access,
-    require_current: (scope) => scopes.requireCurrent(scope),
-    now,
-  });
-  await navigation.current();
+  const authorization = await prepareOwnerScopeReauthorization(env, context, scopeRef.data);
+  await authorization.requireCurrent();
+  if (context.request.signal.aborted) fail("WIKI_RESEARCH_CANCELLED", "Wiki proposal was cancelled", 409);
 }
 
 function parseDependencyReceipt(raw: unknown): DependencyObjectReceipt {
@@ -205,14 +175,11 @@ export async function readDependencyManifest(
   env: Pick<Env, "CORE_DB" | "WORK_BUCKET">,
   artifact: ArtifactRevision,
 ): Promise<DependencyManifestRead> {
-  let row: { readonly object_ref: unknown; readonly object_kind: unknown; readonly section_ordinal: unknown; readonly receipt_json: unknown } | null;
-  try {
-    row = await env.CORE_DB.prepare(
-      "SELECT object_ref, object_kind, section_ordinal, receipt_json FROM artifact_draft_object " +
-      "WHERE artifact_id=?1 AND revision=?2 AND object_ref=?3 LIMIT 1",
-    ).bind(artifact.artifact_ref.id, artifact.artifact_ref.revision, artifact.dependency_manifest_ref)
-      .first<{ readonly object_ref: unknown; readonly object_kind: unknown; readonly section_ordinal: unknown; readonly receipt_json: unknown }>();
-  } catch (error) { throw error; }
+  const row = await env.CORE_DB.prepare(
+    "SELECT object_ref, object_kind, section_ordinal, receipt_json FROM artifact_draft_object " +
+    "WHERE artifact_id=?1 AND revision=?2 AND object_ref=?3 LIMIT 1",
+  ).bind(artifact.artifact_ref.id, artifact.artifact_ref.revision, artifact.dependency_manifest_ref)
+    .first<{ readonly object_ref: unknown; readonly object_kind: unknown; readonly section_ordinal: unknown; readonly receipt_json: unknown }>();
   if (row === null || row.object_ref !== artifact.dependency_manifest_ref ||
       row.object_kind !== "DEPENDENCY_MANIFEST" || row.section_ordinal !== null) {
     fail("WIKI_RESEARCH_OUTPUT_CORRUPT", "dependency manifest binding is missing", 409);

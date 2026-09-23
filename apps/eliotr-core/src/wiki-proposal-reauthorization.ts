@@ -14,10 +14,13 @@ import {
   type ScopeAuthorization,
 } from "@eliotr/cloudflare-evidence";
 import {
-  createD1ScopeService,
+  createProfiledOwnerScopeService,
+  readOwnerScopeProfile,
+  OWNER_RESEARCH_SCOPE_PROFILE,
   createOwnerScopeAuthority,
   reauthorizeOwnerHistoricalScope,
 } from "@eliotr/cloudflare-navigation";
+import { createD1ScopeProfilePort } from "@eliotr/retrieval";
 import { CatalogInputError } from "./catalog-service.js";
 import type { Env } from "./env.js";
 
@@ -156,14 +159,16 @@ export async function prepareOwnerScopeReauthorization(
   const { originalRef, original } = await loadOriginalScope(env, context, scopeRef);
   const now = Date.now;
   const owner = createOwnerScopeAuthority(env.CORE_DB, context, now);
-  await owner.requireReadPolicy();
-  const scopes = createD1ScopeService(env.CORE_DB, owner, { now, max_snapshot_members: 64 });
+  const profile = await readOwnerScopeProfile(env.CORE_DB, original);
+  const scopes = createProfiledOwnerScopeService(env.CORE_DB, owner, profile, now);
   const fresh = await scopes.freeze(original.resolved_scope_expression, context.credential_generation);
   if (!sameScopeForReauthorization(original, fresh)) {
     stale("Wiki proposal sources or policy closure changed");
   }
   await scopes.requireCurrent(fresh);
-  await owner.grant(fresh);
+  await createD1ScopeProfilePort(env.CORE_DB).recordBinding(fresh, profile);
+  if (profile.version === OWNER_RESEARCH_SCOPE_PROFILE.version) await owner.exhaustiveGrant(fresh);
+  else await owner.grant(fresh);
   const navigation = createNavigationReadAuthority({
     database: env.CORE_DB,
     scope_snapshot: fresh,
@@ -197,7 +202,8 @@ export async function prepareOwnerScopeReadAuthorization(
   const { originalRef, original } = await loadOriginalScope(env, context, scopeRef);
   const now = Date.now;
   const owner = createOwnerScopeAuthority(env.CORE_DB, context, now);
-  const scopes = createD1ScopeService(env.CORE_DB, owner, { now, max_snapshot_members: 64 });
+  const profile = await readOwnerScopeProfile(env.CORE_DB, original);
+  const scopes = createProfiledOwnerScopeService(env.CORE_DB, owner, profile, now);
   const navigation = createNavigationReadAuthority({
     database: env.CORE_DB,
     scope_snapshot: original,
@@ -231,7 +237,6 @@ export async function prepareOwnerScopeHistoricalReadAuthorization(
     original_ref: originalRef,
     original,
     now,
-    max_snapshot_members: 64,
   });
   const navigation = createNavigationReadAuthority({
     database: env.CORE_DB,

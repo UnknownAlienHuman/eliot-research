@@ -68,7 +68,6 @@ async function prepareOwnerArtifactReauthorization(
     },
     original: original.snapshot,
     now,
-    max_snapshot_members: 64,
   });
   requireActiveRequest();
   const navigation = createNavigationReadAuthority({

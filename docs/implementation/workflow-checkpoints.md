@@ -30,6 +30,31 @@ short-scope runs are not silently extended or upgraded; reauthenticated reads re
 Code is integrated separately from acceptance: compilation/schema checks are not D1/Workflow,
 Windows, time-boundary or live qualification. Those remain pending in PR #225.
 
+## Full owner Research scope (S99 code checkpoint, 2026-09-23)
+
+New execution admission additionally requires `0071_research_scope_profile.sql`. It records
+`retrieval-scope-v2` using the existing owner exhaustive loader's ceiling of 4,096 authorized
+members; explicit selection retains the generic parser's 1,000-ID bound. Public ORIENT and ordinary
+query profiles retain their original 64-source limit. Existing `retrieval-scope-v1` rows and completed
+orientation receipts are not upgraded or rewritten. Missing legacy profile metadata is accepted only
+inside the old 64-member envelope; unknown or inconsistent profiles fail closed.
+
+Navigation materializes at most 64 metadata previews and returns at most 16 results, independently
+of the complete frozen Research membership. Planning and historical source witnesses read bounded
+64-member pages with exact requested-set checks. Workflow retrieval, report/history reauthorization
+and Wiki proposal readers use the recorded profile; historical reopening retains original revisions,
+owner generations, current policy and purge checks. The requested denominator is never replaced by
+a preview or top-k subset, and scope size confers neither exhaustive coverage nor extra model budget.
+
+Member ceilings are not universal capacity guarantees: the existing canonical snapshot/D1 envelope,
+450,000-byte orientation receipt, 64-KiB Workflow input/checkpoint and downstream result byte limits
+remain in force. Large inline planning manifests or long questions can exhaust these bounds before
+4,096 members. Admission returns an explicit size error with scope-partition guidance, never a
+truncated successful scope. No whole-corpus bodies are loaded to prepare membership.
+
+Code/static compilation is separate from PR #291's unexecuted 65/299-source native product, replay,
+expiry/revocation and corpus-quality acceptance. No live capacity or release-readiness claim.
+
 ## Configured exploratory evidence freeze
 
 The explicit `research-handlers.exploratory.v3` factory now composes stage 10 (`RECONCILE`) and

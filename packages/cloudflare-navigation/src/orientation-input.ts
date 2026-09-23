@@ -21,7 +21,11 @@ export function orientationId(value: unknown): string {
   }
   return result.data;
 }
-export function parseOrientationRequest(value: unknown): QueryRequest {
+export function parseOrientationRequest(value: unknown, maximumSelectedSources = ORIENTATION_MAX_SOURCES): QueryRequest {
+  // Only server execution supplies the larger generic-parser bound; public ORIENT keeps 64.
+  if (!Number.isSafeInteger(maximumSelectedSources) || maximumSelectedSources < 1 || maximumSelectedSources > 1000) {
+    orientationFail("ORIENTATION_INPUT_LIMIT", 413);
+  }
   // Bound the complete object before the recursive public scope schema is invoked.
   const pending: { value: unknown; depth: number }[] = [{ value, depth: 0 }];
   let nodes = 0;
@@ -33,7 +37,7 @@ export function parseOrientationRequest(value: unknown): QueryRequest {
       if (seen.has(next.value)) orientationFail("ORIENTATION_INPUT_INVALID", 400);
       seen.add(next.value);
       const entries = Object.values(next.value);
-      if (entries.length > 128) orientationFail("ORIENTATION_INPUT_LIMIT", 413);
+      if (entries.length > (Array.isArray(next.value) ? Math.max(128, maximumSelectedSources) : 128)) orientationFail("ORIENTATION_INPUT_LIMIT", 413);
       entries.forEach((item) => pending.push({ value: item, depth: next.depth + 1 }));
     }
   }
@@ -54,7 +58,7 @@ export function parseOrientationRequest(value: unknown): QueryRequest {
   const expression = ScopeExpressionSchema.safeParse(record.scope_expression);
   if (!expression.success) orientationFail("ORIENTATION_INPUT_INVALID", 400);
   const metrics = inspectScopeExpression(expression.data);
-  if (metrics.depth > 8 || metrics.atom_count > 16 || metrics.selected_source_count > ORIENTATION_MAX_SOURCES) {
+  if (metrics.depth > 8 || metrics.atom_count > 16 || metrics.selected_source_count > maximumSelectedSources) {
     orientationFail("ORIENTATION_INPUT_LIMIT", 413);
   }
   return { query: record.query, product: "ORIENT", scope_expression: expression.data, literals: [],

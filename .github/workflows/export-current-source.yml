@@ -1,5 +1,5 @@
 name: export-current-source
-# Export current main after S33 for the next production-code checkpoint.
+# Refresh exact main after S08 for S09 semantic-stage acceptance.
 on:
   push:
     branches: [main]

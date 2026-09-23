@@ -1,6 +1,6 @@
 // IMPLEMENTED_NOT_LIVE: ER-24 ResearchSession executes durable sessions over DO storage with W2 D1/R2 checkpoints; research.query/run are composed; hibernation WebSocket transport and live receipts remain separate.
 import { DurableObject } from "cloudflare:workers";
-import { ORIENTATION_PROFILE, createD1ScopeService, createOwnerScopeAuthority } from "@eliotr/cloudflare-navigation";
+import { ORIENTATION_PROFILE, createD1ScopeService, createOwnerScopeAuthority, OWNER_RESEARCH_MAX_SELECTED_SOURCES, readOwnerScopeProfile } from "@eliotr/cloudflare-navigation";
 import { createD1ScopePorts, createD1ScopeProfilePort, createD1RetrievalResultStore, retrievalRequestDigest, RetrievalQueryError } from "@eliotr/retrieval";
 import { createD1EvidenceAuthorityPort, createNavigationReadAuthority } from "@eliotr/cloudflare-evidence";
 import { loadHeldResearchScope, retrieveWithHeldScope } from "./research-retrieval-composition.js";
@@ -46,7 +46,7 @@ const HANDLER_GEN = "research-handlers.v1";
 const ID_RE = /^[A-Za-z0-9][A-Za-z0-9:._-]{0,127}$/u;
 function checkId(value: unknown, label: string): string { if (typeof value !== "string" || !ID_RE.test(value)) fail("RESEARCH_INPUT_INVALID", `${label} is invalid`); return value as string; }
 function checkQuery(value: unknown): string { if (!isResearchQuestionText(value)) fail("RESEARCH_INPUT_INVALID", "query is invalid"); return value; }
-function checkScope(value: unknown): QueryRequest["scope_expression"] { const parsed = ScopeExpressionSchema.safeParse(value); if (!parsed.success) fail("RESEARCH_INPUT_INVALID", "scope_expression is invalid"); const m = inspectScopeExpression(parsed.data); if (m.depth > 8 || m.atom_count > 16 || m.selected_source_count > 64) fail("RESEARCH_INPUT_LIMIT", "scope_expression exceeds its bounds", 413); return parsed.data; }
+function checkScope(value: unknown, maximumSelectedSources = 64): QueryRequest["scope_expression"] { const parsed = ScopeExpressionSchema.safeParse(value); if (!parsed.success) fail("RESEARCH_INPUT_INVALID", "scope_expression is invalid"); const m = inspectScopeExpression(parsed.data); if (m.depth > 8 || m.atom_count > 16 || m.selected_source_count > maximumSelectedSources) fail("RESEARCH_INPUT_LIMIT", "scope_expression exceeds its bounds", 413); return parsed.data; }
 const BASE_REQUEST_KEYS = ["query", "product", "scope_expression", "literals", "evidence_grade", "budget_ref", "max_results"] as const;
 const RUN_V2_REQUEST_KEYS = [...BASE_REQUEST_KEYS, "request_version", "inquiry_protocol_ref"] as const;
 function exactKeys(record: Record<string, unknown>, expected: readonly string[] = BASE_REQUEST_KEYS): void {
@@ -66,7 +66,7 @@ export function parseResearchRunRequest(raw: unknown): QueryRequest {
   if (r.evidence_grade !== "E0" && r.evidence_grade !== "E1" && r.evidence_grade !== "E2") fail("RESEARCH_PROFILE_UNSUPPORTED", "research.run supports grades E0-E2", 422);
   if (r.budget_ref !== RUN_BUDGET) fail("RESEARCH_PROFILE_UNSUPPORTED", "research.run requires the bounded research budget profile", 422);
   const base = {
-    query: checkQuery(r.query), product: "RESEARCH" as const, scope_expression: checkScope(r.scope_expression), literals: [] as const,
+    query: checkQuery(r.query), product: "RESEARCH" as const, scope_expression: checkScope(r.scope_expression, OWNER_RESEARCH_MAX_SELECTED_SOURCES), literals: [] as const,
     evidence_grade: r.evidence_grade as QueryRequest["evidence_grade"], budget_ref: RUN_BUDGET, max_results: checkLiteralsMax(r),
   };
   if (!explicitV2) return base;
@@ -380,7 +380,7 @@ export function createResearchRunService(env: Env): { run(context: Authenticated
         ...(planningManifest === undefined ? {} : { planning_manifest: planningManifest }),
       }));
       if (payloadBytes.byteLength > MAX_WORKFLOW_RECEIPT_BYTES) {
-        fail("RESEARCH_INPUT_LIMIT", `research workflow input exceeds ${MAX_WORKFLOW_RECEIPT_BYTES} UTF-8 bytes`, 413);
+        fail("RESEARCH_INPUT_LIMIT", `research workflow input exceeds ${MAX_WORKFLOW_RECEIPT_BYTES} UTF-8 bytes; partition the requested scope or shorten the question`, 413);
       }
       const payloadHash = await digest(payloadBytes);
       if ((await bucket.head(payloadKey).catch(() => null)) === null) {
@@ -445,7 +445,7 @@ export function createResearchRunService(env: Env): { run(context: Authenticated
       };
       if (lane === "exploratory" && (handlerGeneration === SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION || isSemanticResearchHandlerGeneration(handlerGeneration))) {
         await createD1ScopeProfilePort(db).recordBinding(scopeAuthority.snapshot, {
-          ...SERVER_RETRIEVAL_SCOPE_PROFILE,
+          ...await readOwnerScopeProfile(db, scopeAuthority.snapshot),
           max_results: request.max_results,
         }).catch(mapRetrievalError);
       }

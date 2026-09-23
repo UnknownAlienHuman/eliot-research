@@ -38,7 +38,7 @@ export interface OwnerScopeAuthority extends Pick<ScopeRepository, "resolveAtom"
    */
   exhaustiveSources(refs: readonly string[]): Promise<readonly OrientationSource[]>;
   grant(snapshot: ScopeSnapshot, expiresAtCeilingMs?: number): Promise<void>;
-  exhaustiveGrant(snapshot: ScopeSnapshot): Promise<void>;
+  exhaustiveGrant(snapshot: ScopeSnapshot, expiresAtCeilingMs?: number): Promise<void>;
   exhaustiveRequireReadPolicy(): Promise<void>;
 }
 /** Keep retrieval's larger bound explicit while preserving the orientation batch bound. */
@@ -251,7 +251,7 @@ export function createOwnerScopeAuthority(db: D1Database, context: EvidenceAcces
   return {
     resolveAtom, exhaustiveResolveAtom, resolveAuthorityClosure, exhaustiveResolveAuthorityClosure, sources, exhaustiveSources,
     grant: (snapshot, expiresAtCeilingMs) => grantWithLoader(snapshot, sources, ORIENTATION_MAX_SOURCES, expiresAtCeilingMs),
-    exhaustiveGrant: (snapshot) => grantWithLoader(snapshot, exhaustiveSources, 4096),
+    exhaustiveGrant: (snapshot, expiresAtCeilingMs) => grantWithLoader(snapshot, exhaustiveSources, 4096, expiresAtCeilingMs),
     exhaustiveRequireReadPolicy: async () => { await policies(4096); },
     requireReadPolicy: async () => { await policies(); },
   };

@@ -17,10 +17,11 @@ import {
   type DeterministicScopeMember,
 } from "@eliotr/domain";
 import { createD1ScopeService } from "./d1-scope-service.js";
-import { createOwnerScopeAuthority, type OwnerScopeAuthority } from "./orientation-authority.js";
+import { createOwnerScopeAuthority, splitExhaustiveSourceRefs, type OwnerScopeAuthority } from "./orientation-authority.js";
 import { ScopeServiceError } from "./scope-service.js";
 
-const DEFAULT_MAX_SNAPSHOT_MEMBERS = 64;
+import { createD1ScopeProfilePort } from "@eliotr/retrieval";
+import { readOwnerScopeProfile, OWNER_RESEARCH_SCOPE_PROFILE } from "./owner-scope-profile.js";
 
 export interface OwnerHistoricalScopeInput {
   readonly database: D1Database;
@@ -54,9 +55,9 @@ function stale(): never {
   );
 }
 
-function validMaximum(value: number | undefined): number {
-  const maximum = value ?? DEFAULT_MAX_SNAPSHOT_MEMBERS;
-  if (!Number.isSafeInteger(maximum) || maximum < 1 || maximum > DEFAULT_MAX_SNAPSHOT_MEMBERS) stale();
+function validMaximum(value: number | undefined, recordedMaximum: number): number {
+  const maximum = value ?? recordedMaximum;
+  if (!Number.isSafeInteger(maximum) || maximum < 1 || maximum > recordedMaximum) stale();
   return maximum;
 }
 
@@ -154,22 +155,25 @@ async function provesSourceHeadAdvance(
 ): Promise<boolean> {
   const refs = original.member_source_revision_refs;
   if (refs.length === 0) return false;
-  const result = await database.prepare(
-    "SELECT sr.source_revision_ref AS source_revision_ref, sr.source_owner_generation AS source_owner_generation, " +
-      "sr.purge_state AS purge_state, s.head_rev AS head_revision_ref " +
-      "FROM source_revision sr JOIN source s ON s.source_id=sr.source_id " +
-      "WHERE sr.source_revision_ref IN (SELECT value FROM json_each(?1)) " +
-      "ORDER BY sr.source_revision_ref LIMIT 65",
-  ).bind(JSON.stringify(refs)).all<SourceHeadWitnessRow>();
-  if (!result.success || !Array.isArray(result.results) || result.results.length !== refs.length) return false;
   const expected = new Set(refs);
   let advanced = false;
-  for (const row of result.results) {
-    if (typeof row.source_revision_ref !== "string" || !expected.delete(row.source_revision_ref) ||
-        row.purge_state !== "LIVE" ||
-        row.source_owner_generation !== original.source_owner_generations[row.source_revision_ref] ||
-        typeof row.head_revision_ref !== "string" || row.head_revision_ref.length === 0) return false;
-    if (row.head_revision_ref !== row.source_revision_ref) advanced = true;
+  for (const batch of splitExhaustiveSourceRefs(refs)) {
+    const result = await database.prepare(
+      "SELECT sr.source_revision_ref AS source_revision_ref, sr.source_owner_generation AS source_owner_generation, " +
+        "sr.purge_state AS purge_state, s.head_rev AS head_revision_ref " +
+        "FROM source_revision sr JOIN source s ON s.source_id=sr.source_id " +
+        "WHERE sr.source_revision_ref IN (SELECT value FROM json_each(?1)) " +
+        "ORDER BY sr.source_revision_ref LIMIT ?2",
+    ).bind(JSON.stringify(batch), batch.length + 1).all<SourceHeadWitnessRow>();
+    if (!result.success || !Array.isArray(result.results) || result.results.length !== batch.length) return false;
+    const requested = new Set(batch);
+    for (const row of result.results) {
+      if (typeof row.source_revision_ref !== "string" || !requested.delete(row.source_revision_ref) ||
+          !expected.delete(row.source_revision_ref) || row.purge_state !== "LIVE" ||
+          row.source_owner_generation !== original.source_owner_generations[row.source_revision_ref] ||
+          typeof row.head_revision_ref !== "string" || row.head_revision_ref.length === 0) return false;
+      if (row.head_revision_ref !== row.source_revision_ref) advanced = true;
+    }
   }
   return expected.size === 0 && advanced;
 }
@@ -199,6 +203,9 @@ export async function reauthorizeOwnerHistoricalScope(
   const originalRef = VersionedRefSchema.safeParse(input.original_ref);
   const parsed = ScopeSnapshotSchema.safeParse(input.original);
   if (!originalRef.success || !parsed.success) stale();
+  const profile = await readOwnerScopeProfile(input.database, parsed.data);
+  const maximumMembers = validMaximum(input.max_snapshot_members, profile.max_sources);
+  if (parsed.data.member_source_revision_refs.length > maximumMembers) stale();
   const persisted = await loadScopeAuthority(input.database, originalRef.data);
   if (persisted === null ||
       (persisted.invalidated_at !== null &&
@@ -208,9 +215,9 @@ export async function reauthorizeOwnerHistoricalScope(
   const original = parsed.data;
   await requireOriginalGrantNotRevoked(input.database, originalRef.data, input.access);
   const now = input.now ?? Date.now;
-  const maximumMembers = validMaximum(input.max_snapshot_members);
   const owner = createOwnerScopeAuthority(input.database, input.access, now);
-  await owner.requireReadPolicy();
+  if (profile.version === OWNER_RESEARCH_SCOPE_PROFILE.version) await owner.exhaustiveRequireReadPolicy();
+  else await owner.requireReadPolicy();
   const historicalSources = await owner.exhaustiveSources(original.member_source_revision_refs);
   const historicalBySourceId = indexHistoricalSources(historicalSources, original);
   const resolveAtom = (atom: DeterministicScopeAtom, observedAt: string) =>
@@ -225,7 +232,9 @@ export async function reauthorizeOwnerHistoricalScope(
   const fresh = await scopes.freeze(original.resolved_scope_expression, input.access.credential_generation);
   requireExactHistoricalIdentity(original, fresh);
   await scopes.requireCurrent(fresh);
-  await owner.grant(fresh);
+  await createD1ScopeProfilePort(input.database).recordBinding(fresh, profile);
+  if (profile.version === OWNER_RESEARCH_SCOPE_PROFILE.version) await owner.exhaustiveGrant(fresh);
+  else await owner.grant(fresh);
   await requireOriginalGrantNotRevoked(input.database, originalRef.data, input.access);
   const requireCurrent = async (scope: ScopeSnapshot): Promise<ScopeSnapshot> => {
     await requireOriginalGrantNotRevoked(input.database, originalRef.data, input.access);

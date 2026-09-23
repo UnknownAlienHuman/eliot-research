@@ -46,6 +46,7 @@ fail-closed. The Worker is a composition and transport boundary, not a second do
 - `apps/eliotr-core/wrangler.jsonc`
 - `packages/cloudflare-navigation/src/index.ts`
 - `packages/cloudflare-navigation/src/orientation-authority.ts`
+- `packages/cloudflare-navigation/src/owner-scope-profile.ts`
 - `packages/cloudflare-navigation/src/orientation-currentness.test.ts`
 - `packages/cloudflare-navigation/src/orientation-currentness.ts`
 - `packages/cloudflare-navigation/src/orientation-input.ts`

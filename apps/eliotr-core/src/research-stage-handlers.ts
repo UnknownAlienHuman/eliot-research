@@ -1,3 +1,4 @@
+import { requireOwnerScopeProfile } from "@eliotr/cloudflare-navigation";
 import type { NavigationReadAuthority } from "@eliotr/cloudflare-evidence";
 import type { InvestigationLedgerStore } from "@eliotr/research";
 import { createD1ScopeProfilePort } from "@eliotr/retrieval";
@@ -117,11 +118,8 @@ export function createResearchStageHandlerFactory(
       } catch {
         fail("WORKFLOW_AUTHORITY_STALE");
       }
-      if (profile.version !== SERVER_RETRIEVAL_SCOPE_PROFILE.version ||
-          !Number.isSafeInteger(profile.max_sources) || profile.max_sources > SERVER_RETRIEVAL_SCOPE_PROFILE.max_sources ||
-          !Number.isSafeInteger(profile.max_results) || profile.max_results > SERVER_RETRIEVAL_SCOPE_PROFILE.max_results) {
-        fail("WORKFLOW_AUTHORITY_STALE");
-      }
+      try { requireOwnerScopeProfile(profile, navigation.scope); }
+      catch { fail("WORKFLOW_AUTHORITY_STALE"); }
       return createRetrieveBranchesStageHandler({ ...retrieval, navigation, ledger, profile })(input);
     };
   }
