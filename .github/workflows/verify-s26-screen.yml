@@ -1,0 +1,136 @@
+name: verify-s26-research-screen
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/verify-s26-screen.yml]
+permissions:
+  contents: write
+jobs:
+  verify:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - run: git config --global core.autocrlf false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 22.23.2
+      - name: Restore exact reviewed S26 candidate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$(git branch --show-current)" = main
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          mkdir -p "$RUNNER_TEMP/s26"
+          git rm .github/workflows/verify-s26-screen.yml
+          test "$(git write-tree)" = 1e96d7c0e028494e9344cea88b9d53c76cdff763
+          python - <<'PY'
+          import base64, hashlib, json, lzma, os, pathlib, subprocess, urllib.request
+          sha = '4e48a14d753043888dae7cd946045858ab2ae7bc'
+          req = urllib.request.Request(f"{os.environ['GITHUB_API_URL']}/repos/{os.environ['GITHUB_REPOSITORY']}/git/blobs/{sha}", headers={'Authorization':'Bearer '+os.environ['GH_TOKEN'],'Accept':'application/vnd.github+json'})
+          with urllib.request.urlopen(req, timeout=30) as response:
+              data = base64.b64decode(json.load(response)['content'])
+          def blob(data): return hashlib.sha1(f'blob {len(data)}\0'.encode()+data).hexdigest()
+          assert blob(data) == sha
+          raw = lzma.decompress(base64.b64decode(data))
+          assert hashlib.sha256(raw).hexdigest() == '4a10de1192ab70b04344e1d41adfde4f44b60b182296b0fc800fe64c34b6b1c2'
+          for item in json.loads(raw):
+              path = pathlib.Path(item['path'])
+              assert not path.is_absolute() and '..' not in path.parts
+              old = path.read_bytes() if path.exists() else None
+              assert (None if old is None else blob(old)) == item['before']
+              lines = (old or b'').decode().splitlines(keepends=True)
+              for start, end, content in reversed(item['edits']):
+                  assert 0 <= start <= end <= len(lines)
+                  lines[start:end] = content.splitlines(keepends=True)
+              result = ''.join(lines).encode()
+              assert blob(result) == item['after']
+              path.parent.mkdir(parents=True, exist_ok=True)
+              path.write_bytes(result)
+              subprocess.run(['git','add','--',str(path)],check=True)
+          assert subprocess.check_output(['git','write-tree'],text=True).strip() == '822696853a25f501502d513670e79705ca7ea36b'
+          subprocess.run(['git','diff','--cached','--check'],check=True)
+          PY
+      - name: Frozen dependencies and strict checks
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack prepare pnpm@11.23.0 --activate
+          pnpm install --frozen-lockfile
+          pnpm typecheck
+          pnpm exec tsc -p apps/eliotr-core/test/tsconfig.json --pretty false
+          pnpm exec eslint apps/eliotr-pwa/src/main.ts apps/eliotr-pwa/src/research-run-panel.ts apps/eliotr-pwa/src/research-run-view.ts apps/eliotr-pwa/src/research-run-view.test.ts scripts/test-library-browser.mjs scripts/lib/browser-research-screen-fixture.mjs
+          node scripts/check-boundaries.mjs
+          node scripts/test-boundary-negative.mjs
+          node scripts/check-work-packets.mjs
+          node scripts/check-implementation-status.mjs
+          node docs/contracts/generate.mjs --check
+          node scripts/check-docs-index.mjs
+          pnpm exec vitest run apps/eliotr-pwa > "$RUNNER_TEMP/s26/pwa-tests.log" 2>&1
+          node --experimental-strip-types --test --test-name-pattern='Research question control' tests/integration/browser/library.spec.ts > "$RUNNER_TEMP/s26/csp.log" 2>&1
+          git diff --exit-code
+      - name: Prove the original question is outside the desktop viewport
+        run: |
+          set -euo pipefail
+          for path in apps/eliotr-pwa/src/main.ts apps/eliotr-pwa/src/research-run-panel.ts apps/eliotr-pwa/src/styles.css; do
+            git show "b25680a48e379682978df071ffbdff2fceec3b47:$path" > "$path"
+          done
+          pnpm build:pwa > "$RUNNER_TEMP/s26/baseline-build.log" 2>&1
+          set +e
+          ELIOTR_SCREENSHOT_DIR="$RUNNER_TEMP/s26/baseline" node scripts/test-library-browser.mjs --research-screen > "$RUNNER_TEMP/s26/baseline-browser.log" 2>&1
+          code=$?
+          set -e
+          test "$code" -ne 0
+          grep -F 'must be immediately visible and unobscured' "$RUNNER_TEMP/s26/baseline-browser.log"
+          git checkout-index -f -- apps/eliotr-pwa/src/main.ts apps/eliotr-pwa/src/research-run-panel.ts apps/eliotr-pwa/src/styles.css
+          git diff --exit-code
+      - name: Build and exercise question answer citation and blocked UI
+        run: |
+          set -euo pipefail
+          pnpm build:pwa > "$RUNNER_TEMP/s26/candidate-build.log" 2>&1
+          ELIOTR_SCREENSHOT_DIR="$RUNNER_TEMP/s26/candidate" node scripts/test-library-browser.mjs --research-screen 2>&1 | tee "$RUNNER_TEMP/s26/candidate-browser.log"
+      - name: Retain verified blobs without publishing any ref
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node --input-type=module <<'JS'
+          import { execFileSync } from 'node:child_process';
+          import { writeFileSync } from 'node:fs';
+          import { join } from 'node:path';
+          const git = (...args) => execFileSync('git', args);
+          const text = (...args) => git(...args).toString().trim();
+          const tree = text('write-tree');
+          if (tree !== '822696853a25f501502d513670e79705ca7ea36b') throw new Error('Candidate identity changed');
+          git('diff','--exit-code');
+          git('diff','--cached','--check');
+          const entries = [];
+          for (const path of git('diff','--cached','--name-only','-z','HEAD').toString().split('\0').filter(Boolean)) {
+            const index = text('ls-files','--stage','--',path);
+            if (!index) { entries.push({path,mode:'100644',type:'blob',sha:null}); continue; }
+            const [mode,sha] = index.split(/\s+/);
+            const data = git('cat-file','blob',sha);
+            const response = await fetch(`${process.env.GITHUB_API_URL}/repos/${process.env.GITHUB_REPOSITORY}/git/blobs`, {method:'POST',headers:{authorization:`Bearer ${process.env.GH_TOKEN}`,accept:'application/vnd.github+json','content-type':'application/json'},body:JSON.stringify({content:data.toString('base64'),encoding:'base64'})});
+            if (!response.ok || (await response.json()).sha !== sha) throw new Error('Blob transfer failed');
+            entries.push({path,mode,type:'blob',sha});
+          }
+          writeFileSync(join(process.env.RUNNER_TEMP,'s26','verified-tree.json'),JSON.stringify({base_sha:process.env.GITHUB_SHA,base_tree_sha:text('rev-parse','HEAD^{tree}'),tree_sha:tree,ref_updated:false,entries},null,2));
+          JS
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: s26-screen-${{ matrix.os }}
+          path: ${{ runner.temp }}/s26/
+          retention-days: 7
+          if-no-files-found: error
