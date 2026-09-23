@@ -698,4 +698,32 @@ invokes no model; completed report discovery can issue fresh read-authority reco
 
 No new migration; the complete existing chain through0074 is still required. This code checkpoint
 is compile/static reviewed only. Behavioral/native and signed live acceptance remain pending;
-service run admission, cancellation/recovery and spending sponsorship are not implemented here.
+service run admission, recovery and spending sponsorship remain unimplemented. Delegated cancellation follows below.
+
+
+### Delegated cancellation of a known owner run (S32)
+
+POST `/api/v1/research/run/:workflow_id/cancel` accepts the same signed service identity and
+project-grant locator as status, but requires the separate `cancel` operation. The body is `{}`;
+`Idempotency-Key` is mandatory. The existing owner Stop path and the MCP `eliotr_cancel` adapter
+use the same W2 cancellation transition. Status/report/query permission alone cannot stop a run.
+
+Only a grantor-authored run originally frozen against that one explicit PROJECT is eligible.
+The final conditional D1 update checks current grant revision, signed actor/issuer, project owner
+and generation, active investigation policy, original run/grant linkage, captured authority/ledger
+epochs and a deadline bounded by current source policy/admission and project membership expiry.
+Original expired session/snapshot lifetimes do not renew execution. Revoked provenance stays denied.
+
+The real client's command is recorded in the existing operation intent/attempt/receipt journal;
+its stable action identity includes authenticated identity, run and caller key. Its policy binding
+pins the delegation revision and project generation. Regrant cannot reuse the old action identity.
+The existing `workflow-cancelled:<operation_id>` receipt remains the canonical outcome. The action
+receipt records confirmed cancellation, not a claim that this client won a concurrent stop race.
+Uncertain writes reconcile exact rows; retries do not start stages, replace runs or replay models.
+
+`CANCELLED` is returned only after canonical readback and action reconciliation. `ENGINE_COMPLETED`
+conflicts rather than becoming cancelled. Native termination remains best effort after the durable
+transition; this does not promise reversal/refund of an already dispatched provider call. No report
+or evidence authority is granted by the response. Recovery remains owner-only, not advertised to
+service clients. No new schema/migration: the existing chain through0074 is required. This code has
+compile/static review only; native lifecycle and concurrency acceptance remain pending.

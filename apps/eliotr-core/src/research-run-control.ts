@@ -1,10 +1,13 @@
+import { ClientGrantError, OrientationError, ScopeServiceError } from "@eliotr/cloudflare-navigation";
 import { textDigest, WorkflowCheckpointError, WorkflowCheckpointStore } from "@eliotr/cloudflare-research";
 import type { WorkflowRunStatus } from "@eliotr/cloudflare-research";
 import { RESEARCH_WORKFLOW_STAGES } from "@eliotr/domain";
 import type { AuthenticatedRequestContext, ResearchEngineStatus, ResearchRunStatus } from "@eliotr/interfaces";
 import { CatalogInputError } from "./catalog-service.js";
 import type { Env } from "./env.js";
-import { prepareReauthenticatedRunRead, type ReauthenticatedRunRead } from "./research-run-read-authorization.js";
+import { prepareReauthenticatedRunRead, requireRunStatusContinuity, type ReauthenticatedRunRead } from "./research-run-read-authorization.js";
+import { prepareProjectClientRunRead } from "./research-client-run-read.js";
+import { prepareProjectClientCancelAction } from "./research-run-cancel-action.js";
 import { isSemanticResearchHandlerGeneration } from "./research-stage-handlers.js";
 
 function fail(code: string, status: number, retryable = false): never {
@@ -12,8 +15,16 @@ function fail(code: string, status: number, retryable = false): never {
 }
 
 /** The body cannot supply a principal, replacement run, scope or model policy. */
-export function validateResearchRunControl(context: AuthenticatedRequestContext, operationId: string, body: unknown): void {
-  if (context.client_class !== "owner_pwa") fail("RESEARCH_OWNER_REQUIRED", 403);
+export function validateResearchRunControl(
+  context: AuthenticatedRequestContext, operationId: string, body: unknown, allowService = false,
+): void {
+  if (context.client_class !== "owner_pwa" && (!allowService ||
+      (context.client_class !== "trusted_agent" && context.client_class !== "named_api_client"))) {
+    fail("RESEARCH_OWNER_REQUIRED", 403);
+  }
+  if (context.client_class !== "owner_pwa" && context.access?.authentication_method !== "service_token") {
+    fail("RESEARCH_CONTROL_DENIED", 403);
+  }
   const origin = context.request.headers.get("origin");
   const site = context.request.headers.get("sec-fetch-site");
   if ((origin !== null && origin !== new URL(context.request.url).origin) ||
@@ -35,7 +46,8 @@ export function validateResearchRunControl(context: AuthenticatedRequestContext,
 }
 
 function mapControlFailure(error: unknown): never {
-  if (error instanceof CatalogInputError) throw error;
+  if (error instanceof CatalogInputError || error instanceof ClientGrantError ||
+      error instanceof OrientationError || error instanceof ScopeServiceError) throw error;
   if (error instanceof WorkflowCheckpointError) {
     if (error.code === "WORKFLOW_AUTHORITY_STALE") fail("RESEARCH_CONTROL_DENIED", 403);
     if (error.code === "WORKFLOW_OUTPUT_CORRUPT") fail("RESEARCH_RUN_STATUS_INVALID", 409);
@@ -58,8 +70,8 @@ async function authorize(env: Env, context: AuthenticatedRequestContext, operati
   return read;
 }
 
-// Reuse W2's cancellation receipt and immutable terminal transition. The fresh
-// owner grant is action authorization, not impersonation of the original JWT.
+// Reuse W2's one cancellation receipt and immutable terminal transition. The
+// fresh owner scope or exact client delegation authorizes control, not impersonation.
 // Existing epochs fence the complete policy/member checks performed before SQL;
 // explicit grant/time predicates cover expiry without a database write.
 const CANCEL_SQL = `UPDATE research_workflow_run SET state='CANCELLED',
@@ -70,15 +82,36 @@ const CANCEL_SQL = `UPDATE research_workflow_run SET state='CANCELLED',
   AND ?6 > CAST(unixepoch('subsec') * 1000 AS INTEGER)
   AND EXISTS (SELECT 1 FROM investigation_ledger_head h WHERE h.investigation_id=research_workflow_run.investigation_id
     AND h.principal_ref=?2 AND h.scope_snapshot_id=research_workflow_run.scope_snapshot_id
-    AND h.scope_snapshot_revision=research_workflow_run.scope_snapshot_revision AND h.revision=research_workflow_run.current_revision)
-  AND EXISTS (SELECT 1 FROM scope_snapshot s JOIN scope_access_grant g
+    AND h.scope_snapshot_revision=research_workflow_run.scope_snapshot_revision AND h.revision=research_workflow_run.current_revision
+    AND EXISTS (SELECT 1 FROM investigation_current_policy p WHERE p.policy_generation=h.policy_generation
+      AND p.policy_authority_ref=h.policy_authority_ref AND p.state='ACTIVE'))
+  AND ((?11='owner_pwa' AND EXISTS (SELECT 1 FROM scope_snapshot s JOIN scope_access_grant g
     ON g.snapshot_id=s.snapshot_id AND g.snapshot_revision=s.revision
     WHERE s.snapshot_id=?7 AND s.revision=?8 AND s.invalidated_at IS NULL
     AND julianday(s.expires_at)>julianday('now') AND g.state='ACTIVE'
     AND julianday(g.expires_at)>julianday('now') AND g.principal_ref=?2 AND g.client_class='owner_pwa'
     AND g.credential_generation=?9 AND g.authorization_receipt_ref=?10
     AND g.policy_authority_ref=s.policy_authority_ref
-    AND EXISTS (SELECT 1 FROM json_each(g.allowed_use_json) WHERE value='research'))
+    AND EXISTS (SELECT 1 FROM json_each(g.allowed_use_json) WHERE value='research')))
+    OR (?11 IN ('trusted_agent','named_api_client') AND EXISTS (
+      SELECT 1 FROM project_client_grant_current c JOIN project p ON p.project_id=c.project_id
+      JOIN project_owner o ON o.project_id=p.project_id AND o.principal_ref=c.grantor_principal_ref
+      JOIN scope_snapshot s ON s.snapshot_id=research_workflow_run.scope_snapshot_id
+        AND s.revision=research_workflow_run.scope_snapshot_revision
+      JOIN scope_access_grant g ON g.snapshot_id=s.snapshot_id AND g.snapshot_revision=s.revision
+        AND g.principal_ref=research_workflow_run.principal_ref
+        AND g.credential_generation=research_workflow_run.credential_generation
+        AND g.authorization_receipt_ref=research_workflow_run.authorization_receipt_ref
+        AND g.policy_authority_ref=research_workflow_run.policy_authority_ref
+      WHERE c.grant_id=?12 AND c.revision=?13 AND c.state='ACTIVE' AND p.generation=?14
+        AND c.grantor_principal_ref=?2 AND c.grantee_issuer=?15
+        AND c.grantee_method='service_token' AND c.grantee_subject=?16 AND c.project_id=?17
+        AND julianday(c.expires_at)>julianday('now')
+        AND EXISTS (SELECT 1 FROM json_each(c.record_json,'$.allowed_operations') WHERE value='cancel')
+        AND json_extract(s.resolved_scope_expression_json,'$.kind')='PROJECT'
+        AND json_extract(s.resolved_scope_expression_json,'$.project_id')=c.project_id
+        AND g.client_class='owner_pwa' AND g.project_client_grant_id IS NULL AND g.state IN ('ACTIVE','EXPIRED')
+        AND EXISTS (SELECT 1 FROM json_each(g.allowed_use_json) WHERE value='research'))))
   AND NOT EXISTS (SELECT 1 FROM scope_access_grant revoked
     WHERE revoked.snapshot_id=research_workflow_run.scope_snapshot_id
     AND revoked.snapshot_revision=research_workflow_run.scope_snapshot_revision
@@ -88,37 +121,52 @@ export async function cancelResearchRun(
   env: Env, context: AuthenticatedRequestContext, operationId: string, body: unknown,
 ): Promise<ResearchRunStatus> {
   try {
-    validateResearchRunControl(context, operationId, body);
-    const read = await authorize(env, context, operationId);
+    validateResearchRunControl(context, operationId, body, true);
+    const clientRead = context.client_class === "owner_pwa" ? null
+      : await prepareProjectClientRunRead(env, context, operationId, "cancel");
+    const read = context.client_class === "owner_pwa" ? await authorize(env, context, operationId) : clientRead;
+    if (read === null) fail("RESEARCH_RUN_NOT_FOUND", 404);
     if (read.status.state === "ENGINE_COMPLETED") fail("RESEARCH_RUN_ALREADY_COMPLETED", 409);
+    const action = clientRead === null ? undefined : await prepareProjectClientCancelAction(env.CORE_DB, context, clientRead);
     if (read.status.state === "CANCELLED") {
       await read.requireCurrent();
+      if (read.status.cancellation_receipt_ref === null) fail("RESEARCH_RUN_STATUS_INVALID", 409);
+      await action?.confirm(read.status.cancellation_receipt_ref);
+      validateResearchRunControl(context, operationId, body, true);
       return runControlStatus(read.status);
     }
     const fence = await read.controlFence();
-    validateResearchRunControl(context, operationId, body);
+    validateResearchRunControl(context, operationId, body, true);
     let changed = false;
     let writeUnknown = false;
     try {
-      const result = await env.CORE_DB.prepare(CANCEL_SQL).bind(operationId, context.principal_ref,
+      const delegated = "client_grant" in fence ? fence : undefined;
+      const owner = "scope_ref" in fence ? fence : undefined;
+      const result = await env.CORE_DB.prepare(CANCEL_SQL).bind(operationId, read.status.principal_ref,
         read.status.deployment_generation, fence.ledger_epoch, fence.orientation_epoch, fence.valid_until_ms,
-        fence.scope_ref.id, fence.scope_ref.revision, context.credential_generation, fence.authorization_receipt_ref).run();
+        owner?.scope_ref.id ?? "", owner?.scope_ref.revision ?? 0, context.credential_generation,
+        owner?.authorization_receipt_ref ?? "", context.client_class,
+        delegated?.client_grant.grant_id ?? "", delegated?.client_grant.revision ?? 0,
+        delegated?.project_generation ?? 0, context.access?.issuer ?? "", context.principal_ref,
+        delegated?.client_grant.project_id ?? "").run();
       if (!result.success) writeUnknown = true;
       else changed = result.meta.changes === 1;
     } catch { writeUnknown = true; }
     // A lost acknowledgement is reconciled once against the original operation,
     // never by minting another cancellation or rerunning a possibly paid stage.
     const after = await new WorkflowCheckpointStore(env.CORE_DB).readRunStatus(operationId, {
-      principal_ref: context.principal_ref, credential_generation: context.credential_generation,
+      principal_ref: read.status.principal_ref, credential_generation: read.status.credential_generation,
       deployment_generation: read.status.deployment_generation,
     }, "owner-read");
     await read.requireCurrent();
-    validateResearchRunControl(context, operationId, body);
+    validateResearchRunControl(context, operationId, body, true);
     if (after === null) fail("RESEARCH_CONTROL_UNCONFIRMED", 503, true);
+    requireRunStatusContinuity(read.status, after);
     if (after.state === "ENGINE_COMPLETED") fail("RESEARCH_RUN_ALREADY_COMPLETED", 409);
     if (after.state !== "CANCELLED" || after.cancellation_receipt_ref !== `workflow-cancelled:${operationId}`) {
       fail("RESEARCH_CONTROL_UNCONFIRMED", 503, true);
     }
+    await action?.confirm(after.cancellation_receipt_ref);
     // Native termination is best effort ONLY after canonical cancellation.
     // Never run rollback handlers: they are not authority to undo research data.
     if (changed || writeUnknown) {
@@ -126,7 +174,7 @@ export async function cancelResearchRun(
         const instance = await env.RESEARCH_WORKFLOW.get(operationId);
         if (instance.id !== operationId) throw new Error("instance mismatch");
         await read.requireCurrent();
-        validateResearchRunControl(context, operationId, body);
+        validateResearchRunControl(context, operationId, body, true);
         await instance.terminate();
       } catch {
         console.warn(JSON.stringify({ event: "research_run_native_termination_unconfirmed", trace_id: context.trace_id }));

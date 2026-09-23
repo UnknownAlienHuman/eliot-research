@@ -17,7 +17,7 @@ const annotations = (idempotent: boolean) => ({
   readOnlyHint: false, destructiveHint: false, idempotentHint: idempotent, openWorldHint: false,
 }) as const;
 
-/** One registry for names, discovery schemas and dispatch. Only implemented model-free consumers. */
+/** One registry for names, discovery schemas and dispatch. Only implemented consumers; cancellation is an explicit destructive control. */
 export const MCP_RESEARCH_TOOLS = {
   eliotr_query: {
     name: "eliotr_query",
@@ -39,6 +39,16 @@ export const MCP_RESEARCH_TOOLS = {
       },
     },
     annotations: annotations(true),
+  },
+  eliotr_cancel: {
+    name: "eliotr_cancel",
+    description: "Stop one known grantor-authored explicit-project Research run with separate cancel permission. Uses the same HTTP cancellation command and action key. Returns CANCELLED only after durable confirmation; completed runs conflict. Never resumes/restarts or dispatches models. Native termination may remain unconfirmed after canonical cancellation. On uncertain errors keep the same run, grant and idempotency key.",
+    inputSchema: { type: "object", additionalProperties: false,
+      required: ["client_grant_id", "workflow_instance_id", "idempotency_key"],
+      properties: { ...grant, workflow_instance_id: { type: "string", minLength: 1, maxLength: 128,
+        pattern: "^[A-Za-z0-9][A-Za-z0-9:._-]{0,127}$" },
+        idempotency_key: { type: "string", minLength: 1, maxLength: 256, pattern: "^[^\\u0000-\\u0020\\u007f]+$" } } },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
   },
   eliotr_run_status: {
     name: "eliotr_run_status",

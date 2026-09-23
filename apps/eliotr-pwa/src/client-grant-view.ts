@@ -2,7 +2,7 @@ import { ProjectClientGrantPutSchema, type ProjectClientGrant } from "@eliotr/co
 import { escapeHtml } from "./html.js";
 
 export function clientGrantMarkup(): string {
-  const extra = ProjectClientGrantPutSchema.shape.allowed_operations.element.options.filter((op) => op !== "catalog" && op !== "query" && op !== "evidence" && op !== "report" && op !== "status");
+  const extra = ProjectClientGrantPutSchema.shape.allowed_operations.element.options.filter((op) => op !== "catalog" && op !== "query" && op !== "evidence" && op !== "report" && op !== "status" && op !== "cancel");
   return `<section class="client-grant-panel" aria-labelledby="client-grant-title">
     <div class="connection-heading"><div><span class="eyebrow">Project access</span><h2 id="client-grant-title">Agent permissions</h2></div></div>
     <p>Give a service client access to one project. Enter its public Client ID, never its Client Secret. Configured permissions do not prove a client has connected.</p>
@@ -24,6 +24,7 @@ export function clientGrantMarkup(): string {
         <label class="client-grant-option"><input data-grant-operation type="checkbox" value="catalog" checked>Read project catalog</label>
         <label class="client-grant-option"><input data-grant-operation type="checkbox" value="query">Search project evidence (FAST_SEARCH over HTTP / MCP)</label>
         <label class="client-grant-option"><input data-grant-operation type="checkbox" value="status">Read owner's project run status over HTTP / MCP</label>
+        <label class="client-grant-option"><input data-grant-operation type="checkbox" value="cancel">Stop owner's project run over HTTP / MCP (separate from read access)</label>
         <label class="client-grant-option"><input data-grant-operation type="checkbox" value="report">Read owner's saved project reports over HTTP / MCP</label>
         <label class="client-grant-option"><input data-grant-operation type="checkbox" value="evidence">Open / verify evidence from queries or saved reports</label>
         <p>Status requires a known run ID; discovering its completed report reference also requires report permission. Saved report citations require report and evidence permissions. Only reports originally scoped to this explicit project are shared; reads never start models.</p>

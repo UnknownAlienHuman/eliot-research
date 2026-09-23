@@ -34,6 +34,7 @@ fail-closed. The Worker is a composition and transport boundary, not a second do
 - `apps/eliotr-core/src/research-deployment-compatibility.ts`
 - `apps/eliotr-core/test/research-deployment-compatibility.test.ts`
 - `apps/eliotr-core/src/research-run-control.ts`
+- `apps/eliotr-core/src/research-run-cancel-action.ts`
 - `apps/eliotr-core/src/research-run-list.ts`
 - `apps/eliotr-core/test/research-run-status.test.ts`
 - `apps/eliotr-core/test/research-session.test.ts`

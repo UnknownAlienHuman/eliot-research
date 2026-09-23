@@ -202,6 +202,7 @@ agree with any supplied `X-Eliotr-Client-Grant` header. It selects a delegation,
 | --- | --- | --- |
 | `eliotr_query` | `query` | Original FAST_SEARCH evidence pack and trace reference; no synthesized answer or exhaustive-coverage claim. |
 | `eliotr_run_status` | `status`; additionally `report` for a DRAFT result reference | Existing run-status DTO for a known grantor-authored explicit-project run; never starts/resumes execution. |
+| `eliotr_cancel` | `cancel` | Stop a known grantor-authored project run; existing run-status DTO only after durable cancellation. Requires an action key. |
 | `eliotr_report` | `report` | Existing versioned report-reauthorization envelope, with original artifact metadata and freshness. Known reference required; not report discovery. |
 | `eliotr_section` | `report` | Exact saved section bytes in the transport wrapper below. |
 | `eliotr_citations` | `report` and `evidence` | Existing reauthorization envelope pairing original citations with fresh authorized handles. |
@@ -259,15 +260,32 @@ reaches 512 KiB. Overflow is an explicit error, not truncation; use a smaller re
 or the existing authorized HTTP section endpoint for a section too large for MCP. Persisted work may
 already exist when output cannot be delivered. Errors do not claim that canonical state was unchanged.
 
-All seven Research-tool annotations use `readOnlyHint=false`: search can persist scope/result/trace; report reopening
-and completed run-result discovery can issue read grants/handles; evidence resolution can record a verification receipt. Only query has
-`idempotentHint=true`, under its required stable key. None dispatches a model or alters source/report
-content. Status distinguishes read/search persistence from content mutation and model dispatch.
+All eight Research-tool annotations use `readOnlyHint=false`: search can persist scope/result/trace; report reopening
+and completed run-result discovery can issue read grants/handles; evidence resolution can record a verification receipt.
+Query and cancel have `idempotentHint=true` under their stable keys. Cancellation alone has
+`destructiveHint=true`: it changes durable run state, although it deletes no source/report content.
+No tool dispatches models; cancellation does not promise reversal of an already dispatched call.
 
 Apply existing Core migrations through **0074** before deploying; this transport checkpoint adds no
-migration or public domain-schema revision. Service run admission/control and spend sponsorship remain code
+migration or public domain-schema revision. Service run admission/recovery and spend sponsorship remain code
 work, not hidden or successful stubs. S13 does not qualify a full Research lifecycle or either live
 client. No behavioral test suite, remote service call, deployment or paid call was executed here.
+
+### Stop a known project run
+
+After the owner grants `cancel`, use the same known run ID and one persistent action key:
+
+```json
+{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"eliotr_cancel","arguments":{"client_grant_id":"grant-example","workflow_instance_id":"run-example","idempotency_key":"stop-example-1"}}}
+```
+
+An uncertain response must retain that run, grant and key. The durable action is attributed to the
+signed client and bound to its original delegation revision; a regrant cannot repurpose the old key.
+`status` is not required for the cancellation command, but is separately required for later polling.
+A completed run returns a conflict. Success confirms canonical cancellation, not instantaneous native
+termination or a provider refund. Invalid authority or unavailable readback is never reported as
+successful cancellation. No service recovery/restart tool is exposed. See
+[the cancellation contract](workflow-checkpoints.md#delegated-cancellation-of-a-known-owner-run-s32).
 
 ## v1 observation validation limits
 

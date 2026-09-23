@@ -37,7 +37,7 @@ export interface McpToolDefinition {
   readonly inputSchema: Readonly<Record<string, unknown>>;
   readonly annotations: {
     readonly readOnlyHint: boolean;
-    readonly destructiveHint: false;
+    readonly destructiveHint: boolean;
     readonly idempotentHint: boolean;
     readonly openWorldHint: false;
   };

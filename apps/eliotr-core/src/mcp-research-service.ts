@@ -7,6 +7,7 @@ import { createResearchQueryService, createResearchRunService, parseResearchQuer
 import { mapError as mapHttpError } from "./http-errors.js";
 import { createEvidenceService } from "./evidence-service.js";
 import { reopenOwnerArtifactDraft, reopenOwnerArtifactSection, reopenOwnerArtifactSectionCitations } from "./research-artifact-reauthorization-http.js";
+import { cancelResearchRun } from "./research-run-control.js";
 import { readReadiness } from "./readiness.js";
 import type { Env } from "./env.js";
 
@@ -116,12 +117,14 @@ export function createMcpResearchToolCall(env: Env, request: Request): McpResear
           execute = () => createResearchQueryService(env).query(context, query);
           break;
         }
+        case "eliotr_cancel":
         case "eliotr_run_status": {
           const operation = args.workflow_instance_id;
           if (typeof operation !== "string" || !/^[A-Za-z0-9][A-Za-z0-9:._-]{0,127}$/u.test(operation)) {
             invalid("A valid workflow_instance_id is required");
           }
-          execute = () => createResearchRunService(env).runStatus(context, operation);
+          execute = name === "eliotr_cancel" ? () => cancelResearchRun(env, context, operation, {})
+            : () => createResearchRunService(env).runStatus(context, operation);
           break;
         }
         case "eliotr_report": {
@@ -151,7 +154,7 @@ export function createMcpResearchToolCall(env: Env, request: Request): McpResear
         }
       }
       if (!(await readReadiness(env)).ready) throw new GeminiMcpToolError("SCHEMA_NOT_READY", "Required migrations are not applied", true);
-      const operation = name === "eliotr_run_status" ? "status" : name === "eliotr_query" ? "query" : name === "eliotr_report" || name === "eliotr_section" ? "report" : "evidence";
+      const operation = name === "eliotr_cancel" ? "cancel" : name === "eliotr_run_status" ? "status" : name === "eliotr_query" ? "query" : name === "eliotr_report" || name === "eliotr_section" ? "report" : "evidence";
       const lease = await authorizeProjectClientGrant(env.CORE_DB, context, { operation });
       const result = await execute();
       // Exact readers fence sources/purge before returning. Do not refresh a delegation after their writes.

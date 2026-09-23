@@ -464,14 +464,14 @@ export async function createProjectClientArtifactAuthority(
   return { authority, lease, requireOrigin };
 }
 
-/** Read-only authority for an existing owner-authored explicit-project run.
- * Stored credentials identify provenance, never the caller or execution rights.
+/** Current authority for a known owner-authored explicit-project run.
+ * Status and cancellation are separate delegated operations; neither renews execution.
  * The caller must also validate the original snapshot's historical currentness. */
 export async function createProjectClientRunReadAuthority(
   db: D1Database, context: AuthenticatedRequestContext, operationId: string,
-  now: () => number = Date.now,
+  now: () => number = Date.now, operation: "status" | "cancel" = "status",
 ) {
-  const lease = await authorizeProjectClientGrant(db, context, { operation: "status" }, now);
+  const lease = await authorizeProjectClientGrant(db, context, { operation }, now);
   const binding = await db.prepare("SELECT investigation_id, principal_ref, credential_generation, " +
     "deployment_generation, handler_generation, scope_snapshot_id, scope_snapshot_revision, policy_authority_ref, " +
     "authorization_receipt_ref FROM research_workflow_run r WHERE operation_id=?1 AND principal_ref=?2 " +
@@ -540,8 +540,20 @@ export async function createProjectClientRunReadAuthority(
         closure.purge_ledger_revision < original.purge_ledger_revision) {
       grantFail("CLIENT_RUN_SOURCE_DENIED", 403, "Current disclosure does not cover the original run");
     }
+    // Epochs catch mutations, but not time alone. Cancellation must not cross
+    // a source/policy/membership deadline between authorization and its SQL write.
+    const membership = await db.prepare("SELECT MIN(valid_to) AS expires_at FROM project_source_membership " +
+      "WHERE project_id=?1 AND julianday(valid_from)<=julianday(?2) AND julianday(valid_to)>julianday(?2)")
+      .bind(lease.grant.project_id, new Date(now()).toISOString()).first<{ expires_at: string | null }>();
+    if (membership === null) grantFail("CLIENT_RUN_AUTHORITY_UNAVAILABLE", 503, "Membership deadline is unavailable", true);
+    const validUntil = Math.min(lease.expires_at_ms,
+      ...(membership.expires_at === null ? [] : [Date.parse(membership.expires_at)]),
+      ...loaded.flatMap((source) => [Date.parse(source.policy.expires_at),
+        ...(source.authority.admission_expires_at === undefined ? [] : [Date.parse(source.authority.admission_expires_at)])]));
     await requireOrigin();
+    if (!Number.isSafeInteger(validUntil) || validUntil <= now()) grantFail("CLIENT_RUN_DENIED", 403, "Run authority expired");
     if (await grantEpoch(db) !== epoch) grantFail("CLIENT_RUN_AUTHORITY_CHANGED", 409, "Run read authority changed", true);
+    return validUntil;
   };
   await lease.requireCurrent();
   return { binding: Object.freeze(binding), original, lease, requireCurrent };
