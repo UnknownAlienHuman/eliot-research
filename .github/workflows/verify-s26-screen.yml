@@ -26,7 +26,7 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
           node-version: 22.23.2
-      - name: Restore exact reviewed S26 candidate and native keyboard correction
+      - name: Restore exact reviewed S26 candidate and narrow navigation fix
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -41,6 +41,7 @@ jobs:
           patches = [
               ('4e48a14d753043888dae7cd946045858ab2ae7bc','4a10de1192ab70b04344e1d41adfde4f44b60b182296b0fc800fe64c34b6b1c2','822696853a25f501502d513670e79705ca7ea36b'),
               ('d3a0d6dd3d28c13f7cea56a7d144cece028bbeb1','e2b93db4e1ae4d2e7184c7627042c8355f64aedca9fb392cda3212963f6bb80d','7f0d95fdc9597747cae24fbac75e21824edce746'),
+              ('64e3228f1ab448e70c22c3e4de42454a8b97bc9c','5ee44c0f3f485737569df7ff7722fb5b1f9007eb69ae661e5c8013d864a2aece','95c806a4659db81164f533b7ebb7a1837e4001bd'),
           ]
           def blob(data): return hashlib.sha1(f'blob {len(data)}\0'.encode()+data).hexdigest()
           for sha, raw_hash, expected_tree in patches:
@@ -116,7 +117,7 @@ jobs:
           const git = (...args) => execFileSync('git', args);
           const text = (...args) => git(...args).toString().trim();
           const tree = text('write-tree');
-          if (tree !== '7f0d95fdc9597747cae24fbac75e21824edce746') throw new Error('Candidate identity changed');
+          if (tree !== '95c806a4659db81164f533b7ebb7a1837e4001bd') throw new Error('Candidate identity changed');
           git('diff','--exit-code');
           git('diff','--cached','--check');
           const entries = [];
