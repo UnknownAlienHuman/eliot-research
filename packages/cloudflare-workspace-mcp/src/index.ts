@@ -7,6 +7,8 @@ export {
   GEMINI_MCP_TOOL_NAMES,
   MCP_COMPATIBLE_PROTOCOL_VERSIONS,
   MCP_PROTOCOL_VERSION,
+  MAX_MCP_REQUEST_BYTES,
+  MAX_MCP_RESPONSE_BYTES,
   McpProtocolError,
   handleGeminiMcpProtocol,
   type GeminiMcpServerDependencies,
@@ -57,3 +59,9 @@ export {
   createWorkspacePlan,
   validateWorkspaceReceipt,
 } from "./workspace-mcp-google-sync.js";
+
+export {
+  MCP_RESEARCH_TOOLS,
+  type McpResearchToolName,
+  type McpResearchToolCall,
+} from "./gemini-mcp-research-tools.js";

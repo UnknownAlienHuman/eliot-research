@@ -2,7 +2,8 @@
 
 ## Status
 
-`IMPLEMENTED_NOT_LIVE` after deterministic protocol, authorization, setup, and negative fixtures pass.
+`IMPLEMENTED_NOT_LIVE`. Earlier protocol/setup fixtures do not qualify the new S13 service-token
+Research adapters: that checkpoint has compilation/static review only, with behavioral acceptance pending.
 Live qualification is profile-specific: the selected Workspace profile requires a deployed dedicated
 Cloudflare Access round trip plus real Google Workspace action/readback receipts. The MCP auth profile
 is selected by `MCP_ACCESS_AUTH_PROFILE` (`service-token` or `managed-oauth`); managed-oauth remains
@@ -16,7 +17,8 @@ ELIOT_RESEARCH v29.1 §§12.3–12.12 and ADR-0003 describe the historical Day-0
 Exchange** profile. Those requirements apply to that separate custom server-owned profile; they are
 not a prerequisite for the active Workspace MCP selection recorded on 2026-09-09.
 ER-36 is an optional Gemini service integration, not a replacement ADR or that custom Drive adapter.
-`GOOGLE_EXTERNAL_TRANSPORT=gemini-mcp` currently enables only this no-effect helper. The existing
+`GOOGLE_EXTERNAL_TRANSPORT=gemini-mcp` selects the bounded MCP transport. Google helpers remain
+candidate-only; the separately authorized Research tools may persist canonical read/search state. The existing
 mutual-exclusion check still disables its sync tools in `drive-exchange` mode; that flag alone does
 not implement Drive. Do not activate a second ChatGPT write transport. Missing Drive OAuth, leased
 cursor, freeze/reconciliation and delivery implementations remain open for the separate, unfinished
@@ -73,7 +75,9 @@ logical principal `gemini-spark`. The managed-oauth profile accepts only the exi
 The MCP hostname and Access audience are separate from the owner/API hostname and audience. The ordinary
 API `ACCESS_SERVICE_PRINCIPALS` must not contain the dedicated MCP Client ID; the dedicated MCP verifier
 has an exact one-Client-ID allow-list. A service token that reaches one Access application therefore
-cannot be reinterpreted as an ordinary trusted-agent credential by application routing.
+cannot authenticate the ordinary HTTP routes. After dedicated MCP verification, only the internal
+application adapter carries the actual signed service identity into the same project-grant authorizer;
+it does not forward the dedicated JWT or bypass either Access audience.
 For managed-oauth, `MCP_ACCESS_AUDIENCE` must differ from `ACCESS_AUDIENCE`, service-token credentials
 are rejected, and the dedicated host/team/audience configuration is validated before JSON-RPC dispatch.
 
@@ -93,13 +97,21 @@ notifications are not required by this contour.
 ```text
 eliotr_system_status
 eliotr_catalog
+eliotr_query
+eliotr_report
+eliotr_section
+eliotr_citations
+eliotr_verify
+eliotr_open
 eliotr_create_google_sync_plan
 eliotr_validate_google_sync_receipt
 eliotr_confirm_client_diagnostic
 ```
 
-Discovery includes only wired, authorized tools. The catalog remains withheld until service-scope
-read authority is composed. Sync plans do not execute Google actions; v2 plans and observations use
+Discovery includes only wired tools for the authenticated profile, not a promise that its client has
+every operation granted. Catalog and the six Research tools require `service-token` and the actual
+application callbacks; `managed-oauth` does not advertise or execute them. Every call rechecks
+owner-issued project rights and exact source/artifact authority before disclosing data. Sync plans do not execute Google actions; v2 plans and observations use
 the existing candidate ledger. Receipt validation does not claim that ELIOT performed Google readback.
 Client confirmation writes only the diagnostic observation described below.
 
@@ -174,12 +186,74 @@ permissions; those remain independent live preconditions.
 
 ### Service catalog authorization
 
-The Worker advertises its configured status, Google sync and receipt tools. The diagnostic tool is
-included only when the explicit selected Access profile and trusted Core callback are configured.
-The `eliotr_catalog` contract remains defined, but it is not advertised or executable without an explicit
-service-scope read-policy adapter. Direct calls return `MCP_CATALOG_SCOPE_REQUIRED` before D1 access.
-A signed Client ID alone is not a namespace grant; mapping it to `owner_pwa` is prohibited. Launch 07
-must implement and test service-scope authorization before restoring catalog discovery.
+`eliotr_catalog` is composed through the S10 project grant authorizer. It requires an explicit project
+and `catalog` permission from its current owner. A signed Client ID or shared source is not a grant.
+Without the callback it stays withheld and direct calls fail with `MCP_CATALOG_SCOPE_REQUIRED`.
+Managed-oauth catalog remains unimplemented; its verified human subject is not a service identity.
+
+### Service-token Research tools (S13 code checkpoint)
+
+These tools invoke the same application handlers used by HTTP; no loopback request, new search engine
+or second permission store is introduced. The actual verified service actor, credential generation,
+expiry and deployment are retained. A non-secret `client_grant_id` is required on each tool and must
+agree with any supplied `X-Eliotr-Client-Grant` header. It selects a delegation, never authenticates.
+
+| Tool | Required permission | Result / boundary |
+| --- | --- | --- |
+| `eliotr_query` | `query` | Original FAST_SEARCH evidence pack and trace reference; no synthesized answer or exhaustive-coverage claim. |
+| `eliotr_report` | `report` | Existing versioned report-reauthorization envelope, with original artifact metadata and freshness. Known reference required; not report discovery. |
+| `eliotr_section` | `report` | Exact saved section bytes in the transport wrapper below. |
+| `eliotr_citations` | `report` and `evidence` | Existing reauthorization envelope pairing original citations with fresh authorized handles. |
+| `eliotr_verify` | `evidence` | Existing handle resolution against its exact snapshot and original delegation revision. Locator-candidate submission is not exposed by this tool. |
+| `eliotr_open` | `evidence` | Exact excerpt or a strict UTF-8 byte range `[start,end)`, with the original verification/identity headers. |
+
+Only grantor-authored DRAFT reports originally scoped to one explicit PROJECT are currently eligible.
+A different author's report, compound/GLOBAL scope, or matching source in another project grants no
+report access. Permission to read does not grant publication, erasure, source writes or model spend.
+Regrant never revives an earlier query/handle scope; historical report bytes/references are unchanged.
+
+Tool names and schemas live once in `gemini-mcp-research-tools.ts`. Scope and reference descriptions
+are derived from existing contract schemas; the adapter uses the existing HTTP query parser and
+reference validators, not its own scope evaluator. New query requests retain all seven HTTP fields.
+The query's exact `idempotency_key` must agree with an incoming Idempotency-Key header. JSON-RPC `id`
+is only response correlation, not a mutation key. Retrying an uncertain query must keep the same key,
+request and authority; it cannot silently replace the input or adopt a new grant revision.
+
+Example tool call after normal initialize/notifications/initialized, with the negotiated
+`MCP-Protocol-Version` header. Replace project/grant references with actual owner-issued values:
+
+```json
+{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"eliotr_query","arguments":{"client_grant_id":"grant-example","idempotency_key":"query-example-1","request":{"query":"Which source documents the decision?","product":"FAST_SEARCH","scope_expression":{"kind":"PROJECT","project_id":"project-example"},"literals":[],"evidence_grade":"E0","budget_ref":"retrieval-fast-v1","max_results":8}}}}
+```
+
+For subsequent calls, pass the returned versioned references verbatim; do not build citation IDs or
+substitute a new source head. `eliotr_citations` requires `artifact_ref` and `section_ref`; its fresh
+handle/snapshot references supply `eliotr_verify`, and `eliotr_open` accepts the same `handle_ref`.
+`client_grant_id` must authorize the handle's original delegation revision.
+
+Section/open responses use transport envelope `eliotr.mcp.http-body.v1`:
+`{ protocol, status, headers, body: { encoding: "utf-8", text, byte_length, sha256 } }`.
+The body digest identifies exactly the returned bytes, including a requested range. Original section,
+excerpt and verification headers are retained separately, with their existing HTTP URI encoding.
+The transport digest is not a new EvidenceHandle or proof of a claim. UTF-8 decoding is strict and
+preserves a leading BOM; malformed bytes and split-codepoint ranges are rejected, never repaired.
+Other tools return their application DTO unchanged inside the normal MCP result.
+
+The existing 128-KiB request and 512-KiB **complete JSON response** limits still apply. MCP includes
+both text and structuredContent, so escaping and duplication may exceed the limit before a raw body
+reaches 512 KiB. Overflow is an explicit error, not truncation; use a smaller result set/evidence range
+or the existing authorized HTTP section endpoint for a section too large for MCP. Persisted work may
+already exist when output cannot be delivered. Errors do not claim that canonical state was unchanged.
+
+All six annotations use `readOnlyHint=false`: search can persist scope/result/trace; report reopening
+can issue read grants/handles; evidence resolution can record a verification receipt. Only query has
+`idempotentHint=true`, under its required stable key. None dispatches a model or alters source/report
+content. Status distinguishes read/search persistence from content mutation and model dispatch.
+
+Apply existing Core migrations through **0074** before deploying; this transport checkpoint adds no
+migration or public domain-schema revision. Run/status/control and spend sponsorship remain code
+work, not hidden or successful stubs. S13 does not qualify a full Research lifecycle or either live
+client. No behavioral test suite, remote service call, deployment or paid call was executed here.
 
 ## v1 observation validation limits
 

@@ -17,7 +17,7 @@ profile. A missing optional profile is `NOT_EXECUTED`, not a Drive blocker.
 
 ## Objective
 
-Expose a minimal, read-only ELIOT MCP surface to Gemini Spark and Google Antigravity and define the
+Expose a minimal, bounded ELIOT MCP surface to Gemini Spark and Google Antigravity and define the
 safe client orchestration boundary. The active client profiles use Spark Connected Apps or Antigravity
 project-local MCP configuration; the retained Gemini CLI installer is legacy and unselected. Do not
 create a reverse authority channel and do not let a Google transport result promote itself into ELIOT state.
@@ -35,6 +35,7 @@ create a reverse authority channel and do not let a Google transport result prom
 - `apps/eliotr-core/test/mcp-client-diagnostic-http.test.ts`
 - `apps/eliotr-core/test/mcp-client-diagnostic-roundtrip.test.ts`
 - `apps/eliotr-core/test/workspace-mcp-candidate-store.test.ts`
+- `apps/eliotr-core/src/mcp-research-service.ts`
 - `apps/eliotr-core/src/composition-root.ts`
 - `apps/eliotr-core/test/index.test.ts`
 - `apps/eliotr-core/test/google-oauth-begin-http.test.ts`
@@ -71,7 +72,7 @@ Root integrates package manifests, TypeScript references, dependency boundaries,
 - a human-readable token name cannot substitute for the signed Client ID in `common_name`;
 - MCP 2025-06-18 initialization and protocol-header enforcement work without server session state;
 - real tool discovery exposes only authorized implementations wired into the selected deployment;
-- `eliotr_catalog` stays withheld until an explicit service-scope read-policy adapter exists; direct calls fail before D1;
+- `eliotr_catalog` and Research tools are discovered only with their service-token application adapters; each call still requires current owner-issued project delegation; managed-oauth does not inherit it;
 - ELIOT MCP cannot select providers, models, databases, buckets, indexes, credentials, or arbitrary URLs;
 - no ELIOT tool can directly mutate Google;
 - mutating Google plans require confirmation and exact readback;
@@ -133,3 +134,20 @@ the token name instead of the configured Client ID, and present a Google readbac
 digest. The server must deny the first four and return `OBSERVED_MISMATCH` for the last without changing
 canonical ELIOT state. For `managed-oauth`, a valid human JWT with the dedicated audience is accepted and
 an ordinary-audience JWT or service-token JWT is denied.
+
+## S13 service-token Research adapters — 2026-09-23
+
+`gemini-mcp-research-tools.ts` owns the single tool-name/schema registry. The Worker adapter
+`mcp-research-service.ts` calls the existing S11/S12 query and saved-report/evidence services with
+the actual verified issuer/method/Client ID; the logical Workspace label remains unchanged.
+Query input and versioned references use the existing validators. HTTP classifier error codes and
+retryability are retained with redacted messages. Grant revision is pinned across each tool call.
+
+The six tools are `eliotr_query`, `eliotr_report`, `eliotr_section`, `eliotr_citations`,
+`eliotr_verify` and `eliotr_open`. Their annotations acknowledge persisted search results, scopes,
+read grants, handles and verification receipts. They do not dispatch models, mutate source/report
+content, or treat a transport digest as evidence authority. Google candidate operations are unchanged.
+
+This is a compilation/static-review checkpoint only. Behavioral/native and live acceptance is pending.
+Machine Research run/status/control, sponsorship, managed-oauth delegation, report discovery and
+other artifact origins remain separate code work; no placeholder tool is advertised for them.

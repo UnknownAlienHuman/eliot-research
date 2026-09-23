@@ -1,3 +1,4 @@
+import { MCP_RESEARCH_TOOL_NAMES } from "./gemini-mcp-research-tools.js";
 import type { AccessIdentity } from "@eliotr/cloudflare-access";
 import {
   RuntimeLimitError,
@@ -17,6 +18,7 @@ export const GEMINI_MCP_TOOL_NAMES = [
   "eliotr_confirm_client_diagnostic",
   "eliotr_create_google_sync_plan",
   "eliotr_validate_google_sync_receipt",
+  ...MCP_RESEARCH_TOOL_NAMES,
 ] as const;
 
 export type GeminiMcpToolName = typeof GEMINI_MCP_TOOL_NAMES[number];
@@ -102,8 +104,8 @@ export class McpProtocolError extends Error {
   }
 }
 
-const MAX_MCP_REQUEST_BYTES = 128 * 1024;
-const MAX_MCP_RESPONSE_BYTES = 512 * 1024;
+export const MAX_MCP_REQUEST_BYTES = 128 * 1024;
+export const MAX_MCP_RESPONSE_BYTES = 512 * 1024;
 const MAX_METHOD_BYTES = 128;
 const MAX_TOOL_NAME_BYTES = 128;
 const SUPPORTED_VERSIONS = new Set<string>(MCP_COMPATIBLE_PROTOCOL_VERSIONS);
@@ -349,9 +351,10 @@ export async function handleGeminiMcpProtocol(
           version: dependencies.server_version,
         },
         instructions:
-          "ELIOT tools are bounded planning, catalog, and receipt-validation surfaces. " +
-          "They do not mutate Google or canonical ELIOT state. Use official Google Workspace or " +
-          "gcloud tools only after an ELIOT sync plan and exact post-action readback.",
+          "Use only discovered ELIOT tools and their explicit project grants. Search and read tools " +
+          "may persist scopes, results and verification receipts; they do not dispatch models or mutate " +
+          "source/report content. Google tools remain candidate-only planning/readback surfaces and " +
+          "never perform a Google action. Keep original references, hashes and coverage dispositions.",
       }, version);
     }
 

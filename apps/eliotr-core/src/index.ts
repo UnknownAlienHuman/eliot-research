@@ -1,3 +1,4 @@
+import { createMcpResearchToolCall } from "./mcp-research-service.js";
 import type { Env } from "./env.js";
 import {
   GeminiMcpToolError,
@@ -184,6 +185,7 @@ function workspaceMcpRuntime(env: Env, request: Request): WorkspaceMcpRuntime {
     MCP_ACCESS_SERVICE_TOKEN_CLIENT_ID: env.MCP_ACCESS_SERVICE_TOKEN_CLIENT_ID,
     ACCESS_AUDIENCE: env.ACCESS_AUDIENCE,
     workspaceCandidateStore: createD1WorkspaceMcpCandidateStore(env.CORE_DB),
+    research: createMcpResearchToolCall(env, request),
     async projectCatalog(input, context) {
       const identity = context.verified_access;
       if (!identity || identity.authentication_method !== "service_token" || !identity.issuer) {

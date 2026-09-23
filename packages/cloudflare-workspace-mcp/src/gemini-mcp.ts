@@ -1,4 +1,5 @@
 // IMPLEMENTED_NOT_LIVE: ER-36 Gemini Spark MCP requires live Access and Google readback receipts.
+import { isMcpResearchTool, type McpResearchToolCall } from "./gemini-mcp-research-tools.js";
 import {
   AccessVerificationError,
   createCloudflareAccessVerifier,
@@ -40,6 +41,7 @@ export interface WorkspaceMcpRuntime {
   readonly mcpClientDiagnosticConsume?: McpClientDiagnosticConsume;
   readonly workspaceCandidateStore?: WorkspaceMcpCandidateStore;
   readonly projectCatalog?: GeminiMcpToolDependencies["catalog"];
+  readonly research?: McpResearchToolCall;
   readonly readReadiness: () => Promise<{
     readonly ready: boolean;
     readonly blocking_reason_codes: readonly string[];
@@ -290,6 +292,7 @@ function serverDependencies(
 ): GeminiMcpServerDependencies {
   const diagnosticEnabled = typeof env.mcpClientDiagnosticConsume === "function";
   const catalogEnabled = profile === "service-token" && typeof env.projectCatalog === "function";
+  const researchEnabled = profile === "service-token" && typeof env.research === "function";
   const toolDependencies = {
     google_transport: googleTransport(env),
     now,
@@ -306,13 +309,20 @@ function serverDependencies(
           "system_status",
           "google_sync_planning",
           ...(catalogEnabled ? ["project_catalog"] : []),
+          ...(researchEnabled ? ["project_fast_search", "saved_report_reads", "exact_evidence_reads"] : []),
           ...(diagnosticEnabled ? ["client_diagnostic_confirmation"] : []),
         ],
-        disabled_surfaces: catalogEnabled ? [] : [{ surface: "catalog", reason: "MCP_CATALOG_SCOPE_REQUIRED" }],
+        disabled_surfaces: [
+          ...(catalogEnabled ? [] : [{ surface: "catalog", reason: "MCP_CATALOG_SCOPE_REQUIRED" }]),
+          ...(researchEnabled ? [] : [{ surface: "research_reads", reason: "MCP_RESEARCH_UNAVAILABLE" }]),
+          { surface: "research_run_control", reason: "DELEGATED_EXECUTION_PENDING" },
+        ],
         google_external_transport: googleTransport(env),
         mcp_access_auth_profile: profile,
         exact_readback_required: true,
-        canonical_mutation_available_through_mcp: false,
+        canonical_mutation_available_through_mcp: researchEnabled,
+        source_or_artifact_content_mutation_available: false,
+        model_dispatch_available: false,
       };
     },
     async catalog(input: Parameters<GeminiMcpToolDependencies["catalog"]>[0], context: McpToolCallContext): Promise<unknown> {
@@ -322,13 +332,15 @@ function serverDependencies(
       return env.projectCatalog(input, context);
     },
     mcp_auth_profile: profile,
+    ...(researchEnabled ? { research: env.research } : {}),
     ...(diagnosticEnabled ? { mcpClientDiagnosticConsume: env.mcpClientDiagnosticConsume } : {}),
     ...(env.workspaceCandidateStore === undefined ? {} : { workspaceCandidateStore: env.workspaceCandidateStore }),
   } as const;
   return {
-    server_version: "0.1.0",
+    server_version: "0.2.0",
     deployment_generation: env.DEPLOYMENT_GENERATION,
     listTools: () => GEMINI_MCP_TOOLS.filter((tool) =>
+      (!isMcpResearchTool(tool.name) || researchEnabled) &&
       (tool.name !== "eliotr_catalog" || catalogEnabled) &&
       (tool.name !== "eliotr_confirm_client_diagnostic" || diagnosticEnabled),
     ),
