@@ -1,5 +1,5 @@
 name: export-current-source
-# Refresh exact main after S08 for S09 semantic-stage acceptance.
+# Read-only recovery transport for the interrupted S09 checkpoint.
 on:
   push:
     branches: [main]
@@ -16,8 +16,10 @@ jobs:
           ref: main
           fetch-depth: 0
           persist-credentials: false
-      - name: Export committed sources only
+      - name: Export exact source and reviewed patch bytes
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           test "$(git branch --show-current)" = main
@@ -25,10 +27,25 @@ jobs:
           mkdir -p /tmp/current-source
           git bundle create /tmp/current-source/main.bundle main
           git rev-parse HEAD > /tmp/current-source/SOURCE_SHA
-          (cd /tmp/current-source && sha256sum main.bundle > SHA256SUMS)
-      - uses: actions/upload-artifact@v4
+          python - <<'PY'
+          import base64, gzip, hashlib, json, os, pathlib, urllib.request
+          patches = [
+              ('b88ed5dc66f4e985fbfe512d68a167ab3bc73450', 'e4bb00b003791f55f0ff4dde011486b5ec6fe54b30bffa03529a67255f646715', 'protocol.patch'),
+              ('e048b5e5e7af71b5f079ff204e01d669795a24b0', '2b8aeb442198a3f74c2dacd4de9a3da0984a1e23648b24dfd241db108ffa12a6', 'fixture.patch'),
+          ]
+          for sha, expected, name in patches:
+              request = urllib.request.Request(f"{os.environ['GITHUB_API_URL']}/repos/{os.environ['GITHUB_REPOSITORY']}/git/blobs/{sha}", headers={'Authorization': 'Bearer '+os.environ['GH_TOKEN'], 'Accept': 'application/vnd.github+json'})
+              with urllib.request.urlopen(request, timeout=30) as response:
+                  data = base64.b64decode(json.load(response)['content'])
+              assert hashlib.sha1(f'blob {len(data)}\0'.encode()+data).hexdigest() == sha
+              patch = gzip.decompress(base64.b64decode(data))
+              assert hashlib.sha256(patch).hexdigest() == expected
+              pathlib.Path('/tmp/current-source', name).write_bytes(patch)
+          PY
+          (cd /tmp/current-source && sha256sum main.bundle protocol.patch fixture.patch SOURCE_SHA > SHA256SUMS)
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: current-source
           path: /tmp/current-source/
-          retention-days: 1
+          retention-days: 3
           if-no-files-found: error
