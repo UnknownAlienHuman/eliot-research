@@ -288,3 +288,18 @@ pre { padding: 12px; border: 1px solid var(--line); border-radius: 8px; backgrou
   .research-question-controls .workflow-actions { gap: 8px; }
   .research-question-input { min-height: 100px; }
 }
+
+/* Project-scoped agent access uses the existing Connections controls and palette. */
+.client-grant-panel { display: grid; gap: .85rem; min-width: 0; }
+.client-grant-panel label { display: grid; gap: .35rem; }
+.client-grant-panel input:not([type="checkbox"]), .client-grant-panel textarea { box-sizing: border-box; width: 100%; min-width: 0; max-width: 100%; }
+.client-grant-panel form, .client-grant-fields { display: grid; gap: .85rem; min-width: 0; }
+.client-grant-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 16rem), 1fr)); gap: .75rem; }
+.client-grant-panel .client-grant-option { display: flex; align-items: center; gap: .5rem; }
+.client-grant-options { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 10rem), 1fr)); gap: .5rem; margin-block: .75rem; }
+.client-grant-row { padding-block: .75rem; border-bottom: 1px solid var(--line); }
+.client-grant-row p, .client-grant-panel [data-grant-scope], .client-grant-panel [data-grant-identity], .client-grant-panel [data-grant-pending-identity] { overflow-wrap: anywhere; }
+.client-grant-panel [hidden] { display: none; }
+.client-grant-panel button:disabled { opacity: .55; }
+.client-grant-panel input:not([type="checkbox"]), .client-grant-panel textarea { padding: .7rem; border: 1px solid var(--line); border-radius: 8px; background: var(--canvas); color: var(--ink); font: inherit; }
+.client-grant-panel fieldset { border: 1px solid var(--line); border-radius: 8px; }

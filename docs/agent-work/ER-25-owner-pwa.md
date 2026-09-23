@@ -21,6 +21,7 @@ outside the paths below.
 - `scripts/lib/browser-mcp-diagnostic-fixture.mjs`
 - `scripts/lib/browser-research-readiness-fixture.mjs`
 - `scripts/lib/browser-research-screen-fixture.mjs`
+- `scripts/check-project-client.mjs`
 
 ## Read only
 
@@ -267,3 +268,29 @@ does not close the broader theme or project work.
 
 Disabled upload, workflow, Recent scans and Retrieval actions share the existing muted treatment,
 so their visible state matches their availability without changing layout or the calm palette.
+
+## S31 project-agent management code checkpoint
+
+Connections mounts one project grant editor using S10's strict DTO and existing owner
+GET/PUT/DELETE routes. Project and grant pages are bounded and explicitly loaded; new grants
+default to catalog read only. Other declared operations remain visibly unimplemented service
+handlers, and spend sponsorship is not offered. Editing retains the grantee identity and current
+expected revision. Revocation requires a separate confirmation; regrant is an explicit owner action.
+
+An uncertain mutation retains its exact project/grant/key/body in memory for explicit retry.
+A receipt is acknowledged separately from the subsequent current-list readback, so replaying an old
+receipt cannot mark an obsolete grant current. Offline, authorization or deployment/readiness loss
+and disposal clear all private controls and invalidate late responses. No credentials or grants
+are stored in localStorage, sessionStorage, IndexedDB or the service-worker cache.
+
+The selected grant exposes a command for `scripts/check-project-client.mjs`. This independent
+service client requires explicit `--confirm-live`, an HTTPS origin, project, grant locator and
+deployment generation, plus `CF_ACCESS_CLIENT_ID`/`CF_ACCESS_CLIENT_SECRET` in the process's private
+environment. It sends one bounded catalog GET with no owner cookie and refuses redirects, wrong
+generation/project, malformed output or an absent readable source witness. It prints only a
+bounded read observation and response digest, not source titles, source text or secrets. It neither
+mutates permissions nor calls models. No command result is accepted as server authority in the PWA;
+configured permissions and the generic MCP connection diagnostic remain explicitly separate.
+
+This code-first checkpoint has compile/static verification only. Behavioral/native/browser and
+live client acceptance remain pending; no new test files or test runs are part of the checkpoint.

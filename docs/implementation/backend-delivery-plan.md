@@ -79,6 +79,9 @@ The target is the known mandatory v1/Slices 0–6 with `gemini-mcp`. Completion 
 The current implementation adds owner project-client grant GET/PUT/DELETE plus the shared
 project-scoped HTTP/service-token MCP catalog path. Grant records contain no secrets; configured
 is not a verified connection. Migration 0072 and the common strict DTO are shared by future
-query/run/import consumers. Those consumers and the Connections grant form are not implemented
-by this checkpoint. A supplied spend-policy reference fails explicitly until sponsorship is composed.
+query/run/import consumers. Those consumers remain to implement. Connections now manages
+grants through the existing API and provides the independent opt-in service catalog-read command
+(`scripts/check-project-client.mjs --help`). Configured is not connected: the PWA does not claim
+a signed client round trip from owner readback or the unrelated generic MCP diagnostic.
+A supplied spend-policy reference fails explicitly until sponsorship is composed.
 Native/behavioral acceptance remains pending; this code-first checkpoint does not claim it.

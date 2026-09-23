@@ -4,6 +4,7 @@ import { mountBundleImportPanel } from "./bundle-import-panel.js";
 import { mountGoogleOAuthPanel } from "./google-oauth-panel.js";
 import { mountLibraryPanel } from "./library-panel.js";
 import { mountProjectPanel, type ProjectPanelHandle } from "./project-panel.js";
+import { mountClientGrantPanel } from "./client-grant-panel.js";
 import { mountOrientationPanel } from "./orientation-panel.js";
 import { mountRetrievalPanel } from "./retrieval-panel.js";
 import { mountEvidenceRail } from "./evidence-rail.js";
@@ -175,6 +176,7 @@ function render(health: SystemHealth | null): void {
         <section id="connections-card" class="workspace-view" data-workspace-view="connections" tabindex="-1" aria-label="Connections" hidden>
           <div class="connection-stack">
             <section class="connection-card research-configuration-card" id="research-configuration-card"><div id="research-configuration"></div></section>
+            <article class="connection-card" id="client-grants-card"><div id="client-grants"></div></article>
             <article class="connection-card" id="connection-agent-card"><div id="mcp-client-diagnostic"></div></article>
             <article class="connection-card" id="connection-server-card">
               <div class="connection-heading"><div><span class="eyebrow">Server check</span><h2>Owner API</h2></div><span id="connection-server-state" class="connection-state connection-state--pending">Checking</span></div>
@@ -252,6 +254,11 @@ function render(health: SystemHealth | null): void {
   }) : undefined;
   const wikiHost = app.querySelector<HTMLElement>("#wiki");
   const wiki = wikiHost ? mountWikiPanel(wikiHost, () => app.dataset.healthGeneration, () => app.dataset.healthReady === "true") : undefined;
+  const grantHost = app.querySelector<HTMLElement>("#client-grants");
+  const clientGrants = grantHost ? mountClientGrantPanel(grantHost, {
+    deploymentGeneration: () => app.dataset.healthGeneration,
+    healthReady: () => app.dataset.healthReady === "true",
+  }) : undefined;
   const diagnosticHost = app.querySelector<HTMLElement>("#mcp-client-diagnostic");
   const erasureHost = app.querySelector<HTMLElement>("#erasure");
   const erasure = erasureHost ? mountErasurePanel(erasureHost, {
@@ -470,7 +477,7 @@ function render(health: SystemHealth | null): void {
     exhaustive?.selectSource(id);
     return true;
   }) : undefined;
-  const cleanups = [orientation, retrieval, researchRun, exhaustive, researchChanges, researchConfiguration, wiki, diagnostic, erasure, ownerSession, projectPanel,
+  const cleanups = [orientation, retrieval, researchRun, exhaustive, researchChanges, researchConfiguration, wiki, diagnostic, clientGrants, erasure, ownerSession, projectPanel,
     () => erasureHost?.removeEventListener("eliotr:source-erased", sourceErased),
     () => erasureHost?.removeEventListener("eliotr:source-erasure-requested", sourceErased), importer ? mountBundleImportPanel(importer) : undefined,
     namespacePanel, () => app.removeEventListener("eliotr:namespace-selected", namespaceSelected),
