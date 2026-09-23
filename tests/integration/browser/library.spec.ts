@@ -186,7 +186,7 @@ test("L6 real-browser owner harness: isolated Worker/PWA, denial, authorized Lib
 
 // The full owner test also enforces the actual unchanged CSP in Chromium.
 test("L6 Research question control uses external styles under the existing CSP", async () => {
-  const panel = await readFile(new URL("../../../apps/eliotr-pwa/src/research-run-panel.ts", import.meta.url), "utf8");
+  const panel = await readFile(new URL("../../../apps/eliotr-pwa/src/research-run-view.ts", import.meta.url), "utf8");
   const css = await readFile(new URL("../../../apps/eliotr-pwa/src/styles.css", import.meta.url), "utf8");
   const textarea = panel.match(/<textarea\b[^>]*name="query"[^>]*>/u)?.[0];
   assert.ok(textarea);

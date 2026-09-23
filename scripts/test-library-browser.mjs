@@ -1,3 +1,4 @@
+import { createResearchScreenFixture, runResearchScreenCanary } from "./lib/browser-research-screen-fixture.mjs";
 import assert from "node:assert/strict";
 import { browserImportFixture } from "./lib/browser-import-fixture.mjs";
 import { createBrowserMcpDiagnosticFixture, runBrowserMcpDiagnosticCanary } from "./lib/browser-mcp-diagnostic-fixture.mjs";
@@ -90,11 +91,13 @@ const importing = browserImportFixture();
 const diagnosticFixture = createBrowserMcpDiagnosticFixture();
 const researchReadinessFixture = createBrowserResearchReadinessFixture({ resolvedEvidence });
 const { posted, selectionOrder } = researchReadinessFixture;
+const researchScreen = process.argv.includes("--research-screen") ? createResearchScreenFixture({ envelope, draftWorkflowId, draftArtifact, draftSectionText, draftSectionSha, evidenceSha }) : undefined;
 const server = createServer((request, response) => {
   void (async () => {
     const url = new URL(request.url, "http://127.0.0.1");
     response.setHeader("cache-control", "no-store");
     const json = (body) => { response.setHeader("content-type", "application/json"); response.end(JSON.stringify(body)); };
+    if (researchScreen && await researchScreen.handle(request, response, url)) return;
     if (url.pathname.startsWith("/api/v1/ingest/bundles")) return importing.handle(request, response, url);
     if (url.pathname === "/api/v1/system/mcp-diagnostics") return diagnosticFixture.handle(request, response, url);
     if (url.pathname === "/api/v1/system/health") {
@@ -207,7 +210,7 @@ async function until(test, label, milliseconds = 10000) {
   throw new Error(`Browser deadline: ${label}`);
 }
 async function executable() {
-  const candidates = [process.env.ELIOTR_BROWSER_EXECUTABLE, "/usr/bin/google-chrome", "/usr/bin/chromium", "/usr/bin/chromium-browser"];
+  const candidates = [process.env.ELIOTR_BROWSER_EXECUTABLE, "/usr/bin/google-chrome", "/usr/bin/chromium", "/usr/bin/chromium-browser", process.platform === "win32" ? resolve(process.env.ProgramFiles ?? "C:/Program Files", "Google/Chrome/Application/chrome.exe") : undefined];
   for (const candidate of candidates.filter(Boolean)) { try { await access(candidate); return candidate; } catch { /* Try installed alternative. */ } }
   throw new Error("Chromium is required; set ELIOTR_BROWSER_EXECUTABLE to the installed executable");
 }
@@ -332,7 +335,11 @@ try {
     await wait('document.querySelector("#research-run [data-run-result]")?.textContent.includes("artifact-draft-1:1")', `${label}: draft metadata`);
   };
   await cdp("Runtime.enable"); await cdp("Page.enable"); await cdp("Page.navigate", { url: origin });
-  await wait('document.querySelector("#library")?.textContent.includes("Русский источник")', "Library first page");
+  if (researchScreen) {
+    await runResearchScreenCanary({ fixture: researchScreen, cdp, evaluate, wait, until, click, openSources, draftSectionText, evidenceText, evidenceSha });
+    assert.deepEqual(errors, []);
+  } else {
+  await wait('document.querySelector("#library")?.textContent.includes("Русский источник")' , "Library first page");
   await openSources("Initial Sources"); await assertView("sources", "#library");
   await wait('document.querySelector("#exhaustive-workflow [data-workflow-badge]")?.textContent.trim() === "READY"', "Health event reaches exhaustive panel");
   assert.equal(await evaluate('document.querySelector("#exhaustive-workflow button[type=submit]").disabled'), false);
@@ -542,7 +549,9 @@ try {
   await runBrowserMcpDiagnosticCanary({ fixture: diagnosticFixture, click, evaluate, wait, assertVisible, assertView, openSources });
   assert.deepEqual(errors, []);
   console.log("Library browser: PASS (built PWA; pagination/filter/selection, same-operation continuation/status and reload/missing-ID discovery, legacy unavailable research run, persisted DRAFT metadata/section digest and literal rendering, generation/session/offline and late-response clearing, XSS, denial, generation drift, stale responses, research.verify → research.open and inert evidence rendering). Backend is controlled; IdP and full ingest-to-evidence NOT_EXECUTED.");
+}
 } finally {
+  researchScreen?.release();
   pending?.(); researchReadinessFixture.releaseQuery(); researchReadinessFixture.releaseOrientation(); socket?.close();
   if (browser && browser.exitCode === null) {
     browser.kill("SIGTERM"); const timer = setTimeout(() => browser.kill("SIGKILL"), 3000);

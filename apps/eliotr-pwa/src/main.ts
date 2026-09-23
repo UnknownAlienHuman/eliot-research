@@ -159,14 +159,11 @@ function render(health: SystemHealth | null): void {
           </div>
         </section>
         <section id="research-view" class="workspace-view" data-workspace-view="research" tabindex="-1" aria-label="Research" hidden>
-          <div class="workspace-cards">
-            <article class="intro-card"><div class="intro-card-mark">⌕</div><div><strong>Ask across selected sources</strong><p>Run a bounded search or research workflow, then open only evidence that resolves against the admitted revision.</p></div></article>
-            <div class="mini-grid"><div class="mini-stat"><span class="eyebrow">Coverage</span><strong id="coverage">Not queried</strong><span id="coverage-note">Run Research to measure sampled resolution.</span></div><div class="mini-stat"><span class="eyebrow">Evidence</span><strong id="evidence-count">0 resolved</strong><span>Verified excerpts in this session.</span></div></div>
-          </div>
           <div class="tool-stack">
-            <section class="tool-card" id="research-changes-card"><div id="research-changes"></div></section>
-            <section class="tool-card research-configuration-card" id="research-configuration-card"><div id="research-configuration"></div></section>
-            <section class="tool-card tool-card--research" id="research-card"><div id="retrieval"></div><div class="tool-divider"></div><div id="research-run"></div><div class="tool-divider"></div><div id="exhaustive-workflow"></div></section>
+            <section class="tool-card tool-card--research" id="research-card"><div id="research-run"></div></section>
+            <div class="research-context" aria-label="Search evidence status"><div><span>Search coverage</span><strong id="coverage">Not queried</strong><span id="coverage-note">Run a search to measure sampled resolution.</span></div><div><span>Evidence</span><strong id="evidence-count">0 resolved</strong><span>Verified excerpts in this session.</span></div></div>
+            <details class="tool-card research-tools" id="research-tools" open><summary>Search and full-source scans</summary><div id="retrieval"></div><div class="tool-divider"></div><div id="exhaustive-workflow"></div></details>
+            <details class="tool-card" id="research-changes-card"><summary>Recent activity</summary><div id="research-changes"></div></details>
           </div>
         </section>
         <section id="wiki-view" class="workspace-view" data-workspace-view="wiki" tabindex="-1" aria-label="Wiki" hidden>
@@ -177,6 +174,7 @@ function render(health: SystemHealth | null): void {
         </section>
         <section id="connections-card" class="workspace-view" data-workspace-view="connections" tabindex="-1" aria-label="Connections" hidden>
           <div class="connection-stack">
+            <section class="connection-card research-configuration-card" id="research-configuration-card"><div id="research-configuration"></div></section>
             <article class="connection-card" id="connection-agent-card"><div id="mcp-client-diagnostic"></div></article>
             <article class="connection-card" id="connection-server-card">
               <div class="connection-heading"><div><span class="eyebrow">Server check</span><h2>Owner API</h2></div><span id="connection-server-state" class="connection-state connection-state--pending">Checking</span></div>
@@ -285,9 +283,10 @@ function render(health: SystemHealth | null): void {
   const workspaceViews: Record<string, WorkspaceViewDefinition> = {
     "#library": sourcesView,
     "#corpus-lens-card": { ...sourcesView, anchorSelector: "#corpus-lens-card" },
-    "#research-card": { name: "research", title: "Research", lede: "Search selected source bytes, inspect sampled coverage, and open only verified evidence.", sectionSelector: "#research-view", historyHash: "#research-card", anchorSelector: "#research-card" },
+    "#research-card": { name: "research", title: "Research", lede: "Choose sources, ask a question, and inspect the saved answer with its exact citations.", sectionSelector: "#research-view", historyHash: "#research-card", anchorSelector: "#research-card" },
     "#wiki-card": { name: "wiki", title: "Wiki", lede: "Review saved Wiki proposals and read their current owner-authorized page text.", sectionSelector: "#wiki-view", historyHash: "#wiki-card", anchorSelector: "#wiki-card" },
     "#connections-card": { name: "connections", title: "Connections", lede: "Check the server and workspace connection; client activity appears only after a manual check.", sectionSelector: "#connections-card", historyHash: "#connections-card", anchorSelector: "#connections-card" },
+    "#research-configuration-card": { name: "connections", title: "Connections", lede: "Check the server and workspace connection; client activity appears only after a manual check.", sectionSelector: "#connections-card", historyHash: "#research-configuration-card", anchorSelector: "#research-configuration-card" },
   };
   const locationSelector = (): string => {
     switch (window.location.hash) {
@@ -296,6 +295,7 @@ function render(health: SystemHealth | null): void {
       case "#research-card": return "#research-card";
       case "#wiki":
       case "#wiki-card": return "#wiki-card";
+      case "#research-configuration-card": return "#research-configuration-card";
       case "#connections":
       case "#connections-card": return "#connections-card";
       case "#sources":
@@ -375,8 +375,8 @@ function render(health: SystemHealth | null): void {
       if (coverageNote) coverageNote.textContent = "Run Research to measure sampled resolution.";
     }
   };
-  let projectPanel: (() => void) & ProjectPanelHandle | undefined;
-  let libraryPanel: ReturnType<typeof mountLibraryPanel> | undefined;
+  let projectPanel: (() => void) & ProjectPanelHandle | undefined = undefined;
+  let libraryPanel: ReturnType<typeof mountLibraryPanel> | undefined = undefined;
   const clearPrivateEvidence = (researchNotice?: string): void => { clearEvidenceRail(); retrieval?.clearPrivate(); exhaustive?.clearPrivate(); erasure?.clearPrivate(); ownerSession?.clearPrivate(); projectPanel?.clearPrivate(); libraryPanel?.clearPrivate(); researchRun?.clearPrivate(researchNotice); researchChanges?.clearPrivate(); wiki?.clearPrivate(); };
   const sourceErased = (): void => { clearEvidenceRail(); retrieval?.clearPrivate(); researchRun?.clearPrivate(); exhaustive?.clearPrivate(); researchChanges?.clearPrivate(); wiki?.clearPrivate(); };
   erasureHost?.addEventListener("eliotr:source-erased", sourceErased);

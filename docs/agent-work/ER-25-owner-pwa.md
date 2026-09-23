@@ -20,6 +20,7 @@ outside the paths below.
 - `scripts/lib/browser-import-fixture.mjs`
 - `scripts/lib/browser-mcp-diagnostic-fixture.mjs`
 - `scripts/lib/browser-research-readiness-fixture.mjs`
+- `scripts/lib/browser-research-screen-fixture.mjs`
 
 ## Read only
 
