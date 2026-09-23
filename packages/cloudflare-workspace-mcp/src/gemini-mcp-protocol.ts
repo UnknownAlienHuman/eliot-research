@@ -39,7 +39,7 @@ export interface McpToolDefinition {
     readonly readOnlyHint: boolean;
     readonly destructiveHint: boolean;
     readonly idempotentHint: boolean;
-    readonly openWorldHint: false;
+    readonly openWorldHint: boolean;
   };
 }
 

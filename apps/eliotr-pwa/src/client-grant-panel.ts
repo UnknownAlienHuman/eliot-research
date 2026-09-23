@@ -28,6 +28,7 @@ export function mountClientGrantPanel(element: HTMLElement, options: ClientGrant
   const issuer = get<HTMLInputElement>("[data-grant-issuer]");
   const subject = get<HTMLInputElement>("[data-grant-subject]");
   const expiry = get<HTMLInputElement>("[data-grant-expiry]");
+  const spendPolicy = get<HTMLInputElement>("[data-grant-spend-policy]");
   const namespaces = get<HTMLTextAreaElement>("[data-grant-namespaces]");
   const confirmation = get<HTMLElement>("[data-grant-confirm]");
   const unresolved = get<HTMLElement>("[data-grant-pending]");
@@ -144,6 +145,7 @@ export function mountClientGrantPanel(element: HTMLElement, options: ClientGrant
     issuer.readOnly = grant !== undefined; subject.readOnly = grant !== undefined;
     expiry.value = grant ? clientGrantLocalTime(grant.expires_at) : "";
     namespaces.value = grant?.ingest_namespace_ids.join("\n") ?? "";
+    spendPolicy.value = grant?.spend_policy_ref ?? "";
     for (const option of form.querySelectorAll<HTMLInputElement>("[data-grant-operation]")) {
       option.checked = (grant?.allowed_operations ?? ["catalog"]).some((value) => value === option.value);
     }
@@ -194,7 +196,7 @@ export function mountClientGrantPanel(element: HTMLElement, options: ClientGrant
         allowed_operations: [...form.querySelectorAll<HTMLInputElement>("[data-grant-operation]:checked")].map((input) => input.value),
         ingest_namespace_ids: namespaces.value.split(/\r?\n/u).map((id) => id.trim()).filter(Boolean), expires_at: expiresAt,
         expected_revision: editing?.revision ?? 0,
-        ...(editing?.spend_policy_ref === undefined ? {} : { spend_policy_ref: editing.spend_policy_ref }),
+        ...(spendPolicy.value.trim() === "" ? {} : { spend_policy_ref: spendPolicy.value.trim() }),
       }, editing);
       confirmation.hidden = true; void send();
     } catch (error) { status.textContent = failure(error); availability(); }

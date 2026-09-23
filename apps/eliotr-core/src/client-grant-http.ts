@@ -3,6 +3,7 @@ import { ClientGrantError, createProjectClientGrantService } from "@eliotr/cloud
 import { apiResult, HttpRequestError, requireNoQuery } from "./http.js";
 import { readJsonBodyWithinBytes } from "./bounded-json.js";
 import { readReadiness } from "./readiness.js";
+import { authorizeProjectClientSpend, requireProjectClientSpendSchema } from "./research-client-spend.js";
 import type { Env } from "./env.js";
 
 function trustedIssuers(env: Env): readonly string[] {
@@ -24,7 +25,9 @@ export async function handleClientGrantHttp(request: Request, env: Env, context:
   if (!readiness.ready) throw new HttpRequestError("SCHEMA_NOT_READY", 503, "Required migrations are not applied", true);
   if (context.client_class !== "owner_pwa") throw new ClientGrantError("CLIENT_GRANT_OWNER_REQUIRED", 403, "Owner authentication required");
   const url = new URL(request.url);
-  const service = createProjectClientGrantService({ database: env.CORE_DB, trusted_issuers: trustedIssuers(env) });
+  if (request.method !== "GET") await requireProjectClientSpendSchema(env);
+  const service = createProjectClientGrantService({ database: env.CORE_DB, trusted_issuers: trustedIssuers(env),
+    authorize_spend: (owner, input) => authorizeProjectClientSpend(env, owner, input) });
   const project = params.project_id ?? "";
   if (request.method === "GET") {
     if ([...url.searchParams.keys()].some((key) => key !== "after_grant_id") || url.searchParams.getAll("after_grant_id").length > 1) {

@@ -73,7 +73,7 @@ export const ROUTES: readonly RouteDefinition[] = [
   { method: "GET", path: "/api/v1/research/runs", operation: "research.runs", auth: "owner", maximum_request_bytes: 0, response_mode: "json" },
   { method: "GET", path: "/api/v1/research/run/:workflow_id", operation: "research.run", auth: "owner_or_service", maximum_request_bytes: 0, response_mode: "json" },
   { method: "POST", path: "/api/v1/research/run/:workflow_id/cancel", operation: "research.run.cancel", auth: "owner_or_service", maximum_request_bytes: 1024, response_mode: "json" },
-  { method: "POST", path: "/api/v1/research/run/:workflow_id/recover", operation: "research.run.recover", auth: "owner", maximum_request_bytes: 1024, response_mode: "json" },
+  { method: "POST", path: "/api/v1/research/run/:workflow_id/recover", operation: "research.run.recover", auth: "owner_or_service", maximum_request_bytes: 1024, response_mode: "json" },
   { method: "GET", path: "/api/v1/research/open/:ref", operation: "research.open", auth: "owner_or_service", maximum_request_bytes: 0, response_mode: "stream" },
   { method: "POST", path: "/api/v1/research/verify", operation: "research.verify", auth: "owner_or_service", maximum_request_bytes: 262144, response_mode: "json" },
   { method: "POST", path: "/api/v1/google/oauth/begin", operation: "google.oauth.begin", auth: "owner", maximum_request_bytes: 1024, response_mode: "json" },

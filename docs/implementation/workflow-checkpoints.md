@@ -698,7 +698,7 @@ invokes no model; completed report discovery can issue fresh read-authority reco
 
 No new migration; the complete existing chain through0074 is still required. This code checkpoint
 is compile/static reviewed only. Behavioral/native and signed live acceptance remain pending;
-service run admission, recovery and spending sponsorship remain unimplemented. Delegated cancellation follows below.
+service run admission remains unimplemented. Delegated cancellation and sponsored recovery follow below.
 
 
 ### Delegated cancellation of a known owner run (S32)
@@ -724,6 +724,45 @@ Uncertain writes reconcile exact rows; retries do not start stages, replace runs
 `CANCELLED` is returned only after canonical readback and action reconciliation. `ENGINE_COMPLETED`
 conflicts rather than becoming cancelled. Native termination remains best effort after the durable
 transition; this does not promise reversal/refund of an already dispatched provider call. No report
-or evidence authority is granted by the response. Recovery remains owner-only, not advertised to
-service clients. No new schema/migration: the existing chain through0074 is required. This code has
+or evidence authority is granted by the response. Sponsored recovery has its own authority below.
+This cancellation checkpoint added no migration. This code has
 compile/static review only; native lifecycle and concurrency acceptance remain pending.
+
+
+### Delegated recovery with explicit spend approval (S32)
+
+POST `/api/v1/research/run/:workflow_id/recover` and MCP `eliotr_recover` accept `{}` and the same
+known run ID/action key as the existing owner recovery engine. The signed service requires separate
+`recover` permission; status, cancel and read permissions confer none. Only the current grantor's
+original explicit-PROJECT run is eligible. Its original execution grant must still be current;
+recovery does not renew an expired scope, adopt new sources, create a run or impersonate its owner.
+
+The owner explicitly supplies `spend_policy_ref` when issuing/editing the project grant in Connections
+or the existing API. The server validates the installed approved owner spend template, principal,
+deployment and expiry, then pins the canonical template SHA-256 in private columns on that same
+immutable grant revision. A changed template requires an explicit new grant revision. Grant expiry
+cannot exceed template expiry; excess authority is rejected, never silently shortened. Removing
+approval does not prevent revocation, whose tombstone preserves its historical binding. Neither
+read-only grants nor policy-name possession permit model costs. Machine run creation stays pending.
+
+Recovery uses one existing run/stage intent and attempt, attributed to the actual service principal.
+The policy decision binds grant-record hash, project generation and template hash. The command does
+not manufacture a budget reservation: `budget_reservation_ref` remains null, and W2/W3 continue to
+reserve and check the original owner's actual stage budgets. Write-time epoch/time/source/grant
+fences protect action creation/claim. Regrant, a changed action key or another actor cannot overwrite
+the occupied slot. Unknown native acknowledgement is read back without issuing a second restart.
+An accepted resume may continue remaining authorized paid stages, including the first audit; existing
+paid attempts are reconciled from their durable outputs, not replayed as fresh synthesis.
+
+Migration **0075_project_client_recovery_spend.sql** adds the private sponsorship columns and one
+shared recovery-authorization view for the W2 runtime and its two expired-reservation settlement
+triggers. Exact owner legacy actions retain their original identity; delegated settlement requires
+the pinned current grant, project, sponsor and original execution. Expiry relaxation is readback-only,
+never authority for another provider invocation. Source/report hashes and original budget receipts
+are not rewritten. Apply the complete chain through0075 before deploying grant mutations or recovery.
+
+Authority can change after a native command was accepted: a denied/unconfirmed response is not proof
+that the run did not resume. Grant revocation blocks further client commands and delegated settlement;
+it is not a rollback of the owner's independently authorized workflow. Use separately authorized
+cancellation to stop it. The response itself grants no report/evidence access. This is code with
+compile/static verification only; native lifecycle, race and paid-call-count acceptance remain pending.

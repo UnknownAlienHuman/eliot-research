@@ -81,12 +81,14 @@ project-scoped HTTP/service-token MCP catalog path. Grant records contain no sec
 is not a verified connection. Migration 0072 and the common strict DTO are shared by all consumers.
 Service-token HTTP FAST_SEARCH now uses that authority and binds immutable query scope origin via
 migration 0073; query-derived verify/open additionally require the distinct evidence operation.
-Machine run/status/control, machine-authored report history, MCP query/read, paid sponsorship and import remain code work.
-Apply all migrations through 0074 before deploying the changed shared grant readers. Connections manages
+Known owner-project status, cancellation, sponsored recovery and MCP query/read are now composed.
+Machine-created runs and their histories, broad discovery and import remain code work.
+Apply all migrations through 0075 before deploying the changed shared grant readers. Connections manages
 grants through the existing API and provides the independent opt-in service catalog-read command
 (`scripts/check-project-client.mjs --help`). Configured is not connected: the PWA does not claim
 a signed client round trip from owner readback or the unrelated generic MCP diagnostic.
-A supplied spend-policy reference fails explicitly until sponsorship is composed.
+Recovery sponsorship binds an explicitly installed owner spend-template fingerprint on the same grant
+revision; it does not implement machine creation or relax the original W2/W3 spend authority.
 Native/behavioral acceptance remains pending; this code-first checkpoint does not claim it.
 
 ### S12 / saved-project report readers (code checkpoint, 2026-09-23)

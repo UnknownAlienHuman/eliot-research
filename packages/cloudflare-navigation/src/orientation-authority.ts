@@ -469,7 +469,7 @@ export async function createProjectClientArtifactAuthority(
  * The caller must also validate the original snapshot's historical currentness. */
 export async function createProjectClientRunReadAuthority(
   db: D1Database, context: AuthenticatedRequestContext, operationId: string,
-  now: () => number = Date.now, operation: "status" | "cancel" = "status",
+  now: () => number = Date.now, operation: "status" | "cancel" | "recover" = "status",
 ) {
   const lease = await authorizeProjectClientGrant(db, context, { operation }, now);
   const binding = await db.prepare("SELECT investigation_id, principal_ref, credential_generation, " +

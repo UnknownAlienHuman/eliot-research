@@ -203,6 +203,7 @@ agree with any supplied `X-Eliotr-Client-Grant` header. It selects a delegation,
 | `eliotr_query` | `query` | Original FAST_SEARCH evidence pack and trace reference; no synthesized answer or exhaustive-coverage claim. |
 | `eliotr_run_status` | `status`; additionally `report` for a DRAFT result reference | Existing run-status DTO for a known grantor-authored explicit-project run; never starts/resumes execution. |
 | `eliotr_cancel` | `cancel` | Stop a known grantor-authored project run; existing run-status DTO only after durable cancellation. Requires an action key. |
+| `eliotr_recover` | `recover` plus pinned owner spend approval | Resume/recover the same owner-project run and checkpoints; may continue authorized paid stages. Requires an action key; never creates a new run. |
 | `eliotr_report` | `report` | Existing versioned report-reauthorization envelope, with original artifact metadata and freshness. Known reference required; not report discovery. |
 | `eliotr_section` | `report` | Exact saved section bytes in the transport wrapper below. |
 | `eliotr_citations` | `report` and `evidence` | Existing reauthorization envelope pairing original citations with fresh authorized handles. |
@@ -260,15 +261,16 @@ reaches 512 KiB. Overflow is an explicit error, not truncation; use a smaller re
 or the existing authorized HTTP section endpoint for a section too large for MCP. Persisted work may
 already exist when output cannot be delivered. Errors do not claim that canonical state was unchanged.
 
-All eight Research-tool annotations use `readOnlyHint=false`: search can persist scope/result/trace; report reopening
+All nine Research-tool annotations use `readOnlyHint=false`: search can persist scope/result/trace; report reopening
 and completed run-result discovery can issue read grants/handles; evidence resolution can record a verification receipt.
-Query and cancel have `idempotentHint=true` under their stable keys. Cancellation alone has
+Query, cancel and recover have `idempotentHint=true` under their stable keys. Cancellation alone has
 `destructiveHint=true`: it changes durable run state, although it deletes no source/report content.
-No tool dispatches models; cancellation does not promise reversal of an already dispatched call.
+Recovery alone has `openWorldHint=true`: resuming the workflow can continue authorized model stages.
+Query/read/cancel tools do not dispatch models; cancellation does not promise reversal of an already dispatched call.
 
-Apply existing Core migrations through **0074** before deploying; this transport checkpoint adds no
-migration or public domain-schema revision. Service run admission/recovery and spend sponsorship remain code
-work, not hidden or successful stubs. S13 does not qualify a full Research lifecycle or either live
+Apply Core migrations through **0075** before deploying sponsored recovery and grant mutations.
+The public grant DTO is unchanged; the existing optional spend-policy field now has an installed,
+fingerprint-bound approval check. Machine run admission remains code work, not a successful stub. S13 does not qualify a full Research lifecycle or either live
 client. No behavioral test suite, remote service call, deployment or paid call was executed here.
 
 ### Stop a known project run
@@ -284,8 +286,24 @@ signed client and bound to its original delegation revision; a regrant cannot re
 `status` is not required for the cancellation command, but is separately required for later polling.
 A completed run returns a conflict. Success confirms canonical cancellation, not instantaneous native
 termination or a provider refund. Invalid authority or unavailable readback is never reported as
-successful cancellation. No service recovery/restart tool is exposed. See
+successful cancellation. Sponsored recovery is a separate command below. See
 [the cancellation contract](workflow-checkpoints.md#delegated-cancellation-of-a-known-owner-run-s32).
+
+### Recover the same owner-project run
+
+The owner first issues `recover` with an explicit installed spend-policy reference through Connections
+or the grant API. The current template fingerprint/deployment/expiry and original execution authority
+must still match; a policy locator alone is not approval. Then the actual service can call:
+
+```json
+{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"eliotr_recover","arguments":{"client_grant_id":"grant-example","workflow_instance_id":"run-example","idempotency_key":"recover-example-1"}}}
+```
+
+This can resume remaining paid stages, not renew an expired execution or create a machine-authored
+run. Keep the same action key after a lost response; the occupied run/stage slot cannot be repurposed
+by regrant or a different caller. Result-read permissions remain separate. The original owner budgets
+and saved stage outputs remain authoritative. See the
+[recovery contract](workflow-checkpoints.md#delegated-recovery-with-explicit-spend-approval-s32).
 
 ## v1 observation validation limits
 

@@ -50,6 +50,16 @@ export const MCP_RESEARCH_TOOLS = {
         idempotency_key: { type: "string", minLength: 1, maxLength: 256, pattern: "^[^\\u0000-\\u0020\\u007f]+$" } } },
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
   },
+  eliotr_recover: {
+    name: "eliotr_recover",
+    description: "Recover the same known grantor-authored project Research run with explicit recover permission and fingerprint-bound owner spend sponsorship. Reuses existing checkpoints and the single run/stage action journal; does not create a new run or renew expired execution. Remaining authorized stages may call models, including the first audit. On an uncertain response keep the same run, grant and idempotency key; never substitute another action.",
+    inputSchema: { type: "object", additionalProperties: false,
+      required: ["client_grant_id", "workflow_instance_id", "idempotency_key"],
+      properties: { ...grant, workflow_instance_id: { type: "string", minLength: 1, maxLength: 128,
+        pattern: "^[A-Za-z0-9][A-Za-z0-9:._-]{0,127}$" },
+        idempotency_key: { type: "string", minLength: 1, maxLength: 256, pattern: "^[^\\u0000-\\u0020\\u007f]+$" } } },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  },
   eliotr_run_status: {
     name: "eliotr_run_status",
     description: "Read an existing grantor-authored explicit-project run with status permission. Returns the unchanged HTTP run-status DTO, not a new run. Only separate report permission permits discovery of a completed DRAFT reference through exact historical readback; this may issue read authority. No model, restart or execution renewal.",

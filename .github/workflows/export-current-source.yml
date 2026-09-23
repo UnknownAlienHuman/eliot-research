@@ -1,5 +1,5 @@
 name: export-current-source
-# Refresh current main after delegated cancellation for production implementation.
+# Refresh exact main after S08 for S09 semantic-stage acceptance.
 on:
   push:
     branches: [main]

@@ -31,7 +31,7 @@ function corrupt(): never { throw new WorkflowCheckpointError("WORKFLOW_OUTPUT_C
  * This never writes an execution grant, starts a stage or substitutes an owner context. */
 export async function prepareProjectClientRunRead(
   env: Env, context: AuthenticatedRequestContext, operationId: string,
-  operation: "status" | "cancel" = "status",
+  operation: "status" | "cancel" | "recover" = "status",
 ): Promise<ProjectClientRunRead | null> {
   const authority = await createProjectClientRunReadAuthority(env.CORE_DB, context, operationId, Date.now, operation);
   if (authority === null) return null;
@@ -50,7 +50,7 @@ export async function prepareProjectClientRunRead(
     if (head.principal_ref !== binding.principal_ref || head.scope_snapshot_id !== originalRef.id ||
         head.scope_snapshot_revision !== originalRef.revision || head.policy_authority_ref !== binding.policy_authority_ref ||
         head.deployment_generation !== binding.deployment_generation) stale();
-    if (operation === "cancel") {
+    if (operation !== "status") {
       const policy = await env.CORE_DB.prepare("SELECT 1 AS present FROM investigation_current_policy " +
         "WHERE policy_generation=?1 AND policy_authority_ref=?2 AND state='ACTIVE' LIMIT 1")
         .bind(head.policy_generation, head.policy_authority_ref).first();
@@ -63,7 +63,7 @@ export async function prepareProjectClientRunRead(
   };
   const requireCurrent = async () => { await currentAuthorization(); };
   const controlFence = async (): Promise<ProjectClientRunCancelFence> => {
-    if (operation !== "cancel") stale();
+    if (operation === "status") stale();
     // Capture before validation, so a concurrent upstream change cannot become
     // an accidentally trusted newer epoch at the mutation boundary.
     const epochs = await env.CORE_DB.prepare(

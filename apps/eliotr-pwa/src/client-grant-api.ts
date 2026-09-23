@@ -90,6 +90,9 @@ export function prepareClientGrantMutation(projectId: string, generation: string
     }
     const imports = rights.allowed_operations.some((op) => op === "ingest.bundle" || op === "workspace.admit");
     if (imports !== (rights.ingest_namespace_ids.length > 0)) invalid("Import rights need explicit namespaces; other rights do not use them.", true);
+    if (rights.spend_policy_ref !== undefined && !rights.allowed_operations.some((op) => op === "run" || op === "recover")) {
+      invalid("Spend sponsorship requires explicit run or recover permission; read access cannot spend.", true);
+    }
     if (Date.parse(rights.expires_at) <= Date.now()) invalid("Grant expiry must be in the future.", true);
     normalized = { ...rights, allowed_operations: [...rights.allowed_operations].sort(),
       ingest_namespace_ids: [...rights.ingest_namespace_ids].sort(), expires_at: new Date(rights.expires_at).toISOString() };

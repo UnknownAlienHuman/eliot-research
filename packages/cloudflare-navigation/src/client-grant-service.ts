@@ -1,16 +1,18 @@
 import { ProjectClientGrantPutSchema, ProjectClientGrantRevokeSchema, ProjectClientGrantSchema,
-  type ProjectClientGrant, type ProjectClientGrantList } from "@eliotr/contracts";
+  type ProjectClientGrant, type ProjectClientGrantList, type ProjectClientGrantPut } from "@eliotr/contracts";
 import type { AuthenticatedRequestContext } from "@eliotr/interfaces";
 import { canonicalJson, sha256Utf8 } from "@eliotr/platform-cloudflare";
 import { createOwnerScopeAuthority } from "./orientation-authority.js";
 import { readClientProjectMembers, requireClientGrantNamespaces } from "./client-grant-authority.js";
 import { CLIENT_GRANT_MAX_BYTES, findClientGrant, grantEpoch, grantFail, grantId, grantNow, readClientGrant,
-  readClientGrantPage, readGrantReplay, requireGrantOwner } from "./client-grant-store.js";
+  readClientGrantPage, readGrantReplay, readClientGrantSpend, type ClientGrantSpendBinding, requireGrantOwner } from "./client-grant-store.js";
 
 export interface ClientGrantServiceOptions {
   readonly database: D1Database;
   readonly trusted_issuers: readonly string[];
   readonly now?: () => number;
+  /** Composition validates the installed operator approval, never a policy locator alone. */
+  readonly authorize_spend?: (context: AuthenticatedRequestContext, input: ProjectClientGrantPut) => Promise<ClientGrantSpendBinding>;
 }
 
 /** Owner issuance and revocation share one append-only receipt/authority table. */
@@ -73,6 +75,7 @@ export function createProjectClientGrantService(options: ClientGrantServiceOptio
     const instant = grantNow(now); const timestamp = new Date(instant).toISOString();
     let authorityDeadline = context.access ? Date.parse(context.access.expires_at) : instant + 30_000;
     let result: ProjectClientGrant;
+    let sponsorship: ClientGrantSpendBinding | null = null;
     if (operation === "PUT") {
       const input = ProjectClientGrantPutSchema.parse(normalized);
       if (!issuers.has(input.grantee.issuer)) grantFail("CLIENT_GRANT_ISSUER_DENIED", 403, "Grantee issuer is not a configured Access issuer");
@@ -83,9 +86,21 @@ export function createProjectClientGrantService(options: ClientGrantServiceOptio
       if (sameActor && sameActor.grant_id !== grantIdValue) grantFail("CLIENT_GRANT_IDENTITY_CONFLICT", 409,
         "Use the existing logical grant for this project and client");
       if (Date.parse(input.expires_at) <= instant) grantFail("CLIENT_GRANT_INPUT_INVALID", 400, "Grant expiry must be in the future");
-      // A policy locator alone is not delegation of the owner's model budget. S11 supplies the sponsor path.
-      if (input.spend_policy_ref !== undefined) grantFail("CLIENT_GRANT_SPEND_NOT_SUPPORTED", 409,
-        "Delegated spend sponsorship is not composed; read grants never authorize model charges");
+      if (input.spend_policy_ref !== undefined) {
+        if (!input.allowed_operations.some((op) => op === "run" || op === "recover")) {
+          grantFail("CLIENT_GRANT_INPUT_INVALID", 400, "Spend sponsorship requires an explicit run or recover operation");
+        }
+        if (!options.authorize_spend) grantFail("CLIENT_GRANT_SPEND_NOT_SUPPORTED", 409,
+          "Installed spend approval is not composed; read grants never authorize model charges");
+        sponsorship = await options.authorize_spend(context, input);
+        if (!/^[0-9a-f]{64}$/u.test(sponsorship.policy_sha256) ||
+            !Number.isFinite(Date.parse(sponsorship.expires_at)) || Date.parse(sponsorship.expires_at) <= instant ||
+            Date.parse(input.expires_at) > Date.parse(sponsorship.expires_at)) {
+          grantFail("CLIENT_GRANT_SPEND_DENIED", 403, "Grant expiry exceeds its installed sponsorship approval");
+        }
+        grantId(sponsorship.deployment_generation);
+        authorityDeadline = Math.min(authorityDeadline, Date.parse(sponsorship.expires_at));
+      }
       const imports = input.allowed_operations.some((op) => op === "ingest.bundle" || op === "workspace.admit");
       if (imports && input.ingest_namespace_ids.length === 0) grantFail("CLIENT_GRANT_NAMESPACE_DENIED", 403, "Import rights require explicit namespaces");
       if (!imports && input.ingest_namespace_ids.length !== 0) grantFail("CLIENT_GRANT_INPUT_INVALID", 400, "Import namespaces require an import operation");
@@ -110,6 +125,7 @@ export function createProjectClientGrantService(options: ClientGrantServiceOptio
         created_at: previous?.created_at ?? timestamp, updated_at: timestamp });
     } else {
       if (!previous) grantFail("CLIENT_GRANT_REVISION_CONFLICT", 409, "Grant does not exist");
+      sponsorship = await readClientGrantSpend(db, previous);
       result = { ...previous, state: "REVOKED", revision: expected + 1, updated_at: timestamp };
     }
     const record = canonicalJson(result); const digest = await sha256Utf8(record);
@@ -120,19 +136,24 @@ export function createProjectClientGrantService(options: ClientGrantServiceOptio
     }
     try {
       await db.prepare("INSERT INTO project_client_grant (grant_id,revision,project_id,grantor_principal_ref," +
-        "grantee_issuer,grantee_method,grantee_subject,state,expires_at,idempotency_key,request_sha256,record_json,record_sha256) " +
-        "SELECT ?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13 FROM project p JOIN project_owner o ON o.project_id=p.project_id " +
+        "grantee_issuer,grantee_method,grantee_subject,state,expires_at,idempotency_key,request_sha256,record_json,record_sha256," +
+        "spend_policy_sha256,spend_deployment_generation,spend_expires_at) " +
+        "SELECT ?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?17,?18,?19 FROM project p JOIN project_owner o ON o.project_id=p.project_id " +
         "WHERE p.project_id=?3 AND o.principal_ref=?4 AND p.generation=?14 " +
         "AND (SELECT generation FROM orientation_authority_epoch WHERE singleton=1)=?15 " +
         "AND julianday(?16)>julianday('now')")
         .bind(result.grant_id, result.revision, projectId, principal, result.grantee.issuer,
           result.grantee.authentication_method, result.grantee.subject, result.state, result.expires_at,
-          key, requestDigest, record, digest, generation, epoch, new Date(authorityDeadline).toISOString()).run();
+          key, requestDigest, record, digest, generation, epoch, new Date(authorityDeadline).toISOString(),
+          sponsorship?.policy_sha256 ?? null, sponsorship?.deployment_generation ?? null, sponsorship?.expires_at ?? null).run();
     } catch { /* Lost ACK and CAS conflicts are reconciled by exact immutable receipt readback below. */ }
     const settled = await readGrantReplay(db, principal, key, requestDigest);
     if (settled !== null) {
       await requireGrantOwner(db, projectId, owner(context));
       if (canonicalJson(settled) !== record) grantFail("CLIENT_GRANT_STORAGE_CORRUPT", 503, "Grant receipt differs from its intended revision");
+      if (canonicalJson(await readClientGrantSpend(db, settled)) !== canonicalJson(sponsorship)) {
+        grantFail("CLIENT_GRANT_STORAGE_CORRUPT", 503, "Sponsorship receipt differs from its intended approval");
+      }
       owner(context);
       return settled;
     }
