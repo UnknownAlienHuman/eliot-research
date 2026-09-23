@@ -1,5 +1,5 @@
 name: export-current-source
-# Refresh exact main after S08 for S09 semantic-stage acceptance.
+# Refresh exact main for delegated Research reader integration.
 on:
   push:
     branches: [main]
