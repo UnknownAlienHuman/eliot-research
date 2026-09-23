@@ -81,10 +81,39 @@ project-scoped HTTP/service-token MCP catalog path. Grant records contain no sec
 is not a verified connection. Migration 0072 and the common strict DTO are shared by all consumers.
 Service-token HTTP FAST_SEARCH now uses that authority and binds immutable query scope origin via
 migration 0073; query-derived verify/open additionally require the distinct evidence operation.
-Machine run/status/control, report/history, MCP query, paid sponsorship and import remain code work.
-Apply all migrations through 0073 before deploying the changed shared grant readers. Connections manages
+Machine run/status/control, machine-authored report history, MCP query/read, paid sponsorship and import remain code work.
+Apply all migrations through 0074 before deploying the changed shared grant readers. Connections manages
 grants through the existing API and provides the independent opt-in service catalog-read command
 (`scripts/check-project-client.mjs --help`). Configured is not connected: the PWA does not claim
 a signed client round trip from owner readback or the unrelated generic MCP diagnostic.
 A supplied spend-policy reference fails explicitly until sponsorship is composed.
 Native/behavioral acceptance remains pending; this code-first checkpoint does not claim it.
+
+### S12 / saved-project report readers (code checkpoint, 2026-09-23)
+
+Service-token HTTP clients with `report` may read the existing artifact/section endpoints and
+reauthorization endpoints for DRAFT reports originally bound to one explicit PROJECT and authored
+by that project's current grantor. Sharing a source, a global scope or another project's expression
+is not sufficient. Citation reads additionally require `evidence`. Read-only sharing starts no model
+and changes no report bytes, hashes, draft/verdict labels or publication state.
+
+Migration `0074_project_client_artifact_scope.sql` binds each fresh scope grant to one artifact,
+original project/author and delegation revision. The existing historical-scope algorithm preserves
+all saved source revisions, membership, disclosure closure and profile. Current policy, owner,
+membership, expiry, purge and original-grant revocation are rechecked. Issuance and evidence writes
+are guarded by D1; report-only scope grants cannot mint standalone evidence handles. The existing
+conservative delegated-scope invalidation also covers these read grants; reopening is a new read,
+not revival of an old revoked scope. No browser token or second authority store is introduced.
+
+Service citation GETs use the already-existing `eliotr.artifact-draft-citations-reauthorization.v1`
+response: `original_scope_snapshot_ref` and original verification/audit remain historical, while
+`authorization_scope_snapshot_ref` and each paired fresh `handle_ref` authorize current reads.
+The old handle is retained as `original_handle_ref`; clients must open the fresh handle, not relabel
+an old verification. Owner GET response shapes are unchanged. Without a live exact projection for
+a saved excerpt, citation reopening still fails explicitly rather than substituting current text.
+
+Source-freshness metadata now respects the recorded profile and reads exact 64-member pages, fixing
+another old 64-source bottleneck shared by report/Wiki reopening. Member and byte ceilings remain.
+No model/paid sponsorship, service-run admission, report discovery or MCP reader composition is
+claimed by this checkpoint. Native, behavioral and live acceptance remain pending under #204/#291;
+compilation is not runtime qualification. Migration 0074 is committed, not applied remotely.

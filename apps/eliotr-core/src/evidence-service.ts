@@ -47,19 +47,22 @@ async function requireDelegatedEvidence(db: D1Database, context: AuthenticatedRe
     ? "JOIN evidence_handle h ON h.scope_snapshot_id=g.snapshot_id AND h.scope_snapshot_revision=g.snapshot_revision "
     : "";
   const targetWhere = "handle_ref" in target ? "h.handle_id=?1 AND h.revision=?2" : "g.snapshot_id=?1 AND g.snapshot_revision=?2";
-  let row: { grant_id: string; revision: number; project_id: string; project_generation: number } | null;
+  let row: { grant_id: string; revision: number; project_id: string; project_generation: number; operation: string } | null;
   try {
     row = await db.prepare("SELECT g.project_client_grant_id AS grant_id,g.project_client_grant_revision AS revision," +
-      "d.project_id,g.project_client_project_generation AS project_generation FROM scope_access_grant g " + handleJoin +
+      "d.project_id,g.project_client_project_generation AS project_generation,g.project_client_operation AS operation FROM scope_access_grant g " + handleJoin +
       "JOIN project_client_grant d ON d.grant_id=g.project_client_grant_id AND d.revision=g.project_client_grant_revision " +
       `WHERE ${targetWhere} AND g.principal_ref=?3 AND g.client_class=?4 AND g.credential_generation=?5`)
       .bind(ref.id, ref.revision, context.principal_ref, context.client_class, context.credential_generation)
-      .first<{ grant_id: string; revision: number; project_id: string; project_generation: number }>();
+      .first<{ grant_id: string; revision: number; project_id: string; project_generation: number; operation: string }>();
   } catch {
     throw new ClientGrantError("CLIENT_SCOPE_NOT_READY", 503, "Evidence scope authorization is unavailable; migration 0073 is required", true);
   }
   // Non-delegated legacy grants retain their original resolver path. Missing grants are denied there.
   if (row === null) return async () => {};
+  if (row.operation !== "query" && row.operation !== "evidence") {
+    throw new ClientGrantError("CLIENT_EVIDENCE_DENIED", 403, "Report body authority does not allow standalone evidence reads");
+  }
   const lease = await authorizeProjectClientGrant(db, context, {
     operation: "evidence", project_id: row.project_id, required_revision: row.revision,
   });

@@ -1,4 +1,4 @@
-import type { ScopeSnapshot } from "@eliotr/contracts";
+import type { ScopeSnapshot, VersionedRef } from "@eliotr/contracts";
 import type { EvidenceAccessContext } from "@eliotr/cloudflare-evidence";
 import { canonicalEvidenceJson, evidenceSha256 } from "@eliotr/cloudflare-evidence";
 import type { AuthenticatedRequestContext } from "@eliotr/interfaces";
@@ -16,30 +16,38 @@ export async function requireClientScopeSchema(db: D1Database): Promise<void> {
   }
 }
 
-const provenance = (lease: ClientGrantLease) => ({
+export interface ClientArtifactScopeOrigin {
+  readonly artifact_ref: VersionedRef;
+  readonly operation: "report" | "evidence";
+}
+
+const provenance = (lease: ClientGrantLease, origin?: ClientArtifactScopeOrigin) => ({
   project_client_grant_id: lease.grant.grant_id,
   project_client_grant_revision: lease.grant.revision,
-  project_client_operation: "query",
+  project_client_operation: origin?.operation ?? "query",
   project_client_project_generation: lease.project_generation,
+  ...(origin === undefined ? {} : { project_client_artifact_id: origin.artifact_ref.id,
+    project_client_artifact_revision: origin.artifact_ref.revision }),
 });
 
 /** Scope authority is an exact derivative of one delegation revision, not today's replacement grant. */
 export async function requireClientScopeProvenance(db: D1Database, access: EvidenceAccessContext,
-  scope: ScopeSnapshot, lease: ClientGrantLease): Promise<void> {
+  scope: ScopeSnapshot, lease: ClientGrantLease, origin?: ClientArtifactScopeOrigin): Promise<void> {
   const row = await grantRead(() => db.prepare("SELECT project_client_grant_id,project_client_grant_revision," +
-    "project_client_operation,project_client_project_generation FROM scope_access_grant_effective " +
+    "project_client_operation,project_client_project_generation" + (origin === undefined ? "" :
+      ",project_client_artifact_id,project_client_artifact_revision") + " FROM scope_access_grant_effective " +
     "WHERE snapshot_id=?1 AND snapshot_revision=?2 AND principal_ref=?3 AND client_class=?4 AND credential_generation=?5 " +
     "AND state='ACTIVE' AND policy_authority_ref=?6 AND julianday(expires_at)>julianday('now')")
     .bind(scope.snapshot_id, scope.revision, access.principal_ref, access.client_class,
       access.credential_generation, scope.policy_authority_ref).first());
-  if (row === null || canonicalEvidenceJson(row) !== canonicalEvidenceJson(provenance(lease))) {
+  if (row === null || canonicalEvidenceJson(row) !== canonicalEvidenceJson(provenance(lease, origin))) {
     grantFail("CLIENT_SCOPE_AUTHORITY_STALE", 403, "The frozen scope is not authorized by this delegation revision");
   }
   await lease.requireGrantCurrent();
 }
 
 /** Issue into the existing exact-scope grant store. No browser identity or owner authority is substituted. */
-export async function issueClientQueryScopeGrant(input: {
+interface ClientScopeGrantInput {
   readonly database: D1Database;
   readonly context: AuthenticatedRequestContext;
   readonly snapshot: ScopeSnapshot;
@@ -48,7 +56,29 @@ export async function issueClientQueryScopeGrant(input: {
   readonly require_current: (snapshot: ScopeSnapshot) => Promise<ScopeSnapshot>;
   readonly expires_at_ceiling_ms?: number;
   readonly now: () => number;
-}): Promise<void> {
+}
+
+export async function issueClientQueryScopeGrant(input: ClientScopeGrantInput): Promise<void> {
+  return issueClientScopeGrant(input);
+}
+
+export async function issueClientArtifactScopeGrant(
+  input: ClientScopeGrantInput, origin: ClientArtifactScopeOrigin,
+): Promise<void> {
+  await requireClientArtifactScopeSchema(input.database);
+  return issueClientScopeGrant(input, origin);
+}
+
+export async function requireClientArtifactScopeSchema(db: D1Database): Promise<void> {
+  const ready = await grantRead(() => db.prepare(
+    "SELECT value FROM schema_state WHERE key='project_client_artifact_scope_generation'",
+  ).first<{ value: string }>());
+  if (ready?.value !== "project-client-artifact-scope-v1") {
+    grantFail("CLIENT_ARTIFACT_NOT_READY", 503, "Delegated report reads require migration 0074", true);
+  }
+}
+
+async function issueClientScopeGrant(input: ClientScopeGrantInput, artifactOrigin?: ClientArtifactScopeOrigin): Promise<void> {
   const { database: db, context, snapshot, lease, now } = input;
   const started = grantNow(now);
   const epoch = await grantEpoch(db);
@@ -77,10 +107,10 @@ export async function issueClientQueryScopeGrant(input: {
   }
   const access: EvidenceAccessContext = { principal_ref: context.principal_ref, client_class: context.client_class,
     credential_generation: context.credential_generation };
-  const origin = provenance(lease);
+  const origin = provenance(lease, artifactOrigin);
   const receipt = `grant-${await evidenceSha256({ scope: snapshot.digest, access, delegation: origin })}`;
   // Preserve the resolver's source-use closure, as on owner scopes. These are source-purpose
-  // labels, not client operations or permission to spend; the origin remains query-only.
+  // labels, not client operations or permission to spend; the recorded origin remains operation-specific.
   const allowedUses = [...new Set(loaded.flatMap((source) => source.authority.allowed_use))].sort();
   if (!allowedUses.length) allowedUses.push("research");
   if (allowedUses.length > 512) grantFail("CLIENT_SCOPE_USE_DENIED", 403, "Source-use closure exceeds the evidence envelope");
@@ -95,19 +125,23 @@ export async function issueClientQueryScopeGrant(input: {
     await db.prepare("INSERT INTO scope_access_grant (snapshot_id,snapshot_revision,principal_ref,client_class," +
       "credential_generation,policy_authority_ref,allowed_use_json,disclosure_ceiling,authorization_receipt_ref,state," +
       "expires_at,created_at,project_client_grant_id,project_client_grant_revision,project_client_operation," +
-      "project_client_project_generation,project_client_authority_epoch) " +
-      "SELECT ?1,?2,?3,?4,?5,?6,?7,?8,?9,'ACTIVE',?10,?11,?12,?13,'query',?14,?15 FROM scope_snapshot s " +
+      "project_client_project_generation,project_client_authority_epoch" + (artifactOrigin === undefined ? "" :
+      ",project_client_artifact_id,project_client_artifact_revision") + ") " +
+      "SELECT ?1,?2,?3,?4,?5,?6,?7,?8,?9,'ACTIVE',?10,?11,?12,?13,?17,?14,?15" +
+      (artifactOrigin === undefined ? "" : ",?18,?19") + " FROM scope_snapshot s " +
       "WHERE s.snapshot_id=?1 AND s.revision=?2 AND s.snapshot_digest=?16 AND s.invalidated_at IS NULL " +
       "AND julianday(?10)>julianday('now') " +
       "AND (SELECT generation FROM orientation_authority_epoch WHERE singleton=1)=?15 ON CONFLICT DO NOTHING")
       .bind(snapshot.snapshot_id, snapshot.revision, access.principal_ref, access.client_class, access.credential_generation,
         snapshot.policy_authority_ref, expected.allowed_use_json, expected.disclosure_ceiling, receipt, expected.expires_at,
         new Date(started).toISOString(), origin.project_client_grant_id, origin.project_client_grant_revision,
-        origin.project_client_project_generation, epoch, snapshot.digest).run();
+        origin.project_client_project_generation, epoch, snapshot.digest, origin.project_client_operation,
+        ...(artifactOrigin === undefined ? [] : [artifactOrigin.artifact_ref.id, artifactOrigin.artifact_ref.revision])).run();
   } catch { /* An ambiguous write is read back once; it is never retried with a new identity. */ }
   const settled = await grantRead(() => db.prepare("SELECT policy_authority_ref,allowed_use_json,disclosure_ceiling," +
     "authorization_receipt_ref,state,expires_at,project_client_grant_id,project_client_grant_revision," +
-    "project_client_operation,project_client_project_generation FROM scope_access_grant " +
+    "project_client_operation,project_client_project_generation" + (artifactOrigin === undefined ? "" :
+      ",project_client_artifact_id,project_client_artifact_revision") + " FROM scope_access_grant " +
     "WHERE snapshot_id=?1 AND snapshot_revision=?2 AND principal_ref=?3 AND client_class=?4 AND credential_generation=?5")
     .bind(snapshot.snapshot_id, snapshot.revision, access.principal_ref, access.client_class, access.credential_generation).first());
   if (settled === null) {
@@ -118,5 +152,5 @@ export async function issueClientQueryScopeGrant(input: {
     grantFail("CLIENT_SCOPE_AUTHORITY_STALE", 403, "An existing scope grant cannot be replaced or revived");
   }
   await input.require_current(snapshot);
-  await requireClientScopeProvenance(db, access, snapshot, lease);
+  await requireClientScopeProvenance(db, access, snapshot, lease, artifactOrigin);
 }

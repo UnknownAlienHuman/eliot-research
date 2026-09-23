@@ -293,6 +293,32 @@ export type ResearchArtifactSectionCitations =
   | ResearchArtifactSectionCitationsNotExecuted
   | ResearchArtifactSectionCitationsExecuted;
 
+/** Existing reauthorization wire format, also returned by service citation GETs.
+ * Saved verification belongs to original_scope_snapshot_ref; new handles belong to
+ * authorization_scope_snapshot_ref. Never relabel the historical verification. */
+export type ResearchArtifactReauthorizedCitations = {
+  readonly protocol: "eliotr.artifact-draft-citations-reauthorization.v1";
+  readonly artifact_ref: VersionedRef;
+  readonly section_ref: VersionedRef;
+  readonly original_scope_snapshot_ref: VersionedRef;
+  readonly authorization_scope_snapshot_ref: VersionedRef;
+  readonly authorization: {
+    readonly authorization_receipt_ref: string;
+    readonly policy_authority_ref: string;
+    readonly allowed_use: readonly string[];
+    readonly disclosure_ceiling: string;
+    readonly expires_at: string;
+  };
+  readonly deployment_generation: string;
+  readonly verification_receipt_ref: string;
+  readonly cited_evidence: readonly {
+    readonly original_handle_ref: VersionedRef;
+    readonly handle_ref: VersionedRef;
+    readonly excerpt_sha256: string;
+  }[];
+} & ({ readonly semantic_verification: "NOT_EXECUTED"; readonly audit?: never }
+  | { readonly semantic_verification: "EXECUTED"; readonly audit: ResearchArtifactSectionCitationAudit });
+
 export type ExhaustiveWorkflowPageStatus = ExhaustiveWorkflowResult["workflow_status"];
 export type ExhaustiveWorkflowJobState = "PENDING" | "COMPLETE" | "INVALIDATED";
 
@@ -343,7 +369,7 @@ export interface SemanticApi {
   run(context: AuthenticatedRequestContext, request: QueryRequest): Promise<{ investigation_ref: VersionedRef; workflow_instance_id: string }>;
   artifact(context: AuthenticatedRequestContext, artifactRef: VersionedRef): Promise<ArtifactRevision>;
   artifactSection(context: AuthenticatedRequestContext, artifactRef: VersionedRef, sectionRef: VersionedRef): Promise<Response>;
-  artifactSectionCitations(context: AuthenticatedRequestContext, artifactRef: VersionedRef, sectionRef: VersionedRef): Promise<ResearchArtifactSectionCitations>;
+  artifactSectionCitations(context: AuthenticatedRequestContext, artifactRef: VersionedRef, sectionRef: VersionedRef): Promise<ResearchArtifactSectionCitations | ResearchArtifactReauthorizedCitations>;
   proposeWiki(context: AuthenticatedRequestContext, request: unknown): Promise<WikiProposalResult>;
   proposeWikiFromResearchRun(context: AuthenticatedRequestContext, operationId: string): Promise<WikiProposalResult>;
   proposeWikiFromOwnerEdit(context: AuthenticatedRequestContext, request: unknown): Promise<WikiProposalResult>;

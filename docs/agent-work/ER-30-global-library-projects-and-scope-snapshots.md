@@ -21,6 +21,7 @@ outside the paths below.
 - `apps/eliotr-core/test/scope-persistence.test.ts`
 - `apps/eliotr-core/src/sql-fixture.d.ts`
 - `packages/cloudflare-navigation/src/scope-service.ts`
+- `packages/cloudflare-navigation/src/owner-historical-scope.ts`
 
 ## Read only
 

@@ -9,7 +9,7 @@ import { grantEpoch, grantFail } from "./client-grant-store.js";
 import { scopeExpressionAtoms, scopeExpressionIdentity, type DeterministicScopeAtom } from "@eliotr/domain";
 import { createD1ScopeService } from "./d1-scope-service.js";
 import { orientationCurrentness } from "./orientation-currentness.js";
-import { issueClientQueryScopeGrant, requireClientScopeProvenance, requireClientScopeSchema } from "./client-scope-grant.js";
+import { issueClientQueryScopeGrant, requireClientScopeProvenance, requireClientArtifactScopeSchema, requireClientScopeSchema, type ClientArtifactScopeOrigin } from "./client-scope-grant.js";
 import type { ScopeAuthorityRequest, ScopeRepository } from "./scope-service.js";
 import { ORIENTATION_MAX_SOURCES, orientationFail, orientationId } from "./orientation-input.js";
 
@@ -374,4 +374,82 @@ export async function createProjectClientScopeAuthority(db: D1Database, context:
   }
   await lease.requireCurrent();
   return { authority, requireScopeCurrent };
+}
+
+/** Historical report reads keep the service actor and the grantor's policy subject separate.
+ * Only reports originally scoped to this explicit project are shareable; overlapping sources
+ * do not authorize a global, another project's, or another owner's report. */
+export async function createProjectClientArtifactAuthority(
+  db: D1Database, context: AuthenticatedRequestContext, original: ScopeSnapshot,
+  origin: ClientArtifactScopeOrigin,
+  originalPrincipal: string, now: () => number = Date.now,
+) {
+  if (original.resolved_scope_expression.kind !== "PROJECT") {
+    grantFail("CLIENT_ARTIFACT_PROJECT_REQUIRED", 403, "Report must originate from one explicit project");
+  }
+  await requireClientArtifactScopeSchema(db);
+  const projectId = original.resolved_scope_expression.project_id;
+  const lease = await authorizeProjectClientGrant(db, context, { operation: origin.operation, project_id: projectId }, now);
+  if (lease.grant.grantor_principal_ref !== originalPrincipal || !lease.grant.allowed_operations.includes("report")) {
+    grantFail("CLIENT_ARTIFACT_DENIED", 403, "Delegation does not authorize this report's owner");
+  }
+  const shared = createReadPolicyAuthority(db, context, originalPrincipal, now);
+  async function requireOrigin() {
+    await lease.requireGrantCurrent();
+    const row = await db.prepare("SELECT 1 AS present FROM artifact_draft_binding b " +
+      "JOIN artifact_revision a ON a.artifact_id=b.artifact_id AND a.revision=b.revision " +
+      "WHERE b.artifact_id=?1 AND b.revision=?2 AND b.principal_ref=?3 " +
+      "AND b.scope_snapshot_id=?4 AND b.scope_snapshot_revision=?5 AND a.status='DRAFT' LIMIT 1")
+      .bind(origin.artifact_ref.id, origin.artifact_ref.revision, originalPrincipal, original.snapshot_id, original.revision).first();
+    if (row === null) grantFail("CLIENT_ARTIFACT_DENIED", 403, "Saved report binding is unavailable");
+    await lease.requireGrantCurrent();
+  }
+  async function sources(refs: readonly string[]) {
+    const epoch = await grantEpoch(db);
+    await requireOrigin();
+    // Validate every historical source ID against today's membership without adopting its new head.
+    for (const batch of splitExhaustiveSourceRefs(refs)) {
+      const rows = await db.prepare("SELECT sr.source_revision_ref FROM source_revision sr " +
+        "JOIN project_source_membership m ON m.source_id=sr.source_id AND m.project_id=?1 " +
+        "WHERE sr.source_revision_ref IN (SELECT value FROM json_each(?2)) " +
+        "AND julianday(m.valid_from)<=julianday(?3) AND (m.valid_to IS NULL OR julianday(m.valid_to)>julianday(?3)) " +
+        "ORDER BY sr.source_revision_ref LIMIT ?4")
+        .bind(projectId, JSON.stringify(batch), new Date(now()).toISOString(), batch.length + 1)
+        .all<{ source_revision_ref: string }>();
+      const expected = new Set(batch);
+      if (!rows.success || !Array.isArray(rows.results) || rows.results.length !== batch.length ||
+          rows.results.some((row) => !expected.delete(row.source_revision_ref)) || expected.size !== 0) {
+        grantFail("CLIENT_ARTIFACT_SOURCE_DENIED", 403, "Report sources are not all current project members");
+      }
+    }
+    const result = await shared.exhaustiveSources(refs);
+    await requireOrigin();
+    if (await grantEpoch(db) !== epoch) grantFail("CLIENT_ARTIFACT_AUTHORITY_CHANGED", 409, "Report authority changed during read", true);
+    return result;
+  }
+  async function resolveAtom(atom: DeterministicScopeAtom, observedAt: string) {
+    if (atom.kind !== "PROJECT" || atom.project_id !== projectId) grantFail("CLIENT_ARTIFACT_DENIED", 403, "Report project differs");
+    await requireOrigin();
+    const result = await shared.exhaustiveResolveAtom(atom, observedAt);
+    await requireOrigin();
+    return result;
+  }
+  async function resolveAuthorityClosure(request: ScopeAuthorityRequest) {
+    if (scopeExpressionIdentity(request.expression) !== scopeExpressionIdentity(original.resolved_scope_expression)) {
+      grantFail("CLIENT_ARTIFACT_DENIED", 403, "Report expression differs");
+    }
+    await sources(request.member_source_revision_refs);
+    const closure = await shared.exhaustiveResolveAuthorityClosure(request);
+    const policy = `client-report-${await evidenceSha256({ original: closure.policy_authority_ref,
+      scope: original.digest, artifact: origin, grant: lease.grant, project_generation: lease.project_generation })}`;
+    await requireOrigin();
+    return { ...closure, policy_authority_ref: policy };
+  }
+  const requireReadPolicy = async () => { await requireOrigin(); await shared.exhaustiveRequireReadPolicy(); };
+  const noUnboundGrant = async (): Promise<never> => grantFail("CLIENT_ARTIFACT_DENIED", 403, "Artifact-bound grant issuance is required");
+  const authority: OwnerScopeAuthority = { sources, exhaustiveSources: sources, resolveAtom, exhaustiveResolveAtom: resolveAtom,
+    resolveAuthorityClosure, exhaustiveResolveAuthorityClosure: resolveAuthorityClosure,
+    requireReadPolicy, exhaustiveRequireReadPolicy: requireReadPolicy, grant: noUnboundGrant, exhaustiveGrant: noUnboundGrant };
+  await requireOrigin();
+  return { authority, lease, requireOrigin };
 }

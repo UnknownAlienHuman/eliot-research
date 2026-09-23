@@ -108,7 +108,7 @@ function parseRef(value: unknown, label: string): VersionedRef {
 }
 
 function accessSnapshot(value: EvidenceAccessContext): EvidenceAccessContext {
-  if (value.client_class !== "owner_pwa") {
+  if (!["owner_pwa", "trusted_agent", "named_api_client"].includes(value.client_class)) {
     fail("ARTIFACT_DRAFT_READ_DENIED", 403, "draft read authorization denied");
   }
   return Object.freeze({
@@ -121,7 +121,7 @@ function accessSnapshot(value: EvidenceAccessContext): EvidenceAccessContext {
 function authorizationSnapshot(value: ScopeAuthorization): ScopeAuthorization {
   try {
     return Object.freeze(JSON.parse(canonicalEvidenceJson(value)) as ScopeAuthorization);
-  } catch (cause) {
+  } catch {
     fail("ARTIFACT_DRAFT_READ_INTEGRITY", 409, "citation authorization is invalid");
   }
 }
@@ -192,7 +192,7 @@ async function pinnedCandidate(
       handle.anchor.start,
       handle.anchor.end,
     ).all<ProjectionCitationRow>();
-  } catch (cause) {
+  } catch {
     fail("ARTIFACT_DRAFT_READ_UNAVAILABLE", 503, "fresh citation projection is unavailable", true);
   }
   if (!result.success || !Array.isArray(result.results)) {
@@ -229,7 +229,7 @@ async function pinnedCandidate(
       index_generation: generation,
       metadata: { item_key: itemKey, content_sha256: contentSha },
     });
-  } catch (cause) {
+  } catch {
     fail("ARTIFACT_DRAFT_READ_STALE", 410, "saved citation projection candidate is invalid");
   }
 }
@@ -292,7 +292,7 @@ export async function readReauthorizedArtifactDraftSectionCitations(
   }
   let freshScope: ReturnType<typeof ScopeSnapshotSchema.parse>;
   try { freshScope = ScopeSnapshotSchema.parse(JSON.parse(canonicalEvidenceJson(navigation.scope))); }
-  catch (cause) { fail("ARTIFACT_DRAFT_READ_INTEGRITY", 409, "fresh citation scope is invalid"); }
+  catch { fail("ARTIFACT_DRAFT_READ_INTEGRITY", 409, "fresh citation scope is invalid"); }
   const scopeRef = { id: freshScope.snapshot_id, revision: freshScope.revision };
   const coreInput: ArtifactDraftReauthorizationSectionReadInput = {
     database: input.database,

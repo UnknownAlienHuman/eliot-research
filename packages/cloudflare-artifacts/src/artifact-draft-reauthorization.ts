@@ -24,7 +24,7 @@ export interface ArtifactDraftReauthorizationInput {
   readonly work_bucket: R2Bucket;
   readonly artifact_ref: VersionedRef;
   readonly access: EvidenceAccessContext;
-  /** A newly created, owner-authorized navigation scope for this read. */
+  /** A newly created, actor-authorized navigation scope for this read. */
   readonly current_navigation: NavigationReadAuthority;
   /** The exact grant returned by current_navigation.current(). */
   readonly current_authorization: ScopeAuthorization;
@@ -80,7 +80,7 @@ export async function readReauthorizedArtifactDraft(
 ): Promise<ArtifactDraftReauthorizedRead | null> {
   const artifactRef = parseRef(input.artifact_ref, "draft reference");
   const sectionRef = input.section_ref === undefined ? undefined : parseRef(input.section_ref, "section reference");
-  if (input.access.client_class !== "owner_pwa") {
+  if (!["owner_pwa", "trusted_agent", "named_api_client"].includes(input.access.client_class)) {
     throw new ArtifactDraftReadError("ARTIFACT_DRAFT_READ_DENIED", 403, "draft read authorization denied");
   }
   boundedString(input.access.principal_ref, "principal");
@@ -90,7 +90,7 @@ export async function readReauthorizedArtifactDraft(
       typeof input.current_navigation.current !== "function" || typeof input.current_navigation.sources !== "function") {
     invalid("current navigation authority is invalid");
   }
-  if (!sameAccess(input.access, input.current_navigation.access) || input.current_navigation.access.client_class !== "owner_pwa") {
+  if (!sameAccess(input.access, input.current_navigation.access)) {
     throw new ArtifactDraftReadError("ARTIFACT_DRAFT_READ_DENIED", 403, "draft read authorization denied");
   }
   let currentScope: ScopeSnapshot;

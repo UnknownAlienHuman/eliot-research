@@ -6,7 +6,9 @@ import {
 import type { VersionedRef } from "@eliotr/contracts";
 import { CatalogInputError } from "./catalog-service.js";
 
-const MAX_SOURCE_REFS = 64;
+import { readOwnerScopeProfile } from "@eliotr/cloudflare-navigation";
+
+const SOURCE_PAGE_SIZE = 64;
 const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/u;
 
 interface SourceHeadRow {
@@ -67,7 +69,8 @@ export async function readSourceRevisionFreshness(
     throw new CatalogInputError("WIKI_POLICY_DENIED", "saved Wiki scope is no longer available", 410);
   }
   const refs = original.snapshot.member_source_revision_refs.map((ref) => identifier(ref, "saved source revision"));
-  if (refs.length > MAX_SOURCE_REFS || new Set(refs).size !== refs.length) corrupt("saved Wiki scope source set is malformed");
+  const profile = await readOwnerScopeProfile(database, original.snapshot);
+  if (refs.length > profile.max_sources || new Set(refs).size !== refs.length) corrupt("saved Wiki scope source set is malformed");
   const navigationScope = authorization.navigation.scope;
   if (canonicalEvidenceJson([...navigationScope.member_source_revision_refs].sort()) !== canonicalEvidenceJson([...refs].sort()) ||
       canonicalEvidenceJson(navigationScope.source_owner_generations) !== canonicalEvidenceJson(original.snapshot.source_owner_generations)) {
@@ -75,21 +78,26 @@ export async function readSourceRevisionFreshness(
   }
 
   await authorization.requireCurrent();
-  let rows: readonly SourceHeadRow[] = [];
-  if (refs.length > 0) {
-    const placeholders = refs.map((_, index) => `?${index + 1}`).join(",");
+  const rows: SourceHeadRow[] = [];
+  for (let offset = 0; offset < refs.length; offset += SOURCE_PAGE_SIZE) {
+    const batch = refs.slice(offset, offset + SOURCE_PAGE_SIZE);
     let result: D1Result<SourceHeadRow>;
     try {
       result = await database.prepare(
         "SELECT s.source_id AS source_id, sr.source_revision_ref AS saved_revision_ref, " +
         "s.head_rev AS head_revision_ref FROM source_revision sr JOIN source s ON s.source_id=sr.source_id " +
-        `WHERE sr.source_revision_ref IN (${placeholders}) ORDER BY sr.source_revision_ref LIMIT ${MAX_SOURCE_REFS + 1}`,
-      ).bind(...refs).all<SourceHeadRow>();
+        "WHERE sr.source_revision_ref IN (SELECT value FROM json_each(?1)) ORDER BY sr.source_revision_ref LIMIT ?2",
+      ).bind(JSON.stringify(batch), batch.length + 1).all<SourceHeadRow>();
     } catch {
       unavailable("current Wiki source heads are unavailable");
     }
     if (!result.success || !Array.isArray(result.results)) unavailable("current Wiki source heads are unavailable");
-    rows = result.results;
+    const expected = new Set(batch);
+    if (result.results.length !== batch.length || result.results.some((row) =>
+      typeof row.saved_revision_ref !== "string" || !expected.delete(row.saved_revision_ref)) || expected.size !== 0) {
+      corrupt("saved source freshness page does not match the requested revisions");
+    }
+    rows.push(...result.results);
   }
   if (rows.length !== refs.length) corrupt("saved Wiki source revisions are unavailable");
   const byRevision = new Map<string, { readonly source_id: string; readonly head_revision_ref: string }>();

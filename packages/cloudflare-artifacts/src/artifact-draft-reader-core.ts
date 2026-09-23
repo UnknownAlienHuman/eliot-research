@@ -40,6 +40,8 @@ import {
   type ImmutableObjectReceipt,
 } from "@eliotr/platform-cloudflare";
 
+import { hasDelegatedArtifactReadAuthority } from "./artifact-draft-read-authority.js";
+
 const MANIFEST_PREFIX = "artifact-draft/manifest";
 const SECTION_PREFIX = "artifact-draft/section";
 const REFERENCE_PREFIX = "artifact-draft/reference";
@@ -464,7 +466,7 @@ async function readArtifactDraftCore(
     "SELECT artifact_id, revision, intent_id, intent_revision, expected_head_revision, principal_ref, spec_ref_id, spec_ref_revision, scope_snapshot_id, scope_snapshot_revision, manifest_r2_key, manifest_sha256, manifest_size_bytes, created_at FROM artifact_draft_binding WHERE artifact_id=?1 AND revision=?2 LIMIT 1",
   ).bind(artifactRef.id, artifactRef.revision).first<BindingRow>();
   if (binding === null) fail("ARTIFACT_DRAFT_READ_INTEGRITY", 409, "draft binding is missing");
-  if (binding.principal_ref !== access.principal_ref) fail("ARTIFACT_DRAFT_READ_DENIED", 403, "draft read authorization denied");
+  if (access.client_class === "owner_pwa" && binding.principal_ref !== access.principal_ref) fail("ARTIFACT_DRAFT_READ_DENIED", 403, "draft read authorization denied");
   let scopeRef: VersionedRef;
   try { scopeRef = VersionedRefSchema.parse({ id: binding.scope_snapshot_id, revision: binding.scope_snapshot_revision }); }
   catch { fail("ARTIFACT_DRAFT_READ_INTEGRITY", 409, "draft scope reference is invalid"); }
@@ -482,7 +484,10 @@ async function readArtifactDraftCore(
   let authority: NavigationReadAuthority;
   let initialSourceFingerprint: string | undefined;
   try {
-    if (access.client_class !== "owner_pwa") fail("ARTIFACT_DRAFT_READ_DENIED", 403, "draft read authorization denied");
+    if (access.client_class !== "owner_pwa" && (reauthorization === undefined ||
+        (access.client_class !== "trusted_agent" && access.client_class !== "named_api_client"))) {
+      fail("ARTIFACT_DRAFT_READ_DENIED", 403, "draft read authorization denied");
+    }
     if (reauthorization === undefined) {
       if (!("require_current" in input)) fail("ARTIFACT_DRAFT_READ_INTEGRITY", 409, "draft read currentness input is missing");
       authority = createNavigationReadAuthority({
@@ -495,7 +500,7 @@ async function readArtifactDraftCore(
       await authority.current();
     } else {
       if (reauthorizationAccess === undefined || !reauthorizedAccessMatches(access, reauthorizationAccess) ||
-          reauthorizationAccess.client_class !== "owner_pwa" || freshReauthorizationScope === undefined ||
+          freshReauthorizationScope === undefined ||
           expectedAuthorizationJson === undefined) {
         fail("ARTIFACT_DRAFT_READ_DENIED", 403, "draft read authorization denied");
       }
@@ -512,7 +517,22 @@ async function readArtifactDraftCore(
         freshReauthorizationScope,
         currentGrant,
       );
-      authority = reauthorization.navigation;
+      const navigation = reauthorization.navigation;
+      const authorizationScopeRef = { id: freshReauthorizationScope.snapshot_id, revision: freshReauthorizationScope.revision };
+      const originalPrincipal = text(binding.principal_ref, "draft author");
+      const requireArtifactOrigin = async (grant: ScopeAuthorization) => {
+        if (access.client_class !== "owner_pwa" && !await hasDelegatedArtifactReadAuthority({
+          database, access, artifact_ref: artifactRef, original_scope_ref: scopeRef,
+          authorization_scope_ref: authorizationScopeRef, authorization: grant,
+          original_principal_ref: originalPrincipal, citations,
+        })) fail("ARTIFACT_DRAFT_READ_DENIED", 403, "draft read authorization denied");
+      };
+      await requireArtifactOrigin(currentGrant);
+      authority = { ...navigation, current: async () => {
+        const grant = await navigation.current();
+        await requireArtifactOrigin(grant);
+        return grant;
+      } };
     }
   } catch (error) {
     if (error instanceof ArtifactDraftReadError) throw error;
@@ -594,6 +614,7 @@ async function readArtifactDraftCore(
     fail("ARTIFACT_DRAFT_READ_INTEGRITY", 409, "draft manifest binding is inconsistent");
   }
   const store = createR2EvidenceObjectStore(input.work_bucket);
+  if (access.client_class !== "owner_pwa") await authority.current();
   const manifestObject = await readStoredObject(store, manifestRow, {
     object_ref: "manifest", object_kind: "MANIFEST", section_ordinal: null, prefix: MANIFEST_PREFIX, content_type: "application/json",
   }, true);
@@ -648,6 +669,7 @@ async function readArtifactDraftCore(
     if (row.artifact_id !== artifactRef.id || row.revision !== artifactRef.revision || row.created_at !== artifact.created_at) {
       fail("ARTIFACT_DRAFT_READ_INTEGRITY", 409, "draft object identity is inconsistent");
     }
+    if (access.client_class !== "owner_pwa") await authority.current();
     storedByRef.set(expectedObject.object_ref, await readStoredObject(
       store,
       row,

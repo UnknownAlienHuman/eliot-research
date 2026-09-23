@@ -634,7 +634,9 @@
         "apps/eliotr-core/src/bounded-json.ts",
         "apps/eliotr-core/test/bounded-json.test.ts",
         "apps/eliotr-core/src/federation-http.ts",
-        "apps/eliotr-core/test/federation-runtime-http.test.ts"
+        "apps/eliotr-core/test/federation-runtime-http.test.ts",
+        "apps/eliotr-core/src/research-artifact-reauthorization-http.ts",
+        "apps/eliotr-core/src/source-revision-freshness.ts"
       ],
       "mandatory_negative_case": "Delete Queue or DO transient state and prove no durable job/investigation/artifact is lost.",
       "document": "ER-24-worker-composition-do-queue-and-schedules.md",
@@ -826,7 +828,8 @@
         "packages/domain/src/scope/snapshot-identity.test.ts",
         "apps/eliotr-core/test/scope-persistence.test.ts",
         "apps/eliotr-core/src/sql-fixture.d.ts",
-        "packages/cloudflare-navigation/src/scope-service.ts"
+        "packages/cloudflare-navigation/src/scope-service.ts",
+        "packages/cloudflare-navigation/src/owner-historical-scope.ts"
       ],
       "mandatory_negative_case": "Purge one member after freeze and prove the stale snapshot cannot authorize retrieval through old index/cache/summary.",
       "document": "ER-30-global-library-projects-and-scope-snapshots.md",

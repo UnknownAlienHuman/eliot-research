@@ -98,6 +98,8 @@ fail-closed. The Worker is a composition and transport boundary, not a second do
 - `apps/eliotr-core/test/bounded-json.test.ts`
 - `apps/eliotr-core/src/federation-http.ts`
 - `apps/eliotr-core/test/federation-runtime-http.test.ts`
+- `apps/eliotr-core/src/research-artifact-reauthorization-http.ts`
+- `apps/eliotr-core/src/source-revision-freshness.ts`
 
 ER-09 exclusively owns `apps/eliotr-core/src/research-workflow.ts`; ER-24 may compose its exported
 boundary but does not edit or reimplement that workflow authority.

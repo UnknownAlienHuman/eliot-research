@@ -13,7 +13,7 @@ import { createResearchChangesService } from "./research-changes.js";
 import { reconcileExpiredOutboxLeases } from "./outbox-reconciler.js";
 import { createD1ScopeService, createOrientationApi, createOwnerScopeAuthority, ORIENTATION_PROFILE, OrientationError } from "@eliotr/cloudflare-navigation";
 import { createNavigationExpandService } from "./navigation-expand-service.js";
-import type { ScopeSnapshot, VersionedRef } from "@eliotr/contracts";
+import { ArtifactRevisionSchema, type ScopeSnapshot, type VersionedRef } from "@eliotr/contracts";
 import type {
   ApplicationLifecycle,
   AuthenticatedRequestContext,
@@ -52,6 +52,7 @@ import { createRawMarkdownOwnerConverter } from "@eliotr/cloudflare-markdown";
 import { createRawNormalizedAdmissionService } from "./raw-normalized-admission.js";
 import { readLibraryReadiness } from "./library-readiness.js";
 import { readArtifactDraft, readArtifactDraftSection, readArtifactDraftSectionCitations } from "@eliotr/cloudflare-research";
+import { reopenOwnerArtifactDraft, reopenOwnerArtifactSection, reopenOwnerArtifactSectionCitations } from "./research-artifact-reauthorization-http.js";
 import { ArtifactReadNotFoundError } from "./artifact-draft-http.js";
 import { createErasureOwnerService } from "./erasure-owner-service.js";
 import { readErasureOwnerStatus } from "./erasure-owner-status.js";
@@ -135,11 +136,13 @@ function semanticApi(env: Env): SemanticApi {
     verify: (context, request) => evidence.verify(context, request),
     run: (context, request) => researchRun.run(context, request),
     artifact: async (context, artifactRef) => {
+      if (context.client_class !== "owner_pwa") return ArtifactRevisionSchema.parse((await reopenOwnerArtifactDraft(env, context, artifactRef)).artifact);
       const revision = await readArtifactDraft(artifactInput(context, artifactRef));
       if (revision === null) throw new ArtifactReadNotFoundError();
       return revision;
     },
     artifactSection: async (context, artifactRef, sectionRef) => {
+      if (context.client_class !== "owner_pwa") return reopenOwnerArtifactSection(env, context, artifactRef, sectionRef);
       const section = await readArtifactDraftSection({
         ...artifactInput(context, artifactRef), section_ref: sectionRef,
       });
@@ -147,6 +150,7 @@ function semanticApi(env: Env): SemanticApi {
       return artifactSectionResponse(section);
     },
     artifactSectionCitations: async (context, artifactRef, sectionRef) => {
+      if (context.client_class !== "owner_pwa") return reopenOwnerArtifactSectionCitations(env, context, artifactRef, sectionRef);
       const citations = await readArtifactDraftSectionCitations({
         ...artifactInput(context, artifactRef), section_ref: sectionRef,
       });
