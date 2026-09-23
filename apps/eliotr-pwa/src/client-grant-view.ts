@@ -2,7 +2,7 @@ import { ProjectClientGrantPutSchema, type ProjectClientGrant } from "@eliotr/co
 import { escapeHtml } from "./html.js";
 
 export function clientGrantMarkup(): string {
-  const extra = ProjectClientGrantPutSchema.shape.allowed_operations.element.options.filter((op) => op !== "catalog");
+  const extra = ProjectClientGrantPutSchema.shape.allowed_operations.element.options.filter((op) => op !== "catalog" && op !== "query" && op !== "evidence");
   return `<section class="client-grant-panel" aria-labelledby="client-grant-title">
     <div class="connection-heading"><div><span class="eyebrow">Project access</span><h2 id="client-grant-title">Agent permissions</h2></div></div>
     <p>Give a service client access to one project. Enter its public Client ID, never its Client Secret. Configured permissions do not prove a client has connected.</p>
@@ -22,6 +22,8 @@ export function clientGrantMarkup(): string {
         <label>Service Client ID<input data-grant-subject maxlength="256" placeholder="client-id.access" required autocomplete="off"></label>
         <label>Expires at (your local time)<input data-grant-expiry type="datetime-local" step="0.001" required></label></div>
         <label class="client-grant-option"><input data-grant-operation type="checkbox" value="catalog" checked>Read project catalog</label>
+        <label class="client-grant-option"><input data-grant-operation type="checkbox" value="query">Search project evidence (FAST_SEARCH over HTTP)</label>
+        <label class="client-grant-option"><input data-grant-operation type="checkbox" value="evidence">Open / verify query evidence (requires query permission)</label>
         <details><summary>Other declared permissions — handlers pending</summary>
           <p>These permissions can be configured, but their service handlers are not connected yet. They do not authorize paid model calls.</p>
           <div class="client-grant-options">${extra.map((op) => `<label class="client-grant-option"><input data-grant-operation type="checkbox" value="${escapeHtml(op)}">${escapeHtml(op)}</label>`).join("")}</div>

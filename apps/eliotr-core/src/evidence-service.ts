@@ -12,6 +12,7 @@ import {
 } from "@eliotr/cloudflare-evidence";
 import type { VersionedRef } from "@eliotr/contracts";
 import type { Env } from "./env.js";
+import { authorizeProjectClientGrant, ClientGrantError } from "@eliotr/cloudflare-navigation";
 
 export interface EvidenceService {
   verify(
@@ -35,6 +36,38 @@ function access(context: AuthenticatedRequestContext): EvidenceAccessContext {
     client_class: context.client_class,
     credential_generation: context.credential_generation,
   };
+}
+
+/** Public evidence reads require their own operation; query's internal resolver has no such HTTP capability. */
+async function requireDelegatedEvidence(db: D1Database, context: AuthenticatedRequestContext,
+  target: { readonly scope_ref: VersionedRef } | { readonly handle_ref: VersionedRef }): Promise<() => Promise<void>> {
+  if (context.client_class === "owner_pwa") return async () => {};
+  const ref = "scope_ref" in target ? target.scope_ref : target.handle_ref;
+  const handleJoin = "handle_ref" in target
+    ? "JOIN evidence_handle h ON h.scope_snapshot_id=g.snapshot_id AND h.scope_snapshot_revision=g.snapshot_revision "
+    : "";
+  const targetWhere = "handle_ref" in target ? "h.handle_id=?1 AND h.revision=?2" : "g.snapshot_id=?1 AND g.snapshot_revision=?2";
+  let row: { grant_id: string; revision: number; project_id: string; project_generation: number } | null;
+  try {
+    row = await db.prepare("SELECT g.project_client_grant_id AS grant_id,g.project_client_grant_revision AS revision," +
+      "d.project_id,g.project_client_project_generation AS project_generation FROM scope_access_grant g " + handleJoin +
+      "JOIN project_client_grant d ON d.grant_id=g.project_client_grant_id AND d.revision=g.project_client_grant_revision " +
+      `WHERE ${targetWhere} AND g.principal_ref=?3 AND g.client_class=?4 AND g.credential_generation=?5`)
+      .bind(ref.id, ref.revision, context.principal_ref, context.client_class, context.credential_generation)
+      .first<{ grant_id: string; revision: number; project_id: string; project_generation: number }>();
+  } catch {
+    throw new ClientGrantError("CLIENT_SCOPE_NOT_READY", 503, "Evidence scope authorization is unavailable; migration 0073 is required", true);
+  }
+  // Non-delegated legacy grants retain their original resolver path. Missing grants are denied there.
+  if (row === null) return async () => {};
+  const lease = await authorizeProjectClientGrant(db, context, {
+    operation: "evidence", project_id: row.project_id, required_revision: row.revision,
+  });
+  if (lease.grant.grant_id !== row.grant_id || lease.project_generation !== row.project_generation) {
+    throw new ClientGrantError("CLIENT_SCOPE_AUTHORITY_STALE", 403, "Evidence scope belongs to a different delegation");
+  }
+  await lease.requireCurrent();
+  return lease.requireCurrent;
 }
 
 function sliceUtf8(
@@ -70,6 +103,7 @@ export function createEvidenceService(
   });
   return {
     async verify(context, request) {
+      const requireCurrent = await requireDelegatedEvidence(env.CORE_DB, context, { scope_ref: request.scope_snapshot_ref });
       const resolved = "locator_candidate" in request
         ? await resolver.resolveCandidate({
           candidate: request.locator_candidate,
@@ -81,13 +115,16 @@ export function createEvidenceService(
           expected_scope_snapshot_ref: request.scope_snapshot_ref,
           access: access(context),
         });
+      await requireCurrent();
       return { resolved_evidence: resolved, handle: resolved.handle };
     },
     async open(context, handleRef, range) {
+      const requireCurrent = await requireDelegatedEvidence(env.CORE_DB, context, { handle_ref: handleRef });
       const resolved = await resolver.resolveHandle({
         handle_ref: handleRef,
         access: access(context),
       });
+      await requireCurrent();
       const selected = sliceUtf8(resolved.exact_excerpt, range);
       const headers = new Headers({
         "content-type": "text/plain; charset=utf-8",

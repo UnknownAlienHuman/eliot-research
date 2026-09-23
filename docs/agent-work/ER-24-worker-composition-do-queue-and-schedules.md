@@ -15,6 +15,7 @@ fail-closed. The Worker is a composition and transport boundary, not a second do
 - `packages/cloudflare-navigation/src/client-grant-store.ts`
 - `packages/cloudflare-navigation/src/client-grant-service.ts`
 - `packages/cloudflare-navigation/src/client-grant-authority.ts`
+- `packages/cloudflare-navigation/src/client-scope-grant.ts`
 
 - `apps/eliotr-core/src/env.ts`
 - `apps/eliotr-core/src/index.ts`
@@ -460,8 +461,46 @@ Every requested project member must pass the read ceiling; the result stays boun
 not evidence or an implicit frozen-scope grant. Cursors bind actor, delegation revision and epoch;
 expiry, membership, purge and current authority are checked before disclosure.
 
-This is a code checkpoint: runtime/native acceptance, Connections management UI, delegated
-query/run/control/history/evidence and actual import handlers remain separate. Operation enum
-membership never enables one of those handlers. No existing execution grant is renewed or
-reinterpreted; later execution integration must pin the originating delegation revision. Migration
-0072 is required at deployment; no database was changed remotely by this checkpoint.
+Connections management is implemented through the same owner API. Service-token HTTP FAST_SEARCH
+and query-derived evidence verify/open are wired as described below. Runtime/native acceptance,
+managed-OAuth/MCP query, machine run/control/history and actual import handlers remain separate.
+Operation enum membership never enables a handler. No existing execution grant is renewed or
+reinterpreted; later run integration must also pin the originating delegation revision.
+
+
+## Delegated FAST_SEARCH and query evidence (S11 code checkpoint)
+
+`POST /api/v1/research/query` admits verified service-token clients only for FAST_SEARCH under
+one active project-client grant with `query`. A PROJECT atom selects that project; expressions
+without one require the existing non-secret `X-Eliotr-Client-Grant` locator. GLOBAL_LIBRARY,
+multiple projects and any atom extending outside the project fail before scope storage. Every
+atom is resolved against the grantor's existing read-policy ceiling in full; it is never silently
+intersected with the delegated project. Actor attribution remains the verified service identity.
+
+The existing scope service freezes the expression and membership. Its atom/policy identities bind
+the exact delegation revision and project generation. Additive migration 0073 appends that origin
+to `scope_access_grant`; a current-authority epoch fences issuance and ambiguous writes reconcile
+by exact readback. Grant expiry is capped by the frozen scope, signed service session, delegation,
+source policy/admission and project membership boundaries. No old grant is promoted or renewed.
+
+Retrieval and the exact evidence resolver use the same `scope_access_grant_effective` SQL view.
+Current delegation, project/grantor ownership, membership, policy, source owner and purge state
+are mandatory both during resolution and at durable result/trace/handle/receipt writes. Query
+scope revocation invalidates persisted results; regrant cannot revive a prior scope or cache.
+Source/head/tag/namespace/admission changes conservatively revoke all active delegated query
+scopes, including unrelated ones, so arbitrary tag/class expressions cannot resurrect earlier
+rights. Project and read-policy changes target their affected grant origins. This deliberately
+coarse query-cache invalidation is not a complete reverse-dependency index. It does not touch
+legacy grants or S33 owner execution reservations.
+
+Public `/research/verify` and `/research/open/:ref` additionally require `evidence` on the same
+originating revision, before and after the shared resolver. A `query`-only grant can receive its
+search pack but cannot use a returned handle as independent evidence-read permission. These are
+query-derived evidence reads, not general Research report/section/history or MCP readers.
+
+FAST_SEARCH retains its 64-member/16-result and existing byte/section budgets; overflow is explicit,
+coverage stays NONE/SAMPLED and no model/spend authority is inferred. Owner behavior and the
+existing serializer/digests are retained. **Apply migrations through 0073 before deploying this
+code**, including owner paths that now read the effective-grant view. Code compilation and static
+SQL/ownership checks are not native D1/R2, concurrency, browser or live acceptance. Machine run,
+status, control, paid sponsorship and import/attach remain implementation work.

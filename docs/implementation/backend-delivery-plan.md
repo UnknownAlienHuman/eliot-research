@@ -78,8 +78,11 @@ The target is the known mandatory v1/Slices 0–6 with `gemini-mcp`. Completion 
 
 The current implementation adds owner project-client grant GET/PUT/DELETE plus the shared
 project-scoped HTTP/service-token MCP catalog path. Grant records contain no secrets; configured
-is not a verified connection. Migration 0072 and the common strict DTO are shared by future
-query/run/import consumers. Those consumers remain to implement. Connections now manages
+is not a verified connection. Migration 0072 and the common strict DTO are shared by all consumers.
+Service-token HTTP FAST_SEARCH now uses that authority and binds immutable query scope origin via
+migration 0073; query-derived verify/open additionally require the distinct evidence operation.
+Machine run/status/control, report/history, MCP query, paid sponsorship and import remain code work.
+Apply all migrations through 0073 before deploying the changed shared grant readers. Connections manages
 grants through the existing API and provides the independent opt-in service catalog-read command
 (`scripts/check-project-client.mjs --help`). Configured is not connected: the PWA does not claim
 a signed client round trip from owner readback or the unrelated generic MCP diagnostic.

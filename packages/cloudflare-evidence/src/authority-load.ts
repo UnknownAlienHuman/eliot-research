@@ -156,7 +156,7 @@ export async function authorizeScopeAuthority(
   }
   const row = await database.prepare(
     "SELECT authorization_receipt_ref, policy_authority_ref, allowed_use_json, " +
-    "disclosure_ceiling, expires_at, state FROM scope_access_grant " +
+    "disclosure_ceiling, expires_at, state FROM scope_access_grant_effective " +
     "WHERE snapshot_id = ?1 AND snapshot_revision = ?2 AND principal_ref = ?3 " +
     "AND client_class = ?4 AND credential_generation = ?5 LIMIT 1",
   ).bind(

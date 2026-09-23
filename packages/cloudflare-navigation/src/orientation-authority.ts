@@ -1,12 +1,15 @@
-import { SourceRevisionSchema, type ScopeSnapshot, type SourceRevision } from "@eliotr/contracts";
+import { SourceRevisionSchema, type ScopeExpression, type ScopeSnapshot, type SourceRevision } from "@eliotr/contracts";
 import {
   canonicalEvidenceJson, evidenceSha256, loadSourceAuthorities,
   type EvidenceAccessContext, type EvidenceSourceAuthority,
 } from "@eliotr/cloudflare-evidence";
 import type { AuthenticatedRequestContext } from "@eliotr/interfaces";
 import { authorizeProjectClientGrant, readClientProjectMembers } from "./client-grant-authority.js";
-import { grantFail } from "./client-grant-store.js";
-import type { DeterministicScopeAtom } from "@eliotr/domain";
+import { grantEpoch, grantFail } from "./client-grant-store.js";
+import { scopeExpressionAtoms, scopeExpressionIdentity, type DeterministicScopeAtom } from "@eliotr/domain";
+import { createD1ScopeService } from "./d1-scope-service.js";
+import { orientationCurrentness } from "./orientation-currentness.js";
+import { issueClientQueryScopeGrant, requireClientScopeProvenance, requireClientScopeSchema } from "./client-scope-grant.js";
 import type { ScopeAuthorityRequest, ScopeRepository } from "./scope-service.js";
 import { ORIENTATION_MAX_SOURCES, orientationFail, orientationId } from "./orientation-input.js";
 
@@ -287,4 +290,88 @@ export async function createProjectClientCatalogAuthority(db: D1Database, contex
       return result;
     },
   };
+}
+
+/** One delegated query scope. Every atom is authorized in full; no project intersection is silently added. */
+export async function createProjectClientScopeAuthority(db: D1Database, context: AuthenticatedRequestContext,
+  expression: ScopeExpression, now: () => number = Date.now) {
+  await requireClientScopeSchema(db);
+  const atoms = scopeExpressionAtoms(expression);
+  const projects = [...new Set(atoms.flatMap((atom) => atom.kind === "PROJECT" ? [atom.project_id] : []))];
+  if (projects.length > 1 || atoms.some((atom) => atom.kind === "GLOBAL_LIBRARY")) {
+    grantFail("CLIENT_SCOPE_DENIED", 403, "A delegated query cannot request global or multiple-project authority");
+  }
+  const lease = await authorizeProjectClientGrant(db, context, { operation: "query",
+    ...(projects[0] === undefined ? {} : { project_id: projects[0] }) }, now);
+  const projectId = lease.grant.project_id;
+  const refs = await readClientProjectMembers(db, projectId, now());
+  const members = new Set(refs);
+  const identity = scopeExpressionIdentity(expression);
+  const shared = createReadPolicyAuthority(db, context, lease.grant.grantor_principal_ref, now);
+  const delegation = { grant_id: lease.grant.grant_id, revision: lease.grant.revision,
+    project_id: projectId, project_generation: lease.project_generation, operation: "query" };
+  const delegationDigest = await evidenceSha256(lease.grant);
+  async function requireProject() {
+    const epoch = await grantEpoch(db);
+    await lease.requireGrantCurrent();
+    const current = await readClientProjectMembers(db, projectId, now());
+    if (current.length !== members.size || current.some((ref) => !members.has(ref))) {
+      grantFail("CLIENT_SCOPE_MEMBERSHIP_CHANGED", 409, "Delegated project membership changed; repeat with a new request", true);
+    }
+    if (await grantEpoch(db) !== epoch) grantFail("CLIENT_SCOPE_AUTHORITY_CHANGED", 409, "Project authority changed during read", true);
+  }
+  async function sources(requested: readonly string[]) {
+    await requireProject();
+    if (requested.some((ref) => !members.has(ref))) grantFail("CLIENT_SCOPE_DENIED", 403, "Source is outside the delegated project");
+    const result = await shared.exhaustiveSources(requested);
+    await lease.requireGrantCurrent();
+    return result;
+  }
+  async function resolveAtom(atom: DeterministicScopeAtom, observedAt: string) {
+    if (atom.kind === "GLOBAL_LIBRARY" || (atom.kind === "PROJECT" && atom.project_id !== projectId)) {
+      grantFail("CLIENT_SCOPE_DENIED", 403, "Scope atom is outside the delegated project");
+    }
+    await requireProject();
+    const resolved = await shared.exhaustiveResolveAtom(atom, observedAt);
+    if (resolved.members.some((member) => !members.has(member.source_revision_ref)) ||
+        (atom.kind === "PROJECT" && resolved.members.length !== members.size)) {
+      grantFail("CLIENT_SCOPE_DENIED", 403, "The complete scope atom is not authorized; implicit filtering is forbidden");
+    }
+    await requireProject();
+    return { ...resolved, atom_generation_ref: `client-atom-${await evidenceSha256({
+      original: resolved.atom_generation_ref, delegation, delegationDigest })}` };
+  }
+  async function resolveAuthorityClosure(request: ScopeAuthorityRequest) {
+    if (scopeExpressionIdentity(request.expression) !== identity) {
+      grantFail("CLIENT_SCOPE_DENIED", 403, "Scope expression does not match this delegated request");
+    }
+    await sources(request.member_source_revision_refs);
+    const closure = await shared.exhaustiveResolveAuthorityClosure(request);
+    const policy = `client-policy-${await evidenceSha256({ original: closure.policy_authority_ref, delegation, delegationDigest })}`;
+    await requireProject();
+    return { ...closure, policy_authority_ref: policy };
+  }
+  const authority: OwnerScopeAuthority = {
+    resolveAtom, exhaustiveResolveAtom: resolveAtom,
+    resolveAuthorityClosure, exhaustiveResolveAuthorityClosure: resolveAuthorityClosure,
+    requireReadPolicy: async () => { await requireProject(); await shared.exhaustiveRequireReadPolicy(); },
+    exhaustiveRequireReadPolicy: async () => { await requireProject(); await shared.exhaustiveRequireReadPolicy(); },
+    sources, exhaustiveSources: sources,
+    grant: issue, exhaustiveGrant: issue,
+  };
+  // Same scope algorithm and clock frontier as the owner, with the grantor policy subject kept separate.
+  const scopes = createD1ScopeService(db, authority, { now, max_snapshot_members: 4096, preserve_resolution_errors: true });
+  const current = orientationCurrentness(db, scopes, lease.grant.grantor_principal_ref, now);
+  async function issue(snapshot: ScopeSnapshot, expiresAtCeilingMs?: number) {
+    await issueClientQueryScopeGrant({ database: db, context, snapshot, lease,
+      sources: () => sources(snapshot.member_source_revision_refs), require_current: current, now,
+      ...(expiresAtCeilingMs === undefined ? {} : { expires_at_ceiling_ms: expiresAtCeilingMs }) });
+  }
+  async function requireScopeCurrent(snapshot: ScopeSnapshot) {
+    await lease.requireGrantCurrent();
+    await current(snapshot);
+    await requireClientScopeProvenance(db, context, snapshot, lease);
+  }
+  await lease.requireCurrent();
+  return { authority, requireScopeCurrent };
 }

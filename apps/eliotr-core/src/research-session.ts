@@ -1,6 +1,6 @@
 // IMPLEMENTED_NOT_LIVE: ER-24 ResearchSession executes durable sessions over DO storage with W2 D1/R2 checkpoints; research.query/run are composed; hibernation WebSocket transport and live receipts remain separate.
 import { DurableObject } from "cloudflare:workers";
-import { ORIENTATION_PROFILE, createD1ScopeService, createOwnerScopeAuthority, OWNER_RESEARCH_MAX_SELECTED_SOURCES, readOwnerScopeProfile } from "@eliotr/cloudflare-navigation";
+import { ORIENTATION_PROFILE, createD1ScopeService, createOwnerScopeAuthority, createProjectClientScopeAuthority, OWNER_RESEARCH_MAX_SELECTED_SOURCES, readOwnerScopeProfile } from "@eliotr/cloudflare-navigation";
 import { createD1ScopePorts, createD1ScopeProfilePort, createD1RetrievalResultStore, retrievalRequestDigest, RetrievalQueryError } from "@eliotr/retrieval";
 import { createD1EvidenceAuthorityPort, createNavigationReadAuthority } from "@eliotr/cloudflare-evidence";
 import { loadHeldResearchScope, retrieveWithHeldScope } from "./research-retrieval-composition.js";
@@ -148,9 +148,13 @@ export function createResearchQueryService(env: Pick<Env, "CORE_DB" | "SEARCH_DB
   if (profile.max_sources > RETRIEVAL_SCOPE_MAX_SOURCES || profile.max_results > RETRIEVAL_SCOPE_MAX_RESULTS) fail("RESEARCH_PROFILE_UNSUPPORTED", "research.query scope profile exceeds the metadata-Lens bound", 422);
   return {
     async query(context, request) {
-      requireOwner(context);
       const parsed = parseResearchQueryRequest(request);
+      if (context.client_class !== "owner_pwa" && parsed.product !== "FAST_SEARCH") {
+        fail("RESEARCH_PROFILE_UNSUPPORTED", "delegated research.query currently supports FAST_SEARCH only", 422);
+      }
       const key = idempotencyKey(context);
+      const delegated = context.client_class === "owner_pwa" ? undefined
+        : await createProjectClientScopeAuthority(env.CORE_DB, context, parsed.scope_expression);
       if (context.request.signal.aborted) fail("RESEARCH_CANCELLED", "research query is cancelled", 409);
       const access = { principal_ref: context.principal_ref, client_class: context.client_class, credential_generation: context.credential_generation };
       const scopePorts = createD1ScopePorts(env.CORE_DB, access);
@@ -160,6 +164,7 @@ export function createResearchQueryService(env: Pick<Env, "CORE_DB" | "SEARCH_DB
       const prior = await store.load(key).catch(mapRetrievalError);
       if (prior !== null) {
         const scope = prior.result.trace.scope_snapshot;
+        await delegated?.requireScopeCurrent(scope);
         await scopePorts.requireCurrentScope(scope).catch(mapRetrievalError);
         await createD1ScopeProfilePort(env.CORE_DB).requireBinding(scope, profile).catch(mapRetrievalError);
         // The persisted snapshot retains the canonical request expression. Equal current
@@ -172,20 +177,23 @@ export function createResearchQueryService(env: Pick<Env, "CORE_DB" | "SEARCH_DB
         if (digest !== prior.request_digest) fail("RESEARCH_CONFLICT", "idempotency identity is bound to different inputs", 409);
         // Hashing yields; do not disclose cached bytes after a concurrent revoke/cancel.
         await scopePorts.requireCurrentScope(scope).catch(mapRetrievalError);
+        await delegated?.requireScopeCurrent(scope);
         if (context.request.signal.aborted) fail("RESEARCH_CANCELLED", "research query is cancelled", 409);
         return { evidence_pack: prior.result.evidence_pack, trace_ref: prior.result.trace.trace_ref };
       }
       // Read authorization before reserving work: a denied scope fails with zero D1 writes and no
       // grant; an expired scope fails at the currentness recheck with nothing retrieval persisted.
-      const authority = createOwnerScopeAuthority(env.CORE_DB, context);
+      const authority = delegated?.authority ?? createOwnerScopeAuthority(env.CORE_DB, context);
       await authority.requireReadPolicy();
-      const freezer = createD1ScopeService(env.CORE_DB, authority, { max_snapshot_members: profile.max_sources });
+      const freezer = createD1ScopeService(env.CORE_DB, authority, { max_snapshot_members: profile.max_sources,
+        ...(delegated === undefined ? {} : { preserve_resolution_errors: true }) });
       const snapshot = await freezer.freeze(parsed.scope_expression, context.credential_generation);
       await createD1ScopeProfilePort(env.CORE_DB).recordBinding(snapshot, profile).catch(mapRetrievalError);
       // Pre-grant currentness runs through the scope service; the D1 retrieval ports below require
       // the grant, so the post-grant recheck runs through them instead.
       await freezer.requireCurrent(snapshot);
       await authority.grant(snapshot);
+      await delegated?.requireScopeCurrent(snapshot);
       await scopePorts.requireCurrentScope(snapshot);
       const deadlineMs = Date.now() + RETRIEVAL_QUERY_BUDGET_MS;
       const result = await retrieveWithHeldScope(env, {
@@ -200,6 +208,8 @@ export function createResearchQueryService(env: Pick<Env, "CORE_DB" | "SEARCH_DB
         signal: context.request.signal,
         profile,
       }).catch(mapRetrievalError);
+      await delegated?.requireScopeCurrent(snapshot);
+      if (context.request.signal.aborted) fail("RESEARCH_CANCELLED", "research query is cancelled", 409);
       return { evidence_pack: result.evidence_pack, trace_ref: result.trace.trace_ref };
     },
   };

@@ -112,7 +112,7 @@ async function readScopeAuthority(
     "WHERE sr.source_revision_ref = member.value AND sr.purge_state = 'LIVE' " +
     "AND sr.source_owner_generation = o.source_owner_generation " +
     "AND gen.value = sr.source_owner_generation)) AS stale_members " +
-    "FROM scope_snapshot s LEFT JOIN scope_access_grant g " +
+    "FROM scope_snapshot s LEFT JOIN scope_access_grant_effective g " +
     "ON g.snapshot_id = s.snapshot_id AND g.snapshot_revision = s.revision " +
     "AND g.principal_ref = ?3 AND g.client_class = ?4 AND g.credential_generation = ?5 " +
     "WHERE s.snapshot_id = ?1 AND s.revision = ?2 LIMIT 1",

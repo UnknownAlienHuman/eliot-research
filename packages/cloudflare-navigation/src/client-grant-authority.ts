@@ -56,6 +56,8 @@ export interface ClientGrantLease {
   readonly project_generation: number;
   readonly expires_at_ms: number;
   requireCurrent(): Promise<void>;
+  /** Revalidate the same grant after our own scope writes; caller must also validate its frozen scope. */
+  requireGrantCurrent(): Promise<void>;
 }
 /** Delegation check only. Each consumer must additionally authorize its exact scope and effects. */
 export async function authorizeProjectClientGrant(db: D1Database, context: AuthenticatedRequestContext,
@@ -85,17 +87,22 @@ export async function authorizeProjectClientGrant(db: D1Database, context: Authe
   } else if (namespace !== undefined) {
     grantFail("CLIENT_GRANT_INPUT_INVALID", 400, "Import namespace is not a read scope");
   }
-  const requireCurrent = async () => {
+  const requireGrantCurrent = async () => {
     const instant = grantNow(now);
     if (instant < started || instant >= expires) grantFail("CLIENT_GRANT_DENIED", 403, "Delegation or service session expired");
     verifiedService(context, instant);
     const current = await readClientGrant(db, grant.grant_id);
-    if (!current || canonicalJson(current) !== record || await requireGrantOwner(db, grant.project_id, grant.grantor_principal_ref) !== generation ||
-        await grantEpoch(db) !== epoch) grantFail("CLIENT_GRANT_AUTHORITY_CHANGED", 409, "Delegation or upstream authority changed; restart the read", true);
+    if (!current || canonicalJson(current) !== record || await requireGrantOwner(db, grant.project_id, grant.grantor_principal_ref) !== generation) {
+      grantFail("CLIENT_GRANT_AUTHORITY_CHANGED", 409, "Delegation or project authority changed", true);
+    }
     if (namespace !== undefined) await requireClientGrantNamespaces(db, grant.grantor_principal_ref, [namespace]);
-    if (await grantEpoch(db) !== epoch) grantFail("CLIENT_GRANT_AUTHORITY_CHANGED", 409, "Authority changed before settlement", true);
+    if (grantNow(now) >= expires || context.request.signal.aborted) grantFail("CLIENT_GRANT_DENIED", 403, "Delegation expired or request was cancelled");
+  };
+  const requireCurrent = async () => {
+    await requireGrantCurrent();
+    if (await grantEpoch(db) !== epoch) grantFail("CLIENT_GRANT_AUTHORITY_CHANGED", 409, "Delegation or upstream authority changed; restart the read", true);
     if (grantNow(now) >= expires || context.request.signal.aborted) grantFail("CLIENT_GRANT_DENIED", 403, "Delegation expired or request was cancelled");
   };
   await requireCurrent();
-  return { grant, authority_epoch: epoch, project_generation: generation, expires_at_ms: expires, requireCurrent };
+  return { grant, authority_epoch: epoch, project_generation: generation, expires_at_ms: expires, requireCurrent, requireGrantCurrent };
 }

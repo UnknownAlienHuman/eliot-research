@@ -553,6 +553,7 @@
         "packages/cloudflare-navigation/src/client-grant-store.ts",
         "packages/cloudflare-navigation/src/client-grant-service.ts",
         "packages/cloudflare-navigation/src/client-grant-authority.ts",
+        "packages/cloudflare-navigation/src/client-scope-grant.ts",
         "apps/eliotr-core/src/env.ts",
         "apps/eliotr-core/src/index.ts",
         "apps/eliotr-core/src/http.ts",
