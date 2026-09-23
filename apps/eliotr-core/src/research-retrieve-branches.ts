@@ -37,8 +37,11 @@ import {
 
 /** First generation whose retrieval plan includes managed SEM. Legacy runs retain FAST_SEARCH. */
 export const SEMANTIC_RETRIEVAL_HANDLER_GENERATION = "research-handlers.exploratory.v4";
+/** New protocol runs include SEM; persisted v5 runs retain their original FAST_SEARCH bytes. */
+export const SEMANTIC_PROTOCOL_HANDLER_GENERATION = "research-handlers.exploratory.v6";
 function retrievalProduct(handlerGeneration: string): "FAST_SEARCH" | "RESEARCH" {
-  return handlerGeneration === SEMANTIC_RETRIEVAL_HANDLER_GENERATION ? "RESEARCH" : "FAST_SEARCH";
+  return handlerGeneration === SEMANTIC_RETRIEVAL_HANDLER_GENERATION || handlerGeneration === SEMANTIC_PROTOCOL_HANDLER_GENERATION
+    ? "RESEARCH" : "FAST_SEARCH";
 }
 
 const RETRIEVE_BRANCHES_PROTOCOL = "eliotr.research.retrieve-branches.v1" as const;

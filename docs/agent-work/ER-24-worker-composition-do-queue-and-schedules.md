@@ -37,6 +37,7 @@ fail-closed. The Worker is a composition and transport boundary, not a second do
 - `apps/eliotr-core/test/research-query-retrieval.test.ts`
 - `apps/eliotr-core/test/research-query-replay.test.ts`
 - `apps/eliotr-core/src/research-evidence-freeze-composition.ts`
+- `apps/eliotr-core/src/research-semantic-composition.ts`
 - `apps/eliotr-core/src/exhaustive-query-service.ts`
 - `apps/eliotr-core/src/exhaustive-workflow-service.ts`
 - `apps/eliotr-core/test/research-query-jobs.test.ts`
@@ -419,3 +420,13 @@ Project mutations currently have no outbox producer; tests assert no invented ev
 The independent `d1-mutations` CI job uses the existing Workers configuration on Linux
 and Windows, alongside ER-12's Wiki edit/publication regressions. It does not bypass
 or replace the full CI gates, enable a feature, or qualify a live deployment.
+
+## Protocol retrieval generation compatibility
+
+New explicit InquiryProtocol requests use `research-handlers.exploratory.v6`, whose
+RETRIEVE_BRANCHES plan includes managed SEM. Stored v5 runs retain FAST_SEARCH and
+their original request/output hashes; replay selects the stored generation, never
+the current admission default. Existing v3/v4 behavior also remains unchanged.
+The shared generation predicate keeps v3-v6 report readback, cancellation, recovery
+and materialization on the existing services. This is a new-run correction, not
+an automatic upgrade of old checkpoints or a live search-quality qualification.

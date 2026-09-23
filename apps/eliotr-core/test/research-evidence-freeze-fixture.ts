@@ -1,3 +1,4 @@
+import type { SemanticResearchHandlerGeneration } from "../src/research-stage-handlers.js";
 import { applyD1Migrations, reset } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import {
@@ -59,7 +60,7 @@ export interface FreezeFixture {
 }
 
 export interface FreezeFixtureOptions {
-  readonly handler_generation?: "research-handlers.exploratory.v3" | "research-handlers.exploratory.v4";
+  readonly handler_generation?: SemanticResearchHandlerGeneration;
   /** Optional committed-manifest admission used by later-stage reader fixtures. */
   readonly allowed_verifier_refs?: readonly string[];
   /** Add two real top-level evidence sections for multi-handle downstream fixtures. */

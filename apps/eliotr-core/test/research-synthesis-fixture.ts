@@ -1,3 +1,4 @@
+import type { SemanticResearchHandlerGeneration } from "../src/research-stage-handlers.js";
 import { modelGatewayDynamicRouteTarget } from "@eliotr/cloudflare-ai";
 import type { AllowedReferenceManifest, SelectionIntegrityReceipt, VersionedRef } from "@eliotr/contracts";
 import { modelGatewayRequestParametersSha256 } from "@eliotr/cloudflare-ai";
@@ -31,7 +32,7 @@ export type ApprovalMode = "approved" | "missing" | "malformed";
 export type SynthesisCandidateProtocol = "v1" | "v2";
 
 export interface CommittedFreezeSynthesisFixtureOptions {
-  readonly handler_generation?: "research-handlers.exploratory.v3" | "research-handlers.exploratory.v4";
+  readonly handler_generation?: SemanticResearchHandlerGeneration;
   readonly candidate_protocol?: SynthesisCandidateProtocol;
   readonly synthesis_prompt?: string;
   /** Optional manifest admission used by later committed-stage reader fixtures. */

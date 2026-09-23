@@ -3,6 +3,7 @@ import { INSTALLED_INQUIRY_PROTOCOL_REFS, RESEARCH_RUN_REQUEST_V2 } from "@eliot
 import { body, count, db, principal, runtime, seedSource, setupOrientationDatabase, verifier } from "./orientation-fixture.js";
 import { createResearchOwnerRuntimeConfiguration } from "../src/research-owner-runtime-config.js";
 import { parseResearchRunRequest } from "../src/research-session.js";
+import { SERVER_OWNED_PROTOCOL_HANDLER_GENERATION } from "../src/research-stage-handlers.js";
 import { handleHttp } from "../src/http.js";
 import type { Env } from "../src/env.js";
 
@@ -96,6 +97,10 @@ describe("S24 Research end-to-end input identity", () => {
     const started = await body<{ investigation_ref: { id: string; revision: number }; workflow_instance_id: string }>(response);
     expect(response.status, JSON.stringify(started)).toBe(200);
     admitted.push(started.data.workflow_instance_id);
+    const workflow = await db.prepare("SELECT handler_generation FROM research_workflow_run WHERE operation_id=?1")
+      .bind(started.data.workflow_instance_id).first<{ handler_generation: string }>();
+    expect(workflow?.handler_generation).toBe(SERVER_OWNED_PROTOCOL_HANDLER_GENERATION);
+    expect(workflow?.handler_generation).toBe("research-handlers.exploratory.v6");
     const stored = await db.prepare("SELECT goal, portfolio_ref, input_digest FROM investigation_ledger_head WHERE investigation_id=?1")
       .bind(started.data.investigation_ref.id).first<{ goal: string; portfolio_ref: string; input_digest: string }>();
     expect(stored?.goal).toBe(query);

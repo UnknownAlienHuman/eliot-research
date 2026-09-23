@@ -144,12 +144,44 @@ jobs:
         if: ${{ !cancelled() && steps.d1-types.outcome == 'success' }}
         run: pnpm --dir apps/eliotr-core exec vitest run test/research-query-replay.test.ts --no-file-parallelism
 
+
+  research-semantic:
+    name: research-semantic (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+      - run: corepack enable
+      - run: corepack prepare pnpm@11.23.0 --activate
+      - run: pnpm install --frozen-lockfile
+      - name: Typecheck production and strict Worker tests
+        id: semantic-types
+        run: |
+          set -euo pipefail
+          pnpm typecheck
+          pnpm exec tsc -p apps/eliotr-core/test/tsconfig.json --pretty false
       - name: Research retrieval factory and legacy generation compatibility
-        if: ${{ !cancelled() && steps.d1-types.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.semantic-types.outcome == 'success' }}
         run: pnpm --dir apps/eliotr-core exec vitest run test/research-retrieve-branches.test.ts --no-file-parallelism
       - name: Research semantic retrieval and exact evidence on actual D1 and R2
-        if: ${{ !cancelled() && steps.d1-types.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.semantic-types.outcome == 'success' }}
         run: pnpm --dir apps/eliotr-core exec vitest run test/research-retrieve-semantic.test.ts --no-file-parallelism
+      - name: Current protocol admission over actual HTTP and D1
+        if: ${{ !cancelled() && steps.semantic-types.outcome == 'success' }}
+        run: pnpm --dir apps/eliotr-core exec vitest run test/research-input.test.ts --no-file-parallelism
+      - name: Materialized history and control across stored generations
+        if: ${{ !cancelled() && steps.semantic-types.outcome == 'success' }}
+        run: pnpm --dir apps/eliotr-core exec vitest run test/research-run-status.test.ts --no-file-parallelism
 
   rust:
     runs-on: ubuntu-latest

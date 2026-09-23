@@ -575,6 +575,7 @@
         "apps/eliotr-core/test/research-query-retrieval.test.ts",
         "apps/eliotr-core/test/research-query-replay.test.ts",
         "apps/eliotr-core/src/research-evidence-freeze-composition.ts",
+        "apps/eliotr-core/src/research-semantic-composition.ts",
         "apps/eliotr-core/src/exhaustive-query-service.ts",
         "apps/eliotr-core/src/exhaustive-workflow-service.ts",
         "apps/eliotr-core/test/research-query-jobs.test.ts",

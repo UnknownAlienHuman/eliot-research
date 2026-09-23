@@ -5,7 +5,8 @@ import { createD1InvestigationLedgerStore, createInvestigationLedgerService, typ
 import { createMonotoneStageExecutor, digest, WorkflowCheckpointStore, type StageRequest } from "@eliotr/cloudflare-research";
 import { createEvidenceFreezePostSynthesisContextReader, type ResearchArtifactReportPolicy } from "@eliotr/cloudflare-research";
 import { createResearchCoverageStageHandlerFromFreeze, createResearchCoverageMaterializeStageHandlerFromFreeze } from "@eliotr/cloudflare-research-stages";
-import { createResearchStageHandlerFactory, SERVER_OWNED_FREEZE_HANDLER_GENERATION, SERVER_OWNED_SEMANTIC_HANDLER_GENERATION } from "../src/research-stage-handlers.js";
+import { createResearchStageHandlerFactory, SERVER_OWNED_FREEZE_HANDLER_GENERATION, SERVER_OWNED_SEMANTIC_HANDLER_GENERATION,
+  SERVER_OWNED_LEGACY_PROTOCOL_HANDLER_GENERATION, SERVER_OWNED_PROTOCOL_HANDLER_GENERATION } from "../src/research-stage-handlers.js";
 import { researchClaimAuditStageFixture } from "./research-claim-audit-fixture.js";
 import { principal as freezePrincipal } from "./research-evidence-freeze-fixture.js";
 import type { AccessVerifier } from "@eliotr/cloudflare-access";
@@ -235,7 +236,8 @@ describe("owner run status after reauthentication over real HTTP/D1/R2", () => {
     expect(response.status).toBe(409);
   });
 
-  it.each([SERVER_OWNED_FREEZE_HANDLER_GENERATION, SERVER_OWNED_SEMANTIC_HANDLER_GENERATION] as const)("reopens an actual synthesized, audited and materialized %s draft after login without rerunning the models", async (generation) => {
+  it.each([SERVER_OWNED_FREEZE_HANDLER_GENERATION, SERVER_OWNED_SEMANTIC_HANDLER_GENERATION,
+    SERVER_OWNED_LEGACY_PROTOCOL_HANDLER_GENERATION, SERVER_OWNED_PROTOCOL_HANDLER_GENERATION] as const)("reopens an actual synthesized, audited and materialized %s draft after login without rerunning the models", async (generation) => {
     const audited = await researchClaimAuditStageFixture({ include_counterevidence: true, handler_generation: generation });
     const freeze = audited.fixture.freeze;
     const environment = { database: freeze.db, work_bucket: freeze.bucket,

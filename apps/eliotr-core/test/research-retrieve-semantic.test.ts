@@ -2,11 +2,11 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { AI_SEARCH_PRIMARY_NAMESPACE, AI_SEARCH_PRIMARY_PROJECTION_PROFILE,
   createAiSearchGenerationRegistryService, createD1AiSearchGenerationRegistryStore } from "@eliotr/cloudflare-ai";
 import { canonicalRetrievalJson, createD1ScopeProfilePort } from "@eliotr/retrieval";
-import { digest, readWorkflowObject } from "@eliotr/cloudflare-research";
+import { digest, readWorkflowObject, INSTALLED_INQUIRY_PROTOCOL_REFS } from "@eliotr/cloudflare-research";
 import type { AiSearchNamespaceLike } from "@eliotr/platform-cloudflare";
-import { createResearchStageHandlerFactory, SERVER_OWNED_SEMANTIC_HANDLER_GENERATION } from "../src/research-stage-handlers.js";
+import { createResearchStageHandlerFactory, SERVER_OWNED_PROTOCOL_HANDLER_GENERATION } from "../src/research-stage-handlers.js";
 import { readRetrieveBranchesCheckpoint } from "../src/research-retrieve-branches.js";
-import { runtime, access, principal, profile, fixture, prepareRetrieveStage } from "./research-retrieve-fixture.js";
+import { runtime, access, principal, profile, fixture, prepareRetrieveStage, type Fixture } from "./research-retrieve-fixture.js";
 
 const QUERY = "How can a colony preserve warmth?";
 const TAIL = "## Colony result\n\nПингвины 🐧 сбиваются в плотные группы, уменьшая потери тепла.\n";
@@ -17,8 +17,12 @@ interface Item {
   projection_generation: string; source_revision_ref: string; normalized_start_byte: number; normalized_end_byte: number;
 }
 
-async function semanticFixture(promote = true) {
-  const f = await fixture(SERVER_OWNED_SEMANTIC_HANDLER_GENERATION, { content_markdown: MARKDOWN, query: QUERY });
+function prepareProtocolSource() {
+  return fixture(SERVER_OWNED_PROTOCOL_HANDLER_GENERATION, { content_markdown: MARKDOWN, query: QUERY,
+    inquiry_protocol_ref: INSTALLED_INQUIRY_PROTOCOL_REFS.lookup });
+}
+
+async function semanticFixture(f: Fixture, promote = true) {
   const stage = await prepareRetrieveStage(f);
   await createD1ScopeProfilePort(f.db).recordBinding(f.scope, profile);
   const rows = await runtime.SEARCH_DB.prepare(
@@ -57,7 +61,7 @@ function binding(search: (input: unknown) => Promise<unknown>): AiSearchNamespac
   return { get(id: string) { expect(id).toBe("s09-sem"); return { search }; } } as unknown as AiSearchNamespaceLike;
 }
 function factory(value: Awaited<ReturnType<typeof semanticFixture>>, ai?: AiSearchNamespaceLike) {
-  return createResearchStageHandlerFactory({ kind: "server-owned-exploratory", generation: SERVER_OWNED_SEMANTIC_HANDLER_GENERATION,
+  return createResearchStageHandlerFactory({ kind: "server-owned-exploratory", generation: SERVER_OWNED_PROTOCOL_HANDLER_GENERATION,
     navigation: value.f.navigation, ledger: value.f.ledger,
     environment: { CORE_DB: value.f.db, SEARCH_DB: runtime.SEARCH_DB, WORK_BUCKET: value.f.bucket,
       EVIDENCE_BUCKET: runtime.EVIDENCE_BUCKET, ...(ai === undefined ? {} : { AI_SEARCH: ai }) } })("RETRIEVE_BRANCHES");
@@ -88,8 +92,12 @@ async function noRetrievalCommit() {
 }
 
 describe("S09 managed semantic stage at the real evidence boundary", () => {
+  let source: Fixture;
   let value: Awaited<ReturnType<typeof semanticFixture>>;
-  beforeEach(async () => { value = await semanticFixture(); });
+  // Import/scope and prior-stage/registry setup have separate failure boundaries.
+  // Each case still uses fresh native D1/R2 and the unchanged hook deadlines.
+  beforeEach(async function importProtocolSource() { source = await prepareProtocolSource(); });
+  beforeEach(async function preparePriorStagesAndIndex() { value = await semanticFixture(source); });
 
   it("finds exact non-lexical tail bytes through the production factory and replays without provider calls", async () => {
     let calls = 0;
@@ -104,6 +112,9 @@ describe("S09 managed semantic stage at the real evidence boundary", () => {
     const receipt = await value.f.executor.execute(value.request, principal, factory(value, ai));
     const read = await readRetrieveBranchesCheckpoint(value.dependencies, value.request, principal);
     expect(calls).toBe(1);
+    expect(read.stage_request.handler_generation).toBe(SERVER_OWNED_PROTOCOL_HANDLER_GENERATION);
+    expect(read.checkpoint.trace.query_product).toBe("RESEARCH");
+    expect(read.protocol_scope.profile_definition_ref).toEqual(INSTALLED_INQUIRY_PROTOCOL_REFS.lookup);
     expect(read.checkpoint.trace.candidates_by_lane["SEM"]).toBe(1);
     expect(read.checkpoint.evidence_pack.resolved_evidence.some((x) => x.exact_excerpt === value.exact)).toBe(true);
     expect(JSON.stringify(read.checkpoint.evidence_pack)).not.toContain(PREVIEW);
@@ -244,8 +255,12 @@ describe("S09 managed semantic stage at the real evidence boundary", () => {
 });
 
 describe("S09 unpromoted managed index", () => {
+  let source: Fixture;
   let value: Awaited<ReturnType<typeof semanticFixture>>;
-  beforeEach(async () => { value = await semanticFixture(false); });
+  // Import/scope and prior-stage/registry setup have separate failure boundaries.
+  // Each case still uses fresh native D1/R2 and the unchanged hook deadlines.
+  beforeEach(async function importProtocolSource() { source = await prepareProtocolSource(); });
+  beforeEach(async function preparePriorStagesAndIndex() { value = await semanticFixture(source, false); });
   it("never calls the provider or treats a shadow registry as a promoted index", async () => {
     let calls = 0;
     await value.f.executor.execute(value.request, principal, factory(value, binding(async () => { calls++; return response(value.tail); })));

@@ -27,6 +27,7 @@ import {
 import {
   createRetrieveBranchesStageHandler,
   SEMANTIC_RETRIEVAL_HANDLER_GENERATION,
+  SEMANTIC_PROTOCOL_HANDLER_GENERATION,
   type RetrieveBranchesStageDependencies,
 } from "./research-retrieve-branches.js";
 import {
@@ -43,14 +44,17 @@ export const SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION = "research-handlers.expl
 export const SERVER_OWNED_FREEZE_HANDLER_GENERATION = "research-handlers.exploratory.v3";
 /** Legacy semantic generation; committed v4 runs remain readable. */
 export const SERVER_OWNED_SEMANTIC_HANDLER_GENERATION = SEMANTIC_RETRIEVAL_HANDLER_GENERATION;
-/** Explicit installed InquiryProtocol/obligation generation for v2 run requests. */
-export const SERVER_OWNED_PROTOCOL_HANDLER_GENERATION = "research-handlers.exploratory.v5";
-export function isSemanticResearchHandlerGeneration(generation: unknown): generation is
+/** Persisted protocol runs retain their original non-semantic retrieval plan. */
+export const SERVER_OWNED_LEGACY_PROTOCOL_HANDLER_GENERATION = "research-handlers.exploratory.v5";
+/** New explicit InquiryProtocol/obligation runs include managed semantic retrieval. */
+export const SERVER_OWNED_PROTOCOL_HANDLER_GENERATION = SEMANTIC_PROTOCOL_HANDLER_GENERATION;
+export type SemanticResearchHandlerGeneration =
   typeof SERVER_OWNED_FREEZE_HANDLER_GENERATION | typeof SERVER_OWNED_SEMANTIC_HANDLER_GENERATION |
-  typeof SERVER_OWNED_PROTOCOL_HANDLER_GENERATION {
+  typeof SERVER_OWNED_LEGACY_PROTOCOL_HANDLER_GENERATION | typeof SERVER_OWNED_PROTOCOL_HANDLER_GENERATION;
+export function isSemanticResearchHandlerGeneration(generation: unknown): generation is SemanticResearchHandlerGeneration {
   return generation === SERVER_OWNED_FREEZE_HANDLER_GENERATION ||
     generation === SERVER_OWNED_SEMANTIC_HANDLER_GENERATION ||
-    generation === SERVER_OWNED_PROTOCOL_HANDLER_GENERATION;
+    generation === SERVER_OWNED_LEGACY_PROTOCOL_HANDLER_GENERATION || generation === SERVER_OWNED_PROTOCOL_HANDLER_GENERATION;
 }
 export const SERVER_RETRIEVAL_SCOPE_PROFILE = {
   version: "retrieval-scope-v1",
@@ -65,7 +69,7 @@ export type ResearchStageHandlerFactoryMode =
       readonly ledger: Pick<InvestigationLedgerStore, "read">;
       /** Server-owned bindings used to compose retrieval for v2. */
       readonly environment?: Pick<Env, "CORE_DB" | "SEARCH_DB" | "WORK_BUCKET" | "EVIDENCE_BUCKET"> & Partial<Pick<Env, "AI_SEARCH">>;
-      readonly generation?: typeof SERVER_OWNED_RESEARCH_HANDLER_GENERATION | typeof SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION | typeof SERVER_OWNED_FREEZE_HANDLER_GENERATION | typeof SERVER_OWNED_SEMANTIC_HANDLER_GENERATION | typeof SERVER_OWNED_PROTOCOL_HANDLER_GENERATION;
+      readonly generation?: typeof SERVER_OWNED_RESEARCH_HANDLER_GENERATION | typeof SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION | SemanticResearchHandlerGeneration;
       readonly retrieval?: Omit<RetrieveBranchesStageDependencies, "navigation" | "ledger" | "profile">;
       readonly freeze?: EvidenceFreezeCompositionDependencies;
       readonly synthesis?: Parameters<typeof createEvidenceFreezeSynthesisHandler>[0];

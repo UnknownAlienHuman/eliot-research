@@ -1,3 +1,4 @@
+import type { SemanticResearchHandlerGeneration } from "../src/research-stage-handlers.js";
 import { modelGatewayDynamicRouteTarget } from "@eliotr/cloudflare-ai";
 import type { VersionedRef } from "@eliotr/contracts";
 import { canonicalEvidenceJson, evidenceSha256Bytes } from "@eliotr/cloudflare-evidence";
@@ -184,7 +185,7 @@ function auditPrompt(
 }
 
 export interface ResearchClaimAuditStageFixtureOptions {
-  readonly handler_generation?: "research-handlers.exploratory.v3" | "research-handlers.exploratory.v4";
+  readonly handler_generation?: SemanticResearchHandlerGeneration;
   /** Include a second real projected counterevidence section in the committed pack. */
   readonly include_counterevidence?: boolean;
 }

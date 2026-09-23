@@ -1,14 +1,15 @@
-import { applyD1Migrations, reset } from "cloudflare:test";
+import { reset } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { canonicalEvidenceJson, createNavigationReadAuthority } from "@eliotr/cloudflare-evidence";
 import { createD1ScopeService, createOwnerScopeAuthority } from "@eliotr/cloudflare-navigation";
 import { createD1InvestigationLedgerStore, createInvestigationLedgerService,
   type CreateLedgerInput, type InvestigationLedgerStore, type LedgerD1Database } from "@eliotr/research";
 import { createFreezeProtocolAndScopeStageHandler } from "../../../packages/cloudflare-research/src/research-protocol-freeze.js";
-import { createWorkflowCheckpointExecutor, digest, fail, type StageRequest, type StageReceipt,
+import { createResearchPlanningManifest, installedInquiryProtocolDefinition, compileInquiryLedgerObligations,
+  createWorkflowCheckpointExecutor, digest, fail, type StageRequest, type StageReceipt,
   type WorkflowExecutionPorts, type WorkflowPrincipal } from "@eliotr/cloudflare-research";
 import { createRetrieveBranchesStageHandler, type RetrieveBranchesStageDependencies } from "../src/research-retrieve-branches.js";
-import type { ScopeSnapshot } from "@eliotr/contracts";
+import type { ScopeSnapshot, VersionedRef } from "@eliotr/contracts";
 import { importAndProject, prepareQ1Namespace, type Q1Namespace, type Q1Runtime } from "./retrieval-q1-fixture.js";
 
 export const runtime = env as unknown as Q1Runtime;
@@ -28,12 +29,11 @@ export interface Fixture {
   readonly executor: ReturnType<typeof createWorkflowCheckpointExecutor>;
 }
 
-export async function fixture(handlerGeneration = "retrieve-branches-v1", options: { readonly content_markdown?: string; readonly query?: string } = {}): Promise<Fixture> {
+export async function fixture(handlerGeneration = "retrieve-branches-v1", options: { readonly content_markdown?: string; readonly query?: string; readonly inquiry_protocol_ref?: VersionedRef } = {}): Promise<Fixture> {
   await reset();
   const db = runtime.CORE_DB;
   const bucket = runtime.WORK_BUCKET;
-  await applyD1Migrations(db, runtime.CORE_MIGRATIONS);
-  await applyD1Migrations(runtime.SEARCH_DB, runtime.SEARCH_MIGRATIONS);
+  // prepareQ1Namespace applies both complete migration streams after reset.
   const world = {
     db,
     searchDb: runtime.SEARCH_DB,
@@ -58,6 +58,20 @@ export async function fixture(handlerGeneration = "retrieve-branches-v1", option
     db.prepare("INSERT INTO investigation_current_policy (policy_generation, policy_authority_ref, state, created_at) VALUES (?1,?2,'ACTIVE',?3)").bind("retrieve-policy-v1", scope.policy_authority_ref, now),
     db.prepare("INSERT INTO investigation_current_deployment (deployment_generation, state, created_at) VALUES (?1,'ACTIVE',?2)").bind(principal.deployment_generation, now),
   ]);
+  const installed = options.inquiry_protocol_ref === undefined ? null : installedInquiryProtocolDefinition(options.inquiry_protocol_ref);
+  const sources = await db.prepare(
+    "SELECT sr.source_revision_ref, sr.source_id, s.source_class, s.source_namespace_id, " +
+    "sr.source_owner_generation, s.origin_uri FROM source_revision sr JOIN source s ON s.source_id=sr.source_id " +
+    "WHERE sr.source_revision_ref=?1 LIMIT 1",
+  ).bind(world.revision).all<{ source_revision_ref: string; source_id: string; source_class: string;
+    source_namespace_id: string; source_owner_generation: string; origin_uri: string | null }>();
+  if (!sources.success || sources.results.length !== 1) throw new Error("missing protocol source");
+  const planning = installed === null ? undefined : await createResearchPlanningManifest({
+    investigation_id: "retrieve-branches-investigation", operation_id: "retrieve-branches-operation",
+    question: options.query ?? "Pinned", inquiry_protocol_ref: installed.definition_ref,
+    scope_snapshot_ref: { id: scope.snapshot_id, revision: scope.revision }, scope_created_at: scope.created_at,
+    definition: installed, sources: sources.results,
+  });
   const payload = {
     investigation_id: "retrieve-branches-investigation",
     operation_id: "retrieve-branches-operation",
@@ -65,6 +79,7 @@ export async function fixture(handlerGeneration = "retrieve-branches-v1", option
     scope_snapshot_ref: { id: scope.snapshot_id, revision: scope.revision },
     evidence_grade: "E0" as const,
     principal_ref: principal.principal_ref,
+    ...(installed === null ? {} : { inquiry_protocol_ref: installed.definition_ref, planning_manifest: planning }),
   };
   const payloadBytes = new TextEncoder().encode(canonicalEvidenceJson(payload));
   const payloadKey = "retrieve-branches-input";
@@ -77,7 +92,8 @@ export async function fixture(handlerGeneration = "retrieve-branches-v1", option
     scope_snapshot_revision: scope.revision,
     evidence_grade: "E0",
     lane: "exploratory",
-    lane_registrations: [], obligations: [], hypotheses: [], portfolio_ref: payloadKey, debt_refs: [],
+    lane_registrations: [], obligations: installed === null ? [] : compileInquiryLedgerObligations(installed),
+    hypotheses: planning?.hypotheses.map((item) => item.hypothesis_id) ?? [], portfolio_ref: payloadKey, debt_refs: [],
     principal_ref: principal.principal_ref, input_digest: payloadDigest,
     policy_generation: "retrieve-policy-v1", policy_authority_ref: scope.policy_authority_ref,
     deployment_generation: principal.deployment_generation, idempotency_key: "retrieve-branches-ledger", model_profile_ref: "retrieve-model-v1",
