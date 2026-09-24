@@ -1,4 +1,5 @@
 import {
+  IdentifierSchema,
   ScopeSnapshotSchema,
   VersionedRefSchema,
   type ScopeSnapshot,
@@ -17,6 +18,7 @@ import {
   type DeterministicScopeMember,
 } from "@eliotr/domain";
 import { createD1ScopeService } from "./d1-scope-service.js";
+import { orientationCurrentness } from "./orientation-currentness.js";
 import { createOwnerScopeAuthority, createProjectClientArtifactAuthority, splitExhaustiveSourceRefs, type OwnerScopeAuthority } from "./orientation-authority.js";
 import { ScopeServiceError } from "./scope-service.js";
 import type { AuthenticatedRequestContext } from "@eliotr/interfaces";
@@ -32,6 +34,11 @@ export interface OwnerHistoricalScopeInput {
   readonly original: ScopeSnapshot;
   readonly now?: () => number;
   readonly max_snapshot_members?: number;
+}
+
+export interface OwnerArtifactHistoricalScopeInput extends OwnerHistoricalScopeInput {
+  readonly artifact_ref: VersionedRef;
+  readonly original_principal_ref: string;
 }
 
 export interface ClientArtifactHistoricalScopeInput extends OwnerHistoricalScopeInput {
@@ -191,12 +198,22 @@ async function provesSourceHeadAdvance(
 export async function requireHistoricalScopeOrigin(
   database: D1Database, originalRef: VersionedRef, original: ScopeSnapshot,
 ): Promise<void> {
+  await requireHistoricalScopeRecord(database, originalRef, original, false);
+}
+
+async function requireHistoricalScopeRecord(
+  database: D1Database, originalRef: VersionedRef, original: ScopeSnapshot,
+  independentMachineOwner: boolean,
+): Promise<void> {
   const persisted = await loadScopeAuthority(database, originalRef);
-  if (persisted === null ||
-      (persisted.invalidated_at !== null &&
-       (persisted.invalidation_reason !== "SCOPE_INPUT_CHANGED" ||
-        !(await provesSourceHeadAdvance(database, original)))) ||
-      canonicalEvidenceJson(persisted.snapshot) !== canonicalEvidenceJson(original)) stale();
+  if (persisted === null || canonicalEvidenceJson(persisted.snapshot) !== canonicalEvidenceJson(original)) stale();
+  if (persisted.invalidated_at === null) return;
+  // Only the exact machine report's independently authorized original grantor
+  // may retain historical provenance after the service grant was invalidated.
+  // This never changes the old snapshot or the old service's effective authority.
+  if (independentMachineOwner && persisted.invalidation_reason === "CLIENT_DELEGATION_STALE") return;
+  if (persisted.invalidation_reason !== "SCOPE_INPUT_CHANGED" ||
+      !(await provesSourceHeadAdvance(database, original))) stale();
 }
 
 async function requireOriginalGrantNotRevoked(
@@ -232,8 +249,51 @@ export async function reauthorizeClientArtifactScope(
   return reauthorizeHistoricalScope(input, input);
 }
 
+/** Independent owner entitlement to this exact saved report. The current reader
+ * never adopts the machine's identity, token, grant, budget or execution deadline. */
+export async function reauthorizeOwnerArtifactScope(
+  input: OwnerArtifactHistoricalScopeInput,
+): Promise<OwnerHistoricalScopeAuthorization> {
+  if (input.access.client_class !== "owner_pwa") stale();
+  const artifact = VersionedRefSchema.parse(input.artifact_ref);
+  const originalRef = VersionedRefSchema.parse(input.original_ref);
+  const marker = await input.database.prepare("SELECT value FROM schema_state WHERE key='owner_artifact_read_generation'")
+    .first<{ value: unknown }>();
+  if (marker?.value !== "owner-artifact-read-v1") {
+    throw new ScopeServiceError("SCOPE_PERSISTENCE_INVALID", "Owner report reads require migration 0079");
+  }
+  const readOrigin = () => input.database.prepare(
+    "SELECT origin_client_class, project_id, project_generation FROM owner_artifact_read_origin " +
+    "WHERE artifact_id=?1 AND artifact_revision=?2 AND scope_snapshot_id=?3 AND scope_snapshot_revision=?4 " +
+    "AND principal_ref=?5 AND reader_principal_ref=?6 LIMIT 1",
+  ).bind(artifact.id, artifact.revision, originalRef.id, originalRef.revision,
+    input.original_principal_ref, input.access.principal_ref)
+    .first<{ origin_client_class: unknown; project_id: unknown; project_generation: unknown }>();
+  const origin = await readOrigin();
+  if (origin === null) stale();
+  if (origin.origin_client_class === "owner_pwa") {
+    if (input.original_principal_ref !== input.access.principal_ref ||
+        origin.project_id !== null || origin.project_generation !== null) stale();
+  } else if (!["trusted_agent", "named_api_client"].includes(String(origin.origin_client_class)) ||
+      !IdentifierSchema.safeParse(origin.project_id).success ||
+      typeof origin.project_generation !== "number" || !Number.isSafeInteger(origin.project_generation) || origin.project_generation < 1 ||
+      input.original.resolved_scope_expression.kind !== "PROJECT" ||
+      input.original.resolved_scope_expression.project_id !== origin.project_id) stale();
+  const expected = canonicalEvidenceJson(origin);
+  const requireOrigin = async () => {
+    const current = await readOrigin();
+    if (current === null || canonicalEvidenceJson(current) !== expected) stale();
+  };
+  // A revoked machine grant does not revoke an independently authorized owner.
+  // Ordinary owner-authored reports retain the view's original-grant revoke guard.
+  return reauthorizeHistoricalScope(input, undefined, {
+    requireCurrent: requireOrigin, independentMachine: origin.origin_client_class !== "owner_pwa",
+  });
+}
+
 async function reauthorizeHistoricalScope(
   input: OwnerHistoricalScopeInput, client?: ClientArtifactHistoricalScopeInput,
+  ownerArtifactOrigin?: { readonly requireCurrent: () => Promise<void>; readonly independentMachine: boolean },
 ): Promise<OwnerHistoricalScopeAuthorization> {
   const originalRef = VersionedRefSchema.safeParse(input.original_ref);
   const parsed = ScopeSnapshotSchema.safeParse(input.original);
@@ -241,15 +301,18 @@ async function reauthorizeHistoricalScope(
   const profile = await readOwnerScopeProfile(input.database, parsed.data);
   const maximumMembers = validMaximum(input.max_snapshot_members, profile.max_sources);
   if (parsed.data.member_source_revision_refs.length > maximumMembers) stale();
-  await requireHistoricalScopeOrigin(input.database, originalRef.data, parsed.data);
+  await ownerArtifactOrigin?.requireCurrent();
+  const requireHistoricalOrigin = () => requireHistoricalScopeRecord(input.database, originalRef.data,
+    parsed.data, ownerArtifactOrigin?.independentMachine === true);
+  await requireHistoricalOrigin();
   const original = parsed.data;
   const now = input.now ?? Date.now;
   const delegated = client === undefined ? undefined : await createProjectClientArtifactAuthority(
     input.database, client.access, original, client.origin, client.original_principal_ref, now,
   );
-  const requireOriginalGrant = () => requireOriginalGrantNotRevoked(input.database, originalRef.data,
+  const requireOriginalGrant = ownerArtifactOrigin?.requireCurrent ?? (() => requireOriginalGrantNotRevoked(input.database, originalRef.data,
     client?.original_principal_ref ?? input.access.principal_ref,
-    delegated?.original_client_class ?? input.access.client_class);
+    delegated?.original_client_class ?? input.access.client_class));
   await requireOriginalGrant();
   const owner = delegated?.authority ?? createOwnerScopeAuthority(input.database, input.access, now);
   if (profile.version === OWNER_RESEARCH_SCOPE_PROFILE.version) await owner.exhaustiveRequireReadPolicy();
@@ -265,9 +328,12 @@ async function reauthorizeHistoricalScope(
     resolveAtom,
     resolveAuthorityClosure: (request) => owner.exhaustiveResolveAuthorityClosure(request),
   });
+  const requireScopeCurrent = ownerArtifactOrigin === undefined
+    ? (scope: ScopeSnapshot) => scopes.requireCurrent(scope)
+    : orientationCurrentness(input.database, scopes, input.access.principal_ref, now);
   const fresh = await scopes.freeze(original.resolved_scope_expression, input.access.credential_generation);
   requireExactHistoricalIdentity(original, fresh);
-  await scopes.requireCurrent(fresh);
+  await requireScopeCurrent(fresh);
   await createD1ScopeProfilePort(input.database).recordBinding(fresh, profile);
   if (delegated !== undefined && client !== undefined) {
     await issueClientArtifactScopeGrant({ database: input.database, context: client.access, snapshot: fresh,
@@ -278,12 +344,13 @@ async function reauthorizeHistoricalScope(
   await requireOriginalGrant();
   const requireCurrent = async (scope: ScopeSnapshot): Promise<ScopeSnapshot> => {
     await requireOriginalGrant();
-    await requireHistoricalScopeOrigin(input.database, originalRef.data, original);
-    const checked = await scopes.requireCurrent(scope);
+    await requireHistoricalOrigin();
+    const checked = await requireScopeCurrent(scope);
     if (delegated !== undefined && client !== undefined) {
       await delegated.requireOrigin();
       await requireClientScopeProvenance(input.database, client.access, checked, delegated.lease, client.origin);
     }
+    await ownerArtifactOrigin?.requireCurrent();
     return checked;
   };
   return {

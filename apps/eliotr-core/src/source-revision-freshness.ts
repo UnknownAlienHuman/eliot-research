@@ -31,6 +31,8 @@ export interface SourceRevisionFreshnessAuthorization {
   readonly original_scope_snapshot_ref: VersionedRef;
   readonly navigation: NavigationReadAuthority;
   readonly requireCurrent: () => Promise<void>;
+  /** Internal owner report path only; independently proved against exact saved origin. */
+  readonly owner_artifact_ref?: VersionedRef;
 }
 
 function corrupt(message: string): never {
@@ -64,8 +66,19 @@ export async function readSourceRevisionFreshness(
     if (errorCode(cause) === "EVIDENCE_INPUT_INVALID") corrupt("saved Wiki scope is malformed");
     unavailable("saved Wiki scope freshness is unavailable");
   }
+  const ownerRef = authorization.owner_artifact_ref;
+  const independentOwner = ownerRef !== undefined && authorization.navigation.access.client_class === "owner_pwa"
+    ? await database.prepare(
+      "SELECT 1 AS authorized FROM owner_artifact_read_origin WHERE artifact_id=?1 AND artifact_revision=?2 " +
+      "AND scope_snapshot_id=?3 AND scope_snapshot_revision=?4 AND reader_principal_ref=?5 " +
+      "AND origin_client_class IN ('trusted_agent','named_api_client') LIMIT 1",
+    ).bind(ownerRef.id, ownerRef.revision, authorization.original_scope_snapshot_ref.id,
+      authorization.original_scope_snapshot_ref.revision, authorization.navigation.access.principal_ref)
+      .first<{ authorized: number }>()
+    : null;
+  const retainedMachineOrigin = original?.invalidation_reason === "CLIENT_DELEGATION_STALE" && independentOwner?.authorized === 1;
   if (original === null ||
-      (original.invalidated_at !== null && original.invalidation_reason !== "SCOPE_INPUT_CHANGED")) {
+      (original.invalidated_at !== null && original.invalidation_reason !== "SCOPE_INPUT_CHANGED" && !retainedMachineOrigin)) {
     throw new CatalogInputError("WIKI_POLICY_DENIED", "saved Wiki scope is no longer available", 410);
   }
   const refs = original.snapshot.member_source_revision_refs.map((ref) => identifier(ref, "saved source revision"));
@@ -118,7 +131,7 @@ export async function readSourceRevisionFreshness(
       head_revision_ref: row.head_revision_ref,
     }];
   });
-  if (original.invalidated_at !== null && changedSources.length === 0) {
+  if (original.invalidated_at !== null && !retainedMachineOrigin && changedSources.length === 0) {
     throw new CatalogInputError("WIKI_POLICY_DENIED", "saved Wiki scope invalidation is not a source head change", 410);
   }
   await authorization.requireCurrent();

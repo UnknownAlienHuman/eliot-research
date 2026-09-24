@@ -7,7 +7,7 @@ import {
   type ScopeAuthorization,
 } from "@eliotr/cloudflare-evidence";
 import {
-  reauthorizeOwnerHistoricalScope,
+  reauthorizeOwnerArtifactScope,
   reauthorizeClientArtifactScope,
 } from "@eliotr/cloudflare-navigation";
 import {
@@ -30,7 +30,7 @@ interface ArtifactReadReauthorization {
 }
 
 /** Fresh read authority retains the exact saved author, artifact and source revisions; it never renews execution. */
-async function prepareArtifactReadReauthorization(
+export async function prepareArtifactReadReauthorization(
   env: Env,
   context: AuthenticatedRequestContext,
   artifactRef: VersionedRef,
@@ -41,13 +41,21 @@ async function prepareArtifactReadReauthorization(
   }
   const requireActiveRequest = () => {
     if (context.request.signal.aborted) throw new HttpRequestError("RESEARCH_CANCELLED", 409, "Report reading was cancelled");
+    const access = context.access;
+    if (access !== undefined && (access.principal_ref !== context.principal_ref ||
+        access.credential_generation !== context.credential_generation ||
+        !Number.isFinite(Date.parse(access.expires_at)) || Date.parse(access.expires_at) <= Date.now())) {
+      throw new ArtifactDraftReadError("ARTIFACT_DRAFT_READ_DENIED", 403, "Report credentials are no longer valid");
+    }
   };
   requireActiveRequest();
   const ref = VersionedRefSchema.parse(artifactRef);
   const binding = await env.CORE_DB.prepare(
     "SELECT b.scope_snapshot_id,b.scope_snapshot_revision,b.principal_ref FROM artifact_draft_binding b " +
     "JOIN artifact_revision a ON a.artifact_id=b.artifact_id AND a.revision=b.revision " +
-    "WHERE b.artifact_id=?1 AND b.revision=?2 AND (?3=0 OR b.principal_ref=?4) AND a.status='DRAFT' LIMIT 1",
+    "WHERE b.artifact_id=?1 AND b.revision=?2 AND (?3=0 OR EXISTS (SELECT 1 FROM owner_artifact_read_origin o " +
+    "WHERE o.artifact_id=b.artifact_id AND o.artifact_revision=b.revision AND o.reader_principal_ref=?4)) " +
+    "AND a.status='DRAFT' LIMIT 1",
   ).bind(ref.id, ref.revision, context.client_class === "owner_pwa" ? 1 : 0, context.principal_ref)
     .first<{ scope_snapshot_id: string; scope_snapshot_revision: number; principal_ref: string }>();
   if (binding === null) throw new ArtifactReadNotFoundError();
@@ -55,8 +63,7 @@ async function prepareArtifactReadReauthorization(
     id: binding.scope_snapshot_id, revision: binding.scope_snapshot_revision,
   });
   const original = await loadScopeAuthority(env.CORE_DB, originalScopeRef);
-  if (original === null ||
-      (original.invalidated_at !== null && original.invalidation_reason !== "SCOPE_INPUT_CHANGED")) {
+  if (original === null) {
     throw new ArtifactDraftReadError("ARTIFACT_DRAFT_READ_STALE", 410, "The saved report's sources are no longer available");
   }
   const now = Date.now;
@@ -72,7 +79,8 @@ async function prepareArtifactReadReauthorization(
     now,
   };
   const historical = context.client_class === "owner_pwa"
-    ? await reauthorizeOwnerHistoricalScope(historicalInput)
+    ? await reauthorizeOwnerArtifactScope({ ...historicalInput, artifact_ref: ref,
+      original_principal_ref: binding.principal_ref })
     : await reauthorizeClientArtifactScope({ ...historicalInput, access: context,
       original_principal_ref: binding.principal_ref, origin: { artifact_ref: ref, operation } });
   requireActiveRequest();
@@ -91,6 +99,10 @@ async function prepareArtifactReadReauthorization(
       throw new ArtifactDraftReadError("ARTIFACT_DRAFT_READ_STALE", 410, "The saved report authorization changed during read");
     }
     await navigation.sources(historical.scope.member_source_revision_refs, currentAuthorization);
+    if (canonicalEvidenceJson(await navigation.current()) !== canonicalEvidenceJson(authorization)) {
+      throw new ArtifactDraftReadError("ARTIFACT_DRAFT_READ_STALE", 410, "The saved report authorization changed during read");
+    }
+    await historical.requireCurrent(historical.scope);
     requireActiveRequest();
   };
   return {
@@ -124,6 +136,7 @@ export async function reopenOwnerArtifactDraft(
     original_scope_snapshot_ref: prepared.original_scope_snapshot_ref,
     navigation: prepared.navigation,
     requireCurrent: prepared.requireCurrent,
+    ...(context.client_class === "owner_pwa" ? { owner_artifact_ref: prepared.artifact_ref } : {}),
   });
   return {
     ...result,

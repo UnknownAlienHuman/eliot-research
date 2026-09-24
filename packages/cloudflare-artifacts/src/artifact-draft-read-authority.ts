@@ -49,3 +49,24 @@ export async function hasDelegatedArtifactReadAuthority(input: {
     input.original_principal_ref, input.citations ? 1 : 0, input.workflow_operation_id ?? null).first<{ authorized: number }>();
   return row?.authorized === 1;
 }
+
+/** A fresh owner source grant is not blanket access to another author's report.
+ * The shared SQL view proves self-authorship or the exact original machine grantor
+ * still owning its project. No currently active service delegation is borrowed. */
+export async function hasOwnerArtifactReadAuthority(input: Parameters<typeof hasDelegatedArtifactReadAuthority>[0]): Promise<boolean> {
+  if (input.access.client_class !== "owner_pwa" || input.workflow_operation_id !== undefined) return false;
+  const row = await input.database.prepare(
+    "SELECT 1 AS authorized FROM owner_artifact_read_origin o JOIN scope_access_grant_effective g " +
+    "ON g.snapshot_id=?1 AND g.snapshot_revision=?2 AND g.principal_ref=o.reader_principal_ref " +
+    "WHERE g.principal_ref=?3 AND g.client_class='owner_pwa' AND g.project_client_grant_id IS NULL " +
+    "AND g.credential_generation=?4 AND g.authorization_receipt_ref=?5 AND g.policy_authority_ref=?6 " +
+    "AND g.state='ACTIVE' AND julianday(g.expires_at)>julianday('now') " +
+    "AND EXISTS (SELECT 1 FROM json_each(g.allowed_use_json) WHERE value='research') " +
+    "AND o.artifact_id=?7 AND o.artifact_revision=?8 AND o.scope_snapshot_id=?9 " +
+    "AND o.scope_snapshot_revision=?10 AND o.principal_ref=?11 LIMIT 1",
+  ).bind(input.authorization_scope_ref.id, input.authorization_scope_ref.revision, input.access.principal_ref,
+    input.access.credential_generation, input.authorization.authorization_receipt_ref, input.authorization.policy_authority_ref,
+    input.artifact_ref.id, input.artifact_ref.revision, input.original_scope_ref.id, input.original_scope_ref.revision,
+    input.original_principal_ref).first<{ authorized: number }>();
+  return row?.authorized === 1;
+}

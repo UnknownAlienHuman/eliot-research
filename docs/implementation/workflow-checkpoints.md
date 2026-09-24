@@ -836,3 +836,41 @@ call. This extends commands, not owner management or historical machine-result r
 Migration 0077 changes views only and adds a schema readiness marker; no historical rows,
 public DTOs, grant revisions or model reservations are rewritten. Compile/static review only;
 behavioral and native storage acceptance remains pending.
+
+
+### Owner reading of machine-authored drafts (S12, migration 0079)
+
+The existing owner saved-draft list now includes the original grantor's machine reports for
+projects they still own. The list retains its eight-item bound. Its existing PWA reopen path
+reads report metadata, exact sections/citations and Markdown export through the same POST
+reauthorization handlers. Machine entries deliberately omit a workflow-control locator:
+report access does not confer owner run management, recovery, Wiki promotion or publication.
+Direct legacy owner GET response shapes and service-token MCP tools are unchanged.
+
+`owner_artifact_read_origin` proves ordinary owner authorship or the exact machine W2 operation,
+completed execution reservation, original project grant and report admission. The reader must
+be the original grantor and a current owner of that project, with all original source IDs still
+members. Mere source overlap or a new project owner is not report entitlement. The shared view
+is checked during scope issuance and independently before/after artifact reads. Request-local
+currentness uses the existing mutation epoch/time-frontier checks and pins project generation.
+
+Current owner source policies authorize a fresh owner read scope. The machine's identity,
+credential, delegation, execution deadline and budgets are not adopted or renewed. An expired
+or revoked service grant therefore does not by itself deny the independently entitled owner.
+For this exact owner-machine origin only, `CLIENT_DELEGATION_STALE` may remain historical
+provenance while every current owner/source/disclosure/admission/purge condition is checked.
+The old invalidated snapshot remains invalidated. Other invalidations still fail; the existing
+`SCOPE_INPUT_CHANGED` exception still requires proven source-head advancement. Cancelled
+machine runs and terminal/missing original evidence handles remain unreadable here.
+
+No report bytes, original author, source revisions, hashes, DRAFT/audit verdicts or citation
+identities are rewritten. Citation reopening pairs original references with freshly authorized
+handles and retains the existing exact-projection requirement. Reading starts no model; listing
+and reopening may persist fresh read scopes, grants, receipts and handles. Credentials and
+request cancellation are checked before final disclosure.
+
+Apply the complete migration chain through **0079** before deploying the shared history and
+reauthorization handlers; missing schema is not a permissive fallback. No backfill or source-data
+rewrite is performed. This checkpoint is compilation/lint/schema-reviewed code, not native,
+browser or behavioral acceptance. Owner machine-run control and general run discovery,
+publication/erasure and managed-OAuth integration remain separate work.

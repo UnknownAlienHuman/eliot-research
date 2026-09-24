@@ -1,7 +1,7 @@
 import { ArtifactReadNotFoundError, type AuthenticatedRequestContext, type ResearchRunStatus } from "@eliotr/interfaces";
 import { VersionedRefSchema, type VersionedRef } from "@eliotr/contracts";
 import { loadScopeAuthority } from "@eliotr/cloudflare-evidence";
-import { createOwnerScopeAuthority, OrientationError } from "@eliotr/cloudflare-navigation";
+import { createOwnerScopeAuthority, OrientationError, ScopeServiceError } from "@eliotr/cloudflare-navigation";
 import { ArtifactDraftReadError } from "@eliotr/cloudflare-research";
 import {
   readHistoricalResearchCoverage,
@@ -10,10 +10,11 @@ import {
 import type { Env } from "./env.js";
 import { createResearchRunService } from "./research-session.js";
 import { CatalogInputError } from "./catalog-service.js";
-import { reopenOwnerArtifactDraft } from "./research-artifact-reauthorization-http.js";
+import { prepareArtifactReadReauthorization, reopenOwnerArtifactDraft } from "./research-artifact-reauthorization-http.js";
 import { researchSemanticConfigurationInstalled } from "./research-semantic-server.js";
 
 interface SavedDraftRow {
+  readonly origin_client_class: unknown;
   readonly artifact_id: unknown;
   readonly revision: unknown;
   readonly scope_snapshot_id: unknown;
@@ -44,6 +45,7 @@ function invalidHistory(message: string): never {
 
 function expectedSavedDraftDenial(error: unknown): boolean {
   if (error instanceof ArtifactReadNotFoundError) return true;
+  if (error instanceof ScopeServiceError && error.code === "SCOPE_SNAPSHOT_STALE") return true;
   if (error instanceof OrientationError || error instanceof ArtifactDraftReadError) {
     return [403, 404, 409, 410].includes(error.status);
   }
@@ -165,19 +167,37 @@ export async function readOwnerResearchRuns(env: Env, context: AuthenticatedRequ
   // source policy before listing them; POST reauthorization performs full disclosure checks.
   const authority = createOwnerScopeAuthority(env.CORE_DB, context);
   const drafts = await env.CORE_DB.prepare(
-    "SELECT b.artifact_id,b.revision,b.intent_id,b.intent_revision,b.scope_snapshot_id,b.scope_snapshot_revision,b.created_at " +
-    "FROM artifact_draft_binding b JOIN artifact_revision a " +
-    "ON a.artifact_id=b.artifact_id AND a.revision=b.revision " +
-    "WHERE b.principal_ref=?1 AND a.status='DRAFT' ORDER BY b.created_at DESC,b.artifact_id DESC LIMIT 8",
+    "SELECT b.artifact_id,b.revision,b.intent_id,b.intent_revision,b.scope_snapshot_id,b.scope_snapshot_revision,b.created_at," +
+    "o.origin_client_class FROM artifact_draft_binding b JOIN owner_artifact_read_origin o " +
+    "ON o.artifact_id=b.artifact_id AND o.artifact_revision=b.revision " +
+    "WHERE o.reader_principal_ref=?1 ORDER BY b.created_at DESC,b.artifact_id DESC LIMIT 8",
   ).bind(context.principal_ref).all<SavedDraftRow>();
   if (!drafts.success) throw new CatalogInputError("RESEARCH_HISTORY_UNAVAILABLE", "Saved reports are temporarily unavailable", 503, true);
   const savedDrafts: { artifact_ref: VersionedRef; created_at: string; workflow_instance_id?: string }[] = [];
+  const machineDraftChecks: (() => Promise<void>)[] = [];
   for (const row of drafts.results) {
     const ref = VersionedRefSchema.parse({ id: row.artifact_id, revision: row.revision });
     if (typeof row.created_at !== "string" || !Number.isFinite(Date.parse(row.created_at))) invalidHistory("Saved report metadata is invalid");
     const originalRef = VersionedRefSchema.parse({
       id: row.scope_snapshot_id, revision: row.scope_snapshot_revision,
     });
+    if (!["owner_pwa", "trusted_agent", "named_api_client"].includes(String(row.origin_client_class))) {
+      invalidHistory("Saved report author class is invalid");
+    }
+    if (row.origin_client_class !== "owner_pwa") {
+      try {
+        const read = await prepareArtifactReadReauthorization(env, context, ref, "report");
+        if (!sameRef(read.original_scope_snapshot_ref, originalRef)) invalidHistory("Saved report origin changed");
+        await read.requireCurrent();
+        savedDrafts.push({ artifact_ref: ref, created_at: row.created_at });
+        machineDraftChecks.push(read.requireCurrent);
+      } catch (error) {
+        if (expectedSavedDraftDenial(error)) continue;
+        throw error;
+      }
+      // Do not expose machine run controls or owner Wiki promotion via a report locator.
+      continue;
+    }
     const original = await loadScopeAuthority(env.CORE_DB, originalRef);
     if (original === null || original.invalidated_at !== null) continue;
     try {
@@ -207,6 +227,7 @@ export async function readOwnerResearchRuns(env: Env, context: AuthenticatedRequ
       throw error;
     }
   }
+  for (const requireCurrent of machineDraftChecks) await requireCurrent();
   return {
     protocol: "eliotr.research-runs.v3" as const,
     runs,

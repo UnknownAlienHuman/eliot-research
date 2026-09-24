@@ -85,8 +85,10 @@ Known owner-project status, cancellation, sponsored recovery and MCP query/read 
 Exploratory machine creation is implemented with migration 0076; migration 0077 connects the
 existing controls to that same client and originating grant revision. Migration0078 connects
 historical machine status/report/citation reads to fresh signed credentials and artifact-bound
-read scopes, without renewing execution. Owner management, broad discovery and import remain code work.
-Apply all migrations through 0078 before deploying the changed shared grant readers. Connections manages
+read scopes, without renewing execution. Migration0079 adds independent original-grantor owner
+reading of machine reports through saved-draft discovery and existing PWA reauthorization/export.
+Owner machine-run management, broad discovery and import remain code work.
+Apply all migrations through 0079 before deploying the changed shared grant/history readers. Connections manages
 grants through the existing API and provides the independent opt-in service catalog-read command
 (`scripts/check-project-client.mjs --help`). Configured is not connected: the PWA does not claim
 a signed client round trip from owner readback or the unrelated generic MCP diagnostic.

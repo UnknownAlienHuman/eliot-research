@@ -40,7 +40,7 @@ import {
   type ImmutableObjectReceipt,
 } from "@eliotr/platform-cloudflare";
 
-import { hasDelegatedArtifactReadAuthority } from "./artifact-draft-read-authority.js";
+import { hasDelegatedArtifactReadAuthority, hasOwnerArtifactReadAuthority } from "./artifact-draft-read-authority.js";
 
 const MANIFEST_PREFIX = "artifact-draft/manifest";
 const SECTION_PREFIX = "artifact-draft/section";
@@ -469,7 +469,7 @@ async function readArtifactDraftCore(
     "SELECT artifact_id, revision, intent_id, intent_revision, expected_head_revision, principal_ref, spec_ref_id, spec_ref_revision, scope_snapshot_id, scope_snapshot_revision, manifest_r2_key, manifest_sha256, manifest_size_bytes, created_at FROM artifact_draft_binding WHERE artifact_id=?1 AND revision=?2 LIMIT 1",
   ).bind(artifactRef.id, artifactRef.revision).first<BindingRow>();
   if (binding === null) fail("ARTIFACT_DRAFT_READ_INTEGRITY", 409, "draft binding is missing");
-  if (access.client_class === "owner_pwa" && binding.principal_ref !== access.principal_ref) fail("ARTIFACT_DRAFT_READ_DENIED", 403, "draft read authorization denied");
+  if (reauthorization === undefined && access.client_class === "owner_pwa" && binding.principal_ref !== access.principal_ref) fail("ARTIFACT_DRAFT_READ_DENIED", 403, "draft read authorization denied");
   let scopeRef: VersionedRef;
   try { scopeRef = VersionedRefSchema.parse({ id: binding.scope_snapshot_id, revision: binding.scope_snapshot_revision }); }
   catch { fail("ARTIFACT_DRAFT_READ_INTEGRITY", 409, "draft scope reference is invalid"); }
@@ -478,7 +478,8 @@ async function readArtifactDraftCore(
   catch (error) { return mapAuthorityFailure(error); }
   if (scope === null) fail("ARTIFACT_DRAFT_READ_STALE", 410, "draft read scope is unavailable");
   if (scope.invalidated_at !== null &&
-      (reauthorization === undefined || scope.invalidation_reason !== "SCOPE_INPUT_CHANGED")) {
+      (reauthorization === undefined || (scope.invalidation_reason !== "SCOPE_INPUT_CHANGED" &&
+        !(access.client_class === "owner_pwa" && scope.invalidation_reason === "CLIENT_DELEGATION_STALE")))) {
     fail("ARTIFACT_DRAFT_READ_STALE", 410, "draft read scope was invalidated");
   }
   const storedScope = scope.snapshot;
@@ -533,7 +534,8 @@ async function readArtifactDraftCore(
       const authorizationScopeRef = { id: freshReauthorizationScope.snapshot_id, revision: freshReauthorizationScope.revision };
       const originalPrincipal = text(binding.principal_ref, "draft author");
       const requireArtifactOrigin = async (grant: ScopeAuthorization) => {
-        if (access.client_class !== "owner_pwa" && !await hasDelegatedArtifactReadAuthority({
+        const permitted = access.client_class === "owner_pwa" ? hasOwnerArtifactReadAuthority : hasDelegatedArtifactReadAuthority;
+        if (!await permitted({
           database, access, artifact_ref: artifactRef, original_scope_ref: scopeRef,
           authorization_scope_ref: authorizationScopeRef, authorization: grant,
           original_principal_ref: originalPrincipal, citations,
@@ -626,7 +628,7 @@ async function readArtifactDraftCore(
     fail("ARTIFACT_DRAFT_READ_INTEGRITY", 409, "draft manifest binding is inconsistent");
   }
   const store = createR2EvidenceObjectStore(input.work_bucket);
-  if (access.client_class !== "owner_pwa") await authority.current();
+  if (reauthorization !== undefined || access.client_class !== "owner_pwa") await authority.current();
   const manifestObject = await readStoredObject(store, manifestRow, {
     object_ref: "manifest", object_kind: "MANIFEST", section_ordinal: null, prefix: MANIFEST_PREFIX, content_type: "application/json",
   }, true);
@@ -681,7 +683,7 @@ async function readArtifactDraftCore(
     if (row.artifact_id !== artifactRef.id || row.revision !== artifactRef.revision || row.created_at !== artifact.created_at) {
       fail("ARTIFACT_DRAFT_READ_INTEGRITY", 409, "draft object identity is inconsistent");
     }
-    if (access.client_class !== "owner_pwa") await authority.current();
+    if (reauthorization !== undefined || access.client_class !== "owner_pwa") await authority.current();
     storedByRef.set(expectedObject.object_ref, await readStoredObject(
       store,
       row,
