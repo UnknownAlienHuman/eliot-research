@@ -1,0 +1,78 @@
+name: stage-machine-read-code
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/stage-machine-read-code.yml]
+permissions:
+  contents: write
+jobs:
+  stage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: main
+          fetch-depth: 2
+          persist-credentials: false
+      - name: Stage reviewed source blobs without publishing a ref
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import base64, gzip, hashlib, json, os, pathlib, subprocess, urllib.request
+          base = '259bf3608270cfc2f8e31fc0e78bf1867fe2a187'
+          tree = '5111e4e4efbe4a565275fef560606d739bbe6e49'
+          patch_hash = '0ee757f45dd27e657b1509cdc39676332ceefef4bb798b138ebaec0256f389c0'
+          own = '.github/workflows/stage-machine-read-code.yml'
+          chunks = ['fb008a183fab25be63a6b32edaf7c70f296836fb', '3ac95b9b8a4af05d97fdd65a5ec60b01842b8921', '877f43dab8c0ca92f7892f7a16ba2aefcc9b1057', '0e604dfd6546f971aaeffd64279d0eddfd171fa0', '4888a0ebe998338b79baba494dc20a77675919da', '82e81246b5c763bd34b74deb3281779047e9235c']
+          def git(*args): return subprocess.check_output(['git', *args]).decode().strip()
+          def blob_hash(data): return hashlib.sha1(b'blob '+str(len(data)).encode()+b'\0'+data).hexdigest()
+          def api(path, data=None):
+              body = None if data is None else json.dumps(data).encode()
+              request = urllib.request.Request('https://api.github.com/repos/'+os.environ['GITHUB_REPOSITORY']+path, data=body, headers={'Authorization':'Bearer '+os.environ['GH_TOKEN'],'Accept':'application/vnd.github+json','Content-Type':'application/json','X-GitHub-Api-Version':'2022-11-28'})
+              with urllib.request.urlopen(request, timeout=45) as response: return json.load(response)
+          assert os.environ['GITHUB_REPOSITORY'] == 'UnknownAlienHuman/eliot-research'
+          assert git('branch','--show-current') == 'main'
+          assert git('rev-parse','HEAD') == os.environ['GITHUB_SHA']
+          assert git('rev-parse','HEAD^') == base
+          assert git('diff','--name-only',base,'HEAD') == own
+          payload = b''
+          for sha in chunks:
+              obj = api('/git/blobs/'+sha)
+              assert obj['encoding'] == 'base64' and obj['sha'] == sha
+              data = base64.b64decode(obj['content'])
+              assert blob_hash(data) == sha
+              payload += data
+          patch = gzip.decompress(base64.b64decode(payload, validate=True))
+          assert hashlib.sha256(patch).hexdigest() == patch_hash
+          subprocess.run(['git','rm','--',own], check=True)
+          subprocess.run(['git','apply','--index','--whitespace=error','-'], input=patch, check=True)
+          subprocess.run(['git','diff','--cached','--check'], check=True)
+          assert git('write-tree') == tree
+          paths = git('diff','--cached','--name-only',base).splitlines()
+          assert len(paths) == 16 and own not in paths
+          entries = []
+          for path in paths:
+              assert '..' not in pathlib.PurePosixPath(path).parts and not path.startswith('/')
+              meta, name = git('ls-files','--stage','--',path).split('\t')
+              mode, expected, stage = meta.split()
+              assert name == path and stage == '0' and mode == '100644'
+              content = subprocess.check_output(['git','show',':'+path])
+              assert blob_hash(content) == expected
+              remote = api('/git/blobs', {'content':base64.b64encode(content).decode(),'encoding':'base64'})
+              assert remote['sha'] == expected
+              entries.append({'path':path,'mode':mode,'type':'blob','sha':expected})
+          out = pathlib.Path('/tmp/machine-read-manifest'); out.mkdir()
+          manifest = {'base':base,'staging_commit':os.environ['GITHUB_SHA'],'tree':tree,'patch_sha256':patch_hash,'entries':entries}
+          (out/'manifest.json').write_text(json.dumps(manifest, indent=2)+'\n')
+          print('Staged',len(entries),'reviewed blobs; no commit/ref, tests, deployment or database mutation.')
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: machine-read-manifest
+          path: /tmp/machine-read-manifest/
+          retention-days: 3
+          if-no-files-found: error
