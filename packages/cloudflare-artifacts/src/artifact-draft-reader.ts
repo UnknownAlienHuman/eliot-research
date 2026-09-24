@@ -36,8 +36,11 @@ function validRef(value: unknown, label: string): VersionedRef {
   catch { throw new ArtifactDraftReadError("ARTIFACT_DRAFT_READ_INVALID", 400, `${label} is invalid`); }
 }
 
-function ownerOnly(input: ArtifactDraftReadInput): void {
-  if (input.access.client_class !== "owner_pwa") {
+function requireDirectReader(input: ArtifactDraftReadInput): void {
+  const internalRun = input.workflow_operation_id;
+  const serviceRun = (input.access.client_class === "trusted_agent" || input.access.client_class === "named_api_client") &&
+    typeof internalRun === "string" && /^run-[0-9a-f]{48}$/u.test(internalRun);
+  if (input.access.client_class !== "owner_pwa" && !serviceRun) {
     throw new ArtifactDraftReadError("ARTIFACT_DRAFT_READ_DENIED", 403, "draft read authorization denied");
   }
 }
@@ -49,7 +52,7 @@ function mapFailure(error: unknown): never {
 
 export async function readArtifactDraft(input: ArtifactDraftReadInput): Promise<ArtifactRevision | null> {
   const artifactRef = validRef(input.artifact_ref, "draft reference");
-  ownerOnly(input);
+  requireDirectReader(input);
   try { return await readArtifactDraftInternal(input, artifactRef); }
   catch (error) { return mapFailure(error); }
 }
@@ -57,7 +60,7 @@ export async function readArtifactDraft(input: ArtifactDraftReadInput): Promise<
 export async function readArtifactDraftSection(input: ArtifactDraftSectionReadInput): Promise<ArtifactDraftSectionRead | null> {
   const artifactRef = validRef(input.artifact_ref, "draft reference");
   const sectionRef = validRef(input.section_ref, "section reference");
-  ownerOnly(input);
+  requireDirectReader(input);
   try { return await readArtifactDraftInternal(input, artifactRef, sectionRef); }
   catch (error) { return mapFailure(error); }
 }
@@ -65,7 +68,7 @@ export async function readArtifactDraftSection(input: ArtifactDraftSectionReadIn
 export async function readArtifactDraftSectionCitations(input: ArtifactDraftSectionReadInput): Promise<ArtifactDraftSectionCitationsRead | null> {
   const artifactRef = validRef(input.artifact_ref, "draft reference");
   const sectionRef = validRef(input.section_ref, "section reference");
-  ownerOnly(input);
+  requireDirectReader(input);
   try { return await readArtifactDraftInternal(input, artifactRef, sectionRef, true); }
   catch (error) { return mapFailure(error); }
 }

@@ -766,3 +766,43 @@ that the run did not resume. Grant revocation blocks further client commands and
 it is not a rollback of the owner's independently authorized workflow. Use separately authorized
 cancellation to stop it. The response itself grants no report/evidence access. This is code with
 compile/static verification only; native lifecycle, race and paid-call-count acceptance remain pending.
+
+
+### S11 machine Research execution (migration 0076; code checkpoint)
+
+`research-client-execution.ts` composes the existing service-token authorizer, owner-approved
+spend template, execution reservation, recorded scope profile and native Workflow. HTTP
+`POST /api/v1/research/run` and MCP `eliotr_run` use the same strict request parser, request
+key and W1/W2 identities. New service runs support one explicit PROJECT and the exploratory
+lane; unsupported lanes are rejected before reservation. A `run` grant alone is insufficient:
+its private sponsorship fingerprint, deployment and expiry must match the installed approval.
+
+The existing orientation reservation captures the original project grant ID/revision before
+scope issuance. Migration 0076 retains existing rows exactly while admitting this separately
+fenced actor class; run grants bind one operation and cannot be reused as query/report grants.
+The original service actor remains the W1/W2/W3 principal and artifact author, not the grantor.
+Background execution uses that canonical actor, not browser credentials or payload-selected
+classes. Each authority check resolves the same immutable sponsor; the shared effective view
+fences stage/model writes on revocation, expiry, project/source/policy changes and purge.
+No quota is manufactured and no already dispatched call is promised a refund.
+
+Existing synthesis/audit/report services receive a strictly versioned internal delegated
+policy bound to the approved template. Public DTO/schema descriptors remain unchanged.
+Machine execution does not automatically renew model qualification: installed, unexpired
+route qualification remains mandatory. Admission returns a run handle, not model readiness.
+The full metadata profile, preview/result limits and actual Workflow byte limits are retained.
+
+Machine status and report/citation reads in this checkpoint require the **original service
+credential and an active originating execution scope/grant**. Status/report/evidence remain
+separate permissions. Internal materialization readback has a server-only operation locator
+independently checked against its exact W2 run, report admission and artifact binding; it is
+not a public read capability. Historical owner readers keep their existing path. The original
+report bytes, source revisions and hashes are unchanged by reading.
+
+Remaining code: machine-created-run cancel/recover, owner management of machine-authored
+reports, service credential-refresh/historical machine reads after execution expiry and
+managed-OAuth composition. These are not supplied by this checkpoint. Existing delegated
+controls continue to apply only to their documented owner-authored origins. No ready/live
+claim follows from compiling this code; full lifecycle/native acceptance is still pending.
+Apply the complete migration chain through **0076** before deploying these shared readers
+and mutation paths, including owner paths. No missing-schema permissive fallback exists.

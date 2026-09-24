@@ -74,6 +74,8 @@ export class ArtifactDraftReadError extends Error {
 }
 
 export interface ArtifactDraftReadInput {
+  /** Server-only W2 materialization readback. Public readers use reauthorization instead. */
+  readonly workflow_operation_id?: string;
   readonly database: D1Database;
   readonly work_bucket: R2Bucket;
   readonly artifact_ref: VersionedRef;
@@ -441,6 +443,7 @@ async function readArtifactDraftCore(
   citations = false,
 ): Promise<ArtifactDraftCoreValue | ArtifactDraftReauthorizedCoreRead<ArtifactDraftCoreValue> | null> {
   const reauthorization = "reauthorization" in input ? input.reauthorization : undefined;
+  const workflowOperation = "workflow_operation_id" in input ? input.workflow_operation_id : undefined;
   const access: EvidenceAccessContext = reauthorization === undefined
     ? input.access
     : JSON.parse(canonicalJson(input.access)) as EvidenceAccessContext;
@@ -484,19 +487,28 @@ async function readArtifactDraftCore(
   let authority: NavigationReadAuthority;
   let initialSourceFingerprint: string | undefined;
   try {
-    if (access.client_class !== "owner_pwa" && (reauthorization === undefined ||
+    if (access.client_class !== "owner_pwa" && ((reauthorization === undefined && workflowOperation === undefined) ||
         (access.client_class !== "trusted_agent" && access.client_class !== "named_api_client"))) {
       fail("ARTIFACT_DRAFT_READ_DENIED", 403, "draft read authorization denied");
     }
     if (reauthorization === undefined) {
       if (!("require_current" in input)) fail("ARTIFACT_DRAFT_READ_INTEGRITY", 409, "draft read currentness input is missing");
-      authority = createNavigationReadAuthority({
+      const directNavigation = createNavigationReadAuthority({
         database,
         scope_snapshot: storedScope,
         access,
         require_current: input.require_current,
         ...(input.now === undefined ? {} : { now: input.now }),
       });
+      authority = { ...directNavigation, current: async () => {
+        const grant = await directNavigation.current();
+        if (access.client_class !== "owner_pwa" && !await hasDelegatedArtifactReadAuthority({
+          database, access, artifact_ref: artifactRef, original_scope_ref: scopeRef, authorization_scope_ref: scopeRef,
+          authorization: grant, original_principal_ref: text(binding.principal_ref, "draft author"), citations,
+          ...(workflowOperation === undefined ? {} : { workflow_operation_id: workflowOperation }),
+        })) fail("ARTIFACT_DRAFT_READ_DENIED", 403, "draft execution readback is denied");
+        return grant;
+      } };
       await authority.current();
     } else {
       if (reauthorizationAccess === undefined || !reauthorizedAccessMatches(access, reauthorizationAccess) ||

@@ -32,6 +32,7 @@ import type { AuthenticatedRequestContext, QueryRequest, QueryResult, ResearchEn
 import type { ResearchRunFailureCode } from "@eliotr/interfaces";
 import { ResearchServiceError, failResearch as fail } from "./research-service-error.js";
 export { ResearchServiceError } from "./research-service-error.js";
+import { prepareClientResearchAdmission, requireClientResearchExecution, authorizeMachineRunRead } from "./research-client-execution.js";
 import { loadResearchPlanningSources, prepareResearchRunScope } from "./research-run-admission.js";
 import type { Env } from "./env.js";
 import { RESEARCH_OWNER_MODEL_PROFILE as MODEL_PROFILE } from "./research-owner-profile.js";
@@ -86,7 +87,6 @@ export function parseResearchRunRequest(raw: unknown): QueryRequest {
   return { ...base, request_version: RESEARCH_RUN_REQUEST_V2, inquiry_protocol_ref: parsedRef.data };
 }
 function idempotencyKey(context: AuthenticatedRequestContext): string { const key = context.request.headers.get("idempotency-key"); if (typeof key !== "string" || key.length < 1 || key.length > 256 || /[\u0000-\u0020\u007f]/u.test(key)) fail("RESEARCH_INPUT_INVALID", "idempotency-key header is required"); return key; }
-function requireOwner(context: AuthenticatedRequestContext): void { if (context.client_class !== "owner_pwa") fail("RESEARCH_OWNER_REQUIRED", "research query/run requires the owner profile", 403); }
 const RESEARCH_ENGINE_STATUSES = new Set<ResearchEngineStatus>([
   "queued", "running", "paused", "errored", "terminated", "complete", "waiting", "waitingForPause", "unknown",
 ]);
@@ -265,8 +265,9 @@ async function readResearchRunStatus(env: Env, context: AuthenticatedRequestCont
     };
   };
   const isOwner = context.client_class === "owner_pwa";
-  const delegated = isOwner ? null : await prepareProjectClientRunRead(env, context, operationId).catch(mapRunStatusFailure);
-  if (!isOwner && delegated === null) fail("RESEARCH_RUN_NOT_FOUND", "research run does not exist", 404);
+  const machine = isOwner ? null : await authorizeMachineRunRead(env, context, operationId).catch(mapRunStatusFailure);
+  const delegated = isOwner || machine ? null : await prepareProjectClientRunRead(env, context, operationId).catch(mapRunStatusFailure);
+  if (!isOwner && delegated === null && machine === null) fail("RESEARCH_RUN_NOT_FOUND", "research run does not exist", 404);
   const refreshed = isOwner ? await prepareReauthenticatedRunRead(env, context, operationId).catch(mapRunStatusFailure) : null;
   const status = delegated?.status ?? refreshed?.status ?? await readStoredResearchRunStatus({
     database: env.CORE_DB, operation_id: operationId, principal, recheck_authority: recheckAuthority,
@@ -294,7 +295,7 @@ async function readResearchRunStatus(env: Env, context: AuthenticatedRequestCont
       answer = await readReauthenticatedRunAnswer(env, context, refreshed, generation).catch(mapRunStatusFailure);
     }
     await refreshed.requireCurrent().catch(mapRunStatusFailure);
-  } else if (status.state === "ENGINE_COMPLETED" && isSemanticResearchHandlerGeneration(generation)) {
+  } else if ((!machine || machine.can_read_report) && status.state === "ENGINE_COMPLETED" && isSemanticResearchHandlerGeneration(generation)) {
     const completed = await readCommittedResearchRunResult({
       database: env.CORE_DB,
       work_bucket: env.WORK_BUCKET,
@@ -305,6 +306,7 @@ async function readResearchRunStatus(env: Env, context: AuthenticatedRequestCont
     }).catch(mapRunStatusFailure);
     if (completed !== null) answer = { availability: "draft", artifact_ref: completed.materialization.materialization.draft.artifact_ref };
   }
+  await machine?.requireCurrent();
   return {
     protocol: "eliotr.research-run-status.v1",
     workflow_instance_id: status.operation_id,
@@ -322,8 +324,11 @@ async function readResearchRunStatus(env: Env, context: AuthenticatedRequestCont
 export function createResearchRunService(env: Env): { run(context: AuthenticatedRequestContext, request: QueryRequest): Promise<{ investigation_ref: VersionedRef; workflow_instance_id: string }>; runStatus(context: AuthenticatedRequestContext, workflowInstanceId: string): Promise<ResearchRunStatus> } {
   return {
     async run(context, raw) {
-      requireOwner(context);
       const request = parseResearchRunRequest(raw);
+      const installedProtocol = request.inquiry_protocol_ref === undefined ? null : installedInquiryProtocolDefinition(request.inquiry_protocol_ref);
+      if (context.client_class !== "owner_pwa" && installedProtocol !== null && installedProtocol.lane !== "exploratory") {
+        fail("RESEARCH_PRODUCT_UNSUPPORTED", "Machine Research currently supports the exploratory protocol lane", 400);
+      }
       const inputGeneration = await env.CORE_DB.prepare("SELECT value FROM schema_state WHERE key='research_question_generation'").first<string>("value");
       if (inputGeneration !== "research-question-v2-utf8-envelopes") fail("RESEARCH_INPUT_SCHEMA_MISMATCH", "Research input requires Core migration 0069", 503);
       const key = idempotencyKey(context);
@@ -332,6 +337,8 @@ export function createResearchRunService(env: Env): { run(context: Authenticated
       const hex = base.slice(0, 48);
       const investigation_id = checkId(`research-${hex}`, "investigation_id");
       const operation_id = checkId(`run-${hex}`, "operation_id");
+      const delegated = context.client_class === "owner_pwa" ? undefined
+        : await prepareClientResearchAdmission(env, context, request, operation_id);
       const db = env.CORE_DB;
       const bucket = env.WORK_BUCKET;
       const store = createD1InvestigationLedgerStore(db as unknown as LedgerD1Database);
@@ -346,14 +353,17 @@ export function createResearchRunService(env: Env): { run(context: Authenticated
         fail("RESEARCH_AGENT_NOT_CONFIGURED", "Research agents require the installed model, prompt and report configuration", 503);
       }
       const scopeRef = await prepareResearchRunScope(env, context, request, operation_id, requestDigest,
-        pre === null ? undefined : { id: pre.head.scope_snapshot_id, revision: pre.head.scope_snapshot_revision })
+        pre === null ? undefined : { id: pre.head.scope_snapshot_id, revision: pre.head.scope_snapshot_revision }, delegated)
         .catch(mapRetrievalError);
       const snapshotRow = await db.prepare("SELECT policy_authority_ref, purge_ledger_revision FROM scope_snapshot WHERE snapshot_id = ?1 AND revision = ?2").bind(scopeRef.id, scopeRef.revision).first<{ policy_authority_ref: string; purge_ledger_revision: number }>();
       if (!snapshotRow || typeof snapshotRow.policy_authority_ref !== "string") fail("RESEARCH_AUTHORITY_STALE", "scope snapshot is unavailable", 409);
       const priorWorkflow = pre === null ? null : await db.prepare("SELECT handler_generation FROM research_workflow_run WHERE idempotency_key = ?1")
         .bind(key).first<{ handler_generation: string }>();
       const supportedGenerations = new Set([HANDLER_GEN, SERVER_OWNED_RESEARCH_HANDLER_GENERATION, SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION, SERVER_OWNED_FREEZE_HANDLER_GENERATION, SERVER_OWNED_SEMANTIC_HANDLER_GENERATION, SERVER_OWNED_LEGACY_PROTOCOL_HANDLER_GENERATION, SERVER_OWNED_PROTOCOL_HANDLER_GENERATION]);
-      if (pre !== null && (priorWorkflow === null || !supportedGenerations.has(priorWorkflow.handler_generation))) {
+      // A machine's first admission may stop after W1 but before W2. No stage can
+      // have run without W2; resume that exact initial head, never freeze a new scope.
+      const interruptedMachineAdmission = delegated !== undefined && pre?.head.revision === 1 && priorWorkflow === null;
+      if (pre !== null && !interruptedMachineAdmission && (priorWorkflow === null || !supportedGenerations.has(priorWorkflow.handler_generation))) {
         fail("RESEARCH_CONFLICT", "persisted workflow handler generation is unsupported", 409);
       }
       const currentPolicy = await db.prepare("SELECT policy_generation, state FROM investigation_current_policy WHERE policy_authority_ref = ?1 ORDER BY CASE state WHEN 'ACTIVE' THEN 0 ELSE 1 END LIMIT 1")
@@ -365,9 +375,6 @@ export function createResearchRunService(env: Env): { run(context: Authenticated
         await db.prepare("INSERT OR IGNORE INTO investigation_current_policy (policy_generation, policy_authority_ref, state, created_at) VALUES (?1,?2,'ACTIVE',?3)").bind(newPolicyGeneration, snapshotRow.policy_authority_ref, now).run().catch(mapLedger);
       }
       await db.prepare("INSERT OR IGNORE INTO investigation_current_deployment (deployment_generation, state, created_at) VALUES (?1,'ACTIVE',?2)").bind(env.DEPLOYMENT_GENERATION, now).run().catch(mapLedger);
-      const installedProtocol = request.inquiry_protocol_ref === undefined
-        ? null
-        : installedInquiryProtocolDefinition(request.inquiry_protocol_ref);
       const evidenceAuthority = createD1EvidenceAuthorityPort({ core_database: db, search_database: env.SEARCH_DB });
       const scopeAuthority = await evidenceAuthority.loadScope(scopeRef);
       if (scopeAuthority === null) fail("RESEARCH_AUTHORITY_STALE", "scope snapshot is unavailable", 409);
@@ -470,6 +477,9 @@ export function createResearchRunService(env: Env): { run(context: Authenticated
       try {
         // Reserve the first durable status before creating the Workflow instance so
         // the owner can immediately poll ACTIVE/next_stage_index=0 after launch.
+        await delegated?.requireScopeCurrent(scopeAuthority.snapshot);
+        if (delegated) await requireClientResearchExecution(env, context, scopeAuthority.snapshot, operation_id, env.DEPLOYMENT_GENERATION);
+        if (context.request.signal.aborted) fail("RESEARCH_CANCELLED", "Research admission was cancelled", 409);
         await new WorkflowCheckpointStore(db).ensureRun(initialStage, principal);
         const workflowParams: ResearchWorkflowRunParams = {
           operation_id,
@@ -480,10 +490,12 @@ export function createResearchRunService(env: Env): { run(context: Authenticated
           principal_ref: principal.principal_ref,
           credential_generation: principal.credential_generation,
           deployment_generation: principal.deployment_generation,
-          ...(isSemanticResearchHandlerGeneration(handlerGeneration)
+          ...(delegated === undefined && isSemanticResearchHandlerGeneration(handlerGeneration)
             ? { qualification_renewal: RESEARCH_QUALIFICATION_RENEWAL_MARKER }
             : {}),
         };
+        await delegated?.requireScopeCurrent(scopeAuthority.snapshot);
+        if (delegated) await requireClientResearchExecution(env, context, scopeAuthority.snapshot, operation_id, env.DEPLOYMENT_GENERATION);
         let instance: WorkflowInstance;
         try {
           instance = await env.RESEARCH_WORKFLOW.create({ id: operation_id, params: workflowParams });

@@ -60,7 +60,7 @@ async function requireDelegatedEvidence(db: D1Database, context: AuthenticatedRe
   }
   // Non-delegated legacy grants retain their original resolver path. Missing grants are denied there.
   if (row === null) return async () => {};
-  if (row.operation !== "query" && row.operation !== "evidence") {
+  if (row.operation !== "query" && row.operation !== "evidence" && row.operation !== "run") {
     throw new ClientGrantError("CLIENT_EVIDENCE_DENIED", 403, "Report body authority does not allow standalone evidence reads");
   }
   const lease = await authorizeProjectClientGrant(db, context, {

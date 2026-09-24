@@ -24,12 +24,12 @@ export const RESEARCH_REPORT_PURPOSE = "research-report-materialization" as cons
 const SHA256 = /^[a-f0-9]{64}$/u;
 
 export interface ResearchReportAdmissionPolicy {
-  readonly schema: typeof RESEARCH_REPORT_ADMISSION_SCHEMA;
+  readonly schema: typeof RESEARCH_REPORT_ADMISSION_SCHEMA | "eliotr.research.delegated-report-admission.v1";
   readonly policy_ref: string;
   readonly policy_revision: number;
   readonly config_provenance_ref: string;
   readonly principal_ref: string;
-  readonly client_class: "owner_pwa";
+  readonly client_class: "owner_pwa" | "trusted_agent" | "named_api_client";
   readonly policy_generation: string;
   readonly policy_authority_ref: string;
   readonly allowed_use: readonly string[];
@@ -170,7 +170,10 @@ function readClock(clock: () => number): number {
 
 function validatePolicy(policy: ResearchReportAdmissionPolicy | null): ResearchReportAdmissionPolicy {
   if (policy === null) fail("REPORT_ADMISSION_POLICY_MISSING", "server REPORT policy is not installed");
-  if (policy.schema !== RESEARCH_REPORT_ADMISSION_SCHEMA || policy.client_class !== "owner_pwa" ||
+  const validActor = policy.schema === RESEARCH_REPORT_ADMISSION_SCHEMA ? policy.client_class === "owner_pwa"
+    : policy.schema === "eliotr.research.delegated-report-admission.v1" &&
+      (policy.client_class === "trusted_agent" || policy.client_class === "named_api_client");
+  if (!validActor ||
       policy.requested_output_class !== RESEARCH_REPORT_OUTPUT_CLASS || policy.purpose !== RESEARCH_REPORT_PURPOSE ||
       !Array.isArray(policy.allowed_use) || policy.allowed_use.length !== 1 || policy.allowed_use[0] !== "research") {
     fail("REPORT_ADMISSION_DENIED", "installed REPORT policy does not explicitly permit private research drafts");
@@ -437,7 +440,7 @@ async function readAuthority(input: ResearchReportAdmissionInput, policy: Resear
   const material = {
     schema: RESEARCH_REPORT_ADMISSION_SCHEMA, request_sha256: requestSha, operation_id: finalRun.operation_id,
     investigation_id: finalRun.investigation_id, workflow_revision: finalRun.current_revision,
-    principal_ref: finalRun.principal_ref, client_class: "owner_pwa", credential_generation: finalRun.credential_generation,
+    principal_ref: finalRun.principal_ref, client_class: input.navigation.access.client_class, credential_generation: finalRun.credential_generation,
     deployment_generation: finalRun.deployment_generation, policy_generation: finalRun.policy_generation,
     policy_authority_ref: finalRun.policy_authority_ref, authorization_receipt_ref: afterGrant.authorization_receipt_ref,
     scope_snapshot_ref: { id: finalRun.scope_snapshot_id, revision: finalRun.scope_snapshot_revision },
@@ -493,7 +496,7 @@ async function assertAdmissionReadback(input: {
       row.policy_generation !== input.authority.run.policy_generation || row.policy_authority_ref !== input.authority.run.policy_authority_ref ||
       row.policy_expires_at !== input.policy.expires_at || row.operation_id !== input.authority.run.operation_id ||
       row.intent_id !== input.intent.intent_ref.id || row.intent_revision !== input.intent.intent_ref.revision ||
-      row.outbox_id !== input.outbox_id || row.principal_ref !== input.intent.principal_ref || row.client_class !== "owner_pwa" ||
+      row.outbox_id !== input.outbox_id || row.principal_ref !== input.intent.principal_ref || row.client_class !== input.policy.client_class ||
       row.credential_generation !== input.authority.run.credential_generation || row.idempotency_key !== input.intent.idempotency_key ||
       row.scope_snapshot_id !== input.authority.run.scope_snapshot_id || row.scope_snapshot_revision !== input.authority.run.scope_snapshot_revision ||
       row.scope_snapshot_digest !== input.authority.material.scope_snapshot_digest || row.authorization_receipt_ref !== input.authority.grant.authorization_receipt_ref ||
@@ -514,12 +517,15 @@ async function assertAdmissionReadback(input: {
 function noAdmissionBatchChanges(): void { /* Existing admission is read back before artifact effects. */ }
 
 export async function prepareResearchReportAdmission(input: ResearchReportAdmissionInput): Promise<ResearchReportAdmissionPreparation> {
-  if (input.navigation.access.principal_ref !== input.principal.principal_ref || input.navigation.access.client_class !== "owner_pwa" ||
+  if (input.navigation.access.principal_ref !== input.principal.principal_ref || !["owner_pwa", "trusted_agent", "named_api_client"].includes(input.navigation.access.client_class) ||
       input.navigation.access.credential_generation !== input.principal.credential_generation) {
     fail("REPORT_ADMISSION_AUTHORITY_STALE", "navigation access is not bound to the authenticated owner");
   }
   const policyRaw = await input.policy_source.read();
   const policy = validatePolicySource(policyRaw, input.policy_source);
+  if (policy.client_class !== input.navigation.access.client_class) {
+    fail("REPORT_ADMISSION_AUTHORITY_STALE", "Report policy and actual actor differ");
+  }
   const clock = input.now ?? Date.now;
   const nowMs = readClock(clock);
   const requestSha = await canonicalDigest(input.request);
@@ -578,12 +584,12 @@ export async function prepareResearchReportAdmission(input: ResearchReportAdmiss
       const decisionJson = canonicalEvidenceJson(decision);
       const statement = input.database.prepare(
         "INSERT INTO research_report_admission(decision_id,decision_revision,decision,decision_json,decision_sha256,input_json,input_sha256,policy_json,policy_ref,policy_revision,policy_generation,policy_authority_ref,policy_expires_at,operation_id,intent_id,intent_revision,outbox_id,principal_ref,client_class,credential_generation,idempotency_key,scope_snapshot_id,scope_snapshot_revision,scope_snapshot_digest,authorization_receipt_ref,deployment_generation,source_revision_refs_json,requested_output_class,purpose,disclosure_ceiling,expires_at,created_at) " +
-        "VALUES (?1,1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,1,?15,?16,'owner_pwa',?17,?18,?19,?20,?21,?22,?23,?24,?25,?26,?27,?28,?29)",
+        "VALUES (?1,1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,1,?15,?16,?30,?17,?18,?19,?20,?21,?22,?23,?24,?25,?26,?27,?28,?29)",
       ).bind(decision.decision_id, decision.decision, decisionJson, decisionSha, inputJson, inputSha, current.policyJson, currentPolicy.policy_ref, currentPolicy.policy_revision,
         current.run.policy_generation, current.run.policy_authority_ref, currentPolicy.expires_at, current.run.operation_id, intent.intent_ref.id, outboxId, current.run.principal_ref,
         current.run.credential_generation, intent.idempotency_key, current.run.scope_snapshot_id, current.run.scope_snapshot_revision, current.material.scope_snapshot_digest,
         current.grant.authorization_receipt_ref, current.run.deployment_generation, current.sourceRefsJson, RESEARCH_REPORT_OUTPUT_CLASS, RESEARCH_REPORT_PURPOSE,
-        current.grant.disclosure_ceiling, current.expiry, intent.created_at);
+        current.grant.disclosure_ceiling, current.expiry, intent.created_at, policy.client_class);
       return {
         statements: [statement],
         assertBatchResults(results, offset) {

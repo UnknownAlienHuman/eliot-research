@@ -1,4 +1,4 @@
-import { createOrientationApi, ORIENTATION_PROFILE, splitExhaustiveSourceRefs } from "@eliotr/cloudflare-navigation";
+import { createOrientationApi, ORIENTATION_PROFILE, splitExhaustiveSourceRefs, type createProjectClientScopeAuthority } from "@eliotr/cloudflare-navigation";
 import { createD1EvidenceAuthorityPort } from "@eliotr/cloudflare-evidence";
 import { createD1ScopePorts } from "@eliotr/retrieval";
 import type { VersionedRef } from "@eliotr/contracts";
@@ -14,8 +14,9 @@ export async function prepareResearchRunScope(
   operationId: string,
   requestDigest: string,
   originalRef?: VersionedRef,
+  delegated?: Awaited<ReturnType<typeof createProjectClientScopeAuthority>>,
 ): Promise<VersionedRef> {
-  if (context.client_class !== "owner_pwa") fail("RESEARCH_OWNER_REQUIRED", "owner authorization is required", 403);
+  if (context.client_class !== "owner_pwa" && delegated === undefined) fail("RESEARCH_OWNER_REQUIRED", "owner authorization is required", 403);
   if (context.request.signal.aborted) fail("RESEARCH_CANCELLED", "research admission is cancelled", 409);
   if (originalRef !== undefined) {
     // Never refreeze current heads, change the original JWT attribution or revive
@@ -28,6 +29,7 @@ export async function prepareResearchRunScope(
       fail("RESEARCH_AUTHORITY_STALE", "original research scope is unavailable", 409);
     }
     await createD1ScopePorts(env.CORE_DB, context).requireCurrentScope(original.snapshot);
+    await delegated?.requireScopeCurrent(original.snapshot);
     return originalRef;
   }
   const generation = await env.CORE_DB.prepare(
@@ -41,7 +43,7 @@ export async function prepareResearchRunScope(
   }
   const orientation = createOrientationApi(env, Date.now, {
     operation_id: operationId, request_digest: requestDigest,
-  });
+  }, delegated);
   const oriented = await orientation.orient(context, {
     query: request.query, product: "ORIENT", scope_expression: request.scope_expression,
     literals: [], evidence_grade: "E0", budget_ref: ORIENTATION_PROFILE, max_results: request.max_results,

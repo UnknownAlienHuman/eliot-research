@@ -76,6 +76,7 @@ export type ResearchOwnerReportAdmissionPolicyInput =
   | ResearchOwnerReportAdmissionTemplate;
 
 export interface ResearchOwnerReportAuthorityBinding {
+  readonly sponsor_principal_ref?: string;
   readonly principal_ref: string;
   readonly client_class: ResearchModelSpendPolicy["client_class"];
   readonly deployment_generation: string;
@@ -97,6 +98,7 @@ export interface ResearchOwnerReportConfigSourceOptions {
 }
 
 export interface ResearchOwnerReportPolicyBindingInput {
+  readonly sponsor_principal_ref?: string;
   /** The scope identity supplied by the already authenticated navigation root. */
   readonly current_scope_snapshot_id: string;
   /** The owner identity supplied by the already authenticated Worker principal. */
@@ -178,8 +180,10 @@ export function bindResearchOwnerReportAdmissionTemplate(
   const authority = id(current.policy_authority_ref, "current report policy authority");
   const currentExpiry = canonicalTime(current.expires_at, "current report authority expiry");
   const now = nowMs(input.now_ms);
-  if (client !== "owner_pwa" || template.client_class !== client || template.principal_ref !== principal ||
-      template.deployment_generation !== deployment) {
+  const sponsor = current.sponsor_principal_ref;
+  const validActor = client === "owner_pwa" ? sponsor === undefined && template.principal_ref === principal
+    : (client === "trusted_agent" || client === "named_api_client") && sponsor !== undefined && template.principal_ref === sponsor;
+  if (!validActor || template.deployment_generation !== deployment) {
     throw new ResearchOwnerReportPolicyError(
       "RESEARCH_OWNER_REPORT_POLICY_AUTHORITY_STALE",
       "owner report template is bound to another owner or deployment",
@@ -192,7 +196,7 @@ export function bindResearchOwnerReportAdmissionTemplate(
   }
   const expiresAt = new Date(Math.min(templateExpiry, authorityExpiry)).toISOString();
   return freeze({
-    schema: "eliotr.research.report-admission.v1",
+    schema: client === "owner_pwa" ? "eliotr.research.report-admission.v1" : "eliotr.research.delegated-report-admission.v1",
     policy_ref: template.policy_ref,
     policy_revision: template.policy_revision,
     config_provenance_ref: template.config_provenance_ref,
@@ -286,7 +290,8 @@ export function bindResearchOwnerReportPolicy(
 
   const configuredSection = template(policy.section_residency, "configured section residency");
   const configuredManifest = template(policy.manifest_residency, "configured manifest residency");
-  if (configuredSection.access_domain_id !== owner.data || configuredManifest.access_domain_id !== owner.data) {
+  const policyOwner = input.sponsor_principal_ref === undefined ? owner.data : id(input.sponsor_principal_ref, "report sponsor");
+  if (configuredSection.access_domain_id !== policyOwner || configuredManifest.access_domain_id !== policyOwner) {
     fail("RESEARCH_OWNER_REPORT_POLICY_AUTHORITY_STALE", "configured report residency belongs to another owner");
   }
   const bindResidency = (configured: ReportResidencyTemplate): ReportResidencyTemplate => ({

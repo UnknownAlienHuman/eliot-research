@@ -28,7 +28,7 @@ import {
   bindResearchOwnerReportPolicy,
   createBoundResearchOwnerReportConfigSource,
 } from "./research-owner-report-policy.js";
-import { resolveResearchOwnerSpendPolicy } from "./research-owner-spend-policy.js";
+import { resolveResearchExecutionSpend } from "./research-client-execution.js";
 import { createResearchSemanticWorkflowHandlerFactory } from "./research-semantic-composition.js";
 import type { ResearchStageHandlerFactory } from "./research-stage-handlers.js";
 import { requireResearchDeploymentCompatibility } from "./research-deployment-compatibility.js";
@@ -176,16 +176,8 @@ export async function createResearchSemanticServerHandlers(input: ResearchSemant
     if (canonicalJson(afterPolicy) !== canonicalJson(beforeGrant)) {
       throw new Error("navigation grant changed while binding spend policy");
     }
-    policy = resolveResearchOwnerSpendPolicy({
-      raw: env.ELIOTR_MODEL_SPEND_POLICY_JSON,
-      provenance: installed(env.ELIOTR_MODEL_SPEND_POLICY_PROVENANCE_REF),
-      access: navigation.access,
-      deployment_generation: principal.deployment_generation,
-      policy_generation: generation.data,
-      policy_authority_ref: authorityRef,
-      scope_expires_at: navigation.scope.expires_at,
-      authorization: afterPolicy,
-    }).policy;
+    policy = await resolveResearchExecutionSpend(env, navigation, input.operation_id,
+      principal.deployment_generation, generation.data);
     const terminalGrant = await navigation.current();
     if (canonicalJson(terminalGrant) !== canonicalJson(afterPolicy)) {
       throw new Error("navigation grant changed after binding spend policy");
@@ -195,7 +187,7 @@ export async function createResearchSemanticServerHandlers(input: ResearchSemant
   }
   if (policy.principal_ref !== principal.principal_ref || policy.credential_generation !== principal.credential_generation ||
       policy.deployment_generation !== principal.deployment_generation ||
-      navigation.access.client_class !== "owner_pwa") configurationMissing();
+      navigation.access.client_class !== policy.client_class) configurationMissing();
   const synthesisRule = policy.rules.find((rule) => rule.stage === "SYNTHESIZE");
   const auditRule = policy.rules.find((rule) => rule.stage === "AUDIT_CLAIMS");
   if (!synthesisRule || !auditRule) configurationMissing();
@@ -216,6 +208,7 @@ export async function createResearchSemanticServerHandlers(input: ResearchSemant
       policy_generation: policy.policy_generation,
       policy_authority_ref: policy.policy_authority_ref,
       expires_at: policy.expires_at,
+      ...("sponsor_principal_ref" in policy ? { sponsor_principal_ref: policy.sponsor_principal_ref } : {}),
     },
   });
   const reportPolicy = await reportSource.readArtifactPolicy();
@@ -228,6 +221,7 @@ export async function createResearchSemanticServerHandlers(input: ResearchSemant
         current_scope_snapshot_id: navigation.scope.snapshot_id,
         current_owner_principal_ref: principal.principal_ref,
         frozen_manifest_residency: input.initial_manifest.residency,
+        ...("sponsor_principal_ref" in policy ? { sponsor_principal_ref: policy.sponsor_principal_ref } : {}),
       });
     } catch {
       configurationMissing();

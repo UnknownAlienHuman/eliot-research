@@ -3,7 +3,7 @@ import { authorizeProjectClientGrant } from "@eliotr/cloudflare-navigation";
 import type { AuthenticatedRequestContext } from "@eliotr/interfaces";
 import { readResponseBodyWithinBytes, RuntimeLimitError } from "@eliotr/platform-cloudflare";
 import { GeminiMcpToolError, MAX_MCP_RESPONSE_BYTES, MCP_RESEARCH_TOOLS, type McpResearchToolCall, type McpToolCallContext } from "@eliotr/cloudflare-workspace-mcp";
-import { createResearchQueryService, createResearchRunService, parseResearchQueryRequest } from "./research-session.js";
+import { createResearchQueryService, createResearchRunService, parseResearchRunRequest, parseResearchQueryRequest } from "./research-session.js";
 import { mapError as mapHttpError } from "./http-errors.js";
 import { createEvidenceService } from "./evidence-service.js";
 import { reopenOwnerArtifactDraft, reopenOwnerArtifactSection, reopenOwnerArtifactSectionCitations } from "./research-artifact-reauthorization-http.js";
@@ -111,6 +111,11 @@ export function createMcpResearchToolCall(env: Env, request: Request): McpResear
       const context = serviceContext(env, request, toolContext, args);
       let execute: () => Promise<unknown>;
       switch (name) {
+        case "eliotr_run": {
+          const run = parseResearchRunRequest(args.request);
+          execute = () => createResearchRunService(env).run(context, run);
+          break;
+        }
         case "eliotr_query": {
           const query = parseResearchQueryRequest(args.request);
           if (query.product !== "FAST_SEARCH") invalid("Only model-free FAST_SEARCH is exposed through MCP");
@@ -156,7 +161,7 @@ export function createMcpResearchToolCall(env: Env, request: Request): McpResear
         }
       }
       if (!(await readReadiness(env)).ready) throw new GeminiMcpToolError("SCHEMA_NOT_READY", "Required migrations are not applied", true);
-      const operation = name === "eliotr_recover" ? "recover" : name === "eliotr_cancel" ? "cancel" : name === "eliotr_run_status" ? "status" : name === "eliotr_query" ? "query" : name === "eliotr_report" || name === "eliotr_section" ? "report" : "evidence";
+      const operation = name === "eliotr_run" ? "run" : name === "eliotr_recover" ? "recover" : name === "eliotr_cancel" ? "cancel" : name === "eliotr_run_status" ? "status" : name === "eliotr_query" ? "query" : name === "eliotr_report" || name === "eliotr_section" ? "report" : "evidence";
       const lease = await authorizeProjectClientGrant(env.CORE_DB, context, { operation });
       const result = await execute();
       // Exact readers fence sources/purge before returning. Do not refresh a delegation after their writes.

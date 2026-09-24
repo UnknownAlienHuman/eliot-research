@@ -396,7 +396,7 @@ export async function materializeResearchArtifactDraft(input: ResearchArtifactDr
   if (Object.values(input.section.statement_labels).some((label) => label !== "UNRESOLVED")) {
     fail("RESEARCH_ARTIFACT_DRAFT_INPUT_INVALID", "DRAFT section labels require semantic verification before promotion");
   }
-  if (input.navigation.access.principal_ref !== input.intent.principal_ref || input.navigation.access.client_class !== "owner_pwa") {
+  if (input.navigation.access.principal_ref !== input.intent.principal_ref || !["owner_pwa", "trusted_agent", "named_api_client"].includes(input.navigation.access.client_class)) {
     fail("RESEARCH_ARTIFACT_DRAFT_AUTHORITY_STALE", "draft authority is not owner-bound");
   }
   let initialGrant;

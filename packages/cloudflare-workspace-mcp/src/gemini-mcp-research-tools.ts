@@ -19,6 +19,24 @@ const annotations = (idempotent: boolean) => ({
 
 /** One registry for names, discovery schemas and dispatch. Only implemented consumers; cancellation is an explicit destructive control. */
 export const MCP_RESEARCH_TOOLS = {
+  eliotr_run: {
+    name: "eliotr_run",
+    description: "Create one Research workflow as the signed service actor within one explicit project. Requires run permission and exact owner-approved spend sponsorship. Returns the existing investigation reference and workflow ID; poll eliotr_run_status separately. May dispatch paid stages. Retain the same key and body after an uncertain response; never invent another run. Uses installed qualifications; it does not renew owner qualification probes.",
+    inputSchema: { type: "object", additionalProperties: false,
+      required: ["client_grant_id", "idempotency_key", "request"],
+      properties: { ...grant,
+        idempotency_key: { type: "string", minLength: 1, maxLength: 128, pattern: "^[A-Za-z0-9][A-Za-z0-9:._-]{0,127}$" },
+        request: { type: "object", additionalProperties: false,
+          required: ["query", "product", "scope_expression", "literals", "evidence_grade", "budget_ref", "max_results"],
+          properties: { query: { type: "string", minLength: 1 }, product: { const: "RESEARCH" },
+            scope_expression: { type: "object", additionalProperties: false, required: ["kind", "project_id"],
+              properties: { kind: { const: "PROJECT" }, project_id: identifier } },
+            literals: { type: "array", maxItems: 0 }, evidence_grade: { enum: ["E0", "E1", "E2"] },
+            budget_ref: { const: "research-budget-v1" }, max_results: { type: "integer", minimum: 1, maximum: 16 },
+            request_version: { const: "eliotr.research-run-request.v2" }, inquiry_protocol_ref: ref },
+          dependentRequired: { request_version: ["inquiry_protocol_ref"], inquiry_protocol_ref: ["request_version"] } } } },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  },
   eliotr_query: {
     name: "eliotr_query",
     description: "Run project-authorized FAST_SEARCH through the HTTP query service. Returns original evidence pack and trace references, not a generated answer. Persisted work is replayed only with the same idempotency key, request and current authority. No model dispatch.",

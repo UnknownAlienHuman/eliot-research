@@ -332,3 +332,21 @@ negative candidate observation; raw provider payloads and errors are never refle
 Valid v1 plan identity preimages and response fields are unchanged by these checks. Future authenticated
 issuance or operation-specific evidence requires a reviewed versioned contract, not extra implicit
 trust in this generic envelope. See `canonical-alignment.md` for remaining implementation gaps.
+
+
+### Machine Research admission: `eliotr_run`
+
+The service-token dispatcher now composes `eliotr_run` with the existing HTTP run service.
+It requires `client_grant_id`, a stable `idempotency_key`, and `request` with product RESEARCH,
+explicit PROJECT, the existing `research-budget-v1` locator and existing result/byte bounds.
+The grant must separately contain `run` and an exact approved installed spend-template binding;
+the budget locator itself conveys no spending authority. Discovery marks this operation
+non-read-only and open-world. Retry the same key and request after an uncertain response;
+never replace a run ID or infer that a failed response means no work was recorded.
+
+Use `eliotr_run_status` with `status` permission; completed artifact discovery additionally
+requires `report`, and exact citation/open calls require `evidence`. This code checkpoint
+supports original-credential, active-scope machine reads only. Machine-created cancellation,
+recovery and credential-refresh/history remain unimplemented; the existing control tools
+retain their owner-authored-run restriction. Migration 0076 is required. No test or live
+provider invocation is implied by tool discovery or by the compilation checkpoint.

@@ -45,7 +45,14 @@ const PolicySchema = z.object({
 }).strict();
 
 type SpendRule = Omit<z.infer<typeof RuleSchema>, "deployment"> & { readonly deployment: ModelRouteDeployment };
-export type ResearchModelSpendPolicy = Omit<z.infer<typeof PolicySchema>, "rules"> & { readonly rules: readonly SpendRule[] };
+const DelegatedPolicySchema = PolicySchema.extend({
+  protocol: z.literal("eliotr.research-delegated-model-spend-policy.v1"),
+  client_class: z.enum(["trusted_agent", "named_api_client"]),
+  sponsor_principal_ref: IdentifierSchema,
+  sponsor_policy_sha256: z.string().regex(/^[0-9a-f]{64}$/u),
+});
+export type ResearchModelSpendPolicy = Omit<z.infer<typeof PolicySchema>, "rules"> & { readonly rules: readonly SpendRule[] }
+  | Omit<z.infer<typeof DelegatedPolicySchema>, "rules"> & { readonly rules: readonly SpendRule[] };
 const OwnerSpendPolicyTemplateSchema = PolicySchema.omit({
   credential_generation: true,
   policy_generation: true,
@@ -59,7 +66,7 @@ export type ResearchOwnerSpendPolicyTemplate = Omit<z.infer<typeof OwnerSpendPol
 export function readResearchModelSpendPolicy(raw: string | undefined, provenance: string): ResearchModelSpendPolicy {
   if (!raw || new TextEncoder().encode(raw).byteLength > 65536) stale("installed model spend policy is missing or oversized");
   try {
-    const parsed = PolicySchema.parse(JSON.parse(raw));
+    const parsed = z.union([PolicySchema, DelegatedPolicySchema]).parse(JSON.parse(raw));
     if (parsed.config_provenance_ref !== provenance || new Set(parsed.rules.map((rule) => rule.stage)).size !== 2) {
       stale("installed model spend policy provenance or stage selection is invalid");
     }
@@ -148,15 +155,15 @@ export function createResearchModelSpendPolicyService(input: ResearchModelSpendP
       "WHERE r.operation_id=?1 AND a.attempt_ref=?2 AND a.request_sha256=?3 AND r.state='ACTIVE' " +
       "AND a.state='STARTED' AND a.output_json IS NULL AND a.stage_index IN (12,14) AND r.next_stage_index=a.stage_index " +
       "AND r.current_revision=a.expected_revision AND r.ledger_revision=a.expected_revision AND s.invalidated_at IS NULL " +
-      "AND g.state='ACTIVE' AND g.client_class='owner_pwa' AND g.credential_generation=r.credential_generation " +
+      "AND g.state='ACTIVE' AND g.client_class=?4 AND g.credential_generation=r.credential_generation " +
       "AND g.authorization_receipt_ref=r.authorization_receipt_ref AND g.policy_authority_ref=r.policy_authority_ref " +
       "AND EXISTS(SELECT 1 FROM investigation_current_policy p WHERE p.policy_generation=r.policy_generation AND p.policy_authority_ref=r.policy_authority_ref AND p.state='ACTIVE') " +
       "AND EXISTS(SELECT 1 FROM research_deployment_compatible c WHERE c.origin_deployment_generation=r.deployment_generation) LIMIT 1",
-    ).bind(input.operation_id, attempt, requestSha).first<CurrentStage>();
+    ).bind(input.operation_id, attempt, requestSha, policy.client_class).first<CurrentStage>();
     if (row === null || row.principal_ref !== policy.principal_ref || row.credential_generation !== policy.credential_generation ||
         row.deployment_generation !== policy.deployment_generation || row.policy_generation !== policy.policy_generation ||
         row.policy_authority_ref !== policy.policy_authority_ref || navigation.access.principal_ref !== row.principal_ref ||
-        navigation.access.credential_generation !== row.credential_generation || navigation.scope.snapshot_id !== row.scope_snapshot_id ||
+        navigation.access.credential_generation !== row.credential_generation || navigation.access.client_class !== policy.client_class || navigation.scope.snapshot_id !== row.scope_snapshot_id ||
         navigation.scope.revision !== row.scope_snapshot_revision || grant.policy_authority_ref !== row.policy_authority_ref ||
         !grant.allowed_use.includes("research")) stale("model spend policy does not permit this current owner workflow");
     const stage = row.stage_index === 12 ? "SYNTHESIZE" : "AUDIT_CLAIMS";

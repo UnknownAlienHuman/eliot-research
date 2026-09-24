@@ -17,26 +17,38 @@ export interface OrientationOperation {
   snapshot_id: string | null; snapshot_revision: number | null;
   result_json: string | null; result_digest: string | null; created_at: string; expires_at: string;
   execution_operation_id?: string | null;
+  execution_client_grant_id?: string | null; execution_client_grant_revision?: number | null;
 }
 const fields = "operation_id,principal_ref,client_class,credential_generation,idempotency_key,request_digest,state," +
   "snapshot_id,snapshot_revision,created_at,expires_at," +
   "CASE WHEN length(CAST(result_json AS BLOB))<=450000 THEN result_json ELSE NULL END AS result_json,result_digest";
 
 export function orientationStorage(db: D1Database, context: AuthenticatedRequestContext,
-  now: () => number = Date.now, execution?: ResearchExecutionScopeBinding) {
+  now: () => number = Date.now, execution?: ResearchExecutionScopeBinding,
+  delegation?: { readonly grant_id: string; readonly revision: number }) {
   // Snapshot the server argument before any await. The caller cannot choose a TTL.
   const binding = execution === undefined ? undefined : Object.freeze({ ...execution });
   if (binding !== undefined && (Object.keys(binding).sort().join(",") !== "operation_id,request_digest" ||
       !/^run-[0-9a-f]{48}$/u.test(binding.operation_id) || !/^[0-9a-f]{64}$/u.test(binding.request_digest))) {
     orientationFail("ORIENTATION_EXECUTION_BINDING_INVALID", 400);
   }
-  const selectedFields = fields + (binding === undefined ? "" : ",execution_operation_id");
+  const origin = delegation === undefined ? undefined : Object.freeze({ ...delegation });
+  if (origin !== undefined && (binding === undefined || context.client_class === "owner_pwa" ||
+      !origin.grant_id || !Number.isSafeInteger(origin.revision) || origin.revision < 1)) {
+    orientationFail("ORIENTATION_EXECUTION_BINDING_INVALID", 400);
+  }
+  const selectedFields = fields + (binding === undefined ? "" : ",execution_operation_id") +
+    (origin === undefined ? "" : ",execution_client_grant_id,execution_client_grant_revision");
   async function read(id: string): Promise<OrientationOperation | null> {
     orientationId(id);
     const row = await db.prepare(`SELECT ${selectedFields} FROM orientation_request WHERE operation_id=?1 AND principal_ref=?2 ` +
       "AND client_class=?3 AND credential_generation=?4").bind(id, context.principal_ref, context.client_class,
       context.credential_generation).first<OrientationOperation>();
     if (!row) return null;
+    if (origin !== undefined && (row.execution_client_grant_id !== origin.grant_id ||
+        row.execution_client_grant_revision !== origin.revision)) {
+      orientationFail("ORIENTATION_EXECUTION_BINDING_CONFLICT", 409);
+    }
     if (binding !== undefined && (row.execution_operation_id !== binding.operation_id ||
         row.idempotency_key !== EXECUTION_KEY_PREFIX + binding.operation_id ||
         Date.parse(row.expires_at) - Date.parse(row.created_at) !== EXECUTION_TTL_MS)) {
@@ -73,6 +85,7 @@ export function orientationStorage(db: D1Database, context: AuthenticatedRequest
       credential: context.credential_generation, key })}`;
     const digest = await evidenceSha256(binding === undefined ? request : {
       purpose: "research-execution-scope.v1", execution: binding, request,
+      ...(origin === undefined ? {} : { delegation: origin }),
     });
     let current = await read(id);
     if (!current) {
@@ -80,11 +93,13 @@ export function orientationStorage(db: D1Database, context: AuthenticatedRequest
       try {
         const expiresAt = new Date(Date.parse(timestamp) +
           (binding === undefined ? ORIENTATION_TTL_MS : EXECUTION_TTL_MS)).toISOString();
-        const columns = binding === undefined ? "" : ",execution_operation_id";
-        const value = binding === undefined ? "" : ",?9";
+        const columns = (binding === undefined ? "" : ",execution_operation_id") +
+          (origin === undefined ? "" : ",execution_client_grant_id,execution_client_grant_revision");
+        const value = (binding === undefined ? "" : ",?9") + (origin === undefined ? "" : ",?10,?11");
         const args: (string | number | null)[] = [id, context.principal_ref, context.client_class,
           context.credential_generation, key, digest, timestamp, expiresAt];
         if (binding !== undefined) args.push(binding.operation_id);
+        if (origin !== undefined) args.push(origin.grant_id, origin.revision);
         await db.prepare("INSERT INTO orientation_request (operation_id,principal_ref,client_class,credential_generation," +
           `idempotency_key,request_digest,state,created_at,expires_at${columns}) ` +
           `VALUES (?1,?2,?3,?4,?5,?6,'PREPARED',?7,?8${value}) ON CONFLICT DO NOTHING`).bind(...args).run();
@@ -114,7 +129,7 @@ export function orientationStorage(db: D1Database, context: AuthenticatedRequest
     try {
       await db.prepare("UPDATE orientation_request SET state='COMPLETE',result_json=?2,result_digest=?3 " +
         "WHERE operation_id=?1 AND state='PREPARED' AND snapshot_id=?4 AND snapshot_revision=?5 " +
-        "AND EXISTS (SELECT 1 FROM scope_snapshot s JOIN scope_access_grant g ON g.snapshot_id=s.snapshot_id " +
+        "AND EXISTS (SELECT 1 FROM scope_snapshot s JOIN scope_access_grant_effective g ON g.snapshot_id=s.snapshot_id " +
         "AND g.snapshot_revision=s.revision WHERE s.snapshot_id=?4 AND s.revision=?5 AND s.snapshot_digest=?6 " +
         "AND s.invalidated_at IS NULL AND g.state='ACTIVE' AND g.principal_ref=?7 AND g.client_class=?8 " +
         "AND g.credential_generation=?9 AND julianday(g.expires_at)>julianday(?10) AND julianday(s.expires_at)>julianday(?10))")

@@ -1,3 +1,4 @@
+import type { EvidenceAccessContext } from "@eliotr/cloudflare-evidence";
 import { type ArtifactRevision, type VersionedRef } from "@eliotr/contracts";
 import { readArtifactDraft, ArtifactDraftReadError } from "./artifact-draft-reader.js";
 import { decodeResearchMaterializeResult, ResearchMaterializeResultError, type ResearchMaterializeResultPayload } from "./research-materialize-result.js";
@@ -155,10 +156,21 @@ export async function readCommittedResearchMaterializeOutput(
   if (synthesis === null || synthesis.stage_attempt_ref !== materialization.synthesis.stage_attempt_ref || synthesis.stage_request_sha256 !== materialization.synthesis.stage_request_sha256 || synthesis.output.output_object_ref !== materialization.synthesis.output_object_ref || synthesis.output.output_sha256 !== materialization.synthesis.output_sha256) {
     fail("MATERIALIZE_OUTPUT_CORRUPT", "materialization synthesis binding differs from committed synthesis output");
   }
-  const access = { principal_ref: input.principal.principal_ref, client_class: "owner_pwa" as const, credential_generation: input.principal.credential_generation };
+  const actor = await input.database.prepare("SELECT g.client_class FROM research_workflow_current r " +
+    "JOIN scope_access_grant_effective g ON g.snapshot_id=r.scope_snapshot_id AND g.snapshot_revision=r.scope_snapshot_revision " +
+    "AND g.principal_ref=r.principal_ref AND g.credential_generation=r.credential_generation " +
+    "WHERE r.operation_id=?1 AND r.principal_ref=?2 AND r.credential_generation=?3 " +
+    "AND (g.project_client_grant_id IS NULL OR (g.project_client_operation='run' AND g.project_client_run_operation_id=r.operation_id)) LIMIT 1")
+    .bind(input.operation_id, input.principal.principal_ref, input.principal.credential_generation).first<{ client_class: string }>();
+  if (!actor || (actor.client_class !== "owner_pwa" && actor.client_class !== "trusted_agent" && actor.client_class !== "named_api_client")) {
+    fail("MATERIALIZE_OUTPUT_AUTHORITY_STALE", "materialization actor is unavailable");
+  }
+  const access: EvidenceAccessContext = { principal_ref: input.principal.principal_ref, client_class: actor.client_class,
+    credential_generation: input.principal.credential_generation };
   let artifact: ArtifactRevision | null;
   try {
-    artifact = await readArtifactDraft({ database: input.database, work_bucket: input.work_bucket, artifact_ref: materialization.draft.artifact_ref, access, require_current: async (scope) => {
+    artifact = await readArtifactDraft({ database: input.database, work_bucket: input.work_bucket, artifact_ref: materialization.draft.artifact_ref, access,
+      ...(access.client_class === "owner_pwa" ? {} : { workflow_operation_id: input.operation_id }), require_current: async (scope) => {
       const current = await input.recheck_authority();
       requireAuthority(current, { ...expectedScope, investigation_id: expectedScope.investigation_id });
       if (scope.snapshot_id !== expectedScope.scope_snapshot_id || scope.revision !== expectedScope.scope_snapshot_revision) fail("MATERIALIZE_OUTPUT_AUTHORITY_STALE", "draft scope differs from workflow scope");

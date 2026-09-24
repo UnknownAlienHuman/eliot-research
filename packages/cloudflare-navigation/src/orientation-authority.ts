@@ -10,7 +10,7 @@ import { scopeExpressionAtoms, scopeExpressionIdentity, type DeterministicScopeA
 import { readOwnerScopeProfile } from "./owner-scope-profile.js";
 import { createD1ScopeService } from "./d1-scope-service.js";
 import { orientationCurrentness } from "./orientation-currentness.js";
-import { issueClientQueryScopeGrant, requireClientScopeProvenance, requireClientArtifactScopeSchema, requireClientScopeSchema, type ClientArtifactScopeOrigin } from "./client-scope-grant.js";
+import { issueClientResearchScopeGrant, issueClientQueryScopeGrant, requireClientScopeProvenance, requireClientArtifactScopeSchema, requireClientScopeSchema, type ClientArtifactScopeOrigin } from "./client-scope-grant.js";
 import type { ScopeAuthorityRequest, ScopeRepository } from "./scope-service.js";
 import { ORIENTATION_MAX_SOURCES, orientationFail, orientationId } from "./orientation-input.js";
 
@@ -295,14 +295,19 @@ export async function createProjectClientCatalogAuthority(db: D1Database, contex
 
 /** One delegated query scope. Every atom is authorized in full; no project intersection is silently added. */
 export async function createProjectClientScopeAuthority(db: D1Database, context: AuthenticatedRequestContext,
-  expression: ScopeExpression, now: () => number = Date.now) {
+  expression: ScopeExpression, now: () => number = Date.now,
+  execution?: { readonly operation_id: string; readonly expires_at_ms: number }) {
   await requireClientScopeSchema(db);
   const atoms = scopeExpressionAtoms(expression);
   const projects = [...new Set(atoms.flatMap((atom) => atom.kind === "PROJECT" ? [atom.project_id] : []))];
   if (projects.length > 1 || atoms.some((atom) => atom.kind === "GLOBAL_LIBRARY")) {
     grantFail("CLIENT_SCOPE_DENIED", 403, "A delegated query cannot request global or multiple-project authority");
   }
-  const lease = await authorizeProjectClientGrant(db, context, { operation: "query",
+  if (execution && (expression.kind !== "PROJECT" || !/^run-[0-9a-f]{48}$/u.test(execution.operation_id) ||
+      !Number.isSafeInteger(execution.expires_at_ms) || execution.expires_at_ms <= now())) {
+    grantFail("CLIENT_SCOPE_DENIED", 403, "Research execution requires one explicit project and a current server-bound deadline");
+  }
+  const lease = await authorizeProjectClientGrant(db, context, { operation: execution ? "run" : "query",
     ...(projects[0] === undefined ? {} : { project_id: projects[0] }) }, now);
   const projectId = lease.grant.project_id;
   const refs = await readClientProjectMembers(db, projectId, now());
@@ -310,7 +315,8 @@ export async function createProjectClientScopeAuthority(db: D1Database, context:
   const identity = scopeExpressionIdentity(expression);
   const shared = createReadPolicyAuthority(db, context, lease.grant.grantor_principal_ref, now);
   const delegation = { grant_id: lease.grant.grant_id, revision: lease.grant.revision,
-    project_id: projectId, project_generation: lease.project_generation, operation: "query" };
+    project_id: projectId, project_generation: lease.project_generation, operation: execution ? "run" : "query",
+    ...(execution ? { operation_id: execution.operation_id } : {}) };
   const delegationDigest = await evidenceSha256(lease.grant);
   async function requireProject() {
     const epoch = await grantEpoch(db);
@@ -364,17 +370,22 @@ export async function createProjectClientScopeAuthority(db: D1Database, context:
   const scopes = createD1ScopeService(db, authority, { now, max_snapshot_members: 4096, preserve_resolution_errors: true });
   const current = orientationCurrentness(db, scopes, lease.grant.grantor_principal_ref, now);
   async function issue(snapshot: ScopeSnapshot, expiresAtCeilingMs?: number) {
-    await issueClientQueryScopeGrant({ database: db, context, snapshot, lease,
+    const input = { database: db, context, snapshot, lease,
       sources: () => sources(snapshot.member_source_revision_refs), require_current: current, now,
-      ...(expiresAtCeilingMs === undefined ? {} : { expires_at_ceiling_ms: expiresAtCeilingMs }) });
+      ...(expiresAtCeilingMs === undefined ? {} : { expires_at_ceiling_ms: expiresAtCeilingMs }) };
+    if (execution) await issueClientResearchScopeGrant({ ...input,
+      expires_at_ceiling_ms: Math.min(expiresAtCeilingMs ?? Infinity, execution.expires_at_ms) },
+      { operation: "run", operation_id: execution.operation_id });
+    else await issueClientQueryScopeGrant(input);
   }
   async function requireScopeCurrent(snapshot: ScopeSnapshot) {
     await lease.requireGrantCurrent();
     await current(snapshot);
-    await requireClientScopeProvenance(db, context, snapshot, lease);
+    await requireClientScopeProvenance(db, context, snapshot, lease,
+      execution ? { operation: "run", operation_id: execution.operation_id } : undefined);
   }
   await lease.requireCurrent();
-  return { authority, requireScopeCurrent };
+  return { authority, requireScopeCurrent, lease, policy_principal_ref: lease.grant.grantor_principal_ref };
 }
 
 /** Read every original source under the current project and grantor policy.

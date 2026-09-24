@@ -31,6 +31,7 @@ import {
   type ResearchQualificationRenewalMarker,
 } from "./research-qualification-renewal.js";
 import { isResearchModelStage, researchStageBudgetLeaseMs } from "./research-runtime-duration.js";
+import { loadResearchExecutionAccess, requireClientResearchExecution } from "./research-client-execution.js";
 import { requireResearchDeploymentCompatibility } from "./research-deployment-compatibility.js";
 
 export interface ResearchWorkflowRunParams {
@@ -239,19 +240,20 @@ export class ResearchWorkflow extends WorkflowEntrypoint<Env, ResearchWorkflowPa
         revision: investigation.head.scope_snapshot_revision,
       });
       if (scopeAuthority === null) failWorkflow("WORKFLOW_AUTHORITY_STALE");
-      const access = {
-        principal_ref: principal.principal_ref,
-        client_class: "owner_pwa" as const,
-        credential_generation: principal.credential_generation,
-      };
+      const access = await loadResearchExecutionAccess(this.env, params.operation_id, principal);
       const scopePorts = createD1ScopePorts(this.env.CORE_DB, access);
       const navigation = createNavigationReadAuthority({
         database: this.env.CORE_DB,
         scope_snapshot: scopeAuthority.snapshot,
         access,
-        require_current: async (scope) => { await scopePorts.requireCurrentScope(scope); return scope; },
+        require_current: async (scope) => {
+          await scopePorts.requireCurrentScope(scope);
+          if (access.client_class !== "owner_pwa") await requireClientResearchExecution(this.env, access, scope,
+            params.operation_id, principal.deployment_generation);
+          return scope;
+        },
       });
-      if (params.qualification_renewal !== undefined && !semanticOwned) {
+      if (params.qualification_renewal !== undefined && (!semanticOwned || access.client_class !== "owner_pwa")) {
         failWorkflow("WORKFLOW_AUTHORITY_STALE");
       }
       if (semanticOwned && params.qualification_renewal === RESEARCH_QUALIFICATION_RENEWAL_MARKER) {
