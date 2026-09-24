@@ -1,0 +1,93 @@
+name: stage-owner-run-management
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/stage-owner-run-management.yml]
+permissions:
+  contents: write
+jobs:
+  stage:
+    if: github.repository == 'UnknownAlienHuman/eliot-research' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: main
+          fetch-depth: 2
+          persist-credentials: false
+      - name: Stage exact reviewed source blobs without publishing a ref
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import base64,gzip,hashlib,json,os,pathlib,subprocess,urllib.request
+          repo='UnknownAlienHuman/eliot-research'
+          base='4d7da114afc72d6569f8241b8c3c343ec74658d5'
+          tree='f61dc7f1eccd25e422319b7ac460174763fff387'
+          patch_sha='f85d28bb65eaeb68b6416f291a1bbd355ce03b96c33ac5c524f1ff403bd913ba'
+          workflow='.github/workflows/stage-owner-run-management.yml'
+          chunks=[{'index': 0, 'sha': 'c9dd38d23e3632038b13c90301d55ddfbc05979d', 'length': 2800}, {'index': 1, 'sha': '239a743e282945e710c6128c73343df1c40ad8fa', 'length': 2800, 'wire_sha': 'ba8f6936dbb745ee2b7a51d280b96998a68e8ff4', 'correction': ['HbrNNqaits', 'HbrNNq9aits']}, {'index': 2, 'sha': '5312d2dbb934a5e58a74c8e860d22e33d250a2e5', 'length': 2800}, {'index': 3, 'sha': 'c4d0243c1cd9b08b67df618241e46869ad971d3d', 'length': 2800}, {'index': 4, 'sha': 'd023478f1f845a556da0345d5509539a7846ea9f', 'length': 2800}, {'index': 5, 'sha': '66eefd97fbd3f2fbac3dc8b4476a18637c9fe6da', 'length': 2800}, {'index': 6, 'sha': '1d2aabe550c485cc083d859dbe7c645c45a480a6', 'length': 2800}, {'index': 7, 'sha': '9af00e734de0253e7a483eedc0105876dce928c7', 'length': 2100}]
+          paths=['.github/workflows/export-current-source.yml', 'apps/eliotr-core/src/research-client-spend.ts', 'apps/eliotr-core/src/research-run-cancel-action.ts', 'apps/eliotr-core/src/research-run-control-fence.ts', 'apps/eliotr-core/src/research-run-control.ts', 'apps/eliotr-core/src/research-run-list.ts', 'apps/eliotr-core/src/research-run-read-authorization.ts', 'apps/eliotr-pwa/src/research-run-controls.ts', 'apps/eliotr-pwa/src/research-run-panel.ts', 'apps/eliotr-pwa/src/research-run-view.ts', 'docs/agent-work/ER-25-owner-pwa.md', 'docs/implementation/backend-delivery-plan.md', 'docs/implementation/gap-register.md', 'docs/implementation/implementation-status.json', 'docs/implementation/workflow-checkpoints.md', 'infra/d1/core/migrations/0080_owner_machine_run_management.sql', 'packages/cloudflare-navigation/src/owner-historical-scope.ts', 'packages/cloudflare-research-stages/src/research-historical-coverage-reader.ts']
+          def git(*args):
+              return subprocess.check_output(['git',*args],text=True).strip()
+          def blob_sha(data):
+              return hashlib.sha1(('blob '+str(len(data))+'\0').encode()+data).hexdigest()
+          def api(path,data=None):
+              body=None if data is None else json.dumps(data).encode()
+              request=urllib.request.Request('https://api.github.com/repos/'+repo+path,data=body,
+                headers={'Authorization':'Bearer '+os.environ['GH_TOKEN'],'Accept':'application/vnd.github+json',
+                  'X-GitHub-Api-Version':'2022-11-28','Content-Type':'application/json'},
+                method='GET' if data is None else 'POST')
+              with urllib.request.urlopen(request,timeout=30) as response:
+                  return json.load(response)
+          assert os.environ['GITHUB_REPOSITORY']==repo
+          assert os.environ['GITHUB_REF']=='refs/heads/main'
+          assert git('branch','--show-current')=='main'
+          assert git('rev-parse','HEAD')==os.environ['GITHUB_SHA']
+          assert git('rev-parse','HEAD^')==base
+          assert git('diff','--name-only','HEAD^','HEAD').splitlines()==[workflow]
+          parts=[]
+          for chunk in chunks:
+              wire_sha=chunk.get('wire_sha',chunk['sha'])
+              stored=api('/git/blobs/'+wire_sha)
+              assert stored['encoding']=='base64'
+              part=base64.b64decode(stored['content'])
+              assert blob_sha(part)==wire_sha
+              if 'correction' in chunk:
+                  old,new=(s.encode() for s in chunk['correction'])
+                  assert part.count(old)==1
+                  part=part.replace(old,new,1)
+              assert len(part)==chunk['length']
+              assert blob_sha(part)==chunk['sha']
+              parts.append(part)
+          patch=gzip.decompress(base64.b64decode(b''.join(parts),validate=True))
+          assert len(patch)==65263
+          assert hashlib.sha256(patch).hexdigest()==patch_sha
+          subprocess.run(['git','apply','--check','--unidiff-zero','--whitespace=error-all'],input=patch,check=True)
+          subprocess.run(['git','apply','--index','--unidiff-zero','--whitespace=error-all'],input=patch,check=True)
+          subprocess.run(['git','rm','--cached','--',workflow],check=True)
+          assert git('write-tree')==tree
+          assert sorted(git('diff','--cached','HEAD^','--name-only').splitlines())==sorted(paths)
+          entries=[]
+          for path in paths:
+              data=subprocess.check_output(['git','show',':'+path])
+              expected=blob_sha(data)
+              assert git('rev-parse',':'+path)==expected
+              result=api('/git/blobs',{'encoding':'base64','content':base64.b64encode(data).decode()})
+              assert result['sha']==expected
+              entries.append({'path':path,'mode':'100644','type':'blob','sha':expected})
+          out=pathlib.Path('/tmp/owner-run-management-manifest')
+          out.mkdir(parents=True,exist_ok=True)
+          (out/'manifest.json').write_text(json.dumps({'base':base,'transport_parent':os.environ['GITHUB_SHA'],
+              'tree':tree,'patch_sha256':patch_sha,'entries':entries},indent=2)+'\n')
+          print('Staged 18 exact reviewed source blobs; no ref, deployment or database changed.')
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: owner-run-management-manifest
+          path: /tmp/owner-run-management-manifest/
+          retention-days: 3
+          if-no-files-found: error
