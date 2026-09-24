@@ -60,7 +60,7 @@ export const MCP_RESEARCH_TOOLS = {
   },
   eliotr_cancel: {
     name: "eliotr_cancel",
-    description: "Stop one known grantor-authored explicit-project Research run with separate cancel permission. Uses the same HTTP cancellation command and action key. Returns CANCELLED only after durable confirmation; completed runs conflict. Never resumes/restarts or dispatches models. Native termination may remain unconfirmed after canonical cancellation. On uncertain errors keep the same run, grant and idempotency key.",
+    description: "Stop one known explicit-project Research run with separate cancel permission: a grantor-authored run or your own machine run under its exact originating grant revision. Regrant never transfers control of an old machine run. Uses the same HTTP cancellation command and action key. Returns CANCELLED only after durable confirmation; completed runs conflict. Never resumes/restarts or dispatches models. Native termination may remain unconfirmed after canonical cancellation. On uncertain errors keep the same run, grant and idempotency key.",
     inputSchema: { type: "object", additionalProperties: false,
       required: ["client_grant_id", "workflow_instance_id", "idempotency_key"],
       properties: { ...grant, workflow_instance_id: { type: "string", minLength: 1, maxLength: 128,
@@ -70,7 +70,7 @@ export const MCP_RESEARCH_TOOLS = {
   },
   eliotr_recover: {
     name: "eliotr_recover",
-    description: "Recover the same known grantor-authored project Research run with explicit recover permission and fingerprint-bound owner spend sponsorship. Reuses existing checkpoints and the single run/stage action journal; does not create a new run or renew expired execution. Remaining authorized stages may call models, including the first audit. On an uncertain response keep the same run, grant and idempotency key; never substitute another action.",
+    description: "Recover the same known project Research run with explicit recover permission and fingerprint-bound owner spend sponsorship: a grantor-authored run or your own machine run under its exact originating grant revision. Reuses existing checkpoints and the single run/stage action journal; does not create a new run or renew expired execution. Remaining authorized stages may call models, including the first audit. On an uncertain response keep the same run, grant and idempotency key; never substitute another action.",
     inputSchema: { type: "object", additionalProperties: false,
       required: ["client_grant_id", "workflow_instance_id", "idempotency_key"],
       properties: { ...grant, workflow_instance_id: { type: "string", minLength: 1, maxLength: 128,

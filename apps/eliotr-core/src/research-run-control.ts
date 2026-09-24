@@ -7,7 +7,7 @@ import { CatalogInputError } from "./catalog-service.js";
 import type { Env } from "./env.js";
 import { prepareReauthenticatedRunRead, requireRunStatusContinuity, type ReauthenticatedRunRead } from "./research-run-read-authorization.js";
 import { prepareProjectClientRecoverySpend, requireProjectClientSpendSchema, type ProjectClientRecoverySpend } from "./research-client-spend.js";
-import { RUN_CONTROL_FENCE_SQL, runControlFenceBindings, type AuthorizedRunControl } from "./research-run-control-fence.js";
+import { RUN_CONTROL_FENCE_SQL, runControlFenceBindings, requireRunControlSchema, type AuthorizedRunControl } from "./research-run-control-fence.js";
 import { prepareProjectClientRunRead } from "./research-client-run-read.js";
 import { prepareProjectClientCancelAction } from "./research-run-cancel-action.js";
 import { isSemanticResearchHandlerGeneration } from "./research-stage-handlers.js";
@@ -84,6 +84,7 @@ export async function cancelResearchRun(
 ): Promise<ResearchRunStatus> {
   try {
     validateResearchRunControl(context, operationId, body, true);
+    await requireRunControlSchema(env.CORE_DB);
     const clientRead = context.client_class === "owner_pwa" ? null
       : await prepareProjectClientRunRead(env, context, operationId, "cancel");
     const read = context.client_class === "owner_pwa" ? await authorize(env, context, operationId) : clientRead;
@@ -346,6 +347,7 @@ export async function recoverResearchRun(
 ): Promise<ResearchRunStatus> {
   try {
     validateResearchRunControl(context, operationId, body, true);
+    await requireRunControlSchema(env.CORE_DB);
     await requireProjectClientSpendSchema(env);
     const clientRead = context.client_class === "owner_pwa" ? null
       : await prepareProjectClientRunRead(env, context, operationId, "recover");

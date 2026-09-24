@@ -475,7 +475,7 @@ export async function createProjectClientArtifactAuthority(
   return { authority, lease, requireOrigin };
 }
 
-/** Current authority for a known owner-authored explicit-project run.
+/** Current authority for a known owner run or its originating machine client.
  * Status and cancellation are separate delegated operations; neither renews execution.
  * The caller must also validate the original snapshot's historical currentness. */
 export async function createProjectClientRunReadAuthority(
@@ -485,14 +485,14 @@ export async function createProjectClientRunReadAuthority(
   const lease = await authorizeProjectClientGrant(db, context, { operation }, now);
   const binding = await db.prepare("SELECT investigation_id, principal_ref, credential_generation, " +
     "deployment_generation, handler_generation, scope_snapshot_id, scope_snapshot_revision, policy_authority_ref, " +
-    "authorization_receipt_ref FROM research_workflow_run r WHERE operation_id=?1 AND principal_ref=?2 " +
-    "AND EXISTS (SELECT 1 FROM scope_snapshot s WHERE s.snapshot_id=r.scope_snapshot_id " +
-    "AND s.revision=r.scope_snapshot_revision AND json_extract(s.resolved_scope_expression_json,'$.kind')='PROJECT' " +
-    "AND json_extract(s.resolved_scope_expression_json,'$.project_id')=?3) LIMIT 1")
-    .bind(orientationId(operationId), lease.grant.grantor_principal_ref, lease.grant.project_id).first<{
+    "authorization_receipt_ref, origin_client_class FROM project_client_run_control_origin " +
+    "WHERE operation_id=?1 AND client_grant_id=?2 AND client_grant_revision=?3 " +
+    "AND (?4<>'status' OR origin_client_class='owner_pwa') LIMIT 1")
+    .bind(orientationId(operationId), lease.grant.grant_id, lease.grant.revision, operation).first<{
       investigation_id: string; principal_ref: string; credential_generation: string;
       deployment_generation: string; handler_generation: string; scope_snapshot_id: string;
       scope_snapshot_revision: number; policy_authority_ref: string; authorization_receipt_ref: string;
+      origin_client_class: string;
     }>();
   if (binding === null) { await lease.requireCurrent(); return null; }
   for (const value of [binding.investigation_id, binding.principal_ref, binding.credential_generation,
@@ -511,24 +511,20 @@ export async function createProjectClientRunReadAuthority(
     grantFail("CLIENT_RUN_DENIED", 403, "Run does not originate from this delegated project");
   }
   await readOwnerScopeProfile(db, original);
-  const shared = createReadPolicyAuthority(db, context, binding.principal_ref, now);
+  // Policies belong to the grantor; recorded authorship may belong to the machine.
+  const shared = createReadPolicyAuthority(db, context, lease.grant.grantor_principal_ref, now);
   const requireOrigin = async () => {
     await lease.requireGrantCurrent();
-    const row = await db.prepare("SELECT 1 AS present FROM research_workflow_run r JOIN scope_access_grant g " +
-      "ON g.snapshot_id=r.scope_snapshot_id AND g.snapshot_revision=r.scope_snapshot_revision " +
-      "AND g.principal_ref=r.principal_ref AND g.credential_generation=r.credential_generation " +
-      "AND g.authorization_receipt_ref=r.authorization_receipt_ref AND g.policy_authority_ref=r.policy_authority_ref " +
-      "WHERE r.operation_id=?1 AND r.investigation_id=?2 AND r.principal_ref=?3 AND r.credential_generation=?4 " +
-      "AND r.deployment_generation=?5 AND r.handler_generation=?6 AND r.scope_snapshot_id=?7 " +
-      "AND r.scope_snapshot_revision=?8 AND r.policy_authority_ref=?9 AND r.authorization_receipt_ref=?10 " +
-      "AND g.client_class='owner_pwa' AND g.project_client_grant_id IS NULL AND g.state IN ('ACTIVE','EXPIRED') " +
-      "AND EXISTS (SELECT 1 FROM json_each(g.allowed_use_json) WHERE value='research') " +
-      "AND NOT EXISTS (SELECT 1 FROM scope_access_grant old WHERE old.snapshot_id=g.snapshot_id " +
-      "AND old.snapshot_revision=g.snapshot_revision AND old.principal_ref=g.principal_ref " +
-      "AND old.client_class='owner_pwa' AND old.state='REVOKED') LIMIT 1")
+    const row = await db.prepare("SELECT 1 AS present FROM project_client_run_control_origin " +
+      "WHERE operation_id=?1 AND investigation_id=?2 AND principal_ref=?3 AND credential_generation=?4 " +
+      "AND deployment_generation=?5 AND handler_generation=?6 AND scope_snapshot_id=?7 " +
+      "AND scope_snapshot_revision=?8 AND policy_authority_ref=?9 AND authorization_receipt_ref=?10 " +
+      "AND client_grant_id=?11 AND client_grant_revision=?12 AND origin_client_class=?13 " +
+      "AND project_generation=?14 LIMIT 1")
       .bind(operationId, binding.investigation_id, binding.principal_ref, binding.credential_generation,
         binding.deployment_generation, binding.handler_generation, ref.id, ref.revision,
-        binding.policy_authority_ref, binding.authorization_receipt_ref).first();
+        binding.policy_authority_ref, binding.authorization_receipt_ref, lease.grant.grant_id,
+        lease.grant.revision, binding.origin_client_class, lease.project_generation).first();
     if (row === null) grantFail("CLIENT_RUN_DENIED", 403, "Original run authority was revoked or changed");
     await lease.requireGrantCurrent();
   };

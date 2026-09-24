@@ -52,7 +52,7 @@ export interface ProjectClientRecoverySpend {
 }
 
 /** Sponsorship permits a recovery command, not a replacement run or new scope.
- * The original owner execution and every W2/W3 stage budget remain independently mandatory. */
+ * The original owner or machine execution and every W2/W3 budget remain mandatory. */
 export async function prepareProjectClientRecoverySpend(
   env: Env, read: ProjectClientRunRead,
 ): Promise<ProjectClientRecoverySpend> {
@@ -73,16 +73,12 @@ export async function prepareProjectClientRecoverySpend(
     if (canonicalJson(binding) !== canonicalJson(recorded)) denied("Recovery sponsorship changed");
     // Read authorization is not permission to renew an expired original execution grant.
     const current = await env.CORE_DB.prepare("SELECT 1 AS ok FROM research_workflow_current r " +
-      "JOIN scope_snapshot s ON s.snapshot_id=r.scope_snapshot_id AND s.revision=r.scope_snapshot_revision " +
-      "JOIN scope_access_grant g ON g.snapshot_id=s.snapshot_id AND g.snapshot_revision=s.revision " +
-      "AND g.principal_ref=r.principal_ref AND g.credential_generation=r.credential_generation " +
-      "AND g.authorization_receipt_ref=r.authorization_receipt_ref AND g.policy_authority_ref=r.policy_authority_ref " +
-      "WHERE r.operation_id=?1 AND r.principal_ref=?2 AND r.deployment_generation=?3 AND r.state IN ('ACTIVE','ENGINE_COMPLETED') " +
-      "AND s.invalidated_at IS NULL AND g.state='ACTIVE' AND g.client_class='owner_pwa' " +
-      "AND g.project_client_grant_id IS NULL AND julianday(s.expires_at)>julianday('now') " +
-      "AND julianday(g.expires_at)>julianday('now') " +
-      "AND EXISTS(SELECT 1 FROM json_each(g.allowed_use_json) WHERE value='research') LIMIT 1")
-      .bind(read.status.operation_id, read.status.principal_ref, read.status.deployment_generation).first();
+      "JOIN project_client_run_control_origin c ON c.operation_id=r.operation_id " +
+      "WHERE r.operation_id=?1 AND r.principal_ref=?2 AND r.deployment_generation=?3 " +
+      "AND r.state IN ('ACTIVE','ENGINE_COMPLETED') AND c.client_grant_id=?4 " +
+      "AND c.client_grant_revision=?5 AND c.project_generation=?6 LIMIT 1")
+      .bind(read.status.operation_id, read.status.principal_ref, read.status.deployment_generation,
+        grant.grant_id, grant.revision, read.project_generation).first();
     if (!current) denied("Original execution authority is no longer current; recovery cannot renew it");
     await read.requireCurrent();
     if (Date.parse(installed.expires_at) <= Date.now()) denied("Recovery sponsorship expired");

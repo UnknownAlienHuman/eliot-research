@@ -1,8 +1,20 @@
+import { ClientGrantError } from "@eliotr/cloudflare-navigation";
 import type { AuthenticatedRequestContext } from "@eliotr/interfaces";
 import type { ReauthenticatedRunRead } from "./research-run-read-authorization.js";
 import type { ProjectClientRunRead } from "./research-client-run-read.js";
 
 export type AuthorizedRunControl = ReauthenticatedRunRead | ProjectClientRunRead;
+/** Both owner and service controls reference the same migrated SQL views. */
+export async function requireRunControlSchema(database: D1Database): Promise<void> {
+  let ready = false;
+  try {
+    const row = await database.prepare("SELECT value FROM schema_state WHERE key='project_client_run_control_generation'")
+      .first<{ readonly value: string }>();
+    ready = row?.value === "project-client-run-control-v1";
+  } catch { /* Unavailable schema is never permission to dispatch native recovery. */ }
+  if (!ready) throw new ClientGrantError("CLIENT_GRANT_SCHEMA_NOT_READY", 503,
+    "Migration 0077 is required before Research run controls", true);
+}
 /** Shared write-time owner/delegation fence, not a new source of authority. */
 export const RUN_CONTROL_FENCE_SQL = `operation_id=?1 AND principal_ref=?2 AND deployment_generation=?3 AND state='ACTIVE'
   AND ?4 = (SELECT generation FROM investigation_ledger_epoch WHERE singleton=1)
@@ -22,26 +34,14 @@ export const RUN_CONTROL_FENCE_SQL = `operation_id=?1 AND principal_ref=?2 AND d
     AND g.policy_authority_ref=s.policy_authority_ref
     AND EXISTS (SELECT 1 FROM json_each(g.allowed_use_json) WHERE value='research')))
     OR (?11 IN ('trusted_agent','named_api_client') AND EXISTS (
-      SELECT 1 FROM project_client_grant_current c JOIN project p ON p.project_id=c.project_id
-      JOIN project_owner o ON o.project_id=p.project_id AND o.principal_ref=c.grantor_principal_ref
-      JOIN scope_snapshot s ON s.snapshot_id=research_workflow_run.scope_snapshot_id
-        AND s.revision=research_workflow_run.scope_snapshot_revision
-      JOIN scope_access_grant g ON g.snapshot_id=s.snapshot_id AND g.snapshot_revision=s.revision
-        AND g.principal_ref=research_workflow_run.principal_ref
-        AND g.credential_generation=research_workflow_run.credential_generation
-        AND g.authorization_receipt_ref=research_workflow_run.authorization_receipt_ref
-        AND g.policy_authority_ref=research_workflow_run.policy_authority_ref
-      WHERE c.grant_id=?12 AND c.revision=?13 AND c.state='ACTIVE' AND p.generation=?14
-        AND c.grantor_principal_ref=?2 AND c.grantee_issuer=?15
+      SELECT 1 FROM project_client_run_control_origin c
+      WHERE c.operation_id=research_workflow_run.operation_id AND c.principal_ref=?2
+        AND c.deployment_generation=?3 AND c.client_grant_id=?12 AND c.client_grant_revision=?13
+        AND c.project_generation=?14 AND c.grantee_issuer=?15
         AND c.grantee_method='service_token' AND c.grantee_subject=?16 AND c.project_id=?17
-        AND julianday(c.expires_at)>julianday('now')
-        AND EXISTS (SELECT 1 FROM json_each(c.record_json,'$.allowed_operations') WHERE value=?18)
-        AND json_extract(s.resolved_scope_expression_json,'$.kind')='PROJECT'
-        AND json_extract(s.resolved_scope_expression_json,'$.project_id')=c.project_id
-        AND g.client_class='owner_pwa' AND g.project_client_grant_id IS NULL AND g.state IN ('ACTIVE','EXPIRED')
-        AND (?18='cancel' OR (g.state='ACTIVE' AND s.invalidated_at IS NULL
-          AND julianday(g.expires_at)>julianday('now') AND julianday(s.expires_at)>julianday('now')))
-        AND EXISTS (SELECT 1 FROM json_each(g.allowed_use_json) WHERE value='research'))))
+        AND EXISTS (SELECT 1 FROM json_each(c.grant_record_json,'$.allowed_operations') WHERE value=?18)
+        AND (?18='cancel' OR EXISTS (SELECT 1 FROM research_workflow_current eligible
+          WHERE eligible.operation_id=c.operation_id AND eligible.state='ACTIVE')))))
   AND NOT EXISTS (SELECT 1 FROM scope_access_grant revoked
     WHERE revoked.snapshot_id=research_workflow_run.scope_snapshot_id
     AND revoked.snapshot_revision=research_workflow_run.scope_snapshot_revision

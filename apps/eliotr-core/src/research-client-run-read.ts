@@ -27,7 +27,7 @@ export interface ProjectClientRunCancelFence {
 function stale(): never { throw new WorkflowCheckpointError("WORKFLOW_AUTHORITY_STALE"); }
 function corrupt(): never { throw new WorkflowCheckpointError("WORKFLOW_OUTPUT_CORRUPT"); }
 
-/** Reauthorize a known owner's project run for the actual service caller.
+/** Reauthorize owner-run reads and owner/originating-machine controls for the service caller.
  * This never writes an execution grant, starts a stage or substitutes an owner context. */
 export async function prepareProjectClientRunRead(
   env: Env, context: AuthenticatedRequestContext, operationId: string,

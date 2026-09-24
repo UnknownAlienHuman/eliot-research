@@ -799,10 +799,35 @@ independently checked against its exact W2 run, report admission and artifact bi
 not a public read capability. Historical owner readers keep their existing path. The original
 report bytes, source revisions and hashes are unchanged by reading.
 
-Remaining code: machine-created-run cancel/recover, owner management of machine-authored
-reports, service credential-refresh/historical machine reads after execution expiry and
-managed-OAuth composition. These are not supplied by this checkpoint. Existing delegated
-controls continue to apply only to their documented owner-authored origins. No ready/live
-claim follows from compiling this code; full lifecycle/native acceptance is still pending.
-Apply the complete migration chain through **0076** before deploying these shared readers
-and mutation paths, including owner paths. No missing-schema permissive fallback exists.
+Machine controls are integrated below. Remaining code: owner management of machine-authored
+reports, service credential-refresh/historical machine status and report reads after execution
+expiry, and managed-OAuth composition. Full lifecycle/native acceptance is still pending.
+Apply the complete migration chain through **0077** before deploying these shared readers
+and mutation paths, including owner controls. No missing-schema permissive fallback exists.
+
+### Machine-run cancellation and recovery (S11/S32, migration 0077)
+
+Existing HTTP cancel/recover and MCP `eliotr_cancel`/`eliotr_recover` also accept a run created
+by that same signed service. `project_client_run_control_origin` is the shared SQL origin
+predicate used by navigation authorization, command write fences and recovery settlement.
+It binds the original W2 run, completed orientation reservation, scope/grant receipt, service
+principal/class, project generation and exact project-client grant revision. Another client,
+source overlap or replacement grant cannot control it. Owner-authored delegation is retained;
+matching an author principal alone is no longer sufficient for the owner recovery branch.
+
+Current request credentials authorize the command; stored credentials select original records
+only. A refreshed signed token of the same issuer/method/subject can control the original run,
+without changing execution credentials, deadline, source versions or checkpoint bytes. `cancel`
+and `recover` remain distinct permissions that must exist on the originating grant revision.
+Cancellation requires current source/delegation authority but no spend-template lookup; expired
+execution does not prevent stopping it. Recovery additionally requires the original effective
+execution, fixed deadline and exact installed sponsor approval to remain current. It never
+renews an expired scope or creates a replacement run. Existing W2/W3 budget checks and the
+single recovery action slot remain mandatory; unknown native acknowledgements are observe-only.
+
+Cancellation still confirms the canonical receipt before best-effort native termination.
+Changing control access does not roll back an accepted request or refund an in-flight model
+call. This extends commands, not owner management or historical machine-result read authority.
+Migration 0077 changes views only and adds a schema readiness marker; no historical rows,
+public DTOs, grant revisions or model reservations are rewritten. Compile/static review only;
+behavioral and native storage acceptance remains pending.

@@ -202,7 +202,7 @@ agree with any supplied `X-Eliotr-Client-Grant` header. It selects a delegation,
 | --- | --- | --- |
 | `eliotr_query` | `query` | Original FAST_SEARCH evidence pack and trace reference; no synthesized answer or exhaustive-coverage claim. |
 | `eliotr_run_status` | `status`; additionally `report` for a DRAFT result reference | Existing run-status DTO for a known grantor-authored explicit-project run; never starts/resumes execution. |
-| `eliotr_cancel` | `cancel` | Stop a known grantor-authored project run; existing run-status DTO only after durable cancellation. Requires an action key. |
+| `eliotr_cancel` | `cancel` | Stop a known owner run or the same client's machine run under its original grant revision; existing run-status DTO only after durable cancellation. Requires an action key. |
 | `eliotr_recover` | `recover` plus pinned owner spend approval | Resume/recover the same owner-project run and checkpoints; may continue authorized paid stages. Requires an action key; never creates a new run. |
 | `eliotr_report` | `report` | Existing versioned report-reauthorization envelope, with original artifact metadata and freshness. Known reference required; not report discovery. |
 | `eliotr_section` | `report` | Exact saved section bytes in the transport wrapper below. |
@@ -346,7 +346,11 @@ never replace a run ID or infer that a failed response means no work was recorde
 
 Use `eliotr_run_status` with `status` permission; completed artifact discovery additionally
 requires `report`, and exact citation/open calls require `evidence`. This code checkpoint
-supports original-credential, active-scope machine reads only. Machine-created cancellation,
-recovery and credential-refresh/history remain unimplemented; the existing control tools
-retain their owner-authored-run restriction. Migration 0076 is required. No test or live
-provider invocation is implied by tool discovery or by the compilation checkpoint.
+supports original-credential, active-scope machine status/report reads only. Existing cancel
+and recover tools also control that same client's machine run under its original grant revision
+(migration 0077). A refreshed signed token can issue controls without renewing execution;
+historical status/report reads and owner management remain separate unfinished code. Select
+cancel/recover on the grant before creating the run: regrant cannot take over old machine runs.
+Recovery retains the original active execution and explicit spend approval; cancellation does
+not require a sponsor-template lookup. Apply migrations through 0077 before deployment.
+No behavioral or live provider acceptance is implied by tool discovery or compilation.
