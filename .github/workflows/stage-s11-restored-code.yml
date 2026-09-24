@@ -1,0 +1,113 @@
+name: stage-s11-restored-code
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/stage-s11-restored-code.yml]
+permissions:
+  contents: write
+jobs:
+  stage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: main
+          fetch-depth: 2
+          persist-credentials: false
+      - name: Stage preserved source blobs without publishing a ref
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'JS'
+          import { execFileSync } from 'node:child_process';
+          import { createHash } from 'node:crypto';
+          import { mkdirSync, writeFileSync } from 'node:fs';
+          import { gunzipSync } from 'node:zlib';
+          const git = (...args) => execFileSync('git', args);
+          const text = (...args) => git(...args).toString().trim();
+          const assert = (ok, message) => { if (!ok) throw new Error(message); };
+          const hash = (algorithm, data) => createHash(algorithm).update(data).digest('hex');
+          const blobHash = data => hash('sha1', Buffer.concat([Buffer.from(`blob ${data.length}\0`), data]));
+          const root = `${process.env.GITHUB_API_URL}/repos/${process.env.GITHUB_REPOSITORY}`;
+          async function api(path, method = 'GET', body) {
+            const response = await fetch(`${root}/${path}`, {
+              method, headers: { authorization: `Bearer ${process.env.GH_TOKEN}`, accept: 'application/vnd.github+json', 'content-type': 'application/json' },
+              ...(body === undefined ? {} : { body: JSON.stringify(body) }), signal: AbortSignal.timeout(30000),
+            });
+            if (!response.ok) throw new Error(`Git API ${method} ${path}: HTTP ${response.status}`);
+            return response.json();
+          }
+          const base = 'debb53cbd00b070503ed110fe0a3fe18c6876875';
+          const expectedTree = '4f8ebc4d4edc36c072ce324296b36b87c9ac188d';
+          const transporter = '.github/workflows/stage-s11-restored-code.yml';
+          const head = process.env.GITHUB_SHA;
+          assert(text('branch', '--show-current') === 'main', 'Not on main');
+          assert(text('rev-parse', 'HEAD') === head, 'Main advanced before checkout');
+          assert(text('rev-parse', 'HEAD^') === base, 'Unexpected parent');
+          const parentTree = text('rev-parse', 'HEAD^{tree}');
+          git('rm', '--', transporter);
+          assert(text('write-tree') === 'b99665d602392d46f5717caf2d5653a5636a7471', 'Unexpected base contents');
+          const chunks = [
+            ['3b7567cf2078d6bf77345deb5b82f470f3bcf1a3'],
+            ['0e539c0c6ed64851586d4355fb75863fe932993d'],
+            ['220a17b2cb5311ab69767a608de71dd93c2512d0', 'e7257abdb407000e8b5c9b73ef8d2e6729715ec0', 'KpVMmjS1Np', 'KpVmjS1Np'],
+            ['5fba5741881b4bff45d5040374d7c14707a66304', '84d5934fb5a9479ca7aac9317e1dc949e5afb3a1', 'R91OtNr1+4Eyq8', 'R91OtNr1+Eyq8'],
+            ['5056f74997c0a30e5ee64176d9bc3a0e60ed3f0e'],
+            ['e36ea66e33f167d1b2807f0391999f734c2f98b7'],
+            ['01427d8484f01db33a756274380deea314803b80'],
+          ];
+          let encoded = '';
+          for (const [wireSha, intendedSha, from, to] of chunks) {
+            const blob = await api(`git/blobs/${wireSha}`);
+            assert(blob.encoding === 'base64', 'Unexpected blob encoding');
+            const wire = Buffer.from(blob.content, 'base64');
+            assert(blobHash(wire) === wireSha, 'Transport blob mismatch');
+            let part = wire.toString('utf8');
+            if (intendedSha !== undefined) {
+              // Repair only the audited transfer typo, never the intended patch or source.
+              assert(part.split(from).length === 2, 'Unexpected transfer correction target');
+              part = part.replace(from, to);
+              assert(blobHash(Buffer.from(part)) === intendedSha, 'Intended chunk mismatch');
+            }
+            encoded += part;
+          }
+          const patch = gunzipSync(Buffer.from(encoded, 'base64'));
+          assert(hash('sha256', patch) === '0c7f340d1566b96063891d27c76df4d160fba085ef7f36bdf2973731d134279e', 'Patch checksum mismatch');
+          const patchPath = `${process.env.RUNNER_TEMP}/s11-restored.patch`;
+          writeFileSync(patchPath, patch);
+          git('apply', '--unidiff-zero', '--check', patchPath);
+          git('apply', '--unidiff-zero', '--index', patchPath);
+          git('diff', '--cached', '--check');
+          git('diff', '--exit-code');
+          assert(text('write-tree') === expectedTree, 'Restored code tree mismatch');
+          const paths = git('diff', '--cached', '--name-only', '-z', 'HEAD').toString().split('\0').filter(Boolean);
+          assert(paths.length === 31, 'Unexpected changed path count');
+          const entries = [];
+          for (const path of paths) {
+            const index = text('ls-files', '--stage', '--', path);
+            if (!index) {
+              assert(path === transporter, 'Unexpected deletion');
+              entries.push({ path, mode: '100644', type: 'blob', sha: null });
+              continue;
+            }
+            assert(!path.startsWith('.github/') && !/(^|\/)tests?\//.test(path), 'Unexpected workflow/test modification');
+            const [mode, sha] = index.split(/\s+/);
+            const data = git('cat-file', 'blob', sha);
+            const created = await api('git/blobs', 'POST', { content: data.toString('base64'), encoding: 'base64' });
+            assert(created.sha === sha, `Staged source blob mismatch: ${path}`);
+            entries.push({ path, mode, type: 'blob', sha });
+          }
+          mkdirSync('/tmp/s11-restored-code', { recursive: true });
+          writeFileSync('/tmp/s11-restored-code/manifest.json', JSON.stringify({ base, parent: head, base_tree: parentTree,
+            original_local_commit: '2ebb76c09b4e2e8d8f53ec6e7c78cf472a4df34e', expected_tree: expectedTree, entries }, null, 2));
+          console.log(`STAGED_SOURCE_BLOBS=30\nEXPECTED_TREE=${expectedTree}\nREF_PUBLISHED=false`);
+          JS
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: s11-restored-code-manifest
+          path: /tmp/s11-restored-code/
+          retention-days: 3
+          if-no-files-found: error
