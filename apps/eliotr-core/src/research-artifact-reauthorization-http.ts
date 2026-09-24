@@ -19,7 +19,6 @@ import { ArtifactReadNotFoundError, artifactSectionResponse, type AuthenticatedR
 import type { Env } from "./env.js";
 import { HttpRequestError } from "./http-errors.js";
 import { readSourceRevisionFreshness } from "./source-revision-freshness.js";
-import { prepareMachineArtifactScope } from "./research-client-execution.js";
 
 interface ArtifactReadReauthorization {
   readonly artifact_ref: VersionedRef;
@@ -30,7 +29,7 @@ interface ArtifactReadReauthorization {
   readonly requireCurrent: () => Promise<void>;
 }
 
-/** Owner reports obtain fresh read authority; machine reports retain their exact active execution origin. */
+/** Fresh read authority retains the exact saved author, artifact and source revisions; it never renews execution. */
 async function prepareArtifactReadReauthorization(
   env: Env,
   context: AuthenticatedRequestContext,
@@ -74,8 +73,6 @@ async function prepareArtifactReadReauthorization(
   };
   const historical = context.client_class === "owner_pwa"
     ? await reauthorizeOwnerHistoricalScope(historicalInput)
-    : binding.principal_ref === context.principal_ref
-    ? await prepareMachineArtifactScope(env, context, original.snapshot, operation)
     : await reauthorizeClientArtifactScope({ ...historicalInput, access: context,
       original_principal_ref: binding.principal_ref, origin: { artifact_ref: ref, operation } });
   requireActiveRequest();

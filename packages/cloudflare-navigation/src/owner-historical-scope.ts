@@ -243,12 +243,14 @@ async function reauthorizeHistoricalScope(
   if (parsed.data.member_source_revision_refs.length > maximumMembers) stale();
   await requireHistoricalScopeOrigin(input.database, originalRef.data, parsed.data);
   const original = parsed.data;
-  await requireOriginalGrantNotRevoked(input.database, originalRef.data,
-    client?.original_principal_ref ?? input.access.principal_ref, client === undefined ? input.access.client_class : "owner_pwa");
   const now = input.now ?? Date.now;
   const delegated = client === undefined ? undefined : await createProjectClientArtifactAuthority(
     input.database, client.access, original, client.origin, client.original_principal_ref, now,
   );
+  const requireOriginalGrant = () => requireOriginalGrantNotRevoked(input.database, originalRef.data,
+    client?.original_principal_ref ?? input.access.principal_ref,
+    delegated?.original_client_class ?? input.access.client_class);
+  await requireOriginalGrant();
   const owner = delegated?.authority ?? createOwnerScopeAuthority(input.database, input.access, now);
   if (profile.version === OWNER_RESEARCH_SCOPE_PROFILE.version) await owner.exhaustiveRequireReadPolicy();
   else await owner.requireReadPolicy();
@@ -273,11 +275,9 @@ async function reauthorizeHistoricalScope(
       require_current: (scope) => scopes.requireCurrent(scope), now }, client.origin);
   } else if (profile.version === OWNER_RESEARCH_SCOPE_PROFILE.version) await owner.exhaustiveGrant(fresh);
   else await owner.grant(fresh);
-  await requireOriginalGrantNotRevoked(input.database, originalRef.data,
-    client?.original_principal_ref ?? input.access.principal_ref, client === undefined ? input.access.client_class : "owner_pwa");
+  await requireOriginalGrant();
   const requireCurrent = async (scope: ScopeSnapshot): Promise<ScopeSnapshot> => {
-    await requireOriginalGrantNotRevoked(input.database, originalRef.data,
-      client?.original_principal_ref ?? input.access.principal_ref, client === undefined ? input.access.client_class : "owner_pwa");
+    await requireOriginalGrant();
     await requireHistoricalScopeOrigin(input.database, originalRef.data, original);
     const checked = await scopes.requireCurrent(scope);
     if (delegated !== undefined && client !== undefined) {

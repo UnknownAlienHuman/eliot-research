@@ -676,12 +676,13 @@ The provider, verifier qualification reader and zero-price accounting are explic
 inputs. Public exploratory.v3 activation, live verifier qualification and stages 15–17 integration
 remain separate work; these tests do not establish a complete production research run.
 
-### Delegated read of a known owner run (S11)
+### Delegated read of a known project run (S11)
 
 GET `/api/v1/research/run/:workflow_id` also accepts a signed service token plus the non-secret
-`X-Eliotr-Client-Grant` locator. The grant must include `status`. Only a grantor-authored run whose
-original frozen expression is that one explicit PROJECT is eligible; unrelated projects, global or
-compound scopes and machine-authored runs are not implicitly shared. No run-list authority is added.
+`X-Eliotr-Client-Grant` locator. The grant must include `status`. A grantor-authored run or the
+requesting service's own machine run under its original grant revision is eligible only when its
+frozen expression is that one explicit PROJECT. Unrelated clients/projects and global or compound
+scopes are denied. No run-list authority is added.
 
 The response remains `eliotr.research-run-status.v1`. Progress, terminal cancellation and engine
 observations reuse the existing checkpoint/status implementation. Current delegated access to every
@@ -696,9 +697,9 @@ A known run ID therefore suffices to locate its authorized result, not to list a
 The MCP `eliotr_run_status` tool delegates to this exact application service. It creates no run and
 invokes no model; completed report discovery can issue fresh read-authority records.
 
-No new migration; the complete existing chain through0074 is still required. This code checkpoint
-is compile/static reviewed only. Behavioral/native and signed live acceptance remain pending;
-service run admission remains unimplemented. Delegated cancellation and sponsored recovery follow below.
+The machine historical-read extension requires the complete migration chain through0078.
+Behavioral/native and signed live acceptance remain pending. Run admission and separately authorized
+cancellation/recovery follow below; historical reading never grants those execution capabilities.
 
 
 ### Delegated cancellation of a known owner run (S32)
@@ -792,17 +793,21 @@ Machine execution does not automatically renew model qualification: installed, u
 route qualification remains mandatory. Admission returns a run handle, not model readiness.
 The full metadata profile, preview/result limits and actual Workflow byte limits are retained.
 
-Machine status and report/citation reads in this checkpoint require the **original service
-credential and an active originating execution scope/grant**. Status/report/evidence remain
-separate permissions. Internal materialization readback has a server-only operation locator
-independently checked against its exact W2 run, report admission and artifact binding; it is
-not a public read capability. Historical owner readers keep their existing path. The original
-report bytes, source revisions and hashes are unchanged by reading.
+Machine status and report/citation reads authenticate the **current signed service token** and
+retain the original delegation revision. Migration0078 reuses the recorded run origin for status
+and adds `project_client_artifact_read_origin`, shared by historical-scope issuance, effective grants
+and independent artifact readers. Machine artifacts must match the original W2 report admission,
+not merely overlap sources. Fresh report/evidence scopes remain pinned to the saved artifact and
+historical source versions. The old execution credential, scope and fixed deadline are never renewed.
+Expired execution does not require fresh spend approval to read; current grant/source permissions,
+revocation, project generation, purge and compatible deployment checks still apply. Regrant cannot
+restore old machine access. Cancelled machine runs disclose no saved draft through this path.
+Status/report/evidence remain distinct. Internal materialization readback retains its separately
+bound server-only W2 operation locator; it is not a public read capability. Owner readers are unchanged.
 
 Machine controls are integrated below. Remaining code: owner management of machine-authored
-reports, service credential-refresh/historical machine status and report reads after execution
-expiry, and managed-OAuth composition. Full lifecycle/native acceptance is still pending.
-Apply the complete migration chain through **0077** before deploying these shared readers
+reports and managed-OAuth composition. Full lifecycle/native acceptance is still pending.
+Apply the complete migration chain through **0078** before deploying these shared readers
 and mutation paths, including owner controls. No missing-schema permissive fallback exists.
 
 ### Machine-run cancellation and recovery (S11/S32, migration 0077)

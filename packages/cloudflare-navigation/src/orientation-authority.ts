@@ -433,18 +433,30 @@ export async function createProjectClientArtifactAuthority(
   await requireClientArtifactScopeSchema(db);
   const projectId = original.resolved_scope_expression.project_id;
   const lease = await authorizeProjectClientGrant(db, context, { operation: origin.operation, project_id: projectId }, now);
-  if (lease.grant.grantor_principal_ref !== originalPrincipal || !lease.grant.allowed_operations.includes("report")) {
-    grantFail("CLIENT_ARTIFACT_DENIED", 403, "Delegation does not authorize this report's owner");
+  if (!lease.grant.allowed_operations.includes("report")) {
+    grantFail("CLIENT_ARTIFACT_DENIED", 403, "Report reading is not delegated");
   }
-  const shared = createReadPolicyAuthority(db, context, originalPrincipal, now);
+  const readOrigin = () => db.prepare("SELECT origin_client_class FROM project_client_artifact_read_origin " +
+    "WHERE artifact_id=?1 AND artifact_revision=?2 AND principal_ref=?3 " +
+    "AND scope_snapshot_id=?4 AND scope_snapshot_revision=?5 AND client_grant_id=?6 " +
+    "AND client_grant_revision=?7 AND project_generation=?8 " +
+    "AND (origin_client_class='owner_pwa' OR origin_client_class=?9) LIMIT 1")
+    .bind(origin.artifact_ref.id, origin.artifact_ref.revision, originalPrincipal, original.snapshot_id,
+      original.revision, lease.grant.grant_id, lease.grant.revision, lease.project_generation, context.client_class)
+    .first<{ origin_client_class: EvidenceAccessContext["client_class"] }>();
+  const recorded = await readOrigin();
+  if (!recorded || !["owner_pwa", "trusted_agent", "named_api_client"].includes(recorded.origin_client_class)) {
+    grantFail("CLIENT_ARTIFACT_DENIED", 403, "Saved report does not belong to this delegation");
+  }
+  const originalClientClass = recorded.origin_client_class;
+  // The author may be a machine; its grantor remains the source-policy subject.
+  const shared = createReadPolicyAuthority(db, context, lease.grant.grantor_principal_ref, now);
   async function requireOrigin() {
     await lease.requireGrantCurrent();
-    const row = await db.prepare("SELECT 1 AS present FROM artifact_draft_binding b " +
-      "JOIN artifact_revision a ON a.artifact_id=b.artifact_id AND a.revision=b.revision " +
-      "WHERE b.artifact_id=?1 AND b.revision=?2 AND b.principal_ref=?3 " +
-      "AND b.scope_snapshot_id=?4 AND b.scope_snapshot_revision=?5 AND a.status='DRAFT' LIMIT 1")
-      .bind(origin.artifact_ref.id, origin.artifact_ref.revision, originalPrincipal, original.snapshot_id, original.revision).first();
-    if (row === null) grantFail("CLIENT_ARTIFACT_DENIED", 403, "Saved report binding is unavailable");
+    const row = await readOrigin();
+    if (row?.origin_client_class !== originalClientClass) {
+      grantFail("CLIENT_ARTIFACT_DENIED", 403, "Saved report origin was revoked or changed");
+    }
     await lease.requireGrantCurrent();
   }
   const sources = projectHistoricalSources(db, shared, lease, requireOrigin, now);
@@ -472,7 +484,7 @@ export async function createProjectClientArtifactAuthority(
     resolveAuthorityClosure, exhaustiveResolveAuthorityClosure: resolveAuthorityClosure,
     requireReadPolicy, exhaustiveRequireReadPolicy: requireReadPolicy, grant: noUnboundGrant, exhaustiveGrant: noUnboundGrant };
   await requireOrigin();
-  return { authority, lease, requireOrigin };
+  return { authority, lease, requireOrigin, original_client_class: originalClientClass };
 }
 
 /** Current authority for a known owner run or its originating machine client.
@@ -487,8 +499,8 @@ export async function createProjectClientRunReadAuthority(
     "deployment_generation, handler_generation, scope_snapshot_id, scope_snapshot_revision, policy_authority_ref, " +
     "authorization_receipt_ref, origin_client_class FROM project_client_run_control_origin " +
     "WHERE operation_id=?1 AND client_grant_id=?2 AND client_grant_revision=?3 " +
-    "AND (?4<>'status' OR origin_client_class='owner_pwa') LIMIT 1")
-    .bind(orientationId(operationId), lease.grant.grant_id, lease.grant.revision, operation).first<{
+    "AND (origin_client_class='owner_pwa' OR origin_client_class=?4) LIMIT 1")
+    .bind(orientationId(operationId), lease.grant.grant_id, lease.grant.revision, context.client_class).first<{
       investigation_id: string; principal_ref: string; credential_generation: string;
       deployment_generation: string; handler_generation: string; scope_snapshot_id: string;
       scope_snapshot_revision: number; policy_authority_ref: string; authorization_receipt_ref: string;

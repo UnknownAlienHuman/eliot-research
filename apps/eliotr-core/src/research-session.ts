@@ -32,7 +32,7 @@ import type { AuthenticatedRequestContext, QueryRequest, QueryResult, ResearchEn
 import type { ResearchRunFailureCode } from "@eliotr/interfaces";
 import { ResearchServiceError, failResearch as fail } from "./research-service-error.js";
 export { ResearchServiceError } from "./research-service-error.js";
-import { prepareClientResearchAdmission, requireClientResearchExecution, authorizeMachineRunRead } from "./research-client-execution.js";
+import { prepareClientResearchAdmission, requireClientResearchExecution } from "./research-client-execution.js";
 import { loadResearchPlanningSources, prepareResearchRunScope } from "./research-run-admission.js";
 import type { Env } from "./env.js";
 import { RESEARCH_OWNER_MODEL_PROFILE as MODEL_PROFILE } from "./research-owner-profile.js";
@@ -265,9 +265,8 @@ async function readResearchRunStatus(env: Env, context: AuthenticatedRequestCont
     };
   };
   const isOwner = context.client_class === "owner_pwa";
-  const machine = isOwner ? null : await authorizeMachineRunRead(env, context, operationId).catch(mapRunStatusFailure);
-  const delegated = isOwner || machine ? null : await prepareProjectClientRunRead(env, context, operationId).catch(mapRunStatusFailure);
-  if (!isOwner && delegated === null && machine === null) fail("RESEARCH_RUN_NOT_FOUND", "research run does not exist", 404);
+  const delegated = isOwner ? null : await prepareProjectClientRunRead(env, context, operationId).catch(mapRunStatusFailure);
+  if (!isOwner && delegated === null) fail("RESEARCH_RUN_NOT_FOUND", "research run does not exist", 404);
   const refreshed = isOwner ? await prepareReauthenticatedRunRead(env, context, operationId).catch(mapRunStatusFailure) : null;
   const status = delegated?.status ?? refreshed?.status ?? await readStoredResearchRunStatus({
     database: env.CORE_DB, operation_id: operationId, principal, recheck_authority: recheckAuthority,
@@ -295,7 +294,7 @@ async function readResearchRunStatus(env: Env, context: AuthenticatedRequestCont
       answer = await readReauthenticatedRunAnswer(env, context, refreshed, generation).catch(mapRunStatusFailure);
     }
     await refreshed.requireCurrent().catch(mapRunStatusFailure);
-  } else if ((!machine || machine.can_read_report) && status.state === "ENGINE_COMPLETED" && isSemanticResearchHandlerGeneration(generation)) {
+  } else if (status.state === "ENGINE_COMPLETED" && isSemanticResearchHandlerGeneration(generation)) {
     const completed = await readCommittedResearchRunResult({
       database: env.CORE_DB,
       work_bucket: env.WORK_BUCKET,
@@ -306,7 +305,6 @@ async function readResearchRunStatus(env: Env, context: AuthenticatedRequestCont
     }).catch(mapRunStatusFailure);
     if (completed !== null) answer = { availability: "draft", artifact_ref: completed.materialization.materialization.draft.artifact_ref };
   }
-  await machine?.requireCurrent();
   return {
     protocol: "eliotr.research-run-status.v1",
     workflow_instance_id: status.operation_id,

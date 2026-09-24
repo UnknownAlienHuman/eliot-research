@@ -84,8 +84,8 @@ export async function requireClientArtifactScopeSchema(db: D1Database): Promise<
   const ready = await grantRead(() => db.prepare(
     "SELECT value FROM schema_state WHERE key='project_client_artifact_scope_generation'",
   ).first<{ value: string }>());
-  if (ready?.value !== "project-client-artifact-scope-v1") {
-    grantFail("CLIENT_ARTIFACT_NOT_READY", 503, "Delegated report reads require migration 0074", true);
+  if (ready?.value !== "project-client-artifact-scope-v2") {
+    grantFail("CLIENT_ARTIFACT_NOT_READY", 503, "Delegated historical report reads require migration 0078", true);
   }
 }
 

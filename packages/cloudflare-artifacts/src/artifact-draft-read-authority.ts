@@ -24,7 +24,13 @@ export async function hasDelegatedArtifactReadAuthority(input: {
     "WHERE g.snapshot_id=?1 AND g.snapshot_revision=?2 AND g.principal_ref=?3 AND g.client_class=?4 " +
     "AND g.credential_generation=?5 AND g.authorization_receipt_ref=?6 AND g.policy_authority_ref=?7 " +
     "AND b.scope_snapshot_id=?10 AND b.scope_snapshot_revision=?11 AND b.principal_ref=?12 " +
-    "AND ((?14 IS NULL AND d.grantor_principal_ref=?12 AND g.project_client_operation IN ('report','evidence') " +
+    "AND ((?14 IS NULL AND g.project_client_operation IN ('report','evidence') " +
+    "AND EXISTS (SELECT 1 FROM project_client_artifact_read_origin origin " +
+    "WHERE origin.artifact_id=b.artifact_id AND origin.artifact_revision=b.revision " +
+    "AND origin.principal_ref=b.principal_ref AND origin.scope_snapshot_id=b.scope_snapshot_id " +
+    "AND origin.scope_snapshot_revision=b.scope_snapshot_revision AND origin.client_grant_id=d.grant_id " +
+    "AND origin.client_grant_revision=d.revision AND origin.project_generation=g.project_client_project_generation " +
+    "AND (origin.origin_client_class='owner_pwa' OR origin.origin_client_class=g.client_class)) " +
     "AND g.project_client_artifact_id=?8 AND g.project_client_artifact_revision=?9 " +
     "AND (?13=0 OR g.project_client_operation='evidence')) OR (g.project_client_operation='run' " +
     "AND b.principal_ref=g.principal_ref AND b.scope_snapshot_id=g.snapshot_id AND b.scope_snapshot_revision=g.snapshot_revision " +

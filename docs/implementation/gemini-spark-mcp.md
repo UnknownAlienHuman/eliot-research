@@ -201,7 +201,7 @@ agree with any supplied `X-Eliotr-Client-Grant` header. It selects a delegation,
 | Tool | Required permission | Result / boundary |
 | --- | --- | --- |
 | `eliotr_query` | `query` | Original FAST_SEARCH evidence pack and trace reference; no synthesized answer or exhaustive-coverage claim. |
-| `eliotr_run_status` | `status`; additionally `report` for a DRAFT result reference | Existing run-status DTO for a known grantor-authored explicit-project run; never starts/resumes execution. |
+| `eliotr_run_status` | `status`; additionally `report` for a DRAFT result reference | Existing run-status DTO for a known grantor-authored project run or the original client's machine run; never starts/resumes execution. |
 | `eliotr_cancel` | `cancel` | Stop a known owner run or the same client's machine run under its original grant revision; existing run-status DTO only after durable cancellation. Requires an action key. |
 | `eliotr_recover` | `recover` plus pinned owner spend approval | Resume/recover the same owner-project run and checkpoints; may continue authorized paid stages. Requires an action key; never creates a new run. |
 | `eliotr_report` | `report` | Existing versioned report-reauthorization envelope, with original artifact metadata and freshness. Known reference required; not report discovery. |
@@ -210,9 +210,10 @@ agree with any supplied `X-Eliotr-Client-Grant` header. It selects a delegation,
 | `eliotr_verify` | `evidence` | Existing handle resolution against its exact snapshot and original delegation revision. Locator-candidate submission is not exposed by this tool. |
 | `eliotr_open` | `evidence` | Exact excerpt or a strict UTF-8 byte range `[start,end)`, with the original verification/identity headers. |
 
-Only grantor-authored DRAFT reports originally scoped to one explicit PROJECT are currently eligible.
-A different author's report, compound/GLOBAL scope, or matching source in another project grants no
-report access. Permission to read does not grant publication, erasure, source writes or model spend.
+Eligible DRAFT reports were created for one explicit PROJECT by its current grantor or by the
+requesting service under its exact originating grant revision. A refreshed signed token may read a
+machine report after execution expiry, but a different client, replaced/revoked delegation,
+compound/GLOBAL scope or overlapping sources cannot authorize it. Permission to read does not grant publication, erasure, source writes or model spend.
 Regrant never revives an earlier query/handle scope; historical report bytes/references are unchanged.
 
 Tool names and schemas live once in `gemini-mcp-research-tools.ts`. Scope and reference descriptions
@@ -345,12 +346,15 @@ non-read-only and open-world. Retry the same key and request after an uncertain 
 never replace a run ID or infer that a failed response means no work was recorded.
 
 Use `eliotr_run_status` with `status` permission; completed artifact discovery additionally
-requires `report`, and exact citation/open calls require `evidence`. This code checkpoint
-supports original-credential, active-scope machine status/report reads only. Existing cancel
-and recover tools also control that same client's machine run under its original grant revision
-(migration 0077). A refreshed signed token can issue controls without renewing execution;
-historical status/report reads and owner management remain separate unfinished code. Select
+requires `report`, and exact citation/open calls require `evidence`. Migration 0078 routes machine
+status through the existing historical run reader and issues fresh artifact-bound read scopes for
+report/section/citation reads. The current signed token is authenticated independently of the stored
+execution credential. Expired execution or a missing installed spend template does not prohibit
+reading while the original delegation revision and all current source rights remain valid. Original
+run deadlines, checkpoints, report bytes and author are unchanged; old evidence handles are not
+renewed. Owner access to machine reports remains unfinished.
+Existing cancel/recover tools retain their separate permissions and execution rules. Select
 cancel/recover on the grant before creating the run: regrant cannot take over old machine runs.
 Recovery retains the original active execution and explicit spend approval; cancellation does
-not require a sponsor-template lookup. Apply migrations through 0077 before deployment.
+not require a sponsor-template lookup. Apply migrations through 0078 before deployment.
 No behavioral or live provider acceptance is implied by tool discovery or compilation.

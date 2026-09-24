@@ -80,7 +80,7 @@ export const MCP_RESEARCH_TOOLS = {
   },
   eliotr_run_status: {
     name: "eliotr_run_status",
-    description: "Read an existing grantor-authored explicit-project run with status permission. Returns the unchanged HTTP run-status DTO, not a new run. Only separate report permission permits discovery of a completed DRAFT reference through exact historical readback; this may issue read authority. No model, restart or execution renewal.",
+    description: "Read a known grantor-authored project run or your own machine run under its original delegation revision with status permission. A refreshed token may read after execution expiry; current project/source rights are still required. Returns the unchanged HTTP run-status DTO, not a new run. Only separate report permission permits discovery of a completed DRAFT reference through exact historical readback; this may issue read authority. No model, restart or execution renewal.",
     inputSchema: { type: "object", additionalProperties: false, required: ["client_grant_id", "workflow_instance_id"],
       properties: { ...grant, workflow_instance_id: { type: "string", minLength: 1, maxLength: 128,
         pattern: "^[A-Za-z0-9][A-Za-z0-9:._-]{0,127}$" } } },
@@ -88,7 +88,7 @@ export const MCP_RESEARCH_TOOLS = {
   },
   eliotr_report: {
     name: "eliotr_report",
-    description: "Reopen a known grantor-authored DRAFT report originally scoped to this explicit project. Requires report permission. Returns the same versioned HTTP reauthorization envelope, preserving hashes, freshness and DRAFT status. Issues fresh read authority, no model or artifact mutation.",
+    description: "Reopen a known grantor-authored project DRAFT or your own machine DRAFT under its original delegation revision. Requires report permission. Refreshing your token or expiry of execution does not require restarting the run; expired/revoked/regranted read authority is rejected. Returns the same versioned HTTP reauthorization envelope, preserving hashes, freshness and DRAFT status. Issues fresh read authority, no model or artifact mutation.",
     inputSchema: { type: "object", additionalProperties: false, required: ["client_grant_id", "artifact_ref"],
       properties: { ...grant, artifact_ref: ref } },
     annotations: annotations(false),

@@ -1,4 +1,4 @@
-import type { ScopeSnapshot, VersionedRef, ProjectClientGrant } from "@eliotr/contracts";
+import type { ScopeSnapshot, ProjectClientGrant } from "@eliotr/contracts";
 import type { AuthenticatedRequestContext, QueryRequest } from "@eliotr/interfaces";
 import type { EvidenceAccessContext, NavigationReadAuthority } from "@eliotr/cloudflare-evidence";
 import { authorizeProjectClientGrant, createProjectClientScopeAuthority, readClientGrant,
@@ -123,48 +123,4 @@ export async function resolveResearchExecutionSpend(env: Env, navigation: Naviga
     credential_generation: navigation.access.credential_generation, policy_generation: policyGeneration,
     policy_authority_ref: navigation.scope.policy_authority_ref, expires_at: new Date(expiry).toISOString(),
     sponsor_principal_ref: approved.grant.grantor_principal_ref, sponsor_policy_sha256: approved.binding.policy_sha256 }), common.provenance);
-}
-
-/** Same-token status for a machine-authored run. It cannot turn a new grant into old execution authority. */
-export async function authorizeMachineRunRead(env: Env, context: AuthenticatedRequestContext, operationId: string) {
-  const row = await env.CORE_DB.prepare("SELECT r.scope_snapshot_id,r.scope_snapshot_revision,r.deployment_generation," +
-    "g.project_client_grant_revision,g.project_client_grant_id FROM research_workflow_run r JOIN scope_access_grant g " +
-    "ON g.snapshot_id=r.scope_snapshot_id AND g.snapshot_revision=r.scope_snapshot_revision AND g.principal_ref=r.principal_ref " +
-    "AND g.credential_generation=r.credential_generation WHERE r.operation_id=?1 AND r.principal_ref=?2 " +
-    "AND r.credential_generation=?3 AND g.client_class=?4 AND g.project_client_operation='run' LIMIT 1")
-    .bind(operationId, context.principal_ref, context.credential_generation, context.client_class)
-    .first<{ scope_snapshot_id: string; scope_snapshot_revision: number; deployment_generation: string;
-      project_client_grant_revision: number; project_client_grant_id: string }>();
-  if (!row) return null;
-  const lease = await authorizeProjectClientGrant(env.CORE_DB, context,
-    { operation: "status", required_revision: row.project_client_grant_revision });
-  if (lease.grant.grant_id !== row.project_client_grant_id) denied("Status grant differs from the execution origin");
-  const scope: VersionedRef = { id: row.scope_snapshot_id, revision: row.scope_snapshot_revision };
-  const requireCurrent = async () => {
-    await lease.requireGrantCurrent();
-    await requireClientResearchExecution(env, context, { snapshot_id: scope.id, revision: scope.revision }, operationId, row.deployment_generation);
-  };
-  await requireCurrent();
-  return { lease, requireCurrent, can_read_report: lease.grant.allowed_operations.includes("report") };
-}
-
-/** A machine reads its own original report under current explicit read rights, not the grantor's identity. */
-export async function prepareMachineArtifactScope(env: Env, context: AuthenticatedRequestContext,
-  scope: ScopeSnapshot, operation: "report" | "evidence") {
-  const row = await env.CORE_DB.prepare("SELECT project_client_run_operation_id AS operation_id," +
-    "project_client_grant_id AS grant_id,project_client_grant_revision AS revision FROM scope_access_grant " +
-    "WHERE snapshot_id=?1 AND snapshot_revision=?2 AND principal_ref=?3 AND client_class=?4 " +
-    "AND credential_generation=?5 AND project_client_operation='run' LIMIT 1")
-    .bind(scope.snapshot_id, scope.revision, context.principal_ref, context.client_class, context.credential_generation)
-    .first<{ operation_id: string; grant_id: string; revision: number }>();
-  if (!row) denied("The machine report requires its original execution identity");
-  const lease = await authorizeProjectClientGrant(env.CORE_DB, context, { operation, required_revision: row.revision });
-  if (lease.grant.grant_id !== row.grant_id || !lease.grant.allowed_operations.includes("report")) denied("Report reading is not delegated");
-  const requireCurrent = async () => {
-    await lease.requireGrantCurrent();
-    await requireClientResearchExecution(env, context, scope, row.operation_id, env.DEPLOYMENT_GENERATION);
-    return scope;
-  };
-  await requireCurrent();
-  return { scope, requireCurrent };
 }
