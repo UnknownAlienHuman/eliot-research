@@ -88,6 +88,12 @@ historical machine status/report/citation reads to fresh signed credentials and 
 read scopes, without renewing execution. Migration0079 adds independent original-grantor owner
 reading of machine reports through saved-draft discovery and existing PWA reauthorization/export.
 Migration0080 composes independent owner machine-run list/status/cancel/recover and PWA Stop/Recover; original execution/spend limits still constrain recovery. Broad discovery and import remain code work.
+S98 now composes append-only project attachment through the existing HTTP Project update and
+`eliotr_project_attach`, requiring separate project.attach rights and current grantor source authority.
+Migration0081 records the real service actor and exact original grant revision in existing mutation
+guards/receipts, with write-time CAS/expiry fences and authorized same-key replay. No rename or
+detach, new source ownership, preprocessing, paid effect or expansion of old Research scopes.
+Compilation/static review only; namespace-delegated bundle ingestion and native acceptance remain.
 Apply all migrations through 0080 before deploying the changed shared grant/history readers. Connections manages
 grants through the existing API and provides the independent opt-in service catalog-read command
 (`scripts/check-project-client.mjs --help`). Configured is not connected: the PWA does not claim

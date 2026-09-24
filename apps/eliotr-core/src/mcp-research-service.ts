@@ -1,6 +1,8 @@
 import { VersionedRefSchema, type VersionedRef } from "@eliotr/contracts";
 import { authorizeProjectClientGrant } from "@eliotr/cloudflare-navigation";
 import type { AuthenticatedRequestContext } from "@eliotr/interfaces";
+import { createProjectOwnerService } from "./project-owner-service.js";
+import { inputIdentifier, normalizeUpdate } from "./project-owner-contract.js";
 import { readResponseBodyWithinBytes, RuntimeLimitError } from "@eliotr/platform-cloudflare";
 import { GeminiMcpToolError, MAX_MCP_RESPONSE_BYTES, MCP_RESEARCH_TOOLS, type McpResearchToolCall, type McpToolCallContext } from "@eliotr/cloudflare-workspace-mcp";
 import { createResearchQueryService, createResearchRunService, parseResearchRunRequest, parseResearchQueryRequest } from "./research-session.js";
@@ -111,6 +113,18 @@ export function createMcpResearchToolCall(env: Env, request: Request): McpResear
       const context = serviceContext(env, request, toolContext, args);
       let execute: () => Promise<unknown>;
       switch (name) {
+        case "eliotr_project_attach": {
+          const projectId = inputIdentifier(args.project_id, "project_id");
+          const supplied = record(args.request);
+          if (Object.keys(supplied).some((key) => !["title", "source_ids", "expected_revision"].includes(key))) {
+            invalid("Project attachment request contains unknown fields");
+          }
+          const change = normalizeUpdate(supplied);
+          const key = inputIdentifier(args.idempotency_key, "idempotency_key");
+          execute = () => createProjectOwnerService({ database: env.CORE_DB, deployment_generation: env.DEPLOYMENT_GENERATION })
+            .update(context, projectId, { ...change, idempotency_key: key });
+          break;
+        }
         case "eliotr_run": {
           const run = parseResearchRunRequest(args.request);
           execute = () => createResearchRunService(env).run(context, run);
@@ -161,6 +175,13 @@ export function createMcpResearchToolCall(env: Env, request: Request): McpResear
         }
       }
       if (!(await readReadiness(env)).ready) throw new GeminiMcpToolError("SCHEMA_NOT_READY", "Required migrations are not applied", true);
+      if (name === "eliotr_project_attach") {
+        // This shared mutator fences the exact grant through CAS and readback. Its own successful
+        // project-generation change must not be mistaken for revocation by the read-only wrapper.
+        const result = await execute();
+        serviceContext(env, request, toolContext, args);
+        return result;
+      }
       const operation = name === "eliotr_run" ? "run" : name === "eliotr_recover" ? "recover" : name === "eliotr_cancel" ? "cancel" : name === "eliotr_run_status" ? "status" : name === "eliotr_query" ? "query" : name === "eliotr_report" || name === "eliotr_section" ? "report" : "evidence";
       const lease = await authorizeProjectClientGrant(env.CORE_DB, context, { operation });
       const result = await execute();

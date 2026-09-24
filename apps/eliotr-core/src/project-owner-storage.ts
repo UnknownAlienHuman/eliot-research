@@ -1,3 +1,4 @@
+import type { ProjectAttachmentBinding } from "./project-client-attachment.js";
 import { sha256Utf8 } from "@eliotr/platform-cloudflare";
 import {
   MAX_PROJECTS,
@@ -305,7 +306,11 @@ export function groupMemberships(rows: readonly MembershipRow[], projectIds: rea
   return grouped;
 }
 
-function decodeReceiptRow(row: MutationReceiptRow, principal: string): StoredMutation {
+function decodeReceiptRow(row: MutationReceiptRow, principal: string, attachment?: ProjectAttachmentBinding): StoredMutation {
+  if (attachment === undefined ? row.project_client_grant_id !== null || row.project_client_grant_revision !== null
+    : row.project_client_grant_id !== attachment.grant_id || row.project_client_grant_revision !== attachment.grant_revision) {
+    fail("PROJECT_IDEMPOTENCY_CONFLICT", 409, "Idempotency key belongs to another project authority revision");
+  }
   const rowPrincipal = storedIdentifier(row.principal_ref, "receipt principal");
   const key = storedIdentifier(row.idempotency_key, "receipt idempotency key");
   const operation = row.operation === "CREATE" || row.operation === "UPDATE" ? row.operation : null;
@@ -328,7 +333,7 @@ function decodeReceiptRow(row: MutationReceiptRow, principal: string): StoredMut
   try { parsed = JSON.parse(responseJson); } catch (cause) {
     fail("PROJECT_STORAGE_UNAVAILABLE", 503, "stored receipt response is not JSON", true, cause);
   }
-  const result = decodeProjectResult(parsed, principal);
+  const result = decodeProjectResult(parsed, attachment?.owner_principal_ref ?? principal);
   if (result.project_ref.id !== projectId || result.revision !== Number(row.project_revision) ||
       result.deployment_generation !== deployment || result.protocol !== PROJECT_PROTOCOL) {
     fail("PROJECT_STORAGE_UNAVAILABLE", 503, "stored receipt response does not match its row", true);
@@ -347,19 +352,19 @@ function decodeReceiptRow(row: MutationReceiptRow, principal: string): StoredMut
   };
 }
 
-export async function readReceipt(database: D1Database, principal: string, key: string): Promise<StoredMutation | null> {
+export async function readReceipt(database: D1Database, principal: string, key: string, attachment?: ProjectAttachmentBinding): Promise<StoredMutation | null> {
   let row: MutationReceiptRow | null;
   try {
     row = await database.prepare(
       "SELECT principal_ref,idempotency_key,operation,project_id,request_sha256,response_json,response_sha256," +
-      "project_revision,deployment_generation,created_at FROM project_mutation_receipt " +
+      "project_revision,deployment_generation,created_at,project_client_grant_id,project_client_grant_revision FROM project_mutation_receipt " +
       "WHERE principal_ref=?1 AND idempotency_key=?2 LIMIT 1",
     ).bind(principal, key).first<MutationReceiptRow>();
   } catch (cause) {
     fail("PROJECT_STORAGE_UNAVAILABLE", 503, "project mutation receipt read is unavailable", true, cause);
   }
   if (row === null) return null;
-  const receipt = decodeReceiptRow(row, principal);
+  const receipt = decodeReceiptRow(row, principal, attachment);
   if (await sha256Utf8(JSON.stringify(receipt.result)) !== receipt.response_sha256) {
     fail("PROJECT_STORAGE_UNAVAILABLE", 503, "stored receipt response digest does not match", true);
   }

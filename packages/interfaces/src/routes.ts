@@ -34,7 +34,7 @@ export const ROUTES: readonly RouteDefinition[] = [
   { method: "DELETE", path: "/api/v1/research/projects/:project_id/client-grants/:grant_id", operation: "research.client-grants.revoke", auth: "owner", maximum_request_bytes: 1024, response_mode: "json" },
   { method: "GET", path: "/api/v1/research/projects", operation: "research.projects.list", auth: "owner", maximum_request_bytes: 0, response_mode: "json" },
   { method: "POST", path: "/api/v1/research/projects", operation: "research.projects.create", auth: "owner", maximum_request_bytes: 16384, response_mode: "json" },
-  { method: "PUT", path: "/api/v1/research/projects/:project_id", operation: "research.projects.update", auth: "owner", maximum_request_bytes: 16384, response_mode: "json" },
+  { method: "PUT", path: "/api/v1/research/projects/:project_id", operation: "research.projects.update", auth: "owner_or_service", maximum_request_bytes: 16384, response_mode: "json" },
   { method: "POST", path: "/api/v1/ingest/bundles/discover", operation: "ingest.bundle.discover", auth: "owner_or_service", maximum_request_bytes: 262144, response_mode: "json" },
   { method: "POST", path: "/api/v1/ingest/raw", operation: "ingest.raw.capture", auth: "owner", maximum_request_bytes: 16 * 1024 * 1024, response_mode: "json" },
   { method: "GET", path: "/api/v1/ingest/raw", operation: "ingest.raw.read", auth: "owner", maximum_request_bytes: 0, response_mode: "json" },

@@ -27,3 +27,5 @@ export { createProjectClientCatalogAuthority } from "./orientation-authority.js"
 export { createProjectClientScopeAuthority, createProjectClientRunReadAuthority } from "./orientation-authority.js";
 
 export { readClientGrantSpend, readClientGrant } from "./client-grant-store.js";
+
+export { nextOrientationBoundary } from "./orientation-currentness.js";

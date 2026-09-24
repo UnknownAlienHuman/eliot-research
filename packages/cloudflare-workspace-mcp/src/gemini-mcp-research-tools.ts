@@ -19,6 +19,18 @@ const annotations = (idempotent: boolean) => ({
 
 /** One registry for names, discovery schemas and dispatch. Only implemented consumers; cancellation is an explicit destructive control. */
 export const MCP_RESEARCH_TOOLS = {
+  eliotr_project_attach: {
+    name: "eliotr_project_attach",
+    description: "Append independently admitted, owner-readable sources to one project with project.attach permission. Supply the unchanged title, complete desired source ID set (including all existing members), expected project revision and a stable action key. Uses the same guarded HTTP project update and receipt; cannot rename, detach, create source ownership or dispatch preprocessing/models. Repeat an uncertain response with exactly the same input/key/grant revision. Existing research scopes never expand.",
+    inputSchema: { type: "object", additionalProperties: false,
+      required: ["client_grant_id", "project_id", "idempotency_key", "request"],
+      properties: { ...grant, project_id: identifier, idempotency_key: identifier,
+        request: { type: "object", additionalProperties: false, required: ["title", "source_ids", "expected_revision"],
+          properties: { title: { type: "string", minLength: 1, maxLength: 512 },
+            source_ids: { type: "array", maxItems: 256, uniqueItems: true, items: identifier },
+            expected_revision: { type: "integer", minimum: 1, maximum: 9007199254740990 } } } } },
+    annotations: annotations(true),
+  },
   eliotr_run: {
     name: "eliotr_run",
     description: "Create one Research workflow as the signed service actor within one explicit project. Requires run permission and exact owner-approved spend sponsorship. Returns the existing investigation reference and workflow ID; poll eliotr_run_status separately. May dispatch paid stages. Retain the same key and body after an uncertain response; never invent another run. Uses installed qualifications; it does not renew owner qualification probes.",

@@ -78,6 +78,8 @@ export interface MembershipRow {
 }
 
 export interface MutationReceiptRow {
+  readonly project_client_grant_id: unknown;
+  readonly project_client_grant_revision: unknown;
   readonly principal_ref: unknown;
   readonly idempotency_key: unknown;
   readonly operation: unknown;

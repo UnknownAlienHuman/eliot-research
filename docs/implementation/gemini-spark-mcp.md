@@ -200,6 +200,7 @@ agree with any supplied `X-Eliotr-Client-Grant` header. It selects a delegation,
 
 | Tool | Required permission | Result / boundary |
 | --- | --- | --- |
+| `eliotr_project_attach` | `project.attach` | Same guarded Project update/receipt as HTTP; full desired source set, unchanged title and expected revision. No detach, ownership transfer or model call. |
 | `eliotr_query` | `query` | Original FAST_SEARCH evidence pack and trace reference; no synthesized answer or exhaustive-coverage claim. |
 | `eliotr_run_status` | `status`; additionally `report` for a DRAFT result reference | Existing run-status DTO for a known grantor-authored project run or the original client's machine run; never starts/resumes execution. |
 | `eliotr_cancel` | `cancel` | Stop a known owner run or the same client's machine run under its original grant revision; existing run-status DTO only after durable cancellation. Requires an action key. |
@@ -352,9 +353,55 @@ report/section/citation reads. The current signed token is authenticated indepen
 execution credential. Expired execution or a missing installed spend template does not prohibit
 reading while the original delegation revision and all current source rights remain valid. Original
 run deadlines, checkpoints, report bytes and author are unchanged; old evidence handles are not
-renewed. Owner access to machine reports remains unfinished.
+renewed. Independent original-owner report access and run management are composed through the existing PWA with migrations 0079/0080; this does not expand service authority.
 Existing cancel/recover tools retain their separate permissions and execution rules. Select
 cancel/recover on the grant before creating the run: regrant cannot take over old machine runs.
 Recovery retains the original active execution and explicit spend approval; cancellation does
-not require a sponsor-template lookup. Apply migrations through 0078 before deployment.
+not require a sponsor-template lookup. Apply the complete migration chain through the newest deployed consumer; the attachment consumer below requires 0081.
 No behavioral or live provider acceptance is implied by tool discovery or compilation.
+
+
+### Append-only project attachment (S98)
+
+`eliotr_project_attach` and PUT `/api/v1/research/projects/:project_id` call the same Project
+update service. The current signed service must hold `project.attach` for that exact project;
+Connections exposes this permission separately and still defaults new grants to catalog only.
+The request is the existing UpdateProjectRequest: unchanged `title`, `expected_revision`, and
+the **complete desired `source_ids`**, retaining every existing member. Use a known current
+project snapshot; a source-search preview is not the complete membership inventory.
+
+```json
+{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"eliotr_project_attach","arguments":{"client_grant_id":"grant-example","project_id":"project-example","idempotency_key":"attach-example-1","request":{"title":"Existing project title","expected_revision":3,"source_ids":["existing-source","new-admitted-source"]}}}}
+```
+
+For HTTP use the same request body and `Idempotency-Key` / `X-Eliotr-Client-Grant` headers.
+Both paths retain the existing 256-source project limit and 16-KiB normalized request envelope;
+the HTTP parser also limits the actual incoming body. A service cannot rename, remove members,
+create a project or replace scheduled/time-windowed memberships. New sources do not have to
+already belong to the project, but their current revisions must independently satisfy the
+grantor's active namespace/read/admission/disclosure/owner-generation/purge constraints.
+This permission does **not** authorize bundle ingestion, preprocessing or spending.
+
+The existing CAS, membership versioning and durable mutation receipt remain one D1 batch.
+The caller is the real service actor; `owner_principal_ref` in the existing result still names
+the unchanged owner. Private receipt identity binds the actor/issuer and supplied action key;
+its immutable request hash also binds project, input and original grant revision. Retry an
+unknown outcome with the **same input, key and grant revision**, never a replacement key.
+Concurrent edits conflict rather than silently merging; regrant cannot reuse old commands.
+Before returning either a new or replayed receipt, the service rechecks that same grant and
+current member/source authority. A denied readback does not prove the write had no effect.
+
+Write-time source, grant, project-generation, authority-epoch and expiry fences remain.
+The successful edit legitimately changes project generation, so post-write authorization
+reacquires the same immutable grant rather than treating the edit as revocation. Existing
+project/membership invalidation triggers invalidate affected frozen scopes; they never append
+a new source to an already-created Research snapshot. Existing membership roles are preserved.
+
+Migration **0081_project_client_attachment.sql** adds nullable provenance to the existing
+project guard/receipt tables and an attachment-authority view; old rows stay unchanged.
+It also strengthens exact receipt/membership matching. Apply the complete chain through0081
+before deploying the shared Project mutation/replay readers, including owner create/update.
+Missing schema fails closed. No deployment or remote migration is implied.
+
+This is implemented code with compilation/lint/schema review only. S98 namespace-delegated
+bundle ingestion and later signed HTTP/MCP/D1/R2 lifecycle acceptance remain outstanding.
