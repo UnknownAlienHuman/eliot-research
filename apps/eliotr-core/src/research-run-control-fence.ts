@@ -10,10 +10,10 @@ export async function requireRunControlSchema(database: D1Database): Promise<voi
   try {
     const row = await database.prepare("SELECT value FROM schema_state WHERE key='project_client_run_control_generation'")
       .first<{ readonly value: string }>();
-    ready = row?.value === "project-client-run-control-v1";
+    ready = row?.value === "project-client-run-control-v2";
   } catch { /* Unavailable schema is never permission to dispatch native recovery. */ }
   if (!ready) throw new ClientGrantError("CLIENT_GRANT_SCHEMA_NOT_READY", 503,
-    "Migration 0077 is required before Research run controls", true);
+    "Migration 0080 is required before Research run controls", true);
 }
 /** Shared write-time owner/delegation fence, not a new source of authority. */
 export const RUN_CONTROL_FENCE_SQL = `operation_id=?1 AND principal_ref=?2 AND deployment_generation=?3 AND state='ACTIVE'
@@ -29,10 +29,16 @@ export const RUN_CONTROL_FENCE_SQL = `operation_id=?1 AND principal_ref=?2 AND d
     ON g.snapshot_id=s.snapshot_id AND g.snapshot_revision=s.revision
     WHERE s.snapshot_id=?7 AND s.revision=?8 AND s.invalidated_at IS NULL
     AND julianday(s.expires_at)>julianday('now') AND g.state='ACTIVE'
-    AND julianday(g.expires_at)>julianday('now') AND g.principal_ref=?2 AND g.client_class='owner_pwa'
+    AND julianday(g.expires_at)>julianday('now') AND g.principal_ref=?16 AND g.client_class='owner_pwa'
     AND g.credential_generation=?9 AND g.authorization_receipt_ref=?10
     AND g.policy_authority_ref=s.policy_authority_ref
-    AND EXISTS (SELECT 1 FROM json_each(g.allowed_use_json) WHERE value='research')))
+    AND EXISTS (SELECT 1 FROM json_each(g.allowed_use_json) WHERE value='research')
+    AND ((?2=?16 AND ?17='') OR EXISTS (SELECT 1 FROM owner_machine_run_origin o
+      WHERE o.operation_id=research_workflow_run.operation_id AND o.principal_ref=?2
+        AND o.reader_principal_ref=?16 AND o.project_id=?17 AND o.project_generation=?14
+        AND o.client_grant_id=?12 AND o.client_grant_revision=?13
+        AND (?18='cancel' OR EXISTS (SELECT 1 FROM research_workflow_current eligible
+          WHERE eligible.operation_id=o.operation_id AND eligible.state='ACTIVE'))))))
     OR (?11 IN ('trusted_agent','named_api_client') AND EXISTS (
       SELECT 1 FROM project_client_run_control_origin c
       WHERE c.operation_id=research_workflow_run.operation_id AND c.principal_ref=?2
@@ -54,11 +60,12 @@ export async function runControlFenceBindings(
   const fence = await read.controlFence();
   const delegated = "client_grant" in fence ? fence : undefined;
   const owner = "scope_ref" in fence ? fence : undefined;
+  const machine = owner?.owner_machine;
   return [read.status.operation_id, read.status.principal_ref, read.status.deployment_generation,
     fence.ledger_epoch, fence.orientation_epoch, Math.min(fence.valid_until_ms, validUntil),
     owner?.scope_ref.id ?? "", owner?.scope_ref.revision ?? 0, context.credential_generation,
     owner?.authorization_receipt_ref ?? "", context.client_class,
-    delegated?.client_grant.grant_id ?? "", delegated?.client_grant.revision ?? 0,
-    delegated?.project_generation ?? 0, context.access?.issuer ?? "", context.principal_ref,
-    delegated?.client_grant.project_id ?? "", operation];
+    delegated?.client_grant.grant_id ?? machine?.client_grant_id ?? "", delegated?.client_grant.revision ?? machine?.client_grant_revision ?? 0,
+    delegated?.project_generation ?? machine?.project_generation ?? 0, context.access?.issuer ?? "", context.principal_ref,
+    delegated?.client_grant.project_id ?? machine?.project_id ?? "", operation];
 }

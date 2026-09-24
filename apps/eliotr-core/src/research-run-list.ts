@@ -11,6 +11,7 @@ import type { Env } from "./env.js";
 import { createResearchRunService } from "./research-session.js";
 import { CatalogInputError } from "./catalog-service.js";
 import { prepareArtifactReadReauthorization, reopenOwnerArtifactDraft } from "./research-artifact-reauthorization-http.js";
+import { prepareReauthenticatedRunRead } from "./research-run-read-authorization.js";
 import { researchSemanticConfigurationInstalled } from "./research-semantic-server.js";
 
 interface SavedDraftRow {
@@ -138,7 +139,8 @@ export async function readOwnerResearchRuns(env: Env, context: AuthenticatedRequ
     const result = await env.CORE_DB.prepare(
       "SELECT r.operation_id, r.created_at FROM research_workflow_run r " +
       "JOIN research_deployment_compatible c ON c.origin_deployment_generation=r.deployment_generation " +
-      "AND c.active_deployment_generation=?2 WHERE r.principal_ref=?1 " +
+      "AND c.active_deployment_generation=?2 WHERE (r.principal_ref=?1 OR EXISTS " +
+      "(SELECT 1 FROM owner_machine_run_origin o WHERE o.operation_id=r.operation_id AND o.reader_principal_ref=?1)) " +
       "ORDER BY r.created_at DESC, r.operation_id DESC LIMIT 8",
     ).bind(context.principal_ref, env.DEPLOYMENT_GENERATION)
       .all<{ operation_id: string; created_at: string }>();
@@ -149,6 +151,7 @@ export async function readOwnerResearchRuns(env: Env, context: AuthenticatedRequ
   }
   const service = createResearchRunService(env);
   const runs: { created_at: string; status: ResearchRunStatus }[] = [];
+  const runChecks: (() => Promise<void>)[] = [];
   for (const row of rows) {
     if (typeof row.operation_id !== "string" || typeof row.created_at !== "string" ||
         !Number.isFinite(Date.parse(row.created_at))) {
@@ -156,6 +159,8 @@ export async function readOwnerResearchRuns(env: Env, context: AuthenticatedRequ
     }
     try {
       const status = await service.runStatus(context, row.operation_id);
+      const read = await prepareReauthenticatedRunRead(env, context, row.operation_id);
+      if (read !== null) runChecks.push(read.requireCurrent);
       runs.push({ created_at: row.created_at, status });
     } catch (error) {
       // A revoked, purged, expired or missing run must disappear from this session.
@@ -227,6 +232,7 @@ export async function readOwnerResearchRuns(env: Env, context: AuthenticatedRequ
       throw error;
     }
   }
+  for (const requireCurrent of runChecks) await requireCurrent();
   for (const requireCurrent of machineDraftChecks) await requireCurrent();
   return {
     protocol: "eliotr.research-runs.v3" as const,

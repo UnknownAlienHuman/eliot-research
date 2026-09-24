@@ -6,7 +6,7 @@ import type { AuthenticatedRequestContext, ResearchEngineStatus, ResearchRunStat
 import { CatalogInputError } from "./catalog-service.js";
 import type { Env } from "./env.js";
 import { prepareReauthenticatedRunRead, requireRunStatusContinuity, type ReauthenticatedRunRead } from "./research-run-read-authorization.js";
-import { prepareProjectClientRecoverySpend, requireProjectClientSpendSchema, type ProjectClientRecoverySpend } from "./research-client-spend.js";
+import { prepareProjectClientRecoverySpend, prepareOwnerMachineRecoverySpend, requireProjectClientSpendSchema, type ProjectClientRecoverySpend } from "./research-client-spend.js";
 import { RUN_CONTROL_FENCE_SQL, runControlFenceBindings, requireRunControlSchema, type AuthorizedRunControl } from "./research-run-control-fence.js";
 import { prepareProjectClientRunRead } from "./research-client-run-read.js";
 import { prepareProjectClientCancelAction } from "./research-run-cancel-action.js";
@@ -90,7 +90,8 @@ export async function cancelResearchRun(
     const read = context.client_class === "owner_pwa" ? await authorize(env, context, operationId) : clientRead;
     if (read === null) fail("RESEARCH_RUN_NOT_FOUND", 404);
     if (read.status.state === "ENGINE_COMPLETED") fail("RESEARCH_RUN_ALREADY_COMPLETED", 409);
-    const action = clientRead === null ? undefined : await prepareProjectClientCancelAction(env.CORE_DB, context, clientRead);
+    const action = clientRead !== null || ("owner_machine" in read && read.owner_machine !== undefined)
+      ? await prepareProjectClientCancelAction(env.CORE_DB, context, read) : undefined;
     if (read.status.state === "CANCELLED") {
       await read.requireCurrent();
       if (read.status.cancellation_receipt_ref === null) fail("RESEARCH_RUN_STATUS_INVALID", 409);
@@ -358,7 +359,9 @@ export async function recoverResearchRun(
       await read.requireCurrent();
       return runControlStatus(read.status);
     }
-    const spend = clientRead === null ? undefined : await prepareProjectClientRecoverySpend(env, clientRead);
+    const spend = clientRead !== null ? await prepareProjectClientRecoverySpend(env, clientRead)
+      : "owner_machine" in read && read.owner_machine !== undefined
+        ? await prepareOwnerMachineRecoverySpend(env, context, read) : undefined;
     const requireCurrent = async () => { await read.requireCurrent(); await spend?.requireCurrent(); };
     let instance: WorkflowInstance;
     try {

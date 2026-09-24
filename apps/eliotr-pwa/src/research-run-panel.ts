@@ -1,11 +1,12 @@
+import { mountResearchRunControls, openRunArtifact, runArtifactRenderOptions, type OpenedRunArtifact } from "./research-run-controls.js";
 import { IdentifierSchema } from "@eliotr/contracts";
 import { ApiRequestError, isAuthorizationLoss } from "./api.js";
-import { readResearchRunHistory, researchRunBody, readResearchArtifact, readReauthorizedResearchArtifact, readReauthorizedResearchArtifactSection, readResearchRunStatus, startResearchRun, type ResearchArtifactSectionCitationAuditClaim, type ResearchEngineStatus, type ResearchRunHistoryEntry, type ResearchRunSavedDraft, type ResearchSourceFreshness, type ResearchRunStatusView } from "./research-run-api.js"; import { readReauthorizedResearchArtifactSectionCitations } from "./research-run-reauthorization-api.js"; import { finishResearchStatusRead, readResearchStatusWithAuthorityRetry, shouldRetryResearchAuthority } from "./research-run-status-retry.js";
+import { readResearchRunHistory, researchRunBody, readReauthorizedResearchArtifact, readReauthorizedResearchArtifactSection, readResearchRunStatus, startResearchRun, type ResearchArtifactSectionCitationAuditClaim, type ResearchEngineStatus, type ResearchRunHistoryEntry, type ResearchRunSavedDraft, type ResearchSourceFreshness, type ResearchRunStatusView } from "./research-run-api.js"; import { readReauthorizedResearchArtifactSectionCitations } from "./research-run-reauthorization-api.js"; import { finishResearchStatusRead, readResearchStatusWithAuthorityRetry, shouldRetryResearchAuthority } from "./research-run-status-retry.js";
 import { downloadResearchDraftMarkdown, type ResearchMarkdownSection } from "./research-markdown-download.js";
 import { createWikiProposalFromRun } from "./wiki-proposal-create-api.js";
 import type { ArtifactRevision } from "@eliotr/contracts";
 import type { LibrarySelectionContext } from "./library-readiness-api.js";
-import { RESEARCH_STATUS_REFRESH_MS, AUDIT_DISPOSITION_LABELS, message, statusText, badgeText, idleBadgeText, idleProgressText, wikiProposalErrorText, auditStatusText, historyNoteText, historyStatusText, shouldPollEngine, historyErrorMessage, decodeSectionBody, codeRef, citationRefKey, sameArtifact, renderResearchSourceFreshnessNotice, createResearchRunView, createResearchHistoryRow, researchHistoryCards, renderResearchStatusHeading, createResearchReportHeader } from "./research-run-view.js";
+import { currentResearchRunBadge, RESEARCH_STATUS_REFRESH_MS, AUDIT_DISPOSITION_LABELS, message, statusText, badgeText, idleBadgeText, idleProgressText, wikiProposalErrorText, auditStatusText, historyNoteText, historyStatusText,  shouldPollEngine, historyErrorMessage, decodeSectionBody, codeRef, citationRefKey, sameArtifact, renderResearchSourceFreshnessNotice, createResearchRunView, createResearchHistoryRow, renderResearchHistoryList, renderResearchStatusHeading, createResearchReportHeader } from "./research-run-view.js";
 export function mountResearchRunPanel(
   element: HTMLElement,
   deploymentGeneration: () => string | undefined,
@@ -25,11 +26,12 @@ export function mountResearchRunPanel(
   const updateButtons = (): void => {
     const available = healthReady();
     const startAvailable = available && researchConfigurationReady();
-    const busy = controller !== undefined;
+    const busy = controller !== undefined || runControls?.busy === true;
     submit.disabled = !startAvailable || busy;
     recover.disabled = !available || busy;
     refresh.disabled = !available || busy || workflowId === undefined;
-    historyRefresh.disabled = !available || historyController !== undefined;
+    historyRefresh.disabled = !available || historyController !== undefined || busy;
+    runControls?.refresh();
   };
   const setReportActionsDisabled = (disabled: boolean): void => {
     result.querySelectorAll<HTMLButtonElement>(".research-report-actions > button, .research-citation-actions > button").forEach((button) => { button.disabled = disabled || button.dataset.reportActionUnavailable === "true"; });
@@ -39,16 +41,13 @@ export function mountResearchRunPanel(
     controller = undefined; if (disposed || renderSerial !== serial) return; setReportActionsDisabled(false); updateButtons();
   };
   const refreshAvailability = (): void => {
-    badge.textContent = lastExecutionState === undefined
-      ? idleBadgeText(healthReady(), researchConfigurationReady())
-      : lastExecutionState === "ACTIVE"
-        ? (lastEngineStatus === "errored" || lastEngineStatus === "terminated" ? "FAILED" : "RUNNING")
-        : lastExecutionState === "CANCELLED" ? "CANCELLED" : lastAnswerAvailability === "draft" ? "DRAFT" : "COMPLETE";
+    badge.textContent = currentResearchRunBadge(lastExecutionState, lastEngineStatus, lastAnswerAvailability, healthReady(), researchConfigurationReady());
     if (lastExecutionState === undefined) progress.textContent = idleProgressText(healthReady(), researchConfigurationReady());
     updateButtons();
   };
   const stop = (): void => {
     serial += 1;
+    runControls?.clear();
     clearProgressTimer();
     controller?.abort();
     controller = undefined;
@@ -88,6 +87,8 @@ export function mountResearchRunPanel(
   };
   const onVisibilityChanged = (): void => {
     if (document.visibilityState === "hidden") {
+      runControls?.interrupt();
+      updateButtons();
       clearProgressTimer();
       if (historyController !== undefined) clearHistoryRequest();
         if (controller !== undefined) {
@@ -99,15 +100,22 @@ export function mountResearchRunPanel(
         }
       return;
     }
+    updateButtons();
     scheduleStatusRefresh(true);
     if (healthReady()) loadHistory("automatic");
   };
+  const runControls = mountResearchRunControls(element, status, {
+    available: () => !disposed && healthReady() && navigator.onLine && controller === undefined && document.visibilityState !== "hidden",
+    generation: deploymentGeneration,
+    changed: () => { clearProgressTimer(); setReportActionsDisabled(runControls?.busy === true); updateButtons(); },
+    confirmed: (view) => renderStatus(view), refreshStatus: (id) => readStatus("manual", id), clearPrivate,
+  });
   window.addEventListener("eliotr:health-updated", onHealthUpdated);
   document.addEventListener("visibilitychange", onVisibilityChanged);
   updateButtons();
   const scheduleStatusRefresh = (immediate = false): void => {
     clearProgressTimer();
-    if (disposed || lastExecutionState !== "ACTIVE" || workflowId === undefined || controller !== undefined ||
+    if (disposed || runControls?.busy === true || lastExecutionState !== "ACTIVE" || workflowId === undefined || controller !== undefined ||
         !shouldPollEngine(lastEngineStatus) || !healthReady() || !navigator.onLine || document.visibilityState === "hidden") return;
     progressTimer = window.setTimeout(() => {
       progressTimer = undefined;
@@ -133,9 +141,7 @@ export function mountResearchRunPanel(
   };
   const renderHistoryList = (view: Awaited<ReturnType<typeof readResearchRunHistory>>): void => {
     historyRows.clear();
-    historyList.replaceChildren();
-    historyStatus.textContent = historyStatusText(view);
-    researchHistoryCards(view).forEach((card) => historyList.append("entry" in card ? renderHistory(card.entry) : renderSavedDraft(card.draft, view.deployment_generation)));
+    renderResearchHistoryList(historyList, historyStatus, view, (card) => "entry" in card ? renderHistory(card.entry) : renderSavedDraft(card.draft, view.deployment_generation));
   };
   const updateHistoryStatus = (view: ResearchRunStatusView): void => {
     if (historyView === undefined || historyView.deployment_generation !== view.deployment_generation) return;
@@ -425,6 +431,8 @@ export function mountResearchRunPanel(
     result.append(sections);
   };
   const readSavedDraft = (draft: ResearchRunSavedDraft): void => {
+    if (runControls?.busy) return;
+    runControls?.show();
     const generation = deploymentGeneration();
     if (disposed || !healthReady() || !navigator.onLine || generation === undefined) { status.textContent = "Owner workspace is unavailable. Reconnect before opening saved research."; return; }
     clearProgressTimer();
@@ -448,7 +456,8 @@ export function mountResearchRunPanel(
       })
       .finally(() => { if (active === serial) { controller = undefined; if (!disposed) setReportActionsDisabled(false); updateButtons(); } });
   };
-  const renderStatus = (view: ResearchRunStatusView, artifact?: ArtifactRevision, renderSerial = serial): void => {
+  const renderStatus = (view: ResearchRunStatusView, opened?: OpenedRunArtifact, renderSerial = serial): void => {
+    runControls?.show(view);
     lastExecutionState = view.execution_state;
     lastEngineStatus = view.engine_status;
     lastAnswerAvailability = view.answer.availability;
@@ -457,8 +466,8 @@ export function mountResearchRunPanel(
     badge.textContent = badgeText(view);
     progress.textContent = text;
     const identity = renderResearchStatusHeading(result, view);
-    if (view.answer.availability === "draft" && artifact !== undefined) {
-      renderArtifactReport(artifact, { renderSerial, deploymentGeneration: view.deployment_generation, historical: false, workflowInstanceId: view.workflow_instance_id, investigationRef: `${view.investigation_ref.id}:${view.investigation_ref.revision}` });
+    if (view.answer.availability === "draft" && opened !== undefined) {
+      renderArtifactReport(opened.artifact, runArtifactRenderOptions(view, opened, renderSerial));
     } else {
       result.append(identity);
     }
@@ -469,6 +478,7 @@ export function mountResearchRunPanel(
     if (view.execution_state === "ACTIVE" && shouldPollEngine(view.engine_status)) scheduleStatusRefresh(); else clearProgressTimer();
   };
   const readStatus = (trigger: "manual" | "automatic" | "history" = "manual", requestedWorkflowId?: string): void => {
+    if (runControls?.busy) return;
     if (trigger === "automatic" && (lastExecutionState !== "ACTIVE" || controller !== undefined || !shouldPollEngine(lastEngineStatus))) {
       scheduleStatusRefresh();
       return;
@@ -486,12 +496,13 @@ export function mountResearchRunPanel(
     if (!automatic) {
       result.replaceChildren(); result.hidden = true; submit.disabled = true; recover.disabled = true; refresh.disabled = true; status.textContent = "Reading research status…";
     }
+    runControls?.show();
     const expectedGeneration = id === workflowId ? (workflowGeneration ?? deploymentGeneration()) : deploymentGeneration();
     const canRetryAuthority = (error: unknown): boolean => shouldRetryResearchAuthority(error, { automatic, requestedId: id, workflowId, expectedGeneration, isCurrent: () => active === serial, currentGeneration: deploymentGeneration, healthReady, online: () => navigator.onLine, visible: () => document.visibilityState !== "hidden" });
     void readResearchStatusWithAuthorityRetry(() => readResearchRunStatus(id, expectedGeneration, local.signal), canRetryAuthority, () => { status.textContent = "Refreshing research status…"; })
       .then(async (view) => {
         if (active !== serial) return;
-        const artifact = view.answer.availability === "draft" ? await readResearchArtifact(view.answer.artifact_ref, view.deployment_generation, local.signal) : undefined;
+        const artifact = await openRunArtifact(view, local.signal);
         if (active !== serial) return;
         workflowId = view.workflow_instance_id; workflowGeneration = view.deployment_generation;
         if (trigger !== "history" && (!automatic || workflowInput.value.trim() === id)) workflowInput.value = view.workflow_instance_id;
@@ -518,6 +529,7 @@ export function mountResearchRunPanel(
   };
   form.onsubmit = (event) => {
     event.preventDefault();
+    if (runControls?.busy) return;
     const generation = deploymentGeneration();
     if (!healthReady() || !navigator.onLine || generation === undefined) { status.textContent = "Owner workspace is unavailable. Reconnect before starting research."; return; }
     if (!researchConfigurationReady()) { status.textContent = "Research configuration is not ready. Check the Research configuration card before starting a run."; return; }
@@ -526,7 +538,7 @@ export function mountResearchRunPanel(
     const ids = scope.value === "selected" ? [selectedSourceId as string] : [];
     let body: string;
     try { body = researchRunBody(query.value, ids, 16, scope.value === "project" ? selectedProjectId : undefined); } catch (error: unknown) { status.textContent = message(error); return; }
-    clearProgressTimer(); lastExecutionState = undefined;
+    runControls?.show(); clearProgressTimer(); lastExecutionState = undefined;
     const active = ++serial; controller?.abort(); const local = new AbortController(); controller = local;
     if (body !== previousBody) { previousBody = body; idempotencyKey = crypto.randomUUID(); }
     submit.disabled = true; refresh.disabled = true; recover.disabled = true; result.replaceChildren(); result.hidden = true; status.textContent = "Starting the research run…";
@@ -541,6 +553,7 @@ export function mountResearchRunPanel(
   historyRefresh.onclick = () => loadHistory("manual", true);
   const cleanup = (): void => {
     disposed = true;
+    runControls?.dispose();
     window.removeEventListener("eliotr:health-updated", onHealthUpdated);
     document.removeEventListener("visibilitychange", onVisibilityChanged);
     stop(); clearHistory();

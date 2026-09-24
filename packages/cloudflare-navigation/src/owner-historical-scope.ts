@@ -18,7 +18,7 @@ import {
   type DeterministicScopeMember,
 } from "@eliotr/domain";
 import { createD1ScopeService } from "./d1-scope-service.js";
-import { orientationCurrentness } from "./orientation-currentness.js";
+import { orientationCurrentness, nextOrientationBoundary } from "./orientation-currentness.js";
 import { createOwnerScopeAuthority, createProjectClientArtifactAuthority, splitExhaustiveSourceRefs, type OwnerScopeAuthority } from "./orientation-authority.js";
 import { ScopeServiceError } from "./scope-service.js";
 import type { AuthenticatedRequestContext } from "@eliotr/interfaces";
@@ -289,6 +289,61 @@ export async function reauthorizeOwnerArtifactScope(
   return reauthorizeHistoricalScope(input, undefined, {
     requireCurrent: requireOrigin, independentMachine: origin.origin_client_class !== "owner_pwa",
   });
+}
+
+export interface OwnerMachineRunOrigin {
+  readonly origin_client_class: "trusted_agent" | "named_api_client";
+  readonly project_id: string;
+  readonly project_generation: number;
+  readonly client_grant_id: string;
+  readonly client_grant_revision: number;
+  readonly grant_record_sha256: string;
+  readonly execution_deadline: string;
+}
+
+/** Prove the original grantor independently of the machine's current delegation.
+ * The returned scope authorizes owner reads/control only, never execution renewal. */
+export async function reauthorizeOwnerRunScope(
+  input: OwnerHistoricalScopeInput & { readonly operation_id: string; readonly original_principal_ref: string },
+): Promise<OwnerHistoricalScopeAuthorization & {
+  readonly origin: OwnerMachineRunOrigin;
+  readonly controlDeadline: () => Promise<number>;
+}> {
+  if (input.access.client_class !== "owner_pwa") stale();
+  const originalRef = VersionedRefSchema.parse(input.original_ref);
+  const marker = await input.database.prepare("SELECT value FROM schema_state WHERE key='owner_machine_run_generation'")
+    .first<{ value: unknown }>();
+  if (marker?.value !== "owner-machine-run-v1") {
+    throw new ScopeServiceError("SCOPE_PERSISTENCE_INVALID", "Owner machine-run management requires migration 0080");
+  }
+  const readOrigin = () => input.database.prepare(
+    "SELECT origin_client_class,project_id,project_generation,client_grant_id,client_grant_revision," +
+    "grant_record_sha256,execution_deadline FROM owner_machine_run_origin WHERE operation_id=?1 " +
+    "AND principal_ref=?2 AND reader_principal_ref=?3 AND scope_snapshot_id=?4 AND scope_snapshot_revision=?5 LIMIT 1",
+  ).bind(input.operation_id, input.original_principal_ref, input.access.principal_ref, originalRef.id, originalRef.revision)
+    .first<OwnerMachineRunOrigin>();
+  const origin = await readOrigin();
+  if (!origin || !["trusted_agent", "named_api_client"].includes(origin.origin_client_class) ||
+      !IdentifierSchema.safeParse(origin.project_id).success || !IdentifierSchema.safeParse(origin.client_grant_id).success ||
+      !Number.isSafeInteger(origin.project_generation) || origin.project_generation < 1 ||
+      !Number.isSafeInteger(origin.client_grant_revision) || origin.client_grant_revision < 1 ||
+      !/^[a-f0-9]{64}$/u.test(origin.grant_record_sha256) || !Number.isFinite(Date.parse(origin.execution_deadline)) ||
+      input.original.resolved_scope_expression.kind !== "PROJECT" ||
+      input.original.resolved_scope_expression.project_id !== origin.project_id) stale();
+  const expected = canonicalEvidenceJson(origin);
+  const requireOrigin = async () => {
+    const current = await readOrigin();
+    if (!current || canonicalEvidenceJson(current) !== expected) stale();
+  };
+  const historical = await reauthorizeHistoricalScope(input, undefined,
+    { requireCurrent: requireOrigin, independentMachine: true });
+  return { ...historical, origin: Object.freeze(origin), controlDeadline: async () => {
+    await historical.requireCurrent(historical.scope);
+    const deadline = await nextOrientationBoundary(input.database, input.access.principal_ref,
+      historical.scope, (input.now ?? Date.now)());
+    await historical.requireCurrent(historical.scope);
+    return deadline;
+  } };
 }
 
 async function reauthorizeHistoricalScope(

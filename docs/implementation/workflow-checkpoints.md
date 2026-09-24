@@ -874,3 +874,37 @@ reauthorization handlers; missing schema is not a permissive fallback. No backfi
 rewrite is performed. This checkpoint is compilation/lint/schema-reviewed code, not native,
 browser or behavioral acceptance. Owner machine-run control and general run discovery,
 publication/erasure and managed-OAuth integration remain separate work.
+
+
+### Owner management of machine runs (S11/S32, migration 0080)
+
+The bounded owner run list and existing status/cancel/recover routes now include a machine
+run's original grantor, provided they still own its original project and retain current access
+to all original sources. `owner_machine_run_origin` proves the W2 run, historical grant and
+completed execution reservation without requiring a report to exist. Fresh owner read/control
+scopes retain the exact historical source set; machine authorship and execution credentials
+remain unchanged. A revoked/expired service delegation alone does not deny independent owner
+reading or cancellation. Other source/policy/purge/currentness constraints remain mandatory.
+
+Cancellation is fenced at the canonical write by current owner credentials, source/time
+frontiers, project generation and authority epochs. Its command is attributed to the actual
+owner in the existing journal; success requires the canonical CANCELLED receipt. Native
+termination remains best effort and does not roll back data or refund a dispatched model call.
+Recovery also requires the original effective machine execution, fixed deadline and unchanged
+installed sponsorship with existing W2/W3 budget/provider restrictions. It cannot revive a
+revoked/regranted operation. The existing run/stage recovery slot and observe-only uncertain
+acknowledgement behavior remain; an occupied command is never reassigned to another caller.
+The shared recovery-authorization view also applies that owner-machine provenance at settlement.
+
+The existing PWA now has separate Stop research / Recover research controls. They show pending
+until server confirmation, retain the same action key on unknown outcomes, and read status
+rather than start a replacement run. Offline/auth loss/disposal clears private in-memory state;
+late responses cannot repopulate it. Run result opening uses existing artifact reauthorization
+when the original-author GET returns its typed not-found error. Fresh owner report reading
+still grants no Wiki promotion/publication/erasure capability. No new API DTO or MCP tool is
+introduced. Broader pagination/discovery and managed-OAuth composition remain separate work.
+
+Apply the complete chain through **0080** before deploying the shared owner run readers and
+controls, including legacy owner/service controls using the versioned fence. Compilation,
+scoped lint and empty-schema SQL compilation only; behavioral/native/browser acceptance is
+pending. No deployment, remote migration or provider call is part of this checkpoint.

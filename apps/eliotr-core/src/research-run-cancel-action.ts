@@ -1,7 +1,7 @@
 import { textDigest } from "@eliotr/cloudflare-research";
 import type { AuthenticatedRequestContext } from "@eliotr/interfaces";
 import { CatalogInputError } from "./catalog-service.js";
-import type { ProjectClientRunRead } from "./research-client-run-read.js";
+import type { AuthorizedRunControl } from "./research-run-control-fence.js";
 
 function fail(conflict = false): never {
   throw new CatalogInputError(conflict ? "RESEARCH_RUN_CANCEL_CONFLICT" : "RESEARCH_CONTROL_UNCONFIRMED",
@@ -25,7 +25,7 @@ interface ActionRow {
 /** Attribute the command to the real client in the existing operation journal.
  * The W2 receipt still identifies the run's cancellation, not who won a race to stop it. */
 export async function prepareProjectClientCancelAction(
-  database: D1Database, context: AuthenticatedRequestContext, read: ProjectClientRunRead,
+  database: D1Database, context: AuthenticatedRequestContext, read: AuthorizedRunControl,
 ): Promise<{ confirm(cancellationReceipt: string): Promise<void> }> {
   const key = context.request.headers.get("idempotency-key");
   const access = context.access;
@@ -39,10 +39,17 @@ export async function prepareProjectClientCancelAction(
   const attemptId = `research-cancel-attempt:${digest}`;
   const receiptId = `research-cancel-receipt:${digest}`;
   const payloadRef = `research-run:${operationId}`;
-  const policyRef = `client-cancel-authority:${await textDigest(JSON.stringify([
-    read.client_grant.grant_id, read.client_grant.revision, read.client_grant.project_id,
-    read.project_generation, read.client_grant.grantor_principal_ref, read.client_grant.grantee,
-  ]))}`;
+  const delegated = "client_grant" in read ? read : undefined;
+  const machine = "owner_machine" in read ? read.owner_machine : undefined;
+  if (delegated === undefined && (context.client_class !== "owner_pwa" || machine === undefined)) fail(true);
+  const policyRef = delegated === undefined
+    ? `owner-machine-cancel-authority:${await textDigest(JSON.stringify([
+      operationId, read.status.principal_ref, context.principal_ref, machine,
+    ]))}`
+    : `client-cancel-authority:${await textDigest(JSON.stringify([
+      delegated.client_grant.grant_id, delegated.client_grant.revision, delegated.client_grant.project_id,
+      delegated.project_generation, delegated.client_grant.grantor_principal_ref, delegated.client_grant.grantee,
+    ]))}`;
   const cancellationReceipt = `workflow-cancelled:${operationId}`;
   const output = JSON.stringify([cancellationReceipt]);
   const reason = '["CANONICAL_CANCELLATION_CONFIRMED"]';

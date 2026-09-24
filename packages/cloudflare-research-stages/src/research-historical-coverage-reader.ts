@@ -221,6 +221,29 @@ export async function readProjectClientHistoricalResearchCoverage(
   return readHistoricalCoverage(input, input.original_principal_ref);
 }
 
+/** The current owner is not the recorded machine author. Entitlement is checked
+ * independently before using that author solely as a historical lookup key. */
+export async function readOwnerMachineHistoricalResearchCoverage(
+  input: HistoricalResearchCoverageReaderInput & { readonly original_principal_ref: string },
+): Promise<HistoricalResearchCoverageReadback | null> {
+  if (input === null || typeof input !== "object" || input.owner?.client_class !== "owner_pwa" ||
+      typeof input.owner.principal_ref !== "string" || !IDENTIFIER.test(input.owner.principal_ref) ||
+      typeof input.original_principal_ref !== "string" || !IDENTIFIER.test(input.original_principal_ref)) {
+    fail("WORKFLOW_AUTHORITY_STALE");
+  }
+  const requireOrigin = async () => {
+    await input.require_current();
+    const origin = await input.database.prepare("SELECT 1 AS present FROM owner_machine_run_origin " +
+      "WHERE operation_id=?1 AND principal_ref=?2 AND reader_principal_ref=?3 LIMIT 1")
+      .bind(input.operation_id, input.original_principal_ref, input.owner.principal_ref).first();
+    if (origin === null) fail("WORKFLOW_AUTHORITY_STALE");
+  };
+  await requireOrigin();
+  const result = await readHistoricalCoverage({ ...input, require_current: requireOrigin }, input.original_principal_ref);
+  await requireOrigin();
+  return result;
+}
+
 async function readHistoricalCoverage(
   input: Omit<HistoricalResearchCoverageReaderInput, "owner">,
   originalPrincipal: string,

@@ -178,6 +178,15 @@ export function appendResearchSourceFreshnessDetails(fields: HTMLElement, freshn
     ? "None recorded"
     : freshness.changed_sources.map((source) => `${source.source_id}: saved ${source.saved_revision_ref}; current ${source.head_revision_ref}`).join(" · "));
 }
+export function currentResearchRunBadge(state: ResearchRunStatusView["execution_state"] | undefined,
+  engine: ResearchEngineStatus | undefined, answer: ResearchRunStatusView["answer"]["availability"] | undefined,
+  healthReady: boolean, configurationReady: boolean): string {
+  if (state === undefined) return idleBadgeText(healthReady, configurationReady);
+  if (state === "ACTIVE") return engine === "errored" || engine === "terminated" ? "FAILED" : "RUNNING";
+  if (state === "CANCELLED") return "CANCELLED";
+  return answer === "draft" ? "DRAFT" : "COMPLETE";
+}
+
 export function createResearchRunView(element: HTMLElement, healthReady: boolean, configurationReady: boolean) {
   element.innerHTML = `<div class="workflow-head"><div><span class="eyebrow">Research</span><h2>Ask a question</h2></div><span class="workflow-badge" data-run-badge>${idleBadgeText(healthReady, configurationReady)}</span></div>
     <p class="workflow-status workflow-progress-summary" data-run-progress aria-live="polite">${idleProgressText(healthReady, configurationReady)}</p>
@@ -186,6 +195,7 @@ export function createResearchRunView(element: HTMLElement, healthReady: boolean
     <div class="workflow-actions"><button type="submit" class="button">Start research</button><button type="button" class="button button--quiet" data-run-refresh disabled>Refresh status</button></div></div></form>
     <button class="research-configuration-link workspace-jump" type="button" data-nav-target="#research-configuration-card" aria-controls="research-configuration-card">Connections and research configuration</button>
     <p class="workflow-status" role="status" aria-live="polite">${idleProgressText(healthReady, configurationReady)}</p>
+    <div class="workflow-actions" role="group" aria-label="Manage the loaded research run"><button type="button" class="button button--quiet" data-run-cancel disabled>Stop research</button><button type="button" class="button button--quiet" data-run-resume disabled>Recover research</button></div>
     <section data-run-result hidden></section>
     <details class="workflow-recovery research-history" data-research-history><summary>Recent research</summary><div class="workflow-recovery-head"><h3 id="research-history-title">Saved runs and drafts</h3><button type="button" class="button button--quiet" data-research-history-refresh disabled>Refresh</button></div>
       <p class="workflow-recovery-status" data-research-history-status>Recent research appears after the current session is ready.</p><div class="workflow-recovery-list" data-research-history-list></div></details>
@@ -225,6 +235,13 @@ export function researchHistoryCards(view: ResearchRunHistoryView): HistoryCard[
     ...view.runs.map((entry): HistoryCard => ({ created_at: entry.created_at, entry })),
     ...drafts.map((draft): HistoryCard => ({ created_at: draft.created_at, draft })),
   ].sort((left, right) => Date.parse(right.created_at) - Date.parse(left.created_at));
+}
+
+export function renderResearchHistoryList(list: HTMLElement, status: HTMLElement, view: ResearchRunHistoryView,
+  render: (card: HistoryCard) => HTMLElement): void {
+  list.replaceChildren();
+  status.textContent = historyStatusText(view);
+  researchHistoryCards(view).forEach((card) => list.append(render(card)));
 }
 
 export function renderResearchStatusHeading(result: HTMLElement, view: ResearchRunStatusView): HTMLParagraphElement {

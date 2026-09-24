@@ -294,3 +294,13 @@ configured permissions and the generic MCP connection diagnostic remain explicit
 
 This code-first checkpoint has compile/static verification only. Behavioral/native/browser and
 live client acceptance remain pending; no new test files or test runs are part of the checkpoint.
+
+
+## S32 owner run controls (2026-09-24 code checkpoint)
+
+The existing Research panel exposes Stop research and Recover research separately from Load
+status. `research-run-controls.ts` is a thin adapter to the existing run routes and strict status
+decoder. It retains in-memory action identities for explicit uncertain-outcome retry, never
+optimistically cancels, and clears private state with the panel lifecycle. Report opening reuses
+POST reauthorization for non-author owners without conferring Wiki/publication authority.
+Production compilation/lint only; browser/native acceptance remains pending.

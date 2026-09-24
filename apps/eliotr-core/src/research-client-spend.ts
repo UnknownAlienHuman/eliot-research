@@ -4,6 +4,8 @@ import { ClientGrantError, readClientGrantSpend } from "@eliotr/cloudflare-navig
 import { readResearchOwnerSpendPolicyTemplate } from "@eliotr/cloudflare-research";
 import { canonicalJson, sha256Utf8 } from "@eliotr/platform-cloudflare";
 import type { Env } from "./env.js";
+import { requireClientResearchExecution } from "./research-client-execution.js";
+import type { ReauthenticatedRunRead } from "./research-run-read-authorization.js";
 import type { ProjectClientRunRead } from "./research-client-run-read.js";
 
 function denied(message: string): never { throw new ClientGrantError("CLIENT_GRANT_SPEND_DENIED", 403, message); }
@@ -86,4 +88,43 @@ export async function prepareProjectClientRecoverySpend(
   await requireCurrent();
   return { policy_decision_ref: `research-client-recovery:${await sha256Utf8(canonicalJson(grant))}:${read.project_generation}:${installed.policy_sha256}`,
     valid_until_ms: Date.parse(installed.expires_at), requireCurrent };
+}
+
+/** An owner's command cannot re-create the machine's expired/revoked execution.
+ * Recorded credentials are used only to validate that immutable execution, never
+ * to authenticate the caller or change the journal's actual owner attribution. */
+export async function prepareOwnerMachineRecoverySpend(
+  env: Env, context: AuthenticatedRequestContext, read: ReauthenticatedRunRead,
+): Promise<ProjectClientRecoverySpend> {
+  const origin = read.owner_machine;
+  if (context.client_class !== "owner_pwa" || origin === undefined) denied("Original owner authority is required");
+  const execution = { principal_ref: read.status.principal_ref,
+    credential_generation: read.status.credential_generation, client_class: origin.origin_client_class };
+  const scope = { snapshot_id: read.status.scope_snapshot_id, revision: read.status.scope_snapshot_revision };
+  const approved = await requireClientResearchExecution(env, execution, scope,
+    read.status.operation_id, read.status.deployment_generation);
+  if (approved.grant.grantor_principal_ref !== context.principal_ref ||
+      approved.grant.grant_id !== origin.client_grant_id || approved.grant.revision !== origin.client_grant_revision ||
+      await sha256Utf8(canonicalJson(approved.grant)) !== origin.grant_record_sha256) denied("Original sponsorship does not belong to this owner");
+  const expected = canonicalJson(approved);
+  const validUntil = Math.min(Date.parse(origin.execution_deadline), Date.parse(approved.binding.expires_at));
+  const requireCurrent = async () => {
+    await read.requireCurrent();
+    if (!Number.isSafeInteger(validUntil) || validUntil <= Date.now()) denied("Original execution or sponsorship expired");
+    const current = await requireClientResearchExecution(env, execution, scope,
+      read.status.operation_id, read.status.deployment_generation);
+    if (canonicalJson(current) !== expected) denied("Original execution sponsorship changed");
+    const row = await env.CORE_DB.prepare("SELECT 1 AS present FROM research_workflow_current r " +
+      "JOIN owner_machine_run_origin o ON o.operation_id=r.operation_id WHERE r.operation_id=?1 " +
+      "AND r.principal_ref=?2 AND r.deployment_generation=?3 AND r.state IN ('ACTIVE','ENGINE_COMPLETED') " +
+      "AND o.reader_principal_ref=?4 AND o.project_id=?5 AND o.project_generation=?6 LIMIT 1")
+      .bind(read.status.operation_id, read.status.principal_ref, read.status.deployment_generation,
+        context.principal_ref, origin.project_id, origin.project_generation).first();
+    if (row === null) denied("Recovery cannot replace expired or revoked execution");
+    await read.requireCurrent();
+    if (validUntil <= Date.now()) denied("Original execution or sponsorship expired");
+  };
+  await requireCurrent();
+  return { policy_decision_ref: `research-owner-machine-recovery:${origin.grant_record_sha256}:${origin.project_generation}:${approved.binding.policy_sha256}`,
+    valid_until_ms: validUntil, requireCurrent };
 }
