@@ -5,8 +5,9 @@ authoritative for product intent; the language/runtime contract owns responsibil
 readiness plan owns the ordered path to a production declaration; and the files below are authoritative
 for day-to-day agent work.
 
-1. Read [`docs/implementation/production-readiness-plan.md`](docs/implementation/production-readiness-plan.md)
-   and identify the earliest incomplete phase that owns the requested result.
+1. Read [`docs/implementation/backend-delivery-plan.md`](docs/implementation/backend-delivery-plan.md)
+   for the current ordered queue; use [#292](https://github.com/UnknownAlienHuman/eliot-research/pull/292)
+   for the original S01–S99 contracts. The production-readiness plan owns final release criteria.
 2. Inspect [`docs/implementation/implementation-status.json`](docs/implementation/implementation-status.json)
    and [`docs/implementation/gap-register.md`](docs/implementation/gap-register.md).
 3. Claim one packet from [`docs/agent-work/`](docs/agent-work/README.md).
@@ -14,10 +15,11 @@ for day-to-day agent work.
 5. Read the language owner for the capability in
    [`LANGUAGE_RUNTIME_CONTRACT.md`](docs/architecture/LANGUAGE_RUNTIME_CONTRACT.md).
 6. Implement behind existing ports. Do not redesign cross-package contracts inside a leaf packet.
-7. Follow [`branch-discipline.md`](docs/implementation/branch-discipline.md): one task/branch/worktree,
-   maximum five non-default branches, and 24-hour TTL without an open PR.
-8. Run `pnpm check:affected`; Rust packets also run the Cargo gates required by the language/runtime
-   contract.
+7. Follow [`branch-discipline.md`](docs/implementation/branch-discipline.md): one checkpoint on main,
+   no task branches/worktrees, numeric branch quota or age-based deletion. Preserve concurrent work.
+8. During the owner-directed code phase, compile and run scoped lint (minimal Clippy for Rust);
+   SQL changes require the D1-limit compiler check from #294. Broad suites wait until assembly.
+   Then run `pnpm check:affected` and the required Cargo/native/browser gates; never report deferred checks as passed.
 9. Record deterministic, live, recovery and workload evidence separately. No omitted live gate becomes
    `PASS` by implication.
 

@@ -1,137 +1,109 @@
 # Backend delivery plan
 
-Baseline: `ddf5979b64e2da8b611715271b5358b18cc4427f`. Work directly in current `main`; no worktrees, wholesale merges of planning branches, or unrequested cloud deployments. The owner requested implementation of the difficult domain/control-plane work, with broad testing, UI polish and mechanical cleanup delegated to the local agent.
+Current execution order, reconciled on 2026-09-25 against `main` at
+`12321f7721d6d59a75f0d5dd01ebcb569ca46ae0` and audit PR [#303](https://github.com/UnknownAlienHuman/eliot-research/pull/303).
+Refresh main and the linked tasks before claiming a checkpoint; this is not a permanent status census.
+The [independent audit review](audit-2026-09-25-review.md) separates reproduced defects, source review and unverified claims.
 
-The existing [99-task index](https://github.com/UnknownAlienHuman/eliot-research/pull/292) remains the requirement map. This document is the implementation order and handoff, not a replacement backlog. The supplied consolidated audit is evidence to verify, not permission to remove policy, evidence, Budget Governor or atomic SQL protections indiscriminately.
+## One queue, two completion boundaries
 
-## Implementation order
+This file owns execution order. [#292](https://github.com/UnknownAlienHuman/eliot-research/pull/292)
+links the original S01–S99 requirement passports, not a competing implementation queue. Issues #293–#305
+refine defects in those tasks; #303 is the audit PR, not an implementation assignment.
+Do not restart S01 or rewrite a delivered subsystem merely because its planning PR remains open.
 
-1. **Operation identity and lifetime — S08, S16, S14/S15, S05/S33.** Fix replay binding before widening access or extending run lifetime. Preserve durable cancellation and terminal-state ordering before adding more model branches. Then separate compatible deployments and server execution authority from browser-session lifetime. Existing S06 historical read reauthorization is retained. No stored result, receipt, source revision or operation identity is rewritten to make a check pass.
-2. **One delegated machine principal — S10/S31, S11/S12/S13, S98/S99.** One owner-issued project grant and exact operation vocabulary. Wire the real HTTP/MCP request path, normalized intake, append-only project attachment and complete authorized scope. Never impersonate `owner_pwa` or use a browser token as machine identity.
-3. **Executable Research — S09/S21/S22, S35–S46.** Connect managed retrieval to the real Workflow first. Implement protocol/planning/freeze/debt/verifier decisions and one shared checkpointed branch executor. No role-specific engines, unconditional model fan-out, or technical checkpoint counted as a scientific procedure.
-4. **Persisted products and integrations — S47–S61.** Complete admission/navigation/index generation boundaries, compiler/publication/dependency decisions and the selected Workspace/federation paths. Reuse existing converters, exact evidence resolver and managed Cloudflare services.
-5. **Data and execution safety — S62–S72.** Complete erasure closure, delivery reconciliation, coherent backup/isolated restore, rollback, bounded Steward and event/currentness behavior. External parameters are needed only for the corresponding actual live action, not to write the code.
-6. **Single deterministic runtime owner — S78–S89.** Port only stabilized domain families, retain exact legacy bytes, prove one actual Wasm boundary, then switch one caller family at a time and remove its replaced TS implementation. Do not freeze an unfixed TS bug as normative parity.
+The owner's current phase is **finish product code first**. Perform compilation, scoped lint and,
+for SQL changes, the D1-limit-aware compiler check in #294. Do not manually run broad behavioral,
+browser, mutation, quality or live suites before assembly. Minimal Clippy applies to Rust edits.
+This phase overrides the test-first/full-suite-before-every-push defaults in older process documents.
+It does not waive correctness, permit weakened guards or turn deferred acceptance into PASS.
 
-Within each phase, an existing dependency is reused rather than rewritten. Independent wiring fixes may precede a larger migration when they are needed to exercise the same real path. A task is not closed because its Markdown was merged or one helper compiled.
+Record separately: **code delivered at SHA**, **known code defects**, and **acceptance pending**.
+Keep full criteria on the task and leave final acceptance open. No unspecified local agent is assumed
+to have run anything. Once assembled, execute the existing final gates and retain their real results.
 
-## Division of work
+## Immediate code-repair order
 
-**This implementation:** domain decisions, strict request binding, authorization/currentness, transactional settlement, real application composition, and narrow regressions needed to establish that the critical change is safe. Record the actual result, not an anticipated PASS.
+1. **#293, with #294: repair the shared D1 trigger/view chain and add the cheap compiler guard.**
+   All82 current migrations load, but15 mutation shapes and three view reads fail at expression depth100.
+   Flatten the effective dependencies with a forward migration; retain final atomic authorization,
+   ownership, expiry, purge, CAS, receipt and cancellation constraints. Preserve lost-ACK reconciliation
+   while distinguishing SQL/storage failure from a real grant denial. A default-depth SQLite PASS is insufficient.
+2. **#296: fix the26 confirmed lint findings.** Preserve error causes and cleanup behavior; correct
+   Node globals in their actual environment. Do not silence findings by dropping checks or diagnostics.
+   For #297, inspect existing failure logs now and repair confirmed production defects in their owning
+   modules; the33 reported failures are not automatically33 production bugs. Fixture expansion stays later.
+3. **#295 + #304, coordinated with S90/#282: repair verification wiring.** Keep budget failures visible
+   without suppressing independent checks. Cover all root Vitest files; the existing CI filters omit27.
+   Separate source-maintainability metrics from emitted artifacts. Do not raise limits or shuffle files
+   merely to obtain green; full-suite execution is still the later assembly phase.
+4. **#299 + S37/#229: reconcile retained S37 source before cleanup or reimplementation.** Verify the
+   original payload hash, compare every hunk with current main, preserve useful work and integrate only
+   reviewed missing code. Do not execute the old publisher or delete the payload as assumed garbage.
+5. **#300/#301 and PR#303: finish bounded documentation/privacy reconciliation alongside code.**
+   Preserve full task contracts and one queue; do not spend the implementation phase generating99 new
+   tickets, building a tracker framework or mass-closing/deleting planning branches. #302 operator/domain
+   changes require separate explicit authorization and do not block writing application code.
 
-**Local agent:** full Linux/Windows/core/browser suites, fixture expansion, mutation/load/quality/native-platform qualification, UI tasks S19/S20/S26/S73–S76, source-budget/documentation cleanup, and final S92–S97 acceptance. Do not replace real D1 tests with DatabaseSync or change assertions merely to get green output. Existing commands and proof boundaries are in PR #292.
+## Continue product code in dependency order
 
-Paid-effect/authentication/cancellation changes still need a focused negative/replay test before push. The owner's delegation of broad testing is not a waiver of correctness or permission to disable safeguards.
+| Order | Existing tasks | Concrete next result |
+| --- | --- | --- |
+| A | S29/#221, S34/#226; residual S10–S15, S31–S33, S98–S99 | Complete remaining selected-profile configuration/qualification and machine-path contract items. Reuse the delivered grants, controls, normalized importer and readers; do not reimplement them. Broader discovery or non-exploratory execution is only claimed when its actual caller is composed. |
+| B | S21–S23, S37–S46 | Truthful procedure reporting; real branch factory; protocol execution, W1 observations, freeze/debt/supersession, verifiers and product handlers. Reuse S35/S36 contracts and the S37 salvage disposition. One shared checkpointed executor, not an engine per role. |
+| C | S47–S61 | Complete source/navigation/index boundaries, requested coverage, artifacts/publication, selected Workspace capture/readback and federation. Prioritize dependency-ready S50–S52 (RETRIEVAL) and S58/S59 (Workspace candidate admission), without bypassing their authority prerequisites. |
+| D | S62–S72 | Erasure closure, outbox/DLQ/reconciliation, backup/isolated restore, rollback, Steward and durable events. S62/S63 address ERASURE. Write code without inventing live credentials or treating unavailable live receipts as coding blockers. |
+| E | S20/#212, S73–S77; #298 | Targeted source-change invalidation, complete human Library/Connections/artifact flows and proven-equivalent formatting/reuse. Inspect/fix the Windows layout code independently; its browser proof waits for #305. UI work may advance with its actual backend dependency, not after every Rust family. |
+| F | S78–S89, #106/#176 | Stabilize canonical consumers; implement deterministic Rust families; make the first real versioned Wasm call as soon as one family is ready; promote callers and remove superseded TS authority family by family. Managed Cloudflare I/O stays TypeScript. |
+| G | S18/#210, S30/#222, S90/#282, S91/#283 | Reconcile actual composed code, truthful implementation states, emitted artifacts and D1 mutation boundaries. Compiler/guard fixes land with their owner changes; do not postpone known broken SQL to this final reconciliation. |
 
-## Checkpoint ledger
+S01–S06, S08/S09, S14/S16, S24–S28 and S35/S36 were historically closed. Preserve their code and
+receipts, but link current regressions rather than assuming historical acceptance proves current main.
+S03/S04/S08 regression repair belongs to #293; S26 layout/fixture consequences belong to #298/#305.
+S07's historical-read obligations remain in #199; preserve its exact-version/citation acceptance.
+The original passports remain the source of all mandatory criteria, including tasks with partial code.
 
-- **Already on the baseline:** S01 boundary repair and S06 historical reading. Their earlier focused results are recorded in PRs #193 and #198; full/live acceptance is separate.
-- **Implemented, code commit [e15afeee](https://github.com/UnknownAlienHuman/eliot-research/commit/e15afeeec65b8e3304abc3cb802e1fbbab52ed60): S08 replay.** Compare normalized requested scope against the original persisted expression before returning cached bytes. Equivalent redundant expressions replay; changed PROJECT/GLOBAL/SELECTED expression conflicts even when current members happen to match. Preserve old result digests and recheck currentness after asynchronous hashing; no replacement snapshot or new authority writes.
-- **Implemented in the same checkpoint: S16 internal DO terminal settlement.** A missing or failed canonical D1 cancel cannot produce a successful CANCELLED response. Verify the actual cancellation receipt, then update the short-lived DO projection in a storage-only transaction. A stale execute snapshot cannot overwrite another terminal state. Confirm canonical completion before projecting it. This does not implement the separate public S14 cancel endpoint or S15 native recovery API.
-- **Implemented in the same checkpoint: S09 versioned semantic retrieval.** Passing AI_SEARCH was necessary but not sufficient: FAST_SEARCH's plan does not run SEM. New exploratory runs select `research-handlers.exploratory.v4` and the existing RESEARCH retrieval plan. Existing v1/v2/v3 runs retain their old behavior and immutable receipts. Carry AI_SEARCH through environment and explicit-dependency factories and the real semantic server. Read the stored generation for status, materialization and recovery; v3/v4 share the existing synthesis/audit/citation/coverage machinery without rewriting old results. Missing managed binding remains an explicit skipped lane, not a claimed semantic success.
-- **Implemented, code commit [be4d147](https://github.com/UnknownAlienHuman/eliot-research/commit/be4d147053833d808a3e3ebad5377b3b036b8bdc): S14 public cancellation.** The strict owner-only POST run/cancel route returns the existing status and deterministic W2 cancellation receipt only after canonical readback. Current owner authorization uses the original frozen source set without impersonating its original credential. Existing authority epochs and current grant/deadline predicates fence the conditional SQL write; completion-first conflicts, failed or lost acknowledgements reconcile against the same run, and late stage output cannot commit after cancellation. Native termination is attempted only after confirmed cancellation and its failure cannot undo that decision. No new ledger, migration, replacement run or model call.
-- **Implemented on the current checkpoint: S15 public recovery.** The strict owner-only POST run/recover route operates on the same Workflow instance and records one durable recovery action per run/stage. Active/completed runs do not mutate. Paused instances resume; errored/terminated instances restart once, from the current step when an attempt exists. Lost native acknowledgement is reconciled by status without another restart. Existing W2 attempts keep their original spend identity: unexpired attempts still pass the ordinary Budget Governor, while an expired reservation can settle only after the exact owner-authorized recovery action is present in D1. Recovery invokes registered deterministic/readback adapters only; the paid handler is never called again. VERIFY recovery rereads exact synthesis bytes and does not repeat synthesis. Unknown provider effects, cancellation, revocation and corrupt state remain closed.
-- **Implemented on the current checkpoint: S05 bounded deployment compatibility.** Exact deployment generation remains immutable provenance, while the single ACTIVE Worker may continue a run only when the origin and active generations have the same reproducible backend fingerprint. The fingerprint covers tracked backend/application/domain/Rust/D1 bytes plus scrubbed generated binding/configuration topology; it excludes PWA assets, documentation, build time and the substituted deployment generation. Legacy rows without evidence remain compatible only with themselves while ACTIVE. Unknown handler/schema/resource/config changes remain blocked; old receipts and source revisions are not rewritten. Deployment synchronization refuses an incompatible retired target before retiring the current generation, and the deployment receipt records the reviewed fingerprint/readback without exposing secrets.
-- **Next key work:** operation-bound long-run authority (S33), then the one delegated-machine grant (S10/S31). S14/S15 currently authorize owners only; service delegation and PWA/MCP controls are separate S10/S32 work. S05 permits only identical-backend/PWA-only continuation and does not authorize arbitrary backend upgrades, rollback, browser-grant renewal or live native lifecycle qualification.
+## Delivered code that must not be scheduled from scratch
 
-### Retained verification for e15afeee
+These are checkpoint references, **not proof of current runtime correctness or complete acceptance**.
 
-[Clean-checkout validation and direct-main publication run](https://github.com/UnknownAlienHuman/eliot-research/actions/runs/35053788872), artifact `backend-checkpoint-validation`:
+| Capability | Current lineage |
+| --- | --- |
+| Project/client grants and Connections | `dd77b311`, `6f904052`; #202/#223. |
+| HTTP/MCP query, report/evidence, status and controls | `da18c864`, `cb23b55d`, `db848b33`, `53f9efc1`, `9a1d3275`, `debb53cb`; #203–#205/#224. |
+| Machine admission, machine controls, historical/owner reads and PWA controls | `b66298ee`, `3df3db06`, `ab16f5d1`, `6dee770b`, `b3620e10`; exact original grants/execution deadlines remain distinct from current read authority. |
+| Server execution lifetime and larger recorded scope | `0a480772`, `e09e9ef4`; #225/#291. Existing member/byte ceilings remain, not universal capacity guarantees. |
+| Append-only attachment and normalized machine ingestion | `a99e18a6`, `82766f3e`; #290. Raw conversion is separate S58 work, not permission to duplicate the importer. |
+| First runtime cause and transient reconnect intent | `eee6f976`, `12321f77`; #209/#211. #293 still owns grant-write error mapping; #305 owns stale browser fixtures. |
 
-- Core and PWA declaration builds, core test typecheck, changed-file ESLint, package boundaries and work-packet ownership passed.
-- `research-retrieve-branches.test.ts`: 8 passed; `research-workflow-recovery.test.ts`: 8 passed; `research-run-status.test.ts`: 14 passed. Aggregate: **30/30**, no skipped tests in these three files.
-- Separately selected S08 regression in `research-query-retrieval.test.ts`: **1 passed**, 9 other tests not selected. This is not a claim that the entire query-retrieval file passes.
-- Actual local D1/R2/DO and persisted W1/W2/W3 are exercised. External model/search responses are controlled. Both v3 and v4 synthesized/audited/materialized report fixtures reopen after login with their original bytes and one synthesis plus one audit; reading does not pay again.
-- Source before/after hashes were checked for exactly the 14 changed files before applying and publishing the patch. No migration, fixture normalization, dependency/lock change or cloud deployment was needed.
+The earlier detailed checkpoint ledger remains in the [pre-review plan](https://github.com/UnknownAlienHuman/eliot-research/blob/12321f7721d6d59a75f0d5dd01ebcb569ca46ae0/docs/implementation/backend-delivery-plan.md)
+and task histories. Its old “next” and owner-only statements are not the current queue.
+The checked migration chain ends at0083. Allocate the next number from refreshed main; no migration
+in this review is applied to a remote database. Never deploy the known-broken chain before #293 is repaired.
 
-The first clean-checkout attempt stopped before tests because the test project imports PWA declarations that had not been built. The corrected invocation builds both core and PWA references before checking the core test project; it does not suppress TypeScript errors or change the reviewed application patch. The temporary source/dependency/publication workflow was removed after the verified code push; it is not permanent application infrastructure.
+## After code assembly: acceptance, not another implementation loop
 
-### Retained verification for S14 / be4d147
+Reconcile #297 fixtures versus production fixes and #305 session-aware browser fixtures, then accept
+#298 viewport behavior independently. Execute **S92/#284 local integrated acceptance before S94/#286
+staging**. On the attested staged build, complete S93/#285 corpus quality, S95/#287 native/security/
+restore/client conformance and S96/#288 workload/cost, then S97/#289 release acceptance. Resolved local
+fixture failures do not establish native D1/R2 behavior or model quality. Keep exact build/config identities.
 
-- Actual local HTTP/application/workerd-D1/R2 paths: `research-run-status.test.ts` **24 passed** and `research-workflow-recovery.test.ts` **8 passed**, total **32/32**. Ten new cancellation scenarios exercise refreshed JWT, completion-first, concurrent callers, revoke immediately before SQL, failed/lost-ACK writes, native failure, malformed/foreign/expired/CSRF requests and late in-flight output. Access verification responses and native instance termination are controlled external boundaries, not live platform evidence.
-- Core/PWA declaration builds, core-test TypeScript, changed-file ESLint, package boundaries, work-packet synchronization and implementation registry checks passed. The full browser/Rust/quality/load and deployed suites were not run in this checkpoint.
-- Native Workflow termination and machine/UI controls remain separate acceptance. Do not claim an already dispatched provider call was physically stopped: canonical cancellation prevents subsequent stage/publication effects. Original execution credential, source versions and committed receipts remain immutable.
-- Commands: `node node_modules/typescript/bin/tsc -b apps/eliotr-core/tsconfig.json apps/eliotr-pwa/tsconfig.json --pretty false`; then `node node_modules/typescript/bin/tsc -p apps/eliotr-core/test/tsconfig.json --pretty false`. From `apps/eliotr-core`: `node ../../node_modules/vitest/vitest.mjs run test/research-run-status.test.ts test/research-workflow-recovery.test.ts`. These invoke the repository's frozen dependencies directly in the offline environment; no lockfile or dependency change was needed.
+Only selected mandatory v1/Slices0–6 and `gemini-mcp` are baseline obligations. Unselected managed
+OAuth, Slice7 or another client's local runtime are not added as release blockers. Live deployment,
+provider spending, external restore destinations and hostname changes require their own authorization.
 
-### Retained verification for S05
+## Legacy records and publication
 
-- `research-backend-fingerprint` and deployment-authority unit scripts passed, including A→B→A, changed bindings/code, dirty-tree refusal, incompatible retired-target refusal and preservation of the existing ACTIVE deployment.
-- Deployment ordering/orchestration/verification scripts passed: **5 + 10 + 11 groups**. Receipt schema accepts additive fingerprint/authority fields while preserving pre-existing receipt compatibility. No live deployment was executed.
-- Workerd-D1 deployment compatibility tests passed **2/2**. The focused completed-history/PWA-only status regressions passed during implementation; broad status/Workflow suites remain delegated because the local Miniflare harness retains existing lifecycle warnings and long-lived promises.
-- Core/PWA and core-test TypeScript, changed-file ESLint, package boundaries, work-packet ownership and `git diff --check` passed before the checkpoint commit. The new migration preserves the original W2 current-view columns and ledger revision semantics; only deployment-currentness is replaced by the equal-fingerprint compatibility view.
+Launch01/#98 maps to S03/S47/S70/S73/S98; Launch02/#90 to S08/S09/S23/S48/S50–S52/S99;
+Launch03/#91 to S48/S49; Launch04/#92 to S05–S17/S21–S22/S31–S46/S72;
+Launch05/#93 to S60/S61; Launch06/#94 to S07/S53–S57/S75; Launch07/#95 to S10–S13/S31/S58/S59/S74;
+Launch08/#96 to S62–S72/S91–S97. These are traceability umbrellas, not duplicate work queues.
+#106 is concrete Rust debt under #176; retain its unresolved obligations. Salvage #121/#173/#174
+remain protected until their unique code has an explicit disposition. Mapping is not completion.
 
-### Concrete local-agent handoff
-
-1. Run the full baseline-relative suites and distinguish inherited failures from new regressions. The aggregate checks above are not a full CI/Rust/browser acceptance.
-2. `research-session.test.ts` contains a legacy fixture expecting successful cancellation without an actual W2 run. Create valid canonical W2 authority for its success case and retain a separate missing-run refusal. Never restore best-effort cancellation to satisfy that fixture.
-3. Inspect existing query no-hit/selected-document-fallback expectations against the real product behavior; the targeted S08 pass does not resolve their pre-existing mismatch. Do not merely remove assertions or skip the file.
-4. Expand SEM tests with representative tail-only evidence, outage, foreign/purged hits and native configured bindings. The new controlled test proves binding propagation, lane selection, exact readback and replay, not live recall or full-corpus quality. Keep v3 compatibility tests alongside v4.
-5. Native Workflow warnings in the focused fixtures (`Engine was never started` / `instance.not_found`) and missing env.test AI binding warnings were retained in the logs, not hidden. Resolve their fixture/native-observation setup during full acceptance without configuring real paid providers for deterministic tests.
-6. Complete the existing UI and documentation/source-budget tasks separately. S05/S33/S10, S99 large scope and real provider qualification remain actual implementation/acceptance work, not test-only cleanup.
-
-## Completion boundary
-
-The target is the known mandatory v1/Slices 0–6 with `gemini-mcp`. Completion requires both implemented paths and the existing final acceptance in S92–S97. Do not label every PR complete after a code-only pass. Preserve explicit pending live configuration, independent client, offsite destination and release approval requirements; do not fabricate credentials or receipts.
-
-
-### S10 / S31 grant-backend checkpoint
-
-The current implementation adds owner project-client grant GET/PUT/DELETE plus the shared
-project-scoped HTTP/service-token MCP catalog path. Grant records contain no secrets; configured
-is not a verified connection. Migration 0072 and the common strict DTO are shared by all consumers.
-Service-token HTTP FAST_SEARCH now uses that authority and binds immutable query scope origin via
-migration 0073; query-derived verify/open additionally require the distinct evidence operation.
-Known owner-project status, cancellation, sponsored recovery and MCP query/read are now composed.
-Exploratory machine creation is implemented with migration 0076; migration 0077 connects the
-existing controls to that same client and originating grant revision. Migration0078 connects
-historical machine status/report/citation reads to fresh signed credentials and artifact-bound
-read scopes, without renewing execution. Migration0079 adds independent original-grantor owner
-reading of machine reports through saved-draft discovery and existing PWA reauthorization/export.
-Migration0080 composes independent owner machine-run list/status/cancel/recover and PWA Stop/Recover; original execution/spend limits still constrain recovery. Broad discovery and import remain code work.
-S98 now composes append-only project attachment through the existing HTTP Project update and
-`eliotr_project_attach`, requiring separate project.attach rights and current grantor source authority.
-Migration0081 records the real service actor and exact original grant revision in existing mutation
-guards/receipts, with write-time CAS/expiry fences and authorized same-key replay. No rename or
-detach, new source ownership, preprocessing, paid effect or expansion of old Research scopes.
-S98 also composes namespace-delegated normalized bundle prepare/parts/file-complete/commit/status/recovery/discovery
-through the existing ingest pipeline and service-token MCP metadata adapters. Migration0082 binds the real client
-and original grant revision on the existing operation; current grantor policy/ownership and per-request
-credential/project fences remain mandatory. Only immutable normalized imports, not raw conversion or cutover.
-Attachment additions now require the explicit namespace ceiling; attachment-only grants need no ingest permission.
-Compilation/static review only; native lifecycle and live acceptance remain.
-Apply all migrations through 0080 before deploying the changed shared grant/history readers. Connections manages
-grants through the existing API and provides the independent opt-in service catalog-read command
-(`scripts/check-project-client.mjs --help`). Configured is not connected: the PWA does not claim
-a signed client round trip from owner readback or the unrelated generic MCP diagnostic.
-Recovery sponsorship binds an explicitly installed owner spend-template fingerprint on the same grant
-revision; it never relaxes the original W2/W3 spend authority.
-Native/behavioral acceptance remains pending; this code-first checkpoint does not claim it.
-
-### S12 / saved-project report readers (code checkpoint, 2026-09-23)
-
-Service-token HTTP clients with `report` may read the existing artifact/section endpoints and
-reauthorization endpoints for DRAFT reports originally bound to one explicit PROJECT and authored
-by that project's current grantor. Sharing a source, a global scope or another project's expression
-is not sufficient. Citation reads additionally require `evidence`. Read-only sharing starts no model
-and changes no report bytes, hashes, draft/verdict labels or publication state.
-
-Migration `0074_project_client_artifact_scope.sql` binds each fresh scope grant to one artifact,
-original project/author and delegation revision. The existing historical-scope algorithm preserves
-all saved source revisions, membership, disclosure closure and profile. Current policy, owner,
-membership, expiry, purge and original-grant revocation are rechecked. Issuance and evidence writes
-are guarded by D1; report-only scope grants cannot mint standalone evidence handles. The existing
-conservative delegated-scope invalidation also covers these read grants; reopening is a new read,
-not revival of an old revoked scope. No browser token or second authority store is introduced.
-
-Service citation GETs use the already-existing `eliotr.artifact-draft-citations-reauthorization.v1`
-response: `original_scope_snapshot_ref` and original verification/audit remain historical, while
-`authorization_scope_snapshot_ref` and each paired fresh `handle_ref` authorize current reads.
-The old handle is retained as `original_handle_ref`; clients must open the fresh handle, not relabel
-an old verification. Owner GET response shapes are unchanged. Without a live exact projection for
-a saved excerpt, citation reopening still fails explicitly rather than substituting current text.
-
-Source-freshness metadata now respects the recorded profile and reads exact 64-member pages, fixing
-another old 64-source bottleneck shared by report/Wiki reopening. Member and byte ceilings remain.
-No model/paid sponsorship, service-run admission, report discovery or MCP reader composition is
-claimed by this checkpoint. Native, behavioral and live acceptance remain pending under #204/#291;
-compilation is not runtime qualification. Migration 0074 is committed, not applied remotely.
+Work only on main, one claimed checkpoint at a time, without worktrees or new task branches.
+Use normal authenticated Git or authorized GitHub blob/tree/commit/non-forced ref actions. Refresh
+main before publication and reconcile concurrent changes. Reference actual task numbers in commits.
+Do not create writable transport workflows for routine publication. No branch deletion or history rewrite
+is authorized by this plan; original passports and evidence must remain reachable.

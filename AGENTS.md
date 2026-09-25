@@ -53,6 +53,10 @@ Agents should not reread the whole architecture for normal work. Start from the 
 
 ## Swarm edit protocol
 
+The owner's current code-delivery phase is defined in [backend-delivery-plan.md](docs/implementation/backend-delivery-plan.md).
+Its compilation/scoped-lint-first procedure overrides routine test-first/full-suite-per-push defaults
+below until assembly. Preserve all negative/final acceptance criteria and report unexecuted checks as pending.
+
 - Claim exactly one work packet. Edit only its `owned_paths`.
 - Owner-directed implementation is on `main` only, without additional worktrees or task branches.
 - One agent holds one checkpoint; finish or explicitly hand it off before taking another.

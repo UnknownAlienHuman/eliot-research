@@ -9,6 +9,14 @@ gates, discipline. Anything that ages (which checkpoint is next, what is merged,
 of three tasks; all three were completed and the document kept telling new agents to start them.
 Do not reintroduce that pattern.
 
+## Current work entry
+
+Use [backend-delivery-plan.md](implementation/backend-delivery-plan.md) for the current ordered queue
+and [#292](https://github.com/UnknownAlienHuman/eliot-research/pull/292) for the original S01–S99 contracts.
+Launch theme PRs are historical traceability umbrellas, not a second queue. The owner's current
+code-delivery phase in that plan takes precedence over the test-first/full-suite-per-push procedure
+below; final acceptance requirements remain unchanged. Do not assume an unnamed local agent runs them.
+
 ## 1. Orient by running, not by reading
 
 Run these first, in the repository root. They answer "where is the project right now" in under a
@@ -24,9 +32,9 @@ gh issue list --state open
 
 - `work-packets:check` prints the packet count, exclusive path claims and confirms the ownership DAG
   is acyclic and synchronized between `manifest.json` and the packet documents.
-- `check:implementation-status` prints the exact contour census by state. **`LIVE_QUALIFIED: 0` means
-  no part of this system has ever been proven against real Cloudflare or Google.** Treat every
-  capability claim accordingly.
+- `check:implementation-status` prints the exact contour census by state. **`LIVE_QUALIFIED: 0` means no contour has complete registered live-qualification evidence.**
+  It does not erase limited, dated live observations. Distinguish recorded historical observations
+  from current deployment evidence and do not claim complete qualification from either alone.
 
 Then read [gap-register.md](implementation/gap-register.md) — the priority-ordered list of what is genuinely
 missing — and [production-readiness-plan.md](implementation/production-readiness-plan.md) §0, which defines the only meaning
@@ -65,8 +73,9 @@ an unindexed document is one nobody will find, which is the same as not writing 
 
 ## 3. Pick exactly one piece of work
 
-1. Read [agent-work/README.md](agent-work/README.md) and pick a **dependency-ready** packet, or read
-   [launch-prs/README.md](implementation/launch-prs/README.md) and pick a numbered checkpoint inside one theme.
+1. Follow the earliest dependency-ready code item in [backend-delivery-plan.md](implementation/backend-delivery-plan.md),
+   then read its original S passport through #292 and its owned packet in [agent-work/README.md](agent-work/README.md).
+   Use [launch-prs/README.md](implementation/launch-prs/README.md) for legacy obligation mapping, not a duplicate queue.
 2. Confirm nobody else holds it: check the theme PR for an existing claim comment and check
    `git worktree list` and open PRs.
 3. Post the claim block from [agent-start.md](implementation/launch-prs/agent-start.md) in the theme PR **before** editing.
@@ -107,10 +116,11 @@ node scripts/check-docs-index.mjs   # if you added or moved a document or a pack
 ```
 
 CI runs `verify`, `rust`, `windows-tooling`, and the `local-launch`, `research-semantic`
-and `d1-mutations` matrices on both Ubuntu and Windows. The latter runs Project/Wiki SQL regressions on real local D1
+and `d1-mutations` matrices on both Ubuntu and Windows, plus the `research-screen` matrix.
+The `d1-mutations` matrix runs Project/Wiki SQL regressions on real local D1
 even when an unrelated gate blocks the main test suite. `verify` alone runs contract fixtures, package boundaries plus their negative proof, source
-budgets, work-packet ownership, branch hygiene, six authority fixtures, lint, typecheck, the full test
-suites, the implementation-status registry, the PWA build, a Chromium Library test, local D1
+budgets, work-packet ownership, branch hygiene, six authority fixtures, lint, typecheck, configured test
+selections, the implementation-status registry, the PWA build, a Chromium Library test, local D1
 preparation, binding-type generation and a Worker deployment dry-run.
 
 Report results honestly. If `check:affected` stops early, say where and why, and do **not** report the
@@ -171,7 +181,7 @@ An unclaimed shared edit is not permission.
 | --- | --- |
 | `SCAFFOLD_FAIL_CLOSED` | The port exists but execution throws or returns an explicit pending response. It cannot mutate canonical state. |
 | `IN_PROGRESS` | An owned packet is active. Merge still requires its negative acceptance case. |
-| `IMPLEMENTED_NOT_LIVE` | Deterministic and recorded-fixture gates pass. **No platform round trip has occurred.** |
+| `IMPLEMENTED_NOT_LIVE` | Deterministic and recorded-fixture gates pass. **This state does not establish complete live qualification.** |
 | `LIVE_QUALIFIED` | The implementation and its named live gate both have a retained receipt. |
 
 None of these is satisfied by a mock, a local emulator, a typecheck, a dry-run, a provider's own
@@ -205,16 +215,17 @@ gh pr list --state open             # which themes are red or conflicted
 
 **`pnpm launch:code` is the one to run first.** It exits non-zero with `LIVE_DEPLOY_BLOCKED` followed
 by the exact list of disabled required slices, uncomposed public routes and named blockers. That list
-is the real backlog: shortening it is what moves the product, and nothing else is progress toward a
-working system.
+is the code-composition backlog. It does not replace the known-defect queue or establish runtime
+correctness: a composed route can still fail SQL compilation or violate its behavioral contract.
 
 Two things are worth understanding before you read that list:
 
 - **An implemented contour is not a working route.** A stage executor can be finished, registered and
   green while the public route that would call it is still not composed, so the slice stays disabled.
   `implementation-status.json` tells you the first; `launch:code` tells you the second.
-- **`LIVE_QUALIFIED` counts platform round trips, not code quality.** While it is `0`, nothing in this
-  repository has been proven against real Cloudflare or Google — however green the gates are.
+- **`LIVE_QUALIFIED` records complete contour qualification, not code quality or every limited live observation.**
+  A zero count does not erase dated owner-loop receipts; neither those receipts nor green local gates
+  prove the current build/profile is fully live-qualified.
 
 Deterministic work — test strength, mutation coverage, parity vectors — is real engineering, but it
 does not shorten the `launch:code` list. Do it when it blocks a product path, or when that list is

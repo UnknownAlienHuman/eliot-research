@@ -21,7 +21,8 @@ from the tables below, so an unlisted file is a bug, not an omission you may ign
 |---|---|
 | [implementation-status.md](implementation-status.md) | What the four states mean and why a compiling port is not an implemented feature. |
 | [implementation-status.json](implementation-status.json) | The machine-readable registry. `pnpm check:implementation-status` validates it. |
-| [backend-delivery-plan.md](backend-delivery-plan.md) | Core implementation order, current checkpoints, and local-agent acceptance handoff. |
+| [backend-delivery-plan.md](backend-delivery-plan.md) | Single ordered code queue, delivered checkpoint references, and separate assembled-product acceptance. |
+| [audit-2026-09-25-review.md](audit-2026-09-25-review.md) | Independent review of audit PR303: reproduced SQL/lint/CI findings, corrections, issue mapping and verification limits. |
 | [gap-register.md](gap-register.md) | Prioritized list of what is genuinely missing, with the closure evidence each gap requires. |
 | [2026-09-10 saved work](checkpoints/2026-09-10/README.md) | Inactive snapshots of unfinished local work, push verification and cleanup inventory. |
 | [2026-09-10 cleanup receipt](checkpoints/2026-09-10/cleanup-receipt.json) | Exact removed build paths, recovered Git objects, preserved state, and cleanup exclusions. |
