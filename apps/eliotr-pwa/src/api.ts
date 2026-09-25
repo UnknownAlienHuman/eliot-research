@@ -362,6 +362,11 @@ export async function requestApiWithStatuses(
     if (redirected) {
       throw new ApiRequestError({ status: 401, code: "ACCESS_SESSION_REQUIRED", message: "Sign in to Cloudflare Access and reload this page" });
     }
+    if ([502, 503, 504].includes(response.status) &&
+        (response.headers.get("content-type")?.split(";")[0]?.trim() !== "application/json" || !response.body)) {
+      throw new ApiRequestError({ status: response.status, code: "API_HTTP_UNAVAILABLE",
+        message: "API temporarily unavailable; a submitted write may already have completed" });
+    }
     if (response.headers.get("content-type")?.split(";")[0]?.trim() !== "application/json" || !response.body) {
       throw new ApiRequestError({ status: 502, code: "API_RESPONSE_SCHEMA_MISMATCH", message: "Expected an authenticated JSON API response" });
     }

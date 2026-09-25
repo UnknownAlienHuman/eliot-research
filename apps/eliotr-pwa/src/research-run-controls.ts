@@ -41,6 +41,7 @@ interface ControlHooks {
   confirmed(view: ResearchRunStatusView): void;
   refreshStatus(id: string): void;
   clearPrivate(): void;
+  connectionFailed(error: unknown): boolean;
 }
 
 /** Thin UI over the same run and action-key protocol as HTTP/MCP. Pending means
@@ -93,7 +94,7 @@ export function mountResearchRunControls(element: HTMLElement, notice: HTMLEleme
         method: "POST", body: "{}", signal: local.signal,
         headers: { "content-type": "application/json", "idempotency-key": key },
       });
-      if (active !== serial || disposed || local.signal.aborted || hooks.generation() !== selected.deployment_generation) return;
+      if (active !== serial || disposed || local.signal.aborted || !hooks.available() || hooks.generation() !== selected.deployment_generation) return;
       const view = decodeResearchRunStatus(raw, selected.deployment_generation);
       if (view.workflow_instance_id !== selected.workflow_instance_id || view.investigation_ref.id !== selected.investigation_ref.id ||
           (action === "cancel" && view.execution_state !== "CANCELLED")) {
@@ -103,6 +104,7 @@ export function mountResearchRunControls(element: HTMLElement, notice: HTMLEleme
       notice.textContent = action === "cancel" ? "Stop confirmed in the run journal." : "Recovery request confirmed. Reading the current run state…";
     } catch (error) {
       if (active !== serial || disposed) return;
+      if (hooks.connectionFailed(error)) return;
       if (error instanceof ApiRequestError && (isAuthorizationLoss(error) || error.status === 403 ||
           error.code === "RESEARCH_RUN_DEPLOYMENT_CHANGED")) { hooks.clearPrivate(); return; }
       // Keep the original key even for an aborted or rejected response: it is not
@@ -123,6 +125,7 @@ export function mountResearchRunControls(element: HTMLElement, notice: HTMLEleme
   return {
     get busy() { return request !== undefined; }, refresh, interrupt,
     show(view?: ResearchRunStatusView) { target = view; refresh(); },
+    suspend() { interrupt(); target = undefined; refresh(); },
     clear() { interrupt(); target = undefined; pending.clear(); refresh(); },
     dispose() { disposed = true; interrupt(); pending.clear(); target = undefined; cancel.onclick = null; recover.onclick = null; },
   };
