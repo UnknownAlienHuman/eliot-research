@@ -1,4 +1,5 @@
 import {
+  ProjectClientGrantSchema,
   BundleAdmissionReceiptSchema,
   NormalizedBundleManifestSchema,
   ObjectResidencyKeySchema,
@@ -8,6 +9,7 @@ import {
 import { canonicalJson, safeHashEntries } from "./ingest-validation.js";
 import { objectResidencyKeyDigest, sha256Utf8 } from "./r2.js";
 import type {
+  IngestClientOrigin,
   IngestAdmissionPolicySnapshot,
   IngestOperationState,
   PrepareIngestAuthorityInput,
@@ -164,6 +166,7 @@ export interface ExistingSourceRow {
 }
 
 export interface IngestOperationRow {
+  readonly client_origin_json?: unknown;
   readonly operation_id: unknown;
   readonly principal_ref: unknown;
   readonly origin_authentication_receipt_ref: unknown;
@@ -266,6 +269,7 @@ export async function canonicalDigest(value: unknown): Promise<string> {
 }
 
 export async function ingestInputFingerprint(input: {
+  readonly client_origin?: IngestClientOrigin;
   readonly principal_ref: string;
   readonly origin_authentication_receipt_ref: string;
   readonly idempotency_key: string;
@@ -278,6 +282,23 @@ export async function ingestInputFingerprint(input: {
   readonly policy_snapshot_sha256: string;
 }): Promise<string> {
   return canonicalDigest(input);
+}
+
+function decodeIngestClientOrigin(value: unknown): IngestClientOrigin | undefined {
+  if (value === null || value === undefined) return undefined;
+  const raw = parseJson(value, "ingest client origin");
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw) ||
+      Object.keys(raw).join(",") !== "grant") {
+    authorityFail("INGEST_AUTHORITY_INPUT_INVALID", "Stored client origin shape is invalid");
+  }
+  const fields = raw as Record<string, unknown>;
+  const grant = ProjectClientGrantSchema.safeParse(fields.grant);
+  if (!grant.success || grant.data.state !== "ACTIVE" || !grant.data.allowed_operations.includes("ingest.bundle")) {
+    authorityFail("INGEST_AUTHORITY_INPUT_INVALID", "Stored client origin has no ingestion authority");
+  }
+  const origin = { grant: grant.data };
+  if (canonicalJson(origin) !== value) authorityFail("INGEST_AUTHORITY_INPUT_INVALID", "Stored client origin is not canonical");
+  return origin;
 }
 
 export async function decodeOperationRow(row: IngestOperationRow): Promise<PreparedIngestOperation> {
@@ -350,7 +371,9 @@ export async function decodeOperationRow(row: IngestOperationRow): Promise<Prepa
       authorityFail("INGEST_AUTHORITY_INPUT_INVALID", "terminal bundle receipt digest mismatch");
     }
   }
+  const clientOrigin = decodeIngestClientOrigin(row.client_origin_json);
   const operation: PreparedIngestOperation = {
+    ...(clientOrigin ? { client_origin: clientOrigin } : {}),
     operation_id: authorityIdentifier(row.operation_id, "operation_id"),
     principal_ref: authorityIdentifier(row.principal_ref, "principal_ref"),
     origin_authentication_receipt_ref: authorityIdentifier(
@@ -393,6 +416,7 @@ export async function decodeOperationRow(row: IngestOperationRow): Promise<Prepa
     expires_at: authorityIso(row.expires_at, "operation expires_at"),
   };
   const fingerprint = await ingestInputFingerprint({
+    ...(operation.client_origin ? { client_origin: operation.client_origin } : {}),
     principal_ref: operation.principal_ref,
     origin_authentication_receipt_ref: operation.origin_authentication_receipt_ref,
     idempotency_key: operation.idempotency_key,

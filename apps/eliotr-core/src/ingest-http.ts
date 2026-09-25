@@ -181,19 +181,19 @@ function bundleInput(input: Record<string, unknown>): DiscoverBundleUploadReques
   };
 }
 
-async function prepareRequest(request: Request, maximumBytes: number): Promise<PrepareBundleUploadRequest> {
+export async function prepareBundleRequest(request: Request, maximumBytes: number): Promise<PrepareBundleUploadRequest> {
   const input = await jsonBody(request, maximumBytes);
   exactKeys(input, ["manifest", "total_bytes", "file_hashes", "idempotency_key"], "prepare request");
   return { ...bundleInput(input), idempotency_key: identifier(input.idempotency_key, "idempotency_key") };
 }
 
-async function discoveryRequest(request: Request, maximumBytes: number): Promise<DiscoverBundleUploadRequest> {
+export async function discoverBundleRequest(request: Request, maximumBytes: number): Promise<DiscoverBundleUploadRequest> {
   const input = await jsonBody(request, maximumBytes);
   exactKeys(input, ["manifest", "total_bytes", "file_hashes"], "discovery request");
   return bundleInput(input);
 }
 
-async function completeRequest(
+export async function completeBundleRequest(
   request: Request,
   maximumBytes: number,
   operationId: string,
@@ -220,7 +220,7 @@ async function completeRequest(
   };
 }
 
-async function commitRequest(request: Request, maximumBytes: number): Promise<CommitBundleUploadRequest> {
+export async function commitBundleRequest(request: Request, maximumBytes: number): Promise<CommitBundleUploadRequest> {
   const input = await jsonBody(request, maximumBytes);
   exactKeys(input, ["operation_id", "multipart_session_ref", "manifest_sha256"], "commit request");
   return {
@@ -285,14 +285,14 @@ export async function dispatchIngestOperation(
       );
     case "ingest.bundle.prepare":
       exactQuery(url, []);
-      return owner.prepareBundle(context, await prepareRequest(request, maximumBytes));
+      return owner.prepareBundle(context, await prepareBundleRequest(request, maximumBytes));
     case "ingest.bundle.part.upload":
       return owner.uploadBundlePart(context, uploadRequest(request, url, params, maximumBytes));
     case "ingest.bundle.file.complete":
       exactQuery(url, []);
       return owner.completeBundleFile(
         context,
-        await completeRequest(
+        await completeBundleRequest(
           request,
           maximumBytes,
           identifier(params.operation_id, "operation_id"),
@@ -300,10 +300,10 @@ export async function dispatchIngestOperation(
       );
     case "ingest.bundle.commit":
       exactQuery(url, []);
-      return owner.commitBundle(context, await commitRequest(request, maximumBytes));
+      return owner.commitBundle(context, await commitBundleRequest(request, maximumBytes));
     case "ingest.bundle.discover":
       exactQuery(url, []);
-      return owner.discoverBundle(context, await discoveryRequest(request, maximumBytes));
+      return owner.discoverBundle(context, await discoverBundleRequest(request, maximumBytes));
     case "ingest.bundle.recovery":
       exactQuery(url, []);
       return owner.getBundleRecovery(context, identifier(params.operation_id, "operation_id"));

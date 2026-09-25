@@ -12,6 +12,7 @@ fail-closed. The Worker is a composition and transport boundary, not a second do
 ## Owned paths
 
 - `apps/eliotr-core/src/client-grant-http.ts`
+- `apps/eliotr-core/src/ingest-composition.ts`
 - `apps/eliotr-core/src/project-client-attachment.ts`
 - `packages/cloudflare-navigation/src/client-grant-store.ts`
 - `packages/cloudflare-navigation/src/client-grant-service.ts`

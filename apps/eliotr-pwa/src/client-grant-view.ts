@@ -2,7 +2,7 @@ import { ProjectClientGrantPutSchema, type ProjectClientGrant } from "@eliotr/co
 import { escapeHtml } from "./html.js";
 
 export function clientGrantMarkup(): string {
-  const extra = ProjectClientGrantPutSchema.shape.allowed_operations.element.options.filter((op) => op !== "catalog" && op !== "query" && op !== "evidence" && op !== "report" && op !== "status" && op !== "cancel" && op !== "recover" && op !== "run" && op !== "project.attach");
+  const extra = ProjectClientGrantPutSchema.shape.allowed_operations.element.options.filter((op) => op !== "catalog" && op !== "query" && op !== "evidence" && op !== "report" && op !== "status" && op !== "cancel" && op !== "recover" && op !== "run" && op !== "project.attach" && op !== "ingest.bundle");
   return `<section class="client-grant-panel" aria-labelledby="client-grant-title">
     <div class="connection-heading"><div><span class="eyebrow">Project access</span><h2 id="client-grant-title">Agent permissions</h2></div></div>
     <p>Give a service client access to one project. Enter its public Client ID, never its Client Secret. Configured permissions do not prove a client has connected.</p>
@@ -22,6 +22,8 @@ export function clientGrantMarkup(): string {
         <label>Service Client ID<input data-grant-subject maxlength="256" placeholder="client-id.access" required autocomplete="off"></label>
         <label>Expires at (your local time)<input data-grant-expiry type="datetime-local" step="0.001" required></label></div>
         <label class="client-grant-option"><input data-grant-operation type="checkbox" value="catalog" checked>Read project catalog</label>
+        <label class="client-grant-option"><input data-grant-operation type="checkbox" value="ingest.bundle">Import normalized bundles into explicitly listed namespaces (no raw conversion or ownership change)</label>
+        <label>Import / attachment namespace IDs (one per line)<textarea data-grant-namespaces rows="3" maxlength="16448" spellcheck="false"></textarea></label>
         <label class="client-grant-option"><input data-grant-operation type="checkbox" value="project.attach">Add admitted sources to this project (no rename or removal)</label>
         <label class="client-grant-option"><input data-grant-operation type="checkbox" value="query">Search project evidence (FAST_SEARCH over HTTP / MCP)</label>
         <label class="client-grant-option"><input data-grant-operation type="checkbox" value="run">Start project Research over HTTP / MCP (explicit spend approval required)</label>
@@ -31,11 +33,11 @@ export function clientGrantMarkup(): string {
         <label class="client-grant-option"><input data-grant-operation type="checkbox" value="report">Read authorized project reports over HTTP / MCP</label>
         <label class="client-grant-option"><input data-grant-operation type="checkbox" value="evidence">Open / verify evidence from queries or saved reports</label>
         <p>Status requires a known run ID; discovering its completed report reference also requires report permission. Saved report citations require report and evidence permissions. Only reports originally scoped to this explicit project are shared; reads never start models.</p>
+        <p>Imports stay bound to the original client and grant revision. Token refresh does not extend the upload deadline; changing or revoking the grant blocks unfinished imports. New project attachments must use these same explicit namespace ceilings; attachment is a separate permission.</p>
         <p>Machine-run controls stay bound to the client and grant revision that created the run. Select cancel / recover before creating a run; a replacement grant does not transfer control of existing machine runs.</p>
         <details><summary>Other declared permissions — handlers pending</summary>
           <p>These permissions can be configured, but their service handlers are not connected yet. They do not authorize paid model calls.</p>
           <div class="client-grant-options">${extra.map((op) => `<label class="client-grant-option"><input data-grant-operation type="checkbox" value="${escapeHtml(op)}">${escapeHtml(op)}</label>`).join("")}</div>
-          <label>Import namespace IDs (one per line, only for import rights)<textarea data-grant-namespaces rows="3" maxlength="16448" spellcheck="false"></textarea></label>
         </details>
         <label>Optional installed spend policy ID<input data-grant-spend-policy maxlength="256" autocomplete="off" spellcheck="false"></label>
         <p>Recovery may resume remaining paid stages of the same authorized owner or machine run; it does not renew expired execution. To permit it, explicitly select recover and name the installed, approved owner spend template. Its exact version, deployment and expiry are bound to this grant revision; grant expiry cannot exceed approval expiry. Changing the template requires an explicit new grant revision. Read access alone cannot spend. Starting machine Research also requires run and this explicit approval. Machine-created run reads accept a refreshed token for the original client while the original grant revision remains active. Machine controls retain their original execution deadline. Project attachment does not grant import, model spending or broader project editing rights.</p>

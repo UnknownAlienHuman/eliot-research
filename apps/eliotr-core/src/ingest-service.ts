@@ -267,7 +267,6 @@ export function createIngestService(dependencies: IngestServiceDependencies): Pi
         context.principal_ref,
       );
       requireOperation(operation);
-      if (operation.bundle_receipt !== null) return operation.bundle_receipt;
       requireSession(operation, request.multipart_session_ref);
       if (request.manifest_sha256 !== operation.manifest_sha256) {
         throw new IngestServiceError(
@@ -276,6 +275,7 @@ export function createIngestService(dependencies: IngestServiceDependencies): Pi
           "commit manifest digest does not match prepared authority",
         );
       }
+      if (operation.bundle_receipt !== null) return operation.bundle_receipt;
       // A guarded D1 commit can fail after R2 promotion has durably written its
       // receipt. Reuse that exact persisted decision and promotion on replay;
       // re-evaluating would mint a different decision ref and be rejected by R2.

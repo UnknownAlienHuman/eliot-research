@@ -1,3 +1,5 @@
+import { createIngestApplication } from "./ingest-composition.js";
+import { prepareBundleRequest, discoverBundleRequest, completeBundleRequest, commitBundleRequest } from "./ingest-http.js";
 import { VersionedRefSchema, type VersionedRef } from "@eliotr/contracts";
 import { authorizeProjectClientGrant } from "@eliotr/cloudflare-navigation";
 import type { AuthenticatedRequestContext } from "@eliotr/interfaces";
@@ -113,6 +115,29 @@ export function createMcpResearchToolCall(env: Env, request: Request): McpResear
       const context = serviceContext(env, request, toolContext, args);
       let execute: () => Promise<unknown>;
       switch (name) {
+        case "eliotr_ingest_prepare":
+        case "eliotr_ingest_discover":
+        case "eliotr_ingest_complete_file":
+        case "eliotr_ingest_commit": {
+          const input = record(args.request);
+          const body = name === "eliotr_ingest_prepare" ? { ...input, idempotency_key: args.idempotency_key } : input;
+          if (name === "eliotr_ingest_prepare" && Object.hasOwn(input, "idempotency_key")) invalid("Use the top-level idempotency key");
+          const parserRequest = new Request(context.request.url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body), signal: request.signal });
+          const ingest = createIngestApplication(env);
+          execute = name === "eliotr_ingest_prepare" ? async () => ingest.prepareBundle(context, await prepareBundleRequest(parserRequest, 131072))
+            : name === "eliotr_ingest_discover" ? async () => ingest.discoverBundle(context, await discoverBundleRequest(parserRequest, 131072))
+            : name === "eliotr_ingest_commit" ? async () => ingest.commitBundle(context, await commitBundleRequest(parserRequest, 131072))
+            : async () => ingest.completeBundleFile(context, await completeBundleRequest(parserRequest, 131072, inputIdentifier(args.operation_id, "operation_id")));
+          break;
+        }
+        case "eliotr_ingest_status":
+        case "eliotr_ingest_recovery": {
+          const operationId = inputIdentifier(args.operation_id, "operation_id");
+          const ingest = createIngestApplication(env);
+          execute = name === "eliotr_ingest_status" ? () => ingest.getBundleStatus(context, operationId)
+            : () => ingest.getBundleRecovery(context, operationId);
+          break;
+        }
         case "eliotr_project_attach": {
           const projectId = inputIdentifier(args.project_id, "project_id");
           const supplied = record(args.request);
@@ -175,9 +200,9 @@ export function createMcpResearchToolCall(env: Env, request: Request): McpResear
         }
       }
       if (!(await readReadiness(env)).ready) throw new GeminiMcpToolError("SCHEMA_NOT_READY", "Required migrations are not applied", true);
-      if (name === "eliotr_project_attach") {
-        // This shared mutator fences the exact grant through CAS and readback. Its own successful
-        // project-generation change must not be mistaken for revocation by the read-only wrapper.
+      if (name === "eliotr_project_attach" || name.startsWith("eliotr_ingest_")) {
+        // These services fence their own mutation/namespace authority and readback. They do not
+        // borrow the read-only wrapper's project scope or renew an originating grant.
         const result = await execute();
         serviceContext(env, request, toolContext, args);
         return result;

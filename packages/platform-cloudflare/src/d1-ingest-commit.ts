@@ -199,6 +199,7 @@ export async function commitAdmittedBundle(
   input: CommitAdmittedBundleInput,
   loadOperation: (operationId: string) => Promise<PreparedIngestOperation | null>,
   clock: () => number,
+  writeFence: (operationId: string) => readonly D1PreparedStatement[] = () => [],
 ): Promise<BundleAdmissionReceipt> {
   const operationId = authorityIdentifier(input.operation_id, "operation_id");
   const operation = await loadOperation(operationId);
@@ -254,6 +255,7 @@ export async function commitAdmittedBundle(
     : null;
 
   const statements: D1PreparedStatement[] = [
+    ...writeFence(operation.operation_id),
     database.prepare(
       "INSERT INTO source(source_id, source_namespace_id, source_owner_system_id, " +
       "source_owner_generation, ownership_mode, kind, origin_uri, title, default_storage_policy, " +
@@ -493,7 +495,7 @@ export async function commitAdmittedBundle(
   ];
 
   try {
-    await database.batch(statements);
+    await database.batch([...statements, ...writeFence(operation.operation_id)]);
   } catch (cause) {
     const raced = await loadOperation(operation.operation_id);
     if (raced?.bundle_receipt !== null && raced?.bundle_receipt !== undefined) {

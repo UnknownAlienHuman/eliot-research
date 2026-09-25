@@ -357,7 +357,7 @@ renewed. Independent original-owner report access and run management are compose
 Existing cancel/recover tools retain their separate permissions and execution rules. Select
 cancel/recover on the grant before creating the run: regrant cannot take over old machine runs.
 Recovery retains the original active execution and explicit spend approval; cancellation does
-not require a sponsor-template lookup. Apply the complete migration chain through the newest deployed consumer; the attachment consumer below requires 0081.
+not require a sponsor-template lookup. Apply the complete migration chain through the newest deployed consumer; the ingestion/attachment consumers below require 0082.
 No behavioral or live provider acceptance is implied by tool discovery or compilation.
 
 
@@ -379,7 +379,7 @@ Both paths retain the existing 256-source project limit and 16-KiB normalized re
 the HTTP parser also limits the actual incoming body. A service cannot rename, remove members,
 create a project or replace scheduled/time-windowed memberships. New sources do not have to
 already belong to the project, but their current revisions must independently satisfy the
-grantor's active namespace/read/admission/disclosure/owner-generation/purge constraints.
+grantor's active namespace/read/admission/disclosure/owner-generation/purge constraints, and each new source must be in the grant's explicit `ingest_namespace_ids`. Attachment-only grants may set this ceiling without enabling `ingest.bundle`; an empty ceiling is not a wildcard.
 This permission does **not** authorize bundle ingestion, preprocessing or spending.
 
 The existing CAS, membership versioning and durable mutation receipt remain one D1 batch.
@@ -399,9 +399,68 @@ a new source to an already-created Research snapshot. Existing membership roles 
 
 Migration **0081_project_client_attachment.sql** adds nullable provenance to the existing
 project guard/receipt tables and an attachment-authority view; old rows stay unchanged.
-It also strengthens exact receipt/membership matching. Apply the complete chain through0081
+It also strengthens exact receipt/membership matching. Apply the complete chain through0082
 before deploying the shared Project mutation/replay readers, including owner create/update.
 Missing schema fails closed. No deployment or remote migration is implied.
 
-This is implemented code with compilation/lint/schema review only. S98 namespace-delegated
-bundle ingestion and later signed HTTP/MCP/D1/R2 lifecycle acceptance remain outstanding.
+Migration0082 also fences new attachment namespaces in the existing CAS and receipt transaction.
+Legacy empty-ceiling grants can still be revoked; replacement active attachment grants require explicit namespaces.
+This is compilation/lint/schema-reviewed code, not signed HTTP/MCP/D1/R2 lifecycle acceptance.
+
+
+### Namespace-delegated normalized bundle ingestion (S98)
+
+The existing bundle HTTP discover/prepare/parts/file-complete/commit/status/recovery handlers accept
+an Access-verified service with `ingest.bundle` and an explicit `ingest_namespace_ids` ceiling on its
+owner-issued project grant. Supply `X-Eliotr-Client-Grant` on every request; it is not a credential.
+Connections exposes the permission and namespace list. Current namespace ownership/generation and
+the grantor's admission policy must permit the exact immutable import. This does not initialize a
+namespace, change source ownership, convert raw files, authorize paid preprocessing or attach a project.
+Server-created raw-capture views, cutover and other ownership modes remain on their separate paths.
+
+| MCP metadata tool | Existing HTTP application operation |
+| --- | --- |
+| `eliotr_ingest_prepare` | Reserve the original manifest/hash set and return upload/session locators. |
+| `eliotr_ingest_discover` | Find this client's exact prior input; no new reservation or resumed write. |
+| `eliotr_ingest_complete_file` | Complete/read back an uploaded file with the original part receipts. |
+| `eliotr_ingest_commit` | Qualify, promote exact immutable bytes and settle the source/admission/outbox transaction. |
+| `eliotr_ingest_status` | Read the current authorized status and any original terminal receipt. |
+| `eliotr_ingest_recovery` | Read original input/hash/key/session metadata; observation only. |
+
+Each tool requires `client_grant_id`. Prepare also takes a top-level `idempotency_key`, and its
+`request` is the existing manifest/total_bytes/file_hashes object. Discover takes that same object
+without a key. Complete-file takes `operation_id` plus `request` containing `multipart_session_ref`,
+`path` and the original `parts`. Commit takes `request` containing `operation_id`,
+`multipart_session_ref` and `manifest_sha256`. Status/recovery take `operation_id` directly.
+The tool dispatcher calls the same bounded HTTP parsers, preserving existing DTOs and reason codes.
+
+```json
+{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"eliotr_ingest_recovery","arguments":{"client_grant_id":"grant-example","operation_id":"ingest-example"}}}
+```
+
+Use the existing authenticated HTTP binary-part endpoint for file bytes, with the same grant,
+operation/session and server-advertised part limits. No base64 file payload or duplicate upload
+server is added to MCP. Metadata requests still fit the 128-KiB MCP envelope; the staged bundle
+keeps its existing 128-file/5-GiB default envelope. Oversized metadata is rejected, not truncated.
+An empty completion-parts list only requests exact readback of an already completed file.
+
+The existing ingest operation stores immutable original-grant provenance separately from its
+actual service author. Namespace policy checks use the grantor, never a forged owner request.
+Token refresh can continue the same operation under the same grant but cannot extend its original
+24-hour maximum deadline (also capped by grant expiry). Grant revision replacement/revocation,
+namespace ownership change or changed policy denies continuation and receipt disclosure.
+Project generation is fenced within each request, not frozen for the upload lifetime: subsequent
+attachment does not invalidate an already committed upload receipt while the same grant/owner and
+namespace policy remain valid. Existing current-source/head and purge checks are unchanged.
+
+D1 credential/grant/project assertions run inside the existing writes. Promotion rechecks authority
+between objects and before receipt publication. A late denial may leave staged/immutable objects
+for existing reconciliation/cleanup; it is not proof of zero effects and never alone grants retrieval
+or evidence authority. Lost acknowledgements reuse exact stored decisions/bytes and the same key;
+commit validates session and manifest hash even when returning a terminal receipt. Admission is
+separate from asynchronous projection readiness and from separately authorized project attachment.
+
+Apply the complete migration chain through **0082_project_client_bundle_ingest.sql** before deploying
+the shared ingest readers, grant mutations and attachment consumers, including owner paths. It adds
+nullable origin on the existing operation and assertion views/guards, not another grant store.
+No behavioral/native/live acceptance, remote migration or deployment is implied by this code checkpoint.

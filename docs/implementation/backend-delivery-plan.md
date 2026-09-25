@@ -93,7 +93,12 @@ S98 now composes append-only project attachment through the existing HTTP Projec
 Migration0081 records the real service actor and exact original grant revision in existing mutation
 guards/receipts, with write-time CAS/expiry fences and authorized same-key replay. No rename or
 detach, new source ownership, preprocessing, paid effect or expansion of old Research scopes.
-Compilation/static review only; namespace-delegated bundle ingestion and native acceptance remain.
+S98 also composes namespace-delegated normalized bundle prepare/parts/file-complete/commit/status/recovery/discovery
+through the existing ingest pipeline and service-token MCP metadata adapters. Migration0082 binds the real client
+and original grant revision on the existing operation; current grantor policy/ownership and per-request
+credential/project fences remain mandatory. Only immutable normalized imports, not raw conversion or cutover.
+Attachment additions now require the explicit namespace ceiling; attachment-only grants need no ingest permission.
+Compilation/static review only; native lifecycle and live acceptance remain.
 Apply all migrations through 0080 before deploying the changed shared grant/history readers. Connections manages
 grants through the existing API and provides the independent opt-in service catalog-read command
 (`scripts/check-project-client.mjs --help`). Configured is not connected: the PWA does not claim

@@ -168,7 +168,7 @@ function prerequisites(
     hashesVerified: exactHashSet(operation.file_hashes, verification.hashes),
     originAuthenticated: operation.origin_authentication_receipt_ref.length > 0,
     residencyResolved: operation.residency_key_digest.length === 64,
-    policyAllowed: operation.policy.authorized_principal_refs.includes(operation.principal_ref) &&
+    policyAllowed: operation.policy.authorized_principal_refs.includes(operation.client_origin?.grant.grantor_principal_ref ?? operation.principal_ref) &&
       operation.policy.allowed_ownership_modes.includes(operation.manifest.origin.ownership_mode),
     licenseAllowed: operation.policy.license_policy_ref.length > 0,
     qualificationCompleted: qualification.overall !== "REJECTED",

@@ -1,4 +1,4 @@
-import type { BundleAdmissionReceipt, NormalizedBundleManifest, ObjectResidencyKey, QualificationReport, SourceAdmissionDecision } from "@eliotr/contracts";
+import type { ProjectClientGrant, BundleAdmissionReceipt, NormalizedBundleManifest, ObjectResidencyKey, QualificationReport, SourceAdmissionDecision } from "@eliotr/contracts";
 import type { BundlePromotionAuthorization, BundlePromotionReceipt } from "./ingest-types.js";
 export type { BundlePromotionReceipt } from "./ingest-types.js";
 
@@ -22,7 +22,19 @@ export interface IngestAdmissionPolicySnapshot {
   readonly minimum_quality_state: NormalizedBundleManifest["quality"]["state"];
   readonly created_at: string;
 }
+export interface IngestClientOrigin {
+  readonly grant: ProjectClientGrant;
+}
+
+export interface IngestClientAuthorization {
+  readonly project_generation: number;
+  readonly origin: IngestClientOrigin;
+  readonly credential_expires_at: string;
+  requireCurrent(): Promise<void>;
+}
+
 export interface PreparedIngestOperation {
+  readonly client_origin?: IngestClientOrigin;
   readonly operation_id: string;
   readonly principal_ref: string;
   readonly origin_authentication_receipt_ref: string;

@@ -1,4 +1,4 @@
-import { ScopeExpressionSchema, VersionedRefSchema } from "@eliotr/contracts";
+import { NormalizedBundleManifestSchema, ScopeExpressionSchema, VersionedRefSchema } from "@eliotr/contracts";
 import type { McpToolCallContext, McpToolDefinition } from "./gemini-mcp-protocol.js";
 
 const identifier = { type: "string", minLength: 1, maxLength: 256,
@@ -17,11 +17,69 @@ const annotations = (idempotent: boolean) => ({
   readOnlyHint: false, destructiveHint: false, idempotentHint: idempotent, openWorldHint: false,
 }) as const;
 
+const bundleRequest = { type: "object", additionalProperties: false,
+  required: ["manifest", "total_bytes", "file_hashes"],
+  properties: { manifest: NormalizedBundleManifestSchema.toJSONSchema(),
+    total_bytes: { type: "integer", minimum: 1, maximum: 5368709120 },
+    file_hashes: { type: "object", minProperties: 3, maxProperties: 128,
+      additionalProperties: { type: "string", pattern: "^[a-f0-9]{64}$" } } } } as const;
+
 /** One registry for names, discovery schemas and dispatch. Only implemented consumers; cancellation is an explicit destructive control. */
 export const MCP_RESEARCH_TOOLS = {
+  eliotr_ingest_prepare: {
+    name: "eliotr_ingest_prepare",
+    description: "Prepare an immutable normalized bundle in an explicitly granted namespace. Requires ingest.bundle. The actual client, original grant revision, manifest/hashes and idempotency key bind the upload. Return values are staging locators, not admission or evidence. Upload bytes through the existing authenticated HTTP multipart endpoint; no raw conversion, model dispatch or automatic project attachment.",
+    inputSchema: { type: "object", additionalProperties: false, required: ["client_grant_id", "idempotency_key", "request"],
+      properties: { ...grant, idempotency_key: identifier, request: bundleRequest } },
+    annotations: annotations(true),
+  },
+  eliotr_ingest_discover: {
+    name: "eliotr_ingest_discover",
+    description: "Locate this client's exact existing normalized upload using its manifest, byte total and file hashes. Returns the existing recovery identity, never creates an upload. The original ingest.bundle grant revision and namespace authority must still be valid.",
+    inputSchema: { type: "object", additionalProperties: false, required: ["client_grant_id", "request"],
+      properties: { ...grant, request: bundleRequest } },
+    annotations: { ...annotations(true), readOnlyHint: true },
+  },
+  eliotr_ingest_complete_file: {
+    name: "eliotr_ingest_complete_file",
+    description: "Complete one previously uploaded file using its original part receipts. Empty parts requests readback of an already completed file, not a new upload. Checks exact staged bytes. Does not admit a source. HTTP and MCP use the same completion service and identifiers.",
+    inputSchema: { type: "object", additionalProperties: false, required: ["client_grant_id", "operation_id", "request"],
+      properties: { ...grant, operation_id: identifier, request: { type: "object", additionalProperties: false,
+        required: ["multipart_session_ref", "path", "parts"], properties: { multipart_session_ref: identifier,
+          path: { type: "string", minLength: 1, maxLength: 1024 }, parts: { type: "array", maxItems: 10000,
+            items: { type: "object", additionalProperties: false, required: ["part_number", "size_bytes", "etag"],
+              properties: { part_number: { type: "integer", minimum: 1, maximum: 10000 },
+                size_bytes: { type: "integer", minimum: 1, maximum: 268435456 },
+                etag: { type: "string", minLength: 1, maxLength: 1024 } } } } } } } },
+    annotations: annotations(true),
+  },
+  eliotr_ingest_commit: {
+    name: "eliotr_ingest_commit",
+    description: "Qualify, publish immutable bundle bytes and commit source admission through the existing guarded D1/R2 service. Uses the original operation/session/manifest hash; reconcile uncertain results without a new identity. Requires the exact original ingest.bundle grant and namespace. Returns ADMITTED, QUARANTINED or REJECTED honestly. Admission queues existing projections but is not index/evidence readiness or project attachment.",
+    inputSchema: { type: "object", additionalProperties: false, required: ["client_grant_id", "request"],
+      properties: { ...grant, request: { type: "object", additionalProperties: false,
+        required: ["operation_id", "multipart_session_ref", "manifest_sha256"],
+        properties: { operation_id: identifier, multipart_session_ref: identifier,
+          manifest_sha256: { type: "string", pattern: "^[a-f0-9]{64}$" } } } } },
+    annotations: annotations(true),
+  },
+  eliotr_ingest_status: {
+    name: "eliotr_ingest_status",
+    description: "Read the original client's authorized ingest operation and terminal receipt. Does not import, convert or start models. A known operation ID cannot bypass namespace/grant checks.",
+    inputSchema: { type: "object", additionalProperties: false, required: ["client_grant_id", "operation_id"],
+      properties: { ...grant, operation_id: identifier } },
+    annotations: { ...annotations(true), readOnlyHint: true },
+  },
+  eliotr_ingest_recovery: {
+    name: "eliotr_ingest_recovery",
+    description: "Read the exact existing upload identity, manifest hash, file hashes and total bytes after a lost response. A refreshed token for the same client is allowed, a changed or expired grant is not. This is observation only: it neither retries writes nor extends upload lifetime.",
+    inputSchema: { type: "object", additionalProperties: false, required: ["client_grant_id", "operation_id"],
+      properties: { ...grant, operation_id: identifier } },
+    annotations: { ...annotations(true), readOnlyHint: true },
+  },
   eliotr_project_attach: {
     name: "eliotr_project_attach",
-    description: "Append independently admitted, owner-readable sources to one project with project.attach permission. Supply the unchanged title, complete desired source ID set (including all existing members), expected project revision and a stable action key. Uses the same guarded HTTP project update and receipt; cannot rename, detach, create source ownership or dispatch preprocessing/models. Repeat an uncertain response with exactly the same input/key/grant revision. Existing research scopes never expand.",
+    description: "Append independently admitted, owner-readable sources from explicitly granted ingest_namespace_ids to one project with project.attach permission. Supply the unchanged title, complete desired source ID set (including all existing members), expected project revision and a stable action key. Uses the same guarded HTTP project update and receipt; cannot rename, detach, create source ownership or dispatch preprocessing/models. Repeat an uncertain response with exactly the same input/key/grant revision. Existing research scopes never expand.",
     inputSchema: { type: "object", additionalProperties: false,
       required: ["client_grant_id", "project_id", "idempotency_key", "request"],
       properties: { ...grant, project_id: identifier, idempotency_key: identifier,

@@ -334,6 +334,7 @@ export function createR2StagedBundlePort(
         evidence_store: evidence,
         session,
         admission_receipt_ref: admissionReceiptRef,
+        ...(dependencies.require_current ? { require_current: dependencies.require_current } : {}),
         now,
         ...(dependencies.create_sha256_sink === undefined
           ? {}

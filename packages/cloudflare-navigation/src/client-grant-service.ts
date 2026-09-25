@@ -101,9 +101,9 @@ export function createProjectClientGrantService(options: ClientGrantServiceOptio
         grantId(sponsorship.deployment_generation);
         authorityDeadline = Math.min(authorityDeadline, Date.parse(sponsorship.expires_at));
       }
-      const imports = input.allowed_operations.some((op) => op === "ingest.bundle" || op === "workspace.admit");
-      if (imports && input.ingest_namespace_ids.length === 0) grantFail("CLIENT_GRANT_NAMESPACE_DENIED", 403, "Import rights require explicit namespaces");
-      if (!imports && input.ingest_namespace_ids.length !== 0) grantFail("CLIENT_GRANT_INPUT_INVALID", 400, "Import namespaces require an import operation");
+      const imports = input.allowed_operations.some((op) => op === "ingest.bundle" || op === "workspace.admit" || op === "project.attach");
+      if (imports && input.ingest_namespace_ids.length === 0) grantFail("CLIENT_GRANT_NAMESPACE_DENIED", 403, "Import and attachment rights require explicit namespaces");
+      if (!imports && input.ingest_namespace_ids.length !== 0) grantFail("CLIENT_GRANT_INPUT_INVALID", 400, "Namespace ceilings require an import or attachment operation");
       await requireClientGrantNamespaces(db, principal, input.ingest_namespace_ids);
       const refs = await readClientProjectMembers(db, projectId, instant);
       const sourceAuthority = createOwnerScopeAuthority(db, context, now);

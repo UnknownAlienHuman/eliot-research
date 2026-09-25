@@ -20,8 +20,8 @@ export async function prepareProjectAttachment(db: D1Database, context: Authenti
   }
   const marker = await db.prepare("SELECT value FROM schema_state WHERE key='project_client_attachment_generation'")
     .first<{ value: string }>();
-  if (marker?.value !== "project-client-attachment-v1") {
-    fail("PROJECT_STORAGE_UNAVAILABLE", 503, "Project attachment requires migration 0081", true);
+  if (marker?.value !== "project-client-attachment-v2") {
+    fail("PROJECT_STORAGE_UNAVAILABLE", 503, "Project attachment requires migration 0082", true);
   }
   const lease = await authorizeProjectClientGrant(db, context, { operation: "project.attach", project_id: projectId }, now);
   const grant = lease.grant;
@@ -55,6 +55,11 @@ export async function prepareProjectAttachment(db: D1Database, context: Authenti
 
   async function beforeWrite(): Promise<readonly (string | number)[]> {
     await lease.requireCurrent();
+    const outside = await db.prepare("SELECT 1 AS present FROM source s WHERE s.source_id IN (SELECT value FROM json_each(?1)) " +
+      "AND NOT EXISTS (SELECT 1 FROM project_source_membership m WHERE m.project_id=?2 AND m.source_id=s.source_id AND m.valid_to IS NULL) " +
+      "AND NOT EXISTS (SELECT 1 FROM json_each(?3) n WHERE n.value=s.source_namespace_id) LIMIT 1")
+      .bind(JSON.stringify(input.source_ids), projectId, JSON.stringify(grant.ingest_namespace_ids)).first();
+    if (outside) fail("PROJECT_SOURCE_DENIED", 403, "New sources must belong to an explicitly granted namespace");
     const instant = nowValue(now).millis;
     deadline = await frontier(lease, input.source_ids, instant);
     if (await eligibleCount(db, input.source_ids, grant.grantor_principal_ref, new Date(instant).toISOString()) !== input.source_ids.length) {
@@ -111,5 +116,9 @@ export const PROJECT_ATTACHMENT_CAS =
   "AND (julianday(m.valid_from)>julianday('now') OR julianday(m.valid_to)>julianday('now'))) " +
   "AND EXISTS (SELECT 1 FROM project_attachment_authority g WHERE g.project_id=?1 AND g.grantor_principal_ref=?3 " +
   "AND g.grant_id=?9 AND g.revision=?10 AND g.grantee_issuer=?11 AND g.grantee_subject=?12 AND g.record_sha256=?13) " +
+  "AND NOT EXISTS (SELECT 1 FROM requested q JOIN source s ON s.source_id=q.source_id " +
+  "WHERE NOT EXISTS (SELECT 1 FROM project_source_membership m WHERE m.project_id=?1 AND m.source_id=q.source_id AND m.valid_to IS NULL) " +
+  "AND NOT EXISTS (SELECT 1 FROM project_attachment_authority a,json_each(a.record_json,'$.ingest_namespace_ids') n " +
+  "WHERE a.grant_id=?9 AND a.revision=?10 AND n.value=s.source_namespace_id)) " +
   "AND (SELECT generation FROM orientation_authority_epoch WHERE singleton=1)=?14 " +
   "AND julianday(?15)>julianday('now')";
