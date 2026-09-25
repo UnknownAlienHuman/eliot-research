@@ -1,0 +1,140 @@
+name: stage-s98-ingest
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/stage-s98-ingest.yml]
+permissions:
+  contents: write
+jobs:
+  stage:
+    if: github.repository == 'UnknownAlienHuman/eliot-research' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: main
+          fetch-depth: 2
+          persist-credentials: false
+      - name: Stage exact reviewed source blobs without publishing a ref
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import base64, gzip, hashlib, json, os, pathlib, subprocess, urllib.request
+          repo = 'UnknownAlienHuman/eliot-research'
+          base = '4a34107a7624234cf5b8d0bd4e81a70ae43fa226'
+          tree = 'aead871a539bbea2b3d3d4770a2693c2833dee14'
+          patch_sha = '0c457f9234aa3eba40ff75436bce695af99b2e0baa1075ac178e9afa55abf414'
+          workflow = '.github/workflows/stage-s98-ingest.yml'
+          chunks = [
+            '7f1015b87580f23acb54add478418ce30366bbdd',
+            'cab7f77258db5c25a1f2c50c2bc3733ec09e4d41',
+            'cd2da470e0406d00324272fb26be3b81d827ddf9',
+            'c08eff8b5591d5e259047189e7f7975a97a4a6d7',
+            '36ce3e1312ac690069e35477d737fe0e5e97e6a6',
+            'd029317b5cdfbb6b7848b62540c1db5e10b18f20',
+            '242428a313a3c2d2e9f1b46aec094bbd8f65d0a4',
+            '1914a224d4bd8ceef25e6c12b349ed57c98ad38e',
+            'ecad2efa3c53dcd56796e620783d4e1efac1a386',
+            'da24b7960c8ca1996414032be1cf0620da5a8c18',
+            '2137f4f71121518db031712cb0a5192181555d60',
+            'c5c4e7d69a859aac99e0b4dfe3f46a689b9fe5d9',
+            '3378fcb00b33cb945e528ce36a7f588e8751e742',
+            'b21bde8a8be60b0fe2c90de764a213dd6eac6969',
+            'bbd174b29ddedd003ce1de11babf94c71059a1f3',
+            '086d4fa37d553d3f03bd6a0ded7669f06bb560b0',
+            '9f5d1192e382d239fd072c9297a5650d3b77dccb',
+            '698d9053c55fe59686ff29a8d58ce6ddf4a78a06',
+            '7bc181c32d77e60437861b1424c9569f06901d7a',
+            '16ac15d7dd657c0c65ee1aee876765baa1c727bd',
+            '9f0b46f5995b058dd1d8105d863bbdce8a4a69e4',
+            '9c9fef5ef7fd5cc509c92e760691bb1dea7d9175',
+            '5a9443df786ef8a23f94be2dcbe00b6dc5eeb002',
+            'ce32c8ad4e2f7a2b3aed70084a08052f1b408074',
+            '981956d6057cd025c3e7f9f5fde76e6fa6b47ef5',
+            'dcce7f7b52f29c35bd23e6287c9e543e471eeada',
+          ]
+          paths = [
+            '.github/workflows/export-current-source.yml',
+            'apps/eliotr-core/src/composition-root.ts',
+            'apps/eliotr-core/src/ingest-composition.ts',
+            'apps/eliotr-core/src/ingest-http.ts',
+            'apps/eliotr-core/src/ingest-service.ts',
+            'apps/eliotr-core/src/mcp-research-service.ts',
+            'apps/eliotr-core/src/project-client-attachment.ts',
+            'apps/eliotr-core/src/source-admission-service.ts',
+            'apps/eliotr-pwa/src/client-grant-view.ts',
+            'docs/agent-work/ER-24-worker-composition-do-queue-and-schedules.md',
+            'docs/agent-work/ER-37-governed-ingest-admission-composition.md',
+            'docs/agent-work/manifest.json',
+            'docs/agent-work/packets/ER-37.json',
+            'docs/implementation/backend-delivery-plan.md',
+            'docs/implementation/gap-register.md',
+            'docs/implementation/gemini-spark-mcp.md',
+            'docs/implementation/implementation-status.json',
+            'infra/d1/core/migrations/0082_project_client_bundle_ingest.sql',
+            'packages/cloudflare-navigation/src/client-grant-service.ts',
+            'packages/cloudflare-workspace-mcp/src/gemini-mcp-research-tools.ts',
+            'packages/platform-cloudflare/src/d1-ingest-authority.ts',
+            'packages/platform-cloudflare/src/d1-ingest-client.ts',
+            'packages/platform-cloudflare/src/d1-ingest-commit.ts',
+            'packages/platform-cloudflare/src/d1-ingest-policy.ts',
+            'packages/platform-cloudflare/src/d1-ingest-source-head.ts',
+            'packages/platform-cloudflare/src/d1-ingest-types.ts',
+            'packages/platform-cloudflare/src/d1-ingest-validation.ts',
+            'packages/platform-cloudflare/src/ingest-promotion.ts',
+            'packages/platform-cloudflare/src/ingest-types.ts',
+            'packages/platform-cloudflare/src/ingest.ts',
+          ]
+          def git(*args):
+            return subprocess.check_output(['git', *args], text=True).strip()
+          def blob_sha(data):
+            return hashlib.sha1(('blob '+str(len(data))+'\0').encode()+data).hexdigest()
+          def api(path, data=None):
+            payload = None if data is None else json.dumps(data).encode()
+            request = urllib.request.Request('https://api.github.com/repos/'+repo+path, data=payload,
+              headers={'Authorization': 'Bearer '+os.environ['GH_TOKEN'], 'Accept': 'application/vnd.github+json',
+                'X-GitHub-Api-Version': '2022-11-28', 'Content-Type': 'application/json'},
+              method='GET' if data is None else 'POST')
+            with urllib.request.urlopen(request, timeout=30) as response:
+              return json.load(response)
+          assert os.environ['GITHUB_REPOSITORY'] == repo
+          assert git('branch', '--show-current') == 'main'
+          assert git('rev-parse', 'HEAD') == os.environ['GITHUB_SHA']
+          assert git('rev-parse', 'HEAD^') == base
+          parts = []
+          for sha in chunks:
+            stored = api('/git/blobs/'+sha)
+            assert stored['encoding'] == 'base64'
+            part = base64.b64decode(stored['content'])
+            assert blob_sha(part) == sha
+            parts.append(part)
+          patch = gzip.decompress(b''.join(parts))
+          assert hashlib.sha256(patch).hexdigest() == patch_sha
+          subprocess.run(['git','apply','--check'], input=patch, check=True)
+          subprocess.run(['git','apply','--index'], input=patch, check=True)
+          assert sorted(git('diff','--cached','--name-only').splitlines()) == paths
+          subprocess.run(['git','rm','--cached','--',workflow],check=True)
+          assert git('write-tree') == tree
+          entries = []
+          for path in paths:
+            data = pathlib.Path(path).read_bytes()
+            expected = blob_sha(data)
+            result = api('/git/blobs', {'encoding':'base64','content':base64.b64encode(data).decode()})
+            assert result['sha'] == expected
+            entries.append({'path':path,'mode':'100644','type':'blob','sha':expected})
+          out = pathlib.Path('/tmp/s98-ingest-manifest')
+          out.mkdir(parents=True,exist_ok=True)
+          (out/'manifest.json').write_text(json.dumps({'base':base,'transport_parent':os.environ['GITHUB_SHA'],
+            'tree':tree,'patch_sha256':patch_sha,'entries':entries},indent=2)+'\n')
+          print('Staged 30 exact reviewed source blobs; no ref, deployment or database changed.')
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: s98-ingest-manifest
+          path: /tmp/s98-ingest-manifest/
+          retention-days: 3
+          if-no-files-found: error
