@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { WorkflowFailure } from "./failures.js";
 import { ObjectResidencyKeySchema, ResearchWorkflowStageSchema, Sha256Schema } from "@eliotr/contracts";
 
 export const MAX_WORKFLOW_OUTPUT_BYTES = 8 * 1024 * 1024;
@@ -77,9 +78,16 @@ export type WorkflowStageHandler = (input: {
 export type WorkflowErrorCode =
   | "WORKFLOW_INPUT_INVALID" | "WORKFLOW_CONFLICT" | "WORKFLOW_AUTHORITY_STALE"
   | "WORKFLOW_STAGE_OUT_OF_ORDER" | "WORKFLOW_CANCELLED" | "WORKFLOW_BUDGET_STOP"
-  | "WORKFLOW_EFFECT_UNCERTAIN" | "WORKFLOW_OUTPUT_UNAVAILABLE" | "WORKFLOW_OUTPUT_CORRUPT";
+  | "WORKFLOW_EFFECT_UNCERTAIN" | "WORKFLOW_OUTPUT_UNAVAILABLE" | "WORKFLOW_OUTPUT_CORRUPT"
+  | "WORKFLOW_CONFIGURATION_MISSING"
+  | "WORKFLOW_CONFIGURATION_INVALID"
+  | "WORKFLOW_CREDENTIALS_MISSING"
+  | "WORKFLOW_CREDENTIALS_INVALID"
+  | "WORKFLOW_STORAGE_UNAVAILABLE"
+  | "WORKFLOW_QUALIFICATION_STALE"
+  | "WORKFLOW_PREPARATION_FAILED";
 export class WorkflowCheckpointError extends Error {
-  constructor(readonly code: WorkflowErrorCode) {
+  constructor(readonly code: WorkflowErrorCode, readonly failure?: WorkflowFailure) {
     super(code);
     this.name = "WorkflowCheckpointError";
   }

@@ -1,3 +1,4 @@
+import { workflowFailure, retainWorkflowFailure } from "@eliotr/cloudflare-workflows";
 // IMPLEMENTED_NOT_LIVE: ER-09 monotone bounded Workflow executor over durable D1/R2 checkpoints; governed model/evidence handlers and live qualification remain separate.
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloudflare:workers";
 import { NonRetryableError } from "cloudflare:workflows";
@@ -209,147 +210,170 @@ export class ResearchWorkflow extends WorkflowEntrypoint<Env, ResearchWorkflowPa
       });
       return result;
     }
-    await requireResearchDeploymentCompatibility(this.env.CORE_DB, params.deployment_generation, this.env.DEPLOYMENT_GENERATION);
     const principal: WorkflowPrincipal = {
       principal_ref: params.principal_ref,
       credential_generation: params.credential_generation,
       deployment_generation: params.deployment_generation,
     };
-    const ledger = createD1InvestigationLedgerStore(this.env.CORE_DB as unknown as LedgerD1Database);
-    const investigation = await ledger.read(params.investigation_ref.id);
-    if (investigation === null || investigation.head.principal_ref !== principal.principal_ref ||
-        investigation.head.deployment_generation !== principal.deployment_generation) {
-      failWorkflow("WORKFLOW_AUTHORITY_STALE");
-    }
-    const lane = investigation.head.lane;
-    const semanticOwned = isSemanticResearchHandlerGeneration(params.handler_generation);
-    const serverOwned = semanticOwned || params.handler_generation === SERVER_OWNED_RESEARCH_HANDLER_GENERATION || params.handler_generation === SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION;
-    const retrievalOwned = params.handler_generation === SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION;
-    let handlers: ResearchStageHandlerFactory;
-    if (lane === "confirmatory") {
-      if (serverOwned) failWorkflow("WORKFLOW_AUTHORITY_STALE");
-      handlers = createResearchStageHandlerFactory({ kind: "legacy-deterministic" });
-    } else if (lane === "exploratory") {
-      if (!serverOwned) failWorkflow("WORKFLOW_AUTHORITY_STALE");
-      const evidence = createD1EvidenceAuthorityPort({
-        core_database: this.env.CORE_DB,
-        search_database: this.env.SEARCH_DB,
-      });
-      const scopeAuthority = await evidence.loadScope({
-        id: investigation.head.scope_snapshot_id,
-        revision: investigation.head.scope_snapshot_revision,
-      });
-      if (scopeAuthority === null) failWorkflow("WORKFLOW_AUTHORITY_STALE");
-      const access = await loadResearchExecutionAccess(this.env, params.operation_id, principal);
-      const scopePorts = createD1ScopePorts(this.env.CORE_DB, access);
-      const navigation = createNavigationReadAuthority({
-        database: this.env.CORE_DB,
-        scope_snapshot: scopeAuthority.snapshot,
-        access,
-        require_current: async (scope) => {
-          await scopePorts.requireCurrentScope(scope);
-          if (access.client_class !== "owner_pwa") await requireClientResearchExecution(this.env, access, scope,
-            params.operation_id, principal.deployment_generation);
-          return scope;
-        },
-      });
-      if (params.qualification_renewal !== undefined && (!semanticOwned || access.client_class !== "owner_pwa")) {
+    let activeStage: ResearchWorkflowStage | undefined;
+    let nativeStepPending = false;
+    try {
+      await requireResearchDeploymentCompatibility(this.env.CORE_DB, params.deployment_generation, this.env.DEPLOYMENT_GENERATION);
+      const ledger = createD1InvestigationLedgerStore(this.env.CORE_DB as unknown as LedgerD1Database);
+      const investigation = await ledger.read(params.investigation_ref.id);
+      if (investigation === null || investigation.head.principal_ref !== principal.principal_ref ||
+          investigation.head.deployment_generation !== principal.deployment_generation) {
         failWorkflow("WORKFLOW_AUTHORITY_STALE");
       }
-      if (semanticOwned && params.qualification_renewal === RESEARCH_QUALIFICATION_RENEWAL_MARKER) {
-        await step.do("research-qualification-renewal", {
-          retries: { limit: 0, delay: 0 },
-          timeout: 600_000,
-        }, async () => {
-          try {
-            await renewResearchQualifications(this.env, {
-              operation_id: params.operation_id,
-              investigation,
-              principal,
-              navigation,
-              initial_manifest: params.initial_input_manifest,
-            });
-          } catch (error) {
-            const code = error instanceof Error && "code" in error
-              ? String((error as { code: unknown }).code)
-              : "RESEARCH_QUALIFICATION_RENEWAL_UNAVAILABLE";
-            failWorkflow(code);
-          }
-          return { protocol: "eliotr.research-qualification-renewal.v1", state: "CURRENT" as const };
+      const lane = investigation.head.lane;
+      const semanticOwned = isSemanticResearchHandlerGeneration(params.handler_generation);
+      const serverOwned = semanticOwned || params.handler_generation === SERVER_OWNED_RESEARCH_HANDLER_GENERATION || params.handler_generation === SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION;
+      const retrievalOwned = params.handler_generation === SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION;
+      let handlers: ResearchStageHandlerFactory;
+      if (lane === "confirmatory") {
+        if (serverOwned) failWorkflow("WORKFLOW_AUTHORITY_STALE");
+        handlers = createResearchStageHandlerFactory({ kind: "legacy-deterministic" });
+      } else if (lane === "exploratory") {
+        if (!serverOwned) failWorkflow("WORKFLOW_AUTHORITY_STALE");
+        const evidence = createD1EvidenceAuthorityPort({
+          core_database: this.env.CORE_DB,
+          search_database: this.env.SEARCH_DB,
         });
+        const scopeAuthority = await evidence.loadScope({
+          id: investigation.head.scope_snapshot_id,
+          revision: investigation.head.scope_snapshot_revision,
+        });
+        if (scopeAuthority === null) failWorkflow("WORKFLOW_AUTHORITY_STALE");
+        const access = await loadResearchExecutionAccess(this.env, params.operation_id, principal);
+        const scopePorts = createD1ScopePorts(this.env.CORE_DB, access);
+        const navigation = createNavigationReadAuthority({
+          database: this.env.CORE_DB,
+          scope_snapshot: scopeAuthority.snapshot,
+          access,
+          require_current: async (scope) => {
+            await scopePorts.requireCurrentScope(scope);
+            if (access.client_class !== "owner_pwa") await requireClientResearchExecution(this.env, access, scope,
+              params.operation_id, principal.deployment_generation);
+            return scope;
+          },
+        });
+        if (params.qualification_renewal !== undefined && (!semanticOwned || access.client_class !== "owner_pwa")) {
+          failWorkflow("WORKFLOW_AUTHORITY_STALE");
+        }
+        if (semanticOwned && params.qualification_renewal === RESEARCH_QUALIFICATION_RENEWAL_MARKER) {
+          nativeStepPending = true;
+          await step.do("research-qualification-renewal", {
+            retries: { limit: 0, delay: 0 },
+            timeout: 600_000,
+          }, async () => {
+            try {
+              await renewResearchQualifications(this.env, {
+                operation_id: params.operation_id,
+                investigation,
+                principal,
+                navigation,
+                initial_manifest: params.initial_input_manifest,
+              });
+            } catch (error) {
+              const failure = workflowFailure(error, "PREPARATION");
+              await retainWorkflowFailure(this.env.CORE_DB, params.operation_id, principal, failure);
+              throw new WorkflowCheckpointError("WORKFLOW_PREPARATION_FAILED", failure);
+            }
+            return { protocol: "eliotr.research-qualification-renewal.v1", state: "CURRENT" as const };
+          });
+          nativeStepPending = false;
+        }
+        handlers = semanticOwned
+          ? await createResearchSemanticServerHandlers({ env: this.env, operation_id: params.operation_id,
+            investigation_id: params.investigation_ref.id, principal, navigation, ledger,
+            initial_manifest: params.initial_input_manifest })
+          : createResearchStageHandlerFactory({
+          kind: "server-owned-exploratory",
+          generation: retrievalOwned ? SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION : SERVER_OWNED_RESEARCH_HANDLER_GENERATION,
+          navigation, ledger,
+          environment: this.env,
+        });
+      } else {
+        failWorkflow("WORKFLOW_AUTHORITY_STALE");
       }
-      handlers = semanticOwned
-        ? await createResearchSemanticServerHandlers({ env: this.env, operation_id: params.operation_id,
-          investigation_id: params.investigation_ref.id, principal, navigation, ledger,
-          initial_manifest: params.initial_input_manifest })
-        : createResearchStageHandlerFactory({
-        kind: "server-owned-exploratory",
-        generation: retrievalOwned ? SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION : SERVER_OWNED_RESEARCH_HANDLER_GENERATION,
-        navigation, ledger,
-        environment: this.env,
-      });
-    } else {
-      failWorkflow("WORKFLOW_AUTHORITY_STALE");
-    }
-    const ports = createServerPorts(this.env.CORE_DB, params.operation_id, handlers.recoverStartedAttempt);
-    const executor = createWorkflowCheckpointExecutor(this.env.CORE_DB, this.env.WORK_BUCKET, ports);
-    let investigation_ref: VersionedRef = { ...params.investigation_ref };
-    let input_manifest: WorkflowObject = params.initial_input_manifest;
-    const receipt_refs: string[] = [];
-    let output_manifest: WorkflowObject = input_manifest;
-    for (let index = 0; index < RESEARCH_WORKFLOW_STAGES.length; index += 1) {
-      const stage = RESEARCH_WORKFLOW_STAGES[index] as ResearchWorkflowStage;
-      const request = {
-        protocol: "eliotr.workflow-stage.v1" as const,
+      const ports = createServerPorts(this.env.CORE_DB, params.operation_id, handlers.recoverStartedAttempt);
+      const executor = createWorkflowCheckpointExecutor(this.env.CORE_DB, this.env.WORK_BUCKET, ports);
+      let investigation_ref: VersionedRef = { ...params.investigation_ref };
+      let input_manifest: WorkflowObject = params.initial_input_manifest;
+      const receipt_refs: string[] = [];
+      let output_manifest: WorkflowObject = input_manifest;
+      for (let index = 0; index < RESEARCH_WORKFLOW_STAGES.length; index += 1) {
+        const stage = RESEARCH_WORKFLOW_STAGES[index] as ResearchWorkflowStage;
+        activeStage = stage;
+        const request = {
+          protocol: "eliotr.workflow-stage.v1" as const,
+          operation_id: params.operation_id,
+          investigation_ref: { ...investigation_ref },
+          stage,
+          idempotency_key: params.idempotency_key,
+          handler_generation: params.handler_generation,
+          input_manifest,
+        };
+        const executeStage = async (): Promise<StageReceipt> => {
+          try {
+            const outcome = await executor.execute(request, principal, handlers(stage));
+            const text = JSON.stringify(outcome);
+            if (new TextEncoder().encode(text).byteLength > MAX_WORKFLOW_RECEIPT_BYTES) failWorkflow("WORKFLOW_INPUT_INVALID");
+            if ("completion_disposition" in outcome) failWorkflow("WORKFLOW_INPUT_INVALID");
+            return outcome;
+          } catch (error) {
+            // The executor already records handler/recovery failures before step serialization.
+            const failure = workflowFailure(error, "STAGE", stage);
+            await retainWorkflowFailure(this.env.CORE_DB, params.operation_id, principal, failure);
+            if (failure.code === "WORKFLOW_OUTPUT_CORRUPT") {
+              throw new NonRetryableError(failure.code, "WorkflowCheckpointError");
+            }
+            throw error;
+          }
+        };
+        const stepName = `w2-stage-${String(index).padStart(2, "0")}-${stage}`;
+        nativeStepPending = true;
+        const receipt = isResearchModelStage(stage)
+          ? await step.do(stepName, {
+            retries: { limit: 0, delay: 0 },
+            timeout: researchStageBudgetLeaseMs(stage),
+          }, executeStage)
+          : await step.do(stepName, {
+            retries: { limit: 0, delay: 0 },
+          }, executeStage);
+        nativeStepPending = false;
+        const expectedEngine = index === RESEARCH_WORKFLOW_STAGES.length - 1 ? "ENGINE_COMPLETED" : "CHECKPOINTED";
+        if (receipt.engine_state !== expectedEngine || receipt.operation_id !== params.operation_id || receipt.stage !== stage) {
+          failWorkflow("WORKFLOW_OUTPUT_CORRUPT");
+        }
+        receipt_refs.push(receipt.receipt_ref);
+        investigation_ref = { ...receipt.investigation_ref };
+        input_manifest = receipt.output_manifest;
+        output_manifest = receipt.output_manifest;
+      }
+      const result: ResearchWorkflowResult = {
         operation_id: params.operation_id,
         investigation_ref: { ...investigation_ref },
-        stage,
-        idempotency_key: params.idempotency_key,
-        handler_generation: params.handler_generation,
-        input_manifest,
+        state: "ENGINE_COMPLETED",
+        receipt_refs: [...receipt_refs],
+        output_manifest_ref: output_manifest.object_ref,
       };
-      const executeStage = async (): Promise<StageReceipt> => {
-        try {
-          const outcome = await executor.execute(request, principal, handlers(stage));
-          const text = JSON.stringify(outcome);
-          if (new TextEncoder().encode(text).byteLength > MAX_WORKFLOW_RECEIPT_BYTES) failWorkflow("WORKFLOW_INPUT_INVALID");
-          if ("completion_disposition" in outcome) failWorkflow("WORKFLOW_INPUT_INVALID");
-          return outcome;
-        } catch (error) {
-          if (error instanceof WorkflowCheckpointError && error.code === "WORKFLOW_OUTPUT_CORRUPT") {
-            throw new NonRetryableError("WORKFLOW_OUTPUT_CORRUPT", "WorkflowCheckpointError");
-          }
-          throw error;
-        }
-      };
-      const stepName = `w2-stage-${String(index).padStart(2, "0")}-${stage}`;
-      const receipt = isResearchModelStage(stage)
-        ? await step.do(stepName, {
-          retries: { limit: 0, delay: 0 },
-          timeout: researchStageBudgetLeaseMs(stage),
-        }, executeStage)
-        : await step.do(stepName, {
-          retries: { limit: 0, delay: 0 },
-        }, executeStage);
-      const expectedEngine = index === RESEARCH_WORKFLOW_STAGES.length - 1 ? "ENGINE_COMPLETED" : "CHECKPOINTED";
-      if (receipt.engine_state !== expectedEngine || receipt.operation_id !== params.operation_id || receipt.stage !== stage) {
-        failWorkflow("WORKFLOW_OUTPUT_CORRUPT");
+      if (new TextEncoder().encode(JSON.stringify(result)).byteLength > MAX_WORKFLOW_RECEIPT_BYTES) {
+        failWorkflow("WORKFLOW_INPUT_INVALID");
       }
-      receipt_refs.push(receipt.receipt_ref);
-      investigation_ref = { ...receipt.investigation_ref };
-      input_manifest = receipt.output_manifest;
-      output_manifest = receipt.output_manifest;
+      return result;
+    } catch (error) {
+      const failure = workflowFailure(error, activeStage === undefined ? "PREPARATION" : "STAGE", activeStage);
+      // step.do can reconstruct Error and discard custom fields. The callback has
+      // already recorded the exact cause; do not replace it with that generic wrapper.
+      if (!nativeStepPending) await retainWorkflowFailure(this.env.CORE_DB, params.operation_id, principal, failure);
+      if (error instanceof NonRetryableError && error.message === "WORKFLOW_OUTPUT_CORRUPT") throw error;
+      if (error instanceof WorkflowCheckpointError && error.code === "WORKFLOW_OUTPUT_CORRUPT") {
+        throw new NonRetryableError(error.code, "WorkflowCheckpointError");
+      }
+      // Native status must never contain an arbitrary provider or runtime error message.
+      throw new WorkflowCheckpointError(error instanceof WorkflowCheckpointError ? error.code :
+        activeStage === undefined ? "WORKFLOW_PREPARATION_FAILED" : "WORKFLOW_EFFECT_UNCERTAIN", failure);
     }
-    const result: ResearchWorkflowResult = {
-      operation_id: params.operation_id,
-      investigation_ref: { ...investigation_ref },
-      state: "ENGINE_COMPLETED",
-      receipt_refs: [...receipt_refs],
-      output_manifest_ref: output_manifest.object_ref,
-    };
-    if (new TextEncoder().encode(JSON.stringify(result)).byteLength > MAX_WORKFLOW_RECEIPT_BYTES) {
-      failWorkflow("WORKFLOW_INPUT_INVALID");
-    }
-    return result;
   }
 }

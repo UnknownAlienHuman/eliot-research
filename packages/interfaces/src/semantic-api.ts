@@ -112,19 +112,53 @@ export type ResearchRunFailureCode =
   | "WORKFLOW_EFFECT_UNCERTAIN"
   | "WORKFLOW_OUTPUT_UNAVAILABLE"
   | "WORKFLOW_OUTPUT_CORRUPT"
+  | "WORKFLOW_CONFIGURATION_MISSING"
+  | "WORKFLOW_CONFIGURATION_INVALID"
+  | "WORKFLOW_CREDENTIALS_MISSING"
+  | "WORKFLOW_CREDENTIALS_INVALID"
+  | "WORKFLOW_STORAGE_UNAVAILABLE"
+  | "WORKFLOW_QUALIFICATION_STALE"
+  | "WORKFLOW_PREPARATION_FAILED"
   | "RESEARCH_QUALIFICATION_RENEWAL_READ_TOKEN_REQUIRED"
   | "RESEARCH_QUALIFICATION_RENEWAL_AUTHORITY_STALE"
   | "RESEARCH_QUALIFICATION_RENEWAL_UNAVAILABLE"
-  | "RESEARCH_QUALIFICATION_RENEWAL_ROUTE_UNAVAILABLE";
+  | "RESEARCH_QUALIFICATION_RENEWAL_ROUTE_UNAVAILABLE"
+  | "MODEL_ATTEMPT_INPUT_INVALID"
+  | "MODEL_ATTEMPT_AUTHORITY_STALE"
+  | "MODEL_ATTEMPT_IDENTITY_CONFLICT"
+  | "MODEL_ATTEMPT_BUDGET_EXPIRED"
+  | "MODEL_ATTEMPT_CONFLICT"
+  | "MODEL_ATTEMPT_SETTLEMENT_UNCERTAIN"
+  | "MODEL_ATTEMPT_READBACK_CORRUPT"
+  | "MODEL_GATEWAY_DEPLOYMENT_MISSING"
+  | "MODEL_GATEWAY_PROMPT_COMPILE_FAILED"
+  | "MODEL_GATEWAY_REQUEST_INVALID"
+  | "MODEL_GATEWAY_CREDENTIAL_INVALID"
+  | "MODEL_GATEWAY_TRANSPORT_FAILED"
+  | "MODEL_GATEWAY_AUTH_REJECTED"
+  | "MODEL_GATEWAY_LIMIT_REJECTED"
+  | "MODEL_GATEWAY_POLICY_REJECTED"
+  | "MODEL_GATEWAY_UPSTREAM_REJECTED"
+  | "MODEL_GATEWAY_RESPONSE_INVALID"
+  | "MODEL_GATEWAY_OUTPUT_TRUNCATED"
+  | "MODEL_GATEWAY_OUTPUT_PERSIST_FAILED"
+  | "MODEL_GATEWAY_FINGERPRINT_PERSIST_FAILED"
+  | "MODEL_GATEWAY_PRICING_FAILED";
 
-export interface ResearchRunFailure {
+export interface ResearchRunFailureContext {
   readonly code: ResearchRunFailureCode;
-  /** The durable checkpoint being attempted when the native Workflow stopped. */
   readonly stage?: ResearchWorkflowStage;
+  readonly phase?: "PREPARATION" | "STAGE" | "RECOVERY";
+  /** True only for known pre-dispatch transient preparation reads, never for a possibly paid effect. */
+  readonly retryable?: boolean;
+}
+export interface ResearchRunFailure extends ResearchRunFailureContext {
+  /** A later native/recovery error cannot overwrite the first retained cause. */
+  readonly consequence?: ResearchRunFailureContext;
 }
 
 export interface ResearchRunStatus {
-  readonly protocol: "eliotr.research-run-status.v1";
+  readonly protocol: "eliotr.research-run-status.v1" | "eliotr.research-run-status.v2";
   readonly workflow_instance_id: string;
   readonly investigation_ref: VersionedRef;
   readonly execution_state: "ACTIVE" | "CANCELLED" | "ENGINE_COMPLETED";

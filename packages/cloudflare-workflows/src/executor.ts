@@ -8,6 +8,7 @@ import {
   type WorkflowObject, type WorkflowPrincipal, type WorkflowStageHandler,
 } from "./types.js";
 import type { ResearchWorkflowStage } from "@eliotr/contracts";
+import { workflowFailure, retainWorkflowFailure, type WorkflowFailure } from "./failures.js";
 
 /** One reservation admits at most ONE handler invocation. Unknown execution is never auto-retried. */
 export function createWorkflowCheckpointExecutor(
@@ -70,135 +71,141 @@ export function createWorkflowCheckpointExecutor(
     async execute(raw: unknown, actor: WorkflowPrincipal, handler: WorkflowStageHandler): Promise<StageReceipt> {
       const request = parseRequest(raw);
       const principal = snapshotPrincipal(actor);
-      // Snapshot caller-owned objects before any await; neither a handler nor a browser can rebind this operation.
-      if (principal.signal?.aborted) {
-        // A pre-existing run must retain cancellation; no new run is created for a pre-aborted request.
-        try { await store.cancel(request.operation_id, principal); } catch (error) {
-          if (!(error instanceof WorkflowCheckpointError) || error.code !== "WORKFLOW_CONFLICT") throw error;
+      let failurePhase: WorkflowFailure["phase"] = "STAGE";
+      try {
+        // Snapshot caller-owned objects before any await; neither a handler nor a browser can rebind this operation.
+        if (principal.signal?.aborted) {
+          // A pre-existing run must retain cancellation; no new run is created for a pre-aborted request.
+          try { await store.cancel(request.operation_id, principal); } catch (error) {
+            if (!(error instanceof WorkflowCheckpointError) || error.code !== "WORKFLOW_CONFLICT") throw error;
+          }
+          fail("WORKFLOW_CANCELLED");
         }
-        fail("WORKFLOW_CANCELLED");
-      }
-      await ports.authorizeResidency(request, principal);
-      await store.ensureRun(request, principal);
-      const requestDigest = await textDigest(JSON.stringify(request));
-      let attempt = await store.attempt(request, requestDigest);
-      const previous = await store.receipt(request, requestDigest);
-      if (previous !== null) return finishReadback(request, principal, previous);
-      const recoveringExistingAttempt = attempt !== null;
-      let budget: WorkflowBudgetGrant;
-      if (attempt === null) {
-        budget = await guard(request, principal);
-      } else {
-        budget = storedBudget(attempt);
-        if (budget.expires_at_ms > Date.now()) {
-          budget = await guard(request, principal, budget);
+        await ports.authorizeResidency(request, principal);
+        await store.ensureRun(request, principal);
+        const requestDigest = await textDigest(JSON.stringify(request));
+        let attempt = await store.attempt(request, requestDigest);
+        const previous = await store.receipt(request, requestDigest);
+        if (previous !== null) return await finishReadback(request, principal, previous);
+        const recoveringExistingAttempt = attempt !== null;
+        if (recoveringExistingAttempt) failurePhase = "RECOVERY";
+        let budget: WorkflowBudgetGrant;
+        if (attempt === null) {
+          budget = await guard(request, principal);
         } else {
+          budget = storedBudget(attempt);
+          if (budget.expires_at_ms > Date.now()) {
+            budget = await guard(request, principal, budget);
+          } else {
+            await recoveryGuard(request, principal);
+            await store.requireRecoveryAuthorization(request, principal);
+          }
+        }
+        async function recoverKnownOutput(recoveryAttempt: AttemptRow, existing?: WorkflowObject): Promise<WorkflowObject> {
+          const recoverStartedAttempt = ports.recoverStartedAttempt;
+          if (recoverStartedAttempt === undefined) fail("WORKFLOW_EFFECT_UNCERTAIN");
+          let recovered: Uint8Array | null;
+          try {
+            recovered = await recoverStartedAttempt(Object.freeze({
+              request, principal_ref: principal.principal_ref, credential_generation: principal.credential_generation,
+              deployment_generation: principal.deployment_generation,
+              stage_index: RESEARCH_WORKFLOW_STAGES.indexOf(request.stage), request_sha256: recoveryAttempt.request_sha256,
+              attempt_ref: recoveryAttempt.attempt_ref, expected_revision: recoveryAttempt.expected_revision,
+              output_object_ref: existing?.object_ref ?? `workflow/${requestDigest}/${recoveryAttempt.attempt_ref}`,
+              budget_receipt_ref: recoveryAttempt.budget_receipt_ref,
+              budget_expires_at_ms: recoveryAttempt.budget_expires_at_ms,
+            }));
+          } catch (error) {
+            throw new WorkflowCheckpointError("WORKFLOW_EFFECT_UNCERTAIN", workflowFailure(error, "RECOVERY", request.stage));
+          }
+          if (recovered === null) fail("WORKFLOW_EFFECT_UNCERTAIN");
+          if (!(recovered instanceof Uint8Array) || recovered.byteLength > MAX_WORKFLOW_OUTPUT_BYTES) {
+            fail("WORKFLOW_OUTPUT_CORRUPT");
+          }
+          const recoveredBytes = new Uint8Array(recovered);
+          const recoveredDigest = await digest(recoveredBytes);
+          let reconstructed: WorkflowObject;
+          try {
+            reconstructed = WorkflowObjectSchema.parse({
+              object_ref: existing?.object_ref ?? `workflow/${requestDigest}/${recoveryAttempt.attempt_ref}`,
+              sha256: recoveredDigest, byte_length: recoveredBytes.byteLength,
+              residency: { ...request.input_manifest.residency, content_digest: { algorithm: "sha256", digest: recoveredDigest } },
+            });
+          } catch { return fail("WORKFLOW_OUTPUT_CORRUPT"); }
+          if (existing !== undefined && (existing.object_ref !== reconstructed.object_ref || existing.sha256 !== reconstructed.sha256 ||
+              existing.byte_length !== reconstructed.byte_length || JSON.stringify(existing.residency) !== JSON.stringify(reconstructed.residency))) {
+            fail("WORKFLOW_OUTPUT_CORRUPT");
+          }
           await recoveryGuard(request, principal);
-          await store.requireRecoveryAuthorization(request, principal);
+          await store.recordOutput(request, recoveryAttempt, reconstructed);
+          await recoveryGuard(request, principal);
+          await writeWorkflowObject(bucket, reconstructed, recoveredBytes);
+          return reconstructed;
         }
-      }
-      async function recoverKnownOutput(recoveryAttempt: AttemptRow, existing?: WorkflowObject): Promise<WorkflowObject> {
-        const recoverStartedAttempt = ports.recoverStartedAttempt;
-        if (recoverStartedAttempt === undefined) fail("WORKFLOW_EFFECT_UNCERTAIN");
-        let recovered: Uint8Array | null;
-        try {
-          recovered = await recoverStartedAttempt(Object.freeze({
-            request, principal_ref: principal.principal_ref, credential_generation: principal.credential_generation,
-            deployment_generation: principal.deployment_generation,
-            stage_index: RESEARCH_WORKFLOW_STAGES.indexOf(request.stage), request_sha256: recoveryAttempt.request_sha256,
-            attempt_ref: recoveryAttempt.attempt_ref, expected_revision: recoveryAttempt.expected_revision,
-            output_object_ref: existing?.object_ref ?? `workflow/${requestDigest}/${recoveryAttempt.attempt_ref}`,
-            budget_receipt_ref: recoveryAttempt.budget_receipt_ref,
-            budget_expires_at_ms: recoveryAttempt.budget_expires_at_ms,
-          }));
-        } catch {
-          fail("WORKFLOW_EFFECT_UNCERTAIN");
-        }
-        if (recovered === null) fail("WORKFLOW_EFFECT_UNCERTAIN");
-        if (!(recovered instanceof Uint8Array) || recovered.byteLength > MAX_WORKFLOW_OUTPUT_BYTES) {
-          fail("WORKFLOW_OUTPUT_CORRUPT");
-        }
-        const recoveredBytes = new Uint8Array(recovered);
-        const recoveredDigest = await digest(recoveredBytes);
-        let reconstructed: WorkflowObject;
-        try {
-          reconstructed = WorkflowObjectSchema.parse({
-            object_ref: existing?.object_ref ?? `workflow/${requestDigest}/${recoveryAttempt.attempt_ref}`,
-            sha256: recoveredDigest, byte_length: recoveredBytes.byteLength,
-            residency: { ...request.input_manifest.residency, content_digest: { algorithm: "sha256", digest: recoveredDigest } },
-          });
-        } catch { return fail("WORKFLOW_OUTPUT_CORRUPT"); }
-        if (existing !== undefined && (existing.object_ref !== reconstructed.object_ref || existing.sha256 !== reconstructed.sha256 ||
-            existing.byte_length !== reconstructed.byte_length || JSON.stringify(existing.residency) !== JSON.stringify(reconstructed.residency))) {
-          fail("WORKFLOW_OUTPUT_CORRUPT");
-        }
-        await recoveryGuard(request, principal);
-        await store.recordOutput(request, recoveryAttempt, reconstructed);
-        await recoveryGuard(request, principal);
-        await writeWorkflowObject(bucket, reconstructed, recoveredBytes);
-        return reconstructed;
-      }
-      let output: WorkflowObject;
-      if (attempt === null) {
-        const inputBytes = await readWorkflowObject(bucket, request.input_manifest);
-        await guard(request, principal, budget);
-        const nonce = crypto.randomUUID();
-        attempt = await store.reserve(request, requestDigest, nonce, budget);
-        if (attempt.attempt_ref !== nonce) fail("WORKFLOW_EFFECT_UNCERTAIN");
-        await guard(request, principal, budget);
-        // STARTED is durable before the handler. A crash/throw here requires W3 reconciliation, not another call.
-        let bytes: Uint8Array;
-        try {
-          bytes = await handler({
-            request: structuredClone(request), principal, input_bytes: inputBytes, attempt_ref: attempt.attempt_ref,
-            budget_receipt_ref: attempt.budget_receipt_ref,
-            ...(principal.signal === undefined ? {} : { signal: principal.signal }),
-          });
-        } catch (error) {
-          console.error(JSON.stringify({
-            event: "research_workflow_handler_failed",
-            stage: request.stage,
-            code: error instanceof WorkflowCheckpointError ? error.code : "UNCLASSIFIED",
-          }));
-          if (principal.signal?.aborted) {
-            await store.cancel(request.operation_id, principal);
-            fail("WORKFLOW_CANCELLED");
+        let output: WorkflowObject;
+        if (attempt === null) {
+          const inputBytes = await readWorkflowObject(bucket, request.input_manifest);
+          await guard(request, principal, budget);
+          const nonce = crypto.randomUUID();
+          attempt = await store.reserve(request, requestDigest, nonce, budget);
+          if (attempt.attempt_ref !== nonce) fail("WORKFLOW_EFFECT_UNCERTAIN");
+          await guard(request, principal, budget);
+          // STARTED is durable before the handler. A crash/throw here requires W3 reconciliation, not another call.
+          let bytes: Uint8Array;
+          try {
+            bytes = await handler({
+              request: structuredClone(request), principal, input_bytes: inputBytes, attempt_ref: attempt.attempt_ref,
+              budget_receipt_ref: attempt.budget_receipt_ref,
+              ...(principal.signal === undefined ? {} : { signal: principal.signal }),
+            });
+          } catch (error) {
+            const originalFailure = workflowFailure(error, "STAGE", request.stage);
+            if (principal.signal?.aborted) {
+              await retainWorkflowFailure(database, request.operation_id, principal, originalFailure);
+              await store.cancel(request.operation_id, principal);
+              fail("WORKFLOW_CANCELLED");
+            }
+            if (error instanceof WorkflowCheckpointError && error.code === "WORKFLOW_OUTPUT_CORRUPT") {
+              throw error;
+            }
+            throw new WorkflowCheckpointError("WORKFLOW_EFFECT_UNCERTAIN", originalFailure);
           }
-          if (error instanceof WorkflowCheckpointError && error.code === "WORKFLOW_OUTPUT_CORRUPT") {
-            throw error;
-          }
-          fail("WORKFLOW_EFFECT_UNCERTAIN");
-        }
-        if (!(bytes instanceof Uint8Array) || bytes.byteLength > MAX_WORKFLOW_OUTPUT_BYTES) fail("WORKFLOW_INPUT_INVALID");
-        bytes = new Uint8Array(bytes);
-        const hash = await digest(bytes);
-        output = WorkflowObjectSchema.parse({
-          object_ref: `workflow/${requestDigest}/${attempt.attempt_ref}`, sha256: hash, byte_length: bytes.byteLength,
-          residency: { ...request.input_manifest.residency, content_digest: { algorithm: "sha256", digest: hash } },
-        });
-        await guard(request, principal, budget);
-        await store.recordOutput(request, attempt, output);
-        await guard(request, principal, budget);
-        await writeWorkflowObject(bucket, output, bytes);
-      } else {
-        if (attempt.state === "STARTED" || attempt.output_json === null) {
-          output = await recoverKnownOutput(attempt);
+          if (!(bytes instanceof Uint8Array) || bytes.byteLength > MAX_WORKFLOW_OUTPUT_BYTES) fail("WORKFLOW_INPUT_INVALID");
+          bytes = new Uint8Array(bytes);
+          const hash = await digest(bytes);
+          output = WorkflowObjectSchema.parse({
+            object_ref: `workflow/${requestDigest}/${attempt.attempt_ref}`, sha256: hash, byte_length: bytes.byteLength,
+            residency: { ...request.input_manifest.residency, content_digest: { algorithm: "sha256", digest: hash } },
+          });
+          await guard(request, principal, budget);
+          await store.recordOutput(request, attempt, output);
+          await guard(request, principal, budget);
+          await writeWorkflowObject(bucket, output, bytes);
         } else {
-          try { output = WorkflowObjectSchema.parse(JSON.parse(attempt.output_json)); }
-          catch { return fail("WORKFLOW_OUTPUT_CORRUPT"); }
-          // Lost output/checkpoint ACK: recover exact persisted bytes without invoking the handler.
-          try { await readWorkflowObject(bucket, output, true); }
-          catch (error) {
-            if (error instanceof WorkflowCheckpointError && error.code === "WORKFLOW_OUTPUT_UNAVAILABLE" && ports.recoverStartedAttempt !== undefined) {
-              output = await recoverKnownOutput(attempt, output);
-            } else throw error;
+          if (attempt.state === "STARTED" || attempt.output_json === null) {
+            output = await recoverKnownOutput(attempt);
+          } else {
+            try { output = WorkflowObjectSchema.parse(JSON.parse(attempt.output_json)); }
+            catch { return fail("WORKFLOW_OUTPUT_CORRUPT"); }
+            // Lost output/checkpoint ACK: recover exact persisted bytes without invoking the handler.
+            try { await readWorkflowObject(bucket, output, true); }
+            catch (error) {
+              if (error instanceof WorkflowCheckpointError && error.code === "WORKFLOW_OUTPUT_UNAVAILABLE" && ports.recoverStartedAttempt !== undefined) {
+                output = await recoverKnownOutput(attempt, output);
+              } else throw error;
+            }
           }
         }
+        if (recoveringExistingAttempt) await recoveryGuard(request, principal);
+        else await guard(request, principal, budget);
+        const receipt = await store.commit(request, attempt, output);
+        return await finishReadback(request, principal, receipt);
+      } catch (error) {
+        const failure = workflowFailure(error, failurePhase, request.stage);
+        await retainWorkflowFailure(database, request.operation_id, principal, failure);
+        if (error instanceof WorkflowCheckpointError) throw new WorkflowCheckpointError(error.code, failure);
+        throw new WorkflowCheckpointError("WORKFLOW_EFFECT_UNCERTAIN", failure);
       }
-      if (recoveringExistingAttempt) await recoveryGuard(request, principal);
-      else await guard(request, principal, budget);
-      const receipt = await store.commit(request, attempt, output);
-      return finishReadback(request, principal, receipt);
     },
     cancel(operationId: string, principal: WorkflowPrincipal): Promise<string> {
       return store.cancel(operationId, snapshotPrincipal(principal));

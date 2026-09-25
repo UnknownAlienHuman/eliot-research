@@ -1,42 +1,15 @@
+import { objectRecord, invalid, record, boundedString, isoTimestamp, identifier, versionedRef, sameRef, envelope, checkGeneration } from "./research-run-wire.js";
+export { invalid, record, boundedString, identifier, versionedRef, sameRef, envelope, checkGeneration } from "./research-run-wire.js";
+import { engineStatus, researchRunFailure, type ResearchEngineStatus, type ResearchRunFailureView } from "./research-run-failure-api.js";
+export type { ResearchEngineStatus, ResearchRunFailureCode, ResearchRunFailureContext, ResearchRunFailureView } from "./research-run-failure-api.js";
 import { isResearchQuestionText, RESEARCH_REQUEST_MAX_BYTES } from "@eliotr/contracts";
-import { ArtifactRevisionSchema, IdentifierSchema, ResearchWorkflowStageSchema, ScopeExpressionSchema, Sha256Schema, VersionedRefSchema, type ArtifactRevision, type ResearchWorkflowStage, type VersionedRef } from "@eliotr/contracts";
+import { ArtifactRevisionSchema, IdentifierSchema, ScopeExpressionSchema, Sha256Schema, type ArtifactRevision, type VersionedRef } from "@eliotr/contracts";
 import { ApiRequestError, requestApi, requestApiBytes, type ApiBytesResponse } from "./api.js";
 
 export interface ResearchRunLaunchView {
   readonly investigation_ref: { readonly id: string; readonly revision: number };
   readonly workflow_instance_id: string;
   readonly deployment_generation: string;
-}
-
-export type ResearchEngineStatus =
-  | "queued"
-  | "running"
-  | "paused"
-  | "errored"
-  | "terminated"
-  | "complete"
-  | "waiting"
-  | "waitingForPause"
-  | "unknown";
-
-export type ResearchRunFailureCode =
-  | "WORKFLOW_INPUT_INVALID"
-  | "WORKFLOW_CONFLICT"
-  | "WORKFLOW_AUTHORITY_STALE"
-  | "WORKFLOW_STAGE_OUT_OF_ORDER"
-  | "WORKFLOW_CANCELLED"
-  | "WORKFLOW_BUDGET_STOP"
-  | "WORKFLOW_EFFECT_UNCERTAIN"
-  | "WORKFLOW_OUTPUT_UNAVAILABLE"
-  | "WORKFLOW_OUTPUT_CORRUPT"
-  | "RESEARCH_QUALIFICATION_RENEWAL_READ_TOKEN_REQUIRED"
-  | "RESEARCH_QUALIFICATION_RENEWAL_AUTHORITY_STALE"
-  | "RESEARCH_QUALIFICATION_RENEWAL_UNAVAILABLE"
-  | "RESEARCH_QUALIFICATION_RENEWAL_ROUTE_UNAVAILABLE";
-
-export interface ResearchRunFailureView {
-  readonly code: ResearchRunFailureCode;
-  readonly stage?: ResearchWorkflowStage;
 }
 
 export interface ResearchRunStatusView {
@@ -182,91 +155,10 @@ export type ResearchArtifactSectionCitationsView =
 const MAX_RESULTS = 16;
 const MAX_WORKFLOW_STAGE_INDEX = 18;
 const SAFE_IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9:._-]{0,127}$/u;
-const SAFE_TRACE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
-const RESEARCH_ENGINE_STATUSES: readonly ResearchEngineStatus[] = [
-  "queued", "running", "paused", "errored", "terminated", "complete", "waiting", "waitingForPause", "unknown",
-];
-const RESEARCH_RUN_FAILURE_CODES: readonly ResearchRunFailureCode[] = [
-  "WORKFLOW_INPUT_INVALID", "WORKFLOW_CONFLICT", "WORKFLOW_AUTHORITY_STALE", "WORKFLOW_STAGE_OUT_OF_ORDER",
-  "WORKFLOW_CANCELLED", "WORKFLOW_BUDGET_STOP", "WORKFLOW_EFFECT_UNCERTAIN", "WORKFLOW_OUTPUT_UNAVAILABLE",
-  "WORKFLOW_OUTPUT_CORRUPT", "RESEARCH_QUALIFICATION_RENEWAL_READ_TOKEN_REQUIRED",
-  "RESEARCH_QUALIFICATION_RENEWAL_AUTHORITY_STALE", "RESEARCH_QUALIFICATION_RENEWAL_UNAVAILABLE",
-  "RESEARCH_QUALIFICATION_RENEWAL_ROUTE_UNAVAILABLE",
-];
-
-export function invalid(message = "Research run response is invalid; try again"): never {
-  throw new ApiRequestError({ status: 502, code: "RESEARCH_RUN_RESPONSE_INVALID", message });
-}
-
-function objectRecord(value: unknown): Record<string, unknown> {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) invalid();
-  return value as Record<string, unknown>;
-}
-
-export function record(value: unknown, required: readonly string[], optional: readonly string[] = []): Record<string, unknown> {
-  const object = objectRecord(value);
-  const allowed = new Set([...required, ...optional]);
-  if (required.some((key) => !Object.hasOwn(object, key)) || Object.keys(object).some((key) => !allowed.has(key))) invalid();
-  return object;
-}
-
-export function boundedString(value: unknown, label: string, maximum = 256): string {
-  if (typeof value !== "string" || value.length === 0 || value.length > maximum || value !== value.trim() || /[\u0000-\u001f\u007f]/u.test(value)) invalid(`${label} is invalid`);
-  return value;
-}
-
-function isoTimestamp(value: unknown, label: string): string {
-  const timestamp = boundedString(value, label, 64);
-  if (!Number.isFinite(Date.parse(timestamp)) || new Date(timestamp).toISOString() !== timestamp) invalid(`${label} is invalid`);
-  return timestamp;
-}
-
-export function identifier(value: unknown, label: string): string {
-  try { return IdentifierSchema.parse(value); } catch { invalid(`${label} is invalid`); }
-}
-
-export function versionedRef(value: unknown, label: string): { readonly id: string; readonly revision: number } {
-  try { return VersionedRefSchema.parse(value); } catch { invalid(`${label} is invalid`); }
-}
-
-export function sameRef(left: VersionedRef, right: VersionedRef): boolean {
-  return left.id === right.id && left.revision === right.revision;
-}
-
-export function envelope(value: unknown): { readonly data: Record<string, unknown>; readonly deployment_generation: string } {
-  const outer = record(value, ["data", "trace_id", "deployment_generation"]);
-  const trace = boundedString(outer.trace_id, "trace_id", 128);
-  if (!SAFE_TRACE_ID.test(trace)) invalid("trace_id is invalid");
-  return { data: objectRecord(outer.data), deployment_generation: identifier(outer.deployment_generation, "deployment_generation") };
-}
-
-export function checkGeneration(actual: string, expected: string | undefined): void {
-  if (expected !== undefined && actual !== expected) {
-    throw new ApiRequestError({ status: 409, code: "RESEARCH_RUN_DEPLOYMENT_CHANGED", message: "Application changed; refresh the Research run", retryable: true });
-  }
-}
-
 function checkWorkflowId(value: unknown): string {
   const id = identifier(value, "workflow_instance_id");
   if (!SAFE_IDENTIFIER.test(id)) invalid("workflow_instance_id is invalid");
   return id;
-}
-
-function engineStatus(value: unknown): ResearchEngineStatus {
-  if (typeof value !== "string" || !RESEARCH_ENGINE_STATUSES.includes(value as ResearchEngineStatus)) invalid("research engine status is invalid");
-  return value as ResearchEngineStatus;
-}
-
-function researchRunFailure(value: unknown): ResearchRunFailureView {
-  const failure = record(value, ["code"], ["stage"]);
-  if (typeof failure.code !== "string" || !RESEARCH_RUN_FAILURE_CODES.includes(failure.code as ResearchRunFailureCode)) invalid("research run failure code is invalid");
-  let stage: ResearchWorkflowStage | undefined;
-  if (Object.hasOwn(failure, "stage")) {
-    const parsed = ResearchWorkflowStageSchema.safeParse(failure.stage);
-    if (!parsed.success) invalid("research run failure stage is invalid");
-    stage = parsed.data;
-  }
-  return { code: failure.code as ResearchRunFailureCode, ...(stage === undefined ? {} : { stage }) };
 }
 
 const AUDIT_DISPOSITIONS: readonly ResearchArtifactSectionCitationAuditDisposition[] = [
@@ -458,7 +350,7 @@ export function decodeResearchRunLaunch(raw: unknown, expectedDeploymentGenerati
 export function decodeResearchRunStatus(raw: unknown, expectedDeploymentGeneration?: string): ResearchRunStatusView {
   const parsed = envelope(raw); checkGeneration(parsed.deployment_generation, expectedDeploymentGeneration);
   const data = record(parsed.data, ["protocol", "workflow_instance_id", "investigation_ref", "execution_state", "next_stage_index", "answer"], ["cancellation_receipt_ref", "engine_status", "failure"]);
-  if (data.protocol !== "eliotr.research-run-status.v1") invalid("research run protocol is invalid");
+  if (data.protocol !== "eliotr.research-run-status.v1" && data.protocol !== "eliotr.research-run-status.v2") invalid("research run protocol is invalid");
   const state = data.execution_state;
   if (state !== "ACTIVE" && state !== "CANCELLED" && state !== "ENGINE_COMPLETED") invalid("research run state is invalid");
   if (!Number.isSafeInteger(data.next_stage_index) || (data.next_stage_index as number) < 0 || (data.next_stage_index as number) > MAX_WORKFLOW_STAGE_INDEX) invalid("research run stage index is invalid");
@@ -475,7 +367,7 @@ export function decodeResearchRunStatus(raw: unknown, expectedDeploymentGenerati
   } else invalid("research run answer availability is invalid");
   const cancellation = Object.hasOwn(data, "cancellation_receipt_ref") ? boundedString(data.cancellation_receipt_ref, "cancellation_receipt_ref") : undefined;
   const observedEngineStatus = Object.hasOwn(data, "engine_status") ? engineStatus(data.engine_status) : "unknown";
-  const failure = Object.hasOwn(data, "failure") ? researchRunFailure(data.failure) : undefined;
+  const failure = Object.hasOwn(data, "failure") ? researchRunFailure(data.failure, data.protocol === "eliotr.research-run-status.v2") : undefined;
   if (failure !== undefined && (state !== "ACTIVE" || observedEngineStatus !== "errored")) invalid("research run failure state is invalid");
   if (state === "CANCELLED" && cancellation !== `workflow-cancelled:${workflowId}`) invalid("cancelled run receipt does not match the workflow");
   if (state !== "CANCELLED" && cancellation !== undefined) invalid("non-cancelled run cannot carry a cancellation receipt");

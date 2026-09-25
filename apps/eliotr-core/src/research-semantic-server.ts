@@ -1,12 +1,14 @@
 import { isSemanticResearchHandlerGeneration } from "./research-stage-handlers.js";
 import { z } from "zod";
-import { validateModelGatewayToken } from "@eliotr/cloudflare-ai";
+import { DynamicRouteProvisioningError, validateModelGatewayToken } from "@eliotr/cloudflare-ai";
 import { IdentifierSchema, IsoDateTimeSchema, VersionedRefSchema } from "@eliotr/contracts";
 import { canonicalJson, decodeModelRouteDeployment } from "@eliotr/platform-cloudflare";
 import type { NavigationReadAuthority } from "@eliotr/cloudflare-evidence";
 import type { InvestigationLedgerStore } from "@eliotr/research";
 import { createD1ScopeProfilePort } from "@eliotr/retrieval";
-import { fail, type WorkflowObject, type WorkflowPrincipal } from "@eliotr/cloudflare-workflows";
+import { fail, WorkflowCheckpointError, workflowFailure, retainWorkflowFailure,
+  type WorkflowObject, type WorkflowPrincipal } from "@eliotr/cloudflare-workflows";
+import { ResearchOwnerSpendPolicyError } from "./research-owner-spend-policy.js";
 import {
   createD1ModelGatewayDeploymentRegistry,
   createD1DynamicRouteQualificationProofStore,
@@ -26,6 +28,7 @@ import { readResearchSemanticConfiguration, type Env } from "./env.js";
 import { loadHeldResearchScope } from "./research-retrieval-composition.js";
 import {
   bindResearchOwnerReportPolicy,
+  ResearchOwnerReportPolicyError,
   createBoundResearchOwnerReportConfigSource,
 } from "./research-owner-report-policy.js";
 import { resolveResearchExecutionSpend } from "./research-client-execution.js";
@@ -73,14 +76,13 @@ const ConfigurationSchema = z.object({
 export type ResearchSemanticConfiguration = z.infer<typeof ConfigurationSchema>;
 
 export function parseResearchSemanticConfiguration(raw: string): ResearchSemanticConfiguration {
-  if (typeof raw !== "string" || raw.trim() === "" || new TextEncoder().encode(raw).byteLength > 65536) {
-    configurationMissing();
-  }
+  if (typeof raw !== "string" || raw.trim() === "") configurationMissing();
+  if (new TextEncoder().encode(raw).byteLength > 65536) configurationInvalid();
   let decoded: unknown;
   try { decoded = JSON.parse(raw); }
-  catch { configurationMissing(); }
+  catch { configurationInvalid(); }
   const parsed = ConfigurationSchema.safeParse(decoded);
-  if (!parsed.success) configurationMissing();
+  if (!parsed.success) configurationInvalid();
   return parsed.data;
 }
 
@@ -90,7 +92,16 @@ export function researchSemanticPromptParameters(
   return promptParameters(value);
 }
 
-function configurationMissing(): never { return fail("WORKFLOW_AUTHORITY_STALE"); }
+function configurationMissing(): never { return fail("WORKFLOW_CONFIGURATION_MISSING"); }
+function configurationInvalid(): never { return fail("WORKFLOW_CONFIGURATION_INVALID"); }
+function preparationError(error: unknown): WorkflowCheckpointError {
+  if (error instanceof WorkflowCheckpointError) return error;
+  if (error instanceof ResearchOwnerSpendPolicyError) return new WorkflowCheckpointError(
+    error.code === "INVALID" ? "WORKFLOW_CONFIGURATION_INVALID" : "WORKFLOW_AUTHORITY_STALE");
+  if (error instanceof ResearchOwnerReportPolicyError) return new WorkflowCheckpointError(
+    error.code === "RESEARCH_OWNER_REPORT_POLICY_INVALID" ? "WORKFLOW_CONFIGURATION_INVALID" : "WORKFLOW_AUTHORITY_STALE");
+  return new WorkflowCheckpointError("WORKFLOW_PREPARATION_FAILED", workflowFailure(error, "PREPARATION"));
+}
 function installed(value: string | undefined): string {
   if (value === undefined || value.trim() === "") configurationMissing();
   return value;
@@ -106,11 +117,11 @@ function modelGatewayConfiguration(env: Env): ResearchModelGatewayRuntimeConfig 
   const token = env.ELIOTR_MODEL_GATEWAY_TOKEN;
   if (typeof token === "string" && token.trim() !== "") {
     try { validateModelGatewayToken(token); }
-    catch { configurationMissing(); }
+    catch { fail("WORKFLOW_CREDENTIALS_INVALID"); }
     return { reasoning_gateway_base_url: env.AI_GATEWAY_REASONING_URL, gateway_token: token };
   }
   const binding = env.AI as Partial<ResearchModelGatewayBinding> | undefined;
-  if (typeof binding?.gateway !== "function") configurationMissing();
+  if (typeof binding?.gateway !== "function") fail("WORKFLOW_CREDENTIALS_MISSING");
   return { reasoning_gateway_base_url: env.AI_GATEWAY_REASONING_URL,
     ai_gateway_binding: binding as ResearchModelGatewayBinding };
 }
@@ -138,23 +149,34 @@ export interface ResearchSemanticServerInput {
 
 /** The actual Worker binding/configuration assembly used by HTTP, DO and Workflow execution. */
 export async function createResearchSemanticServerHandlers(input: ResearchSemanticServerInput): Promise<ResearchStageHandlerFactory> {
+  try { return await assembleResearchSemanticServerHandlers(input); }
+  catch (error) {
+    const safe = preparationError(error);
+    const failure = workflowFailure(safe, "PREPARATION", undefined, safe.code === "WORKFLOW_STORAGE_UNAVAILABLE");
+    await retainWorkflowFailure(input.env.CORE_DB, input.operation_id, input.principal, failure);
+    throw new WorkflowCheckpointError(safe.code, failure);
+  }
+}
+
+async function assembleResearchSemanticServerHandlers(input: ResearchSemanticServerInput): Promise<ResearchStageHandlerFactory> {
   const { env, navigation, principal } = input;
+  // Validate credentials separately, before the aggregate installation predicate loses that distinction.
+  const gateway = modelGatewayConfiguration(env);
   if (!researchSemanticConfigurationInstalled(env)) configurationMissing();
-  await requireResearchDeploymentCompatibility(env.CORE_DB, principal.deployment_generation, env.DEPLOYMENT_GENERATION)
-    .catch(configurationMissing);
+  await requireResearchDeploymentCompatibility(env.CORE_DB, principal.deployment_generation, env.DEPLOYMENT_GENERATION);
   const runBinding = await env.CORE_DB.prepare(
     "SELECT handler_generation FROM research_workflow_run WHERE operation_id=?1 AND investigation_id=?2 " +
     "AND principal_ref=?3 AND credential_generation=?4 AND deployment_generation=?5",
   ).bind(input.operation_id, input.investigation_id, principal.principal_ref,
-    principal.credential_generation, principal.deployment_generation).first<{ handler_generation: unknown }>();
-  if (!isSemanticResearchHandlerGeneration(runBinding?.handler_generation)) configurationMissing();
+    principal.credential_generation, principal.deployment_generation).first<{ handler_generation: unknown }>().catch(() => fail("WORKFLOW_STORAGE_UNAVAILABLE"));
+  if (!isSemanticResearchHandlerGeneration(runBinding?.handler_generation)) fail("WORKFLOW_AUTHORITY_STALE");
   const handlerGeneration = runBinding.handler_generation;
   const config = parseResearchSemanticConfiguration(installed(readResearchSemanticConfiguration(env)));
   let policy: ResearchModelSpendPolicy;
   try {
     if (navigation.access.principal_ref !== principal.principal_ref ||
         navigation.access.credential_generation !== principal.credential_generation) {
-      throw new Error("navigation owner mismatch");
+      fail("WORKFLOW_AUTHORITY_STALE");
     }
     const beforeGrant = await navigation.current();
     const authorityRef = IdentifierSchema.parse(navigation.scope.policy_authority_ref);
@@ -167,30 +189,30 @@ export async function createResearchSemanticServerHandlers(input: ResearchSemant
       "AND r.policy_authority_ref=?7 AND r.state='ACTIVE' LIMIT 1",
     ).bind(input.operation_id, principal.principal_ref, principal.credential_generation,
       principal.deployment_generation, navigation.scope.snapshot_id, navigation.scope.revision, authorityRef)
-      .first<CurrentInvestigationPolicyRow>();
+      .first<CurrentInvestigationPolicyRow>().catch(() => fail("WORKFLOW_STORAGE_UNAVAILABLE"));
     const generation = IdentifierSchema.safeParse(currentPolicy?.policy_generation);
     const rowAuthority = IdentifierSchema.safeParse(currentPolicy?.policy_authority_ref);
     if (currentPolicy === null || currentPolicy.state !== "ACTIVE" || !generation.success || !rowAuthority.success ||
-        rowAuthority.data !== authorityRef) throw new Error("current investigation policy is unavailable");
+        rowAuthority.data !== authorityRef) fail("WORKFLOW_AUTHORITY_STALE");
     const afterPolicy = await navigation.current();
     if (canonicalJson(afterPolicy) !== canonicalJson(beforeGrant)) {
-      throw new Error("navigation grant changed while binding spend policy");
+      fail("WORKFLOW_AUTHORITY_STALE");
     }
     policy = await resolveResearchExecutionSpend(env, navigation, input.operation_id,
       principal.deployment_generation, generation.data);
     const terminalGrant = await navigation.current();
     if (canonicalJson(terminalGrant) !== canonicalJson(afterPolicy)) {
-      throw new Error("navigation grant changed after binding spend policy");
+      fail("WORKFLOW_AUTHORITY_STALE");
     }
-  } catch {
-    configurationMissing();
+  } catch (error) {
+    throw preparationError(error);
   }
   if (policy.principal_ref !== principal.principal_ref || policy.credential_generation !== principal.credential_generation ||
       policy.deployment_generation !== principal.deployment_generation ||
-      navigation.access.client_class !== policy.client_class) configurationMissing();
+      navigation.access.client_class !== policy.client_class) fail("WORKFLOW_AUTHORITY_STALE");
   const synthesisRule = policy.rules.find((rule) => rule.stage === "SYNTHESIZE");
   const auditRule = policy.rules.find((rule) => rule.stage === "AUDIT_CLAIMS");
-  if (!synthesisRule || !auditRule) configurationMissing();
+  if (!synthesisRule || !auditRule) configurationInvalid();
   const auditDeployment = auditRule.deployment;
   const deploymentEnvironment = env.ENVIRONMENT === "development" ? "TEST" : "PRODUCTION";
   const deploymentRegistry = createD1ModelGatewayDeploymentRegistry(env.CORE_DB, { environment: deploymentEnvironment });
@@ -212,9 +234,8 @@ export async function createResearchSemanticServerHandlers(input: ResearchSemant
     },
   });
   const reportPolicy = await reportSource.readArtifactPolicy();
-  if (!reportPolicy) configurationMissing();
-  try { await navigation.current(); }
-  catch { configurationMissing(); }
+  if (!reportPolicy) configurationInvalid();
+  await navigation.current();
   const boundReportPolicy = (() => {
     try {
       return bindResearchOwnerReportPolicy(reportPolicy, {
@@ -223,8 +244,8 @@ export async function createResearchSemanticServerHandlers(input: ResearchSemant
         frozen_manifest_residency: input.initial_manifest.residency,
         ...("sponsor_principal_ref" in policy ? { sponsor_principal_ref: policy.sponsor_principal_ref } : {}),
       });
-    } catch {
-      configurationMissing();
+    } catch (error) {
+      throw preparationError(error);
     }
   })();
   const retrievalProfile = await createD1ScopeProfilePort(env.CORE_DB).loadBinding(navigation.scope);
@@ -234,7 +255,7 @@ export async function createResearchSemanticServerHandlers(input: ResearchSemant
   const recheckAuthority = async () => {
     const held = await loadHeldResearchScope(env, navigation.access, input.operation_id, principal.deployment_generation);
     if (held.investigation_id !== input.investigation_id || held.scope_snapshot_ref.id !== navigation.scope.snapshot_id ||
-        held.scope_snapshot_ref.revision !== navigation.scope.revision) configurationMissing();
+        held.scope_snapshot_ref.revision !== navigation.scope.revision) fail("WORKFLOW_AUTHORITY_STALE");
     return { investigation_id: held.investigation_id, scope_snapshot_id: held.scope_snapshot_ref.id,
       scope_snapshot_revision: held.scope_snapshot_ref.revision };
   };
@@ -245,12 +266,29 @@ export async function createResearchSemanticServerHandlers(input: ResearchSemant
       "SELECT c.candidate_json,c.candidate_ref,c.candidate_sha256 FROM dynamic_route_active_generation a JOIN dynamic_route_candidate c " +
       "ON c.candidate_ref=a.candidate_ref AND c.candidate_sha256=a.candidate_sha256 " +
       "AND c.route_ref=a.route_ref AND c.route_version=a.route_version WHERE a.route_ref=?1 LIMIT 1",
-    ).bind(auditDeployment.route_ref).first<{ candidate_json: string; candidate_ref: string; candidate_sha256: string }>();
+    ).bind(auditDeployment.route_ref).first<{ candidate_json: string; candidate_ref: string; candidate_sha256: string }>()
+      .catch(() => fail("WORKFLOW_STORAGE_UNAVAILABLE"));
     const before = await readCandidate();
-    const deployment = decodeModelRouteDeployment(await deploymentRegistry.resolve(auditDeployment.route_ref));
-    if (!before || canonicalJson(deployment) !== canonicalJson(auditDeployment)) configurationMissing();
+    let rawDeployment: unknown;
+    try { rawDeployment = await deploymentRegistry.resolve(auditDeployment.route_ref); }
+    catch (error) {
+      if (error instanceof DynamicRouteProvisioningError) {
+        if (error.code === "DYNAMIC_ROUTE_QUALIFICATION_INVALID" || error.code === "DYNAMIC_ROUTE_LIVE_GATE_REQUIRED") {
+          fail("WORKFLOW_QUALIFICATION_STALE");
+        }
+        if (error.code === "DYNAMIC_ROUTE_PROMOTION_FAILED") fail("WORKFLOW_OUTPUT_CORRUPT");
+      }
+      throw error;
+    }
+    if (rawDeployment === null) fail("WORKFLOW_QUALIFICATION_STALE");
+    const deployment = (() => {
+      try { return decodeModelRouteDeployment(rawDeployment); }
+      catch { fail("WORKFLOW_OUTPUT_CORRUPT"); }
+    })();
+    if (!before || canonicalJson(deployment) !== canonicalJson(auditDeployment)) fail("WORKFLOW_QUALIFICATION_STALE");
     let candidate: { execution_probe_ref?: unknown; qualification_expires_at?: unknown };
-    try { candidate = JSON.parse(before.candidate_json) as typeof candidate; } catch { configurationMissing(); }
+    try { candidate = JSON.parse(before.candidate_json) as typeof candidate; } catch { fail("WORKFLOW_OUTPUT_CORRUPT"); }
+    if (candidate === null || typeof candidate !== "object" || Array.isArray(candidate)) fail("WORKFLOW_OUTPUT_CORRUPT");
     const proof = await createD1DynamicRouteQualificationProofStore(env.CORE_DB).readLatest({
       route_ref: auditDeployment.route_ref, route_version: auditDeployment.route_version,
       candidate_ref: before.candidate_ref, candidate_sha256: before.candidate_sha256,
@@ -258,9 +296,9 @@ export async function createResearchSemanticServerHandlers(input: ResearchSemant
     const receipt = IdentifierSchema.safeParse(proof?.qualification.execution_probe_ref ?? candidate.execution_probe_ref);
     const expires = IsoDateTimeSchema.safeParse(proof?.qualification.expires_at ?? candidate.qualification_expires_at);
     if (!receipt.success || !expires.success || Date.parse(expires.data) <= Date.now() ||
-        !config.audit.allowed_verifier_refs.includes(config.audit.verifier_ref)) configurationMissing();
+        !config.audit.allowed_verifier_refs.includes(config.audit.verifier_ref)) fail("WORKFLOW_QUALIFICATION_STALE");
     const after = await readCandidate();
-    if (after?.candidate_json !== before.candidate_json) configurationMissing();
+    if (after?.candidate_json !== before.candidate_json) fail("WORKFLOW_QUALIFICATION_STALE");
     await navigation.current();
     return Object.freeze({ allowed_verifier_refs: Object.freeze([...config.audit.allowed_verifier_refs]),
       verifier_ref: config.audit.verifier_ref, verifier_schema_generation: config.audit.verifier_schema_generation,
@@ -268,7 +306,6 @@ export async function createResearchSemanticServerHandlers(input: ResearchSemant
       qualification_receipt_ref: receipt.data, qualification_expires_at: expires.data, qualified: true, current: true });
   }
   const verifier = await readVerifier();
-  const gateway = modelGatewayConfiguration(env);
   return createResearchSemanticWorkflowHandlerFactory({
     database: env.CORE_DB, search_database: env.SEARCH_DB, work_bucket: env.WORK_BUCKET, evidence_bucket: env.EVIDENCE_BUCKET,
     ai_search: env.AI_SEARCH, handler_generation: handlerGeneration,
@@ -296,7 +333,7 @@ export async function createResearchSemanticServerHandlers(input: ResearchSemant
         if (request.operation_id !== input.operation_id || request.investigation_ref.id !== input.investigation_id ||
             request.principal_ref !== principal.principal_ref || request.credential_generation !== principal.credential_generation ||
             request.deployment_generation !== principal.deployment_generation || request.scope_snapshot_ref.id !== navigation.scope.snapshot_id ||
-            request.scope_snapshot_ref.revision !== navigation.scope.revision) configurationMissing();
+            request.scope_snapshot_ref.revision !== navigation.scope.revision) fail("WORKFLOW_AUTHORITY_STALE");
         await recheckAuthority();
         return readVerifier();
       } } },

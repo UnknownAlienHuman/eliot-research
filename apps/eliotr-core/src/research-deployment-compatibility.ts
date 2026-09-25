@@ -32,7 +32,7 @@ export async function requireResearchDeploymentCompatibility(
       "FROM research_deployment_compatible WHERE origin_deployment_generation=?1 " +
       "AND active_deployment_generation=?2 LIMIT 1",
     ).bind(originDeploymentGeneration, activeDeploymentGeneration).first<ResearchDeploymentCompatibility>();
-  } catch { stale(); }
+  } catch { throw new WorkflowCheckpointError("WORKFLOW_STORAGE_UNAVAILABLE"); }
   if (row === null || row.origin_deployment_generation !== originDeploymentGeneration ||
       row.active_deployment_generation !== activeDeploymentGeneration ||
       (row.backend_fingerprint !== null && !SHA256.test(row.backend_fingerprint))) stale();

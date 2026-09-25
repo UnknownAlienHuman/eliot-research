@@ -114,6 +114,7 @@ export function resolveResearchOwnerSpendPolicy(
         readResearchOwnerSpendPolicyTemplate(input.raw, input.provenance), input,
       ) });
     } catch (cause) {
+      if (cause instanceof ResearchOwnerSpendPolicyError) throw cause;
       invalid("installed owner spend template is invalid", cause);
     }
   }

@@ -1,4 +1,5 @@
 import { RESEARCH_WORKFLOW_STAGES } from "@eliotr/domain";
+import { decodeWorkflowFailure, type WorkflowFailure } from "./failures.js";
 import {
   COMMAND_SQL, buildAppendCommand, decodeLedgerHead,
   type LedgerEvent, type LedgerHead, type LedgerHeadRow,
@@ -15,6 +16,7 @@ interface RunRow {
   idempotency_key: string; handler_generation: string; initial_manifest_json: string;
   next_stage_index: number; state: "ACTIVE" | "CANCELLED" | "ENGINE_COMPLETED";
   cancellation_receipt_ref: string | null; ledger_revision?: number;
+  first_failure_json?: string | null; latest_failure_json?: string | null;
 }
 export interface AttemptRow {
   operation_id: string; stage_index: number; request_json: string; request_sha256: string;
@@ -22,6 +24,8 @@ export interface AttemptRow {
   state: "STARTED" | "OUTPUT_RECORDED" | "COMMITTED"; output_json: string | null;
 }
 export interface WorkflowRunStatus {
+  readonly first_failure: WorkflowFailure | null;
+  readonly latest_failure: WorkflowFailure | null;
   readonly operation_id: string;
   readonly investigation_id: string;
   readonly initial_revision: number;
@@ -97,7 +101,7 @@ export class WorkflowCheckpointStore {
         this.db.prepare(
           "SELECT operation_id, investigation_id, initial_revision, current_revision, principal_ref, " +
           "credential_generation, deployment_generation, scope_snapshot_id, scope_snapshot_revision, " +
-          "next_stage_index, state, cancellation_receipt_ref, handler_generation, idempotency_key, " +
+          "next_stage_index, state, cancellation_receipt_ref, handler_generation, idempotency_key, first_failure_json, latest_failure_json, " +
           "policy_generation, policy_authority_ref, authorization_receipt_ref, purge_revision, initial_manifest_json " +
           "FROM research_workflow_run WHERE operation_id = ?1 AND principal_ref = ?2 LIMIT 1",
         ).bind(operationId, principal.principal_ref),
@@ -189,7 +193,8 @@ export class WorkflowCheckpointStore {
         fail("WORKFLOW_OUTPUT_CORRUPT");
       }
       return Object.freeze({
-        operation_id: run.operation_id, investigation_id: run.investigation_id, initial_revision: run.initial_revision,
+        first_failure: decodeWorkflowFailure(run.first_failure_json), latest_failure: decodeWorkflowFailure(run.latest_failure_json),
+      operation_id: run.operation_id, investigation_id: run.investigation_id, initial_revision: run.initial_revision,
         current_revision: run.current_revision, principal_ref: run.principal_ref,
         credential_generation: run.credential_generation, deployment_generation: run.deployment_generation,
         scope_snapshot_id: run.scope_snapshot_id, scope_snapshot_revision: run.scope_snapshot_revision,
@@ -198,6 +203,7 @@ export class WorkflowCheckpointStore {
       });
     }
     return Object.freeze({
+      first_failure: decodeWorkflowFailure(run.first_failure_json), latest_failure: decodeWorkflowFailure(run.latest_failure_json),
       operation_id: run.operation_id, investigation_id: run.investigation_id, initial_revision: run.initial_revision,
       current_revision: run.current_revision, principal_ref: run.principal_ref,
       credential_generation: run.credential_generation, deployment_generation: run.deployment_generation,
