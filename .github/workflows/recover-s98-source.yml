@@ -1,0 +1,64 @@
+name: recover-s98-source
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/recover-s98-source.yml]
+permissions:
+  contents: read
+jobs:
+  export:
+    if: github.repository == 'UnknownAlienHuman/eliot-research' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Recover checksum-bound patch and exact main without publishing
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import ast, base64, gzip, hashlib, json, os, pathlib, re, subprocess, urllib.request
+          repo = 'UnknownAlienHuman/eliot-research'
+          parent = '87f9638fcf89095989e03dbed6fb5c4175700688'
+          def git(*args):
+            return subprocess.check_output(['git', *args], text=True).strip()
+          assert git('branch','--show-current') == 'main'
+          assert git('rev-parse','HEAD') == os.environ['GITHUB_SHA']
+          assert git('rev-parse','HEAD^') == parent
+          script = subprocess.check_output(['git','show',parent+':.github/workflows/stage-s98-ingest.yml'],text=True)
+          chunks = ast.literal_eval(re.search(r'chunks = (\[[\s\S]*?\])',script).group(1))
+          assert len(chunks) == 26 and all(re.fullmatch(r'[0-9a-f]{40}', x) for x in chunks)
+          parts = []
+          for sha in chunks:
+            req = urllib.request.Request('https://api.github.com/repos/'+repo+'/git/blobs/'+sha,
+              headers={'Authorization':'Bearer '+os.environ['GH_TOKEN'],'Accept':'application/vnd.github+json'})
+            with urllib.request.urlopen(req, timeout=30) as response:
+              body = json.load(response)
+            assert body['encoding'] == 'base64'
+            data = base64.b64decode(body['content'],validate=False)
+            assert hashlib.sha1(('blob '+str(len(data))+'\0').encode()+data).hexdigest() == sha
+            parts.append(data)
+          patch = gzip.decompress(b''.join(parts))
+          assert hashlib.sha256(patch).hexdigest() == '0c457f9234aa3eba40ff75436bce695af99b2e0baa1075ac178e9afa55abf414'
+          out = pathlib.Path('/tmp/s98-recovery')
+          out.mkdir()
+          (out/'candidate.patch').write_bytes(patch)
+          (out/'SOURCE_SHA').write_text(git('rev-parse','HEAD')+'\n')
+          subprocess.run(['git','bundle','create',str(out/'main.bundle'),'main'],check=True)
+          with (out/'SHA256SUMS').open('w') as checks:
+            for name in ['candidate.patch','main.bundle','SOURCE_SHA']:
+              checks.write(hashlib.sha256((out/name).read_bytes()).hexdigest()+'  '+name+'\n')
+          print('Recovered original patch and main; no product code, ref, database or deployment changed.')
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: s98-recovered-source
+          path: /tmp/s98-recovery/
+          retention-days: 3
+          if-no-files-found: error
