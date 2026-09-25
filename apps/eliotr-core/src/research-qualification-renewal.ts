@@ -30,8 +30,8 @@ import {
   researchSemanticPromptParameters,
 } from "./research-semantic-server.js";
 import { readResearchSemanticConfiguration, type Env } from "./env.js";
-import { resolveResearchOwnerSpendPolicy } from "./research-owner-spend-policy.js";
-import type { WorkflowObject, WorkflowPrincipal } from "@eliotr/cloudflare-workflows";
+import { ResearchOwnerSpendPolicyError, resolveResearchOwnerSpendPolicy } from "./research-owner-spend-policy.js";
+import { WorkflowCheckpointError, type WorkflowObject, type WorkflowPrincipal } from "@eliotr/cloudflare-workflows";
 import type { ResearchQualificationPromptConfig } from "@eliotr/cloudflare-research";
 
 const RENEWAL_MARKER = "LAZY_OWNER_V1" as const;
@@ -89,6 +89,7 @@ function requiredText(
   code: ResearchQualificationRenewalError["code"] = "RESEARCH_QUALIFICATION_RENEWAL_UNAVAILABLE",
 ): string {
   if (typeof value !== "string" || value.trim() === "") {
+    if (code === "RESEARCH_QUALIFICATION_RENEWAL_UNAVAILABLE") throw new WorkflowCheckpointError("WORKFLOW_CONFIGURATION_MISSING");
     fail(code, `${label} is not installed`);
   }
   return value;
@@ -115,8 +116,8 @@ async function readActiveCandidate(
       "c.candidate_sha256=a.candidate_sha256 AND c.route_ref=a.route_ref AND c.route_version=a.route_version " +
       "WHERE a.route_ref=?1 LIMIT 1",
     ).bind(routeRef).first<ActiveCandidateRow>();
-  } catch (cause) {
-    fail("RESEARCH_QUALIFICATION_RENEWAL_AUTHORITY_STALE", "active qualification candidate could not be read", true, cause);
+  } catch {
+    throw new WorkflowCheckpointError("WORKFLOW_STORAGE_UNAVAILABLE");
   }
   if (row === null) fail("RESEARCH_QUALIFICATION_RENEWAL_AUTHORITY_STALE", "active qualification candidate is unavailable");
   try {
@@ -131,7 +132,7 @@ async function readActiveCandidate(
     return candidate;
   } catch (cause) {
     if (cause instanceof ResearchQualificationRenewalError) throw cause;
-    fail("RESEARCH_QUALIFICATION_RENEWAL_AUTHORITY_STALE", "active qualification candidate is malformed", false, cause);
+    throw new WorkflowCheckpointError("WORKFLOW_OUTPUT_CORRUPT");
   }
 }
 
@@ -217,7 +218,7 @@ function modelGateway(env: Env): ResearchModelGatewayRuntimeConfig {
   const token = env.ELIOTR_MODEL_GATEWAY_TOKEN;
   if (typeof token === "string" && token.trim() !== "") {
     try { validateModelGatewayToken(token); }
-    catch (cause) { fail("RESEARCH_QUALIFICATION_RENEWAL_UNAVAILABLE", "model execution gateway credential is invalid", false, cause); }
+    catch { throw new WorkflowCheckpointError("WORKFLOW_CREDENTIALS_INVALID"); }
     return Object.freeze({
       reasoning_gateway_base_url: env.AI_GATEWAY_REASONING_URL,
       gateway_token: token,
@@ -225,7 +226,7 @@ function modelGateway(env: Env): ResearchModelGatewayRuntimeConfig {
   }
   const binding = env.AI as Partial<ResearchModelGatewayBinding> | undefined;
   if (typeof binding?.gateway !== "function") {
-    fail("RESEARCH_QUALIFICATION_RENEWAL_UNAVAILABLE", "model execution gateway is not installed");
+    throw new WorkflowCheckpointError("WORKFLOW_CREDENTIALS_MISSING");
   }
   return Object.freeze({
     reasoning_gateway_base_url: env.AI_GATEWAY_REASONING_URL,
@@ -397,7 +398,10 @@ export async function renewResearchQualifications(
   const configRaw = readResearchSemanticConfiguration(env);
   const config = (() => {
     try { return parseResearchSemanticConfiguration(requiredText(configRaw, "research semantic configuration")); }
-    catch (cause) { fail("RESEARCH_QUALIFICATION_RENEWAL_UNAVAILABLE", "research semantic configuration is invalid", false, cause); }
+    catch (cause) {
+      if (cause instanceof WorkflowCheckpointError) throw cause;
+      throw new WorkflowCheckpointError("WORKFLOW_CONFIGURATION_INVALID");
+    }
   })();
   const access = ownerAccess(principal);
   const grant = await navigation.current();
@@ -414,13 +418,17 @@ export async function renewResearchQualifications(
         authorization: grant,
       }).policy;
     } catch (cause) {
+      if (cause instanceof WorkflowCheckpointError) throw cause;
+      if (cause instanceof ResearchOwnerSpendPolicyError && cause.code === "INVALID") {
+        throw new WorkflowCheckpointError("WORKFLOW_CONFIGURATION_INVALID");
+      }
       fail("RESEARCH_QUALIFICATION_RENEWAL_AUTHORITY_STALE", "installed model spend policy is not current", false, cause);
     }
   })();
   const synthesisRule = policy.rules.find((rule) => rule.stage === "SYNTHESIZE");
   const auditRule = policy.rules.find((rule) => rule.stage === "AUDIT_CLAIMS");
   if (synthesisRule === undefined || auditRule === undefined) {
-    fail("RESEARCH_QUALIFICATION_RENEWAL_UNAVAILABLE", "installed model spend policy has no synthesis/audit routes");
+    throw new WorkflowCheckpointError("WORKFLOW_CONFIGURATION_INVALID");
   }
   const profile = createPersistedModelProfileBindingProducer({
     config: {

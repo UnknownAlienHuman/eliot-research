@@ -13,6 +13,41 @@ The owner's current priority is composing the existing protocol, retrieval, evid
 stages into the usable document-to-answer flow. New financial budgeting/accounting work is deferred
 (2026-09-10); existing provider authorization, cancellation and duplicate-call guards are preserved.
 
+## Runtime failure provenance (S17 code, 2026-09-25)
+
+Apply the complete migration chain through `0083_research_runtime_failures.sql` before deploying
+these status readers/executors, together with the updated PWA. Existing rows are not backfilled:
+old failures with no retained diagnosis remain unknown or use the finite native error fallback.
+
+Semantic preparation and the preceding qualification-renewal path distinguish missing/invalid
+configuration, gateway credentials, route qualification expiry, current authority, storage read
+failure and corrupt output. Existing error families supply a closed safe vocabulary. Neither
+messages, nested causes, stacks, config values nor provider/source payloads enter diagnostics.
+
+The existing W2 run keeps its first failure and most recent consequence; each actual W2 attempt
+also retains its first failure. A metadata-only write cannot change request/attempt identity,
+output, budget, checkpoint revision, cancellation or execution state. First fields are immutable
+once set. Output/currentness checks remain mandatory for output/state transitions, while recording
+an expired-authority failure does not itself require renewed execution authorization. The attempt
+and run diagnostic writes use one D1 batch; uncertain acknowledgement reads that same run back.
+Failure to retain diagnostics emits only a bounded safe-code event and never replaces the original
+error or claims successful persistence. A database outage can therefore leave diagnostics absent.
+
+Callbacks record safe cause/phase/stage before native Workflow error serialization. An outer
+`step.do` wrapper cannot overwrite them with a generic consequence. Status reads do not record
+failures. Only a native `errored` observation on an ACTIVE run exposes the retained failure;
+a recovered/running, cancelled or completed run is not relabelled failed by its history.
+Failure-bearing status uses `eliotr.research-run-status.v2` with one optional `consequence`;
+normal statuses retain v1, and the PWA accepts both. Existing HTTP/MCP authorization and trace
+identities remain unchanged. The UI names the initial cause and later consequence separately.
+
+Diagnostic retryability is not permission to replay a Workflow or a model call. It defaults false;
+only a known model-free semantic-preparation storage read can mark its own operation retryable.
+Qualification renewal can dispatch probes and never acquires that automatic-retry hint. Native
+step retry limits, UNKNOWN handling, Stop/Recover authority and CompletionDisposition are unchanged.
+This is code with compile/static checks only; signed native lifecycle, injection, secret-redaction,
+restart/recovery and concurrency acceptance remain pending in #209. No new test run or live claim.
+
 ## Operation-bound execution scopes (S33 code checkpoint, 2026-09-23)
 
 New owner runs require additive migration `0070_research_execution_scope.sql`.

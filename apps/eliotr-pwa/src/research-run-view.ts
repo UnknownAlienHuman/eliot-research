@@ -81,10 +81,10 @@ export function wikiProposalErrorText(error: unknown): string {
   }
   return "Wiki draft could not be saved. Try again from this report.";
 }
-export function failureText(failure: ResearchRunStatusView["failure"]): string | undefined {
+function failureCauseText(failure: ResearchRunStatusView["failure"]): string | undefined {
   switch (failure?.code) {
     case "WORKFLOW_OUTPUT_CORRUPT":
-      return "The model returned a result that did not match the required format. This run has no verified answer. Your saved reports are still available.";
+      return "A produced or saved Research result failed integrity or format validation. This run has no verified answer. Your saved reports are still available.";
     case "WORKFLOW_OUTPUT_UNAVAILABLE":
       return "The research result could not be read. This run has no verified answer. Your saved reports are still available.";
     case "WORKFLOW_EFFECT_UNCERTAIN":
@@ -97,10 +97,42 @@ export function failureText(failure: ResearchRunStatusView["failure"]): string |
       return "Research access cannot be renewed because the server Read token is missing. An administrator must renew the connection.";
     case "RESEARCH_QUALIFICATION_RENEWAL_AUTHORITY_STALE":
       return "Research policy has expired. An administrator must renew research access.";
+    case "WORKFLOW_CONFIGURATION_MISSING":
+      return "Required Research configuration is missing. Configure the server before recovering this run.";
+    case "WORKFLOW_CONFIGURATION_INVALID":
+      return "Research configuration is invalid. Correct it before recovering this run.";
+    case "WORKFLOW_CREDENTIALS_MISSING":
+      return "Research gateway credentials or the native binding are missing.";
+    case "WORKFLOW_CREDENTIALS_INVALID":
+    case "MODEL_GATEWAY_CREDENTIAL_INVALID":
+    case "MODEL_GATEWAY_AUTH_REJECTED":
+      return "The Research gateway credentials are invalid or were rejected.";
+    case "WORKFLOW_STORAGE_UNAVAILABLE":
+      return "Research preparation could not read its required storage. This is not proof that access was revoked.";
+    case "WORKFLOW_QUALIFICATION_STALE":
+      return "The configured model route qualification is unavailable, expired or changed.";
+    case "WORKFLOW_PREPARATION_FAILED":
+      return "Research preparation failed before a safe specific cause could be identified.";
+    case "MODEL_ATTEMPT_BUDGET_EXPIRED":
+      return "The model attempt's original budget reservation expired.";
+    case "MODEL_GATEWAY_RESPONSE_INVALID":
+    case "MODEL_GATEWAY_OUTPUT_TRUNCATED":
+    case "MODEL_ATTEMPT_READBACK_CORRUPT":
+      return "The model result was incomplete or failed validation. It was not accepted as a verified answer.";
     default:
-      return undefined;
+      return failure === undefined ? undefined : `Research stopped with code ${failure.code}.`;
   }
 }
+export function failureText(failure: ResearchRunStatusView["failure"]): string | undefined {
+  const initial = failureCauseText(failure);
+  if (failure === undefined || initial === undefined) return initial;
+  const location = failure.phase === "PREPARATION" ? "During preparation. "
+    : failure.stage === undefined ? "" : `At ${failure.stage.replaceAll("_", " ")}. `;
+  const subsequent = failure.consequence === undefined ? ""
+    : ` Later failure (${failure.consequence.code}): ${failureCauseText(failure.consequence)}`;
+  return `${location}${initial}${subsequent}`;
+}
+
 export function auditStatusText(claims: readonly ResearchArtifactSectionCitationAuditClaim[]): string {
   if (claims.some((claim) => claim.disposition === "NOT_VERIFIABLE_IN_SCOPE")) {
     return `${claims.length} claim assessments are recorded. Some claims could not be verified. Review the draft and its sources.`;
