@@ -33,8 +33,8 @@
     "rust:wasm": "cargo build --workspace --target wasm32-unknown-unknown --release --locked && node scripts/check-rust-wasm.mjs --mode default && cargo build --package eliotr-kernel-wasm --target wasm32-unknown-unknown --release --features m1-self-test-export --locked && node scripts/check-rust-wasm.mjs --mode self-test",
     "rust:coverage": "cargo +nightly-2026-08-31 llvm-cov --package eliotr-canonical --package eliotr-test-vectors --all-features --locked --branch --fail-under-lines 90 --text",
     "rust:check": "pnpm rust:boundaries && pnpm rust:vectors && pnpm rust:fmt && pnpm rust:clippy && pnpm rust:test && pnpm rust:deny && pnpm rust:wasm && pnpm rust:coverage",
-    "check": "pnpm contracts:check && pnpm boundaries:check && pnpm boundaries:negative && pnpm budgets:check && pnpm work-packets:check && pnpm branch-hygiene:check && pnpm delivery:check && pnpm ingest:check && pnpm projection:check && pnpm evidence:check && pnpm erasure:check && pnpm gemini:check && pnpm lint && pnpm typecheck && pnpm test && pnpm check:implementation-status && pnpm rust:check",
-    "check:affected": "pnpm contracts:check && pnpm boundaries:check && pnpm boundaries:negative && pnpm budgets:check && pnpm work-packets:check && pnpm branch-hygiene:check && pnpm delivery:check && pnpm ingest:check && pnpm projection:check && pnpm evidence:check && pnpm erasure:check && pnpm gemini:check && pnpm lint && pnpm typecheck && pnpm test && pnpm check:implementation-status && pnpm rust:check",
+    "check": "pnpm d1:depth && pnpm contracts:check && pnpm boundaries:check && pnpm boundaries:negative && pnpm budgets:check && pnpm work-packets:check && pnpm branch-hygiene:check && pnpm delivery:check && pnpm ingest:check && pnpm projection:check && pnpm evidence:check && pnpm erasure:check && pnpm gemini:check && pnpm lint && pnpm typecheck && pnpm test && pnpm check:implementation-status && pnpm rust:check",
+    "check:affected": "pnpm d1:depth && pnpm contracts:check && pnpm boundaries:check && pnpm boundaries:negative && pnpm budgets:check && pnpm work-packets:check && pnpm branch-hygiene:check && pnpm delivery:check && pnpm ingest:check && pnpm projection:check && pnpm evidence:check && pnpm erasure:check && pnpm gemini:check && pnpm lint && pnpm typecheck && pnpm test && pnpm check:implementation-status && pnpm rust:check",
     "work-packets:check": "node scripts/check-work-packets.mjs",
     "cf:types": "pnpm --filter @eliotr/core cf:types",
     "cf:dev": "node scripts/local-runtime.mjs --dev",
@@ -57,7 +57,8 @@
     "local:owner": "node scripts/local-owner.mjs",
     "test:local-owner": "node --test scripts/test-local-owner.mjs scripts/test-local-read-policy.mjs scripts/test-local-namespace.mjs scripts/test-local-async-execution.mjs",
     "test:library-browser": "node scripts/test-library-browser.mjs",
-    "test:owner-e2e": "node --test tests/integration/browser/library.spec.ts tests/integration/browser/raw-file-browser.test.mjs"
+    "test:owner-e2e": "node --test tests/integration/browser/library.spec.ts tests/integration/browser/raw-file-browser.test.mjs",
+    "d1:depth": "node infra/d1/check-expression-depth.mjs"
   },
   "devDependencies": {
     "@cloudflare/vitest-plugin": "1.1.0",

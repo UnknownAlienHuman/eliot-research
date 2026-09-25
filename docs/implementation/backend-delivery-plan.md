@@ -24,11 +24,15 @@ to have run anything. Once assembled, execute the existing final gates and retai
 
 ## Immediate code-repair order
 
-1. **#293, with #294: repair the shared D1 trigger/view chain and add the cheap compiler guard.**
-   All82 current migrations load, but15 mutation shapes and three view reads fail at expression depth100.
-   Flatten the effective dependencies with a forward migration; retain final atomic authorization,
-   ownership, expiry, purge, CAS, receipt and cancellation constraints. Preserve lost-ACK reconciliation
-   while distinguishing SQL/storage failure from a real grant denial. A default-depth SQLite PASS is insufficient.
+1. **#293, using #294: repair the shared D1 trigger/view chain.** The compiler guard is now available
+   as `pnpm d1:depth`, starts `check`/`check:affected`, and has independent Ubuntu/Windows CI jobs.
+   It checks both migration chains, trigger-bearing table writes (including all-column UPDATE), view
+   reads and supported INSTEAD OF writes. Do not rebuild this guard or call its current FAIL a fix:
+   the unchanged Core schema still has19 failing shapes (15 original mutation categories, one additional
+   UPDATE shape and three view reads). Flatten the effective dependencies with a forward migration;
+   retain final atomic authorization, ownership, expiry, purge, CAS, receipt and cancellation constraints.
+   Preserve lost-ACK reconciliation while distinguishing SQL/storage failure from a real grant denial.
+   A default-depth SQLite PASS is insufficient; compiler calibration is not native behavioral acceptance.
 2. **#296: fix the26 confirmed lint findings.** Preserve error causes and cleanup behavior; correct
    Node globals in their actual environment. Do not silence findings by dropping checks or diagnostics.
    For #297, inspect existing failure logs now and repair confirmed production defects in their owning
