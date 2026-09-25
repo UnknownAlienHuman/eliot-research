@@ -27,6 +27,9 @@ if (root === null) throw new Error("missing #app root");
 const app: HTMLDivElement = root;
 
 let googleOAuthCleanup: (() => void) | undefined;
+let healthController: AbortController | undefined;
+let healthSerial = 0;
+let pageClosed = false;
 let mountedGoogleTransport: GoogleExternalTransport | "unknown" | null = null;
 type HealthLossReason = "initial-unavailable" | "connection-lost" | "generation-changed";
 type HealthFailureKind = "network" | "access" | "server";
@@ -384,13 +387,26 @@ function render(health: SystemHealth | null): void {
   };
   let projectPanel: (() => void) & ProjectPanelHandle | undefined = undefined;
   let libraryPanel: ReturnType<typeof mountLibraryPanel> | undefined = undefined;
-  const clearPrivateEvidence = (researchNotice?: string): void => { clearEvidenceRail(); retrieval?.clearPrivate(); exhaustive?.clearPrivate(); erasure?.clearPrivate(); ownerSession?.clearPrivate(); projectPanel?.clearPrivate(); libraryPanel?.clearPrivate(); researchRun?.clearPrivate(researchNotice); researchChanges?.clearPrivate(); wiki?.clearPrivate(); };
-  const sourceErased = (): void => { clearEvidenceRail(); retrieval?.clearPrivate(); researchRun?.clearPrivate(); exhaustive?.clearPrivate(); researchChanges?.clearPrivate(); wiki?.clearPrivate(); };
+  let selectionSerial = 0;
+  const clearPrivateEvidence = (researchNotice?: string, preserveIntent = false): void => {
+    selectionSerial += 1;
+    if (preserveIntent) researchRun?.suspendPrivate(); else researchRun?.clearPrivate(researchNotice);
+    clearEvidenceRail(); retrieval?.clearPrivate(); exhaustive?.clearPrivate(); erasure?.clearPrivate(); ownerSession?.clearPrivate();
+    projectPanel?.clearPrivate(); libraryPanel?.clearPrivate(); researchChanges?.clearPrivate(); wiki?.clearPrivate();
+  };
+  const sourceErased = (): void => { selectionSerial += 1; clearEvidenceRail(); retrieval?.clearPrivate(); researchRun?.clearPrivate(); exhaustive?.clearPrivate(); researchChanges?.clearPrivate(); wiki?.clearPrivate(); };
   erasureHost?.addEventListener("eliotr:source-erased", sourceErased);
   erasureHost?.addEventListener("eliotr:source-erasure-requested", sourceErased);
-  const clearEvidenceOnEvent = (): void => clearPrivateEvidence();
+  const clearEvidenceOnEvent = (): void => {
+    healthSerial += 1; healthController?.abort();
+    app.querySelectorAll<HTMLButtonElement>("[data-refresh], [data-connection-refresh]").forEach((button) => { button.disabled = false; });
+    updateHealth(unavailableHealth());
+  };
   const clearEvidenceOnAuthorization = (): void => clearPrivateEvidence("Authorization changed. Sign in again or renew the read policy, then try again.");
-  const clearEvidenceOnHealthLost = (): void => clearPrivateEvidence();
+  const clearEvidenceOnHealthLost = (event: Event): void => {
+    const reason = (event as CustomEvent<{ reason?: unknown }>).detail?.reason;
+    clearPrivateEvidence(undefined, reason === "connection-lost" || reason === "initial-unavailable");
+  };
   const clearEvidenceOnScopeChange = (event: Event): void => {
     const detail = (event as CustomEvent<{ readonly reason?: unknown; readonly projectId?: unknown; readonly title?: unknown }>).detail;
     if (detail?.reason === "project-filter") {
@@ -412,16 +428,6 @@ function render(health: SystemHealth | null): void {
     researchChanges?.refresh();
   };
   const clearEvidenceOnQueryStart = (): void => clearEvidenceRail();
-  const refreshHealth = (): void => {
-    const previousGeneration = app.querySelector(".health-generation")?.textContent;
-    const refreshButtons = app.querySelectorAll<HTMLButtonElement>("[data-refresh], [data-connection-refresh]");
-    refreshButtons.forEach((button) => { button.disabled = true; });
-    void getSystemHealth().then((next) => {
-      if (previousGeneration && previousGeneration !== "generation pending" && previousGeneration !== next.deployment_generation) clearPrivateEvidence();
-      updateHealth(next);
-    }).catch((error) => { clearPrivateEvidence(); updateHealth(unavailableHealth(), classifyHealthFailure(error));
-    }).finally(() => { refreshButtons.forEach((button) => { button.disabled = false; }); });
-  };
   app.querySelector<HTMLButtonElement>("[data-refresh]")?.addEventListener("click", refreshHealth);
   app.querySelector<HTMLButtonElement>("[data-connection-refresh]")?.addEventListener("click", refreshHealth);
   // Coverage stays "sampled" until an exhaustive denominator is reconciled; the summary reports
@@ -438,6 +444,7 @@ function render(health: SystemHealth | null): void {
   });
   retrievalHost?.addEventListener("retrieval:started", clearEvidenceOnQueryStart);
   researchRunHost?.addEventListener("research:started", clearEvidenceOnQueryStart);
+  researchRunHost?.addEventListener("research:private-cleared", clearEvidenceOnQueryStart);
   exhaustiveHost?.addEventListener("exhaustive:started", clearEvidenceOnQueryStart);
   exhaustiveHost?.addEventListener("exhaustive:completed", (event) => {
     const detail = (event as CustomEvent<{ matches: number; sections: number }>).detail;
@@ -454,6 +461,7 @@ function render(health: SystemHealth | null): void {
   app.addEventListener("eliotr:health-updated", refreshProjects);
   app.addEventListener("library:scope-changed", clearEvidenceOnScopeChange);
   window.addEventListener("offline", clearEvidenceOnEvent);
+  window.addEventListener("online", refreshHealth);
   window.addEventListener("eliotr:authorization-cleared", clearEvidenceOnAuthorization);
   window.addEventListener("eliotr:raw-admission-completed", refreshAfterSourceAdmission);
   retrievalHost?.addEventListener("retrieval:evidence-selected", (event) => {
@@ -467,11 +475,14 @@ function render(health: SystemHealth | null): void {
     onOpenProject: (projectId) => libraryPanel?.openProject(projectId),
   }) : undefined;
   libraryPanel = library ? mountLibraryPanel(library, async (id, context) => {
-    if (!id) { retrieval?.clearPrivate(); researchRun?.clearPrivate(); exhaustive?.clearPrivate(); erasure?.clearPrivate(); return; }
+    // Empty Library callbacks clear protected selection, not retained Research intent.
+    if (!id) { retrieval?.clearPrivate(); exhaustive?.clearPrivate(); erasure?.clearPrivate(); return; }
+    const selection = selectionSerial;
     erasure?.selectSource(id, context);
     if (!context?.sourceRevisionRef) {
       if (!orientation || !(await orientation.selectSource(id))) return false;
     }
+    if (selection !== selectionSerial || pageClosed || !navigator.onLine || app.dataset.healthReady !== "true") return false;
     retrieval?.selectSource(id, context);
     researchRun?.selectSource(id, context);
     exhaustive?.selectSource(id);
@@ -483,7 +494,27 @@ function render(health: SystemHealth | null): void {
     namespacePanel, () => app.removeEventListener("eliotr:namespace-selected", namespaceSelected),
     rawUploadHost ? mountRawFilePanel(rawUploadHost, { generation: () => app.dataset.healthGeneration, ready: () => app.dataset.healthReady === "true", sourceNamespace: () => selectedNamespace }) : undefined,
     libraryPanel];
-  window.addEventListener("pagehide", () => { cleanups.forEach((cleanup) => cleanup?.()); googleOAuthCleanup?.(); googleOAuthCleanup = undefined; mountedGoogleTransport = null; evidenceRail?.dispose(); sourceChooserToggle?.removeEventListener("click", toggleSourceChooser); sourceChooserViewport.removeEventListener("change", handleSourceChooserViewport); rawUploadHost?.removeEventListener("eliotr:find-in-library", handleFindInLibrary); rawUploadHost?.removeEventListener(SOURCE_VERSION_FORM_REQUESTED_EVENT, handleSourceVersionFormRequested); app.removeEventListener("library:scope-changed", clearEvidenceOnScopeChange); window.removeEventListener("offline", clearEvidenceOnEvent); window.removeEventListener("eliotr:authorization-cleared", clearEvidenceOnAuthorization); window.removeEventListener("eliotr:raw-admission-completed", refreshAfterSourceAdmission); retrievalHost?.removeEventListener("retrieval:started", clearEvidenceOnQueryStart); researchRunHost?.removeEventListener("research:started", clearEvidenceOnQueryStart); exhaustiveHost?.removeEventListener("exhaustive:started", clearEvidenceOnQueryStart); app.removeEventListener("eliotr:health-lost", clearEvidenceOnHealthLost); app.removeEventListener("eliotr:health-lost", clearResearchConfiguration); app.removeEventListener("eliotr:health-updated", refreshResearchConfiguration); app.removeEventListener("eliotr:health-updated", refreshResearchChanges); app.removeEventListener("eliotr:health-updated", refreshWiki); app.removeEventListener("eliotr:health-updated", refreshProjects); window.removeEventListener("popstate", handleLocationChange); window.removeEventListener("hashchange", handleLocationChange); app.removeEventListener("research:evidence-selected", selectResearchEvidence); }, { once: true });
+  window.addEventListener("pagehide", () => { pageClosed = true; healthSerial += 1; healthController?.abort(); cleanups.forEach((cleanup) => cleanup?.()); googleOAuthCleanup?.(); googleOAuthCleanup = undefined; mountedGoogleTransport = null; evidenceRail?.dispose(); sourceChooserToggle?.removeEventListener("click", toggleSourceChooser); sourceChooserViewport.removeEventListener("change", handleSourceChooserViewport); rawUploadHost?.removeEventListener("eliotr:find-in-library", handleFindInLibrary); rawUploadHost?.removeEventListener(SOURCE_VERSION_FORM_REQUESTED_EVENT, handleSourceVersionFormRequested); app.removeEventListener("library:scope-changed", clearEvidenceOnScopeChange); window.removeEventListener("offline", clearEvidenceOnEvent); window.removeEventListener("online", refreshHealth); window.removeEventListener("eliotr:authorization-cleared", clearEvidenceOnAuthorization); window.removeEventListener("eliotr:raw-admission-completed", refreshAfterSourceAdmission); retrievalHost?.removeEventListener("retrieval:started", clearEvidenceOnQueryStart); researchRunHost?.removeEventListener("research:started", clearEvidenceOnQueryStart); researchRunHost?.removeEventListener("research:private-cleared", clearEvidenceOnQueryStart); exhaustiveHost?.removeEventListener("exhaustive:started", clearEvidenceOnQueryStart); app.removeEventListener("eliotr:health-lost", clearEvidenceOnHealthLost); app.removeEventListener("eliotr:health-lost", clearResearchConfiguration); app.removeEventListener("eliotr:health-updated", refreshResearchConfiguration); app.removeEventListener("eliotr:health-updated", refreshResearchChanges); app.removeEventListener("eliotr:health-updated", refreshWiki); app.removeEventListener("eliotr:health-updated", refreshProjects); window.removeEventListener("popstate", handleLocationChange); window.removeEventListener("hashchange", handleLocationChange); app.removeEventListener("research:evidence-selected", selectResearchEvidence); }, { once: true });
+}
+
+function refreshHealth(): void {
+  if (pageClosed) return;
+  healthController?.abort();
+  const mine = ++healthSerial;
+  const local = new AbortController(); healthController = local;
+  const buttons = app.querySelectorAll<HTMLButtonElement>("[data-refresh], [data-connection-refresh]");
+  buttons.forEach((button) => { button.disabled = true; });
+  void getSystemHealth(local.signal).then((health) => {
+    if (mine === healthSerial && !pageClosed && navigator.onLine) updateHealth(health);
+  }).catch((error: unknown) => {
+    if (mine !== healthSerial || pageClosed || local.signal.aborted) return;
+    const failure = classifyHealthFailure(error);
+    if (failure.kind === "access") window.dispatchEvent(new Event("eliotr:authorization-cleared"));
+    updateHealth(unavailableHealth(), failure);
+  }).finally(() => {
+    if (healthController === local) healthController = undefined;
+    if (mine === healthSerial && !pageClosed) buttons.forEach((button) => { button.disabled = false; });
+  });
 }
 
 function updateHealth(health: SystemHealth, failure?: HealthFailure): void {
@@ -500,7 +531,7 @@ function updateHealth(health: SystemHealth, failure?: HealthFailure): void {
   if (reason !== undefined) {
     app.dispatchEvent(new CustomEvent("eliotr:health-lost", { detail: { reason } }));
   }
-  app.dataset.healthGeneration = health.deployment_generation;
+  if (!endpointUnreachable) app.dataset.healthGeneration = health.deployment_generation;
   app.dataset.healthReady = health.ready ? "true" : "false";
   app.dataset.healthObserved = "true";
   renderGoogleConnector(health);
@@ -556,7 +587,7 @@ function updateHealth(health: SystemHealth, failure?: HealthFailure): void {
 
 window.addEventListener("pageshow", (event) => { if (event.persisted) window.location.reload(); });
 render(null);
-void getSystemHealth().then(updateHealth).catch((error) => updateHealth(unavailableHealth(), classifyHealthFailure(error)));
+refreshHealth();
 
 if ("serviceWorker" in navigator) {
   void navigator.serviceWorker.register("/sw.js");

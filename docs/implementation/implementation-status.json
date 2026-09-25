@@ -118,7 +118,7 @@
         "ER-24"
       ],
       "state": "IMPLEMENTED_NOT_LIVE",
-      "behavior": "Bounded application lifecycle, health, capabilities, owner catalog and governed ingest composition are executable; unsupported products remain typed unavailable. Owner catalog uses explicit current read policy and admitted-source verification, primary mutation/time fencing and session-bound v2 cursors. Library selection binds active readiness and FAST_SEARCH to the selected head and deployment; metadata orientation remains separate. Owner-only revision history reuses the catalog read fence and independently validates historical admissions; historical per-channel metadata remains RECORDED_ONLY.",
+      "behavior": "Bounded application lifecycle, health, capabilities, owner catalog and governed ingest composition are executable; unsupported products remain typed unavailable. Owner catalog uses explicit current read policy and admitted-source verification, primary mutation/time fencing and session-bound v2 cursors. Library selection binds active readiness and FAST_SEARCH to the selected head and deployment; metadata orientation remains separate. Owner-only revision history reuses the catalog read fence and independently validates historical admissions; historical per-channel metadata remains RECORDED_ONLY. S19 PWA code separates retained in-tab question/run intent from protected responses: reconnect verifies the same owner/deployment and observes the original run without automatic write replay. Auth/identity changes still clear input; no offline private cache. Compilation/lint only; browser/native acceptance deferred under #211.",
       "completion_evidence": [
         "strict TypeScript check",
         "owner/service authorization negative tests",

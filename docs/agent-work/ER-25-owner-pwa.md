@@ -304,3 +304,20 @@ decoder. It retains in-memory action identities for explicit uncertain-outcome r
 optimistically cancels, and clears private state with the panel lifecycle. Report opening reuses
 POST reauthorization for non-author owners without conferring Wiki/publication authority.
 Production compilation/lint only; browser/native acceptance remains pending.
+
+
+## S19 transient reconnect (2026-09-25 code checkpoint)
+
+Research keeps the user-entered question, scope selection, known run locator and unresolved
+request/action keys in this tab's memory across network loss, health unavailability and session
+reverification. Protected reports, sections, citations, history and the evidence rail are cleared.
+The existing strict owner-session decoder is shared with the connection gate. A fresh GET must
+confirm the same owner and deployment before observing the same run; auth denial, identity/deployment
+change and disposal clear retained input too. Scope/source invalidation retains its hard clearing rule.
+
+Reconnect reads session, status and history; it never submits or retries a run, control or upload.
+An unacknowledged start keeps its body/key for an explicit unchanged retry, not a replacement run.
+In-flight responses are fenced by lifecycle serial, cancellation, current generation and session
+expiry. Health checks are cancellable/latest-only and browser online initiates a new check.
+No private browser storage or offline response cache is introduced. Report presentation is extracted
+from the existing controller, not duplicated. Compilation/lint only; browser/native acceptance pending.

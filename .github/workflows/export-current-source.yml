@@ -1,5 +1,5 @@
 name: export-current-source
-# Refresh exact main for S19 reconnect implementation.
+# Refresh exact main after S08 for S09 semantic-stage acceptance.
 on:
   push:
     branches: [main]

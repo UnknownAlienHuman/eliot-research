@@ -1,5 +1,15 @@
 # Implementation gap register
 
+## S19 code checkpoint — transient Research reconnect (2026-09-25)
+
+The PWA now separates in-tab question/scope/run intent from protected response data. Temporary
+network/health loss clears reports, history and evidence but retains the existing run and request keys.
+Reconnect verifies the same owner via the existing session GET before reading that run, without
+resubmitting Research or uploads. Auth/identity/deployment changes and disposal still clear input.
+Unconfirmed starts allow only explicit unchanged-key retries; no browser disk persistence or automatic
+write retry is introduced. Production compilation/lint only; actual browser/authorization and uncertain
+acknowledgement acceptance remains pending under #211. This does not qualify other launch blockers.
+
 ## S27 checkpoint — integration-proven branch cleanup (2026-09-19)
 
 The former count/age/closed-PR deletion rules are removed under the owner's explicit direction.
