@@ -9,10 +9,13 @@ export const ORIENTATION_MAX_RESULTS = 16;
 export const ORIENTATION_TTL_MS = 15 * 60 * 1000;
 export class OrientationError extends Error {
   public constructor(public readonly code: string, public readonly status = 409,
-    public readonly retryable = false) { super(code); this.name = "OrientationError"; }
+    public readonly retryable = false, cause?: unknown) {
+    super(code, cause === undefined ? undefined : { cause });
+    this.name = "OrientationError";
+  }
 }
-export function orientationFail(code: string, status = 409, retryable = false): never {
-  throw new OrientationError(code, status, retryable);
+export function orientationFail(code: string, status = 409, retryable = false, cause?: unknown): never {
+  throw new OrientationError(code, status, retryable, cause);
 }
 export function orientationId(value: unknown): string {
   const result = IdentifierSchema.safeParse(value);

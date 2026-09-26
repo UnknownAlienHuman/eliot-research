@@ -261,21 +261,22 @@ async function ensureRecoveryAction(
   const bindings = [...fence, identity.intent_id, expected.idempotency_key, identity.payload_ref,
     expected.policy_decision_ref, expected.budget_reservation_ref, expected.cancellation_ref,
     new Date().toISOString(), status.next_stage_index, status.current_revision, identity.attempt_id];
-  const authorized = `EXISTS (SELECT 1 FROM research_workflow_run WHERE ${RUN_CONTROL_FENCE_SQL}
-    AND next_stage_index=?26 AND current_revision=?27)`;
+  const authorized = `FROM research_workflow_run WHERE ${RUN_CONTROL_FENCE_SQL}
+    AND (next_stage_index,current_revision)=(?26,?27)`;
   try {
     await database.batch([
       database.prepare(`INSERT OR IGNORE INTO operation_intent(intent_id,revision,operation_kind,principal_ref,
         idempotency_key,payload_ref,policy_decision_ref,budget_reservation_ref,cancellation_ref,created_at)
-        SELECT ?19,1,'research.run.recover.v1',?16,?20,?21,?22,?23,?24,?25 WHERE ${authorized}`)
+        SELECT ?19,1,'research.run.recover.v1',?16,?20,?21,?22,?23,?24,?25 ${authorized}`)
         .bind(...bindings.slice(0, 27)),
       database.prepare(`INSERT OR IGNORE INTO operation_attempt(attempt_id,intent_id,intent_revision,attempt_number,
         state,checkpoint_ref,error_code,started_at,ended_at)
-        SELECT ?28,?19,1,1,'STARTED',NULL,NULL,?25,NULL WHERE ${authorized}
-        AND EXISTS (SELECT 1 FROM operation_intent i WHERE i.intent_id=?19 AND i.revision=1
-          AND i.operation_kind='research.run.recover.v1' AND i.principal_ref=?16 AND i.idempotency_key=?20
-          AND i.payload_ref=?21 AND i.policy_decision_ref=?22 AND i.budget_reservation_ref IS ?23
-          AND i.cancellation_ref=?24)`).bind(...bindings),
+        SELECT ?28,?19,1,1,'STARTED',NULL,NULL,?25,NULL ${authorized}
+        AND EXISTS (SELECT 1 FROM operation_intent i
+          WHERE (i.intent_id,i.revision,i.operation_kind,i.principal_ref,i.idempotency_key,
+            i.payload_ref,i.policy_decision_ref,i.cancellation_ref)
+            =(?19,1,'research.run.recover.v1',?16,?20,?21,?22,?24)
+          AND i.budget_reservation_ref IS ?23)`).bind(...bindings),
     ]);
   } catch { /* Reconcile an uncertain batch using the same immutable action, never another key. */ }
   const row = await readRecoveryAction(database, identity.intent_id);
@@ -296,9 +297,11 @@ async function claimRecoveryAction(
   let result: D1Result;
   try {
     result = await database.prepare(`UPDATE operation_attempt SET state='CHECKPOINTED', checkpoint_ref=?20
-      WHERE attempt_id=?19 AND intent_id=?21 AND intent_revision=1 AND attempt_number=1 AND state='STARTED'
-      AND EXISTS (SELECT 1 FROM research_workflow_run WHERE ${RUN_CONTROL_FENCE_SQL}
-        AND next_stage_index=?22 AND current_revision=?23)`)
+      FROM research_workflow_run
+      WHERE (operation_attempt.attempt_id,operation_attempt.intent_id,operation_attempt.intent_revision,
+        operation_attempt.attempt_number,operation_attempt.state)=(?19,?21,1,1,'STARTED')
+      AND ${RUN_CONTROL_FENCE_SQL}
+      AND (research_workflow_run.next_stage_index,research_workflow_run.current_revision)=(?22,?23)`)
       .bind(...fence, row.attempt_id, checkpointRef, row.intent_id, read.status.next_stage_index, read.status.current_revision).run();
   } catch { fail("RESEARCH_CONTROL_UNCONFIRMED", 503, true); }
   const current = await readRecoveryAction(database, row.intent_id);

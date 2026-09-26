@@ -25,5 +25,29 @@ Exit 1 means a schema compilation failure; exit 2 means missing tooling or an in
 
 This is the depth-100 check for #293/#294, **not full D1 emulation or behavioral acceptance**. It does
 not prove authorization, concurrency, readback, native runtime limits or every dynamically constructed
-application query. The real-workerd jobs and S91/S92 acceptance remain required. A forward migration
-must repair the existing failures; do not edit old migrations or raise the limit to make this pass.
+application query. The real-workerd jobs and S91/S92 acceptance remain required. Migration 0084
+repairs the reviewed chain; do not edit old migrations or raise the limit to make this pass.
+
+## 0084 authority-chain repair
+
+The forward migration decorrelates effective-scope/workflow/recovery lookups, compacts composite
+identity equality and separates checkpoint invariants within one atomic trigger invocation. It keeps
+legacy/delegated branches disjoint and preserves semijoin cardinality with DISTINCT where joins may
+find multiple witnesses. No durable authorization cache, owner bypass, table rewrite or weaker expiry,
+purge, revocation, receipt, CAS or cancellation predicate is introduced.
+
+The actual Stop/Recover statements also use shallow same-operation joins. Their 18 fence bindings,
+original-owner exception, independent owner-machine cancellation and effective-execution requirement
+for recovery remain unchanged. Each join is pinned to the unique run operation; it cannot multiply
+recovery reservations. The grant writer retains an insertion failure through exact readback: a matching
+row reconciles a lost acknowledgement, while an unconfirmed write/read failure is a bounded 503 with
+retryable=false. Proven no-match without a storage failure retains the existing 403. Internal causes
+are not exposed through HTTP/MCP error text.
+
+On the reviewed Node 22.16.0 / TypeScript 6.0.3 / SQLite 3.46.1 checkpoint, the unchanged depth-100
+compiler checks 83 Core migrations, 78 trigger-bearing tables, 12 views and 325 statement shapes with
+zero failures; Search's four migrations compile. Additional source-derived EXPLAIN checks covered
+702 statically recovered prepare expressions and nine query/run/artifact scope-grant variants. All
+711 compile against the appropriate Core or Search schema. These are compile-only observations,
+not executed product requests, native D1 qualification or exhaustive dynamic-SQL coverage. Remaining
+runtime-built prepare sites and integration/negative/concurrency acceptance remain #294/S91/S92 work.

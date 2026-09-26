@@ -247,19 +247,37 @@ function createReadPolicyAuthority(db: D1Database, context: EvidenceAccessContex
       access.credential_generation, snapshot.policy_authority_ref, JSON.stringify(allowedUses), disclosure,
       receipt, expiresAt, clock(), snapshot.digest];
     // Conflict never revives a revoked/expired grant. Currentness is rechecked by the caller on both sides.
+    let writeFailure: { cause: unknown } | undefined;
     try {
-      await db.prepare("INSERT INTO scope_access_grant (snapshot_id,snapshot_revision,principal_ref,client_class," +
+      const result = await db.prepare("INSERT INTO scope_access_grant (snapshot_id,snapshot_revision,principal_ref,client_class," +
         "credential_generation,policy_authority_ref,allowed_use_json,disclosure_ceiling,authorization_receipt_ref,state,expires_at,created_at) " +
         "SELECT ?1,?2,?3,?4,?5,?6,?7,?8,?9,'ACTIVE',?10,?11 FROM scope_snapshot " +
         "WHERE snapshot_id=?1 AND revision=?2 AND snapshot_digest=?12 AND invalidated_at IS NULL " +
         "AND julianday(expires_at)>julianday(?11) ON CONFLICT DO NOTHING").bind(...values).run();
-    } catch { /* Reconcile once through exact readback, never retry an ambiguous write. */ }
-    const row = await db.prepare("SELECT policy_authority_ref,allowed_use_json,disclosure_ceiling,authorization_receipt_ref,state,expires_at " +
-      "FROM scope_access_grant WHERE snapshot_id=?1 AND snapshot_revision=?2 AND principal_ref=?3 AND client_class=?4 " +
-      "AND credential_generation=?5").bind(...values.slice(0, 5)).first();
+      if (!result.success) writeFailure = { cause: new Error("Scope grant write did not report success") };
+    } catch (cause) {
+      // Retain even a thrown undefined value. An absent row is not proof that the write was denied.
+      writeFailure = { cause };
+    }
     const expected = { policy_authority_ref: snapshot.policy_authority_ref, allowed_use_json: JSON.stringify(allowedUses),
       disclosure_ceiling: disclosure, authorization_receipt_ref: receipt, state: "ACTIVE", expires_at: expiresAt };
-    if (!row || canonicalEvidenceJson(row) !== canonicalEvidenceJson(expected)) orientationFail("ORIENTATION_GRANT_UNAVAILABLE", 403);
+    let confirmed: boolean;
+    try {
+      const row = await db.prepare("SELECT policy_authority_ref,allowed_use_json,disclosure_ceiling,authorization_receipt_ref,state,expires_at " +
+        "FROM scope_access_grant WHERE snapshot_id=?1 AND snapshot_revision=?2 AND principal_ref=?3 AND client_class=?4 " +
+        "AND credential_generation=?5").bind(...values.slice(0, 5)).first();
+      confirmed = row !== null && canonicalEvidenceJson(row) === canonicalEvidenceJson(expected);
+    } catch (cause) {
+      // Causes stay internal; HTTP/MCP expose only the bounded code and generic message.
+      orientationFail("ORIENTATION_GRANT_STORAGE_UNAVAILABLE", 503, false, writeFailure === undefined
+        ? cause : new AggregateError([writeFailure.cause, cause], "Scope grant write/readback outcome is unknown"));
+    }
+    // Exact durable readback reconciles a lost acknowledgement without another INSERT.
+    if (confirmed) return;
+    if (writeFailure !== undefined) {
+      orientationFail("ORIENTATION_GRANT_STORAGE_UNAVAILABLE", 503, false, writeFailure.cause);
+    }
+    orientationFail("ORIENTATION_GRANT_UNAVAILABLE", 403);
   }
   return {
     resolveAtom, exhaustiveResolveAtom, resolveAuthorityClosure, exhaustiveResolveAuthorityClosure, sources, exhaustiveSources,
