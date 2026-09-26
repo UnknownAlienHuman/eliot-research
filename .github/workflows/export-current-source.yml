@@ -1,9 +1,7 @@
 name: export-current-source
 # Refresh exact main after S08 for S09 semantic-stage acceptance.
 on:
-  push:
-    branches: [main]
-    paths: [.github/workflows/export-current-source.yml]
+  workflow_dispatch:
 permissions:
   contents: read
 jobs:
