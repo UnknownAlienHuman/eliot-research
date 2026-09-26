@@ -109,7 +109,7 @@ function installedProfileDeployment(env: Env): ModelRouteDeployment {
   return decodeModelRouteDeployment((parsed as Record<string, unknown>).deployment);
 }
 
-function activeCandidateQuery(route: ModelRouteDeployment): string {
+function activeCandidateQuery(): string {
   return "SELECT c.candidate_ref,c.candidate_sha256,c.candidate_json,c.route_ref,c.route_version,c.staged_at " +
     "FROM dynamic_route_active_generation a JOIN dynamic_route_candidate c ON " +
     "c.candidate_ref=a.candidate_ref AND c.candidate_sha256=a.candidate_sha256 " +
@@ -121,7 +121,7 @@ async function readActiveCandidate(
   database: D1Database,
   route: ModelRouteDeployment,
 ): Promise<StoredDynamicRouteCandidate> {
-  const row = await database.prepare(activeCandidateQuery(route))
+  const row = await database.prepare(activeCandidateQuery())
     .bind(route.route_ref, route.route_version)
     .first<ActiveCandidateRow>();
   if (row === null) failure("active model route candidate is unavailable");

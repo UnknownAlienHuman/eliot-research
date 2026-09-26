@@ -107,8 +107,7 @@ export interface DynamicRouteQualificationObservation {
   readonly verified_at: string;
   readonly expires_at: string;
 }
-export interface DynamicRouteQualificationObservationWriteInput
-  extends DynamicRouteQualificationObservation {}
+export type DynamicRouteQualificationObservationWriteInput = DynamicRouteQualificationObservation;
 export interface DynamicRouteQualificationObservationReceipt {
   readonly protocol: typeof OBSERVATION_PROTOCOL;
   readonly execution_probe_ref: string;
@@ -574,7 +573,9 @@ export async function qualifyDynamicRouteGeneration(
   let observed: ModelGatewayExecutionObservation;
   try {
     observed = dependencies.execute_observed === undefined
-      ? await executeObservedModelGatewayCall(dependencies.execution!, input.model_call)
+      ? await executeObservedModelGatewayCall(dependencies.execution ?? fail(
+        "DYNAMIC_ROUTE_QUALIFICATION_INPUT_INVALID", "qualification execution dependencies are unavailable",
+      ), input.model_call)
       : await dependencies.execute_observed({ probe: input, probe_input_sha256: probeInputSha256, claim_ref: claimRef });
   }
   catch (cause) { fail("DYNAMIC_ROUTE_QUALIFICATION_EXECUTION_FAILED", "observed qualification model call failed", false, cause); }

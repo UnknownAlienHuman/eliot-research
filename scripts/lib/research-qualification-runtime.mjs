@@ -233,7 +233,10 @@ export async function withResearchQualificationRuntime(input, callback) {
   const previousWranglerLog = process.env.WRANGLER_LOG;
   process.env.WRANGLER_LOG = "error";
   let platform;
+  let result;
+  let operationFailed = false;
   let operationError;
+  const cleanupErrors = [];
   try {
     const { getPlatformProxy } = await import("wrangler");
     platform = await getPlatformProxy({
@@ -242,37 +245,49 @@ export async function withResearchQualificationRuntime(input, callback) {
       envFiles: [],
       persist: false,
     });
-    return await callback(platform.env);
+    result = await callback(platform.env);
   } catch (error) {
+    // A callback may reject with undefined; presence must not depend on its value.
+    operationFailed = true;
     operationError = error;
-    throw error;
   } finally {
-    let cleanupError;
     if (platform !== undefined) {
       try {
         await platform.dispose();
       } catch (error) {
-        cleanupError = error;
+        cleanupErrors.push(error);
       }
     }
     try {
       await unlink(overlayPath);
     } catch (error) {
-      if (error?.code !== "ENOENT" && cleanupError === undefined) {
-        cleanupError = error;
-      }
+      if (error?.code !== "ENOENT") cleanupErrors.push(error);
     }
     if (hadWranglerLog && previousWranglerLog !== undefined) {
       process.env.WRANGLER_LOG = previousWranglerLog;
     } else {
       delete process.env.WRANGLER_LOG;
     }
-    if (operationError === undefined && cleanupError !== undefined) {
-      throw new ResearchQualificationRuntimeError(
-        "RESEARCH_QUALIFICATION_RUNTIME_CLEANUP_FAILED",
-        "qualification runtime cleanup failed",
-        cleanupError,
-      );
-    }
   }
+  if (operationFailed) {
+    if (cleanupErrors.length > 0) {
+      // Keep the operation first and retain cleanup failures without replacing its code.
+      const failure = new AggregateError(
+        [operationError, ...cleanupErrors],
+        "qualification operation and cleanup failed",
+        { cause: operationError },
+      );
+      if (typeof operationError?.code === "string") failure.code = operationError.code;
+      throw failure;
+    }
+    throw operationError;
+  }
+  if (cleanupErrors.length > 0) {
+    throw new ResearchQualificationRuntimeError(
+      "RESEARCH_QUALIFICATION_RUNTIME_CLEANUP_FAILED",
+      "qualification runtime cleanup failed",
+      cleanupErrors.length === 1 ? cleanupErrors[0] : new AggregateError(cleanupErrors, "qualification cleanup failed"),
+    );
+  }
+  return result;
 }

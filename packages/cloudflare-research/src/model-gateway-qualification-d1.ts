@@ -18,8 +18,6 @@ import {
   createD1ResearchModelQualificationObservationStore,
 } from "./research-model-qualification-store.js";
 
-const IDENTIFIER = /^[A-Za-z0-9._:@/-]{1,256}$/u;
-const SHA256 = /^[a-f0-9]{64}$/u;
 const PROTOCOL = "eliotr.dynamic-route-qualification-proof.v1" as const;
 const OBSERVATION_PROTOCOL = "eliotr.dynamic-route-qualification-observation.v1" as const;
 const CANDIDATE_KEYS = new Set([
@@ -567,7 +565,7 @@ export function createD1DynamicRouteQualificationProofStore(
       }
       const activatedAt = now();
       if (Date.parse(stored.proof.qualification.expires_at) <= Date.parse(activatedAt)) fail("DYNAMIC_ROUTE_QUALIFICATION_INVALID", "latest qualification proof is expired");
-      let applied: LatestRow | null = null;
+      let applied: LatestRow | null;
       if (input.expected_latest === null) {
         applied = await database.prepare(
           "INSERT INTO dynamic_route_active_qualification(route_ref,route_version,candidate_ref,candidate_sha256,qualification_ref,qualification_sha256,activated_at) VALUES (?1,?2,?3,?4,?5,?6,?7) ON CONFLICT(route_ref,route_version) DO NOTHING RETURNING " + latestSelect,

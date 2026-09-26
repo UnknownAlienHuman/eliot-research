@@ -7,6 +7,11 @@ const typescriptConfigs = tseslint.configs.recommended.map((config) => ({
   files: typescriptFiles,
 }));
 const nodeGlobals = {
+  AbortSignal: "readonly",
+  Response: "readonly",
+  TextDecoder: "readonly",
+  TextEncoder: "readonly",
+  URLSearchParams: "readonly",
   Buffer: "readonly",
   URL: "readonly",
   clearTimeout: "readonly",

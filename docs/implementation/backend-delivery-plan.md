@@ -32,12 +32,15 @@ to have run anything. Once assembled, execute the existing final gates and retai
    exact lost-ACK readback rather than defaulting to 403. See #293 for exact commit/results and
    [the D1 repair notes](../../infra/d1/README.md). Native behavioral acceptance remains pending;
    #294's remaining dynamic-query coverage is not claimed complete. Do not repeat this repair or
-   rebuild the installed compiler. **The next production-code task is #296.**
-2. **#296: fix the26 confirmed lint findings.** Preserve error causes and cleanup behavior; correct
-   Node globals in their actual environment. Do not silence findings by dropping checks or diagnostics.
+   rebuild the installed compiler.
+2. **#296 code/static checkpoint delivered: full ESLint is clean.** Script globals are declared only
+   in the existing Node environment; no lint rule or path was suppressed. Qualification cleanup retains
+   the primary failure and secondary cleanup causes, including an undefined rejection. Wiki storage
+   causes are preserved internally; replay/readback branches remain intact. Full TypeScript compilation
+   passes. Fault-injection and replay acceptance remain pending in #296, not silently marked PASS.
    For #297, inspect existing failure logs now and repair confirmed production defects in their owning
    modules; the33 reported failures are not automatically33 production bugs. Fixture expansion stays later.
-3. **#295 + #304, coordinated with S90/#282: repair verification wiring.** Keep budget failures visible
+3. **NEXT: #295 + #304, coordinated with S90/#282: repair verification wiring.** Keep budget failures visible
    without suppressing independent checks. Cover all root Vitest files; the existing CI filters omit27.
    Separate source-maintainability metrics from emitted artifacts. Do not raise limits or shuffle files
    merely to obtain green; full-suite execution is still the later assembly phase.

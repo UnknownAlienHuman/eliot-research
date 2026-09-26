@@ -71,8 +71,8 @@ interface HistoricalRevisionRow {
   readonly body_sha256: string;
 }
 
-function fail(code: string, message: string, status = 409, retryable = false): never {
-  throw new CatalogInputError(code, message, status, retryable);
+function fail(code: string, message: string, status = 409, retryable = false, cause?: unknown): never {
+  throw new CatalogInputError(code, message, status, retryable, cause);
 }
 
 function record(value: unknown, message: string): Record<string, unknown> {
@@ -146,7 +146,7 @@ async function loadHistoricalRevision(database: D1Database, pageRef: VersionedRe
       "FROM wiki_publication_revision WHERE page_id=?1 AND revision=?2 LIMIT 1",
     ).bind(pageRef.id, pageRef.revision).first<HistoricalRevisionRow>();
   } catch (cause) {
-    fail("WIKI_SETTLEMENT_UNCERTAIN", "canonical Wiki base revision read is unavailable", 503, true);
+    fail("WIKI_SETTLEMENT_UNCERTAIN", "canonical Wiki base revision read is unavailable", 503, true, cause);
   }
   return historicalRow(row);
 }

@@ -366,10 +366,9 @@ export async function admitWikiOwnerReview(
   const existingAuthority = await loadAuthority(env.CORE_DB, row);
   const existingReceiptRef = existingAuthority?.policy_receipt_ref ?? null;
   let admittedAt = new Date().toISOString();
-  let existingReceipt: WikiOwnerReviewReceipt | null = null;
   if (existingReceiptRef !== null) {
     const existingObject = await readObject(env.WORK_BUCKET, existingReceiptRef, MAX_MANIFEST_BYTES);
-    existingReceipt = decodeWikiOwnerReviewReceipt(existingObject.bytes);
+    const existingReceipt = decodeWikiOwnerReviewReceipt(existingObject.bytes);
     if (existingReceipt === null) {
       fail("WIKI_PROPOSAL_READBACK_MISMATCH", "existing Wiki review receipt is malformed");
     }

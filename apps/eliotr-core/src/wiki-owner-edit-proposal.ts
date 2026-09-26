@@ -25,7 +25,9 @@ export interface EditMetadata { readonly base_body_sha256: string; readonly base
 export interface EditBindingRow { readonly proposal_id: string; readonly proposal_revision: number; readonly principal_ref: string; readonly idempotency_key: string; readonly request_sha256: string; readonly proposal_page_sha256: string; readonly base_proposal_id: string; readonly base_proposal_revision: number; readonly base_page_id: string; readonly base_page_revision: number; readonly base_page_sha256: string; readonly created_at: string; }
 export interface PublishedRevisionRow { readonly proposal_id: string; readonly proposal_revision: number; readonly page_sha256: string; readonly page_json: string; readonly body_object_ref: string; readonly body_sha256: string; }
 export interface CanonicalBase { readonly proposal: ProposalRow; readonly page: WikiPageRevision; readonly page_sha256: string; readonly evidence_map_sha256: string; readonly dependency_refs_sha256: string; readonly authorization: Awaited<ReturnType<typeof prepareOwnerScopeReadAuthorization>>; readonly port: WikiPublicationPort; readonly head: { readonly page_ref: VersionedRef; readonly manifest_ref: string; readonly outbox_ref: string; }; }
-function fail(code: string, message: string, status = 400, retryable = false): never { throw new CatalogInputError(code, message, status, retryable); }
+function fail(code: string, message: string, status = 400, retryable = false, cause?: unknown): never {
+  throw new CatalogInputError(code, message, status, retryable, cause);
+}
 function requireOwner(context: AuthenticatedRequestContext): void { if (context.client_class !== "owner_pwa") fail("WIKI_OWNER_REQUIRED", "Wiki owner edit requires an owner session", 403); }
 function sameRef(left: VersionedRef, right: VersionedRef): boolean { return left.id === right.id && left.revision === right.revision; }
 function sameBytes(left: Uint8Array, right: Uint8Array): boolean { return left.byteLength === right.byteLength && left.every((value, index) => value === right[index]); }
@@ -140,7 +142,7 @@ export async function loadProposalByIdempotency(
       "WHERE principal_ref=?1 AND idempotency_key=?2 LIMIT 1",
     ).bind(principal, idempotencyKey).first<ProposalRow>();
   } catch (cause) {
-    fail("WIKI_SETTLEMENT_UNCERTAIN", "Wiki owner edit idempotency read is unavailable", 503, true);
+    fail("WIKI_SETTLEMENT_UNCERTAIN", "Wiki owner edit idempotency read is unavailable", 503, true, cause);
   }
 }
 
@@ -155,7 +157,7 @@ export async function loadPublishedRevision(
       "FROM wiki_publication_revision WHERE page_id=?1 AND revision=?2 AND manifest_ref=?3 LIMIT 1",
     ).bind(pageRef.id, pageRef.revision, manifestRef).first<PublishedRevisionRow>();
   } catch (cause) {
-    fail("WIKI_SETTLEMENT_UNCERTAIN", "Wiki base revision read is unavailable", 503, true);
+    fail("WIKI_SETTLEMENT_UNCERTAIN", "Wiki base revision read is unavailable", 503, true, cause);
   }
 }
 
@@ -377,7 +379,7 @@ export async function loadEditBinding(database: D1Database, proposalRef: Version
       "WHERE proposal_id=?1 AND proposal_revision=?2 LIMIT 1",
     ).bind(proposalRef.id, proposalRef.revision).first<EditBindingRow>();
   } catch (cause) {
-    fail("WIKI_SETTLEMENT_UNCERTAIN", "Wiki owner edit binding read is unavailable", 503, true);
+    fail("WIKI_SETTLEMENT_UNCERTAIN", "Wiki owner edit binding read is unavailable", 503, true, cause);
   }
 }
 
@@ -434,8 +436,7 @@ async function settleBinding(
     verifyBinding(settled, proposal, context, idempotencyKey, requestSha256, metadata);
     return;
   }
-  void mutationError;
-  fail("WIKI_SETTLEMENT_UNCERTAIN", "Wiki owner edit binding did not settle", 503, true);
+  fail("WIKI_SETTLEMENT_UNCERTAIN", "Wiki owner edit binding did not settle", 503, true, mutationError);
 }
 
 async function readExistingEdit(

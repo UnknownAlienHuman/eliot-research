@@ -7,8 +7,8 @@ export class CatalogInputError extends Error {
   public readonly code: string;
 
   public constructor(code: string, message: string, public readonly status = 400,
-    public readonly retryable = false) {
-    super(message);
+    public readonly retryable = false, cause?: unknown) {
+    super(message, cause === undefined ? undefined : { cause });
     this.name = "CatalogInputError";
     this.code = code;
   }
