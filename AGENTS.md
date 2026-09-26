@@ -66,8 +66,12 @@ below until assembly. Preserve all negative/final acceptance criteria and report
 - Do not edit another agent's barrel file, package manifest, migration, or shared fixture unless the
   packet grants ownership.
 - Add implementation behind existing interfaces; do not rename public fields or enums.
-- Keep a source file below 600 lines and a package below 10,000 source lines. Split by capability,
-  not by arbitrary line count.
+- Source-maintainability heuristics: at most 600 physical lines/file and 10,000 lines/package for
+  `.ts/.tsx/.js/.mjs` under `src`, including colocated tests. Raw Worker/PWA source-byte ceilings are
+  600 KiB/2 MiB. `scripts/check-budgets.mjs` defines the counted paths and exclusions. Split by
+  capability, not arbitrary line count; never remove tests or move files merely to game the count.
+  These are not emitted-artifact or platform limits. S90 separately measures the release targets
+  (compressed Worker <= 4 MiB; initial PWA JavaScript <= 600 KiB gzip) and runtime resources.
 - Every mutation implements Intent → Attempt → Receipt → Readback → Reconciliation.
 - Every expensive or retryable operation accepts an idempotency identity and cancellation/budget
   context.

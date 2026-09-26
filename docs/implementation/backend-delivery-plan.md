@@ -40,11 +40,17 @@ to have run anything. Once assembled, execute the existing final gates and retai
    passes. Fault-injection and replay acceptance remain pending in #296, not silently marked PASS.
    For #297, inspect existing failure logs now and repair confirmed production defects in their owning
    modules; the33 reported failures are not automatically33 production bugs. Fixture expansion stays later.
-3. **NEXT: #295 + #304, coordinated with S90/#282: repair verification wiring.** Keep budget failures visible
-   without suppressing independent checks. Cover all root Vitest files; the existing CI filters omit27.
-   Separate source-maintainability metrics from emitted artifacts. Do not raise limits or shuffle files
-   merely to obtain green; full-suite execution is still the later assembly phase.
-4. **#299 + S37/#229: reconcile retained S37 source before cleanup or reimplementation.** Verify the
+3. **#295/#304 CI-wiring and root-selection checkpoint delivered.** Source budgets run as an
+   independent mandatory Ubuntu/Windows matrix; `verify` aggregates all jobs and rejects failed,
+   cancelled or skipped results. Independent compile/lint/provisioner/Worker/build steps retain
+   their real setup dependencies without depending on unrelated checks. One complete root Vitest
+   invocation replaces the old directory filters; file discovery confirms all 133 files, including
+   the former 27 omissions. This is discovery, not a passing test run. The focused cross-OS query
+   regression remains an intentional overlap. CI stays manual-only; no suites were dispatched.
+   Source heuristics remain enforced and distinct from S90's emitted-artifact/runtime targets.
+   Structural source-budget violations and actual S90 measurements remain open; no threshold was
+   raised, file shuffled or failure waived. Do not repeat the completed wiring to claim those fixed.
+4. **NEXT: #299 + S37/#229: reconcile retained S37 source before cleanup or reimplementation.** Verify the
    original payload hash, compare every hunk with current main, preserve useful work and integrate only
    reviewed missing code. Do not execute the old publisher or delete the payload as assumed garbage.
 5. **#300/#301 and PR#303: finish bounded documentation/privacy reconciliation alongside code.**

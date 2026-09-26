@@ -115,16 +115,31 @@ pnpm exec tsc -p apps/eliotr-core/test/tsconfig.json --pretty false
 node scripts/check-docs-index.mjs   # if you added or moved a document or a packet
 ```
 
-CI runs `verify`, `rust`, `windows-tooling`, and the `local-launch`, `research-semantic`
-and `d1-mutations` matrices on both Ubuntu and Windows, plus the `research-screen` matrix.
-The `d1-mutations` matrix runs Project/Wiki SQL regressions on real local D1
-even when an unrelated gate blocks the main test suite. `verify` alone runs contract fixtures, package boundaries plus their negative proof, source
-budgets, work-packet ownership, branch hygiene, six authority fixtures, lint, typecheck, configured test
-selections, the implementation-status registry, the PWA build, a Chromium Library test, local D1
-preparation, binding-type generation and a Worker deployment dry-run.
+[CI](../.github/workflows/ci.yml) is currently manual-only (`workflow_dispatch`); code checkpoints
+must not re-enable push/PR triggers or dispatch the assembled-product suites without authorization.
+`verify` is the mandatory aggregate: every dependency must succeed, including both source-budget OS
+jobs. Failed, cancelled or skipped jobs cannot turn it green. It retains the existing check name.
 
-Report results honestly. If `check:affected` stops early, say where and why, and do **not** report the
-whole command as PASS. Put the commands and their exit codes in the PR body.
+`source-budgets` and `d1-expression-depth` run independently on Ubuntu/Windows. `root-tests` uses
+`pnpm test:root:list` for non-executing discovery and `pnpm test:root` for the complete root Vitest
+configuration, with no directory allowlist and no success on zero selected tests. `verify-checks`
+runs privacy, contracts, boundaries, ownership, authority fixtures, lint, typecheck, provisioners,
+`pnpm test:worker`, registry checks, PWA build/browser checks, local preparation, binding generation
+and the deployment dry-run. Independent steps require setup success, not unrelated gate success;
+browser and dry-run steps still require their actual build/preparation prerequisites.
+
+The `research-screen`, `local-launch`, `research-semantic` and `d1-mutations` Ubuntu/Windows matrices,
+plus `rust` and `windows-tooling`, remain. The d1-mutations matrix intentionally repeats root
+`query-persistence.test.ts` on both OSes; it is a focused cross-platform regression, not another
+complete root suite. Worker tests retain their own Cloudflare configuration; federation is included
+by the root configuration, and its existing package command retains root semantics.
+
+Local `pnpm test` selects provisioners, the same complete root suite and the separate Worker suite.
+`pnpm check:affected` aliases the full `pnpm check`; it is not base-aware or a changed-file selector.
+These local aggregate commands remain fail-fast. A failed command leaves later checks unexecuted,
+not passed; CI's independent reporting does not change that local result. Record exact SHA,
+commands and exit codes in the task discussion. Code-first versus final acceptance remains defined
+by the [delivery plan](implementation/backend-delivery-plan.md).
 
 Pinned toolchain: Node ≥ 22.13, pnpm 11.23.0, Rust 1.98.0. Windows is a first-class CI target; long
 paths and CRLF are real failure modes here, so prefer repository-relative paths and never hardcode a

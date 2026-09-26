@@ -31,7 +31,59 @@ jobs:
       - name: Compile both D1 schemas at expression depth 100
         run: node infra/d1/check-expression-depth.mjs
 
-  verify:
+  source-budgets:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 5
+    steps:
+      - name: Preserve native Windows source measurement
+        if: ${{ runner.os == 'Windows' }}
+        run: git config --global core.autocrlf true
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 22
+      - name: Enforce source heuristics without blocking independent jobs
+        run: node scripts/check-budgets.mjs
+
+  root-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 22
+      - run: corepack enable
+      - run: corepack prepare pnpm@11.23.0 --activate
+      - name: Install frozen dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Record complete root test discovery without executing tests
+        run: |
+          pnpm --silent test:root:list --json > "$RUNNER_TEMP/root-vitest-files.json"
+          node --input-type=module <<'JS'
+          import { readFileSync } from 'node:fs';
+          import { join, relative } from 'node:path';
+          const files = JSON.parse(readFileSync(join(process.env.RUNNER_TEMP, 'root-vitest-files.json'), 'utf8'));
+          if (!Array.isArray(files) || files.length === 0 || files.some(entry => typeof entry.file !== 'string')) {
+            throw new Error('Root Vitest discovery is missing or empty');
+          }
+          const names = files.map(entry => relative(process.cwd(), entry.file).replaceAll('\\', '/'));
+          if (new Set(names).size !== names.length || names.some(name => name.startsWith('apps/eliotr-core/'))) {
+            throw new Error('Root selection duplicates files or includes the separate Worker environment');
+          }
+          console.log(`Root Vitest selection: ${names.length} files`);
+          console.log(names.sort().join('\n'));
+          JS
+      - name: Execute the complete root configuration once
+        # No directory allowlist: new eligible directories are discovered automatically.
+        # The native d1-mutations matrix deliberately repeats query-persistence on both OSes.
+        run: pnpm test:root
+
+  verify-checks:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -42,68 +94,81 @@ jobs:
       - run: corepack enable
       - run: corepack prepare pnpm@11.23.0 --activate
       - name: Install frozen dependencies
+        id: dependencies
         run: |
           test -f pnpm-lock.yaml
           pnpm install --frozen-lockfile
+      - name: Verify public repository privacy
+        if: ${{ !cancelled() && steps.dependencies.outcome == 'success' }}
+        run: node scripts/test-public-repo-privacy.mjs
       - name: Verify normative contract fixtures
+        if: ${{ !cancelled() && steps.dependencies.outcome == 'success' }}
         run: pnpm contracts:check
       - name: Verify package boundaries
+        if: ${{ !cancelled() && steps.dependencies.outcome == 'success' }}
         run: pnpm boundaries:check
       - name: Prove forbidden imports fail closed
+        if: ${{ !cancelled() && steps.dependencies.outcome == 'success' }}
         run: pnpm boundaries:negative
-      - name: Verify source budgets
-        run: pnpm budgets:check
       - name: Verify swarm work packets
+        if: ${{ !cancelled() && steps.dependencies.outcome == 'success' }}
         run: pnpm work-packets:check
       - name: Verify branch and worktree hygiene
+        if: ${{ !cancelled() && steps.dependencies.outcome == 'success' }}
         run: pnpm branch-hygiene:check
       - name: Verify delivery authority fixture
+        if: ${{ !cancelled() && steps.dependencies.outcome == 'success' }}
         run: pnpm delivery:check
       - name: Verify ingest admission authority fixture
+        if: ${{ !cancelled() && steps.dependencies.outcome == 'success' }}
         run: pnpm ingest:check
       - name: Verify projection execution authority fixture
+        if: ${{ !cancelled() && steps.dependencies.outcome == 'success' }}
         run: pnpm projection:check
       - name: Verify exact evidence resolution authority fixture
+        if: ${{ !cancelled() && steps.dependencies.outcome == 'success' }}
         run: pnpm evidence:check
       - name: Verify exact erasure closure authority fixture
+        if: ${{ !cancelled() && steps.dependencies.outcome == 'success' }}
         run: pnpm erasure:check
       - name: Verify Gemini MCP integration fixtures
+        if: ${{ !cancelled() && steps.dependencies.outcome == 'success' }}
         run: pnpm gemini:check
       - name: Lint
+        if: ${{ !cancelled() && steps.dependencies.outcome == 'success' }}
         run: pnpm lint
       - name: Typecheck
+        if: ${{ !cancelled() && steps.dependencies.outcome == 'success' }}
         run: pnpm typecheck
       - name: Typecheck navigation integration fixtures
+        if: ${{ !cancelled() && steps.dependencies.outcome == 'success' }}
         run: pnpm exec tsc -p apps/eliotr-core/test/tsconfig.json --pretty false
       - name: Test Cloudflare provisioners
+        if: ${{ !cancelled() && steps.dependencies.outcome == 'success' }}
         run: pnpm test:provisioners
-      - name: Test contracts
-        run: timeout 90s pnpm exec vitest run packages/contracts --reporter=verbose
-      - name: Test domain
-        run: timeout 90s pnpm exec vitest run packages/domain --reporter=verbose
-      - name: Test policy
-        run: timeout 90s pnpm exec vitest run packages/policy --reporter=verbose
-      - name: Test retrieval, research and Drive exchange
-        run: timeout 180s pnpm exec vitest run packages/retrieval packages/research packages/google-drive-exchange --reporter=verbose
-      - name: Test Cloudflare federation package command
-        run: timeout 180s pnpm --filter @eliotr/cloudflare-federation test
-      - name: Test Cloudflare AI, ingest, platform, projection, evidence and erasure packages
-        run: timeout 180s pnpm exec vitest run packages/cloudflare-access packages/cloudflare-workspace-mcp packages/cloudflare-ai packages/cloudflare-markdown packages/cloudflare-raw-ingest packages/platform-cloudflare packages/cloudflare-projection packages/cloudflare-evidence packages/cloudflare-erasure packages/cloudflare-navigation --reporter=verbose
-      - name: Test testkit, integration harness and PWA
-        run: timeout 180s pnpm exec vitest run packages/testkit tests apps/eliotr-pwa --reporter=verbose
       - name: Test Worker runtime
-        run: pnpm --filter @eliotr/core test
+        if: ${{ !cancelled() && steps.dependencies.outcome == 'success' }}
+        run: pnpm test:worker
       - name: Verify implementation-status registry
+        if: ${{ !cancelled() && steps.dependencies.outcome == 'success' }}
         run: pnpm check:implementation-status
       - name: Build PWA
+        if: ${{ !cancelled() && steps.dependencies.outcome == 'success' }}
+        id: pwa-build
         run: pnpm build:pwa
       - name: Test built Library in Chromium with controlled HTTP fixtures
+        if: ${{ !cancelled() && steps.pwa-build.outcome == 'success' }}
         run: pnpm test:library-browser
       - name: Prepare clean local PWA and both D1 stores
+        if: ${{ !cancelled() && steps.dependencies.outcome == 'success' }}
+        id: local-prepare
         run: pnpm local:prepare
       - name: Generate Cloudflare binding types
+        if: ${{ !cancelled() && steps.local-prepare.outcome == 'success' }}
+        id: binding-types
         run: pnpm cf:types
       - name: Dry-run Worker deployment
+        if: ${{ !cancelled() && steps.pwa-build.outcome == 'success' && steps.binding-types.outcome == 'success' }}
         run: pnpm cf:dry-run
 
   research-screen:
@@ -181,6 +246,7 @@ jobs:
         # This independent S16 check does not claim the unrelated admission fixtures pass.
         run: pnpm --dir apps/eliotr-core exec vitest run test/research-session.test.ts --no-file-parallelism -t 'canonical cancellation persistence|starts, reads'
 
+      # Intentional overlap with root-tests: one exact-query regression on both OSes.
       - name: Query persistence compatibility rejection and integrity
         if: ${{ !cancelled() && steps.d1-types.outcome == 'success' }}
         run: pnpm exec vitest run packages/retrieval/src/query-persistence.test.ts
@@ -315,21 +381,26 @@ jobs:
         run: git config --global core.autocrlf true
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        id: node-ready
         with:
           node-version: 22
       - name: Verify package boundaries on Windows
+        if: ${{ !cancelled() && steps.node-ready.outcome == 'success' }}
         run: node scripts/check-boundaries.mjs
       - name: Verify Fetch-forbidden local Workers port guard on Windows
+        if: ${{ !cancelled() && steps.node-ready.outcome == 'success' }}
         run: node scripts/test-miniflare-port-guard.mjs
-      - name: Verify source budgets on Windows
-        run: node scripts/check-budgets.mjs
       - name: Prove portable checkout and negative gates on Windows
+        if: ${{ !cancelled() && steps.node-ready.outcome == 'success' }}
         run: node scripts/test-boundary-negative.mjs
       - name: Verify deployment HTTP guards on Windows
+        if: ${{ !cancelled() && steps.node-ready.outcome == 'success' }}
         run: node scripts/test-deployment-verification.mjs
       - name: Verify deployment ordering on Windows
+        if: ${{ !cancelled() && steps.node-ready.outcome == 'success' }}
         run: node scripts/test-deployment-orchestration.mjs
       - name: Prove test fixtures leave the checkout unchanged
+        if: ${{ !cancelled() && steps.node-ready.outcome == 'success' }}
         run: |
           $changes = git status --porcelain --untracked-files=all
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -363,3 +434,41 @@ jobs:
         run: pnpm local:smoke
       - name: Run actual owner browser acceptance
         run: pnpm test:owner-e2e
+
+  # Retain the existing verify check name as the aggregate, not a success-only leaf.
+  verify:
+    if: ${{ always() }}
+    needs:
+      - d1-expression-depth
+      - source-budgets
+      - root-tests
+      - verify-checks
+      - research-screen
+      - d1-mutations
+      - research-semantic
+      - rust
+      - windows-tooling
+      - local-launch
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require every mandatory job to succeed
+        env:
+          CI_NEEDS: ${{ toJSON(needs) }}
+        run: |
+          node --input-type=module <<'JS'
+          import { appendFileSync } from 'node:fs';
+          const results = JSON.parse(process.env.CI_NEEDS);
+          if (results === null || typeof results !== 'object' || Array.isArray(results)) {
+            throw new Error('Mandatory CI results are unavailable');
+          }
+          const jobs = Object.entries(results);
+          if (jobs.length === 0) throw new Error('Mandatory CI results are empty');
+          const lines = jobs.map(([name, result]) => `${name}: ${result?.result ?? 'missing'}`);
+          console.log(lines.join('\n'));
+          if (process.env.GITHUB_STEP_SUMMARY) {
+            appendFileSync(process.env.GITHUB_STEP_SUMMARY, `## Mandatory CI results\n\n${lines.join('  \n')}\n`);
+          }
+          // Failed, cancelled, skipped, malformed or missing evidence is never a green gate.
+          if (jobs.some(([, result]) => result?.result !== 'success')) process.exitCode = 1;
+          JS
