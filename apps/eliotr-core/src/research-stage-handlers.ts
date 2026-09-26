@@ -15,7 +15,9 @@ import {
   createResearchReportMaterializeStageHandler,
   type ResearchReportMaterializeStageDependencies,
   createResearchMaterializeRecovery,
+  createResearchBranchExecutionHandlers,
   readWorkflowObject,
+  type ResearchBranchExecutionDependencies,
 } from "@eliotr/cloudflare-research";
 import {
   createResearchVerificationStageHandler,
@@ -29,6 +31,7 @@ import {
   createRetrieveBranchesStageHandler,
   SEMANTIC_RETRIEVAL_HANDLER_GENERATION,
   SEMANTIC_PROTOCOL_HANDLER_GENERATION,
+  BRANCH_EXECUTION_HANDLER_GENERATION,
   type RetrieveBranchesStageDependencies,
 } from "./research-retrieve-branches.js";
 import {
@@ -49,13 +52,18 @@ export const SERVER_OWNED_SEMANTIC_HANDLER_GENERATION = SEMANTIC_RETRIEVAL_HANDL
 export const SERVER_OWNED_LEGACY_PROTOCOL_HANDLER_GENERATION = "research-handlers.exploratory.v5";
 /** New explicit InquiryProtocol/obligation runs include managed semantic retrieval. */
 export const SERVER_OWNED_PROTOCOL_HANDLER_GENERATION = SEMANTIC_PROTOCOL_HANDLER_GENERATION;
+/** Branch-aware generation selected only for newly admitted explicit-protocol runs. */
+export const SERVER_OWNED_BRANCH_HANDLER_GENERATION = BRANCH_EXECUTION_HANDLER_GENERATION;
 export type SemanticResearchHandlerGeneration =
   typeof SERVER_OWNED_FREEZE_HANDLER_GENERATION | typeof SERVER_OWNED_SEMANTIC_HANDLER_GENERATION |
-  typeof SERVER_OWNED_LEGACY_PROTOCOL_HANDLER_GENERATION | typeof SERVER_OWNED_PROTOCOL_HANDLER_GENERATION;
+  typeof SERVER_OWNED_LEGACY_PROTOCOL_HANDLER_GENERATION | typeof SERVER_OWNED_PROTOCOL_HANDLER_GENERATION |
+  typeof SERVER_OWNED_BRANCH_HANDLER_GENERATION;
 export function isSemanticResearchHandlerGeneration(generation: unknown): generation is SemanticResearchHandlerGeneration {
   return generation === SERVER_OWNED_FREEZE_HANDLER_GENERATION ||
     generation === SERVER_OWNED_SEMANTIC_HANDLER_GENERATION ||
-    generation === SERVER_OWNED_LEGACY_PROTOCOL_HANDLER_GENERATION || generation === SERVER_OWNED_PROTOCOL_HANDLER_GENERATION;
+    generation === SERVER_OWNED_LEGACY_PROTOCOL_HANDLER_GENERATION ||
+    generation === SERVER_OWNED_PROTOCOL_HANDLER_GENERATION ||
+    generation === SERVER_OWNED_BRANCH_HANDLER_GENERATION;
 }
 export const SERVER_RETRIEVAL_SCOPE_PROFILE = {
   version: "retrieval-scope-v1",
@@ -73,6 +81,7 @@ export type ResearchStageHandlerFactoryMode =
       readonly generation?: typeof SERVER_OWNED_RESEARCH_HANDLER_GENERATION | typeof SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION | SemanticResearchHandlerGeneration;
       readonly retrieval?: Omit<RetrieveBranchesStageDependencies, "navigation" | "ledger" | "profile">;
       readonly freeze?: EvidenceFreezeCompositionDependencies;
+      readonly branch_execution?: Omit<ResearchBranchExecutionDependencies, "navigation" | "ledger">;
       readonly synthesis?: Parameters<typeof createEvidenceFreezeSynthesisHandler>[0];
       readonly materialize?: ResearchMaterializeStageDependencies;
       readonly report_materialize?: ResearchReportMaterializeStageDependencies;
@@ -126,6 +135,10 @@ export function createResearchStageHandlerFactory(
   const freezeComposition = mode.kind === "server-owned-exploratory" &&
     isSemanticResearchHandlerGeneration(mode.generation) && mode.freeze !== undefined
     ? createEvidenceFreezeComposition(mode.freeze)
+    : undefined;
+  const branchExecution = mode.kind === "server-owned-exploratory" &&
+    mode.generation === SERVER_OWNED_BRANCH_HANDLER_GENERATION && mode.branch_execution !== undefined
+    ? createResearchBranchExecutionHandlers({ ...mode.branch_execution, navigation: mode.navigation, ledger: mode.ledger })
     : undefined;
   let materializeHandler: WorkflowStageHandler | undefined;
   if (mode.kind === "server-owned-exploratory" && isSemanticResearchHandlerGeneration(mode.generation)) {
@@ -189,6 +202,18 @@ export function createResearchStageHandlerFactory(
       if (retrievalHandler === undefined) return async () => fail("WORKFLOW_AUTHORITY_STALE");
       return retrievalHandler;
     }
+    if (stage === "READ_AND_EXTRACT" && mode.kind === "server-owned-exploratory" &&
+        mode.generation === SERVER_OWNED_BRANCH_HANDLER_GENERATION) {
+      return branchExecution?.read_and_extract ?? (async () => fail("WORKFLOW_AUTHORITY_STALE"));
+    }
+    if (stage === "ANALYZE_BRANCHES" && mode.kind === "server-owned-exploratory" &&
+        mode.generation === SERVER_OWNED_BRANCH_HANDLER_GENERATION) {
+      return branchExecution?.analyze_branches ?? (async () => fail("WORKFLOW_AUTHORITY_STALE"));
+    }
+    if (stage === "COUNTER_SEARCH" && mode.kind === "server-owned-exploratory" &&
+        mode.generation === SERVER_OWNED_BRANCH_HANDLER_GENERATION) {
+      return branchExecution?.counter_search ?? (async () => fail("WORKFLOW_AUTHORITY_STALE"));
+    }
     if ((stage === "RECONCILE" || stage === "FREEZE_EVIDENCE") && freezeComposition !== undefined) {
       return stage === "RECONCILE" ? freezeComposition.reconcile : freezeComposition.freeze;
     }
@@ -224,6 +249,14 @@ export function createResearchStageHandlerFactory(
   if (explicitSemantic) {
     const recoverStartedAttempt: WorkflowStartedAttemptRecovery = async (input) => {
       if (input.request.handler_generation !== mode.generation) return null;
+      if ((input.request.stage === "READ_AND_EXTRACT" || input.request.stage === "ANALYZE_BRANCHES" ||
+          input.request.stage === "COUNTER_SEARCH") && branchExecution !== undefined) {
+        return branchExecution.recover(input.request.stage, input.request, {
+          principal_ref: input.principal_ref,
+          credential_generation: input.credential_generation,
+          deployment_generation: input.deployment_generation,
+        });
+      }
       if (input.request.stage === "SYNTHESIZE") return getSynthesisAdapter()?.recoverStartedAttempt(input) ?? null;
       if (input.request.stage === "VERIFY") {
         const handler = getVerificationHandler();

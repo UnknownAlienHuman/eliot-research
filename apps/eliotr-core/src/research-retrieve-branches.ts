@@ -39,8 +39,12 @@ import {
 export const SEMANTIC_RETRIEVAL_HANDLER_GENERATION = "research-handlers.exploratory.v4";
 /** New protocol runs include SEM; persisted v5 runs retain their original FAST_SEARCH bytes. */
 export const SEMANTIC_PROTOCOL_HANDLER_GENERATION = "research-handlers.exploratory.v6";
+/** Branch-aware generation for newly admitted explicit-protocol runs. */
+export const BRANCH_EXECUTION_HANDLER_GENERATION = "research-handlers.exploratory.v7";
 function retrievalProduct(handlerGeneration: string): "FAST_SEARCH" | "RESEARCH" {
-  return handlerGeneration === SEMANTIC_RETRIEVAL_HANDLER_GENERATION || handlerGeneration === SEMANTIC_PROTOCOL_HANDLER_GENERATION
+  return handlerGeneration === SEMANTIC_RETRIEVAL_HANDLER_GENERATION ||
+    handlerGeneration === SEMANTIC_PROTOCOL_HANDLER_GENERATION ||
+    handlerGeneration === BRANCH_EXECUTION_HANDLER_GENERATION
     ? "RESEARCH" : "FAST_SEARCH";
 }
 
