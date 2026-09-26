@@ -1,8 +1,6 @@
 name: rust-deep-verification
 
 on:
-  schedule:
-    - cron: "17 5 * * 1"
   workflow_dispatch:
 
 permissions:
