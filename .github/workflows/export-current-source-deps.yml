@@ -1,9 +1,7 @@
 name: export-current-source-deps
 # Refreshed 2026-09-19 after S37 transport recovery for direct implementation.
 on:
-  push:
-    branches: [main]
-    paths: [.github/workflows/export-current-source-deps.yml]
+  workflow_dispatch:
 permissions:
   contents: read
 jobs:
