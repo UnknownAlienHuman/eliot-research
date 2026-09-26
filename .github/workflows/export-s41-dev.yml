@@ -1,10 +1,7 @@
 name: export-s41-dev
 
 on:
-  push:
-    branches: [main]
-    paths: [.github/workflows/export-s41-dev.yml]
-
+  workflow_dispatch:
 permissions:
   contents: read
 
