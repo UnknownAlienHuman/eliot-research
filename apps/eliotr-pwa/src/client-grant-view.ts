@@ -18,7 +18,7 @@ export function clientGrantMarkup(): string {
     <form data-grant-form autocomplete="off" hidden>
       <h3 data-grant-heading>New grant</h3><p data-grant-identity></p>
       <fieldset data-grant-fields class="client-grant-fields"><legend>Client and permissions</legend>
-        <div class="client-grant-grid"><label>Access issuer<input data-grant-issuer type="url" maxlength="256" placeholder="https://team.cloudflareaccess.com" required autocomplete="off"></label>
+        <div class="client-grant-grid"><label>Access issuer<input data-grant-issuer type="url" maxlength="256" placeholder="https://example-team.cloudflareaccess.com" required autocomplete="off"></label>
         <label>Service Client ID<input data-grant-subject maxlength="256" placeholder="client-id.access" required autocomplete="off"></label>
         <label>Expires at (your local time)<input data-grant-expiry type="datetime-local" step="0.001" required></label></div>
         <label class="client-grant-option"><input data-grant-operation type="checkbox" value="catalog" checked>Read project catalog</label>
