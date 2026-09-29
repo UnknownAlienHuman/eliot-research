@@ -6,10 +6,19 @@ not a claim that a live connection or every adapter already exists.
 
 ## Connect and work
 
-Use a supported HTTP/MCP/CLI connector or browser session. Check the actual client's authentication,
-tools, file transfer and background/cancellation support. The current MCP adapter has one legacy
-Gemini identity; use the existing independently authorized HTTP path or implement the registry change
-named in ADR-0007. A provider API key configures inference, not an agent's browser or subscription.
+Use a supported HTTP/MCP/CLI connector or browser session. Check actual authentication, tools, file
+transfer and cancellation support. For service-token MCP, set Worker `MCP_ACCESS_AUTH_PROFILE=service-token`
+and `MCP_ACCESS_SERVICE_TOKEN_CLIENT_IDS` to a JSON array (or JSON-encoded string), for example
+`["muse-client.access", "other-client.access"]`, replacing both examples with real Access Client IDs.
+Authorize those tokens in the dedicated Access application too, and issue the required project grants
+against each actual signed Client ID/issuer. The IDs are configuration; Client Secrets stay in the client.
+`MCP_ACCESS_SERVICE_TOKEN_CLIENT_ID` is optional and preserves the old Gemini actor only; omit it when
+Spark is unused, and do not repeat it in the new list. Generic clients get separate stable actor hashes.
+Existing automated Access provisioning still configures one legacy token; this checkpoint adds Worker
+runtime support, not a multi-client provisioning UI or a live Muse connection. Managed OAuth Research
+delegation remains separate. A provider API key configures inference, not a browser or subscription.
+With `GOOGLE_EXTERNAL_TRANSPORT=disabled`, Research tools remain available and Google sync tools are hidden.
+`system_status` reports wired capabilities; successful calls still require their existing per-project grants.
 
 The owner selects environment, permissions, data scope, task and budget. Production work, writes and
 administration are allowed when authorized; routine actions reuse those permissions. Credentials belong

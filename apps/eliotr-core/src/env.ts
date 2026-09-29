@@ -53,6 +53,8 @@ export interface Env {
   /** Dedicated MCP authentication profile; omitted means the legacy service-token profile. */
   readonly MCP_ACCESS_AUTH_PROFILE?: "service-token" | "managed-oauth";
   readonly MCP_ACCESS_SERVICE_TOKEN_CLIENT_ID?: string;
+  /** Additional independent MCP clients; array binding or JSON-encoded array, no secrets. */
+  readonly MCP_ACCESS_SERVICE_TOKEN_CLIENT_IDS?: readonly string[] | string;
   readonly GOOGLE_EXTERNAL_TRANSPORT?: "disabled" | "gemini-mcp" | "drive-exchange";
   readonly GOOGLE_CLIENT_ID?: string;
   readonly GOOGLE_CLIENT_SECRET?: string;

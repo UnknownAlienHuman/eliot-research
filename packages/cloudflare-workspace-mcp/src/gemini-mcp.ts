@@ -27,6 +27,7 @@ import {
   type GoogleExternalTransport,
 } from "./gemini-mcp-tools.js";
 import type { WorkspaceMcpCandidateStore } from "./workspace-mcp-ledger.js";
+import { readMcpServiceClients, type McpServiceClient } from "./mcp-service-clients.js";
 
 export interface WorkspaceMcpRuntime {
   readonly DEPLOYMENT_GENERATION: string;
@@ -37,6 +38,8 @@ export interface WorkspaceMcpRuntime {
   readonly MCP_ACCESS_TEAM_DOMAIN?: string | undefined;
   readonly MCP_ACCESS_AUDIENCE?: string | undefined;
   readonly MCP_ACCESS_SERVICE_TOKEN_CLIENT_ID?: string | undefined;
+  /** Independent service clients; JSON array binding or JSON-encoded array, without secrets. */
+  readonly MCP_ACCESS_SERVICE_TOKEN_CLIENT_IDS?: unknown;
   readonly ACCESS_AUDIENCE?: string | undefined;
   readonly mcpClientDiagnosticConsume?: McpClientDiagnosticConsume;
   readonly workspaceCandidateStore?: WorkspaceMcpCandidateStore;
@@ -51,8 +54,6 @@ export interface WorkspaceMcpRuntime {
 const MCP_LOGICAL_PRINCIPAL = "gemini-spark";
 const SAFE_TRACE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
 const SAFE_HOSTNAME = /^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/u;
-const ACCESS_SERVICE_TOKEN_CLIENT_ID =
-  /^[A-Za-z0-9][A-Za-z0-9._:-]{0,254}\.access$/u;
 const MCP_ACCESS_AUTH_PROFILES = ["service-token", "managed-oauth"] as const;
 
 interface AccessVerifierCache {
@@ -115,21 +116,6 @@ function requiredHostname(raw: string | undefined): string {
   return raw;
 }
 
-function requiredServiceTokenClientId(raw: string | undefined): string {
-  if (
-    raw === undefined ||
-    raw.length > 256 ||
-    !ACCESS_SERVICE_TOKEN_CLIENT_ID.test(raw)
-  ) {
-    throw new AccessVerificationError(
-      "ACCESS_CONFIG_INVALID",
-      "MCP_ACCESS_SERVICE_TOKEN_CLIENT_ID must be the exact Cloudflare Access service-token Client ID",
-      true,
-    );
-  }
-  return raw;
-}
-
 function accessAuthProfile(raw: unknown): McpAccessAuthProfile {
   if (raw === undefined) return "service-token";
   if (typeof raw !== "string" || !MCP_ACCESS_AUTH_PROFILES.includes(raw as McpAccessAuthProfile)) {
@@ -182,7 +168,7 @@ function requiredAccessAudience(raw: string | undefined, ordinary: string | unde
 function configuredVerifier(
   env: WorkspaceMcpRuntime,
   profile: McpAccessAuthProfile,
-  serviceTokenClientId: string,
+  serviceTokenClientIds: readonly string[],
 ): AccessVerifier {
   const teamDomain = requiredAccessTeamDomain(env.MCP_ACCESS_TEAM_DOMAIN);
   const audience = requiredAccessAudience(env.MCP_ACCESS_AUDIENCE, env.ACCESS_AUDIENCE);
@@ -190,14 +176,14 @@ function configuredVerifier(
     profile,
     teamDomain,
     audience,
-    serviceTokenClientId,
+    serviceTokenClientIds,
   ]);
   if (verifierCache?.key === key) return verifierCache.verifier;
   const verifier = createCloudflareAccessVerifier({
     team_domain: teamDomain,
     audience,
     ...(profile === "service-token"
-      ? { allowed_service_principal_common_names: [serviceTokenClientId] }
+      ? { allowed_service_principal_common_names: serviceTokenClientIds }
       : {}),
   });
   verifierCache = { key, verifier };
@@ -221,7 +207,7 @@ export async function authenticatedContext(
   identity: AccessIdentity,
   trace: string,
   profile: McpAccessAuthProfile,
-  expectedServiceTokenClientId: string,
+  expectedServiceTokenClientId: string | readonly McpServiceClient[],
   accessTeamDomain: string | undefined,
   accessAudience: string | undefined,
   deploymentGeneration: string,
@@ -230,14 +216,25 @@ export async function authenticatedContext(
     return jsonError(401, "MCP_AUTHENTICATION_FAILED", trace);
   }
   if (profile === "service-token") {
-    if (
-      identity.authentication_method !== "service_token" ||
-      identity.principal_ref !== expectedServiceTokenClientId
-    ) {
+    // Preserve the exported legacy call shape while the runtime passes the validated client set.
+    const clients = typeof expectedServiceTokenClientId === "string"
+      ? [{ client_id: expectedServiceTokenClientId, legacy: true }]
+      : expectedServiceTokenClientId;
+    const client = clients.find((candidate) => candidate.client_id === identity.principal_ref);
+    if (identity.authentication_method !== "service_token" || client === undefined) {
       return jsonError(403, "MCP_SERVICE_PRINCIPAL_DENIED", trace);
     }
+    let actorRef = MCP_LOGICAL_PRINCIPAL;
+    if (!client.legacy) {
+      const issuer = requiredAccessTeamDomain(accessTeamDomain);
+      const audience = requiredAccessAudience(accessAudience, undefined);
+      if (identity.issuer !== issuer) return jsonError(403, "MCP_SERVICE_PRINCIPAL_DENIED", trace);
+      actorRef = `mcp-service-${await sha256(JSON.stringify(stable({
+        protocol: "eliotr.mcp.service-actor.v1", issuer, audience, client_id: identity.principal_ref,
+      })))}`;
+    }
     const verifiedActor: McpVerifiedActorContext = Object.freeze({
-      actor_ref: MCP_LOGICAL_PRINCIPAL,
+      actor_ref: actorRef,
       credential_generation: identity.credential_generation,
       authentication_method: identity.authentication_method,
       expires_at: identity.expires_at,
@@ -245,7 +242,7 @@ export async function authenticatedContext(
       deployment_generation: deploymentGeneration,
     });
     return Object.freeze({
-      principal_ref: MCP_LOGICAL_PRINCIPAL,
+      principal_ref: actorRef,
       trace_id: trace,
       deployment_generation: deploymentGeneration,
       verified_actor: verifiedActor,
@@ -293,8 +290,20 @@ function serverDependencies(
   const diagnosticEnabled = typeof env.mcpClientDiagnosticConsume === "function";
   const catalogEnabled = profile === "service-token" && typeof env.projectCatalog === "function";
   const researchEnabled = profile === "service-token" && typeof env.research === "function";
+  const transport = googleTransport(env);
+  const googleSyncEnabled = transport === "gemini-mcp";
+  const tools = GEMINI_MCP_TOOLS.filter((tool) =>
+    (!isMcpResearchTool(tool.name) || researchEnabled) &&
+    (tool.name !== "eliotr_catalog" || catalogEnabled) &&
+    (tool.name !== "eliotr_confirm_client_diagnostic" || diagnosticEnabled) &&
+    ((tool.name !== "eliotr_create_google_sync_plan" && tool.name !== "eliotr_validate_google_sync_receipt") || googleSyncEnabled),
+  );
+  const hasTool = (name: string): boolean => tools.some((tool) => tool.name === name);
+  const runEnabled = hasTool("eliotr_run");
+  const controlEnabled = hasTool("eliotr_cancel") || hasTool("eliotr_recover");
+  const ingestEnabled = hasTool("eliotr_ingest_commit");
   const toolDependencies = {
-    google_transport: googleTransport(env),
+    google_transport: transport,
     now,
     deployment_generation: env.DEPLOYMENT_GENERATION,
     async systemStatus(): Promise<Record<string, unknown>> {
@@ -307,22 +316,28 @@ function serverDependencies(
         blocking_reason_codes: readiness.blocking_reason_codes,
         enabled_surfaces: [
           "system_status",
-          "google_sync_planning",
+          ...(googleSyncEnabled ? ["google_sync_planning"] : []),
           ...(catalogEnabled ? ["project_catalog"] : []),
           ...(researchEnabled ? ["project_fast_search", "saved_report_reads", "exact_evidence_reads"] : []),
+          ...(runEnabled ? ["research_run_creation"] : []),
+          ...(controlEnabled ? ["research_run_control"] : []),
+          ...(ingestEnabled ? ["normalized_bundle_ingest"] : []),
+          ...(hasTool("eliotr_project_attach") ? ["project_source_attachment"] : []),
           ...(diagnosticEnabled ? ["client_diagnostic_confirmation"] : []),
         ],
         disabled_surfaces: [
           ...(catalogEnabled ? [] : [{ surface: "catalog", reason: "MCP_CATALOG_SCOPE_REQUIRED" }]),
           ...(researchEnabled ? [] : [{ surface: "research_reads", reason: "MCP_RESEARCH_UNAVAILABLE" }]),
-          { surface: "research_run_control", reason: "DELEGATED_EXECUTION_PENDING" },
+          ...(controlEnabled ? [] : [{ surface: "research_run_control", reason: "DELEGATED_EXECUTION_PENDING" }]),
+          ...(googleSyncEnabled ? [] : [{ surface: "google_sync_planning", reason: "GOOGLE_TRANSPORT_DISABLED" }]),
         ],
-        google_external_transport: googleTransport(env),
+        google_external_transport: transport,
         mcp_access_auth_profile: profile,
         exact_readback_required: true,
         canonical_mutation_available_through_mcp: researchEnabled,
-        source_or_artifact_content_mutation_available: false,
-        model_dispatch_available: false,
+        // These describe wired operations, not a grant to the current caller.
+        source_or_artifact_content_mutation_available: ingestEnabled,
+        model_dispatch_available: runEnabled || hasTool("eliotr_recover"),
       };
     },
     async catalog(input: Parameters<GeminiMcpToolDependencies["catalog"]>[0], context: McpToolCallContext): Promise<unknown> {
@@ -337,13 +352,9 @@ function serverDependencies(
     ...(env.workspaceCandidateStore === undefined ? {} : { workspaceCandidateStore: env.workspaceCandidateStore }),
   } as const;
   return {
-    server_version: "0.2.0",
+    server_version: "0.3.0",
     deployment_generation: env.DEPLOYMENT_GENERATION,
-    listTools: () => GEMINI_MCP_TOOLS.filter((tool) =>
-      (!isMcpResearchTool(tool.name) || researchEnabled) &&
-      (tool.name !== "eliotr_catalog" || catalogEnabled) &&
-      (tool.name !== "eliotr_confirm_client_diagnostic" || diagnosticEnabled),
-    ),
+    listTools: () => tools,
     callTool: (name, input, context) =>
       callGeminiMcpTool(toolDependencies, name, input, context),
   };
@@ -359,24 +370,28 @@ export async function handleGeminiMcp(
   const url = new URL(request.url);
   let hostname: string;
   let profile: McpAccessAuthProfile;
-  let configuredClientId: string | undefined;
+  let configuredClients: readonly McpServiceClient[] = [];
   try {
     hostname = requiredHostname(env.MCP_HOSTNAME);
     // Validate the selected external transport before authentication so an
     // unknown or mixed deployment cannot be probed through the auth boundary.
     googleTransport(env);
     profile = accessAuthProfile(env.MCP_ACCESS_AUTH_PROFILE);
-    if (profile === "service-token" && (
-      dependencies.accessVerifier === undefined ||
-      env.MCP_ACCESS_SERVICE_TOKEN_CLIENT_ID !== undefined
-    )) {
-      configuredClientId = requiredServiceTokenClientId(
-        env.MCP_ACCESS_SERVICE_TOKEN_CLIENT_ID,
+    if (profile === "service-token") {
+      configuredClients = readMcpServiceClients(
+        env.MCP_ACCESS_SERVICE_TOKEN_CLIENT_ID, env.MCP_ACCESS_SERVICE_TOKEN_CLIENT_IDS,
       );
-    } else if (env.MCP_ACCESS_SERVICE_TOKEN_CLIENT_ID !== undefined) {
+      if (configuredClients.length === 0 && dependencies.accessVerifier === undefined) {
+        throw new AccessVerificationError("ACCESS_CONFIG_INVALID", "MCP requires a configured service Client ID", true);
+      }
+      if (configuredClients.some((client) => !client.legacy)) {
+        requiredAccessTeamDomain(env.MCP_ACCESS_TEAM_DOMAIN);
+        requiredAccessAudience(env.MCP_ACCESS_AUDIENCE, env.ACCESS_AUDIENCE);
+      }
+    } else if (env.MCP_ACCESS_SERVICE_TOKEN_CLIENT_ID !== undefined || env.MCP_ACCESS_SERVICE_TOKEN_CLIENT_IDS !== undefined) {
       throw new AccessVerificationError(
         "ACCESS_CONFIG_INVALID",
-        "Managed OAuth MCP profile must not configure a service-token Client ID",
+        "Managed OAuth MCP profile must not configure service-token Client IDs",
         true,
       );
     }
@@ -413,7 +428,7 @@ export async function handleGeminiMcp(
     const verifier = dependencies.accessVerifier ?? configuredVerifier(
       env,
       profile,
-      configuredClientId ?? "managed-oauth",
+      configuredClients.map((client) => client.client_id),
     );
     identity = await verifier.verify(request);
   } catch (error) {
@@ -438,15 +453,15 @@ export async function handleGeminiMcp(
     return jsonError(503, "MCP_AUTHENTICATION_UNAVAILABLE", trace, true);
   }
 
-  const context = await authenticatedContext(
-    identity,
-    trace,
-    profile,
-    configuredClientId ?? "",
-    env.MCP_ACCESS_TEAM_DOMAIN,
-    env.MCP_ACCESS_AUDIENCE,
-    env.DEPLOYMENT_GENERATION,
-  );
+  let context: McpToolCallContext | Response;
+  try {
+    context = await authenticatedContext(
+      identity, trace, profile, configuredClients,
+      env.MCP_ACCESS_TEAM_DOMAIN, env.MCP_ACCESS_AUDIENCE, env.DEPLOYMENT_GENERATION,
+    );
+  } catch {
+    return jsonError(503, "MCP_AUTHENTICATION_UNAVAILABLE", trace, true);
+  }
   if (context instanceof Response) return context;
   try {
     return handleGeminiMcpProtocol(

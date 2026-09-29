@@ -183,6 +183,7 @@ function workspaceMcpRuntime(env: Env, request: Request): WorkspaceMcpRuntime {
     MCP_ACCESS_TEAM_DOMAIN: env.MCP_ACCESS_TEAM_DOMAIN,
     MCP_ACCESS_AUDIENCE: env.MCP_ACCESS_AUDIENCE,
     MCP_ACCESS_SERVICE_TOKEN_CLIENT_ID: env.MCP_ACCESS_SERVICE_TOKEN_CLIENT_ID,
+    MCP_ACCESS_SERVICE_TOKEN_CLIENT_IDS: env.MCP_ACCESS_SERVICE_TOKEN_CLIENT_IDS,
     ACCESS_AUDIENCE: env.ACCESS_AUDIENCE,
     workspaceCandidateStore: createD1WorkspaceMcpCandidateStore(env.CORE_DB),
     research: createMcpResearchToolCall(env, request),

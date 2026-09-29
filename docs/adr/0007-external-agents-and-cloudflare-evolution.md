@@ -1,6 +1,6 @@
 # ADR-0007: Replaceable external models, agents and Cloudflare adapters
 
-**Accepted, revised 2026-09-29.** Source/code review: `edf61e216b57ee1e21a96d965a8cd0407f5fb00c`.
+**Accepted, revised 2026-09-29.** Source/code review: `aebb8ccaf0b2b95358073d62fc278335a8a29188`.
 This revision replaces the earlier staging-only/operator restrictions. It amends ADR-0006's mandatory
 client selection and LANGUAGE_RUNTIME_CONTRACT §§0/3/11: providers and clients are replaceable;
 TypeScript is the current platform implementation, not a permanent requirement; external Python/tools
@@ -31,7 +31,7 @@ harness capabilities are recorded separately; neither implies the other.
 |---|---|
 | Inference | Reuse `packages/research/src/ports.ts::ModelRoutePort` and `packages/platform-cloudflare/src/model-gateway.ts`. The ten `dynamic/eliotr-*` names are application roles, not ten permitted vendors. Provider/model fingerprints are already strings. |
 | Additional transports | Extend `packages/cloudflare-ai/src/model-gateway-http-request.ts` and the adapter behind `ModelRoutePort` for direct/provider-native APIs; preserve request/result schemas, actual model provenance and existing attempt/output receipts. Present Gateway-only execution is not universal transport support. |
-| External clients | Generalize `packages/cloudflare-workspace-mcp/src/gemini-mcp.ts::{configuredVerifier,authenticatedContext,serverDependencies}` from one `gemini-spark` mapping to configured independent clients; keep legacy identities valid. Reuse owner grants in `apps/eliotr-core/src/client-grant-http.ts`, not a new permissions engine. |
+| External clients | `mcp-service-clients.ts` parses `MCP_ACCESS_SERVICE_TOKEN_CLIENT_IDS`; `gemini-mcp.ts` and Core env/index accept independent verified clients. New actors bind issuer/audience/Client ID; the optional legacy singleton preserves `gemini-spark`. Existing project grants still use the actual signed Client ID. |
 | Google optionality | `scripts/check-launch-code.mjs::launchCodeBlockers` must accept explicit `disabled`; selected Google profiles still require their own implementation. Keep deployment config and `implementation-status.json.release_profile` consistent. Current selected config is not changed by this ADR. |
 
 Connections should allow enabling/disabling clients, testing each connection, selecting models per role
@@ -43,6 +43,11 @@ subscription usage and unknown usage; do not force agent results into fabricated
 For subscription agents without a callable inference API, support client-initiated work and later a
 pull-task/result callback adapter over existing Research jobs. Carry job/attempt IDs through reconnect,
 progress, cancellation and result readback. This adapter is planned, not implemented by this document.
+
+Single-client descriptions in ER-36 and `gemini-spark-mcp.md` now describe only the legacy configuration.
+Discovery and system status share the wired tool set: run/control/ingest are not falsely marked absent,
+and disabled Google tools are not advertised. Installed capability, current readiness and a caller's
+permission are distinct; Connections should display them separately rather than stop all work.
 
 ## 3. Short future notes from the platform review
 
@@ -69,8 +74,9 @@ progress, cancellation and result readback. This adapter is planned, not impleme
 Execution stays in [the delivery plan](../implementation/backend-delivery-plan.md): S37 continues;
 client/profile work belongs to S10–S13/S29/S98–S99, model adapters to ER-16, Rust to S78–S89.
 For external operation and NotebookLM comparisons use the [short runbook](../implementation/muse-operator-runbook.md).
-**Status:** architecture and the optional-Google launch-gate correction only; multi-client MCP,
-additional model transports, external task adapter and live Muse connection remain implementation work.
+**Code boundary:** optional-Google launch guard, multi-client service-token MCP and truthful capability
+reporting are implemented, not live-qualified. Automated multi-client Access provisioning, managed-OAuth
+Research delegation, additional inference transports, external task adapter and live Muse remain pending.
 
 [custom]: https://developers.cloudflare.com/ai-gateway/configuration/custom-providers/
 [rest]: https://developers.cloudflare.com/ai-gateway/usage/rest-api/
