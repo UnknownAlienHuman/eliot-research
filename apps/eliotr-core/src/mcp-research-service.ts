@@ -13,6 +13,8 @@ import { createEvidenceService } from "./evidence-service.js";
 import { reopenOwnerArtifactDraft, reopenOwnerArtifactSection, reopenOwnerArtifactSectionCitations } from "./research-artifact-reauthorization-http.js";
 import { cancelResearchRun, recoverResearchRun } from "./research-run-control.js";
 import { readReadiness } from "./readiness.js";
+import { ExternalAgentTaskError } from "@eliotr/cloudflare-workflows";
+import { callExternalAgentTaskTool, isExternalAgentTaskToolName } from "./mcp-external-agent-task.js";
 import type { Env } from "./env.js";
 
 function invalid(message: string): never { throw new GeminiMcpToolError("INPUT_INVALID", message); }
@@ -94,6 +96,10 @@ async function responseBody(response: Response): Promise<unknown> {
 
 function mapError(request: Request, error: unknown): never {
   if (error instanceof GeminiMcpToolError) throw error;
+  if (error instanceof ExternalAgentTaskError) {
+    throw new GeminiMcpToolError(error.code,
+      "External agent task request could not be completed under its exact lease and authority", error.retryable);
+  }
   if (error instanceof RuntimeLimitError) throw new GeminiMcpToolError("MCP_RESEARCH_LIMIT", "Research response exceeds the MCP envelope; use a smaller query or evidence byte range");
   if (error instanceof RangeError) throw new GeminiMcpToolError("EVIDENCE_RANGE_INVALID", "Evidence range is outside the excerpt or splits a UTF-8 code point");
   // Preserve application error codes/retryability through the same HTTP classifier; do not
@@ -173,6 +179,19 @@ export function createMcpResearchToolCall(env: Env, request: Request): McpResear
             : () => createResearchRunService(env).runStatus(context, operation);
           break;
         }
+        case "eliotr_task_pull":
+        case "eliotr_task_progress":
+        case "eliotr_task_result":
+        case "eliotr_task_status": {
+          if (!isExternalAgentTaskToolName(name)) invalid("External task tool identity is invalid");
+          execute = async () => {
+            const grant = await authorizeProjectClientGrant(env.CORE_DB, context, { operation: "run" });
+            const result = await callExternalAgentTaskTool(env, context, grant.grant, name, args);
+            await grant.requireGrantCurrent();
+            return result;
+          };
+          break;
+        }
         case "eliotr_report": {
           const artifact = ref(args.artifact_ref);
           execute = () => reopenOwnerArtifactDraft(env, context, artifact);
@@ -200,6 +219,11 @@ export function createMcpResearchToolCall(env: Env, request: Request): McpResear
         }
       }
       if (!(await readReadiness(env)).ready) throw new GeminiMcpToolError("SCHEMA_NOT_READY", "Required migrations are not applied", true);
+      if (isExternalAgentTaskToolName(name)) {
+        const result = await execute();
+        serviceContext(env, request, toolContext, args);
+        return result;
+      }
       if (name === "eliotr_project_attach" || name.startsWith("eliotr_ingest_")) {
         // These services fence their own mutation/namespace authority and readback. They do not
         // borrow the read-only wrapper's project scope or renew an originating grant.

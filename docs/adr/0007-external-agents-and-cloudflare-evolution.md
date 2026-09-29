@@ -48,9 +48,18 @@ creates a new configuration revision for new attempts; existing runs keep their 
 Embedding changes use a new index generation. Reuse existing budget/attempt accounting: distinguish
 measured API cost, subscription usage and unknown usage; do not fabricate token/cost fields.
 
-For subscription agents without a callable inference API, support client-initiated work and later a
-pull-task/result callback adapter over existing Research jobs. Carry job/attempt IDs through reconnect,
-progress, cancellation and result readback. This adapter is planned, not implemented by this document.
+For subscription agents without a callable inference API, the first delivery boundary now reuses the
+existing Research W2 attempt instead of introducing another scheduler. An internal publisher binds one
+immutable task to the exact operation/stage, attempt reference, request digest, project and historical
+service-token grant revision. The client can recover a bounded lease with `eliotr_task_pull`, append strict
+next-cursor progress, submit an idempotent result callback, and read cancellation/result status. A stable
+caller-chosen worker slot provides lost-ack recovery; independent slots may process distinct tasks without
+a hard-coded single-worker restriction. Each lease pins the authenticated credential generation; token
+rotation cannot inherit an unexpired lease. Early replacement, stale authority and cancelled workflows fail
+closed. The callback is delivery evidence only: receipts explicitly report `workflow_settled=false`, and
+a later stage-specific consumer must validate it before committing through the existing W1/W2 checkpoint.
+Concrete stage selection, task publication from that handler and callback-to-stage-output settlement are
+still pending; the adapter does not create arbitrary jobs or expose a second completion authority.
 
 Discovery and system status share the wired tool set: run/control/ingest are not falsely marked absent,
 and disabled Google tools are not advertised. Installed capability, current readiness and a caller's
@@ -82,9 +91,10 @@ Execution stays in [the delivery plan](../implementation/backend-delivery-plan.m
 client/profile work belongs to S10–S13/S29/S98–S99, model adapters to ER-16, Rust to S78–S89.
 For external operation and NotebookLM comparisons use the [short runbook](../implementation/muse-operator-runbook.md).
 **Code boundary:** optional-Google launch guard, multi-client Worker verification and Access provisioning,
-truthful capability reporting, stdin-only Secrets Store key create/rotation, and composed Custom Provider
-plus Provider Config attachment are implemented, not live-qualified. Managed-OAuth Research delegation,
-provider-native inference transports, safe connection removal, external task adapter and live Muse remain pending.
+truthful capability reporting, stdin-only Secrets Store key create/rotation, composed Custom Provider plus
+Provider Config attachment, and the grant/attempt-bound external task lease/progress/result/status adapter
+are implemented, not live-qualified. Managed-OAuth Research delegation, provider-native inference transports,
+safe connection removal, a concrete external-agent stage publisher/consumer and live Muse remain pending.
 
 [custom]: https://developers.cloudflare.com/ai-gateway/configuration/custom-providers/
 [rest]: https://developers.cloudflare.com/ai-gateway/usage/rest-api/

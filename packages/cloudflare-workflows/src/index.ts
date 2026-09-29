@@ -6,3 +6,5 @@ export * from "./objects.js";
 export * from "./executor.js";
 export * from "./deterministic-stage-handler.js";
 export * from "./committed-lineage.js";
+export * from "./external-agent-task-codec.js";
+export * from "./external-agent-task-store.js";

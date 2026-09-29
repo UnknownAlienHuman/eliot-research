@@ -23,6 +23,37 @@ const bundleRequest = { type: "object", additionalProperties: false,
     total_bytes: { type: "integer", minimum: 1, maximum: 5368709120 },
     file_hashes: { type: "object", minProperties: 3, maxProperties: 128,
       additionalProperties: { type: "string", pattern: "^[a-f0-9]{64}$" } } } } as const;
+const externalTaskId = { type: "string", pattern: "^external-task:[a-f0-9]{64}$" } as const;
+const externalLeaseId = { type: "string",
+  pattern: "^external-lease:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$" } as const;
+const externalWorkerSlot = { type: "string", minLength: 1, maxLength: 64,
+  pattern: "^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$",
+  description: "Stable caller-chosen pull slot for lost-ack recovery and optional parallel workers; defaults to default." } as const;
+const externalEvidenceRefs = { type: "array", maxItems: 64, uniqueItems: true, items: ref } as const;
+const externalUsage = { type: "object", additionalProperties: false, required: ["accounting"],
+  properties: { accounting: { enum: ["SUBSCRIPTION", "API_METERED", "UNKNOWN"] },
+    input_tokens: { type: "integer", minimum: 0 }, output_tokens: { type: "integer", minimum: 0 },
+    billed_usd: { type: "number", minimum: 0 } },
+  allOf: [
+    { if: { properties: { accounting: { const: "UNKNOWN" } }, required: ["accounting"] },
+      then: { not: { anyOf: [{ required: ["input_tokens"] }, { required: ["output_tokens"] }, { required: ["billed_usd"] }] } } },
+    { if: { properties: { accounting: { const: "SUBSCRIPTION" } }, required: ["accounting"] },
+      then: { not: { required: ["billed_usd"] } } },
+    { if: { properties: { accounting: { const: "API_METERED" } }, required: ["accounting"] },
+      then: { anyOf: [{ required: ["input_tokens"] }, { required: ["output_tokens"] }, { required: ["billed_usd"] }] } },
+  ] } as const;
+const externalResult = { type: "object", additionalProperties: false,
+  required: ["disposition", "output", "evidence_refs", "diagnostics", "usage"],
+  properties: { disposition: { enum: ["SUCCEEDED", "PARTIAL", "FAILED"] },
+    output: { anyOf: [{ type: "object" }, { type: "null" }] }, evidence_refs: externalEvidenceRefs,
+    diagnostics: { type: "array", maxItems: 32, items: { type: "string", minLength: 1, maxLength: 2048 } },
+    usage: externalUsage },
+  allOf: [
+    { if: { properties: { disposition: { const: "FAILED" } }, required: ["disposition"] },
+      then: { properties: { output: { type: "null" }, diagnostics: { minItems: 1 } } } },
+    { if: { properties: { disposition: { enum: ["SUCCEEDED", "PARTIAL"] } }, required: ["disposition"] },
+      then: { properties: { output: { type: "object" } } } },
+  ] } as const;
 
 /** One registry for names, discovery schemas and dispatch. Only implemented consumers; cancellation is an explicit destructive control. */
 export const MCP_RESEARCH_TOOLS = {
@@ -155,6 +186,45 @@ export const MCP_RESEARCH_TOOLS = {
       properties: { ...grant, workflow_instance_id: { type: "string", minLength: 1, maxLength: 128,
         pattern: "^[A-Za-z0-9][A-Za-z0-9:._-]{0,127}$" } } },
     annotations: annotations(false),
+  },
+  eliotr_task_pull: {
+    name: "eliotr_task_pull",
+    description: "Claim or recover this exact grant revision's current subscription-agent task. Reuse one stable worker_slot after an uncertain response; independent slots may process separate published tasks concurrently. Returns null when no task is available. The lease is bounded by the existing Research attempt, spend expiry and project grant; this tool does not create a run, select a stage or settle W1/W2.",
+    inputSchema: { type: "object", additionalProperties: false, required: ["client_grant_id"],
+      properties: { ...grant, worker_slot: externalWorkerSlot } },
+    annotations: annotations(false),
+  },
+  eliotr_task_progress: {
+    name: "eliotr_task_progress",
+    description: "Append one exact next progress cursor for a leased subscription-agent task and renew the same lease within its existing bounds. Replaying identical cursor content returns the recorded receipt; gaps, changed content, replaced leases and cancelled workflows fail closed.",
+    inputSchema: { type: "object", additionalProperties: false,
+      required: ["client_grant_id", "task_id", "lease_id", "cursor", "progress"],
+      properties: { ...grant, task_id: externalTaskId, lease_id: externalLeaseId,
+        cursor: { type: "integer", minimum: 1, maximum: 4096 },
+        progress: { type: "object", additionalProperties: false, required: ["phase", "evidence_refs"],
+          properties: { phase: { type: "string", minLength: 1, maxLength: 128 },
+            message: { type: "string", minLength: 1, maxLength: 2048 },
+            completed_units: { type: "integer", minimum: 0, maximum: 1000000000 },
+            total_units: { type: "integer", minimum: 0, maximum: 1000000000 },
+            evidence_refs: externalEvidenceRefs } } } },
+    annotations: annotations(true),
+  },
+  eliotr_task_result: {
+    name: "eliotr_task_result",
+    description: "Record an idempotent subscription-agent callback for the exact live lease. Repeat the same idempotency key and semantic result after a lost acknowledgement. The receipt explicitly reports workflow_settled=false: a later stage-specific consumer must validate and commit through the existing W1/W2 authority.",
+    inputSchema: { type: "object", additionalProperties: false,
+      required: ["client_grant_id", "task_id", "lease_id", "idempotency_key", "result"],
+      properties: { ...grant, task_id: externalTaskId, lease_id: externalLeaseId,
+        idempotency_key: { type: "string", minLength: 1, maxLength: 256,
+          pattern: "^[^\\u0000-\\u0020\\u007f]+$" }, result: externalResult } },
+    annotations: annotations(true),
+  },
+  eliotr_task_status: {
+    name: "eliotr_task_status",
+    description: "Read delivery, lease, latest progress, callback digest and workflow cancellation for one task bound to this exact grant revision. It never renews a lease or converts a recorded callback into a Research stage result.",
+    inputSchema: { type: "object", additionalProperties: false, required: ["client_grant_id", "task_id"],
+      properties: { ...grant, task_id: externalTaskId } },
+    annotations: { ...annotations(true), readOnlyHint: true },
   },
   eliotr_report: {
     name: "eliotr_report",
