@@ -7,23 +7,45 @@ not a claim that a live connection or every adapter already exists.
 ## Connect and work
 
 Use a supported HTTP/MCP/CLI connector or browser session. Check actual authentication, tools, file
-transfer and cancellation support. For service-token MCP, set Worker `MCP_ACCESS_AUTH_PROFILE=service-token`
-and `MCP_ACCESS_SERVICE_TOKEN_CLIENT_IDS` to a JSON array (or JSON-encoded string), for example
-`["muse-client.access", "other-client.access"]`, replacing both examples with real Access Client IDs.
-Authorize those tokens in the dedicated Access application too, and issue the required project grants
-against each actual signed Client ID/issuer. The IDs are configuration; Client Secrets stay in the client.
-`MCP_ACCESS_SERVICE_TOKEN_CLIENT_ID` is optional and preserves the old Gemini actor only; omit it when
-Spark is unused, and do not repeat it in the new list. Generic clients get separate stable actor hashes.
-Existing automated Access provisioning still configures one legacy token; this checkpoint adds Worker
-runtime support, not a multi-client provisioning UI or a live Muse connection. Managed OAuth Research
-delegation remains separate. A provider API key configures inference, not a browser or subscription.
+transfer and cancellation support. A provider API key configures inference, not a browser subscription.
 With `GOOGLE_EXTERNAL_TRANSPORT=disabled`, Research tools remain available and Google sync tools are hidden.
-`system_status` reports wired capabilities; successful calls still require their existing per-project grants.
+
+For service-token MCP, each external client needs its own Cloudflare Access service token. Configure
+additional clients for the provisioner as one JSON array; IDs are not secrets, but Client Secrets stay
+only in the corresponding client:
+
+```text
+ELIOTR_MCP_ACCESS_AUTH_PROFILE=service-token
+ELIOTR_MCP_ACCESS_ENABLED=1
+ELIOTR_MCP_ACCESS_SERVICE_TOKENS=[
+  {"token_id":"<Access service-token UUID>","client_id":"<signed Client ID>.access"},
+  {"token_id":"<second UUID>","client_id":"<second Client ID>.access"}
+]
+```
+
+`ELIOTR_MCP_ACCESS_ENABLED=1` is optional when the profile or bindings already select MCP. It is an
+enable-only signal: removal/revocation is a separate reviewed operation, not `=0`. The legacy
+`ELIOTR_MCP_ACCESS_SERVICE_TOKEN_ID` plus `..._CLIENT_ID` pair remains compatible and identifies the
+old `gemini-spark` actor. Omit that pair when Spark is unused. Do not duplicate a Client ID or token UUID
+between the legacy pair and the array.
+
+The Access provisioner reads back every exact UUID/Client-ID pairing before mutation, installs one
+non-identity policy containing the declared token selectors, and records order-independent digests.
+Generated Worker configuration retains the optional legacy Client ID and writes all additional Client IDs
+to `MCP_ACCESS_SERVICE_TOKEN_CLIENT_IDS`. The Worker independently verifies the signed Client ID and
+creates a stable actor for each non-legacy client. Issue project grants against those actual actor/client
+identities; Access admission alone does not grant a project or an operation.
+
+Managed OAuth remains a distinct profile and cannot be combined with service-token bindings. A dedicated
+MCP application, AUD and `/mcp` path remain separate from ordinary owner Access. Connection configuration
+is independent of Google transport selection; Google-free operation does not require pretending Muse is
+Gemini.
 
 The owner selects environment, permissions, data scope, task and budget. Production work, writes and
 administration are allowed when authorized; routine actions reuse those permissions. Credentials belong
 in the client's supported secret mechanism, not prompts or repository files. Missing capabilities are
-reported per operation; they do not require abandoning other useful work.
+reported per operation; they do not require abandoning other useful work. `system_status` reports wired
+capabilities; successful calls still require their existing per-project grants.
 
 Reuse run/attempt IDs across refresh and reconnect. Read existing results before retrying an uncertain
 submission. Record build, task, steps, observed result, error/trace IDs and useful screenshots. Use an

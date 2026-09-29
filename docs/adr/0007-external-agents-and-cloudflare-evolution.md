@@ -1,6 +1,6 @@
 # ADR-0007: Replaceable external models, agents and Cloudflare adapters
 
-**Accepted, revised 2026-09-29.** Source/code review: `b41254a80bdc7251aac4aae01a31c068e4223a02` plus this checkpoint.
+**Accepted, revised 2026-09-29.** Source/code review: `f97cbebde60f1b7b0f30e1d26b74f40591a42801` plus this checkpoint.
 This revision replaces the earlier staging-only/operator restrictions. It amends ADR-0006's mandatory
 client selection and LANGUAGE_RUNTIME_CONTRACT §§0/3/11: providers and clients are replaceable;
 TypeScript is the current platform implementation, not a permanent requirement; external Python/tools
@@ -30,24 +30,28 @@ harness capabilities are recorded separately; neither implies the other.
 | Area | Reuse/change |
 |---|---|
 | Inference | Reuse `packages/research/src/ports.ts::ModelRoutePort` and `packages/platform-cloudflare/src/model-gateway.ts`. The ten `dynamic/eliotr-*` names are application roles, not ten permitted vendors. Provider/model fingerprints are already strings. |
-| External providers | `manageExternalModelSecret()` plus `scripts/manage-external-model-secret.mjs` create or rotate one exact `ai_gateway`-scoped Secrets Store key from bounded stdin. `connectExternalModelProvider()` and `scripts/connect-external-model-provider.mjs` then compose Custom Provider registration and Provider Config attachment. `customProviderModelTarget()` emits `custom-<slug>/<model>` for existing Dynamic Routes. Raw provider keys and secret previews never enter JSON, argv, receipts or errors. |
-| Additional transports | Extend `packages/cloudflare-ai/src/model-gateway-http-request.ts` and the adapter behind `ModelRoutePort` for direct/provider-native APIs; preserve request/result schemas, actual model provenance and existing attempt/output receipts. Present Gateway-only execution is not universal transport support. |
-| External clients | `mcp-service-clients.ts` parses `MCP_ACCESS_SERVICE_TOKEN_CLIENT_IDS`; `gemini-mcp.ts` and Core env/index accept independent verified clients. New actors bind issuer/audience/Client ID; the optional legacy singleton preserves `gemini-spark`. Existing project grants still use the actual signed Client ID. |
-| Google optionality | `scripts/check-launch-code.mjs::launchCodeBlockers` must accept explicit `disabled`; selected Google profiles still require their own implementation. Keep deployment config and `implementation-status.json.release_profile` consistent. Current selected config is not changed by this ADR. |
+| External providers | `manageExternalModelSecret()` plus `scripts/manage-external-model-secret.mjs` create or rotate one exact `ai_gateway`-scoped Secrets Store key from bounded stdin. `connectExternalModelProvider()` then composes Custom Provider registration and Provider Config attachment. `customProviderModelTarget()` emits `custom-<slug>/<model>` for Dynamic Routes. Raw provider keys and secret previews never enter JSON, argv, receipts or errors. |
+| Additional transports | Dynamic Routes still use the compatibility Chat Completions endpoint. Extend `model-gateway-http-request.ts` and the adapter behind `ModelRoutePort` only for provider-native APIs whose request/response schema cannot use that route; preserve provenance and attempt/output receipts. |
+| External clients | Worker verification accepts independent Client IDs through `MCP_ACCESS_SERVICE_TOKEN_CLIENT_IDS`. Access provisioning now accepts independently read-back `{token_id, client_id}` bindings, installs one bounded non-identity policy, and binds receipts/generated Worker vars to the complete order-independent client set. The optional legacy pair preserves `gemini-spark`; omit it when Spark is unused. |
+| Google optionality | `GOOGLE_EXTERNAL_TRANSPORT=disabled` is valid. Explicit MCP service bindings or managed OAuth enable the MCP Access contour independently of Google. Selected Google profiles still require their own implementation and qualification. |
 
-External-model setup is intentionally monotone: pipe the provider key to `manage-external-model-secret.mjs`, copy its `secret_reference` into the connect input, run `connect-external-model-provider.mjs`, then use the existing route planner and model-authority installer. Secret create/rotation and provider/config attachment each use one write attempt followed by exact readback or operation-marker reconciliation; no rollback deletes shared provider state.
+External-model setup is intentionally monotone: pipe the provider key to
+`manage-external-model-secret.mjs`, copy its `secret_reference` into the connect input, run
+`connect-external-model-provider.mjs`, then use the existing route planner and model-authority installer.
+Each mutation uses one write attempt followed by exact readback or operation-marker reconciliation;
+no rollback deletes shared provider state.
 
-Connections should allow enabling/disabling clients, testing each connection, selecting models per role
-and configuring fallbacks without code edits for each vendor. A provider/model change creates a new
-configuration revision for new attempts; existing runs keep their recorded identity. Embedding changes
-use a new index generation. Reuse existing budget/attempt accounting: distinguish measured API cost,
-subscription usage and unknown usage; do not force agent results into fabricated token/cost fields.
+Connections should allow enabling clients, testing each connection, selecting models per role and
+configuring fallbacks without code edits for each vendor. Revocation/removal is a separate reconciled
+operation; absence or `enabled=0` must not silently orphan a live Access policy. A provider/model change
+creates a new configuration revision for new attempts; existing runs keep their recorded identity.
+Embedding changes use a new index generation. Reuse existing budget/attempt accounting: distinguish
+measured API cost, subscription usage and unknown usage; do not fabricate token/cost fields.
 
 For subscription agents without a callable inference API, support client-initiated work and later a
 pull-task/result callback adapter over existing Research jobs. Carry job/attempt IDs through reconnect,
 progress, cancellation and result readback. This adapter is planned, not implemented by this document.
 
-Single-client descriptions in ER-36 and `gemini-spark-mcp.md` now describe only the legacy configuration.
 Discovery and system status share the wired tool set: run/control/ingest are not falsely marked absent,
 and disabled Google tools are not advertised. Installed capability, current readiness and a caller's
 permission are distinct; Connections should display them separately rather than stop all work.
@@ -77,11 +81,10 @@ permission are distinct; Connections should display them separately rather than 
 Execution stays in [the delivery plan](../implementation/backend-delivery-plan.md): S37 continues;
 client/profile work belongs to S10–S13/S29/S98–S99, model adapters to ER-16, Rust to S78–S89.
 For external operation and NotebookLM comparisons use the [short runbook](../implementation/muse-operator-runbook.md).
-**Code boundary:** optional-Google launch guard, multi-client service-token MCP, truthful capability
-reporting, stdin-only Secrets Store key create/rotation, and composed Custom Provider plus Provider
-Config attachment are implemented, not live-qualified. Automated multi-client Access provisioning,
-managed-OAuth Research delegation, provider-native inference transports, external task adapter and
-live Muse remain pending.
+**Code boundary:** optional-Google launch guard, multi-client Worker verification and Access provisioning,
+truthful capability reporting, stdin-only Secrets Store key create/rotation, and composed Custom Provider
+plus Provider Config attachment are implemented, not live-qualified. Managed-OAuth Research delegation,
+provider-native inference transports, safe connection removal, external task adapter and live Muse remain pending.
 
 [custom]: https://developers.cloudflare.com/ai-gateway/configuration/custom-providers/
 [rest]: https://developers.cloudflare.com/ai-gateway/usage/rest-api/
