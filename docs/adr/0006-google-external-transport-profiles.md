@@ -4,6 +4,10 @@
 
 **Date:** 2026-09-09
 
+**Amended 2026-09-29 by [ADR-0007](0007-external-agents-and-cloudflare-evolution.md):** Spark/Antigravity
+selection below is historical, not mandatory. Muse or another client may replace it. A Google-free
+release may select `disabled`; only an explicitly selected Google integration requires its own gates.
+
 ## Decision
 
 The deployment selects one value of the existing `GOOGLE_EXTERNAL_TRANSPORT` setting:

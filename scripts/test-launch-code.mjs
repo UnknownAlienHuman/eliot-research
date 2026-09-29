@@ -49,9 +49,25 @@ assert.throws(() => launchCodeBlockers({ ...complete, release_profile: { protoco
 assert.throws(() => launchCodeBlockers({ ...complete, entries: [
   ...complete.entries, { id: "common-entry", path: "test-common.ts", state: "IMPLEMENTED_NOT_LIVE", required_for_transports: ["gemini-mcp"] },
 ] }, composition()));
-assert.deepEqual(launchCodeBlockers({ ...complete, release_profile: { ...profile, google_external_transport: "disabled" } }, composition()), [
-  "google external transport is disabled for the selected release profile",
+// A Google-free release still checks every common product and actual unavailable operation.
+const withoutGoogle = { ...complete, release_profile: { ...profile, google_external_transport: "disabled" }, entries: [
+  { id: "test", path: "test.ts", state: "IMPLEMENTED_NOT_LIVE" },
+  { id: "workspace-candidate-admission", path: "test-workspace.ts", state: "IN_PROGRESS", required_for_transports: ["gemini-mcp"] },
+  { id: "pending-drive-exchange", path: "test-drive.ts", state: "IN_PROGRESS", required_for_transports: ["drive-exchange"] },
+] };
+assert.equal(readConfiguredTransport({ vars: { GOOGLE_EXTERNAL_TRANSPORT: "disabled" } }), "disabled");
+assert.deepEqual(launchCodeBlockers(withoutGoogle, composition('"DRIVE_EXCHANGE"')), []);
+for (const slice of ["RETRIEVAL", "RESEARCH", "FEDERATION", "WIKI", "ERASURE"]) {
+  assert.deepEqual(launchCodeBlockers(withoutGoogle, composition(JSON.stringify(slice))), [`disabled required slice: ${slice}`]);
+}
+assert.deepEqual(launchCodeBlockers(withoutGoogle, composition('', 'unavailable("research.query");')), ["research.query"]);
+assert.deepEqual(launchCodeBlockers({ ...withoutGoogle, entries: registry.entries }, composition()), [
+  "session: apps/session.ts", "workflow: apps/workflow.ts",
 ]);
+for (const transport of ["gemini-mcp", "drive-exchange"]) {
+  const blockers = launchCodeBlockers({ ...withoutGoogle, release_profile: { ...profile, google_external_transport: transport } }, composition());
+  assert.ok(blockers.some((blocker) => blocker.startsWith(`google ${transport}:`)), "selected integrations retain their own readiness requirements");
+}
 const current = JSON.parse(await readFile(new URL("../docs/implementation/implementation-status.json", import.meta.url), "utf8"));
 const drive = current.entries.find((entry) => entry.path === "packages/google-drive-exchange/src/reconciler.ts");
 assert.ok(drive, "The normative Drive implementation must be explicitly inventoried");

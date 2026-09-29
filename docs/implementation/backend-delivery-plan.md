@@ -156,6 +156,11 @@ Publication rules:
 
 ## Preserved scope and safety
 
-Mandatory baseline remains v1, Slices 0–6 and selected `gemini-mcp`. Unselected managed OAuth, Slice 7, unavailable live credentials, provider spending or external restore destinations are not coding blockers for unrelated work.
+Mandatory baseline remains v1 and Slices 0–6. [ADR-0007](../adr/0007-external-agents-and-cloudflare-evolution.md)
+makes model providers, external agents and Google tools independent choices; Muse may replace Spark.
+The currently recorded `gemini-mcp` release configuration is not a mandatory vendor choice. Explicit
+`disabled` is valid for a Google-free release; configuration and registry must still agree. Unselected
+integration gates do not block other work. S29/profile and S10–S13/S98–S99 client work implement the
+remaining selection/adapter changes without redoing delivered services. The active S37 checkpoint is unchanged.
 
 No branch deletion, force push, pushed-history rewrite, live deployment, provider spending, hostname change or remote database migration is authorized by this plan.

@@ -81,9 +81,8 @@ export function launchCodeBlockers(registry, composition) {
   };
   visit(source);
   if (declarations !== 1) throw new Error("Expected exactly one explicit disabled_slices declaration");
-  if (selectedTransport === "disabled") {
-    blockers.push("google external transport is disabled for the selected release profile");
-  } else {
+  // ADR-0007: Google is optional; only a selected integration adds its own gate.
+  if (selectedTransport !== "disabled") {
     const requirement = PROFILE_REQUIREMENTS[selectedTransport];
     const entry = registry.entries.find((candidate) => candidate.id === requirement.entry_id);
     if (entry === undefined || ["SCAFFOLD_FAIL_CLOSED", "IN_PROGRESS"].includes(entry.state)) {

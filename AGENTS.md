@@ -39,28 +39,29 @@ Agents should not reread the whole architecture for normal work. Start from the 
 
 1. TypeScript currently owns the Cloudflare control plane: Worker routing, Access, D1/R2/Queues,
    Workflows, Durable Objects, AI Search, Workers AI/AI Gateway, Analytics Engine, MCP transport,
-   Google orchestration, PWA, Wrangler, and provisioning. ADR-0007 permits bounded Rust adapter
-   evaluation, not production cutover; the pure-kernel boundary and per-capability promotion gates remain.
+   Google orchestration, PWA, Wrangler, and provisioning. ADR-0007 permits incremental Rust platform
+   adapters, including a Rust-authored backend; preserve behavior and record each ownership cutover.
 2. Rust owns pure deterministic domain authority: canonicalization, stable IDs, state machines, scope,
    policy/residency invariants, qualification, evidence/coverage dispositions, and algorithmic cores.
 3. SQL owns D1 migrations, constraints, indexes, and executable transaction fixtures.
 4. Pure Rust crates receive explicit bytes/state and perform no network, filesystem, clock, randomness,
    environment, process, or Cloudflare binding access.
-5. The TypeScript↔Rust/Wasm boundary is versioned canonical UTF-8 bytes in and canonical bytes or typed
-   errors out. Cloudflare handles never cross it.
+5. The pure-kernel TypeScript↔Rust/Wasm ABI is versioned canonical UTF-8 bytes in and canonical bytes
+   or typed errors out. Platform I/O belongs to separate adapters, not that kernel ABI.
 6. TypeScript may reject malformed/oversized transport input earlier but may not strengthen a promoted
    Rust result.
 7. Permanent duplicate TypeScript/Rust authority is prohibited. Differential shadow mode is temporary
    and must converge to one owner.
-8. A new production language or a change to this ownership matrix requires a normative ADR.
+8. Record TypeScript/Rust capability ownership under ADR-0007. An additional production language
+   outside the approved runtime roles requires a normative ADR.
 
-## External operator boundary
+## External models and agents
 
-Muse or another external agent may use qualified UI/API/connector paths for research and QA, never
-D1/R2/admin credentials or a second Research engine. Follow the
-[Muse operator runbook](docs/implementation/muse-operator-runbook.md). Existing MCP identity is
-Gemini-specific: do not share that token or rename its principal to impersonate Muse. Browser checks,
-traces and agent conclusions are observations, not admission, evidence or completion authority.
+Model providers, agent clients and Google tools are independent choices. Muse may replace Spark;
+no vendor is mandatory. The owner grants the required actions, including production writes or
+administration; no blanket QA-only/staging-only restriction applies. Reuse existing authorization,
+evidence and attempt semantics. See [ADR-0007](docs/adr/0007-external-agents-and-cloudflare-evolution.md)
+for current adapter gaps and the [short runbook](docs/implementation/muse-operator-runbook.md).
 
 ## Swarm edit protocol
 
