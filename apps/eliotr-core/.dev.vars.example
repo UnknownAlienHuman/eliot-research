@@ -5,18 +5,15 @@ AI_GATEWAY_REASONING_URL=
 AI_GATEWAY_RETRIEVAL_URL=
 ACCESS_TEAM_DOMAIN=https://replace-me.cloudflareaccess.com
 ACCESS_AUDIENCE=replace-me
-# Ordinary API service-token Client IDs only. Do not add dedicated MCP clients.
+# Ordinary API service-token Client IDs only. Do not add the dedicated Gemini token.
 ACCESS_SERVICE_PRINCIPALS=
-MCP_HOSTNAME=eliotr-core.local.invalid
+MCP_HOSTNAME=mcp.replace-me.example
 MCP_ACCESS_TEAM_DOMAIN=https://replace-me.cloudflareaccess.com
 MCP_ACCESS_AUDIENCE=replace-me
-MCP_ACCESS_AUTH_PROFILE=service-token
-# Optional legacy Client ID. Omit when Spark is unused.
-MCP_ACCESS_SERVICE_TOKEN_CLIENT_ID=
-# JSON array of all non-legacy verified MCP Client IDs.
-MCP_ACCESS_SERVICE_TOKEN_CLIENT_IDS=[]
-# Exactly one external Google transport may own the Google state family; MCP is independent.
-GOOGLE_EXTERNAL_TRANSPORT=disabled
+# Exact Cloudflare Access service-token Client ID, normally ending in .access.
+MCP_ACCESS_SERVICE_TOKEN_CLIENT_ID=replace-me.access
+# Exactly one external Google transport may own the state family.
+GOOGLE_EXTERNAL_TRANSPORT=gemini-mcp
 GOOGLE_CLIENT_ID=
 GOOGLE_CLIENT_SECRET=
 GOOGLE_TOKEN_ENCRYPTION_KEY=

@@ -1,12 +1,6 @@
 import { createHash } from "node:crypto";
-import {
-  hasMcpAccessServiceConfiguration,
-  mcpAccessRuntimeClientSha256,
-  readMcpAccessRuntimeClients,
-} from "./mcp-access-service-bindings.mjs";
 
 const AUD_TAG_PATTERN = /^[A-Za-z0-9._:-]{1,64}$/u;
-const SHA256 = /^[0-9a-f]{64}$/u;
 const ACCESS_RECEIPT_PROTOCOL = "eliotr.cloudflare-access-receipt.v1";
 const MCP_ACCESS_AUTH_PROFILES = new Set(["service-token", "managed-oauth"]);
 const MCP_PATH = "/mcp";
@@ -21,8 +15,11 @@ function required(value, label) {
 export function normalizeTeamOrigin(value, label = "ELIOTR_ACCESS_TEAM_DOMAIN") {
   const raw = required(value, label);
   let teamUrl;
-  try { teamUrl = new URL(raw); }
-  catch { throw new Error(`${label} must be an absolute HTTPS URL`); }
+  try {
+    teamUrl = new URL(raw);
+  } catch {
+    throw new Error(`${label} must be an absolute HTTPS URL`);
+  }
   if (
     teamUrl.protocol !== "https:" ||
     teamUrl.username !== "" ||
@@ -40,7 +37,9 @@ export function normalizeTeamOrigin(value, label = "ELIOTR_ACCESS_TEAM_DOMAIN") 
 
 export function validateAudTag(value, label = "ELIOTR_ACCESS_AUDIENCE") {
   const raw = required(value, label);
-  if (!AUD_TAG_PATTERN.test(raw)) throw new Error(`${label} must be a bounded Cloudflare Access AUD tag`);
+  if (!AUD_TAG_PATTERN.test(raw)) {
+    throw new Error(`${label} must be a bounded Cloudflare Access AUD tag`);
+  }
   return raw;
 }
 
@@ -52,7 +51,9 @@ function parseServicePrincipals(environment) {
   if (
     servicePrincipals.length > 64 ||
     servicePrincipals.some((value) =>
-      value.length === 0 || value.length > 256 || /[\u0000-\u001f\u007f,]/u.test(value)
+      value.length === 0 ||
+      value.length > 256 ||
+      /[\u0000-\u001f\u007f,]/.test(value)
     ) ||
     new Set(servicePrincipals).size !== servicePrincipals.length
   ) {
@@ -64,9 +65,16 @@ function parseServicePrincipals(environment) {
 }
 
 export function validateAccessRuntimeConfiguration(environment) {
-  const teamDomain = normalizeTeamOrigin(environment.ELIOTR_ACCESS_TEAM_DOMAIN, "ELIOTR_ACCESS_TEAM_DOMAIN");
-  const audience = validateAudTag(environment.ELIOTR_ACCESS_AUDIENCE, "ELIOTR_ACCESS_AUDIENCE");
+  const teamDomain = normalizeTeamOrigin(
+    environment.ELIOTR_ACCESS_TEAM_DOMAIN,
+    "ELIOTR_ACCESS_TEAM_DOMAIN",
+  );
+  const audience = validateAudTag(
+    environment.ELIOTR_ACCESS_AUDIENCE,
+    "ELIOTR_ACCESS_AUDIENCE",
+  );
   const servicePrincipals = parseServicePrincipals(environment);
+
   return Object.freeze({
     teamDomain,
     audience,
@@ -75,7 +83,17 @@ export function validateAccessRuntimeConfiguration(environment) {
   });
 }
 
-/** Resolve the verified ordinary Access authority for generated Core configuration. */
+/**
+ * Resolve the verified Access authority for core config generation.
+ *
+ * Pure (no network, filesystem, or clock): the caller loads the ignored
+ * non-secret Access receipt and passes it here. When a receipt is present its
+ * Cloudflare-readback AUD and team origin win; non-empty environment values
+ * must reconcile exactly instead of silently overriding the receipt. When no
+ * receipt is present the caller falls back to environment validation (used by
+ * check-only CREATE plans and historical mocks). Service principals always
+ * come from the environment: receipts carry only digests, never principals.
+ */
 export function resolveAccessRuntimeConfiguration(environment, accessReceipt) {
   const servicePrincipals = parseServicePrincipals(environment);
   if (accessReceipt === null || accessReceipt === undefined) {
@@ -83,7 +101,7 @@ export function resolveAccessRuntimeConfiguration(environment, accessReceipt) {
       ...environment,
       ELIOTR_ACCESS_SERVICE_PRINCIPALS: environment.ELIOTR_ACCESS_SERVICE_PRINCIPALS ?? "",
     });
-    return Object.freeze({ ...fromEnv, source: "ENVIRONMENT", mcpAccessRuntime: null });
+    return Object.freeze({ ...fromEnv, source: "ENVIRONMENT" });
   }
   if (typeof accessReceipt !== "object" || Array.isArray(accessReceipt)) {
     throw new Error("Access receipt must be an object for AUD propagation");
@@ -121,33 +139,22 @@ export function resolveAccessRuntimeConfiguration(environment, accessReceipt) {
       throw new Error("Access AUD propagation mismatch: environment AUD differs from the verified Access receipt AUD");
     }
   }
-  const mcpAccessRuntime = accessReceipt.mcp === undefined
-    ? null
-    : resolveMcpAccessRuntimeConfiguration(environment, accessReceipt, {
-        ordinaryAudience: accessReceipt.aud,
-        publicHostname: accessReceipt.hostname,
-        profileDefault: accessReceipt.mcp?.auth_profile,
-      });
   return Object.freeze({
     teamDomain: receiptTeam,
     audience: accessReceipt.aud,
     servicePrincipals,
     servicePrincipalCount: servicePrincipals.length,
     source: "RECEIPT",
-    mcpAccessRuntime,
   });
 }
 
 export function applyAccessRuntimeVars(vars, accessRuntime) {
-  const ordinary = {
+  return {
     ...vars,
     ACCESS_TEAM_DOMAIN: accessRuntime.teamDomain,
     ACCESS_AUDIENCE: accessRuntime.audience,
     ACCESS_SERVICE_PRINCIPALS: accessRuntime.servicePrincipals.join(","),
   };
-  return accessRuntime.mcpAccessRuntime === null || accessRuntime.mcpAccessRuntime === undefined
-    ? ordinary
-    : applyMcpRuntimeVars(ordinary, accessRuntime.mcpAccessRuntime);
 }
 
 function strictMcpTeamOrigin(value, label = "ELIOTR_MCP_ACCESS_TEAM_DOMAIN") {
@@ -180,10 +187,24 @@ function strictMcpProfile(value, label = "ELIOTR_MCP_ACCESS_AUTH_PROFILE") {
   return value;
 }
 
-function sha256Hex(value) { return createHash("sha256").update(value, "utf8").digest("hex"); }
+function strictMcpClientId(value, label = "ELIOTR_MCP_ACCESS_SERVICE_TOKEN_CLIENT_ID") {
+  if (typeof value !== "string" || value === "" || value !== value.trim() ||
+      value.length > 256 || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,254}\.access$/u.test(value)) {
+    throw new Error(`${label} must be the exact Cloudflare Access service-token Client ID`);
+  }
+  return value;
+}
+
+function sha256Hex(value) {
+  return createHash("sha256").update(value, "utf8").digest("hex");
+}
 
 function mcpReceiptAuthority(accessReceipt, publicHostname) {
   if (accessReceipt === null || accessReceipt === undefined) return null;
+  if (typeof accessReceipt !== "object" || Array.isArray(accessReceipt) ||
+      accessReceipt.protocol !== ACCESS_RECEIPT_PROTOCOL) {
+    throw new Error("MCP Access receipt must use the ordinary Access receipt protocol");
+  }
   const raw = accessReceipt.mcp;
   if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
     throw new Error("MCP Access receipt is missing its dedicated mcp authority");
@@ -193,13 +214,13 @@ function mcpReceiptAuthority(accessReceipt, publicHostname) {
     throw new Error("MCP Access receipt hostname differs from the public deployment hostname");
   }
   if (raw.path !== MCP_PATH || raw.path_cookie_attribute !== true) {
-    throw new Error,"MCP Access receipt must bind the exact /mcp path and scoped cookie attribute");
+    throw new Error("MCP Access receipt must bind the exact /mcp path and scoped cookie attribute");
   }
   const teamDomain = strictMcpTeamOrigin(raw.team_domain, "MCP receipt team_domain");
   const audience = strictMcpAudience(raw.aud, "MCP receipt aud");
   const profile = strictMcpProfile(raw.auth_profile, "MCP receipt auth_profile");
   if (raw.oauth_configuration_enabled !== (profile === "managed-oauth")) {
-    throw new Error,"MCP Access receipt OAuth configuration does not match its auth profile");
+    throw new Error("MCP Access receipt OAuth configuration does not match its auth profile");
   }
   const application = raw.application;
   if (application === null || typeof application !== "object" || Array.isArray(application) ||
@@ -209,21 +230,13 @@ function mcpReceiptAuthority(accessReceipt, publicHostname) {
       !["CREATED", "UNCHANGED"].includes(application.disposition)) {
     throw new Error("MCP Access receipt application binding is invalid");
   }
-
-  const oldClientDigest = raw.service_token_client_id_sha256;
-  const runtimeDigest = raw.service_token_runtime_clients_sha256;
-  const bindingDigest = raw.service_token_bindings_sha256;
-  const clientCount = raw.service_token_count;
-  if (profile === "service-token") {
-    const oldShape = runtimeDigest === undefined && SHA256.test(oldClientDigest ?? "");
-    const newShape = SHA256.test(runtimeDigest ?? "") && SHA256.test(bindingDigest ?? "") &&
-      Number.isSafeInteger(clientCount) && clientCount >= 1 && clientCount <= 64;
-    if (!oldShape && !newShape) {
-      throw new Error("MCP service-token receipt must bind the complete verified client set");
-    }
-  } else if (oldClientDigest !== undefined || runtimeDigest !== undefined || bindingDigest !== undefined ||
-             clientCount !== undefined || raw.service_token_id !== undefined) {
-    throw new Error("Managed OAuth MCP receipt must not contain service-token bindings");
+  const digest = raw.service_token_client_id_sha256;
+  if (profile === "service-token" &&
+      (typeof digest !== "string" || !/^[0-9a-f]{64}$/u.test(digest))) {
+    throw new Error("MCP service-token receipt must bind a Client ID digest");
+  }
+  if (profile === "managed-oauth" && digest !== undefined) {
+    throw new Error("Managed OAuth MCP receipt must not contain a service-token Client ID digest");
   }
   return Object.freeze({
     source: "RECEIPT",
@@ -233,14 +246,15 @@ function mcpReceiptAuthority(accessReceipt, publicHostname) {
     audience,
     authProfile: profile,
     applicationId: application.id,
-    serviceTokenClientIdSha256: oldClientDigest,
-    serviceTokenRuntimeClientsSha256: runtimeDigest,
-    serviceTokenBindingsSha256: bindingDigest,
-    serviceTokenCount: clientCount,
+    serviceTokenClientIdSha256: digest,
   });
 }
 
-/** Resolve dedicated MCP Access authority independently of any Google transport. */
+/**
+ * Resolve the dedicated MCP Access authority without contacting Cloudflare.
+ * A receipt is required for apply; explicit MCP values are accepted only for
+ * check-only CREATE plans and never borrow the ordinary Access AUD.
+ */
 export function resolveMcpAccessRuntimeConfiguration(environment, accessReceipt, {
   ordinaryAudience,
   publicHostname,
@@ -278,30 +292,21 @@ export function resolveMcpAccessRuntimeConfiguration(environment, accessReceipt,
     throw new Error("MCP Access audience must differ from the resolved ordinary Access audience");
   }
 
-  const clients = readMcpAccessRuntimeClients(environment);
-  if (authProfile === "managed-oauth" && (clients.count !== 0 || hasMcpAccessServiceConfiguration(environment))) {
-    throw new Error("Managed OAuth MCP profile must not configure service-token identifiers");
+  const rawClientId = environment.ELIOTR_MCP_ACCESS_SERVICE_TOKEN_CLIENT_ID;
+  const clientId = rawClientId === undefined ? undefined : strictMcpClientId(rawClientId);
+  if (authProfile === "managed-oauth" && clientId !== undefined) {
+    throw new Error("Managed OAuth MCP profile must not configure a service-token Client ID");
   }
-  if (authProfile === "service-token" && receipt && clients.count === 0) {
-    throw new Error("MCP service-token Client IDs are required to materialize generated Worker vars");
+  if (authProfile === "service-token" && receipt && clientId === undefined) {
+    throw new Error("MCP service-token Client ID is required to materialize generated Worker vars");
   }
-  if (receipt && authProfile === "service-token") {
-    if (receipt.serviceTokenRuntimeClientsSha256 !== undefined) {
-      if (clients.count !== receipt.serviceTokenCount ||
-          mcpAccessRuntimeClientSha256(clients) !== receipt.serviceTokenRuntimeClientsSha256) {
-        throw new Error,"MCP service-token Client IDs differ from the verified receipt client set");
-      }
-    } else {
-      if (clients.count !== 1 || clients.legacyClientId === null || clients.additionalClientIds.length !== 0 ||
-          sha256Hex(clients.legacyClientId) !== receipt.serviceTokenClientIdSha256) {
-        throw new Error("MCP service-token Client ID differs from the legacy verified receipt digest");
-      }
-    }
+  if (receipt && clientId !== undefined && sha256Hex(clientId) !== receipt.serviceTokenClientIdSha256) {
+    throw new Error("MCP service-token Client ID differs from the verified receipt digest");
   }
 
   const source = receipt ? "RECEIPT" : audience !== null || teamDomain !== null ? "EXPLICIT_ENVIRONMENT" : "CREATE";
   if (!receipt && !checkOnly) {
-    throw new Error,"MCP Access receipt is required for apply");
+    throw new Error("MCP Access receipt is required for apply on the gemini-mcp profile");
   }
   return Object.freeze({
     source,
@@ -310,11 +315,8 @@ export function resolveMcpAccessRuntimeConfiguration(environment, accessReceipt,
     teamDomain,
     audience,
     authProfile,
-    legacyClientId: clients.legacyClientId,
-    additionalClientIds: clients.additionalClientIds,
-    serviceTokenClientCount: clients.count,
-    serviceTokenClientIdConfigured: clients.count > 0,
-    serviceTokenRuntimeClientsSha256: clients.count > 0 ? mcpAccessRuntimeClientSha256(clients) : null,
+    serviceTokenClientId: clientId,
+    serviceTokenClientIdConfigured: clientId !== undefined,
     applicationId: receipt?.applicationId ?? null,
   });
 }
@@ -328,13 +330,9 @@ export function applyMcpRuntimeVars(vars, runtime) {
     MCP_ACCESS_AUTH_PROFILE: runtime.authProfile,
   };
   if (runtime.authProfile === "service-token") {
-    if (runtime.legacyClientId === null) delete result.MCP_ACCESS_SERVICE_TOKEN_CLIENT_ID;
-    else result.MCP_ACCESS_SERVICE_TOKEN_CLIENT_ID = runtime.legacyClientId;
-    if (runtime.additionalClientIds.length === 0) delete result.MCP_ACCESS_SERVICE_TOKEN_CLIENT_IDS;
-    else result.MCP_ACCESS_SERVICE_TOKEN_CLIENT_IDS = JSON.stringify(runtime.additionalClientIds);
+    result.MCP_ACCESS_SERVICE_TOKEN_CLIENT_ID = runtime.serviceTokenClientId;
   } else {
     delete result.MCP_ACCESS_SERVICE_TOKEN_CLIENT_ID;
-    delete result.MCP_ACCESS_SERVICE_TOKEN_CLIENT_IDS;
   }
   return result;
 }

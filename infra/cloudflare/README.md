@@ -49,41 +49,21 @@ remain `NOT_EXECUTED` until the dedicated integration harness records real recei
 
 ## MCP Access operator inputs
 
-The MCP Access application is independent of Google transport selection. The historical
-`ELIOTR_GOOGLE_EXTERNAL_TRANSPORT=gemini-mcp` profile still selects it, but a Google-free deployment may
-set the canonical transport to `disabled` and explicitly configure MCP clients. `drive-exchange` does not
-select MCP by itself.
+The selected transport must be passed explicitly to the Access provisioner and must match the canonical
+Core config: `ELIOTR_GOOGLE_EXTERNAL_TRANSPORT=gemini-mcp`. An omitted transport cannot issue an
+owner-only receipt when the canonical profile selects Gemini MCP. `drive-exchange` retains the legacy
+owner contour and does not create the MCP application.
 
-MCP uses the existing Access hostname with the exact `/mcp` path; `ELIOTR_MCP_HOSTNAME`, when provided,
-must equal `ELIOTR_ACCESS_HOSTNAME`. For service-token authentication, provide either the compatible
-legacy pair:
-
-```text
-ELIOTR_MCP_ACCESS_SERVICE_TOKEN_ID=<Access service-token UUID>
-ELIOTR_MCP_ACCESS_SERVICE_TOKEN_CLIENT_ID=<signed Client ID>.access
-```
-
-or independent client bindings:
-
-```text
-ELIOTR_MCP_ACCESS_SERVICE_TOKENS=[
-  {"token_id":"<UUID>","client_id":"<Client ID>.access"},
-  {"token_id":"<UUID>","client_id":"<Client ID>.access"}
-]
-```
-
-`ELIOTR_MCP_ACCESS_ENABLED=1` is an optional enable-only signal. Do not use `=0` as removal: revoking an
-existing connection requires a separate reconciled policy/token operation. The provisioner accepts at
-most 64 unique token UUIDs and Client IDs, confirms every exact pairing by live service-token readback,
-and creates one `non_identity` policy containing those selectors. Client Secrets never enter environment
-configuration, generated Worker vars or receipts.
-
-The generated Worker keeps the optional legacy ID in `MCP_ACCESS_SERVICE_TOKEN_CLIENT_ID` and writes
-non-legacy IDs as a JSON array in `MCP_ACCESS_SERVICE_TOKEN_CLIENT_IDS`. For managed OAuth, set
-`ELIOTR_MCP_ACCESS_AUTH_PROFILE=managed-oauth`; every service-token input is rejected and the dedicated
-app must read back `oauth_configuration.enabled=true` with `path_cookie_attribute=true`.
+Gemini MCP uses the existing Access hostname with the exact `/mcp` path; `ELIOTR_MCP_HOSTNAME`, when
+provided, must equal `ELIOTR_ACCESS_HOSTNAME`. For `service-token`, provide
+`ELIOTR_MCP_ACCESS_SERVICE_TOKEN_ID` (the Access policy selector UUID) and
+`ELIOTR_MCP_ACCESS_SERVICE_TOKEN_CLIENT_ID` (the signed verifier Client ID ending in `.access`). These
+are different identifiers; the provisioner confirms their pairing by reading the exact service-token
+record. For `managed-oauth`, set `ELIOTR_MCP_ACCESS_AUTH_PROFILE=managed-oauth`; service-token inputs
+are rejected and the dedicated app must read back `oauth_configuration.enabled=true` with
+`path_cookie_attribute=true`.
 
 MCP application and policy compatibility is checked before the owner application is created. Cloudflare
 generates the dedicated AUD during application creation; the receipt accepts it only from a fresh
-application readback and verifies that it differs from the ordinary AUD. Receipts contain resource IDs,
-counts and order-independent digests, but never Client ID values, tokens, cookies or other secrets.
+application readback and verifies that it differs from the ordinary AUD. Receipts contain IDs, digests,
+profile and contour fields, but never Client ID values, tokens, cookies or other secrets.
