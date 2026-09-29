@@ -9,6 +9,8 @@ This repository is governed by:
 
 - `docs/architecture/ELIOT_RESEARCH.md` for product and authority architecture;
 - `docs/architecture/LANGUAGE_RUNTIME_CONTRACT.md` for language and runtime ownership;
+- [ADR-0007](docs/adr/0007-external-agents-and-cloudflare-evolution.md) for the scoped 2026-09-29
+  external-agent and platform-evolution amendments;
 - `docs/implementation/branch-discipline.md` for branch/worktree lifecycle.
 
 Agents should not reread the whole architecture for normal work. Start from the work packet in
@@ -35,9 +37,10 @@ Agents should not reread the whole architecture for normal work. Start from the 
 
 ## Language and runtime ownership
 
-1. TypeScript permanently owns the Cloudflare control plane: Worker routing, Access, D1/R2/Queues,
+1. TypeScript currently owns the Cloudflare control plane: Worker routing, Access, D1/R2/Queues,
    Workflows, Durable Objects, AI Search, Workers AI/AI Gateway, Analytics Engine, MCP transport,
-   Google orchestration, PWA, Wrangler, and provisioning.
+   Google orchestration, PWA, Wrangler, and provisioning. ADR-0007 permits bounded Rust adapter
+   evaluation, not production cutover; the pure-kernel boundary and per-capability promotion gates remain.
 2. Rust owns pure deterministic domain authority: canonicalization, stable IDs, state machines, scope,
    policy/residency invariants, qualification, evidence/coverage dispositions, and algorithmic cores.
 3. SQL owns D1 migrations, constraints, indexes, and executable transaction fixtures.
@@ -50,6 +53,14 @@ Agents should not reread the whole architecture for normal work. Start from the 
 7. Permanent duplicate TypeScript/Rust authority is prohibited. Differential shadow mode is temporary
    and must converge to one owner.
 8. A new production language or a change to this ownership matrix requires a normative ADR.
+
+## External operator boundary
+
+Muse or another external agent may use qualified UI/API/connector paths for research and QA, never
+D1/R2/admin credentials or a second Research engine. Follow the
+[Muse operator runbook](docs/implementation/muse-operator-runbook.md). Existing MCP identity is
+Gemini-specific: do not share that token or rename its principal to impersonate Muse. Browser checks,
+traces and agent conclusions are observations, not admission, evidence or completion authority.
 
 ## Swarm edit protocol
 

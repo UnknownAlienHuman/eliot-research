@@ -101,7 +101,8 @@ A local manifest, prepared patch or unattached blob is not published work.
 | Current checkpoint and queue | [backend-delivery-plan.md](implementation/backend-delivery-plan.md) |
 | Complete original task criteria | [PR #292](https://github.com/UnknownAlienHuman/eliot-research/pull/292) and the selected S task |
 | Product/state authority | [ELIOT_RESEARCH.md](architecture/ELIOT_RESEARCH.md), only named sections |
-| TypeScript/Rust/SQL ownership | [LANGUAGE_RUNTIME_CONTRACT.md](architecture/LANGUAGE_RUNTIME_CONTRACT.md) |
+| TypeScript/Rust/SQL ownership | [LANGUAGE_RUNTIME_CONTRACT.md](architecture/LANGUAGE_RUNTIME_CONTRACT.md), amended by [ADR-0007](adr/0007-external-agents-and-cloudflare-evolution.md) |
+| Muse, Cloudflare evolution and external QA | [ADR-0007](adr/0007-external-agents-and-cloudflare-evolution.md) and [operator runbook](implementation/muse-operator-runbook.md); not a replacement queue |
 | File ownership | [agent-work/README.md](agent-work/README.md) and [manifest.json](agent-work/manifest.json) |
 | Implemented vs scaffold vs live | [implementation-status.json](implementation/implementation-status.json) |
 | Known product gaps | [gap-register.md](implementation/gap-register.md) |
