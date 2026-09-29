@@ -1,6 +1,6 @@
 # ADR-0007: Replaceable external models, agents and Cloudflare adapters
 
-**Accepted, revised 2026-09-29.** Source/code review: `a269928d859ea8bb267619082e7166a7286acb1f`.
+**Accepted, revised 2026-09-29.** Source/code review: `b41254a80bdc7251aac4aae01a31c068e4223a02` plus this checkpoint.
 This revision replaces the earlier staging-only/operator restrictions. It amends ADR-0006's mandatory
 client selection and LANGUAGE_RUNTIME_CONTRACT §§0/3/11: providers and clients are replaceable;
 TypeScript is the current platform implementation, not a permanent requirement; external Python/tools
@@ -30,12 +30,12 @@ harness capabilities are recorded separately; neither implies the other.
 | Area | Reuse/change |
 |---|---|
 | Inference | Reuse `packages/research/src/ports.ts::ModelRoutePort` and `packages/platform-cloudflare/src/model-gateway.ts`. The ten `dynamic/eliotr-*` names are application roles, not ten permitted vendors. Provider/model fingerprints are already strings. |
-| External providers | `scripts/lib/external-model-provider-install.mjs::connectExternalModelProvider()` composes create/readback/reconcile for the Custom Provider and its existing Secrets Store reference; `scripts/connect-external-model-provider.mjs` is the operator entrypoint. `customProviderModelTarget()` emits `custom-<slug>/<model>` for existing Dynamic Routes. Raw provider keys and secret previews never enter input or receipts. |
+| External providers | `manageExternalModelSecret()` plus `scripts/manage-external-model-secret.mjs` create or rotate one exact `ai_gateway`-scoped Secrets Store key from bounded stdin. `connectExternalModelProvider()` and `scripts/connect-external-model-provider.mjs` then compose Custom Provider registration and Provider Config attachment. `customProviderModelTarget()` emits `custom-<slug>/<model>` for existing Dynamic Routes. Raw provider keys and secret previews never enter JSON, argv, receipts or errors. |
 | Additional transports | Extend `packages/cloudflare-ai/src/model-gateway-http-request.ts` and the adapter behind `ModelRoutePort` for direct/provider-native APIs; preserve request/result schemas, actual model provenance and existing attempt/output receipts. Present Gateway-only execution is not universal transport support. |
 | External clients | `mcp-service-clients.ts` parses `MCP_ACCESS_SERVICE_TOKEN_CLIENT_IDS`; `gemini-mcp.ts` and Core env/index accept independent verified clients. New actors bind issuer/audience/Client ID; the optional legacy singleton preserves `gemini-spark`. Existing project grants still use the actual signed Client ID. |
 | Google optionality | `scripts/check-launch-code.mjs::launchCodeBlockers` must accept explicit `disabled`; selected Google profiles still require their own implementation. Keep deployment config and `implementation-status.json.release_profile` consistent. Current selected config is not changed by this ADR. |
 
-External-model setup is intentionally monotone: create the correctly named `ai_gateway` secret separately, run the connect command, then use the existing route planner and model-authority installer. A partial provider-only result is safe to retry under the same input; no rollback deletes shared provider state.
+External-model setup is intentionally monotone: pipe the provider key to `manage-external-model-secret.mjs`, copy its `secret_reference` into the connect input, run `connect-external-model-provider.mjs`, then use the existing route planner and model-authority installer. Secret create/rotation and provider/config attachment each use one write attempt followed by exact readback or operation-marker reconciliation; no rollback deletes shared provider state.
 
 Connections should allow enabling/disabling clients, testing each connection, selecting models per role
 and configuring fallbacks without code edits for each vendor. A provider/model change creates a new
@@ -78,10 +78,10 @@ Execution stays in [the delivery plan](../implementation/backend-delivery-plan.m
 client/profile work belongs to S10–S13/S29/S98–S99, model adapters to ER-16, Rust to S78–S89.
 For external operation and NotebookLM comparisons use the [short runbook](../implementation/muse-operator-runbook.md).
 **Code boundary:** optional-Google launch guard, multi-client service-token MCP, truthful capability
-reporting and composed Custom Provider plus existing Secrets Store attachment are implemented,
-not live-qualified. Automated multi-client Access provisioning, managed-OAuth Research delegation,
-Secrets Store secret creation/rotation, provider-native inference transports, external task adapter
-and live Muse remain pending.
+reporting, stdin-only Secrets Store key create/rotation, and composed Custom Provider plus Provider
+Config attachment are implemented, not live-qualified. Automated multi-client Access provisioning,
+managed-OAuth Research delegation, provider-native inference transports, external task adapter and
+live Muse remain pending.
 
 [custom]: https://developers.cloudflare.com/ai-gateway/configuration/custom-providers/
 [rest]: https://developers.cloudflare.com/ai-gateway/usage/rest-api/
