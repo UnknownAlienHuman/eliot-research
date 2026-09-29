@@ -76,3 +76,6 @@ export {
 } from "./dynamic-route-rest-binding-codec.js";
 export * from "./dynamic-route-rest-control-plane.js";
 export * from "./ai-search-managed-read.js";
+export * from "./custom-provider-rest-contract.js";
+export { customProviderModelTarget } from "./custom-provider-rest-codec.js";
+export { ensureCloudflareCustomProvider } from "./custom-provider-rest.js";
