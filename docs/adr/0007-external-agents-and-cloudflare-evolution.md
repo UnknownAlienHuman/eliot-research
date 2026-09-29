@@ -30,7 +30,7 @@ harness capabilities are recorded separately; neither implies the other.
 | Area | Reuse/change |
 |---|---|
 | Inference | Reuse `packages/research/src/ports.ts::ModelRoutePort` and `packages/platform-cloudflare/src/model-gateway.ts`. The ten `dynamic/eliotr-*` names are application roles, not ten permitted vendors. Provider/model fingerprints are already strings. |
-| External providers | `packages/cloudflare-ai/src/custom-provider-rest*.ts` now performs create-only account provider registration with exact readback and lost-ack reconciliation. `customProviderModelTarget()` emits `custom-<slug>/<model>` for the existing Dynamic Route flow. Inline credential headers are not copied into receipts; provider-key/BYOK installation remains the next control-plane checkpoint. |
+| External providers | `custom-provider-rest*.ts` registers external HTTPS providers; `provider-config-rest*.ts` attaches an existing correctly named Secrets Store reference to `eliotr-reasoning`. Both are create-only with exact readback and lost-ACK reconciliation. `customProviderModelTarget()` emits `custom-<slug>/<model>` for existing Dynamic Routes. Raw provider keys and secret previews never enter receipts. |
 | Additional transports | Extend `packages/cloudflare-ai/src/model-gateway-http-request.ts` and the adapter behind `ModelRoutePort` for direct/provider-native APIs; preserve request/result schemas, actual model provenance and existing attempt/output receipts. Present Gateway-only execution is not universal transport support. |
 | External clients | `mcp-service-clients.ts` parses `MCP_ACCESS_SERVICE_TOKEN_CLIENT_IDS`; `gemini-mcp.ts` and Core env/index accept independent verified clients. New actors bind issuer/audience/Client ID; the optional legacy singleton preserves `gemini-spark`. Existing project grants still use the actual signed Client ID. |
 | Google optionality | `scripts/check-launch-code.mjs::launchCodeBlockers` must accept explicit `disabled`; selected Google profiles still require their own implementation. Keep deployment config and `implementation-status.json.release_profile` consistent. Current selected config is not changed by this ADR. |
@@ -76,9 +76,10 @@ Execution stays in [the delivery plan](../implementation/backend-delivery-plan.m
 client/profile work belongs to S10–S13/S29/S98–S99, model adapters to ER-16, Rust to S78–S89.
 For external operation and NotebookLM comparisons use the [short runbook](../implementation/muse-operator-runbook.md).
 **Code boundary:** optional-Google launch guard, multi-client service-token MCP, truthful capability
-reporting and create/readback/reconcile for Cloudflare Custom Providers are implemented, not live-qualified.
-Automated multi-client Access provisioning, managed-OAuth Research delegation, BYOK/provider-key setup,
-provider-native inference transports, external task adapter and live Muse remain pending.
+reporting, Custom Provider registration and Secrets Store provider-config attachment are implemented,
+not live-qualified. Automated multi-client Access provisioning, managed-OAuth Research delegation,
+Secrets Store secret creation/rotation, installer composition, provider-native inference transports,
+external task adapter and live Muse remain pending.
 
 [custom]: https://developers.cloudflare.com/ai-gateway/configuration/custom-providers/
 [rest]: https://developers.cloudflare.com/ai-gateway/usage/rest-api/

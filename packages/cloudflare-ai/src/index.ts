@@ -79,3 +79,5 @@ export * from "./ai-search-managed-read.js";
 export * from "./custom-provider-rest-contract.js";
 export { customProviderModelTarget } from "./custom-provider-rest-codec.js";
 export { ensureCloudflareCustomProvider } from "./custom-provider-rest.js";
+export * from "./provider-config-rest-contract.js";
+export { ensureCloudflareProviderConfig } from "./provider-config-rest.js";
