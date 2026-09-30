@@ -109,3 +109,12 @@ Idempotency-Key and an exact service-token actor. Include `WEB_INBOX` and task k
 `RESEARCH_BRANCH_ANALYSIS`; list cloud/local/browser capabilities honestly. Updating capabilities appends
 a revision. DELETE appends `DISABLED` and does not revoke the Cloudflare token or project grant by itself.
 Those remain separate reconciled authorities.
+
+## Configure the project route
+
+For each project, PUT the owner-only route at
+`/api/v1/research/projects/<project_id>/computer-agent-routes/RESEARCH_BRANCH_ANALYSIS`. Use strategy
+`ORIGINATING_MATCH` and order exact current `{connection_id, connection_revision}` records by preference.
+A service actor may start a delegated explicit-protocol run only when its own current connection appears
+in the active route; its priority and exact revisions are frozen into the run. Updating the list does not
+move existing tasks or leases. DELETE appends a disabled revision and blocks new delegated runs.

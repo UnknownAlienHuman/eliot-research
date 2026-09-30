@@ -134,3 +134,12 @@ computer capabilities. MCP task callbacks require `MCP_WRITE`; the browser inbox
 The contour label is descriptive only. The same actor still needs an exact current project grant with
 `run`, `recover` and `evidence`. Disabling a registry entry blocks task access but does not silently revoke
 Access credentials or rewrite historical grants and leases.
+
+## Bind connections to a project route
+
+After registering Spark, Muse or Dot, the project owner publishes an ordered
+`RESEARCH_BRANCH_ANALYSIS` route containing the exact current connection revisions. The initial strategy
+is `ORIGINATING_MATCH`: the agent that starts the delegated run must itself appear in the route. The
+recorded priority is preparation for later owner-directed routing; it does not let a lower- or higher-
+priority agent inherit another actor's grant, task or lease. Update the route after changing a connection
+revision, and use a new Idempotency-Key for each distinct route revision.

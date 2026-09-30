@@ -94,3 +94,11 @@ The service-token actor must also have an owner-enabled current computer-agent c
 computer capabilities to the exact Access issuer/subject and prevents a self-reported contour selector
 from becoming authority. Disabling the connection blocks new inbox task operations without deleting task,
 lease, callback or project-grant history.
+
+## Project route binding
+
+An enabled `WEB_INBOX` connection is necessary but not sufficient for a delegated v8 run. The project
+owner must also publish an active `RESEARCH_BRANCH_ANALYSIS` route containing that exact current
+connection revision. The run records the chosen route/connection/grant revisions before Workflow start,
+and Stage 8 verifies that immutable origin before exposing a task. Priority order is not browser-supplied
+and does not permit the inbox to claim another connection's run.

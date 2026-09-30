@@ -25,6 +25,7 @@ import {
   isAgentTaskHttpOperation,
 } from "./agent-task-http.js";
 import { handleComputerAgentConnectionHttp } from "./computer-agent-connection-http.js";
+import { handleComputerAgentRouteHttp } from "./computer-agent-route-http.js";
 
 interface SpecialRouteMatch {
   readonly route: RouteDefinition;
@@ -73,6 +74,11 @@ export async function dispatchHttpSpecialRoute(input: {
     case "system.computer-agents.put":
     case "system.computer-agents.disable":
       return handleComputerAgentConnectionHttp(input.request, input.env, input.context,
+        input.match.params, input.match.route.maximum_request_bytes);
+    case "research.computer-agent-routes.read":
+    case "research.computer-agent-routes.put":
+    case "research.computer-agent-routes.disable":
+      return handleComputerAgentRouteHttp(input.request, input.env, input.context,
         input.match.params, input.match.route.maximum_request_bytes);
     case "research.client-grants.list":
     case "research.client-grants.put":

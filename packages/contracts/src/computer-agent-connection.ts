@@ -3,7 +3,7 @@ import { IdentifierSchema, IsoDateTimeSchema } from "./common.js";
 
 const id = IdentifierSchema.regex(/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/u);
 const revision = z.number().int().min(1).max(2_147_483_647);
-const actor = z.object({
+export const ComputerAgentActorSchema = z.object({
   issuer: z.string().max(256).regex(/^https:\/\/[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.cloudflareaccess\.com$/u),
   authentication_method: z.literal("service_token"),
   subject: z.string().max(256).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,254}\.access$/u),
@@ -32,7 +32,7 @@ const taskKinds = z.array(ComputerAgentTaskKindSchema).min(1).max(8)
 const mutable = {
   display_name: z.string().min(1).max(128),
   contour: ComputerAgentContourSchema,
-  actor,
+  actor: ComputerAgentActorSchema,
   transport_capabilities: transports,
   computer_capabilities: computers,
   task_kinds: taskKinds,

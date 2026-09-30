@@ -33,6 +33,10 @@ import { readResearchEngineStatus, researchRunFailure } from "./research-run-fai
 import { ResearchServiceError, failResearch as fail } from "./research-service-error.js";
 export { ResearchServiceError } from "./research-service-error.js";
 import { prepareClientResearchAdmission, requireClientResearchExecution } from "./research-client-execution.js";
+import {
+  bindComputerAgentRunRoute,
+  ComputerAgentRouteError,
+} from "./computer-agent-route-store.js";
 import { loadResearchPlanningSources, prepareResearchRunScope } from "./research-run-admission.js";
 import type { Env } from "./env.js";
 import { RESEARCH_OWNER_MODEL_PROFILE as MODEL_PROFILE } from "./research-owner-profile.js";
@@ -93,6 +97,17 @@ export const RETRIEVAL_SCOPE_MAX_SOURCES = SERVER_RETRIEVAL_SCOPE_PROFILE.max_so
 export const RETRIEVAL_SCOPE_MAX_RESULTS = SERVER_RETRIEVAL_SCOPE_PROFILE.max_results;
 const RETRIEVAL_QUERY_BUDGET_MS = 30_000;
 export interface ResearchQueryOptions { readonly scopeProfile?: { readonly version: string; readonly max_sources: number; readonly max_results: number } }
+function mapComputerAgentRouteError(error: unknown): never {
+  if (!(error instanceof ComputerAgentRouteError)) throw error;
+  if (error.retryable) {
+    fail("RESEARCH_SETTLEMENT_UNCERTAIN",
+      "Computer-agent project route is temporarily unavailable", 503, true);
+  }
+  if (error.status === 403 || error.status === 404) {
+    fail("RESEARCH_AUTHORITY_STALE", "Computer-agent project route is not current", 403);
+  }
+  fail("RESEARCH_CONFLICT", "Computer-agent project route conflicts with this run", 409);
+}
 function mapRetrievalError(error: unknown): never {
   if (error instanceof ResearchServiceError) throw error;
   if (!(error instanceof RetrievalQueryError)) throw error;
@@ -376,6 +391,15 @@ export function createResearchRunService(env: Env): { run(context: Authenticated
             !delegated.lease.grant.allowed_operations.includes("evidence"))) {
         fail("RESEARCH_AUTHORITY_STALE",
           "Computer-agent Research requires the same grant revision to authorize run, recover and evidence", 403);
+      }
+      if (handlerGeneration === SERVER_OWNED_EXTERNAL_AGENT_HANDLER_GENERATION && delegated !== undefined) {
+        await bindComputerAgentRunRoute({
+          database: db,
+          context,
+          grant: delegated.lease.grant,
+          operation_id,
+          task_kind: "RESEARCH_BRANCH_ANALYSIS",
+        }).catch(mapComputerAgentRouteError);
       }
       const wantHead = { investigation_id, goal: request.query, scope_snapshot_id: scopeRef.id, scope_snapshot_revision: scopeRef.revision, evidence_grade: request.evidence_grade, lane, portfolio_ref: payloadKey, principal_ref: context.principal_ref, input_digest: payloadHash, policy_generation: policyGeneration, policy_authority_ref: snapshotRow.policy_authority_ref, deployment_generation: env.DEPLOYMENT_GENERATION, idempotency_key: key };
       let skipCreate = false;

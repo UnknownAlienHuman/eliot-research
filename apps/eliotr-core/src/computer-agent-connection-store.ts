@@ -315,10 +315,39 @@ export function createComputerAgentConnectionService(options: ComputerAgentConne
   };
 }
 
-export async function requireComputerAgentConnectionForTask(
+export async function readComputerAgentConnectionRevision(
+  database: D1Database,
+  connectionIdValue: string,
+  revision: number,
+): Promise<ComputerAgentConnection | null> {
+  await requireSchema(database);
+  const connectionId = identifier(connectionIdValue, "connection_id");
+  if (!Number.isSafeInteger(revision) || revision < 1 || revision > 2_147_483_647) {
+    fail("COMPUTER_AGENT_CONNECTION_INPUT_INVALID", 400, "connection_revision is invalid");
+  }
+  let row: ConnectionRow | null;
+  try {
+    row = await database.prepare("SELECT * FROM computer_agent_connection " +
+      "WHERE connection_id=?1 AND revision=?2 LIMIT 1").bind(connectionId, revision).first<ConnectionRow>();
+  } catch {
+    fail("COMPUTER_AGENT_CONNECTION_STORAGE_UNAVAILABLE", 503, "Connection revision read is unavailable", true);
+  }
+  return row === null ? null : decode(row);
+}
+
+export async function readCurrentComputerAgentConnection(
+  database: D1Database,
+  connectionIdValue: string,
+): Promise<ComputerAgentConnection | null> {
+  await requireSchema(database);
+  const connectionId = identifier(connectionIdValue, "connection_id");
+  const row = await currentById(database, connectionId);
+  return row === null ? null : decode(row);
+}
+
+export async function requireEnabledComputerAgentConnectionForTask(
   database: D1Database,
   context: AuthenticatedRequestContext,
-  transport: ComputerAgentTransportCapability,
   taskKind: ComputerAgentTaskKind,
   now: () => number = Date.now,
 ): Promise<ComputerAgentConnection> {
@@ -343,11 +372,24 @@ export async function requireComputerAgentConnectionForTask(
       "The service actor resolves to multiple computer-agent connections");
   }
   const connection = await decode(rows[0]!);
-  if (connection.state !== "ENABLED" ||
-      !connection.transport_capabilities.includes(transport) ||
-      !connection.task_kinds.includes(taskKind)) {
+  if (connection.state !== "ENABLED" || !connection.task_kinds.includes(taskKind)) {
     fail("COMPUTER_AGENT_CONNECTION_DENIED", 403,
-      "The computer-agent connection is disabled or lacks the required capability");
+      "The computer-agent connection is disabled or lacks the required task capability");
+  }
+  return connection;
+}
+
+export async function requireComputerAgentConnectionForTask(
+  database: D1Database,
+  context: AuthenticatedRequestContext,
+  transport: ComputerAgentTransportCapability,
+  taskKind: ComputerAgentTaskKind,
+  now: () => number = Date.now,
+): Promise<ComputerAgentConnection> {
+  const connection = await requireEnabledComputerAgentConnectionForTask(database, context, taskKind, now);
+  if (!connection.transport_capabilities.includes(transport)) {
+    fail("COMPUTER_AGENT_CONNECTION_DENIED", 403,
+      "The computer-agent connection lacks the required transport capability");
   }
   return connection;
 }

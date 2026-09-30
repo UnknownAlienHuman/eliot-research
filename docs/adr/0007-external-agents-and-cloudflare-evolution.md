@@ -158,3 +158,18 @@ connections fail before task lease authority is reached.
 This registry is the substrate for routing, not routing itself. V8 tasks still target the originating
 exact grant/actor. Project-level preferred-agent policy, cross-agent assignment, capability-based failover
 and parallel independent task publication remain pending and must not reuse or transfer an existing lease.
+
+## 5. Project route policy and immutable run binding
+
+Migration 0088 adds one owner-controlled append-only route per project/task kind. The current strategy,
+`ORIGINATING_MATCH`, stores an ordered list of exact enabled connection revisions. A delegated explicit-
+protocol run is admitted only when the verified initiating actor's current connection appears in that
+route. Admission records the exact route revision, priority, connection revision and project-grant revision
+under the run operation ID. Stage 8 must read the immutable binding before task publication or callback
+consumption.
+
+Ordering is now authoritative owner state but does not yet authorize silent delegation. The system does
+not start another actor, race two agents for one task, or transfer a lease. Updating or disabling a route
+affects new runs; an existing run keeps its recorded route identity, while current connection and project-
+grant checks can still block new task access. Automatic preferred-agent dispatch and failover require a
+separate owner-delegation protocol.

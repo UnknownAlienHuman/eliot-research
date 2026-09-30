@@ -92,6 +92,7 @@ type ExternalBranchAnalysisOutput = z.infer<typeof ExternalBranchAnalysisOutputS
 export interface ResearchExternalBranchAnalysisDependencies extends ResearchBranchExecutionDependencies {
   readonly resolver: CloudflareEvidenceResolver;
   readonly grant: ProjectClientGrant;
+  readonly require_route_binding: (operationId: string, grant: ProjectClientGrant) => Promise<void>;
   readonly now?: () => number;
 }
 
@@ -438,6 +439,7 @@ async function executeOrRecover(
   if (grant.grantee.subject !== principal.principal_ref || grant.state !== "ACTIVE" ||
       !grant.allowed_operations.includes("run") || !grant.allowed_operations.includes("recover") ||
       !grant.allowed_operations.includes("evidence")) stale();
+  await dependencies.require_route_binding(request.operation_id, grant);
   const context = await loadContext(dependencies, request, principal);
   validateReadCheckpoint(context, request, principal, inputValue.input_bytes);
   const store = new ExternalAgentTaskStore(dependencies.database,

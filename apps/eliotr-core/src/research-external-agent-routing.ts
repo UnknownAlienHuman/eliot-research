@@ -20,6 +20,10 @@ import {
   type ResearchStageHandlerFactory,
 } from "./research-stage-handlers.js";
 import type { Env } from "./env.js";
+import {
+  ComputerAgentRouteError,
+  requireComputerAgentRunRouteBinding,
+} from "./computer-agent-route-store.js";
 
 export interface ResearchExternalAgentRoutingInput {
   readonly base: ResearchStageHandlerFactory;
@@ -91,6 +95,16 @@ export function routeResearchComputerAgentStages(
       ...branchDependencies,
       resolver,
       grant,
+      require_route_binding: async (operationId, exactGrant) => {
+        try {
+          await requireComputerAgentRunRouteBinding(input.env.CORE_DB, operationId, exactGrant);
+        } catch (error) {
+          if (error instanceof ComputerAgentRouteError && error.retryable) {
+            fail("WORKFLOW_EFFECT_UNCERTAIN");
+          }
+          fail("WORKFLOW_AUTHORITY_STALE");
+        }
+      },
       ...(input.now === undefined ? {} : { now: input.now }),
     });
   }
