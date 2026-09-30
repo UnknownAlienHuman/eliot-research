@@ -110,6 +110,7 @@ jobs:
           pnpm install --frozen-lockfile --ignore-scripts
           pnpm --filter @eliotr/interfaces --filter @eliotr/core --filter @eliotr/pwa typecheck
           pnpm --filter @eliotr/pwa check
+          nl -ba apps/eliotr-pwa/src/pages/agent-inbox.astro | sed -n '150,175p'
           pnpm --filter @eliotr/pwa build
           test -f apps/eliotr-pwa/dist/agent-inbox/index.html
           test -f apps/eliotr-pwa/dist/agent-inbox/app.js
