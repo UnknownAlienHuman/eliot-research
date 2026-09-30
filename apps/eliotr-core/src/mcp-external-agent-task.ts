@@ -2,6 +2,7 @@ import { VersionedRefSchema, type ProjectClientGrant, type VersionedRef } from "
 import {
   ExternalAgentTaskError,
   ExternalAgentTaskStore,
+  readExternalAgentTaskPayload,
   type ExternalAgentProgressInput,
   type ExternalAgentResultInput,
   type ExternalAgentTaskActor,
@@ -24,11 +25,24 @@ export function isExternalAgentTaskToolName(name: string): name is ExternalAgent
 function invalid(message: string): never {
   throw new ExternalAgentTaskError("EXTERNAL_AGENT_TASK_INPUT_INVALID", 400, message);
 }
+function corrupt(message: string): never {
+  throw new ExternalAgentTaskError("EXTERNAL_AGENT_TASK_OUTPUT_CORRUPT", 500, message);
+}
 function object(value: unknown, label: string): Record<string, unknown> {
   if (value === null || typeof value !== "object" || Array.isArray(value)) invalid(`${label} must be an object`);
   const prototype = Object.getPrototypeOf(value);
   if (prototype !== Object.prototype && prototype !== null) invalid(`${label} must be a plain object`);
   return value as Record<string, unknown>;
+}
+function serverObject(value: unknown, label: string): Record<string, unknown> {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) corrupt(`${label} is corrupt`);
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) corrupt(`${label} is corrupt`);
+  return value as Record<string, unknown>;
+}
+function serverString(value: unknown, label: string): string {
+  if (typeof value !== "string") corrupt(`${label} is corrupt`);
+  return value;
 }
 function shape(value: Record<string, unknown>, required: readonly string[], optional: readonly string[], label: string): void {
   const expected = new Set([...required, ...optional]);
@@ -82,6 +96,36 @@ function actor(context: AuthenticatedRequestContext, grant: ProjectClientGrant):
   return { grant, principal_ref: context.principal_ref, credential_generation: context.credential_generation };
 }
 
+async function withPayload(env: Env, raw: Readonly<Record<string, unknown>>): Promise<Readonly<Record<string, unknown>>> {
+  const task = raw.task;
+  if (task === null || task === undefined) return raw;
+  const taskRecord = serverObject(task, "Task pull response task");
+  const taskId = serverString(taskRecord.task_id, "Task pull response task_id");
+  const payload = await readExternalAgentTaskPayload(env.CORE_DB, taskId);
+  if (payload === null) return raw;
+  return Object.freeze({
+    ...raw,
+    task: Object.freeze({
+      ...taskRecord,
+      task_kind: payload.envelope.task_kind,
+      task_expires_at: payload.expires_at,
+      payload_sha256: payload.payload_sha256,
+      payload: payload.envelope,
+    }),
+  });
+}
+
+async function statusWithPayload(env: Env, raw: Readonly<Record<string, unknown>>): Promise<Readonly<Record<string, unknown>>> {
+  const taskId = serverString(raw.task_id, "Task status task_id");
+  const payload = await readExternalAgentTaskPayload(env.CORE_DB, taskId);
+  return payload === null ? raw : Object.freeze({
+    ...raw,
+    task_kind: payload.envelope.task_kind,
+    task_expires_at: payload.expires_at,
+    payload_sha256: payload.payload_sha256,
+  });
+}
+
 /** Parse one strict MCP callback envelope and delegate to the D1 delivery authority. */
 export async function callExternalAgentTaskTool(
   env: Env,
@@ -96,7 +140,7 @@ export async function callExternalAgentTaskTool(
     case "eliotr_task_pull": {
       shape(input, ["client_grant_id"], ["worker_slot"], "Task pull request");
       const workerSlot = input.worker_slot === undefined ? "default" : stringValue(input.worker_slot, "worker_slot");
-      return store.pull(taskActor, workerSlot);
+      return withPayload(env, await store.pull(taskActor, workerSlot));
     }
     case "eliotr_task_progress": {
       exact(input, ["client_grant_id", "task_id", "lease_id", "cursor", "progress"], "Task progress request");
@@ -136,8 +180,9 @@ export async function callExternalAgentTaskTool(
       };
       return store.recordResult(taskActor, parsed);
     }
-    case "eliotr_task_status":
+    case "eliotr_task_status": {
       exact(input, ["client_grant_id", "task_id"], "Task status request");
-      return store.status(taskActor, stringValue(input.task_id, "task_id"));
+      return statusWithPayload(env, await store.status(taskActor, stringValue(input.task_id, "task_id")));
+    }
   }
 }

@@ -75,3 +75,4 @@ export * from "./research-inquiry-protocol.js";
 export * from "./research-planning-manifest.js";
 
 export * from "./research-branch-execution.js";
+export * from "./research-external-branch-analysis.js";

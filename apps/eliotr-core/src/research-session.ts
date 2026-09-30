@@ -22,7 +22,7 @@ import { readCommittedResearchRunResult } from "@eliotr/cloudflare-research-stag
 import type { StageReceipt, StageRequest, WorkflowExecutionPorts, WorkflowObject, WorkflowPrincipal } from "@eliotr/cloudflare-research";
 import { createD1InvestigationLedgerStore, createInvestigationLedgerService, LedgerError } from "@eliotr/research";
 import type { LedgerD1Database } from "@eliotr/research";
-import { createResearchStageHandlerFactory, SERVER_OWNED_RESEARCH_HANDLER_GENERATION, SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION, SERVER_OWNED_FREEZE_HANDLER_GENERATION, SERVER_OWNED_SEMANTIC_HANDLER_GENERATION, SERVER_OWNED_LEGACY_PROTOCOL_HANDLER_GENERATION, SERVER_OWNED_PROTOCOL_HANDLER_GENERATION, isSemanticResearchHandlerGeneration, SERVER_RETRIEVAL_SCOPE_PROFILE } from "./research-stage-handlers.js";
+import { createResearchStageHandlerFactory, SERVER_OWNED_RESEARCH_HANDLER_GENERATION, SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION, SERVER_OWNED_FREEZE_HANDLER_GENERATION, SERVER_OWNED_SEMANTIC_HANDLER_GENERATION, SERVER_OWNED_LEGACY_PROTOCOL_HANDLER_GENERATION, SERVER_OWNED_PROTOCOL_HANDLER_GENERATION, SERVER_OWNED_BRANCH_HANDLER_GENERATION, SERVER_OWNED_EXTERNAL_AGENT_HANDLER_GENERATION, isSemanticResearchHandlerGeneration, SERVER_RETRIEVAL_SCOPE_PROFILE } from "./research-stage-handlers.js";
 import { createResearchSemanticServerHandlers, researchSemanticConfigurationInstalled } from "./research-semantic-server.js";
 import { RESEARCH_QUALIFICATION_RENEWAL_MARKER } from "./research-qualification-renewal.js";
 import { isResearchQuestionText, ScopeExpressionSchema, VersionedRefSchema } from "@eliotr/contracts";
@@ -116,38 +116,30 @@ export function createResearchQueryService(env: Pick<Env, "CORE_DB" | "SEARCH_DB
       const access = { principal_ref: context.principal_ref, client_class: context.client_class, credential_generation: context.credential_generation };
       const scopePorts = createD1ScopePorts(env.CORE_DB, access);
       const store = createD1RetrievalResultStore(env.CORE_DB, access);
-      // Replay precedes the freeze: the frozen scope carries its creation instant, so a re-freeze
-      // never reproduces the stored digest. A stored result replays from its own frozen scope.
-      const prior = await store.load(key).catch(mapRetrievalError);
+      const prior = await store.load(key).catch(() => {
+        fail("RESEARCH_SETTLEMENT_UNCERTAIN", "stored query result is unavailable", 503, true);
+      });
       if (prior !== null) {
         const scope = prior.result.trace.scope_snapshot;
         await delegated?.requireScopeCurrent(scope);
         await scopePorts.requireCurrentScope(scope).catch(mapRetrievalError);
         await createD1ScopeProfilePort(env.CORE_DB).requireBinding(scope, profile).catch(mapRetrievalError);
-        // The persisted snapshot retains the canonical request expression. Equal current
-        // members do not make PROJECT, GLOBAL and SELECTED_SOURCES interchangeable.
-        // Compare before freezing or writing; legacy result/trace bytes stay unchanged.
         if (scopeExpressionIdentity(parsed.scope_expression) !== scopeExpressionIdentity(scope.resolved_scope_expression)) {
           fail("RESEARCH_CONFLICT", "idempotency identity is bound to a different scope expression", 409);
         }
         const digest = await retrievalRequestDigest({ raw_query: parsed.query, product: parsed.product, literals: [...parsed.literals], requested_limit: parsed.max_results, scope_digest: scope.digest });
         if (digest !== prior.request_digest) fail("RESEARCH_CONFLICT", "idempotency identity is bound to different inputs", 409);
-        // Hashing yields; do not disclose cached bytes after a concurrent revoke/cancel.
         await scopePorts.requireCurrentScope(scope).catch(mapRetrievalError);
         await delegated?.requireScopeCurrent(scope);
         if (context.request.signal.aborted) fail("RESEARCH_CANCELLED", "research query is cancelled", 409);
         return { evidence_pack: prior.result.evidence_pack, trace_ref: prior.result.trace.trace_ref };
       }
-      // Read authorization before reserving work: a denied scope fails with zero D1 writes and no
-      // grant; an expired scope fails at the currentness recheck with nothing retrieval persisted.
       const authority = delegated?.authority ?? createOwnerScopeAuthority(env.CORE_DB, context);
       await authority.requireReadPolicy();
       const freezer = createD1ScopeService(env.CORE_DB, authority, { max_snapshot_members: profile.max_sources,
         ...(delegated === undefined ? {} : { preserve_resolution_errors: true }) });
       const snapshot = await freezer.freeze(parsed.scope_expression, context.credential_generation);
       await createD1ScopeProfilePort(env.CORE_DB).recordBinding(snapshot, profile).catch(mapRetrievalError);
-      // Pre-grant currentness runs through the scope service; the D1 retrieval ports below require
-      // the grant, so the post-grant recheck runs through them instead.
       await freezer.requireCurrent(snapshot);
       await authority.grant(snapshot);
       await delegated?.requireScopeCurrent(snapshot);
@@ -290,7 +282,6 @@ export function createResearchRunService(env: Env): { run(context: Authenticated
       const db = env.CORE_DB;
       const bucket = env.WORK_BUCKET;
       const store = createD1InvestigationLedgerStore(db as unknown as LedgerD1Database);
-      // An unavailable identity lookup is not permission to freeze another scope.
       const pre = await store.readByIdempotency(key).catch(() =>
         fail("RESEARCH_SETTLEMENT_UNCERTAIN", "research identity readback is unavailable", 503, true));
       if (pre !== null && (pre.head.investigation_id !== investigation_id ||
@@ -307,9 +298,7 @@ export function createResearchRunService(env: Env): { run(context: Authenticated
       if (!snapshotRow || typeof snapshotRow.policy_authority_ref !== "string") fail("RESEARCH_AUTHORITY_STALE", "scope snapshot is unavailable", 409);
       const priorWorkflow = pre === null ? null : await db.prepare("SELECT handler_generation FROM research_workflow_run WHERE idempotency_key = ?1")
         .bind(key).first<{ handler_generation: string }>();
-      const supportedGenerations = new Set([HANDLER_GEN, SERVER_OWNED_RESEARCH_HANDLER_GENERATION, SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION, SERVER_OWNED_FREEZE_HANDLER_GENERATION, SERVER_OWNED_SEMANTIC_HANDLER_GENERATION, SERVER_OWNED_LEGACY_PROTOCOL_HANDLER_GENERATION, SERVER_OWNED_PROTOCOL_HANDLER_GENERATION]);
-      // A machine's first admission may stop after W1 but before W2. No stage can
-      // have run without W2; resume that exact initial head, never freeze a new scope.
+      const supportedGenerations = new Set([HANDLER_GEN, SERVER_OWNED_RESEARCH_HANDLER_GENERATION, SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION, SERVER_OWNED_FREEZE_HANDLER_GENERATION, SERVER_OWNED_SEMANTIC_HANDLER_GENERATION, SERVER_OWNED_LEGACY_PROTOCOL_HANDLER_GENERATION, SERVER_OWNED_PROTOCOL_HANDLER_GENERATION, SERVER_OWNED_BRANCH_HANDLER_GENERATION, SERVER_OWNED_EXTERNAL_AGENT_HANDLER_GENERATION]);
       const interruptedMachineAdmission = delegated !== undefined && pre?.head.revision === 1 && priorWorkflow === null;
       if (pre !== null && !interruptedMachineAdmission && (priorWorkflow === null || !supportedGenerations.has(priorWorkflow.handler_generation))) {
         fail("RESEARCH_CONFLICT", "persisted workflow handler generation is unsupported", 409);
@@ -367,8 +356,6 @@ export function createResearchRunService(env: Env): { run(context: Authenticated
       }
       const principal: WorkflowPrincipal = { principal_ref: context.principal_ref, credential_generation: context.credential_generation, deployment_generation: env.DEPLOYMENT_GENERATION };
       const installedObligations = installedProtocol === null ? [] : compileInquiryLedgerObligations(installedProtocol);
-      // Existing confirmatory heads retain their original generation for historical replay;
-      // new server-owned runs use the authority-bound generation above.
       const policyGeneration = pre?.head.policy_generation === POLICY_GEN ? POLICY_GEN : newPolicyGeneration;
       const lane = pre === null ? installedProtocol?.lane ?? "exploratory" :
         pre.head.lane === "confirmatory" || pre.head.lane === "exploratory" || pre.head.lane === "mixed_with_declared_split" ? pre.head.lane : null;
@@ -382,8 +369,13 @@ export function createResearchRunService(env: Env): { run(context: Authenticated
       const handlerGeneration = lane === "exploratory"
         ? priorWorkflow?.handler_generation ?? (request.inquiry_protocol_ref === undefined
           ? SERVER_OWNED_SEMANTIC_HANDLER_GENERATION
-          : SERVER_OWNED_PROTOCOL_HANDLER_GENERATION)
+          : delegated === undefined ? SERVER_OWNED_BRANCH_HANDLER_GENERATION : SERVER_OWNED_EXTERNAL_AGENT_HANDLER_GENERATION)
         : HANDLER_GEN;
+      if (handlerGeneration === SERVER_OWNED_EXTERNAL_AGENT_HANDLER_GENERATION &&
+          (delegated === undefined || !delegated.lease.grant.allowed_operations.includes("recover"))) {
+        fail("RESEARCH_AUTHORITY_STALE",
+          "Computer-agent Research requires the same grant revision to authorize run and recover", 403);
+      }
       const wantHead = { investigation_id, goal: request.query, scope_snapshot_id: scopeRef.id, scope_snapshot_revision: scopeRef.revision, evidence_grade: request.evidence_grade, lane, portfolio_ref: payloadKey, principal_ref: context.principal_ref, input_digest: payloadHash, policy_generation: policyGeneration, policy_authority_ref: snapshotRow.policy_authority_ref, deployment_generation: env.DEPLOYMENT_GENERATION, idempotency_key: key };
       let skipCreate = false;
       if (pre !== null) {
@@ -423,8 +415,6 @@ export function createResearchRunService(env: Env): { run(context: Authenticated
         }).catch(mapRetrievalError);
       }
       try {
-        // Reserve the first durable status before creating the Workflow instance so
-        // the owner can immediately poll ACTIVE/next_stage_index=0 after launch.
         await delegated?.requireScopeCurrent(scopeAuthority.snapshot);
         if (delegated) await requireClientResearchExecution(env, context, scopeAuthority.snapshot, operation_id, env.DEPLOYMENT_GENERATION);
         if (context.request.signal.aborted) fail("RESEARCH_CANCELLED", "Research admission was cancelled", 409);
@@ -448,8 +438,6 @@ export function createResearchRunService(env: Env): { run(context: Authenticated
         try {
           instance = await env.RESEARCH_WORKFLOW.create({ id: operation_id, params: workflowParams });
         } catch {
-          // A lost create ACK is reconciled against the deterministic instance ID;
-          // never create a second Workflow for the same idempotency identity.
           instance = await env.RESEARCH_WORKFLOW.get(operation_id);
         }
         if (instance.id !== operation_id) fail("RESEARCH_SETTLEMENT_UNCERTAIN", "workflow instance readback is unavailable", 503, true);
@@ -485,8 +473,6 @@ function workflowProblem(request: Request, error: WorkflowCheckpointError): Resp
 export class ResearchSession extends DurableObject<Env> {
   private load(id: string): Promise<SessionRecord | null> { return this.ctx.storage.get<SessionRecord>(`session:${id}`).then((value) => value ?? null); }
   private save(record: SessionRecord): Promise<void> { if (new TextEncoder().encode(JSON.stringify(record)).byteLength > 256 * 1024) fail("RESEARCH_INPUT_LIMIT", "session state exceeds its persist bound", 413); return this.ctx.storage.put(`session:${record.session_id}`, record); }
-  /** Short storage-only transaction: an old execute callback must not overwrite a
-   * terminal decision published by another request. D1 remains the authority. */
   private async settleTerminal(
     expected: SessionRecord,
     change: Pick<SessionRecord, "state"> & Partial<Pick<SessionRecord, "investigation_revision" | "receipt_refs" | "output_manifest_ref">>,
@@ -546,8 +532,6 @@ export class ResearchSession extends DurableObject<Env> {
     const storedPrincipal: WorkflowPrincipal = { principal_ref: stored.principal_ref,
       credential_generation: stored.credential_generation, deployment_generation: stored.deployment_generation };
     const store = new WorkflowCheckpointStore(this.env.CORE_DB);
-    // Never manufacture a receipt from cached DO state. In particular, a failed
-    // canonical cancel is not a best-effort success, even on a repeated request.
     const before = await store.readRunStatus(stored.operation_id, storedPrincipal);
     if (before === null) return problem(request, 503, "SESSION_SETTLEMENT_UNCERTAIN");
     if (before.state === "ENGINE_COMPLETED") return problem(request, 409, "SESSION_CONFLICT");

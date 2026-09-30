@@ -8,3 +8,4 @@ export * from "./deterministic-stage-handler.js";
 export * from "./committed-lineage.js";
 export * from "./external-agent-task-codec.js";
 export * from "./external-agent-task-store.js";
+export * from "./external-agent-task-payload.js";

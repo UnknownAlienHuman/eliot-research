@@ -37,14 +37,17 @@ import {
 
 /** First generation whose retrieval plan includes managed SEM. Legacy runs retain FAST_SEARCH. */
 export const SEMANTIC_RETRIEVAL_HANDLER_GENERATION = "research-handlers.exploratory.v4";
-/** New protocol runs include SEM; persisted v5 runs retain their original FAST_SEARCH bytes. */
+/** Existing protocol runs include SEM; persisted v5 runs retain their original FAST_SEARCH bytes. */
 export const SEMANTIC_PROTOCOL_HANDLER_GENERATION = "research-handlers.exploratory.v6";
-/** Branch-aware generation for newly admitted explicit-protocol runs. */
+/** Branch-aware generation for owner explicit-protocol runs. */
 export const BRANCH_EXECUTION_HANDLER_GENERATION = "research-handlers.exploratory.v7";
+/** Provider-neutral external computer-agent branch analysis. */
+export const EXTERNAL_AGENT_BRANCH_HANDLER_GENERATION = "research-handlers.exploratory.v8";
 function retrievalProduct(handlerGeneration: string): "FAST_SEARCH" | "RESEARCH" {
   return handlerGeneration === SEMANTIC_RETRIEVAL_HANDLER_GENERATION ||
     handlerGeneration === SEMANTIC_PROTOCOL_HANDLER_GENERATION ||
-    handlerGeneration === BRANCH_EXECUTION_HANDLER_GENERATION
+    handlerGeneration === BRANCH_EXECUTION_HANDLER_GENERATION ||
+    handlerGeneration === EXTERNAL_AGENT_BRANCH_HANDLER_GENERATION
     ? "RESEARCH" : "FAST_SEARCH";
 }
 
@@ -118,7 +121,6 @@ async function persistedStageZero(
   });
 }
 
-
 async function persistedStageFive(
   dependencies: RetrieveBranchesStageDependencies,
   request: StageRequest,
@@ -137,9 +139,7 @@ async function persistedStageFive(
     if (error instanceof WorkflowCheckpointError && error.code === "WORKFLOW_OUTPUT_CORRUPT") fail("WORKFLOW_OUTPUT_CORRUPT");
     fail("WORKFLOW_AUTHORITY_STALE");
   }
-  if (receipt === null) {
-    fail("WORKFLOW_AUTHORITY_STALE");
-  }
+  if (receipt === null) fail("WORKFLOW_AUTHORITY_STALE");
   let bytes: Uint8Array;
   try { bytes = await readWorkflowObject(dependencies.work_bucket, receipt.output_manifest, true); }
   catch { fail("WORKFLOW_OUTPUT_CORRUPT"); }

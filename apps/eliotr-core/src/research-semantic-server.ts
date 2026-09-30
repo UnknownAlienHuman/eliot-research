@@ -1,4 +1,8 @@
-import { isSemanticResearchHandlerGeneration } from "./research-stage-handlers.js";
+import {
+  isSemanticResearchHandlerGeneration,
+  SERVER_OWNED_BRANCH_HANDLER_GENERATION,
+  SERVER_OWNED_EXTERNAL_AGENT_HANDLER_GENERATION,
+} from "./research-stage-handlers.js";
 import { z } from "zod";
 import { DynamicRouteProvisioningError, validateModelGatewayToken } from "@eliotr/cloudflare-ai";
 import { IdentifierSchema, IsoDateTimeSchema, VersionedRefSchema } from "@eliotr/contracts";
@@ -31,10 +35,11 @@ import {
   ResearchOwnerReportPolicyError,
   createBoundResearchOwnerReportConfigSource,
 } from "./research-owner-report-policy.js";
-import { resolveResearchExecutionSpend } from "./research-client-execution.js";
+import { requireClientResearchExecution, resolveResearchExecutionSpend } from "./research-client-execution.js";
 import { createResearchSemanticWorkflowHandlerFactory } from "./research-semantic-composition.js";
 import type { ResearchStageHandlerFactory } from "./research-stage-handlers.js";
 import { requireResearchDeploymentCompatibility } from "./research-deployment-compatibility.js";
+import { routeResearchComputerAgentStages } from "./research-external-agent-routing.js";
 
 const PromptSchema = z.object({
   prompt: z.string().min(1), max_tokens: z.number().int().positive().safe(),
@@ -160,7 +165,6 @@ export async function createResearchSemanticServerHandlers(input: ResearchSemant
 
 async function assembleResearchSemanticServerHandlers(input: ResearchSemanticServerInput): Promise<ResearchStageHandlerFactory> {
   const { env, navigation, principal } = input;
-  // Validate credentials separately, before the aggregate installation predicate loses that distinction.
   const gateway = modelGatewayConfiguration(env);
   if (!researchSemanticConfigurationInstalled(env)) configurationMissing();
   await requireResearchDeploymentCompatibility(env.CORE_DB, principal.deployment_generation, env.DEPLOYMENT_GENERATION);
@@ -195,15 +199,11 @@ async function assembleResearchSemanticServerHandlers(input: ResearchSemanticSer
     if (currentPolicy === null || currentPolicy.state !== "ACTIVE" || !generation.success || !rowAuthority.success ||
         rowAuthority.data !== authorityRef) fail("WORKFLOW_AUTHORITY_STALE");
     const afterPolicy = await navigation.current();
-    if (canonicalJson(afterPolicy) !== canonicalJson(beforeGrant)) {
-      fail("WORKFLOW_AUTHORITY_STALE");
-    }
+    if (canonicalJson(afterPolicy) !== canonicalJson(beforeGrant)) fail("WORKFLOW_AUTHORITY_STALE");
     policy = await resolveResearchExecutionSpend(env, navigation, input.operation_id,
       principal.deployment_generation, generation.data);
     const terminalGrant = await navigation.current();
-    if (canonicalJson(terminalGrant) !== canonicalJson(afterPolicy)) {
-      fail("WORKFLOW_AUTHORITY_STALE");
-    }
+    if (canonicalJson(terminalGrant) !== canonicalJson(afterPolicy)) fail("WORKFLOW_AUTHORITY_STALE");
   } catch (error) {
     throw preparationError(error);
   }
@@ -306,7 +306,7 @@ async function assembleResearchSemanticServerHandlers(input: ResearchSemanticSer
       qualification_receipt_ref: receipt.data, qualification_expires_at: expires.data, qualified: true, current: true });
   }
   const verifier = await readVerifier();
-  return createResearchSemanticWorkflowHandlerFactory({
+  const base = createResearchSemanticWorkflowHandlerFactory({
     database: env.CORE_DB, search_database: env.SEARCH_DB, work_bucket: env.WORK_BUCKET, evidence_bucket: env.EVIDENCE_BUCKET,
     ai_search: env.AI_SEARCH, handler_generation: handlerGeneration,
     navigation, ledger: input.ledger, operation_id: input.operation_id, investigation_id: input.investigation_id,
@@ -338,5 +338,20 @@ async function assembleResearchSemanticServerHandlers(input: ResearchSemanticSer
         return readVerifier();
       } } },
     report: { policy_source: reportSource, report_policy: boundReportPolicy, expected_draft_head_revision: null },
+  });
+  if (handlerGeneration !== SERVER_OWNED_BRANCH_HANDLER_GENERATION &&
+      handlerGeneration !== SERVER_OWNED_EXTERNAL_AGENT_HANDLER_GENERATION) return base;
+  const sponsored = handlerGeneration === SERVER_OWNED_EXTERNAL_AGENT_HANDLER_GENERATION
+    ? await requireClientResearchExecution(env, navigation.access, navigation.scope,
+      input.operation_id, principal.deployment_generation)
+    : undefined;
+  return routeResearchComputerAgentStages({
+    base,
+    generation: handlerGeneration,
+    env,
+    navigation,
+    ledger: input.ledger,
+    retrieval_profile: retrievalProfile,
+    ...(sponsored === undefined ? {} : { grant: sponsored.grant }),
   });
 }

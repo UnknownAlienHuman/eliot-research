@@ -32,6 +32,7 @@ import {
   SEMANTIC_RETRIEVAL_HANDLER_GENERATION,
   SEMANTIC_PROTOCOL_HANDLER_GENERATION,
   BRANCH_EXECUTION_HANDLER_GENERATION,
+  EXTERNAL_AGENT_BRANCH_HANDLER_GENERATION,
   type RetrieveBranchesStageDependencies,
 } from "./research-retrieve-branches.js";
 import {
@@ -50,20 +51,23 @@ export const SERVER_OWNED_FREEZE_HANDLER_GENERATION = "research-handlers.explora
 export const SERVER_OWNED_SEMANTIC_HANDLER_GENERATION = SEMANTIC_RETRIEVAL_HANDLER_GENERATION;
 /** Persisted protocol runs retain their original non-semantic retrieval plan. */
 export const SERVER_OWNED_LEGACY_PROTOCOL_HANDLER_GENERATION = "research-handlers.exploratory.v5";
-/** New explicit InquiryProtocol/obligation runs include managed semantic retrieval. */
+/** Existing explicit InquiryProtocol/obligation runs include managed semantic retrieval. */
 export const SERVER_OWNED_PROTOCOL_HANDLER_GENERATION = SEMANTIC_PROTOCOL_HANDLER_GENERATION;
-/** Branch-aware generation selected only for newly admitted explicit-protocol runs. */
+/** Branch-aware generation selected for owner explicit-protocol runs. */
 export const SERVER_OWNED_BRANCH_HANDLER_GENERATION = BRANCH_EXECUTION_HANDLER_GENERATION;
+/** Provider-neutral computer-agent analysis for delegated explicit-protocol runs. */
+export const SERVER_OWNED_EXTERNAL_AGENT_HANDLER_GENERATION = EXTERNAL_AGENT_BRANCH_HANDLER_GENERATION;
 export type SemanticResearchHandlerGeneration =
   typeof SERVER_OWNED_FREEZE_HANDLER_GENERATION | typeof SERVER_OWNED_SEMANTIC_HANDLER_GENERATION |
   typeof SERVER_OWNED_LEGACY_PROTOCOL_HANDLER_GENERATION | typeof SERVER_OWNED_PROTOCOL_HANDLER_GENERATION |
-  typeof SERVER_OWNED_BRANCH_HANDLER_GENERATION;
+  typeof SERVER_OWNED_BRANCH_HANDLER_GENERATION | typeof SERVER_OWNED_EXTERNAL_AGENT_HANDLER_GENERATION;
 export function isSemanticResearchHandlerGeneration(generation: unknown): generation is SemanticResearchHandlerGeneration {
   return generation === SERVER_OWNED_FREEZE_HANDLER_GENERATION ||
     generation === SERVER_OWNED_SEMANTIC_HANDLER_GENERATION ||
     generation === SERVER_OWNED_LEGACY_PROTOCOL_HANDLER_GENERATION ||
     generation === SERVER_OWNED_PROTOCOL_HANDLER_GENERATION ||
-    generation === SERVER_OWNED_BRANCH_HANDLER_GENERATION;
+    generation === SERVER_OWNED_BRANCH_HANDLER_GENERATION ||
+    generation === SERVER_OWNED_EXTERNAL_AGENT_HANDLER_GENERATION;
 }
 export const SERVER_RETRIEVAL_SCOPE_PROFILE = {
   version: "retrieval-scope-v1",
@@ -101,11 +105,12 @@ export type ResearchStageHandlerFactory = MonotoneHandlerFactory & {
   readonly recoverStartedAttempt?: WorkflowStartedAttemptRecovery;
 };
 
-/**
- * Selects the real protocol/scope producer only for its explicit generation.
- * Legacy workflow records continue to use the deterministic handler, including
- * arbitrary fixture bytes and their existing replay identity.
- */
+function branchGeneration(generation: unknown): boolean {
+  return generation === SERVER_OWNED_BRANCH_HANDLER_GENERATION ||
+    generation === SERVER_OWNED_EXTERNAL_AGENT_HANDLER_GENERATION;
+}
+
+/** Select only handlers pinned by the persisted generation; no runtime vendor fallback is implicit. */
 export function createResearchStageHandlerFactory(
   mode: ResearchStageHandlerFactoryMode,
 ): ResearchStageHandlerFactory {
@@ -137,7 +142,7 @@ export function createResearchStageHandlerFactory(
     ? createEvidenceFreezeComposition(mode.freeze)
     : undefined;
   const branchExecution = mode.kind === "server-owned-exploratory" &&
-    mode.generation === SERVER_OWNED_BRANCH_HANDLER_GENERATION && mode.branch_execution !== undefined
+    branchGeneration(mode.generation) && mode.branch_execution !== undefined
     ? createResearchBranchExecutionHandlers({ ...mode.branch_execution, navigation: mode.navigation, ledger: mode.ledger })
     : undefined;
   let materializeHandler: WorkflowStageHandler | undefined;
@@ -194,24 +199,23 @@ export function createResearchStageHandlerFactory(
   }
 
   const factory = ((stage) => {
-    if (stage === "FREEZE_PROTOCOL_AND_SCOPE" && protocolScopeHandler !== undefined) {
-      return protocolScopeHandler;
-    }
+    if (stage === "FREEZE_PROTOCOL_AND_SCOPE" && protocolScopeHandler !== undefined) return protocolScopeHandler;
     if (stage === "RETRIEVE_BRANCHES" && mode.kind === "server-owned-exploratory" &&
         (mode.generation === SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION || isSemanticResearchHandlerGeneration(mode.generation))) {
-      if (retrievalHandler === undefined) return async () => fail("WORKFLOW_AUTHORITY_STALE");
-      return retrievalHandler;
+      return retrievalHandler ?? (async () => fail("WORKFLOW_AUTHORITY_STALE"));
     }
-    if (stage === "READ_AND_EXTRACT" && mode.kind === "server-owned-exploratory" &&
-        mode.generation === SERVER_OWNED_BRANCH_HANDLER_GENERATION) {
+    if (stage === "READ_AND_EXTRACT" && mode.kind === "server-owned-exploratory" && branchGeneration(mode.generation)) {
       return branchExecution?.read_and_extract ?? (async () => fail("WORKFLOW_AUTHORITY_STALE"));
+    }
+    if (stage === "ANALYZE_BRANCHES" && mode.kind === "server-owned-exploratory" &&
+        mode.generation === SERVER_OWNED_EXTERNAL_AGENT_HANDLER_GENERATION) {
+      return async () => fail("WORKFLOW_AUTHORITY_STALE");
     }
     if (stage === "ANALYZE_BRANCHES" && mode.kind === "server-owned-exploratory" &&
         mode.generation === SERVER_OWNED_BRANCH_HANDLER_GENERATION) {
       return branchExecution?.analyze_branches ?? (async () => fail("WORKFLOW_AUTHORITY_STALE"));
     }
-    if (stage === "COUNTER_SEARCH" && mode.kind === "server-owned-exploratory" &&
-        mode.generation === SERVER_OWNED_BRANCH_HANDLER_GENERATION) {
+    if (stage === "COUNTER_SEARCH" && mode.kind === "server-owned-exploratory" && branchGeneration(mode.generation)) {
       return branchExecution?.counter_search ?? (async () => fail("WORKFLOW_AUTHORITY_STALE"));
     }
     if ((stage === "RECONCILE" || stage === "FREEZE_EVIDENCE") && freezeComposition !== undefined) {
