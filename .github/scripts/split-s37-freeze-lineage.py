@@ -8,6 +8,7 @@ start = text.find(start_marker)
 end = text.find(end_marker, start)
 if start < 0 or end < 0:
     raise SystemExit("branch-lineage helper block was not found after the primary patch")
+text = text[:start] + text[end:]
 
 import_anchor = 'import type { StageRequest, WorkflowPrincipal } from "@eliotr/cloudflare-workflows";\n'
 lineage_import = '''import {
@@ -19,7 +20,6 @@ lineage_import = '''import {
 if text.count(import_anchor) != 1:
     raise SystemExit("preparation import anchor is not unique")
 text = text.replace(import_anchor, import_anchor + lineage_import)
-text = text[:start] + text[end:]
 preparation_path.write_text(text, encoding="utf-8")
 
 module = '''import type { VersionedRef } from "@eliotr/contracts";
