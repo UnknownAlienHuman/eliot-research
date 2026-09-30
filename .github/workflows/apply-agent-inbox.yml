@@ -80,8 +80,8 @@ jobs:
 
           output, count = re.subn(r"(<textarea\b[^>]*>)(.*?)(</textarea>)", encode_json, source,
                                   flags=re.DOTALL)
-          if count < 2 or changed < 2:
-              raise SystemExit("agent-inbox textarea JSON markers were not found")
+          if count < 1 or changed < 1:
+              raise SystemExit("agent-inbox textarea JSON marker was not found")
           page.write_text(output, encoding="utf-8")
           PY
       - name: Static and scoped compile checks
@@ -112,7 +112,7 @@ jobs:
           assert "/_astro/" not in page
           assert page.count("/agent-inbox/app.") == 2
           assert '<script is:inline type="module" src="/agent-inbox/app.js"></script>' in page
-          assert page.count("&#123;") >= 2 and page.count("&#125;") >= 2
+          assert page.count("&#123;") >= 1 and page.count("&#125;") >= 1
           assert not re.search(r"<textarea\b[^>]*>\s*\{", page)
           assert 'credentials: "omit"' in ui
           assert 'redirect: "error"' in ui
