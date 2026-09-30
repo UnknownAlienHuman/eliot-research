@@ -1,0 +1,85 @@
+name: Bind S37 branch reconciliation into EvidenceFreeze
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/bind-s37-freeze.yml
+      - .github/scripts/bind-s37-freeze.py
+
+permissions:
+  contents: write
+
+concurrency:
+  group: bind-s37-freeze
+  cancel-in-progress: false
+
+jobs:
+  bind:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.13.0
+      - name: Apply reviewed S37 freeze binding
+        run: |
+          python .github/scripts/bind-s37-freeze.py
+          git rm .github/workflows/bind-s37-freeze.yml .github/scripts/bind-s37-freeze.py
+      - name: Static and scoped compile checks
+        run: |
+          git diff --check
+          python - <<'PY'
+          from pathlib import Path
+          paths = [
+              "packages/cloudflare-research/src/research-branch-execution.ts",
+              "packages/cloudflare-research/src/research-evidence-freeze-composition.ts",
+              "packages/cloudflare-research/src/research-evidence-freeze-preparation.ts",
+              "packages/cloudflare-research/src/research-evidence-freeze.ts",
+              "apps/eliotr-core/src/research-evidence-freeze-composition.ts",
+              "apps/eliotr-core/src/research-semantic-composition.ts",
+          ]
+          source = {path: Path(path).read_text(encoding="utf-8") for path in paths}
+          assert "readCommittedResearchBranchReconciliationLineage" in source[paths[0]]
+          assert "branch_reconciliation: branch" in source[paths[2]]
+          assert "Object.keys(raw).length !== 15" in source[paths[3]]
+          assert 'const INPUT_PROTOCOL = "eliotr.evidence-freeze-input.v2"' in source[paths[3]]
+          assert "freeze_ref: authority.freeze_ref" in source[paths[3]]
+          assert "requires_branch_reconciliation" in source[paths[5]]
+          assert "SERVER_OWNED_EXTERNAL_AGENT_HANDLER_GENERATION" in source[paths[5]]
+          assert all(len(text.splitlines()) <= 600 for text in source.values())
+          print("S37_BRANCH_FREEZE_STATIC_OK")
+          PY
+          npm install --global pnpm@11.23.0 --ignore-scripts
+          pnpm --version
+          pnpm install --frozen-lockfile --ignore-scripts
+          pnpm --filter @eliotr/cloudflare-research --filter @eliotr/core typecheck
+          pnpm exec eslint \
+            packages/cloudflare-research/src/research-branch-execution.ts \
+            packages/cloudflare-research/src/research-evidence-freeze-composition.ts \
+            packages/cloudflare-research/src/research-evidence-freeze-preparation.ts \
+            packages/cloudflare-research/src/research-evidence-freeze.ts \
+            apps/eliotr-core/src/research-evidence-freeze-composition.ts \
+            apps/eliotr-core/src/research-semantic-composition.ts
+          pnpm boundaries:check
+          pnpm work-packets:check
+          pnpm budgets:check
+          pnpm d1:depth
+      - name: Commit S37 freeze binding
+        run: |
+          git add \
+            packages/cloudflare-research/src/research-branch-execution.ts \
+            packages/cloudflare-research/src/research-evidence-freeze-composition.ts \
+            packages/cloudflare-research/src/research-evidence-freeze-preparation.ts \
+            packages/cloudflare-research/src/research-evidence-freeze.ts \
+            apps/eliotr-core/src/research-evidence-freeze-composition.ts \
+            apps/eliotr-core/src/research-semantic-composition.ts
+          git diff --cached --check
+          git config user.name 'Iurii Lisenkov'
+          git config user.email '71514792+UnknownAlienHuman@users.noreply.github.com'
+          git commit -m 'feat: bind research branches into evidence freeze' \
+            -m 'Require exact committed v7/v8 branch reconciliation before freeze. Bind its checkpoint, W2 attempt and request identity into manifest/freeze refs, derive unresolved contradictions and open ResearchDebt server-side, and keep legacy v2 freeze bytes unchanged. Refs #229.'
+          git push origin HEAD:main
