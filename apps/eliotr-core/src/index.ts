@@ -16,6 +16,11 @@ import { handleQueue } from "./queue.js";
 import { readReadiness } from "./readiness.js";
 import { createD1WorkspaceMcpCandidateStore } from "./workspace-mcp-candidate-store.js";
 import { handleScheduled } from "./scheduled.js";
+import {
+  ComputerAgentQualificationError,
+  preflightComputerAgentQualificationChallenge,
+  requireComputerAgentQualificationChallengeReady,
+} from "./computer-agent-qualification-store.js";
 export { ResearchSession } from "./research-session.js";
 export { ResearchWorkflow } from "./research-workflow.js";
 
@@ -127,6 +132,11 @@ function mcpDiagnosticError(error: McpClientDiagnosticServiceError): GeminiMcpTo
     : new GeminiMcpToolError(mapped.code, mapped.message, mapped.retryable);
 }
 
+function computerAgentQualificationError(error: ComputerAgentQualificationError): GeminiMcpToolError {
+  return new GeminiMcpToolError(error.code,
+    "Computer-agent qualification is not current for this Access actor", error.retryable);
+}
+
 function unavailableMcpDiagnosticError(): GeminiMcpToolError {
   return new GeminiMcpToolError(
     "MCP_CLIENT_DIAGNOSTIC_UNAVAILABLE",
@@ -159,13 +169,34 @@ function configuredMcpClientDiagnosticConsume(env: Env): McpClientDiagnosticCons
     });
     const consumeContext = copyMcpDiagnosticContext(context);
     try {
+      const actor = context.verified_actor;
+      const access = context.verified_access;
+      const bound = actor === undefined ? false : await preflightComputerAgentQualificationChallenge({
+        database,
+        challenge_id: consumeInput.challenge_id,
+        transport: "MCP_WRITE",
+        issuer: access?.issuer,
+        subject: context.principal_ref,
+        deployment_generation: deploymentGeneration,
+      });
       const service = createD1McpClientDiagnosticService(database, {
         now: Date.now,
         auth_profile: profile,
         deployment_generation: deploymentGeneration,
       });
-      return await service.consume(consumeInput, consumeContext);
+      const result = await service.consume(consumeInput, consumeContext);
+      if (bound && context.verified_actor !== undefined) {
+        await requireComputerAgentQualificationChallengeReady({
+          database,
+          challenge_id: consumeInput.challenge_id,
+          transport: "MCP_WRITE",
+          credential_generation: context.verified_actor.credential_generation,
+          deployment_generation: deploymentGeneration,
+        });
+      }
+      return result;
     } catch (error) {
+      if (error instanceof ComputerAgentQualificationError) throw computerAgentQualificationError(error);
       if (error instanceof McpClientDiagnosticServiceError) throw mcpDiagnosticError(error);
       throw unavailableMcpDiagnosticError();
     }

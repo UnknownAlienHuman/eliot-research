@@ -102,3 +102,11 @@ owner must also publish an active `RESEARCH_BRANCH_ANALYSIS` route containing th
 connection revision. The run records the chosen route/connection/grant revisions before Workflow start,
 and Stage 8 verifies that immutable origin before exposing a task. Priority order is not browser-supplied
 and does not permit the inbox to claim another connection's run.
+
+## Web-inbox qualification
+
+Before task access, the owner issues a `WEB_INBOX` challenge for the exact current connection revision.
+The agent enters the one-shot challenge ID/token in the no-persistence inbox. Confirmation uses the same
+service-token Access actor as later task calls, omits cookies, clears the token after success, and writes only
+the existing diagnostic observation plus immutable connection binding. A changed credential generation,
+connection revision, deployment, expiry or disabled connection requires a new qualification.

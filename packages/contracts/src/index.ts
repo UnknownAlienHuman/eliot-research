@@ -8,6 +8,7 @@ export * from "./scope.js";
 export * from "./project-client-grant.js";
 export * from "./computer-agent-connection.js";
 export * from "./computer-agent-route.js";
+export * from "./computer-agent-qualification.js";
 export * from "./normalized-bundle.js";
 export * from "./evidence.js";
 export * from "./coordinate-map.js";

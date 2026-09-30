@@ -1,8 +1,11 @@
 type JsonRecord = Record<string, unknown>;
 
-interface AccessFields {
+interface AccessIdentityFields {
   readonly clientId: string;
   readonly clientSecret: string;
+  readonly grantId?: string;
+}
+interface AccessFields extends AccessIdentityFields {
   readonly grantId: string;
 }
 
@@ -51,6 +54,8 @@ function element<T extends HTMLElement>(
 const accessClientId = element("access-client-id", HTMLInputElement);
 const accessClientSecret = element("access-client-secret", HTMLInputElement);
 const clientGrantId = element("client-grant-id", HTMLInputElement);
+const qualificationChallengeId = element("qualification-challenge-id", HTMLInputElement);
+const qualificationChallengeToken = element("qualification-challenge-token", HTMLInputElement);
 const workerSlot = element("worker-slot", HTMLInputElement);
 const contour = element("agent-contour", HTMLSelectElement);
 const computerScope = element("computer-scope", HTMLSelectElement);
@@ -116,32 +121,35 @@ function parseJsonObject(source: string, label: string): JsonRecord {
   return record(value, label);
 }
 
-function credentials(): AccessFields {
+function accessIdentity(): AccessIdentityFields {
   const clientId = accessClientId.value.trim();
   const clientSecret = accessClientSecret.value;
-  const grantId = clientGrantId.value.trim();
-  if (
-    !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,254}\.access$/u.test(clientId) ||
-    clientSecret.length < 1 ||
-    clientSecret.length > 4096 ||
-    /\s/u.test(clientSecret) ||
-    !/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/u.test(grantId)
-  ) {
-    throw new Error("Enter a valid Access Client ID, Client Secret, and project grant locator");
+  if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,254}\.access$/u.test(clientId) ||
+      clientSecret.length < 1 || clientSecret.length > 4096 || /\s/u.test(clientSecret)) {
+    throw new Error("Enter a valid Access Client ID and Client Secret");
   }
-  return { clientId, clientSecret, grantId };
+  return { clientId, clientSecret };
+}
+
+function credentials(): AccessFields {
+  const access = accessIdentity();
+  const grantId = clientGrantId.value.trim();
+  if (!/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/u.test(grantId)) {
+    throw new Error("Enter a valid project grant locator");
+  }
+  return { ...access, grantId };
 }
 
 function requestHeaders(
-  access: AccessFields,
+  access: AccessIdentityFields,
   options: { readonly json?: boolean; readonly idempotencyKey?: string } = {},
 ): Headers {
   const headers = new Headers({
     "CF-Access-Client-Id": access.clientId,
     "CF-Access-Client-Secret": access.clientSecret,
     "X-Eliotr-Agent-Inbox": AGENT_INBOX_PROTOCOL,
-    "X-Eliotr-Client-Grant": access.grantId,
   });
+  if (access.grantId !== undefined) headers.set("X-Eliotr-Client-Grant", access.grantId);
   if (options.json === true) headers.set("Content-Type", "application/json");
   if (options.idempotencyKey !== undefined) {
     headers.set("Idempotency-Key", options.idempotencyKey);
@@ -160,7 +168,7 @@ function requireUncontrolledPage(): void {
 
 async function sameOriginFetch(
   path: string,
-  access: AccessFields,
+  access: AccessIdentityFields,
   init: {
     readonly method: "GET" | "POST";
     readonly body?: string;
@@ -418,6 +426,22 @@ async function busy<T>(label: string, action: () => Promise<T>): Promise<T | und
   }
 }
 
+element("confirm-qualification", HTMLButtonElement).addEventListener("click", () => {
+  void busy("Confirming web-inbox qualification…", async () => {
+    const response = await sameOriginFetch(
+      "/api/v1/computer-agents/qualifications/confirm",
+      accessIdentity(),
+      { method: "POST", body: JSON.stringify({
+        challenge_id: qualificationChallengeId.value.trim(),
+        challenge_token: qualificationChallengeToken.value,
+      }) },
+    );
+    const result = await decodedResponse(response);
+    qualificationChallengeToken.value = "";
+    render(eventOutput, result);
+  });
+});
+
 element("pull-task", HTMLButtonElement).addEventListener("click", () => {
   void busy("Pulling the next task…", async () => {
     const response = await postTask("pull", {
@@ -540,13 +564,17 @@ element("clear-secrets", HTMLButtonElement).addEventListener("click", () => {
   accessClientId.value = "";
   accessClientSecret.value = "";
   clientGrantId.value = "";
-  setStatus("Credential fields cleared.");
+  qualificationChallengeId.value = "";
+  qualificationChallengeToken.value = "";
+  setStatus("Credential and qualification fields cleared.");
 });
 
 window.addEventListener("pagehide", () => {
   accessClientId.value = "";
   accessClientSecret.value = "";
   clientGrantId.value = "";
+  qualificationChallengeId.value = "";
+  qualificationChallengeToken.value = "";
   currentTask = null;
 });
 

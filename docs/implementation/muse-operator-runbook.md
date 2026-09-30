@@ -143,3 +143,11 @@ is `ORIGINATING_MATCH`: the agent that starts the delegated run must itself appe
 recorded priority is preparation for later owner-directed routing; it does not let a lower- or higher-
 priority agent inherit another actor's grant, task or lease. Update the route after changing a connection
 revision, and use a new Idempotency-Key for each distinct route revision.
+
+## Qualify each transport
+
+Capability declarations are not readiness. The owner issues a qualification challenge for the exact current
+connection revision and transport. An MCP client confirms the challenge with the existing
+`eliotr_confirm_client_diagnostic` tool; a UI-only Dot/Muse/Spark contour confirms `WEB_INBOX` in the
+no-persistence page. Requalify after credential rotation, connection revision changes, deployment changes,
+expiry or freshness timeout. Never copy one contour's challenge token to another actor.

@@ -26,6 +26,10 @@ import {
 } from "./agent-task-http.js";
 import { handleComputerAgentConnectionHttp } from "./computer-agent-connection-http.js";
 import { handleComputerAgentRouteHttp } from "./computer-agent-route-http.js";
+import {
+  handleComputerAgentQualificationConfirmHttp,
+  handleComputerAgentQualificationOwnerHttp,
+} from "./computer-agent-qualification-http.js";
 
 interface SpecialRouteMatch {
   readonly route: RouteDefinition;
@@ -70,6 +74,13 @@ export async function dispatchHttpSpecialRoute(input: {
     );
   }
   switch (input.match.route.operation) {
+    case "system.computer-agent-qualifications.status":
+    case "system.computer-agent-qualifications.issue":
+      return handleComputerAgentQualificationOwnerHttp(input.request, input.env, input.context,
+        input.match.params, input.match.route.maximum_request_bytes);
+    case "computer-agent-qualifications.confirm":
+      return handleComputerAgentQualificationConfirmHttp(input.request, input.env, input.context,
+        input.match.route.maximum_request_bytes);
     case "system.computer-agents.list":
     case "system.computer-agents.put":
     case "system.computer-agents.disable":

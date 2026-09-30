@@ -173,3 +173,17 @@ not start another actor, race two agents for one task, or transfer a lease. Upda
 affects new runs; an existing run keeps its recorded route identity, while current connection and project-
 grant checks can still block new task access. Automatic preferred-agent dispatch and failover require a
 separate owner-delegation protocol.
+
+## 6. Connection qualification and readiness
+
+Migration 0089 binds the existing one-shot MCP diagnostic challenge to one exact connection revision and
+`MCP_WRITE` or `WEB_INBOX`. Challenge token generation, SHA-256-only persistence, five-minute issuance,
+verified actor/deployment readback and immutable confirmation continue to use the existing diagnostic
+protocol. A bound challenge is rejected before consume when the verified Access actor, selected transport,
+connection revision or deployment differs.
+
+A confirmed qualification is READY only for the exact credential generation that performed it, while the
+connection remains current and enabled, and until the earlier of verified credential expiry or the bounded
+freshness window. Task pull/progress/result/status now require READY qualification for the transport actually
+used. Qualification does not grant a project, select a route, create a run or transfer a lease. Route priority
+can therefore become readiness-aware later without treating configured capability as observed availability.

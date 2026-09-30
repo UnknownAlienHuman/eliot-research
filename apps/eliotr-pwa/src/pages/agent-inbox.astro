@@ -77,6 +77,32 @@ const description = "A no-persistence service-token task console for approved co
         </div>
       </section>
 
+      <section class="panel" aria-labelledby="qualification-heading">
+        <div class="panel-heading">
+          <div>
+            <p class="step">01b</p>
+            <h2 id="qualification-heading">Qualify this web-inbox credential</h2>
+          </div>
+          <button id="confirm-qualification" class="button" type="button" data-request>Confirm qualification</button>
+        </div>
+        <p class="help">
+          Paste the one-shot owner-issued WEB_INBOX challenge. The token is sent once, never stored,
+          and cleared after a successful confirmation. Qualification is bound to this exact Access actor,
+          connection revision, credential generation, deployment, and freshness window.
+        </p>
+        <div class="form-grid">
+          <label>
+            <span>Qualification challenge ID</span>
+            <input id="qualification-challenge-id" type="text" autocomplete="off" spellcheck="false" />
+          </label>
+          <label>
+            <span>Qualification challenge token</span>
+            <input id="qualification-challenge-token" type="password" autocomplete="off"
+              data-1p-ignore data-lpignore="true" spellcheck="false" />
+          </label>
+        </div>
+      </section>
+
       <section class="panel" aria-labelledby="task-heading">
         <div class="panel-heading">
           <div>

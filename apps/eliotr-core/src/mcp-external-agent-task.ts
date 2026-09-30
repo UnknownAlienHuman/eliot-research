@@ -14,7 +14,11 @@ import {
   ComputerAgentConnectionError,
   requireComputerAgentConnectionForTask,
 } from "./computer-agent-connection-store.js";
-import type { ComputerAgentTransportCapability } from "@eliotr/contracts";
+import type { ComputerAgentQualificationTransport } from "@eliotr/contracts";
+import {
+  ComputerAgentQualificationError,
+  requireCurrentComputerAgentQualification,
+} from "./computer-agent-qualification-store.js";
 
 export const EXTERNAL_AGENT_TASK_TOOL_NAMES = Object.freeze([
   "eliotr_task_pull",
@@ -138,12 +142,20 @@ export async function callExternalAgentTaskTool(
   grant: ProjectClientGrant,
   name: ExternalAgentTaskToolName,
   input: Record<string, unknown>,
-  transport: ComputerAgentTransportCapability,
+  transport: ComputerAgentQualificationTransport,
 ): Promise<unknown> {
   try {
     const connection = await requireComputerAgentConnectionForTask(
       env.CORE_DB, context, transport, "RESEARCH_BRANCH_ANALYSIS",
     );
+    await requireCurrentComputerAgentQualification({
+      database: env.CORE_DB,
+      context,
+      connection,
+      transport,
+      task_kind: "RESEARCH_BRANCH_ANALYSIS",
+      deployment_generation: env.DEPLOYMENT_GENERATION,
+    });
     if (connection.actor.issuer !== grant.grantee.issuer ||
         connection.actor.subject !== grant.grantee.subject) {
       throw new ExternalAgentTaskError("EXTERNAL_AGENT_TASK_DENIED", 403,
@@ -151,6 +163,17 @@ export async function callExternalAgentTaskTool(
     }
   } catch (error) {
     if (error instanceof ExternalAgentTaskError) throw error;
+    if (error instanceof ComputerAgentQualificationError) {
+      const code = error.code === "COMPUTER_AGENT_QUALIFICATION_SCHEMA_NOT_READY"
+        ? "EXTERNAL_AGENT_TASK_SCHEMA_NOT_READY"
+        : error.code === "COMPUTER_AGENT_QUALIFICATION_STORAGE_CORRUPT"
+          ? "EXTERNAL_AGENT_TASK_OUTPUT_CORRUPT"
+          : error.retryable
+            ? "EXTERNAL_AGENT_TASK_EFFECT_UNCERTAIN"
+            : "EXTERNAL_AGENT_TASK_DENIED";
+      throw new ExternalAgentTaskError(code, error.status,
+        "Computer-agent qualification is not current for this task transport", error.retryable);
+    }
     if (error instanceof ComputerAgentConnectionError) {
       const code = error.code === "COMPUTER_AGENT_CONNECTION_SCHEMA_NOT_READY"
         ? "EXTERNAL_AGENT_TASK_SCHEMA_NOT_READY"

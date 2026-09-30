@@ -118,3 +118,12 @@ For each project, PUT the owner-only route at
 A service actor may start a delegated explicit-protocol run only when its own current connection appears
 in the active route; its priority and exact revisions are frozen into the run. Updating the list does not
 move existing tasks or leases. DELETE appends a disabled revision and blocks new delegated runs.
+
+## Qualify the exact web-inbox credential
+
+The owner POSTs `{}` with `X-Eliotr-Csrf: 1` to
+`/api/v1/system/computer-agents/<connection_id>/qualifications/WEB_INBOX`, then passes the returned one-shot
+challenge ID/token to the intended agent. The agent opens `/agent-inbox/`, enters its Access Client ID/Secret
+and the challenge, and confirms once. Owner GET on the same qualification URL reports `ISSUED`, `READY`,
+`EXPIRED`, `ACTOR_MISMATCH` or `STALE` without returning the token. Task calls fail until the exact current
+credential generation is READY.
