@@ -1,0 +1,221 @@
+---
+const title = "Eliot Computer-Agent Inbox";
+const description = "A no-persistence service-token task console for approved computer agents.";
+---
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content={description} />
+    <meta name="robots" content="noindex, nofollow, noarchive" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; connect-src 'self'; script-src 'self'; style-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'; frame-ancestors 'none'; img-src 'none'; font-src 'none'; manifest-src 'none'; worker-src 'none'"
+    />
+    <meta name="referrer" content="same-origin" />
+    <link rel="stylesheet" href="/agent-inbox/app.css" />
+    <title>{title}</title>
+  </head>
+  <body>
+    <main class="shell">
+      <header class="hero">
+        <p class="eyebrow">Provider-neutral computer-agent transport</p>
+        <h1>{title}</h1>
+        <p>
+          Use this shell only for an approved Spark, Muse, Dot, or other computer-agent identity.
+          The page does not store credentials. API requests omit cookies and remain bound to the exact
+          Cloudflare Access service token and project-grant revision.
+        </p>
+        <p id="status-line" class="status-line" data-kind="ready" aria-live="polite"></p>
+      </header>
+
+      <section class="panel" aria-labelledby="access-heading">
+        <div class="panel-heading">
+          <div>
+            <p class="step">01</p>
+            <h2 id="access-heading">Service identity</h2>
+          </div>
+          <button id="clear-secrets" class="button button--quiet" type="button">Clear credentials</button>
+        </div>
+        <div class="form-grid">
+          <label>
+            <span>Access Client ID</span>
+            <input id="access-client-id" type="text" autocomplete="off" spellcheck="false"
+              placeholder="client-id.access" />
+          </label>
+          <label>
+            <span>Access Client Secret</span>
+            <input id="access-client-secret" type="password" autocomplete="off" data-1p-ignore data-lpignore="true" spellcheck="false" />
+          </label>
+          <label>
+            <span>Project grant locator</span>
+            <input id="client-grant-id" type="text" autocomplete="off" spellcheck="false" />
+          </label>
+          <label>
+            <span>Stable worker slot</span>
+            <input id="worker-slot" type="text" value="default" autocomplete="off" spellcheck="false" />
+          </label>
+          <label>
+            <span>Reported contour</span>
+            <select id="agent-contour">
+              <option value="OPENAI_DOT">OpenAI Dot</option>
+              <option value="META_MUSE">Meta Muse</option>
+              <option value="GEMINI_SPARK">Gemini Spark</option>
+              <option value="OTHER">Other</option>
+            </select>
+          </label>
+          <label>
+            <span>Computer scope</span>
+            <select id="computer-scope">
+              <option value="CLOUD">Cloud</option>
+              <option value="LOCAL">Local</option>
+              <option value="HYBRID">Hybrid</option>
+              <option value="UNKNOWN">Unknown</option>
+            </select>
+          </label>
+        </div>
+      </section>
+
+      <section class="panel" aria-labelledby="task-heading">
+        <div class="panel-heading">
+          <div>
+            <p class="step">02</p>
+            <h2 id="task-heading">Pull and inspect</h2>
+          </div>
+          <div class="button-row">
+            <button id="pull-task" class="button" type="button" data-request>Pull task</button>
+            <button id="read-status" class="button button--secondary" type="button" data-request>Read status</button>
+          </div>
+        </div>
+        <div class="form-grid">
+          <label>
+            <span>Task ID</span>
+            <input id="task-id" type="text" autocomplete="off" spellcheck="false" />
+          </label>
+          <label>
+            <span>Lease ID</span>
+            <input id="lease-id" type="text" autocomplete="off" spellcheck="false" />
+          </label>
+          <label>
+            <span>Workflow ID</span>
+            <input id="workflow-id" type="text" autocomplete="off" spellcheck="false" />
+          </label>
+        </div>
+        <details open>
+          <summary>Current task envelope</summary>
+          <pre id="task-output">No task loaded.</pre>
+        </details>
+      </section>
+
+      <section class="panel" aria-labelledby="evidence-heading">
+        <div class="panel-heading">
+          <div>
+            <p class="step">03</p>
+            <h2 id="evidence-heading">Open admitted evidence</h2>
+          </div>
+          <button id="open-evidence" class="button" type="button" data-request>Open range</button>
+        </div>
+        <p class="help">
+          Select a supplied handle or enter one manually. Reads are bounded to 64 KiB and pass through
+          the existing exact-evidence authorization path.
+        </p>
+        <div id="evidence-choices" class="evidence-choices"></div>
+        <div class="form-grid form-grid--evidence">
+          <label class="wide">
+            <span>Evidence handle ID</span>
+            <input id="evidence-id" type="text" autocomplete="off" spellcheck="false" />
+          </label>
+          <label>
+            <span>Revision</span>
+            <input id="evidence-revision" type="number" min="1" step="1" value="1" />
+          </label>
+          <label>
+            <span>Start byte</span>
+            <input id="evidence-start" type="number" min="0" step="1" value="0" />
+          </label>
+          <label>
+            <span>End byte</span>
+            <input id="evidence-end" type="number" min="1" max="65536" step="1" value="4096" />
+          </label>
+        </div>
+        <details>
+          <summary>Exact evidence response</summary>
+          <pre id="evidence-output">No evidence opened.</pre>
+        </details>
+      </section>
+
+      <section class="panel split" aria-label="Task callback">
+        <div>
+          <div class="panel-heading">
+            <div>
+              <p class="step">04</p>
+              <h2>Progress</h2>
+            </div>
+            <button id="submit-progress" class="button" type="button" data-request>Submit progress</button>
+          </div>
+          <label>
+            <span>Next cursor</span>
+            <input id="progress-cursor" type="number" min="1" max="4096" step="1" value="1" />
+          </label>
+          <label>
+            <span>Progress JSON</span>
+            <textarea id="progress-json" rows="10" spellcheck="false">&#123;
+  "phase": "ANALYZE_BRANCHES",
+  "message": "Task opened in the computer-agent web inbox.",
+  "evidence_refs": []
+&#125;</textarea>
+          </label>
+        </div>
+        <div>
+          <div class="panel-heading">
+            <div>
+              <p class="step">05</p>
+              <h2>Result</h2>
+            </div>
+            <div class="button-row">
+              <button id="reset-result" class="button button--quiet" type="button">Reset template</button>
+              <button id="submit-result" class="button" type="button" data-request>Submit result</button>
+            </div>
+          </div>
+          <label>
+            <span>Result idempotency key</span>
+            <input id="result-key" type="text" autocomplete="off" spellcheck="false" />
+          </label>
+          <label>
+            <span>Strict result JSON</span>
+            <textarea id="result-json" rows="18" spellcheck="false"></textarea>
+          </label>
+        </div>
+      </section>
+
+      <section class="panel" aria-labelledby="recover-heading">
+        <div class="panel-heading">
+          <div>
+            <p class="step">06</p>
+            <h2 id="recover-heading">Canonical recovery</h2>
+          </div>
+          <button id="recover-run" class="button button--danger" type="button" data-request>Recover workflow</button>
+        </div>
+        <p class="help">
+          A recorded callback is delivery evidence only. Recovery validates it and settles the existing
+          W2/W1 authority; it does not create a replacement run.
+        </p>
+        <label>
+          <span>Recovery idempotency key</span>
+          <input id="recovery-key" type="text" autocomplete="off" spellcheck="false" />
+        </label>
+        <details open>
+          <summary>Latest operation receipt</summary>
+          <pre id="event-output">No operation submitted.</pre>
+        </details>
+      </section>
+
+      <footer>
+        No credentials, task output, evidence, or receipts are written to Web Storage, IndexedDB,
+        cookies, service workers, URLs, or the DOM outside the visible form and response panes.
+      </footer>
+    </main>
+    <script is:inline type="module" src="/agent-inbox/app.js"></script>
+  </body>
+</html>

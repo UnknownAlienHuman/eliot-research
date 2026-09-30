@@ -94,11 +94,12 @@ permission are distinct; Connections should display them separately rather than 
 
 ## 3. Short future notes from the platform review
 
-- **Dot:** expose the same task backend through a small authenticated web inbox because Pro custom MCP is
-  read/fetch-only and agent mode does not consume custom apps. Use Dot's cloud computer, optional local
-  computer, connected apps, scheduled/proactive work and messaging where the owner enables them; keep
-  computer/app permissions separate from ERC project grants. [Dot][dot] / [workspace controls][dot-admin]
-  / [MCP availability][openai-mcp]
+- **Dot:** the source-implemented [narrow web inbox](0008-computer-agent-web-inbox.md) exposes the same
+  task backend when Pro custom MCP is read/fetch-only or an agent can operate only a UI. It preserves
+  Access identity, project grants, leases and W2/W1 settlement; live Access policy, deployment and Dot
+  browser qualification remain pending. Use Dot's cloud computer, optional local computer, connected
+  apps, scheduled/proactive work and messaging where the owner enables them. [Dot][dot] /
+  [workspace controls][dot-admin] / [MCP availability][openai-mcp]
 - **Multi-agent routing:** add an owner-controlled route registry for Spark/Muse/Dot, capability matching,
   explicit failover and parallel independent slots. Do not race agents against the same exclusive lease or
   infer identity from a self-reported contour label.
@@ -129,8 +130,9 @@ For external operation and NotebookLM comparisons use the [computer-agent runboo
 truthful capability reporting, stdin-only Secrets Store key create/rotation, composed Custom Provider plus
 Provider Config attachment, task payload/lease/progress/result/status, and delegated v8 branch-analysis
 publication/callback/W2 recovery are implemented, not live-qualified. Managed-OAuth Research delegation,
-provider-native inference transports, safe connection removal, owner-selected cross-agent routing, web task
-inbox and live Spark/Muse/Dot qualification remain pending.
+provider-native inference transports, safe connection removal, owner-selected cross-agent routing and
+live Spark/Muse/Dot qualification remain pending. The web inbox is implemented in source under ADR-0008,
+but its Access policy, deployment and real-agent qualification remain pending.
 
 [dot]: https://help.openai.com/en/articles/20001530-getting-started-with-your-dot
 [dot-admin]: https://help.openai.com/en/articles/20001554-manage-dots-in-chatgpt-workspaces

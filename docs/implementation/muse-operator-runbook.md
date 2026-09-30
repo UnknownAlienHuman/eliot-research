@@ -19,8 +19,9 @@ then work with local files and commands, local skills and browser fallback, and 
 tasks. Enterprise controls separately gate cloud browser, network, desktop, password manager, local
 computer, Slack/Teams and custom rules. Do not assume Dot Pro has write-capable custom MCP: full MCP
 write/modify is currently a Business/Enterprise/Edu capability, while Pro custom MCP is read/fetch-only.
-Use the shared MCP/API contour when supported and a future narrow authenticated web task inbox when only
-computer/UI interaction is available.
+Use the shared MCP/API contour when supported and the source-implemented
+[computer-agent web inbox](computer-agent-web-inbox.md) when only computer/UI interaction is available.
+Its Access policy, deployment and real-agent qualification remain pending.
 
 A provider API key configures inference, not a browser subscription or computer agent. With
 `GOOGLE_EXTERNAL_TRANSPORT=disabled`, Research tools remain available and Google sync tools are hidden.
@@ -99,9 +100,10 @@ immutable deadline; replay never extends it. Revocation, regrant, project/scope 
 closed. Owner explicit-protocol runs use deterministic v7;
 historical generations retain their previous semantics.
 
-There is no arbitrary shell inbox and no permission derived from knowing a `client_grant_id`. A generic
-web inbox for agents without usable write-capable MCP is a future facade over this same backend contract,
-not a separate scheduler or weaker authorization path.
+There is no arbitrary shell inbox and no permission derived from knowing a `client_grant_id`. The isolated
+`/agent-inbox/` source implementation is a no-persistence facade over this same backend contract, not a
+second scheduler or weaker authorization path. It is not live until the path-scoped Access policy and the
+actual Spark/Muse/Dot browser are qualified.
 
 ## Operational recording
 

@@ -36,6 +36,7 @@ import {
   RawCaptureHttpError,
   rawCaptureProblem,
 } from "@eliotr/cloudflare-raw-ingest";
+import { ExternalAgentTaskError } from "@eliotr/cloudflare-workflows";
 
 export class HttpRequestError extends Error {
   public readonly code: string;
@@ -107,6 +108,15 @@ export function mapError(request: Request, error: unknown, problemResponse: Prob
       error.code, error.message, error.retryable);
   }
   if (error instanceof ClientGrantError) return problemResponse(request, error.status, error.code, error.message, error.retryable);
+  if (error instanceof ExternalAgentTaskError) {
+    return problemResponse(
+      request,
+      error.status,
+      error.code,
+      "External agent task request could not be completed under its exact lease and authority",
+      error.retryable,
+    );
+  }
   if (error instanceof OrientationError) return problemResponse(request, error.status, error.code, "Orientation request cannot be completed", error.retryable);
   if (error instanceof ScopeServiceError) return problemResponse(request, 409, error.code, "Current scope authority could not be established", false);
   if (error instanceof NavigationError) return problemResponse(request, error.code === "NAVIGATION_LIMIT_EXCEEDED" ? 413 : 409,

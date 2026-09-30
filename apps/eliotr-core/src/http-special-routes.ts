@@ -20,6 +20,10 @@ import {
   handleMcpClientDiagnosticIssue,
   handleMcpClientDiagnosticLatest,
 } from "./mcp-client-diagnostic-http.js";
+import {
+  handleAgentTaskHttp,
+  isAgentTaskHttpOperation,
+} from "./agent-task-http.js";
 
 interface SpecialRouteMatch {
   readonly route: RouteDefinition;
@@ -53,6 +57,15 @@ export async function dispatchHttpSpecialRoute(input: {
   if (input.match.route.operation.startsWith("google.oauth.") ||
       input.match.route.operation.startsWith("google.connection.")) {
     requireDriveExchangeTransport(input.env);
+  }
+  if (isAgentTaskHttpOperation(input.match.route.operation)) {
+    return handleAgentTaskHttp(
+      input.request,
+      input.env,
+      input.context,
+      input.match.route.operation,
+      input.match.route.maximum_request_bytes,
+    );
   }
   switch (input.match.route.operation) {
     case "research.client-grants.list":

@@ -5,8 +5,9 @@
   "type": "module",
   "sideEffects": true,
   "scripts": {
-    "build": "astro build",
-    "dev": "astro dev",
+    "build": "node scripts/build-agent-inbox.mjs && astro build",
+    "build:agent-inbox": "node scripts/build-agent-inbox.mjs",
+    "dev": "node scripts/build-agent-inbox.mjs && astro dev",
     "check": "astro check",
     "typecheck": "tsc -b --pretty false",
     "test": "vitest run",

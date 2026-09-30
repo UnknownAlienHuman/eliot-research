@@ -49,6 +49,7 @@ import {
 } from "./ingest-http.js";
 import { dispatchRawCaptureOperation } from "@eliotr/cloudflare-raw-ingest";
 import { dispatchHttpSpecialRoute } from "./http-special-routes.js";
+import { fetchStaticAsset } from "./agent-inbox-static.js";
 import { readRawMarkdownConversionRequest } from "@eliotr/cloudflare-markdown";
 import { parseExhaustiveWorkflowJobsRequest } from "./research-query-http.js";
 import { readReadiness } from "./readiness.js";
@@ -795,7 +796,7 @@ export async function handleHttp(
     if (isApiPath(url.pathname)) {
       return problem(request, 404, "ROUTE_NOT_FOUND", "API route does not exist", false);
     }
-    return env.ASSETS.fetch(request);
+    return fetchStaticAsset(request, env, url);
   }
   try {
     validateContentLength(request, resolved.match.route);
