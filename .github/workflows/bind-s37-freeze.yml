@@ -6,6 +6,7 @@ on:
     paths:
       - .github/workflows/bind-s37-freeze.yml
       - .github/scripts/bind-s37-freeze.py
+      - .github/scripts/split-s37-freeze-lineage.py
 
 permissions:
   contents: write
@@ -28,7 +29,11 @@ jobs:
       - name: Apply reviewed S37 freeze binding
         run: |
           python .github/scripts/bind-s37-freeze.py
-          git rm .github/workflows/bind-s37-freeze.yml .github/scripts/bind-s37-freeze.py
+          python .github/scripts/split-s37-freeze-lineage.py
+          git rm \
+            .github/workflows/bind-s37-freeze.yml \
+            .github/scripts/bind-s37-freeze.py \
+            .github/scripts/split-s37-freeze-lineage.py
       - name: Static and scoped compile checks
         run: |
           git diff --check
@@ -36,6 +41,7 @@ jobs:
           from pathlib import Path
           paths = [
               "packages/cloudflare-research/src/research-branch-execution.ts",
+              "packages/cloudflare-research/src/research-evidence-freeze-branch-lineage.ts",
               "packages/cloudflare-research/src/research-evidence-freeze-composition.ts",
               "packages/cloudflare-research/src/research-evidence-freeze-preparation.ts",
               "packages/cloudflare-research/src/research-evidence-freeze.ts",
@@ -43,14 +49,17 @@ jobs:
               "apps/eliotr-core/src/research-semantic-composition.ts",
           ]
           source = {path: Path(path).read_text(encoding="utf-8") for path in paths}
+          line_counts = {path: len(text.splitlines()) for path, text in source.items()}
+          print("S37_SOURCE_LINES", line_counts)
           assert "readCommittedResearchBranchReconciliationLineage" in source[paths[0]]
-          assert "branch_reconciliation: branch" in source[paths[2]]
-          assert "Object.keys(raw).length !== 15" in source[paths[3]]
-          assert 'const INPUT_PROTOCOL = "eliotr.evidence-freeze-input.v2"' in source[paths[3]]
-          assert "freeze_ref: authority.freeze_ref" in source[paths[3]]
-          assert "requires_branch_reconciliation" in source[paths[5]]
-          assert "SERVER_OWNED_EXTERNAL_AGENT_HANDLER_GENERATION" in source[paths[5]]
-          assert all(len(text.splitlines()) <= 600 for text in source.values())
+          assert "branch_reconciliation: branch" in source[paths[1]]
+          assert "derivedManifestRef" in source[paths[3]]
+          assert "Object.keys(raw).length !== 15" in source[paths[4]]
+          assert 'const INPUT_PROTOCOL = "eliotr.evidence-freeze-input.v2"' in source[paths[4]]
+          assert "freeze_ref: authority.freeze_ref" in source[paths[4]]
+          assert "requires_branch_reconciliation" in source[paths[6]]
+          assert "SERVER_OWNED_EXTERNAL_AGENT_HANDLER_GENERATION" in source[paths[6]]
+          assert all(lines <= 600 for lines in line_counts.values())
           print("S37_BRANCH_FREEZE_STATIC_OK")
           PY
           npm install --global pnpm@11.23.0 --ignore-scripts
@@ -59,6 +68,7 @@ jobs:
           pnpm --filter @eliotr/cloudflare-research --filter @eliotr/core typecheck
           pnpm exec eslint \
             packages/cloudflare-research/src/research-branch-execution.ts \
+            packages/cloudflare-research/src/research-evidence-freeze-branch-lineage.ts \
             packages/cloudflare-research/src/research-evidence-freeze-composition.ts \
             packages/cloudflare-research/src/research-evidence-freeze-preparation.ts \
             packages/cloudflare-research/src/research-evidence-freeze.ts \
@@ -72,6 +82,7 @@ jobs:
         run: |
           git add \
             packages/cloudflare-research/src/research-branch-execution.ts \
+            packages/cloudflare-research/src/research-evidence-freeze-branch-lineage.ts \
             packages/cloudflare-research/src/research-evidence-freeze-composition.ts \
             packages/cloudflare-research/src/research-evidence-freeze-preparation.ts \
             packages/cloudflare-research/src/research-evidence-freeze.ts \
