@@ -43,8 +43,8 @@ jobs:
           assert 3 * (96 * 1024 + 64 * 1024 + 4 * 1024) < 512 * 1024
           print("EXTERNAL_AGENT_V8_STATIC_OK")
           PY
-          corepack enable
-          corepack prepare pnpm@11.23.0 --activate
+          npm install --global pnpm@11.23.0 --ignore-scripts
+          pnpm --version
           pnpm install --frozen-lockfile --ignore-scripts
           pnpm --filter @eliotr/cloudflare-workflows --filter @eliotr/cloudflare-research --filter @eliotr/core typecheck
           pnpm d1:depth
