@@ -28,7 +28,7 @@ A provider API key configures inference, not a browser subscription or computer 
 ## Access identities
 
 Each external client needs its own Cloudflare Access service token and its own owner-issued project-grant
-revision. Computer-agent Research requires that same revision to authorize both `run` and `recover`. Never reuse Spark's identity for Muse or Dot. Configure additional clients as one JSON array;
+revision. Computer-agent Research requires that same revision to authorize `run`, `recover` and `evidence`. Never reuse Spark's identity for Muse or Dot. Configure additional clients as one JSON array;
 IDs are not secrets, but Client Secrets stay only in the corresponding client:
 
 ```text
