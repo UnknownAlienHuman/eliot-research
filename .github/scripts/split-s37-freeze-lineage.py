@@ -20,6 +20,27 @@ lineage_import = '''import {
 if text.count(import_anchor) != 1:
     raise SystemExit("preparation import anchor is not unique")
 text = text.replace(import_anchor, import_anchor + lineage_import)
+
+optional_replacements = (
+    (
+        "    branch_reconciliation: input.branch_reconciliation,\n",
+        """    ...(input.branch_reconciliation === undefined
+      ? {}
+      : { branch_reconciliation: input.branch_reconciliation }),
+""",
+    ),
+    (
+        "    branch_reconciliation: dependencies.branch_reconciliation,\n",
+        """    ...(dependencies.branch_reconciliation === undefined
+      ? {}
+      : { branch_reconciliation: dependencies.branch_reconciliation }),
+""",
+    ),
+)
+for old, new in optional_replacements:
+    if text.count(old) != 1:
+        raise SystemExit(f"exact-optional call site was not unique: {old.strip()}")
+    text = text.replace(old, new)
 preparation_path.write_text(text, encoding="utf-8")
 
 module = '''import type { VersionedRef } from "@eliotr/contracts";
