@@ -9,7 +9,7 @@ import {
   type ResearchDebt,
   type ResearchReadExtractCheckpoint,
 } from "@eliotr/contracts";
-import { evidenceSha256 } from "@eliotr/cloudflare-evidence";
+import { canonicalEvidenceJson, evidenceSha256 } from "@eliotr/cloudflare-evidence";
 import {
   WorkflowCheckpointStore,
   fail,
@@ -213,6 +213,10 @@ export function createResearchBranchExecutionHandlers(
 
 export interface ResearchBranchReconciliationLineage {
   readonly checkpoint: ResearchBranchReconciliationCheckpoint;
+  readonly read_extract_attempt_ref: string;
+  readonly read_extract_request_sha256: string;
+  readonly branch_analysis_attempt_ref: string;
+  readonly branch_analysis_request_sha256: string;
   readonly stage_attempt_ref: string;
   readonly stage_request_sha256: string;
 }
@@ -238,17 +242,51 @@ export async function readCommittedResearchBranchReconciliationLineage(
       receipt.investigation_ref.revision !== committed.request.investigation_ref.revision) {
     fail("WORKFLOW_OUTPUT_CORRUPT");
   }
-  const checkpoint = decodeResearchBranchReconciliationCheckpoint(
-    await readWorkflowObject(input.work_bucket, receipt.output_manifest, true),
-  );
-  if (checkpoint.operation_id !== input.operation_id ||
+  const [readLineage, analysisLineage] = await Promise.all([
+    readCommittedStageLineage(checkpoints, input.operation_id, "READ_AND_EXTRACT"),
+    readCommittedStageLineage(checkpoints, input.operation_id, "ANALYZE_BRANCHES"),
+  ]);
+  if (readLineage.request.investigation_ref.id !== input.investigation_id ||
+      analysisLineage.request.investigation_ref.id !== input.investigation_id ||
+      readLineage.request.investigation_ref.revision !== committed.request.investigation_ref.revision ||
+      analysisLineage.request.investigation_ref.revision !== committed.request.investigation_ref.revision) {
+    fail("WORKFLOW_OUTPUT_CORRUPT");
+  }
+  const [read, analysis, checkpoint] = await Promise.all([
+    readWorkflowObject(input.work_bucket, readLineage.receipt.output_manifest, true)
+      .then(decodeResearchReadExtractCheckpoint),
+    readWorkflowObject(input.work_bucket, analysisLineage.receipt.output_manifest, true)
+      .then(decodeResearchBranchAnalysisCheckpoint),
+    readWorkflowObject(input.work_bucket, receipt.output_manifest, true)
+      .then(decodeResearchBranchReconciliationCheckpoint),
+  ]);
+  const analysisResults = [...analysis.branch_results]
+    .sort((left, right) => left.role.localeCompare(right.role));
+  const reconciledAnalysisResults = checkpoint.branch_results
+    .filter((result) => result.role !== "COUNTER")
+    .sort((left, right) => left.role.localeCompare(right.role));
+  if (read.operation_id !== input.operation_id || analysis.operation_id !== input.operation_id ||
+      checkpoint.operation_id !== input.operation_id ||
+      read.investigation_ref.id !== input.investigation_id || analysis.investigation_ref.id !== input.investigation_id ||
       checkpoint.investigation_ref.id !== input.investigation_id ||
+      read.investigation_ref.revision !== committed.request.investigation_ref.revision ||
+      analysis.investigation_ref.revision !== committed.request.investigation_ref.revision ||
       checkpoint.investigation_ref.revision !== committed.request.investigation_ref.revision ||
-      checkpoint.principal_ref !== input.principal_ref) {
+      read.principal_ref !== input.principal_ref || analysis.principal_ref !== input.principal_ref ||
+      checkpoint.principal_ref !== input.principal_ref ||
+      !sameRef(analysis.read_extract_ref, read.checkpoint_ref) ||
+      !sameRef(checkpoint.branch_analysis_ref, analysis.checkpoint_ref) ||
+      canonicalEvidenceJson([...analysis.required_roles].sort()) !==
+        canonicalEvidenceJson([...checkpoint.required_roles].sort()) ||
+      canonicalEvidenceJson(analysisResults) !== canonicalEvidenceJson(reconciledAnalysisResults)) {
     fail("WORKFLOW_OUTPUT_CORRUPT");
   }
   return Object.freeze({
     checkpoint,
+    read_extract_attempt_ref: readLineage.attempt_ref,
+    read_extract_request_sha256: readLineage.request_sha256,
+    branch_analysis_attempt_ref: analysisLineage.attempt_ref,
+    branch_analysis_request_sha256: analysisLineage.request_sha256,
     stage_attempt_ref: committed.attempt_ref,
     stage_request_sha256: committed.request_sha256,
   });

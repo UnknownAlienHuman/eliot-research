@@ -1,8 +1,9 @@
 import type { VersionedRef } from "@eliotr/contracts";
-import { evidenceSha256 } from "@eliotr/cloudflare-evidence";
+import { canonicalEvidenceJson, evidenceSha256 } from "@eliotr/cloudflare-evidence";
 import type { ResearchBranchReconciliationLineage } from "./research-branch-execution.js";
 import type { EvidenceFreezeStageFiveLineage } from "./research-evidence-freeze-preparation.js";
 import type { ProtocolScopeCheckpoint } from "./research-protocol-freeze.js";
+import { debtFor } from "./research-branch-execution-results.js";
 
 const ID = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/u;
 const SHA256 = /^[a-f0-9]{64}$/u;
@@ -10,6 +11,10 @@ const SHA256 = /^[a-f0-9]{64}$/u;
 export interface EvidenceFreezeBranchLineage {
   readonly checkpoint_ref: VersionedRef;
   readonly identity_digest: string;
+  readonly read_extract_attempt_ref: string;
+  readonly read_extract_request_sha256: string;
+  readonly branch_analysis_attempt_ref: string;
+  readonly branch_analysis_request_sha256: string;
   readonly stage_attempt_ref: string;
   readonly stage_request_sha256: string;
   readonly required_roles: readonly string[];
@@ -50,13 +55,32 @@ async function branchLineageMaterial(input: {
   });
   const requiredRoles = [...checkpoint.required_roles].sort();
   const expectedRoles = [...input.stage_zero.coverage_denominator.required_question_branches].sort();
+  const resultRoles = checkpoint.branch_results.map((result) => result.role).sort();
   const unmetRoles = [...checkpoint.unmet_required_roles].sort();
+  const blockedResults = checkpoint.branch_results
+    .filter((result) => result.status === "BLOCKED")
+    .sort((left, right) => left.role.localeCompare(right.role));
+  const blockedRoles = blockedResults.map((result) => result.role);
   const contradictionRefs = [...checkpoint.unresolved_contradiction_refs].sort();
-  const debtRefs = checkpoint.research_debts.map((item) => item.debt_ref)
-    .sort((left, right) => refKey(left).localeCompare(refKey(right)));
+  const counter = checkpoint.branch_results.find((result) => result.role === "COUNTER");
+  const expectedContradictions = counter === undefined ? [] : (await Promise.all(
+    counter.evidence_handle_refs.map(async (ref) => `eliotr.research.contradiction-${await evidenceSha256({
+      domain: "eliotr.research.contradiction.v1",
+      handle_ref: ref,
+    })}`),
+  )).sort();
+  const branchIdentities = await Promise.all(checkpoint.branch_results.map(async (result) => {
+    const { branch_ref: _branchRef, identity_digest: _identityDigest, ...material } = result;
+    const resultDigest = await evidenceSha256({ domain: "eliotr.research.branch-result.v1", value: material });
+    return result.identity_digest === resultDigest &&
+      result.branch_ref.id === `eliotr.research.branch-${resultDigest}` && result.branch_ref.revision === 1;
+  }));
+  const expectedDebts = (await Promise.all(blockedResults.map(debtFor)))
+    .sort((left, right) => refKey(left.debt_ref).localeCompare(refKey(right.debt_ref)));
+  const actualDebts = [...checkpoint.research_debts]
+    .sort((left, right) => refKey(left.debt_ref).localeCompare(refKey(right.debt_ref)));
+  const debtRefs = actualDebts.map((item) => item.debt_ref);
   const debtKeys = debtRefs.map(refKey);
-  const debtCoverage = unmetRoles.every((role) =>
-    checkpoint.research_debts.filter((debt) => debt.blocked_refs.includes(role)).length === 1);
   if (input.stage_zero.planning_manifest_ref === undefined ||
       input.stage_zero.planning_manifest_digest === undefined ||
       checkpoint.operation_id !== input.stage_zero.operation_id ||
@@ -71,20 +95,31 @@ async function branchLineageMaterial(input: {
       digest !== checkpoint.identity_digest ||
       checkpoint.checkpoint_ref.id !== `eliotr.research.branch-reconciliation-${digest}` ||
       checkpoint.checkpoint_ref.revision !== 1 ||
+      !ID.test(lineage.read_extract_attempt_ref) ||
+      !SHA256.test(lineage.read_extract_request_sha256) ||
+      !ID.test(lineage.branch_analysis_attempt_ref) ||
+      !SHA256.test(lineage.branch_analysis_request_sha256) ||
       !ID.test(lineage.stage_attempt_ref) ||
       !SHA256.test(lineage.stage_request_sha256) ||
       !sameStrings(requiredRoles, expectedRoles) ||
+      !sameStrings(resultRoles, requiredRoles) ||
+      !sameStrings(blockedRoles, unmetRoles) ||
+      !sameStrings(contradictionRefs, expectedContradictions) ||
+      branchIdentities.some((valid) => !valid) ||
       new Set(requiredRoles).size !== requiredRoles.length ||
       new Set(unmetRoles).size !== unmetRoles.length ||
       new Set(contradictionRefs).size !== contradictionRefs.length ||
       new Set(debtKeys).size !== debtKeys.length ||
-      debtRefs.length !== unmetRoles.length ||
-      !debtCoverage) {
+      canonicalEvidenceJson(actualDebts) !== canonicalEvidenceJson(expectedDebts)) {
     throw new Error("branch reconciliation lineage is inconsistent");
   }
   return Object.freeze({
     checkpoint_ref: { ...checkpoint.checkpoint_ref },
     identity_digest: checkpoint.identity_digest,
+    read_extract_attempt_ref: lineage.read_extract_attempt_ref,
+    read_extract_request_sha256: lineage.read_extract_request_sha256,
+    branch_analysis_attempt_ref: lineage.branch_analysis_attempt_ref,
+    branch_analysis_request_sha256: lineage.branch_analysis_request_sha256,
     stage_attempt_ref: lineage.stage_attempt_ref,
     stage_request_sha256: lineage.stage_request_sha256,
     required_roles: Object.freeze(requiredRoles),
