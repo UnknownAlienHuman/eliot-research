@@ -125,3 +125,12 @@ by this documentation change.
 - https://help.openai.com/en/articles/20001530-getting-started-with-your-dot
 - https://help.openai.com/en/articles/20001554-manage-dots-in-chatgpt-workspaces
 - https://help.openai.com/en/articles/12584461-developer-mode-and-mcp-apps-in-chatgpt
+
+## Register each computer-agent connection
+
+Register Spark, Muse and Dot separately through the owner-only computer-agent connection API. Bind each
+logical connection to its exact Access issuer and Client ID, then declare only observed transport and
+computer capabilities. MCP task callbacks require `MCP_WRITE`; the browser inbox requires `WEB_INBOX`.
+The contour label is descriptive only. The same actor still needs an exact current project grant with
+`run`, `recover` and `evidence`. Disabling a registry entry blocks task access but does not silently revoke
+Access credentials or rewrite historical grants and leases.

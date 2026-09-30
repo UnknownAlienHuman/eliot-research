@@ -101,3 +101,11 @@ This slice does not implement:
 Qualification must check the actual agent/browser because computer-use products can differ in custom
 header support, password-field handling, file transfer, browser isolation, cancellation and local-computer
 capabilities.
+
+## Register the browser contour
+
+Before using the inbox, the owner creates `/api/v1/system/computer-agents/<connection_id>` with a stable
+Idempotency-Key and an exact service-token actor. Include `WEB_INBOX` and task kind
+`RESEARCH_BRANCH_ANALYSIS`; list cloud/local/browser capabilities honestly. Updating capabilities appends
+a revision. DELETE appends `DISABLED` and does not revoke the Cloudflare token or project grant by itself.
+Those remain separate reconciled authorities.

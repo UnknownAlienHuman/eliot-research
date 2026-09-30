@@ -86,3 +86,11 @@ Deployment must explicitly:
 5. qualify the actual browser's custom-header, redirect, cancellation and no-persistence behavior.
 
 No live Access policy, service token, deployment or agent account is changed by this ADR.
+
+## Connection registry requirement
+
+The service-token actor must also have an owner-enabled current computer-agent connection revision with
+`WEB_INBOX` and `RESEARCH_BRANCH_ANALYSIS`. The registry stores no Client Secret. It binds transport and
+computer capabilities to the exact Access issuer/subject and prevents a self-reported contour selector
+from becoming authority. Disabling the connection blocks new inbox task operations without deleting task,
+lease, callback or project-grant history.

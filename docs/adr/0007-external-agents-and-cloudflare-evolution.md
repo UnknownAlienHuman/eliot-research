@@ -145,3 +145,16 @@ but its Access policy, deployment and real-agent qualification remain pending.
 [cf]: https://blog.cloudflare.com/cloudflare-cf-cli-launch/
 [forge]: https://blog.cloudflare.com/forge-open-source-generation-pipeline/
 [adlc]: https://blog.cloudflare.com/agent-development-lifecycle/
+
+## 4. Computer-agent connection registry
+
+Migration 0087 and the owner-only `/api/v1/system/computer-agents` contour now register each logical
+computer agent as append-only revisions bound to one exact Cloudflare Access service-token issuer and
+subject. `GEMINI_SPARK`, `META_MUSE`, `OPENAI_DOT` and `OTHER` remain owner-maintained metadata;
+a caller is authorized by its verified Access actor, current project grant and declared transport/task
+capabilities. Task MCP requires `MCP_WRITE`; the browser inbox requires `WEB_INBOX`. Disabled or missing
+connections fail before task lease authority is reached.
+
+This registry is the substrate for routing, not routing itself. V8 tasks still target the originating
+exact grant/actor. Project-level preferred-agent policy, cross-agent assignment, capability-based failover
+and parallel independent task publication remain pending and must not reuse or transfer an existing lease.

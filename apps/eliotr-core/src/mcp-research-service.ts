@@ -186,7 +186,9 @@ export function createMcpResearchToolCall(env: Env, request: Request): McpResear
           if (!isExternalAgentTaskToolName(name)) invalid("External task tool identity is invalid");
           execute = async () => {
             const grant = await authorizeProjectClientGrant(env.CORE_DB, context, { operation: "run" });
-            const result = await callExternalAgentTaskTool(env, context, grant.grant, name, args);
+            const result = await callExternalAgentTaskTool(
+              env, context, grant.grant, name, args, "MCP_WRITE",
+            );
             await grant.requireGrantCurrent();
             return result;
           };

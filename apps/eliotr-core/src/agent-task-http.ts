@@ -174,6 +174,7 @@ export async function handleAgentTaskHttp(
     lease.grant,
     TOOL_BY_OPERATION[operation],
     body,
+    "WEB_INBOX",
   );
   await lease.requireGrantCurrent();
   return apiResult(request, env, result);

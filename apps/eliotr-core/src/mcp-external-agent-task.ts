@@ -10,6 +10,11 @@ import {
 } from "@eliotr/cloudflare-workflows";
 import type { AuthenticatedRequestContext } from "@eliotr/interfaces";
 import type { Env } from "./env.js";
+import {
+  ComputerAgentConnectionError,
+  requireComputerAgentConnectionForTask,
+} from "./computer-agent-connection-store.js";
+import type { ComputerAgentTransportCapability } from "@eliotr/contracts";
 
 export const EXTERNAL_AGENT_TASK_TOOL_NAMES = Object.freeze([
   "eliotr_task_pull",
@@ -133,7 +138,32 @@ export async function callExternalAgentTaskTool(
   grant: ProjectClientGrant,
   name: ExternalAgentTaskToolName,
   input: Record<string, unknown>,
+  transport: ComputerAgentTransportCapability,
 ): Promise<unknown> {
+  try {
+    const connection = await requireComputerAgentConnectionForTask(
+      env.CORE_DB, context, transport, "RESEARCH_BRANCH_ANALYSIS",
+    );
+    if (connection.actor.issuer !== grant.grantee.issuer ||
+        connection.actor.subject !== grant.grantee.subject) {
+      throw new ExternalAgentTaskError("EXTERNAL_AGENT_TASK_DENIED", 403,
+        "Computer-agent connection and project grant bind different actors");
+    }
+  } catch (error) {
+    if (error instanceof ExternalAgentTaskError) throw error;
+    if (error instanceof ComputerAgentConnectionError) {
+      const code = error.code === "COMPUTER_AGENT_CONNECTION_SCHEMA_NOT_READY"
+        ? "EXTERNAL_AGENT_TASK_SCHEMA_NOT_READY"
+        : error.code === "COMPUTER_AGENT_CONNECTION_STORAGE_CORRUPT"
+          ? "EXTERNAL_AGENT_TASK_OUTPUT_CORRUPT"
+          : error.retryable
+            ? "EXTERNAL_AGENT_TASK_EFFECT_UNCERTAIN"
+            : "EXTERNAL_AGENT_TASK_DENIED";
+      throw new ExternalAgentTaskError(code, error.status,
+        "Computer-agent connection is not authorized for this task transport", error.retryable);
+    }
+    throw error;
+  }
   const store = new ExternalAgentTaskStore(env.CORE_DB);
   const taskActor = actor(context, grant);
   switch (name) {
