@@ -73,7 +73,7 @@ export function routeResearchComputerAgentStages(
     const grant = input.grant;
     if (grant === undefined || grant.grantee.subject !== input.navigation.access.principal_ref ||
         grant.revision < 1 || grant.state !== "ACTIVE" || !grant.allowed_operations.includes("run") ||
-        !grant.allowed_operations.includes("recover")) {
+        !grant.allowed_operations.includes("recover") || !grant.allowed_operations.includes("evidence")) {
       fail("WORKFLOW_AUTHORITY_STALE");
     }
     const authority = createD1EvidenceAuthorityPort({

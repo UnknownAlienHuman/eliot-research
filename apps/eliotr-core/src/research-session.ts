@@ -372,9 +372,10 @@ export function createResearchRunService(env: Env): { run(context: Authenticated
           : delegated === undefined ? SERVER_OWNED_BRANCH_HANDLER_GENERATION : SERVER_OWNED_EXTERNAL_AGENT_HANDLER_GENERATION)
         : HANDLER_GEN;
       if (handlerGeneration === SERVER_OWNED_EXTERNAL_AGENT_HANDLER_GENERATION &&
-          (delegated === undefined || !delegated.lease.grant.allowed_operations.includes("recover"))) {
+          (delegated === undefined || !delegated.lease.grant.allowed_operations.includes("recover") ||
+            !delegated.lease.grant.allowed_operations.includes("evidence"))) {
         fail("RESEARCH_AUTHORITY_STALE",
-          "Computer-agent Research requires the same grant revision to authorize run and recover", 403);
+          "Computer-agent Research requires the same grant revision to authorize run, recover and evidence", 403);
       }
       const wantHead = { investigation_id, goal: request.query, scope_snapshot_id: scopeRef.id, scope_snapshot_revision: scopeRef.revision, evidence_grade: request.evidence_grade, lane, portfolio_ref: payloadKey, principal_ref: context.principal_ref, input_digest: payloadHash, policy_generation: policyGeneration, policy_authority_ref: snapshotRow.policy_authority_ref, deployment_generation: env.DEPLOYMENT_GENERATION, idempotency_key: key };
       let skipCreate = false;

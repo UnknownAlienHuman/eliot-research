@@ -12,7 +12,7 @@ CREATE TABLE research_external_agent_task_payload (
   payload_json TEXT NOT NULL CHECK(
     json_valid(payload_json)
     AND json_type(payload_json)='object'
-    AND length(CAST(payload_json AS BLOB)) BETWEEN 1 AND 524288
+    AND length(CAST(payload_json AS BLOB)) BETWEEN 1 AND 98304
   ),
   payload_sha256 TEXT NOT NULL CHECK(
     length(payload_sha256)=64 AND payload_sha256 NOT GLOB '*[^0-9a-f]*'

@@ -14,7 +14,8 @@ import {
 import { textDigest, type StageRequest } from "./types.js";
 
 const SCHEMA_GENERATION = "external-agent-task-payload-v1";
-const MAX_PAYLOAD_BYTES = 512 * 1024;
+// MCP emits structuredContent plus a JSON text fallback; keep the task payload below the safe combined envelope.
+const MAX_PAYLOAD_BYTES = 96 * 1024;
 const MAX_LIFETIME_MS = 7 * 24 * 60 * 60 * 1000;
 const MIN_LIFETIME_MS = 5_000;
 const TASK_KIND = /^[A-Z][A-Z0-9_]{0,63}$/u;
@@ -188,7 +189,8 @@ export async function publishExternalAgentTaskPayload(
     fail("EXTERNAL_AGENT_TASK_EFFECT_UNCERTAIN", 503, "External task payload was not recorded", true);
   }
   const recorded = await validateRow(row);
-  if (recorded.payload_sha256 !== payloadSha || recorded.expires_at !== expiresAt ||
+  // A lost publication ACK must reuse the first immutable deadline. Replays may neither extend nor shorten it.
+  if (recorded.payload_sha256 !== payloadSha ||
       externalTaskCanonical(recorded.envelope, MAX_PAYLOAD_BYTES, "Recorded external task payload") !== payloadJson) {
     fail("EXTERNAL_AGENT_TASK_CONFLICT", 409, "External task payload identity conflicts with an existing publication");
   }

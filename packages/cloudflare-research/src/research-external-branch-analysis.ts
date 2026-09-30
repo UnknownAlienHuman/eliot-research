@@ -49,7 +49,8 @@ const TASK_KIND = "RESEARCH_BRANCH_ANALYSIS" as const;
 const OUTPUT_PROTOCOL = "eliotr.external-branch-analysis.v1" as const;
 const TASK_BODY_PROTOCOL = "eliotr.research.external-branch-analysis-task.v1" as const;
 const TASK_LIFETIME_MS = 24 * 60 * 60 * 1000;
-const INLINE_EXCERPT_BUDGET_BYTES = 320 * 1024;
+// Evidence text is reopened through the current evidence authority; task pull remains safely below the MCP response ceiling.
+const INLINE_EXCERPT_BUDGET_BYTES = 0;
 const MAX_TEXT = 8192;
 
 const RoleOutputSchema = z.object({
@@ -212,6 +213,7 @@ function taskBody(context: BranchExecutionContext): Readonly<Record<string, unkn
       ]),
       rules: Object.freeze([
         "Copy task_id, operation_id, stage_index, stage, attempt_ref and request_sha256 exactly from the task envelope.",
+        "Use eliotr_open with bounded byte ranges to reopen exact excerpts from supplied admitted handles.",
         "Return exactly one role record for every required role except COUNTER; COUNTER is handled by the next canonical stage.",
         "CANDIDATE_READY roles must select admitted evidence_handle_refs supplied by this task. Never invent a handle.",
         "New browser, app, local-computer or UI observations belong only in candidate_findings with admission_state=NOT_ADMITTED.",
@@ -433,7 +435,8 @@ async function executeOrRecover(
   if (!parsedGrant.success) stale();
   const grant = parsedGrant.data;
   if (grant.grantee.subject !== principal.principal_ref || grant.state !== "ACTIVE" ||
-      !grant.allowed_operations.includes("run") || !grant.allowed_operations.includes("recover")) stale();
+      !grant.allowed_operations.includes("run") || !grant.allowed_operations.includes("recover") ||
+      !grant.allowed_operations.includes("evidence")) stale();
   const context = await loadContext(dependencies, request, principal);
   validateReadCheckpoint(context, request, principal, inputValue.input_bytes);
   const store = new ExternalAgentTaskStore(dependencies.database,

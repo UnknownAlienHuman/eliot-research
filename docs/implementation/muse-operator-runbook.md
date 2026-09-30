@@ -63,14 +63,16 @@ Migrations `0085_external_agent_task_delivery.sql` and `0086_external_agent_task
 MCP tools provide the delivery channel. Newly admitted delegated explicit-protocol runs use handler
 generation `research-handlers.exploratory.v8`; the first live consumer is `ANALYZE_BRANCHES`.
 
-1. Start `eliotr_run` under the agent's exact project grant. At Stage 8 the workflow publishes an immutable
-   `RESEARCH_BRANCH_ANALYSIS` payload bound to the exact W2 attempt, request digest, project and historical
-   grant revision. The initial workflow execution intentionally remains STARTED/uncertain while the agent works.
+1. Start `eliotr_run` under the agent's exact project grant. The same immutable grant revision must authorize
+   `run`, `recover` and `evidence`. At Stage 8 the workflow publishes a `RESEARCH_BRANCH_ANALYSIS` payload
+   bound to the exact W2 attempt, request digest, project and historical grant revision. The initial workflow
+   execution intentionally remains STARTED/uncertain while the agent works.
 2. Call `eliotr_task_pull` with that `client_grant_id` and reuse a stable `worker_slot` (default: `default`).
-   The response includes `task_kind`, `task_expires_at`, `payload_sha256` and the full payload. It returns
-   the slot's same unexpired lease after an uncertain response or reconnect, and `task: null` when none is
-   available. Independent slots may claim distinct tasks. A lease is pinned to the credential generation
-   that claimed it; rotated credentials cannot inherit it.
+   The response includes `task_kind`, `task_expires_at`, `payload_sha256` and the bounded handle-first payload.
+   Reopen exact evidence with `eliotr_open` in bounded byte ranges; do not expect task pull to duplicate large
+   excerpts. Pull returns the slot's same unexpired lease after an uncertain response or reconnect, and
+   `task: null` when none is available. Independent slots may claim distinct tasks. A lease is pinned to the
+   credential generation that claimed it; rotated credentials cannot inherit it.
 3. Analyse the supplied frozen questions and **already-admitted evidence**. Browser/app/cloud/local-computer
    work may discover other material, but return it only in `candidate_findings` with
    `admission_state=NOT_ADMITTED`. Never invent an evidence handle. New material requires a separate

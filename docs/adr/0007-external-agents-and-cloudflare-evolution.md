@@ -68,9 +68,9 @@ slot provides lost-ack recovery; independent slots may process distinct tasks. E
 credential generation; rotation cannot inherit an unexpired lease. Early replacement, stale authority,
 revocation and cancellation fail closed.
 
-New delegated explicit-protocol runs use `research-handlers.exploratory.v8`; the same grant revision must authorize both `run` and `recover`. Stage 8
+New delegated explicit-protocol runs use `research-handlers.exploratory.v8`; the same grant revision must authorize `run`, `recover` and `evidence`. Stage 8
 `ANALYZE_BRANCHES` publishes a provider-neutral task consumable by Spark, Muse, Dot or another computer
-agent. The payload contains the frozen question graph and admitted evidence. Callback identity and
+agent. The bounded payload contains the frozen question graph and admitted evidence handles. Larger exact excerpts are reopened through current evidence authority with bounded ranges. Callback identity and
 selected handles are checked against the exact W2 attempt and re-resolved under current evidence
 authority. The server derives the canonical branch checkpoint; the external agent cannot mint a branch
 reference, observation reference or authoritative disposition. A strict failed callback becomes explicit
