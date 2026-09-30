@@ -35,6 +35,7 @@ jobs:
           from hashlib import sha256
           from io import BytesIO
           from pathlib import Path, PurePosixPath
+          import re
           import tarfile
 
           root = Path(".github/patches/agent-inbox")
@@ -61,6 +62,28 @@ jobs:
           apply.write_text(text.replace("parents[2]", "parents[3]"), encoding="utf-8")
           PY
           python .github/patches/agent-inbox/apply.py
+          python - <<'PY'
+          from pathlib import Path
+          import re
+
+          page = Path("apps/eliotr-pwa/src/pages/agent-inbox.astro")
+          source = page.read_text(encoding="utf-8")
+          changed = 0
+
+          def encode_json(match: re.Match[str]) -> str:
+              global changed
+              body = match.group(2)
+              encoded = body.replace("{", "&#123;").replace("}", "&#125;")
+              if encoded != body:
+                  changed += 1
+              return match.group(1) + encoded + match.group(3)
+
+          output, count = re.subn(r"(<textarea\b[^>]*>)(.*?)(</textarea>)", encode_json, source,
+                                  flags=re.DOTALL)
+          if count < 2 or changed < 2:
+              raise SystemExit("agent-inbox textarea JSON markers were not found")
+          page.write_text(output, encoding="utf-8")
+          PY
       - name: Static and scoped compile checks
         run: |
           set -euo pipefail
@@ -89,6 +112,8 @@ jobs:
           assert "/_astro/" not in page
           assert page.count("/agent-inbox/app.") == 2
           assert '<script is:inline type="module" src="/agent-inbox/app.js"></script>' in page
+          assert page.count("&#123;") >= 2 and page.count("&#125;") >= 2
+          assert not re.search(r"<textarea\b[^>]*>\s*\{", page)
           assert 'credentials: "omit"' in ui
           assert 'redirect: "error"' in ui
           assert 'request.headers.has("Cookie")' in server
@@ -110,7 +135,6 @@ jobs:
           pnpm install --frozen-lockfile --ignore-scripts
           pnpm --filter @eliotr/interfaces --filter @eliotr/core --filter @eliotr/pwa typecheck
           pnpm --filter @eliotr/pwa check
-          nl -ba apps/eliotr-pwa/src/pages/agent-inbox.astro | sed -n '150,175p'
           pnpm --filter @eliotr/pwa build
           test -f apps/eliotr-pwa/dist/agent-inbox/index.html
           test -f apps/eliotr-pwa/dist/agent-inbox/app.js
