@@ -1,5 +1,6 @@
 import {
   ObjectResidencyKeySchema,
+  type AllowedReferenceManifest,
   type InquiryProtocolProfile,
   type ObjectResidencyKey,
   type VersionedRef,
@@ -25,12 +26,19 @@ import type {
   ModelProfileBinding as EvidenceFreezeModelBinding,
   ModelProfileDefinition as EvidenceFreezeModelDefinition,
 } from "./research-model-profile-binding.js";
+import type { ResearchBranchReconciliationLineage } from "./research-branch-execution.js";
 import type { StageRequest, WorkflowPrincipal } from "@eliotr/cloudflare-workflows";
+import {
+  buildEvidenceFreezeLineage,
+  derivedFreezeRef,
+  derivedManifestRef,
+} from "./research-evidence-freeze-branch-lineage.js";
 
 export type { EvidenceFreezeModelBinding, EvidenceFreezeModelDefinition };
 
 const MAX_BYTES = 64 * 1024;
 const ID = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/u;
+const SHA256 = /^[a-f0-9]{64}$/u;
 
 export interface EvidenceFreezeStageFiveLineage {
   readonly operation_id: string;
@@ -63,6 +71,7 @@ export interface EvidenceFreezePreparationDependencies {
   readonly resolver: CloudflareEvidenceResolver;
   readonly stage_zero: ProtocolScopeCheckpoint;
   readonly stage_five: EvidenceFreezeStageFiveLineage;
+  readonly branch_reconciliation?: ResearchBranchReconciliationLineage | null;
   readonly w1_head: LedgerHead;
   readonly model_binding: EvidenceFreezeModelBinding;
   readonly scope_snapshot_digest: string;
@@ -182,11 +191,15 @@ async function modelDefinition(binding: EvidenceFreezeModelBinding): Promise<Evi
 export async function deriveEvidenceFreezeAuthorityBinding(input: {
   readonly stage_zero: ProtocolScopeCheckpoint;
   readonly stage_five: EvidenceFreezeStageFiveLineage;
+  readonly branch_reconciliation?: ResearchBranchReconciliationLineage | null;
   readonly w1_head: LedgerHead;
   readonly model_binding: EvidenceFreezeModelBinding;
   readonly scope_snapshot_digest: string;
   readonly current_investigation_ref: VersionedRef;
+  readonly manifest: Pick<AllowedReferenceManifest, "manifest_ref" | "manifest_digest">;
   readonly stage_input: {
+    readonly freeze_ref: VersionedRef;
+    readonly manifest_ref: VersionedRef;
     readonly coverage_denominator_ref: VersionedRef;
     readonly protocol_profile: InquiryProtocolProfile;
     readonly protocol_definition: EvidenceFreezeProtocolDefinition;
@@ -201,6 +214,7 @@ export async function deriveEvidenceFreezeAuthorityBinding(input: {
     readonly model_profile_definition: EvidenceFreezeModelDefinition;
   };
 }): Promise<{
+  readonly freeze_ref: VersionedRef;
   readonly scope_snapshot_ref: VersionedRef;
   readonly coverage_denominator_ref: VersionedRef;
   readonly protocol_digest: string;
@@ -220,6 +234,23 @@ export async function deriveEvidenceFreezeAuthorityBinding(input: {
   readonly provider_model_prompt_tool_generations: Readonly<Record<string, string>>;
 }> {
   cleanW1(input.w1_head, input.stage_zero, input.current_investigation_ref);
+  const lineage = await buildEvidenceFreezeLineage({
+    operation_id: input.stage_zero.operation_id,
+    stage_zero: input.stage_zero,
+    stage_five: input.stage_five,
+    model_profile_binding_ref: input.model_binding.binding_ref,
+    ...(input.branch_reconciliation === undefined
+      ? {}
+      : { branch_reconciliation: input.branch_reconciliation }),
+  });
+  const manifestRef = await derivedManifestRef(lineage.identity);
+  const freezeRef = await derivedFreezeRef(lineage.identity, manifestRef, input.manifest.manifest_digest);
+  if (!SHA256.test(input.manifest.manifest_digest) ||
+      !sameRef(input.manifest.manifest_ref, manifestRef) ||
+      !sameRef(input.stage_input.manifest_ref, manifestRef) ||
+      !sameRef(input.stage_input.freeze_ref, freezeRef)) {
+    throw new Error("freeze reference lineage differs from committed branch material");
+  }
   if (input.stage_five.operation_id !== input.stage_zero.operation_id || input.stage_five.principal_ref !== input.stage_zero.principal_ref ||
       !sameRef(input.stage_five.scope_snapshot_ref, input.stage_zero.scope_snapshot_ref) ||
       input.stage_five.protocol_digest !== input.stage_zero.protocol_digest || input.stage_five.denominator_digest !== input.stage_zero.denominator_digest ||
@@ -258,6 +289,7 @@ export async function deriveEvidenceFreezeAuthorityBinding(input: {
     throw new Error("freeze authority digest differs from persisted workflow material");
   }
   return {
+    freeze_ref: freezeRef,
     scope_snapshot_ref: input.stage_zero.scope_snapshot_ref,
     coverage_denominator_ref: input.stage_zero.coverage_denominator.denominator_ref,
     protocol_digest: input.stage_zero.protocol_digest,
@@ -275,8 +307,12 @@ export async function deriveEvidenceFreezeAuthorityBinding(input: {
       evidence_ref: candidate.candidate_id,
       reason: candidate.reason_code,
     })),
-    unresolved_contradiction_refs: [],
-    open_research_debt_refs: [],
+    unresolved_contradiction_refs: lineage.branch === null
+      ? []
+      : [...lineage.branch.unresolved_contradiction_refs],
+    open_research_debt_refs: lineage.branch === null
+      ? []
+      : lineage.branch.open_research_debt_refs.map((ref) => ({ ...ref })),
     provider_model_prompt_tool_generations: generationBindings(input.model_binding),
   };
 }
@@ -322,17 +358,16 @@ export async function prepareEvidenceFreezeInput(
     lane: dependencies.w1_head.lane,
     lane_registrations: [...dependencies.w1_head.lane_registrations],
   });
-  const lineage = {
+  const lineage = await buildEvidenceFreezeLineage({
     operation_id: request.operation_id,
-    stage_zero_attempt_ref: dependencies.stage_zero.attempt_ref,
-    stage_five_attempt_ref: dependencies.stage_five.stage_attempt_ref,
-    stage_five_request_sha256: dependencies.stage_five.stage_request_sha256,
-    scope_snapshot_ref: scopeRef,
-    protocol_digest: dependencies.stage_zero.protocol_digest,
-    denominator_digest: dependencies.stage_zero.denominator_digest,
+    stage_zero: dependencies.stage_zero,
+    stage_five: dependencies.stage_five,
     model_profile_binding_ref: binding.binding_ref,
-  };
-  const manifestRef: VersionedRef = { id: `eliotr.reference-manifest-${await derivedDigest("eliotr.evidence-freeze.manifest-ref.v1", lineage)}`, revision: 1 };
+    ...(dependencies.branch_reconciliation === undefined
+      ? {}
+      : { branch_reconciliation: dependencies.branch_reconciliation }),
+  });
+  const manifestRef = await derivedManifestRef(lineage.identity);
   const built = await buildAllowedReferenceManifest({
     evidence_pack: dependencies.stage_five.evidence_pack,
     navigation: dependencies.navigation,
@@ -367,7 +402,7 @@ export async function prepareEvidenceFreezeInput(
   const persisted = await store.persist(built.manifest);
   if (!sameRef(persisted.manifest_ref, manifestRef) || persisted.manifest_digest !== built.manifest.manifest_digest ||
       persisted.r2_content_sha256 !== manifestContentDigest) throw new Error("reference manifest persistence readback is not exact");
-  const freezeRef: VersionedRef = { id: `eliotr.evidence-freeze-${await derivedDigest("eliotr.evidence-freeze.ref.v1", { ...lineage, manifest_ref: manifestRef, manifest_digest: built.manifest.manifest_digest })}`, revision: 1 };
+  const freezeRef = await derivedFreezeRef(lineage.identity, manifestRef, built.manifest.manifest_digest);
   const stageInput: EvidenceFreezePreparationResult["stage_input"] = {
     protocol: "eliotr.evidence-freeze-input.v2",
     freeze_ref: freezeRef,

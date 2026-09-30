@@ -211,20 +211,52 @@ export function createResearchBranchExecutionHandlers(
   return Object.freeze({ read_and_extract, analyze_branches, counter_search, recover });
 }
 
-export async function readCommittedResearchBranchReconciliation(input: {
+export interface ResearchBranchReconciliationLineage {
+  readonly checkpoint: ResearchBranchReconciliationCheckpoint;
+  readonly stage_attempt_ref: string;
+  readonly stage_request_sha256: string;
+}
+
+interface ResearchBranchReconciliationReadInput {
   readonly database: D1Database;
   readonly work_bucket: R2Bucket;
   readonly operation_id: string;
   readonly investigation_id: string;
   readonly principal_ref: string;
-}): Promise<ResearchBranchReconciliationCheckpoint | null> {
+}
+
+export async function readCommittedResearchBranchReconciliationLineage(
+  input: ResearchBranchReconciliationReadInput,
+): Promise<ResearchBranchReconciliationLineage | null> {
   const checkpoints = new WorkflowCheckpointStore(input.database);
   const committed = await checkpoints.readCommittedStageRequest(input.operation_id, "COUNTER_SEARCH");
   if (committed === null || committed.request.investigation_ref.id !== input.investigation_id) return null;
   const receipt = await checkpoints.receipt(committed.request, committed.request_sha256);
-  if (receipt === null || receipt.attempt_ref !== committed.attempt_ref) fail("WORKFLOW_OUTPUT_CORRUPT");
-  const parsed = decodeResearchBranchReconciliationCheckpoint(await readWorkflowObject(input.work_bucket, receipt.output_manifest, true));
-  if (parsed.operation_id !== input.operation_id || parsed.investigation_ref.id !== input.investigation_id ||
-      parsed.principal_ref !== input.principal_ref) fail("WORKFLOW_OUTPUT_CORRUPT");
-  return parsed;
+  if (receipt === null || receipt.attempt_ref !== committed.attempt_ref ||
+      receipt.request_sha256 !== committed.request_sha256 ||
+      receipt.investigation_ref.id !== input.investigation_id ||
+      receipt.investigation_ref.revision !== committed.request.investigation_ref.revision) {
+    fail("WORKFLOW_OUTPUT_CORRUPT");
+  }
+  const checkpoint = decodeResearchBranchReconciliationCheckpoint(
+    await readWorkflowObject(input.work_bucket, receipt.output_manifest, true),
+  );
+  if (checkpoint.operation_id !== input.operation_id ||
+      checkpoint.investigation_ref.id !== input.investigation_id ||
+      checkpoint.investigation_ref.revision !== committed.request.investigation_ref.revision ||
+      checkpoint.principal_ref !== input.principal_ref) {
+    fail("WORKFLOW_OUTPUT_CORRUPT");
+  }
+  return Object.freeze({
+    checkpoint,
+    stage_attempt_ref: committed.attempt_ref,
+    stage_request_sha256: committed.request_sha256,
+  });
+}
+
+export async function readCommittedResearchBranchReconciliation(
+  input: ResearchBranchReconciliationReadInput,
+): Promise<ResearchBranchReconciliationCheckpoint | null> {
+  const lineage = await readCommittedResearchBranchReconciliationLineage(input);
+  return lineage?.checkpoint ?? null;
 }

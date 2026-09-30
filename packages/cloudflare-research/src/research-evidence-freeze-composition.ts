@@ -3,6 +3,7 @@ import type { ReferenceManifestStore } from "@eliotr/policy";
 import { RESEARCH_WORKFLOW_STAGES } from "@eliotr/domain";
 import type { InvestigationLedgerStore, LedgerHead } from "@eliotr/research";
 import type { ProtocolScopeCheckpoint } from "./research-protocol-freeze.js";
+import type { ResearchBranchReconciliationLineage } from "./research-branch-execution.js";
 import { readWorkflowObject } from "@eliotr/cloudflare-workflows";
 import { decodeEvidenceFreezeStageInput, type EvidenceFreezeStageInput } from "./research-evidence-freeze.js";
 import {
@@ -32,6 +33,7 @@ import { readCommittedStageLineage } from "@eliotr/cloudflare-workflows";
 export interface EvidenceFreezePredecessorReadback {
   readonly stage_zero: ProtocolScopeCheckpoint;
   readonly stage_five: EvidenceFreezeStageFiveLineage;
+  readonly branch_reconciliation: ResearchBranchReconciliationLineage | null;
   readonly w1_head: LedgerHead;
   readonly authorization_receipt_ref: string;
 }
@@ -45,6 +47,9 @@ export interface EvidenceFreezeCommittedReaderInput {
 export interface EvidenceFreezeCommittedReaders {
   readonly read_stage_zero: (input: EvidenceFreezeCommittedReaderInput) => Promise<ProtocolScopeCheckpoint>;
   readonly read_stage_five: (input: EvidenceFreezeCommittedReaderInput) => Promise<EvidenceFreezeStageFiveLineage>;
+  readonly read_branch_reconciliation?: (
+    input: EvidenceFreezeCommittedReaderInput,
+  ) => Promise<ResearchBranchReconciliationLineage | null>;
   readonly read_w1_head: (investigation_id: string) => Promise<LedgerHead | null>;
   readonly read_authorization_receipt_ref: (operation_id: string, investigation_id: string, principal: WorkflowPrincipal) => Promise<string | null>;
 }
@@ -115,9 +120,14 @@ export function createEvidenceFreezeWorkflowReaders(
   };
 }
 
+export interface EvidenceFreezePredecessorReaderOptions {
+  readonly requires_branch_reconciliation?: (handler_generation: string) => boolean;
+}
+
 export function createEvidenceFreezePredecessorReader(
   navigation: NavigationReadAuthority,
   readers: EvidenceFreezeCommittedReaders,
+  options: EvidenceFreezePredecessorReaderOptions = {},
 ): (request: StageRequest, principal: WorkflowPrincipal) => Promise<EvidenceFreezePredecessorReadback> {
   return async (request, principal) => {
     if (request.stage !== "RECONCILE" && request.stage !== "FREEZE_EVIDENCE") fail("WORKFLOW_INPUT_INVALID");
@@ -126,6 +136,11 @@ export function createEvidenceFreezePredecessorReader(
     const readerInput = { operation_id: request.operation_id, investigation_id: request.investigation_ref.id, principal };
     const stageZero = await readers.read_stage_zero(readerInput);
     const stageFive = await readers.read_stage_five(readerInput);
+    const requiresBranch = options.requires_branch_reconciliation?.(request.handler_generation) ?? false;
+    const branchReconciliation = requiresBranch && readers.read_branch_reconciliation !== undefined
+      ? await readers.read_branch_reconciliation(readerInput)
+      : null;
+    if (requiresBranch && branchReconciliation === null) fail("WORKFLOW_AUTHORITY_STALE");
     const head = await readers.read_w1_head(request.investigation_ref.id);
     const authorizationReceiptRef = await readers.read_authorization_receipt_ref(request.operation_id, request.investigation_ref.id, principal);
     if (head === null || authorizationReceiptRef === null || authorizationReceiptRef.length === 0 ||
@@ -140,7 +155,13 @@ export function createEvidenceFreezePredecessorReader(
     const finalHead = await readers.read_w1_head(request.investigation_ref.id);
     if (canonicalEvidenceJson(before) !== canonicalEvidenceJson(after) || finalHead === null ||
         canonicalEvidenceJson(finalHead) !== canonicalEvidenceJson(head)) fail("WORKFLOW_AUTHORITY_STALE");
-    return { stage_zero: stageZero, stage_five: stageFive, w1_head: head, authorization_receipt_ref: authorizationReceiptRef };
+    return {
+      stage_zero: stageZero,
+      stage_five: stageFive,
+      branch_reconciliation: branchReconciliation,
+      w1_head: head,
+      authorization_receipt_ref: authorizationReceiptRef,
+    };
   };
 }
 
@@ -163,7 +184,8 @@ export function createEvidenceFreezeComposition(dependencies: EvidenceFreezeComp
     const binding = await dependencies.resolve_model_binding({ protocol_scope: predecessor.stage_zero, w1_head: predecessor.w1_head });
     return (await prepareEvidenceFreezeInput({
       navigation: dependencies.navigation, resolver: dependencies.resolver, stage_zero: predecessor.stage_zero,
-      stage_five: predecessor.stage_five, w1_head: predecessor.w1_head, model_binding: binding,
+      stage_five: predecessor.stage_five, branch_reconciliation: predecessor.branch_reconciliation,
+      w1_head: predecessor.w1_head, model_binding: binding,
       scope_snapshot_digest: dependencies.navigation.scope.digest, manifest_store: dependencies.manifest_store_factory,
       manifest_residency_template: dependencies.manifest_residency_template,
       authorization_receipt_ref: predecessor.authorization_receipt_ref, max_context_bytes: dependencies.max_context_bytes,
@@ -174,9 +196,11 @@ export function createEvidenceFreezeComposition(dependencies: EvidenceFreezeComp
       const predecessor = await dependencies.read_predecessors(input.request, input.principal);
       const binding = await dependencies.resolve_model_binding({ protocol_scope: predecessor.stage_zero, w1_head: predecessor.w1_head });
       return deriveEvidenceFreezeAuthorityBinding({
-        stage_zero: predecessor.stage_zero, stage_five: predecessor.stage_five, w1_head: predecessor.w1_head,
+        stage_zero: predecessor.stage_zero, stage_five: predecessor.stage_five,
+        branch_reconciliation: predecessor.branch_reconciliation, w1_head: predecessor.w1_head,
         model_binding: binding, scope_snapshot_digest: dependencies.navigation.scope.digest,
-        current_investigation_ref: input.request.investigation_ref, stage_input: input.stage_input,
+        current_investigation_ref: input.request.investigation_ref, manifest: input.manifest,
+        stage_input: input.stage_input,
       });
     },
   };

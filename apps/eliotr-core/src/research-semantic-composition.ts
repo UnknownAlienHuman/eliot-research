@@ -63,6 +63,8 @@ import { createResearchSynthesisPromptDependencies } from "./research-synthesis-
 import type { RetrieveBranchesStageDependencies } from "./research-retrieve-branches.js";
 import {
   createResearchStageHandlerFactory,
+  SERVER_OWNED_BRANCH_HANDLER_GENERATION,
+  SERVER_OWNED_EXTERNAL_AGENT_HANDLER_GENERATION,
   SERVER_OWNED_FREEZE_HANDLER_GENERATION,
   type SemanticResearchHandlerGeneration,
   type ResearchStageHandlerFactory,
@@ -478,7 +480,11 @@ export function createResearchSemanticComposition(
     work_bucket: input.work_bucket,
     retrieve,
   }, input.navigation, input.ledger);
-  const predecessorReader = createEvidenceFreezePredecessorReader(input.navigation, readers);
+  const predecessorReader = createEvidenceFreezePredecessorReader(input.navigation, readers, {
+    requires_branch_reconciliation: (generation) =>
+      generation === SERVER_OWNED_BRANCH_HANDLER_GENERATION ||
+      generation === SERVER_OWNED_EXTERNAL_AGENT_HANDLER_GENERATION,
+  });
   const freeze: EvidenceFreezeCompositionDependencies = {
     navigation: input.navigation,
     resolver: evidenceResolver,

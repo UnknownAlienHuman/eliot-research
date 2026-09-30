@@ -55,6 +55,7 @@ export interface EvidenceFreezeStageInput {
  * accepted as generation, scope or coverage proof.
  */
 export interface EvidenceFreezeAuthorityBinding {
+  readonly freeze_ref: VersionedRef;
   readonly scope_snapshot_ref: VersionedRef;
   readonly coverage_denominator_ref: VersionedRef;
   readonly protocol_digest: string;
@@ -312,7 +313,7 @@ async function validateAuthority(
   let snapshot: EvidenceFreezeAuthorityBinding;
   try { snapshot = JSON.parse(canonicalEvidenceJson(value)) as EvidenceFreezeAuthorityBinding; }
   catch (cause) { fail("EVIDENCE_FREEZE_AUTHORITY_INVALID", "freeze authority readback is not canonical", false, cause); }
-  const authorityKeys = ["scope_snapshot_ref", "coverage_denominator_ref", "protocol_digest", "contract_protocol_digest", "lane_digest",
+  const authorityKeys = ["freeze_ref", "scope_snapshot_ref", "coverage_denominator_ref", "protocol_digest", "contract_protocol_digest", "lane_digest",
     "stage_zero_attempt_ref", "stage_five_attempt_ref", "stage_five_request_sha256", "model_profile_binding_ref",
     "model_profile_definition", "protocol_profile", "protocol_definition", "lane_material",
     "excluded_evidence", "unresolved_contradiction_refs", "open_research_debt_refs",
@@ -325,13 +326,20 @@ async function validateAuthority(
     fail("EVIDENCE_FREEZE_AUTHORITY_INVALID", "freeze authority arrays are malformed");
   }
   try {
+    const freezeRef = VersionedRefSchema.parse(snapshot.freeze_ref);
     VersionedRefSchema.parse(snapshot.scope_snapshot_ref);
     VersionedRefSchema.parse(snapshot.coverage_denominator_ref);
+    if (freezeRef.revision !== 1) {
+      fail("EVIDENCE_FREEZE_AUTHORITY_INVALID", "freeze authority reference revision is unsupported");
+    }
   } catch (cause) {
     fail("EVIDENCE_FREEZE_AUTHORITY_INVALID", "freeze authority references are invalid", false, cause);
   }
   if (refKey(snapshot.scope_snapshot_ref) !== `${scope.snapshot_id}:${scope.revision}`) {
     fail("EVIDENCE_FREEZE_SCOPE_STALE", "freeze authority is bound to another scope");
+  }
+  if (refKey(snapshot.freeze_ref) !== refKey(input.freeze_ref)) {
+    fail("EVIDENCE_FREEZE_AUTHORITY_INVALID", "freeze reference differs from persisted authority");
   }
   if (refKey(snapshot.coverage_denominator_ref).length > 256 ||
       refKey(snapshot.coverage_denominator_ref) !== refKey(input.coverage_denominator_ref)) {
@@ -540,7 +548,7 @@ export function createEvidenceFreezeStageHandler(
       digest: item.excerpt_sha256,
     })).sort((left, right) => refKey(left.handle_ref).localeCompare(refKey(right.handle_ref)));
     return freezeBytes({
-      freeze_ref: stageInput.freeze_ref,
+      freeze_ref: authority.freeze_ref,
       scope_snapshot_ref: manifest.scope_snapshot_ref,
       client_fence_ref: dependencies.navigation.access.credential_generation,
       coverage_denominator_ref: authority.coverage_denominator_ref,

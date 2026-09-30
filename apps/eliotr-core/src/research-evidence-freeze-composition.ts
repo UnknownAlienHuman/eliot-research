@@ -8,6 +8,7 @@ import {
   type EvidenceFreezeCompositionDependencies,
   createEvidenceFreezeWorkflowReaders as createPackageEvidenceFreezeWorkflowReaders,
   createEvidenceFreezeStageFiveLineage,
+  readCommittedResearchBranchReconciliationLineage,
   WorkflowCheckpointStore,
   fail,
 } from "@eliotr/cloudflare-research";
@@ -35,7 +36,7 @@ export function createEvidenceFreezeWorkflowReaders(
   navigation: NavigationReadAuthority,
   ledger: Pick<InvestigationLedgerStore, "read">,
 ): EvidenceFreezeCommittedReaders {
-  return createPackageEvidenceFreezeWorkflowReaders({
+  const readers = createPackageEvidenceFreezeWorkflowReaders({
     database: environment.database,
     work_bucket: environment.work_bucket,
     read_stage_five: async (input) => {
@@ -44,7 +45,22 @@ export function createEvidenceFreezeWorkflowReaders(
       if (stored === null || stored.request.investigation_ref.id !== input.investigation_id) fail("WORKFLOW_AUTHORITY_STALE");
       const result = await readRetrieveBranchesCheckpoint({ ...environment.retrieve, navigation, ledger }, stored.request, input.principal);
       if (result.receipt.attempt_ref !== stored.attempt_ref) fail("WORKFLOW_OUTPUT_CORRUPT");
-      return createEvidenceFreezeStageFiveLineage({ checkpoint: result.checkpoint, attempt_ref: result.receipt.attempt_ref, request_sha256: result.receipt.request_sha256 });
+      return createEvidenceFreezeStageFiveLineage({
+        checkpoint: result.checkpoint,
+        attempt_ref: result.receipt.attempt_ref,
+        request_sha256: result.receipt.request_sha256,
+      });
     },
   }, navigation, ledger);
+  return Object.freeze({
+    ...readers,
+    read_branch_reconciliation: (input: EvidenceFreezeCommittedReaderInput) =>
+      readCommittedResearchBranchReconciliationLineage({
+      database: environment.database,
+      work_bucket: environment.work_bucket,
+      operation_id: input.operation_id,
+      investigation_id: input.investigation_id,
+      principal_ref: input.principal.principal_ref,
+    }),
+  });
 }

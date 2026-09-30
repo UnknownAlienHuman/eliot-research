@@ -1,49 +1,4 @@
-from pathlib import Path
-
-preparation_path = Path("packages/cloudflare-research/src/research-evidence-freeze-preparation.ts")
-text = preparation_path.read_text(encoding="utf-8")
-start_marker = "interface EvidenceFreezeBranchLineage {"
-end_marker = "function validId(value: string, label: string): void {"
-start = text.find(start_marker)
-end = text.find(end_marker, start)
-if start < 0 or end < 0:
-    raise SystemExit("branch-lineage helper block was not found after the primary patch")
-text = text[:start] + text[end:]
-
-import_anchor = 'import type { StageRequest, WorkflowPrincipal } from "@eliotr/cloudflare-workflows";\n'
-lineage_import = '''import {
-  buildEvidenceFreezeLineage,
-  derivedFreezeRef,
-  derivedManifestRef,
-} from "./research-evidence-freeze-branch-lineage.js";
-'''
-if text.count(import_anchor) != 1:
-    raise SystemExit("preparation import anchor is not unique")
-text = text.replace(import_anchor, import_anchor + lineage_import)
-
-optional_replacements = (
-    (
-        "    branch_reconciliation: input.branch_reconciliation,\n",
-        """    ...(input.branch_reconciliation === undefined
-      ? {}
-      : { branch_reconciliation: input.branch_reconciliation }),
-""",
-    ),
-    (
-        "    branch_reconciliation: dependencies.branch_reconciliation,\n",
-        """    ...(dependencies.branch_reconciliation === undefined
-      ? {}
-      : { branch_reconciliation: dependencies.branch_reconciliation }),
-""",
-    ),
-)
-for old, new in optional_replacements:
-    if text.count(old) != 1:
-        raise SystemExit(f"exact-optional call site was not unique: {old.strip()}")
-    text = text.replace(old, new)
-preparation_path.write_text(text, encoding="utf-8")
-
-module = '''import type { VersionedRef } from "@eliotr/contracts";
+import type { VersionedRef } from "@eliotr/contracts";
 import { evidenceSha256 } from "@eliotr/cloudflare-evidence";
 import type { ResearchBranchReconciliationLineage } from "./research-branch-execution.js";
 import type { EvidenceFreezeStageFiveLineage } from "./research-evidence-freeze-preparation.js";
@@ -186,5 +141,3 @@ export async function derivedFreezeRef(
     revision: 1,
   };
 }
-'''
-Path("packages/cloudflare-research/src/research-evidence-freeze-branch-lineage.ts").write_text(module, encoding="utf-8")
