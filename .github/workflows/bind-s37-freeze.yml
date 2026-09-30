@@ -7,6 +7,7 @@ on:
       - .github/workflows/bind-s37-freeze.yml
       - .github/scripts/bind-s37-freeze.py
       - .github/scripts/split-s37-freeze-lineage.py
+      - .github/scripts/type-s37-app-reader.py
 
 permissions:
   contents: write
@@ -30,10 +31,12 @@ jobs:
         run: |
           python .github/scripts/bind-s37-freeze.py
           python .github/scripts/split-s37-freeze-lineage.py
+          python .github/scripts/type-s37-app-reader.py
           git rm \
             .github/workflows/bind-s37-freeze.yml \
             .github/scripts/bind-s37-freeze.py \
-            .github/scripts/split-s37-freeze-lineage.py
+            .github/scripts/split-s37-freeze-lineage.py \
+            .github/scripts/type-s37-app-reader.py
       - name: Static and scoped compile checks
         run: |
           git diff --check
@@ -57,6 +60,7 @@ jobs:
           assert "Object.keys(raw).length !== 15" in source[paths[4]]
           assert 'const INPUT_PROTOCOL = "eliotr.evidence-freeze-input.v2"' in source[paths[4]]
           assert "freeze_ref: authority.freeze_ref" in source[paths[4]]
+          assert "input: EvidenceFreezeCommittedReaderInput" in source[paths[5]]
           assert "requires_branch_reconciliation" in source[paths[6]]
           assert "SERVER_OWNED_EXTERNAL_AGENT_HANDLER_GENERATION" in source[paths[6]]
           assert line_counts[paths[1]] <= 200
