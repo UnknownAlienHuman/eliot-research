@@ -73,7 +73,8 @@ New delegated explicit-protocol runs use `research-handlers.exploratory.v8`; the
 agent. The bounded payload contains the frozen question graph and admitted evidence handles. Larger exact excerpts are reopened through current evidence authority with bounded ranges. Callback identity and
 selected handles are checked against the exact W2 attempt and re-resolved under current evidence
 authority. The server derives the canonical branch checkpoint; the external agent cannot mint a branch
-reference, observation reference or authoritative disposition. A strict failed callback becomes explicit
+reference, observation reference, unknown/limitation prose, failed-probe reference or authoritative disposition.
+Agent prose remains quarantined in delivery metadata. A strict failed callback becomes explicit
 blocked branches with delivery diagnostics left quarantined; it is not permission for a hidden replacement call. The frozen inquiry protocol still declares
 `external_acquisition="none"`: browser/app/local-computer discoveries are retained only as
 `NOT_ADMITTED` task candidates and cannot enter evidence until a separate ingest/admission flow accepts
@@ -83,7 +84,9 @@ A callback is delivery evidence until the stage-specific consumer validates it. 
 publishes and leaves the W2 attempt STARTED; after `eliotr_task_result`, the originating agent calls the
 existing recovery operation. Recovery reads the exact recorded callback and commits through existing
 W2/W1 authority. Task deadlines may outlive the original ten-minute W2 reservation, but do not outlive
-the exact project grant or current workflow authority. There is no second completion authority.
+the exact project grant or current workflow authority. A payload staged before a lost task-publication ACK
+can bind the exact task at any later instant before that immutable deadline; replay never extends it. There is
+no second completion authority.
 
 Discovery and system status share the wired tool set: run/control/ingest are not falsely marked absent,
 and disabled Google tools are not advertised. Installed capability, current readiness and a caller's

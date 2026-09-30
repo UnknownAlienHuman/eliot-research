@@ -80,7 +80,8 @@ generation `research-handlers.exploratory.v8`; the first live consumer is `ANALY
 4. Call `eliotr_task_progress` only with the next cursor. Exact same-cursor content can reconcile while the
    same lease remains current; gaps, changed content, replacement leases and cancellation fail closed.
 5. Call `eliotr_task_result` with one stable idempotency key and the strict
-   `eliotr.external-branch-analysis.v1` output. Select only evidence handles from the supplied payload.
+   `eliotr.external-branch-analysis.v1` output. Each role record contains only `role`, `status` and selected
+   admitted `evidence_handle_refs`; arbitrary role prose is rejected and cannot enter the canonical checkpoint.
    Report the observed contour/computer/interface honestly; it is diagnostic metadata, not authority.
    Use `SUBSCRIPTION`, `API_METERED` or `UNKNOWN` usage honestly; never invent token counts or cost. A strict
    `FAILED` callback is converted server-side into blocked branch records with quarantined diagnostics, rather
@@ -92,8 +93,10 @@ generation `research-handlers.exploratory.v8`; the first live consumer is `ANALY
    cancellation. It does not renew a lease or settle the stage.
 
 The task deadline can outlive the original short W2 execution reservation so an agent can complete GUI
-work, but it is still bounded by the exact grant and current workflow authority. Revocation, regrant,
-project/scope drift or cancellation fail closed. Owner explicit-protocol runs use deterministic v7;
+work, but it is still bounded by the exact grant and current workflow authority. If publication loses its ACK
+after staging the payload but before creating the task row, the exact task may still bind before that original
+immutable deadline; replay never extends it. Revocation, regrant, project/scope drift or cancellation fail
+closed. Owner explicit-protocol runs use deterministic v7;
 historical generations retain their previous semantics.
 
 There is no arbitrary shell inbox and no permission derived from knowing a `client_grant_id`. A generic

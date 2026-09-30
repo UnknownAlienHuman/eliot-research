@@ -57,9 +57,6 @@ const RoleOutputSchema = z.object({
   role: ResearchBranchRoleSchema,
   status: z.enum(["CANDIDATE_READY", "BLOCKED"]),
   evidence_handle_refs: z.array(VersionedRefSchema).max(512),
-  unknowns: z.array(z.string().min(1).max(1024)).max(64),
-  limitations: z.array(z.string().min(1).max(1024)).max(64),
-  failed_probe_refs: z.array(z.string().min(1).max(256)).max(64),
 }).strict();
 
 const CandidateFindingSchema = z.object({
@@ -201,9 +198,7 @@ function taskBody(context: BranchExecutionContext): Readonly<Record<string, unkn
         "protocol", "task_kind", "task_id", "operation_id", "stage_index", "stage",
         "attempt_ref", "request_sha256", "roles", "candidate_findings", "execution_observation",
       ]),
-      role_record_fields: Object.freeze([
-        "role", "status", "evidence_handle_refs", "unknowns", "limitations", "failed_probe_refs",
-      ]),
+      role_record_fields: Object.freeze(["role", "status", "evidence_handle_refs"]),
       candidate_finding_fields: Object.freeze([
         "candidate_ref", "locator", "observation", "captured_at(optional)", "admission_state=NOT_ADMITTED",
       ]),
@@ -216,6 +211,7 @@ function taskBody(context: BranchExecutionContext): Readonly<Record<string, unkn
         "Use eliotr_open with bounded byte ranges to reopen exact excerpts from supplied admitted handles.",
         "Return exactly one role record for every required role except COUNTER; COUNTER is handled by the next canonical stage.",
         "CANDIDATE_READY roles must select admitted evidence_handle_refs supplied by this task. Never invent a handle.",
+        "Do not return prose in role records. Canonical unknowns, limitations and failed-probe refs are derived server-side.",
         "New browser, app, local-computer or UI observations belong only in candidate_findings with admission_state=NOT_ADMITTED.",
         "Provider or contour names are diagnostic metadata only and never confer authority.",
         "After eliotr_task_result succeeds, call the existing recover operation for this same workflow instance.",
@@ -371,10 +367,9 @@ async function consumeResult(
     if (!sameStrings(roles, [...required].sort()) || new Set(roles).size !== roles.length) corrupt();
     for (const role of output.roles) {
       if (role.role === "COUNTER" ||
-          (role.status === "CANDIDATE_READY" && role.evidence_handle_refs.length === 0 && role.role !== "SOURCE_AUDIT") ||
-          (role.status === "BLOCKED" && role.failed_probe_refs.length === 0)) corrupt();
+          (role.status === "CANDIDATE_READY" && role.evidence_handle_refs.length === 0 && role.role !== "SOURCE_AUDIT")) corrupt();
       const keys = refSet(role.evidence_handle_refs);
-      if (new Set(keys).size !== keys.length || new Set(role.failed_probe_refs).size !== role.failed_probe_refs.length) corrupt();
+      if (new Set(keys).size !== keys.length) corrupt();
     }
     const selected = output.roles.flatMap((role) => role.evidence_handle_refs);
     const uniqueSelected = [...new Map(selected.map((ref) => [refKey(ref), ref])).values()]
@@ -387,11 +382,17 @@ async function consumeResult(
     ];
     const results: ResearchBranchResult[] = [];
     for (const role of output.roles.sort((left, right) => left.role.localeCompare(right.role))) {
+      const blocked = role.status === "BLOCKED";
       const limitations = uniqueSorted([
-        ...role.limitations,
         ...candidateLimitation,
+        "Arbitrary computer-agent prose remains quarantined in delivery metadata; the canonical branch contains only server-derived status text and admitted handle selections.",
         `External client reported contour ${output.execution_observation.contour}; this metadata is non-authoritative and verification/claim audit remain authoritative.`,
       ]);
+      const failedProbeRefs = blocked ? [`eliotr.research.external-agent-blocked-${await evidenceSha256({
+        domain: "eliotr.research.external-agent-blocked.v1",
+        role: role.role,
+        result_digest: resultDigest,
+      })}`] : [];
       results.push(await branchResult({
         role: role.role,
         status: role.status,
@@ -399,9 +400,9 @@ async function consumeResult(
         hypothesis_ids: hypothesesForRole(context.planning, role.role),
         evidence_handle_refs: role.evidence_handle_refs,
         observation_refs: await observationRefs(role.role, role.evidence_handle_refs, resultDigest),
-        unknowns: uniqueSorted(role.unknowns),
+        unknowns: blocked ? ["External computer-agent analysis left this required branch unresolved."] : [],
         limitations,
-        failed_probe_refs: uniqueSorted(role.failed_probe_refs),
+        failed_probe_refs: failedProbeRefs,
         authoritative_disposition: "UNASSESSED",
       }));
     }

@@ -93,7 +93,7 @@ WHERE a.attempt_ref=t.attempt_ref AND a.request_sha256=t.request_sha256
     AND json_extract(p.payload_json,'$.request_sha256')=t.request_sha256
     AND json_extract(p.payload_json,'$.project_id')=t.project_id
     AND julianday(p.created_at)<=julianday(t.created_at)
-    AND julianday(t.created_at)<=julianday(p.created_at,'+5 minutes')
+    AND julianday(t.created_at)<=julianday(p.expires_at)
     AND julianday(p.expires_at)<=julianday(g.expires_at)
   ));
 
