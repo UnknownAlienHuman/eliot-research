@@ -1,0 +1,151 @@
+name: Apply computer-agent web inbox
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/apply-agent-inbox.yml
+      - .github/patches/agent-inbox/payload.part-00
+      - .github/patches/agent-inbox/payload.part-01
+      - .github/patches/agent-inbox/payload.part-02
+      - .github/patches/agent-inbox/payload.part-03
+      - .github/patches/agent-inbox/payload.part-04
+
+permissions:
+  contents: write
+
+concurrency:
+  group: apply-agent-inbox
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 22.13.0
+      - name: Expand and apply reviewed source changes
+        run: |
+          python - <<'PY'
+          from hashlib import sha256
+          from io import BytesIO
+          from pathlib import Path, PurePosixPath
+          import tarfile
+
+          root = Path(".github/patches/agent-inbox")
+          raw = b"".join((root / f"payload.part-{index:02d}").read_bytes() for index in range(5))
+          if sha256(raw).hexdigest() != "7e6e1505027ef5817cb15562e6faa4c0c0f012e2f650ae36912330db483232f8":
+              raise SystemExit("agent-inbox payload digest mismatch")
+          with tarfile.open(fileobj=BytesIO(raw), mode="r:gz") as archive:
+              members = archive.getmembers()
+              if not members or len(members) > 64:
+                  raise SystemExit("agent-inbox payload member count is invalid")
+              total = 0
+              for member in members:
+                  path = PurePosixPath(member.name)
+                  if member.isdir() or path.is_absolute() or ".." in path.parts or member.issym() or member.islnk():
+                      raise SystemExit(f"unsafe agent-inbox payload member: {member.name}")
+                  total += member.size
+              if total > 256 * 1024:
+                  raise SystemExit("agent-inbox payload is too large")
+              archive.extractall(root, members=members, filter="data")
+          PY
+          python .github/patches/agent-inbox/apply.py
+      - name: Static and scoped compile checks
+        run: |
+          set -euo pipefail
+          git diff --check
+          node --check apps/eliotr-pwa/scripts/build-agent-inbox.mjs
+          python - <<'PY'
+          from pathlib import Path
+          import re
+
+          root = Path(".")
+          routes = (root / "packages/interfaces/src/routes.ts").read_text()
+          pairs = re.findall(r'\{ method: "([A-Z]+)", path: "([^"]+)"', routes)
+          assert len(pairs) == len(set(pairs))
+          assert routes.count("research.agent-task.") == 4
+
+          ui = (root / "apps/eliotr-pwa/src/agent-inbox.ts").read_text()
+          page = (root / "apps/eliotr-pwa/src/pages/agent-inbox.astro").read_text()
+          server = (root / "apps/eliotr-core/src/agent-task-http.ts").read_text()
+          static = (root / "apps/eliotr-core/src/agent-inbox-static.ts").read_text()
+          build = (root / "apps/eliotr-pwa/scripts/build-agent-inbox.mjs").read_text()
+          forbidden = ("localStorage", "sessionStorage", "indexedDB", "document.cookie")
+          assert not any(value in ui for value in forbidden)
+          assert "serviceWorker.register" not in ui
+          assert "navigator.serviceWorker.controller" in ui
+          assert "\\bcaches\\b" in build
+          assert "/_astro/" not in page
+          assert page.count("/agent-inbox/app.") == 2
+          assert '<script is:inline type="module" src="/agent-inbox/app.js"></script>' in page
+          assert 'credentials: "omit"' in ui
+          assert 'redirect: "error"' in ui
+          assert 'request.headers.has("Cookie")' in server
+          assert 'Sec-Fetch-Dest' in server and 'Sec-Fetch-Mode' in server
+          assert '"CF-Access-Client-Secret"' not in server
+          for required in (
+              "Cache-Control", "Content-Security-Policy", "X-Frame-Options",
+              "X-Content-Type-Options", "Cross-Origin-Opener-Policy",
+              "Cross-Origin-Resource-Policy", "Permissions-Policy", "X-Robots-Tag",
+          ):
+              assert required in static
+          assert 'headers.delete("Set-Cookie")' in static
+          assert len(ui.splitlines()) < 600
+          assert len(server.splitlines()) < 600
+          assert len(static.splitlines()) < 600
+          print("AGENT_INBOX_STATIC_OK")
+          PY
+          npm install --global pnpm@11.23.0 --ignore-scripts
+          pnpm install --frozen-lockfile --ignore-scripts
+          pnpm --filter @eliotr/interfaces --filter @eliotr/core --filter @eliotr/pwa typecheck
+          pnpm --filter @eliotr/pwa check
+          pnpm --filter @eliotr/pwa build
+          test -f apps/eliotr-pwa/dist/agent-inbox/index.html
+          test -f apps/eliotr-pwa/dist/agent-inbox/app.js
+          test -f apps/eliotr-pwa/dist/agent-inbox/app.css
+          grep -F '/agent-inbox/app.js' apps/eliotr-pwa/dist/agent-inbox/index.html
+          grep -F '/agent-inbox/app.css' apps/eliotr-pwa/dist/agent-inbox/index.html
+          ! grep -F '/_astro/' apps/eliotr-pwa/dist/agent-inbox/index.html
+          ! grep -R -E 'localStorage|sessionStorage|indexedDB|document\.cookie|serviceWorker\.register|sourceMappingURL' \
+            apps/eliotr-pwa/dist/agent-inbox
+          git check-ignore apps/eliotr-pwa/public/agent-inbox/app.js
+          git check-ignore apps/eliotr-pwa/public/agent-inbox/app.css
+          ! git ls-files --error-unmatch apps/eliotr-pwa/public/agent-inbox/app.js
+          ! git ls-files --error-unmatch apps/eliotr-pwa/public/agent-inbox/app.css
+          node scripts/check-budgets.mjs
+      - name: Commit verified inbox
+        run: |
+          set -euo pipefail
+          git rm .github/workflows/apply-agent-inbox.yml \
+            .github/patches/agent-inbox/payload.part-*
+          rm -rf .github/patches/agent-inbox
+          git diff --check
+          git add \
+            packages/interfaces/src/routes.ts \
+            apps/eliotr-core/src/agent-task-http.ts \
+            apps/eliotr-core/src/agent-inbox-static.ts \
+            apps/eliotr-core/src/http-special-routes.ts \
+            apps/eliotr-core/src/http-errors.ts \
+            apps/eliotr-core/src/http.ts \
+            apps/eliotr-pwa/AGENTS.md \
+            apps/eliotr-pwa/package.json \
+            apps/eliotr-pwa/scripts/build-agent-inbox.mjs \
+            apps/eliotr-pwa/public/agent-inbox/.gitignore \
+            apps/eliotr-pwa/src/pages/agent-inbox.astro \
+            apps/eliotr-pwa/src/agent-inbox.ts \
+            apps/eliotr-pwa/src/agent-inbox.css \
+            docs/adr/0007-external-agents-and-cloudflare-evolution.md \
+            docs/adr/0008-computer-agent-web-inbox.md \
+            docs/implementation/muse-operator-runbook.md \
+            docs/implementation/computer-agent-web-inbox.md
+          git config user.name 'Iurii Lisenkov'
+          git config user.email '71514792+UnknownAlienHuman@users.noreply.github.com'
+          git commit -m 'feat: add computer-agent web inbox' \
+            -m 'Expose the existing external-task, exact-evidence and recovery authorities through a no-persistence same-origin browser facade for Dot Pro and other UI-only computer agents. Keep Access service-token identity, project grants, leases and W2/W1 settlement unchanged. Refs #301.'
+          git push origin HEAD:main
