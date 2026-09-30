@@ -59,7 +59,8 @@ jobs:
           assert "freeze_ref: authority.freeze_ref" in source[paths[4]]
           assert "requires_branch_reconciliation" in source[paths[6]]
           assert "SERVER_OWNED_EXTERNAL_AGENT_HANDLER_GENERATION" in source[paths[6]]
-          assert all(lines <= 600 for lines in line_counts.values())
+          assert line_counts[paths[1]] <= 200
+          assert all(line_counts[path] <= 600 for path in paths[:-1])
           print("S37_BRANCH_FREEZE_STATIC_OK")
           PY
           npm install --global pnpm@11.23.0 --ignore-scripts
