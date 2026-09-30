@@ -1,0 +1,256 @@
+name: Apply computer-agent qualification
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/apply-computer-agent-qualification.yml
+      - .github/scripts/apply-computer-agent-qualification.py
+
+permissions:
+  contents: write
+
+concurrency:
+  group: apply-computer-agent-qualification
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 22.13.0
+      - name: Apply reviewed qualification source
+        run: |
+          python -m py_compile .github/scripts/apply-computer-agent-qualification.py
+          python - <<'PY'
+          from pathlib import Path
+          script = Path('.github/scripts/apply-computer-agent-qualification.py')
+          text = script.read_text(encoding='utf-8')
+          block = '''replace_once(
+              "apps/eliotr-pwa/src/agent-inbox.ts",
+              '  access: AccessFields,\\n',
+              '  access: AccessIdentityFields,\\n',
+          )
+          '''
+          block = block.replace('          ', '')
+          if text.count(block) != 2:
+              raise SystemExit(f'expected two AccessFields replacement blocks, found {text.count(block)}')
+          custom = '''target = ROOT / "apps/eliotr-pwa/src/agent-inbox.ts"
+          source = target.read_text(encoding="utf-8")
+          old = '  access: AccessFields,\\n'
+          if source.count(old) != 2:
+              raise SystemExit(f"agent-inbox expected two AccessFields parameters, found {source.count(old)}")
+          target.write_text(source.replace(old, '  access: AccessIdentityFields,\\n'), encoding="utf-8")
+          '''.replace('          ', '')
+          text = text.replace(block, '', 1).replace(block, custom, 1)
+          script.write_text(text, encoding='utf-8')
+          PY
+          python .github/scripts/apply-computer-agent-qualification.py
+      - name: Static, compile, PWA and D1 checks
+        run: |
+          set -euo pipefail
+          git diff --check
+          python - <<'PY'
+          from pathlib import Path
+          import re
+          import subprocess
+
+          routes = Path("packages/interfaces/src/routes.ts").read_text()
+          pairs = re.findall(r'\{ method: "([A-Z]+)", path: "([^"]+)"', routes)
+          assert len(pairs) == len(set(pairs))
+          assert routes.count("computer-agent-qualifications.") == 3
+
+          migration = Path("infra/d1/core/migrations/0089_computer_agent_qualification.sql").read_text()
+          assert "computer-agent-qualification-v1" in migration
+          assert "mcp_client_diagnostic_challenge" in migration
+          assert "COMPUTER_AGENT_QUALIFICATION_AUTHORITY_STALE" in migration
+          store = Path("apps/eliotr-core/src/computer-agent-qualification-store.ts").read_text()
+          assert "createD1McpClientDiagnosticService" in store
+          assert "preflightComputerAgentQualificationChallenge" in store
+          assert "requireCurrentComputerAgentQualification" in store
+          assert "FRESHNESS_MS" in store
+          mcp = Path("apps/eliotr-core/src/index.ts").read_text()
+          assert 'transport: "MCP_WRITE"' in mcp
+          task = Path("apps/eliotr-core/src/mcp-external-agent-task.ts").read_text()
+          assert "requireCurrentComputerAgentQualification" in task
+          ui = Path("apps/eliotr-pwa/src/agent-inbox.ts").read_text()
+          page = Path("apps/eliotr-pwa/src/pages/agent-inbox.astro").read_text()
+          assert "/api/v1/computer-agents/qualifications/confirm" in ui
+          assert "qualification-challenge-token" in page
+          for forbidden in ("localStorage", "sessionStorage", "indexedDB", "document.cookie"):
+              assert forbidden not in ui
+
+          changed = subprocess.check_output(
+              ["git", "diff", "--name-only", "--diff-filter=AM"], text=True,
+          ).splitlines()
+          for name in changed:
+              path = Path(name)
+              if path.suffix not in {".ts", ".tsx", ".js", ".mjs"} or "/src/" not in f"/{name}":
+                  continue
+              current = len(path.read_text(encoding="utf-8").splitlines())
+              old = subprocess.run(["git", "show", f"HEAD:{name}"], text=True, capture_output=True)
+              if old.returncode != 0:
+                  assert current <= 600, f"new source exceeds 600 lines: {name} ({current})"
+              elif len(old.stdout.splitlines()) <= 600:
+                  assert current <= 600, f"changed source created a new violation: {name} ({current})"
+          print("COMPUTER_AGENT_QUALIFICATION_STATIC_OK")
+          PY
+          npm install --global pnpm@11.23.0 --ignore-scripts
+          pnpm install --frozen-lockfile --ignore-scripts
+          pnpm --filter @eliotr/contracts --filter @eliotr/interfaces --filter @eliotr/cloudflare-workspace-mcp --filter @eliotr/core --filter @eliotr/pwa typecheck
+          pnpm --filter @eliotr/pwa check
+          pnpm --filter @eliotr/pwa build
+          test -f apps/eliotr-pwa/dist/agent-inbox/index.html
+          grep -F 'qualification-challenge-token' apps/eliotr-pwa/dist/agent-inbox/index.html
+          ! grep -R -E 'localStorage|sessionStorage|indexedDB|document\.cookie|serviceWorker\.register|sourceMappingURL' \
+            apps/eliotr-pwa/dist/agent-inbox
+          pnpm d1:depth
+          python - <<'PY'
+          import hashlib
+          import json
+          import sqlite3
+          from pathlib import Path
+
+          def canonical(value):
+              return json.dumps(value, separators=(",", ":"), sort_keys=True)
+          def digest(value):
+              return hashlib.sha256(value.encode()).hexdigest()
+
+          db = sqlite3.connect(":memory:")
+          db.executescript("CREATE TABLE schema_state(key TEXT PRIMARY KEY,value TEXT NOT NULL,updated_at TEXT NOT NULL) STRICT;")
+          db.executescript(Path("infra/d1/core/migrations/0044_mcp_client_diagnostics.sql").read_text())
+          db.executescript(Path("infra/d1/core/migrations/0087_computer_agent_connections.sql").read_text())
+          db.executescript(Path("infra/d1/core/migrations/0089_computer_agent_qualification.sql").read_text())
+
+          actor_issuer = "https://team.cloudflareaccess.com"
+          actor_subject = "dot-client.access"
+          connection = {"protocol":"eliotr.computer-agent-connection.v1","connection_id":"dot-primary",
+                        "revision":1,"owner_principal_ref":"owner-1","state":"ENABLED",
+                        "display_name":"Dot primary","contour":"OPENAI_DOT",
+                        "actor":{"issuer":actor_issuer,"authentication_method":"service_token","subject":actor_subject},
+                        "transport_capabilities":["WEB_INBOX"],"computer_capabilities":["CLOUD_BROWSER"],
+                        "task_kinds":["RESEARCH_BRANCH_ANALYSIS"],
+                        "created_at":"2026-09-30T20:00:00.000Z","updated_at":"2026-09-30T20:00:00.000Z"}
+          connection_text = canonical(connection)
+          db.execute("INSERT INTO computer_agent_connection VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (
+              "dot-primary",1,"owner-1",actor_issuer,"service_token",actor_subject,"ENABLED",
+              "Dot primary","OPENAI_DOT",canonical(["WEB_INBOX"]),canonical(["CLOUD_BROWSER"]),
+              canonical(["RESEARCH_BRANCH_ANALYSIS"]),"connection-put","0"*64,
+              connection_text,digest(connection_text),connection["created_at"],connection["updated_at"]))
+
+          db.execute("INSERT INTO mcp_client_diagnostic_challenge VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (
+              "challenge-1","a"*64,"owner-1","owner-generation-1","deploy-1","service-token",
+              "2026-09-30T20:01:00.000Z","2026-09-30T20:06:00.000Z","ISSUED",
+              None,None,None,None,None,None,None))
+          binding = {"protocol":"eliotr.computer-agent-qualification-binding.v1",
+                     "challenge_id":"challenge-1","connection_id":"dot-primary","connection_revision":1,
+                     "transport":"WEB_INBOX","owner_principal_ref":"owner-1",
+                     "owner_credential_generation":"owner-generation-1","deployment_generation":"deploy-1",
+                     "issued_at":"2026-09-30T20:01:00.000Z","expires_at":"2026-09-30T20:06:00.000Z",
+                     "created_at":"2026-09-30T20:01:00.000Z"}
+          binding_text = canonical(binding)
+          db.execute("INSERT INTO computer_agent_connection_qualification_binding VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", (
+              "challenge-1","dot-primary",1,"WEB_INBOX","owner-1","owner-generation-1","deploy-1",
+              binding["issued_at"],binding["expires_at"],binding_text,digest(binding_text),binding["created_at"]))
+          assert db.execute("SELECT challenge_state,current_connection_revision FROM computer_agent_connection_qualification_observation").fetchone() == ("ISSUED",1)
+
+          db.execute("UPDATE mcp_client_diagnostic_challenge SET state='CONFIRMED',observation_ref=?,observed_at=?,trace_id=?,verified_actor_ref=?,verified_credential_generation=?,verified_authentication_method='service_token',verified_expires_at=? WHERE challenge_id='challenge-1'", (
+              "observation-1","2026-09-30T20:02:00.000Z","trace-1",actor_subject,"service-generation-1",
+              "2026-10-01T20:02:00.000Z"))
+          confirmed = db.execute("SELECT challenge_state,verified_actor_ref,verified_credential_generation FROM computer_agent_connection_qualification_observation").fetchone()
+          assert confirmed == ("CONFIRMED",actor_subject,"service-generation-1")
+
+          db.execute("INSERT INTO mcp_client_diagnostic_challenge VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (
+              "challenge-2","b"*64,"owner-1","owner-generation-1","deploy-1","service-token",
+              "2026-09-30T20:03:00.000Z","2026-09-30T20:08:00.000Z","ISSUED",
+              None,None,None,None,None,None,None))
+          wrong = dict(binding); wrong.update(challenge_id="challenge-2",transport="MCP_WRITE",
+              issued_at="2026-09-30T20:03:00.000Z",expires_at="2026-09-30T20:08:00.000Z",
+              created_at="2026-09-30T20:03:00.000Z")
+          wrong_text = canonical(wrong)
+          try:
+              db.execute("INSERT INTO computer_agent_connection_qualification_binding VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", (
+                  "challenge-2","dot-primary",1,"MCP_WRITE","owner-1","owner-generation-1","deploy-1",
+                  wrong["issued_at"],wrong["expires_at"],wrong_text,digest(wrong_text),wrong["created_at"]))
+              raise AssertionError("undeclared transport was accepted")
+          except sqlite3.IntegrityError as error:
+              assert "COMPUTER_AGENT_QUALIFICATION_AUTHORITY_STALE" in str(error)
+
+          assert db.execute("SELECT value FROM schema_state WHERE key='computer_agent_qualification_generation'").fetchone()[0] == "computer-agent-qualification-v1"
+          print("COMPUTER_AGENT_QUALIFICATION_SQL_OK")
+          PY
+          set +e
+          node scripts/check-budgets.mjs > "$RUNNER_TEMP/qualification-budget-report.txt" 2>&1
+          set -e
+          cat "$RUNNER_TEMP/qualification-budget-report.txt"
+          BUDGET_REPORT="$RUNNER_TEMP/qualification-budget-report.txt" python - <<'PY'
+          from pathlib import Path
+          import os
+
+          report = Path(os.environ["BUDGET_REPORT"]).read_text()
+          if "Source budgets: PASS" in report:
+              print("COMPUTER_AGENT_QUALIFICATION_GLOBAL_BUDGETS_PASS")
+              raise SystemExit(0)
+          known = {
+              "packages/cloudflare-ai/src/dynamic-route-qualification.ts",
+              "packages/cloudflare-ai/src/dynamic-route-rest-codec.ts",
+              "packages/cloudflare-ai/src/model-gateway-response.ts",
+              "packages/cloudflare-ai",
+              "packages/cloudflare-artifacts/src/artifact-draft-reader-core.ts",
+              "packages/cloudflare-research/src/research-owner-qualification-renewal.ts",
+              "packages/cloudflare-research/src/research-report-admission.ts",
+              "packages/cloudflare-research",
+              "packages/cloudflare-research-stages/src/research-claim-audit-input.ts",
+              "apps/eliotr-core/src/http.ts",
+              "apps/eliotr-core/src/research-semantic-composition.ts",
+              "apps/eliotr-core/src/wiki-publication-store.ts",
+              "apps/eliotr-core",
+              "Worker source",
+              "apps/eliotr-pwa",
+          }
+          observed = set()
+          for line in report.splitlines():
+              if " has " in line and (" lines (max " in line or " source lines (max " in line):
+                  observed.add(line.split(" has ", 1)[0])
+              elif line.startswith("Worker source is "):
+                  observed.add("Worker source")
+          unknown = observed - known
+          if unknown:
+              raise SystemExit(f"qualification introduced new source-budget violations: {sorted(unknown)}")
+          if not observed:
+              raise SystemExit("unrecognized source-budget report")
+          print(f"COMPUTER_AGENT_QUALIFICATION_SCOPED_BUDGET_OK known_debt={len(observed)} new_violations=0")
+          PY
+      - name: Commit verified qualification
+        run: |
+          set -euo pipefail
+          git rm .github/workflows/apply-computer-agent-qualification.yml \
+            .github/scripts/apply-computer-agent-qualification.py
+          git diff --check
+          git add \
+            infra/d1/core/migrations/0089_computer_agent_qualification.sql \
+            packages/contracts/src/computer-agent-qualification.ts \
+            packages/contracts/src/index.ts \
+            apps/eliotr-core/src/computer-agent-qualification-store.ts \
+            apps/eliotr-core/src/computer-agent-qualification-http.ts \
+            apps/eliotr-core/src/mcp-external-agent-task.ts \
+            apps/eliotr-core/src/index.ts \
+            apps/eliotr-core/src/http-special-routes.ts \
+            packages/interfaces/src/routes.ts \
+            apps/eliotr-pwa/src/pages/agent-inbox.astro \
+            apps/eliotr-pwa/src/agent-inbox.ts \
+            docs/adr/0007-external-agents-and-cloudflare-evolution.md \
+            docs/adr/0008-computer-agent-web-inbox.md \
+            docs/implementation/computer-agent-web-inbox.md \
+            docs/implementation/muse-operator-runbook.md
+          git config user.name 'Iurii Lisenkov'
+          git config user.email '71514792+UnknownAlienHuman@users.noreply.github.com'
+          git commit -m 'feat: qualify computer-agent transports' \
+            -m 'Bind the existing one-shot MCP diagnostic to exact Spark, Muse, Dot or other connection revisions and MCP-write/web-inbox transports. Require current actor, deployment, credential-generation and freshness qualification before task access, while keeping project grants, routes and leases separate. Refs #301.'
+          git push origin HEAD:main
