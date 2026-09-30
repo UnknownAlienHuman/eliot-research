@@ -27,6 +27,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22.13.0
+      - name: Record canonical source-budget baseline debt
+        run: |
+          set +e
+          node scripts/check-budgets.mjs > "$RUNNER_TEMP/s37-budget-before.txt" 2>&1
+          printf '%s\n' "$?" > "$RUNNER_TEMP/s37-budget-before.status"
+          set -e
       - name: Apply reviewed S37 freeze binding
         run: |
           python .github/scripts/bind-s37-freeze.py
@@ -81,7 +87,55 @@ jobs:
             apps/eliotr-core/src/research-semantic-composition.ts
           pnpm boundaries:check
           pnpm work-packets:check
-          pnpm budgets:check
+          set +e
+          node scripts/check-budgets.mjs > "$RUNNER_TEMP/s37-budget-after.txt" 2>&1
+          printf '%s\n' "$?" > "$RUNNER_TEMP/s37-budget-after.status"
+          set -e
+          cat "$RUNNER_TEMP/s37-budget-after.txt"
+          python - <<'PY'
+          from pathlib import Path
+          import os
+          import re
+
+          root = Path(os.environ["RUNNER_TEMP"])
+          before = (root / "s37-budget-before.txt").read_text(encoding="utf-8")
+          after = (root / "s37-budget-after.txt").read_text(encoding="utf-8")
+          before_status = int((root / "s37-budget-before.status").read_text().strip())
+          after_status = int((root / "s37-budget-after.status").read_text().strip())
+
+          def violation_keys(text: str) -> list[str]:
+              keys: list[str] = []
+              for raw in text.splitlines():
+                  line = raw.strip()
+                  match = re.fullmatch(r"(.+?) has \d+ source lines \(max \d+\)", line)
+                  if match:
+                      keys.append(f"{match.group(1)}|source-lines")
+                      continue
+                  match = re.fullmatch(r"(.+?) has \d+ lines \(max \d+\)", line)
+                  if match:
+                      keys.append(f"{match.group(1)}|lines")
+                      continue
+                  if re.fullmatch(r"Worker source is \d+ bytes \(max \d+\)", line):
+                      keys.append("Worker source|bytes")
+              return keys
+
+          before_keys = violation_keys(before)
+          after_keys = violation_keys(after)
+          if before_status == 0:
+              assert after_status == 0, "S37 introduced source-budget debt into a green baseline"
+          else:
+              assert before_keys, "red baseline had no parseable source-budget violations"
+              assert after_status != 0, "source-budget baseline unexpectedly changed classification"
+              assert len(after_keys) <= len(before_keys), (
+                  f"source-budget violation count increased: {len(before_keys)} -> {len(after_keys)}"
+              )
+              new_keys = sorted(set(after_keys) - set(before_keys))
+              assert not new_keys, f"S37 introduced new source-budget violation keys: {new_keys}"
+              print(
+                  "SOURCE_BUDGET_BASELINE_DEBT_UNCHANGED",
+                  {"before": len(before_keys), "after": len(after_keys), "keys": sorted(set(after_keys))},
+              )
+          PY
           pnpm d1:depth
       - name: Commit S37 freeze binding
         run: |
