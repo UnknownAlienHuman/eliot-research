@@ -530,3 +530,32 @@ export async function confirmWebInboxComputerAgentQualification(input: {
     deployment_generation: status.deployment_generation,
   });
 }
+
+export async function readComputerAgentQualificationStatusForConnection(input: {
+  readonly database: D1Database;
+  readonly connection_id: string;
+  readonly connection_revision: number;
+  readonly transport: ComputerAgentQualificationTransport;
+  readonly now?: () => number;
+}): Promise<ComputerAgentQualificationStatus | null> {
+  const now = input.now ?? Date.now;
+  await requireSchema(input.database);
+  if (!/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/u.test(input.connection_id) ||
+      !Number.isSafeInteger(input.connection_revision) || input.connection_revision < 1 ||
+      input.connection_revision > 2_147_483_647) {
+    fail("COMPUTER_AGENT_QUALIFICATION_INPUT_INVALID", 400,
+      "Connection qualification identity is invalid");
+  }
+  const selectedTransport = transport(input.transport);
+  const row = await latest(input.database, input.connection_id,
+    input.connection_revision, selectedTransport);
+  if (row === null) return null;
+  const status = await statusFromRow(row, nowValue(now));
+  if (status.connection_id !== input.connection_id ||
+      status.connection_revision !== input.connection_revision ||
+      status.transport !== selectedTransport) {
+    fail("COMPUTER_AGENT_QUALIFICATION_STORAGE_CORRUPT", 500,
+      "Connection qualification readback identity is corrupt");
+  }
+  return status;
+}

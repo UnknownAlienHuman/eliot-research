@@ -151,3 +151,10 @@ connection revision and transport. An MCP client confirms the challenge with the
 `eliotr_confirm_client_diagnostic` tool; a UI-only Dot/Muse/Spark contour confirms `WEB_INBOX` in the
 no-persistence page. Requalify after credential rotation, connection revision changes, deployment changes,
 expiry or freshness timeout. Never copy one contour's challenge token to another actor.
+
+## Preview the preferred ready contour
+
+Before manual dispatch, the owner can read the project route readiness report for `MCP_WRITE` or
+`WEB_INBOX`. The first eligible ordered entry is returned as `preferred_ready_connection`, while every
+other entry retains its exact reason for ineligibility. This is a planning signal only: the agent that starts
+a delegated run must still be the verified originating actor present in the active route.

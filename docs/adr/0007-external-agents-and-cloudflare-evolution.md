@@ -187,3 +187,15 @@ connection remains current and enabled, and until the earlier of verified creden
 freshness window. Task pull/progress/result/status now require READY qualification for the transport actually
 used. Qualification does not grant a project, select a route, create a run or transfer a lease. Route priority
 can therefore become readiness-aware later without treating configured capability as observed availability.
+
+## 7. Readiness-aware route preview
+
+The owner-only route-readiness endpoint now combines the active ordered route, exact connection revisions,
+declared task/transport capabilities, latest exact qualification and current deployment into one read-only
+report. Each entry reports connection, capability and qualification state; the first eligible entry becomes
+`preferred_ready_connection`. Missing qualification is `UNQUALIFIED`, not inferred READY. Qualification
+for another deployment is `STALE`.
+
+This preview is not dispatch. It does not create a run, call an agent, alter a route, confirm a challenge,
+move a task or transfer a lease. It makes future preferred-agent selection auditable before any mutation
+protocol is introduced.

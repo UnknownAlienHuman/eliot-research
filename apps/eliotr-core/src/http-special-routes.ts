@@ -89,6 +89,7 @@ export async function dispatchHttpSpecialRoute(input: {
     case "research.computer-agent-routes.read":
     case "research.computer-agent-routes.put":
     case "research.computer-agent-routes.disable":
+    case "research.computer-agent-routes.readiness":
       return handleComputerAgentRouteHttp(input.request, input.env, input.context,
         input.match.params, input.match.route.maximum_request_bytes);
     case "research.client-grants.list":

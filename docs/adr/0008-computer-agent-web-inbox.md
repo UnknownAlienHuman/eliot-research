@@ -110,3 +110,11 @@ The agent enters the one-shot challenge ID/token in the no-persistence inbox. Co
 service-token Access actor as later task calls, omits cookies, clears the token after success, and writes only
 the existing diagnostic observation plus immutable connection binding. A changed credential generation,
 connection revision, deployment, expiry or disabled connection requires a new qualification.
+
+## Route readiness preview
+
+Owners may inspect
+`/api/v1/research/projects/<project_id>/computer-agent-routes/RESEARCH_BRANCH_ANALYSIS/readiness/WEB_INBOX`
+before starting work. The report preserves route priority but marks an entry eligible only when the exact
+connection revision is still current/enabled, declares `WEB_INBOX` and the task kind, and has READY
+qualification for the current deployment. `preferred_ready_connection` is advisory observation only.

@@ -6,6 +6,7 @@ import {
 import { apiResult, HttpRequestError, requireNoQuery } from "./http.js";
 import { readJsonBodyWithinBytes } from "./bounded-json.js";
 import type { Env } from "./env.js";
+import { readProjectComputerAgentRouteReadiness } from "./computer-agent-route-readiness.js";
 
 function requireMutationOrigin(request: Request, url: URL): void {
   const origin = request.headers.get("Origin");
@@ -43,6 +44,16 @@ export async function handleComputerAgentRouteHttp(
   try {
     requireNoQuery(url);
     if (request.method === "GET") {
+      if (params.transport !== undefined) {
+        return apiResult(request, env, await readProjectComputerAgentRouteReadiness({
+          database: env.CORE_DB,
+          context,
+          project_id: projectId,
+          task_kind: taskKind,
+          transport: params.transport,
+          deployment_generation: env.DEPLOYMENT_GENERATION,
+        }));
+      }
       return apiResult(request, env, await service.get(context, projectId, taskKind));
     }
     requireMutationOrigin(request, url);

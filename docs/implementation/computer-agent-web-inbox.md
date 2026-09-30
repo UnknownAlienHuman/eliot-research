@@ -127,3 +127,10 @@ challenge ID/token to the intended agent. The agent opens `/agent-inbox/`, enter
 and the challenge, and confirms once. Owner GET on the same qualification URL reports `ISSUED`, `READY`,
 `EXPIRED`, `ACTOR_MISMATCH` or `STALE` without returning the token. Task calls fail until the exact current
 credential generation is READY.
+
+## Inspect readiness without dispatch
+
+Use the owner-only route readiness GET endpoint with `WEB_INBOX` to see ordered Spark/Muse/Dot entries,
+exact revisions, declared capabilities, latest qualification state and the first currently eligible entry.
+`UNQUALIFIED`, `EXPIRED`, `ACTOR_MISMATCH`, `STALE`, unsupported capability and stale connection revisions
+remain distinct. Reading the report does not select an agent or reserve work.

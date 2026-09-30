@@ -41,6 +41,7 @@ export const ROUTES: readonly RouteDefinition[] = [
   { method: "GET", path: "/api/v1/research/projects/:project_id/computer-agent-routes/:task_kind", operation: "research.computer-agent-routes.read", auth: "owner", maximum_request_bytes: 0, response_mode: "json" },
   { method: "PUT", path: "/api/v1/research/projects/:project_id/computer-agent-routes/:task_kind", operation: "research.computer-agent-routes.put", auth: "owner", maximum_request_bytes: 24576, response_mode: "json" },
   { method: "DELETE", path: "/api/v1/research/projects/:project_id/computer-agent-routes/:task_kind", operation: "research.computer-agent-routes.disable", auth: "owner", maximum_request_bytes: 1024, response_mode: "json" },
+  { method: "GET", path: "/api/v1/research/projects/:project_id/computer-agent-routes/:task_kind/readiness/:transport", operation: "research.computer-agent-routes.readiness", auth: "owner", maximum_request_bytes: 0, response_mode: "json" },
   { method: "GET", path: "/api/v1/research/projects", operation: "research.projects.list", auth: "owner", maximum_request_bytes: 0, response_mode: "json" },
   { method: "POST", path: "/api/v1/research/projects", operation: "research.projects.create", auth: "owner", maximum_request_bytes: 16384, response_mode: "json" },
   { method: "PUT", path: "/api/v1/research/projects/:project_id", operation: "research.projects.update", auth: "owner_or_service", maximum_request_bytes: 16384, response_mode: "json" },
