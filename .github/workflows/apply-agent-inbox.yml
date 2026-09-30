@@ -54,6 +54,11 @@ jobs:
               if total > 256 * 1024:
                   raise SystemExit("agent-inbox payload is too large")
               archive.extractall(root, members=members, filter="data")
+          apply = root / "apply.py"
+          text = apply.read_text(encoding="utf-8")
+          if text.count("parents[2]") != 1:
+              raise SystemExit("agent-inbox apply root marker is invalid")
+          apply.write_text(text.replace("parents[2]", "parents[3]"), encoding="utf-8")
           PY
           python .github/patches/agent-inbox/apply.py
       - name: Static and scoped compile checks
