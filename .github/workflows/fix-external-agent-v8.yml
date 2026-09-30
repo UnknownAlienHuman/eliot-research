@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - .github/workflows/fix-external-agent-v8.yml
+      - .github/scripts/fix-external-agent-v8.py
 
 permissions:
   contents: write
@@ -37,6 +38,7 @@ jobs:
           assert "MAX_PAYLOAD_BYTES = 96 * 1024" in payload
           assert "recorded.expires_at !== expiresAt" not in payload
           assert "INLINE_EXCERPT_BUDGET_BYTES = 0" in branch
+          assert "allowed_operations.includes(\"evidence\")" in branch
           assert "BETWEEN 1 AND 98304" in migration
           assert 3 * (96 * 1024 + 64 * 1024 + 4 * 1024) < 512 * 1024
           print("EXTERNAL_AGENT_V8_STATIC_OK")

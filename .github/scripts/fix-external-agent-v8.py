@@ -6,7 +6,7 @@ def replace_once(path: str, old: str, new: str) -> None:
     text = file.read_text(encoding="utf-8")
     count = text.count(old)
     if count != 1:
-        raise SystemExit(f"{path}: expected one replacement, found {count}")
+        raise SystemExit(f"{path}: expected one replacement, found {count}: {old[:96]!r}")
     file.write_text(text.replace(old, new), encoding="utf-8")
 
 
@@ -24,18 +24,10 @@ replace_once(
     "packages/cloudflare-workflows/src/external-agent-task-payload.ts",
     """  const recorded = await validateRow(row);
   if (recorded.payload_sha256 !== payloadSha || recorded.expires_at !== expiresAt ||
-      externalTaskCanonical(recorded.envelope, MAX_PAYLOAD_BYTES, "Recorded external task payload") !== payloadJson) {
-    fail("EXTERNAL_AGENT_TASK_CONFLICT", 409, "External task payload conflicts with its recorded identity");
-  }
-  return recorded;
 """,
     """  const recorded = await validateRow(row);
   // A lost publication ACK must reuse the first immutable deadline. Replays may neither extend nor shorten it.
   if (recorded.payload_sha256 !== payloadSha ||
-      externalTaskCanonical(recorded.envelope, MAX_PAYLOAD_BYTES, "Recorded external task payload") !== payloadJson) {
-    fail("EXTERNAL_AGENT_TASK_CONFLICT", 409, "External task payload conflicts with its recorded identity");
-  }
-  return recorded;
 """,
 )
 replace_once(
@@ -45,18 +37,30 @@ replace_once(
 )
 replace_once(
     "packages/cloudflare-research/src/research-external-branch-analysis.ts",
-    '!grant.allowed_operations.includes("run") || !grant.allowed_operations.includes("recover") ||',
-    '!grant.allowed_operations.includes("run") || !grant.allowed_operations.includes("recover") ||\n      !grant.allowed_operations.includes("evidence") ||',
+    """  if (grant.grantee.subject !== principal.principal_ref || grant.state !== "ACTIVE" ||
+      !grant.allowed_operations.includes("run") || !grant.allowed_operations.includes("recover")) stale();
+""",
+    """  if (grant.grantee.subject !== principal.principal_ref || grant.state !== "ACTIVE" ||
+      !grant.allowed_operations.includes("run") || !grant.allowed_operations.includes("recover") ||
+      !grant.allowed_operations.includes("evidence")) stale();
+""",
 )
 replace_once(
     "packages/cloudflare-research/src/research-external-branch-analysis.ts",
-    'rules: ["admitted_evidence_only", "external_findings_are_candidates", "server_derives_checkpoint"],',
-    'rules: ["admitted_evidence_only", "open_handles_with_bounded_ranges",\n      "external_findings_are_candidates", "server_derives_checkpoint"],',
+    """        "Copy task_id, operation_id, stage_index, stage, attempt_ref and request_sha256 exactly from the task envelope.",
+""",
+    """        "Copy task_id, operation_id, stage_index, stage, attempt_ref and request_sha256 exactly from the task envelope.",
+        "Use eliotr_open with bounded byte ranges to reopen exact excerpts from supplied admitted handles.",
+""",
 )
 replace_once(
     "apps/eliotr-core/src/research-external-agent-routing.ts",
-    '!grant.allowed_operations.includes("run") || !grant.allowed_operations.includes("recover") ||',
-    '!grant.allowed_operations.includes("run") || !grant.allowed_operations.includes("recover") ||\n      !grant.allowed_operations.includes("evidence") ||',
+    """        grant.revision < 1 || grant.state !== "ACTIVE" || !grant.allowed_operations.includes("run") ||
+        !grant.allowed_operations.includes("recover")) {
+""",
+    """        grant.revision < 1 || grant.state !== "ACTIVE" || !grant.allowed_operations.includes("run") ||
+        !grant.allowed_operations.includes("recover") || !grant.allowed_operations.includes("evidence")) {
+""",
 )
 replace_once(
     "apps/eliotr-core/src/research-session.ts",
