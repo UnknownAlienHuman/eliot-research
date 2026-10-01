@@ -23,6 +23,27 @@ jobs:
       - name: Apply, verify, and publish exact target decline
         run: |
           set -euo pipefail
+          gzip -dc .github/decline-payload/apply.py.gz > /tmp/apply-computer-agent-decline.py
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('/tmp/apply-computer-agent-decline.py')
+          text = path.read_text(encoding='utf-8')
+          marker = '    if count != 1:\n'
+          if text.count(marker) != 1:
+              raise SystemExit('decline apply replace_once guard changed')
+          scoped_duplicate = '''    if (
+              count == 2
+              and path == "apps/eliotr-core/src/computer-agent-dispatch-store.ts"
+              and "Computer-agent dispatch migrations 0090 and 0091 are required" in old
+          ):
+              target.write_text(text.replace(old, new), encoding="utf-8")
+              return
+          '''
+          path.write_text(text.replace(marker, scoped_duplicate + marker), encoding='utf-8')
+          PY
+          gzip -n -c /tmp/apply-computer-agent-decline.py > .github/decline-payload/apply.py.gz
+
           gzip -dc .github/decline-payload/runner.sh.gz > /tmp/run-computer-agent-decline.sh
           python - <<'PY'
           from pathlib import Path
