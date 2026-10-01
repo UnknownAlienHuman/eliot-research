@@ -167,7 +167,7 @@ async function createDelegationTestDb() {
   return { db, d1 };
 }
 
-const ISSUER = "https://s92-delegation.cloudflareaccess.com";const GRANTEE_1 = { issuer: ISSUER, authentication_method: "service_token", subject: "machine-01.access" };
+const ISSUER = "https://s92-delegation-example.cloudflareaccess.com";const GRANTEE_1 = { issuer: ISSUER, authentication_method: "service_token", subject: "machine-01.access" };
 const GRANTEE_2 = { issuer: ISSUER, authentication_method: "service_token", subject: "machine-02.access" };
 
 function ownerContext(traceId) {

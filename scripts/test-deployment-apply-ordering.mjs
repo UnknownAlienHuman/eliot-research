@@ -166,7 +166,7 @@ function harness(overrides = {}) {
       }] } });
       if (String(url).endsWith("/versions/" + versionId)) return globalThis.Response.json({ success: true, result: {
         id: versionId, number: 9, resources: {
-          bindings: { CORE_DB: { type: "d1", id: config.d1_databases[0].database_id },
+          bindings: { DEPLOYMENT_GENERATION: { type: "plain_text", text: config.vars.DEPLOYMENT_GENERATION }, CORE_DB: { type: "d1", id: config.d1_databases[0].database_id },
             SEARCH_DB: { type: "d1", id: config.d1_databases[1].database_id }, ASSETS: { type: "assets" },
             RESEARCH_SESSION: { type: "durable_object_namespace", class_name: "ResearchSession" } },
           script: { etag: "fixture-etag" }, script_runtime: { compatibility_date: config.compatibility_date,
