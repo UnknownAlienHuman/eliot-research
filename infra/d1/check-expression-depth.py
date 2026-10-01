@@ -5,7 +5,6 @@ import re
 import sqlite3
 import sys
 import time
-from collections import Counter
 
 ROOT = Path(__file__).resolve().parents[2]
 DEPTH = 100
@@ -159,7 +158,6 @@ def check_store(store: str, application_queries: list[dict], application_status:
             for kind, sql in write_shapes(name, fields, operations):
                 compile_shape(name, "VIEW_" + kind, sql)
         store_app_successes = 0
-        store_app_failures: Counter[str] = Counter()
         for index, query in enumerate(application_queries):
             try:
                 explain(db, query["sql"])
@@ -168,10 +166,8 @@ def check_store(store: str, application_queries: list[dict], application_status:
             except sqlite3.Error as error:
                 failure = category(error)
                 application_status[index].append(failure)
-                store_app_failures[failure] += 1
-        print(f"D1_APP_SQL {store}: compiled={store_app_successes}/{len(application_queries)}")
-        for failure, count in sorted(store_app_failures.items()):
-            print(f"D1_APP_SQL {store}: {failure}={count}")
+        rejected = len(application_queries) - store_app_successes
+        print(f"D1_APP_SQL {store}: compiled={store_app_successes}/{len(application_queries)} candidate_schema_rejected={rejected}")
         print(f"D1_DEPTH {store}: migrations={len(migrations)} tables={len(tables)} "
               f"views={len(views)} statements={statements} failures={failures}")
         return statements, failures

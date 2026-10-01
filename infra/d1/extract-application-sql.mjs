@@ -75,6 +75,24 @@ function staticEvaluator(source) {
     const body = fn.body;
     if (!body) return undefined;
     if (!ts.isBlock(body)) return evaluate(body, environment, depth + 1);
+    const localDeclarations = [];
+    function collectLocals(node) {
+      if (node !== body && ts.isFunctionLike(node)) return;
+      if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name)) localDeclarations.push(node);
+      ts.forEachChild(node, collectLocals);
+    }
+    collectLocals(body);
+    const duplicateNames = new Set();
+    for (const declaration of localDeclarations) {
+      const name = declaration.name.text;
+      if (environment.has(name)) duplicateNames.add(name);
+      environment.set(name, undefined);
+    }
+    for (const declaration of localDeclarations) {
+      const name = declaration.name.text;
+      if (duplicateNames.has(name) || (ts.getCombinedNodeFlags(declaration) & ts.NodeFlags.Const) === 0 || !declaration.initializer) continue;
+      environment.set(name, evaluate(declaration.initializer, environment, depth + 1));
+    }
 
     function statement(node) {
       if (!node) return undefined;
@@ -87,21 +105,27 @@ function staticEvaluator(source) {
         }
       } else if (ts.isIfStatement(node)) {
         const condition = evaluate(node.expression, environment, depth + 1);
-        if (typeof condition === "boolean") return statement(condition ? node.thenStatement : node.elseStatement);
+        if (condition === undefined) return { unknown: true };
+        return statement(condition ? node.thenStatement : node.elseStatement);
       } else if (ts.isBlock(node)) {
         for (const child of node.statements) {
           const result = statement(child);
-          if (result?.returned) return result;
+          if (result?.returned || result?.unknown) return result;
         }
       } else if (ts.isSwitchStatement(node)) {
         const value = evaluate(node.expression, environment, depth + 1);
+        if (value === undefined) return { unknown: true };
         let active = false;
         for (const clause of node.caseBlock.clauses) {
           if (ts.isDefaultClause(clause)) active ||= !node.caseBlock.clauses.some((candidate) => ts.isCaseClause(candidate) && evaluate(candidate.expression, environment, depth + 1) === value);
-          else if (evaluate(clause.expression, environment, depth + 1) === value) active = true;
+          else {
+            const caseValue = evaluate(clause.expression, environment, depth + 1);
+            if (caseValue === undefined) return { unknown: true };
+            if (caseValue === value) active = true;
+          }
           if (active) for (const child of clause.statements) {
             const result = statement(child);
-            if (result?.returned) return result;
+            if (result?.returned || result?.unknown) return result;
           }
         }
       }
@@ -110,6 +134,7 @@ function staticEvaluator(source) {
     for (const child of body.statements) {
       const result = statement(child);
       if (result?.returned) return result.value;
+      if (result?.unknown) return undefined;
     }
     return undefined;
   }
@@ -187,38 +212,71 @@ export function extractSourceText(text, file = resolve(root, "<fixture>.ts")) {
   const queries = [];
   const unresolved = [];
 
-  function invocationEnvironments(call) {
-    let owner = call.parent;
+  function nearestFunction(node) {
+    let owner = node.parent;
     while (owner && !ts.isFunctionLike(owner)) owner = owner.parent;
+    return owner;
+  }
+
+  function shadowedNames(owner, initialValues = new Map()) {
+    const environment = new Map();
+    if (!owner) return environment;
+    for (const parameter of owner.parameters) if (ts.isIdentifier(parameter.name)) environment.set(parameter.name.text, undefined);
+    for (const [name, value] of initialValues) environment.set(name, value);
+    const localDeclarations = [];
+    function visit(node) {
+      if (node !== owner.body && ts.isFunctionLike(node)) return;
+      if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name)) localDeclarations.push(node);
+      ts.forEachChild(node, visit);
+    }
+    if (owner.body) visit(owner.body);
+    const duplicateNames = new Set();
+    for (const declaration of localDeclarations) {
+      const name = declaration.name.text;
+      if (environment.has(name)) duplicateNames.add(name);
+      environment.set(name, undefined);
+    }
+    for (const declaration of localDeclarations) {
+      const name = declaration.name.text;
+      if (duplicateNames.has(name) || (ts.getCombinedNodeFlags(declaration) & ts.NodeFlags.Const) === 0 || !declaration.initializer) continue;
+      environment.set(name, evaluate(declaration.initializer, environment));
+    }
+    return environment;
+  }
+
+  function invocationEnvironments(call) {
+    const owner = nearestFunction(call);
     if (!owner) return [new Map()];
     const functionName = owner.name && ts.isIdentifier(owner.name) ? owner.name.text
       : ts.isVariableDeclaration(owner.parent) && ts.isIdentifier(owner.parent.name) ? owner.parent.name.text : undefined;
-    if (!functionName) return [new Map()];
-    const environments = [new Map()];
+    if (!functionName) return [shadowedNames(owner)];
+    const environments = [];
     function findInvocations(node) {
       if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === functionName && node !== owner) {
-        const environment = new Map();
+        const callerEnvironment = shadowedNames(nearestFunction(node));
+        const parameterValues = new Map();
         owner.parameters.forEach((parameter, index) => {
           if (!ts.isIdentifier(parameter.name)) return;
-          const value = node.arguments[index] ? evaluate(node.arguments[index]) : parameter.initializer ? evaluate(parameter.initializer) : undefined;
-          if (value !== undefined) environment.set(parameter.name.text, value);
+          const value = node.arguments[index] ? evaluate(node.arguments[index], callerEnvironment) : parameter.initializer ? evaluate(parameter.initializer, parameterValues) : undefined;
+          parameterValues.set(parameter.name.text, value);
         });
-        if (environment.size) environments.push(environment);
+        environments.push(shadowedNames(owner, parameterValues));
       }
       ts.forEachChild(node, findInvocations);
     }
     findInvocations(source);
-    return environments;
+    return environments.length ? environments : [shadowedNames(owner)];
   }
 
   function visit(node) {
     if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) && node.expression.name.text === "prepare") {
       const argument = node.arguments[0];
       const environments = invocationEnvironments(node);
-      const values = [...new Set(environments.map((environment) => evaluate(argument, environment)).filter(isSql))];
+      const evaluations = environments.map((environment) => evaluate(argument, environment));
+      const values = [...new Set(evaluations.filter(isSql))];
       const location = sourceLocation(source, node);
       if (values.length) for (const sql of values) queries.push({ location, sql });
-      else {
+      if (!argument || evaluations.some((value) => !isSql(value))) {
         const value = evaluate(argument);
         unresolved.push({ location, reason: !argument ? "missing-prepare-argument" : value === undefined ? "dynamic-or-unresolved" : "non-sql-prepare-argument" });
       }

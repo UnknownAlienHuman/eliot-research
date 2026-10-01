@@ -32,4 +32,42 @@ db.prepare(\`SELECT * FROM \u0024{runtimeTable}\`);
 assert.equal(changed.queries.length, 0);
 assert.equal(changed.unresolved.length, 1);
 
+const mixed = extractSourceText(`
+const registeredSql = "SELECT * FROM source";
+const db = { prepare: (sql: string) => sql };
+function registeredRead(sql: string): void { db.prepare(sql); }
+registeredRead(registeredSql);
+registeredRead(runtimeSql);
+`);
+assert.equal(mixed.queries.length, 1);
+assert.equal(mixed.queries[0].sql, "SELECT * FROM source");
+assert.equal(mixed.unresolved.length, 1);
+
+const shadows = extractSourceText(`
+const query = "SELECT * FROM source";
+const db = { prepare: (sql: string) => sql };
+function parameterShadow(query: string): void { db.prepare(query); }
+function localShadow(): void {
+  const query = runtimeSql;
+  db.prepare(query);
+}
+parameterShadow(runtimeSql);
+localShadow();
+`);
+assert.equal(shadows.queries.length, 0);
+assert.equal(shadows.unresolved.length, 2);
+
+const unknownBranch = extractSourceText(`
+const fallbackSql = "SELECT * FROM safe_table";
+const db = { prepare: (sql: string) => sql };
+function guardedRead(): string {
+  const runtimeCondition = getRuntimeCondition();
+  if (runtimeCondition) return "SELECT * FROM dynamic_table";
+  return fallbackSql;
+}
+db.prepare(guardedRead());
+`);
+assert.equal(unknownBranch.queries.length, 0);
+assert.equal(unknownBranch.unresolved.length, 1);
+
 process.stdout.write("D1_APP_SQL extractor fixtures PASS\n");
