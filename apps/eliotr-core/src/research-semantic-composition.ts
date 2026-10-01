@@ -623,6 +623,11 @@ export function createResearchSemanticWorkflowHandlerFactory(
     generation: input.handler_generation ?? SERVER_OWNED_FREEZE_HANDLER_GENERATION,
     navigation: semantic.navigation,
     ledger: semantic.ledger,
+    branch_execution: {
+      database: input.database,
+      work_bucket: input.work_bucket,
+      read_stage_five: semantic.readers.read_stage_five,
+    },
     environment: {
       CORE_DB: input.database,
       SEARCH_DB: input.search_database,
