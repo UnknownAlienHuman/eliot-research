@@ -59,6 +59,15 @@ export {
   createWorkspacePlan,
   validateWorkspaceReceipt,
 } from "./workspace-mcp-google-sync.js";
+export {
+  MAX_WORKSPACE_CANDIDATE_BYTES,
+  WORKSPACE_CANDIDATE_ADMISSION_PROTOCOL,
+  WorkspaceCandidateAdmissionError,
+  evaluateWorkspaceCandidateAdmission,
+  type WorkspaceCandidateAdmission,
+  type WorkspaceCandidateAdmissionErrorCode,
+  type WorkspaceCandidateAdmissionInput,
+} from "./workspace-candidate-admission.js";
 
 export {
   MCP_RESEARCH_TOOLS,

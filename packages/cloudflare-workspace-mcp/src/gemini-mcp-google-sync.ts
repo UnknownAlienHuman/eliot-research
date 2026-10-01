@@ -1,4 +1,9 @@
-// IN_PROGRESS: ER-36 Workspace candidate bytes admission and live connector readback remain unimplemented; durable v2 plans and observations do not admit sources.
+// Residual (ER-36): live connector readback remains unimplemented (ELIOT performing its own
+// Google readback; google_readback_performed_by_eliotr stays false until managed OAuth client
+// qualification). Workspace candidate-bytes admission is implemented in
+// workspace-candidate-admission.ts: durable v2 plans and observations still never admit sources
+// on their own; the gate only binds caller-supplied bytes to an OBSERVED_MATCH observation plus a
+// separate owner-issued exact-candidate authorization, with no source/evidence authority minted.
 import type { McpToolCallContext } from "./gemini-mcp-protocol.js";
 import {
   GOOGLE_ACTIONS,
