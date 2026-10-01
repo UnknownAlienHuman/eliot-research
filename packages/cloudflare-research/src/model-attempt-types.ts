@@ -54,6 +54,12 @@ export interface ModelAttemptReservationInput {
   /** Trusted W2 stage identity that authorizes this model boundary. */
   readonly stage_attempt_ref: string;
   readonly stage_request_sha256: string;
+  /**
+   * For branch role stages: the W2 stage-level request sha used for workflow
+   * authority binding. `stage_request_sha256` remains the role-scoped request
+   * sha used for W3 spend identity.
+   */
+  readonly workflow_stage_request_sha256?: string;
   /** W2 execution-grant locator; distinct from the W3 cost reservation ID. */
   readonly workflow_budget_receipt_ref: string;
 }
@@ -136,7 +142,8 @@ export type ModelAttemptErrorCode =
   | "MODEL_ATTEMPT_BUDGET_EXPIRED"
   | "MODEL_ATTEMPT_CONFLICT"
   | "MODEL_ATTEMPT_SETTLEMENT_UNCERTAIN"
-  | "MODEL_ATTEMPT_READBACK_CORRUPT";
+  | "MODEL_ATTEMPT_READBACK_CORRUPT"
+  | "MODEL_ATTEMPT_REQUEST_MISMATCH";
 
 export class ModelAttemptError extends Error {
   public readonly code: ModelAttemptErrorCode;

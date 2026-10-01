@@ -11,6 +11,11 @@ export interface SpendAuthorizationReadRequest {
   readonly principal_ref: string;
   readonly stage_attempt_ref: string;
   readonly stage_request_sha256: string;
+  /**
+   * Stage-level W2 sha for branch role stages; the admission lookup still
+   * uses `stage_request_sha256` (the role-scoped sha for the W3 identity).
+   */
+  readonly workflow_stage_request_sha256?: string;
   readonly reservation_id: string;
   readonly quote_ref: string;
   readonly route_ref: string;
@@ -203,7 +208,7 @@ async function readWorkflow(
   ).bind(
     input.request.operation_id,
     input.attempt_ref,
-    input.stage_request_sha256,
+    prepared.workflow_stage_request_sha256 ?? input.stage_request_sha256,
     prepared.authority.client_class,
   ).first<WorkflowRow>();
   if (row === null) stale("workflow currentness or exact stage grant is unavailable");
@@ -236,7 +241,7 @@ function verifyWorkflow(row: WorkflowRow, input: ModelAttemptPreparationContext,
   requireEqual(row.scope_snapshot_id, prepared.authority.scope_snapshot_ref.id, "workflow scope");
   requireEqual(row.scope_snapshot_revision, prepared.authority.scope_snapshot_ref.revision, "workflow scope revision");
   requireEqual(row.attempt_ref, input.attempt_ref, "workflow stage attempt");
-  requireEqual(row.stage_request_sha256, input.stage_request_sha256, "workflow stage request");
+  requireEqual(row.stage_request_sha256, prepared.workflow_stage_request_sha256 ?? input.stage_request_sha256, "workflow stage request");
   requireEqual(row.budget_receipt_ref, input.budget_receipt_ref, "workflow budget receipt");
   requireEqual(row.grant_client_class, prepared.authority.client_class, "workflow client class");
   requireEqual(row.grant_credential_generation, prepared.authority.credential_generation, "grant credential generation");
@@ -374,6 +379,9 @@ export function createD1ResearchModelAttemptRevalidator(
       principal_ref: prepared.authority.principal_ref,
       stage_attempt_ref: prepared.stage_attempt_ref,
       stage_request_sha256: prepared.stage_request_sha256,
+      ...(prepared.workflow_stage_request_sha256 === undefined
+        ? {}
+        : { workflow_stage_request_sha256: prepared.workflow_stage_request_sha256 }),
       reservation_id: prepared.quote.reservation_id,
       quote_ref: prepared.quote.quote_ref,
       route_ref: prepared.call.route_ref,

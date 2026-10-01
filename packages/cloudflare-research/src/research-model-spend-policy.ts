@@ -1,9 +1,9 @@
 import { z } from "zod";
-import { IdentifierSchema, IsoDateTimeSchema, OperationIntentSchema } from "@eliotr/contracts";
+import { IdentifierSchema, IsoDateTimeSchema, OperationIntentSchema, ResearchBranchRoleSchema, type ResearchBranchRole } from "@eliotr/contracts";
 import { modelGatewaySha256 } from "@eliotr/cloudflare-ai";
 import { canonicalJson, decodeModelRouteDeployment, type ModelRouteDeployment } from "@eliotr/platform-cloudflare";
 import type { NavigationReadAuthority } from "@eliotr/cloudflare-evidence";
-import { StageRequestSchema, textDigest } from "@eliotr/cloudflare-workflows";
+import { StageRequestSchema, fail as workflowFail, textDigest, type StageRequest } from "@eliotr/cloudflare-workflows";
 import { ModelAttemptError, type ModelAttemptAuthority, type ModelCostQuote } from "./model-attempt-types.js";
 import { deriveModelAttemptIdentity, type ModelAttemptPreparationContext } from "./model-attempt-handler.js";
 import type { SpendAuthorizationReadRequest } from "./research-model-attempt-revalidator.js";
@@ -23,12 +23,16 @@ const QuoteEstimateSchema = z.object({
   expected_sections: count, confidence: z.number().min(0).max(1),
 }).strict();
 const RuleSchema = z.object({
-  stage: z.enum(["SYNTHESIZE", "AUDIT_CLAIMS"]),
+  stage: z.enum(["ANALYZE_BRANCHES", "COUNTER_SEARCH", "SYNTHESIZE", "AUDIT_CLAIMS"]),
   deployment: z.unknown(),
   max_input_bytes: count.min(1).max(256 * 1024),
   max_output_bytes: count.min(1).max(256 * 1024),
   quote: QuoteEstimateSchema,
 }).strict();
+function validRuleStages(rules: readonly { readonly stage: string }[]): boolean {
+  const stages = rules.map((rule) => rule.stage);
+  return new Set(stages).size === stages.length && stages.includes("SYNTHESIZE") && stages.includes("AUDIT_CLAIMS");
+}
 const PolicySchema = z.object({
   protocol: z.literal("eliotr.research-model-spend-policy.v1"),
   approved: z.literal(true),
@@ -41,7 +45,8 @@ const PolicySchema = z.object({
   policy_generation: IdentifierSchema,
   policy_authority_ref: IdentifierSchema,
   expires_at: IsoDateTimeSchema,
-  rules: z.array(RuleSchema).length(2),
+  rules: z.array(RuleSchema).min(2).max(4).refine(validRuleStages,
+    { message: "model spend policy rules must list unique stages including SYNTHESIZE and AUDIT_CLAIMS" }),
 }).strict();
 
 type SpendRule = Omit<z.infer<typeof RuleSchema>, "deployment"> & { readonly deployment: ModelRouteDeployment };
@@ -67,7 +72,7 @@ export function readResearchModelSpendPolicy(raw: string | undefined, provenance
   if (!raw || new TextEncoder().encode(raw).byteLength > 65536) stale("installed model spend policy is missing or oversized");
   try {
     const parsed = z.union([PolicySchema, DelegatedPolicySchema]).parse(JSON.parse(raw));
-    if (parsed.config_provenance_ref !== provenance || new Set(parsed.rules.map((rule) => rule.stage)).size !== 2) {
+    if (parsed.config_provenance_ref !== provenance || !validRuleStages(parsed.rules)) {
       stale("installed model spend policy provenance or stage selection is invalid");
     }
     return Object.freeze({ ...parsed, rules: Object.freeze(parsed.rules.map((rule) => Object.freeze({
@@ -83,7 +88,7 @@ export function readResearchOwnerSpendPolicyTemplate(raw: string | undefined, pr
   if (!raw || new TextEncoder().encode(raw).byteLength > 65536) stale("installed owner spend template is missing or oversized");
   try {
     const parsed = OwnerSpendPolicyTemplateSchema.parse(JSON.parse(raw));
-    if (parsed.config_provenance_ref !== provenance || new Set(parsed.rules.map((rule) => rule.stage)).size !== 2) {
+    if (parsed.config_provenance_ref !== provenance || !validRuleStages(parsed.rules)) {
       stale("installed owner spend template provenance or stage selection is invalid");
     }
     return Object.freeze({ ...parsed, rules: Object.freeze(parsed.rules.map((rule) => Object.freeze({
@@ -133,6 +138,24 @@ export interface ResearchModelSpendPolicyService {
   readonly admissions: ResearchModelSpendAdmissionPort;
   /** Record the installed explicit decision before the existing W3 reservation. */
   admit(input: ModelAttemptPreparationContext, deployment: ModelRouteDeployment): Promise<void>;
+  /** Record the installed explicit branch-role decision before the existing W3 reservation. */
+  admitBranchRole(input: ResearchBranchRoleSpendAdmissionInput): Promise<void>;
+}
+
+/**
+ * Input for admitting one branch role's model spend. The stage request is the
+ * recovered stage-level request (role suffix stripped); the role context
+ * carries the role-scoped request sha and W3 identity derived from it.
+ */
+export interface ResearchBranchRoleSpendAdmissionInput {
+  /** Stage-level request (recovered by stripping the `:branch-role:${ROLE}` suffix). */
+  readonly stage_request: StageRequest;
+  /** Stage-level W2 request sha. */
+  readonly stage_request_sha256: string;
+  /** Role-scoped preparation context: role-scoped request sha and W3 identity. */
+  readonly role_context: ModelAttemptPreparationContext;
+  readonly role: ResearchBranchRole;
+  readonly deployment: ModelRouteDeployment;
 }
 
 /** Connect the explicit installed policy to current D1 authority and the durable spend adapter. */
@@ -153,7 +176,7 @@ export function createResearchModelSpendPolicyService(input: ResearchModelSpendP
       "JOIN scope_snapshot s ON s.snapshot_id=r.scope_snapshot_id AND s.revision=r.scope_snapshot_revision " +
       "JOIN scope_access_grant g ON g.snapshot_id=s.snapshot_id AND g.snapshot_revision=s.revision AND g.principal_ref=r.principal_ref " +
       "WHERE r.operation_id=?1 AND a.attempt_ref=?2 AND a.request_sha256=?3 AND r.state='ACTIVE' " +
-      "AND a.state='STARTED' AND a.output_json IS NULL AND a.stage_index IN (12,14) AND r.next_stage_index=a.stage_index " +
+      "AND a.state='STARTED' AND a.output_json IS NULL AND a.stage_index IN (8,9,12,14) AND r.next_stage_index=a.stage_index " +
       "AND r.current_revision=a.expected_revision AND r.ledger_revision=a.expected_revision AND s.invalidated_at IS NULL " +
       "AND g.state='ACTIVE' AND g.client_class=?4 AND g.credential_generation=r.credential_generation " +
       "AND g.authorization_receipt_ref=r.authorization_receipt_ref AND g.policy_authority_ref=r.policy_authority_ref " +
@@ -166,7 +189,7 @@ export function createResearchModelSpendPolicyService(input: ResearchModelSpendP
         navigation.access.credential_generation !== row.credential_generation || navigation.access.client_class !== policy.client_class || navigation.scope.snapshot_id !== row.scope_snapshot_id ||
         navigation.scope.revision !== row.scope_snapshot_revision || grant.policy_authority_ref !== row.policy_authority_ref ||
         !grant.allowed_use.includes("research")) stale("model spend policy does not permit this current owner workflow");
-    const stage = row.stage_index === 12 ? "SYNTHESIZE" : "AUDIT_CLAIMS";
+    const stage = row.stage_index === 12 ? "SYNTHESIZE" : row.stage_index === 14 ? "AUDIT_CLAIMS" : row.stage_index === 8 ? "ANALYZE_BRANCHES" : "COUNTER_SEARCH";
     const rule = policy.rules.find((value) => value.stage === stage);
     if (rule === undefined || !Number.isSafeInteger(row.budget_expires_at_ms)) stale("model stage policy or execution grant is unavailable");
     const expires = Math.min(Date.parse(policy.expires_at), Date.parse(row.grant_expires_at),
@@ -195,6 +218,13 @@ export function createResearchModelSpendPolicyService(input: ResearchModelSpendP
   }
 
   async function readCurrent(request: SpendAuthorizationReadRequest): Promise<ResearchModelSpendCurrentAuthority> {
+    if (request.workflow_stage_request_sha256 !== undefined) {
+      // Branch role stage: the W2 authority is read by the stage-level request
+      // sha. The role-level W3 identity intentionally differs; the role binding
+      // is validated by admitBranchRole and by the port's assertRequest.
+      const value = await current(request.stage_attempt_ref, request.workflow_stage_request_sha256);
+      return { authority: value.authority, expected_deployment: value.deployment };
+    }
     const value = await current(request.stage_attempt_ref, request.stage_request_sha256);
     if (request.operation_id !== value.identity.operation_id || request.principal_ref !== value.authority.principal_ref ||
         request.route_ref !== value.deployment.route_ref || request.workflow_authorization_receipt_ref !== value.row.authorization_receipt_ref ||
@@ -228,11 +258,51 @@ export function createResearchModelSpendPolicyService(input: ResearchModelSpendP
         stage_attempt_ref: value.row.attempt_ref, stage_request_sha256: value.row.request_sha256,
         reservation_id: quote.reservation_id, quote_ref: quote.quote_ref, route_ref: value.deployment.route_ref,
         scope_snapshot_ref: value.authority.scope_snapshot_ref, workflow_authorization_receipt_ref: value.row.authorization_receipt_ref },
-      workflow_operation_id: input.operation_id, stage_index: value.row.stage_index === 12 ? 12 : 14,
+      workflow_operation_id: input.operation_id, stage_index: value.row.stage_index as 8 | 9 | 12 | 14,
       workflow_budget_receipt_ref: value.row.budget_receipt_ref,
       stage_request_json: value.row.request_json, intent, quote, authority: value.authority, expected_deployment: value.deployment,
       approval: { ...decision, decision_digest: await modelGatewaySha256(canonicalJson(decision)) },
       max_input_bytes: value.rule.max_input_bytes, max_output_bytes: value.rule.max_output_bytes,
+    });
+  },
+  async admitBranchRole(admission: ResearchBranchRoleSpendAdmissionInput): Promise<void> {
+    const stageIndex = admission.stage_request.stage === "ANALYZE_BRANCHES" ? 8 : admission.stage_request.stage === "COUNTER_SEARCH" ? 9 : undefined;
+    if (stageIndex === undefined) workflowFail("WORKFLOW_CONFIGURATION_MISSING");
+    const rule = policy.rules.find((value) => value.stage === admission.stage_request.stage);
+    if (rule === undefined) workflowFail("WORKFLOW_CONFIGURATION_MISSING");
+    ResearchBranchRoleSchema.parse(admission.role);
+    const context = admission.role_context;
+    const roleSha = context.stage_request_sha256;
+    const value = await current(context.attempt_ref, admission.stage_request_sha256);
+    const identity = await deriveModelAttemptIdentity({ stage_request_sha256: roleSha,
+      principal_ref: context.principal.principal_ref, credential_generation: context.principal.credential_generation,
+      deployment_generation: context.principal.deployment_generation });
+    if (context.model_operation_id !== identity.operation_id || context.model_idempotency_key !== identity.idempotency_key ||
+        context.budget_receipt_ref !== value.row.budget_receipt_ref || canonicalJson(admission.deployment) !== canonicalJson(value.deployment) ||
+        canonicalJson(admission.stage_request) !== canonicalJson(value.request)) stale("branch role preparation is outside its approved durable stage");
+    const quote: ModelCostQuote = { ...rule.quote, quote_ref: `model-quote-${roleSha}`,
+      reservation_id: `model-reservation-${roleSha}`, operation_kind: "RESEARCH",
+      selected_routes: [admission.deployment.route_ref], expires_at: value.authority.expires_at };
+    const intent = OperationIntentSchema.parse({ intent_ref: { id: identity.operation_id, revision: 1 },
+      operation_kind: "RESEARCH", principal_ref: value.authority.principal_ref, idempotency_key: identity.idempotency_key,
+      payload_ref: `branch-role-payload-${roleSha}`, cancellation_ref: `branch-role-cancel-${roleSha}`,
+      policy_decision_ref: value.authority.policy_decision_ref, budget_reservation_ref: quote.reservation_id, created_at: value.row.started_at });
+    const decision = { protocol: RESEARCH_MODEL_SPEND_APPROVAL_PROTOCOL, approved: true as const,
+      authorization_ref: `model-authorization-${roleSha}`, policy_decision_ref: value.authority.policy_decision_ref,
+      policy_generation: value.authority.policy_generation, currentness_digest: value.authority.currentness_digest,
+      expires_at: value.authority.expires_at, expected_deployment: admission.deployment };
+    await admissions.admit({
+      request: { operation_id: identity.operation_id, principal_ref: value.authority.principal_ref,
+        stage_attempt_ref: value.row.attempt_ref, stage_request_sha256: roleSha,
+        reservation_id: quote.reservation_id, quote_ref: quote.quote_ref, route_ref: admission.deployment.route_ref,
+        scope_snapshot_ref: value.authority.scope_snapshot_ref, workflow_authorization_receipt_ref: value.row.authorization_receipt_ref,
+        workflow_stage_request_sha256: admission.stage_request_sha256 },
+      workflow_operation_id: input.operation_id, stage_index: stageIndex,
+      workflow_budget_receipt_ref: value.row.budget_receipt_ref,
+      workflow_stage_request_sha256: admission.stage_request_sha256,
+      stage_request_json: value.row.request_json, intent, quote, authority: value.authority, expected_deployment: admission.deployment,
+      approval: { ...decision, decision_digest: await modelGatewaySha256(canonicalJson(decision)) },
+      max_input_bytes: rule.max_input_bytes, max_output_bytes: rule.max_output_bytes,
     });
   } });
 }
