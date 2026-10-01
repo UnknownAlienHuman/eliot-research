@@ -62,6 +62,13 @@ interface ProgressRow {
   task_id: string; cursor: number; lease_id: string; credential_generation: string;
   progress_json: string; progress_sha256: string; created_at: string;
 }
+interface WorkflowSettlementRow {
+  state: "ACTIVE" | "CANCELLED" | "ENGINE_COMPLETED";
+  next_stage_index: number;
+}
+interface WorkflowSettlement extends WorkflowSettlementRow {
+  settled: boolean;
+}
 function taskId(requestSha256: string): string { return `external-task:${requestSha256}`; }
 function requireGrant(actor: ExternalAgentTaskActor, now: number): ProjectClientGrant {
   const grant = actor.grant;
@@ -188,6 +195,31 @@ export class ExternalAgentTaskStore {
     try { return await this.#db.prepare("SELECT * FROM research_external_agent_task_progress WHERE task_id=?1 AND cursor=?2 LIMIT 1")
       .bind(task, cursor).first<ProgressRow>(); }
     catch { fail("EXTERNAL_AGENT_TASK_EFFECT_UNCERTAIN", 503, "External task progress read is unavailable", true); }
+  }
+  async #workflowSettlement(row: TaskRow): Promise<WorkflowSettlement> {
+    let status: WorkflowSettlementRow | null;
+    try {
+      status = await this.#db.prepare(
+        "SELECT state,next_stage_index FROM research_workflow_run WHERE operation_id=?1 LIMIT 1",
+      ).bind(row.operation_id).first<WorkflowSettlementRow>();
+    } catch {
+      fail("EXTERNAL_AGENT_TASK_EFFECT_UNCERTAIN", 503,
+        "External task workflow settlement read is unavailable", true);
+    }
+    if (status === null ||
+        (status.state !== "ACTIVE" && status.state !== "CANCELLED" &&
+          status.state !== "ENGINE_COMPLETED") ||
+        !Number.isSafeInteger(status.next_stage_index) || status.next_stage_index < 0 ||
+        status.next_stage_index > RESEARCH_WORKFLOW_STAGES.length ||
+        (status.state === "ACTIVE" && status.next_stage_index < row.stage_index)) {
+      fail("EXTERNAL_AGENT_TASK_OUTPUT_CORRUPT", 500,
+        "External task workflow settlement is corrupt");
+    }
+    return Object.freeze({
+      ...status,
+      settled: status.state === "ENGINE_COMPLETED" ||
+        status.next_stage_index > row.stage_index,
+    });
   }
 
   async publish(inputValue: ExternalAgentTaskPublication): Promise<Readonly<Record<string, unknown>>> {
@@ -485,12 +517,14 @@ export class ExternalAgentTaskStore {
         envelope.request_sha256 !== row.request_sha256 || envelope.attempt_ref !== row.attempt_ref) {
       fail("EXTERNAL_AGENT_TASK_CONFLICT", 409, "A different result is already recorded for this task");
     }
+    const settlement = await this.#workflowSettlement(row);
     return Object.freeze({ protocol: "eliotr.external-agent-result-receipt.v1", task_id: row.task_id,
       operation_id: row.operation_id, stage_index: row.stage_index, stage: row.stage,
       attempt_ref: row.attempt_ref, request_sha256: row.request_sha256, lease_id: row.lease_id,
       idempotency_key: row.result_idempotency_key, disposition: envelope.disposition,
       worker_slot: row.lease_slot, result_sha256: row.result_sha256, submitted_at: envelope.submitted_at,
-      delivery_state: row.state, workflow_settled: false });
+      delivery_state: row.state, workflow_state: settlement.state,
+      workflow_next_stage_index: settlement.next_stage_index, workflow_settled: settlement.settled });
   }
 
   async status(actor: ExternalAgentTaskActor, task: string): Promise<Readonly<Record<string, unknown>>> {
@@ -506,17 +540,21 @@ export class ExternalAgentTaskStore {
       }
       decodeExternalAgentRecordedProgress(latest, row);
     }
+    const settlement = await this.#workflowSettlement(row);
     let result: Readonly<Record<string, unknown>> | null = null;
     if (row.state === "RESULT_RECORDED" && row.result_json !== null && row.result_sha256 !== null) {
       const envelope = decodeExternalAgentRecordedResult(row);
       result = Object.freeze({ disposition: envelope.disposition, result_sha256: row.result_sha256,
-        idempotency_key: row.result_idempotency_key, submitted_at: envelope.submitted_at, workflow_settled: false });
+        idempotency_key: row.result_idempotency_key, submitted_at: envelope.submitted_at,
+        workflow_state: settlement.state, workflow_next_stage_index: settlement.next_stage_index,
+        workflow_settled: settlement.settled });
     }
     return Object.freeze({ protocol: "eliotr.external-agent-task-status.v1", task_id: row.task_id,
       operation_id: row.operation_id, stage_index: row.stage_index, stage: row.stage,
       attempt_ref: row.attempt_ref, request_sha256: row.request_sha256, project_id: row.project_id,
-      delivery_state: row.state, effective_state: row.workflow_state === "CANCELLED" ? "CANCELLED" : row.state,
-      workflow_state: row.workflow_state, cancellation_receipt_ref: row.cancellation_receipt_ref,
+      delivery_state: row.state, effective_state: settlement.state === "CANCELLED" ? "CANCELLED" : row.state,
+      workflow_state: settlement.state, workflow_next_stage_index: settlement.next_stage_index,
+      workflow_settled: settlement.settled, cancellation_receipt_ref: row.cancellation_receipt_ref,
       lease: row.lease_id === null ? null : Object.freeze({ lease_id: row.lease_id, worker_slot: row.lease_slot,
         revision: row.lease_revision, expires_at: row.lease_expires_at }),
       latest_progress: latest === null ? null : Object.freeze({ cursor: latest.cursor,

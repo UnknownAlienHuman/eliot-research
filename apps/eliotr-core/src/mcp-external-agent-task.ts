@@ -10,6 +10,7 @@ import {
 } from "@eliotr/cloudflare-workflows";
 import type { AuthenticatedRequestContext } from "@eliotr/interfaces";
 import type { Env } from "./env.js";
+import { wakeExternalAgentResultWorkflow } from "./external-agent-result-wake.js";
 import {
   ComputerAgentConnectionError,
   requireComputerAgentConnectionForTask,
@@ -231,7 +232,8 @@ export async function callExternalAgentTaskTool(
         evidence_refs: refs(result.evidence_refs), diagnostics: stringArray(result.diagnostics, "result.diagnostics"),
         usage: usage(result.usage),
       };
-      return store.recordResult(taskActor, parsed);
+      const receipt = await store.recordResult(taskActor, parsed);
+      return wakeExternalAgentResultWorkflow(env, context, receipt);
     }
     case "eliotr_task_status": {
       exact(input, ["client_grant_id", "task_id"], "Task status request");

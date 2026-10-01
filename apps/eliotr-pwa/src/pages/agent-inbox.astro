@@ -245,7 +245,7 @@ const description = "A no-persistence service-token task console for approved co
           <div class="panel-heading">
             <div>
               <p class="step">05</p>
-              <h2>Result</h2>
+              <h2>Result and automatic wake</h2>
             </div>
             <div class="button-row">
               <button id="reset-result" class="button button--quiet" type="button">Reset template</button>
@@ -267,13 +267,14 @@ const description = "A no-persistence service-token task console for approved co
         <div class="panel-heading">
           <div>
             <p class="step">06</p>
-            <h2 id="recover-heading">Canonical recovery</h2>
+            <h2 id="recover-heading">Manual recovery fallback</h2>
           </div>
-          <button id="recover-run" class="button button--danger" type="button" data-request>Recover workflow</button>
+          <button id="recover-run" class="button button--danger" type="button" data-request>Retry canonical wake</button>
         </div>
         <p class="help">
-          A recorded callback is delivery evidence only. Recovery validates it and settles the existing
-          W2/W1 authority; it does not create a replacement run.
+          Result submission automatically invokes the existing recovery path after durable callback readback.
+          Use this fallback only when that wake is unconfirmed, preserving the prefilled deterministic key.
+          Recovery validates the callback and settles W2/W1; it never creates a replacement run.
         </p>
         <label>
           <span>Recovery idempotency key</span>

@@ -211,7 +211,7 @@ export const MCP_RESEARCH_TOOLS = {
   },
   eliotr_task_result: {
     name: "eliotr_task_result",
-    description: "Record an idempotent subscription-agent callback for the exact live lease. Repeat the same idempotency key and semantic result after a lost acknowledgement. The receipt explicitly reports workflow_settled=false: a later stage-specific consumer must validate and commit through the existing W1/W2 authority.",
+    description: "Record an idempotent subscription-agent callback for the exact live lease. After durable readback Core attempts the existing recover action with deterministic key agent-recover-<first 24 request_sha256 hex>. Repeat the same result after an uncertain response; manual recover is only a fallback with that exact key. workflow_settled becomes true only after the stage-specific consumer validates and W2/W1 advances.",
     inputSchema: { type: "object", additionalProperties: false,
       required: ["client_grant_id", "task_id", "lease_id", "idempotency_key", "result"],
       properties: { ...grant, task_id: externalTaskId, lease_id: externalLeaseId,
@@ -221,7 +221,7 @@ export const MCP_RESEARCH_TOOLS = {
   },
   eliotr_task_status: {
     name: "eliotr_task_status",
-    description: "Read delivery, lease, latest progress, callback digest and workflow cancellation for one task bound to this exact grant revision. It never renews a lease or converts a recorded callback into a Research stage result.",
+    description: "Read delivery, lease, latest progress, callback digest, canonical next-stage settlement and workflow cancellation for one task bound to this exact grant revision. It never renews a lease or converts a recorded callback into a Research stage result.",
     inputSchema: { type: "object", additionalProperties: false, required: ["client_grant_id", "task_id"],
       properties: { ...grant, task_id: externalTaskId } },
     annotations: { ...annotations(true), readOnlyHint: true },

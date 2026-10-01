@@ -59,12 +59,14 @@ than sharing the owner PWA profile. The inbox never registers a worker or writes
    reconciliation.
 5. Edit the strict result JSON. Canonical role records contain only role, status and admitted handle refs;
    browser/local discoveries remain `candidate_findings` with `admission_state=NOT_ADMITTED`.
-6. Submit the result with one stable idempotency key.
-7. Invoke recovery with the existing workflow ID and one stable recovery idempotency key.
-8. Read task status to reconcile uncertain responses.
+6. Submit the result with one stable idempotency key. After durable result readback, Core invokes the
+   existing recovery path using `agent-recover-<first 24 request_sha256 hex>`.
+7. If result/wake acknowledgement is uncertain, repeat the exact result. Use the manual recovery control only
+   as a fallback with that same deterministic key; a different key conflicts with the durable recovery journal.
+8. Read task status to reconcile delivery and canonical settlement.
 
-The result receipt remains `workflow_settled=false` until the existing recovery path validates the callback,
-reopens selected evidence and commits the W2/W1 checkpoint.
+`workflow_settled` remains false while the same workflow is merely active. It becomes true only after the
+stage-specific consumer reopens selected evidence, validates the callback and advances W2/W1.
 
 ## HTTP contract
 
@@ -93,7 +95,7 @@ This slice does not implement:
 - Access-policy mutation or service-token issuance;
 - automatic Spark/Muse/Dot selection, failover or lease transfer;
 - multiple agents racing one exclusive lease;
-- automatic Workflow wake-up after callback;
+- deployment/live qualification of automatic Workflow wake-up after callback;
 - automatic admission of new browser/local material;
 - offline caching, credential persistence or background browser execution;
 - live Dot, Muse or Spark verification.

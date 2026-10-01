@@ -10,7 +10,7 @@ import { prepareProjectClientRecoverySpend, prepareOwnerMachineRecoverySpend, re
 import { RUN_CONTROL_FENCE_SQL, runControlFenceBindings, requireRunControlSchema, type AuthorizedRunControl } from "./research-run-control-fence.js";
 import { prepareProjectClientRunRead } from "./research-client-run-read.js";
 import { prepareProjectClientCancelAction } from "./research-run-cancel-action.js";
-import { isSemanticResearchHandlerGeneration } from "./research-stage-handlers.js";
+import { isSemanticResearchHandlerGeneration, SERVER_OWNED_EXTERNAL_AGENT_HANDLER_GENERATION } from "./research-stage-handlers.js";
 
 function fail(code: string, status: number, retryable = false): never {
   throw new CatalogInputError(code, "Research run control could not be confirmed", status, retryable);
@@ -323,12 +323,19 @@ async function settleRecoveryAction(database: D1Database, row: RecoveryActionRow
   if (after?.state !== "SUCCEEDED") fail("RESEARCH_CONTROL_UNCONFIRMED", 503, true);
 }
 
+export function isRecoverableStartedResearchStage(handlerGeneration: string, stage: string): boolean {
+  return isSemanticResearchHandlerGeneration(handlerGeneration) &&
+    (RECOVERABLE_STARTED_STAGES.has(stage) ||
+      (handlerGeneration === SERVER_OWNED_EXTERNAL_AGENT_HANDLER_GENERATION &&
+        stage === "ANALYZE_BRANCHES"));
+}
+
 function requireSafeRestart(status: WorkflowRunStatus, handlerGeneration: string): void {
   const stage = RESEARCH_WORKFLOW_STAGES[status.next_stage_index];
   if (stage === undefined || (status.current_attempt !== null &&
       status.current_attempt.stage_index !== status.next_stage_index)) fail("RESEARCH_RUN_STATUS_INVALID", 409);
   if (status.current_attempt?.state === "STARTED" &&
-      (!isSemanticResearchHandlerGeneration(handlerGeneration) || !RECOVERABLE_STARTED_STAGES.has(stage))) {
+      !isRecoverableStartedResearchStage(handlerGeneration, stage)) {
     fail("RESEARCH_RUN_RECOVERY_UNSAFE", 409);
   }
 }

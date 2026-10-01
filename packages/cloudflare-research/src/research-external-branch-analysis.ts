@@ -215,7 +215,7 @@ function taskBody(context: BranchExecutionContext): Readonly<Record<string, unkn
         "Do not return prose in role records. Canonical unknowns, limitations and failed-probe refs are derived server-side.",
         "New browser, app, local-computer or UI observations belong only in candidate_findings with admission_state=NOT_ADMITTED.",
         "Provider or contour names are diagnostic metadata only and never confer authority.",
-        "After eliotr_task_result succeeds, call the existing recover operation for this same workflow instance.",
+        "After eliotr_task_result readback, Core attempts the existing recover operation automatically with key agent-recover-<first 24 request_sha256 hex>; use that exact key only as a manual fallback after an unconfirmed wake.",
       ]),
     }),
   });

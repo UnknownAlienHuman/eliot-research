@@ -87,11 +87,13 @@ generation `research-handlers.exploratory.v8`; the first live consumer is `ANALY
    Use `SUBSCRIPTION`, `API_METERED` or `UNKNOWN` usage honestly; never invent token counts or cost. A strict
    `FAILED` callback is converted server-side into blocked branch records with quarantined diagnostics, rather
    than authorizing replacement evidence or silently retrying another agent.
-6. After the result receipt (`workflow_settled=false`), call the existing `eliotr_recover` for the same
-   workflow ID and grant. Recovery reads the exact callback, re-resolves every selected handle under current
-   scope/evidence authority, derives the canonical branch checkpoint server-side, and settles through W2/W1.
-7. Use `eliotr_task_status` to inspect delivery state, lease, progress digest, callback digest and workflow
-   cancellation. It does not renew a lease or settle the stage.
+6. After durable result readback, Core automatically invokes the existing recovery action with
+   `agent-recover-<first 24 request_sha256 hex>`. Recovery reads the exact callback, re-resolves every selected
+   handle under current scope/evidence authority, derives the canonical branch checkpoint server-side and
+   settles through W2/W1. If acknowledgement is uncertain, repeat the exact result; use manual recover only
+   as a fallback with that same deterministic key.
+7. Use `eliotr_task_status` to inspect delivery state, lease, progress digest, callback digest, canonical
+   next-stage settlement and workflow cancellation. It does not renew a lease or settle the stage itself.
 
 The task deadline can outlive the original short W2 execution reservation so an agent can complete GUI
 work, but it is still bounded by the exact grant and current workflow authority. If publication loses its ACK
@@ -167,8 +169,8 @@ a delegated run must still be the verified originating actor present in the acti
 3. In the target agent's own authenticated contour, pull the dispatch using the exact grant locator.
 4. Accept it under that same credential generation. The returned workflow ID is the existing Research run,
    not a wrapper job.
-5. Pull the Stage 8 task only after the workflow publishes it, submit the callback, then recover through the
-   existing W2/W1 path.
+5. Pull the Stage 8 task only after the workflow publishes it and submit the callback. Core attempts the
+   existing W2/W1 recovery automatically; preserve the deterministic recovery key for fallback reconciliation.
 
 Do not accept another actor's dispatch, copy a lease between agents, or interpret an empty pull as permission
 to start a replacement run. Route/grant/qualification changes require a fresh owner intent.

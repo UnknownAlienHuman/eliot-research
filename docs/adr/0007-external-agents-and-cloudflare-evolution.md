@@ -81,9 +81,11 @@ blocked branches with delivery diagnostics left quarantined; it is not permissio
 them. Owner explicit-protocol runs use deterministic v7; historical generations retain their bytes.
 
 A callback is delivery evidence until the stage-specific consumer validates it. The first handler call
-publishes and leaves the W2 attempt STARTED; after `eliotr_task_result`, the originating agent calls the
-existing recovery operation. Recovery reads the exact recorded callback and commits through existing
-W2/W1 authority. Task deadlines may outlive the original ten-minute W2 reservation, but do not outlive
+publishes and leaves the W2 attempt STARTED. After durable `eliotr_task_result` readback, Core invokes the
+existing recovery operation with a request-digest-derived idempotency key; the same key remains the manual
+fallback after an unconfirmed wake. The v8 `ANALYZE_BRANCHES` STARTED attempt is restart-safe only because
+its dedicated recovery handler reads the exact recorded callback before producing canonical bytes. Recovery
+commits through existing W2/W1 authority. Task deadlines may outlive the original ten-minute W2 reservation, but do not outlive
 the exact project grant or current workflow authority. A payload staged before a lost task-publication ACK
 can bind the exact task at any later instant before that immutable deadline; replay never extends it. There is
 no second completion authority.
@@ -131,7 +133,8 @@ truthful capability reporting, stdin-only Secrets Store key create/rotation, com
 Provider Config attachment, task payload/lease/progress/result/status, and delegated v8 branch-analysis
 publication/callback/W2 recovery are implemented, not live-qualified. Managed-OAuth Research delegation,
 provider-native inference transports, safe connection removal, automatic cross-agent failover and live
-Spark/Muse/Dot qualification remain pending. Exact owner-selected dispatch is implemented in source, and
+Spark/Muse/Dot qualification remain pending. Automatic same-workflow callback wake is implemented in source;
+exact owner-selected dispatch is implemented in source, and
 the web inbox is implemented under ADR-0008, but Access policy, deployment and real-agent qualification
 remain pending.
 
