@@ -118,6 +118,14 @@
         "has_assets": { "type": ["boolean", "null"] },
         "durable_object_export": { "const": "durable-object" },
         "deployment_generation_binding": { "const": "PASS" },
+        "vars_readback": {
+          "type": "object", "additionalProperties": false,
+          "required": ["state", "binding_count"],
+          "properties": {
+            "state": { "const": "PASS" },
+            "binding_count": { "type": "integer", "minimum": 1 }
+          }
+        },
         "deployment_id": { "type": "string", "format": "uuid" },
         "deployment_created_on": { "type": "string", "format": "date-time" },
         "version_id": { "type": "string", "format": "uuid" },
