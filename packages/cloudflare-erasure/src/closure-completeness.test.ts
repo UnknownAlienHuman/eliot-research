@@ -52,7 +52,10 @@ function target(kind: PurgeTarget["target_kind"] = "OBJECT"): PurgeTarget {
 function emptyD1(): D1Database {
   return {
     prepare: vi.fn(() => ({
-      bind: vi.fn(() => ({ all: vi.fn(async () => ({ success: true, results: [] })) })),
+      bind: vi.fn(() => ({
+        all: vi.fn(async () => ({ success: true, results: [] })),
+        first: vi.fn(async () => null),
+      })),
     })),
   } as unknown as D1Database;
 }

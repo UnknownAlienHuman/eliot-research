@@ -71,11 +71,7 @@ export function createD1CoreErasureLocationPort(
   return {
     async purge(request, fence, target): Promise<PurgeAttemptReceipt> {
       if (target.target_kind === "LOCATION_EMPTY_PROOF") {
-        return {
-          target_id: target.target_id,
-          disposition: "ALREADY_ABSENT",
-          receipt_ref: await receipt("delete-empty", request, target, "absent"),
-        };
+        erasureFail("ERASURE_CLOSURE_INCOMPLETE", "D1 Core cannot accept an empty-location proof without a Core namespace proof");
       }
       if (isRawIngestErasureTarget(target)) return rawIngest.purge(request, fence, target);
       const now = isoFromMs(clock());

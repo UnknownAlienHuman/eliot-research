@@ -23,6 +23,10 @@ import type {
   SourceRevisionInventoryRow,
 } from "./types.js";
 import { enumerateRawIngestDependencies } from "./raw-ingest-inventory.js";
+import { createEmptyLocationProofTarget } from "./empty-location-proof.js";
+import { makeD1SearchEmptyProofFields } from "./empty-location-proof-authority.js";
+import { readErasureRootIdentity } from "./empty-location-proof-authority.js";
+import { makeR2WorkEmptyProofTarget } from "./empty-location-proof-r2.js";
 import {
   applyPending,
   earlierPending,
@@ -95,8 +99,10 @@ const INVENTORY_FETCH_LIMIT = INVENTORY_ROW_LIMIT + 1;
 const MAX_CLOSURE_TARGETS = 100_000;
 
 function boundedRows<T>(result: InventoryQueryResult<T>, label: string): readonly T[] {
-  if (result.success === false) erasureFail("ERASURE_SETTLEMENT_UNCERTAIN", `${label} failed`, true);
-  const rows = result.results ?? [];
+  if (result.success !== true || !Array.isArray(result.results)) {
+    erasureFail("ERASURE_SETTLEMENT_UNCERTAIN", `${label} did not return a complete successful result`, true);
+  }
+  const rows = result.results;
   if (rows.length > INVENTORY_ROW_LIMIT) {
     erasureFail("ERASURE_CLOSURE_INCOMPLETE", `${label} exceeds the bounded ${INVENTORY_ROW_LIMIT}-row inventory`);
   }
@@ -280,7 +286,7 @@ async function items(database: D1Database, revisionRef: string, generation: stri
 async function backups(database: D1Database): Promise<readonly BackupEpochInventoryRow[]> {
   const result = await database.prepare(
     "SELECT backup_epoch_id,offsite_copy_ref,purge_ledger_revision,verification_state " +
-    `FROM backup_epoch WHERE verification_state='VERIFIED' ORDER BY backup_epoch_id LIMIT ${INVENTORY_FETCH_LIMIT}`,
+    `FROM backup_epoch ORDER BY backup_epoch_id LIMIT ${INVENTORY_FETCH_LIMIT}`,
   ).all<BackupRow>();
   return boundedRows(result, "backup inventory").map(decodeBackup);
 }
@@ -321,9 +327,65 @@ async function registeredSharedCount(
   return live.size;
 }
 
+async function verifyEvidenceHandleRoot(database: D1Database, handleId: string, revision: number): Promise<void> {
+  const row = await database.prepare(
+    "SELECT source_revision_ref,source_namespace_id,source_owner_generation FROM evidence_handle " +
+    "WHERE handle_id=?1 AND revision=?2 LIMIT 1",
+  ).bind(handleId, revision).first<{
+    readonly source_revision_ref: unknown;
+    readonly source_namespace_id: unknown;
+    readonly source_owner_generation: unknown;
+  }>();
+  if (row === null) erasureFail("ERASURE_CLOSURE_INCOMPLETE", "evidence-handle root does not exist");
+  const sourceRevisionRef = assertErasureIdentifier(row.source_revision_ref, "evidence-handle source revision");
+  const root = await readErasureRootIdentity(database, sourceRevisionRef, false);
+  if (
+    assertErasureIdentifier(row.source_namespace_id, "evidence-handle namespace") !== root.source_namespace_id ||
+    assertErasureIdentifier(row.source_owner_generation, "evidence-handle owner generation") !== root.source_owner_generation
+  ) erasureFail("ERASURE_CLOSURE_INCOMPLETE", "evidence-handle root no longer matches active source ownership");
+}
+
+async function verifyScopeSnapshotRoots(database: D1Database, snapshotId: string, revision: number): Promise<void> {
+  const row = await database.prepare(
+    "SELECT member_source_revision_refs_json,source_owner_generations_json FROM scope_snapshot " +
+    "WHERE snapshot_id=?1 AND revision=?2 LIMIT 1",
+  ).bind(snapshotId, revision).first<{
+    readonly member_source_revision_refs_json: unknown;
+    readonly source_owner_generations_json: unknown;
+  }>();
+  if (row === null) erasureFail("ERASURE_CLOSURE_INCOMPLETE", "scope-snapshot root does not exist");
+  let members: unknown;
+  let owners: unknown;
+  try {
+    members = JSON.parse(assertErasureText(row.member_source_revision_refs_json, "scope members JSON", 262_144)) as unknown;
+    owners = JSON.parse(assertErasureText(row.source_owner_generations_json, "scope owner generations JSON", 262_144)) as unknown;
+  } catch (cause) {
+    erasureFail("ERASURE_CLOSURE_INCOMPLETE", "scope-snapshot root identity is malformed", false, cause);
+  }
+  if (!Array.isArray(members) || members.length > 10_000 ||
+    members.some((value) => typeof value !== "string") ||
+    typeof owners !== "object" || owners === null || Array.isArray(owners)) {
+    erasureFail("ERASURE_CLOSURE_INCOMPLETE", "scope-snapshot root identity is incomplete");
+  }
+  const refs = members.map((value) => assertErasureIdentifier(value, "scope source revision"));
+  const generations = owners as Record<string, unknown>;
+  const ownerRefs = Object.keys(generations).sort();
+  if (new Set(refs).size !== refs.length || ownerRefs.length !== refs.length ||
+    refs.some((ref) => !ownerRefs.includes(ref))) {
+    erasureFail("ERASURE_CLOSURE_INCOMPLETE", "scope-snapshot owner map does not exactly cover its source roots");
+  }
+  for (const ref of refs) {
+    const root = await readErasureRootIdentity(database, ref, false);
+    if (assertErasureIdentifier(generations[ref], "scope source owner generation") !== root.source_owner_generation) {
+      erasureFail("ERASURE_CLOSURE_INCOMPLETE", "scope-snapshot source owner generation is stale");
+    }
+  }
+}
+
 export interface D1ErasureInventoryDependencies {
   readonly core_database: D1Database;
   readonly search_database: D1Database;
+  readonly work_bucket?: R2Bucket;
 }
 
 export function createD1ErasureInventory(
@@ -347,6 +409,7 @@ export function createD1ErasureInventory(
           ensureClosureCapacity(revisions.length, rows.length, "source revision selection");
           for (const row of rows) revisions.push({ subject: exactSubjectRef, row });
         } else if (parsed.kind === "evidence_handle") {
+          await verifyEvidenceHandleRoot(dependencies.core_database, parsed.handle_id, parsed.revision);
           ensureClosureCapacity(directTargets.length, 2, "direct erasure target selection");
           directTargets.push(await target(
             exactSubjectRef,
@@ -359,6 +422,7 @@ export function createD1ErasureInventory(
             `d1-core:route:evidence-handle:${parsed.handle_id}:${parsed.revision}`,
           ));
         } else {
+          await verifyScopeSnapshotRoots(dependencies.core_database, parsed.snapshot_id, parsed.revision);
           ensureClosureCapacity(directTargets.length, 2, "direct erasure target selection");
           directTargets.push(await target(
             exactSubjectRef,
@@ -397,6 +461,22 @@ export function createD1ErasureInventory(
         if (raw?.pending !== undefined) rawPendingBySubject.set(subject, earlierPending(rawPendingBySubject.get(subject), raw.pending));
       }
       const generated: PurgeTarget[] = [...directTargets];
+      if (request.required_locations.includes("Projection") && dependencies.work_bucket !== undefined) {
+        for (const { subject, row } of revisions) {
+          const work = await makeR2WorkEmptyProofTarget(
+            dependencies.core_database,
+            dependencies.work_bucket,
+            requestDigest,
+            subject,
+            row.source_revision_ref,
+          );
+          if (work.target === null) {
+            generated.push(await target(subject, "Projection", `r2-work-prefix:${work.prefix}`));
+          } else {
+            generated.push(work.target);
+          }
+        }
+      }
       const backupRows = request.required_locations.includes("BackupRestorePath")
         ? await backups(dependencies.core_database)
         : [];
@@ -433,8 +513,19 @@ export function createD1ErasureInventory(
             shared_live_reference_count: 0,
           }));
         }
-        for (const projection of await projections(dependencies.core_database, row.source_revision_ref)) {
-          if (projection.work_manifest_ref !== undefined) {
+        const projectionRows = await projections(dependencies.core_database, row.source_revision_ref);
+        if (request.required_locations.includes("Index") && projectionRows.length === 0) {
+          const proof = await makeD1SearchEmptyProofFields(
+            dependencies.core_database,
+            dependencies.search_database,
+            requestDigest,
+            subject,
+            row.source_revision_ref,
+          );
+          generated.push(await createEmptyLocationProofTarget(proof));
+        }
+        for (const projection of projectionRows) {
+          if (dependencies.work_bucket === undefined && projection.work_manifest_ref !== undefined) {
             ensureClosureCapacity(generated.length, 1, "projection erasure targets");
             generated.push(await target(
               subject,
@@ -443,13 +534,15 @@ export function createD1ErasureInventory(
               rawPending,
             ));
           }
-          ensureClosureCapacity(generated.length, 1, "index erasure targets");
-          generated.push(await target(
-            subject,
-            "Index",
-            `d1-search:${row.source_revision_ref}:${projection.projection_generation}`,
-            rawPending,
-          ));
+          if (request.required_locations.includes("Index")) {
+            ensureClosureCapacity(generated.length, 1, "index erasure targets");
+            generated.push(await target(
+              subject,
+              "Index",
+              `d1-search:${row.source_revision_ref}:${projection.projection_generation}`,
+              rawPending,
+            ));
+          }
           if (projection.semantic_instance_id !== undefined) {
             if (projection.semantic_generation === undefined) {
               erasureFail("ERASURE_CLOSURE_INCOMPLETE", "active semantic projection lacks an exact provider generation");
@@ -482,9 +575,13 @@ export function createD1ErasureInventory(
         }
       }
 
-      const selectedSubjects = new Set(request.exact_subject_refs);
+      const selectedRegistrySubjects = [...new Set([
+        ...request.exact_subject_refs,
+        ...revisions.map(({ row }) => `source-revision:${row.source_revision_ref}`),
+      ])].sort();
+      const selectedSubjects = new Set(selectedRegistrySubjects);
       const registeredSharedCounts = new Map<string, number>();
-      const registeredDependencies = await registered(dependencies.core_database, request.exact_subject_refs);
+      const registeredDependencies = await registered(dependencies.core_database, selectedRegistrySubjects);
       ensureClosureCapacity(generated.length, registeredDependencies.length, "registered erasure targets");
       for (const dependency of registeredDependencies) {
         const registryR2Key = evidenceR2Key(dependency.canonical_ref);

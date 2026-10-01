@@ -1,4 +1,5 @@
 import type { ErasureBackend } from "@eliotr/contracts";
+import { erasureFail } from "./canonical.js";
 import { createD1ErasureAuthority } from "./authority.js";
 import { createBackupErasureLocationPort } from "./backup-location.js";
 import { createCloudflareErasureBackend } from "./backend.js";
@@ -9,6 +10,8 @@ import { createManagedSearchErasureLocationPort } from "./provider-location.js";
 import { createR2ErasureLocationPort } from "./r2-location.js";
 import { createErasureLocationRegistry } from "./registry.js";
 import { createD1SearchErasureLocationPort } from "./search-location.js";
+import { validateD1SearchEmptyProof } from "./empty-location-proof-authority.js";
+import { validateR2WorkEmptyProof } from "./empty-location-proof-r2.js";
 import type {
   BackupErasurePort,
   ManagedSearchErasureNamespace,
@@ -62,6 +65,7 @@ export function createConfiguredErasureBackend(
     inventory: createD1ErasureInventory({
       core_database: dependencies.core_database,
       search_database: dependencies.search_database,
+      work_bucket: dependencies.work_bucket,
     }),
     locations: createErasureLocationRegistry({
       CanonicalPayload: core,
@@ -77,6 +81,27 @@ export function createConfiguredErasureBackend(
       database: dependencies.core_database,
       ...(dependencies.now === undefined ? {} : { now: dependencies.now }),
     }),
+    validateEmptyLocationProof: async (request, _fence, target) => {
+      if (target.location === "Index") {
+        await validateD1SearchEmptyProof(
+          dependencies.core_database,
+          dependencies.search_database,
+          request,
+          target,
+        );
+        return;
+      }
+      if (target.location === "Projection") {
+        await validateR2WorkEmptyProof(
+          dependencies.core_database,
+          dependencies.work_bucket,
+          request,
+          target,
+        );
+        return;
+      }
+      erasureFail("ERASURE_CLOSURE_INCOMPLETE", "no authoritative empty-location verifier exists for this location");
+    },
     ...(dependencies.now === undefined ? {} : { now: dependencies.now }),
   });
 }
