@@ -3,6 +3,7 @@ import { ROUTES } from "@eliotr/interfaces";
 import {
   ArtifactProductInputError,
   parseAcceptArtifactRequest,
+  parseReviseArtifactSectionRequest,
   readAcceptArtifactRequest,
 } from "../src/artifact-product-http.js";
 
@@ -85,5 +86,36 @@ describe("artifact publication HTTP input", () => {
       headers: { "content-type": "application/json", "idempotency-key": idempotencyKey },
       body: `${body} `,
     }), "report-1:4", body.length)).rejects.toThrow();
+  });
+});
+
+describe("artifact section COW HTTP input", () => {
+  it("binds the exact artifact head and stable section id from the route", () => {
+    expect(parseReviseArtifactSectionRequest({
+      protocol: "eliotr.artifact-section-revise.v1",
+      expected_artifact_revision: 4,
+    }, artifactRef, "section-claims", idempotencyKey)).toEqual({
+      protocol: "eliotr.artifact-section-revise.v1",
+      artifact_ref: artifactRef,
+      section_id: "section-claims",
+      expected_artifact_revision: 4,
+      idempotency_key: idempotencyKey,
+    });
+  });
+
+  it("fails closed on altered head, invalid section id, or client authority fields", () => {
+    expect(() => parseReviseArtifactSectionRequest({
+      protocol: "eliotr.artifact-section-revise.v1",
+      expected_artifact_revision: 3,
+    }, artifactRef, "section-claims", idempotencyKey)).toThrow(/exact artifact revision/u);
+    expect(() => parseReviseArtifactSectionRequest({
+      protocol: "eliotr.artifact-section-revise.v1",
+      expected_artifact_revision: 4,
+      policy_authority_ref: "client-selected",
+    }, artifactRef, "section-claims", idempotencyKey)).toThrow(ArtifactProductInputError);
+    expect(() => parseReviseArtifactSectionRequest({
+      protocol: "eliotr.artifact-section-revise.v1",
+      expected_artifact_revision: 4,
+    }, artifactRef, "", idempotencyKey)).toThrow(ArtifactProductInputError);
   });
 });
