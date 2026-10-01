@@ -45,6 +45,7 @@ import { readLibraryReadiness } from "./library-readiness.js";
 import { readArtifactDraft, readArtifactDraftSection, readArtifactDraftSectionCitations } from "@eliotr/cloudflare-research";
 import { reopenOwnerArtifactDraft, reopenOwnerArtifactSection, reopenOwnerArtifactSectionCitations } from "./research-artifact-reauthorization-http.js";
 import { ArtifactReadNotFoundError } from "./artifact-draft-http.js";
+import { acceptOwnerArtifact, readOwnerArtifactPublication } from "./artifact-product-composition.js";
 import { createErasureOwnerService } from "./erasure-owner-service.js";
 import { readErasureOwnerStatus } from "./erasure-owner-status.js";
 import { prepareErasureForOwner } from "./erasure-owner-prepare.js";
@@ -149,6 +150,8 @@ function semanticApi(env: Env): SemanticApi {
       if (citations.semantic_verification === "EXECUTED") return { protocol: "eliotr.artifact-section-citations.v2", ...citations };
       return { protocol: "eliotr.artifact-section-citations.v1", ...citations };
     },
+    acceptArtifact: (context, request) => acceptOwnerArtifact(env, context, request),
+    artifactPublication: (context, artifactRef) => readOwnerArtifactPublication(env, context, artifactRef),
     proposeWiki: createWikiProposalService(env),
     proposeWikiFromResearchRun: (context, operationId) => proposeWikiFromResearchRunOperation(
       env, context, operationId, requireWikiIdempotencyKey(context),

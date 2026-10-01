@@ -29,6 +29,8 @@ export const SEMANTIC_API_OPERATIONS = [
   "research.run.cancel",
   "research.run.recover",
   "research.artifact",
+  "research.artifact.accept",
+  "research.artifact.publication",
   "research.wiki.propose",
   "research.wiki.propose.from-run",
   "research.wiki.propose.from-edit",
@@ -323,6 +325,39 @@ export interface ResearchArtifactSectionCitationsExecuted extends ResearchArtifa
   readonly audit: ResearchArtifactSectionCitationAudit;
 }
 
+export interface ArtifactPublicationAcceptRequest {
+  readonly protocol: "eliotr.artifact-publication-accept.v1";
+  readonly artifact_ref: VersionedRef;
+  readonly expected_draft_head_revision: number;
+  readonly expected_publication_revision: number | null;
+  readonly idempotency_key: string;
+}
+
+export interface ArtifactPublicationReceipt {
+  readonly publication_ref: string;
+  readonly artifact_ref: VersionedRef;
+  readonly publication_revision: number;
+  readonly manifest_sha256: string;
+  readonly verification_set_sha256: string;
+  readonly evidence_currentness_sha256: string;
+  readonly principal_ref: string;
+  readonly authorization_receipt_ref: string;
+  readonly created_at: string;
+}
+
+export interface ArtifactPublicationMutationResult {
+  readonly protocol: "eliotr.artifact-publication.v1";
+  readonly disposition: "CREATED" | "EXISTING";
+  readonly revision: ArtifactRevision;
+  readonly receipt: ArtifactPublicationReceipt;
+}
+
+export interface ArtifactPublicationReadResult {
+  readonly protocol: "eliotr.artifact-publication.v1";
+  readonly revision: ArtifactRevision;
+  readonly receipt: ArtifactPublicationReceipt;
+}
+
 export type ResearchArtifactSectionCitations =
   | ResearchArtifactSectionCitationsNotExecuted
   | ResearchArtifactSectionCitationsExecuted;
@@ -404,6 +439,8 @@ export interface SemanticApi {
   artifact(context: AuthenticatedRequestContext, artifactRef: VersionedRef): Promise<ArtifactRevision>;
   artifactSection(context: AuthenticatedRequestContext, artifactRef: VersionedRef, sectionRef: VersionedRef): Promise<Response>;
   artifactSectionCitations(context: AuthenticatedRequestContext, artifactRef: VersionedRef, sectionRef: VersionedRef): Promise<ResearchArtifactSectionCitations | ResearchArtifactReauthorizedCitations>;
+  acceptArtifact(context: AuthenticatedRequestContext, request: ArtifactPublicationAcceptRequest): Promise<ArtifactPublicationMutationResult>;
+  artifactPublication(context: AuthenticatedRequestContext, artifactRef: VersionedRef): Promise<ArtifactPublicationReadResult>;
   proposeWiki(context: AuthenticatedRequestContext, request: unknown): Promise<WikiProposalResult>;
   proposeWikiFromResearchRun(context: AuthenticatedRequestContext, operationId: string): Promise<WikiProposalResult>;
   proposeWikiFromOwnerEdit(context: AuthenticatedRequestContext, request: unknown): Promise<WikiProposalResult>;
