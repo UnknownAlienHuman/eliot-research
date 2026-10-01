@@ -28,6 +28,11 @@ export interface Env {
   readonly ELIOTR_MODEL_PROFILE_DEFINITION_JSON?: string;
   readonly ELIOTR_MODEL_PROFILE_PROVENANCE_REF?: string;
   /** Installed synthesis/audit prompts and normalization contract. */
+  /** Immutable semantic config revision reference (S29); replaces the split JSON chunks. */
+  readonly ELIOTR_RESEARCH_SEMANTIC_CONFIG_REF?: string;
+  /** Expected SHA-256 of the canonical semantic config bytes for the revision above. */
+  readonly ELIOTR_RESEARCH_SEMANTIC_CONFIG_SHA256?: string;
+  /** Research semantic configuration as one JSON value (legacy; migration window). */
   readonly ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON?: string;
   /** Wrangler-safe chunks for the installed semantic configuration; provide both or neither. */
   readonly ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON_0?: string;

@@ -41,6 +41,10 @@ import {
   type ResearchClaimAuditVerifierAuthority,
 } from "@eliotr/cloudflare-research-stages";
 import { readResearchSemanticConfiguration, type Env } from "./env.js";
+import {
+  resolveResearchSemanticConfig,
+  semanticConfigCheckpointError,
+} from "./research-semantic-config-revision.js";
 import { loadHeldResearchScope } from "./research-retrieval-composition.js";
 import {
   bindResearchOwnerReportPolicy,
@@ -149,11 +153,17 @@ function modelGatewayConfiguration(env: Env): ResearchModelGatewayRuntimeConfig 
 export function researchSemanticConfigurationInstalled(env: Env): boolean {
   const hasGatewayToken = typeof env.ELIOTR_MODEL_GATEWAY_TOKEN === "string" && env.ELIOTR_MODEL_GATEWAY_TOKEN.trim() !== "";
   const hasNativeGateway = typeof (env.AI as Partial<ResearchModelGatewayBinding> | undefined)?.gateway === "function";
-  const semantic = readResearchSemanticConfiguration(env);
-  return [semantic, env.ELIOTR_MODEL_PROFILE_DEFINITION_JSON,
-    env.ELIOTR_MODEL_PROFILE_PROVENANCE_REF, env.ELIOTR_MODEL_SPEND_POLICY_JSON,
-    env.ELIOTR_MODEL_SPEND_POLICY_PROVENANCE_REF, env.ELIOTR_RESEARCH_REPORT_CONFIG_JSON,
-    env.ELIOTR_RESEARCH_REPORT_POLICY_PROVENANCE_REF].every((value) => typeof value === "string" && value.trim() !== "") &&
+  const legacySemantic = readResearchSemanticConfiguration(env);
+  const hasRevision = typeof env.ELIOTR_RESEARCH_SEMANTIC_CONFIG_REF === "string" &&
+    env.ELIOTR_RESEARCH_SEMANTIC_CONFIG_REF.trim() !== "" &&
+    typeof env.ELIOTR_RESEARCH_SEMANTIC_CONFIG_SHA256 === "string" &&
+    env.ELIOTR_RESEARCH_SEMANTIC_CONFIG_SHA256.trim() !== "";
+  const semantic = hasRevision || (typeof legacySemantic === "string" && legacySemantic.trim() !== "");
+  return semantic &&
+    [env.ELIOTR_MODEL_PROFILE_DEFINITION_JSON,
+      env.ELIOTR_MODEL_PROFILE_PROVENANCE_REF, env.ELIOTR_MODEL_SPEND_POLICY_JSON,
+      env.ELIOTR_MODEL_SPEND_POLICY_PROVENANCE_REF, env.ELIOTR_RESEARCH_REPORT_CONFIG_JSON,
+      env.ELIOTR_RESEARCH_REPORT_POLICY_PROVENANCE_REF].every((value) => typeof value === "string" && value.trim() !== "") &&
     (hasGatewayToken || hasNativeGateway);
 }
 
@@ -190,7 +200,16 @@ async function assembleResearchSemanticServerHandlers(input: ResearchSemanticSer
     principal.credential_generation, principal.deployment_generation).first<{ handler_generation: unknown }>().catch(() => fail("WORKFLOW_STORAGE_UNAVAILABLE"));
   if (!isSemanticResearchHandlerGeneration(runBinding?.handler_generation)) fail("WORKFLOW_AUTHORITY_STALE");
   const handlerGeneration = runBinding.handler_generation;
-  const config = parseResearchSemanticConfiguration(installed(readResearchSemanticConfiguration(env)));
+  const resolvedSemanticConfig = await resolveResearchSemanticConfig({ env, database: env.CORE_DB }).catch((error) => {
+    throw semanticConfigCheckpointError(error);
+  });
+  const config = (() => {
+    try {
+      return parseResearchSemanticConfiguration(resolvedSemanticConfig.config_json);
+    } catch {
+      throw new WorkflowCheckpointError("WORKFLOW_CONFIGURATION_INVALID");
+    }
+  })();
   let policy: ResearchModelSpendPolicy;
   try {
     if (navigation.access.principal_ref !== principal.principal_ref ||
@@ -398,6 +417,7 @@ async function assembleResearchSemanticServerHandlers(input: ResearchSemanticSer
     navigation, ledger: input.ledger, operation_id: input.operation_id, investigation_id: input.investigation_id,
     principal, retrieval_profile: retrievalProfile,
     model_profile: { raw: env.ELIOTR_MODEL_PROFILE_DEFINITION_JSON, provenance_ref: installed(env.ELIOTR_MODEL_PROFILE_PROVENANCE_REF) },
+    semantic_config: { revision_ref: resolvedSemanticConfig.revision_ref, config_sha256: resolvedSemanticConfig.config_sha256 },
     deployment_environment: deploymentEnvironment, recheck_authority: recheckAuthority,
     manifest: { residency_template: residency, max_context_bytes: synthesisRule.max_input_bytes },
     model: {

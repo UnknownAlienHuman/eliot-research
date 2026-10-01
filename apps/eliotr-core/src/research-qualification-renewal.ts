@@ -29,7 +29,11 @@ import {
   parseResearchSemanticConfiguration,
   researchSemanticPromptParameters,
 } from "./research-semantic-server.js";
-import { readResearchSemanticConfiguration, type Env } from "./env.js";
+import type { Env } from "./env.js";
+import {
+  resolveResearchSemanticConfig,
+  semanticConfigCheckpointError,
+} from "./research-semantic-config-revision.js";
 import { ResearchOwnerSpendPolicyError, resolveResearchOwnerSpendPolicy } from "./research-owner-spend-policy.js";
 import { WorkflowCheckpointError, type WorkflowObject, type WorkflowPrincipal } from "@eliotr/cloudflare-workflows";
 import type { ResearchQualificationPromptConfig } from "@eliotr/cloudflare-research";
@@ -318,6 +322,8 @@ async function renewStage(
     readonly max_output_bytes: number;
     readonly evidence_pack: Awaited<ReturnType<typeof freshEvidence>>;
     readonly config: ReturnType<typeof parseResearchSemanticConfiguration>;
+    /** S29: immutable revision identity of the semantic config above. */
+    readonly semantic_config: { readonly revision_ref: string | null; readonly config_sha256: string };
     readonly profile: Awaited<ReturnType<ReturnType<typeof createPersistedModelProfileBindingProducer>["resolve"]>>;
     readonly manifest: WorkflowObject;
     readonly principal: WorkflowPrincipal;
@@ -395,9 +401,11 @@ export async function renewResearchQualifications(
       navigation.scope.revision !== investigation.head.scope_snapshot_revision) {
     fail("RESEARCH_QUALIFICATION_RENEWAL_AUTHORITY_STALE", "research qualification scope is not current");
   }
-  const configRaw = readResearchSemanticConfiguration(env);
+  const resolvedSemanticConfig = await resolveResearchSemanticConfig({ env, database: env.CORE_DB }).catch((error) => {
+    throw semanticConfigCheckpointError(error);
+  });
   const config = (() => {
-    try { return parseResearchSemanticConfiguration(requiredText(configRaw, "research semantic configuration")); }
+    try { return parseResearchSemanticConfiguration(resolvedSemanticConfig.config_json); }
     catch (cause) {
       if (cause instanceof WorkflowCheckpointError) throw cause;
       throw new WorkflowCheckpointError("WORKFLOW_CONFIGURATION_INVALID");
@@ -486,6 +494,10 @@ export async function renewResearchQualifications(
       candidate: item.candidate,
       evidence_pack: evidencePack,
       config,
+      semantic_config: {
+        revision_ref: resolvedSemanticConfig.revision_ref,
+        config_sha256: resolvedSemanticConfig.config_sha256,
+      },
       profile: resolvedProfile,
       manifest: input.initial_manifest,
       principal,

@@ -9,6 +9,7 @@ import {
   type ResearchModelGatewayBinding,
 } from "@eliotr/cloudflare-research";
 import { readResearchSemanticConfiguration, type Env } from "./env.js";
+import { readResearchSemanticConfigSource } from "./research-semantic-config-revision.js";
 import type { AuthenticatedRequestContext } from "@eliotr/interfaces";
 import { parseResearchClaimAuditPolicy } from "@eliotr/cloudflare-research-stages";
 import {
@@ -51,6 +52,8 @@ const SemanticConfigurationSchema = z.object({
 }).strict();
 
 type RequiredField =
+  | "ELIOTR_RESEARCH_SEMANTIC_CONFIG_REF"
+  | "ELIOTR_RESEARCH_SEMANTIC_CONFIG_SHA256"
   | "ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON"
   | "ELIOTR_MODEL_PROFILE_DEFINITION_JSON"
   | "ELIOTR_MODEL_PROFILE_PROVENANCE_REF"
@@ -166,17 +169,37 @@ export function readResearchConfigurationStatus(
     return value;
   };
 
-  const semantic = readResearchSemanticConfiguration(env);
-  const semanticHasChunks = env.ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON_0 !== undefined ||
-    env.ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON_1 !== undefined;
-  if (semantic === undefined) {
-    if (env.ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON === undefined && !semanticHasChunks) {
-      missing.add("ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON");
-    } else {
+  // S29: the revision reference is the primary source; the legacy split JSON
+  // remains accepted during the migration window. Mixing both, or a partial
+  // revision identity, is invalid. Digest readback against D1 happens at
+  // dispatch; this sync status check only validates identity shape.
+  const semanticSource = (() => {
+    try {
+      return readResearchSemanticConfigSource(env);
+    } catch {
+      return undefined;
+    }
+  })();
+  if (semanticSource === undefined) {
+    invalid.add("ELIOTR_RESEARCH_SEMANTIC_CONFIG_REF");
+    invalid.add("ELIOTR_RESEARCH_SEMANTIC_CONFIG_SHA256");
+  } else if (semanticSource.kind === "absent") {
+    missing.add("ELIOTR_RESEARCH_SEMANTIC_CONFIG_REF");
+  } else if (semanticSource.kind === "legacy") {
+    const semantic = readResearchSemanticConfiguration(env);
+    const semanticHasChunks = env.ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON_0 !== undefined ||
+      env.ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON_1 !== undefined;
+    if (semantic === undefined) {
+      if (env.ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON === undefined && !semanticHasChunks) {
+        missing.add("ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON");
+      } else {
+        invalid.add("ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON");
+      }
+    } else if (!hasText(semantic)) {
+      (semanticHasChunks ? invalid : missing).add("ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON");
+    } else if (!validSemanticConfiguration(semantic)) {
       invalid.add("ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON");
     }
-  } else if (!hasText(semantic)) {
-    (semanticHasChunks ? invalid : missing).add("ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON");
   }
   const profile = read("ELIOTR_MODEL_PROFILE_DEFINITION_JSON");
   const profileProvenance = read("ELIOTR_MODEL_PROFILE_PROVENANCE_REF");
@@ -184,10 +207,6 @@ export function readResearchConfigurationStatus(
   const spendProvenance = read("ELIOTR_MODEL_SPEND_POLICY_PROVENANCE_REF");
   const report = read("ELIOTR_RESEARCH_REPORT_CONFIG_JSON");
   const reportProvenance = read("ELIOTR_RESEARCH_REPORT_POLICY_PROVENANCE_REF");
-
-  if (hasText(semantic) && !validSemanticConfiguration(semantic)) {
-    invalid.add("ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON");
-  }
 
   const profileJsonValid = profile === undefined || validJsonObject(profile);
   const profileProvenanceValid = profileProvenance === undefined || validProvenance(profileProvenance);

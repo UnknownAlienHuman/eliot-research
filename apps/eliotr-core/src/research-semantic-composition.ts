@@ -180,6 +180,15 @@ export interface ResearchSemanticCompositionDependencies {
   readonly retrieval_profile: ScopeProfileBinding;
   /** Explicit installed model definition; no production default is allowed. */
   readonly model_profile: ModelProfileDefinitionConfigSourceOptions;
+  /**
+   * S29: immutable semantic configuration revision identity bound to this
+   * composition. The prompts compiled below come from exactly these bytes;
+   * revision_ref is null only for the legacy env source during migration.
+   */
+  readonly semantic_config: {
+    readonly revision_ref: string | null;
+    readonly config_sha256: string;
+  };
   /** Explicitly selects the D1 route qualification gate (PRODUCTION or TEST). */
   readonly deployment_environment: NonNullable<D1DynamicRouteRegistryOptions["environment"]>;
   /** The same validated clock is used by route, evidence, and profile readers. */
@@ -619,6 +628,7 @@ export function createResearchSemanticComposition(
     manifest_store: manifestStore,
     deployment_registry: deploymentRegistry,
     model_profile: modelProfile,
+    semantic_config: Object.freeze({ ...input.semantic_config }),
     freeze,
     synthesis,
     verification,
