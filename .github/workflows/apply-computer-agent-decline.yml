@@ -110,20 +110,30 @@ jobs:
           valid_issuer = re.compile(
               r'^https://[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.cloudflareaccess\.com$'
           )
-          replacements = [0]
-          def normalize_fixture_issuer(match):
-              if valid_issuer.fullmatch(match.group('value')):
-                  return match.group(0)
-              replacements[0] += 1
-              return (
-                  f"{match.group('key')}{match.group('quote')}"
-                  f"https://fixture.cloudflareaccess.com{match.group('quote')}"
-              )
-          text = issuer_literal.sub(normalize_fixture_issuer, text)
-          if replacements[0] < 1 or replacements[0] > 4:
+          invalid_values = {
+              match.group('value')
+              for match in issuer_literal.finditer(text)
+              if not valid_issuer.fullmatch(match.group('value'))
+          }
+          if len(invalid_values) != 1:
               raise SystemExit(
-                  f'decline synthetic issuer fixture count changed: {replacements[0]}'
+                  f'decline synthetic issuer identity changed: {sorted(invalid_values)!r}'
               )
+          old_issuer = next(iter(invalid_values))
+          replacement_count = (
+              text.count(f"'{old_issuer}'") + text.count(f'"{old_issuer}"')
+          )
+          if replacement_count < 2 or replacement_count > 16:
+              raise SystemExit(
+                  f'decline synthetic issuer occurrence count changed: {replacement_count}'
+              )
+          text = text.replace(
+              f"'{old_issuer}'", "'https://fixture.cloudflareaccess.com'"
+          ).replace(
+              f'"{old_issuer}"', '"https://fixture.cloudflareaccess.com"'
+          )
+          if old_issuer in text:
+              raise SystemExit('decline synthetic issuer replacement is incomplete')
           path.write_text(text, encoding='utf-8')
           PY
           chmod +x /tmp/run-computer-agent-decline.sh
