@@ -55,6 +55,7 @@ export * from "./research-model-attempt-revalidator.js";
 export type { ResearchModelGatewayBinding } from "./research-model-gateway-binding.js";
 export * from "./research-model-spend-admission.js";
 export * from "./research-model-spend-policy.js";
+export * from "./research-model-spend-observation.js";
 export * from "./research-synthesis-preparation.js";
 export * from "./research-held-scope.js";
 export * from "./research-run-status.js";
