@@ -25,3 +25,20 @@ Honestly refused in this checkpoint: generation *currency* (equality against
 the actually-deployed Worker/data generations needs the missing
 binding/version attestation reader) and cost/bounds/rollback-target checks
 (no live cost observer exists; any such check would always pass).
+
+## Implemented runner: T5-failure-injection
+
+`t5-failure-injection-runner.ts` is the T5 fault-injection arm. Five fault
+classes are injected through dependency-injected probes — D1 write error, R2
+readback mismatch, queue duplicate delivery, model timeout, ledger conflict —
+and each must fail closed: the fault is detected, a well-formed digest-pinned
+negative receipt is produced, nothing is partially committed, and nothing
+silently passes. The model-timeout class must surface uncertainty (exactly one
+attempt, no retry), never success. One owned key per class
+(`probe/<test-generation>/T5-failure-injection/<fault-class>/001`); cleanup
+names exactly those five keys. State discipline mirrors the T4 runner: no
+credentials -> `NOT_EXECUTED`, unsatisfied prerequisite -> `BLOCKED`,
+mishandled fault -> `FAIL`, timeout/lost response -> `RUNNING` with
+`SETTLEMENT_UNCERTAIN`. Only `live` trials with attested worker/data
+generations can satisfy `gateMayBeReportedAsPass`; `local` trials are
+downgraded to unattested identity.
