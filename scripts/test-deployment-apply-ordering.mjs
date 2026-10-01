@@ -20,6 +20,7 @@ import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { deployCloudflare } from "./deploy-cloudflare.mjs";
+import { readDeploymentMigrationPlan } from "./lib/deployment-migrations.mjs";
 import { digestAccountId } from "./lib/cloudflare-usage-envelope.mjs";
 import { dailyWindowFor, monthlyWindowFor } from "./lib/cloudflare-usage-collection.mjs";
 import { stripNodeOptionsLoaderTokens } from "./lib/cloudflare-wrangler-oauth.mjs";
@@ -71,6 +72,8 @@ function admittedSnapshotJson(accountId = "test-account", at = now) {
 const environment = { CLOUDFLARE_ACCOUNT_ID: "test-account", CLOUDFLARE_API_TOKEN: "secret-token",
   ELIOTR_ENVIRONMENT: "staging", ELIOTR_DEPLOYMENT_GENERATION: "git-test", ELIOTR_CUSTOM_DOMAIN: "1",
   ELIOTR_ACCESS_HOSTNAME: "research.example.com", ELIOTR_OWNER_EMAILS: "owner@example.com",
+  ELIOTR_STAGING_TARGET_JSON: JSON.stringify({ protocol: "eliotr.staging-target.v1", isolation: "dedicated-account",
+    account_id: "test-account", protected_account_ids: ["production-test-account"], access_hostname: "research.example.com" }),
   ELIOTR_ACCESS_TEAM_DOMAIN: "https://team-example.cloudflareaccess.com", ELIOTR_ACCESS_AUDIENCE: "test-aud",
   ELIOTR_ACCESS_SERVICE_PRINCIPALS: "", ELIOTR_ACCESS_SMOKE_COOKIE: "secret-cookie", ELIOTR_GOOGLE_EXTERNAL_TRANSPORT: "gemini-mcp" };
 // Staged snapshots travel via the explicit `usageSnapshot` deploy option
@@ -86,6 +89,13 @@ const config = { name: "eliotr-core", minify: true, preview_urls: false, compati
     { binding: "CORE_DB", database_name: "eliotr-core", database_id: "11111111-1111-4111-8111-111111111111" },
     { binding: "SEARCH_DB", database_name: "eliotr-search", database_id: "22222222-2222-4222-8222-222222222222" },
   ] };
+Object.assign(config, {
+  assets: { binding: "ASSETS" }, exports: { ResearchSession: { type: "durable-object", storage: "sqlite" } },
+  r2_buckets: [], queues: { producers: [] }, durable_objects: { bindings: [{ name: "RESEARCH_SESSION", class_name: "ResearchSession" }] },
+  workflows: [], analytics_engine_datasets: [],
+});
+const versionId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+const migrationPlan = await readDeploymentMigrationPlan(config, { root: resolve(fileURLToPath(new URL("../", import.meta.url))) });
 const bytes = Buffer.from(JSON.stringify(config));
 function harness(overrides = {}) {
   const calls = [];
@@ -109,7 +119,15 @@ function harness(overrides = {}) {
       const method = init.method ?? "GET";
       calls.push(`${method} ${url}`);
       if (method === "POST" && String(url).includes("/d1/database/")) {
-        const batch = JSON.parse(init.body).batch;
+        const query = JSON.parse(init.body);
+        if (query.sql?.startsWith("SELECT name FROM d1_migrations")) {
+          const stream = migrationPlan.find((entry) => String(url).includes(entry.database_id));
+          const names = [...stream.migration_names];
+          if (overrides.ledgerDrift === stream.binding) names.pop();
+          return globalThis.Response.json({ success: true, result: [{ success: true,
+            results: names.map((name) => ({ name })), meta: { rows_written: 0, changed_db: false } }] });
+        }
+        const batch = query.batch;
         const result = batch.map(({ sql, params }) => {
           let changes = 0;
           let results = [];
@@ -142,6 +160,19 @@ function harness(overrides = {}) {
         { id: "eliotr-core", compatibility_date: "2026-08-28", has_assets: true,
           exports: { ResearchSession: { type: "durable-object" } } },
       ] });
+      if (String(url).endsWith("/deployments")) return globalThis.Response.json({ success: true, result: { deployments: [{
+        id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", created_on: new Date(now).toISOString(), strategy: "percentage",
+        versions: [{ version_id: versionId, percentage: overrides.partialTraffic ? 50 : 100 }],
+      }] } });
+      if (String(url).endsWith("/versions/" + versionId)) return globalThis.Response.json({ success: true, result: {
+        id: versionId, number: 9, resources: {
+          bindings: { CORE_DB: { type: "d1", id: config.d1_databases[0].database_id },
+            SEARCH_DB: { type: "d1", id: config.d1_databases[1].database_id }, ASSETS: { type: "assets" },
+            RESEARCH_SESSION: { type: "durable_object_namespace", class_name: "ResearchSession" } },
+          script: { etag: "fixture-etag" }, script_runtime: { compatibility_date: config.compatibility_date,
+            compatibility_flags: [], exports: { default: { type: "worker" }, ...config.exports } },
+        },
+      } });
       if (String(url).endsWith("/healthz")) return globalThis.Response.json({ ready: true,
         deployment_generation: "git-test", checked_at: new Date(now).toISOString() });
       return globalThis.Response.json({ trace_id: "trace-test", deployment_generation: "git-test", data: {
@@ -198,7 +229,7 @@ await check("missing cookie retains NOT_EXECUTED", async () => {
   const test = harness({ options: { environment: { ...environment, ELIOTR_ACCESS_SMOKE_COOKIE: undefined } } });
   const receipt = await deployCloudflare(test.options);
   assert.equal(receipt.remote_http_smoke.state, "NOT_EXECUTED");
-  assert.equal(test.calls.filter((call) => call.startsWith("GET ")).length, 1);
+  assert.equal(test.calls.filter((call) => call.startsWith("GET ")).length, 3);
 });
 await check("migration or deployment failure cannot publish PASS", async () => {
   for (const command of [coreMigration, searchMigration, deployCommand]) {
@@ -215,5 +246,23 @@ await check("readback failure after upload is not successful deployment", async 
   assert.ok(test.calls.includes("archive"));
   assert.equal(test.receipts.length, 0);
 });
+
+await check("migration ledger mismatch stops before Worker upload and authority writes", async () => {
+  for (const binding of ["CORE_DB", "SEARCH_DB"]) {
+    const test = harness({ ledgerDrift: binding });
+    await assert.rejects(deployCloudflare(test.options), /migration plan or ledger/u);
+    assert.ok(!test.calls.includes(deployCommand));
+    assert.ok(!test.calls.some((call) => call.startsWith("GET ")));
+    assert.equal(test.receipts.length, 0);
+  }
+});
+await check("partial active traffic stops before deployment authority and PASS receipt", async () => {
+  const test = harness({ partialTraffic: true });
+  await assert.rejects(deployCloudflare(test.options), /active deployment/u);
+  assert.ok(test.calls.includes(deployCommand));
+  assert.equal(test.calls.filter((call) => call.startsWith("POST ")).length, 2, "only read-only ledger queries can precede refusal");
+  assert.equal(test.receipts.length, 0);
+});
+
 
 console.log(`Deployment apply ordering: ${cases} groups passed; live Cloudflare NOT_EXECUTED`);

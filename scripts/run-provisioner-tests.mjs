@@ -7,6 +7,8 @@ await import("./test-cloudflare-mcp-oauth.mjs");
 await import("./test-mcp-access-service-bindings.mjs");
 await import("./test-mcp-access-provisioning-flow.mjs");
 await import("./test-launch-code.mjs");
+await import("./test-staging-isolation.mjs");
+await import("./test-deployment-migrations.mjs");
 await import("./test-local-runtime.mjs");
 await import("./test-deployment-verification.mjs");
 await import("./test-research-backend-fingerprint.mjs");
