@@ -24,5 +24,46 @@ jobs:
         run: |
           set -euo pipefail
           gzip -dc .github/decline-payload/runner.sh.gz > /tmp/run-computer-agent-decline.sh
+          python - <<'PY'
+          from pathlib import Path
+          import re
+
+          path = Path('/tmp/run-computer-agent-decline.sh')
+          text = path.read_text(encoding='utf-8')
+          baseline = 'BASELINE="cca6982de00fddf27b6422a8b1df6864a5dc43b1"\n'
+          if text.count(baseline) != 1:
+              raise SystemExit('decline verifier baseline marker changed')
+          text = text.replace(
+              baseline,
+              baseline + 'STAGING_HEAD="$(git rev-parse HEAD)"\n',
+          )
+          head_pattern = re.compile(
+              r'if \[\[ "\$\(git rev-parse HEAD\)" != "\$BASELINE" \]\]; then\n'
+              r'\s*echo "unexpected baseline: \$\(git rev-parse HEAD\)" >&2\n'
+              r'\s*exit 1\nfi'
+          )
+          text, head_count = head_pattern.subn(
+              'if [[ "$(git rev-parse HEAD^)" != "$BASELINE" ]]; then\n'
+              '  echo "unexpected product parent: $(git rev-parse HEAD^)" >&2\n'
+              '  exit 1\nfi',
+              text,
+          )
+          origin_pattern = re.compile(
+              r'if \[\[ "\$\(git rev-parse origin/main\)" != "\$BASELINE" \]\]; then\n'
+              r'\s*echo "origin/main moved during verification" >&2\n'
+              r'\s*exit 1\nfi'
+          )
+          text, origin_count = origin_pattern.subn(
+              'if [[ "$(git rev-parse origin/main)" != "$STAGING_HEAD" ]]; then\n'
+              '  echo "origin/main moved during verification" >&2\n'
+              '  exit 1\nfi',
+              text,
+          )
+          if head_count != 1 or origin_count != 1:
+              raise SystemExit(
+                  f'decline verifier baseline guards changed: head={head_count}, origin={origin_count}'
+              )
+          path.write_text(text, encoding='utf-8')
+          PY
           chmod +x /tmp/run-computer-agent-decline.sh
           /tmp/run-computer-agent-decline.sh
