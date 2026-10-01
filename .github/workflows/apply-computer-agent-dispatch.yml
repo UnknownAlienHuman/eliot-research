@@ -45,6 +45,7 @@ jobs:
             apps/eliotr-core/src/computer-agent-dispatch-store.ts \
             apps/eliotr-core/src/computer-agent-dispatch-http.ts \
             apps/eliotr-pwa/src/agent-inbox-dispatch.ts
+          test -e /packages || sudo ln -s "$GITHUB_WORKSPACE/packages" /packages
           ln -s "$GITHUB_WORKSPACE/.github/scripts/apply-computer-agent-dispatch.py" /tmp/apply-computer-agent-dispatch.py
           cat .github/dispatch-payload/runner-*.b64 | base64 -d | gzip -d > /tmp/apply-computer-agent-dispatch.sh
           chmod +x /tmp/apply-computer-agent-dispatch.sh
