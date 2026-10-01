@@ -64,6 +64,10 @@ async function snapshot(): Promise<ScopeSnapshot> {
 async function setup(source: SourceRevision, scope: ScopeSnapshot): Promise<{ database: DatabaseSync; core: D1Database }> {
   const database = new DatabaseSync(":memory:");
   for (const migration of [m0001, m0002, m0003, m0004, m0005, m0006, m0007, m0008, m0009, m0010]) database.exec(migration);
+  // Production authority-load.ts (S11) reads scope_access_grant_effective, a view
+  // created in migration 0073. This fixture only applies migrations 0001-0010, so
+  // provide a simplified view covering the non-delegated grants used here.
+  database.exec("CREATE VIEW scope_access_grant_effective AS SELECT * FROM scope_access_grant;");
   const core = d1(database);
   const decision = {
     source_namespace_id: "namespace-1", owner_system_id: "owner-1", source_owner_generation: "generation-1",

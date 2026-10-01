@@ -108,6 +108,18 @@ async function deployment(body = requestBody(), overrides = {}) {
   };
 }
 
+// Since 2c395a76 the request model must address the deployment-identity-bound
+// dynamic route target, not the bare route ref. `model` is outside the
+// parameter projection, so the deployment digest is stable while the model is
+// patched to the computed target. Overrides that stay within JSON_BODY_KEYS
+// are reflected in the deployment before targeting.
+async function targetedRequestBody(overrides = {}) {
+  const body = requestBody(overrides);
+  const deployed = await deployment(body);
+  const target = await modelGatewayDynamicRouteTarget(deployed);
+  return { ...body, model: target.model };
+}
+
 function fingerprint(deployed, overrides = {}) {
   return {
     ...deployed,
@@ -171,7 +183,7 @@ function gatewayResponse(body = responseBody(), options = {}) {
 }
 
 async function fixture(overrides = {}) {
-  const body = overrides.request_body ?? requestBody();
+  const body = overrides.request_body ?? (await targetedRequestBody());
   const deployed = overrides.deployment ?? (await deployment(body));
   const compiledPrompt =
     overrides.compiled ?? (await compiled(body));
@@ -253,7 +265,7 @@ async function expectCode(promise, code) {
 
 describe("ER-16 reasoning gateway fetch execution boundary", () => {
   it("prepares the authenticated dynamic-route endpoint without leaking a provider Authorization header", async () => {
-    const body = requestBody();
+    const body = await targetedRequestBody();
     const deployed = await deployment(body);
     const prepared = await prepareModelGatewayHttpRequest(
       input(),
@@ -286,7 +298,7 @@ describe("ER-16 reasoning gateway fetch execution boundary", () => {
   });
 
   it("preserves multiline prompts and newline stop sequences", async () => {
-    const body = requestBody({ stop: ["\n\n", "\r\nEND"] });
+    const body = await targetedRequestBody({ stop: ["\n\n", "\r\nEND"] });
     const prepared = await prepareModelGatewayHttpRequest(
       input(),
       await deployment(body),
@@ -300,7 +312,7 @@ describe("ER-16 reasoning gateway fetch execution boundary", () => {
   });
 
   it("rejects wrong endpoints, malformed tokens, unsafe body fields, and reservation overflow before fetch", async () => {
-    const body = requestBody();
+    const body = await targetedRequestBody();
     const deployed = await deployment(body);
     const compiledPrompt = await compiled(body);
     await expectCode(
@@ -313,7 +325,13 @@ describe("ER-16 reasoning gateway fetch execution boundary", () => {
       ),
       "MODEL_GATEWAY_REQUEST_INVALID",
     );
-    const unsafeBody = requestBody({ tools: [] });
+    // tools:[] is outside JSON_BODY_KEYS, so the body cannot seed its own
+    // deployment: patch the model to the already-valid deployment's target so
+    // the tools rejection (not a model mismatch) is what fires.
+    const unsafeBody = {
+      ...requestBody({ tools: [] }),
+      model: (await modelGatewayDynamicRouteTarget(deployed)).model,
+    };
     await expectCode(
       prepareModelGatewayHttpRequest(
         input(),
@@ -334,7 +352,7 @@ describe("ER-16 reasoning gateway fetch execution boundary", () => {
       ),
       "MODEL_GATEWAY_REQUEST_INVALID",
     );
-    const oversizedOutput = requestBody({ max_tokens: 9_000 });
+    const oversizedOutput = await targetedRequestBody({ max_tokens: 9_000 });
     await expectCode(
       prepareModelGatewayHttpRequest(
         input(),
@@ -360,7 +378,7 @@ describe("ER-16 reasoning gateway fetch execution boundary", () => {
   });
 
   it("rejects request-body and deployed-parameter digest drift", async () => {
-    const body = requestBody();
+    const body = await targetedRequestBody();
     const deployed = await deployment(body);
     await expectCode(
       prepareModelGatewayHttpRequest(

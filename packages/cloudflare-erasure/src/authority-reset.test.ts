@@ -16,6 +16,9 @@ function databaseFixture(): { readonly database: D1Database; readonly calls: Cal
           calls.push({ sql, values });
           return {
             async first<T>() {
+              // Locator retention check expects { missing: 0 }; the final
+              // execution fence read expects { state, closure_digest }.
+              if (sql.includes("erasure_dependency_registry")) return { missing: 0 } as T;
               return { state: "REQUESTED", closure_digest: null } as T;
             },
             async run<T>() {
@@ -26,7 +29,9 @@ function databaseFixture(): { readonly database: D1Database; readonly calls: Cal
       };
     },
     async batch<T>(statements: readonly D1PreparedStatement[]) {
-      expect(statements).toHaveLength(5);
+      // First batch retains recovery locators (1 statement); second batch
+      // clears transient closure state (5 statements). See 997d6b48.
+      expect([1, 5]).toContain(statements.length);
       return statements.map(() => ({ success: true, results: [] })) as unknown as D1Result<T>[];
     },
   } as unknown as D1Database;
