@@ -19,6 +19,10 @@ CREATE TABLE artifact_publication_receipt (
   authorization_scope_revision INTEGER NOT NULL CHECK(authorization_scope_revision>0),
   authorization_receipt_ref TEXT NOT NULL,
   policy_authority_ref TEXT NOT NULL,
+  acceptance_decision_ref TEXT NOT NULL CHECK(length(acceptance_decision_ref) BETWEEN 1 AND 256),
+  acceptance_provenance_ref TEXT NOT NULL CHECK(length(acceptance_provenance_ref) BETWEEN 1 AND 256),
+  acceptance_decision_json TEXT NOT NULL CHECK(json_valid(acceptance_decision_json) AND json_type(acceptance_decision_json)='object' AND length(CAST(acceptance_decision_json AS BLOB))<=65536),
+  acceptance_decision_sha256 TEXT NOT NULL CHECK(length(acceptance_decision_sha256)=64 AND acceptance_decision_sha256 NOT GLOB '*[^0-9a-f]*'),
   credential_generation TEXT NOT NULL,
   authorization_expires_at TEXT NOT NULL,
   deployment_generation TEXT NOT NULL,
@@ -26,9 +30,9 @@ CREATE TABLE artifact_publication_receipt (
   publication_revision INTEGER NOT NULL CHECK(publication_revision>0),
   expected_draft_head_revision INTEGER NOT NULL CHECK(expected_draft_head_revision>0),
   manifest_sha256 TEXT NOT NULL CHECK(length(manifest_sha256)=64 AND manifest_sha256 NOT GLOB '*[^0-9a-f]*'),
-  verification_set_json TEXT NOT NULL CHECK(json_valid(verification_set_json) AND json_type(verification_set_json)='array' AND json_array_length(verification_set_json)>0 AND length(verification_set_json)<=524288),
+  verification_set_json TEXT NOT NULL CHECK(json_valid(verification_set_json) AND json_type(verification_set_json)='array' AND json_array_length(verification_set_json)>0 AND length(CAST(verification_set_json AS BLOB))<=524288),
   verification_set_sha256 TEXT NOT NULL CHECK(length(verification_set_sha256)=64 AND verification_set_sha256 NOT GLOB '*[^0-9a-f]*'),
-  evidence_currentness_json TEXT NOT NULL CHECK(json_valid(evidence_currentness_json) AND json_type(evidence_currentness_json)='array' AND json_array_length(evidence_currentness_json)>0 AND length(evidence_currentness_json)<=262144),
+  evidence_currentness_json TEXT NOT NULL CHECK(json_valid(evidence_currentness_json) AND json_type(evidence_currentness_json)='array' AND json_array_length(evidence_currentness_json)>0 AND length(CAST(evidence_currentness_json AS BLOB))<=262144),
   evidence_currentness_sha256 TEXT NOT NULL CHECK(length(evidence_currentness_sha256)=64 AND evidence_currentness_sha256 NOT GLOB '*[^0-9a-f]*'),
   purge_ledger_revision INTEGER NOT NULL CHECK(purge_ledger_revision>=0),
   created_at TEXT NOT NULL,
@@ -51,10 +55,28 @@ BEGIN
     WHERE i.intent_id=NEW.intent_id AND i.revision=NEW.intent_revision
       AND i.operation_kind='ARTIFACT_PUBLISH' AND i.principal_ref=NEW.principal_ref
       AND i.idempotency_key=NEW.idempotency_key AND o.outbox_id=NEW.outbox_id
+      AND i.policy_decision_ref=NEW.acceptance_decision_ref
       AND r.outcome='ACCEPTED' AND r.reconciliation_required=1
       AND EXISTS(SELECT 1 FROM json_each(r.output_refs_json) WHERE value=NEW.publication_ref)
       AND julianday(NEW.authorization_expires_at)>julianday(NEW.created_at)
   ) THEN RAISE(ABORT,'ARTIFACT_PUBLICATION_OPERATION_GUARD') END;
+  SELECT CASE WHEN
+    json_extract(NEW.acceptance_decision_json,'$.protocol') IS NOT 'eliotr.artifact-owner-acceptance.v1'
+    OR json_extract(NEW.acceptance_decision_json,'$.mode') IS NOT 'OWNER_EXPLICIT'
+    OR json_extract(NEW.acceptance_decision_json,'$.artifact_ref.id') IS NOT NEW.artifact_id
+    OR json_extract(NEW.acceptance_decision_json,'$.artifact_ref.revision') IS NOT NEW.draft_revision
+    OR json_extract(NEW.acceptance_decision_json,'$.expected_draft_head_revision') IS NOT NEW.expected_draft_head_revision
+    OR json_extract(NEW.acceptance_decision_json,'$.expected_publication_revision') IS NOT NEW.expected_publication_revision
+    OR json_extract(NEW.acceptance_decision_json,'$.principal_ref') IS NOT NEW.principal_ref
+    OR json_extract(NEW.acceptance_decision_json,'$.credential_generation') IS NOT NEW.credential_generation
+    OR json_extract(NEW.acceptance_decision_json,'$.idempotency_key') IS NOT NEW.idempotency_key
+    OR json_extract(NEW.acceptance_decision_json,'$.decision_ref') IS NOT NEW.acceptance_decision_ref
+    OR json_extract(NEW.acceptance_decision_json,'$.provenance_ref') IS NOT NEW.acceptance_provenance_ref
+    OR json_type(NEW.acceptance_decision_json,'$.expires_at') IS NOT 'text'
+    OR julianday(json_extract(NEW.acceptance_decision_json,'$.expires_at')) IS NULL
+    OR julianday(json_extract(NEW.acceptance_decision_json,'$.expires_at'))<=julianday(NEW.created_at)
+    OR julianday(json_extract(NEW.acceptance_decision_json,'$.expires_at'))>julianday(NEW.authorization_expires_at)
+    THEN RAISE(ABORT,'ARTIFACT_PUBLICATION_OWNER_COMMIT_GUARD') END;
   SELECT CASE WHEN NOT EXISTS (
     SELECT 1 FROM artifact_revision r JOIN artifact_draft_binding b ON b.artifact_id=r.artifact_id AND b.revision=r.revision
     JOIN artifact_draft_head h ON h.artifact_id=r.artifact_id
