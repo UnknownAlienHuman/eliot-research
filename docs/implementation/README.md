@@ -37,6 +37,7 @@ from the tables below, so an unlisted file is a bug, not an omission you may ign
 |---|---|
 | [dependency-map.md](dependency-map.md) | Package direction, owners and state authority. |
 | [contract-index.md](contract-index.md) | Canonical schemas and the code file that owns each one. |
+| [rust-kernel-abi-versioning.md](rust-kernel-abi-versioning.md) | Versioned Rust/Wasm ABI and the consumer-newer compatibility guard. |
 | [runtime-contract.md](runtime-contract.md) | Bounded Worker, DO, Workflow, Queue, D1, R2 and AI Search behaviour. |
 | [failure-model.md](failure-model.md) | Retries, lost ACKs, tampering, stale generations, partial failure. |
 | [security-checklist.md](security-checklist.md) | Executable disclosure, taint, erasure and secret boundaries. |
