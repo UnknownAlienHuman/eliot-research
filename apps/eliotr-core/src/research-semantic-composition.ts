@@ -12,6 +12,7 @@ import type { ModelGatewayPricingPort } from "@eliotr/cloudflare-ai";
 import type { ReferenceManifestStore } from "@eliotr/policy";
 import type { InvestigationLedgerStore } from "@eliotr/research";
 import type { RetrievalQueryAccess, ScopeProfileBinding } from "@eliotr/retrieval";
+import type { ResearchBranchRole } from "@eliotr/contracts";
 import {
   fail as failWorkflow,
   type WorkflowPrincipal,
@@ -26,6 +27,7 @@ import {
   createEvidenceFreezeSynthesisContextReader,
   createEvidenceFreezeVerificationContextReader,
   createPersistedModelProfileBindingProducer,
+  createResearchBranchRoleModelExecutor,
   type D1DynamicRouteRegistryOptions,
   type EvidenceFreezeCommittedReaders,
   type EvidenceFreezeCompositionDependencies,
@@ -34,6 +36,8 @@ import {
   type EvidenceFreezeSynthesisContextReader,
   type EvidenceFreezeSynthesisModelDependencies,
   type ModelProfileDefinitionConfigSourceOptions,
+  type ResearchBranchRoleModelDependencies,
+  type ResearchBranchRoleModelExecutor,
   type ResearchModelGatewayRuntimeConfig,
   type ResearchModelPromptCompilerDependencies,
   type SpendAuthorizationReader,
@@ -60,6 +64,10 @@ import {
 } from "./research-evidence-freeze-composition.js";
 import { createResearchClaimAuditPromptDependencies } from "./research-claim-audit-prompt.js";
 import { createResearchSynthesisPromptDependencies } from "./research-synthesis-prompt.js";
+import {
+  createResearchBranchRolePromptDependencies,
+  type ResearchBranchRolePromptDependenciesInput,
+} from "./research-branch-role-prompt.js";
 import type { RetrieveBranchesStageDependencies } from "./research-retrieve-branches.js";
 import {
   createResearchStageHandlerFactory,
@@ -137,6 +145,23 @@ export interface ResearchSemanticAuditModelDependencies {
   readonly prepare: ResearchClaimAuditStageDependencies["prepare"];
 }
 
+export interface ResearchSemanticRolesModelDependencies {
+  readonly gateway: ResearchModelGatewayRuntimeConfig;
+  /**
+   * Installed per-role prompt inputs. The composition builds the per-role
+   * prompt compiler dependencies from these via createResearchBranchRolePromptDependencies.
+   */
+  readonly prompt: (role: ResearchBranchRole) => ResearchBranchRolePromptDependenciesInput;
+  readonly pricing: ModelGatewayPricingPort;
+  readonly spend_authorization: SpendAuthorizationReader;
+  /**
+   * Server-owned W3 preparation seam for branch role attempts. The spend
+   * admission for branch stages is owned by the duration/budget checkpoint;
+   * until it lands the server must not provide a roles config.
+   */
+  readonly prepare: ResearchBranchRoleModelDependencies["prepare"];
+}
+
 export interface ResearchSemanticCompositionDependencies {
   /** CORE_DB owns workflow, freeze, model profile and active route rows. */
   readonly database: D1Database;
@@ -171,6 +196,8 @@ export interface ResearchSemanticCompositionDependencies {
   readonly model: {
     readonly synthesis: ResearchSemanticSynthesisModelDependencies;
     readonly audit: ResearchSemanticAuditModelDependencies;
+    /** Optional branch-role model execution. Absent until the duration/budget checkpoint lands role spend admission. */
+    readonly roles?: ResearchSemanticRolesModelDependencies;
   };
   readonly verification: {
     /** The v2 normalization contract is server-selected and required here. */
@@ -612,6 +639,22 @@ export function createResearchSemanticWorkflowHandlerFactory(
   input: ResearchSemanticWorkflowDependencies,
 ): ResearchStageHandlerFactory {
   const semantic = createResearchSemanticComposition(input);
+  const roles = input.model.roles;
+  const roleModel: ResearchBranchRoleModelExecutor | undefined = roles === undefined
+    ? undefined
+    : createResearchBranchRoleModelExecutor({
+      database: input.database,
+      work_bucket: input.work_bucket,
+      gateway: roles.gateway,
+      prompt: (role: ResearchBranchRole) => createResearchBranchRolePromptDependencies(
+        roles.prompt(role),
+      ),
+      prepare: roles.prepare,
+      spend_authorization: roles.spend_authorization,
+      pricing: roles.pricing,
+      deployment_environment: input.deployment_environment,
+      ...(input.now === undefined ? {} : { now: input.now }),
+    });
   const environment = {
     database: input.database,
     work_bucket: input.work_bucket,
@@ -627,6 +670,7 @@ export function createResearchSemanticWorkflowHandlerFactory(
       database: input.database,
       work_bucket: input.work_bucket,
       read_stage_five: semantic.readers.read_stage_five,
+      ...(roleModel === undefined ? {} : { role_model: roleModel }),
     },
     environment: {
       CORE_DB: input.database,

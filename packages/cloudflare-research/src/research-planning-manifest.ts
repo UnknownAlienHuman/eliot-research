@@ -148,10 +148,16 @@ async function buildHypotheses(
   ];
 }
 
+/** Installed per-role branch question. These prompts are server-installed; they are not model defaults. */
+export function researchBranchRoleQuestion(role: string): string {
+  const text = ROLE_QUESTION[role];
+  if (text === undefined) throw new RangeError(`unsupported installed research branch role ${role}`);
+  return text;
+}
+
 export async function createResearchPlanningManifest(
   input: ResearchPlanningManifestInput,
-): Promise<ResearchPlanningManifest> {
-  if (!isResearchQuestionText(input.question)) throw new RangeError("question text is invalid");
+): Promise<ResearchPlanningManifest> {  if (!isResearchQuestionText(input.question)) throw new RangeError("question text is invalid");
   if (input.definition.definition_ref.id !== input.inquiry_protocol_ref.id ||
       input.definition.definition_ref.revision !== input.inquiry_protocol_ref.revision) {
     throw new RangeError("planning definition does not match the selected inquiry protocol");

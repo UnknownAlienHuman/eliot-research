@@ -45,11 +45,16 @@ function selectedGeneration(value: string): boolean {
 /**
  * Replace only stages 7-9 for the exact persisted generation. All later semantic
  * stages remain owned by the already-composed model/evidence/report factory.
+ *
+ * The v7 branch generation is already composed with substantive role model
+ * execution by the semantic factory; it is returned unchanged so the composed
+ * branch execution dependencies (including the role model executor) survive.
  */
 export function routeResearchComputerAgentStages(
   input: ResearchExternalAgentRoutingInput,
 ): ResearchStageHandlerFactory {
   if (!selectedGeneration(input.generation)) return input.base;
+  if (input.generation === SERVER_OWNED_BRANCH_HANDLER_GENERATION) return input.base;
   const retrieve = {
     database: input.env.CORE_DB,
     search_database: input.env.SEARCH_DB,

@@ -18,6 +18,7 @@ import { assertResearchPlanningManifestIdentity } from "./research-planning-mani
 import type { EvidenceFreezeStageFiveLineage } from "./research-evidence-freeze-preparation.js";
 import { readFreezeProtocolAndScopeCheckpoint, type ProtocolScopeCheckpoint } from "./research-protocol-freeze.js";
 import { refKey, sameRef } from "./research-branch-execution-shared.js";
+import type { ResearchBranchRoleModelExecutor } from "./research-branch-role-model.js";
 
 interface InitialPayload {
   readonly planning_manifest?: unknown;
@@ -40,6 +41,12 @@ export interface ResearchBranchExecutionDependencies {
     readonly investigation_id: string;
     readonly principal: WorkflowPrincipal;
   }) => Promise<EvidenceFreezeStageFiveLineage>;
+  /**
+   * Substantive per-role model execution. When absent, any role that requires a
+   * model call fails closed; source-class heuristics alone are not substantive
+   * branch execution.
+   */
+  readonly role_model?: ResearchBranchRoleModelExecutor;
 }
 
 async function loadPlanningManifest(

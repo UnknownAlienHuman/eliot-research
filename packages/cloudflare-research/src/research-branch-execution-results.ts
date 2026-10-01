@@ -9,6 +9,7 @@ import {
 } from "@eliotr/contracts";
 import { evidenceSha256 } from "@eliotr/cloudflare-evidence";
 import { branchResult, refKey, uniqueSorted } from "./research-branch-execution-shared.js";
+import type { ResearchBranchRoleModelOutput } from "./research-branch-role-output.js";
 
 function roleForQuestionKind(kind: ResearchPlanningManifest["questions"][number]["kind"]): ResearchBranchRole | null {
   switch (kind) {
@@ -32,7 +33,7 @@ function hypothesesForRole(planning: ResearchPlanningManifest, role: ResearchBra
   return uniqueSorted(planning.hypotheses.map((item) => item.hypothesis_id));
 }
 
-function evidenceForRole(role: ResearchBranchRole, evidence: readonly ResearchBranchEvidenceItem[]): ResearchBranchEvidenceItem[] {
+export function evidenceForRole(role: ResearchBranchRole, evidence: readonly ResearchBranchEvidenceItem[]): ResearchBranchEvidenceItem[] {
   const contains = (value: string, terms: readonly string[]): boolean => terms.some((term) => value.toLowerCase().includes(term));
   switch (role) {
     case "COUNTER": return evidence.filter((item) => contains(item.source_class, ["counter", "contradict", "refutation"]));
@@ -93,6 +94,37 @@ export async function buildRoleResult(
     observation_refs: await observations(role, selected),
     unknowns: blocked ? [`No exact admitted evidence was selected for the required ${role} branch.`] : [],
     limitations: roleLimitations(role, selected),
+    failed_probe_refs: blocked ? [blockedProbe(role)] : [],
+    authoritative_disposition: "UNASSESSED",
+  });
+}
+
+/**
+ * Builds the branch result from validated substantive model output. The model's
+ * evidence selection is already bound to the role's pre-selected evidence; the
+ * deterministic guardrails (questions, observations, base limitations, blocked
+ * probes) are merged, never replaced.
+ */
+export async function buildRoleResultFromModelOutput(
+  planning: ResearchPlanningManifest,
+  role: ResearchBranchRole,
+  selected: readonly ResearchBranchEvidenceItem[],
+  output: ResearchBranchRoleModelOutput,
+): Promise<ResearchBranchResult> {
+  const selectedByRef = new Map(selected.map((item) => [refKey(item.handle_ref), item]));
+  const cited = output.evidence_handle_refs.map((ref) => selectedByRef.get(refKey(ref))).filter((item) => item !== undefined);
+  const blocked = output.status === "BLOCKED";
+  return branchResult({
+    role,
+    status: output.status,
+    question_ids: questionsForRole(planning, role),
+    hypothesis_ids: hypothesesForRole(planning, role),
+    evidence_handle_refs: cited.map((item) => item.handle_ref),
+    observation_refs: await observations(role, cited),
+    unknowns: blocked
+      ? [`The ${role} model analysis reported no usable evidence.`]
+      : [...output.unknowns],
+    limitations: uniqueSorted([...roleLimitations(role, cited), ...output.limitations]),
     failed_probe_refs: blocked ? [blockedProbe(role)] : [],
     authoritative_disposition: "UNASSESSED",
   });

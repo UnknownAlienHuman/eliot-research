@@ -4,9 +4,12 @@ import {
   ResearchBranchRoleSchema,
   ResearchReadExtractCheckpointSchema,
   type ResearchBranchAnalysisCheckpoint,
+  type ResearchBranchEvidenceItem,
   type ResearchBranchReconciliationCheckpoint,
   type ResearchBranchResult,
+  type ResearchBranchRole,
   type ResearchDebt,
+  type ResearchPlanningManifest,
   type ResearchReadExtractCheckpoint,
 } from "@eliotr/contracts";
 import { canonicalEvidenceJson, evidenceSha256 } from "@eliotr/cloudflare-evidence";
@@ -34,7 +37,14 @@ import {
   type BranchExecutionContext,
   type ResearchBranchExecutionDependencies,
 } from "./research-branch-execution-context.js";
-import { buildRoleResult, debtFor } from "./research-branch-execution-results.js";
+import {
+  buildRoleResult,
+  buildRoleResultFromModelOutput,
+  debtFor,
+  evidenceForRole,
+} from "./research-branch-execution-results.js";
+import { parseBranchRoleModelOutput } from "./research-branch-role-output.js";
+import type { ResearchBranchRoleModelExecutor } from "./research-branch-role-model.js";
 
 export type {
   ResearchBranchAnalysisCheckpoint,
@@ -84,14 +94,56 @@ async function readExtractCheckpoint(
   ));
 }
 
+interface RoleInvocation {
+  readonly request: StageRequest;
+  readonly principal: WorkflowPrincipal;
+  readonly attempt_ref: string;
+  readonly budget_receipt_ref: string;
+  readonly input_bytes: Uint8Array;
+  readonly role_model?: ResearchBranchRoleModelExecutor | undefined;
+}
+
+/**
+ * Executes one required role. Roles with no pre-selected evidence never cost a
+ * model call: they resolve deterministically to BLOCKED (or CANDIDATE_READY for
+ * an evidence-optional SOURCE_AUDIT). Any other role requires the substantive
+ * role model executor; without it the checkpoint fails closed.
+ */
+async function executeRole(
+  planning: ResearchPlanningManifest,
+  invocation: RoleInvocation,
+  role: ResearchBranchRole,
+  evidence: readonly ResearchBranchEvidenceItem[],
+): Promise<ResearchBranchResult> {
+  const selected = evidenceForRole(role, evidence);
+  if (selected.length === 0) {
+    return buildRoleResult(planning, role, evidence);
+  }
+  const roleModel = invocation.role_model;
+  if (roleModel === undefined) fail("WORKFLOW_CONFIGURATION_MISSING");
+  const outputBytes = await roleModel.executeRole({
+    role,
+    request: invocation.request,
+    principal: invocation.principal,
+    attempt_ref: invocation.attempt_ref,
+    budget_receipt_ref: invocation.budget_receipt_ref,
+    input_bytes: invocation.input_bytes,
+  });
+  const output = parseBranchRoleModelOutput(outputBytes, role, selected.map((item) => item.handle_ref));
+  return buildRoleResultFromModelOutput(planning, role, selected, output);
+}
+
 async function analyzeCheckpoint(
+  dependencies: ResearchBranchExecutionDependencies,
   context: BranchExecutionContext,
+  invocation: RoleInvocation,
   read: ResearchReadExtractCheckpoint,
 ): Promise<ResearchBranchAnalysisCheckpoint> {
   const requiredRoles = uniqueSorted(context.planning.required_branch_roles.map((role) => ResearchBranchRoleSchema.parse(role)));
   const analysisRoles = requiredRoles.filter((role) => role !== "COUNTER");
   const results: ResearchBranchResult[] = [];
-  for (const role of analysisRoles) results.push(await buildRoleResult(context.planning, role, read.evidence));
+  const roleInvocation: RoleInvocation = { ...invocation, role_model: dependencies.role_model };
+  for (const role of analysisRoles) results.push(await executeRole(context.planning, roleInvocation, role, read.evidence));
   const value = {
     protocol: "eliotr.research.branch-analysis.v1" as const,
     operation_id: read.operation_id,
@@ -115,13 +167,22 @@ async function analyzeCheckpoint(
 }
 
 async function reconciliationCheckpoint(
+  dependencies: ResearchBranchExecutionDependencies,
   context: BranchExecutionContext,
+  invocation: RoleInvocation,
   analysis: ResearchBranchAnalysisCheckpoint,
   read: ResearchReadExtractCheckpoint,
 ): Promise<ResearchBranchReconciliationCheckpoint> {
   const results = [...analysis.branch_results];
   const counterRequired = analysis.required_roles.includes("COUNTER");
-  if (counterRequired) results.push(await buildRoleResult(context.planning, "COUNTER", read.evidence));
+  if (counterRequired) {
+    results.push(await executeRole(
+      context.planning,
+      { ...invocation, role_model: dependencies.role_model },
+      "COUNTER",
+      read.evidence,
+    ));
+  }
   results.sort((left, right) => left.role.localeCompare(right.role));
   const unmet = results.filter((item) => item.status === "BLOCKED").map((item) => item.role).sort();
   const debts: ResearchDebt[] = [];
@@ -167,7 +228,7 @@ export function createResearchBranchExecutionHandlers(
     const context = await loadContext(dependencies, request, principal);
     return canonicalBytes(await readExtractCheckpoint(context, request, principal));
   };
-  const analyze_branches: WorkflowStageHandler = async ({ request, principal, input_bytes }) => {
+  const analyze_branches: WorkflowStageHandler = async ({ request, principal, input_bytes, attempt_ref, budget_receipt_ref }) => {
     if (request.stage !== "ANALYZE_BRANCHES") fail("WORKFLOW_INPUT_INVALID");
     const context = await loadContext(dependencies, request, principal);
     const read = decodeResearchReadExtractCheckpoint(input_bytes);
@@ -176,9 +237,10 @@ export function createResearchBranchExecutionHandlers(
         !sameRef(read.planning_manifest_ref, context.planning.manifest_ref) || read.planning_manifest_digest !== context.planning.identity_digest) {
       fail("WORKFLOW_OUTPUT_CORRUPT");
     }
-    return canonicalBytes(await analyzeCheckpoint(context, read));
+    return canonicalBytes(await analyzeCheckpoint(dependencies, context,
+      { request, principal, attempt_ref, budget_receipt_ref, input_bytes }, read));
   };
-  const counter_search: WorkflowStageHandler = async ({ request, principal, input_bytes }) => {
+  const counter_search: WorkflowStageHandler = async ({ request, principal, input_bytes, attempt_ref, budget_receipt_ref }) => {
     if (request.stage !== "COUNTER_SEARCH") fail("WORKFLOW_INPUT_INVALID");
     const context = await loadContext(dependencies, request, principal);
     const analysis = decodeResearchBranchAnalysisCheckpoint(input_bytes);
@@ -190,7 +252,8 @@ export function createResearchBranchExecutionHandlers(
     const storedRead = await readCommittedStageLineage(new WorkflowCheckpointStore(dependencies.database), request.operation_id, "READ_AND_EXTRACT");
     const read = decodeResearchReadExtractCheckpoint(await readWorkflowObject(dependencies.work_bucket, storedRead.receipt.output_manifest, true));
     if (!sameRef(read.checkpoint_ref, analysis.read_extract_ref)) fail("WORKFLOW_OUTPUT_CORRUPT");
-    return canonicalBytes(await reconciliationCheckpoint(context, analysis, read));
+    return canonicalBytes(await reconciliationCheckpoint(dependencies, context,
+      { request, principal, attempt_ref, budget_receipt_ref, input_bytes }, analysis, read));
   };
   const recover = async (stage: StageRequest["stage"], request: StageRequest, principal: WorkflowPrincipal): Promise<Uint8Array | null> => {
     if (stage === "READ_AND_EXTRACT") return read_and_extract({ request, principal, input_bytes: new Uint8Array(), attempt_ref: "recovery", budget_receipt_ref: "recovery" });
