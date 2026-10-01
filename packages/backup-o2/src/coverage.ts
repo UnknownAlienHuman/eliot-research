@@ -100,6 +100,10 @@ const NOT_A_BACKUP_TABLES: ReadonlySet<string> = new Set([
   "backup_offsite_copy_receipt",
   "backup_offsite_nonce_authority",
   "backup_export_cut",
+  // O4 retains controller-only replay authority; portable recovery cannot
+  // recreate the original grant from copy digests or claim erasure closure.
+  "backup_offsite_copy_replay_authority",
+  "backup_erasure_replay_obligation",
 ]);
 
 export function classifyDurableTable(table: string): DurableStatus {

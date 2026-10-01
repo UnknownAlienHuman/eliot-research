@@ -15,6 +15,7 @@ import {
   backupIsoNow, backupNonceHex, commitCopyReceipt, copyIdForDigest,
   deriveBackupNonce, readCopyCheckpoints, readCopyReceipt, recordCopyCheckpoint, resolveControllerClock,
 } from "./offsite-durability.js";
+import { commitOffsiteCopyReplayIntent, persistOffsiteCopyReplayIntent } from "./o4-authority.js";
 
 // ER-34 O2 FIX2 encrypted offsite copy. Encryption happens before the
 // destination boundary; KEK/key bytes never enter the epoch, logs, receipts
@@ -162,12 +163,29 @@ export async function copyOffsiteExport(ports: BackupSourcePorts, limits: Backup
     expiry_identity: authority.policy.expiry_identity,
   });
   const copyId = await copyIdForDigest({ epoch_id: persistedDraft.epoch_id, destination_id: authority.destination_id, key_generation: keyGeneration, policy_digest: policyDigest, intent_digest: storedIntentDigest });
+  const replayAuthority = await persistOffsiteCopyReplayIntent(ports.core_db, {
+    copy_id: copyId,
+    epoch_id: persistedDraft.epoch_id,
+    destination_id: authority.destination_id,
+    intent,
+    key_generation: keyGeneration,
+    expires_at: persistedDraft.expires_at,
+    primary_failure_domain: primaryDomain,
+    destination_policy: authority.policy,
+    destination_policy_json: authority.policy_json,
+    intent_digest: storedIntentDigest,
+    policy_digest: policyDigest,
+    descriptor_digest: descriptorDigest,
+    authority_authorized_at: authority.authorized_at,
+    created_at: now,
+  });
   // Exact replay of a committed copy returns persisted bytes verbatim.
   const committed = await readCopyReceipt(ports.core_db, copyId);
   if (committed !== null) {
     if (committed.epoch_id !== persistedDraft.epoch_id || committed.destination_id !== authority.destination_id || committed.key_generation !== keyGeneration || committed.policy_digest !== policyDigest || committed.intent_digest !== storedIntentDigest || committed.failure_domain !== descriptor.failure_domain || committed.descriptor_digest !== descriptorDigest || committed.authority_authorized_at !== authority.authorized_at) {
       failBackup("BACKUP_INTENT_CONFLICT", "offsite copy identity reuses divergent content", false, {});
     }
+    if (replayAuthority.state === "INTENT") await commitOffsiteCopyReplayIntent(ports.core_db, copyId, clockMs);
     let receipt: OperationReceipt;
     let epoch: BackupEpoch;
     let attempt: OperationAttempt;
@@ -317,6 +335,7 @@ export async function copyOffsiteExport(ports: BackupSourcePorts, limits: Backup
     if (winner.epoch_id !== persistedDraft.epoch_id || winner.destination_id !== authority.destination_id || winner.key_generation !== keyGeneration || winner.policy_digest !== policyDigest || winner.intent_digest !== storedIntentDigest || winner.failure_domain !== descriptor.failure_domain || winner.descriptor_digest !== descriptorDigest || winner.authority_authorized_at !== authority.authorized_at) {
       failBackup("BACKUP_INTENT_CONFLICT", "offsite copy identity reuses divergent content", false, {});
     }
+    await commitOffsiteCopyReplayIntent(ports.core_db, copyId, clockMs);
     try {
       const winnerReceipt = OperationReceiptSchema.parse(JSON.parse(winner.receipt_json) as unknown);
       const winnerEpoch = BackupEpochSchema.parse(JSON.parse(winner.epoch_json) as unknown);
@@ -326,6 +345,7 @@ export async function copyOffsiteExport(ports: BackupSourcePorts, limits: Backup
       failBackup("BACKUP_VECTOR_UNVERIFIABLE", "persisted offsite copy bytes are corrupt", false, {}, cause);
     }
   }
+  await commitOffsiteCopyReplayIntent(ports.core_db, copyId, clockMs);
   return { epoch, offsite_copy_ref: offsiteCopyRef, readback_digest: readbackDigest, attempt, receipt };
 }
 
