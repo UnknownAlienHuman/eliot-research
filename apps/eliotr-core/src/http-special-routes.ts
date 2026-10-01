@@ -94,6 +94,7 @@ export async function dispatchHttpSpecialRoute(input: {
       return handleComputerAgentRouteHttp(input.request, input.env, input.context,
         input.match.params, input.match.route.maximum_request_bytes);
     case "research.computer-agent-dispatches.create":
+    case "research.computer-agent-dispatches.create-preferred":
     case "research.computer-agent-dispatches.abandon":
     case "research.computer-agent-dispatches.reassign":
     case "research.computer-agent-dispatches.status":

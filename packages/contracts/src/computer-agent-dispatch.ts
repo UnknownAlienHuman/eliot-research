@@ -50,6 +50,17 @@ export const ComputerAgentDispatchCreateSchema = z.object({
 }).strict();
 export type ComputerAgentDispatchCreate = z.infer<typeof ComputerAgentDispatchCreateSchema>;
 
+export const ComputerAgentPreferredDispatchCreateSchema = z.object({
+  transport: ComputerAgentQualificationTransportSchema,
+  expected_route_revision: revision,
+  client_grant_id: id,
+  client_grant_revision: revision,
+  expires_in_seconds: z.number().int().min(60).max(3600),
+  run_request: ComputerAgentDispatchRunRequestSchema,
+}).strict();
+export type ComputerAgentPreferredDispatchCreate =
+  z.infer<typeof ComputerAgentPreferredDispatchCreateSchema>;
+
 export const ComputerAgentDispatchQualificationSchema = z.object({
   challenge_id: id,
   observation_ref: id,
@@ -96,6 +107,77 @@ export const ComputerAgentDispatchSchema = z.object({
   }
 });
 export type ComputerAgentDispatch = z.infer<typeof ComputerAgentDispatchSchema>;
+
+export const ComputerAgentPreferredDispatchSelectionSchema = z.object({
+  protocol: z.literal("eliotr.computer-agent-preferred-selection.v1"),
+  selection_id: id,
+  project_id: id,
+  task_kind: ComputerAgentTaskKindSchema,
+  selection_strategy: z.literal("FIRST_READY"),
+  transport: ComputerAgentQualificationTransportSchema,
+  route_revision: revision,
+  priority: z.number().int().min(0).max(15),
+  connection_id: id,
+  connection_revision: revision,
+  client_grant_id: id,
+  client_grant_revision: revision,
+  owner_principal_ref: id,
+  owner_credential_generation: id,
+  qualification: ComputerAgentDispatchQualificationSchema,
+  run_request_sha256: Sha256Schema,
+  idempotency_key: actionKey,
+  request_sha256: Sha256Schema,
+  selected_at: IsoDateTimeSchema,
+}).strict().superRefine((value, context) => {
+  if (value.task_kind !== "RESEARCH_BRANCH_ANALYSIS") {
+    context.addIssue({ code: "custom", path: ["task_kind"],
+      message: "Preferred dispatch supports only RESEARCH_BRANCH_ANALYSIS" });
+  }
+  if (value.selection_id !== `preferred-selection-${value.request_sha256.slice(0, 48)}` ||
+      Date.parse(value.qualification.ready_until) <= Date.parse(value.selected_at)) {
+    context.addIssue({ code: "custom", message: "Preferred selection identity or expiry is invalid" });
+  }
+});
+export type ComputerAgentPreferredDispatchSelection =
+  z.infer<typeof ComputerAgentPreferredDispatchSelectionSchema>;
+
+export const ComputerAgentPreferredDispatchSettlementSchema = z.object({
+  protocol: z.literal("eliotr.computer-agent-preferred-dispatch-settlement.v1"),
+  selection_id: id,
+  dispatch_id: id,
+  settled_at: IsoDateTimeSchema,
+}).strict();
+export type ComputerAgentPreferredDispatchSettlement =
+  z.infer<typeof ComputerAgentPreferredDispatchSettlementSchema>;
+
+export const ComputerAgentPreferredDispatchReceiptSchema = z.object({
+  protocol: z.literal("eliotr.computer-agent-preferred-dispatch-receipt.v1"),
+  selection: ComputerAgentPreferredDispatchSelectionSchema,
+  settlement: ComputerAgentPreferredDispatchSettlementSchema,
+  dispatch: ComputerAgentDispatchSchema,
+}).strict().superRefine((value, context) => {
+  const selection = value.selection;
+  const dispatch = value.dispatch;
+  if (value.settlement.selection_id !== selection.selection_id ||
+      value.settlement.dispatch_id !== dispatch.dispatch_id ||
+      dispatch.project_id !== selection.project_id || dispatch.task_kind !== selection.task_kind ||
+      dispatch.transport !== selection.transport || dispatch.route_revision !== selection.route_revision ||
+      dispatch.priority !== selection.priority || dispatch.connection_id !== selection.connection_id ||
+      dispatch.connection_revision !== selection.connection_revision ||
+      dispatch.client_grant_id !== selection.client_grant_id ||
+      dispatch.client_grant_revision !== selection.client_grant_revision ||
+      dispatch.owner_principal_ref !== selection.owner_principal_ref ||
+      dispatch.owner_credential_generation !== selection.owner_credential_generation ||
+      dispatch.qualification.challenge_id !== selection.qualification.challenge_id ||
+      dispatch.qualification.observation_ref !== selection.qualification.observation_ref ||
+      dispatch.qualification.verified_credential_generation !==
+        selection.qualification.verified_credential_generation ||
+      dispatch.run_request_sha256 !== selection.run_request_sha256) {
+    context.addIssue({ code: "custom", message: "Preferred dispatch receipt identities differ" });
+  }
+});
+export type ComputerAgentPreferredDispatchReceipt =
+  z.infer<typeof ComputerAgentPreferredDispatchReceiptSchema>;
 
 export const ComputerAgentDispatchPullSchema = z.object({
   transport: ComputerAgentQualificationTransportSchema,

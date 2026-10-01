@@ -249,3 +249,18 @@ connection revision, transport, project grant, qualification, deployment and own
 again. The predecessor and successor receive distinct dispatch IDs, actor credential generations and any
 later task/lease identities. Accepted, merely expired/stale, pending, mismatched or already-reassigned
 dispatches are rejected. This is explicit failover history, not timeout automation or work transfer.
+
+## 12. Owner-authorized FIRST_READY dispatch
+
+Migration 0094 adds a separate immutable selection intent before exact dispatch creation. The owner may
+submit project, exact expected route revision, transport, target grant revision, expiry and explicit v2
+Research request without naming Spark, Muse, Dot or another contour. Core consumes the existing readiness
+report and records its first READY connection, priority and qualification observation. Only then does it
+create the ordinary exact dispatch for that actor.
+
+The caller idempotency key binds the selection request, while a reserved digest-derived internal key binds
+the exact dispatch. Selection is recorded before dispatch creation, so a retry after any lost acknowledgement
+reuses the same selected connection and cannot jump to a newly preferred contour. Ordinary explicit dispatch
+creation rejects the reserved internal-key namespace. This is owner-authorized target selection, not failover:
+decline, abandonment and terminal reassignment remain separate actions, and no accepted offer, task, lease,
+credential or Research run moves between actors.

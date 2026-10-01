@@ -215,6 +215,7 @@ export function createComputerAgentDispatchService(env: Env, options?: {
   readonly start_run?: (context: AuthenticatedRequestContext, request: QueryRequest) =>
     Promise<{ investigation_ref: { readonly id: string; readonly revision: number };
       workflow_instance_id: string }>;
+  readonly allow_preferred_internal_key?: boolean | undefined;
 }) {
   const db = env.CORE_DB;
   const now = options?.now ?? Date.now;
@@ -230,6 +231,11 @@ export function createComputerAgentDispatchService(env: Env, options?: {
       "Dispatch input contains unknown or invalid fields");
     requireRunRequest(parsed.data.run_request, projectId);
     const key = idempotency(context.request.headers.get("Idempotency-Key"));
+    if (key.startsWith("preferred-dispatch-") &&
+        options?.allow_preferred_internal_key !== true) {
+      fail("COMPUTER_AGENT_DISPATCH_INPUT_INVALID", 400,
+        "Idempotency-Key uses the reserved preferred-dispatch namespace");
+    }
     const requestSha = await sha256Utf8(canonicalJson({
       protocol: "eliotr.computer-agent-dispatch-create.v1",
       project_id: projectId,

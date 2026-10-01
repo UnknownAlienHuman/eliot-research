@@ -195,3 +195,11 @@ the exact target, the owner may call the reassignment endpoint with the predeces
 `run_request_sha256` it just read. The response links one new dispatch to that terminal predecessor. The
 new target must independently satisfy the current route, grant and qualification checks. Do not reassign an
 accepted run, infer failover from timeout alone, reuse the old dispatch ID, or transfer a task or lease.
+
+### Owner-selected FIRST_READY offer
+
+The owner may call the preferred-dispatch endpoint after inspecting route readiness. The endpoint chooses and
+immutably records the first READY Spark, Muse, Dot or other route entry, then creates the normal exact offer.
+The agent still pulls and accepts under its own Access actor and exact project grant. Retry the same owner key
+and body after an uncertain response; selection cannot silently switch to another contour. Decline/abandon
+continues through explicit reassignment rather than automatic failover.

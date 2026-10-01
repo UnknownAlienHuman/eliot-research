@@ -167,3 +167,26 @@ The Web Inbox remains a target-agent surface. Owner automation uses
 an `ABANDONED` or `DECLINED` predecessor. The body names the exact expected predecessor state and frozen
 request digest plus the newly selected route/connection/grant/transport. The successor is a new offer;
 no browser secret, accepted run, task lease or credential authority is copied from the predecessor.
+
+## Owner-authorized FIRST_READY creation
+
+An owner can create a new offer without manually copying the preferred connection from readiness:
+
+```text
+POST /api/v1/research/projects/<project>/computer-agent-dispatches/preferred
+Idempotency-Key: <stable owner action key>
+
+{
+  "transport": "WEB_INBOX",
+  "expected_route_revision": 4,
+  "client_grant_id": "<exact target grant>",
+  "client_grant_revision": 2,
+  "expires_in_seconds": 900,
+  "run_request": { "...": "explicit v2 PROJECT Research request" }
+}
+```
+
+Core records an immutable FIRST_READY selection before creating the ordinary exact dispatch. Repeating the
+same owner key/body returns that selection and dispatch even if readiness ordering later changes. A different
+body under the same key conflicts. This endpoint does not reassign a declined/abandoned offer and never moves
+an accepted dispatch or task lease; use the explicit reassignment endpoint for terminal offers.

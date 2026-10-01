@@ -7,6 +7,7 @@ import { createComputerAgentDispatchService } from "./computer-agent-dispatch-st
 import { createComputerAgentDispatchAbandonmentService } from "./computer-agent-dispatch-abandonment.js";
 import { createComputerAgentDispatchDeclineService } from "./computer-agent-dispatch-decline.js";
 import { createComputerAgentDispatchReassignmentService } from "./computer-agent-dispatch-reassignment.js";
+import { createComputerAgentPreferredDispatchService } from "./computer-agent-preferred-dispatch.js";
 
 function requireJson(request: Request): void {
   if (request.headers.get("Content-Type")?.split(";", 1)[0]?.trim().toLowerCase() !==
@@ -53,13 +54,15 @@ export async function handleComputerAgentDispatchHttp(
         params.dispatch_id ?? "",
       ));
     }
-    if (operation === "research.computer-agent-dispatches.create") {
+    if (operation === "research.computer-agent-dispatches.create" ||
+        operation === "research.computer-agent-dispatches.create-preferred") {
       requireOwnerMutationOrigin(request, url);
-      return apiResult(request, env, await service.create(
-        context,
-        params.project_id ?? "",
-        await readJsonBodyWithinBytes(request, maximumBytes),
-      ));
+      const body: unknown = await readJsonBodyWithinBytes(request, maximumBytes);
+      return apiResult(request, env,
+        operation === "research.computer-agent-dispatches.create-preferred"
+          ? await createComputerAgentPreferredDispatchService(env).create(
+              context, params.project_id ?? "", body)
+          : await service.create(context, params.project_id ?? "", body));
     }
     if (operation === "research.computer-agent-dispatches.abandon") {
       requireOwnerMutationOrigin(request, url);
