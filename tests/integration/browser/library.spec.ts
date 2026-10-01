@@ -257,3 +257,299 @@ test("S92 92.1f intake: Library/Lens exact readback; foreign namespace reads zer
   const outcome = await runS92IntakeScenario("verifyS92IntakeLibraryLensReadback");
   assertS92Honest(outcome, ["PASS"]);
 });
+
+// ---------------------------------------------------------------------------
+// S92 local product acceptance: 92.2 delegation scenarios (s92-delegation.mjs).
+// Each scenario drives the real delegation service + real 0072/0075 DDL in
+// in-memory SQLite: owner-issued grant → machine query/run/status/report →
+// citation, with S98/S99 migration guards. Honest states: PASS, or
+// PENDING_OWNER_D1B for live-model assertions, NOT_EXECUTED for missing
+// Chromium, BLOCKED for stale/missing dist build.
+// ---------------------------------------------------------------------------
+
+type S92DelegationScenario = { name: string; run: () => Promise<S92ScenarioOutcome> };
+
+async function runS92DelegationScenario(name: string): Promise<S92ScenarioOutcome> {
+  const m = (await import("./s92-delegation.mjs")) as unknown as { SCENARIOS: S92DelegationScenario[] };
+  const scenario = m.SCENARIOS.find((s) => s.name === name);
+  assert.ok(scenario, `s92-delegation.mjs SCENARIOS must include ${name}`);
+  return scenario.run();
+}
+
+test("S92 92.2a delegation: grant issuance is owner-only; machine issuance denied", async () => {
+  const outcome = await runS92DelegationScenario("s92-delegation-grant-issuance-owner-only");
+  assertS92Honest(outcome, ["PASS"]);
+});
+
+test("S92 92.2b delegation: owner put → grant → query/run/status/report → revoke → denied", async () => {
+  const outcome = await runS92DelegationScenario("s92-delegation-grant-positive-path");
+  assertS92Honest(outcome, ["PASS"]);
+});
+
+test("S92 92.2c delegation: attachment append-only guards hold against real DDL", async () => {
+  const outcome = await runS92DelegationScenario("s92-delegation-attachment-append-only");
+  assertS92Honest(outcome, ["PASS"]);
+});
+
+test("S92 92.2d delegation: normalized ingest guards hold against real DDL", async () => {
+  const outcome = await runS92DelegationScenario("s92-delegation-normalized-ingest-guards");
+  assertS92Honest(outcome, ["PASS"]);
+});
+
+test("S92 92.2e delegation: receipt digest binding verified against real prepareProjectAttachment", async () => {
+  const outcome = await runS92DelegationScenario("s92-delegation-receipt-digest-binding");
+  assertS92Honest(outcome, ["PASS"]);
+});
+
+test("S92 92.2f delegation: model dispatch fail-closed proven; live model PENDING_OWNER_D1B", async () => {
+  const outcome = await runS92DelegationScenario("s92-delegation-model-fail-closed");
+  // D1(a): no local model gateway exists. PENDING_OWNER_D1B is the honest
+  // terminal state until the owner decides D1(b); PASS is accepted for that
+  // future without weakening today's assertion.
+  assertS92Honest(outcome, ["PENDING_OWNER_D1B", "PASS"]);
+});
+
+test("S92 92.2g delegation: runtime config readiness verified", async () => {
+  const outcome = await runS92DelegationScenario("s92-delegation-runtime-config-readiness");
+  assertS92Honest(outcome, ["PASS"]);
+});
+
+test("S92 92.2h delegation: browser harness probe; NOT_EXECUTED without Chromium", async () => {
+  const outcome = await runS92DelegationScenario("s92-delegation-browser-harness-probe");
+  // Chromium is unavailable in this environment; the probe honestly reports
+  // NOT_EXECUTED. PASS is accepted where Chromium exists.
+  assertS92Honest(outcome, ["NOT_EXECUTED", "PASS"]);
+});
+
+// ---------------------------------------------------------------------------
+// S92 local product acceptance: 92.3 product scenarios (s92-products.mjs).
+// Registered ASK/COMPARE/FACT_CHECK/DEEP_RESEARCH/REPORT through actual
+// W1/W2/W3/storage and the controlled external model. Honest states: PASS,
+// or PENDING_OWNER_D1B for live-model assertions until the owner decides
+// D1(b).
+// ---------------------------------------------------------------------------
+
+type S92ProductsScenario = { name: string; run: () => Promise<S92ScenarioOutcome> };
+
+async function runS92ProductsScenario(name: string): Promise<S92ScenarioOutcome> {
+  const m = (await import("./s92-products.mjs")) as unknown as { SCENARIOS: S92ProductsScenario[] };
+  const scenario = m.SCENARIOS.find((s) => s.name === name);
+  assert.ok(scenario, `s92-products.mjs SCENARIOS must include ${name}`);
+  return scenario.run();
+}
+
+test("S92 92.3a products: all five products registered with exact descriptors", async () => {
+  const outcome = await runS92ProductsScenario("s92-products-registered");
+  assertS92Honest(outcome, ["PASS"]);
+});
+
+test("S92 92.3b products: local model gateway disabled via sentinel URL", async () => {
+  const outcome = await runS92ProductsScenario("s92-local-model-disabled");
+  assertS92Honest(outcome, ["PASS"]);
+});
+
+test("S92 92.3c products: local environment isolation (no test-var seam)", async () => {
+  const outcome = await runS92ProductsScenario("s92-local-env-isolation");
+  assertS92Honest(outcome, ["PASS"]);
+});
+
+test("S92 92.3d products: model gateway fail-closed on missing credentials", async () => {
+  const outcome = await runS92ProductsScenario("s92-model-gateway-fail-closed");
+  assertS92Honest(outcome, ["PASS"]);
+});
+
+test("S92 92.3e products: ASK admission with exact row readback", async () => {
+  const outcome = await runS92ProductsScenario("s92-product-ask-admission");
+  assertS92Honest(outcome, ["PASS"]);
+});
+
+test("S92 92.3f products: COMPARE admission with exact row readback", async () => {
+  const outcome = await runS92ProductsScenario("s92-product-compare-admission");
+  assertS92Honest(outcome, ["PASS"]);
+});
+
+test("S92 92.3g products: FACT_CHECK admission with exact row readback", async () => {
+  const outcome = await runS92ProductsScenario("s92-product-fact-check-admission");
+  assertS92Honest(outcome, ["PASS"]);
+});
+
+test("S92 92.3h products: DEEP_RESEARCH admission with exact row readback", async () => {
+  const outcome = await runS92ProductsScenario("s92-product-deep-research-admission");
+  assertS92Honest(outcome, ["PASS"]);
+});
+
+test("S92 92.3i products: REPORT admission with exact row readback", async () => {
+  const outcome = await runS92ProductsScenario("s92-product-report-admission");
+  assertS92Honest(outcome, ["PASS"]);
+});
+
+test("S92 92.3j products: live model assertions PENDING_OWNER_D1B", async () => {
+  const outcome = await runS92ProductsScenario("s92-live-model-assertions");
+  // D1(a): no live model gateway exists. PENDING_OWNER_D1B is the honest
+  // terminal state until the owner decides D1(b).
+  assertS92Honest(outcome, ["PENDING_OWNER_D1B", "PASS"]);
+});
+
+// ---------------------------------------------------------------------------
+// S92 local product acceptance: 92.4 continuity scenarios (s92-continuity.mjs).
+// JWT refresh, compatible deploy, source generations v1→v2, offline, cancel,
+// same-run recovery — against real D1 migrations and real Worker boot.
+// Honest states: PASS, or NOT_EXECUTED for missing Chromium/Worker boot.
+// ---------------------------------------------------------------------------
+
+type S92ContinuityScenario = { name: string; run: () => Promise<S92ScenarioOutcome> };
+
+async function runS92ContinuityScenario(name: string): Promise<S92ScenarioOutcome> {
+  const m = (await import("./s92-continuity.mjs")) as unknown as { SCENARIOS: S92ContinuityScenario[] };
+  const scenario = m.SCENARIOS.find((s) => s.name === name);
+  assert.ok(scenario, `s92-continuity.mjs SCENARIOS must include ${name}`);
+  return scenario.run();
+}
+
+test("S92 92.4a continuity: JWT refresh with rotation; old expired, new valid", async () => {
+  const outcome = await runS92ContinuityScenario("s92-continuity-jwt-refresh");
+  assertS92Honest(outcome, ["PASS"]);
+});
+
+test("S92 92.4b continuity: compatible deploy; NOT_EXECUTED without local Worker boot", async () => {
+  const outcome = await runS92ContinuityScenario("s92-continuity-compatible-deploy");
+  // Local Worker boot is unavailable in this environment; the scenario
+  // honestly reports NOT_EXECUTED without requesting a remote deploy.
+  // PASS is accepted where local boot works.
+  assertS92Honest(outcome, ["NOT_EXECUTED", "PASS"]);
+});
+
+test("S92 92.4c continuity: 94 migrations; v1→v2 source generations upgrade once", async () => {
+  const outcome = await runS92ContinuityScenario("s92-continuity-source-generations-v1-v2");
+  assertS92Honest(outcome, ["PASS"]);
+});
+
+test("S92 92.4d continuity: offline mode; NOT_EXECUTED without Chromium", async () => {
+  const outcome = await runS92ContinuityScenario("s92-continuity-offline");
+  // Live CDP offline emulation needs Chromium; the scenario honestly reports
+  // NOT_EXECUTED after verifying readiness fixture wiring. PASS is accepted
+  // where Chromium exists.
+  assertS92Honest(outcome, ["NOT_EXECUTED", "PASS"]);
+});
+
+test("S92 92.4e continuity: cancel request retained; foreign bindings rejected", async () => {
+  const outcome = await runS92ContinuityScenario("s92-continuity-cancel");
+  assertS92Honest(outcome, ["PASS"]);
+});
+
+test("S92 92.4f continuity: same-run recovery converges; no repeated effect", async () => {
+  const outcome = await runS92ContinuityScenario("s92-continuity-same-run-recover");
+  assertS92Honest(outcome, ["PASS"]);
+});
+
+// ---------------------------------------------------------------------------
+// S92 local product acceptance: 92.5 copy-on-write scenarios (s92-cow.mjs).
+// Verified export identity/tamper, change-review entry point, publication
+// acceptance, history readback, model policy D1 — against compiled dist.
+// Honest states: PASS, BLOCKED for unimplemented prerequisites,
+// NOT_EXECUTED for missing fixtures, PENDING_OWNER_D1B for live model.
+// ---------------------------------------------------------------------------
+
+type S92CowScenario = { name: string; run: () => Promise<S92ScenarioOutcome> };
+
+async function runS92CowScenario(name: string): Promise<S92ScenarioOutcome> {
+  const m = (await import("./s92-cow.mjs")) as unknown as { SCENARIOS: S92CowScenario[] };
+  const scenario = m.SCENARIOS.find((s) => s.name === name);
+  assert.ok(scenario, `s92-cow.mjs SCENARIOS must include ${name}`);
+  return scenario.run();
+}
+
+test("S92 92.5a COW: verified export identity with exact digest readback", async () => {
+  const outcome = await runS92CowScenario("s92-cow-verified-export-identity");
+  assertS92Honest(outcome, ["PASS"]);
+});
+
+test("S92 92.5b COW: verified export tamper detected; digest mismatch fail-closed", async () => {
+  const outcome = await runS92CowScenario("s92-cow-verified-export-tamper");
+  assertS92Honest(outcome, ["PASS"]);
+});
+
+test("S92 92.5c COW: change-review entry point; BLOCKED until reviseSection lands", async () => {
+  const outcome = await runS92CowScenario("s92-cow-change-review-entry-point");
+  // reviseSection is not implemented; the scenario honestly reports BLOCKED.
+  // PASS is accepted once the producer exists.
+  assertS92Honest(outcome, ["BLOCKED", "PASS"]);
+});
+
+test("S92 92.5d COW: publication acceptance; BLOCKED until producer composed", async () => {
+  const outcome = await runS92CowScenario("s92-cow-publication-accepted");
+  // The ACCEPTED publication producer is not composed; the scenario honestly
+  // reports BLOCKED. PASS is accepted once it exists.
+  assertS92Honest(outcome, ["BLOCKED", "PASS"]);
+});
+
+test("S92 92.5e COW: history readback; NOT_EXECUTED without prepared D1/R2", async () => {
+  const outcome = await runS92CowScenario("s92-cow-history-readback");
+  // No prepared local D1/R2 in this environment; the scenario honestly
+  // reports NOT_EXECUTED. PASS is accepted with fixtures present.
+  assertS92Honest(outcome, ["NOT_EXECUTED", "PASS"]);
+});
+
+test("S92 92.5f COW: model policy D1 fail-closed verified", async () => {
+  const outcome = await runS92CowScenario("s92-cow-model-policy-d1");
+  assertS92Honest(outcome, ["PASS"]);
+});
+
+test("S92 92.5g COW: live model PENDING_OWNER_D1B", async () => {
+  const outcome = await runS92CowScenario("s92-cow-live-model-pending");
+  // D1(a): no live model gateway exists. PENDING_OWNER_D1B is the honest
+  // terminal state until the owner decides D1(b).
+  assertS92Honest(outcome, ["PENDING_OWNER_D1B", "PASS"]);
+});
+
+// ---------------------------------------------------------------------------
+// S92 local product acceptance: 92.6 negative scenarios (s92-negatives.mjs).
+// Actor unauthorized, scope denial, revoke enforcement, purge stickiness,
+// corrupt input rejection, CAS conflict single-flight, late-reply
+// classification — all against real harness entry points with fakes only at
+// documented transport seams. Honest states: PASS (all negatives hold).
+// ---------------------------------------------------------------------------
+
+type S92NegativesScenario = { name: string; run: () => Promise<S92ScenarioOutcome> };
+
+async function runS92NegativesScenario(name: string): Promise<S92ScenarioOutcome> {
+  const m = (await import("./s92-negatives.mjs")) as unknown as { SCENARIOS: S92NegativesScenario[] };
+  const scenario = m.SCENARIOS.find((s) => s.name === name);
+  assert.ok(scenario, `s92-negatives.mjs SCENARIOS must include ${name}`);
+  return scenario.run();
+}
+
+test("S92 92.6a negatives: unauthorized actor denied with zero D1 mutation", async () => {
+  const outcome = await runS92NegativesScenario("s92-92.6-actor-unauthorized-denied");
+  assertS92Honest(outcome, ["PASS"]);
+});
+
+test("S92 92.6b negatives: out-of-scope request denied", async () => {
+  const outcome = await runS92NegativesScenario("s92-92.6-scope-out-of-scope-denied");
+  assertS92Honest(outcome, ["PASS"]);
+});
+
+test("S92 92.6c negatives: revoked grant enforced on subsequent use", async () => {
+  const outcome = await runS92NegativesScenario("s92-92.6-revoke-enforced");
+  assertS92Honest(outcome, ["PASS"]);
+});
+
+test("S92 92.6d negatives: purge semantics sticky; no resurrection", async () => {
+  const outcome = await runS92NegativesScenario("s92-92.6-purge-semantics-sticky");
+  assertS92Honest(outcome, ["PASS"]);
+});
+
+test("S92 92.6e negatives: corrupt input rejected fail-closed", async () => {
+  const outcome = await runS92NegativesScenario("s92-92.6-corrupt-input-rejected");
+  assertS92Honest(outcome, ["PASS"]);
+});
+
+test("S92 92.6f negatives: CAS conflict single-flight; no lost update", async () => {
+  const outcome = await runS92NegativesScenario("s92-92.6-cas-conflict-single-flight");
+  assertS92Honest(outcome, ["PASS"]);
+});
+
+test("S92 92.6g negatives: late reply classified without reopening terminal", async () => {
+  const outcome = await runS92NegativesScenario("s92-92.6-late-reply-classified");
+  assertS92Honest(outcome, ["PASS"]);
+});

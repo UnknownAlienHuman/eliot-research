@@ -1,0 +1,256 @@
+{
+  "model_profile": {
+    "config_provenance_ref": "local-draft-provenance-v1",
+    "deployment": {
+      "pricing_snapshot_ref": "local-draft-pricing-snapshot-v1",
+      "prompt_generation": "local-draft-prompt-gen-1",
+      "route_ref": "dynamic/eliotr-strong",
+      "route_version": "local-draft-route-v1",
+      "schema_generation": "local-draft-schema-gen-1"
+    },
+    "expires_at": "2027-10-01T00:00:00.000Z",
+    "max_context_bytes": 65536,
+    "model_profile_ref": "research-model-v1",
+    "policy": {
+      "allowed_tool_definition_refs": [],
+      "allowed_use": [
+        "research"
+      ],
+      "allowed_verifier_refs": [
+        "local-draft-verifier-v1"
+      ],
+      "disclosure_ceiling": "local-draft-disclosure-ceiling",
+      "expires_at": "2027-10-01T00:00:00.000Z",
+      "permitted_acquisition_or_expansion_routes": [
+        "local-draft-acquisition-route"
+      ],
+      "permitted_anchor_and_precision_ceilings": [
+        "local-draft-anchor-ceiling"
+      ],
+      "provider_and_policy_generations": {
+        "local-draft-provider": "local-draft-policy-gen-1"
+      }
+    }
+  },
+  "protocol": "eliotr.research-owner-setup.v1",
+  "report": {
+    "admission_policy": {
+      "allowed_use": [
+        "research"
+      ],
+      "client_class": "owner_pwa",
+      "config_provenance_ref": "local-draft-provenance-v1",
+      "disclosure_ceiling": "local-draft-disclosure-ceiling",
+      "expires_at": "2027-10-01T00:00:00.000Z",
+      "policy_authority_ref": "local-draft-policy-authority-v1",
+      "policy_generation": "local-draft-policy-gen-1",
+      "policy_ref": "local-draft-report-policy-v1",
+      "policy_revision": 1,
+      "principal_ref": "local-draft-owner-principal",
+      "purpose": "research-report-materialization",
+      "requested_output_class": "private-draft",
+      "schema": "eliotr.research.report-admission.v1"
+    },
+    "artifact_policy": {
+      "audience": "owner",
+      "budget_ref": "local-draft-budget-v1",
+      "citation_policy_ref": "local-draft-citation-policy-v1",
+      "export_formats": [
+        "markdown"
+      ],
+      "include_counterevidence": true,
+      "include_methodology": true,
+      "kind": "research_report",
+      "language": "en",
+      "length_policy_ref": "local-draft-length-policy-v1",
+      "manifest_residency": {
+        "scope_domain_id": "local-draft-scope",
+        "access_domain_id": "local-draft-owner-principal",
+        "confidentiality_domain_id": "local-draft-confidentiality",
+        "encryption_key_domain_id": "local-draft-encryption-key",
+        "retention_domain_id": "local-draft-retention",
+        "erasure_domain_id": "local-draft-erasure"
+      },
+      "section_contract": {
+        "section_id": "local-draft-section",
+        "title": "Local draft section",
+        "purpose": "Local S92 acceptance draft",
+        "required_claim_kinds": [
+          "local-draft-claim-kind"
+        ],
+        "required_evidence_classes": [
+          "local-draft-evidence-class"
+        ],
+        "maximum_utf8_bytes": 65536
+      },
+      "section_residency": {
+        "scope_domain_id": "local-draft-scope",
+        "access_domain_id": "local-draft-owner-principal",
+        "confidentiality_domain_id": "local-draft-confidentiality",
+        "encryption_key_domain_id": "local-draft-encryption-key",
+        "retention_domain_id": "local-draft-retention",
+        "erasure_domain_id": "local-draft-erasure"
+      },
+      "statement_labels": {
+        "local-draft-claim-kind": "UNRESOLVED"
+      },
+      "title": "Local draft research report",
+      "verification_policy_ref": "local-draft-verification-policy-v1"
+    }
+  },
+  "semantic": {
+    "audit": {
+      "allowed_verifier_refs": [
+        "local-draft-verifier-v1"
+      ],
+      "max_tokens": 4000,
+      "policy": {
+        "required_dimensions": [
+          "value_or_measurement_verification"
+        ],
+        "source_requirement_applicable": true,
+        "excerpt_requirement_applicable": true,
+        "coverage_limitations": [],
+        "unsupported_precision": []
+      },
+      "reasoning_effort": "low",
+      "request_timeout_ms": 60000,
+      "verifier_ref": "local-draft-verifier-v1",
+      "verifier_schema_generation": "local-draft-verifier-schema-gen-1"
+    },
+    "normalization": {
+      "required_precision": "local-draft-precision",
+      "required_source_class": "local-draft-source-class",
+      "section_ref": {
+        "id": "local-draft-normalization-section",
+        "revision": 1
+      }
+    },
+    "output_format": "json_schema",
+    "synthesis": {
+      "max_tokens": 4000,
+      "reasoning_effort": "low",
+      "request_timeout_ms": 60000
+    }
+  },
+  "spend_policy": {
+    "approved": true,
+    "client_class": "owner_pwa",
+    "config_provenance_ref": "local-draft-provenance-v1",
+    "deployment_generation": "local-draft-deployment-gen-1",
+    "expires_at": "2027-10-01T00:00:00.000Z",
+    "policy_ref": "local-draft-spend-policy-v1",
+    "principal_ref": "local-draft-owner-principal",
+    "protocol": "eliotr.research-owner-spend-template.v1",
+    "rules": [
+      {
+        "deployment": {
+          "pricing_snapshot_ref": "local-draft-pricing-snapshot-v1",
+          "prompt_generation": "local-draft-prompt-gen-1",
+          "route_ref": "dynamic/eliotr-strong",
+          "route_version": "local-draft-route-v1",
+          "schema_generation": "local-draft-schema-gen-1"
+        },
+        "max_input_bytes": 65536,
+        "max_output_bytes": 16384,
+        "quote": {
+          "byok_usd": 0,
+          "confidence": 0.5,
+          "estimated_embedding_tokens": 0,
+          "estimated_input_tokens": 8000,
+          "estimated_model_calls": 2,
+          "estimated_output_tokens": 4000,
+          "expected_sections": 6,
+          "expected_sources": 12,
+          "max_total_usd": 0,
+          "platform_usd": 0,
+          "quoted_neurons": 0,
+          "workers_ai_usd": 0,
+          "workflow_steps": 4
+        },
+        "stage": "SYNTHESIZE"
+      },
+      {
+        "deployment": {
+          "pricing_snapshot_ref": "local-draft-pricing-snapshot-v1",
+          "prompt_generation": "local-draft-prompt-gen-1",
+          "route_ref": "dynamic/eliotr-audit-verifier",
+          "route_version": "local-draft-route-v1",
+          "schema_generation": "local-draft-schema-gen-1"
+        },
+        "max_input_bytes": 32768,
+        "max_output_bytes": 8192,
+        "quote": {
+          "byok_usd": 0,
+          "confidence": 0.5,
+          "estimated_embedding_tokens": 0,
+          "estimated_input_tokens": 6000,
+          "estimated_model_calls": 2,
+          "estimated_output_tokens": 2000,
+          "expected_sections": 6,
+          "expected_sources": 12,
+          "max_total_usd": 0,
+          "platform_usd": 0,
+          "quoted_neurons": 0,
+          "workers_ai_usd": 0,
+          "workflow_steps": 3
+        },
+        "stage": "AUDIT_CLAIMS"
+      },
+      {
+        "deployment": {
+          "pricing_snapshot_ref": "local-draft-pricing-snapshot-v1",
+          "prompt_generation": "local-draft-prompt-gen-1",
+          "route_ref": "dynamic/eliotr-balanced",
+          "route_version": "local-draft-route-v1",
+          "schema_generation": "local-draft-schema-gen-1"
+        },
+        "max_input_bytes": 32768,
+        "max_output_bytes": 8192,
+        "quote": {
+          "byok_usd": 0,
+          "confidence": 0.5,
+          "estimated_embedding_tokens": 0,
+          "estimated_input_tokens": 14000,
+          "estimated_model_calls": 7,
+          "estimated_output_tokens": 7000,
+          "expected_sections": 8,
+          "expected_sources": 20,
+          "max_total_usd": 0,
+          "platform_usd": 0,
+          "quoted_neurons": 0,
+          "workers_ai_usd": 0,
+          "workflow_steps": 10
+        },
+        "stage": "ANALYZE_BRANCHES"
+      },
+      {
+        "deployment": {
+          "pricing_snapshot_ref": "local-draft-pricing-snapshot-v1",
+          "prompt_generation": "local-draft-prompt-gen-1",
+          "route_ref": "dynamic/eliotr-balanced",
+          "route_version": "local-draft-route-v1",
+          "schema_generation": "local-draft-schema-gen-1"
+        },
+        "max_input_bytes": 32768,
+        "max_output_bytes": 8192,
+        "quote": {
+          "byok_usd": 0,
+          "confidence": 0.5,
+          "estimated_embedding_tokens": 0,
+          "estimated_input_tokens": 6000,
+          "estimated_model_calls": 2,
+          "estimated_output_tokens": 2000,
+          "expected_sections": 4,
+          "expected_sources": 10,
+          "max_total_usd": 0,
+          "platform_usd": 0,
+          "quoted_neurons": 0,
+          "workers_ai_usd": 0,
+          "workflow_steps": 3
+        },
+        "stage": "COUNTER_SEARCH"
+      }
+    ]
+  }
+}
