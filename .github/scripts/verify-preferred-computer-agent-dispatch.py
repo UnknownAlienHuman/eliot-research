@@ -5,29 +5,30 @@ import re
 import sqlite3
 import subprocess
 
-required = {
-    "infra/d1/core/migrations/0094_computer_agent_preferred_dispatch.sql": [
+REQUIRED = {
+    "infra/d1/core/migrations/0094_computer_agent_preferred_dispatch.sql": (
         "computer-agent-preferred-dispatch-v1",
         "computer_agent_preferred_ready_qualification",
         "computer_agent_preferred_selection_route_guard",
         "computer_agent_preferred_selection_grant_guard",
         "computer_agent_preferred_selection_qualification_guard",
         "computer_agent_preferred_selection_priority_guard",
+        "json_extract(g.record_json,'$.spend_policy_ref') IS NOT NULL",
         "COMPUTER_AGENT_PREFERRED_SETTLEMENT_CONFLICT",
-    ],
-    "apps/eliotr-core/src/computer-agent-preferred-dispatch.ts": [
+    ),
+    "apps/eliotr-core/src/computer-agent-preferred-dispatch.ts": (
         'selection_strategy: "FIRST_READY"',
         "allow_preferred_internal_key: true",
         "readProjectComputerAgentRouteReadiness",
-    ],
-    "apps/eliotr-core/src/computer-agent-dispatch-store.ts": [
+    ),
+    "apps/eliotr-core/src/computer-agent-dispatch-store.ts": (
         "reserved preferred-dispatch namespace",
-    ],
-    "packages/interfaces/src/routes.ts": [
+    ),
+    "packages/interfaces/src/routes.ts": (
         "research.computer-agent-dispatches.create-preferred",
-    ],
+    ),
 }
-for name, markers in required.items():
+for name, markers in REQUIRED.items():
     text = Path(name).read_text(encoding="utf-8")
     for marker in markers:
         if marker not in text:
@@ -38,10 +39,9 @@ pairs = re.findall(r'\{ method: "([A-Z]+)", path: "([^"]+)"', routes)
 if len(pairs) != len(set(pairs)):
     raise SystemExit("duplicate HTTP route method/path")
 
-changed = subprocess.check_output(
+for name in subprocess.check_output(
     ["git", "diff", "--name-only", "--diff-filter=AM"], text=True,
-).splitlines()
-for name in changed:
+).splitlines():
     path = Path(name)
     if path.suffix not in {".ts", ".tsx", ".js", ".mjs"} or "/src/" not in f"/{name}":
         continue
@@ -53,8 +53,8 @@ for name in changed:
         assert current <= 600, f"changed source created a new violation: {name} ({current})"
 print("PREFERRED_DISPATCH_STATIC_OK")
 
-# Focused D1 behavior fixture. The first insert selects Muse while Spark is unqualified;
-# a second attempt to select Muse is rejected once Spark becomes the earlier READY entry.
+# Focused D1 fixture mirrors real project_client_grant storage: spend_policy_ref is
+# canonical JSON, not an invented SQL column.
 db = sqlite3.connect(":memory:")
 db.executescript('''
 PRAGMA foreign_keys=ON;
@@ -77,8 +77,8 @@ CREATE TABLE project_computer_agent_route_entry(
 CREATE VIEW project_computer_agent_route_current AS SELECT * FROM project_computer_agent_route;
 CREATE TABLE project_client_grant(
   grant_id TEXT,revision INTEGER,state TEXT,project_id TEXT,grantor_principal_ref TEXT,
-  grantee_method TEXT,grantee_issuer TEXT,grantee_subject TEXT,spend_policy_ref TEXT,
-  expires_at TEXT,record_json TEXT,PRIMARY KEY(grant_id,revision));
+  grantee_method TEXT,grantee_issuer TEXT,grantee_subject TEXT,expires_at TEXT,record_json TEXT,
+  PRIMARY KEY(grant_id,revision));
 CREATE VIEW project_client_grant_current AS SELECT * FROM project_client_grant;
 CREATE TABLE computer_agent_connection_qualification_binding(challenge_id TEXT PRIMARY KEY);
 CREATE TABLE computer_agent_connection_qualification_observation(
@@ -97,38 +97,47 @@ CREATE TABLE computer_agent_dispatch(
   deployment_generation TEXT,run_request_sha256 TEXT,created_at TEXT,expires_at TEXT);
 ''')
 db.executescript(Path("infra/d1/core/migrations/0094_computer_agent_preferred_dispatch.sql").read_text())
-now = "2026-10-01T09:00:00.000Z"
-ready = "2026-10-01T10:00:00.000Z"
+NOW = "2026-10-01T09:00:00.000Z"
+READY = "2026-10-01T10:00:00.000Z"
 db.execute("INSERT INTO project VALUES ('project-1')")
 db.execute("INSERT INTO project_owner VALUES ('project-1','owner-1')")
-for cid, subject in [("spark", "spark.access"), ("muse", "muse.access")]:
+for connection, subject in (("spark", "spark.access"), ("muse", "muse.access")):
     db.execute("INSERT INTO computer_agent_connection VALUES (?,?,?,?,?,?,?,?)", (
-        cid, 1, "ENABLED", "owner-1", "https://issuer.example", subject,
+        connection, 1, "ENABLED", "owner-1", "https://issuer.example", subject,
         '["RESEARCH_BRANCH_ANALYSIS"]', '["WEB_INBOX"]',
     ))
 db.execute("INSERT INTO project_computer_agent_route VALUES (?,?,?,?,?)", (
     "project-1", "RESEARCH_BRANCH_ANALYSIS", 1, "owner-1", "ACTIVE",
 ))
-db.executemany("INSERT INTO project_computer_agent_route_entry VALUES (?,?,?,?,?,?)", [
+db.executemany("INSERT INTO project_computer_agent_route_entry VALUES (?,?,?,?,?,?)", (
     ("project-1", "RESEARCH_BRANCH_ANALYSIS", 1, 0, "spark", 1),
     ("project-1", "RESEARCH_BRANCH_ANALYSIS", 1, 1, "muse", 1),
-])
-grant_record = json.dumps({"allowed_operations": ["run", "recover", "evidence"]}, separators=(",", ":"))
-db.execute("INSERT INTO project_client_grant VALUES (?,?,?,?,?,?,?,?,?,?,?)", (
+))
+grant_record = json.dumps({
+    "allowed_operations": ["run", "recover", "evidence"],
+    "spend_policy_ref": "spend-1",
+}, separators=(",", ":"))
+db.execute("INSERT INTO project_client_grant VALUES (?,?,?,?,?,?,?,?,?,?)", (
     "grant-muse", 1, "ACTIVE", "project-1", "owner-1", "service_token",
-    "https://issuer.example", "muse.access", "spend-1", ready, grant_record,
+    "https://issuer.example", "muse.access", READY, grant_record,
 ))
-db.execute("INSERT INTO computer_agent_connection_qualification_binding VALUES ('q-muse')")
-db.execute("INSERT INTO computer_agent_connection_qualification_observation VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (
-    "q-muse", "muse", 1, "WEB_INBOX", "owner-1", "CONFIRMED", "service-token", "ENABLED",
-    "ENABLED", 1, "service_token", "muse.access", "muse.access", "obs-muse", "cred-muse",
-    "deploy-1", "2026-10-01T08:55:00.000Z", "2026-10-01T08:59:00.000Z", ready,
-))
-run_sha = hashlib.sha256(b"run-1").hexdigest()
 
-def selection_record(seed: bytes, key: str) -> tuple[dict, str, str]:
+def add_qualification(challenge: str, connection: str, subject: str,
+                      observation: str, credential: str, issued: str, observed: str) -> None:
+    db.execute("INSERT INTO computer_agent_connection_qualification_binding VALUES (?)", (challenge,))
+    db.execute("INSERT INTO computer_agent_connection_qualification_observation VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (
+        challenge, connection, 1, "WEB_INBOX", "owner-1", "CONFIRMED", "service-token",
+        "ENABLED", "ENABLED", 1, "service_token", subject, subject, observation, credential,
+        "deploy-1", issued, observed, READY,
+    ))
+
+add_qualification("q-muse", "muse", "muse.access", "obs-muse", "cred-muse",
+                  "2026-10-01T08:55:00.000Z", "2026-10-01T08:59:00.000Z")
+RUN_SHA = hashlib.sha256(b"run-1").hexdigest()
+
+def selection(seed: bytes, key: str) -> tuple[dict, str, str]:
     request_sha = hashlib.sha256(seed).hexdigest()
-    selection = {
+    value = {
         "protocol": "eliotr.computer-agent-preferred-selection.v1",
         "selection_id": "preferred-selection-" + request_sha[:48],
         "project_id": "project-1", "task_kind": "RESEARCH_BRANCH_ANALYSIS",
@@ -137,49 +146,47 @@ def selection_record(seed: bytes, key: str) -> tuple[dict, str, str]:
         "client_grant_id": "grant-muse", "client_grant_revision": 1,
         "owner_principal_ref": "owner-1", "owner_credential_generation": "owner-gen-1",
         "qualification": {"challenge_id": "q-muse", "observation_ref": "obs-muse",
-            "verified_credential_generation": "cred-muse", "ready_until": ready,
+            "verified_credential_generation": "cred-muse", "ready_until": READY,
             "deployment_generation": "deploy-1"},
-        "run_request_sha256": run_sha, "idempotency_key": key,
-        "request_sha256": request_sha, "selected_at": now,
+        "run_request_sha256": RUN_SHA, "idempotency_key": key,
+        "request_sha256": request_sha, "selected_at": NOW,
     }
-    record = json.dumps(selection, sort_keys=True, separators=(",", ":"))
-    return selection, request_sha, record
+    record = json.dumps(value, sort_keys=True, separators=(",", ":"))
+    return value, request_sha, record
 
-def insert_selection(selection: dict, request_sha: str, record: str) -> None:
+def insert_selection(value: dict, request_sha: str, record: str) -> None:
     db.execute("INSERT INTO computer_agent_preferred_dispatch_selection VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (
-        selection["selection_id"], "project-1", "RESEARCH_BRANCH_ANALYSIS", "FIRST_READY", "WEB_INBOX", 1, 1,
-        "muse", 1, "grant-muse", 1, "owner-1", "owner-gen-1", "q-muse", "obs-muse", "cred-muse",
-        ready, "deploy-1", run_sha, selection["idempotency_key"], request_sha, record,
-        hashlib.sha256(record.encode()).hexdigest(), now,
+        value["selection_id"], "project-1", "RESEARCH_BRANCH_ANALYSIS", "FIRST_READY",
+        "WEB_INBOX", 1, 1, "muse", 1, "grant-muse", 1, "owner-1", "owner-gen-1",
+        "q-muse", "obs-muse", "cred-muse", READY, "deploy-1", RUN_SHA,
+        value["idempotency_key"], request_sha, record,
+        hashlib.sha256(record.encode()).hexdigest(), NOW,
     ))
 
-selection, request_sha, record = selection_record(b"preferred-1", "owner-key-1")
-insert_selection(selection, request_sha, record)
+first, first_sha, first_record = selection(b"preferred-1", "owner-key-1")
+insert_selection(first, first_sha, first_record)
 db.execute("INSERT INTO computer_agent_dispatch VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (
     "dispatch-1", "project-1", "RESEARCH_BRANCH_ANALYSIS", "WEB_INBOX", 1, 1, "muse", 1,
-    "grant-muse", 1, "owner-1", "owner-gen-1", "q-muse", "obs-muse", "cred-muse", "deploy-1",
-    run_sha, now, "2026-10-01T09:15:00.000Z",
+    "grant-muse", 1, "owner-1", "owner-gen-1", "q-muse", "obs-muse", "cred-muse",
+    "deploy-1", RUN_SHA, NOW, "2026-10-01T09:15:00.000Z",
 ))
 settlement = {"protocol": "eliotr.computer-agent-preferred-dispatch-settlement.v1",
-    "selection_id": selection["selection_id"], "dispatch_id": "dispatch-1", "settled_at": now}
+              "selection_id": first["selection_id"], "dispatch_id": "dispatch-1", "settled_at": NOW}
 settlement_json = json.dumps(settlement, sort_keys=True, separators=(",", ":"))
 db.execute("INSERT INTO computer_agent_preferred_dispatch_settlement VALUES (?,?,?,?,?)", (
-    selection["selection_id"], "dispatch-1", settlement_json,
-    hashlib.sha256(settlement_json.encode()).hexdigest(), now,
+    first["selection_id"], "dispatch-1", settlement_json,
+    hashlib.sha256(settlement_json.encode()).hexdigest(), NOW,
 ))
 assert db.execute("SELECT COUNT(*) FROM computer_agent_preferred_dispatch_settlement").fetchone()[0] == 1
 
-db.execute("INSERT INTO computer_agent_connection_qualification_binding VALUES ('q-spark')")
-db.execute("INSERT INTO computer_agent_connection_qualification_observation VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (
-    "q-spark", "spark", 1, "WEB_INBOX", "owner-1", "CONFIRMED", "service-token", "ENABLED",
-    "ENABLED", 1, "service_token", "spark.access", "spark.access", "obs-spark", "cred-spark",
-    "deploy-1", "2026-10-01T08:56:00.000Z", "2026-10-01T08:58:00.000Z", ready,
-))
-selection2, request_sha2, record2 = selection_record(b"preferred-2", "owner-key-2")
-rejected = False
+add_qualification("q-spark", "spark", "spark.access", "obs-spark", "cred-spark",
+                  "2026-10-01T08:56:00.000Z", "2026-10-01T08:58:00.000Z")
+second, second_sha, second_record = selection(b"preferred-2", "owner-key-2")
 try:
-    insert_selection(selection2, request_sha2, record2)
+    insert_selection(second, second_sha, second_record)
 except sqlite3.IntegrityError as error:
-    rejected = "COMPUTER_AGENT_PREFERRED_SELECTION_AUTHORITY_STALE" in str(error)
-assert rejected, "later READY entry was selected while an earlier READY entry existed"
+    if "COMPUTER_AGENT_PREFERRED_SELECTION_AUTHORITY_STALE" not in str(error):
+        raise
+else:
+    raise AssertionError("later READY entry was selected while an earlier READY entry existed")
 print("PREFERRED_DISPATCH_SQL_BEHAVIOR_OK")

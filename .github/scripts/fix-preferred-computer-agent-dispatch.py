@@ -60,7 +60,8 @@ WHEN NOT EXISTS (
     AND g.grantor_principal_ref=NEW.owner_principal_ref
     AND g.grantee_method='service_token'
     AND g.grantee_issuer=c.actor_issuer AND g.grantee_subject=c.actor_subject
-    AND g.spend_policy_ref IS NOT NULL AND julianday(g.expires_at)>julianday(NEW.selected_at)
+    AND json_extract(g.record_json,'$.spend_policy_ref') IS NOT NULL
+    AND julianday(g.expires_at)>julianday(NEW.selected_at)
     AND EXISTS (SELECT 1 FROM json_each(g.record_json,'$.allowed_operations') WHERE value='run')
     AND EXISTS (SELECT 1 FROM json_each(g.record_json,'$.allowed_operations') WHERE value='recover')
     AND EXISTS (SELECT 1 FROM json_each(g.record_json,'$.allowed_operations') WHERE value='evidence')
