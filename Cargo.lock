@@ -10,6 +10,7 @@ version = "0.1.0"
 name = "eliotr-kernel-wasm"
 version = "0.1.0"
 dependencies = [
+ "eliotr-canonical",
  "eliotr-test-vectors",
 ]
 
