@@ -23,6 +23,16 @@ const FORBIDDEN_IMPORTS = [
   "sqlite3",
 ];
 
+// These exact files execute as host-side Node tooling, never inside a Worker
+// or browser bundle. Keep filesystem exceptions file- and specifier-specific:
+// the two SQLite migration tests read checked-in migration SQL, and the PWA
+// build script reads TypeScript/CSS sources before writing its generated asset.
+const HOST_FILESYSTEM_IMPORTS = new Map([
+  ["packages/cloudflare-research/src/research-model-qualification-renewal.test.ts", new Set(["node:fs"])],
+  ["packages/cloudflare-research/src/research-model-spend-admission-branch-stages.test.ts", new Set(["node:fs"])],
+  ["apps/eliotr-pwa/scripts/build-agent-inbox.mjs", new Set(["node:fs/promises"])],
+]);
+
 const PACKAGE_RULES = new Map([
   ["packages/contracts", new Set(["zod"])],
   ["packages/domain", new Set(["@eliotr/contracts"])],
@@ -114,15 +124,18 @@ for (const sourceRoot of SOURCE_ROOTS) {
   for (const file of await walk(fullRoot)) {
     const owner = ownerFor(file);
     if (!owner) continue;
+    const normalizedPath = projectPath(file);
     const source = await readFile(file, "utf8");
     for (const specifier of importsOf(source)) {
-      if (FORBIDDEN_IMPORTS.some((prefix) => specifier === prefix || specifier.startsWith(prefix))) {
-        errors.push(`${projectPath(file)} imports forbidden module ${specifier}`);
+      const allowedHostFilesystemImport = HOST_FILESYSTEM_IMPORTS.get(normalizedPath)?.has(specifier) === true;
+      if (!allowedHostFilesystemImport &&
+          FORBIDDEN_IMPORTS.some((prefix) => specifier === prefix || specifier.startsWith(prefix))) {
+        errors.push(`${normalizedPath} imports forbidden module ${specifier}`);
       }
       if (!specifier.startsWith("@eliotr/")) continue;
       const allowed = PACKAGE_RULES.get(owner);
       if (!allowed?.has(specifier)) {
-        errors.push(`${projectPath(file)} violates dependency direction with ${specifier}`);
+        errors.push(`${normalizedPath} violates dependency direction with ${specifier}`);
       }
     }
   }
