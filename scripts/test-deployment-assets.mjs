@@ -85,14 +85,20 @@ try {
     fetchImpl: async () => { throw new Error("must not run"); },
   }), /duplicate paths|digest or order/);
 
+  let stalledStreamCanceled = false;
   await assert.rejects(verifyDeploymentAssets(manifest, {
     origin: "https://staging.example", cookie: "secret",
   }, {
     timeoutMs: 25,
     fetchImpl: async () => new globalThis.Response(new globalThis.ReadableStream({
       pull() { return new Promise(() => {}); },
+      cancel() { stalledStreamCanceled = true; },
     }), { status: 200 }),
   }), /exceeded its deadline/);
+  assert.equal(stalledStreamCanceled, true, "deadline must release the response reader");
+  await assert.rejects(verifyDeploymentAssets(manifest, {
+    origin: "https://staging.example", cookie: "cookie; injected=1",
+  }, { fetchImpl: () => assert.fail("invalid cookie must never be sent") }), /inputs are invalid/);
 
   const symlinkRoot = path.join(root, "apps", "eliotr-pwa", "symlink-dist");
   await symlink(dist, symlinkRoot, "junction");

@@ -78,10 +78,10 @@ export async function verifyDeploymentAssets(manifest, input, { fetchImpl = glob
     throw new Error("Deployment asset readback inputs are invalid");
   }
   const origin = parseExactOrigin(input.origin);
-  if (typeof input.cookie !== "string" || input.cookie.length === 0) {
+  if (input.cookie === undefined || input.cookie === null || input.cookie === "") {
     return { state: "NOT_EXECUTED", reason: "access_cookie_missing" };
   }
-  if (input.cookie.length > 16_384 || /[\r\n]/.test(input.cookie) || typeof fetchImpl !== "function" ||
+  if (typeof input.cookie !== "string" || input.cookie.length > 16_384 || !/^[A-Za-z0-9._~-]+$/u.test(input.cookie) || typeof fetchImpl !== "function" ||
       !Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 300_000) {
     throw new Error("Deployment asset readback inputs are invalid");
   }
@@ -155,19 +155,27 @@ async function walkAssetDirectory(directory, relativeDirectory, files, addSize, 
       if (!before.isFile() || before.size !== stats.size || before.dev !== stats.dev || before.ino !== stats.ino) {
         throw new Error("Deployment asset changed while being read");
       }
-      let bytes;
+      const hash = createHash("sha256");
+      const chunk = Buffer.alloc(64 * 1024);
+      let size = 0;
       try {
-        bytes = await handle.readFile();
+        for (;;) {
+          if (Date.now() > deadline) throw new Error("deadline");
+          const { bytesRead } = await handle.read(chunk, 0, chunk.byteLength, null);
+          if (bytesRead === 0) break;
+          size += bytesRead;
+          if (size > before.size || size > DEFAULT_LIMITS.fileBytes) throw new Error("changed size");
+          hash.update(chunk.subarray(0, bytesRead));
+        }
       } catch {
-        throw new Error("Deployment asset file cannot be read");
+        throw new Error("Deployment asset file cannot be read within its bounds");
       }
       const after = await handle.stat();
-      if (after.size !== before.size || after.mtimeMs !== before.mtimeMs || bytes.byteLength !== before.size) {
+      if (after.size !== before.size || after.mtimeMs !== before.mtimeMs || size !== before.size) {
         throw new Error("Deployment asset changed while being read");
       }
-      addSize(bytes.byteLength);
-      files.push({ path: relativePath, bytes: bytes.byteLength,
-        sha256: createHash("sha256").update(bytes).digest("hex") });
+      addSize(size);
+      files.push({ path: relativePath, bytes: size, sha256: hash.digest("hex") });
     } finally {
       await handle.close().catch(() => {});
     }
@@ -210,6 +218,8 @@ async function readAssets(routes, origin, cookie, fetchImpl, signal) {
 async function hashResponseBody(body, expectedBytes, signal) {
   const reader = body.getReader();
   const hash = createHash("sha256");
+  const abort = () => { void reader.cancel().catch(() => {}); };
+  signal.addEventListener("abort", abort, { once: true });
   let bytes = 0;
   try {
     for (;;) {
@@ -227,6 +237,7 @@ async function hashResponseBody(body, expectedBytes, signal) {
     await reader.cancel().catch(() => {});
     throw error;
   } finally {
+    signal.removeEventListener("abort", abort);
     reader.releaseLock();
   }
 }
