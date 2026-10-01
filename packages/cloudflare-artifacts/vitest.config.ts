@@ -3,6 +3,7 @@ import { cloudflareTest, readD1Migrations } from "@cloudflare/vitest-plugin";
 import { defineConfig } from "vitest/config";
 
 export default defineConfig(async () => ({
+  root: fileURLToPath(new URL(".", import.meta.url)),
   plugins: [cloudflareTest({
     remoteBindings: false,
     miniflare: {

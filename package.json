@@ -61,7 +61,8 @@
     "d1:depth": "node infra/d1/check-expression-depth.mjs",
     "test:root": "vitest run --config vitest.config.ts --passWithNoTests=false --reporter=verbose",
     "test:root:list": "vitest list --config vitest.config.ts --filesOnly",
-    "test:worker": "pnpm --filter @eliotr/core test"
+    "test:worker": "pnpm --filter @eliotr/core test && pnpm test:artifacts-worker",
+    "test:artifacts-worker": "vitest run --config packages/cloudflare-artifacts/vitest.config.ts --passWithNoTests=false"
   },
   "devDependencies": {
     "@cloudflare/vitest-plugin": "1.1.0",
