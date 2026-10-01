@@ -144,6 +144,16 @@ jobs:
               raise SystemExit(
                   f'decline total synthetic issuer occurrence count changed: {total_replacements}'
               )
+          cleanup_pattern = re.compile(
+              r'(?m)^(?P<indent>[ \t]*)git rm (?=(?:\\[ \t]*$|\.github/))'
+          )
+          text, cleanup_count = cleanup_pattern.subn(
+              lambda match: f"{match.group('indent')}git rm -f ", text
+          )
+          if cleanup_count != 1:
+              raise SystemExit(
+                  f'decline self-removal command changed: {cleanup_count}'
+              )
           path.write_text(text, encoding='utf-8')
           PY
           chmod +x /tmp/run-computer-agent-decline.sh
