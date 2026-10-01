@@ -200,3 +200,60 @@ test("L6 authenticated panels keep exact method/path/status and negative phase b
   const harness = await loadHarness();
   assert.equal(harness.verifyAuthenticatedPanelNetworkRegression().state, "PASS");
 });
+
+// ---------------------------------------------------------------------------
+// S92 local product acceptance: 92.1 intake scenarios (s92-intake.mjs).
+// Each scenario drives the real local harness (scripts/lib/local-*.mjs,
+// owner-e2e.mjs) against in-memory SQLite seeded with the real migration DDL.
+// Honest states: PASS, or PENDING_OWNER_D1B for live-model assertions until
+// the owner decides D1(b) (see S92-INPUT-DECISIONS.md).
+// ---------------------------------------------------------------------------
+
+type S92ScenarioOutcome = { state: string; detail?: string };
+
+async function runS92IntakeScenario(name: string): Promise<S92ScenarioOutcome> {
+  const m = (await import("./s92-intake.mjs")) as unknown as Record<string, () => Promise<S92ScenarioOutcome>>;
+  const run = m[name];
+  assert.ok(typeof run === "function", `s92-intake.mjs must export ${name}`);
+  return run();
+}
+
+function assertS92Honest(outcome: S92ScenarioOutcome, allowed: readonly string[]): void {
+  assert.ok(
+    allowed.includes(outcome.state),
+    `S92 scenario must end in an honest state (${allowed.join("/")}), got ${outcome.state}: ${outcome.detail ?? ""}`,
+  );
+}
+
+test("S92 92.1a intake: RS256 owner identity signs and verifies; tampered token rejected", async () => {
+  const outcome = await runS92IntakeScenario("verifyS92IntakeOwnerIdentity");
+  assertS92Honest(outcome, ["PASS"]);
+});
+
+test("S92 92.1b intake: local launch config allowlisted, model gateway sentinel, env scrubbed", async () => {
+  const outcome = await runS92IntakeScenario("verifyS92IntakeLocalConfig");
+  assertS92Honest(outcome, ["PASS"]);
+});
+
+test("S92 92.1c intake: project admission with exact row readback; replay idempotent; negatives fail closed", async () => {
+  const outcome = await runS92IntakeScenario("verifyS92IntakeProjectAdmission");
+  assertS92Honest(outcome, ["PASS"]);
+});
+
+test("S92 92.1d intake: read-policy grant applied with exact readback; stale/missing refused", async () => {
+  const outcome = await runS92IntakeScenario("verifyS92IntakeReadPolicyGrant");
+  assertS92Honest(outcome, ["PASS"]);
+});
+
+test("S92 92.1e intake: model D1 fail-closed proven; live model PENDING_OWNER_D1B", async () => {
+  const outcome = await runS92IntakeScenario("verifyS92IntakeModelD1FailClosed");
+  // D1(a): no local model gateway exists. PENDING_OWNER_D1B is the honest
+  // terminal state until the owner decides D1(b); PASS is accepted for that
+  // future without weakening today's assertion.
+  assertS92Honest(outcome, ["PENDING_OWNER_D1B", "PASS"]);
+});
+
+test("S92 92.1f intake: Library/Lens exact readback; foreign namespace reads zero rows", async () => {
+  const outcome = await runS92IntakeScenario("verifyS92IntakeLibraryLensReadback");
+  assertS92Honest(outcome, ["PASS"]);
+});
