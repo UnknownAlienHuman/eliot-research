@@ -1,3 +1,4 @@
+// IMPLEMENTED_NOT_LIVE: S37 shared governed branch executor for READ_AND_EXTRACT, ANALYZE_BRANCHES and COUNTER_SEARCH with exact scope/protocol/planning/W1/stage-five revalidation and receipt-based recovery; v7 activation in semantic composition and live model/evidence qualification remain separate.
 import {
   ResearchBranchAnalysisCheckpointSchema,
   ResearchBranchReconciliationCheckpointSchema,

@@ -1,3 +1,4 @@
+// IMPLEMENTED_NOT_LIVE: S37 per-role branch model execution derives role-scoped stage requests and dispatches role-bound model stage handlers through the server-owned W3 preparation seam; role prompt compilation wiring and live model qualification remain separate.
 import {
   StageRequestSchema,
   type StageRequest,

@@ -1,3 +1,4 @@
+// IMPLEMENTED_NOT_LIVE: S37 session-level settling of v7 branch execution observations onto the W1 investigation ledger head as one OBSERVED event bound to the committed reconciliation checkpoint; EvidenceFreeze binding of the reconciliation checkpoint and live ledger qualification remain separate.
 /**
  * Settles v7 branch execution observations on the W1 investigation ledger head.
  *
