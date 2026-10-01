@@ -175,6 +175,9 @@ importers:
       '@eliotr/contracts':
         specifier: workspace:*
         version: link:../contracts
+      '@eliotr/domain':
+        specifier: workspace:*
+        version: link:../domain
       '@eliotr/platform-cloudflare':
         specifier: workspace:*
         version: link:../platform-cloudflare

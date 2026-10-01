@@ -20,6 +20,7 @@
   "dependencies": {
     "@eliotr/cloudflare-evidence": "workspace:*",
     "@eliotr/contracts": "workspace:*",
+    "@eliotr/domain": "workspace:*",
     "@eliotr/platform-cloudflare": "workspace:*"
   }
 }
