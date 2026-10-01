@@ -137,6 +137,7 @@ CREATE TABLE artifact_publication_head (
 ) STRICT;
 CREATE TRIGGER artifact_publication_head_insert_guard BEFORE INSERT ON artifact_publication_head
 WHEN NEW.disposition='ACCEPTED'
+  AND NOT EXISTS(SELECT 1 FROM artifact_publication_head WHERE artifact_id=NEW.artifact_id)
 BEGIN
   SELECT CASE WHEN NEW.publication_revision<>1 OR NOT EXISTS(
     SELECT 1 FROM artifact_publication_receipt p JOIN artifact_draft_head d
