@@ -101,7 +101,7 @@ jobs:
           };
           const actor = {
             issuer: 'https://fixture.cloudflareaccess.com',
-            authentication_method: 'service_token', subject: 'agent-1',
+            authentication_method: 'service_token', subject: 'agent-1.access',
           };
           const dispatch = {
             protocol: 'eliotr.computer-agent-dispatch.v1', dispatch_id: 'dispatch-old',
