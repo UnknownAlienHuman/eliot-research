@@ -78,4 +78,5 @@ export * from "./research-branch-execution.js";
 export * from "./research-w1-observations.js";
 export * from "./research-branch-role-model.js";
 export * from "./research-branch-role-output.js";
+export * from "./research-branch-role-preparation.js";
 export * from "./research-external-branch-analysis.js";
