@@ -10,3 +10,5 @@ export {
   encodeArtifactDraftVerification,
   encodeArtifactDraftVerificationV2,
 } from "./artifact-draft-verification.js";
+
+export * from "./artifact-publication.js";

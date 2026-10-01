@@ -86,3 +86,5 @@ export * from "./research-branch-role-server-preparation.js";
 export * from "./research-branch-role-manifest-store.js";
 export { decodeResearchReadExtractCheckpoint } from "./research-branch-execution-shared.js";
 export * from "./research-external-branch-analysis.js";
+
+export * from "@eliotr/cloudflare-artifacts/artifact-publication.js";
