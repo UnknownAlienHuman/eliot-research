@@ -2,11 +2,13 @@ import {
   ComputerAgentDispatchAbandonmentSchema,
   ComputerAgentDispatchAcceptanceSchema,
   ComputerAgentDispatchDeclineReceiptSchema,
+  ComputerAgentDispatchReassignmentSchema,
   ComputerAgentDispatchSchema,
   type ComputerAgentDispatch,
   type ComputerAgentDispatchAbandonment,
   type ComputerAgentDispatchAcceptance,
   type ComputerAgentDispatchDeclineReceipt,
+  type ComputerAgentDispatchReassignment,
 } from "@eliotr/contracts";
 import { canonicalJson, sha256Utf8 } from "@eliotr/platform-cloudflare";
 import { failComputerAgentDispatch as fail } from "./computer-agent-dispatch-error.js";
@@ -78,6 +80,26 @@ export interface DeclineRow {
   record_json: string;
   record_sha256: string;
   declined_at: string;
+}
+export interface ReassignmentRow {
+  predecessor_dispatch_id: string;
+  successor_dispatch_id: string;
+  project_id: string;
+  owner_principal_ref: string;
+  owner_credential_generation: string;
+  predecessor_state: string;
+  run_request_sha256: string;
+  successor_transport: string;
+  successor_route_revision: number;
+  successor_connection_id: string;
+  successor_connection_revision: number;
+  successor_client_grant_id: string;
+  successor_client_grant_revision: number;
+  idempotency_key: string;
+  request_sha256: string;
+  record_json: string;
+  record_sha256: string;
+  reassigned_at: string;
 }
 
 export async function decodeComputerAgentDispatch(row: DispatchRow): Promise<ComputerAgentDispatch> {
@@ -184,6 +206,38 @@ export async function decodeComputerAgentDispatchDecline(
   return parsed.data;
 }
 
+export async function decodeComputerAgentDispatchReassignment(
+  row: ReassignmentRow,
+): Promise<ComputerAgentDispatchReassignment> {
+  let raw: unknown;
+  try { raw = JSON.parse(row.record_json); }
+  catch { return fail("COMPUTER_AGENT_DISPATCH_STORAGE_CORRUPT", 500,
+    "Dispatch reassignment is not valid JSON"); }
+  const parsed = ComputerAgentDispatchReassignmentSchema.safeParse(raw);
+  if (!parsed.success || canonicalJson(parsed.data) !== row.record_json ||
+      await sha256Utf8(row.record_json) !== row.record_sha256 ||
+      parsed.data.predecessor_dispatch_id !== row.predecessor_dispatch_id ||
+      parsed.data.successor_dispatch_id !== row.successor_dispatch_id ||
+      parsed.data.project_id !== row.project_id ||
+      parsed.data.owner_principal_ref !== row.owner_principal_ref ||
+      parsed.data.owner_credential_generation !== row.owner_credential_generation ||
+      parsed.data.predecessor_state !== row.predecessor_state ||
+      parsed.data.run_request_sha256 !== row.run_request_sha256 ||
+      parsed.data.successor_transport !== row.successor_transport ||
+      parsed.data.successor_route_revision !== row.successor_route_revision ||
+      parsed.data.successor_connection_id !== row.successor_connection_id ||
+      parsed.data.successor_connection_revision !== row.successor_connection_revision ||
+      parsed.data.successor_client_grant_id !== row.successor_client_grant_id ||
+      parsed.data.successor_client_grant_revision !== row.successor_client_grant_revision ||
+      parsed.data.idempotency_key !== row.idempotency_key ||
+      parsed.data.request_sha256 !== row.request_sha256 ||
+      parsed.data.reassigned_at !== row.reassigned_at) {
+    fail("COMPUTER_AGENT_DISPATCH_STORAGE_CORRUPT", 500,
+      "Dispatch reassignment identity is corrupt");
+  }
+  return parsed.data;
+}
+
 export async function readComputerAgentDispatchRow(
   db: D1Database,
   dispatchId: string,
@@ -282,6 +336,36 @@ export async function readComputerAgentDispatchDeclineReplay(
   } catch {
     fail("COMPUTER_AGENT_DISPATCH_STORAGE_UNAVAILABLE", 503,
       "Dispatch decline replay read is unavailable", true);
+  }
+}
+
+export async function readComputerAgentDispatchReassignmentRow(
+  db: D1Database,
+  predecessorDispatchId: string,
+): Promise<ReassignmentRow | null> {
+  try {
+    return await db.prepare(
+      "SELECT * FROM computer_agent_dispatch_reassignment " +
+      "WHERE predecessor_dispatch_id=?1 LIMIT 1",
+    ).bind(predecessorDispatchId).first<ReassignmentRow>();
+  } catch {
+    fail("COMPUTER_AGENT_DISPATCH_STORAGE_UNAVAILABLE", 503,
+      "Dispatch reassignment read is unavailable", true);
+  }
+}
+
+export async function readComputerAgentDispatchReassignmentReplay(
+  db: D1Database,
+  principal: string,
+  key: string,
+): Promise<ReassignmentRow | null> {
+  try {
+    return await db.prepare("SELECT * FROM computer_agent_dispatch_reassignment " +
+      "WHERE owner_principal_ref=?1 AND idempotency_key=?2 LIMIT 1")
+      .bind(principal, key).first<ReassignmentRow>();
+  } catch {
+    fail("COMPUTER_AGENT_DISPATCH_STORAGE_UNAVAILABLE", 503,
+      "Dispatch reassignment replay read is unavailable", true);
   }
 }
 

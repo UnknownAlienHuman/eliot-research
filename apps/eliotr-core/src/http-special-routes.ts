@@ -95,6 +95,7 @@ export async function dispatchHttpSpecialRoute(input: {
         input.match.params, input.match.route.maximum_request_bytes);
     case "research.computer-agent-dispatches.create":
     case "research.computer-agent-dispatches.abandon":
+    case "research.computer-agent-dispatches.reassign":
     case "research.computer-agent-dispatches.status":
     case "research.computer-agent-dispatches.pull":
     case "research.computer-agent-dispatches.accept":

@@ -236,3 +236,13 @@ credential generation recorded by the owner. Decline is immutable delivery state
 offer disappears, no Research run starts, and no task or lease moves. The owner must observe readiness
 again and issue a distinct dispatch to any replacement contour. Owner abandonment and target decline are
 mutually exclusive with acceptance.
+
+## 11. Explicit terminal dispatch reassignment
+
+Migration 0093 adds an auditable owner action after an unaccepted dispatch has already settled as
+`ABANDONED` or `DECLINED`. Reassignment reuses only the predecessor's frozen Research request and
+`run_request_sha256`. The successor is created through the ordinary dispatch authority, so current route,
+connection revision, transport, project grant, qualification, deployment and owner session are checked
+again. The predecessor and successor receive distinct dispatch IDs, actor credential generations and any
+later task/lease identities. Accepted, merely expired/stale, pending, mismatched or already-reassigned
+dispatches are rejected. This is explicit failover history, not timeout automation or work transfer.

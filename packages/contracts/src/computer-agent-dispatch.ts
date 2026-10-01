@@ -201,17 +201,59 @@ export const ComputerAgentDispatchDeclineReceiptSchema = z.object({
 export type ComputerAgentDispatchDeclineReceipt =
   z.infer<typeof ComputerAgentDispatchDeclineReceiptSchema>;
 
+export const ComputerAgentDispatchReassignSchema = z.object({
+  expected_predecessor_state: z.enum(["ABANDONED", "DECLINED"]),
+  expected_run_request_sha256: Sha256Schema,
+  transport: ComputerAgentQualificationTransportSchema,
+  expected_route_revision: revision,
+  connection_id: id,
+  connection_revision: revision,
+  client_grant_id: id,
+  client_grant_revision: revision,
+  expires_in_seconds: z.number().int().min(60).max(3600),
+}).strict();
+export type ComputerAgentDispatchReassign =
+  z.infer<typeof ComputerAgentDispatchReassignSchema>;
+
+export const ComputerAgentDispatchReassignmentSchema = z.object({
+  protocol: z.literal("eliotr.computer-agent-dispatch-reassigned.v1"),
+  predecessor_dispatch_id: id,
+  successor_dispatch_id: id,
+  project_id: id,
+  owner_principal_ref: id,
+  owner_credential_generation: id,
+  predecessor_state: z.enum(["ABANDONED", "DECLINED"]),
+  run_request_sha256: Sha256Schema,
+  successor_transport: ComputerAgentQualificationTransportSchema,
+  successor_route_revision: revision,
+  successor_connection_id: id,
+  successor_connection_revision: revision,
+  successor_client_grant_id: id,
+  successor_client_grant_revision: revision,
+  idempotency_key: actionKey,
+  request_sha256: Sha256Schema,
+  reassigned_at: IsoDateTimeSchema,
+}).strict().superRefine((value, context) => {
+  if (value.predecessor_dispatch_id === value.successor_dispatch_id) {
+    context.addIssue({ code: "custom", path: ["successor_dispatch_id"],
+      message: "Reassignment must create a distinct successor dispatch" });
+  }
+});
+export type ComputerAgentDispatchReassignment =
+  z.infer<typeof ComputerAgentDispatchReassignmentSchema>;
+
 export const ComputerAgentDispatchStateSchema = z.enum([
   "PENDING", "ACCEPTED", "ABANDONED", "DECLINED", "EXPIRED", "STALE",
 ]);
 
 export const ComputerAgentDispatchStatusSchema = z.object({
-  protocol: z.literal("eliotr.computer-agent-dispatch-status.v1"),
+  protocol: z.literal("eliotr.computer-agent-dispatch-status.v2"),
   state: ComputerAgentDispatchStateSchema,
   dispatch: ComputerAgentDispatchSchema,
   acceptance: ComputerAgentDispatchAcceptanceSchema.nullable(),
   abandonment: ComputerAgentDispatchAbandonmentSchema.nullable(),
   decline: ComputerAgentDispatchDeclineReceiptSchema.nullable(),
+  reassignment: ComputerAgentDispatchReassignmentSchema.nullable(),
 }).strict().superRefine((value, context) => {
   if ((value.state === "ACCEPTED") !== (value.acceptance !== null)) {
     context.addIssue({ code: "custom", path: ["acceptance"],
@@ -252,6 +294,17 @@ export const ComputerAgentDispatchStatusSchema = z.object({
   )) {
     context.addIssue({ code: "custom", path: ["decline", "dispatch_id"],
       message: "Decline receipt is bound to another dispatch target" });
+  }
+  if (value.reassignment !== null && (
+    (value.state !== "ABANDONED" && value.state !== "DECLINED") ||
+    value.reassignment.predecessor_state !== value.state ||
+    value.reassignment.predecessor_dispatch_id !== value.dispatch.dispatch_id ||
+    value.reassignment.project_id !== value.dispatch.project_id ||
+    value.reassignment.owner_principal_ref !== value.dispatch.owner_principal_ref ||
+    value.reassignment.run_request_sha256 !== value.dispatch.run_request_sha256
+  )) {
+    context.addIssue({ code: "custom", path: ["reassignment"],
+      message: "Reassignment receipt is not bound to this terminal predecessor" });
   }
 });
 export type ComputerAgentDispatchStatus = z.infer<typeof ComputerAgentDispatchStatusSchema>;

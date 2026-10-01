@@ -7,9 +7,11 @@ import {
   decodeComputerAgentDispatchAbandonment,
   decodeComputerAgentDispatchAcceptance,
   decodeComputerAgentDispatchDecline,
+  decodeComputerAgentDispatchReassignment,
   readComputerAgentDispatchAbandonmentRow,
   readComputerAgentDispatchAcceptanceRow,
   readComputerAgentDispatchDeclineRow,
+  readComputerAgentDispatchReassignmentRow,
   readCurrentComputerAgentDispatchOffer,
 } from "./computer-agent-dispatch-record.js";
 import { failComputerAgentDispatch as fail } from "./computer-agent-dispatch-error.js";
@@ -19,10 +21,11 @@ export async function readComputerAgentDispatchStatus(input: {
   readonly dispatch: ComputerAgentDispatch;
   readonly now: number;
 }): Promise<ComputerAgentDispatchStatus> {
-  const [acceptedRow, abandonedRow, declinedRow] = await Promise.all([
+  const [acceptedRow, abandonedRow, declinedRow, reassignmentRow] = await Promise.all([
     readComputerAgentDispatchAcceptanceRow(input.database, input.dispatch.dispatch_id),
     readComputerAgentDispatchAbandonmentRow(input.database, input.dispatch.dispatch_id),
     readComputerAgentDispatchDeclineRow(input.database, input.dispatch.dispatch_id),
+    readComputerAgentDispatchReassignmentRow(input.database, input.dispatch.dispatch_id),
   ]);
   const acceptance = acceptedRow === null ? null
     : await decodeComputerAgentDispatchAcceptance(acceptedRow);
@@ -30,6 +33,8 @@ export async function readComputerAgentDispatchStatus(input: {
     : await decodeComputerAgentDispatchAbandonment(abandonedRow);
   const decline = declinedRow === null ? null
     : await decodeComputerAgentDispatchDecline(declinedRow);
+  const reassignment = reassignmentRow === null ? null
+    : await decodeComputerAgentDispatchReassignment(reassignmentRow);
   const terminalCount = Number(acceptance !== null) +
     Number(abandonment !== null) + Number(decline !== null);
   if (terminalCount > 1) {
@@ -44,11 +49,12 @@ export async function readComputerAgentDispatchStatus(input: {
               input.database, input.dispatch.dispatch_id,
             ) === null ? "STALE" as const : "PENDING" as const;
   return ComputerAgentDispatchStatusSchema.parse({
-    protocol: "eliotr.computer-agent-dispatch-status.v1",
+    protocol: "eliotr.computer-agent-dispatch-status.v2",
     state,
     dispatch: input.dispatch,
     acceptance,
     abandonment,
     decline,
+    reassignment,
   });
 }

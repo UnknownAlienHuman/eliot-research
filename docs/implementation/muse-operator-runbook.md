@@ -185,3 +185,11 @@ identity. Once accepted, use ordinary Research status/cancel/recover rather than
 When the selected contour cannot execute an offered dispatch, use the exact decline operation rather than
 accepting and abandoning work later. A decline closes only that offer. It does not move the task, grant,
 lease, browser session, or credential authority to another contour.
+
+### Explicit terminal reassignment
+
+When a pending Spark, Muse, Dot or other offer has been immutably abandoned by the owner or declined by
+the exact target, the owner may call the reassignment endpoint with the predecessor state and frozen
+`run_request_sha256` it just read. The response links one new dispatch to that terminal predecessor. The
+new target must independently satisfy the current route, grant and qualification checks. Do not reassign an
+accepted run, infer failover from timeout alone, reuse the old dispatch ID, or transfer a task or lease.

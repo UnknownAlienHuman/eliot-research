@@ -6,6 +6,7 @@ import { ComputerAgentDispatchError } from "./computer-agent-dispatch-error.js";
 import { createComputerAgentDispatchService } from "./computer-agent-dispatch-store.js";
 import { createComputerAgentDispatchAbandonmentService } from "./computer-agent-dispatch-abandonment.js";
 import { createComputerAgentDispatchDeclineService } from "./computer-agent-dispatch-decline.js";
+import { createComputerAgentDispatchReassignmentService } from "./computer-agent-dispatch-reassignment.js";
 
 function requireJson(request: Request): void {
   if (request.headers.get("Content-Type")?.split(";", 1)[0]?.trim().toLowerCase() !==
@@ -66,6 +67,14 @@ export async function handleComputerAgentDispatchHttp(
         await createComputerAgentDispatchAbandonmentService({ database: env.CORE_DB })
           .abandon(context, params.project_id ?? "", params.dispatch_id ?? "",
             await readJsonBodyWithinBytes(request, maximumBytes)));
+    }
+    if (operation === "research.computer-agent-dispatches.reassign") {
+      requireOwnerMutationOrigin(request, url);
+      return apiResult(request, env,
+        await createComputerAgentDispatchReassignmentService(env).reassign(
+          context, params.project_id ?? "", params.dispatch_id ?? "",
+          await readJsonBodyWithinBytes(request, maximumBytes),
+        ));
     }
     requireJson(request);
     const body: unknown = await readJsonBodyWithinBytes(request, maximumBytes);

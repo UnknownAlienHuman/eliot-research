@@ -60,6 +60,7 @@ import type { Env } from "./env.js";
 const SCHEMA_GENERATION = "computer-agent-dispatch-v1";
 const ABANDONMENT_SCHEMA_GENERATION = "computer-agent-dispatch-abandonment-v1";
 const DECLINE_SCHEMA_GENERATION = "computer-agent-dispatch-decline-v1";
+const REASSIGNMENT_SCHEMA_GENERATION = "computer-agent-dispatch-reassignment-v1";
 const TASK_KIND = "RESEARCH_BRANCH_ANALYSIS" as const;
 const MAX_RECORD_BYTES = 294_912;
 const MIN_REMAINING_MS = 10_000;
@@ -114,20 +115,23 @@ async function requireSchema(db: D1Database): Promise<void> {
     const result = await db.prepare(
       "SELECT key,value FROM schema_state WHERE key IN (" +
       "'computer_agent_dispatch_generation','computer_agent_dispatch_abandonment_generation'," +
-      "'computer_agent_dispatch_decline_generation')",
+      "'computer_agent_dispatch_decline_generation'," +
+      "'computer_agent_dispatch_reassignment_generation')",
     ).all<{ key: string; value: string }>();
     values = new Map((result.results ?? []).map((entry) => [entry.key, entry.value]));
   } catch {
     fail("COMPUTER_AGENT_DISPATCH_SCHEMA_NOT_READY", 503,
-      "Computer-agent dispatch migrations 0090 through 0092 are required", true);
+      "Computer-agent dispatch migrations 0090 through 0093 are required", true);
   }
   if (values.get("computer_agent_dispatch_generation") !== SCHEMA_GENERATION ||
       values.get("computer_agent_dispatch_abandonment_generation") !==
         ABANDONMENT_SCHEMA_GENERATION ||
       values.get("computer_agent_dispatch_decline_generation") !==
-        DECLINE_SCHEMA_GENERATION) {
+        DECLINE_SCHEMA_GENERATION ||
+      values.get("computer_agent_dispatch_reassignment_generation") !==
+        REASSIGNMENT_SCHEMA_GENERATION) {
     fail("COMPUTER_AGENT_DISPATCH_SCHEMA_NOT_READY", 503,
-      "Computer-agent dispatch migrations 0090 through 0092 are required", true);
+      "Computer-agent dispatch migrations 0090 through 0093 are required", true);
   }
 }
 function mapDependency(error: unknown): never {

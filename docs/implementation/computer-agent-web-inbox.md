@@ -157,3 +157,11 @@ must be cancelled through the existing Research run controls.
 Before acceptance, the exact selected credential generation may submit one stable decline key and reason.
 Retry the same key and body after an uncertain response. `DECLINED` means no workflow was created. The
 owner must create another dispatch explicitly; an accepted run instead uses normal cancel/recover controls.
+
+### Owner reassignment API
+
+The Web Inbox remains a target-agent surface. Owner automation uses
+`POST /api/v1/research/projects/:project_id/computer-agent-dispatches/:dispatch_id/reassign` after reading
+an `ABANDONED` or `DECLINED` predecessor. The body names the exact expected predecessor state and frozen
+request digest plus the newly selected route/connection/grant/transport. The successor is a new offer;
+no browser secret, accepted run, task lease or credential authority is copied from the predecessor.
