@@ -244,11 +244,23 @@ export async function readDeploymentWorker(env, input, config, options = {}) {
     }
     actualByName.set(binding.bindingName, binding);
   }
+  const expectedGeneration = config.vars?.DEPLOYMENT_GENERATION;
+  const generationBinding = actualByName.get("DEPLOYMENT_GENERATION");
+  if (!boundedString(expectedGeneration) || !generationBinding || generationBinding.type !== "plain_text" ||
+      generationBinding.text !== expectedGeneration) {
+    fail("Worker version deployment generation binding drift");
+  }
   const bindingReadback = [];
   for (const expected of expectedBindings) {
     const actual = actualByName.get(expected.name);
     if (!actual || actual.type !== expected.type ||
-        Object.entries(expected.identity).some(([key, value]) => actual[key] !== value)) {
+        Object.entries(expected.identity).some(([key, value]) => {
+          if (expected.type === "durable_object_namespace" || expected.type === "workflow") {
+            if (key === "script_name") return (actual.script_name ?? config.name) !== value;
+            if (key === "environment") return (actual.environment ?? null) !== value;
+          }
+          return actual[key] !== value;
+        })) {
       fail(`Worker version binding identity drift: ${expected.name}`);
     }
     bindingReadback.push({ name: expected.name, type: expected.type, identity: expected.identity });
@@ -264,6 +276,7 @@ export async function readDeploymentWorker(env, input, config, options = {}) {
   return { id: worker.id, compatibility_date: worker.compatibility_date,
     modified_on: worker.modified_on ?? null, last_deployed_from: worker.last_deployed_from ?? null,
     has_assets: worker.has_assets, durable_object_export: configuredExports.ResearchSession?.type,
+    deployment_generation_binding: "PASS",
     deployment_id: active.id, deployment_created_on: active.created_on, version_id: versionId,
     version_number: version.number, version_etag: versionScript.etag, traffic_percentage: 100,
     binding_readback: bindingReadback };
@@ -274,6 +287,10 @@ function expectedDeploymentBindings(config) {
   const add = (name, type, identity = {}) => {
     if (!boundedString(name) || !boundedString(type) || expected.some((binding) => binding.name === name)) {
       fail("Generated deployment binding names are invalid or duplicated");
+    }
+    if (!isObject(identity) || Object.entries(identity).some(([key, value]) =>
+      !(key === "environment" && value === null) && !boundedString(value))) {
+      fail("Generated deployment binding identity is incomplete");
     }
     expected.push({ name, type, identity });
   };
@@ -286,10 +303,14 @@ function expectedDeploymentBindings(config) {
   for (const item of config.r2_buckets) add(item?.binding, "r2_bucket", { bucket_name: item?.bucket_name });
   for (const item of config.queues.producers) add(item?.binding, "queue", { queue_name: item?.queue });
   for (const item of config.durable_objects.bindings) {
-    add(item?.name, "durable_object_namespace", { class_name: item?.class_name });
+    add(item?.name, "durable_object_namespace", {
+      class_name: item?.class_name, script_name: item?.script_name ?? config.name,
+      environment: item?.environment ?? null,
+    });
   }
   for (const item of config.workflows) {
-    add(item?.binding, "workflow", { workflow_name: item?.name, class_name: item?.class_name });
+    add(item?.binding, "workflow", { workflow_name: item?.name, class_name: item?.class_name,
+      script_name: item?.script_name ?? config.name });
   }
   for (const item of config.analytics_engine_datasets) {
     add(item?.binding, "analytics_engine", { dataset: item?.dataset });
@@ -302,7 +323,9 @@ function expectedDeploymentBindings(config) {
   for (const item of config.ai_search ?? []) {
     add(item?.binding, "ai_search", { instance_name: item?.instance_name });
   }
-  for (const item of config.wasm_modules ?? []) add(item?.binding, "wasm_module");
+  const wasmModules = config.wasm_modules ?? {};
+  if (!isObject(wasmModules)) fail("Invalid generated Wasm module bindings");
+  for (const name of Object.keys(wasmModules)) add(name, "wasm_module");
   return expected;
 }
 

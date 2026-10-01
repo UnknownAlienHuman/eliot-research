@@ -23,6 +23,7 @@ const config = {
   durable_objects: { bindings: [{ name: "RESEARCH_SESSION", class_name: "ResearchSession" }] },
   workflows: [{ binding: "RESEARCH_WORKFLOW", name: "eliotr-research-workflow", class_name: "ResearchWorkflow" }],
   ai_search_namespaces: [{ binding: "AI_SEARCH", namespace: "eliotr" }], ai: { binding: "AI" },
+  wasm_modules: { KERNEL_WASM: "../../crates/kernel-wasm/pkg/eliotr_kernel_wasm_bg.wasm" },
   analytics_engine_datasets: [{ binding: "METRICS", dataset: "eliotr_metrics" }],
   vars: { DEPLOYMENT_GENERATION: "git-test", ENVIRONMENT: "staging", GOOGLE_EXTERNAL_TRANSPORT: "gemini-mcp",
     ACCESS_TEAM_DOMAIN: "https://team-example.cloudflareaccess.com", ACCESS_AUDIENCE: "test-aud", ACCESS_SERVICE_PRINCIPALS: "agent" },
@@ -172,7 +173,9 @@ await check("Worker inventory export/compatibility/assets fail closed", async ()
     RESEARCH_WORKFLOW: { type: "workflow", name: "eliotr-research-workflow", class_name: "ResearchWorkflow" },
     AI_SEARCH: { type: "ai_search_namespace", namespace: "eliotr" },
     AI: { type: "ai" }, METRICS: { type: "analytics_engine", dataset: "eliotr_metrics" },
+    KERNEL_WASM: { type: "wasm_module" },
     ASSETS: { type: "assets" },
+    DEPLOYMENT_GENERATION: { type: "plain_text", text: "git-test" },
     ACCESS_AUDIENCE: { type: "plain_text", text: "test-aud" },
   };
   const active = { id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", created_on: "2026-09-04T22:59:00.000Z",
@@ -183,7 +186,7 @@ await check("Worker inventory export/compatibility/assets fail closed", async ()
       exports: { default: { type: "worker" }, ResearchSession: { type: "durable-object", storage: "sqlite" } },
     },
   } };
-  const read = (overrides = {}) => readDeploymentWorker(environment, input, config, { fetchImpl: async (url) => {
+  const read = (overrides = {}, configOverride = config) => readDeploymentWorker(environment, input, configOverride, { fetchImpl: async (url) => {
     if (String(url).endsWith("/workers/scripts")) return json(overrides.inventory ?? { success: true, result: [worker] });
     if (String(url).endsWith("/deployments")) return json(overrides.deployments ?? { success: true, result: { deployments: [active] } });
     if (String(url).endsWith(`/versions/${active.versions[0].version_id}`)) {
@@ -198,7 +201,8 @@ await check("Worker inventory export/compatibility/assets fail closed", async ()
   assert.equal(attestation.version_number, 9);
   assert.equal(attestation.version_etag, "cloudflare-etag-opaque");
   assert.equal(attestation.traffic_percentage, 100);
-  assert.equal(attestation.binding_readback.length, 11);
+  assert.equal(attestation.deployment_generation_binding, "PASS");
+  assert.equal(attestation.binding_readback.length, 12);
   assert.ok(!JSON.stringify(attestation).includes("test-aud"));
   for (const inventory of [{ success: false, result: [worker] }, { result: [worker] },
     { success: true, result: [] }, { success: true, result: [worker, worker] },
@@ -217,11 +221,17 @@ await check("Worker inventory export/compatibility/assets fail closed", async ()
     (value) => { value.resources.script_runtime.exports.ResearchSession.storage = "legacy-kv"; },
     (value) => { value.resources.bindings.CORE_DB.id = "ffffffff-ffff-4fff-8fff-ffffffffffff"; },
     (value) => { delete value.resources.bindings.ASSETS; },
+    (value) => { value.resources.bindings.DEPLOYMENT_GENERATION.text = "stale-generation"; },
+    (value) => { value.resources.bindings.RESEARCH_SESSION.script_name = "foreign-worker"; },
+    (value) => { value.resources.bindings.RESEARCH_SESSION.environment = "preview"; },
     (value) => { value.resources.bindings.EXTRA = { type: "r2_bucket", bucket_name: "other" }; },
     (value) => { value.resources.bindings.CORE_DB_DUP = { ...value.resources.bindings.CORE_DB, name: "CORE_DB" }; },
   ]) {
     const changed = structuredClone(version); mutate(changed);
     await assert.rejects(read({ versionResponse: { success: true, result: changed } }));
   }
+  const malformedConfig = structuredClone(config);
+  delete malformedConfig.d1_databases[0].database_id;
+  await assert.rejects(read({}, malformedConfig));
 });
 console.log(`Deployment verification: ${cases} groups passed; live Cloudflare NOT_EXECUTED`);
