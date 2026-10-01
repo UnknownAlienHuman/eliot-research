@@ -66,6 +66,8 @@ BEGIN
     OR json_extract(NEW.acceptance_decision_json,'$.artifact_ref.id') IS NOT NEW.artifact_id
     OR json_extract(NEW.acceptance_decision_json,'$.artifact_ref.revision') IS NOT NEW.draft_revision
     OR json_extract(NEW.acceptance_decision_json,'$.expected_draft_head_revision') IS NOT NEW.expected_draft_head_revision
+    OR json_type(NEW.acceptance_decision_json,'$.expected_publication_revision') IS NOT
+      CASE WHEN NEW.expected_publication_revision IS NULL THEN 'null' ELSE 'integer' END
     OR json_extract(NEW.acceptance_decision_json,'$.expected_publication_revision') IS NOT NEW.expected_publication_revision
     OR json_extract(NEW.acceptance_decision_json,'$.principal_ref') IS NOT NEW.principal_ref
     OR json_extract(NEW.acceptance_decision_json,'$.credential_generation') IS NOT NEW.credential_generation
