@@ -21,8 +21,11 @@ jobs:
           node-version: 22.13.0
       - name: Apply reviewed product patch
         run: |
-          python -m py_compile .github/scripts/apply-external-agent-auto-wake.py
+          python -m py_compile \
+            .github/scripts/apply-external-agent-auto-wake.py \
+            .github/scripts/fix-external-agent-auto-wake.py
           python .github/scripts/apply-external-agent-auto-wake.py
+          python .github/scripts/fix-external-agent-auto-wake.py
       - name: Static and focused compile checks
         shell: bash
         run: |
@@ -34,6 +37,7 @@ jobs:
 
           required = {
               'apps/eliotr-core/src/external-agent-result-wake.ts': [
+                  'readonly [key: string]: unknown;',
                   'agent-recover-${requestSha256.slice(0, 24)}',
                   'recoverResearchRun(env, wakeContext, receipt.operation_id, {})',
                   'workflow_wake:',
@@ -130,8 +134,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          git rm .github/workflows/apply-external-agent-auto-wake.yml \
-            .github/scripts/apply-external-agent-auto-wake.py
+          git rm \
+            .github/workflows/apply-external-agent-auto-wake.yml \
+            .github/scripts/apply-external-agent-auto-wake.py \
+            .github/scripts/fix-external-agent-auto-wake.py
           git diff --check
           git add \
             apps/eliotr-core/src/external-agent-result-wake.ts \
