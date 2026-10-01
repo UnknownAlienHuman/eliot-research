@@ -42,3 +42,23 @@ mishandled fault -> `FAIL`, timeout/lost response -> `RUNNING` with
 `SETTLEMENT_UNCERTAIN`. Only `live` trials with attested worker/data
 generations can satisfy `gateMayBeReportedAsPass`; `local` trials are
 downgraded to unattested identity.
+
+## Implemented runner: T5-disclosure-audit
+
+`t5-disclosure-audit-runner.ts` verifies the Phase 10 disclosure, inference,
+source/task and client policies independently — the first gate covering them
+(`T5-disclosure-audit` in `live-gates.example.json`). It plants three synthetic
+fixtures under a named test generation (two per-client shared fixtures, one
+per-client evidence object), then checks four dimensions: (a) the disclosure
+redactor removes sensitive shapes and emits markers; (b) shared-fixture reads
+stay visible and correctly attributed for the owning client, and are denied —
+without leaking bytes even in the denial — for anyone else; (c) the
+source-task reference survives redaction unchanged; (d) evidence reads allow
+the owner and deny strangers. Each dimension carries its own FAIL reason code
+(`DISCLOSURE_REDACTION_LEAK`, `INFERENCE_BOUNDARY_LEAK`, `ATTRIBUTION_LOST`,
+`CLIENT_POLICY_GRANT_VIOLATION`, `CLIENT_POLICY_OWNER_DENIED`). State
+discipline mirrors the T4 runner: no credentials -> `NOT_EXECUTED`,
+unsatisfied prerequisite -> `BLOCKED`, policy violation -> `FAIL`,
+timeout/lost response -> `RUNNING` with `SETTLEMENT_UNCERTAIN` and no retry.
+Receipts carry digests only; the diagnostic log carries redacted text; cleanup
+names the three exact fixture keys, never a prefix.
