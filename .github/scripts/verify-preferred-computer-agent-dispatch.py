@@ -126,7 +126,7 @@ db.execute("INSERT INTO computer_agent_connection_qualification_observation VALU
 ))
 run_sha = hashlib.sha256(b"run-1").hexdigest()
 
-def selection_record(seed: bytes, key: str): tuple[dict, str, str]:
+def selection_record(seed: bytes, key: str) -> tuple[dict, str, str]:
     request_sha = hashlib.sha256(seed).hexdigest()
     selection = {
         "protocol": "eliotr.computer-agent-preferred-selection.v1",
