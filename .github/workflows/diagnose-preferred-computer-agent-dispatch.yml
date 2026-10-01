@@ -1,0 +1,25 @@
+name: Diagnose preferred computer-agent dispatch
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    if: "${{ github.event.head_commit.message == 'chore: diagnose preferred computer-agent dispatch' }}"
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Apply and diagnose
+        run: |
+          python -m py_compile \
+            .github/scripts/apply-preferred-computer-agent-dispatch.py \
+            .github/scripts/fix-preferred-computer-agent-dispatch.py \
+            .github/scripts/diagnose-preferred-computer-agent-dispatch.py
+          python .github/scripts/apply-preferred-computer-agent-dispatch.py
+          python .github/scripts/fix-preferred-computer-agent-dispatch.py
+          python .github/scripts/diagnose-preferred-computer-agent-dispatch.py
