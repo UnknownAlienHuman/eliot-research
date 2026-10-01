@@ -11,8 +11,7 @@ import { isUsageAdmissionCapability, runUsagePreflight } from "./lib/cloudflare-
 
 import { assertLaunchCodeComplete, readConfiguredTransport } from "./check-launch-code.mjs";
 import { loadResearchRuntimeEnvironment, RESEARCH_RUNTIME_CONFIGURATION_KEYS,
-  RESEARCH_RUNTIME_SEMANTIC_CONFIGURATION_CHUNK_KEYS, RESEARCH_RUNTIME_SEMANTIC_CONFIGURATION_KEY,
-  splitResearchSemanticConfiguration } from "./lib/research-runtime-config.mjs";
+  RESEARCH_RUNTIME_SEMANTIC_TRANSPORT_KEYS, semanticConfigurationTransport } from "./lib/research-runtime-config.mjs";
 import { synchronizeResearchDeploymentAuthority } from "./lib/research-deployment-authority.mjs";
 import { computeResearchBackendFingerprint } from "./lib/research-backend-fingerprint.mjs";
 
@@ -35,18 +34,13 @@ function capture(command, args, cwd, env) {
 }
 
 function verifyGeneratedSemanticConfiguration(config, environment) {
-  const semantic = Object.hasOwn(environment, RESEARCH_RUNTIME_SEMANTIC_CONFIGURATION_KEY) &&
-    typeof environment[RESEARCH_RUNTIME_SEMANTIC_CONFIGURATION_KEY] === "string"
-    ? splitResearchSemanticConfiguration(environment[RESEARCH_RUNTIME_SEMANTIC_CONFIGURATION_KEY]) : null;
-  const transportKeys = [RESEARCH_RUNTIME_SEMANTIC_CONFIGURATION_KEY,
-    ...RESEARCH_RUNTIME_SEMANTIC_CONFIGURATION_CHUNK_KEYS];
-  for (const key of transportKeys) {
-    const expected = key === RESEARCH_RUNTIME_SEMANTIC_CONFIGURATION_KEY
-      ? undefined : semantic?.[key];
+  const transport = semanticConfigurationTransport(environment);
+  for (const key of RESEARCH_RUNTIME_SEMANTIC_TRANSPORT_KEYS) {
+    const expected = transport.vars[key];
     const actual = config?.vars && Object.hasOwn(config.vars, key) ? config.vars[key] : undefined;
     if (actual !== expected) throw new Error(`Generated deployment semantic configuration drift (${key})`);
   }
-  for (const key of SEMANTIC_SERVER_CONFIGURATION_KEYS.filter((item) => item !== RESEARCH_RUNTIME_SEMANTIC_CONFIGURATION_KEY)) {
+  for (const key of SEMANTIC_SERVER_CONFIGURATION_KEYS.filter((item) => !RESEARCH_RUNTIME_SEMANTIC_TRANSPORT_KEYS.includes(item))) {
     const expected = Object.hasOwn(environment, key) && typeof environment[key] === "string"
       ? environment[key] : undefined;
     const actual = config?.vars && Object.hasOwn(config.vars, key) ? config.vars[key] : undefined;

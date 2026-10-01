@@ -28,6 +28,9 @@ authority/configuration source.
   protocol: "eliotr.research-runtime.v1",
   vars: {
     ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON: <semantic configuration object>,
+    // ...or, after the S29 migration, the immutable revision identity instead:
+    // ELIOTR_RESEARCH_SEMANTIC_CONFIG_REF: <revision reference, e.g. scr-abc123def456>,
+    // ELIOTR_RESEARCH_SEMANTIC_CONFIG_SHA256: <SHA-256 of the canonical config bytes>,
     ELIOTR_MODEL_PROFILE_DEFINITION_JSON: <model profile definition object>,
     ELIOTR_MODEL_PROFILE_PROVENANCE_REF: <profile provenance reference>,
     ELIOTR_MODEL_SPEND_POLICY_JSON: <spend policy object>,
@@ -52,7 +55,9 @@ model configuration first. At least one supported variable is required.
 
 | Key | Required for research | Native validation and meaning |
 | --- | --- | --- |
-| ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON | Yes | Strictly parsed by ConfigurationSchema in apps/eliotr-core/src/research-semantic-server.ts, including the synthesis/audit configuration and normalization binding. |
+| ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON | Yes, unless migrated | The legacy semantic configuration object. Strictly parsed by ConfigurationSchema in apps/eliotr-core/src/research-semantic-server.ts, including the synthesis/audit configuration and normalization binding. Superseded by the revision identity below; recognized during the migration window, then removed. |
+| ELIOTR_RESEARCH_SEMANTIC_CONFIG_REF | Yes, after migration | Short immutable revision reference (`scr-` + 12 hex chars) identifying one row of the `research_semantic_config_revision` D1 table (migration 0097). The Worker resolves the canonical config bytes from D1 and verifies them against the digest before model dispatch. |
+| ELIOTR_RESEARCH_SEMANTIC_CONFIG_SHA256 | Yes, after migration | Expected SHA-256 (64 lowercase hex) of the canonical semantic configuration bytes for the revision above. A mismatch fails closed; the Worker never runs a config whose bytes differ from this digest. |
 | ELIOTR_MODEL_PROFILE_DEFINITION_JSON | Yes | Parsed and bound through packages/cloudflare-research/src/research-model-profile-config.ts and its persisted profile authority. It must describe an installed profile; no model is supplied by a default. |
 | ELIOTR_MODEL_PROFILE_PROVENANCE_REF | Yes | The exact provenance reference matched by the profile binding source and its current persisted authority. |
 | ELIOTR_MODEL_SPEND_POLICY_JSON | Yes | Parsed by readResearchModelSpendPolicy in packages/cloudflare-research/src/research-model-spend-policy.ts; current principal, credential, deployment, and policy authority are checked by Core. |
@@ -92,13 +97,47 @@ The existing call sites use the same loader:
   generated deployment configuration has the same allowlisted values before
   the deployment path can proceed. A generated file by itself is not a live
   deployment receipt.
-* The generated Wrangler transport splits the canonical semantic JSON with
-  `splitResearchSemanticConfiguration` into
-  `ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON_0` and `_1`, with at most 4,000 UTF-8
-  bytes per chunk and 8,000 bytes total. The Worker reassembles these chunks
-  before its existing strict parser; chunking is only a transport encoding and
-  does not change the `eliotr.research-runtime.v1` envelope, its canonical JSON
-  identity, or its allowlisted keys.
+* The generated Wrangler transport carries the semantic configuration by revision
+identity after the S29 migration: `ELIOTR_RESEARCH_SEMANTIC_CONFIG_REF` and
+`ELIOTR_RESEARCH_SEMANTIC_CONFIG_SHA256` are forwarded as Worker vars, and no
+chunk vars are emitted, so the Worker can never see mixed sources. Before
+migration, the canonical semantic JSON is split with
+`splitResearchSemanticConfiguration` into
+`ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON_0` and `_1`, with at most 4,000 UTF-8
+bytes per chunk and 8,000 bytes total. The Worker reassembles these chunks
+before its existing strict parser; chunking is only a transport encoding and
+does not change the `eliotr.research-runtime.v1` envelope, its canonical JSON
+identity, or its allowlisted keys.
+
+## Migrate the semantic configuration to an immutable revision
+
+The revision table is immutable: a deployed reference can never change
+meaning, and migration/restart/rollback cannot silently change a run's frozen
+model, prompt, or schema. The migration is deliberate and operator-driven; the
+Worker read path never installs revisions.
+
+1. Ensure migration `0097_research_semantic_config_revision.sql` is applied to
+   the Core D1 database.
+2. Run `scripts/install-semantic-config-revision.mjs <created-by-principal-ref>`
+   with the research runtime envelope available. It prints the revision
+   reference, the SHA-256 digest, the exact SQL `INSERT` for the
+   `research_semantic_config_revision` table, and the two vars to set.
+3. Execute the printed `INSERT` against the Core D1 database
+   (e.g. `wrangler d1 execute`). The insert is idempotent: reinstalling
+   identical bytes returns the same revision reference.
+4. Set `ELIOTR_RESEARCH_SEMANTIC_CONFIG_REF` and
+   `ELIOTR_RESEARCH_SEMANTIC_CONFIG_SHA256` in the research runtime envelope
+   (the legacy `ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON` may stay as the
+   human-readable source of truth; the deploy transport drops it in favor of
+   the revision) and redeploy.
+5. Verify: the configuration status endpoint reports the revision source, and
+   a research dispatch succeeds. A missing, unknown, or digest-mismatched
+   revision fails before model dispatch with `WORKFLOW_CONFIGURATION_MISSING`
+   or `WORKFLOW_CONFIGURATION_INVALID`.
+6. After the migration is proven, remove the legacy
+   `ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON` from the envelope and the
+   `_JSON_0`/`_JSON_1` chunk transport. The Worker rejects a revision
+   configured alongside legacy vars as an ambiguous mixed source.
 
 Install the envelope first, then use the existing entrypoint for the intended
 environment. Treat a loader error, Core schema error, provenance mismatch, or
