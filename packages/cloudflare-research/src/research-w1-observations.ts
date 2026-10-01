@@ -52,6 +52,14 @@ export interface SettleW1BranchObservationsInput {
   readonly operation_id: string;
   readonly investigation_id: string;
   readonly principal_ref: string;
+  /**
+   * Whether the run's handler generation executes branches through the shared
+   * branch executor (v7/v8). Older generations still commit a COUNTER_SEARCH
+   * stage, but its output is not a branch reconciliation checkpoint, so there
+   * is nothing to settle. The caller owns generation knowledge; the package
+   * must not infer it from the payload.
+   */
+  readonly branch_execution: boolean;
 }
 
 interface W1Observation {
@@ -95,14 +103,21 @@ async function observationFor(
  * Settles the committed branch reconciliation's observations on the W1 head.
  *
  * Returns the W1 head after settling, or null when the operation did not run
- * branch execution (no committed COUNTER_SEARCH checkpoint), in which case
- * there is nothing to settle. When the head already carries this
+ * branch execution (the run's handler generation is not branch-aware, or no
+ * committed COUNTER_SEARCH checkpoint exists), in which case there is nothing
+ * to settle. When the head already carries this
  * reconciliation's observations the call is a no-op returning the current
  * head.
  */
 export async function settleW1BranchObservations(
   input: SettleW1BranchObservationsInput,
 ): Promise<LedgerHead | null> {
+  // The run's generation never executed branches: a committed COUNTER_SEARCH
+  // from an older generation is legacy content, not a branch reconciliation
+  // checkpoint, so there is nothing to settle.
+  if (!input.branch_execution) {
+    return null;
+  }
   const checkpoints = new WorkflowCheckpointStore(input.database);
   const committed = await checkpoints.readCommittedStageRequest(input.operation_id, "COUNTER_SEARCH");
   if (committed === null || committed.request.investigation_ref.id !== input.investigation_id) {

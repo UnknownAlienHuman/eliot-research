@@ -110,6 +110,16 @@ function branchGeneration(generation: unknown): boolean {
     generation === SERVER_OWNED_EXTERNAL_AGENT_HANDLER_GENERATION;
 }
 
+/**
+ * Whether the handler generation executes READ_AND_EXTRACT/ANALYZE_BRANCHES/
+ * COUNTER_SEARCH through the shared branch executor (v7/v8), so a committed
+ * COUNTER_SEARCH is a branch reconciliation checkpoint. Older generations
+ * commit a legacy COUNTER_SEARCH that carries no branch observations.
+ */
+export function isBranchExecutionHandlerGeneration(generation: unknown): boolean {
+  return branchGeneration(generation);
+}
+
 /** Select only handlers pinned by the persisted generation; no runtime vendor fallback is implicit. */
 export function createResearchStageHandlerFactory(
   mode: ResearchStageHandlerFactoryMode,
