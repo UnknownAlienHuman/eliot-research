@@ -172,13 +172,18 @@ async function reconciliationCheckpoint(
   invocation: RoleInvocation,
   analysis: ResearchBranchAnalysisCheckpoint,
   read: ResearchReadExtractCheckpoint,
+  readInputBytes: Uint8Array,
 ): Promise<ResearchBranchReconciliationCheckpoint> {
   const results = [...analysis.branch_results];
   const counterRequired = analysis.required_roles.includes("COUNTER");
   if (counterRequired) {
+    // The counter binds to the committed read-extract bytes — the same
+    // evidence input the analysis roles received. Passing the analysis
+    // checkpoint bytes here would present analysis material to the counter
+    // model as if it were evidence.
     results.push(await executeRole(
       context.planning,
-      { ...invocation, role_model: dependencies.role_model },
+      { ...invocation, input_bytes: readInputBytes, role_model: dependencies.role_model },
       "COUNTER",
       read.evidence,
     ));
@@ -250,10 +255,11 @@ export function createResearchBranchExecutionHandlers(
       fail("WORKFLOW_OUTPUT_CORRUPT");
     }
     const storedRead = await readCommittedStageLineage(new WorkflowCheckpointStore(dependencies.database), request.operation_id, "READ_AND_EXTRACT");
-    const read = decodeResearchReadExtractCheckpoint(await readWorkflowObject(dependencies.work_bucket, storedRead.receipt.output_manifest, true));
+    const readInputBytes = await readWorkflowObject(dependencies.work_bucket, storedRead.receipt.output_manifest, true);
+    const read = decodeResearchReadExtractCheckpoint(readInputBytes);
     if (!sameRef(read.checkpoint_ref, analysis.read_extract_ref)) fail("WORKFLOW_OUTPUT_CORRUPT");
     return canonicalBytes(await reconciliationCheckpoint(dependencies, context,
-      { request, principal, attempt_ref, budget_receipt_ref, input_bytes }, analysis, read));
+      { request, principal, attempt_ref, budget_receipt_ref, input_bytes }, analysis, read, readInputBytes));
   };
   const recover = async (stage: StageRequest["stage"], request: StageRequest, principal: WorkflowPrincipal): Promise<Uint8Array | null> => {
     if (stage === "READ_AND_EXTRACT") return read_and_extract({ request, principal, input_bytes: new Uint8Array(), attempt_ref: "recovery", budget_receipt_ref: "recovery" });
