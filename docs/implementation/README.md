@@ -64,7 +64,8 @@ from the tables below, so an unlisted file is a bug, not an omission you may ign
 | [owner-workspace-setup.md](owner-workspace-setup.md) | Operator-provisioned namespace bootstrap and first owner workspace setup. |
 | [research-runtime-configuration.md](research-runtime-configuration.md) | Server-owned Research configuration envelope, provenance and local/deployment input validation. |
 | [live-document-project-acceptance-2026-09-14.md](live-document-project-acceptance-2026-09-14.md) | Deployed owner login, PDF/DOCX intake, project save, research draft, claim audit and citation readbacks. |
-| [audit-2026-09-14.md](audit-2026-09-14.md) | Consolidated deep audit: coordinator pass, Antigravity Opus 4.6 swarm pass and independent re-verification — authority model, D1 triggers and test-harness depth limits, AI Gateway and canon, UI against NotebookLM, refuted claims. |
+| [audit-2026-09-25.md](audit-2026-09-25.md) | Public-description cleanup, project stage, CI state, issue/task tracking quality, documentation conformance and remaining work (in Russian). |
+| [audit-2026-09-14.md](audit-2026-09-14.md) | Consolidated deep audit: coordinator pass, Antigravity swarm pass and independent re-verification — authority model, D1 triggers and test-harness depth limits, AI Gateway and canon, UI against NotebookLM, refuted claims. |
 | [audit-2026-09-09.md](audit-2026-09-09.md) | Dated merged-work and Cloudflare OAuth readback audit, with the remaining launch blockers. |
 | [audit-2026-09-08.md](audit-2026-09-08.md) | Dated whole-repository audit against the documentation: what is consistent, what drifted, what is left. |
 | [deployment-audit-2026-09-04.md](deployment-audit-2026-09-04.md) | Dated readiness audit for a local-to-Cloudflare product trial. |
