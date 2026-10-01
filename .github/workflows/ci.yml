@@ -81,7 +81,8 @@ jobs:
       - name: Execute the complete root configuration once
         # No directory allowlist: new eligible directories are discovered automatically.
         # The native d1-mutations matrix deliberately repeats query-persistence on both OSes.
-        run: pnpm test:root
+        # Build first: infra/ai-search/*.test.mjs import the compiled packages/cloudflare-ai dist.
+        run: pnpm build && pnpm test:root
 
   verify-checks:
     runs-on: ubuntu-latest
