@@ -86,8 +86,8 @@ const config = { name: "eliotr-core", minify: true, preview_urls: false, compati
   vars: { DEPLOYMENT_GENERATION: "git-test", ENVIRONMENT: "staging", ACCESS_TEAM_DOMAIN: "https://team-example.cloudflareaccess.com",
     ACCESS_AUDIENCE: "test-aud", ACCESS_SERVICE_PRINCIPALS: "", GOOGLE_EXTERNAL_TRANSPORT: "gemini-mcp" },
   d1_databases: [
-    { binding: "CORE_DB", database_name: "eliotr-core", database_id: "11111111-1111-4111-8111-111111111111" },
-    { binding: "SEARCH_DB", database_name: "eliotr-search", database_id: "22222222-2222-4222-8222-222222222222" },
+    { binding: "CORE_DB", database_name: "eliotr-core", database_id: "11111111-1111-4111-8111-111111111111", migrations_dir: "../../infra/d1/core/migrations" },
+    { binding: "SEARCH_DB", database_name: "eliotr-search", database_id: "22222222-2222-4222-8222-222222222222", migrations_dir: "../../infra/d1/search/migrations" },
   ] };
 Object.assign(config, {
   assets: { binding: "ASSETS" }, exports: { ResearchSession: { type: "durable-object", storage: "sqlite" } },
@@ -166,7 +166,8 @@ function harness(overrides = {}) {
       }] } });
       if (String(url).endsWith("/versions/" + versionId)) return globalThis.Response.json({ success: true, result: {
         id: versionId, number: 9, resources: {
-          bindings: { DEPLOYMENT_GENERATION: { type: "plain_text", text: config.vars.DEPLOYMENT_GENERATION }, CORE_DB: { type: "d1", id: config.d1_databases[0].database_id },
+          bindings: { ...Object.fromEntries(Object.entries(config.vars).map(([name, text]) => [name, { type: "plain_text", text }])),
+            ...overrides.bindingDrift, CORE_DB: { type: "d1", id: config.d1_databases[0].database_id },
             SEARCH_DB: { type: "d1", id: config.d1_databases[1].database_id }, ASSETS: { type: "assets" },
             RESEARCH_SESSION: { type: "durable_object_namespace", class_name: "ResearchSession" } },
           script: { etag: "fixture-etag" }, script_runtime: { compatibility_date: config.compatibility_date,
@@ -201,6 +202,7 @@ await check("successful ordering and no implicit live qualification", async () =
   assert.ok(!test.calls.some((call) => call.includes("--keep-vars")));
   assert.ok(test.calls.indexOf("archive") < test.calls.indexOf("node scripts/provision-cloudflare-core.mjs"));
   assert.equal(receipt.remote_http_smoke.state, "PASS");
+  assert.deepEqual(receipt.worker.vars_readback, { state: "PASS", binding_count: Object.keys(config.vars).length });
   assert.ok(Object.values(receipt.live_conformance).every((state) => state === "NOT_EXECUTED"));
   assert.equal(test.receipts.length, 1);
   assert.ok(!JSON.stringify(receipt).includes("secret-"));
@@ -264,5 +266,40 @@ await check("partial active traffic stops before deployment authority and PASS r
   assert.equal(test.receipts.length, 0);
 });
 
+
+
+await check("unreviewed bindings and stale runtime vars cannot sync authority or publish PASS", async () => {
+  const drifts = [
+    { EXTRA: { type: "plain_text", text: "foreign" } },
+    { EXTRA: { type: "json", json: { foreign: true } } },
+    { EXTRA: { type: "secret_text" } },
+    { ACCESS_AUDIENCE: { type: "plain_text", text: "stale-audience" } },
+    { ACCESS_AUDIENCE: undefined },
+    { ENVIRONMENT: { type: "json", json: "staging" } },
+    { ELIOTR_MODEL_GATEWAY_TOKEN: { type: "plain_text", text: "secret-reflected" } },
+  ];
+  for (const bindingDrift of drifts) {
+    const test = harness({ bindingDrift });
+    await assert.rejects(deployCloudflare(test.options));
+    assert.ok(test.calls.includes(deployCommand));
+    assert.equal(test.calls.filter((call) => call.startsWith("POST ")).length, 2,
+      "only read-only ledger queries may precede refusal");
+    assert.equal(test.receipts.length, 0);
+  }
+});
+await check("missing or default migration directories stop before D1 apply and Worker upload", async () => {
+  for (const migrations_dir of [undefined, "migrations", "../../foreign"]) {
+    const changed = structuredClone(config);
+    if (migrations_dir === undefined) delete changed.d1_databases[0].migrations_dir;
+    else changed.d1_databases[0].migrations_dir = migrations_dir;
+    const test = harness({ options: { read: async () => Buffer.from(JSON.stringify(changed)) } });
+    await assert.rejects(deployCloudflare(test.options), /migration plan or ledger/u);
+    assert.ok(!test.calls.includes(generatedDryRun));
+    assert.ok(!test.calls.includes(coreMigration));
+    assert.ok(!test.calls.includes(deployCommand));
+    assert.equal(test.calls.filter((call) => call.startsWith("POST ")).length, 0);
+    assert.equal(test.receipts.length, 0);
+  }
+});
 
 console.log(`Deployment apply ordering: ${cases} groups passed; live Cloudflare NOT_EXECUTED`);

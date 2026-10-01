@@ -1,5 +1,5 @@
 import { applyD1Migrations, env, reset } from "cloudflare:test";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   createErasureAdmissionPolicyStore,
   type ErasureAdmissionPolicyInput,
@@ -13,7 +13,6 @@ const runtime = env as unknown as Env & {
   readonly SEARCH_MIGRATIONS: Parameters<typeof applyD1Migrations>[1];
 };
 const credential = "erasure-http-credential";
-const createdAt = "2026-10-01T12:00:00.000Z";
 
 function ownerAccess(principal: string) {
   return {
@@ -32,6 +31,7 @@ function ownerAccess(principal: string) {
 }
 
 async function seedOwnerSource(principal: string) {
+  const createdAt = new Date(Date.now()).toISOString();
   await runtime.CORE_DB.batch([
     runtime.CORE_DB.prepare(
       "INSERT INTO source_namespace_ownership(source_namespace_id,ownership_record_revision,owner_system_id," +
@@ -62,8 +62,8 @@ async function seedOwnerSource(principal: string) {
     credential_generation: credential,
     authorization_binding_ref: "erase-http-operator-receipt",
     legal_basis_ref: "erase-http-legal-basis",
-    valid_from: "2026-10-01T00:00:00.000Z",
-    expires_at: "2026-10-02T00:00:00.000Z",
+    valid_from: new Date(Date.now() - 60_000).toISOString(),
+    expires_at: new Date(Date.now() + 3_600_000).toISOString(),
   };
   await createErasureAdmissionPolicyStore({ database: runtime.CORE_DB }).install(policy);
   await runtime.EVIDENCE_BUCKET.put("erase-http/raw.bin", new TextEncoder().encode("pinned source bytes"));
@@ -91,7 +91,11 @@ describe("owner erasure HTTP composition over real D1 and R2", () => {
     await applyD1Migrations(runtime.SEARCH_DB, runtime.SEARCH_MIGRATIONS);
   });
 
-  it("serves a no-effect preview, denies a foreign owner, and refuses completion without exact closure", async () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it.each([Date.UTC(2026, 9, 1, 12), Date.UTC(2030, 0, 15, 12)])(
+    "serves an honest erasure HTTP flow at clock %s", async (now) => {
+    vi.spyOn(Date, "now").mockReturnValue(now);
     const owner = "erase-http-owner-principal";
     await seedOwnerSource(owner);
     const ownerDeps = ownerAccess(owner);

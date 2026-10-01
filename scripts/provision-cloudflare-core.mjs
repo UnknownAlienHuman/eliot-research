@@ -11,6 +11,8 @@ import { isUsageAdmissionCapability, runUsagePreflight } from "./lib/cloudflare-
 import { loadResearchRuntimeEnvironment, RESEARCH_RUNTIME_CONFIGURATION_KEYS,
   RESEARCH_RUNTIME_SEMANTIC_TRANSPORT_KEYS, semanticConfigurationTransport } from "./lib/research-runtime-config.mjs";
 
+import { validateDeploymentMigrationDirectories } from "./lib/deployment-migrations.mjs";
+
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // Isolated state root for tests: ELIOTR_STATE_DIRECTORY overrides the shared
 // gitignored .eliotr-state so parallel/serial runs never communicate through
@@ -159,6 +161,7 @@ function assertManifest() {
 }
 
 function assertCanonicalBindingAlignment() {
+  validateDeploymentMigrationDirectories(canonicalConfig, { root: repositoryRoot });
   const canonicalD1 = new Map((canonicalConfig.d1_databases ?? []).map((item) => [item.binding, item]));
   const canonicalR2 = new Map((canonicalConfig.r2_buckets ?? []).map((item) => [item.binding, item]));
   const canonicalQueues = new Map((canonicalConfig.queues?.producers ?? []).map((item) => [item.binding, item]));
