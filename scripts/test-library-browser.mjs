@@ -98,6 +98,12 @@ const server = createServer((request, response) => {
     response.setHeader("cache-control", "no-store");
     const json = (body) => { response.setHeader("content-type", "application/json"); response.end(JSON.stringify(body)); };
     if (researchScreen && await researchScreen.handle(request, response, url)) return;
+    if (url.pathname === "/api/v1/system/session") {
+      assert.equal(request.method, "GET");
+      return json(envelope({ protocol: "eliotr.owner-session.v1", principal_ref: "owner-principal",
+        client_class: "owner_pwa", credential_generation: "browser-fixture",
+        expires_at: new Date(Date.now() + 86_400_000).toISOString() }));
+    }
     if (url.pathname.startsWith("/api/v1/ingest/bundles")) return importing.handle(request, response, url);
     if (url.pathname === "/api/v1/system/mcp-diagnostics") return diagnosticFixture.handle(request, response, url);
     if (url.pathname === "/api/v1/system/health") {

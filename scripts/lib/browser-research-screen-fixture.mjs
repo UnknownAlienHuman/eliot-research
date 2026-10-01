@@ -18,11 +18,14 @@ export function createResearchScreenFixture({ envelope, draftWorkflowId, draftAr
   const state = { blocked: false, starts: [], sectionReads: 0, citationReads: 0, holdSection: false, pendingSection: undefined, seen: [] };
   const handle = async (request, response, url) => {
     const path = url.pathname;
-    const paths = ["/api/v1/system/research-configuration", "/api/v1/research/runs", "/api/v1/research/changes", "/api/v1/research/run", `/api/v1/research/run/${draftWorkflowId}`, `${artifactPath}/reauthorize`, `${sectionPath}/reauthorize`, `${sectionPath}/citations/reauthorize`];
+    const paths = ["/api/v1/system/session", "/api/v1/system/research-configuration", "/api/v1/research/runs", "/api/v1/research/changes", "/api/v1/research/run", `/api/v1/research/run/${draftWorkflowId}`, `${artifactPath}/reauthorize`, `${sectionPath}/reauthorize`, `${sectionPath}/citations/reauthorize`];
     state.seen.push(`${request.method} ${path}`);
     if (!paths.includes(path)) return false;
     const json = (data) => { response.setHeader("content-type", "application/json"); response.end(JSON.stringify(envelope(data))); };
-    if (path === "/api/v1/system/research-configuration") {
+    if (path === "/api/v1/system/session") {
+      assert.equal(request.method, "GET");
+      json({ protocol: "eliotr.owner-session.v1", principal_ref: "owner-principal", client_class: "owner_pwa", credential_generation: "browser-fixture", expires_at: expiresAt });
+    } else if (path === "/api/v1/system/research-configuration") {
       assert.equal(request.method, "GET");
       json({ protocol: "eliotr.research-configuration-readiness.v1", configuration: state.blocked ? "missing" : "present", model_transport: "available", qualification_state: state.blocked ? "unavailable" : "current", run_readiness: state.blocked ? "blocked" : "ready", readiness_reason: state.blocked ? "CONFIGURATION_NOT_READY" : "QUALIFICATION_PROOFS_CURRENT", model_route: "fixture-model", qualification_expires_at: expiresAt, missing_fields: state.blocked ? ["RESEARCH_AGENT_CONFIG"] : [], invalid_fields: [], checked_at: new Date().toISOString() });
     } else if (path === "/api/v1/research/runs") {
