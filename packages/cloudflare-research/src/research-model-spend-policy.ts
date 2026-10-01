@@ -1,3 +1,4 @@
+// IMPLEMENTED_NOT_LIVE: S37 branch-aware W3 spend admission for ANALYZE_BRANCHES/COUNTER_SEARCH admits per-role model spend against the durable stage-level W2 authority with role-scoped identities; D1-backed admission readback qualification remains open.
 import { z } from "zod";
 import { IdentifierSchema, IsoDateTimeSchema, OperationIntentSchema, ResearchBranchRoleSchema, type ResearchBranchRole } from "@eliotr/contracts";
 import { modelGatewaySha256 } from "@eliotr/cloudflare-ai";
@@ -11,6 +12,7 @@ import {
   createD1ResearchModelSpendAdmissionPort,
   RESEARCH_MODEL_SPEND_APPROVAL_PROTOCOL,
   type ResearchModelSpendAdmissionPort,
+  type ResearchModelSpendAdmissionRecord,
   type ResearchModelSpendCurrentAuthority,
 } from "./research-model-spend-admission.js";
 
@@ -139,7 +141,7 @@ export interface ResearchModelSpendPolicyService {
   /** Record the installed explicit decision before the existing W3 reservation. */
   admit(input: ModelAttemptPreparationContext, deployment: ModelRouteDeployment): Promise<void>;
   /** Record the installed explicit branch-role decision before the existing W3 reservation. */
-  admitBranchRole(input: ResearchBranchRoleSpendAdmissionInput): Promise<void>;
+  admitBranchRole(input: ResearchBranchRoleSpendAdmissionInput): Promise<ResearchModelSpendAdmissionRecord>;
 }
 
 /**
@@ -265,7 +267,7 @@ export function createResearchModelSpendPolicyService(input: ResearchModelSpendP
       max_input_bytes: value.rule.max_input_bytes, max_output_bytes: value.rule.max_output_bytes,
     });
   },
-  async admitBranchRole(admission: ResearchBranchRoleSpendAdmissionInput): Promise<void> {
+  async admitBranchRole(admission: ResearchBranchRoleSpendAdmissionInput): Promise<ResearchModelSpendAdmissionRecord> {
     const stageIndex = admission.stage_request.stage === "ANALYZE_BRANCHES" ? 8 : admission.stage_request.stage === "COUNTER_SEARCH" ? 9 : undefined;
     if (stageIndex === undefined) workflowFail("WORKFLOW_CONFIGURATION_MISSING");
     const rule = policy.rules.find((value) => value.stage === admission.stage_request.stage);
@@ -291,7 +293,7 @@ export function createResearchModelSpendPolicyService(input: ResearchModelSpendP
       authorization_ref: `model-authorization-${roleSha}`, policy_decision_ref: value.authority.policy_decision_ref,
       policy_generation: value.authority.policy_generation, currentness_digest: value.authority.currentness_digest,
       expires_at: value.authority.expires_at, expected_deployment: admission.deployment };
-    await admissions.admit({
+    return admissions.admit({
       request: { operation_id: identity.operation_id, principal_ref: value.authority.principal_ref,
         stage_attempt_ref: value.row.attempt_ref, stage_request_sha256: roleSha,
         reservation_id: quote.reservation_id, quote_ref: quote.quote_ref, route_ref: admission.deployment.route_ref,

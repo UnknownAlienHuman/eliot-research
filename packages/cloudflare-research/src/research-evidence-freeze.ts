@@ -180,7 +180,7 @@ function parsePolicy(value: unknown): ReferenceManifestPolicyProfile {
   });
 }
 
-async function parseModelDefinition(value: unknown): Promise<EvidenceFreezeModelDefinition> {
+export async function parseResearchModelProfileDefinition(value: unknown): Promise<EvidenceFreezeModelDefinition> {
   const record = exactObject(value, new Set([
     "schema", "definition_ref", "definition_sha256", "config_provenance_ref", "model_profile_ref",
     "expires_at", "max_context_bytes", "deployment", "policy",
@@ -243,7 +243,7 @@ async function parseInput(bytes: Uint8Array): Promise<EvidenceFreezeStageInput> 
     denominatorRef = VersionedRefSchema.parse(raw.coverage_denominator_ref);
     modelProfileBindingRef = VersionedRefSchema.parse(raw.model_profile_binding_ref);
     if (modelProfileBindingRef.revision !== 1) fail("EVIDENCE_FREEZE_INPUT_INVALID", "model profile binding revision is unsupported");
-    modelProfileDefinition = await parseModelDefinition(raw.model_profile_definition);
+    modelProfileDefinition = await parseResearchModelProfileDefinition(raw.model_profile_definition);
     protocolProfile = InquiryProtocolProfileSchema.parse(raw.protocol_profile);
     const definition = exactObject(raw.protocol_definition, new Set([
       "independence_policy_ref", "chronology_policy_ref", "fidelity_ceiling", "stop_rule_ref",
@@ -363,7 +363,7 @@ async function validateAuthority(
   let protocolProfile: ProtocolScopeCheckpoint["protocol_profile"];
   let protocolDefinition: EvidenceFreezeProtocolDefinition;
   let laneMaterial: EvidenceFreezeLaneMaterial;
-  try { modelProfileDefinition = await parseModelDefinition(snapshot.model_profile_definition); }
+  try { modelProfileDefinition = await parseResearchModelProfileDefinition(snapshot.model_profile_definition); }
   catch (cause) {
     if (cause instanceof EvidenceFreezeStageError && cause.code === "EVIDENCE_FREEZE_AUTHORITY_INVALID") throw cause;
     fail("EVIDENCE_FREEZE_AUTHORITY_INVALID", "model profile definition is invalid", false, cause);

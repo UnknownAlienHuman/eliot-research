@@ -79,4 +79,8 @@ export * from "./research-w1-observations.js";
 export * from "./research-branch-role-model.js";
 export * from "./research-branch-role-output.js";
 export * from "./research-branch-role-preparation.js";
+export * from "./research-branch-role-evidence-pack.js";
+export * from "./research-branch-role-server-preparation.js";
+export * from "./research-branch-role-manifest-store.js";
+export { decodeResearchReadExtractCheckpoint } from "./research-branch-execution-shared.js";
 export * from "./research-external-branch-analysis.js";

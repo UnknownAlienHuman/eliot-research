@@ -5,19 +5,31 @@ import {
 } from "./research-stage-handlers.js";
 import { z } from "zod";
 import { DynamicRouteProvisioningError, validateModelGatewayToken } from "@eliotr/cloudflare-ai";
-import { IdentifierSchema, IsoDateTimeSchema, VersionedRefSchema } from "@eliotr/contracts";
+import { IdentifierSchema, IsoDateTimeSchema, VersionedRefSchema, type ResearchBranchRole } from "@eliotr/contracts";
 import { canonicalJson, decodeModelRouteDeployment } from "@eliotr/platform-cloudflare";
-import type { NavigationReadAuthority } from "@eliotr/cloudflare-evidence";
+import {
+  createCloudflareEvidenceResolver,
+  createD1EvidenceAuthorityPort,
+  createR2EvidenceContentPort,
+  type NavigationReadAuthority,
+} from "@eliotr/cloudflare-evidence";
 import type { InvestigationLedgerStore } from "@eliotr/research";
-import { createD1ScopeProfilePort } from "@eliotr/retrieval";
-import { fail, WorkflowCheckpointError, workflowFailure, retainWorkflowFailure,
-  type WorkflowObject, type WorkflowPrincipal } from "@eliotr/cloudflare-workflows";
+import { createD1ScopeProfilePort, type RetrievalQueryAccess } from "@eliotr/retrieval";
+import { fail, readCommittedStageLineage, readWorkflowObject, WorkflowCheckpointError, workflowFailure, retainWorkflowFailure,
+  WorkflowCheckpointStore, type WorkflowObject, type WorkflowPrincipal } from "@eliotr/cloudflare-workflows";
 import { ResearchOwnerSpendPolicyError } from "./research-owner-spend-policy.js";
 import {
   createD1ModelGatewayDeploymentRegistry,
   createD1DynamicRouteQualificationProofStore,
+  createD1ResearchModelPricingQuotePort,
+  createEvidenceFreezeStageFiveLineage,
+  createResearchBranchRolePreparation,
+  createResearchBranchRoleServerPreparation,
   createResearchSynthesisPreparation,
   createResearchModelSpendPolicyService,
+  decodeResearchReadExtractCheckpoint,
+  parseResearchModelProfileDefinition,
+  type ReferenceManifestPolicyProfile,
   type ResearchModelGatewayBinding,
   type ResearchModelGatewayRuntimeConfig,
   type ResearchModelSpendPolicy,
@@ -36,7 +48,9 @@ import {
   createBoundResearchOwnerReportConfigSource,
 } from "./research-owner-report-policy.js";
 import { requireClientResearchExecution, resolveResearchExecutionSpend } from "./research-client-execution.js";
-import { createResearchSemanticWorkflowHandlerFactory } from "./research-semantic-composition.js";
+import { createResearchSemanticWorkflowHandlerFactory, type ResearchSemanticRolesModelDependencies } from "./research-semantic-composition.js";
+import { readRetrieveBranchesCheckpoint } from "./research-retrieve-branches.js";
+import { createResearchBranchRoleServerPromptInput } from "./research-branch-role-server-prompt.js";
 import type { ResearchStageHandlerFactory } from "./research-stage-handlers.js";
 import { requireResearchDeploymentCompatibility } from "./research-deployment-compatibility.js";
 import { routeResearchComputerAgentStages } from "./research-external-agent-routing.js";
@@ -75,6 +89,7 @@ const ConfigurationSchema = z.object({
     allowed_verifier_refs: z.array(IdentifierSchema).min(1).max(512),
     policy: z.unknown(),
   }).strict(),
+  roles: PromptConfigSchema.optional(),
   normalization: NormalizationSchema,
 }).strict();
 
@@ -306,6 +321,77 @@ async function assembleResearchSemanticServerHandlers(input: ResearchSemanticSer
       qualification_receipt_ref: receipt.data, qualification_expires_at: expires.data, qualified: true, current: true });
   }
   const verifier = await readVerifier();
+  let roles: ResearchSemanticRolesModelDependencies | undefined;
+  const roleConfig = config.roles;
+  if (roleConfig !== undefined) {
+    let modelPolicy: ReferenceManifestPolicyProfile;
+    try {
+      modelPolicy = (await parseResearchModelProfileDefinition(
+        JSON.parse(installed(env.ELIOTR_MODEL_PROFILE_DEFINITION_JSON)))).policy;
+    } catch { configurationInvalid(); }
+    const roleEvidenceAuthority = createD1EvidenceAuthorityPort({
+      core_database: env.CORE_DB, search_database: env.SEARCH_DB, now: () => Date.now(),
+    });
+    const roleEvidenceContent = createR2EvidenceContentPort({ evidence_bucket: env.EVIDENCE_BUCKET });
+    const roleEvidenceResolver = createCloudflareEvidenceResolver({
+      authority: roleEvidenceAuthority, content: roleEvidenceContent, now: () => Date.now(),
+    });
+    const roleNavigationAccess: RetrievalQueryAccess = Object.freeze({
+      principal_ref: navigation.access.principal_ref,
+      client_class: navigation.access.client_class,
+      credential_generation: navigation.access.credential_generation,
+    });
+    const readBranchRoleStageFive = async (
+      readerInput: { operation_id: string; investigation_id: string; principal: WorkflowPrincipal },
+    ) => {
+      const stored = await new WorkflowCheckpointStore(env.CORE_DB)
+        .readCommittedStageRequest(readerInput.operation_id, "RETRIEVE_BRANCHES");
+      if (stored === null || stored.request.investigation_ref.id !== readerInput.investigation_id) {
+        fail("WORKFLOW_AUTHORITY_STALE");
+      }
+      const result = await readRetrieveBranchesCheckpoint({
+        database: env.CORE_DB, search_database: env.SEARCH_DB, work_bucket: env.WORK_BUCKET,
+        evidence_bucket: env.EVIDENCE_BUCKET, access: roleNavigationAccess, profile: retrievalProfile,
+        navigation, ledger: input.ledger,
+      }, stored.request, readerInput.principal);
+      if (result.receipt.attempt_ref !== stored.attempt_ref) fail("WORKFLOW_OUTPUT_CORRUPT");
+      return createEvidenceFreezeStageFiveLineage({
+        checkpoint: result.checkpoint,
+        attempt_ref: result.receipt.attempt_ref,
+        request_sha256: result.receipt.request_sha256,
+      });
+    };
+    const readBranchRoleReadExtract = async (operation_id: string, investigation_id: string) => {
+      const stored = await readCommittedStageLineage(
+        new WorkflowCheckpointStore(env.CORE_DB), operation_id, "READ_AND_EXTRACT");
+      const bytes = await readWorkflowObject(env.WORK_BUCKET, stored.receipt.output_manifest, true);
+      const read = decodeResearchReadExtractCheckpoint(bytes);
+      if (read.investigation_ref.id !== investigation_id) fail("WORKFLOW_AUTHORITY_STALE");
+      return read;
+    };
+    roles = {
+      gateway,
+      prompt: (role: ResearchBranchRole) => createResearchBranchRoleServerPromptInput({
+        role,
+        work_bucket: env.WORK_BUCKET,
+        navigation,
+        evidence_resolver: roleEvidenceResolver,
+        residency_template: residency,
+        model_policy: modelPolicy,
+        trusted_parameters: promptParameters(roleConfig.trusted_parameters),
+        request_timeout_ms: roleConfig.request_timeout_ms,
+      }),
+      pricing: createD1ResearchModelPricingQuotePort(env.CORE_DB, { now: () => Date.now() }),
+      spend_authorization: spend.admissions,
+      prepare: createResearchBranchRoleServerPreparation({
+        read_stage_five: readBranchRoleStageFive,
+        read_read_extract: readBranchRoleReadExtract,
+        policy_rules: policy.rules,
+        admit_branch_role: (admissionInput) => spend.admitBranchRole(admissionInput),
+        prepare_attempt: createResearchBranchRolePreparation(),
+      }),
+    };
+  }
   const base = createResearchSemanticWorkflowHandlerFactory({
     database: env.CORE_DB, search_database: env.SEARCH_DB, work_bucket: env.WORK_BUCKET, evidence_bucket: env.EVIDENCE_BUCKET,
     ai_search: env.AI_SEARCH, handler_generation: handlerGeneration,
@@ -326,6 +412,7 @@ async function assembleResearchSemanticServerHandlers(input: ResearchSemanticSer
           await spend.admit(context, audit.verifier.deployment);
           return prepareAudit(context, audit);
         } },
+      ...(roles === undefined ? {} : { roles }),
     },
     verification: { config: config.normalization },
     audit: { normalization: config.normalization, policy: parseResearchClaimAuditPolicy(config.audit.policy),
