@@ -70,7 +70,10 @@ describe("Library wire boundary", () => {
       vi.stubGlobal("fetch", async () => response);
       await expect(readLibraryPage()).rejects.toThrow();
     }
-    expect(dispatch).toHaveBeenCalledTimes(3);
+    // 401 and 302 redirect clear the session even with malformed/empty bodies.
+    // 403 with a malformed body is NOT an authorization loss: only an explicit
+    // ACCESS_* code clears (resource/policy 403s must not wipe the session).
+    expect(dispatch).toHaveBeenCalledTimes(2);
     expect(dispatch.mock.calls.every(([event]) => event.type === "eliotr:authorization-cleared")).toBe(true);
   });
 

@@ -112,7 +112,9 @@ describe("source history PWA boundary", () => {
     const request = readSourceRevisionsPage("source-1", "deploy-1", undefined, abort.signal); abort.abort();
     await expect(request).rejects.toMatchObject({ code: "API_REQUEST_ABORTED" });
     const dispatch = vi.fn(); vi.stubGlobal("window", { dispatchEvent: dispatch });
-    vi.stubGlobal("fetch", async () => new Response("denied", { status: 403 }));
+    // 401 clears the session even with a malformed body. A 403 with a malformed
+    // body does NOT clear: only explicit ACCESS_* codes are authorization loss.
+    vi.stubGlobal("fetch", async () => new Response("denied", { status: 401 }));
     await expect(readSourceRevisionsPage("source-1", "deploy-1")).rejects.toThrow();
     expect(dispatch).toHaveBeenCalledOnce();
   });

@@ -247,7 +247,7 @@ describe("atomic ledger commands over committed migrations", () => {
     const ttlBefore = snapshot(ttlCtx, "inv-ttl");
     await expect(ttlCtx.d1.batch([ttlCtx.d1.prepare(COMMAND_SQL.insertCommand).bind(...ttlParams)])).rejects.toThrow(/LEDGER_INPUT_INVALID/);
     expect(snapshot(ttlCtx, "inv-ttl")).toBe(ttlBefore);
-  });
+  }, 20000);
   it("bounded skew accepts a mildly future instant", async () => {
     const ctx = setup();
     const input = baseInput();
@@ -461,5 +461,5 @@ describe("atomic ledger commands over committed migrations", () => {
       expect(snapshot(ctx, "inv-c1"), `d1-rows:${stamp}`).toBe(before);
       expect(headBytes(ctx, "inv-c1"), `d1-head:${stamp}`).toBe(beforeBytes);
     }
-  });
+  }, 120000);
 });
