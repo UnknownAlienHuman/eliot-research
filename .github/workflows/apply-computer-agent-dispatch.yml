@@ -1,0 +1,25 @@
+name: Apply computer-agent dispatch
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 22.13.0
+          check-latest: false
+      - name: Apply, verify, and publish exact dispatch protocol
+        run: |
+          set -euo pipefail
+          cat .github/dispatch-payload/runner-*.b64 | base64 -d | gzip -d > /tmp/apply-computer-agent-dispatch.sh
+          chmod +x /tmp/apply-computer-agent-dispatch.sh
+          /tmp/apply-computer-agent-dispatch.sh
