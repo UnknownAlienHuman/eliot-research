@@ -3,7 +3,9 @@
 Baseline: `origin/main @ 8db894c6`. S92 passport: PR #292 → EXECUTION-STEPS-03
 (S78–S97). This runbook covers the **setup track only**: INPUT.json,
 compile, local runtime, command sequence. Scenario modules (92.1–92.6)
-are a separate writer track.
+were delivered in `e5c8ec47` and registered in `9c1e4788`. Reconciled against
+`main @ 4c897429` on 2026-10-01. Their permitted
+`BLOCKED`/`NOT_EXECUTED`/`PENDING_OWNER_D1B` outcomes are not full acceptance.
 
 ## 0. Prereqs
 
@@ -125,30 +127,53 @@ zero repeated completed effects. `local:documents` does not exist
 (passport: "No local:documents"). Controlled external tests do not
 establish native/live behavior. Unexecuted checks stay PENDING, never PASS.
 
-## 3. D1(b) variant — real gateway (NOT applied, owner decision only)
+## 3. D1(b) variant - verify the existing real-gateway profile before execution
 
-Known values from the docs (recorded, not installed):
+The committed draft selects D1(a). This is a local test-mode choice, not
+evidence that the owner has never selected a provider or installed a token.
+[research-runtime-configuration.md](../implementation/research-runtime-configuration.md)
+records the owner's 2026-09-13 OpenRouter `thinkingmachines/inkling:free`
+selection under BYOK alias `default`, the approved Cloudflare
+`@cf/zai-org/glm-5.3-flash` fallback with explicit `reasoning_effort: "low"`,
+HTTP transport deployment at `cb4d6ae`, and subsequent installation of
+`ELIOTR_MODEL_GATEWAY_TOKEN`. Do not ask the owner to repeat those choices
+or provide the secret value. Historical installation is not current
+secret/profile/qualification readback or authorization for a new paid run.
 
-- Provider/model: OpenRouter `thinkingmachines/inkling:free`
-- AI Gateway alias: `default` in `eliotr-reasoning`
-- Route: `owner-inkling-free-v1`
-- Fallback: `@cf/zai-org/glm-5.3-flash`
+`owner-inkling-free-v1` names that provider configuration/profile; it is
+not an `ApplicationModelRoute`. [ADR-0007 section 2](../adr/0007-external-agents-and-cloudflare-evolution.md)
+and `packages/platform-cloudflare/src/model-gateway.ts` distinguish
+replaceable provider/model fingerprints from the ten `dynamic/eliotr-*`
+application roles. Populate each deployment's `route_ref` with its existing
+application role and exact installed `route_version`, prompt/schema/parameter
+and pricing generations. Read the installed provider mapping separately.
+Do not insert a provider-profile ID into `route_ref`, extend the role
+allow-list to admit that ID, or invent new generations to make INPUT compile.
 
-Applying D1(b) requires the owner's explicit call **and**:
+Before actual D1(b) execution:
 
-1. `ELIOTR_MODEL_GATEWAY_TOKEN` installed via the Cloudflare dashboard
-   (Variables and Secrets, type Secret, AI Gateway Run permission) —
-   **never in INPUT.json** (the envelope forbids secrets).
-2. Either editing the local-launch override or running S92 against a
-   deployed Worker with the HTTP transport — there is no local fake
-   model gateway.
-3. **Open route question**: `owner-inkling-free-v1` is not in
-   `APPLICATION_MODEL_ROUTES`; the compiler rejects unknown routes
-   (`model route deployment references an unsupported application
-   route`). The owner must decide whether to extend the route list
-   (code change) or map the alias to an existing dynamic route before
-   D1(b) INPUT.json can compile.
+1. Read back the approved target and existing HTTP transport/secret **metadata**
+   through the authorized operator session. Reuse the installed secret; only
+   confirmed absence/revocation requires an operator repair. Keep all secret
+   values out of INPUT.json, vars, argv, receipts and repository text.
+2. Verify current ACTIVE model profile, qualification proof, installed
+   application-role mappings, pricing, evidence scope and spend admission.
+   The setup compiler validates shape and relationships; it does not install
+   or qualify a profile. If immutable semantic revisions are selected, use
+   the delivered S29 installer/store (`0097`) and verify the reference/digest;
+   do not mix that identity with the legacy JSON vars.
+3. Use the existing real HTTP model transport under the approved runtime
+   configuration. Local launch currently overrides the reasoning endpoint
+   with `local-disabled`; there is no local fake model gateway. Any change
+   to that test mode must preserve explicit target/configuration and denial
+   behavior. A previously deployed Worker is not automatically the current
+   S92 or S94 attested build.
+4. Retain applicable data permission, allowed disclosure and maximum spend /
+   stop rules before provider/index calls. Missing current input is a precise
+   execution prerequisite, not a new provider-selection question. Do not
+   replay an unknown paid effect or promote from HTTP success alone.
 
-D1(b) additionally unblocks live-model assertions in S92 and the
-T4/T5 live gates. Until then, S92 scope = configuration + readiness +
-fail-closed behavior.
+Until this current-generation execution evidence exists, live-model assertions
+remain `PENDING_OWNER_D1B`/`NOT_EXECUTED`; D1(a)'s configuration/readiness/denial
+results remain valid within their stated local scope. D1(b) by itself does not
+satisfy S93 quality, S95 native/security or S96 measured-cost acceptance.

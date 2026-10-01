@@ -1,7 +1,7 @@
 # Backend delivery plan
 
 Current execution order, reconciled on 2026-10-01 against `main`
-`8db894c6da834cd337cdd6f0d7057545af4e18fa`.
+`4c897429688a12e1719ed4b55cca3ec044c94e05`.
 
 This is the volatile handoff and queue. Refresh `origin/main` and the active task before editing. [PR #292](https://github.com/UnknownAlienHuman/eliot-research/pull/292) preserves the original S01–S99 passports and negative acceptance criteria; it is not a second queue.
 
@@ -23,24 +23,44 @@ The current phase is product code first: compilation, scoped lint, the depth-100
 local config readiness, project admission, read-policy grant, model D1
 fail-closed, Library/Lens exact readback — registered as real `node:test`
 assertions in `tests/integration/browser/library.spec.ts`. Honest states:
-5 PASS + 1 PENDING_OWNER_D1B (live-model assertions need owner decision
-D1(b)). Every scenario drives the real harness (`scripts/lib/local-*.mjs`,
+5 PASS + 1 PENDING_OWNER_D1B in the original checkpoint (live-model
+execution was deferred). Scenario code uses the existing harness (`scripts/lib/local-*.mjs`,
 `owner-e2e.mjs`) against in-memory SQLite seeded with the real migration
 DDL; no new browser framework.
 
-92.2–92.6 (delegation, products, continuity, COW, negatives) and the local
-runbook / INPUT draft are in flight. The S92 done-state requires
+92.2-92.6 (delegation, products, continuity, COW, negatives) are delivered
+in `e5c8ec47`; registration and the [local runbook / INPUT draft](../s92/README.md)
+are delivered in `9c1e4788`. Reuse the six `s92-*.mjs` modules and their
+`library.spec.ts` registrations; do not start a second harness. Delivery
+of these scenarios does not establish their full acceptance: the runner
+explicitly permits `BLOCKED`, `NOT_EXECUTED` and `PENDING_OWNER_D1B` outcomes.
+`ArtifactCompiler.reviseSection` remains an interface-only COW entry point;
+the S92 COW probe also reports the absent ACCEPTED-publication producer.
+Resolve these existing product paths and inspect actual outcomes instead
+of treating a successful test-process exit as an accepted owner loop.
+
+At this baseline, `node scripts/check-launch-code.mjs` reports disabled
+required slices `ERASURE` and `RETRIEVAL`. The implementation registry
+validates 43 `IMPLEMENTED_NOT_LIVE` contours and zero `LIVE_QUALIFIED`.
+These counts and blockers are dated observations; refresh both commands.
+
+The S92 done-state requires
 `pnpm test:local-launch`, `test:local-owner`, `local:prepare`,
 `local:smoke`, `test:owner-e2e`, `cf:types`, `build`, `cf:dry-run` and full
 F on applicable CI platforms; unexecuted checks stay pending, never PASS.
-D1(a) applies: no local fake model gateway exists — configuration and
-readiness fail-closed only; anything needing a live model response stays
-`PENDING_OWNER_D1B`.
+D1(a) applies to the committed local draft: configuration and readiness
+fail-closed only; live-model assertions remain `PENDING_OWNER_D1B` there.
+The provider/fallback and historical token installation are already
+recorded in [research-runtime-configuration.md](research-runtime-configuration.md).
+Verify current installed profile, qualification, budget and data permission
+before real calls; do not ask for the same provider/token decision again.
 
-After S92: S94 staging is blocked — staging isolation is unresolved
-(Option A: env-suffixed resource names + deny-list guard, Option B:
-separate Cloudflare account) and no live deployment is authorized — then
-S93/S95/S96 on the attested build, then S97 release acceptance.
+After S92: S94 staging, then S93/S95/S96 on the attested build, then S97
+release acceptance. S94's local implementation and preparation do not
+depend on a new A/B product decision. Its actual remote effects require
+an approved isolated target and explicit deployment authorization; see
+the bounded staging preparation below. No such authorization is supplied
+by this plan or by the historical model/token installation.
 
 ## S37 / #229 — code delivered, do not restart
 
@@ -74,6 +94,7 @@ Task: [S37 / #229](https://github.com/UnknownAlienHuman/eliot-research/pull/229)
 | `b7b7d657` | S37 hardening (1/2): `admitBranchRole` role↔stage fail-closed binding in the spend policy; port-layer re-validation at write time. |
 | `90dcfdff` | S37 hardening (2/2): migration `0095` adds the `role` column to `research_model_spend_admission` with a stage-tied CHECK, bound into the admission digest; new tests. |
 | `8db894c6` | S92 92.1 intake scenarios + `library.spec.ts` registration (see active checkpoint above). |
+| `a452494b` | Migration `0096` rebuilds model-spend admission for stages 8/9/12/13/14, preserves existing rows with a copy guard, and extends the W2 stage mapping. The old stage-8/9 widening packet is delivered. |
 
 ### Exact boundary
 
@@ -108,16 +129,16 @@ Task: [S37 / #229](https://github.com/UnknownAlienHuman/eliot-research/pull/229)
 Do not describe S37 as live-qualified or acceptance-complete. The remaining
 work is acceptance (assembly, S93 real-model quality), not code.
 
-### Known S37 residual — separate packet, do not fold into 0095
+### Delivered S37 stage-8/9 repair
 
-`research_model_spend_admission` still carries migration 0046's
-`CHECK(stage_index IN (12, 13, 14))`, and the 0084 trigger
-`research_model_spend_admission_w2_guard` maps only stages 12/13/14
-(`SYNTHESIZE`/`VERIFY`/`AUDIT_CLAIMS`). Stage 8/9 branch admissions
-(`ANALYZE_BRANCHES`/`COUNTER_SEARCH`) cannot be inserted at the DB layer,
-so the 0095 role CHECK is vacuous for branch stages until the table is
-widened. Widening needs a table rebuild plus trigger updates; do not widen
-0095's CHECK alone.
+The old widening residual is repaired by `a452494b`,
+`infra/d1/core/migrations/0096_research_model_spend_admission_branch_stages.sql`.
+Its replacement table accepts stages 8/9/12/13/14 and requires a role only
+for branch stages. The W2 trigger maps 8/9 to ANALYZE_BRANCHES/COUNTER_SEARCH;
+copy verification, all admission triggers and the lookup index are retained.
+The corresponding branch-stage tests are in `packages/cloudflare-research/src/`.
+Do not change historical migration 0095 or implement another rebuild.
+Remote application and exact-build native/live acceptance remain separate.
 
 ## Delivered checkpoints that must not be restarted
 
@@ -125,10 +146,15 @@ widened. Widening needs a table rebuild plus trigger updates; do not widen
 |---|---|---|
 | Queue/audit reconciliation | `bf1ffa2e` | Selected residual tasks still need exact current-main disposition. |
 | D1 depth compiler | `fc25ee02` | #294 dynamic-query coverage and native acceptance. |
-| D1 authority/grant/control repair | `7d2bb36` | #293 native negative/replay/concurrency acceptance. |
+| D1 authority/grant/control repair | `7d2bb36`, `d09def61` | Native test source is delivered in `apps/eliotr-core/test/research-authority-0084-acceptance.test.ts`; executed exact-build negative/replay/concurrency evidence is a separate obligation. |
 | Full lint/error retention | `eaa4efa` | #296 focused fault/replay acceptance. |
-| CI independent reporting/root selection | `a76acd98` | #295 structural resource work and #304 execution acceptance. |
-| S37 source/contracts/executor/factory | `c25df085`, `b98ee60f`, `25be3164` | v7/v8 admission, freeze binding, substantive role execution, W1 settling, branch-aware budget, `model.roles` server wiring, admission hardening (migrations through `0095`) and the 43-contour registry are delivered (see S37 record above). Do not restart them; remaining work is acceptance (assembly, S93 real-model quality) plus the known stage 8/9 DB-widening packet. |
+| CI independent reporting/root selection | `a76acd98`, `a348adad` | Root selection/build repair is delivered; applicable exact-build execution remains pending. CI is manual-only. |
+| S37 source/contracts/executor/factory | `c25df085`, `b98ee60f`, `25be3164`, `a452494b` | v7/v8 admission, freeze binding, substantive role execution, W1 settling, branch-aware budget, `model.roles` server wiring, admission hardening through `0096` and the 43-contour registry are delivered. Remaining assembly/real-model acceptance must not restart these implementations. |
+| S29 immutable semantic configuration | `ccf500e8`, `d774d66a`, `2a5d6458` | Migration `0097`, immutable revision store, digest-checked Worker resolution and installer are delivered. Legacy JSON is an explicit compatibility path; mixed/partial revision identity fails closed. Operator installation/current qualification still need verification. |
+| S34 qualification renewal | `5e1552d0` | `packages/cloudflare-research/src/research-model-qualification-renewal.ts` has same-key proof replay and in-process cross-operation single-flight. Do not reimplement it in the route provisioner or infer cross-isolate coordination from this local mechanism. |
+| S92 scenario/setup source | `e5c8ec47`, `9c1e4788` | Actual owner/headless/storage/browser outcomes and unresolved COW/product paths remain S92 acceptance work. |
+| Browser handshake / Windows gutter | `8b747991`, `4c897429` | #305/#298 are closed with source fixes; authenticated negatives and both OS viewport results still require their own exact-build evidence. |
+| Rust vector parser kill tests | `4904b30a` | #106 is closed; four parser kill-test files are delivered. This does not establish a fresh complete mutation or Miri verdict; retain #176's remaining acceptance. |
 
 Also reuse the already delivered project/client grants, machine HTTP/MCP readers and controls, owner historical reads, long-run authority, append-only project attachment, normalized bundle ingestion, runtime failure diagnostics and reconnect intent. Their exact lineages remain in #202–#205, #209, #211, #223–#225, #290 and #291. Open planning cards do not mean those systems are wholly absent.
 
@@ -138,7 +164,7 @@ Finish the active checkpoint before switching. Then resume this dependency order
 
 | Order | Tasks | Next product result |
 |---|---|---|
-| A | S34/#226; S29 workspace-candidate admission gate delivered (`37ba91eb`, `5e7ed589`) as `IMPLEMENTED_NOT_LIVE`; verified residuals in S10–S15, S31–S33, S98–S99 | ER-36 fail-closed `evaluateWorkspaceCandidateAdmission` bound to durable `OBSERVED_MATCH` v2 plus a separate owner-issued exact-candidate authorization. Two genuine code residuals remain: S29/#221 immutable semantic configuration revision (`ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON_0`/`_1` still read in `apps/eliotr-core/src/env.ts`); S34/#226 lazy model-proof renewal single-flight (same-key replay returns `DYNAMIC_ROUTE_PROMOTION_CONFLICT`, no cross-operation single-flight in `packages/cloudflare-ai/src/dynamic-route-provisioning.ts`). Finish selected-profile configuration/qualification and genuine machine-path gaps without reimplementing delivered grants, controls, importer or readers. |
+| A | S29/#221 and S34/#226 delivered checkpoints; verified residuals in S10-S15, S31-S33, S98-S99 | Reuse the workspace-candidate admission gate (`37ba91eb`, `5e7ed589`), immutable semantic revision (`ccf500e8`, `d774d66a`, `2a5d6458`) and renewal replay/single-flight (`5e1552d0`). Finish verified selected-profile configuration/qualification and machine-path gaps without reimplementing those delivered mechanisms. |
 | B | S21–S23 and remaining S38–S46 | Complete truthful procedure reporting, protocol execution, observations, freeze/debt/supersession, verifiers and product handlers on the shared Research engine. |
 | C | S47–S61 | Complete source/navigation/index boundaries, requested coverage, artifacts/publication, Workspace candidate admission/readback and federation. Prioritize dependency-ready S50–S52 and S58/S59. |
 | D | S62–S72 | Complete erasure closure, outbox/DLQ/reconciliation, backup/isolated restore, rollback, Steward and durable events. |
@@ -146,22 +172,80 @@ Finish the active checkpoint before switching. Then resume this dependency order
 | F | S78–S89, #106/#176 | Complete deterministic Rust families, versioned Wasm promotion and removal of superseded TypeScript authority family by family. |
 | G | S18/#210, S30/#222, S90/#282, S91/#283 | Reconcile composition, implementation states, emitted artifacts/runtime budgets and D1 mutation boundaries. |
 
-After code assembly: reconcile #297 and #305, verify #298 independently, run S92 local integration before S94 staging, then S93/S95/S96 on the attested build and S97 release acceptance.
+After code assembly: verify the delivered root-suite fixes (`168a29f6`, `df139b47`), #305 handshake and #298 geometry independently on the exact assembled build; run S92 before S94, then S93/S95/S96 and S97. Closed Issues do not replace pending acceptance evidence.
 
-## Cross-cutting open records
+## Cross-cutting records - current state versus historical evidence
 
 These are not permission to interrupt the active checkpoint unless they block its code:
 
-- #293/#294 — delivered SQL/compiler repairs; native/dynamic-query acceptance remains;
-- #295/#304 — delivered CI wiring/selection; resource and real execution acceptance remains;
-- #296 — delivered lint/error repair; fault/replay acceptance remains;
-- #297 — historical root-suite failures require per-file code-vs-fixture disposition during assembly acceptance; the old count is not a current census;
-- #298/#305 — browser fixture/session first, Windows geometry separately;
-- #300/#301 — bounded documentation/task reconciliation alongside code;
-- #302 — external hostname/account decision requires explicit operator authorization and does not block coding;
-- #106/#176 — deterministic Rust mutation/test-strength debt.
+Only #294 and #301 are open at the baseline above; refresh `gh issue list --state open`.
+
+- #294 (open) - one calibrated depth-100 compiler is installed. The refreshed local run compiles 96 Core migration files, 22 views and 399 generic forms with zero failures, plus four Search migrations. This is not exhaustive application/dynamic-query or native authorization proof. The previously recorded 711-shape/64-unresolved-site inventory is historical, not a current census. Reproducible source-derived application and UPDATE-OF-sensitive coverage remains required.
+- #301 (open) - retain original task/passport criteria and reconcile selected residuals against exact main. This handoff corrects known stale claims; it does not migrate all tasks or close every legacy obligation.
+- #293/#295/#296/#297/#300/#304/#305 (closed) - retain delivered source and the distinct pending exact-build native, fault/replay, root/browser and CI evidence; do not recreate their repairs.
+- #298 (closed 2026-10-01) - stable scrollbar gutter delivered in `4c897429`; viewport assertions remain unchanged. Closure is not a retained same-SHA Windows/Ubuntu browser result.
+- #106 (closed 2026-10-01) - original canonical survivors were already zero historically; vector parser kill-test source is now delivered. #176 remains the Rust acceptance/debt passport: zero unexplained load-bearing survivors and zero timeouts, with fresh complete mutation and Miri results where required. Do not reopen an old caught-ratio threshold choice.
+- #302 (closed) - public-text cleanup is separate from live endpoint disposition. The refreshed public-repo privacy checker still reports six existing hits in other files, including three historical hostname references and three generic Access template/fixture origins; closure is not a clean-tree result. Closure supplies no account-wide rename, Access change, migration or deployment permission.
 
 #299 is complete. Do not reopen or recreate the S37 payload-recovery task.
+
+## S93-S97 - settled requirements and bounded staging preparation
+
+The original passports remain authoritative; no new product choice is needed to
+implement their stated requirements. A/B labels in an old handoff are not an ADR.
+
+| Task | Existing contract/source | Exact remaining boundary |
+|---|---|---|
+| [S94 / #286](https://github.com/UnknownAlienHuman/eliot-research/pull/286) | `scripts/deploy-cloudflare.mjs`, `scripts/lib/deployment-verification.mjs`, `infra/cloudflare/resources.json`, production-readiness Phase 7 and the shared [staging checklist](launch-prs/cloudflare-handoff.md) | Local negative/ordering preparation can proceed. `readDeploymentWorker` is only inventory/export readback; it does not independently attest the actual version, every binding, both schema ledgers, assets and Wasm. Complete that existing reader/receipt path before claiming S94. Actual apply requires isolated approved target and permission. |
+| [S93 / #285](https://github.com/UnknownAlienHuman/eliot-research/pull/285) | Existing Golden corpus/runner and production-readiness Phase 9, architecture 19.2-19.5/19.8 | Prepare independent tuning/holdout labels locally. Actual per-product T2/T3 quality results require the attested model/prompt/index/config/corpus generations and approved data/budget. A controlled model response is not quality acceptance. |
+| [S95 / #287](https://github.com/UnknownAlienHuman/eliot-research/pull/287) | `tests/integration/d1-write-readback-runner.ts`, T5-A/B/C/D runners, `gate-state.ts`, production-readiness Phases 8/10-12 | Probe source is delivered, not native qualification. Compose/run all applicable T4/T5 storage, security, erasure/restore/rollback and selected independent-client checks against S94; preserve denied/replay/unknown-effect results. Unselected Google clients add no gate. |
+| [S96 / #288](https://github.com/UnknownAlienHuman/eliot-research/pull/288) | `tests/integration/t6-representative-load-runner.ts`, model spend observation/settlement, production-readiness Phase 13 | Run 5/20/50 readers, five sessions, ten queued jobs and two long Workflows; measure per-operation latency/errors/resources and actual usage/cost. Approved maximum spend, duration and stop rules precede live load; local simulation or estimates do not qualify it. |
+| [S97 / #289](https://github.com/UnknownAlienHuman/eliot-research/pull/289) | Existing release checklist/receipt and production-readiness Phase 14 | Reconcile mandatory selected-profile Slices 0-6, production-critical Rust and S92-S96 evidence, then observe canaries and obtain explicit production approval. No universal correctness claim or merge/deploy permission follows from task closure. |
+
+### Isolation is an operational prerequisite, not an A/B coding hold
+
+The shared staging checklist already permits **a dedicated approved staging
+account OR a separately reviewed isolated resource profile**. Neither the S94
+passport nor an accepted ADR chooses an account for the operator. Architecture
+16.3's clean-account restore rule is an erasure-aware restore requirement,
+not a blanket new-account decision for all staging work.
+
+The shipped foundation uses fixed names: Worker `eliotr-core`; D1
+`eliotr-core`/`eliotr-search`; R2 `eliotr-evidence`/`eliotr-work`; Queue/DLQ
+`eliotr-jobs`/`eliotr-dlq`. The canonical Wrangler configuration also binds
+ResearchSession, `eliotr-research-workflow`, AI Search `eliotr`, the reasoning
+and retrieval Gateways, and `eliotr_metrics`. Access must protect the exact
+chosen ingress before application exposure. `ELIOTR_ENVIRONMENT=staging`
+changes a runtime label, not these identities. The generated-config validator
+requires the fixed Worker/D1 names; the provisioner verifies canonical resource
+names. A suffix plus a deny-list is therefore proposed implementation work,
+not an installed or owner-selected staging mode.
+
+For a first trial, an already approved dedicated staging account is the path
+compatible with the shipped names. If the operator selects same-account
+isolation instead, review and implement the complete profile across provisioners,
+bindings, Access, search/gateways, DO/Workflow and readback; do not hand-edit
+generated config or merely append `-staging`. Neither path is selected here.
+
+Before requesting final apply approval, prepare privately one exact main
+SHA/tree/build and profile; account/resource/hostname/jurisdiction identities;
+owner/service identities and secret references (reuse and verify installed
+secrets, never request their values); both migration-ledger deltas, including
+Core rebuild `0096` and semantic revision `0097` if absent; immutable config
+installation/readback; maximum spend and stop conditions; disposable data,
+cleanup and rollback scope. The rebuild preserves existing admissions with a
+copy guard but still changes schema; label changes can collide with production
+resources, and model/index/load work can spend money. No cost is measured by a
+dry-run. Obtain authorization for that concrete bundle, then read-only
+`cf:preflight:remote` and the existing guarded orchestrator; no raw Wrangler bypass.
+The orchestrator additionally requires fresh usage-envelope `ADMITTED` evidence
+and a same-process admission capability before remote mutation; an old receipt
+or a `SEALED` result cannot authorize upload, migration or provider effects.
+
+S94's own future T4/T6 receipts cannot be prerequisites for the first staging
+deployment that produces them. Missing mandatory code, S92 acceptance, exact
+attestation preparation, target approval and budget authorization are real
+preconditions. They do not block independent local code/documentation work.
 
 ## Agent checkpoint protocol
 
