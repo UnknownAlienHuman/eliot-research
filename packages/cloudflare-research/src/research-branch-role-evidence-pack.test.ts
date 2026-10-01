@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { ResolvedEvidenceSchema, type ResolvedEvidence, type VersionedRef } from "@eliotr/contracts";
 import type { EvidencePack } from "@eliotr/retrieval";
 import { ModelAttemptError } from "./model-attempt-types.js";
-import { buildBranchRoleEvidencePack } from "./research-branch-role-evidence-pack.js";
+import { buildBranchRoleEvidencePack, deriveBranchRoleManifestRef } from "./research-branch-role-evidence-pack.js";
 
 const SHA = "a".repeat(64);
 const SCOPE: VersionedRef = { id: "scope-1", revision: 1 };
@@ -110,5 +110,87 @@ describe("buildBranchRoleEvidencePack", () => {
     const five = stageFivePack([resolvedEvidence("h-a", 1, "alpha")]);
     await expect(buildBranchRoleEvidencePack(five, "SUPPORT", []))
       .rejects.toMatchObject({ code: "MODEL_ATTEMPT_INPUT_INVALID" });
+  });
+
+  it("deduplicates repeated handles in the selection", async () => {
+    const five = stageFivePack([resolvedEvidence("h-a", 1, "alpha"), resolvedEvidence("h-b", 1, "beta")]);
+    const pack = await buildBranchRoleEvidencePack(five, "SUPPORT", [ref("h-a", 1), ref("h-a", 1), ref("h-a", 1)]);
+    expect(pack.resolved_evidence).toHaveLength(1);
+    expect(pack.resolved_evidence.map((item) => item.handle.handle_ref.id)).toEqual(["h-a"]);
+  });
+
+  it("binds the pack identity to the frozen pack ref, not just the selection", async () => {
+    const first = stageFivePack([resolvedEvidence("h-a", 1, "alpha")]);
+    const second = {
+      ...stageFivePack([resolvedEvidence("h-a", 1, "alpha")]),
+      pack_ref: { id: "pack-stage-five-other", revision: 1 },
+    };
+    const packOne = await buildBranchRoleEvidencePack(first, "SUPPORT", [ref("h-a", 1)]);
+    const packTwo = await buildBranchRoleEvidencePack(second, "SUPPORT", [ref("h-a", 1)]);
+    // Same selection and bytes, different frozen pack ref: different pack identity.
+    expect(packOne.pack_ref.id).not.toBe(packTwo.pack_ref.id);
+  });
+
+  it("counts total_utf8_bytes in UTF-8 bytes, not characters", async () => {
+    const excerpt = "héllo→世界";
+    const five = stageFivePack([resolvedEvidence("h-a", 1, excerpt)]);
+    const pack = await buildBranchRoleEvidencePack(five, "SUPPORT", [ref("h-a", 1)]);
+    expect(pack.total_utf8_bytes).toBe(new TextEncoder().encode(excerpt).byteLength);
+    expect(pack.total_utf8_bytes).toBeGreaterThan(excerpt.length);
+  });
+
+  it("fails closed on a null frozen pack", async () => {
+    await expect(buildBranchRoleEvidencePack(null as never, "SUPPORT", [ref("h-a", 1)]))
+      .rejects.toBeInstanceOf(ModelAttemptError);
+  });
+
+  it("fails closed when a frozen pack item has no handle", async () => {
+    const malformed = { ...stageFivePack([resolvedEvidence("h-a", 1, "alpha")]) };
+    (malformed.resolved_evidence as unknown[]).push({ exact_excerpt: "no handle here" });
+    await expect(buildBranchRoleEvidencePack(malformed as never, "SUPPORT", [ref("h-a", 1)]))
+      .rejects.toBeInstanceOf(ModelAttemptError);
+  });
+});
+
+describe("deriveBranchRoleManifestRef", () => {
+  function packFor(role: "SUPPORT" | "COUNTER" = "SUPPORT") {
+    return buildBranchRoleEvidencePack(
+      stageFivePack([resolvedEvidence("h-a", 1, "alpha")]),
+      role,
+      [ref("h-a", 1)],
+    );
+  }
+
+  it("is deterministic for the same pack and role", async () => {
+    const pack = await packFor();
+    const first = await deriveBranchRoleManifestRef(pack, "SUPPORT");
+    const second = await deriveBranchRoleManifestRef(pack, "SUPPORT");
+    expect(first).toEqual(second);
+    expect(first.revision).toBe(1);
+  });
+
+  it("is sensitive to the role", async () => {
+    const pack = await packFor();
+    const support = await deriveBranchRoleManifestRef(pack, "SUPPORT");
+    const counter = await deriveBranchRoleManifestRef(pack, "COUNTER");
+    expect(support.id).not.toBe(counter.id);
+  });
+
+  it("is sensitive to the pack identity", async () => {
+    const one = await packFor("SUPPORT");
+    const two = await packFor("COUNTER");
+    const first = await deriveBranchRoleManifestRef(one, "SUPPORT");
+    const second = await deriveBranchRoleManifestRef(two, "SUPPORT");
+    expect(first.id).not.toBe(second.id);
+  });
+
+  it("fails closed on an invalid role", async () => {
+    const pack = await packFor();
+    await expect(deriveBranchRoleManifestRef(pack, "NOPE" as never)).rejects.toThrow();
+  });
+
+  it("fails closed on a null pack", async () => {
+    await expect(deriveBranchRoleManifestRef(null as never, "SUPPORT"))
+      .rejects.toBeInstanceOf(ModelAttemptError);
   });
 });

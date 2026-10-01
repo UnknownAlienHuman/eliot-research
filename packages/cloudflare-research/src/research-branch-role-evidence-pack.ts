@@ -73,11 +73,14 @@ export async function buildBranchRoleEvidencePack(
     invalid("branch role evidence selection is empty");
   }
   const selected = selectedHandleRefs.map((ref) => VersionedRefSchema.parse(ref));
-  if (!Array.isArray(stageFivePack.resolved_evidence)) {
+  if (typeof stageFivePack !== "object" || stageFivePack === null || !Array.isArray(stageFivePack.resolved_evidence)) {
     invalid("frozen stage-five evidence pack is malformed");
   }
   const byHandle = new Map<string, ResolvedEvidence>();
   for (const item of stageFivePack.resolved_evidence) {
+    if (typeof item !== "object" || item === null || typeof item.handle !== "object" || item.handle === null) {
+      invalid("frozen stage-five evidence pack is malformed");
+    }
     const key = refKey(item.handle.handle_ref);
     if (!byHandle.has(key)) byHandle.set(key, item);
   }

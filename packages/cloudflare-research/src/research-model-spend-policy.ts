@@ -273,6 +273,13 @@ export function createResearchModelSpendPolicyService(input: ResearchModelSpendP
     const rule = policy.rules.find((value) => value.stage === admission.stage_request.stage);
     if (rule === undefined) workflowFail("WORKFLOW_CONFIGURATION_MISSING");
     ResearchBranchRoleSchema.parse(admission.role);
+    // F1: the admitted role must be compatible with the stage it is admitted
+    // for: COUNTER only on COUNTER_SEARCH, every other role only on
+    // ANALYZE_BRANCHES. The port re-checks this at write time; fail closed
+    // here too so a mis-wired caller never reaches the ledger.
+    if (admission.role === "COUNTER" ? admission.stage_request.stage !== "COUNTER_SEARCH" : admission.stage_request.stage !== "ANALYZE_BRANCHES") {
+      workflowFail("WORKFLOW_CONFIGURATION_MISSING");
+    }
     const context = admission.role_context;
     const roleSha = context.stage_request_sha256;
     const value = await current(context.attempt_ref, admission.stage_request_sha256);
@@ -300,7 +307,7 @@ export function createResearchModelSpendPolicyService(input: ResearchModelSpendP
         scope_snapshot_ref: value.authority.scope_snapshot_ref, workflow_authorization_receipt_ref: value.row.authorization_receipt_ref,
         workflow_stage_request_sha256: admission.stage_request_sha256 },
       workflow_operation_id: input.operation_id, stage_index: stageIndex,
-      workflow_budget_receipt_ref: value.row.budget_receipt_ref,
+      role: admission.role, workflow_budget_receipt_ref: value.row.budget_receipt_ref,
       workflow_stage_request_sha256: admission.stage_request_sha256,
       stage_request_json: value.row.request_json, intent, quote, authority: value.authority, expected_deployment: admission.deployment,
       approval: { ...decision, decision_digest: await modelGatewaySha256(canonicalJson(decision)) },

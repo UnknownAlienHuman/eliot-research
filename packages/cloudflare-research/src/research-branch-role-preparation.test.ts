@@ -117,6 +117,7 @@ function admissionRecord(roleSha: string): ResearchModelSpendAdmissionRecord {
     admission_sha256: "d".repeat(64),
     workflow_operation_id: "op-1",
     stage_index: 8,
+    role: "SUPPORT",
     stage_request_json: JSON.stringify(REQUEST),
     workflow_budget_receipt_ref: BUDGET_RECEIPT_REF,
     intent,

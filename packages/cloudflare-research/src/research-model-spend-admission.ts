@@ -1,7 +1,9 @@
 import {
   OperationIntentSchema,
   OperationKindSchema,
+  ResearchBranchRoleSchema,
   type OperationIntent,
+  type ResearchBranchRole,
   type VersionedRef,
 } from "@eliotr/contracts";
 import {
@@ -71,6 +73,13 @@ export interface ResearchModelSpendAdmissionInput {
    * is the stage-level exact W2 bytes.
    */
   readonly workflow_stage_request_sha256?: string;
+  /**
+   * Branch role admitted for stages 8/9. Required for branch stages, absent
+   * otherwise. Validated against the stage (COUNTER only on COUNTER_SEARCH,
+   * every other role only on ANALYZE_BRANCHES) and bound into the admission
+   * digest; the durable record carries it back.
+   */
+  readonly role?: ResearchBranchRole | null;
   readonly workflow_budget_receipt_ref: string;
   readonly intent: OperationIntent;
   readonly quote: ModelCostQuote;
@@ -89,6 +98,8 @@ export interface ResearchModelSpendAdmissionRecord extends SpendAuthorizationRea
   readonly admission_sha256: string;
   readonly workflow_operation_id: string;
   readonly stage_index: 8 | 9 | 12 | 13 | 14;
+  /** Branch role admitted for stages 8/9; null for every other stage. */
+  readonly role: ResearchBranchRole | null;
   readonly stage_request_json: string;
   readonly workflow_budget_receipt_ref: string;
   readonly intent: OperationIntent;
@@ -273,7 +284,7 @@ function sameAuthority(left: ModelAttemptAuthority, right: ModelAttemptAuthority
 }
 
 function admissionMaterial(input: ResearchModelSpendAdmissionInput & { readonly created_at: string }): Record<string, unknown> {
-  return { protocol: RESEARCH_MODEL_SPEND_ADMISSION_PROTOCOL, authorization_ref: input.approval.authorization_ref, operation_id: input.request.operation_id, workflow_operation_id: input.workflow_operation_id, stage_index: input.stage_index, stage_attempt_ref: input.request.stage_attempt_ref, stage_request_sha256: input.request.stage_request_sha256, stage_request_json: input.stage_request_json, workflow_budget_receipt_ref: input.workflow_budget_receipt_ref, intent: input.intent, quote: input.quote, authority: input.authority, expected_deployment: input.expected_deployment, approval: input.approval, max_input_bytes: input.max_input_bytes, max_output_bytes: input.max_output_bytes, expires_at: input.approval.expires_at, created_at: input.created_at };
+  return { protocol: RESEARCH_MODEL_SPEND_ADMISSION_PROTOCOL, authorization_ref: input.approval.authorization_ref, operation_id: input.request.operation_id, workflow_operation_id: input.workflow_operation_id, stage_index: input.stage_index, role: input.role ?? null, stage_attempt_ref: input.request.stage_attempt_ref, stage_request_sha256: input.request.stage_request_sha256, stage_request_json: input.stage_request_json, workflow_budget_receipt_ref: input.workflow_budget_receipt_ref, intent: input.intent, quote: input.quote, authority: input.authority, expected_deployment: input.expected_deployment, approval: input.approval, max_input_bytes: input.max_input_bytes, max_output_bytes: input.max_output_bytes, expires_at: input.approval.expires_at, created_at: input.created_at };
 }
 async function admissionDigest(input: ResearchModelSpendAdmissionInput & { readonly created_at: string }): Promise<string> { return modelGatewaySha256(canonicalJson(admissionMaterial(input))); }
 async function approvalDigest(value: ResearchModelSpendApproval): Promise<string> { return modelGatewaySha256(canonicalJson({ protocol: value.protocol, approved: value.approved, authorization_ref: value.authorization_ref, policy_decision_ref: value.policy_decision_ref, policy_generation: value.policy_generation, currentness_digest: value.currentness_digest, expires_at: value.expires_at, expected_deployment: value.expected_deployment })); }
@@ -281,10 +292,10 @@ async function approvalDigest(value: ResearchModelSpendApproval): Promise<string
 interface AdmissionRow {
   readonly authorization_ref: unknown; readonly operation_id: unknown; readonly workflow_operation_id: unknown; readonly stage_index: unknown; readonly stage_attempt_ref: unknown; readonly stage_request_sha256: unknown; readonly stage_request_json: unknown; readonly workflow_budget_receipt_ref: unknown;
   readonly intent_id: unknown; readonly intent_revision: unknown; readonly intent_json: unknown; readonly reservation_id: unknown; readonly quote_ref: unknown; readonly quote_json: unknown; readonly authority_json: unknown; readonly principal_ref: unknown; readonly client_class: unknown; readonly credential_generation: unknown; readonly deployment_generation: unknown;
-  readonly policy_decision_ref: unknown; readonly policy_generation: unknown; readonly currentness_digest: unknown; readonly scope_snapshot_id: unknown; readonly scope_snapshot_revision: unknown; readonly workflow_authorization_receipt_ref: unknown; readonly route_ref: unknown; readonly expected_deployment_json: unknown; readonly approval_json: unknown; readonly admission_revision: unknown; readonly admission_sha256: unknown; readonly decision_digest: unknown; readonly max_input_bytes: unknown; readonly max_output_bytes: unknown; readonly expires_at: unknown; readonly created_at: unknown;
+  readonly policy_decision_ref: unknown; readonly policy_generation: unknown; readonly currentness_digest: unknown; readonly scope_snapshot_id: unknown; readonly scope_snapshot_revision: unknown; readonly workflow_authorization_receipt_ref: unknown; readonly route_ref: unknown; readonly expected_deployment_json: unknown; readonly approval_json: unknown; readonly admission_revision: unknown; readonly admission_sha256: unknown; readonly decision_digest: unknown; readonly max_input_bytes: unknown; readonly max_output_bytes: unknown; readonly expires_at: unknown; readonly created_at: unknown; readonly role: unknown;
   readonly [key: string]: unknown;
 }
-const COLUMNS = ["authorization_ref", "operation_id", "workflow_operation_id", "stage_index", "stage_attempt_ref", "stage_request_sha256", "stage_request_json", "workflow_budget_receipt_ref", "intent_id", "intent_revision", "intent_json", "reservation_id", "quote_ref", "quote_json", "authority_json", "principal_ref", "client_class", "credential_generation", "deployment_generation", "policy_decision_ref", "policy_generation", "currentness_digest", "scope_snapshot_id", "scope_snapshot_revision", "workflow_authorization_receipt_ref", "route_ref", "expected_deployment_json", "approval_json", "admission_revision", "admission_sha256", "decision_digest", "max_input_bytes", "max_output_bytes", "expires_at", "created_at"] as const;
+const COLUMNS = ["authorization_ref", "operation_id", "workflow_operation_id", "stage_index", "stage_attempt_ref", "stage_request_sha256", "stage_request_json", "role", "workflow_budget_receipt_ref", "intent_id", "intent_revision", "intent_json", "reservation_id", "quote_ref", "quote_json", "authority_json", "principal_ref", "client_class", "credential_generation", "deployment_generation", "policy_decision_ref", "policy_generation", "currentness_digest", "scope_snapshot_id", "scope_snapshot_revision", "workflow_authorization_receipt_ref", "route_ref", "expected_deployment_json", "approval_json", "admission_revision", "admission_sha256", "decision_digest", "max_input_bytes", "max_output_bytes", "expires_at", "created_at"] as const;
 function columns(prefix?: string): string { return COLUMNS.map((column) => prefix === undefined ? column : `${prefix}.${column}`).join(","); }
 
 function clock(now: () => number): number {
@@ -295,9 +306,26 @@ function clock(now: () => number): number {
 }
 function unexpired(value: string, nowMs: number, label: string): void { if (Date.parse(value) <= nowMs) fail("MODEL_ATTEMPT_BUDGET_EXPIRED", `${label} has expired`); }
 
-function validateInput(input: ResearchModelSpendAdmissionInput): { readonly request: SpendAuthorizationReadRequest; readonly stage: ReturnType<typeof stageRequest>; readonly owner: ModelAttemptAuthority; readonly cost: ModelCostQuote; readonly expected: ModelRouteDeployment; readonly operation: OperationIntent; readonly decision: ResearchModelSpendApproval } {
+function validateInput(input: ResearchModelSpendAdmissionInput): { readonly request: SpendAuthorizationReadRequest; readonly stage: ReturnType<typeof stageRequest>; readonly owner: ModelAttemptAuthority; readonly cost: ModelCostQuote; readonly expected: ModelRouteDeployment; readonly operation: OperationIntent; readonly decision: ResearchModelSpendApproval; readonly role: ResearchBranchRole | null } {
   const request = readRequest(input.request);
   if (!(input.stage_index === 8 || input.stage_index === 9 || input.stage_index === 12 || input.stage_index === 13 || input.stage_index === 14)) fail("MODEL_ATTEMPT_INPUT_INVALID", "spend admission stage index is invalid");
+  // F2: the branch role is part of the admitted identity for stages 8/9.
+  // COUNTER is admitted only on COUNTER_SEARCH (stage 9); every other role is
+  // admitted only on ANALYZE_BRANCHES (stage 8). Fail closed on mismatch.
+  const branchStage = input.stage_index === 8 || input.stage_index === 9;
+  let role: ResearchBranchRole | null = null;
+  if (input.role !== undefined) {
+    const parsedRole = ResearchBranchRoleSchema.safeParse(input.role);
+    if (!parsedRole.success) fail("MODEL_ATTEMPT_INPUT_INVALID", "spend admission role is invalid");
+    role = parsedRole.data;
+  }
+  if (branchStage && role === null) fail("MODEL_ATTEMPT_INPUT_INVALID", "branch stage spend admission requires a role");
+  if (!branchStage && role !== null) fail("MODEL_ATTEMPT_INPUT_INVALID", "non-branch stage spend admission must not carry a role");
+  if (role !== null) {
+    const stageName = STAGES[input.stage_index];
+    const compatible = role === "COUNTER" ? stageName === "COUNTER_SEARCH" : stageName === "ANALYZE_BRANCHES";
+    if (!compatible) fail("MODEL_ATTEMPT_INPUT_INVALID", "branch role is not admitted for this stage");
+  }
   if (input.workflow_stage_request_sha256 !== undefined) sha(input.workflow_stage_request_sha256, "workflow stage request digest", "MODEL_ATTEMPT_INPUT_INVALID");
   const stage = stageRequest(input.stage_request_json, "MODEL_ATTEMPT_INPUT_INVALID");
   const operation = intent(input.intent, "MODEL_ATTEMPT_INPUT_INVALID", "spend admission intent");
@@ -308,13 +336,26 @@ function validateInput(input: ResearchModelSpendAdmissionInput): { readonly requ
   id(input.workflow_operation_id, "workflow operation", "MODEL_ATTEMPT_INPUT_INVALID"); id(input.workflow_budget_receipt_ref, "workflow budget receipt", "MODEL_ATTEMPT_INPUT_INVALID"); bounded(input.max_input_bytes, "max_input_bytes", "MODEL_ATTEMPT_INPUT_INVALID"); bounded(input.max_output_bytes, "max_output_bytes", "MODEL_ATTEMPT_INPUT_INVALID");
   if (stage.request.operation_id !== input.workflow_operation_id || stage.request.stage !== STAGES[input.stage_index]) fail("MODEL_ATTEMPT_INPUT_INVALID", "W2 stage does not match its admission key");
   if (request.operation_id !== operation.intent_ref.id || request.principal_ref !== owner.principal_ref || request.reservation_id !== cost.reservation_id || request.quote_ref !== cost.quote_ref || request.route_ref !== expected.route_ref || !sameRef(request.scope_snapshot_ref, owner.scope_snapshot_ref) || operation.principal_ref !== owner.principal_ref || operation.budget_reservation_ref !== cost.reservation_id || operation.policy_decision_ref !== owner.policy_decision_ref || cost.operation_kind !== operation.operation_kind || cost.selected_routes[0] !== expected.route_ref || decision.policy_decision_ref !== owner.policy_decision_ref || decision.policy_generation !== owner.policy_generation || decision.currentness_digest !== owner.currentness_digest || !sameDeployment(decision.expected_deployment, expected) || Date.parse(decision.expires_at) > Date.parse(cost.expires_at) || Date.parse(decision.expires_at) > Date.parse(owner.expires_at)) fail("MODEL_ATTEMPT_INPUT_INVALID", "spend admission fields are not bound to one explicit decision");
-  return { request, stage, owner, cost, expected, operation, decision };
+  return { request, stage, owner, cost, expected, operation, decision, role };
 }
 
 async function decodeRow(row: AdmissionRow): Promise<ResearchModelSpendAdmissionRecord> {
   const code: ErrorCode = "MODEL_ATTEMPT_READBACK_CORRUPT";
   const authorizationRef = id(row.authorization_ref, "stored authorization_ref", code), operationId = id(row.operation_id, "stored operation_id", code), workflowOperationId = id(row.workflow_operation_id, "stored workflow_operation_id", code);
   const stageIndex = nonnegative(row.stage_index, "stored stage_index", code); if (!(stageIndex === 8 || stageIndex === 9 || stageIndex === 12 || stageIndex === 13 || stageIndex === 14)) fail(code, "stored stage index is unsupported");
+  // F2: the branch role is part of the durable admission identity. Branch
+  // stages always carry the admitted role; every other stage never does.
+  let recordRole: ResearchBranchRole | null = null;
+  if (stageIndex === 8 || stageIndex === 9) {
+    const parsedRole = ResearchBranchRoleSchema.safeParse(row.role);
+    if (!parsedRole.success) fail(code, "stored branch role is missing or invalid");
+    const stageName = STAGES[stageIndex];
+    const compatible = parsedRole.data === "COUNTER" ? stageName === "COUNTER_SEARCH" : stageName === "ANALYZE_BRANCHES";
+    if (!compatible) fail(code, "stored branch role does not match its stage");
+    recordRole = parsedRole.data;
+  } else if (row.role !== null && row.role !== undefined) {
+    fail(code, "stored non-branch admission carries a role");
+  }
   const stageRaw = stageRequest(row.stage_request_json, code), stageSha = sha(row.stage_request_sha256, "stored stage request digest", code);
   // Branch stages (8/9) store the role-scoped sha in stage_request_sha256 while
   // stage_request_json holds the stage-level W2 bytes; they intentionally
@@ -326,9 +367,9 @@ async function decodeRow(row: AdmissionRow): Promise<ResearchModelSpendAdmission
   const intentId = id(row.intent_id, "stored intent id", code), intentRevision = bounded(row.intent_revision, "stored intent revision", code), reservationId = id(row.reservation_id, "stored reservation id", code), quoteRef = id(row.quote_ref, "stored quote ref", code), principalRef = id(row.principal_ref, "stored principal", code), clientClass = id(row.client_class, "stored client class", code), credentialGeneration = id(row.credential_generation, "stored credential generation", code), deploymentGeneration = id(row.deployment_generation, "stored deployment generation", code), policyDecisionRef = id(row.policy_decision_ref, "stored policy decision", code), policyGeneration = id(row.policy_generation, "stored policy generation", code), currentnessDigest = sha(row.currentness_digest, "stored currentness digest", code), scopeId = id(row.scope_snapshot_id, "stored scope id", code), scopeRevision = bounded(row.scope_snapshot_revision, "stored scope revision", code), workflowReceipt = id(row.workflow_authorization_receipt_ref, "stored workflow receipt", code), routeRef = id(row.route_ref, "stored route", code), admissionRevision = bounded(row.admission_revision, "stored admission revision", code), admissionSha = sha(row.admission_sha256, "stored admission digest", code), decisionDigest = sha(row.decision_digest, "stored decision digest", code), maxInput = bounded(row.max_input_bytes, "stored max_input_bytes", code), maxOutput = bounded(row.max_output_bytes, "stored max_output_bytes", code), expiresAt = time(row.expires_at, "stored expiry", code), createdAt = time(row.created_at, "stored creation time", code);
   if (admissionRevision !== 1 || Date.parse(expiresAt) <= Date.parse(createdAt) || storedApproval.expires_at !== expiresAt || Date.parse(expiresAt) > Date.parse(storedQuote.expires_at) || Date.parse(expiresAt) > Date.parse(storedAuthority.expires_at)) fail(code, "stored admission expiry is not bound to its approval");
   if (stageRaw.request.operation_id !== workflowOperationId || stageRaw.request.stage !== STAGES[stageIndex] || storedIntent.intent_ref.id !== intentId || storedIntent.intent_ref.revision !== intentRevision || storedIntent.principal_ref !== principalRef || storedIntent.policy_decision_ref !== policyDecisionRef || storedIntent.budget_reservation_ref !== reservationId || storedQuote.quote_ref !== quoteRef || storedQuote.reservation_id !== reservationId || storedQuote.operation_kind !== storedIntent.operation_kind || storedAuthority.principal_ref !== principalRef || storedAuthority.client_class !== clientClass || storedAuthority.credential_generation !== credentialGeneration || storedAuthority.deployment_generation !== deploymentGeneration || storedAuthority.policy_decision_ref !== policyDecisionRef || storedAuthority.policy_generation !== policyGeneration || storedAuthority.currentness_digest !== currentnessDigest || storedAuthority.scope_snapshot_ref.id !== scopeId || storedAuthority.scope_snapshot_ref.revision !== scopeRevision || storedDeployment.route_ref !== routeRef || storedApproval.authorization_ref !== authorizationRef || storedApproval.decision_digest !== decisionDigest || storedApproval.policy_decision_ref !== policyDecisionRef || storedApproval.policy_generation !== policyGeneration || storedApproval.currentness_digest !== currentnessDigest || !sameDeployment(storedApproval.expected_deployment, storedDeployment) || await approvalDigest(storedApproval) !== decisionDigest) fail(code, "stored spend admission fields disagree");
-  const material = { request: { operation_id: operationId, stage_attempt_ref: attemptRef, stage_request_sha256: stageSha, reservation_id: reservationId, quote_ref: quoteRef, route_ref: routeRef, scope_snapshot_ref: { id: scopeId, revision: scopeRevision }, workflow_authorization_receipt_ref: workflowReceipt }, workflow_operation_id: workflowOperationId, stage_index: stageIndex as 8 | 9 | 12 | 13 | 14, stage_request_json: stageRaw.raw, workflow_budget_receipt_ref: workflowBudget, intent: storedIntent, quote: storedQuote, authority: storedAuthority, expected_deployment: storedDeployment, approval: storedApproval, max_input_bytes: maxInput, max_output_bytes: maxOutput, created_at: createdAt } as ResearchModelSpendAdmissionInput & { readonly created_at: string };
+  const material = { request: { operation_id: operationId, stage_attempt_ref: attemptRef, stage_request_sha256: stageSha, reservation_id: reservationId, quote_ref: quoteRef, route_ref: routeRef, scope_snapshot_ref: { id: scopeId, revision: scopeRevision }, workflow_authorization_receipt_ref: workflowReceipt }, workflow_operation_id: workflowOperationId, stage_index: stageIndex as 8 | 9 | 12 | 13 | 14, role: recordRole, stage_request_json: stageRaw.raw, workflow_budget_receipt_ref: workflowBudget, intent: storedIntent, quote: storedQuote, authority: storedAuthority, expected_deployment: storedDeployment, approval: storedApproval, max_input_bytes: maxInput, max_output_bytes: maxOutput, created_at: createdAt } as ResearchModelSpendAdmissionInput & { readonly created_at: string };
   if (await admissionDigest(material) !== admissionSha) fail(code, "stored admission digest differs from canonical bytes");
-  return Object.freeze({ authorization_ref: authorizationRef, decision_digest: decisionDigest, operation_id: operationId, principal_ref: principalRef, stage_attempt_ref: attemptRef, stage_request_sha256: stageSha, reservation_id: reservationId, quote_ref: quoteRef, route_ref: routeRef, scope_snapshot_ref: Object.freeze({ id: scopeId, revision: scopeRevision }), workflow_authorization_receipt_ref: workflowReceipt, policy_generation: policyGeneration, currentness_digest: currentnessDigest, expires_at: expiresAt, expected_deployment: storedDeployment, admission_ref: Object.freeze({ id: authorizationRef, revision: admissionRevision }), admission_sha256: admissionSha, workflow_operation_id: workflowOperationId, stage_index: stageIndex as 8 | 9 | 12 | 13 | 14, stage_request_json: stageRaw.raw, workflow_budget_receipt_ref: workflowBudget, intent: storedIntent, quote: storedQuote, authority: storedAuthority, approval: storedApproval, max_input_bytes: maxInput, max_output_bytes: maxOutput, created_at: createdAt });
+  return Object.freeze({ authorization_ref: authorizationRef, decision_digest: decisionDigest, operation_id: operationId, principal_ref: principalRef, stage_attempt_ref: attemptRef, stage_request_sha256: stageSha, reservation_id: reservationId, quote_ref: quoteRef, route_ref: routeRef, scope_snapshot_ref: Object.freeze({ id: scopeId, revision: scopeRevision }), workflow_authorization_receipt_ref: workflowReceipt, policy_generation: policyGeneration, currentness_digest: currentnessDigest, expires_at: expiresAt, expected_deployment: storedDeployment, admission_ref: Object.freeze({ id: authorizationRef, revision: admissionRevision }), admission_sha256: admissionSha, workflow_operation_id: workflowOperationId, stage_index: stageIndex as 8 | 9 | 12 | 13 | 14, role: recordRole, stage_request_json: stageRaw.raw, workflow_budget_receipt_ref: workflowBudget, intent: storedIntent, quote: storedQuote, authority: storedAuthority, approval: storedApproval, max_input_bytes: maxInput, max_output_bytes: maxOutput, created_at: createdAt });
 }
 
 function assertRequest(record: ResearchModelSpendAdmissionRecord, request: SpendAuthorizationReadRequest): void {
@@ -385,8 +426,8 @@ export function createD1ResearchModelSpendAdmissionPort(database: D1Database, op
       const nowMs = clock(now); unexpired(input.decision.expires_at, nowMs, "spend approval");
       const before = await current(options.read_current_authority, input.request); if (before === null) fail("MODEL_ATTEMPT_AUTHORITY_STALE", "current spend authority is unavailable", true); assertCurrent(before, { authority: input.owner, expected_deployment: input.expected }, nowMs);
       const createdAt = new Date(nowMs).toISOString();
-      const admissionSha = await admissionDigest({ ...raw, request: input.request, stage_request_json: input.stage.raw, intent: input.operation, quote: input.cost, authority: input.owner, expected_deployment: input.expected, approval: input.decision, created_at: createdAt });
-      const statement = database.prepare(`INSERT INTO research_model_spend_admission(${columns()}) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23,?24,?25,?26,?27,?28,?29,?30,?31,?32,?33,?34,?35) ON CONFLICT(operation_id,stage_index) DO NOTHING RETURNING ${columns()}`).bind(input.decision.authorization_ref, input.request.operation_id, raw.workflow_operation_id, raw.stage_index, input.request.stage_attempt_ref, input.request.stage_request_sha256, input.stage.raw, raw.workflow_budget_receipt_ref, input.operation.intent_ref.id, input.operation.intent_ref.revision, canonical(input.operation, "intent", "MODEL_ATTEMPT_INPUT_INVALID"), input.cost.reservation_id, input.cost.quote_ref, canonical(input.cost, "quote", "MODEL_ATTEMPT_INPUT_INVALID"), canonical(input.owner, "authority", "MODEL_ATTEMPT_INPUT_INVALID"), input.owner.principal_ref, input.owner.client_class, input.owner.credential_generation, input.owner.deployment_generation, input.owner.policy_decision_ref, input.owner.policy_generation, input.owner.currentness_digest, input.owner.scope_snapshot_ref.id, input.owner.scope_snapshot_ref.revision, input.request.workflow_authorization_receipt_ref, input.expected.route_ref, canonical(input.expected, "expected deployment", "MODEL_ATTEMPT_INPUT_INVALID"), canonical(input.decision, "approval", "MODEL_ATTEMPT_INPUT_INVALID"), 1, admissionSha, input.decision.decision_digest, raw.max_input_bytes, raw.max_output_bytes, input.decision.expires_at, createdAt);
+      const admissionSha = await admissionDigest({ ...raw, role: input.role, request: input.request, stage_request_json: input.stage.raw, intent: input.operation, quote: input.cost, authority: input.owner, expected_deployment: input.expected, approval: input.decision, created_at: createdAt });
+      const statement = database.prepare(`INSERT INTO research_model_spend_admission(${columns()}) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23,?24,?25,?26,?27,?28,?29,?30,?31,?32,?33,?34,?35,?36) ON CONFLICT(operation_id,stage_index) DO NOTHING RETURNING ${columns()}`).bind(input.decision.authorization_ref, input.request.operation_id, raw.workflow_operation_id, raw.stage_index, input.request.stage_attempt_ref, input.request.stage_request_sha256, input.stage.raw, input.role, raw.workflow_budget_receipt_ref, input.operation.intent_ref.id, input.operation.intent_ref.revision, canonical(input.operation, "intent", "MODEL_ATTEMPT_INPUT_INVALID"), input.cost.reservation_id, input.cost.quote_ref, canonical(input.cost, "quote", "MODEL_ATTEMPT_INPUT_INVALID"), canonical(input.owner, "authority", "MODEL_ATTEMPT_INPUT_INVALID"), input.owner.principal_ref, input.owner.client_class, input.owner.credential_generation, input.owner.deployment_generation, input.owner.policy_decision_ref, input.owner.policy_generation, input.owner.currentness_digest, input.owner.scope_snapshot_ref.id, input.owner.scope_snapshot_ref.revision, input.request.workflow_authorization_receipt_ref, input.expected.route_ref, canonical(input.expected, "expected deployment", "MODEL_ATTEMPT_INPUT_INVALID"), canonical(input.decision, "approval", "MODEL_ATTEMPT_INPUT_INVALID"), 1, admissionSha, input.decision.decision_digest, raw.max_input_bytes, raw.max_output_bytes, input.decision.expires_at, createdAt);
       let row: AdmissionRow | null = null; let writeError: unknown;
       try { row = await statement.first<AdmissionRow>(); } catch (cause) { writeError = cause; }
       if (row === null) {
@@ -398,8 +439,8 @@ export function createD1ResearchModelSpendAdmissionPort(database: D1Database, op
         fail("MODEL_ATTEMPT_SETTLEMENT_UNCERTAIN", "spend admission write readback is missing", true, writeError);
       }
       const record = await decodeRow(row);
-      const expectedAdmissionSha = await admissionDigest({ ...raw, request: input.request, stage_request_json: input.stage.raw, intent: input.operation, quote: input.cost, authority: input.owner, expected_deployment: input.expected, approval: input.decision, created_at: record.created_at });
-      if (record.operation_id !== input.request.operation_id || record.workflow_operation_id !== raw.workflow_operation_id || record.stage_index !== raw.stage_index || record.stage_request_json !== input.stage.raw || record.authorization_ref !== input.decision.authorization_ref || record.admission_sha256 !== expectedAdmissionSha || record.max_input_bytes !== raw.max_input_bytes || record.max_output_bytes !== raw.max_output_bytes || !sameAuthority(record.authority, input.owner) || !sameDeployment(record.expected_deployment, input.expected) || canonicalJson(record.intent) !== canonicalJson(input.operation) || canonicalJson(record.quote) !== canonicalJson(input.cost)) fail("MODEL_ATTEMPT_IDENTITY_CONFLICT", "spend admission write readback differs from the trusted decision");
+      const expectedAdmissionSha = await admissionDigest({ ...raw, role: input.role, request: input.request, stage_request_json: input.stage.raw, intent: input.operation, quote: input.cost, authority: input.owner, expected_deployment: input.expected, approval: input.decision, created_at: record.created_at });
+      if (record.operation_id !== input.request.operation_id || record.workflow_operation_id !== raw.workflow_operation_id || record.stage_index !== raw.stage_index || record.role !== input.role || record.stage_request_json !== input.stage.raw || record.authorization_ref !== input.decision.authorization_ref || record.admission_sha256 !== expectedAdmissionSha || record.max_input_bytes !== raw.max_input_bytes || record.max_output_bytes !== raw.max_output_bytes || !sameAuthority(record.authority, input.owner) || !sameDeployment(record.expected_deployment, input.expected) || canonicalJson(record.intent) !== canonicalJson(input.operation) || canonicalJson(record.quote) !== canonicalJson(input.cost)) fail("MODEL_ATTEMPT_IDENTITY_CONFLICT", "spend admission write readback differs from the trusted decision");
       const after = await current(options.read_current_authority, input.request); if (after === null) fail("MODEL_ATTEMPT_AUTHORITY_STALE", "current spend authority changed after admission", true); assertCurrent(after, record, clock(now)); return record;
     },
     async read(rawRequest: SpendAuthorizationReadRequest): Promise<SpendAuthorizationReadback | null> {
