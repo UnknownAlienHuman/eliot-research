@@ -4,7 +4,7 @@
 > authority map, how to claim work, verification gates and branch discipline. The non-negotiable
 > boundaries are in [AGENTS.md](AGENTS.md).
 
-**Private owner workspace is deployed:** [eliotr-core.kleymor-metal.workers.dev](https://eliotr-core.kleymor-metal.workers.dev).
+**Private owner workspace is deployed** (owner-only URL, not published).
 The live owner path imports and reads TXT, Markdown, PDF and DOCX documents, saves projects,
 supports exact and lexical search, and runs a full scan of the selected scope. Owner research
 executes the 18-stage workflow with Cloudflare `@cf/zai-org/glm-5.3-flash`, saves a DRAFT,
