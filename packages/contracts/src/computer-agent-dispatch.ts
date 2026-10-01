@@ -162,8 +162,47 @@ export const ComputerAgentDispatchAbandonmentSchema = z.object({
 export type ComputerAgentDispatchAbandonment =
   z.infer<typeof ComputerAgentDispatchAbandonmentSchema>;
 
+export const ComputerAgentDispatchDeclineReasonSchema = z.enum([
+  "UNAVAILABLE", "UNSUPPORTED_TASK", "INSUFFICIENT_CONTEXT",
+  "LOCAL_POLICY", "TRANSIENT_FAILURE", "OTHER",
+]);
+export type ComputerAgentDispatchDeclineReason =
+  z.infer<typeof ComputerAgentDispatchDeclineReasonSchema>;
+
+export const ComputerAgentDispatchDeclineSchema = z.object({
+  reason: ComputerAgentDispatchDeclineReasonSchema,
+  note: z.string().min(1).max(2048).optional(),
+}).strict().superRefine((value, context) => {
+  if (value.reason === "OTHER" && value.note === undefined) {
+    context.addIssue({ code: "custom", path: ["note"],
+      message: "OTHER decline requires a note" });
+  }
+});
+
+export const ComputerAgentDispatchDeclineReceiptSchema = z.object({
+  protocol: z.literal("eliotr.computer-agent-dispatch-declined.v1"),
+  dispatch_id: id,
+  project_id: id,
+  connection_id: id,
+  connection_revision: revision,
+  actor: ComputerAgentActorSchema,
+  credential_generation: id,
+  reason: ComputerAgentDispatchDeclineReasonSchema,
+  note: z.string().min(1).max(2048).optional(),
+  idempotency_key: actionKey,
+  request_sha256: Sha256Schema,
+  declined_at: IsoDateTimeSchema,
+}).strict().superRefine((value, context) => {
+  if (value.reason === "OTHER" && value.note === undefined) {
+    context.addIssue({ code: "custom", path: ["note"],
+      message: "OTHER decline requires a note" });
+  }
+});
+export type ComputerAgentDispatchDeclineReceipt =
+  z.infer<typeof ComputerAgentDispatchDeclineReceiptSchema>;
+
 export const ComputerAgentDispatchStateSchema = z.enum([
-  "PENDING", "ACCEPTED", "ABANDONED", "EXPIRED", "STALE",
+  "PENDING", "ACCEPTED", "ABANDONED", "DECLINED", "EXPIRED", "STALE",
 ]);
 
 export const ComputerAgentDispatchStatusSchema = z.object({
@@ -172,6 +211,7 @@ export const ComputerAgentDispatchStatusSchema = z.object({
   dispatch: ComputerAgentDispatchSchema,
   acceptance: ComputerAgentDispatchAcceptanceSchema.nullable(),
   abandonment: ComputerAgentDispatchAbandonmentSchema.nullable(),
+  decline: ComputerAgentDispatchDeclineReceiptSchema.nullable(),
 }).strict().superRefine((value, context) => {
   if ((value.state === "ACCEPTED") !== (value.acceptance !== null)) {
     context.addIssue({ code: "custom", path: ["acceptance"],
@@ -181,8 +221,15 @@ export const ComputerAgentDispatchStatusSchema = z.object({
     context.addIssue({ code: "custom", path: ["abandonment"],
       message: "Only ABANDONED dispatch status may contain an abandonment receipt" });
   }
-  if (value.acceptance !== null && value.abandonment !== null) {
-    context.addIssue({ code: "custom", message: "Dispatch cannot be accepted and abandoned" });
+  if ((value.state === "DECLINED") !== (value.decline !== null)) {
+    context.addIssue({ code: "custom", path: ["decline"],
+      message: "Only DECLINED dispatch status may contain a decline receipt" });
+  }
+  const terminalCount = Number(value.acceptance !== null) +
+    Number(value.abandonment !== null) + Number(value.decline !== null);
+  if (terminalCount > 1) {
+    context.addIssue({ code: "custom",
+      message: "Dispatch terminal receipts are mutually exclusive" });
   }
   if (value.acceptance !== null && value.acceptance.dispatch_id !== value.dispatch.dispatch_id) {
     context.addIssue({ code: "custom", path: ["acceptance", "dispatch_id"],
@@ -194,6 +241,17 @@ export const ComputerAgentDispatchStatusSchema = z.object({
   )) {
     context.addIssue({ code: "custom", path: ["abandonment", "dispatch_id"],
       message: "Abandonment receipt is bound to another dispatch" });
+  }
+  if (value.decline !== null && (
+    value.decline.dispatch_id !== value.dispatch.dispatch_id ||
+    value.decline.project_id !== value.dispatch.project_id ||
+    value.decline.connection_id !== value.dispatch.connection_id ||
+    value.decline.connection_revision !== value.dispatch.connection_revision ||
+    value.decline.actor.issuer !== value.dispatch.actor.issuer ||
+    value.decline.actor.subject !== value.dispatch.actor.subject
+  )) {
+    context.addIssue({ code: "custom", path: ["decline", "dispatch_id"],
+      message: "Decline receipt is bound to another dispatch target" });
   }
 });
 export type ComputerAgentDispatchStatus = z.infer<typeof ComputerAgentDispatchStatusSchema>;

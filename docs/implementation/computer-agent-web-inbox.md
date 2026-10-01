@@ -151,3 +151,9 @@ For an unaccepted dispatch that should not run, call the owner endpoint
 readiness and create a new dispatch with a new idempotency key for the chosen READY entry. Do not give the
 replacement actor the old dispatch ID, task ID, lease ID or credential generation. Accepted dispatches
 must be cancelled through the existing Research run controls.
+
+### Declining an offer
+
+Before acceptance, the exact selected credential generation may submit one stable decline key and reason.
+Retry the same key and body after an uncertain response. `DECLINED` means no workflow was created. The
+owner must create another dispatch explicitly; an accepted run instead uses normal cancel/recover controls.

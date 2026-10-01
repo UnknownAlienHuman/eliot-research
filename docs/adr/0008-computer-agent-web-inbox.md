@@ -133,3 +133,9 @@ The web inbox never silently advances to the next route entry. For an unaccepted
 an explicit abandonment, observes current readiness again, and creates another exact dispatch. This
 preserves actor, credential-generation and grant boundaries. Accepted work uses the existing Research
 cancellation/recovery flow instead of reassignment.
+
+## Target decline
+
+The web inbox exposes the same exact service-actor decline as the MCP/API contour. A decline never selects
+the next route entry or inherits another credential's authority. The owner may create a replacement only
+after reading current readiness and using a new dispatch identity.

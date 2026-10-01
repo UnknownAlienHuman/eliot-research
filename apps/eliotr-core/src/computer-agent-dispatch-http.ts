@@ -5,6 +5,7 @@ import { apiResult, HttpRequestError, requireNoQuery } from "./http.js";
 import { ComputerAgentDispatchError } from "./computer-agent-dispatch-error.js";
 import { createComputerAgentDispatchService } from "./computer-agent-dispatch-store.js";
 import { createComputerAgentDispatchAbandonmentService } from "./computer-agent-dispatch-abandonment.js";
+import { createComputerAgentDispatchDeclineService } from "./computer-agent-dispatch-decline.js";
 
 function requireJson(request: Request): void {
   if (request.headers.get("Content-Type")?.split(";", 1)[0]?.trim().toLowerCase() !==
@@ -68,6 +69,11 @@ export async function handleComputerAgentDispatchHttp(
     }
     requireJson(request);
     const body: unknown = await readJsonBodyWithinBytes(request, maximumBytes);
+    if (operation === "research.computer-agent-dispatches.decline") {
+      return apiResult(request, env,
+        await createComputerAgentDispatchDeclineService({ database: env.CORE_DB })
+          .decline(context, params.dispatch_id ?? "", body));
+    }
     if (operation === "research.computer-agent-dispatches.pull") {
       return apiResult(request, env, await service.pull(context, body));
     }

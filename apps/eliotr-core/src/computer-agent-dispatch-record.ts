@@ -1,10 +1,12 @@
 import {
   ComputerAgentDispatchAbandonmentSchema,
   ComputerAgentDispatchAcceptanceSchema,
+  ComputerAgentDispatchDeclineReceiptSchema,
   ComputerAgentDispatchSchema,
   type ComputerAgentDispatch,
   type ComputerAgentDispatchAbandonment,
   type ComputerAgentDispatchAcceptance,
+  type ComputerAgentDispatchDeclineReceipt,
 } from "@eliotr/contracts";
 import { canonicalJson, sha256Utf8 } from "@eliotr/platform-cloudflare";
 import { failComputerAgentDispatch as fail } from "./computer-agent-dispatch-error.js";
@@ -60,6 +62,22 @@ export interface AbandonmentRow {
   record_json: string;
   record_sha256: string;
   abandoned_at: string;
+}
+export interface DeclineRow {
+  dispatch_id: string;
+  project_id: string;
+  connection_id: string;
+  connection_revision: number;
+  actor_issuer: string;
+  actor_subject: string;
+  credential_generation: string;
+  reason: string;
+  note: string | null;
+  idempotency_key: string;
+  request_sha256: string;
+  record_json: string;
+  record_sha256: string;
+  declined_at: string;
 }
 
 export async function decodeComputerAgentDispatch(row: DispatchRow): Promise<ComputerAgentDispatch> {
@@ -140,6 +158,32 @@ export async function decodeComputerAgentDispatchAbandonment(
   return parsed.data;
 }
 
+export async function decodeComputerAgentDispatchDecline(
+  row: DeclineRow,
+): Promise<ComputerAgentDispatchDeclineReceipt> {
+  let raw: unknown;
+  try { raw = JSON.parse(row.record_json); }
+  catch { return fail("COMPUTER_AGENT_DISPATCH_STORAGE_CORRUPT", 500,
+    "Dispatch decline is not valid JSON"); }
+  const parsed = ComputerAgentDispatchDeclineReceiptSchema.safeParse(raw);
+  if (!parsed.success || canonicalJson(parsed.data) !== row.record_json ||
+      await sha256Utf8(row.record_json) !== row.record_sha256 ||
+      parsed.data.dispatch_id !== row.dispatch_id || parsed.data.project_id !== row.project_id ||
+      parsed.data.connection_id !== row.connection_id ||
+      parsed.data.connection_revision !== row.connection_revision ||
+      parsed.data.actor.issuer !== row.actor_issuer ||
+      parsed.data.actor.subject !== row.actor_subject ||
+      parsed.data.credential_generation !== row.credential_generation ||
+      parsed.data.reason !== row.reason || (parsed.data.note ?? null) !== row.note ||
+      parsed.data.idempotency_key !== row.idempotency_key ||
+      parsed.data.request_sha256 !== row.request_sha256 ||
+      parsed.data.declined_at !== row.declined_at) {
+    fail("COMPUTER_AGENT_DISPATCH_STORAGE_CORRUPT", 500,
+      "Dispatch decline identity is corrupt");
+  }
+  return parsed.data;
+}
+
 export async function readComputerAgentDispatchRow(
   db: D1Database,
   dispatchId: string,
@@ -211,13 +255,43 @@ export async function readComputerAgentDispatchAbandonmentReplay(
   }
 }
 
+export async function readComputerAgentDispatchDeclineRow(
+  db: D1Database,
+  dispatchId: string,
+): Promise<DeclineRow | null> {
+  try {
+    return await db.prepare(
+      "SELECT * FROM computer_agent_dispatch_decline WHERE dispatch_id=?1 LIMIT 1",
+    ).bind(dispatchId).first<DeclineRow>();
+  } catch {
+    fail("COMPUTER_AGENT_DISPATCH_STORAGE_UNAVAILABLE", 503,
+      "Dispatch decline read is unavailable", true);
+  }
+}
+
+export async function readComputerAgentDispatchDeclineReplay(
+  db: D1Database,
+  issuer: string,
+  subject: string,
+  key: string,
+): Promise<DeclineRow | null> {
+  try {
+    return await db.prepare("SELECT * FROM computer_agent_dispatch_decline " +
+      "WHERE actor_issuer=?1 AND actor_subject=?2 AND idempotency_key=?3 LIMIT 1")
+      .bind(issuer, subject, key).first<DeclineRow>();
+  } catch {
+    fail("COMPUTER_AGENT_DISPATCH_STORAGE_UNAVAILABLE", 503,
+      "Dispatch decline replay read is unavailable", true);
+  }
+}
+
 export async function readCurrentComputerAgentDispatchOffer(
   db: D1Database,
   dispatchId: string,
 ): Promise<DispatchRow | null> {
   try {
     return await db.prepare(
-      "SELECT * FROM computer_agent_dispatch_offer_actionable WHERE dispatch_id=?1 LIMIT 1",
+      "SELECT * FROM computer_agent_dispatch_offer_claimable WHERE dispatch_id=?1 LIMIT 1",
     ).bind(dispatchId).first<DispatchRow>();
   } catch {
     fail("COMPUTER_AGENT_DISPATCH_STORAGE_UNAVAILABLE", 503,

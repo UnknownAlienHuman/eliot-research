@@ -47,6 +47,7 @@ export const ROUTES: readonly RouteDefinition[] = [
   { method: "POST", path: "/api/v1/research/projects/:project_id/computer-agent-dispatches/:dispatch_id/abandon", operation: "research.computer-agent-dispatches.abandon", auth: "owner", maximum_request_bytes: 4096, response_mode: "json" },
   { method: "POST", path: "/api/v1/research/computer-agent-dispatches/pull", operation: "research.computer-agent-dispatches.pull", auth: "service", maximum_request_bytes: 1024, response_mode: "json" },
   { method: "POST", path: "/api/v1/research/computer-agent-dispatches/:dispatch_id/accept", operation: "research.computer-agent-dispatches.accept", auth: "service", maximum_request_bytes: 1024, response_mode: "json" },
+  { method: "POST", path: "/api/v1/research/computer-agent-dispatches/:dispatch_id/decline", operation: "research.computer-agent-dispatches.decline", auth: "service", maximum_request_bytes: 4096, response_mode: "json" },
   { method: "GET", path: "/api/v1/research/projects", operation: "research.projects.list", auth: "owner", maximum_request_bytes: 0, response_mode: "json" },
   { method: "POST", path: "/api/v1/research/projects", operation: "research.projects.create", auth: "owner", maximum_request_bytes: 16384, response_mode: "json" },
   { method: "PUT", path: "/api/v1/research/projects/:project_id", operation: "research.projects.update", auth: "owner_or_service", maximum_request_bytes: 16384, response_mode: "json" },

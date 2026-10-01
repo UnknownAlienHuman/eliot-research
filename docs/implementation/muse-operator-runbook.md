@@ -179,3 +179,9 @@ If a pending Spark, Muse or Dot dispatch should not be accepted, the owner aband
 creates a new dispatch only after re-reading current readiness. Agents never infer that a timeout grants
 them another actor's work, and a replacement never reuses the old dispatch, task, lease or credential
 identity. Once accepted, use ordinary Research status/cancel/recover rather than dispatch reassignment.
+
+### Decline without transfer
+
+When the selected contour cannot execute an offered dispatch, use the exact decline operation rather than
+accepting and abandoning work later. A decline closes only that offer. It does not move the task, grant,
+lease, browser session, or credential authority to another contour.

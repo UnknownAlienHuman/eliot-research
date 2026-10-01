@@ -5,7 +5,6 @@ import {
   ComputerAgentDispatchOfferSchema,
   ComputerAgentDispatchPullSchema,
   ComputerAgentDispatchSchema,
-  ComputerAgentDispatchStatusSchema,
   type ComputerAgentConnection,
   type ComputerAgentDispatch,
   type ComputerAgentDispatchAcceptance,
@@ -48,19 +47,19 @@ import {
 } from "./computer-agent-dispatch-error.js";
 import {
   decodeComputerAgentDispatch,
-  decodeComputerAgentDispatchAbandonment,
   decodeComputerAgentDispatchAcceptance,
-  readComputerAgentDispatchAbandonmentRow,
   readComputerAgentDispatchAcceptanceRow,
   readComputerAgentDispatchReplay,
   readComputerAgentDispatchRow,
   readCurrentComputerAgentDispatchOffer,
   type DispatchRow,
 } from "./computer-agent-dispatch-record.js";
+import { readComputerAgentDispatchStatus } from "./computer-agent-dispatch-status.js";
 import type { Env } from "./env.js";
 
 const SCHEMA_GENERATION = "computer-agent-dispatch-v1";
 const ABANDONMENT_SCHEMA_GENERATION = "computer-agent-dispatch-abandonment-v1";
+const DECLINE_SCHEMA_GENERATION = "computer-agent-dispatch-decline-v1";
 const TASK_KIND = "RESEARCH_BRANCH_ANALYSIS" as const;
 const MAX_RECORD_BYTES = 294_912;
 const MIN_REMAINING_MS = 10_000;
@@ -114,18 +113,21 @@ async function requireSchema(db: D1Database): Promise<void> {
   try {
     const result = await db.prepare(
       "SELECT key,value FROM schema_state WHERE key IN (" +
-      "'computer_agent_dispatch_generation','computer_agent_dispatch_abandonment_generation')",
+      "'computer_agent_dispatch_generation','computer_agent_dispatch_abandonment_generation'," +
+      "'computer_agent_dispatch_decline_generation')",
     ).all<{ key: string; value: string }>();
     values = new Map((result.results ?? []).map((entry) => [entry.key, entry.value]));
   } catch {
     fail("COMPUTER_AGENT_DISPATCH_SCHEMA_NOT_READY", 503,
-      "Computer-agent dispatch migrations 0090 and 0091 are required", true);
+      "Computer-agent dispatch migrations 0090 through 0092 are required", true);
   }
   if (values.get("computer_agent_dispatch_generation") !== SCHEMA_GENERATION ||
       values.get("computer_agent_dispatch_abandonment_generation") !==
-        ABANDONMENT_SCHEMA_GENERATION) {
+        ABANDONMENT_SCHEMA_GENERATION ||
+      values.get("computer_agent_dispatch_decline_generation") !==
+        DECLINE_SCHEMA_GENERATION) {
     fail("COMPUTER_AGENT_DISPATCH_SCHEMA_NOT_READY", 503,
-      "Computer-agent dispatch migrations 0090 and 0091 are required", true);
+      "Computer-agent dispatch migrations 0090 through 0092 are required", true);
   }
 }
 function mapDependency(error: unknown): never {
@@ -354,28 +356,13 @@ export function createComputerAgentDispatchService(env: Env, options?: {
     if (row === null || row.project_id !== projectId) fail("COMPUTER_AGENT_DISPATCH_NOT_FOUND", 404,
       "Computer-agent dispatch does not exist in this project");
     const dispatch = await decodeComputerAgentDispatch(row);
-    const [acceptedRow, abandonedRow] = await Promise.all([
-      readComputerAgentDispatchAcceptanceRow(db, dispatchId),
-      readComputerAgentDispatchAbandonmentRow(db, dispatchId),
-    ]);
-    const acceptance = acceptedRow === null ? null
-      : await decodeComputerAgentDispatchAcceptance(acceptedRow);
-    const abandonment = abandonedRow === null ? null
-      : await decodeComputerAgentDispatchAbandonment(abandonedRow);
-    if (acceptance !== null && abandonment !== null) {
-      fail("COMPUTER_AGENT_DISPATCH_STORAGE_CORRUPT", 500,
-        "Dispatch is both accepted and abandoned");
-    }
-    const state = acceptance !== null ? "ACCEPTED" as const
-      : abandonment !== null ? "ABANDONED" as const
-        : Date.parse(dispatch.expires_at) <= instant(now) ? "EXPIRED" as const
-          : await readCurrentComputerAgentDispatchOffer(db, dispatchId) === null
-            ? "STALE" as const : "PENDING" as const;
-    owner(context, now);
-    return ComputerAgentDispatchStatusSchema.parse({
-      protocol: "eliotr.computer-agent-dispatch-status.v1",
-      state, dispatch, acceptance, abandonment,
+    const result = await readComputerAgentDispatchStatus({
+      database: db,
+      dispatch,
+      now: instant(now),
     });
+    owner(context, now);
+    return result;
   }
 
   async function serviceGrant(context: AuthenticatedRequestContext, dispatch: ComputerAgentDispatch) {
@@ -482,7 +469,7 @@ export function createComputerAgentDispatchService(env: Env, options?: {
       "Verified actor is not present in the current project route");
     let row: DispatchRow | null;
     try {
-      row = await db.prepare("SELECT * FROM computer_agent_dispatch_offer_current " +
+      row = await db.prepare("SELECT * FROM computer_agent_dispatch_offer_claimable " +
         "WHERE project_id=?1 AND route_revision=?2 AND priority=?3 " +
         "AND connection_id=?4 AND connection_revision=?5 AND client_grant_id=?6 " +
         "AND client_grant_revision=?7 AND transport=?8 AND actor_issuer=?9 AND actor_subject=?10 " +

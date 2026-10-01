@@ -112,6 +112,7 @@ const description = "A no-persistence service-token task console for approved co
           <div class="button-row">
             <button id="pull-dispatch" class="button" type="button" data-request>Pull dispatch</button>
             <button id="accept-dispatch" class="button button--secondary" type="button" data-request>Accept dispatch</button>
+            <button id="decline-dispatch" class="button button--danger" type="button" data-request>Decline dispatch</button>
           </div>
         </div>
         <p class="help">
@@ -119,10 +120,31 @@ const description = "A no-persistence service-token task console for approved co
           connection revision, credential generation and current route. Acceptance starts the existing
           delegated Research workflow; it does not transfer another actor's task or lease.
         </p>
-        <label>
-          <span>Dispatch ID</span>
-          <input id="dispatch-id" type="text" autocomplete="off" spellcheck="false" />
-        </label>
+        <div class="form-grid">
+          <label>
+            <span>Dispatch ID</span>
+            <input id="dispatch-id" type="text" autocomplete="off" spellcheck="false" />
+          </label>
+          <label>
+            <span>Decline reason</span>
+            <select id="decline-reason">
+              <option value="UNAVAILABLE">Unavailable</option>
+              <option value="UNSUPPORTED_TASK">Unsupported task</option>
+              <option value="INSUFFICIENT_CONTEXT">Insufficient context</option>
+              <option value="LOCAL_POLICY">Local policy</option>
+              <option value="TRANSIENT_FAILURE">Transient failure</option>
+              <option value="OTHER">Other</option>
+            </select>
+          </label>
+          <label>
+            <span>Decline idempotency key</span>
+            <input id="decline-key" type="text" autocomplete="off" spellcheck="false" />
+          </label>
+          <label>
+            <span>Optional decline note</span>
+            <input id="decline-note" type="text" maxlength="2048" autocomplete="off" spellcheck="false" />
+          </label>
+        </div>
         <details open>
           <summary>Current dispatch offer</summary>
           <pre id="dispatch-output">No dispatch loaded.</pre>

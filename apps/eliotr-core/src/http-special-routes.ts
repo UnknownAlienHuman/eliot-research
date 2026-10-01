@@ -98,6 +98,7 @@ export async function dispatchHttpSpecialRoute(input: {
     case "research.computer-agent-dispatches.status":
     case "research.computer-agent-dispatches.pull":
     case "research.computer-agent-dispatches.accept":
+    case "research.computer-agent-dispatches.decline":
       return handleComputerAgentDispatchHttp(input.request, input.env, input.context,
         input.match.route.operation, input.match.params, input.match.route.maximum_request_bytes);
     case "research.client-grants.list":

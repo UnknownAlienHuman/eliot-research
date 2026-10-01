@@ -228,3 +228,11 @@ re-reads route readiness and creates a distinct dispatch for the selected READY 
 connection. The system does not choose the replacement, reuse the old dispatch identity, transfer a task
 or lease, or let an abandoned dispatch be accepted. An accepted dispatch cannot be abandoned; its
 existing Research run is controlled through the ordinary status/cancel/recover authority.
+
+### Explicit target decline
+
+An exact selected Spark, Muse, Dot, or other service actor may decline an unaccepted dispatch under the
+credential generation recorded by the owner. Decline is immutable delivery state, not failover: the old
+offer disappears, no Research run starts, and no task or lease moves. The owner must observe readiness
+again and issue a distinct dispatch to any replacement contour. Owner abandonment and target decline are
+mutually exclusive with acceptance.
