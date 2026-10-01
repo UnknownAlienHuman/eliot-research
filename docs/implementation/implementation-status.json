@@ -86,7 +86,7 @@
       ],
       "behavior": "Day-0 ChatGPT Drive Exchange cursor reconciliation now executes: leased changes.list replay with bounded ID-column scans, R2 freeze, ContributionIntent admission and guarded cursor commit only after reconciliation, plus a read-only historical ID/hash audit by digest against the frozen envelope. Sheet/changes REST, contribution guards, encrypted D1 credentials, bounded refresh and internal initial OAuth admission now execute. Owner-only OAuth begin HTTP/PWA with server-owned configuration/Production attestation, verified-Access owner/session/currentness, same-origin/CSRF and stable operation retry now executes. Owner callback and reconnect/disconnect/status lifecycle now execute; provisioning, Doc publication/export and full runtime composition remain separate. Optional Gemini MCP does not replace this path.",
       "completion_evidence": [
-        "Implement ELIOT_RESEARCH v29.1 \u00a7\u00a712.3\u201312.12 and ADR-0003 in small owned checkpoints; one active ChatGPT write transport.",
+        "Implement ELIOT_RESEARCH v29.1 §§12.3–12.12 and ADR-0003 in small owned checkpoints; one active ChatGPT write transport.",
         "packages/google-drive-exchange/src/reconciler.test.ts: 10 cases over real node:sqlite D1 against the committed migration stream (import with cursor advance, duplicate resume without re-freeze/re-admit, admitted-but-unrecorded resume via ContributionIntent DUPLICATE, incomplete missing-parts with no cursor advance and failure counter, held-lease refusal before any Drive read, outrun-TTL commit refusal, edited-replay tamper without re-freeze under a preserved frozen authority, digest-against-frozen tamper audit, missing-not-tampered audit, lost-notification plus edited-row negative with no duplicate work); no new migration",
         "packages/google-drive-exchange/src/reconciler-store.ts: D1 cursor lease CAS (steal-on-expiry, extend-own, refuse-other, commit only under a live own lease) and frozen-observation ledger (IMPORTED/DUPLICATE_IGNORED/TRANSPORT_TAMPERED) with lost-ACK readback and no multi-statement transaction spanning I/O",
         "Exact atomic REQUESTS/PAYLOAD_PARTS append and leased cursor commit only after immutable freeze and idempotent reconciliation; local failure/tamper/reorder/lost-ACK fixtures.",
@@ -196,22 +196,20 @@
     },
     {
       "id": "workspace-candidate-admission",
-      "path": "packages/cloudflare-workspace-mcp/src/gemini-mcp-google-sync.ts",
-      "sentinel": "IN_PROGRESS: ER-36 Workspace candidate bytes admission and live connector readback remain unimplemented; durable v2 plans and observations do not admit sources.",
+      "path": "packages/cloudflare-workspace-mcp/src/workspace-candidate-admission.ts",
+      "sentinel": "IMPLEMENTED_NOT_LIVE: ER-36 authenticated Workspace candidate-bytes admission gate binds caller-supplied bytes to a durable OBSERVED_MATCH v2 observation plus a separate owner-issued exact-candidate authorization; the gate mints no source/evidence authority. Live connector readback (ELIOT-performed Google readback) remains unimplemented.",
       "owner_packets": [
         "ER-36"
       ],
-      "state": "IN_PROGRESS",
+      "state": "IMPLEMENTED_NOT_LIVE",
       "required_for_transports": [
         "gemini-mcp"
       ],
-      "behavior": "The selected Workspace MCP profile preserves v1 behavior and adds strict v2 server-issued intent plans bound to the verified actor, deployment and auth profile. Append-only D1 plans and candidate observations use canonical digests, exact readback and same-key reconciliation. A committed UNKNOWN comparison is distinct from an uncertain D1 write. The ledger does not invoke Google or admit source/evidence bytes; external connector qualification and authenticated source admission remain incomplete.",
+      "behavior": "evaluateWorkspaceCandidateAdmission fails closed on any non-OBSERVED_MATCH disposition, missing/skipped exact readback, unbound payload digest, byte/digest mismatch, oversized or empty bytes, cross-actor or cross-deployment invocation, and missing owner authorization reference. The returned frozen admission intent carries the observation/plan/receipt digests, the verified byte digest and the owner authorization reference with candidate_only=true and source_evidence_authority_changed=false. The ledger still never invokes Google and observations still never admit sources on their own.",
       "completion_evidence": [
-        "packages/contracts/src/workspace-mcp.ts and workspace-mcp.test.ts: strict v2 candidate plans, external receipt input and separate comparison/write uncertainty",
-        "packages/cloudflare-workspace-mcp/src/workspace-mcp-google-sync.test.ts: server-issued plan replay, changed-intent conflict, actor binding and candidate observation behavior",
-        "apps/eliotr-core/test/workspace-mcp-candidate-store.test.ts: actual local Worker/D1 canonical plan and observation readback, actor isolation, historical replay and append-only storage",
-        "infra/d1/core/migrations/0031_workspace_mcp_candidate_ledger.sql: constrained append-only plan and observation ledgers",
-        "Authenticated Workspace source-byte admission, live Google action/readback and managed OAuth client qualification remain NOT_EXECUTED; candidate observations do not establish source/evidence authority."
+        "packages/cloudflare-workspace-mcp/src/workspace-candidate-admission.ts and workspace-candidate-admission.test.ts: 11 deterministic cases (exact-match bind plus 10 negative refusals)",
+        "packages/cloudflare-workspace-mcp/src/index.ts: gate exported through the package barrel (ER-36 owned path)",
+        "Live Google action/readback (google_readback_performed_by_eliotr) and managed OAuth client qualification remain NOT_EXECUTED; app-layer composition (owner grant check against the grant store, HTTP route) remains separate code work."
       ]
     },
     {
