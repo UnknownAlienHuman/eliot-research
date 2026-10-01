@@ -213,6 +213,72 @@
       ]
     },
     {
+      "id": "implemented-branch-execution",
+      "path": "packages/cloudflare-research/src/research-branch-execution.ts",
+      "sentinel": "IMPLEMENTED_NOT_LIVE: S37 shared governed branch executor for READ_AND_EXTRACT, ANALYZE_BRANCHES and COUNTER_SEARCH with exact scope/protocol/planning/W1/stage-five revalidation and receipt-based recovery; v7 activation in semantic composition and live model/evidence qualification remain separate.",
+      "owner_packets": [
+        "ER-09",
+        "ER-24"
+      ],
+      "state": "IMPLEMENTED_NOT_LIVE",
+      "behavior": "createResearchBranchExecutionHandlers provides one shared governed executor for the v7 branch stages. loadContext revalidates exact scope snapshot, protocol, planning manifest identity and W1/stage-five state before each stage handler runs. READ_AND_EXTRACT emits the read-extract checkpoint; ANALYZE_BRANCHES decodes the committed read-extract and cross-checks operation, investigation, principal, scope and planning bindings before emitting the analysis checkpoint; COUNTER_SEARCH binds the branch analysis to the committed read-extract bytes (sameRef on read_extract_ref) and emits the reconciliation checkpoint with stable per-role observation identities. recover replays from committed stage lineage receipts on restart. readCommittedResearchBranchReconciliationLineage/readCommittedResearchBranchReconciliation expose the committed reconciliation with read-extract and analysis attempt refs. The executor emits evidence-bound candidate material; role model calls and W1 observation mutation are wired in separate modules.",
+      "completion_evidence": [
+        "Commits b98ee60f (shared governed branch executor), 25be3164 (v7 registration and stage-factory connection), 8250ff20 (COUNTER bound to committed read-extract bytes), 05c3c3a1 (assembly acceptance with receipt-based recovery)",
+        "Strict TypeScript check with noUncheckedIndexedAccess and exactOptionalPropertyTypes",
+        "Scoped ESLint for packages/cloudflare-research",
+        "Live model invocation and live evidence qualification receipts NOT_EXECUTED; S93 real-model quality remains a separate gate"
+      ]
+    },
+    {
+      "id": "implemented-branch-role-model",
+      "path": "packages/cloudflare-research/src/research-branch-role-model.ts",
+      "sentinel": "IMPLEMENTED_NOT_LIVE: S37 per-role branch model execution derives role-scoped stage requests and dispatches role-bound model stage handlers through the server-owned W3 preparation seam; role prompt compilation wiring and live model qualification remain separate.",
+      "owner_packets": [
+        "ER-24"
+      ],
+      "state": "IMPLEMENTED_NOT_LIVE",
+      "behavior": "deriveBranchRoleStageRequest derives a role-scoped stage request with a deterministic per-role idempotency key (<key>:branch-role:<ROLE>), so a restart replays the same attempt instead of dispatching a duplicate and an absent role costs zero calls. createResearchBranchRoleModelExecutor caches one ResearchModelStageHandler per role and binds the server-owned W3 preparation seam per role via prepare(context, role), so each role's model call carries its own attempt identity while the spend admission for branch stages stays behind the duration/budget checkpoint.",
+      "completion_evidence": [
+        "Commit a3930696 (substantive model-backed execution for v7 branch roles)",
+        "packages/cloudflare-research/src/research-branch-role-model.test.ts: 4 cases pinning role-scoped idempotency keys, distinct keys per role, deterministic restart replay and unknown-role rejection",
+        "Per-role handler cache and prepare-closure binding are compile/static reviewed only; research-branch-role-preparation.test.ts covers the preparation seam on the other side",
+        "Live model call receipts NOT_EXECUTED"
+      ]
+    },
+    {
+      "id": "implemented-w1-branch-observations",
+      "path": "packages/cloudflare-research/src/research-w1-observations.ts",
+      "sentinel": "IMPLEMENTED_NOT_LIVE: S37 session-level settling of v7 branch execution observations onto the W1 investigation ledger head as one OBSERVED event bound to the committed reconciliation checkpoint; EvidenceFreeze binding of the reconciliation checkpoint and live ledger qualification remain separate.",
+      "owner_packets": [
+        "ER-08",
+        "ER-24"
+      ],
+      "state": "IMPLEMENTED_NOT_LIVE",
+      "behavior": "settleW1BranchObservations runs at the session level after workflow completion, not inside a stage handler, because the stage checkpoint commit is the sole ledger writer per stage. It returns null when the run generation never executed branches or when no committed COUNTER_SEARCH reconciliation checkpoint exists for the investigation. The committed reconciliation checkpoint is evidence-bound: the receipt output manifest ref and digest are verified on read and operation/investigation/principal bindings are checked before use. Only the ledger owner settles on an OPEN ledger; the settling appends one OBSERVED ledger event whose payload is the committed reconciliation checkpoint workflow object and whose deterministic event id (the reconciliation identity digest) makes identical replay a no-op via the store's appliedAlready check.",
+      "completion_evidence": [
+        "Commits b5ea49df (settle W1 observations after v7 branch execution), 05c3c3a1 (gated behind branch-execution handler generations)",
+        "packages/cloudflare-research/src/research-w1-observations.test.ts: no-op case when the run generation never executed branches, with zero D1/R2 effects",
+        "Strict TypeScript check",
+        "D1-backed settling fixture over the committed migration stream and live ledger receipts NOT_EXECUTED; EvidenceFreeze binding of the reconciliation checkpoint remains a separate contour"
+      ]
+    },
+    {
+      "id": "implemented-branch-role-spend-admission",
+      "path": "packages/cloudflare-research/src/research-model-spend-policy.ts",
+      "sentinel": "IMPLEMENTED_NOT_LIVE: S37 branch-aware W3 spend admission for ANALYZE_BRANCHES/COUNTER_SEARCH admits per-role model spend against the durable stage-level W2 authority with role-scoped identities; D1-backed admission readback qualification remains open.",
+      "owner_packets": [
+        "ER-24"
+      ],
+      "state": "IMPLEMENTED_NOT_LIVE",
+      "behavior": "admitBranchRole maps ANALYZE_BRANCHES/COUNTER_SEARCH to stage indexes 8/9 and fails closed with WORKFLOW_CONFIGURATION_MISSING for non-branch stages, a missing policy rule or an invalid role. It reads the durable stage-level W2 authority by the stage request sha; the role-level W3 identity intentionally differs and the role binding is validated here and by the port's assertRequest. A role-scoped model attempt identity is derived from the role sha, so concurrent SUPPORT/COUNTER admissions on the same stage never collide on the (operation_id, stage_index) conflict target. Identity, budget receipt, deployment and the exact stage request are verified against the authority row before minting role-scoped quote, reservation, intent and authorization digests and recording the admission through the D1 spend admission port with the stage-level workflow_stage_request_sha256 preserved for readback.",
+      "completion_evidence": [
+        "Commits fb1c9167/bccd6037 (branch-aware W3 spend admission for ANALYZE_BRANCHES/COUNTER_SEARCH)",
+        "packages/cloudflare-research/src/research-model-spend-policy.test.ts covers the pure JSON policy readers",
+        "Strict TypeScript check with noUncheckedIndexedAccess and exactOptionalPropertyTypes",
+        "D1-backed admit/admitBranchRole fixtures (happy path, expiry, deployment change, two-role concurrency) and live spend receipts NOT_EXECUTED; this is compile/static reviewed code, not behavioral acceptance"
+      ]
+    },
+    {
       "id": "implemented-006",
       "path": "packages/cloudflare-workspace-mcp/src/gemini-mcp.ts",
       "sentinel": "IMPLEMENTED_NOT_LIVE: ER-36 Gemini Spark MCP requires live Access and Google readback receipts.",
