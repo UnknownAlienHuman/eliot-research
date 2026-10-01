@@ -1,7 +1,9 @@
 import {
+  ComputerAgentDispatchAbandonmentSchema,
   ComputerAgentDispatchAcceptanceSchema,
   ComputerAgentDispatchSchema,
   type ComputerAgentDispatch,
+  type ComputerAgentDispatchAbandonment,
   type ComputerAgentDispatchAcceptance,
 } from "@eliotr/contracts";
 import { canonicalJson, sha256Utf8 } from "@eliotr/platform-cloudflare";
@@ -45,6 +47,19 @@ export interface AcceptanceRow {
   record_json: string;
   record_sha256: string;
   accepted_at: string;
+}
+export interface AbandonmentRow {
+  dispatch_id: string;
+  project_id: string;
+  owner_principal_ref: string;
+  owner_credential_generation: string;
+  reason: string;
+  note: string | null;
+  idempotency_key: string;
+  request_sha256: string;
+  record_json: string;
+  record_sha256: string;
+  abandoned_at: string;
 }
 
 export async function decodeComputerAgentDispatch(row: DispatchRow): Promise<ComputerAgentDispatch> {
@@ -102,6 +117,29 @@ export async function decodeComputerAgentDispatchAcceptance(
   return parsed.data;
 }
 
+export async function decodeComputerAgentDispatchAbandonment(
+  row: AbandonmentRow,
+): Promise<ComputerAgentDispatchAbandonment> {
+  let raw: unknown;
+  try { raw = JSON.parse(row.record_json); }
+  catch { return fail("COMPUTER_AGENT_DISPATCH_STORAGE_CORRUPT", 500,
+    "Dispatch abandonment is not valid JSON"); }
+  const parsed = ComputerAgentDispatchAbandonmentSchema.safeParse(raw);
+  if (!parsed.success || canonicalJson(parsed.data) !== row.record_json ||
+      await sha256Utf8(row.record_json) !== row.record_sha256 ||
+      parsed.data.dispatch_id !== row.dispatch_id || parsed.data.project_id !== row.project_id ||
+      parsed.data.owner_principal_ref !== row.owner_principal_ref ||
+      parsed.data.owner_credential_generation !== row.owner_credential_generation ||
+      parsed.data.reason !== row.reason || (parsed.data.note ?? null) !== row.note ||
+      parsed.data.idempotency_key !== row.idempotency_key ||
+      parsed.data.request_sha256 !== row.request_sha256 ||
+      parsed.data.abandoned_at !== row.abandoned_at) {
+    fail("COMPUTER_AGENT_DISPATCH_STORAGE_CORRUPT", 500,
+      "Dispatch abandonment identity is corrupt");
+  }
+  return parsed.data;
+}
+
 export async function readComputerAgentDispatchRow(
   db: D1Database,
   dispatchId: string,
@@ -144,13 +182,42 @@ export async function readComputerAgentDispatchAcceptanceRow(
   }
 }
 
+export async function readComputerAgentDispatchAbandonmentRow(
+  db: D1Database,
+  dispatchId: string,
+): Promise<AbandonmentRow | null> {
+  try {
+    return await db.prepare(
+      "SELECT * FROM computer_agent_dispatch_abandonment WHERE dispatch_id=?1 LIMIT 1",
+    ).bind(dispatchId).first<AbandonmentRow>();
+  } catch {
+    fail("COMPUTER_AGENT_DISPATCH_STORAGE_UNAVAILABLE", 503,
+      "Dispatch abandonment read is unavailable", true);
+  }
+}
+
+export async function readComputerAgentDispatchAbandonmentReplay(
+  db: D1Database,
+  principal: string,
+  key: string,
+): Promise<AbandonmentRow | null> {
+  try {
+    return await db.prepare("SELECT * FROM computer_agent_dispatch_abandonment " +
+      "WHERE owner_principal_ref=?1 AND idempotency_key=?2 LIMIT 1")
+      .bind(principal, key).first<AbandonmentRow>();
+  } catch {
+    fail("COMPUTER_AGENT_DISPATCH_STORAGE_UNAVAILABLE", 503,
+      "Dispatch abandonment replay read is unavailable", true);
+  }
+}
+
 export async function readCurrentComputerAgentDispatchOffer(
   db: D1Database,
   dispatchId: string,
 ): Promise<DispatchRow | null> {
   try {
     return await db.prepare(
-      "SELECT * FROM computer_agent_dispatch_offer_current WHERE dispatch_id=?1 LIMIT 1",
+      "SELECT * FROM computer_agent_dispatch_offer_actionable WHERE dispatch_id=?1 LIMIT 1",
     ).bind(dispatchId).first<DispatchRow>();
   } catch {
     fail("COMPUTER_AGENT_DISPATCH_STORAGE_UNAVAILABLE", 503,

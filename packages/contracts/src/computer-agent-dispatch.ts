@@ -14,6 +14,8 @@ import { isResearchQuestionText, RESEARCH_REQUEST_MAX_BYTES } from "./research.j
 
 const id = IdentifierSchema.regex(/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/u);
 const revision = z.number().int().min(1).max(2_147_483_647);
+const actionKey = z.string().min(1).max(256)
+  .regex(/^[A-Za-z0-9][A-Za-z0-9:._/-]{0,255}$/u);
 const question = z.string().min(1)
   .refine(isResearchQuestionText, "Research question text is invalid")
   .refine((value) => new TextEncoder().encode(value).byteLength <= RESEARCH_REQUEST_MAX_BYTES,
@@ -123,8 +125,45 @@ export const ComputerAgentDispatchAcceptanceSchema = z.object({
 export type ComputerAgentDispatchAcceptance =
   z.infer<typeof ComputerAgentDispatchAcceptanceSchema>;
 
+export const ComputerAgentDispatchAbandonReasonSchema = z.enum([
+  "TARGET_UNAVAILABLE", "QUALIFICATION_EXPIRED", "ROUTE_CHANGED",
+  "OWNER_REASSIGNMENT", "OWNER_CANCELLED", "OTHER",
+]);
+export type ComputerAgentDispatchAbandonReason =
+  z.infer<typeof ComputerAgentDispatchAbandonReasonSchema>;
+
+export const ComputerAgentDispatchAbandonSchema = z.object({
+  reason: ComputerAgentDispatchAbandonReasonSchema,
+  note: z.string().min(1).max(2048).optional(),
+}).strict().superRefine((value, context) => {
+  if (value.reason === "OTHER" && value.note === undefined) {
+    context.addIssue({ code: "custom", path: ["note"],
+      message: "OTHER abandonment requires a note" });
+  }
+});
+
+export const ComputerAgentDispatchAbandonmentSchema = z.object({
+  protocol: z.literal("eliotr.computer-agent-dispatch-abandoned.v1"),
+  dispatch_id: id,
+  project_id: id,
+  owner_principal_ref: id,
+  owner_credential_generation: id,
+  reason: ComputerAgentDispatchAbandonReasonSchema,
+  note: z.string().min(1).max(2048).optional(),
+  idempotency_key: actionKey,
+  request_sha256: Sha256Schema,
+  abandoned_at: IsoDateTimeSchema,
+}).strict().superRefine((value, context) => {
+  if (value.reason === "OTHER" && value.note === undefined) {
+    context.addIssue({ code: "custom", path: ["note"],
+      message: "OTHER abandonment requires a note" });
+  }
+});
+export type ComputerAgentDispatchAbandonment =
+  z.infer<typeof ComputerAgentDispatchAbandonmentSchema>;
+
 export const ComputerAgentDispatchStateSchema = z.enum([
-  "PENDING", "ACCEPTED", "EXPIRED", "STALE",
+  "PENDING", "ACCEPTED", "ABANDONED", "EXPIRED", "STALE",
 ]);
 
 export const ComputerAgentDispatchStatusSchema = z.object({
@@ -132,14 +171,29 @@ export const ComputerAgentDispatchStatusSchema = z.object({
   state: ComputerAgentDispatchStateSchema,
   dispatch: ComputerAgentDispatchSchema,
   acceptance: ComputerAgentDispatchAcceptanceSchema.nullable(),
+  abandonment: ComputerAgentDispatchAbandonmentSchema.nullable(),
 }).strict().superRefine((value, context) => {
   if ((value.state === "ACCEPTED") !== (value.acceptance !== null)) {
     context.addIssue({ code: "custom", path: ["acceptance"],
       message: "Only ACCEPTED dispatch status may contain an acceptance receipt" });
   }
+  if ((value.state === "ABANDONED") !== (value.abandonment !== null)) {
+    context.addIssue({ code: "custom", path: ["abandonment"],
+      message: "Only ABANDONED dispatch status may contain an abandonment receipt" });
+  }
+  if (value.acceptance !== null && value.abandonment !== null) {
+    context.addIssue({ code: "custom", message: "Dispatch cannot be accepted and abandoned" });
+  }
   if (value.acceptance !== null && value.acceptance.dispatch_id !== value.dispatch.dispatch_id) {
     context.addIssue({ code: "custom", path: ["acceptance", "dispatch_id"],
       message: "Acceptance receipt is bound to another dispatch" });
+  }
+  if (value.abandonment !== null && (
+    value.abandonment.dispatch_id !== value.dispatch.dispatch_id ||
+    value.abandonment.project_id !== value.dispatch.project_id
+  )) {
+    context.addIssue({ code: "custom", path: ["abandonment", "dispatch_id"],
+      message: "Abandonment receipt is bound to another dispatch" });
   }
 });
 export type ComputerAgentDispatchStatus = z.infer<typeof ComputerAgentDispatchStatusSchema>;

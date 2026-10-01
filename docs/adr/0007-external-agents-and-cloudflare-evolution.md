@@ -220,3 +220,11 @@ A route, grant, connection, deployment or qualification change makes an unaccept
 accepted run is not moved when policy changes; its existing task publication, callback and recovery rules
 still apply and current authority may block later access. Pull does not claim a lease, acceptance does not
 reuse another actor's lease, and this checkpoint does not implement silent fallback or cross-agent retry.
+
+## Explicit abandonment and reassignment
+
+A pending exact dispatch may be closed only by an immutable owner abandonment receipt. The owner then
+re-reads route readiness and creates a distinct dispatch for the selected READY Spark, Muse, Dot or other
+connection. The system does not choose the replacement, reuse the old dispatch identity, transfer a task
+or lease, or let an abandoned dispatch be accepted. An accepted dispatch cannot be abandoned; its
+existing Research run is controlled through the ordinary status/cancel/recover authority.

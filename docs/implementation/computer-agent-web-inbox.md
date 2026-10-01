@@ -142,3 +142,12 @@ clean service-token inbox, use **Pull dispatch** and then **Accept dispatch**. A
 workflow ID. The workflow may need to advance before Stage 8 publishes an agent task; use the existing task
 pull after that point. Repeating accept with the same dispatch is idempotent and returns the same workflow.
 A rotated credential, newer route/grant revision or newer qualification requires a new dispatch.
+
+## Deliberate reassignment
+
+For an unaccepted dispatch that should not run, call the owner endpoint
+`POST /api/v1/research/projects/:project_id/computer-agent-dispatches/:dispatch_id/abandon` with a stable
+`Idempotency-Key` and `{ "reason": "OWNER_REASSIGNMENT" }` or another declared reason. Then read route
+readiness and create a new dispatch with a new idempotency key for the chosen READY entry. Do not give the
+replacement actor the old dispatch ID, task ID, lease ID or credential generation. Accepted dispatches
+must be cancelled through the existing Research run controls.

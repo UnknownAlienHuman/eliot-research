@@ -48,7 +48,9 @@ import {
 } from "./computer-agent-dispatch-error.js";
 import {
   decodeComputerAgentDispatch,
+  decodeComputerAgentDispatchAbandonment,
   decodeComputerAgentDispatchAcceptance,
+  readComputerAgentDispatchAbandonmentRow,
   readComputerAgentDispatchAcceptanceRow,
   readComputerAgentDispatchReplay,
   readComputerAgentDispatchRow,
@@ -58,6 +60,7 @@ import {
 import type { Env } from "./env.js";
 
 const SCHEMA_GENERATION = "computer-agent-dispatch-v1";
+const ABANDONMENT_SCHEMA_GENERATION = "computer-agent-dispatch-abandonment-v1";
 const TASK_KIND = "RESEARCH_BRANCH_ANALYSIS" as const;
 const MAX_RECORD_BYTES = 294_912;
 const MIN_REMAINING_MS = 10_000;
@@ -107,18 +110,22 @@ function owner(context: AuthenticatedRequestContext, now: () => number) {
   });
 }
 async function requireSchema(db: D1Database): Promise<void> {
-  let value: string | null;
+  let values: Map<string, string>;
   try {
-    value = await db.prepare(
-      "SELECT value FROM schema_state WHERE key='computer_agent_dispatch_generation'",
-    ).first<string>("value");
+    const result = await db.prepare(
+      "SELECT key,value FROM schema_state WHERE key IN (" +
+      "'computer_agent_dispatch_generation','computer_agent_dispatch_abandonment_generation')",
+    ).all<{ key: string; value: string }>();
+    values = new Map((result.results ?? []).map((entry) => [entry.key, entry.value]));
   } catch {
     fail("COMPUTER_AGENT_DISPATCH_SCHEMA_NOT_READY", 503,
-      "Computer-agent dispatch migration 0090 is required", true);
+      "Computer-agent dispatch migrations 0090 and 0091 are required", true);
   }
-  if (value !== SCHEMA_GENERATION) {
+  if (values.get("computer_agent_dispatch_generation") !== SCHEMA_GENERATION ||
+      values.get("computer_agent_dispatch_abandonment_generation") !==
+        ABANDONMENT_SCHEMA_GENERATION) {
     fail("COMPUTER_AGENT_DISPATCH_SCHEMA_NOT_READY", 503,
-      "Computer-agent dispatch migration 0090 is required", true);
+      "Computer-agent dispatch migrations 0090 and 0091 are required", true);
   }
 }
 function mapDependency(error: unknown): never {
@@ -347,16 +354,27 @@ export function createComputerAgentDispatchService(env: Env, options?: {
     if (row === null || row.project_id !== projectId) fail("COMPUTER_AGENT_DISPATCH_NOT_FOUND", 404,
       "Computer-agent dispatch does not exist in this project");
     const dispatch = await decodeComputerAgentDispatch(row);
-    const acceptedRow = await readComputerAgentDispatchAcceptanceRow(db, dispatchId);
+    const [acceptedRow, abandonedRow] = await Promise.all([
+      readComputerAgentDispatchAcceptanceRow(db, dispatchId),
+      readComputerAgentDispatchAbandonmentRow(db, dispatchId),
+    ]);
     const acceptance = acceptedRow === null ? null
       : await decodeComputerAgentDispatchAcceptance(acceptedRow);
+    const abandonment = abandonedRow === null ? null
+      : await decodeComputerAgentDispatchAbandonment(abandonedRow);
+    if (acceptance !== null && abandonment !== null) {
+      fail("COMPUTER_AGENT_DISPATCH_STORAGE_CORRUPT", 500,
+        "Dispatch is both accepted and abandoned");
+    }
     const state = acceptance !== null ? "ACCEPTED" as const
-      : Date.parse(dispatch.expires_at) <= instant(now) ? "EXPIRED" as const
-        : await readCurrentComputerAgentDispatchOffer(db, dispatchId) === null
-          ? "STALE" as const : "PENDING" as const;
+      : abandonment !== null ? "ABANDONED" as const
+        : Date.parse(dispatch.expires_at) <= instant(now) ? "EXPIRED" as const
+          : await readCurrentComputerAgentDispatchOffer(db, dispatchId) === null
+            ? "STALE" as const : "PENDING" as const;
     owner(context, now);
     return ComputerAgentDispatchStatusSchema.parse({
-      protocol: "eliotr.computer-agent-dispatch-status.v1", state, dispatch, acceptance,
+      protocol: "eliotr.computer-agent-dispatch-status.v1",
+      state, dispatch, acceptance, abandonment,
     });
   }
 

@@ -126,3 +126,10 @@ evidence and recovery endpoints. Pull is read-only and returns only an unexpired
 page's exact Access actor, current grant, route, connection and WEB_INBOX qualification. Accept starts the
 existing delegated Research workflow with the dispatch's frozen request. Neither action persists secrets,
 creates a second scheduler, selects another actor or transfers a task lease.
+
+### Reassignment after a declined or unavailable target
+
+The web inbox never silently advances to the next route entry. For an unaccepted offer, the owner records
+an explicit abandonment, observes current readiness again, and creates another exact dispatch. This
+preserves actor, credential-generation and grant boundaries. Accepted work uses the existing Research
+cancellation/recovery flow instead of reassignment.

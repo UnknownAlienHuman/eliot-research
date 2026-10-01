@@ -172,3 +172,10 @@ a delegated run must still be the verified originating actor present in the acti
 
 Do not accept another actor's dispatch, copy a lease between agents, or interpret an empty pull as permission
 to start a replacement run. Route/grant/qualification changes require a fresh owner intent.
+
+### Owner-directed reassignment
+
+If a pending Spark, Muse or Dot dispatch should not be accepted, the owner abandons that exact offer and
+creates a new dispatch only after re-reading current readiness. Agents never infer that a timeout grants
+them another actor's work, and a replacement never reuses the old dispatch, task, lease or credential
+identity. Once accepted, use ordinary Research status/cancel/recover rather than dispatch reassignment.
