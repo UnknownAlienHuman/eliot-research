@@ -26,7 +26,8 @@ const config = {
   wasm_modules: { KERNEL_WASM: "../../crates/kernel-wasm/pkg/eliotr_kernel_wasm_bg.wasm" },
   analytics_engine_datasets: [{ binding: "METRICS", dataset: "eliotr_metrics" }],
   vars: { DEPLOYMENT_GENERATION: "git-test", ENVIRONMENT: "staging", GOOGLE_EXTERNAL_TRANSPORT: "gemini-mcp",
-    ACCESS_TEAM_DOMAIN: "https://team-example.cloudflareaccess.com", ACCESS_AUDIENCE: "test-aud", ACCESS_SERVICE_PRINCIPALS: "agent" },
+    ACCESS_TEAM_DOMAIN: "https://team-example.cloudflareaccess.com", ACCESS_AUDIENCE: "test-aud", ACCESS_SERVICE_PRINCIPALS: "agent",
+    JSON_PROFILE: { mode: "strict", limits: [1, 2] } },
   d1_databases: [
     { binding: "CORE_DB", database_name: "eliotr-core", database_id: "11111111-1111-4111-8111-111111111111" },
     { binding: "SEARCH_DB", database_name: "eliotr-search", database_id: "22222222-2222-4222-8222-222222222222" },
@@ -151,6 +152,8 @@ await check("generated identity, Access and D1 config", () => {
     (value) => { value.vars.GOOGLE_EXTERNAL_TRANSPORT = "drive-exchange"; },
     (value) => { value.vars.ACCESS_AUDIENCE = "other"; },
     (value) => { value.vars.ENVIRONMENT = "development"; },
+    (value) => { value.vars.GOOGLE_CLIENT_SECRET = "must-be-secret_text"; },
+    (value) => { value.vars = null; },
     (value) => { value.keep_vars = true; },
     (value) => { value.d1_databases[1].database_id = value.d1_databases[0].database_id; },
     (value) => { value.d1_databases[0].database_id = "placeholder"; },
@@ -175,8 +178,9 @@ await check("Worker inventory export/compatibility/assets fail closed", async ()
     AI: { type: "ai" }, METRICS: { type: "analytics_engine", dataset: "eliotr_metrics" },
     KERNEL_WASM: { type: "wasm_module" },
     ASSETS: { type: "assets" },
-    DEPLOYMENT_GENERATION: { type: "plain_text", text: "git-test" },
-    ACCESS_AUDIENCE: { type: "plain_text", text: "test-aud" },
+    ...Object.fromEntries(Object.entries(config.vars).map(([name, value]) => [name,
+      typeof value === "string" ? { type: "plain_text", text: value } : { type: "json", json: value }])),
+    GOOGLE_CLIENT_SECRET: { type: "secret_text", text: "never-return-this-secret-value" },
   };
   const active = { id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", created_on: "2026-09-04T22:59:00.000Z",
     strategy: "percentage", versions: [{ version_id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", percentage: 100 }] };
@@ -203,7 +207,13 @@ await check("Worker inventory export/compatibility/assets fail closed", async ()
   assert.equal(attestation.traffic_percentage, 100);
   assert.equal(attestation.deployment_generation_binding, "PASS");
   assert.equal(attestation.binding_readback.length, 12);
+  assert.deepEqual(attestation.vars_readback, { state: "PASS", binding_count: Object.keys(config.vars).length });
   assert.ok(!JSON.stringify(attestation).includes("test-aud"));
+  assert.ok(!JSON.stringify(attestation).includes("never-return-this-secret-value"));
+  const withoutOptionalSecret = structuredClone(version);
+  delete withoutOptionalSecret.resources.bindings.GOOGLE_CLIENT_SECRET;
+  assert.deepEqual((await read({ versionResponse: { success: true, result: withoutOptionalSecret } })).vars_readback,
+    attestation.vars_readback);
   for (const inventory of [{ success: false, result: [worker] }, { result: [worker] },
     { success: true, result: [] }, { success: true, result: [worker, worker] },
     { success: true, result: [{ ...worker, has_assets: false }] },
@@ -222,6 +232,15 @@ await check("Worker inventory export/compatibility/assets fail closed", async ()
     (value) => { value.resources.bindings.CORE_DB.id = "ffffffff-ffff-4fff-8fff-ffffffffffff"; },
     (value) => { delete value.resources.bindings.ASSETS; },
     (value) => { value.resources.bindings.DEPLOYMENT_GENERATION.text = "stale-generation"; },
+    (value) => { value.resources.bindings.ACCESS_AUDIENCE.text = "stale-audience"; },
+    (value) => { value.resources.bindings.ACCESS_AUDIENCE.type = "json"; },
+    (value) => { delete value.resources.bindings.ACCESS_AUDIENCE; },
+    (value) => { value.resources.bindings.JSON_PROFILE.type = "plain_text"; },
+    (value) => { value.resources.bindings.JSON_PROFILE.json = { limits: [1, 2], mode: "stale" }; },
+    (value) => { value.resources.bindings.EXTRA_VAR = { type: "plain_text", text: "unexpected" }; },
+    (value) => { value.resources.bindings.EXTRA_JSON = { type: "json", json: { enabled: true } }; },
+    (value) => { value.resources.bindings.UNKNOWN_SECRET = { type: "secret_text" }; },
+    (value) => { value.resources.bindings.GOOGLE_CLIENT_SECRET.type = "plain_text"; },
     (value) => { value.resources.bindings.RESEARCH_SESSION.script_name = "foreign-worker"; },
     (value) => { value.resources.bindings.RESEARCH_SESSION.environment = "preview"; },
     (value) => { value.resources.bindings.EXTRA = { type: "r2_bucket", bucket_name: "other" }; },

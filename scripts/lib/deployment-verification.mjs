@@ -5,6 +5,13 @@ const MAX_SMOKE_BYTES = 64 * 1024;
 const MAX_API_BYTES = 1024 * 1024;
 const TIMEOUT_MS = 15_000;
 const GOOGLE_EXTERNAL_TRANSPORTS = new Set(["disabled", "gemini-mcp", "drive-exchange"]);
+// Runtime-only credentials documented by the core Env contract. These remain
+// optional across provider profiles; readback confirms only name and type.
+const ALLOWED_SECRET_BINDINGS = new Set([
+  "ELIOTR_MODEL_GATEWAY_TOKEN", "ELIOTR_MODEL_GATEWAY_READ_TOKEN", "GOOGLE_CLIENT_SECRET",
+  "GOOGLE_TOKEN_ENCRYPTION_KEY", "RESEARCH_CHANGES_CURSOR_KEY", "FEDERATION_CURSOR_HMAC_KEY",
+  "OWNER_NOTIFICATION_WEBHOOK",
+]);
 const CLOUDFLARE_UUID = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/iu;
 const isObject = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
 const fail = (label) => { throw new Error(label); };
@@ -56,7 +63,9 @@ export function validateDeploymentInput(env) {
 export function validateGeneratedDeployment(bytes, env, input) {
   let config;
   try { config = JSON.parse(bytes.toString("utf8")); } catch { fail("Invalid generated deployment JSON"); }
-  if (!isObject(config) || config.name !== "eliotr-core" || config.minify !== true ||
+  if (!isObject(config) || !isObject(config.vars) ||
+      Object.keys(config.vars).some((name) => ALLOWED_SECRET_BINDINGS.has(name)) ||
+      config.name !== "eliotr-core" || config.minify !== true ||
       config.keep_vars === true || config.preview_urls !== false ||
       !/^\d{4}-\d{2}-\d{2}$/u.test(config.compatibility_date ?? "") ||
       config.vars?.DEPLOYMENT_GENERATION !== env.ELIOTR_DEPLOYMENT_GENERATION ||
@@ -236,6 +245,7 @@ export async function readDeploymentWorker(env, input, config, options = {}) {
   }
 
   const expectedBindings = expectedDeploymentBindings(config);
+  const expectedVars = expectedDeploymentVars(config);
   const actualBindings = normalizeDeploymentBindings(version.resources.bindings);
   const actualByName = new Map();
   for (const binding of actualBindings) {
@@ -265,12 +275,24 @@ export async function readDeploymentWorker(env, input, config, options = {}) {
     }
     bindingReadback.push({ name: expected.name, type: expected.type, identity: expected.identity });
   }
-  // Unknown identity-bearing bindings are drift. Text and secret bindings may be
-  // provisioned outside the checked-in config; their values are never returned.
   const expectedNames = new Set(expectedBindings.map((binding) => binding.name));
-  const opaqueTypes = new Set(["plain_text", "secret_text", "json"]);
-  if (actualBindings.some((binding) => !expectedNames.has(binding.bindingName) && !opaqueTypes.has(binding.type))) {
-    fail("Worker version has an undeclared resource binding");
+  const variableReadback = [];
+  for (const [name, value] of Object.entries(expectedVars)) {
+    if (expectedNames.has(name)) fail("Generated variable conflicts with a resource binding");
+    const actual = actualByName.get(name);
+    const expectedType = typeof value === "string" ? "plain_text" : "json";
+    const observedValue = expectedType === "plain_text" ? actual?.text : actual?.json;
+    if (!actual || actual.type !== expectedType || !sameJsonValue(observedValue, value)) {
+      fail("Worker version variable readback drift");
+    }
+    variableReadback.push({ name, type: expectedType });
+  }
+  for (const binding of actualBindings) {
+    const name = binding.bindingName;
+    if (expectedNames.has(name) || Object.hasOwn(expectedVars, name)) continue;
+    if (!ALLOWED_SECRET_BINDINGS.has(name) || binding.type !== "secret_text") {
+      fail("Worker version has an undeclared binding or secret");
+    }
   }
 
   return { id: worker.id, compatibility_date: worker.compatibility_date,
@@ -279,7 +301,35 @@ export async function readDeploymentWorker(env, input, config, options = {}) {
     deployment_generation_binding: "PASS",
     deployment_id: active.id, deployment_created_on: active.created_on, version_id: versionId,
     version_number: version.number, version_etag: versionScript.etag, traffic_percentage: 100,
-    binding_readback: bindingReadback };
+    binding_readback: bindingReadback,
+    vars_readback: { state: "PASS", binding_count: variableReadback.length } };
+}
+
+function expectedDeploymentVars(config) {
+  if (!isObject(config.vars) || Object.keys(config.vars).some((name) =>
+    !/^[A-Z][A-Z0-9_]{0,127}$/u.test(name) || ALLOWED_SECRET_BINDINGS.has(name))) {
+    fail("Generated deployment variables are invalid or include a secret");
+  }
+  for (const value of Object.values(config.vars)) {
+    try {
+      if (JSON.stringify(value) === undefined) fail("Generated deployment variable is not JSON-safe");
+    } catch { fail("Generated deployment variable is not JSON-safe"); }
+  }
+  return config.vars;
+}
+
+function sameJsonValue(left, right) {
+  const canonical = (value) => {
+    if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
+    if (isObject(value)) return `{${Object.keys(value).sort().map((key) =>
+      `${JSON.stringify(key)}:${canonical(value[key])}`).join(",")}}`;
+    return JSON.stringify(value);
+  };
+  try {
+    const leftJson = canonical(left);
+    const rightJson = canonical(right);
+    return leftJson !== undefined && rightJson !== undefined && leftJson === rightJson;
+  } catch { return false; }
 }
 
 function expectedDeploymentBindings(config) {
