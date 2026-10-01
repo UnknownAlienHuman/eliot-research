@@ -23,17 +23,38 @@ jobs:
       - name: Apply, verify, and publish exact target decline
         run: |
           set -euo pipefail
+          gzip -dc .github/decline-payload/apply.py.gz > /tmp/apply-computer-agent-decline.py
           python - <<'PY'
           from pathlib import Path
 
-          path = Path('apps/eliotr-core/src/computer-agent-dispatch-store.ts')
+          path = Path('/tmp/apply-computer-agent-decline.py')
           text = path.read_text(encoding='utf-8')
-          old = '      "Computer-agent dispatch migrations 0090 and 0091 are required", true);\n'
-          new = '      "Computer-agent dispatch migrations 0090, 0091 and 0092 are required", true);\n'
-          if text.count(old) != 2 or new in text:
-              raise SystemExit('decline schema-message multiplicity changed')
-          path.write_text(text.replace(old, new, 1), encoding='utf-8')
+          start = text.index('def replace_once(')
+          end = text.find('\ndef ', start + 1)
+          if end < 0:
+              raise SystemExit('decline apply replace_once boundary changed')
+          block = text[start:end]
+          guard = '    if count != 1:\n'
+          writer = '    target.write_text(text.replace(old, new), encoding="utf-8")\n'
+          if block.count(guard) != 1 or block.count(writer) != 1:
+              raise SystemExit('decline apply replace_once body changed')
+          marker = 'Computer-agent dispatch migrations 0090 and 0091 are required'
+          block = block.replace(
+              guard,
+              '    sequential_decline_schema = (\n'
+              '        path == "apps/eliotr-core/src/computer-agent-dispatch-store.ts"\n'
+              f'        and "{marker}" in old\n'
+              '    )\n'
+              '    if count != 1 and not (sequential_decline_schema and count == 2):\n',
+          )
+          block = block.replace(
+              writer,
+              '    updated = text.replace(old, new, 1) if sequential_decline_schema else text.replace(old, new)\n'
+              '    target.write_text(updated, encoding="utf-8")\n',
+          )
+          path.write_text(text[:start] + block + text[end:], encoding='utf-8')
           PY
+          gzip -n -c /tmp/apply-computer-agent-decline.py > .github/decline-payload/apply.py.gz
 
           gzip -dc .github/decline-payload/runner.sh.gz > /tmp/run-computer-agent-decline.sh
           python - <<'PY'
