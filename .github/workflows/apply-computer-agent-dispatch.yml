@@ -1,6 +1,9 @@
 name: Apply computer-agent dispatch
 
 on:
+  push:
+    branches:
+      - main
   workflow_dispatch:
 
 permissions:
