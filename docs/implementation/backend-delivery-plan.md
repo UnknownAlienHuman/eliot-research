@@ -1,7 +1,7 @@
 # Backend delivery plan
 
-Current execution order, reconciled on 2026-09-29 against `main`
-`25be3164b7aee8e76f83f5e60808641ac58c4b0a`.
+Current execution order, reconciled on 2026-10-01 against `main`
+`8db894c6da834cd337cdd6f0d7057545af4e18fa`.
 
 This is the volatile handoff and queue. Refresh `origin/main` and the active task before editing. [PR #292](https://github.com/UnknownAlienHuman/eliot-research/pull/292) preserves the original S01–S99 passports and negative acceptance criteria; it is not a second queue.
 
@@ -16,75 +16,108 @@ Keep these states separate:
 
 The current phase is product code first: compilation, scoped lint, the depth-100 SQL compiler when relevant, and minimal Clippy for Rust changes. Broad behavioral/browser/native/mutation/live suites follow assembly. Deferred checks remain mandatory and must not be labelled `PASS`.
 
-## Current active checkpoint — S37 / #229
+## Current active checkpoint — S92 local integration
 
-### What is already in `main`
+92.1 is delivered (`8db894c6`): six browser-harness scenarios in
+`tests/integration/browser/s92-intake.mjs` — owner identity (RS256),
+local config readiness, project admission, read-policy grant, model D1
+fail-closed, Library/Lens exact readback — registered as real `node:test`
+assertions in `tests/integration/browser/library.spec.ts`. Honest states:
+5 PASS + 1 PENDING_OWNER_D1B (live-model assertions need owner decision
+D1(b)). Every scenario drives the real harness (`scripts/lib/local-*.mjs`,
+`owner-e2e.mjs`) against in-memory SQLite seeded with the real migration
+DDL; no new browser framework.
+
+92.2–92.6 (delegation, products, continuity, COW, negatives) and the local
+runbook / INPUT draft are in flight. The S92 done-state requires
+`pnpm test:local-launch`, `test:local-owner`, `local:prepare`,
+`local:smoke`, `test:owner-e2e`, `cf:types`, `build`, `cf:dry-run` and full
+F on applicable CI platforms; unexecuted checks stay pending, never PASS.
+D1(a) applies: no local fake model gateway exists — configuration and
+readiness fail-closed only; anything needing a live model response stays
+`PENDING_OWNER_D1B`.
+
+After S92: S94 staging is blocked — staging isolation is unresolved
+(Option A: env-suffixed resource names + deny-list guard, Option B:
+separate Cloudflare account) and no live deployment is authorized — then
+S93/S95/S96 on the attested build, then S97 release acceptance.
+
+## S37 / #229 — code delivered, do not restart
+
+Task: [S37 / #229](https://github.com/UnknownAlienHuman/eliot-research/pull/229).
+
+### What is in `main`
 
 | SHA | Delivered |
 |---|---|
 | `c25df085` | Recovered the exact historical S37 patch, published strict branch contracts, removed the obsolete writable publisher and closed #299. |
 | `b98ee60f` | Added one shared governed branch executor for `READ_AND_EXTRACT`, `ANALYZE_BRANCHES` and `COUNTER_SEARCH`, with exact scope/protocol/planning/W1/stage-five revalidation and receipt-based recovery. |
 | `25be3164` | Registered `research-handlers.exploratory.v7`, connected the shared executor to the stage factory and started-attempt recovery, and retained fail-closed missing-handler behavior. |
+| `d252eb69` | Bound research branches into EvidenceFreeze: exact committed v7/v8 branch reconciliation required before freeze; checkpoint, W2 attempt and request identity bound into manifest/freeze refs; unresolved contradictions and open ResearchDebt derived server-side; legacy v2 freeze bytes unchanged. Refs #229. |
+| `70dc0965` | Hardened branch freeze lineage: reopen exact committed Stage7/Stage8 outputs before accepting Stage9 reconciliation; exact required-role coverage, nested branch identities, canonical contradiction derivation, one-to-one canonical OPEN debt per blocked role. |
+| `16ced6eb` | Passed `branch_execution` deps (database, Work R2, committed stage-five reader, role model) from semantic composition into the workflow handler factory. |
+| `a3930696` | Substantive model-backed execution for v7 branch roles: per-role model calls behind W3 admission, installed prompts, model-attempt/reservation ports. |
+| `b5ea49df` | Settled W1 observations after v7 branch execution, wired into the session execute path. |
+| `8250ff20` | Bound COUNTER to committed read-extract bytes, not analysis output. |
+| `fb1c9167` | Branch-aware W3 spend admission for ANALYZE_BRANCHES/COUNTER_SEARCH (1/2): admission port branch-role awareness. |
+| `bccd6037` | Branch-aware W3 spend admission for ANALYZE_BRANCHES/COUNTER_SEARCH (2/2): `admitBranchRole` spend-policy path and policy readers. |
+| `05c3c3a1` | Gated W1 branch settling behind branch-execution handler generations, with a regression test for the legacy settling path. |
+| `2d1d0ae6` | S37 branch-role unit tests: executor binding, output schema boundaries, preparation fail-closed. |
+| `68678041` | S37 `model.roles` server wiring: per-role evidence packs derived only from the frozen stage-five pack (Variant A), deterministic manifest refs, roles assembled in the semantic server; registry contours. |
+| `d6041be7`, `331a41b8` | Registered S37 subsystem contours in `implementation-status.json`: 43 exact contours, all `IMPLEMENTED_NOT_LIVE`, 0 `LIVE_QUALIFIED` (`scripts/check-implementation-status.mjs` exit 0). |
+| `71348bb2` | T5-A erasure-restore live-gate trial runner (ingest/erase/absence-readback/purge-replay). |
+| `0d796ba9` | T5-B prompt-injection trial runner (gate `T5-prompt-injection`). |
+| `90f694d0` | T5-C failure-injection trial runner (gate `T5-failure-injection`). |
+| `f067fe9c` | T5-D disclosure-audit trial runner (gate `T5-disclosure-audit`). |
+| `178f7b25` | T6 representative-load trial runner (gate `T6-representative-load`). Gates enumerated in `tests/integration/live-gates.example.json` (13 gates). |
+| `55c83038` | S96 live cost observer + settlement (`research-model-spend-observation`). |
+| `b7b7d657` | S37 hardening (1/2): `admitBranchRole` role↔stage fail-closed binding in the spend policy; port-layer re-validation at write time. |
+| `90dcfdff` | S37 hardening (2/2): migration `0095` adds the `role` column to `research_model_spend_admission` with a stage-tied CHECK, bound into the admission digest; new tests. |
+| `8db894c6` | S92 92.1 intake scenarios + `library.spec.ts` registration (see active checkpoint above). |
 
-### Exact current boundary
+### Exact boundary
 
-`v7` is registered but **not active**:
+- `v7` (`research-handlers.exploratory.v7`) is the selected generation for new
+  explicit-protocol admissions (`SERVER_OWNED_BRANCH_HANDLER_GENERATION` in
+  `apps/eliotr-core/src/research-session.ts`); delegated computer-agent runs
+  select `v8` (`SERVER_OWNED_EXTERNAL_AGENT_HANDLER_GENERATION`); idempotent
+  replay keeps the previously stored handler generation; persisted `v5/v6`
+  (and other prior generations) remain accepted and unchanged.
+- Semantic composition passes `branch_execution` deps (database, Work R2,
+  committed stage-five reader, navigation, ledger, role model) into the stage
+  handler factory.
+- EvidenceFreeze requires the exact committed v7/v8 branch reconciliation
+  before freeze: a missing or inconsistent lineage fails closed
+  (`WORKFLOW_AUTHORITY_STALE`), never falling back to the legacy path;
+  contradiction refs are derived server-side; a canonical OPEN ResearchDebt is
+  recorded per blocked role; legacy v2 freeze bytes are unchanged.
+- The branch executor performs per-role model calls behind branch-aware W3
+  spend admission (`admitBranchRole`) and settles W1 observations after
+  execution, gated behind branch-execution handler generations; COUNTER binds
+  committed read-extract bytes.
+- `model.roles` is assembled in the semantic server from the installed
+  `ELIOTR_MODEL_PROFILE_DEFINITION_JSON` model policy, evidence
+  authority/resolver ports and the committed stage-five reader; per-role packs
+  are filtered views of the frozen pack with exact frozen digests and
+  receipts; absent `config.roles` means roles are not passed at all
+  (fail-closed current behavior).
+- T5-A/B/C/D and T6 trial runners are code-delivered; their attested/live
+  gate runs are acceptance-pending, not PASS.
+- S96 cost observer is code-delivered; live qualification is pending.
 
-- new explicit-protocol admissions still select `v6`;
-- stored `v5/v6` runs keep their original semantics;
-- semantic composition does not yet pass branch-executor dependencies;
-- EvidenceFreeze does not yet bind the committed branch reconciliation, contradiction refs or open ResearchDebt;
-- the current branch executor emits evidence-bound candidate material but performs no role model calls and no W1 observation mutation.
+Do not describe S37 as live-qualified or acceptance-complete. The remaining
+work is acceptance (assembly, S93 real-model quality), not code.
 
-Do not describe S37 as complete or executable end-to-end.
+### Known S37 residual — separate packet, do not fold into 0095
 
-### Next checkpoint: activate v7 and bind reconciliation into EvidenceFreeze
-
-Task: [S37 / #229](https://github.com/UnknownAlienHuman/eliot-research/pull/229).
-
-Expected source paths:
-
-```text
-apps/eliotr-core/src/research-session.ts
-apps/eliotr-core/src/research-semantic-composition.ts
-apps/eliotr-core/src/research-evidence-freeze-composition.ts
-packages/cloudflare-research/src/research-evidence-freeze-composition.ts
-packages/cloudflare-research/src/research-evidence-freeze-preparation.ts
-```
-
-`research-retrieve-branches.ts` and `research-stage-handlers.ts` already contain the published v7 registration/factory work. Do not rewrite them unless a concrete integration defect requires it.
-
-Required result:
-
-1. newly admitted requests carrying the explicit installed InquiryProtocol select `v7`;
-2. idempotent replay keeps the previously stored handler generation; persisted `v5/v6` remains accepted and unchanged;
-3. semantic composition supplies the existing shared branch executor with the same database, Work R2, navigation, ledger and committed stage-five reader;
-4. v7 EvidenceFreeze requires the exact committed branch reconciliation and binds its identity, unresolved contradiction refs, unmet roles and open ResearchDebt into freeze preparation/currentness;
-5. legacy generations retain their existing freeze input and lineage; do not reinterpret old receipts as v7;
-6. a missing, foreign, corrupt or stale v7 reconciliation fails closed instead of falling back to the legacy path;
-7. recovery continues through the same stored generation and checkpoint identities.
-
-Verification for this code-first checkpoint:
-
-```text
-TypeScript build: contracts + cloudflare-research + eliotr-core
-scoped ESLint for changed production files
-package boundaries
-work-packet ownership
-whitespace / diff check
-```
-
-No broad test, workflow dispatch, deployment, provider call or remote migration is implied. Record those as pending.
-
-### Following S37 checkpoints
-
-After v7 activation/freeze binding, continue #229 in this order:
-
-1. **Semantic role execution.** Use the installed prompts and existing model-attempt/reservation/W3 ports for only the required SUPPORT, COUNTER, ALTERNATIVE, CHRONOLOGY, IMPLEMENTATION, LITERATURE and SOURCE_AUDIT roles. An absent role must cost zero calls. Source-class heuristics alone are not substantive branch execution.
-2. **Settle W1 observations.** Append only permitted evidence-bound observations with stable branch identities. Do not rewrite protected portfolio/debt refs. Identical replay is a no-op; conflict is integrity failure.
-3. **Counter/reconciliation truthfulness.** Preserve contradiction, failed-probe, unmet-role and independence information through freeze. Duplicate origins cannot satisfy missing independent support.
-4. **Duration, budget and recovery.** Classify actual paid I/O, keep every expensive call behind existing W3 authority, recover committed output before redispatch, and block new work after cancellation/deadline/currentness failure.
-5. **Assembly acceptance.** Retain the S37 passport's named fixtures and native restart/lost-ACK/concurrency cases for the later acceptance phase. Real-model quality remains S93.
+`research_model_spend_admission` still carries migration 0046's
+`CHECK(stage_index IN (12, 13, 14))`, and the 0084 trigger
+`research_model_spend_admission_w2_guard` maps only stages 12/13/14
+(`SYNTHESIZE`/`VERIFY`/`AUDIT_CLAIMS`). Stage 8/9 branch admissions
+(`ANALYZE_BRANCHES`/`COUNTER_SEARCH`) cannot be inserted at the DB layer,
+so the 0095 role CHECK is vacuous for branch stages until the table is
+widened. Widening needs a table rebuild plus trigger updates; do not widen
+0095's CHECK alone.
 
 ## Delivered checkpoints that must not be restarted
 
@@ -95,17 +128,17 @@ After v7 activation/freeze binding, continue #229 in this order:
 | D1 authority/grant/control repair | `7d2bb36` | #293 native negative/replay/concurrency acceptance. |
 | Full lint/error retention | `eaa4efa` | #296 focused fault/replay acceptance. |
 | CI independent reporting/root selection | `a76acd98` | #295 structural resource work and #304 execution acceptance. |
-| S37 source/contracts/executor/factory | `c25df085`, `b98ee60f`, `25be3164` | Active v7 admission/freeze binding, then substantive role/W1/budget execution. |
+| S37 source/contracts/executor/factory | `c25df085`, `b98ee60f`, `25be3164` | v7/v8 admission, freeze binding, substantive role execution, W1 settling, branch-aware budget, `model.roles` server wiring, admission hardening (migrations through `0095`) and the 43-contour registry are delivered (see S37 record above). Do not restart them; remaining work is acceptance (assembly, S93 real-model quality) plus the known stage 8/9 DB-widening packet. |
 
 Also reuse the already delivered project/client grants, machine HTTP/MCP readers and controls, owner historical reads, long-run authority, append-only project attachment, normalized bundle ingestion, runtime failure diagnostics and reconnect intent. Their exact lineages remain in #202–#205, #209, #211, #223–#225, #290 and #291. Open planning cards do not mean those systems are wholly absent.
 
-## Queue after S37
+## Queue after S92
 
 Finish the active checkpoint before switching. Then resume this dependency order:
 
 | Order | Tasks | Next product result |
 |---|---|---|
-| A | S29/#221, S34/#226; verified residuals in S10–S15, S31–S33, S98–S99 | Finish selected-profile configuration/qualification and genuine machine-path gaps without reimplementing delivered grants, controls, importer or readers. |
+| A | S34/#226; S29 workspace-candidate admission gate delivered (`37ba91eb`, `5e7ed589`) as `IMPLEMENTED_NOT_LIVE`; verified residuals in S10–S15, S31–S33, S98–S99 | ER-36 fail-closed `evaluateWorkspaceCandidateAdmission` bound to durable `OBSERVED_MATCH` v2 plus a separate owner-issued exact-candidate authorization. Two genuine code residuals remain: S29/#221 immutable semantic configuration revision (`ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON_0`/`_1` still read in `apps/eliotr-core/src/env.ts`); S34/#226 lazy model-proof renewal single-flight (same-key replay returns `DYNAMIC_ROUTE_PROMOTION_CONFLICT`, no cross-operation single-flight in `packages/cloudflare-ai/src/dynamic-route-provisioning.ts`). Finish selected-profile configuration/qualification and genuine machine-path gaps without reimplementing delivered grants, controls, importer or readers. |
 | B | S21–S23 and remaining S38–S46 | Complete truthful procedure reporting, protocol execution, observations, freeze/debt/supersession, verifiers and product handlers on the shared Research engine. |
 | C | S47–S61 | Complete source/navigation/index boundaries, requested coverage, artifacts/publication, Workspace candidate admission/readback and federation. Prioritize dependency-ready S50–S52 and S58/S59. |
 | D | S62–S72 | Complete erasure closure, outbox/DLQ/reconciliation, backup/isolated restore, rollback, Steward and durable events. |
@@ -161,6 +194,6 @@ makes model providers, external agents and Google tools independent choices; Mus
 The currently recorded `gemini-mcp` release configuration is not a mandatory vendor choice. Explicit
 `disabled` is valid for a Google-free release; configuration and registry must still agree. Unselected
 integration gates do not block other work. S29/profile and S10–S13/S98–S99 client work implement the
-remaining selection/adapter changes without redoing delivered services. The active S37 checkpoint is unchanged.
+remaining selection/adapter changes without redoing delivered services. The active checkpoint is S92 local integration; S37 code is delivered (acceptance pending).
 
 No branch deletion, force push, pushed-history rewrite, live deployment, provider spending, hostname change or remote database migration is authorized by this plan.
