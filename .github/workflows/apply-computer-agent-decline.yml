@@ -1,0 +1,28 @@
+name: Apply computer-agent dispatch decline
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 22.13.0
+          check-latest: false
+      - name: Apply, verify, and publish exact target decline
+        run: |
+          set -euo pipefail
+          gzip -dc .github/decline-payload/runner.sh.gz > /tmp/run-computer-agent-decline.sh
+          chmod +x /tmp/run-computer-agent-decline.sh
+          /tmp/run-computer-agent-decline.sh
