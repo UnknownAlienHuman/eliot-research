@@ -361,6 +361,18 @@ export function createProjectComputerAgentRouteService(options: {
   };
 }
 
+export async function readCurrentProjectComputerAgentRoute(
+  database: D1Database,
+  projectIdValue: string,
+  taskKindValue: string,
+): Promise<ProjectComputerAgentRoute | null> {
+  await requireSchema(database);
+  const projectId = identifier(projectIdValue, "project_id");
+  const kind = taskKind(taskKindValue);
+  const row = await currentRoute(database, projectId, kind);
+  return row === null ? null : decodeRoute(database, row);
+}
+
 async function readBinding(db: D1Database, operationId: string): Promise<BindingRow | null> {
   try {
     return await db.prepare("SELECT * FROM research_computer_agent_route_binding_valid " +

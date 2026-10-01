@@ -118,3 +118,11 @@ Owners may inspect
 before starting work. The report preserves route priority but marks an entry eligible only when the exact
 connection revision is still current/enabled, declares `WEB_INBOX` and the task kind, and has READY
 qualification for the current deployment. `preferred_ready_connection` is advisory observation only.
+
+## Owner-authorized dispatch acceptance
+
+The isolated inbox may call the service-token dispatch pull and accept endpoints in addition to task,
+evidence and recovery endpoints. Pull is read-only and returns only an unexpired intent addressed to the
+page's exact Access actor, current grant, route, connection and WEB_INBOX qualification. Accept starts the
+existing delegated Research workflow with the dispatch's frozen request. Neither action persists secrets,
+creates a second scheduler, selects another actor or transfers a task lease.

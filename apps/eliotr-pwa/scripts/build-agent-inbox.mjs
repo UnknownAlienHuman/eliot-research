@@ -5,6 +5,7 @@ import ts from "typescript";
 
 const appRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const sourcePath = resolve(appRoot, "src/agent-inbox.ts");
+const dispatchSourcePath = resolve(appRoot, "src/agent-inbox-dispatch.ts");
 const cssPath = resolve(appRoot, "src/agent-inbox.css");
 const outputDirectory = resolve(appRoot, "public/agent-inbox");
 const outputScript = resolve(outputDirectory, "app.js");
@@ -14,10 +15,13 @@ function fail(message) {
   throw new Error(`agent-inbox build: ${message}`);
 }
 
-const [source, css] = await Promise.all([
+const [mainSource, dispatchSource, css] = await Promise.all([
   readFile(sourcePath, "utf8"),
+  readFile(dispatchSourcePath, "utf8"),
   readFile(cssPath, "utf8"),
 ]);
+const source = `${mainSource}
+${dispatchSource}`;
 
 if (/(^|\n)\s*(?:import|export)\b/u.test(source) || /\bimport\s*\(/u.test(source)) {
   fail("standalone source cannot import another module");

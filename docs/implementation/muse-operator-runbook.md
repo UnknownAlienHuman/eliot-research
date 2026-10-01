@@ -158,3 +158,17 @@ Before manual dispatch, the owner can read the project route readiness report fo
 `WEB_INBOX`. The first eligible ordered entry is returned as `preferred_ready_connection`, while every
 other entry retains its exact reason for ineligibility. This is a planning signal only: the agent that starts
 a delegated run must still be the verified originating actor present in the active route.
+
+## Owner-selected dispatch flow
+
+1. Confirm the intended Muse/Spark/Dot connection and transport is READY in the route-readiness report.
+2. Create a dispatch naming that exact connection revision and exact project-grant revision, with the
+   explicit v2 PROJECT Research request and a TTL of at most 3600 seconds.
+3. In the target agent's own authenticated contour, pull the dispatch using the exact grant locator.
+4. Accept it under that same credential generation. The returned workflow ID is the existing Research run,
+   not a wrapper job.
+5. Pull the Stage 8 task only after the workflow publishes it, submit the callback, then recover through the
+   existing W2/W1 path.
+
+Do not accept another actor's dispatch, copy a lease between agents, or interpret an empty pull as permission
+to start a replacement run. Route/grant/qualification changes require a fresh owner intent.

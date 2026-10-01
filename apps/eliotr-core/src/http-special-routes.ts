@@ -26,6 +26,7 @@ import {
 } from "./agent-task-http.js";
 import { handleComputerAgentConnectionHttp } from "./computer-agent-connection-http.js";
 import { handleComputerAgentRouteHttp } from "./computer-agent-route-http.js";
+import { handleComputerAgentDispatchHttp } from "./computer-agent-dispatch-http.js";
 import {
   handleComputerAgentQualificationConfirmHttp,
   handleComputerAgentQualificationOwnerHttp,
@@ -92,6 +93,12 @@ export async function dispatchHttpSpecialRoute(input: {
     case "research.computer-agent-routes.readiness":
       return handleComputerAgentRouteHttp(input.request, input.env, input.context,
         input.match.params, input.match.route.maximum_request_bytes);
+    case "research.computer-agent-dispatches.create":
+    case "research.computer-agent-dispatches.status":
+    case "research.computer-agent-dispatches.pull":
+    case "research.computer-agent-dispatches.accept":
+      return handleComputerAgentDispatchHttp(input.request, input.env, input.context,
+        input.match.route.operation, input.match.params, input.match.route.maximum_request_bytes);
     case "research.client-grants.list":
     case "research.client-grants.put":
     case "research.client-grants.revoke":

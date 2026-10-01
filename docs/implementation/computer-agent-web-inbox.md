@@ -91,7 +91,7 @@ or application redirect.
 This slice does not implement:
 
 - Access-policy mutation or service-token issuance;
-- owner-selected Spark/Muse/Dot routing or failover;
+- automatic Spark/Muse/Dot selection, failover or lease transfer;
 - multiple agents racing one exclusive lease;
 - automatic Workflow wake-up after callback;
 - automatic admission of new browser/local material;
@@ -134,3 +134,11 @@ Use the owner-only route readiness GET endpoint with `WEB_INBOX` to see ordered 
 exact revisions, declared capabilities, latest qualification state and the first currently eligible entry.
 `UNQUALIFIED`, `EXPIRED`, `ACTOR_MISMATCH`, `STALE`, unsupported capability and stale connection revisions
 remain distinct. Reading the report does not select an agent or reserve work.
+
+## Dispatch before task delivery
+
+For owner-selected computer-agent runs, first create an immutable dispatch through the owner API. In the
+clean service-token inbox, use **Pull dispatch** and then **Accept dispatch**. Acceptance returns the exact
+workflow ID. The workflow may need to advance before Stage 8 publishes an agent task; use the existing task
+pull after that point. Repeating accept with the same dispatch is idempotent and returns the same workflow.
+A rotated credential, newer route/grant revision or newer qualification requires a new dispatch.

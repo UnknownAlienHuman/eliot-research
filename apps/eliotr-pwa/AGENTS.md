@@ -5,6 +5,6 @@ persistent panels—corpus, investigation, evidence—and always expose health, 
 denial, budget stop, and connector degradation.
 
 The isolated `/agent-inbox/` page is the sole exception to the owner-session transport rule. It may call
-only the declared service-token task, exact-evidence, and run-recovery APIs. It must not import Cloudflare
+only the declared service-token dispatch, task, exact-evidence, and run-recovery APIs. It must not import Cloudflare
 bindings, reuse owner cookies, register a service worker, persist credentials or task data, share owner PWA
 bundles, or create another scheduler/completion authority.

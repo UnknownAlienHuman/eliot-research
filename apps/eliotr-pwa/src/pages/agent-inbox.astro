@@ -103,6 +103,32 @@ const description = "A no-persistence service-token task console for approved co
         </div>
       </section>
 
+      <section class="panel" aria-labelledby="dispatch-heading">
+        <div class="panel-heading">
+          <div>
+            <p class="step">01c</p>
+            <h2 id="dispatch-heading">Owner-authorized run dispatch</h2>
+          </div>
+          <div class="button-row">
+            <button id="pull-dispatch" class="button" type="button" data-request>Pull dispatch</button>
+            <button id="accept-dispatch" class="button button--secondary" type="button" data-request>Accept dispatch</button>
+          </div>
+        </div>
+        <p class="help">
+          Pull only an immutable WEB_INBOX intent addressed to this exact Access actor, grant revision,
+          connection revision, credential generation and current route. Acceptance starts the existing
+          delegated Research workflow; it does not transfer another actor's task or lease.
+        </p>
+        <label>
+          <span>Dispatch ID</span>
+          <input id="dispatch-id" type="text" autocomplete="off" spellcheck="false" />
+        </label>
+        <details open>
+          <summary>Current dispatch offer</summary>
+          <pre id="dispatch-output">No dispatch loaded.</pre>
+        </details>
+      </section>
+
       <section class="panel" aria-labelledby="task-heading">
         <div class="panel-heading">
           <div>

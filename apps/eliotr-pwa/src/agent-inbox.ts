@@ -566,7 +566,8 @@ element("clear-secrets", HTMLButtonElement).addEventListener("click", () => {
   clientGrantId.value = "";
   qualificationChallengeId.value = "";
   qualificationChallengeToken.value = "";
-  setStatus("Credential and qualification fields cleared.");
+  clearDispatchFields();
+  setStatus("Credential, qualification and dispatch fields cleared.");
 });
 
 window.addEventListener("pagehide", () => {
@@ -575,6 +576,7 @@ window.addEventListener("pagehide", () => {
   clientGrantId.value = "";
   qualificationChallengeId.value = "";
   qualificationChallengeToken.value = "";
+  clearDispatchFields();
   currentTask = null;
 });
 

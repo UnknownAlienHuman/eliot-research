@@ -130,9 +130,10 @@ For external operation and NotebookLM comparisons use the [computer-agent runboo
 truthful capability reporting, stdin-only Secrets Store key create/rotation, composed Custom Provider plus
 Provider Config attachment, task payload/lease/progress/result/status, and delegated v8 branch-analysis
 publication/callback/W2 recovery are implemented, not live-qualified. Managed-OAuth Research delegation,
-provider-native inference transports, safe connection removal, owner-selected cross-agent routing and
-live Spark/Muse/Dot qualification remain pending. The web inbox is implemented in source under ADR-0008,
-but its Access policy, deployment and real-agent qualification remain pending.
+provider-native inference transports, safe connection removal, automatic cross-agent failover and live
+Spark/Muse/Dot qualification remain pending. Exact owner-selected dispatch is implemented in source, and
+the web inbox is implemented under ADR-0008, but Access policy, deployment and real-agent qualification
+remain pending.
 
 [dot]: https://help.openai.com/en/articles/20001530-getting-started-with-your-dot
 [dot-admin]: https://help.openai.com/en/articles/20001554-manage-dots-in-chatgpt-workspaces
@@ -155,9 +156,10 @@ a caller is authorized by its verified Access actor, current project grant and d
 capabilities. Task MCP requires `MCP_WRITE`; the browser inbox requires `WEB_INBOX`. Disabled or missing
 connections fail before task lease authority is reached.
 
-This registry is the substrate for routing, not routing itself. V8 tasks still target the originating
-exact grant/actor. Project-level preferred-agent policy, cross-agent assignment, capability-based failover
-and parallel independent task publication remain pending and must not reuse or transfer an existing lease.
+The registry and project route are now consumed by an explicit owner-selected dispatch intent. The target
+actor still starts its own delegated v8 run under the exact originating grant and qualification; no owner
+impersonation or task/lease transfer is introduced. Automatic preferred-agent selection, capability-based
+failover and parallel independent task publication remain pending.
 
 ## 5. Project route policy and immutable run binding
 
@@ -199,3 +201,22 @@ for another deployment is `STALE`.
 This preview is not dispatch. It does not create a run, call an agent, alter a route, confirm a challenge,
 move a task or transfer a lease. It makes future preferred-agent selection auditable before any mutation
 protocol is introduced.
+
+## 8. Owner-authorized dispatch intent and target acceptance
+
+Migration 0090 adds a separate two-phase delegation receipt instead of letting an owner impersonate a
+computer agent. The owner creates one immutable, bounded dispatch for an exact project route revision,
+connection revision, transport, project-grant revision, READY qualification observation and explicit v2
+Research request. Dispatch expiry is capped at one hour and cannot outlive either the grant or the exact
+credential qualification.
+
+The selected agent then pulls and accepts the intent under its own verified Cloudflare Access actor and
+credential generation. Acceptance invokes the existing `research.run` service with a deterministic key
+derived from the dispatch ID. Existing project sponsorship, scope freezing, v8 handler selection, route
+binding and Workflow creation therefore remain the only run authority. The acceptance receipt must join
+the resulting workflow and immutable route binding before it can settle.
+
+A route, grant, connection, deployment or qualification change makes an unaccepted dispatch stale. An
+accepted run is not moved when policy changes; its existing task publication, callback and recovery rules
+still apply and current authority may block later access. Pull does not claim a lease, acceptance does not
+reuse another actor's lease, and this checkpoint does not implement silent fallback or cross-agent retry.
