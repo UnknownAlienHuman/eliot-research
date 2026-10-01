@@ -4,6 +4,7 @@ import {
   exactDynamicRouteObject,
   exactDynamicRouteSha256,
   dynamicRouteProvisioningFailure,
+  modelGatewaySha256,
   parseDynamicRouteQualificationProbeInput,
   type DynamicRouteControlPlanePort,
   type DynamicRouteProvisioningErrorCode,
@@ -22,6 +23,7 @@ import {
 import {
   createResearchModelQualification,
   type ResearchModelQualificationNativeDependencies,
+  type ResearchModelQualificationPort,
 } from "./research-model-qualification.js";
 import { createD1ResearchModelQualificationObservationStore } from "./research-model-qualification-store.js";
 
@@ -198,6 +200,42 @@ async function previousProbeKey(
   return identity(observation.probe_idempotency_key, "active candidate probe idempotency key", "DYNAMIC_ROUTE_PROMOTION_CONFLICT");
 }
 
+/**
+ * Cross-operation single-flight for qualification renewal. Concurrent renewals
+ * for the same route/config identity coalesce to one execution; every joiner
+ * awaits the leader and receives the leader's result.
+ *
+ * Module-level (per-isolate) state is deliberate: renewStage mints a fresh
+ * renewal port per operation per stage, so per-instance state would never
+ * coalesce anything. The key is the full candidate identity (route, version,
+ * candidate ref and sha), so different identities never share a flight.
+ * Entries are removed when the flight settles, so a failed leader does not
+ * poison retries: the next caller starts a new flight.
+ */
+const renewalFlights = new Map<string, Promise<ResearchModelQualificationRenewalResult>>();
+
+function renewalFlightKey(candidate: StoredDynamicRouteCandidate): string {
+  return [
+    candidate.row.route_ref,
+    candidate.row.route_version,
+    candidate.row.candidate_ref,
+    candidate.row.candidate_sha256,
+  ].join("|");
+}
+
+async function joinRenewalFlight(
+  key: string,
+  execute: () => Promise<ResearchModelQualificationRenewalResult>,
+): Promise<ResearchModelQualificationRenewalResult> {
+  const inFlight = renewalFlights.get(key);
+  if (inFlight !== undefined) return inFlight;
+  const flight = execute().finally(() => {
+    if (renewalFlights.get(key) === flight) renewalFlights.delete(key);
+  });
+  renewalFlights.set(key, flight);
+  return flight;
+}
+
 export interface ResearchModelQualificationRenewalDependencies {
   readonly database: D1Database;
   readonly work_bucket: R2Bucket;
@@ -205,6 +243,13 @@ export interface ResearchModelQualificationRenewalDependencies {
   readonly control_plane: Pick<DynamicRouteControlPlanePort, "get">;
   readonly prompt_compiler: ModelGatewayPromptCompilerPort;
   readonly now: () => string;
+  /**
+   * Override for the qualification step. Defaults to the native research model
+   * qualification service (one-shot claim, provider call, control-plane
+   * readbacks). Tests stub this to avoid the provider call; the single-flight
+   * and replay logic under test runs for real.
+   */
+  readonly qualify?: (fresh: DynamicRouteQualificationProbeInput) => Promise<DynamicRouteQualificationEvidence>;
 }
 
 export interface ResearchModelQualificationRenewalInput {
@@ -239,16 +284,11 @@ export function createResearchModelQualificationRenewal(
     fail("DYNAMIC_ROUTE_PROMOTION_CONFLICT", "qualification renewal dependencies are invalid");
   }
   const proofStore = createD1DynamicRouteQualificationProofStore(dependencies.database, { now: dependencies.now });
-  return Object.freeze({
-    async renew(rawInput: ResearchModelQualificationRenewalInput): Promise<ResearchModelQualificationRenewalResult> {
-      const input = detachedRenewalInput(rawInput);
-      const candidate = await readActiveCandidate(dependencies.database, input.candidate_ref, input.candidate_sha256);
-      assertProbeCandidateBinding(input.fresh, candidate);
-      const oldProbeKey = await previousProbeKey(dependencies.database, candidate, dependencies.now);
-      if (oldProbeKey === input.fresh.probe_idempotency_key) {
-        fail("DYNAMIC_ROUTE_PROMOTION_CONFLICT", "qualification renewal requires a new probe identity");
-      }
-      const qualificationService = createResearchModelQualification({
+  const observations = createD1ResearchModelQualificationObservationStore(dependencies.database, dependencies.now);
+  let nativeQualification: ResearchModelQualificationPort | undefined;
+  function getNativeQualification(): ResearchModelQualificationPort {
+    if (nativeQualification === undefined) {
+      nativeQualification = createResearchModelQualification({
         database: dependencies.database,
         work_bucket: dependencies.work_bucket,
         gateway: dependencies.gateway,
@@ -256,47 +296,138 @@ export function createResearchModelQualificationRenewal(
         prompt_compiler: dependencies.prompt_compiler,
         now: dependencies.now,
       });
-      // qualify() owns the existing one-shot claim, native provider call, and
-      // before/after control-plane readbacks. Errors are deliberately allowed
-      // to escape; this method never redispatches an ambiguous probe.
-      const qualification = await qualificationService.qualify(input.fresh);
-      const afterQualification = await readActiveCandidate(
-        dependencies.database,
-        input.candidate_ref,
-        input.candidate_sha256,
-      );
-      assertProbeCandidateBinding(input.fresh, afterQualification);
-      const proof = await proofStore.putImmutable({
-        candidate_ref: input.candidate_ref,
-        candidate_sha256: input.candidate_sha256,
-        qualification,
-      });
-      const latest = await proofStore.promoteLatest({
-        route_ref: afterQualification.row.route_ref,
-        route_version: afterQualification.row.route_version,
-        candidate_ref: input.candidate_ref,
-        candidate_sha256: input.candidate_sha256,
-        qualification_ref: proof.qualification_ref,
-        qualification_sha256: proof.proof_sha256,
-        expected_latest: input.expected_latest,
-      });
-      const finalCandidate = await readActiveCandidate(
-        dependencies.database,
-        input.candidate_ref,
-        input.candidate_sha256,
-      );
-      if (finalCandidate.row.route_ref !== afterQualification.row.route_ref ||
-          finalCandidate.row.route_version !== afterQualification.row.route_version) {
-        fail("DYNAMIC_ROUTE_PROMOTION_CONFLICT", "active route candidate changed after qualification renewal");
-      }
-      return Object.freeze({
-        candidate_ref: input.candidate_ref,
-        candidate_sha256: input.candidate_sha256,
-        qualification_ref: proof.qualification_ref,
-        qualification_sha256: proof.proof_sha256,
-        qualification,
-        latest,
-      });
+    }
+    return nativeQualification;
+  }
+  // qualify() owns the existing one-shot claim, native provider call, and
+  // before/after control-plane readbacks. Errors are deliberately allowed
+  // to escape; this method never redispatches an ambiguous probe.
+  const qualifyEvidence = dependencies.qualify ?? ((fresh: DynamicRouteQualificationProbeInput) =>
+    getNativeQualification().qualify(fresh));
+
+  /**
+   * Reads the execution probe ref of the completed renewal observation for a
+   * probe idempotency key. Returns null when the key never completed (unknown
+   * or unfinished claim); fails closed when the stored receipt is unreadable
+   * or malformed.
+   */
+  async function readCompletedRenewalObservation(probeIdempotencyKey: string): Promise<string | null> {
+    let raw: unknown | null;
+    try {
+      raw = await observations.readByIdempotencyKey(probeIdempotencyKey);
+    } catch (cause) {
+      fail("DYNAMIC_ROUTE_PROMOTION_CONFLICT", "completed renewal observation could not be read", cause);
+    }
+    if (raw === null) return null;
+    const receipt = record(raw, PROBE_RECEIPT_KEYS, "completed renewal observation", "DYNAMIC_ROUTE_PROMOTION_CONFLICT");
+    if (receipt.protocol !== OBSERVATION_PROTOCOL) {
+      fail("DYNAMIC_ROUTE_PROMOTION_CONFLICT", "completed renewal observation protocol is invalid");
+    }
+    return identity(receipt.execution_probe_ref, "completed renewal execution probe reference", "DYNAMIC_ROUTE_PROMOTION_CONFLICT");
+  }
+
+  /**
+   * Same-key replay: when the incoming probe idempotency key already completed
+   * a renewal for this candidate identity, return the existing proof instead
+   * of conflicting. Returns null when this is not a replay (unknown key, no
+   * proof yet, or the key's completed observation does not match the latest
+   * proof for this identity); callers then run the normal flow, which fails
+   * closed on genuine mismatches.
+   */
+  async function replayCompletedRenewal(
+    input: ResearchModelQualificationRenewalInput,
+    candidate: StoredDynamicRouteCandidate,
+  ): Promise<ResearchModelQualificationRenewalResult | null> {
+    const completed = await readCompletedRenewalObservation(input.fresh.probe_idempotency_key);
+    if (completed === null) return null;
+    const identity = {
+      route_ref: candidate.row.route_ref,
+      route_version: candidate.row.route_version,
+      candidate_ref: candidate.row.candidate_ref,
+      candidate_sha256: candidate.row.candidate_sha256,
+    };
+    const latest = await proofStore.readLatest(identity);
+    if (latest === null || latest.qualification.execution_probe_ref !== completed) return null;
+    const proofSha256 = await modelGatewaySha256(canonicalModelGatewayJson(latest));
+    const qualificationRef = `dynamic-route-qualification-proof-${proofSha256}`;
+    // Idempotent: the pointer already names this proof, so this reconciles
+    // the read without writing; expected_latest keeps it fail-closed.
+    const pointer = await proofStore.promoteLatest({
+      ...identity,
+      qualification_ref: qualificationRef,
+      qualification_sha256: proofSha256,
+      expected_latest: { qualification_ref: qualificationRef, qualification_sha256: proofSha256 },
+    });
+    return Object.freeze({
+      candidate_ref: input.candidate_ref,
+      candidate_sha256: input.candidate_sha256,
+      qualification_ref: qualificationRef,
+      qualification_sha256: proofSha256,
+      qualification: latest.qualification,
+      latest: pointer,
+    });
+  }
+
+  async function executeRenewal(
+    input: ResearchModelQualificationRenewalInput,
+    candidate: StoredDynamicRouteCandidate,
+  ): Promise<ResearchModelQualificationRenewalResult> {
+    const oldProbeKey = await previousProbeKey(dependencies.database, candidate, dependencies.now);
+    if (oldProbeKey === input.fresh.probe_idempotency_key) {
+      // The replay check above already returned the existing proof when this
+      // key completed a renewal. Reaching here means the key never completed
+      // one for this identity: reusing the candidate's original probe key is
+      // a genuine conflict, not a replay.
+      fail("DYNAMIC_ROUTE_PROMOTION_CONFLICT", "qualification renewal replay does not match a completed renewal");
+    }
+    const qualification = await qualifyEvidence(input.fresh);
+    const afterQualification = await readActiveCandidate(
+      dependencies.database,
+      input.candidate_ref,
+      input.candidate_sha256,
+    );
+    assertProbeCandidateBinding(input.fresh, afterQualification);
+    const proof = await proofStore.putImmutable({
+      candidate_ref: input.candidate_ref,
+      candidate_sha256: input.candidate_sha256,
+      qualification,
+    });
+    const latest = await proofStore.promoteLatest({
+      route_ref: afterQualification.row.route_ref,
+      route_version: afterQualification.row.route_version,
+      candidate_ref: input.candidate_ref,
+      candidate_sha256: input.candidate_sha256,
+      qualification_ref: proof.qualification_ref,
+      qualification_sha256: proof.proof_sha256,
+      expected_latest: input.expected_latest,
+    });
+    const finalCandidate = await readActiveCandidate(
+      dependencies.database,
+      input.candidate_ref,
+      input.candidate_sha256,
+    );
+    if (finalCandidate.row.route_ref !== afterQualification.row.route_ref ||
+        finalCandidate.row.route_version !== afterQualification.row.route_version) {
+      fail("DYNAMIC_ROUTE_PROMOTION_CONFLICT", "active route candidate changed after qualification renewal");
+    }
+    return Object.freeze({
+      candidate_ref: input.candidate_ref,
+      candidate_sha256: input.candidate_sha256,
+      qualification_ref: proof.qualification_ref,
+      qualification_sha256: proof.proof_sha256,
+      qualification,
+      latest,
+    });
+  }
+
+  return Object.freeze({
+    async renew(rawInput: ResearchModelQualificationRenewalInput): Promise<ResearchModelQualificationRenewalResult> {
+      const input = detachedRenewalInput(rawInput);
+      const candidate = await readActiveCandidate(dependencies.database, input.candidate_ref, input.candidate_sha256);
+      assertProbeCandidateBinding(input.fresh, candidate);
+      const replayed = await replayCompletedRenewal(input, candidate);
+      if (replayed !== null) return replayed;
+      return joinRenewalFlight(renewalFlightKey(candidate), () => executeRenewal(input, candidate));
     },
   });
 }
