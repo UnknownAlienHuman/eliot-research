@@ -297,9 +297,19 @@ a previous receipt is moved to `cloudflare-deployment-receipt.json.previous`; a 
 leave the previous PASS at the current receipt path. The previous file is historical evidence, not a
 statement about the current environment.
 
-Worker inventory readback checks the expected compatibility date, static assets and `ResearchSession`
-export. This bounded observation is **not** attestation of every binding or the exact deployed code
-version. A large/ambiguous inventory fails closed rather than claiming a matching deployment.
+Worker readback requires one active deployment with 100% traffic on one version, then
+checks that version's resources: every configured typed runtime variable, D1/R2/Queue/DO/Workflow,
+AI/Search/Vectorize/Analytics/assets bindings, runtime compatibility and exports. Unknown bindings
+fail closed; optional secret bindings are restricted to the reviewed runtime names and secret type.
+Secret values are never read or recorded. The receipt records variable count and equality only.
+The version identifier and API etag are observations, not a SHA-256 proof of uploaded code bytes.
+A large/ambiguous inventory or stale variable fails before deployment authority synchronization.
+
+Canonical and generated D1 configs must explicitly resolve both repository migration directories;
+Wrangler's omitted default directory is refused. Local bundle digests bind the selected SQL files;
+remote ledgers prove the exact applied names, not historical remote SQL byte equality.
+The staging target declaration binds the requested account and excludes declared protected IDs.
+It does not prove that the account contains no production resources or supply owner authorization.
 
 Authenticated HTTP smoke runs only with an Access cookie. Both `/healthz` and the capabilities envelope
 must report the expected deployment generation; health must be ready and timestamped within two minutes.

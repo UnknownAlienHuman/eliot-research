@@ -14,7 +14,7 @@ import { loadResearchRuntimeEnvironment, RESEARCH_RUNTIME_CONFIGURATION_KEYS,
   RESEARCH_RUNTIME_SEMANTIC_TRANSPORT_KEYS, semanticConfigurationTransport } from "./lib/research-runtime-config.mjs";
 import { synchronizeResearchDeploymentAuthority } from "./lib/research-deployment-authority.mjs";
 import { computeResearchBackendFingerprint } from "./lib/research-backend-fingerprint.mjs";
-import { readDeploymentMigrationPlan, requireUnchangedMigrationPlan, verifyDeploymentMigrationLedgers } from "./lib/deployment-migrations.mjs";
+import { readDeploymentMigrationPlan, requireUnchangedMigrationPlan, validateDeploymentMigrationDirectories, verifyDeploymentMigrationLedgers } from "./lib/deployment-migrations.mjs";
 import { readDeploymentAssetManifest, verifyDeploymentAssets } from "./lib/deployment-assets.mjs";
 import { validateStagingTarget } from "./lib/staging-isolation.mjs";
 
@@ -103,6 +103,7 @@ export async function deployCloudflare({ confirmLive = false, environment = proc
       env.ELIOTR_DEPLOYMENT_GENERATION = `git-${revision}`;
     }
     const canonicalConfig = JSON.parse(await readFile(resolve(core, "wrangler.jsonc"), "utf8"));
+    validateDeploymentMigrationDirectories(canonicalConfig, { root });
     env.ELIOTR_GOOGLE_EXTERNAL_TRANSPORT = readConfiguredTransport(canonicalConfig);
     input = validateDeploymentInput(env);
   }

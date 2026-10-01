@@ -10,17 +10,29 @@ const fail = () => { throw new Error("Deployment D1 migration plan or ledger rea
 
 // Only the two repository migration streams are deployable. A generated config
 // cannot substitute a different directory, ledger table or discovery pattern.
-export async function readDeploymentMigrationPlan(config, { root } = {}) {
-  if (typeof root !== "string" || !Array.isArray(config?.d1_databases)) fail();
-  const streams = [];
+export function validateDeploymentMigrationDirectories(config, { root } = {}) {
+  if (typeof root !== "string" || !Array.isArray(config?.d1_databases) || config.d1_databases.length !== 2) fail();
   for (const [binding, stream] of [["CORE_DB", "core"], ["SEARCH_DB", "search"]]) {
     const matches = config.d1_databases.filter((db) => db?.binding === binding);
-    if (matches.length !== 1 || !UUID.test(matches[0].database_id ?? "")) fail();
+    if (matches.length !== 1) fail();
     const db = matches[0];
     const directory = resolve(root, "infra/d1", stream, "migrations");
-    if (db.migrations_dir !== undefined && resolve(root, "apps/eliotr-core", db.migrations_dir) !== directory) fail();
+    // Wrangler otherwise discovers its default migrations/ directory beside
+    // the generated config, which is not the byte bundle attested below.
+    if (typeof db.migrations_dir !== "string" || db.migrations_dir.trim() === "" ||
+        resolve(root, "apps/eliotr-core", db.migrations_dir) !== directory) fail();
     if ((db.migrations_table !== undefined && db.migrations_table !== "d1_migrations") ||
         db.migrations_pattern !== undefined) fail();
+  }
+}
+
+export async function readDeploymentMigrationPlan(config, { root } = {}) {
+  validateDeploymentMigrationDirectories(config, { root });
+  const streams = [];
+  for (const [binding, stream] of [["CORE_DB", "core"], ["SEARCH_DB", "search"]]) {
+    const db = config.d1_databases.find((item) => item.binding === binding);
+    if (!UUID.test(db.database_id ?? "")) fail();
+    const directory = resolve(root, "infra/d1", stream, "migrations");
     const entries = (await readdir(directory, { withFileTypes: true })).filter((entry) => entry.name.endsWith(".sql"));
     if (entries.length < 1 || entries.length > 2048 || entries.some((entry) => !entry.isFile() || !NAME.test(entry.name))) fail();
     const names = entries.map((entry) => entry.name).sort();
