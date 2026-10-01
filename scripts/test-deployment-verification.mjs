@@ -14,6 +14,16 @@ const environment = {
 };
 const config = {
   name: "eliotr-core", minify: true, preview_urls: false, compatibility_date: "2026-08-28",
+  assets: { binding: "ASSETS" }, exports: { ResearchSession: { type: "durable-object", storage: "sqlite" } },
+  r2_buckets: [
+    { binding: "EVIDENCE_BUCKET", bucket_name: "eliotr-evidence" },
+    { binding: "WORK_BUCKET", bucket_name: "eliotr-work" },
+  ],
+  queues: { producers: [{ binding: "JOB_QUEUE", queue: "eliotr-jobs" }], consumers: [] },
+  durable_objects: { bindings: [{ name: "RESEARCH_SESSION", class_name: "ResearchSession" }] },
+  workflows: [{ binding: "RESEARCH_WORKFLOW", name: "eliotr-research-workflow", class_name: "ResearchWorkflow" }],
+  ai_search_namespaces: [{ binding: "AI_SEARCH", namespace: "eliotr" }], ai: { binding: "AI" },
+  analytics_engine_datasets: [{ binding: "METRICS", dataset: "eliotr_metrics" }],
   vars: { DEPLOYMENT_GENERATION: "git-test", ENVIRONMENT: "staging", GOOGLE_EXTERNAL_TRANSPORT: "gemini-mcp",
     ACCESS_TEAM_DOMAIN: "https://team-example.cloudflareaccess.com", ACCESS_AUDIENCE: "test-aud", ACCESS_SERVICE_PRINCIPALS: "agent" },
   d1_databases: [
@@ -152,12 +162,66 @@ await check("generated identity, Access and D1 config", () => {
 await check("Worker inventory export/compatibility/assets fail closed", async () => {
   const worker = { id: "eliotr-core", compatibility_date: "2026-08-28", has_assets: true,
     exports: { ResearchSession: { type: "durable-object" } } };
-  const read = (payload) => readDeploymentWorker(environment, input, config, { fetchImpl: async () => json(payload) });
-  assert.equal((await read({ success: true, result: [worker] })).durable_object_export, "durable-object");
-  for (const payload of [{ success: false, result: [worker] }, { result: [worker] },
+  const bindings = {
+    CORE_DB: { type: "d1", id: config.d1_databases[0].database_id },
+    SEARCH_DB: { type: "d1", id: config.d1_databases[1].database_id },
+    EVIDENCE_BUCKET: { type: "r2_bucket", bucket_name: "eliotr-evidence" },
+    WORK_BUCKET: { type: "r2_bucket", bucket_name: "eliotr-work" },
+    JOB_QUEUE: { type: "queue", queue_name: "eliotr-jobs" },
+    RESEARCH_SESSION: { type: "durable_object_namespace", class_name: "ResearchSession" },
+    RESEARCH_WORKFLOW: { type: "workflow", name: "eliotr-research-workflow", class_name: "ResearchWorkflow" },
+    AI_SEARCH: { type: "ai_search_namespace", namespace: "eliotr" },
+    AI: { type: "ai" }, METRICS: { type: "analytics_engine", dataset: "eliotr_metrics" },
+    ASSETS: { type: "assets" },
+    ACCESS_AUDIENCE: { type: "plain_text", text: "test-aud" },
+  };
+  const active = { id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", created_on: "2026-09-04T22:59:00.000Z",
+    strategy: "percentage", versions: [{ version_id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", percentage: 100 }] };
+  const version = { id: active.versions[0].version_id, number: 9, resources: {
+    bindings, script: { etag: "cloudflare-etag-opaque" }, script_runtime: {
+      compatibility_date: "2026-08-28T00:00:00Z", compatibility_flags: [],
+      exports: { default: { type: "worker" }, ResearchSession: { type: "durable-object", storage: "sqlite" } },
+    },
+  } };
+  const read = (overrides = {}) => readDeploymentWorker(environment, input, config, { fetchImpl: async (url) => {
+    if (String(url).endsWith("/workers/scripts")) return json(overrides.inventory ?? { success: true, result: [worker] });
+    if (String(url).endsWith("/deployments")) return json(overrides.deployments ?? { success: true, result: { deployments: [active] } });
+    if (String(url).endsWith(`/versions/${active.versions[0].version_id}`)) {
+      return json(overrides.versionResponse ?? { success: true, result: version });
+    }
+    assert.fail(`unexpected readback URL: ${url}`);
+  } });
+  const attestation = await read();
+  assert.equal(attestation.durable_object_export, "durable-object");
+  assert.equal(attestation.deployment_id, active.id);
+  assert.equal(attestation.version_id, version.id);
+  assert.equal(attestation.version_number, 9);
+  assert.equal(attestation.version_etag, "cloudflare-etag-opaque");
+  assert.equal(attestation.traffic_percentage, 100);
+  assert.equal(attestation.binding_readback.length, 11);
+  assert.ok(!JSON.stringify(attestation).includes("test-aud"));
+  for (const inventory of [{ success: false, result: [worker] }, { result: [worker] },
     { success: true, result: [] }, { success: true, result: [worker, worker] },
     { success: true, result: [{ ...worker, has_assets: false }] },
-    { success: true, result: [{ ...worker, compatibility_date: "old" }] },
-    { success: true, result: [{ ...worker, exports: {} }] }]) await assert.rejects(read(payload));
+    { success: true, result: [{ ...worker, compatibility_date: "old" }] }]) {
+    await assert.rejects(read({ inventory }));
+  }
+  for (const deployments of [{ success: true, result: { deployments: [] } },
+    { success: true, result: { deployments: [{ ...active, versions: [active.versions[0], active.versions[0]] }] } },
+    { success: true, result: { deployments: [{ ...active, versions: [{ ...active.versions[0], percentage: 90 }] }] } }]) {
+    await assert.rejects(read({ deployments }));
+  }
+  for (const mutate of [
+    (value) => { value.id = "cccccccc-cccc-4ccc-8ccc-cccccccccccc"; },
+    (value) => { value.resources.script_runtime.compatibility_date = "2026-01-01T00:00:00Z"; },
+    (value) => { value.resources.script_runtime.exports.ResearchSession.storage = "legacy-kv"; },
+    (value) => { value.resources.bindings.CORE_DB.id = "ffffffff-ffff-4fff-8fff-ffffffffffff"; },
+    (value) => { delete value.resources.bindings.ASSETS; },
+    (value) => { value.resources.bindings.EXTRA = { type: "r2_bucket", bucket_name: "other" }; },
+    (value) => { value.resources.bindings.CORE_DB_DUP = { ...value.resources.bindings.CORE_DB, name: "CORE_DB" }; },
+  ]) {
+    const changed = structuredClone(version); mutate(changed);
+    await assert.rejects(read({ versionResponse: { success: true, result: changed } }));
+  }
 });
 console.log(`Deployment verification: ${cases} groups passed; live Cloudflare NOT_EXECUTED`);

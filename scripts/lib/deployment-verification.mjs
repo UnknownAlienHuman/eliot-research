@@ -5,6 +5,7 @@ const MAX_SMOKE_BYTES = 64 * 1024;
 const MAX_API_BYTES = 1024 * 1024;
 const TIMEOUT_MS = 15_000;
 const GOOGLE_EXTERNAL_TRANSPORTS = new Set(["disabled", "gemini-mcp", "drive-exchange"]);
+const CLOUDFLARE_UUID = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/iu;
 const isObject = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
 const fail = (label) => { throw new Error(label); };
 
@@ -166,17 +167,154 @@ export async function verifyDeploymentSmoke(env, input, options = {}) {
 }
 
 export async function readDeploymentWorker(env, input, config, options = {}) {
-  // This is a bounded inventory/export observation, not a proof of every binding or product path.
-  const url = `${input.apiBase}/accounts/${encodeURIComponent(env.CLOUDFLARE_ACCOUNT_ID)}/workers/scripts`;
-  const { data } = await readDeploymentJson(url, { Authorization: `Bearer ${env.CLOUDFLARE_API_TOKEN}` },
-    { ...options, maxBytes: MAX_API_BYTES });
-  if (!isObject(data) || data.success !== true || !Array.isArray(data.result)) fail("Invalid Worker inventory readback");
-  const matches = data.result.filter((worker) => worker?.id === config.name);
+  const account = encodeURIComponent(env.CLOUDFLARE_ACCOUNT_ID);
+  const script = encodeURIComponent(config.name);
+  const base = `${input.apiBase}/accounts/${account}/workers/scripts/${script}`;
+  const headers = { Authorization: `Bearer ${env.CLOUDFLARE_API_TOKEN}` };
+  const read = async (url) => (await readDeploymentJson(url, headers,
+    { ...options, maxBytes: MAX_API_BYTES })).data;
+  const inventory = await read(`${input.apiBase}/accounts/${account}/workers/scripts`);
+  if (!isObject(inventory) || inventory.success !== true || !Array.isArray(inventory.result)) {
+    fail("Invalid Worker inventory readback");
+  }
+  const matches = inventory.result.filter((worker) => worker?.id === config.name);
   if (matches.length !== 1) fail("Ambiguous or absent Worker readback");
   const worker = matches[0];
-  if (worker.compatibility_date !== config.compatibility_date || worker.has_assets !== true ||
-      worker.exports?.ResearchSession?.type !== "durable-object") fail("Worker compatibility, assets or export drift");
+  if (worker.compatibility_date !== config.compatibility_date || worker.has_assets !== true) {
+    fail("Worker compatibility or assets drift");
+  }
+
+  // Cloudflare documents the first deployment as the one actively serving traffic.
+  // Require a single 100% version so a gradual rollout cannot be mistaken for one build.
+  const deployments = await read(`${base}/deployments`);
+  const active = deployments?.success === true && Array.isArray(deployments.result?.deployments)
+    ? deployments.result.deployments[0] : null;
+  if (!isObject(active) || !CLOUDFLARE_UUID.test(active.id ?? "") ||
+      typeof active.created_on !== "string" || !/^\d{4}-\d{2}-\d{2}T/u.test(active.created_on) ||
+      !Number.isFinite(Date.parse(active.created_on)) || active.strategy !== "percentage" ||
+      !Array.isArray(active.versions) || active.versions.length !== 1 ||
+      active.versions[0]?.percentage !== 100 || !CLOUDFLARE_UUID.test(active.versions[0]?.version_id ?? "")) {
+    fail("Worker active deployment is absent, ambiguous or gradual");
+  }
+  const versionId = active.versions[0].version_id;
+  const versionResponse = await read(`${base}/versions/${encodeURIComponent(versionId)}`);
+  const version = versionResponse?.success === true ? versionResponse.result : null;
+  const runtime = version?.resources?.script_runtime;
+  const versionScript = version?.resources?.script;
+  if (!isObject(version) || version.id !== versionId || !Number.isSafeInteger(version.number) || version.number < 1 ||
+      !isObject(runtime) || !isObject(versionScript) ||
+      !boundedString(versionScript.etag, 256)) {
+    fail("Invalid active Worker version readback");
+  }
+  const versionDate = typeof runtime.compatibility_date === "string"
+    ? runtime.compatibility_date.slice(0, 10) : null;
+  if (versionDate !== config.compatibility_date) fail("Worker version compatibility drift");
+  const expectedFlags = [...(config.compatibility_flags ?? [])].sort();
+  const actualFlags = runtime.compatibility_flags;
+  if (!Array.isArray(actualFlags) || actualFlags.some((flag) => typeof flag !== "string") ||
+      JSON.stringify([...actualFlags].sort()) !== JSON.stringify(expectedFlags)) {
+    fail("Worker version compatibility flags drift");
+  }
+  const exports = runtime.exports;
+  if (!isObject(exports)) fail("Worker version exports missing");
+  const configuredExports = config.exports ?? {};
+  if (!isObject(configuredExports) || configuredExports.ResearchSession?.type !== "durable-object") {
+    fail("Invalid generated Worker exports");
+  }
+  const expectedExportNames = Object.keys(configuredExports).sort();
+  const actualExportNames = Object.keys(exports).filter((name) => name !== "default").sort();
+  if (JSON.stringify(actualExportNames) !== JSON.stringify(expectedExportNames)) {
+    fail("Worker version named exports drift");
+  }
+  for (const [name, expected] of Object.entries(configuredExports)) {
+    const actual = exports[name];
+    if (!isObject(expected) || !isObject(actual) || actual.type !== expected.type ||
+        (expected.storage !== undefined && actual.storage !== expected.storage) ||
+        (actual.state !== undefined && actual.state !== "created")) {
+      fail("Worker version named export identity drift");
+    }
+  }
+
+  const expectedBindings = expectedDeploymentBindings(config);
+  const actualBindings = normalizeDeploymentBindings(version.resources.bindings);
+  const actualByName = new Map();
+  for (const binding of actualBindings) {
+    if (!boundedString(binding.bindingName) || !boundedString(binding.type) || actualByName.has(binding.bindingName)) {
+      fail("Worker version binding names are invalid or duplicated");
+    }
+    actualByName.set(binding.bindingName, binding);
+  }
+  const bindingReadback = [];
+  for (const expected of expectedBindings) {
+    const actual = actualByName.get(expected.name);
+    if (!actual || actual.type !== expected.type ||
+        Object.entries(expected.identity).some(([key, value]) => actual[key] !== value)) {
+      fail(`Worker version binding identity drift: ${expected.name}`);
+    }
+    bindingReadback.push({ name: expected.name, type: expected.type, identity: expected.identity });
+  }
+  // Unknown identity-bearing bindings are drift. Text and secret bindings may be
+  // provisioned outside the checked-in config; their values are never returned.
+  const expectedNames = new Set(expectedBindings.map((binding) => binding.name));
+  const opaqueTypes = new Set(["plain_text", "secret_text", "json"]);
+  if (actualBindings.some((binding) => !expectedNames.has(binding.bindingName) && !opaqueTypes.has(binding.type))) {
+    fail("Worker version has an undeclared resource binding");
+  }
+
   return { id: worker.id, compatibility_date: worker.compatibility_date,
     modified_on: worker.modified_on ?? null, last_deployed_from: worker.last_deployed_from ?? null,
-    has_assets: worker.has_assets, durable_object_export: worker.exports.ResearchSession.type };
+    has_assets: worker.has_assets, durable_object_export: configuredExports.ResearchSession?.type,
+    deployment_id: active.id, deployment_created_on: active.created_on, version_id: versionId,
+    version_number: version.number, version_etag: versionScript.etag, traffic_percentage: 100,
+    binding_readback: bindingReadback };
+}
+
+function expectedDeploymentBindings(config) {
+  const expected = [];
+  const add = (name, type, identity = {}) => {
+    if (!boundedString(name) || !boundedString(type) || expected.some((binding) => binding.name === name)) {
+      fail("Generated deployment binding names are invalid or duplicated");
+    }
+    expected.push({ name, type, identity });
+  };
+  if (!Array.isArray(config.d1_databases) || !Array.isArray(config.r2_buckets) ||
+      !Array.isArray(config.queues?.producers) || !Array.isArray(config.durable_objects?.bindings) ||
+      !Array.isArray(config.workflows) || !Array.isArray(config.analytics_engine_datasets)) {
+    fail("Generated deployment resource bindings are incomplete");
+  }
+  for (const item of config.d1_databases) add(item?.binding, "d1", { id: item?.database_id });
+  for (const item of config.r2_buckets) add(item?.binding, "r2_bucket", { bucket_name: item?.bucket_name });
+  for (const item of config.queues.producers) add(item?.binding, "queue", { queue_name: item?.queue });
+  for (const item of config.durable_objects.bindings) {
+    add(item?.name, "durable_object_namespace", { class_name: item?.class_name });
+  }
+  for (const item of config.workflows) {
+    add(item?.binding, "workflow", { workflow_name: item?.name, class_name: item?.class_name });
+  }
+  for (const item of config.analytics_engine_datasets) {
+    add(item?.binding, "analytics_engine", { dataset: item?.dataset });
+  }
+  if (config.ai?.binding !== undefined) add(config.ai.binding, "ai");
+  if (config.assets?.binding !== undefined) add(config.assets.binding, "assets");
+  for (const item of config.ai_search_namespaces ?? []) {
+    add(item?.binding, "ai_search_namespace", { namespace: item?.namespace });
+  }
+  for (const item of config.ai_search ?? []) {
+    add(item?.binding, "ai_search", { instance_name: item?.instance_name });
+  }
+  for (const item of config.wasm_modules ?? []) add(item?.binding, "wasm_module");
+  return expected;
+}
+
+function normalizeDeploymentBindings(bindings) {
+  if (Array.isArray(bindings)) return bindings.map((binding) => {
+    if (!isObject(binding)) fail("Invalid Worker version binding");
+    return { ...binding, bindingName: binding.binding ?? binding.name };
+  });
+  if (!isObject(bindings)) fail("Worker version bindings missing");
+  return Object.entries(bindings).map(([name, binding]) => {
+    if (!isObject(binding)) fail("Invalid Worker version binding");
+    return { ...binding, bindingName: name,
+      ...(binding.type === "workflow" ? { workflow_name: binding.workflow_name ?? binding.name } : {}) };
+  });
 }

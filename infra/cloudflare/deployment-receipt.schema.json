@@ -33,6 +33,17 @@
       }
     },
     "environment": { "enum": ["staging", "production"] },
+    "staging_target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["protocol", "isolation", "target_declaration_sha256", "account_id_sha256"],
+      "properties": {
+        "protocol": { "const": "eliotr.staging-target-binding.v1" },
+        "isolation": { "const": "dedicated-account" },
+        "target_declaration_sha256": { "$ref": "#/$defs/sha256" },
+        "account_id_sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
     "account_id": { "type": "string", "minLength": 1 },
     "access_app_id": { "type": "string", "minLength": 1 },
     "access_aud": { "type": "string", "pattern": "^[A-Za-z0-9._:-]{1,64}$" },
@@ -52,7 +63,39 @@
         "modified_on": { "type": ["string", "null"] },
         "last_deployed_from": { "type": ["string", "null"] },
         "has_assets": { "type": ["boolean", "null"] },
-        "durable_object_export": { "const": "durable-object" }
+        "durable_object_export": { "const": "durable-object" },
+        "deployment_id": { "type": "string", "format": "uuid" },
+        "deployment_created_on": { "type": "string", "format": "date-time" },
+        "version_id": { "type": "string", "format": "uuid" },
+        "version_number": { "type": "integer", "minimum": 1 },
+        "version_etag": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "traffic_percentage": { "const": 100 },
+        "binding_readback": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "type", "identity"],
+            "properties": {
+              "name": { "type": "string", "minLength": 1 },
+              "type": { "type": "string", "minLength": 1 },
+              "identity": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "id": { "type": "string", "minLength": 1 },
+                  "bucket_name": { "type": "string", "minLength": 1 },
+                  "queue_name": { "type": "string", "minLength": 1 },
+                  "class_name": { "type": "string", "minLength": 1 },
+                  "workflow_name": { "type": "string", "minLength": 1 },
+                  "dataset": { "type": "string", "minLength": 1 },
+                  "namespace": { "type": "string", "minLength": 1 },
+                  "instance_name": { "type": "string", "minLength": 1 }
+                }
+              }
+            }
+          }
+        }
       }
     },
     "generated_config_sha256": { "$ref": "#/$defs/sha256" },
