@@ -24,6 +24,8 @@ import {
   ArtifactPublicationReadinessError,
 } from "./artifact-publication-policy.js";
 
+export { ArtifactPublicationReadinessError } from "./artifact-publication-policy.js";
+
 const SHA256 = /^[a-f0-9]{64}$/u;
 const IDENTIFIER = /^[^\u0000-\u001f\u007f]{1,256}$/u;
 const ACCEPT_TOPIC = "artifact.accepted";
@@ -55,7 +57,7 @@ export interface CreateArtifactPublicationProducerInput {
   readonly database: D1Database;
   readonly work_bucket: R2Bucket;
   readonly require_current: D1NavigationStoreInput["require_current"];
-  readonly resolve_acceptance_decision: (input: ResolveArtifactAcceptanceDecisionInput) => Promise<ArtifactOwnerAcceptanceDecision>;
+  readonly resolve_acceptance_decision?: (input: ResolveArtifactAcceptanceDecisionInput) => Promise<ArtifactOwnerAcceptanceDecision>;
   readonly now?: () => number;
 }
 
@@ -722,6 +724,9 @@ export function createArtifactPublicationProducer(options: CreateArtifactPublica
         expected_draft_head_revision: expectedDraftHead,
         expected_publication_revision: expectedPublicationRevision,
       };
+      if (options.resolve_acceptance_decision === undefined) {
+        fail("ARTIFACT_PUBLICATION_DENIED", "explicit owner acceptance decision service is unavailable");
+      }
       let acceptanceDecisionRaw: ArtifactOwnerAcceptanceDecision;
       try {
         acceptanceDecisionRaw = await options.resolve_acceptance_decision({
