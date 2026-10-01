@@ -267,6 +267,24 @@ describe("createResearchBranchRolePreparation", () => {
       .toBe("MODEL_ATTEMPT_IDENTITY_CONFLICT");
   });
 
+  it("fails closed when the admission stage attempt does not match the context", async () => {
+    const roleRequest = deriveBranchRoleStageRequest(REQUEST, "SUPPORT");
+    const roleSha = await textDigest(JSON.stringify(roleRequest));
+    const prepare = createResearchBranchRolePreparation();
+    const admission = { ...admissionRecord(roleSha), stage_attempt_ref: "other-attempt" };
+    expect(await conflictCode(async () => prepare(await contextFor(roleSha), "SUPPORT", admission, EVIDENCE_PACK)))
+      .toBe("MODEL_ATTEMPT_IDENTITY_CONFLICT");
+  });
+
+  it("fails closed when the admission stage request is not JSON", async () => {
+    const roleRequest = deriveBranchRoleStageRequest(REQUEST, "SUPPORT");
+    const roleSha = await textDigest(JSON.stringify(roleRequest));
+    const prepare = createResearchBranchRolePreparation();
+    const admission = { ...admissionRecord(roleSha), stage_request_json: "not json" };
+    expect(await conflictCode(async () => prepare(await contextFor(roleSha), "SUPPORT", admission, EVIDENCE_PACK)))
+      .toBe("MODEL_ATTEMPT_INPUT_INVALID");
+  });
+
   it("fails closed when the admitted stage bytes differ from the recovered stage request", async () => {
     const roleRequest = deriveBranchRoleStageRequest(REQUEST, "SUPPORT");
     const roleSha = await textDigest(JSON.stringify(roleRequest));
