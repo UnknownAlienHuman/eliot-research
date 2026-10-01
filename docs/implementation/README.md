@@ -78,3 +78,5 @@ from the tables below, so an unlisted file is a bug, not an omission you may ign
 | [drive-credentials.md](drive-credentials.md) | Encrypted credential storage, refresh and rotation. |
 | [drive-oauth-admission.md](drive-oauth-admission.md) | Initial Google OAuth admission. |
 | [gemini-spark-mcp.md](gemini-spark-mcp.md) | Spark/Antigravity MCP protocol, client orchestration and live gates. |
+| [muse-operator-runbook.md](muse-operator-runbook.md) | Computer-agent operation — capabilities, transport and operating procedure per ADR-0007. |
+| [computer-agent-web-inbox.md](computer-agent-web-inbox.md) | Browser transport for the computer-agent web inbox; common task semantics live in the operator runbook. |

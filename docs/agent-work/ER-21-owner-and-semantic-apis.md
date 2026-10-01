@@ -63,9 +63,9 @@ Request a provider/database/index name through the API and prove it cannot bypas
 pnpm --filter @eliotr/interfaces typecheck
 pnpm --filter @eliotr/core typecheck
 pnpm --filter @eliotr/core test
-pnpm check:boundaries
-pnpm check:budgets
-pnpm check:implementation
+pnpm boundaries:check
+pnpm budgets:check
+pnpm check:implementation-status
 ```
 
 The direct Cloudflare Access/D1 round trip is not a packet-local gate and remains `NOT EXECUTED` until

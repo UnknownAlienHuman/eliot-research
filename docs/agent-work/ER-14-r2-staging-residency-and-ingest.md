@@ -131,10 +131,10 @@ canonical object rather than creating another mutation.
 ```text
 pnpm --filter @eliotr/platform-cloudflare typecheck
 pnpm --filter @eliotr/platform-cloudflare test
-pnpm check:contracts
-pnpm check:boundaries
-pnpm check:budgets
-pnpm check:work-packets
+pnpm contracts:check
+pnpm boundaries:check
+pnpm budgets:check
+pnpm work-packets:check
 ```
 
 The implementation has deterministic unit/recorded-fixture coverage. A real Cloudflare R2 round trip is
