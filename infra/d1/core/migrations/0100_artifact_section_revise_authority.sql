@@ -271,8 +271,9 @@ CREATE TRIGGER artifact_section_revise_spend_shape_guard
 BEFORE INSERT ON artifact_section_revise_spend_admission
 BEGIN
   SELECT RAISE(ABORT, 'ARTIFACT_COW_SPEND_ADMISSION_INVALID')
-  WHERE json_extract(NEW.stage_request_json,'$.protocol') IS NOT 'eliotr.artifact.section.revise.v1'
-    OR json_extract(NEW.stage_request_json,'$.operation_id') IS NOT NEW.workflow_operation_id
+  WHERE json_extract(NEW.stage_request_json,'$.request.protocol') IS NOT 'eliotr.artifact.section.revise.v1'
+    OR json_extract(NEW.stage_request_json,'$.attempt_ref') IS NOT NEW.stage_attempt_ref
+    OR json_extract(NEW.stage_request_json,'$.request.operation_id') IS NOT NEW.workflow_operation_id
     OR json_extract(NEW.intent_json,'$.intent_ref.id') IS NOT NEW.intent_id
     OR json_extract(NEW.intent_json,'$.intent_ref.revision') IS NOT NEW.intent_revision
     OR json_extract(NEW.intent_json,'$.principal_ref') IS NOT NEW.principal_ref
@@ -310,7 +311,7 @@ BEGIN
     OR NOT EXISTS (SELECT 1 FROM artifact_section_revise_current r JOIN artifact_section_revise_attempt a
       ON a.operation_id=r.operation_id AND a.attempt_ref=NEW.stage_attempt_ref
       WHERE r.operation_id=NEW.workflow_operation_id AND a.request_sha256=NEW.stage_request_sha256
-        AND a.state='STARTED' AND a.output_json IS NULL
+        AND a.state='STARTED' AND a.output_json IS NULL AND a.request_json=NEW.stage_request_json
         AND a.budget_receipt_ref=NEW.workflow_budget_receipt_ref
         AND r.principal_ref=NEW.principal_ref
         AND r.credential_generation=NEW.credential_generation
