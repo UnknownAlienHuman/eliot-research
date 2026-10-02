@@ -11,7 +11,7 @@ import { assertO2MigrationAuthority } from "./migration-gate.js";
 import { canonicalEpochIntentDigest } from "./intent-digest.js";
 import {
   BACKUP_MANIFEST_PROTOCOL, TABLE_SPECS, assertExportColumnCoverage,
-  digestCoreColumnInventory, openExportCut, readCoreColumnInventory, sealExportCut,
+  BACKUP_SCHEMA_INVENTORY_PROTOCOL, digestCoreColumnInventory, openExportCut, readCoreColumnInventory, sealExportCut,
   type CoreTableInventory, type CutInputs, type OpenCut,
 } from "./coherent-cut.js";
 
@@ -333,7 +333,12 @@ export function createBackupEpochPort(ports: BackupSourcePorts, overrides?: { re
     };
     const specManifest = new Map<string, string>();
     for (const spec of TABLE_SPECS) specManifest.set(spec.table, spec.manifest);
-    for (const row of frozen.rows) record(specManifest.get(row.table) ?? "sources", canonicalBackupJson({ table: row.table, row: row.row }));
+    for (const row of frozen.rows) {
+      // Purge rows are emitted once below from the dedicated stable ledger
+      // read; avoid duplicating them in their regular table manifest.
+      if (row.table === "purge_ledger") continue;
+      record(specManifest.get(row.table) ?? "sources", canonicalBackupJson({ table: row.table, row: row.row }));
+    }
     for (const row of frozen.purge_rows) record("purge", canonicalBackupJson({ table: row.table, row: row.row }));
     for (const table of ["publication", "federation_reference_manifest", "navigation_artifact"] as const) {
       if (!await backupTableExists(ports.core_db, table)) record("heads", canonicalBackupJson({ table, status: "TABLE_ABSENT" }));
@@ -348,10 +353,12 @@ export function createBackupEpochPort(ports: BackupSourcePorts, overrides?: { re
     for (const [id, head] of [...heads.entries()].sort()) record("heads", canonicalBackupJson({ kind: "investigation", id, head_revision: head }));
     for (const line of rebuildManifestLines()) record("rebuild", line);
     record("schema", canonicalBackupJson({ manifest_protocol: BACKUP_MANIFEST_PROTOCOL, schema_generation: vector.schema_generation, migration_ledger_digest: vector.migration_ledger_digest, migration_ledger: "PRESENT", migration_count: vector.migration_names.length }));
-    record("schema-inventory", canonicalBackupJson({ protocol: BACKUP_MANIFEST_PROTOCOL, schema_inventory_digest: frozen.inventory_digest, cut_id: cut.cut_id }));
+    record("schema-inventory", canonicalBackupJson({ protocol: BACKUP_MANIFEST_PROTOCOL, inventory_protocol: BACKUP_SCHEMA_INVENTORY_PROTOCOL, schema_inventory_digest: frozen.inventory_digest, cut_id: cut.cut_id }));
     for (const table of specManifest.keys()) {
-      const columns = frozen.column_inventory.find((entry) => entry.table === table)?.columns.map((column) => column.name) ?? [];
-      record("schema-inventory", canonicalBackupJson({ table, columns: [...columns].sort() }));
+      const inventory = frozen.column_inventory.find((entry) => entry.table === table);
+      const columns = inventory?.columns.map((column) => column.name) ?? [];
+      const column_shapes = inventory?.columns ?? [];
+      record("schema-inventory", canonicalBackupJson({ table, columns, column_shapes }));
     }
     record("purge", canonicalBackupJson({ purge_frontier: vector.purge_frontier, purge_digest: vector.purge_digest }));
     record("r2-objects", canonicalBackupJson({ object_count: r2.entries.length, total_bytes: r2.total_bytes, fingerprint: r2.fingerprint }));

@@ -5,9 +5,10 @@ import { DatabaseSync } from "node:sqlite";
 import type { OperationIntent } from "@eliotr/contracts";
 import { BackupError } from "./shared.js";
 import { createBackupPort } from "./index.js";
-import { createControlledOffsiteAdapter } from "./offsite.js";
+import { createControlledOffsiteAdapter, openOffsiteBackupPart } from "./offsite.js";
 import { authorizeBackupDestination, revokeBackupDestination } from "./destination-authority.js";
-import type { BackupDestinationPolicy } from "./destination-policy.js";
+import { destinationDescriptorDigest, destinationPolicyDigest, type BackupDestinationPolicy } from "./destination-policy.js";
+import { verifyPortableBackupManifests } from "./portable-manifest.js";
 import type { BackupSourcePorts } from "./epoch.js";
 import type { Sha256DigestSink, EvidenceObjectStore } from "./shared.js";
 import m0001 from "../../../infra/d1/core/migrations/0001_initial.sql?raw";
@@ -130,6 +131,21 @@ async function aesKey(len: number, usages: KeyUsage[] = ["encrypt", "decrypt"]):
 }
 
 describe("ER-34 O2 offsite copy (policy + hardened crypto)", () => {
+  it("parses the actual full portable epoch and validates its vector against every exported row", async () => {
+    const h = await setup();
+    const { draft } = await h.port.createPortableEpoch(intent("id-parse-portable"), { now_ms: NOW });
+    const plaintext_parts = [];
+    for (const part of draft.part_index) {
+      const object = await h.ports.part_sink.open(part.part_key);
+      expect(object).not.toBeNull();
+      if (object === null) throw new Error("fixture portable part disappeared");
+      plaintext_parts.push({ manifest: part.manifest, index: part.index, bytes: new Uint8Array(await new Response(object.body).arrayBuffer()) });
+    }
+    const parsed = await verifyPortableBackupManifests({ draft, plaintext_parts });
+    expect(parsed.purge_ledger).toHaveLength(1);
+    expect(parsed.source_rows.some((row) => row.table === "source" && row.row["source_id"] === "source-1")).toBe(true);
+  });
+
   it("round-trips with controller authority; deterministic nonces converge across copies; exact replay returns persisted bytes", async () => {
     const h = await setup();
     const key = await aesKey(256);
@@ -153,6 +169,41 @@ describe("ER-34 O2 offsite copy (policy + hardened crypto)", () => {
     expect(replayed.epoch).toEqual(c1.epoch);
     expect(a1.puts).toBe(putsBefore);
   });
+  it("opens a copied part with the original AAD and rejects ciphertext tampering", async () => {
+    const h = await setup();
+    const key = await aesKey(256);
+    const draft = (await h.port.createPortableEpoch(intent("id-open-part"), { now_ms: NOW })).draft;
+    const adapter = createControlledOffsiteAdapter({ destination_id: "offsite-1", failure_domain: "domain-remote" });
+    await h.port.copyOffsite({ draft, intent: intent("id-open-part"), encryption_key: key, key_generation: "key-gen-1", primary_failure_domain: "domain-primary", destination_policy: policy(), adapter, now_ms: Date.now() });
+    const authority = {
+      destination_id: "offsite-1",
+      key_generation: "key-gen-1",
+      expires_at: draft.expires_at,
+      primary_failure_domain: "domain-primary",
+      destination_policy_digest: await destinationPolicyDigest(policy()),
+      descriptor_digest: await destinationDescriptorDigest(await adapter.describe()),
+    };
+    const part = draft.part_index[0];
+    expect(part).toBeDefined();
+    if (part === undefined) throw new Error("fixture epoch has no parts");
+    const openInput = { draft, part, encryption_key: key, destination_policy: policy(), authority, adapter, now_ms: Date.now() };
+    const plaintext = await openOffsiteBackupPart(openInput);
+    expect(await sha(plaintext)).toBe(part.sha256);
+    expect(new TextDecoder().decode(plaintext)).toContain("\"manifest_protocol\"");
+    const corrupt: typeof adapter = {
+      ...adapter,
+      async get(partRef) {
+        const read = await adapter.get(partRef);
+        if (read === null) return null;
+        const ciphertext = read.ciphertext.slice();
+        ciphertext[ciphertext.length - 1] = (ciphertext[ciphertext.length - 1] ?? 0) ^ 1;
+        return { ...read, ciphertext };
+      },
+    };
+    await expect(openOffsiteBackupPart({ ...openInput, adapter: corrupt }))
+      .rejects.toMatchObject({ code: "BACKUP_OFFSITE_READBACK_MISMATCH" });
+  });
+
   it("refuses copies with no controller authority and rejects adapter self-report", async () => {
     const h = await setup();
     const key = await aesKey(256);
