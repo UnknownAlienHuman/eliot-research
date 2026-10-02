@@ -114,7 +114,11 @@ const server = createServer(async (req, res) => {
 
     const statement = database.prepare(body.sql);
     const rows = statement.all(...body.params);
-    if (mutation && rows.length > 0) appliedWrites += 1;
+    const changes = mutation
+      ? database.prepare("SELECT changes() AS changes").get().changes
+      : 0;
+    assert(Number.isSafeInteger(changes) && changes >= 0);
+    if (mutation && changes > 0) appliedWrites += 1;
 
     if (mutation && mode === "lost-acknowledgement") {
       mode = "normal";
@@ -130,7 +134,7 @@ const server = createServer(async (req, res) => {
       success: true,
       errors: [],
       messages: [],
-      result: [{ success: true, results: rows, meta: {} }],
+      result: [{ success: true, results: rows, meta: { changes } }],
     });
   } catch (error) {
     response(res, 400, {

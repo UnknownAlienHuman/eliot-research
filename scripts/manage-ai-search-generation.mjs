@@ -1,8 +1,9 @@
 import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
-import { fileURLToPath, URL } from "node:url";
+import { fileURLToPath } from "node:url";
 import { createCloudflareD1HttpDatabase } from "./lib/cloudflare-d1-http.mjs";
+import { loadCompiledWorkspaceModule } from "./lib/compiled-workspace-module.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const COMMANDS = new Set(["status", "declare", "observe", "promote"]);
@@ -250,15 +251,13 @@ async function loadDesiredState(path) {
 }
 
 async function loadCloudflareAiModule() {
-  const moduleUrl = (name) =>
-    new URL(`../packages/cloudflare-ai/dist/${name}.js`, import.meta.url);
   try {
     const [profile, generation, registry, store, primary] = await Promise.all([
-      import(moduleUrl("ai-search-profile")),
-      import(moduleUrl("ai-search-generation")),
-      import(moduleUrl("ai-search-generation-registry")),
-      import(moduleUrl("ai-search-generation-registry-d1")),
-      import(moduleUrl("ai-search-primary-profile")),
+      loadCompiledWorkspaceModule("packages/cloudflare-ai/dist/ai-search-profile.js"),
+      loadCompiledWorkspaceModule("packages/cloudflare-ai/dist/ai-search-generation.js"),
+      loadCompiledWorkspaceModule("packages/cloudflare-ai/dist/ai-search-generation-registry.js"),
+      loadCompiledWorkspaceModule("packages/cloudflare-ai/dist/ai-search-generation-registry-d1.js"),
+      loadCompiledWorkspaceModule("packages/cloudflare-ai/dist/ai-search-primary-profile.js"),
     ]);
     return Object.freeze({
       ...profile,
