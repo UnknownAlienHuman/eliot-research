@@ -295,7 +295,7 @@ function parseReceipt(value: unknown): ImmutableObjectReceipt {
 
 function mapAuthorityFailure(error: unknown): never {
   const code = typeof error === "object" && error !== null && "code" in error ? (error as { readonly code?: unknown }).code : undefined;
-  if (code === "EVIDENCE_AUTHORIZATION_DENIED" || code === "NAVIGATION_SCOPE_MISMATCH" ||
+  if (code === "EVIDENCE_AUTHORIZATION_DENIED" || code === "EVIDENCE_SOURCE_NOT_LIVE" || code === "NAVIGATION_SCOPE_MISMATCH" ||
       code === "ORIENTATION_SOURCE_DENIED" || code === "ORIENTATION_SOURCE_NOT_ADMITTED") {
     fail("ARTIFACT_DRAFT_READ_DENIED", 403, "draft read authorization denied");
   }

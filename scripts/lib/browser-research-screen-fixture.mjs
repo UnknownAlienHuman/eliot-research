@@ -18,11 +18,18 @@ export function createResearchScreenFixture({ envelope, draftWorkflowId, draftAr
   const state = { blocked: false, starts: [], sectionReads: 0, citationReads: 0, holdSection: false, pendingSection: undefined, seen: [] };
   const handle = async (request, response, url) => {
     const path = url.pathname;
-    const paths = ["/api/v1/system/session", "/api/v1/system/research-configuration", "/api/v1/research/runs", "/api/v1/research/changes", "/api/v1/research/run", `/api/v1/research/run/${draftWorkflowId}`, `${artifactPath}/reauthorize`, `${sectionPath}/reauthorize`, `${sectionPath}/citations/reauthorize`];
+    const paths = ["/api/v1/system/session", "/api/v1/system/research-configuration", "/api/v1/research/runs", "/api/v1/research/changes", "/api/v1/research/run", `/api/v1/research/run/${draftWorkflowId}`, `${artifactPath}/reauthorize`, `${artifactPath}/publication`, `${artifactPath}/publication/current`, `${sectionPath}/reauthorize`, `${sectionPath}/citations/reauthorize`];
     state.seen.push(`${request.method} ${path}`);
     if (!paths.includes(path)) return false;
     const json = (data) => { response.setHeader("content-type", "application/json"); response.end(JSON.stringify(envelope(data))); };
-    if (path === "/api/v1/system/session") {
+    if (path === `${artifactPath}/publication` || path === `${artifactPath}/publication/current`) {
+      assert.equal(request.method, "GET"); assert.equal(url.search, "");
+      response.statusCode = 404;
+      response.setHeader("content-type", "application/problem+json");
+      response.end(JSON.stringify({ type: "urn:eliotr:problem:ARTIFACT_PUBLICATION_NOT_FOUND",
+        title: "Draft publication has not been created", status: 404,
+        code: "ARTIFACT_PUBLICATION_NOT_FOUND", trace_id: "browser-draft-publication-absence", retryable: false }));
+    } else if (path === "/api/v1/system/session") {
       assert.equal(request.method, "GET");
       json({ protocol: "eliotr.owner-session.v1", principal_ref: "owner-principal", client_class: "owner_pwa", credential_generation: "browser-fixture", expires_at: expiresAt });
     } else if (path === "/api/v1/system/research-configuration") {

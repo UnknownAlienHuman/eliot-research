@@ -139,3 +139,24 @@ exact 409 readback and malformed success receipts. They do not establish actual
 browser login/relogin, multiple live tabs, native historical REPORT reopening or
 live Cloudflare acceptance. The prior publication-fixture 404 browser failure at
 0f1b7215 also remains unresolved in this checkpoint.
+
+### Canonical checkout continuation
+
+The old writers stopped and published all nine unfinished source files at
+`0fd055b23a4db047670dbabe079d7714f68d64d6`. The canonical Cybertech checkout
+was first fast-forwarded to reviewed remote main `2a26cce4`, then to that exact
+saved exchange head on local main. Remote main was not advanced. The existing
+`agent/product-resume-20261002` branch remains the parent-reviewed exchange;
+no additional branch, worktree, credentials, deployment or live renewal was made.
+
+The first bounded follow-up preserves `EVIDENCE_SOURCE_NOT_LIVE` as a typed
+draft-read denial and supplies the exact structured
+`404/ARTIFACT_PUBLICATION_NOT_FOUND` for the synthetic unpublished draft's
+publication endpoints. Node syntax, exact-file ESLint and whitespace checks pass.
+Current-migration native purge-race and mounted browser proof remain pending;
+these static checks do not qualify the complete session feature.
+
+Parent review also identified per-snapshot history fanout and unbounded window
+work in the saved SQL design. The three owner-requested Luna/max workers are
+finishing disjoint backend, PWA and shared-history checkpoints under one
+serialized validation lane. Earlier test results are not current-head evidence.
