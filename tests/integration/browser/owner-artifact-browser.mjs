@@ -127,6 +127,8 @@ export async function runOwnerArtifactBrowser(harness) {
           { token, worker, phase: "original-report-run-status" });
         assert.equal(status.status, 200); assert.deepEqual(status.data.data, manifest.run.status);
         assert.deepEqual(status.data.data.answer, { availability: "draft", artifact_ref: manifest.artifact });
+        const artifact = await harness.workerJson(worker.origin, artifactPath, { token, worker, phase: "original-report-author-read" });
+        assert.equal(artifact.status, 200); assert.deepEqual(artifact.data.data.artifact_ref, manifest.artifact);
       }
       process.stdout.write(JSON.stringify({ phase: "artifact-real-history", status: history.status, code: history.data?.code,
         runs: history.data?.data?.runs?.length, saved_drafts: history.data?.data?.saved_drafts?.map((draft) => draft.artifact_ref) }) + "\n");
@@ -208,6 +210,11 @@ export async function runOwnerArtifactBrowser(harness) {
           const [accepted] = await Promise.all([
             browser.page.waitForResponse((response) => response.request().method() === "POST" &&
               response.url() === bridge.origin + artifactPath + "/accept", { timeout: 15000 }),
+            browser.page.waitForEvent("dialog", { timeout: 15000 }).then(async (dialog) => {
+              assert.equal(dialog.type(), "confirm");
+              assert.equal(dialog.message(), "Accept this exact report revision after reviewing its sections and sources?");
+              await dialog.accept();
+            }),
             browser.page.getByRole("button", { name: "Accept report", exact: true }).click(),
           ]);
           assert.equal(accepted.status(), 201);
@@ -345,7 +352,7 @@ export async function runOwnerArtifactBrowser(harness) {
     section = manifest.section;
     sectionPath = artifactPath + "/sections/" + encodeURIComponent(section.section_ref.id + ":" + section.section_ref.revision) + "/reauthorize";
     extras = [["GET", "/api/v1/system/session"], ["GET", "/api/v1/research/runs"],
-      ["GET", "/api/v1/research/run/" + encodeURIComponent(manifest.run.operation_id)], ["POST", artifactPath + "/reauthorize"],
+      ["GET", "/api/v1/research/run/" + encodeURIComponent(manifest.run.operation_id)], ["GET", artifactPath], ["POST", artifactPath + "/reauthorize"],
       ["GET", artifactPath + "/publication"], ["GET", artifactPath + "/publication/current"], ["POST", sectionPath], ["POST", artifactPath + "/accept"]];
     const originalDraftCheckpoint = await durableCheckpoint(paths, manifest);
     await start(); await browserRead("original_before_restart"); await publicationRead();
