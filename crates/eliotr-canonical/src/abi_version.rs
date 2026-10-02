@@ -13,6 +13,8 @@
 //! and `schema_generation` before touching payload bytes. Any mismatch fails closed with a typed
 //! [`AbiVersionError`]; no operation may weaken this check.
 
+#![forbid(unsafe_code)]
+
 use core::fmt;
 
 /// Kernel ABI operation-contract version.

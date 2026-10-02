@@ -9,8 +9,8 @@
 //! - `ScopeSnapshotIdentityVector::case_id` must return the declared id
 //!   (`-> "" | "xyzzy"`, 173:9).
 
-use eliotr_test_vectors::parse_scope_snapshot_identity_vector_set;
 use eliotr_test_vectors::ScopeSnapshotIdentityVerificationError;
+use eliotr_test_vectors::parse_scope_snapshot_identity_vector_set;
 
 fn frame(row: &str) -> String {
     format!(
@@ -29,41 +29,69 @@ fn error_row(case_id: &str, code: &str) -> String {
 
 #[test]
 fn parse_admits_input_too_large_code() {
-    let set = parse_scope_snapshot_identity_vector_set(&error_row(
+    let parsed = parse_scope_snapshot_identity_vector_set(&error_row(
         "err_input_too_large",
         "ELIOTR_SNAPSHOT_INPUT_TOO_LARGE",
-    ))
-    .expect("ELIOTR_SNAPSHOT_INPUT_TOO_LARGE must parse");
+    ));
+    assert!(
+        parsed.is_ok(),
+        "ELIOTR_SNAPSHOT_INPUT_TOO_LARGE must parse: {:?}",
+        parsed.as_ref().err()
+    );
+    let Ok(set) = parsed else {
+        return;
+    };
     assert_eq!(set.cases().len(), 1);
 }
 
 #[test]
 fn parse_admits_node_limit_code() {
-    let set = parse_scope_snapshot_identity_vector_set(&error_row(
+    let parsed = parse_scope_snapshot_identity_vector_set(&error_row(
         "err_node_limit",
         "ELIOTR_SNAPSHOT_NODE_LIMIT",
-    ))
-    .expect("ELIOTR_SNAPSHOT_NODE_LIMIT must parse");
+    ));
+    assert!(
+        parsed.is_ok(),
+        "ELIOTR_SNAPSHOT_NODE_LIMIT must parse: {:?}",
+        parsed.as_ref().err()
+    );
+    let Ok(set) = parsed else {
+        return;
+    };
     assert_eq!(set.cases().len(), 1);
 }
 
 #[test]
 fn parse_admits_output_too_large_code() {
-    let set = parse_scope_snapshot_identity_vector_set(&error_row(
+    let parsed = parse_scope_snapshot_identity_vector_set(&error_row(
         "err_output_too_large",
         "ELIOTR_SNAPSHOT_OUTPUT_TOO_LARGE",
-    ))
-    .expect("ELIOTR_SNAPSHOT_OUTPUT_TOO_LARGE must parse");
+    ));
+    assert!(
+        parsed.is_ok(),
+        "ELIOTR_SNAPSHOT_OUTPUT_TOO_LARGE must parse: {:?}",
+        parsed.as_ref().err()
+    );
+    let Ok(set) = parsed else {
+        return;
+    };
     assert_eq!(set.cases().len(), 1);
 }
 
 #[test]
 fn vector_case_id_returns_declared_id() {
-    let set = parse_scope_snapshot_identity_vector_set(&error_row(
+    let parsed = parse_scope_snapshot_identity_vector_set(&error_row(
         "my_case_42",
         "ELIOTR_SNAPSHOT_SYNTAX",
-    ))
-    .expect("error row must parse");
+    ));
+    assert!(
+        parsed.is_ok(),
+        "error row must parse: {:?}",
+        parsed.as_ref().err()
+    );
+    let Ok(set) = parsed else {
+        return;
+    };
     assert_eq!(set.cases()[0].case_id(), "my_case_42");
 }
 

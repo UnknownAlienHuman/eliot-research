@@ -20,7 +20,9 @@ use eliotr_test_vectors::{
 };
 
 fn frame(row: &str) -> String {
-    format!("{STABLE_ID_PROTOCOL_HEADER}\n# schema_generation=1\n{STABLE_ID_COLUMNS_HEADER}\n{row}\n")
+    format!(
+        "{STABLE_ID_PROTOCOL_HEADER}\n# schema_generation=1\n{STABLE_ID_COLUMNS_HEADER}\n{row}\n"
+    )
 }
 
 fn headers_only() -> String {
@@ -31,50 +33,51 @@ fn headers_only() -> String {
 fn error_lines_are_one_based() {
     // NoCases on a headers-only frame is reported at line 4.
     // Kills `line -> 1` (83:9) and `*line + 1` mutants (202:54).
-    match parse_stable_id_vector_set(&headers_only()) {
-        Err(error) => {
-            assert!(
-                matches!(error.kind(), StableIdParseErrorKind::NoCases),
-                "wrong kind: {:?}",
-                error.kind()
-            );
-            assert_eq!(error.line(), 4, "NoCases must be reported at line 4");
-        }
-        Ok(_) => panic!("expected NoCases"),
+    let no_cases = parse_stable_id_vector_set(&headers_only());
+    assert!(no_cases.is_err(), "expected NoCases");
+    if let Err(error) = no_cases {
+        assert!(
+            matches!(error.kind(), StableIdParseErrorKind::NoCases),
+            "wrong kind: {:?}",
+            error.kind()
+        );
+        assert_eq!(error.line(), 4, "NoCases must be reported at line 4");
     }
     // A malformed first case row is reported at line 4.
     // Kills `index + 1 -> index * 1` (124:37).
-    match parse_stable_id_vector_set(&frame("broken")) {
-        Err(error) => {
-            assert!(
-                matches!(
-                    error.kind(),
-                    StableIdParseErrorKind::WrongColumnCount { .. }
-                ),
-                "wrong kind: {:?}",
-                error.kind()
-            );
-            assert_eq!(error.line(), 4, "first case row must be line 4");
-        }
-        Ok(_) => panic!("expected WrongColumnCount"),
+    let malformed_first = parse_stable_id_vector_set(&frame("broken"));
+    assert!(
+        malformed_first.is_err(),
+        "expected WrongColumnCount on first case row"
+    );
+    if let Err(error) = malformed_first {
+        assert!(
+            matches!(
+                error.kind(),
+                StableIdParseErrorKind::WrongColumnCount { .. }
+            ),
+            "wrong kind: {:?}",
+            error.kind()
+        );
+        assert_eq!(error.line(), 4, "first case row must be line 4");
     }
     // A malformed second case row is reported at line 5.
-    let two_rows = format!(
-        "ok1|derive_stable_id|00|error|-|{STABLE_ID_NUL_CODE}\nbroken"
+    let two_rows = format!("ok1|derive_stable_id|00|error|-|{STABLE_ID_NUL_CODE}\nbroken");
+    let malformed_second = parse_stable_id_vector_set(&frame(&two_rows));
+    assert!(
+        malformed_second.is_err(),
+        "expected WrongColumnCount on second case row"
     );
-    match parse_stable_id_vector_set(&frame(&two_rows)) {
-        Err(error) => {
-            assert!(
-                matches!(
-                    error.kind(),
-                    StableIdParseErrorKind::WrongColumnCount { .. }
-                ),
-                "wrong kind: {:?}",
-                error.kind()
-            );
-            assert_eq!(error.line(), 5, "second case row must be line 5");
-        }
-        Ok(_) => panic!("expected WrongColumnCount"),
+    if let Err(error) = malformed_second {
+        assert!(
+            matches!(
+                error.kind(),
+                StableIdParseErrorKind::WrongColumnCount { .. }
+            ),
+            "wrong kind: {:?}",
+            error.kind()
+        );
+        assert_eq!(error.line(), 5, "second case row must be line 5");
     }
 }
 

@@ -31,9 +31,7 @@ fn residency_key_rejects_non_canonical_case_id_shapes() {
     // `a!`: canonical head, non-canonical tail. `A1`: non-canonical head,
     // canonical tail. Both must fail closed; the `||` mutant admits both.
     for bad in ["a!", "A1", "A", "a-b", "_lead"] {
-        let row = format!(
-            "{bad}|73|61|63|6b|72|65|{RESIDENCY_DIGEST_HEX}|ok|00|-"
-        );
+        let row = format!("{bad}|73|61|63|6b|72|65|{RESIDENCY_DIGEST_HEX}|ok|00|-");
         assert!(
             matches!(
                 parse_residency_key_vector_set(&residency_frame(&row)),

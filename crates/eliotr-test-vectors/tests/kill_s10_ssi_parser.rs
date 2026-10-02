@@ -29,35 +29,33 @@ fn frame(body: &str) -> String {
 }
 
 fn display_of(source: &str) -> String {
-    match parse_scope_snapshot_identity_vector_set(source) {
-        Err(error) => format!("{error}"),
-        Ok(_) => panic!("expected parse error"),
-    }
+    let parsed = parse_scope_snapshot_identity_vector_set(source);
+    assert!(parsed.is_err(), "expected parse error");
+    let Err(error) = parsed else {
+        return String::new();
+    };
+    format!("{error}")
 }
 
 fn assert_kind(source: &str, kind_debug: &str) {
-    match parse_scope_snapshot_identity_vector_set(source) {
-        Err(error) => {
-            let text = format!("{error}");
-            assert!(
-                text.contains(kind_debug),
-                "expected kind {kind_debug}, got: {text}"
-            );
-        }
-        Ok(_) => panic!("expected parse error"),
+    let parsed = parse_scope_snapshot_identity_vector_set(source);
+    assert!(parsed.is_err(), "expected parse error");
+    if let Err(error) = parsed {
+        let text = format!("{error}");
+        assert!(
+            text.contains(kind_debug),
+            "expected kind {kind_debug}, got: {text}"
+        );
     }
 }
 
 fn assert_not_kind(source: &str, kind_debug: &str) {
-    match parse_scope_snapshot_identity_vector_set(source) {
-        Err(error) => {
-            let text = format!("{error}");
-            assert!(
-                !text.contains(kind_debug),
-                "must not be {kind_debug}, got: {text}"
-            );
-        }
-        Ok(_) => {}
+    if let Err(error) = parse_scope_snapshot_identity_vector_set(source) {
+        let text = format!("{error}");
+        assert!(
+            !text.contains(kind_debug),
+            "must not be {kind_debug}, got: {text}"
+        );
     }
 }
 
