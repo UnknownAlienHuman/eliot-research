@@ -374,11 +374,17 @@ function parseManifest(bytes: Uint8Array): { readonly spec: ArtifactSpec; readon
   } catch { fail("ARTIFACT_DRAFT_READ_INTEGRITY", 409, "draft manifest contract is invalid"); }
 }
 
-function sameScopeForReauthorization(original: ScopeSnapshot, fresh: ScopeSnapshot): boolean {
+function sameScopeForReauthorization(original: ScopeSnapshot, fresh: ScopeSnapshot, leaseRefreshProven = false): boolean {
+  const originalParticipants = { ...original.participant_generations };
+  const freshParticipants = { ...fresh.participant_generations };
+  if (leaseRefreshProven) {
+    delete originalParticipants["member-policy-closure"];
+    delete freshParticipants["member-policy-closure"];
+  }
   return canonicalJson(original.resolved_scope_expression) === canonicalJson(fresh.resolved_scope_expression) &&
     canonicalJson([...original.member_source_revision_refs].sort()) === canonicalJson([...fresh.member_source_revision_refs].sort()) &&
     canonicalJson(original.source_owner_generations) === canonicalJson(fresh.source_owner_generations) &&
-    canonicalJson(original.participant_generations) === canonicalJson(fresh.participant_generations) &&
+    canonicalJson(originalParticipants) === canonicalJson(freshParticipants) &&
     original.disclosure_closure_digest === fresh.disclosure_closure_digest &&
     fresh.purge_ledger_revision >= original.purge_ledger_revision;
 }
@@ -546,7 +552,32 @@ async function readArtifactDraftCore(
           expectedAuthorizationJson === undefined) {
         fail("ARTIFACT_DRAFT_READ_DENIED", 403, "draft read authorization denied");
       }
-      if (!sameScopeForReauthorization(storedScope, freshReauthorizationScope)) {
+      let sameScope = sameScopeForReauthorization(storedScope, freshReauthorizationScope);
+      if (!sameScope && access.client_class === "owner_pwa" && binding.principal_ref === access.principal_ref) {
+        // This is a durable lease witness, never a caller-supplied permission flag.
+        // The navigation authority independently reconstructs the original policy
+        // hashes and rechecks current sources before any stored bytes are read.
+        const lease = await database.prepare(
+          "SELECT 1 AS proven FROM scope_read_policy_snapshot_baseline b JOIN scope_snapshot s " +
+          "ON s.snapshot_id=b.snapshot_id AND s.revision=b.snapshot_revision " +
+          "WHERE b.snapshot_id=?1 AND b.snapshot_revision=?2 AND b.pre_migration_semantic=0 " +
+          "AND EXISTS(SELECT 1 FROM scope_access_grant g WHERE g.snapshot_id=s.snapshot_id " +
+          "AND g.snapshot_revision=s.revision AND g.principal_ref=?3 AND g.client_class='owner_pwa' " +
+          "AND g.project_client_grant_id IS NULL AND g.state='ACTIVE' AND g.policy_authority_ref=s.policy_authority_ref " +
+          "AND g.credential_generation=s.client_fence_ref) " +
+          "AND EXISTS(SELECT 1 FROM scope_read_policy_history_event e JOIN scope_read_policy_lease_refresh_receipt r " +
+          "ON r.receipt_sequence=e.receipt_sequence AND r.refresh_id=e.refresh_id AND r.state='APPLIED' " +
+          "WHERE e.principal_ref=?3 AND e.client_class='owner_pwa' AND e.event_kind='LEASE_REFRESH' " +
+          "AND e.history_event_sequence>b.history_event_sequence_floor AND r.receipt_sequence>b.receipt_sequence_floor) " +
+          "AND NOT EXISTS(SELECT 1 FROM scope_read_policy_identity i WHERE i.principal_ref=?3 " +
+          "AND i.client_class='owner_pwa' AND i.birth_sequence<=b.history_event_sequence_floor " +
+          "AND i.semantic_sequence>b.history_event_sequence_floor) " +
+          "AND NOT EXISTS(SELECT 1 FROM scope_read_policy_lease_refresh_receipt r WHERE r.principal_ref=?3 " +
+          "AND r.client_class='owner_pwa' AND r.state='PREPARED') LIMIT 1",
+        ).bind(scopeRef.id, scopeRef.revision, access.principal_ref).first<{ proven: number }>();
+        sameScope = lease?.proven === 1 && sameScopeForReauthorization(storedScope, freshReauthorizationScope, true);
+      }
+      if (!sameScope) {
         fail("ARTIFACT_DRAFT_READ_STALE", 410, "fresh draft scope does not cover the saved source set");
       }
       const currentGrant = await reauthorization.navigation.current();
