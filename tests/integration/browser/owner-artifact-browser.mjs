@@ -132,7 +132,7 @@ export async function runOwnerArtifactBrowser(harness) {
         throw error;
       }
     }
-    const extras = [["GET", "/api/v1/research/runs"], ["POST", artifactPath + "/reauthorize"],
+    const extras = [["GET", "/api/v1/system/session"], ["GET", "/api/v1/research/runs"], ["POST", artifactPath + "/reauthorize"],
       ["GET", artifactPath + "/publication"], ["GET", artifactPath + "/publication/current"], ["POST", sectionPath]];
     async function browserRead(round) {
       browser = await harness.launchPlaywright(runId);
