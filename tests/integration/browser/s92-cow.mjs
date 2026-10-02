@@ -6,16 +6,13 @@
  * returns { state, detail? } with harness state discipline:
  *   PASS            — real assertion held against the real system code
  *   FAIL            — assertion failure, with reason
- *   NOT_EXECUTED    — missing credentials/environment (honest skip, never fake PASS)
- *   BLOCKED         — unmet prerequisite in the product (e.g. producer not implemented)
- *   NOT_EXECUTED — live gateway assertions have not run in this local test mode
+ *   NOT_EXECUTED    — a required credential, environment or scenario fixture is unavailable
+ *   BLOCKED         — a required product/build prerequisite is unmet (e.g. producer not implemented)
  *
  * Real entry points driven (never stubbed):
  *   - scripts/lib/local-launch.mjs      (localConfig, localEnvironment, localPaths)
  *   - packages/cloudflare-artifacts/dist (compiled verification + draft reader)
  *   - packages/research/src/artifact-compiler.ts (change-review contract)
- *   - apps/eliotr-core/src/composition-root.ts (publication wiring probe)
- *   - docs/implementation/implementation-status.json (registry evidence)
  *
  * The compiled @eliotr/* dist modules are loaded through a resolve hook that
  * maps bare "@eliotr/<pkg>" specifiers to "<repo>/packages/<pkg>/dist/index.js".
@@ -232,31 +229,24 @@ async function runChangeReviewEntryPoint() {
 }
 
 // ---------------------------------------------------------------------------
-// Scenario 4 — publication: an ACCEPTED-status publication producer must be
-// composed. An executable authorized publish/readback is required beyond source wiring.
+// Scenario 4 — publication: an ACCEPTED publication requires an executable
+// authorized publish/readback, not a source-wiring assertion. This wrapper has
+// no admitted V2 draft/current owner session or bound D1/R2 fixture, so its
+// outcome remains separate from the existing native and browser proof paths.
 // ---------------------------------------------------------------------------
 async function runPublicationAccepted() {
   const name = "s92-cow-publication-accepted";
-  try {
-    const composition = readFileSync(resolve(REPO, "apps/eliotr-core/src/composition-root.ts"), "utf8");
-    const servicePath = resolve(REPO, "apps/eliotr-core/src/artifact-product-composition.ts");
-    const producerPath = resolve(REPO, "packages/cloudflare-artifacts/src/artifact-publication.ts");
-    if (!existsSync(servicePath) || !existsSync(producerPath) ||
-      !composition.includes("createArtifactProductService")) {
-      return { state: "BLOCKED", detail: name + ": owner publication service is not composed" };
-    }
-    // Source wiring establishes only a prerequisite. The actual D1/R2 producer
-    // and authenticated HTTP path must execute before publication is accepted.
-    return { state: "NOT_EXECUTED", detail: name + ": owner ACCEPTED service exists; this browser scenario needs an admitted V2 draft and current owner session. Run the actual Worker publication integration tests separately; a source probe does not prove acceptance." };
-  } catch (error) {
-    return failResult(name, error);
-  }
+  return {
+    state: "NOT_EXECUTED",
+    detail: `${name}: this wrapper has no admitted V2 draft/current owner session or bound D1/R2 fixture, so it does not execute publication/readback; related actual evidence remains in apps/eliotr-core/test/artifact-owner-loop-http.test.ts and tests/integration/browser/owner-e2e.mjs --owner-artifact. Source presence alone is not publication proof, and those separate results are not promoted here.`,
+  };
 }
 
 // ---------------------------------------------------------------------------
 // Scenario 5 — history readback: the draft reader exposes immutable historical
-// reads (readArtifactDraft / readArtifactDraftSection). Executing a readback
-// needs a prepared local D1/R2 state; without it this is an honest skip.
+// reads (readArtifactDraft / readArtifactDraftSection). This wrapper has no
+// D1/R2 fixture binding or exact artifact reference, so a local profile alone
+// cannot prove the readback.
 // ---------------------------------------------------------------------------
 async function runHistoryReadback() {
   const name = "s92-cow-history-readback";
@@ -270,15 +260,12 @@ async function runHistoryReadback() {
     assert.equal(typeof mod.readArtifactDraftSection, "function", "historical section read entry point must exist");
     const { localPaths } = await import(pathToFileURL(resolve(REPO, "scripts/lib/local-launch.mjs")).href);
     const paths = localPaths();
-    if (!existsSync(paths.directory)) {
-      return {
-        state: "NOT_EXECUTED",
-        detail: `${name}: reader entry points exist (readArtifactDraft/readArtifactDraftSection), but no prepared local D1/R2 state at ${paths.directory}; run pnpm local:prepare, then execute readback`,
-      };
-    }
+    const profileState = existsSync(paths.directory)
+      ? `local profile state is present at ${paths.directory}`
+      : `no local profile state is present at ${paths.directory}`;
     return {
-      state: "BLOCKED",
-      detail: `${name}: local state exists at ${paths.directory} but live readback assertions are not wired in this scenario file; wire readArtifactDraft against the prepared local D1 before claiming PASS`,
+      state: "NOT_EXECUTED",
+      detail: `${name}: ${profileState}, but this scenario has no D1/R2 fixture binding or exact artifact reference and does not call readArtifactDraft/readArtifactDraftSection; historical readback remains unexecuted`,
     };
   } catch (error) {
     return failResult(name, error);
