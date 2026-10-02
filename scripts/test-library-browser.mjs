@@ -508,6 +508,8 @@ try {
   "the default mounted driver must route both exact draft-publication paths to the structured absence fixture");
   assert.deepEqual(researchScreen.state.seen.filter((request) => publicationAbsencePaths.some((path) => request === `GET ${path}`)),
     publicationAbsencePaths.map((path) => `GET ${path}`));
+  await wait('document.querySelector("#source-namespace [data-namespace-status]")?.textContent.includes("already covers the current owner session")',
+    "Initial namespace check completes before source interactions");
   await openSources("Initial Sources"); await assertView("sources", "#library");
   await wait('document.querySelector("#exhaustive-workflow [data-workflow-badge]")?.textContent.trim() === "READY"', "Health event reaches exhaustive panel");
   assert.equal(await evaluate('document.querySelector("#exhaustive-workflow button[type=submit]").disabled'), false);
