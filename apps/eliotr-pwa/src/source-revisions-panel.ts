@@ -66,7 +66,7 @@ export function mountSourceRevisionsPanel(element: HTMLElement, sourceId: string
   };
   next.onclick = () => { const cursor = page?.next_cursor; if (cursor) void load(cursor); };
   const offline = () => clear("Offline. Private version data cleared.");
-  const denied = () => clear("Authorization changed. Sign in or renew the read policy, then refresh.");
+  const denied = () => clear("Authorization changed. Sign in again, then refresh revision history to check current access.");
   window.addEventListener("offline", offline); window.addEventListener("eliotr:authorization-cleared", denied);
   void load();
   return () => { disposed = true; clear("Version session closed."); element.replaceChildren();

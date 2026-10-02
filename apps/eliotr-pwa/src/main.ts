@@ -1,5 +1,5 @@
 import "./styles.css";
-import { ApiRequestError, getSystemHealth, type GoogleExternalTransport, type SystemHealth } from "./api.js";
+import { getSystemHealth, type GoogleExternalTransport, type SystemHealth } from "./api.js";
 import { mountBundleImportPanel } from "./bundle-import-panel.js";
 import { mountGoogleOAuthPanel } from "./google-oauth-panel.js";
 import { mountLibraryPanel } from "./library-panel.js";
@@ -19,7 +19,9 @@ import { mountErasurePanel } from "./erasure-panel.js";
 import { mountSourceNamespacePanel } from "./source-namespace-panel.js";
 import { mountResearchConfigurationPanel, type ResearchConfigurationStartState } from "./research-configuration-panel.js";
 import { mountOwnerSessionPanel } from "./owner-session-panel.js";
+import { createOwnerSessionLifecycle } from "./owner-session-lifecycle.js";
 import { escapeHtml } from "./html.js";
+import { classifyHealthFailure, type HealthFailure } from "./health-failure.js";
 import type { ResolvedEvidence, VersionedRef } from "@eliotr/contracts";
 
 const root = document.querySelector<HTMLDivElement>("#app");
@@ -32,18 +34,6 @@ let healthSerial = 0;
 let pageClosed = false;
 let mountedGoogleTransport: GoogleExternalTransport | "unknown" | null = null;
 type HealthLossReason = "initial-unavailable" | "connection-lost" | "generation-changed";
-type HealthFailureKind = "network" | "access" | "server";
-interface HealthFailure { readonly kind: HealthFailureKind; readonly code: string; readonly status: number; }
-
-function classifyHealthFailure(error: unknown): HealthFailure {
-  if (!(error instanceof ApiRequestError)) return { kind: "network", code: "API_UNREACHABLE", status: 0 };
-  const code = /^[A-Z0-9_:-]{1,128}$/u.test(error.code) ? error.code : "API_REQUEST_FAILED";
-  const status = Number.isSafeInteger(error.status) && error.status >= 100 && error.status <= 599 ? error.status : 0;
-  const kind: HealthFailureKind = code === "API_UNREACHABLE" || code === "API_REQUEST_ABORTED"
-    ? "network"
-    : code.startsWith("ACCESS_") || status === 401 || status === 403 ? "access" : "server";
-  return { kind, code, status };
-}
 
 function healthBadge(health: SystemHealth | null): string {
   if (health === null) return '<span class="status status--pending">checking</span>';
@@ -211,15 +201,27 @@ function render(health: SystemHealth | null): void {
   const importer = app.querySelector<HTMLElement>("#bundle-import");
   const rawUploadHost = app.querySelector<HTMLElement>("#raw-upload");
   let selectedNamespace: string | undefined;
+  let namespacePanel: ReturnType<typeof mountSourceNamespacePanel> | undefined;
+  let projectPanel: (() => void) & ProjectPanelHandle | undefined;
+  let libraryPanel: ReturnType<typeof mountLibraryPanel> | undefined;
+  let refreshOwnerReadPanes = (): void => {};
+  const ownerSessionLifecycle = createOwnerSessionLifecycle({
+    deploymentGeneration: () => app.dataset.healthGeneration,
+    healthReady: () => !pageClosed && app.dataset.healthReady === "true",
+    onVerified: (session, deploymentGeneration) => namespacePanel?.verifyOwnerSession(session, deploymentGeneration),
+    onCleared: () => namespacePanel?.clearPrivate("Owner session verification ended. Workspace data was cleared."),
+    refreshReadPanes: () => refreshOwnerReadPanes(),
+  });
   const namespaceSelected = (event: Event): void => {
     const id = (event as CustomEvent<{ sourceNamespaceId?: unknown }>).detail?.sourceNamespaceId;
     selectedNamespace = typeof id === "string" && /^[A-Za-z0-9][A-Za-z0-9._:@-]{0,255}$/u.test(id) ? id : undefined;
   };
   app.addEventListener("eliotr:namespace-selected", namespaceSelected);
   const namespaceHost = app.querySelector<HTMLElement>("#source-namespace");
-  const namespacePanel = namespaceHost ? mountSourceNamespacePanel(namespaceHost, {
+  namespacePanel = namespaceHost ? mountSourceNamespacePanel(namespaceHost, {
     deploymentGeneration: () => app.dataset.healthGeneration,
     healthReady: () => app.dataset.healthReady === "true",
+    onResumed: ownerSessionLifecycle.onResumed,
   }) : undefined;
   app.dataset.healthReady = health?.ready === true ? "true" : "false";
   renderGoogleConnector(health);
@@ -276,8 +278,9 @@ function render(health: SystemHealth | null): void {
   const ownerSession = ownerSessionHost ? mountOwnerSessionPanel(ownerSessionHost, {
     deploymentGeneration: () => app.dataset.healthGeneration,
     healthReady: () => app.dataset.healthReady === "true",
-    onVerified: (session, deploymentGeneration) => namespacePanel?.verifyOwnerSession(session, deploymentGeneration),
-    onCleared: () => namespacePanel?.clearPrivate("Owner session verification ended. Workspace data was cleared."),
+    onVerified: ownerSessionLifecycle.onVerified,
+    onCleared: ownerSessionLifecycle.onCleared,
+    onExpired: ownerSessionLifecycle.onExpired,
   }) : undefined;
   const evidenceEmpty = app.querySelector<HTMLElement>("#evidence-empty");
   const evidenceDetail = app.querySelector<HTMLElement>("#evidence-detail");
@@ -387,8 +390,6 @@ function render(health: SystemHealth | null): void {
       if (coverageNote) coverageNote.textContent = "Run Research to measure sampled resolution.";
     }
   };
-  let projectPanel: (() => void) & ProjectPanelHandle | undefined = undefined;
-  let libraryPanel: ReturnType<typeof mountLibraryPanel> | undefined = undefined;
   let selectionSerial = 0;
   const clearPrivateEvidence = (researchNotice?: string, preserveIntent = false): void => {
     selectionSerial += 1;
@@ -404,7 +405,7 @@ function render(health: SystemHealth | null): void {
     app.querySelectorAll<HTMLButtonElement>("[data-refresh], [data-connection-refresh]").forEach((button) => { button.disabled = false; });
     updateHealth(unavailableHealth());
   };
-  const clearEvidenceOnAuthorization = (): void => clearPrivateEvidence("Authorization changed. Sign in again or renew the read policy, then try again.");
+  const clearEvidenceOnAuthorization = (): void => clearPrivateEvidence("Authorization changed. Sign in again, then refresh to check which sources remain permitted.");
   const clearEvidenceOnHealthLost = (event: Event): void => {
     const reason = (event as CustomEvent<{ reason?: unknown }>).detail?.reason;
     clearPrivateEvidence(undefined, reason === "connection-lost" || reason === "initial-unavailable");
@@ -490,6 +491,7 @@ function render(health: SystemHealth | null): void {
     exhaustive?.selectSource(id);
     return true;
   }) : undefined;
+  refreshOwnerReadPanes = (): void => { projectPanel?.refresh(); libraryPanel?.refresh(); researchRun?.refreshHistory(); };
   const cleanups = [orientation, retrieval, researchRun, exhaustive, researchChanges, researchConfiguration, wiki, diagnostic, clientGrants, erasure, ownerSession, projectPanel,
     () => erasureHost?.removeEventListener("eliotr:source-erased", sourceErased),
     () => erasureHost?.removeEventListener("eliotr:source-erasure-requested", sourceErased), importer ? mountBundleImportPanel(importer) : undefined,

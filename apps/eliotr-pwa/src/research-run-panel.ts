@@ -13,7 +13,7 @@ export function mountResearchRunPanel(
   deploymentGeneration: () => string | undefined,
   healthReady: () => boolean = () => false,
   researchConfigurationReady: () => boolean = () => true,
-): (() => void) & { clearPrivate(notice?: string): void; suspendPrivate(): void; refreshAvailability(): void; invalidateSourceRevision(): void; selectSource(id: string, context?: LibrarySelectionContext): void; setProject(projectId?: string, title?: string): void } {
+): (() => void) & { clearPrivate(notice?: string): void; suspendPrivate(): void; refreshAvailability(): void; refreshHistory(): void; invalidateSourceRevision(): void; selectSource(id: string, context?: LibrarySelectionContext): void; setProject(projectId?: string, title?: string): void } {
   const { form, badge, progress, query, scope, projectOption, selectedOption, submit, refresh, workflowInput, recover, status, result, historyRefresh, historyStatus, historyList } = createResearchRunView(element, healthReady(), researchConfigurationReady());
   let serial = 0; let controller: AbortController | undefined;
   let workflowId: string | undefined; let workflowGeneration: string | undefined; let selectedSourceId: string | undefined; let selectedProjectId: string | undefined;
@@ -400,6 +400,7 @@ export function mountResearchRunPanel(
   return Object.assign(cleanup, {
     clearPrivate, suspendPrivate,
     refreshAvailability,
+    refreshHistory(): void { loadHistory("automatic", true); },
     invalidateSourceRevision(): void {
       if (disposed || result.hidden || result.querySelector(".research-report-heading") === null) return;
       stop(); workflowId = undefined; workflowGeneration = undefined; workflowInput.value = "";

@@ -47,6 +47,27 @@ export interface CreatedSourceNamespace {
   readonly deployment_generation: string;
 }
 
+/** Confirms a creation receipt against the authoritative generation-bound owner catalog. */
+export function confirmCreatedNamespaceReadback(
+  created: CreatedSourceNamespace,
+  profile: SourceNamespaceProfile,
+  readback: SourceNamespaceCatalog,
+): SourceNamespaceSummary {
+  const confirmed = readback.namespaces.find((namespace) => namespace.source_namespace_id === created.source_namespace_id);
+  const profileStillExists = readback.profiles.some((candidate) =>
+    candidate.profile_ref.id === profile.profile_ref.id && candidate.profile_ref.revision === profile.profile_ref.revision);
+  if (readback.deployment_generation !== created.deployment_generation || confirmed?.title !== created.title || !profileStillExists) {
+    throw new ApiRequestError({
+      status: 503,
+      code: "NAMESPACE_READBACK_UNCONFIRMED",
+      message: "The created workspace was not confirmed in the current owner catalog readback.",
+      retryable: true,
+      traceId: created.trace_id,
+    });
+  }
+  return confirmed;
+}
+
 export interface RenewedSourceNamespace {
   readonly protocol: typeof RENEWAL_PROTOCOL;
   readonly source_namespace_id: string;

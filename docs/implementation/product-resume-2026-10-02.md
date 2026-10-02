@@ -160,3 +160,21 @@ Parent review also identified per-snapshot history fanout and unbounded window
 work in the saved SQL design. The three owner-requested Luna/max workers are
 finishing disjoint backend, PWA and shared-history checkpoints under one
 serialized validation lane. Earlier test results are not current-head evidence.
+
+The bounded PWA continuation connects verified-session expiry to the existing
+global private-data clear and refreshes Library, Projects and saved Research
+history after the same session's namespace check completes. Creation now uses
+an authoritative catalog readback before selecting a usable workspace. Manual
+renewal controls and related instructions are removed. The callbacks retain
+session, deployment, health, expiry and disposal fences; restoring access does
+not select a source, open a report or start Research. Two small source helpers
+separate session lifecycle and existing health-error classification to retain
+the source-file budget.
+
+This PWA source checkpoint is saved independently while the atomic renewal and
+shared-history integration are still in assembly. Compilation, scoped lint,
+mounted lifecycle tests and current-migration native history proof are pending
+at publication. The publication-absence fixture now uses the API's required
+`application/json` MIME type. The draft-reader test adds the known terminal
+source denial while retaining the unknown-authority 503 control; native proof
+remains pending. No live session, lease, report or deployment is changed.

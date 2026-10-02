@@ -25,7 +25,7 @@ export function createResearchScreenFixture({ envelope, draftWorkflowId, draftAr
     if (path === `${artifactPath}/publication` || path === `${artifactPath}/publication/current`) {
       assert.equal(request.method, "GET"); assert.equal(url.search, "");
       response.statusCode = 404;
-      response.setHeader("content-type", "application/problem+json");
+      response.setHeader("content-type", "application/json");
       response.end(JSON.stringify({ type: "urn:eliotr:problem:ARTIFACT_PUBLICATION_NOT_FOUND",
         title: "Draft publication has not been created", status: 404,
         code: "ARTIFACT_PUBLICATION_NOT_FOUND", trace_id: "browser-draft-publication-absence", retryable: false }));

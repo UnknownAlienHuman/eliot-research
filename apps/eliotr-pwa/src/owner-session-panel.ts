@@ -6,6 +6,8 @@ export interface OwnerSessionPanelOptions {
   readonly healthReady: () => boolean;
   readonly onVerified?: (session: OwnerSession, deploymentGeneration: string) => void;
   readonly onCleared?: () => void;
+  /** Clears every private owner view when the verified Cloudflare session expires. */
+  readonly onExpired?: () => void;
 }
 
 function online(): boolean {
@@ -137,6 +139,10 @@ export function mountOwnerSessionPanel(
         options.onVerified?.(response, generation);
       } catch (error) {
         if (mine !== serial || disposed) return;
+        if (error instanceof ApiRequestError && error.code === "ACCESS_SESSION_EXPIRED" && options.onExpired !== undefined) {
+          options.onExpired();
+          return;
+        }
         session = undefined;
         sessionGeneration = undefined;
         clearExpiryTimer();
@@ -191,7 +197,8 @@ export function mountOwnerSessionPanel(
       scheduleExpiry(current);
       return;
     }
-    clearPrivate("Owner session expired. Checking the current verified session again.");
+    options.onExpired?.();
+    if (session === current) clearPrivate("Owner session expired. Checking the current verified session again.");
     if (options.healthReady() && online() && currentGeneration() !== undefined) refresh();
   }
   readButton.onclick = refresh;

@@ -51,7 +51,7 @@ function failureMessage(error: unknown): string {
   if (error.code === "PROJECT_IDEMPOTENCY_CONFLICT") return "This save key is already bound to another change. Edit the project and try again.";
   if (error.code === "PROJECT_NOT_FOUND") return "This project is no longer available. Refresh Projects to read the current list.";
   if (error.status === 401 || error.status === 403 || error.code.startsWith("ACCESS_")) {
-    return "Project access changed. Sign in again or renew the workspace read policy.";
+    return "Project access changed. Sign in again, then refresh Projects to check current access.";
   }
   return "Projects could not be read. Try Refresh Projects.";
 }

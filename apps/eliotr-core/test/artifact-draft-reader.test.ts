@@ -2,7 +2,7 @@ import type { ArtifactDraftReadError } from "@eliotr/cloudflare-research";
 import { readArtifactDraft, readArtifactDraftSection, readReauthorizedArtifactDraft } from "@eliotr/cloudflare-research";
 import { readArtifactDraftSectionCitations } from "../../../packages/cloudflare-artifacts/src/artifact-draft-reader.js";
 import type { OperationIntent } from "@eliotr/contracts";
-import { createNavigationReadAuthority, evidenceSha256Bytes } from "@eliotr/cloudflare-evidence";
+import { createNavigationReadAuthority, evidenceSha256Bytes, EvidenceRuntimeError } from "@eliotr/cloudflare-evidence";
 import { OrientationError } from "@eliotr/cloudflare-navigation";
 import { createEvidenceFreezeMaterializeContextReader, createEvidenceFreezeVerificationContextReader } from "../../../packages/cloudflare-research/src/research-evidence-freeze-composition.js";
 import { decodeResearchVerificationResult } from "@eliotr/cloudflare-research-stages";
@@ -304,6 +304,13 @@ describe("actual D1/R2 artifact draft reader", () => {
       expected: { code: "ARTIFACT_DRAFT_READ_DENIED", status: 403, retryable: false },
     },
     {
+      name: "terminal source authority",
+      code: "EVIDENCE_SOURCE_NOT_LIVE",
+      status: 403,
+      retryable: false,
+      expected: { code: "ARTIFACT_DRAFT_READ_DENIED", status: 403, retryable: false },
+    },
+    {
       name: "unmapped authority failure",
       code: "ARTIFACT_READER_TEST_UNMAPPED",
       status: 409,
@@ -326,7 +333,11 @@ describe("actual D1/R2 artifact draft reader", () => {
     const currentAuthorization = await navigation.current();
     const injectedNavigation = {
       ...navigation,
-      current: async () => { throw new OrientationError(failure.code, failure.status, failure.retryable); },
+      current: async () => {
+        throw failure.code === "EVIDENCE_SOURCE_NOT_LIVE"
+          ? new EvidenceRuntimeError(failure.code, "source is pending purge", { invalidation_state: "REDACTED" })
+          : new OrientationError(failure.code, failure.status, failure.retryable);
+      },
     };
     const bucketGet = vi.spyOn(runtime.WORK_BUCKET, "get");
     try {
