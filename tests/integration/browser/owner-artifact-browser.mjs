@@ -103,11 +103,17 @@ export async function runOwnerArtifactBrowser(harness) {
         runs: history.data?.data?.runs?.length, saved_drafts: history.data?.data?.saved_drafts?.map((draft) => draft.artifact_ref) }) + "\n");
     }
     async function action(name, successor, callback, extraPaths = []) {
-      await harness.settleLedger(browser.page, browser);
-      browser.registerOp({ kind: "harness-action", cause: "recovery-selection", scope: "document", sourceDoc: browser.currentDocId(),
-        targetDoc: browser.currentDocId(), action: name, role: "catalog-read", from: browser.currentOp().id, successors: [successor] });
-      browser.mintSlotsFor(browser.currentIssuance(), { origin: bridge.origin, extraPaths });
-      await callback();
+      try {
+        await harness.settleLedger(browser.page, browser);
+        browser.registerOp({ kind: "harness-action", cause: "recovery-selection", scope: "document", sourceDoc: browser.currentDocId(),
+          targetDoc: browser.currentDocId(), action: name, role: "catalog-read", from: browser.currentOp().id, successors: [successor] });
+        browser.mintSlotsFor(browser.currentIssuance(), { origin: bridge.origin, extraPaths });
+        await callback();
+      } catch (error) {
+        const detail = error instanceof Error ? (error.stack ?? error.message) : String(error);
+        process.stderr.write(`owner-e2e artifact action=${name} failed: ${detail}\\n`);
+        throw error;
+      }
     }
     const extras = [["GET", "/api/v1/research/runs"], ["POST", artifactPath + "/reauthorize"],
       ["GET", artifactPath + "/publication"], ["GET", artifactPath + "/publication/current"], ["POST", sectionPath]];
@@ -153,10 +159,12 @@ export async function runOwnerArtifactBrowser(harness) {
         assert.equal(await browser.page.getByRole("button", { name: "Accept report", exact: true }).isDisabled(), true);
       }, extras);
       await action("artifact-section-open", "artifact-acceptance-check", async () => {
-        const nextSection = browser.page.waitForResponse((response) => response.request().method() === "POST" &&
-          response.url() === bridge.origin + sectionPath, { timeout: 15000 });
-        await browser.page.getByRole("button", { name: "Open section", exact: true }).first().click();
-        const opened = await nextSection; assert.equal(opened.status(), 200);
+        const [opened] = await Promise.all([
+          browser.page.waitForResponse((response) => response.request().method() === "POST" &&
+            response.url() === bridge.origin + sectionPath, { timeout: 15000 }),
+          browser.page.getByRole("button", { name: "Open section", exact: true }).first().click(),
+        ]);
+        assert.equal(opened.status(), 200);
         for (const name of ["x-eliotr-artifact-ref", "x-eliotr-section-ref", "x-eliotr-section-object-ref",
           "x-eliotr-section-sha256", "x-eliotr-deployment-generation", "content-length"]) {
           assert.ok(opened.headers()[name], `Actual browser section response must retain ${name}`);
@@ -172,10 +180,12 @@ export async function runOwnerArtifactBrowser(harness) {
         await browser.page.waitForFunction(() => document.querySelector(".research-publication-status")?.textContent?.includes("ACCEPTED"), null, { timeout: 15000 });
       }, extras);
       await action("artifact-health-refresh", "artifact-health-refresh", async () => {
-        const nextHealth = browser.page.waitForResponse((response) => response.request().method() === "GET" &&
-          response.url() === bridge.origin + "/api/v1/system/health", { timeout: 15000 });
-        await browser.page.locator("[data-refresh]").click();
-        const freshHealth = await nextHealth; assert.equal(freshHealth.status(), 200); await freshHealth.finished();
+        const [freshHealth] = await Promise.all([
+          browser.page.waitForResponse((response) => response.request().method() === "GET" &&
+            response.url() === bridge.origin + "/api/v1/system/health", { timeout: 15000 }),
+          browser.page.locator("[data-refresh]").click(),
+        ]);
+        assert.equal(freshHealth.status(), 200); await freshHealth.finished();
         await browser.page.waitForFunction((generation) => document.querySelector("#app")?.dataset.healthReady === "true" &&
           document.querySelector("#app")?.dataset.healthGeneration === generation &&
           document.querySelector("[data-refresh]")?.disabled === false, paths.generation, { timeout: 15000 });
