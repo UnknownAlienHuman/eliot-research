@@ -24,6 +24,7 @@ interface ReportHooks {
   setActionsDisabled(disabled: boolean): void;
   finishAction(controller: AbortController, serial: number): void;
   openArtifact(ref: ArtifactRevision["artifact_ref"]): void;
+  publicationChanged(status: ArtifactRevision["status"] | null): void;
 }
 
 export function renderResearchArtifactReport(artifact: ArtifactRevision, options: ReportRenderOptions, hooks: ReportHooks): void {
@@ -163,6 +164,7 @@ export function renderResearchArtifactReport(artifact: ArtifactRevision, options
     begin: () => { const local = new AbortController(); hooks.setController(local); hooks.setActionsDisabled(true); return local; },
     finish: (local) => hooks.finishAction(local, options.renderSerial),
     openArtifact: hooks.openArtifact,
+    publicationChanged: hooks.publicationChanged,
     failed: (error) => {
       if (!currentProductView()) return;
       if (hooks.connectionFailed(error)) return;

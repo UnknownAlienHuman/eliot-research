@@ -20,6 +20,7 @@ export function mountResearchRunPanel(
   let previousBody = ""; let idempotencyKey = ""; let unconfirmedStart = false; let suspended = false;
   let reconnecting: Promise<void> | undefined; let progressTimer: number | undefined;
   let lastExecutionState: ResearchRunStatusView["execution_state"] | undefined; let lastEngineStatus: ResearchEngineStatus | undefined; let lastAnswerAvailability: ResearchRunStatusView["answer"]["availability"] | undefined;
+  let publicationStatus: ArtifactRevision["status"] | undefined;
   let historyController: AbortController | undefined; let historySerial = 0; let historyGeneration: string | undefined; let historyView: Awaited<ReturnType<typeof readResearchRunHistory>> | undefined;
   const historyRows = new Map<string, HTMLElement>(); let disposed = false;
   const clearProgressTimer = (): void => {
@@ -44,7 +45,7 @@ export function mountResearchRunPanel(
     controller = undefined; if (disposed || renderSerial !== serial) return; setReportActionsDisabled(false); updateButtons();
   };
   const refreshAvailability = (): void => {
-    badge.textContent = currentResearchRunBadge(lastExecutionState, lastEngineStatus, lastAnswerAvailability, healthReady(), researchConfigurationReady());
+    badge.textContent = publicationStatus ?? currentResearchRunBadge(lastExecutionState, lastEngineStatus, lastAnswerAvailability, healthReady(), researchConfigurationReady());
     if (suspended) { badge.textContent = "RECONNECT REQUIRED"; progress.textContent = "Input retained in this tab; private responses cleared. Reconnect to verify the owner and read the same run."; }
     else if (lastExecutionState === undefined) progress.textContent = idleProgressText(healthReady(), researchConfigurationReady());
     updateButtons();
@@ -58,6 +59,7 @@ export function mountResearchRunPanel(
     lastExecutionState = undefined;
     lastEngineStatus = undefined;
     lastAnswerAvailability = undefined;
+    publicationStatus = undefined;
     updateButtons();
   };
   const clearHistoryRequest = (): void => {
@@ -241,6 +243,11 @@ export function mountResearchRunPanel(
     disposed: () => disposed, generation: deploymentGeneration, setController: (local) => { controller = local; },
     clearPrivate, setActionsDisabled: setReportActionsDisabled, finishAction: finishReportAction,
     openArtifact: (ref) => { readSavedDraft({ artifact_ref: ref, created_at: new Date().toISOString() }); loadHistory("automatic", true); },
+    publicationChanged: (status) => {
+      if (options.renderSerial !== serial || disposed || !connection.ready || deploymentGeneration() !== options.deploymentGeneration) return;
+      publicationStatus = status ?? "DRAFT";
+      refreshAvailability();
+    },
   });
   const readSavedDraft = (draft: ResearchRunSavedDraft): void => {
     if (runControls?.busy) return;
@@ -250,6 +257,7 @@ export function mountResearchRunPanel(
     if (disposed || !healthReady() || !navigator.onLine || generation === undefined) { status.textContent = "Owner workspace is unavailable. Reconnect before opening saved research."; return; }
     clearProgressTimer();
     const active = ++serial; controller?.abort(); const local = new AbortController(); controller = local;
+    publicationStatus = undefined;
     workflowId = undefined; workflowGeneration = undefined; workflowInput.value = "";
     lastExecutionState = undefined; lastEngineStatus = undefined; lastAnswerAvailability = undefined;
     result.replaceChildren(); result.hidden = true; badge.textContent = "WAITING"; progress.textContent = "Opening saved research…"; status.textContent = "Opening saved research…"; updateButtons();
@@ -306,6 +314,7 @@ export function mountResearchRunPanel(
       return;
     }
     const id = requestedId;
+    if (id !== workflowId) publicationStatus = undefined;
     if (connection?.ready !== true) { void resumeConnection(); return; }
     if (!healthReady() || !navigator.onLine || deploymentGeneration() === undefined) { status.textContent = "Owner workspace is unavailable. Reconnect before reading research."; return; }
     clearProgressTimer();
@@ -367,6 +376,7 @@ export function mountResearchRunPanel(
     const active = ++serial; const local = new AbortController(); controller = local;
     if (body !== previousBody) { previousBody = body; idempotencyKey = crypto.randomUUID(); }
     unconfirmedStart = true;
+    publicationStatus = undefined;
     workflowId = undefined; workflowGeneration = undefined; workflowInput.value = "";
     submit.disabled = true; refresh.disabled = true; recover.disabled = true; result.replaceChildren(); result.hidden = true; status.textContent = "Starting the research run…";
     element.dispatchEvent(new CustomEvent("research:started", { bubbles: true }));

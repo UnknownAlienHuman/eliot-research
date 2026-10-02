@@ -9,6 +9,7 @@ export interface ArtifactProductControlHooks {
   begin(): AbortController;
   finish(controller: AbortController): void;
   failed(error: unknown): void;
+  publicationChanged(status: ArtifactRevision["status"] | null): void;
   openArtifact(ref: VersionedRef): void;
 }
 export function createArtifactProductControls(artifact: ArtifactRevision, generation: string, actions: HTMLElement,
@@ -21,6 +22,7 @@ export function createArtifactProductControls(artifact: ArtifactRevision, genera
     state.textContent = publication === null ? "This revision has no owner acceptance." : "Owner publication: " + publication.revision.status;
     const badge = heading.querySelector(".research-draft-badge"); if (badge !== null) badge.textContent = publication?.revision.status ?? "DRAFT";
     accept.dataset.reportActionUnavailable = String(accepted); accept.disabled = accepted;
+    hooks.publicationChanged(publication?.revision.status ?? null);
   };
   state.textContent = "Owner acceptance has not been checked.";
   if (initial !== undefined) display(initial);
