@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import type { AuthenticatedRequestContext } from "@eliotr/interfaces";
-import { canonicalEvidenceJson, loadScopeAuthority } from "@eliotr/cloudflare-evidence";
+import { canonicalEvidenceJson, evidenceSha256Bytes, loadScopeAuthority } from "@eliotr/cloudflare-evidence";
 import { canonicalDigest } from "@eliotr/platform-cloudflare";
 import type { ResearchArtifactReportPolicy } from "@eliotr/cloudflare-research";
 import {
@@ -11,7 +11,7 @@ import {
   startArtifactSectionReviseWorkflow,
 } from "@eliotr/cloudflare-research";
 import { prepareResearchReportAdmission, type ResearchReportAdmissionInput } from "../../../packages/cloudflare-research/src/research-report-admission.js";
-import { createArtifactSectionReviseWorkflowStore, digest, WorkflowCheckpointStore } from "@eliotr/cloudflare-workflows";
+import { createArtifactSectionReviseWorkflowStore, digest, readWorkflowObject, WorkflowCheckpointStore } from "@eliotr/cloudflare-workflows";
 import { createResearchStageHandlerFactory, SERVER_OWNED_FREEZE_HANDLER_GENERATION } from "../src/research-stage-handlers.js";
 import { prepareOwnerArtifactReportAdmission } from "../src/artifact-report-admission.js";
 import { prepareArtifactReadReauthorization } from "../src/research-artifact-reauthorization-http.js";
@@ -130,8 +130,19 @@ describe("server-owned REPORT admission and artifact commit", () => {
       synthesis.freeze.db.prepare("SELECT COUNT(*) AS n FROM artifact_draft_object").first<{ readonly n: number }>(),
       synthesis.freeze.db.prepare("SELECT COUNT(*) AS n FROM outbox WHERE intent_id=(SELECT intent_id FROM research_report_admission WHERE operation_id=?1 LIMIT 1)").bind(synthesis.freeze.operation_id).first<{ readonly n: number }>(),
     ]);
-    const replay = await synthesis.freeze.executor.execute(request, principal, observedHandler);
+    const firstStage17Bytes = await readWorkflowObject(synthesis.freeze.bucket, first.output_manifest, true);
+    const savedBlobs = async () => Object.fromEntries(await Promise.all((await synthesis.freeze.bucket.list()).objects.map(async ({ key }) => {
+      const object = await synthesis.freeze.bucket.get(key); if (object === null) throw new Error("Legacy replay blob disappeared");
+      return [key, await evidenceSha256Bytes(new Uint8Array(await object.arrayBuffer()))];
+    })));
+    const beforeReplayBytes = await savedBlobs();
+    const replay = await synthesis.freeze.executor.execute(request, principal, async () => {
+      throw new Error("Legacy committed Stage17 replay must not invoke the materializer");
+    });
     expect(replay.receipt_ref).toBe(first.receipt_ref);
+    expect(replay).toEqual(first);
+    expect(await readWorkflowObject(synthesis.freeze.bucket, replay.output_manifest, true)).toEqual(firstStage17Bytes);
+    expect(await savedBlobs()).toEqual(beforeReplayBytes);
     const afterReplay = await Promise.all([
       synthesis.freeze.db.prepare("SELECT COUNT(*) AS n FROM research_report_admission").first<{ readonly n: number }>(),
       synthesis.freeze.db.prepare("SELECT COUNT(*) AS n FROM artifact_draft_object").first<{ readonly n: number }>(),
