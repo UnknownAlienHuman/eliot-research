@@ -1,8 +1,11 @@
 import { applyD1Migrations, type D1Migration } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { beforeAll, describe, expect, it } from "vitest";
+import type { ErasureDependencyClosure, ErasureFence, ErasureRequest } from "@eliotr/contracts";
 import { invalidateEvidenceHandle } from "@eliotr/cloudflare-evidence";
 import { createArtifactPublicationProducer } from "../src/index.js";
+import { createD1ErasureInvalidationPort } from "../../cloudflare-erasure/src/invalidation.js";
+import { erasureDigest } from "../../cloudflare-erasure/src/canonical.js";
 import {
   createArtifactPublicationFixture,
   createArtifactPublicationFreshNavigation,
@@ -298,5 +301,58 @@ describe("artifact publication with actual D1 and R2", () => {
       evidence_bucket: prepared.fixture.retrieve.evidence_bucket,
       deployment_generation: prepared.access.deployment_generation,
     })).rejects.toMatchObject({ code: "ARTIFACT_DRAFT_READ_STALE" });
+
+    const invalidationPort = createD1ErasureInvalidationPort({ database: fixture.db });
+    const exactSourceRef = prepared.evidence.handle.source_revision_ref;
+    const erasureInput = (erasureId: string): {
+      readonly request: ErasureRequest;
+      readonly fence: ErasureFence;
+      readonly closure: ErasureDependencyClosure;
+      readonly ledger_ref: string;
+    } => {
+      const erasureRef = { id: erasureId, revision: 1 };
+      const subjectRef = `source-revision:${exactSourceRef}`;
+      return {
+        request: {
+          protocol: "erc.privacy.erasure.v1",
+          erasure_ref: erasureRef,
+          requested_by_principal_ref: "fixture-privacy-officer",
+          exact_subject_refs: [subjectRef],
+          required_locations: ["CanonicalPayload"],
+          legal_basis_ref: `fixture-legal-basis-${erasureId}`,
+          admitted_at: new Date().toISOString(),
+          deadline: new Date(Date.now() + 60_000).toISOString(),
+        },
+        fence: { erasure_id: erasureId, revision: 1, lease_owner: "fixture-erasure-worker", lease_generation: 1,
+          lease_until_ms: Date.now() + 60_000 },
+        closure: {
+          erasure_ref: erasureRef,
+          request_digest: "1".repeat(64),
+          closure_digest: "2".repeat(64),
+          targets: [{ target_id: `source-target-${erasureId}`, target_kind: "OBJECT", exact_subject_ref: subjectRef,
+            location: "CanonicalPayload", canonical_ref: `d1-core:source-revision:${exactSourceRef}`,
+            identity_digest: "3".repeat(64), shared_live_reference_count: 0 }],
+        },
+        ledger_ref: `fixture-purge-ledger-${erasureId}`,
+      };
+    };
+    for (const [erasureId, disposition] of [["fixture-erasure-blocked", "BLOCKED"], ["fixture-erasure-complete", "COMPLETE"]] as const) {
+      const erasure = erasureInput(erasureId);
+      await fixture.db.prepare(
+        "INSERT INTO purge_ledger(erasure_id,non_revealing_subject_digest,disposition,receipt_ref,created_at) " +
+        "VALUES(?1,?2,?3,?4,?5)",
+      ).bind(erasureId, await erasureDigest([...erasure.request.exact_subject_refs].sort()), disposition,
+        erasure.ledger_ref, new Date().toISOString()).run();
+      const invalidations = await invalidationPort.invalidate(erasure.request, erasure.fence, erasure.closure, erasure.ledger_ref);
+      expect(invalidations).toContainEqual(expect.objectContaining({
+        dependent_kind: "ArtifactRevision",
+        dependent_ref: `artifact:${prepared.artifactRef.id}:${raceDraft.artifactRef.revision}`,
+        disposition: disposition === "COMPLETE" ? "REDACTED" : "PENDING_REVALIDATION",
+      }));
+      const head = await fixture.db.prepare(
+        "SELECT disposition FROM artifact_publication_head WHERE artifact_id=?1",
+      ).bind(prepared.artifactRef.id).first<{ readonly disposition: string }>();
+      expect(head?.disposition).toBe(disposition === "COMPLETE" ? "REDACTED_DEPENDENCY" : "PENDING_REVALIDATION");
+    }
   }, 90_000);
 });
