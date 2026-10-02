@@ -135,6 +135,12 @@ export const CANONICAL_EXPORTED_TABLES: ReadonlySet<string> = new Set([
   // never rehydrated as current admission, ownership, or credentials.
   "historical_scope_access_grant",
   "historical_project_client_grant",
+  // Scope-policy history is portable provenance, never transferable current
+  // authority; the live scope_read_policy table remains NOT_A_BACKUP below.
+  "scope_read_policy_lease_refresh_receipt",
+  "scope_read_policy_history_event",
+  "scope_read_policy_identity",
+  "scope_read_policy_snapshot_baseline",
   // Immutable acceptance and per-call COW effect history must survive recovery.
   "artifact_publication_receipt",
   "artifact_publication_head",

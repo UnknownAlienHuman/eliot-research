@@ -62,6 +62,16 @@ describe("ER-34 O2 full Core migration coverage", () => {
     expect(classifyDurableTable("project_client_grant")).toBe("NOT_A_BACKUP");
     expect(classifyDurableTable("historical_scope_access_grant")).toBe("CANONICAL_EXPORTED");
     expect(classifyDurableTable("historical_project_client_grant")).toBe("CANONICAL_EXPORTED");
+    for (const table of [
+      "scope_read_policy_lease_refresh_receipt",
+      "scope_read_policy_history_event",
+      "scope_read_policy_identity",
+      "scope_read_policy_snapshot_baseline",
+    ]) {
+      expect(classifyDurableTable(table)).toBe("CANONICAL_EXPORTED");
+    }
+    expect(CANONICAL_EXPORTED_TABLES.has("scope_read_policy")).toBe(false);
+    expect(classifyDurableTable("scope_read_policy")).toBe("NOT_A_BACKUP");
     expect(database.prepare("SELECT COUNT(*) AS n FROM historical_scope_access_grant").get()).toEqual({ n: 0 });
     expect(database.prepare("SELECT COUNT(*) AS n FROM historical_project_client_grant").get()).toEqual({ n: 0 });
   });

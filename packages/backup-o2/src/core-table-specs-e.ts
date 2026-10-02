@@ -125,4 +125,68 @@ export const DURABLE_CORE_TABLE_SPECS_E: readonly TableSpec[] = [
     "expires_at": "text",
     "created_at": "text"
   }, required: false },
+  // Immutable scope-policy facts are exported as historical provenance. The
+  // live scope_read_policy authority remains excluded from portable backup.
+  { manifest: "scopes", table: "scope_read_policy_lease_refresh_receipt", order_by: "receipt_sequence", columns: {
+    "receipt_sequence": "int",
+    "refresh_id": "text",
+    "source_namespace_id": "text",
+    "principal_ref": "text",
+    "client_class": "text",
+    "credential_generation": "text",
+    "access_expires_at": "text",
+    "owner_incarnation_ref": "text",
+    "source_owner_generation": "text",
+    "ownership_record_revision": "int",
+    "source_admission_policy_revision": "int",
+    "policy_ref": "text",
+    "old_generation": "int",
+    "new_generation": "int",
+    "old_allowed_use_json": "text",
+    "old_disclosure_ceiling": "text",
+    "old_created_at": "text",
+    "old_expires_at": "text",
+    "new_expires_at": "text",
+    "created_at": "text",
+    "state": "text"
+  }, required: false },
+  { manifest: "scopes", table: "scope_read_policy_history_event", order_by: "history_event_sequence", columns: {
+    "history_event_sequence": "int",
+    "source_namespace_id": "text",
+    "principal_ref": "text",
+    "client_class": "text",
+    "event_kind": "text",
+    "receipt_sequence": "int-or-null",
+    "refresh_id": "text-or-null",
+    "old_policy_ref": "text-or-null",
+    "old_generation": "int-or-null",
+    "old_allowed_use_json": "text-or-null",
+    "old_disclosure_ceiling": "text-or-null",
+    "old_state": "text-or-null",
+    "old_expires_at": "text-or-null",
+    "old_created_at": "text-or-null",
+    "new_policy_ref": "text-or-null",
+    "new_generation": "int-or-null",
+    "new_allowed_use_json": "text-or-null",
+    "new_disclosure_ceiling": "text-or-null",
+    "new_state": "text-or-null",
+    "new_expires_at": "text-or-null",
+    "new_created_at": "text-or-null",
+    "created_at": "text"
+  }, required: false },
+  { manifest: "scopes", table: "scope_read_policy_identity", order_by: "source_namespace_id, principal_ref, client_class", columns: {
+    "source_namespace_id": "text",
+    "principal_ref": "text",
+    "client_class": "text",
+    "birth_sequence": "int",
+    "last_event_sequence": "int",
+    "semantic_sequence": "int"
+  }, required: false },
+  { manifest: "scopes", table: "scope_read_policy_snapshot_baseline", order_by: "snapshot_id, snapshot_revision", columns: {
+    "snapshot_id": "text",
+    "snapshot_revision": "int",
+    "history_event_sequence_floor": "int",
+    "receipt_sequence_floor": "int",
+    "pre_migration_semantic": "int"
+  }, required: false },
 ];
