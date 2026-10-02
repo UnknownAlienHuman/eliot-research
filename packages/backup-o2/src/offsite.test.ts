@@ -27,11 +27,12 @@ import m0013 from "../../../infra/d1/core/migrations/0013_google_oauth_intents.s
 import m0018 from "../../../infra/d1/core/migrations/0018_backup_o2_replay_authority.sql?raw";
 import m0019 from "../../../infra/d1/core/migrations/0019_backup_o2_replay_authority_fix.sql?raw";
 import m0099 from "../../../infra/d1/core/migrations/0099_backup_erasure_replay.sql?raw";
+import m0101 from "../../../infra/d1/core/migrations/0101_backup_historical_grant_provenance.sql?raw";
 
 const T = "2026-09-06T00:00:00.000Z";
 const HEX = (c: string): string => c.repeat(64);
 const NOW = Date.parse(T);
-const APPLIED = ["0001_initial.sql", "0002_execution_coordination.sql", "0003_delivery_inbox_payload_digest.sql", "0004_outbox_delivery_fence.sql", "0005_ingest_admission.sql", "0006_projection_execution.sql", "0007_evidence_resolution.sql", "0008_erasure_closure.sql", "0009_federation_authority.sql", "0010_navigation_artifacts.sql", "0011_owner_orientation.sql", "0012_google_credentials.sql", "0013_google_oauth_intents.sql", "0018_backup_o2_replay_authority.sql", "0019_backup_o2_replay_authority_fix.sql", "0099_backup_erasure_replay.sql"];
+const APPLIED = ["0001_initial.sql", "0002_execution_coordination.sql", "0003_delivery_inbox_payload_digest.sql", "0004_outbox_delivery_fence.sql", "0005_ingest_admission.sql", "0006_projection_execution.sql", "0007_evidence_resolution.sql", "0008_erasure_closure.sql", "0009_federation_authority.sql", "0010_navigation_artifacts.sql", "0011_owner_orientation.sql", "0012_google_credentials.sql", "0013_google_oauth_intents.sql", "0018_backup_o2_replay_authority.sql", "0019_backup_o2_replay_authority_fix.sql", "0099_backup_erasure_replay.sql", "0101_backup_historical_grant_provenance.sql"];
 async function sha(b: Uint8Array): Promise<string> {
   const c = new Uint8Array(b.byteLength); c.set(b);
   return [...new Uint8Array(await crypto.subtle.digest("SHA-256", c.buffer))].map((v) => v.toString(16).padStart(2, "0")).join("");
@@ -99,6 +100,24 @@ function testPartSink(bucket: R2Bucket): EvidenceObjectStore {
 function openCore(): DatabaseSync {
   const db = new DatabaseSync(":memory:");
   for (const m of [m0001, m0002, m0003, m0004, m0005, m0006, m0007, m0008, m0009, m0010, m0011, m0012, m0013, m0018, m0019, m0099]) db.exec(m);
+  // This focused O2 fixture omits the full project-client migration chain;
+  // provide its source table shape for the 0101 provenance triggers.
+  db.exec(`CREATE TABLE project_client_grant (
+    grant_id TEXT NOT NULL, revision INTEGER NOT NULL, project_id TEXT NOT NULL,
+    grantor_principal_ref TEXT NOT NULL, grantee_issuer TEXT NOT NULL,
+    grantee_method TEXT NOT NULL, grantee_subject TEXT NOT NULL, state TEXT NOT NULL,
+    expires_at TEXT NOT NULL, idempotency_key TEXT NOT NULL, request_sha256 TEXT NOT NULL,
+    record_json TEXT NOT NULL, record_sha256 TEXT NOT NULL, PRIMARY KEY(grant_id,revision)
+  ) STRICT`);
+  db.exec(`ALTER TABLE scope_access_grant ADD COLUMN project_client_grant_id TEXT;
+    ALTER TABLE scope_access_grant ADD COLUMN project_client_grant_revision INTEGER;
+    ALTER TABLE scope_access_grant ADD COLUMN project_client_operation TEXT;
+    ALTER TABLE scope_access_grant ADD COLUMN project_client_project_generation INTEGER;
+    ALTER TABLE scope_access_grant ADD COLUMN project_client_run_operation_id TEXT;
+    ALTER TABLE scope_access_grant ADD COLUMN project_client_artifact_id TEXT;
+    ALTER TABLE scope_access_grant ADD COLUMN project_client_artifact_revision INTEGER;
+    ALTER TABLE scope_access_grant ADD COLUMN project_client_authority_epoch INTEGER`);
+  db.exec(m0101);
   for (const [i, n] of APPLIED.entries()) db.prepare("INSERT INTO d1_migrations (name, applied_at) VALUES (?1,?2)").run(n, `${T.slice(0, 10)}T00:00:${String(i).padStart(2, "0")}.000Z`);
   return db;
 }
@@ -131,6 +150,32 @@ async function aesKey(len: number, usages: KeyUsage[] = ["encrypt", "decrypt"]):
 }
 
 describe("ER-34 O2 offsite copy (policy + hardened crypto)", () => {
+  it("archives grant insert, revocation transition, and deletion without copying live authority", async () => {
+    const db = openCore();
+    seedCore(db);
+    db.prepare(`INSERT INTO scope_access_grant(
+      snapshot_id,snapshot_revision,principal_ref,client_class,credential_generation,policy_authority_ref,
+      allowed_use_json,disclosure_ceiling,authorization_receipt_ref,state,expires_at,created_at
+    ) VALUES ('snap-1',1,'author-1','owner_pwa','credential-old','policy-authority-1','["research"]','local',
+      'grant-receipt-1','ACTIVE','2027-01-01T00:00:00.000Z','2026-09-06T00:00:00.000Z')`).run();
+    db.prepare("UPDATE scope_access_grant SET state='REVOKED' WHERE authorization_receipt_ref='grant-receipt-1'").run();
+    db.prepare("DELETE FROM scope_access_grant WHERE authorization_receipt_ref='grant-receipt-1'").run();
+    expect(db.prepare("SELECT archive_revision,state,event_kind FROM historical_scope_access_grant ORDER BY archive_revision").all())
+      .toEqual([
+        { archive_revision: 1, state: "ACTIVE", event_kind: "INSERT" },
+        { archive_revision: 2, state: "REVOKED", event_kind: "UPDATE" },
+        { archive_revision: 3, state: "REVOKED", event_kind: "DELETE" },
+      ]);
+    expect(db.prepare("SELECT COUNT(*) AS n FROM scope_access_grant").get()).toEqual({ n: 0 });
+    db.prepare(`INSERT INTO project_client_grant(
+      grant_id,revision,project_id,grantor_principal_ref,grantee_issuer,grantee_method,grantee_subject,
+      state,expires_at,idempotency_key,request_sha256,record_json,record_sha256
+    ) VALUES ('client-grant-1',1,'project-1','grantor-1','issuer-1','service_token','agent-1','ACTIVE',
+      '2027-01-01T00:00:00.000Z','idempotency-1','${HEX("a")}', '{"allowed_operations":["run"]}','${HEX("b")}')`).run();
+    expect(db.prepare("SELECT grant_id,grantor_principal_ref,state,event_kind FROM historical_project_client_grant").all())
+      .toEqual([{ grant_id: "client-grant-1", grantor_principal_ref: "grantor-1", state: "ACTIVE", event_kind: "INSERT" }]);
+  });
+
   it("parses the actual full portable epoch and validates its vector against every exported row", async () => {
     const h = await setup();
     const { draft } = await h.port.createPortableEpoch(intent("id-parse-portable"), { now_ms: NOW });
@@ -202,6 +247,24 @@ describe("ER-34 O2 offsite copy (policy + hardened crypto)", () => {
     };
     await expect(openOffsiteBackupPart({ ...openInput, adapter: corrupt }))
       .rejects.toMatchObject({ code: "BACKUP_OFFSITE_READBACK_MISMATCH" });
+    const malformed: typeof adapter = {
+      ...adapter,
+      async get(partRef) {
+        const read = await adapter.get(partRef);
+        return read === null ? null : { ...read, ciphertext: [1, 2, 3] as unknown as Uint8Array };
+      },
+    };
+    await expect(openOffsiteBackupPart({ ...openInput, adapter: malformed }))
+      .rejects.toMatchObject({ code: "BACKUP_PART_READBACK_MISMATCH" });
+    const oversized: typeof adapter = {
+      ...adapter,
+      async get(partRef) {
+        const read = await adapter.get(partRef);
+        return read === null ? null : { ...read, ciphertext: new Uint8Array(part.size_bytes + 29) };
+      },
+    };
+    await expect(openOffsiteBackupPart({ ...openInput, adapter: oversized }))
+      .rejects.toMatchObject({ code: "BACKUP_PART_READBACK_MISMATCH" });
   });
 
   it("refuses copies with no controller authority and rejects adapter self-report", async () => {

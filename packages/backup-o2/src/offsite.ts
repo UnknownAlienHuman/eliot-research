@@ -406,6 +406,11 @@ export async function openOffsiteBackupPart(input: {
     failBackup("BACKUP_OBJECT_UNREADABLE", "offsite restore part read is unavailable", true, { manifest: input.part.manifest }, cause);
   }
   if (stored === null) failBackup("BACKUP_PART_READBACK_MISMATCH", "offsite restore part is absent", false, { manifest: input.part.manifest });
+  if (typeof stored !== "object" || !(stored.ciphertext instanceof Uint8Array) ||
+    stored.ciphertext.byteLength < 28 || stored.ciphertext.byteLength > input.part.size_bytes + 28 ||
+    typeof stored.stored !== "object" || stored.stored === null || Array.isArray(stored.stored)) {
+    failBackup("BACKUP_PART_READBACK_MISMATCH", "offsite restore ciphertext or metadata has an invalid shape or exceeds its bound", false, { manifest: input.part.manifest });
+  }
   if (
     stored.stored.content_digest !== input.part.sha256 || stored.stored.size_bytes !== input.part.size_bytes ||
     stored.stored.epoch_id !== input.draft.epoch_id || stored.stored.key_generation !== authority.key_generation ||
