@@ -646,7 +646,7 @@ try {
   await evaluate('window.dispatchEvent(new Event("offline"))');
   await wait('document.querySelector("#evidence-empty").hidden === false && document.querySelector(".rail-status").textContent === "No excerpt selected"', "Evidence offline clearing");
   assert.equal(await evaluate('document.querySelector("#research-run [data-run-result]").hidden && document.querySelector("#research-run [data-run-result]").textContent === ""'), true);
-  assert.equal(await evaluate('document.querySelector("#research-run [data-workflow-id]").value'), "");
+  assert.equal(await evaluate('document.querySelector("#research-run [data-workflow-id]").value'), draftWorkflowId);
   await openSources("Sources before import"); await openBundle();
   await evaluate(`(() => {
     const transfer = new DataTransfer();
@@ -859,7 +859,7 @@ try {
     + 'document.querySelectorAll("#projects [data-project-list] .project-card").length === 0 && '
     + 'document.querySelector("#research-run [data-research-history-list]")?.childElementCount === 0',
   "JWT expiry clears owner session, reports, evidence, Library, Projects, and saved history");
-  assert.equal(await evaluate('document.querySelector("#research-run [data-workflow-id]").value'), draftWorkflowId);
+  assert.equal(await evaluate('document.querySelector("#research-run [data-workflow-id]").value'), "");
   pendingPrivateHistory?.(); pendingPrivateHistory = undefined;
   assert.equal(privateHistoryReleaseCount, 1, "The old held history callback is released after expiry");
   await delay(100);
