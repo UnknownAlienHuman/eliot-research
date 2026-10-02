@@ -205,7 +205,7 @@ test("L6 authenticated panels keep exact method/path/status and negative phase b
 // S92 local product acceptance: 92.1 intake scenarios (s92-intake.mjs).
 // Each scenario drives the real local harness (scripts/lib/local-*.mjs,
 // owner-e2e.mjs) against in-memory SQLite seeded with the real migration DDL.
-// Honest states: PASS, or PENDING_OWNER_D1B for live-model assertions until
+// Honest states: PASS, or NOT_EXECUTED for live-model assertions until
 // the owner decides D1(b) (see S92-INPUT-DECISIONS.md).
 // ---------------------------------------------------------------------------
 
@@ -245,12 +245,12 @@ test("S92 92.1d intake: read-policy grant applied with exact readback; stale/mis
   assertS92Honest(outcome, ["PASS"]);
 });
 
-test("S92 92.1e intake: model D1 fail-closed proven; live model PENDING_OWNER_D1B", async () => {
+test("S92 92.1e intake: model D1 fail-closed proven; live model NOT_EXECUTED", async () => {
   const outcome = await runS92IntakeScenario("verifyS92IntakeModelD1FailClosed");
-  // D1(a): no local model gateway exists. PENDING_OWNER_D1B is the honest
-  // terminal state until the owner decides D1(b); PASS is accepted for that
+  // D1(a): no local model gateway exists. NOT_EXECUTED is the honest
+  // terminal state until current approved runtime execution is verified; PASS is accepted for that
   // future without weakening today's assertion.
-  assertS92Honest(outcome, ["PENDING_OWNER_D1B", "PASS"]);
+  assertS92Honest(outcome, ["NOT_EXECUTED", "PASS"]);
 });
 
 test("S92 92.1f intake: Library/Lens exact readback; foreign namespace reads zero rows", async () => {
@@ -263,7 +263,7 @@ test("S92 92.1f intake: Library/Lens exact readback; foreign namespace reads zer
 // Each scenario drives the real delegation service + real 0072/0075 DDL in
 // in-memory SQLite: owner-issued grant → machine query/run/status/report →
 // citation, with S98/S99 migration guards. Honest states: PASS, or
-// PENDING_OWNER_D1B for live-model assertions, NOT_EXECUTED for missing
+// NOT_EXECUTED for live-model assertions, NOT_EXECUTED for missing
 // Chromium, BLOCKED for stale/missing dist build.
 // ---------------------------------------------------------------------------
 
@@ -301,12 +301,12 @@ test("S92 92.2e delegation: receipt digest binding verified against real prepare
   assertS92Honest(outcome, ["PASS"]);
 });
 
-test("S92 92.2f delegation: model dispatch fail-closed proven; live model PENDING_OWNER_D1B", async () => {
+test("S92 92.2f delegation: model dispatch fail-closed proven; live model NOT_EXECUTED", async () => {
   const outcome = await runS92DelegationScenario("s92-delegation-model-fail-closed");
-  // D1(a): no local model gateway exists. PENDING_OWNER_D1B is the honest
-  // terminal state until the owner decides D1(b); PASS is accepted for that
+  // D1(a): no local model gateway exists. NOT_EXECUTED is the honest
+  // terminal state until current approved runtime execution is verified; PASS is accepted for that
   // future without weakening today's assertion.
-  assertS92Honest(outcome, ["PENDING_OWNER_D1B", "PASS"]);
+  assertS92Honest(outcome, ["NOT_EXECUTED", "PASS"]);
 });
 
 test("S92 92.2g delegation: runtime config readiness verified", async () => {
@@ -325,7 +325,7 @@ test("S92 92.2h delegation: browser harness probe; NOT_EXECUTED without Chromium
 // S92 local product acceptance: 92.3 product scenarios (s92-products.mjs).
 // Registered ASK/COMPARE/FACT_CHECK/DEEP_RESEARCH/REPORT through actual
 // W1/W2/W3/storage and the controlled external model. Honest states: PASS,
-// or PENDING_OWNER_D1B for live-model assertions until the owner decides
+// or NOT_EXECUTED for live-model assertions until current approved runtime execution is verified
 // D1(b).
 // ---------------------------------------------------------------------------
 
@@ -383,11 +383,11 @@ test("S92 92.3i products: REPORT admission with exact row readback", async () =>
   assertS92Honest(outcome, ["PASS"]);
 });
 
-test("S92 92.3j products: live model assertions PENDING_OWNER_D1B", async () => {
+test("S92 92.3j products: live model assertions NOT_EXECUTED", async () => {
   const outcome = await runS92ProductsScenario("s92-live-model-assertions");
-  // D1(a): no live model gateway exists. PENDING_OWNER_D1B is the honest
-  // terminal state until the owner decides D1(b).
-  assertS92Honest(outcome, ["PENDING_OWNER_D1B", "PASS"]);
+  // D1(a): no live model gateway exists. NOT_EXECUTED is the honest
+  // terminal state until current approved runtime execution is verified.
+  assertS92Honest(outcome, ["NOT_EXECUTED", "PASS"]);
 });
 
 // ---------------------------------------------------------------------------
@@ -447,7 +447,7 @@ test("S92 92.4f continuity: same-run recovery converges; no repeated effect", as
 // Verified export identity/tamper, change-review entry point, publication
 // acceptance, history readback, model policy D1 — against compiled dist.
 // Honest states: PASS, BLOCKED for unimplemented prerequisites,
-// NOT_EXECUTED for missing fixtures, PENDING_OWNER_D1B for live model.
+// NOT_EXECUTED for missing fixtures, NOT_EXECUTED for live model.
 // ---------------------------------------------------------------------------
 
 type S92CowScenario = { name: string; run: () => Promise<S92ScenarioOutcome> };
@@ -495,11 +495,11 @@ test("S92 92.5f COW: model policy D1 fail-closed verified", async () => {
   assertS92Honest(outcome, ["PASS"]);
 });
 
-test("S92 92.5g COW: live model PENDING_OWNER_D1B", async () => {
+test("S92 92.5g COW: live model NOT_EXECUTED", async () => {
   const outcome = await runS92CowScenario("s92-cow-live-model-pending");
-  // D1(a): no live model gateway exists. PENDING_OWNER_D1B is the honest
-  // terminal state until the owner decides D1(b).
-  assertS92Honest(outcome, ["PENDING_OWNER_D1B", "PASS"]);
+  // D1(a): no live model gateway exists. NOT_EXECUTED is the honest
+  // terminal state until current approved runtime execution is verified.
+  assertS92Honest(outcome, ["NOT_EXECUTED", "PASS"]);
 });
 
 // ---------------------------------------------------------------------------

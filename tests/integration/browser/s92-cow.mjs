@@ -8,7 +8,7 @@
  *   FAIL            — assertion failure, with reason
  *   NOT_EXECUTED    — missing credentials/environment (honest skip, never fake PASS)
  *   BLOCKED         — unmet prerequisite in the product (e.g. producer not implemented)
- *   PENDING_OWNER_D1B — awaits the owner's D1(b) decision (real model gateway)
+ *   NOT_EXECUTED — live gateway assertions have not run in this local test mode
  *
  * Real entry points driven (never stubbed):
  *   - scripts/lib/local-launch.mjs      (localConfig, localEnvironment, localPaths)
@@ -35,7 +35,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { register } from "node:module";
 import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = resolve(HERE, "../../..");
@@ -51,15 +51,15 @@ for (const pkg of readdirSync(resolve(REPO, "packages"))) {
 }
 register(
   `data:text/javascript,${encodeURIComponent(
-    `export async function resolve(specifier, context, next) { const map = ${JSON.stringify(DIST_MAP)}; ` +
-      `if (Object.hasOwn(map, specifier)) return { url: "file://" + map[specifier], shortCircuit: true }; ` +
+    `import { pathToFileURL } from "node:url"; export async function resolve(specifier, context, next) { const map = ${JSON.stringify(DIST_MAP)}; ` +
+      `if (Object.hasOwn(map, specifier)) return { url: pathToFileURL(map[specifier]).href, shortCircuit: true }; ` +
       `return next(specifier, context); }`,
   )}`,
 );
 
 const ARTIFACTS_DIST = resolve(REPO, "packages/cloudflare-artifacts/dist");
-const verificationModule = () => import(`file://${resolve(ARTIFACTS_DIST, "artifact-draft-verification.js")}`);
-const readerModule = () => import(`file://${resolve(ARTIFACTS_DIST, "artifact-draft-reader.js")}`);
+const verificationModule = () => import(pathToFileURL(resolve(ARTIFACTS_DIST, "artifact-draft-verification.js")).href);
+const readerModule = () => import(pathToFileURL(resolve(ARTIFACTS_DIST, "artifact-draft-reader.js")).href);
 
 /** Refuse to test compiled output older than its source. */
 function assertDistCurrent(distFile, srcFile) {
@@ -233,24 +233,21 @@ async function runChangeReviewEntryPoint() {
 
 // ---------------------------------------------------------------------------
 // Scenario 4 — publication: an ACCEPTED-status publication producer must be
-// composed. The composition root serves DRAFT reads only.
+// composed. An executable authorized publish/readback is required beyond source wiring.
 // ---------------------------------------------------------------------------
 async function runPublicationAccepted() {
   const name = "s92-cow-publication-accepted";
   try {
     const composition = readFileSync(resolve(REPO, "apps/eliotr-core/src/composition-root.ts"), "utf8");
-    const hasDraftRead = /readArtifactDraft|reopenOwnerArtifactDraft/u.test(composition);
-    assert.ok(hasDraftRead, "composition root must at least serve DRAFT artifact reads");
-    const publishProducer = /(publishArtifact|acceptArtifact|promoteToAccepted|artifact.*ACCEPTED.*producer)/u.test(composition);
-    const registry = JSON.parse(readFileSync(resolve(REPO, "docs/implementation/implementation-status.json"), "utf8"));
-    const registryNote = JSON.stringify(registry).includes("Accepted-artifact/COW");
-    if (!publishProducer) {
-      return {
-        state: "BLOCKED",
-        detail: `${name}: no ACCEPTED-publication producer composed in apps/eliotr-core/src/composition-root.ts (DRAFT reads only)${registryNote ? "; registry scaffold-002: accepted-artifact/COW remain open" : ""}`,
-      };
+    const servicePath = resolve(REPO, "apps/eliotr-core/src/artifact-product-composition.ts");
+    const producerPath = resolve(REPO, "packages/cloudflare-artifacts/src/artifact-publication.ts");
+    if (!existsSync(servicePath) || !existsSync(producerPath) ||
+      !composition.includes("createArtifactProductService")) {
+      return { state: "BLOCKED", detail: name + ": owner publication service is not composed" };
     }
-    return { state: "PASS", detail: `${name}: accepted-publication producer is composed` };
+    // Source wiring establishes only a prerequisite. The actual D1/R2 producer
+    // and authenticated HTTP path must execute before publication is accepted.
+    return { state: "NOT_EXECUTED", detail: name + ": owner ACCEPTED service exists; this browser scenario needs an admitted V2 draft and current owner session. Run the actual Worker publication integration tests separately; a source probe does not prove acceptance." };
   } catch (error) {
     return failResult(name, error);
   }
@@ -271,7 +268,7 @@ async function runHistoryReadback() {
     const mod = await readerModule();
     assert.equal(typeof mod.readArtifactDraft, "function", "historical draft read entry point must exist");
     assert.equal(typeof mod.readArtifactDraftSection, "function", "historical section read entry point must exist");
-    const { localPaths } = await import(`file://${resolve(REPO, "scripts/lib/local-launch.mjs")}`);
+    const { localPaths } = await import(pathToFileURL(resolve(REPO, "scripts/lib/local-launch.mjs")).href);
     const paths = localPaths();
     if (!existsSync(paths.directory)) {
       return {
@@ -296,7 +293,7 @@ async function runHistoryReadback() {
 async function runModelPolicyD1() {
   const name = "s92-cow-model-policy-d1";
   try {
-    const launch = await import(`file://${resolve(REPO, "scripts/lib/local-launch.mjs")}`);
+    const launch = await import(pathToFileURL(resolve(REPO, "scripts/lib/local-launch.mjs")).href);
     const wranglerJsonc = await readFile(resolve(REPO, "apps/eliotr-core/wrangler.jsonc"), "utf8");
     const config = launch.localConfig(JSON.parse(wranglerJsonc));
     const SENTINEL = "https://example.invalid/local-disabled";
@@ -312,14 +309,14 @@ async function runModelPolicyD1() {
 }
 
 // ---------------------------------------------------------------------------
-// Scenario 7 — live model responses are PENDING_OWNER_D1B: D1(b) (real gateway
-// override) is an explicit owner decision; this scenario guards that no live
+// Scenario 7 — live model responses are NOT_EXECUTED: D1(b) (real gateway
+// override) is an explicit runtime configuration and applicable execution authorization; this scenario guards that no live
 // model call is attempted and no model output is invented meanwhile.
 // ---------------------------------------------------------------------------
 async function runLiveModelPending() {
   const name = "s92-cow-live-model-pending";
   try {
-    const launch = await import(`file://${resolve(REPO, "scripts/lib/local-launch.mjs")}`);
+    const launch = await import(pathToFileURL(resolve(REPO, "scripts/lib/local-launch.mjs")).href);
     const wranglerJsonc = await readFile(resolve(REPO, "apps/eliotr-core/wrangler.jsonc"), "utf8");
     const config = launch.localConfig(JSON.parse(wranglerJsonc));
     assert.equal(
@@ -328,8 +325,8 @@ async function runLiveModelPending() {
       "live model assertions must not run while the gateway is the disabled sentinel",
     );
     return {
-      state: "PENDING_OWNER_D1B",
-      detail: `${name}: live model response assertions require owner decision D1(b) (real AI_GATEWAY_REASONING_URL override via local-launch override or deployed Worker + ELIOTR_MODEL_GATEWAY_TOKEN secret); no model output invented`,
+      state: "NOT_EXECUTED",
+      detail: `${name}: live model response assertions require current approved gateway configuration and execution authorization (real AI_GATEWAY_REASONING_URL override via local-launch override or deployed Worker + ELIOTR_MODEL_GATEWAY_TOKEN secret); no model output invented`,
     };
   } catch (error) {
     return failResult(name, error);
