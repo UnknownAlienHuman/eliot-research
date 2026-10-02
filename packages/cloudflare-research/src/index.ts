@@ -88,3 +88,11 @@ export { decodeResearchReadExtractCheckpoint } from "./research-branch-execution
 export * from "./research-external-branch-analysis.js";
 
 export * from "@eliotr/cloudflare-artifacts/artifact-publication.js";
+export * from "./artifact-cow-freeze-reader.js";
+export * from "./artifact-cow-product.js";
+export * from "./artifact-cow-model-executor.js";
+export * from "./artifact-cow-model-runtime.js";
+export * from "./artifact-cow-section-producer.js";
+export * from "./artifact-cow-revision-runner.js";
+export * from "./artifact-cow-model-revalidator.js";
+export * from "./artifact-cow-spend-admission.js";

@@ -1,6 +1,8 @@
 import {
   ArtifactDraftReadError,
+  readArtifactDraftCowSnapshotInternal,
   readArtifactDraftInternal,
+  type ArtifactDraftCowSnapshot,
   type ArtifactDraftReadInput,
   type ArtifactDraftSectionCitationsRead,
   type ArtifactDraftSectionRead,
@@ -10,6 +12,7 @@ import { VersionedRefSchema, type ArtifactRevision, type VersionedRef } from "@e
 
 export {
   ArtifactDraftReadError,
+  type ArtifactDraftCowSnapshot,
   type ArtifactDraftReadErrorCode,
   type ArtifactDraftReadInput,
   type ArtifactDraftSectionCitationsRead,
@@ -54,6 +57,16 @@ export async function readArtifactDraft(input: ArtifactDraftReadInput): Promise<
   const artifactRef = validRef(input.artifact_ref, "draft reference");
   requireDirectReader(input);
   try { return await readArtifactDraftInternal(input, artifactRef); }
+  catch (error) { return mapFailure(error); }
+}
+
+/** Reads all exact immutable parent bytes through the same direct-owner authority fence. */
+export async function readArtifactDraftCowSnapshot(
+  input: ArtifactDraftReadInput,
+): Promise<ArtifactDraftCowSnapshot | null> {
+  const artifactRef = validRef(input.artifact_ref, "draft reference");
+  requireDirectReader(input);
+  try { return await readArtifactDraftCowSnapshotInternal(input, artifactRef); }
   catch (error) { return mapFailure(error); }
 }
 

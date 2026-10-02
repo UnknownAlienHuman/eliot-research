@@ -2,6 +2,7 @@ import {
   BudgetReservationSchema,
   OperationAttemptSchema,
   OperationIntentSchema,
+  VersionedRefSchema,
   type BudgetReservation,
   type OperationAttempt,
   type OperationIntent,
@@ -9,6 +10,7 @@ import {
 } from "@eliotr/contracts";
 import type { ModelCallReceipt } from "@eliotr/research";
 import { canonicalJson } from "@eliotr/platform-cloudflare";
+import { z } from "zod";
 import {
   ModelAttemptError,
   type ModelAttemptAuthority,
@@ -57,9 +59,14 @@ export interface ReservationRow {
   readonly workflow_principal_ref: unknown;
   readonly workflow_credential_generation: unknown;
   readonly workflow_deployment_generation: unknown;
+  readonly workflow_binding_kind: unknown;
+  readonly cow_operation_id: unknown;
 }
 
 export interface AttemptRow extends ReservationRow {
+  readonly model_workflow_binding_kind: unknown;
+  readonly model_cow_operation_id: unknown;
+  readonly cow_call_slot: unknown;
   readonly attempt_id: unknown;
   readonly intent_id: unknown;
   readonly intent_revision: unknown;
@@ -210,6 +217,7 @@ function compactRequest(input: ModelAttemptReservationInput, fullDigest: string)
     stage_attempt_ref: input.stage_attempt_ref,
     stage_request_sha256: input.stage_request_sha256,
     workflow_budget_receipt_ref: input.workflow_budget_receipt_ref,
+    ...(input.artifact_cow_binding === undefined ? {} : { artifact_cow_binding: input.artifact_cow_binding }),
   };
 }
 
@@ -220,10 +228,25 @@ function validateInput(input: ModelAttemptReservationInput): { quote: ModelCostQ
   text(input.stage_attempt_ref, "stage_attempt_ref");
   sha(input.stage_request_sha256, "stage_request_sha256");
   text(input.workflow_budget_receipt_ref, "workflow_budget_receipt_ref");
+  if (input.artifact_cow_binding !== undefined &&
+      (input.artifact_cow_binding.protocol !== "eliotr.artifact.section.revise.v1" ||
+       !(input.artifact_cow_binding.call_slot === "SYNTHESIZE" || input.artifact_cow_binding.call_slot === "INDEPENDENT_VERIFY") ||
+       !IDENTIFIER.test(input.artifact_cow_binding.operation_id) || !IDENTIFIER.test(input.artifact_cow_binding.attempt_ref) ||
+       input.artifact_cow_binding.attempt_ref !== input.stage_attempt_ref ||
+       !VersionedRefSchema.safeParse(input.artifact_cow_binding.scope_snapshot_ref).success ||
+       input.artifact_cow_binding.scope_snapshot_ref.id !== input.authority.scope_snapshot_ref.id ||
+       input.artifact_cow_binding.scope_snapshot_ref.revision !== input.authority.scope_snapshot_ref.revision ||
+       !IDENTIFIER.test(input.artifact_cow_binding.policy_authority_ref) || !IDENTIFIER.test(input.artifact_cow_binding.authorization_receipt_ref) ||
+       !Number.isSafeInteger(input.artifact_cow_binding.purge_revision) || input.artifact_cow_binding.purge_revision < 0)) {
+    fail("MODEL_ATTEMPT_INPUT_INVALID", "artifact COW workflow binding is malformed or differs from its attempt");
+  }
   text(input.idempotency_key, "idempotency_key");
   if (intent.idempotency_key !== input.idempotency_key || intent.principal_ref !== authority.principal_ref || intent.policy_decision_ref !== authority.policy_decision_ref) fail("MODEL_ATTEMPT_IDENTITY_CONFLICT", "intent and verified authority do not match");
   if (intent.budget_reservation_ref !== quote.reservation_id || input.call.budget_reservation_ref !== quote.reservation_id) fail("MODEL_ATTEMPT_IDENTITY_CONFLICT", "model call does not use the quoted reservation");
   if (quote.operation_kind !== intent.operation_kind) fail("MODEL_ATTEMPT_IDENTITY_CONFLICT", "quote operation kind does not match intent");
+  if (input.artifact_cow_binding !== undefined && intent.operation_kind !== "REPORT") {
+    fail("MODEL_ATTEMPT_IDENTITY_CONFLICT", "artifact COW model execution requires REPORT operation intent");
+  }
   if (input.call.evidence_pack.scope_snapshot_ref.id !== authority.scope_snapshot_ref.id || input.call.evidence_pack.scope_snapshot_ref.revision !== authority.scope_snapshot_ref.revision) fail("MODEL_ATTEMPT_AUTHORITY_STALE", "model evidence scope does not match verified authority");
   text(input.call.route_ref, "call.route_ref");
   text(input.call.prompt_generation, "call.prompt_generation");
@@ -231,7 +254,7 @@ function validateInput(input: ModelAttemptReservationInput): { quote: ModelCostQ
   text(input.call.output_object_ref, "call.output_object_ref");
   nonNegativeInteger(input.call.max_input_bytes, "call.max_input_bytes");
   nonNegativeInteger(input.call.max_output_bytes, "call.max_output_bytes");
-  const full = canonicalJson({ intent, idempotency_key: input.idempotency_key, call: input.call, quote, authority, stage_attempt_ref: input.stage_attempt_ref, stage_request_sha256: input.stage_request_sha256, workflow_budget_receipt_ref: input.workflow_budget_receipt_ref });
+  const full = canonicalJson({ intent, idempotency_key: input.idempotency_key, call: input.call, quote, authority, stage_attempt_ref: input.stage_attempt_ref, stage_request_sha256: input.stage_request_sha256, workflow_budget_receipt_ref: input.workflow_budget_receipt_ref, ...(input.artifact_cow_binding === undefined ? {} : { artifact_cow_binding: input.artifact_cow_binding }) });
   return { quote, authority, request_json: "", request_sha256: full };
 }
 
@@ -308,6 +331,58 @@ function operationIntent(row: AttemptRow): OperationIntent {
 }
 
 async function assertWorkflowStageBinding(database: D1Database, input: ModelAttemptReservationInput): Promise<void> {
+  const cow = input.artifact_cow_binding;
+  if (cow !== undefined) {
+    const row = await database.prepare(
+      "SELECT a.budget_receipt_ref, r.principal_ref AS workflow_principal_ref, r.credential_generation AS workflow_credential_generation, r.deployment_generation AS workflow_deployment_generation, r.policy_generation, r.policy_authority_ref, r.authorization_receipt_ref, r.purge_revision, r.scope_snapshot_id, r.scope_snapshot_revision, r.request_sha256 " +
+      "FROM artifact_section_revise_attempt a JOIN artifact_section_revise_run r ON r.operation_id=a.operation_id " +
+      "WHERE a.operation_id=?1 AND a.attempt_ref=?2 AND a.request_sha256=?3 AND a.state='STARTED' AND a.output_json IS NULL " +
+      "AND r.state='ACTIVE' AND r.current_attempt_ref=a.attempt_ref AND r.request_sha256=?3 LIMIT 1",
+    ).bind(cow.operation_id, cow.attempt_ref, input.stage_request_sha256).first<{
+      readonly budget_receipt_ref: unknown;
+      readonly workflow_principal_ref: unknown;
+      readonly workflow_credential_generation: unknown;
+      readonly workflow_deployment_generation: unknown;
+      readonly policy_generation: unknown;
+      readonly policy_authority_ref: unknown;
+      readonly authorization_receipt_ref: unknown;
+      readonly purge_revision: unknown;
+      readonly scope_snapshot_id: unknown;
+      readonly scope_snapshot_revision: unknown;
+    }>();
+    if (row === null || row.budget_receipt_ref !== input.workflow_budget_receipt_ref ||
+        row.workflow_principal_ref !== input.authority.principal_ref ||
+        row.workflow_credential_generation !== input.authority.credential_generation ||
+        row.workflow_deployment_generation !== input.authority.deployment_generation ||
+        row.policy_generation !== input.authority.policy_generation ||
+        row.scope_snapshot_id !== cow.scope_snapshot_ref.id || row.scope_snapshot_revision !== cow.scope_snapshot_ref.revision ||
+        row.policy_authority_ref !== cow.policy_authority_ref || row.authorization_receipt_ref !== cow.authorization_receipt_ref ||
+        row.purge_revision !== cow.purge_revision) {
+      fail("MODEL_ATTEMPT_AUTHORITY_STALE", "model attempt is not bound to the persisted artifact COW workflow grant");
+    }
+    const admission = await database.prepare(
+      "SELECT call_slot,operation_id,intent_id,intent_revision,reservation_id,workflow_budget_receipt_ref,principal_ref,credential_generation,deployment_generation,policy_generation,scope_snapshot_id,scope_snapshot_revision,workflow_authorization_receipt_ref,policy_decision_ref,expires_at " +
+      "FROM artifact_section_revise_spend_admission WHERE workflow_operation_id=?1 AND stage_attempt_ref=?2 AND stage_request_sha256=?3 AND call_slot=?4 AND intent_id=?5 AND intent_revision=?6 LIMIT 1",
+    ).bind(cow.operation_id, cow.attempt_ref, input.stage_request_sha256, cow.call_slot,
+      input.intent.intent_ref.id, input.intent.intent_ref.revision).first<{
+      readonly call_slot: unknown; readonly operation_id: unknown; readonly intent_id: unknown;
+      readonly intent_revision: unknown; readonly reservation_id: unknown; readonly workflow_budget_receipt_ref: unknown;
+      readonly principal_ref: unknown; readonly credential_generation: unknown; readonly deployment_generation: unknown;
+      readonly policy_generation: unknown; readonly scope_snapshot_id: unknown; readonly scope_snapshot_revision: unknown;
+      readonly workflow_authorization_receipt_ref: unknown; readonly policy_decision_ref: unknown; readonly expires_at: unknown;
+    }>();
+    if (admission === null || admission.call_slot !== cow.call_slot || admission.operation_id !== input.intent.intent_ref.id ||
+        admission.intent_id !== input.intent.intent_ref.id || admission.intent_revision !== input.intent.intent_ref.revision ||
+        admission.reservation_id !== input.quote.reservation_id || admission.workflow_budget_receipt_ref !== input.workflow_budget_receipt_ref ||
+        admission.principal_ref !== input.authority.principal_ref || admission.credential_generation !== input.authority.credential_generation ||
+        admission.deployment_generation !== input.authority.deployment_generation || admission.policy_generation !== input.authority.policy_generation ||
+        admission.scope_snapshot_id !== input.authority.scope_snapshot_ref.id || admission.scope_snapshot_revision !== input.authority.scope_snapshot_ref.revision ||
+        admission.workflow_authorization_receipt_ref !== cow.authorization_receipt_ref || admission.policy_decision_ref !== input.authority.policy_decision_ref ||
+        typeof admission.expires_at !== "string" || Date.parse(admission.expires_at) <= Date.now()) {
+      fail("MODEL_ATTEMPT_AUTHORITY_STALE", "model attempt is missing its exact current COW spend authorization");
+    }
+    return;
+  }
   const row = await database.prepare(
     "SELECT w.budget_receipt_ref, r.principal_ref AS workflow_principal_ref, r.credential_generation AS workflow_credential_generation, r.deployment_generation AS workflow_deployment_generation " +
     "FROM research_workflow_attempt w JOIN research_workflow_run r ON r.operation_id = w.operation_id " +
@@ -352,6 +427,33 @@ async function readbackFromRow(row: AttemptRow): Promise<ModelAttemptReadback> {
     fail("MODEL_ATTEMPT_READBACK_CORRUPT", "workflow budget grant binding is inconsistent");
   }
   if (text(row.attempt_stage_attempt_ref, "stage_attempt_ref") !== text(row.stage_attempt_ref, "stage_attempt_ref") || sha(row.attempt_stage_request_sha256, "stage_request_sha256") !== sha(row.stage_request_sha256, "stage_request_sha256")) fail("MODEL_ATTEMPT_READBACK_CORRUPT", "workflow stage binding is inconsistent");
+  let artifactCowBinding: ModelAttemptReadback["artifact_cow_binding"];
+  if (row.workflow_binding_kind === "ARTIFACT_SECTION_REVISE") {
+    let parsedRequest: unknown;
+    try { parsedRequest = JSON.parse(requestJson) as unknown; }
+    catch (cause) { fail("MODEL_ATTEMPT_READBACK_CORRUPT", "COW model request is malformed", false, cause); }
+    const rawBinding = parsedRequest !== null && typeof parsedRequest === "object" && !Array.isArray(parsedRequest)
+      ? (parsedRequest as Record<string, unknown>).artifact_cow_binding : undefined;
+    const binding = z.object({
+      protocol: z.literal("eliotr.artifact.section.revise.v1"),
+      call_slot: z.enum(["SYNTHESIZE", "INDEPENDENT_VERIFY"]),
+      operation_id: z.string().regex(IDENTIFIER),
+      attempt_ref: z.string().regex(IDENTIFIER),
+      scope_snapshot_ref: VersionedRefSchema,
+      policy_authority_ref: z.string().regex(IDENTIFIER),
+      authorization_receipt_ref: z.string().regex(IDENTIFIER),
+      purge_revision: z.number().int().nonnegative(),
+    }).strict().safeParse(rawBinding);
+    if (!binding.success || binding.data.operation_id !== row.cow_operation_id || binding.data.attempt_ref !== row.stage_attempt_ref ||
+        row.model_workflow_binding_kind !== "ARTIFACT_SECTION_REVISE" || row.model_cow_operation_id !== row.cow_operation_id ||
+        binding.data.scope_snapshot_ref.id !== authority.scope_snapshot_ref.id || binding.data.scope_snapshot_ref.revision !== authority.scope_snapshot_ref.revision ||
+        binding.data.purge_revision < 0 || row.cow_call_slot !== binding.data.call_slot) {
+      fail("MODEL_ATTEMPT_READBACK_CORRUPT", "COW model request does not match its persisted W2 locator");
+    }
+    artifactCowBinding = Object.freeze(binding.data);
+  } else if (row.workflow_binding_kind !== "RESEARCH_STAGE" || row.cow_operation_id !== null) {
+    fail("MODEL_ATTEMPT_READBACK_CORRUPT", "model attempt has an unsupported W2 binding kind");
+  }
   const receipt = parseModelReceipt(row.receipt_json);
   if ((receipt === null) !== (row.receipt_sha256 === null)) fail("MODEL_ATTEMPT_READBACK_CORRUPT", "model receipt and digest binding disagree");
   if (receipt !== null) {
@@ -391,32 +493,38 @@ async function readbackFromRow(row: AttemptRow): Promise<ModelAttemptReadback> {
     operation_receipt,
     output,
     workflow_budget_receipt_ref: workflowBudgetReceipt,
+    ...(artifactCowBinding === undefined ? {} : { artifact_cow_binding: artifactCowBinding }),
     ...(row.error_code === null ? {} : { error_code: text(row.error_code, "error_code") }),
     reason_codes: Object.freeze(parseStringArray(row.reason_codes_json, "reason_codes")),
   });
 }
 
 function attemptSelect(): string {
-  return "SELECT m.attempt_id, m.intent_id, m.intent_revision, m.reservation_id, m.attempt_number, m.principal_ref, m.operation_kind, m.idempotency_key, m.request_sha256 AS attempt_request_sha256, m.request_json AS attempt_request_json, m.authority_json AS attempt_authority_json, m.route_ref, m.prompt_generation, m.schema_generation, m.credential_generation AS attempt_credential_generation, m.deployment_generation AS attempt_deployment_generation, m.stage_attempt_ref AS attempt_stage_attempt_ref, m.stage_request_sha256 AS attempt_stage_request_sha256, m.state AS attempt_state, m.receipt_json, m.receipt_sha256, m.output_object_ref, m.output_sha256, m.output_size_bytes, m.readback_sha256, m.error_code, m.reason_codes_json, m.started_at, m.ended_at, " +
+  return "SELECT m.attempt_id, m.intent_id, m.intent_revision, m.reservation_id, m.attempt_number, m.principal_ref, m.operation_kind, m.idempotency_key, m.request_sha256 AS attempt_request_sha256, m.request_json AS attempt_request_json, m.authority_json AS attempt_authority_json, m.route_ref, m.prompt_generation, m.schema_generation, m.credential_generation AS attempt_credential_generation, m.deployment_generation AS attempt_deployment_generation, m.stage_attempt_ref AS attempt_stage_attempt_ref, m.stage_request_sha256 AS attempt_stage_request_sha256, m.workflow_binding_kind AS model_workflow_binding_kind, m.cow_operation_id AS model_cow_operation_id, csa.call_slot AS cow_call_slot, m.state AS attempt_state, m.receipt_json, m.receipt_sha256, m.output_object_ref, m.output_sha256, m.output_size_bytes, m.readback_sha256, m.error_code, m.reason_codes_json, m.started_at, m.ended_at, " +
     "a.state AS operation_attempt_state, a.checkpoint_ref, a.error_code AS operation_attempt_error_code, " +
     "i.revision, i.operation_kind, i.principal_ref, i.idempotency_key, i.payload_ref, i.policy_decision_ref, i.budget_reservation_ref, i.cancellation_ref, i.created_at AS intent_created_at, " +
     "o.receipt_id AS operation_receipt_id, o.revision AS operation_receipt_revision, o.outcome AS operation_receipt_outcome, o.reconciliation_required AS operation_reconciliation_required, o.output_refs_json AS operation_output_refs_json, o.readback_receipt_refs_json AS operation_readback_receipt_refs_json, o.reason_codes_json AS operation_reasons_json, o.created_at AS operation_receipt_created_at, " +
-    "b.project_id, b.platform_usd, b.workers_ai_usd, b.byok_usd, b.max_total_usd, b.workflow_steps, b.state AS state, b.state AS budget_state, b.expires_at, b.created_at AS created_at, b.created_at AS budget_created_at, b.expected_sources, b.expected_sections, b.confidence, b.quote_ref, b.quote_json, b.authority_json, b.stage_attempt_ref, b.stage_request_sha256, b.request_sha256, b.request_json, w.budget_receipt_ref AS workflow_budget_receipt_ref, r.principal_ref AS workflow_principal_ref, r.credential_generation AS workflow_credential_generation, r.deployment_generation AS workflow_deployment_generation " +
+    "b.project_id, b.platform_usd, b.workers_ai_usd, b.byok_usd, b.max_total_usd, b.workflow_steps, b.state AS state, b.state AS budget_state, b.expires_at, b.created_at AS created_at, b.created_at AS budget_created_at, b.expected_sources, b.expected_sections, b.confidence, b.quote_ref, b.quote_json, b.authority_json, b.stage_attempt_ref, b.stage_request_sha256, b.request_sha256, b.request_json, b.workflow_binding_kind, b.cow_operation_id, COALESCE(w.budget_receipt_ref,ca.budget_receipt_ref) AS workflow_budget_receipt_ref, COALESCE(r.principal_ref,cr.principal_ref) AS workflow_principal_ref, COALESCE(r.credential_generation,cr.credential_generation) AS workflow_credential_generation, COALESCE(r.deployment_generation,cr.deployment_generation) AS workflow_deployment_generation " +
     "FROM research_model_attempt m JOIN operation_attempt a ON a.attempt_id = m.attempt_id " +
     "JOIN operation_intent i ON i.intent_id = m.intent_id AND i.revision = m.intent_revision " +
     "JOIN budget_reservation b ON b.reservation_id = m.reservation_id " +
-    "JOIN research_workflow_attempt w ON w.attempt_ref = b.stage_attempt_ref AND w.request_sha256 = b.stage_request_sha256 " +
-    "JOIN research_workflow_run r ON r.operation_id = w.operation_id " +
+    "LEFT JOIN research_workflow_attempt w ON b.workflow_binding_kind='RESEARCH_STAGE' AND w.attempt_ref = b.stage_attempt_ref AND w.request_sha256 = b.stage_request_sha256 " +
+    "LEFT JOIN research_workflow_run r ON b.workflow_binding_kind='RESEARCH_STAGE' AND r.operation_id = w.operation_id " +
+    "LEFT JOIN artifact_section_revise_attempt ca ON b.workflow_binding_kind='ARTIFACT_SECTION_REVISE' AND ca.operation_id=b.cow_operation_id AND ca.attempt_ref=b.stage_attempt_ref AND ca.request_sha256=b.stage_request_sha256 " +
+    "LEFT JOIN artifact_section_revise_run cr ON b.workflow_binding_kind='ARTIFACT_SECTION_REVISE' AND cr.operation_id=ca.operation_id " +
+    "LEFT JOIN artifact_section_revise_spend_admission csa ON b.workflow_binding_kind='ARTIFACT_SECTION_REVISE' AND csa.workflow_operation_id=b.cow_operation_id AND csa.stage_attempt_ref=b.stage_attempt_ref AND csa.stage_request_sha256=b.stage_request_sha256 AND csa.reservation_id=b.reservation_id AND csa.intent_id=m.intent_id AND csa.intent_revision=m.intent_revision " +
     "LEFT JOIN operation_receipt o ON o.attempt_id = m.attempt_id AND o.intent_id = m.intent_id AND o.intent_revision = m.intent_revision ";
 }
 
 export function createModelAttemptStore(database: D1Database, now: () => string = () => new Date().toISOString()): ModelAttemptStore {
   async function readReservation(input: ModelAttemptReservationInput, request_sha256: string): Promise<ModelAttemptReservation | null> {
     const row = await database.prepare(
-      "SELECT i.*, b.*, w.budget_receipt_ref AS workflow_budget_receipt_ref, r.principal_ref AS workflow_principal_ref, r.credential_generation AS workflow_credential_generation, r.deployment_generation AS workflow_deployment_generation " +
+      "SELECT i.*, b.*, b.workflow_binding_kind, b.cow_operation_id, COALESCE(w.budget_receipt_ref,ca.budget_receipt_ref) AS workflow_budget_receipt_ref, COALESCE(r.principal_ref,cr.principal_ref) AS workflow_principal_ref, COALESCE(r.credential_generation,cr.credential_generation) AS workflow_credential_generation, COALESCE(r.deployment_generation,cr.deployment_generation) AS workflow_deployment_generation " +
       "FROM operation_intent i JOIN budget_reservation b ON b.reservation_id = i.budget_reservation_ref " +
-      "JOIN research_workflow_attempt w ON w.attempt_ref = b.stage_attempt_ref AND w.request_sha256 = b.stage_request_sha256 " +
-      "JOIN research_workflow_run r ON r.operation_id = w.operation_id " +
+      "LEFT JOIN research_workflow_attempt w ON b.workflow_binding_kind='RESEARCH_STAGE' AND w.attempt_ref = b.stage_attempt_ref AND w.request_sha256 = b.stage_request_sha256 " +
+      "LEFT JOIN research_workflow_run r ON b.workflow_binding_kind='RESEARCH_STAGE' AND r.operation_id = w.operation_id " +
+      "LEFT JOIN artifact_section_revise_attempt ca ON b.workflow_binding_kind='ARTIFACT_SECTION_REVISE' AND ca.operation_id=b.cow_operation_id AND ca.attempt_ref=b.stage_attempt_ref AND ca.request_sha256=b.stage_request_sha256 " +
+      "LEFT JOIN artifact_section_revise_run cr ON b.workflow_binding_kind='ARTIFACT_SECTION_REVISE' AND cr.operation_id=ca.operation_id " +
       "WHERE i.operation_kind = ?1 AND i.principal_ref = ?2 AND i.idempotency_key = ?3 LIMIT 1",
     ).bind(input.intent.operation_kind, input.authority.principal_ref, input.idempotency_key).first<ReservationRow & { readonly intent_id: unknown; readonly revision: unknown; readonly payload_ref: unknown; readonly budget_reservation_ref: unknown; readonly policy_decision_ref: unknown; readonly cancellation_ref: unknown; readonly created_at: unknown }>();
     if (row === null) return null;
@@ -430,9 +538,13 @@ export function createModelAttemptStore(database: D1Database, now: () => string 
     });
     const reservation = reservationFromRow(row);
     const authority = parseAuthority(row.authority_json);
-    if (row.stage_attempt_ref !== input.stage_attempt_ref || row.stage_request_sha256 !== input.stage_request_sha256) fail("MODEL_ATTEMPT_IDENTITY_CONFLICT", "model reservation is bound to a different workflow stage");
+    if (row.stage_attempt_ref !== input.stage_attempt_ref || row.stage_request_sha256 !== input.stage_request_sha256 ||
+        row.workflow_binding_kind !== (input.artifact_cow_binding === undefined ? "RESEARCH_STAGE" : "ARTIFACT_SECTION_REVISE") ||
+        (input.artifact_cow_binding !== undefined && row.cow_operation_id !== input.artifact_cow_binding.operation_id)) {
+      fail("MODEL_ATTEMPT_IDENTITY_CONFLICT", "model reservation is bound to a different workflow stage");
+    }
     if (row.workflow_budget_receipt_ref !== input.workflow_budget_receipt_ref || row.workflow_principal_ref !== authority.principal_ref || row.workflow_credential_generation !== authority.credential_generation || row.workflow_deployment_generation !== authority.deployment_generation) fail("MODEL_ATTEMPT_AUTHORITY_STALE", "model reservation is bound to a different workflow stage grant");
-    return Object.freeze({ intent, reservation, request_sha256, request_json: canonicalStoredJson(row.request_json, "request_json"), attempt_identity: attemptIdFor(request_sha256), authority, output_object_ref: input.call.output_object_ref, route_ref: input.call.route_ref, prompt_generation: input.call.prompt_generation, schema_generation: input.call.schema_generation, stage_attempt_ref: text(row.stage_attempt_ref, "stage_attempt_ref"), stage_request_sha256: sha(row.stage_request_sha256, "stage_request_sha256"), workflow_budget_receipt_ref: text(row.workflow_budget_receipt_ref, "workflow_budget_receipt_ref") });
+    return Object.freeze({ intent, reservation, request_sha256, request_json: canonicalStoredJson(row.request_json, "request_json"), attempt_identity: attemptIdFor(request_sha256), authority, output_object_ref: input.call.output_object_ref, route_ref: input.call.route_ref, prompt_generation: input.call.prompt_generation, schema_generation: input.call.schema_generation, stage_attempt_ref: text(row.stage_attempt_ref, "stage_attempt_ref"), stage_request_sha256: sha(row.stage_request_sha256, "stage_request_sha256"), workflow_budget_receipt_ref: text(row.workflow_budget_receipt_ref, "workflow_budget_receipt_ref"), ...(input.artifact_cow_binding === undefined ? {} : { artifact_cow_binding: input.artifact_cow_binding }) });
   }
 
   async function reloadReservation(reservation: ModelAttemptReservation): Promise<BudgetReservation["state"]> {
@@ -441,7 +553,7 @@ export function createModelAttemptStore(database: D1Database, now: () => string 
     const stored = reservationFromRow(row);
     const storedIdentity = { ...stored, state: "RESERVED" as const };
     const requestedIdentity = { ...reservation.reservation, state: "RESERVED" as const };
-    if (canonicalJson(storedIdentity) !== canonicalJson(requestedIdentity) || row.request_sha256 !== reservation.request_sha256 || row.stage_attempt_ref !== reservation.stage_attempt_ref || row.stage_request_sha256 !== reservation.stage_request_sha256 || canonicalStoredJson(row.request_json, "model reservation request") !== reservation.request_json || canonicalJson(parseAuthority(row.authority_json)) !== canonicalJson(reservation.authority)) fail("MODEL_ATTEMPT_IDENTITY_CONFLICT", "model reservation changed after its authority readback");
+    if (canonicalJson(storedIdentity) !== canonicalJson(requestedIdentity) || row.request_sha256 !== reservation.request_sha256 || row.stage_attempt_ref !== reservation.stage_attempt_ref || row.stage_request_sha256 !== reservation.stage_request_sha256 || canonicalStoredJson(row.request_json, "model reservation request") !== reservation.request_json || canonicalJson(parseAuthority(row.authority_json)) !== canonicalJson(reservation.authority) || row.workflow_binding_kind !== (reservation.artifact_cow_binding === undefined ? "RESEARCH_STAGE" : "ARTIFACT_SECTION_REVISE") || row.cow_operation_id !== (reservation.artifact_cow_binding?.operation_id ?? null)) fail("MODEL_ATTEMPT_IDENTITY_CONFLICT", "model reservation changed after its authority readback");
     return stored.state;
   }
 
@@ -457,7 +569,7 @@ export function createModelAttemptStore(database: D1Database, now: () => string 
       try {
         const results = await database.batch([
           database.prepare("INSERT INTO operation_intent(intent_id, revision, operation_kind, principal_ref, idempotency_key, payload_ref, policy_decision_ref, budget_reservation_ref, cancellation_ref, created_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)").bind(input.intent.intent_ref.id, input.intent.intent_ref.revision, input.intent.operation_kind, input.intent.principal_ref, input.intent.idempotency_key, input.intent.payload_ref, input.intent.policy_decision_ref, prepared.quote.reservation_id, input.intent.cancellation_ref ?? null, input.intent.created_at),
-          database.prepare("INSERT INTO budget_reservation(reservation_id, operation_kind, project_id, platform_usd, workers_ai_usd, byok_usd, max_total_usd, workflow_steps, state, expires_at, created_at, principal_ref, idempotency_key, request_sha256, request_json, policy_decision_ref, credential_generation, deployment_generation, quote_ref, expected_sources, expected_sections, confidence, quote_json, authority_json, stage_attempt_ref, stage_request_sha256) VALUES (?1,?2,NULL,?3,?4,?5,?6,?7,'RESERVED',?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23,?24)").bind(prepared.quote.reservation_id, input.intent.operation_kind, prepared.quote.platform_usd, prepared.quote.workers_ai_usd, prepared.quote.byok_usd, prepared.quote.max_total_usd, prepared.quote.workflow_steps, prepared.quote.expires_at, created, input.authority.principal_ref, input.idempotency_key, prepared.request_sha256, prepared.request_json, input.authority.policy_decision_ref, input.authority.credential_generation, input.authority.deployment_generation, prepared.quote.quote_ref, prepared.quote.expected_sources, prepared.quote.expected_sections, prepared.quote.confidence, quoteJson, authorityJson, input.stage_attempt_ref, input.stage_request_sha256),
+          database.prepare("INSERT INTO budget_reservation(reservation_id, operation_kind, project_id, platform_usd, workers_ai_usd, byok_usd, max_total_usd, workflow_steps, state, expires_at, created_at, principal_ref, idempotency_key, request_sha256, request_json, policy_decision_ref, credential_generation, deployment_generation, quote_ref, expected_sources, expected_sections, confidence, quote_json, authority_json, stage_attempt_ref, stage_request_sha256,workflow_binding_kind,cow_operation_id) VALUES (?1,?2,NULL,?3,?4,?5,?6,?7,'RESERVED',?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23,?24,?25,?26)").bind(prepared.quote.reservation_id, input.intent.operation_kind, prepared.quote.platform_usd, prepared.quote.workers_ai_usd, prepared.quote.byok_usd, prepared.quote.max_total_usd, prepared.quote.workflow_steps, prepared.quote.expires_at, created, input.authority.principal_ref, input.idempotency_key, prepared.request_sha256, prepared.request_json, input.authority.policy_decision_ref, input.authority.credential_generation, input.authority.deployment_generation, prepared.quote.quote_ref, prepared.quote.expected_sources, prepared.quote.expected_sections, prepared.quote.confidence, quoteJson, authorityJson, input.stage_attempt_ref, input.stage_request_sha256, input.artifact_cow_binding === undefined ? "RESEARCH_STAGE" : "ARTIFACT_SECTION_REVISE", input.artifact_cow_binding?.operation_id ?? null),
         ]);
         if (results.length !== 2 || results.some((result) => (result.meta?.changes ?? 0) !== 1)) fail("MODEL_ATTEMPT_SETTLEMENT_UNCERTAIN", "model reservation batch did not commit exactly two rows", true);
       } catch (error) {
@@ -489,7 +601,7 @@ export function createModelAttemptStore(database: D1Database, now: () => string 
       try {
         const results = await database.batch([
           database.prepare("INSERT INTO operation_attempt(attempt_id,intent_id,intent_revision,attempt_number,state,checkpoint_ref,error_code,started_at,ended_at) VALUES (?1,?2,?3,?4,'STARTED',NULL,NULL,?5,NULL)").bind(attemptId, reservation.intent.intent_ref.id, reservation.intent.intent_ref.revision, attempt_number, startedAt),
-          database.prepare("INSERT INTO research_model_attempt(attempt_id,intent_id,intent_revision,reservation_id,attempt_number,principal_ref,operation_kind,idempotency_key,request_sha256,request_json,authority_json,route_ref,prompt_generation,schema_generation,credential_generation,deployment_generation,stage_attempt_ref,stage_request_sha256,state,receipt_json,receipt_sha256,output_object_ref,output_sha256,output_size_bytes,readback_sha256,error_code,reason_codes_json,started_at,ended_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,'STARTED',NULL,NULL,NULL,NULL,NULL,NULL,NULL,?19,?20,NULL)").bind(attemptId, reservation.intent.intent_ref.id, reservation.intent.intent_ref.revision, reservation.reservation.reservation_id, attempt_number, reservation.authority.principal_ref, reservation.intent.operation_kind, reservation.intent.idempotency_key, reservation.request_sha256, reservation.request_json, authorityJson, reservation.route_ref, reservation.prompt_generation, reservation.schema_generation, reservation.authority.credential_generation, reservation.authority.deployment_generation, reservation.stage_attempt_ref, reservation.stage_request_sha256, reasonJson, startedAt),
+          database.prepare("INSERT INTO research_model_attempt(attempt_id,intent_id,intent_revision,reservation_id,attempt_number,principal_ref,operation_kind,idempotency_key,request_sha256,request_json,authority_json,route_ref,prompt_generation,schema_generation,credential_generation,deployment_generation,stage_attempt_ref,stage_request_sha256,workflow_binding_kind,cow_operation_id,state,receipt_json,receipt_sha256,output_object_ref,output_sha256,output_size_bytes,readback_sha256,error_code,reason_codes_json,started_at,ended_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,'STARTED',NULL,NULL,NULL,NULL,NULL,NULL,NULL,?21,?22,NULL)").bind(attemptId, reservation.intent.intent_ref.id, reservation.intent.intent_ref.revision, reservation.reservation.reservation_id, attempt_number, reservation.authority.principal_ref, reservation.intent.operation_kind, reservation.intent.idempotency_key, reservation.request_sha256, reservation.request_json, authorityJson, reservation.route_ref, reservation.prompt_generation, reservation.schema_generation, reservation.authority.credential_generation, reservation.authority.deployment_generation, reservation.stage_attempt_ref, reservation.stage_request_sha256, reservation.artifact_cow_binding === undefined ? "RESEARCH_STAGE" : "ARTIFACT_SECTION_REVISE", reservation.artifact_cow_binding?.operation_id ?? null, reasonJson, startedAt),
         ]);
         if (results.length !== 2 || results.some((result) => (result.meta?.changes ?? 0) !== 1)) fail("MODEL_ATTEMPT_SETTLEMENT_UNCERTAIN", "model attempt batch did not commit exactly two rows", true);
       } catch (error) {
