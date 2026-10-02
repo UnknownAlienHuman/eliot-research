@@ -112,6 +112,7 @@ export async function runOwnerArtifactBrowser(harness) {
       assert.equal(read.data.data.revision.status, "ACCEPTED");
     }
 
+    async function start() {
       worker = await startLocalWorker(paths); processIds.push(worker.diagnostics().pid);
       assert.ok(Number.isSafeInteger(processIds.at(-1))); await publicationRead();
       const history = await harness.workerJson(worker.origin, "/api/v1/research/runs", { token, worker, phase: "artifact-history-diagnostic" });
@@ -278,7 +279,7 @@ export async function runOwnerArtifactBrowser(harness) {
     receipt.source_purge = "PASS (real Worker refused accepted artifact after exact source-row redaction in an independent native fixture)";
     assert.deepEqual(await durableCheckpoint(purgePaths, purgeManifest), purgeBaseCheckpoint);
     receipt.run_reopen = "PENDING (accepted COW child has no immutable original REPORT run output binding; Stage17 original draft acceptance remains blocked)";
-
+    return receipt;
   } finally {
     const failures = [];
     for (const close of [() => browser?.close(), () => bridge?.close(), () => purgeWorker?.stop(), () => worker?.stop(), () => jwks?.close(),
