@@ -518,7 +518,7 @@ describe("owner run status after reauthentication over real HTTP/D1/R2", () => {
       try {
         const racedRead = await handleHttp(new Request(racedArtifactUrl, { method: "POST" }), readEnv,
           {} as ExecutionContext, { accessVerifier: oldAccess });
-        expect([403, 409, 410]).toContain(racedRead.status);
+        expect([403, 409, 410], JSON.stringify(await racedRead.clone().json())).toContain(racedRead.status);
       } finally {
         getSpy.mockRestore();
       }

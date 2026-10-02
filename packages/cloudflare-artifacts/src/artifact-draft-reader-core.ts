@@ -295,7 +295,10 @@ function parseReceipt(value: unknown): ImmutableObjectReceipt {
 
 function mapAuthorityFailure(error: unknown): never {
   const code = typeof error === "object" && error !== null && "code" in error ? (error as { readonly code?: unknown }).code : undefined;
-  if (code === "EVIDENCE_AUTHORIZATION_DENIED" || code === "NAVIGATION_SCOPE_MISMATCH") fail("ARTIFACT_DRAFT_READ_DENIED", 403, "draft read authorization denied");
+  if (code === "EVIDENCE_AUTHORIZATION_DENIED" || code === "NAVIGATION_SCOPE_MISMATCH" ||
+      code === "ORIENTATION_SOURCE_DENIED" || code === "ORIENTATION_SOURCE_NOT_ADMITTED") {
+    fail("ARTIFACT_DRAFT_READ_DENIED", 403, "draft read authorization denied");
+  }
   if (code === "EVIDENCE_SCOPE_EXPIRED" || code === "EVIDENCE_SCOPE_INVALIDATED" || code === "SCOPE_SNAPSHOT_STALE" || code === "NAVIGATION_SCOPE_NOT_CURRENT") fail("ARTIFACT_DRAFT_READ_STALE", 410, "draft read scope is stale");
   if (code === "EVIDENCE_INPUT_INVALID" || code === "SCOPE_SNAPSHOT_READBACK_MISMATCH") fail("ARTIFACT_DRAFT_READ_INTEGRITY", 409, "draft read authority is inconsistent");
   fail("ARTIFACT_DRAFT_READ_UNAVAILABLE", 503, "draft read authority is unavailable", true);

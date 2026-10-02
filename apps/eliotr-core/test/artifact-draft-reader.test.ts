@@ -1,8 +1,9 @@
 import type { ArtifactDraftReadError } from "@eliotr/cloudflare-research";
-import { readArtifactDraft, readArtifactDraftSection } from "@eliotr/cloudflare-research";
+import { readArtifactDraft, readArtifactDraftSection, readReauthorizedArtifactDraft } from "@eliotr/cloudflare-research";
 import { readArtifactDraftSectionCitations } from "../../../packages/cloudflare-artifacts/src/artifact-draft-reader.js";
 import type { OperationIntent } from "@eliotr/contracts";
-import { evidenceSha256Bytes } from "@eliotr/cloudflare-evidence";
+import { createNavigationReadAuthority, evidenceSha256Bytes } from "@eliotr/cloudflare-evidence";
+import { OrientationError } from "@eliotr/cloudflare-navigation";
 import { createEvidenceFreezeMaterializeContextReader, createEvidenceFreezeVerificationContextReader } from "../../../packages/cloudflare-research/src/research-evidence-freeze-composition.js";
 import { decodeResearchVerificationResult } from "@eliotr/cloudflare-research-stages";
 import type {
@@ -14,7 +15,7 @@ import { createResearchArtifactMetadataProducer, type ResearchArtifactReportPoli
 import { readCommittedResearchMaterializeOutput } from "../../../packages/cloudflare-research/src/research-materialize-output-reader.js";
 import { readWorkflowObject } from "@eliotr/cloudflare-workflows";
 import { WorkflowCheckpointStore } from "@eliotr/cloudflare-workflows";
-import { beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 import { handleHttp } from "../src/http.js";
 import { canonicalDigest } from "@eliotr/platform-cloudflare";
 import {
@@ -285,6 +286,65 @@ describe("actual D1/R2 artifact draft reader", () => {
     await runtime.WORK_BUCKET.delete(object.receipt.key);
     await expectReadCode(read(fixture), "ARTIFACT_DRAFT_READ_INTEGRITY");
     expect(await draftHead(fixture.input.revision.artifact_ref.id)).toEqual(before);
+  });
+
+  it.each([
+    {
+      name: "source denied",
+      code: "ORIENTATION_SOURCE_DENIED",
+      status: 403,
+      retryable: false,
+      expected: { code: "ARTIFACT_DRAFT_READ_DENIED", status: 403, retryable: false },
+    },
+    {
+      name: "source not admitted",
+      code: "ORIENTATION_SOURCE_NOT_ADMITTED",
+      status: 403,
+      retryable: false,
+      expected: { code: "ARTIFACT_DRAFT_READ_DENIED", status: 403, retryable: false },
+    },
+    {
+      name: "unmapped authority failure",
+      code: "ARTIFACT_READER_TEST_UNMAPPED",
+      status: 409,
+      retryable: false,
+      expected: { code: "ARTIFACT_DRAFT_READ_UNAVAILABLE", status: 503, retryable: true },
+    },
+  ] as const)("maps $name from current navigation without reading storage", async (failure) => {
+    const fixture = await readableOwnerArtifactDraft(`reader-reauth-current-${crypto.randomUUID()}`);
+    await seed(fixture);
+    const artifactId = fixture.input.revision.artifact_ref.id;
+    const countsBefore = await authorityCounts(artifactId);
+    const headBefore = await draftHead(artifactId);
+    const navigation = createNavigationReadAuthority({
+      database: runtime.CORE_DB,
+      scope_snapshot: fixture.scope,
+      access: fixture.access,
+      require_current: fixture.requireCurrent,
+      now: fixture.now,
+    });
+    const currentAuthorization = await navigation.current();
+    const injectedNavigation = {
+      ...navigation,
+      current: async () => { throw new OrientationError(failure.code, failure.status, failure.retryable); },
+    };
+    const bucketGet = vi.spyOn(runtime.WORK_BUCKET, "get");
+    try {
+      await expect(readReauthorizedArtifactDraft({
+        database: runtime.CORE_DB,
+        work_bucket: runtime.WORK_BUCKET,
+        artifact_ref: fixture.input.revision.artifact_ref,
+        access: fixture.access,
+        current_navigation: injectedNavigation,
+        current_authorization: currentAuthorization,
+        deployment_generation: runtime.DEPLOYMENT_GENERATION,
+      })).rejects.toMatchObject(failure.expected);
+      expect(bucketGet).not.toHaveBeenCalled();
+    } finally {
+      bucketGet.mockRestore();
+    }
+    expect(await authorityCounts(artifactId)).toEqual(countsBefore);
+    expect(await draftHead(artifactId)).toEqual(headBefore);
   });
 
   it("reads one historical section body with exact object identity and private headers", async () => {
