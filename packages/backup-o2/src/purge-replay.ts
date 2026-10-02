@@ -95,11 +95,22 @@ async function assertLiveErasureFence(
 }
 
 async function readCopyAuthorities(database: D1Database, epochId: string): Promise<readonly BackupOffsiteCopyReplayAuthority[]> {
+  let result: D1Result<BackupOffsiteCopyReplayAuthority>;
   try {
-    const result = await database.prepare(
+    result = await database.prepare(
       `SELECT copy_id,epoch_id,destination_id,principal_ref,policy_decision_ref,operation_intent_json,key_generation,expires_at,primary_failure_domain,destination_policy_json,intent_digest,policy_digest,descriptor_digest,authority_authorized_at,state,created_at,committed_at FROM backup_offsite_copy_replay_authority WHERE epoch_id=?1 ORDER BY copy_id LIMIT ${MAX_EPOCH_COPIES + 1}`,
     ).bind(epochId).all<BackupOffsiteCopyReplayAuthority>();
-    const rows = [...(result.results ?? [])];
+  } catch (cause) {
+    failBackup("BACKUP_TABLE_MISSING", "offsite replay authority is unavailable", true, {}, cause);
+  }
+  if (result.success !== true || !Array.isArray(result.results)) {
+    failBackup("BACKUP_TABLE_MISSING", "offsite replay authority query returned an incomplete inventory", true);
+  }
+  try {
+    const rows = [...result.results];
+    if (rows.some((row) => typeof row !== "object" || row === null || Array.isArray(row))) {
+      failBackup("BACKUP_VECTOR_UNVERIFIABLE", "offsite replay authority inventory contains a malformed row");
+    }
     if (rows.length > MAX_EPOCH_COPIES) failBackup("BACKUP_BOUND_EXCEEDED", "offsite epoch has too many copy authorities");
     for (const row of rows) {
       if ((row.state !== "INTENT" && row.state !== "COMMITTED") || row.epoch_id !== epochId) {
@@ -129,14 +140,23 @@ async function readCopyAuthorities(database: D1Database, epochId: string): Promi
 }
 
 async function readCopyReceipts(database: D1Database, epochId: string): Promise<readonly CopyReceiptRow[]> {
+  let result: D1Result<CopyReceiptRow>;
   try {
-    const result = await database.prepare(
+    result = await database.prepare(
       `SELECT copy_id,epoch_id,destination_id,key_generation,policy_digest,intent_digest,expires_at,failure_domain,descriptor_digest,authority_authorized_at FROM backup_offsite_copy_receipt WHERE epoch_id=?1 ORDER BY copy_id LIMIT ${MAX_EPOCH_COPIES + 1}`,
     ).bind(epochId).all<CopyReceiptRow>();
-    const rows = [...(result.results ?? [])];
+  } catch (cause) {
+    failBackup("BACKUP_TABLE_MISSING", "offsite copy receipt inventory is unavailable", true, {}, cause);
+  }
+  if (result.success !== true || !Array.isArray(result.results)) {
+    failBackup("BACKUP_TABLE_MISSING", "offsite copy receipt query returned an incomplete inventory", true);
+  }
+  try {
+    const rows = [...result.results];
     if (rows.length > MAX_EPOCH_COPIES) failBackup("BACKUP_BOUND_EXCEEDED", "offsite epoch has too many committed copies");
     for (const row of rows) {
       if (
+        typeof row !== "object" || row === null || Array.isArray(row) ||
         typeof row.copy_id !== "string" || typeof row.epoch_id !== "string" || typeof row.destination_id !== "string" ||
         typeof row.key_generation !== "string" || typeof row.policy_digest !== "string" || typeof row.intent_digest !== "string" ||
         typeof row.expires_at !== "string" || typeof row.failure_domain !== "string" || typeof row.descriptor_digest !== "string" ||
@@ -151,14 +171,20 @@ async function readCopyReceipts(database: D1Database, epochId: string): Promise<
 }
 
 async function assertNoUnboundParts(database: D1Database, epochId: string, authorities: readonly BackupOffsiteCopyReplayAuthority[]): Promise<void> {
-  let rows: readonly { readonly copy_id: string }[];
+  let result: D1Result<{ readonly copy_id: unknown }>;
   try {
-    const result = await database.prepare(
+    result = await database.prepare(
       `SELECT DISTINCT copy_id FROM backup_offsite_copy_part WHERE part_ref LIKE ?1 LIMIT ${MAX_EPOCH_COPIES + 1}`,
-    ).bind(`offsite/${epochId}/%`).all<{ readonly copy_id: string }>();
-    rows = result.results ?? [];
+    ).bind(`offsite/${epochId}/%`).all<{ readonly copy_id: unknown }>();
   } catch (cause) {
     failBackup("BACKUP_TABLE_MISSING", "offsite partial-copy inventory is unavailable", true, {}, cause);
+  }
+  if (result.success !== true || !Array.isArray(result.results)) {
+    failBackup("BACKUP_TABLE_MISSING", "offsite partial-copy query returned an incomplete inventory", true);
+  }
+  const rows = result.results;
+  if (rows.some((row) => typeof row !== "object" || row === null || Array.isArray(row) || typeof row.copy_id !== "string" || row.copy_id.length === 0)) {
+    failBackup("BACKUP_VECTOR_UNVERIFIABLE", "offsite partial-copy inventory contains malformed copy identity");
   }
   if (rows.length > MAX_EPOCH_COPIES || rows.some((row) => !authorities.some((authority) => authority.copy_id === row.copy_id))) {
     failBackup("BACKUP_PURGE_BLOCKED", "offsite epoch has partial or legacy bytes without O4 authority; refusing incomplete purge closure");
@@ -191,8 +217,7 @@ async function discoverCopies(database: D1Database, epochId: string): Promise<re
 }
 
 async function readObligation(database: D1Database, erasureRef: string, epochId: string, copyId: string, expiryKey: string): Promise<ReplayObligationRow | null> {
-  const [erasureId, revisionText] = erasureRef.split(":");
-  const revision = Number(revisionText);
+  const { id: erasureId, revision } = parseErasureRef(erasureRef);
   let row: ReplayObligationRow | null;
   try {
     row = await database.prepare(
@@ -230,8 +255,7 @@ async function ensureIntent(
   expectedState: "PURGE_EACH_LOCATION" | "VERIFY_ABSENCE_OR_BLOCK",
   nowMs: number,
 ): Promise<ReplayObligationRow> {
-  const [erasureId, revisionText] = erasureRef.split(":");
-  const revision = Number(revisionText);
+  const { id: erasureId, revision } = parseErasureRef(erasureRef);
   try {
     await database.prepare(
       "INSERT INTO backup_erasure_replay_obligation(erasure_id,erasure_revision,backup_epoch_id,copy_id,target_id,expiry_intent_key,state,reason_code,receipt_json,created_at,updated_at) " +
@@ -281,6 +305,47 @@ function errorCode(cause: unknown): string | null {
 
 function blockedError(code: string | null): boolean {
   return code === "BACKUP_EXPIRY_BLOCKED" || code === "BACKUP_PURGE_BLOCKED" || code === "BACKUP_DESTINATION_POLICY_MISMATCH" || code === "BACKUP_OFFSITE_INADMISSIBLE";
+}
+
+function fenceOffsiteEffects(
+  adapter: OffsiteCopyAdapter,
+  dependencies: BackupPurgeReplayDependencies,
+  fence: ErasureFence,
+  expectedState: "PURGE_EACH_LOCATION" | "VERIFY_ABSENCE_OR_BLOCK",
+): OffsiteCopyAdapter {
+  const assertEffectFence = async (): Promise<void> => {
+    try {
+      await assertLiveErasureFence(dependencies.core_db, fence, expectedState, (dependencies.now ?? Date.now)());
+    } catch (cause) {
+      // A delete/get may already have settled remotely. Preserve the durable
+      // O4 PENDING attempt so the next lease owner reconciles provider state;
+      // never convert possible side effects into a terminal BLOCKED receipt.
+      failBackup("BACKUP_OFFSITE_UNCERTAIN", "erasure lease changed around an offsite effect; provider settlement requires replay", true, {}, cause);
+    }
+  };
+  return {
+    async describe() {
+      await assertEffectFence();
+      const result = await adapter.describe();
+      await assertEffectFence();
+      return result;
+    },
+    async get(partRef) {
+      await assertEffectFence();
+      const result = await adapter.get(partRef);
+      await assertEffectFence();
+      return result;
+    },
+    async delete(partRef, reason) {
+      await assertEffectFence();
+      const result = await adapter.delete(partRef, reason);
+      await assertEffectFence();
+      return result;
+    },
+    async put() {
+      failBackup("BACKUP_OFFSITE_UNCERTAIN", "purge replay adapter cannot write offsite objects", false);
+    },
+  };
 }
 
 async function expiryKeyFor(input: { erasureRef: string; epochId: string; copyId: string; descriptorDigest: string; holdRef: string | null }): Promise<string> {
@@ -374,7 +439,7 @@ async function processCopy(input: {
       expiry,
       destination_policy: policy,
       primary_failure_domain: authority.primary_failure_domain,
-      adapter,
+      adapter: fenceOffsiteEffects(adapter, dependencies, context.fence, expectedState),
       now_ms: nowMs,
     });
     if (result.state !== "DELETED" || result.absent_parts !== draft.part_index.length || result.journal_refs.length !== draft.part_index.length) {

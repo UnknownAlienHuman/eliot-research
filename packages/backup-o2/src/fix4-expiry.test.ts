@@ -358,6 +358,7 @@ describe("ER-34 O4 durable purge replay", () => {
       target_id: "backup-target-1",
       fence: { erasure_id: erasureId, revision: 1, lease_owner: "worker-1", lease_generation: 7, lease_until_ms: now + 30_000 },
       now,
+      loseFence() { h.db.prepare("UPDATE erasure_execution SET lease_generation=8 WHERE erasure_id=?1 AND revision=1").run(erasureId); },
     };
   }
 
@@ -408,5 +409,55 @@ describe("ER-34 O4 durable purge replay", () => {
       const ref = `offsite/${draft.epoch_id}/${part.manifest}/${String(part.index).padStart(6, "0")}-${part.sha256}`;
       await expect(adapter.get(ref)).resolves.not.toBeNull();
     }
+  });
+
+  it("leaves O4 PENDING when the lease is lost during the first remote delete and stops before the next part", async () => {
+    const h = await setup();
+    const inner = createControlledOffsiteAdapter({ destination_id: "offsite-1", failure_domain: "domain-remote" });
+    const draft = await copied(h, "o4-lost-between-parts", inner);
+    const lease = seedErasure(h, draft.epoch_id, "erase-o4-lost-between-parts");
+    let deleteAttempts = 0;
+    const adapter: OffsiteCopyAdapter = {
+      ...inner,
+      async delete(partRef, reason) {
+        const deleted = await inner.delete(partRef, reason);
+        if (++deleteAttempts === 1) lease.loseFence();
+        return deleted;
+      },
+    };
+    const port = createBackupPurgeReplayPort({ core_db: h.coreDb, resolve_adapter: async () => adapter, now: () => lease.now });
+
+    await expect(port.purge(draft.epoch_id, "erase-o4-lost-between-parts:1", { target_id: lease.target_id, fence: lease.fence }))
+      .rejects.toMatchObject({ code: "BACKUP_OFFSITE_UNCERTAIN" });
+    expect(inner.journal).toHaveLength(1);
+    expect(h.db.prepare("SELECT state,reason_code,receipt_json FROM backup_erasure_replay_obligation").get())
+      .toEqual({ state: "PENDING", reason_code: null, receipt_json: null });
+    const first = draft.part_index[0];
+    const second = draft.part_index[1];
+    if (first === undefined || second === undefined) throw new Error("multipart offsite draft did not contain two parts");
+    const ref = (part: NonNullable<typeof first>) => `offsite/${draft.epoch_id}/${part.manifest}/${String(part.index).padStart(6, "0")}-${part.sha256}`;
+    await expect(inner.get(ref(first))).resolves.toBeNull();
+    await expect(inner.get(ref(second))).resolves.not.toBeNull();
+  });
+
+  it("rejects missing copy inventory results instead of interpreting them as an empty backup", async () => {
+    const h = await setup();
+    const adapter = createControlledOffsiteAdapter({ destination_id: "offsite-1", failure_domain: "domain-remote" });
+    const draft = await copied(h, "o4-missing-inventory", adapter);
+    const lease = seedErasure(h, draft.epoch_id, "erase-o4-missing-inventory");
+    const brokenDb = {
+      prepare(sql: string) {
+        if (sql.includes("FROM backup_offsite_copy_replay_authority WHERE epoch_id")) {
+          return { bind: () => ({ async all() { return { success: true }; } }) };
+        }
+        return h.coreDb.prepare(sql);
+      },
+    } as unknown as D1Database;
+    const port = createBackupPurgeReplayPort({ core_db: brokenDb, resolve_adapter: async () => adapter, now: () => lease.now });
+
+    await expect(port.purge(draft.epoch_id, "erase-o4-missing-inventory:1", { target_id: lease.target_id, fence: lease.fence }))
+      .rejects.toMatchObject({ code: "BACKUP_TABLE_MISSING" });
+    expect(adapter.journal).toHaveLength(0);
+    expect(h.db.prepare("SELECT count(*) AS n FROM backup_erasure_replay_obligation").get()).toEqual({ n: 0 });
   });
 });
