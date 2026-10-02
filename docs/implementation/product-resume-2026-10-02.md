@@ -472,3 +472,31 @@ foreign-owner, and cursor/current-authority cases. Before-fix repros and final
 outputs are retained in `eliotr-provisioner-and-shared-repros-8fce2caa.log` and
 `eliotr-fixture-checkpoint-and-query-replay-8fce2caa.log` under OS temp. The full
 Core suite and aggregate merge gate have not yet been rerun for this change.
+
+The next fixture checkpoint replaces manually selected navigation/scope DDL
+with the complete current Core migration chain on isolated reset bindings.
+Navigation sources now have their current head and exact read policy; grant
+inserts name base columns explicitly. The PROJECT resilience fixture records
+the authenticated project owner. Production authority and migrations are not
+changed. Native complete files PASS: navigation 18/18 in 27.24s; scope persistence
+12/12 plus orientation resilience 12/12 in 26.11s. Revocation, corruption,
+expiry, lost acknowledgements, concurrent writes and post-read races remain
+covered. Scoped lint and typecheck PASS.
+
+Deployment ordering now selects a deterministic, explicitly named runtime
+configuration in a validated OS-temp directory and derives all semantic
+transport vars from that fixture. It cleans up only that exact temp-root child;
+semantic drift still blocks migration/upload before any simulated mutation.
+The full `pnpm test:provisioners` PASS, including local-owner 36 cases; after
+moving the cleanup validation into a helper for `no-unsafe-finally`, scoped
+lint and the direct ordering script PASS all 12 groups on 3c376dbc. An intervening
+direct run correctly refused uncommitted production execution inputs before
+the replay source checkpoint was committed; that guard was not bypassed.
+All deployment calls in this test are harnessed: live Cloudflare NOT_EXECUTED.
+
+Logs: `eliotr-functional-groups-8fce2caa.log`,
+`eliotr-navigation-related-and-fk-8fce2caa.log`, and
+`eliotr-final-fixtures-and-change-repro-3c376dbc.log` under OS temp.
+These focused results close only the identified fixture failures. Further Core
+groups, REPORT timing diagnosis, source budgets, broad lint, Rust and live
+qualification remain open; there is no passing aggregate gate claim.

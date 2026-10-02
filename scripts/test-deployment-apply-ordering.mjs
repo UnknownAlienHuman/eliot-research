@@ -16,14 +16,17 @@
 
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { deployCloudflare } from "./deploy-cloudflare.mjs";
 import { readDeploymentMigrationPlan } from "./lib/deployment-migrations.mjs";
 import { digestAccountId } from "./lib/cloudflare-usage-envelope.mjs";
 import { dailyWindowFor, monthlyWindowFor } from "./lib/cloudflare-usage-collection.mjs";
 import { stripNodeOptionsLoaderTokens } from "./lib/cloudflare-wrangler-oauth.mjs";
+import { loadResearchRuntimeEnvironment, RESEARCH_RUNTIME_CONFIGURATION_KEYS,
+  RESEARCH_RUNTIME_SEMANTIC_TRANSPORT_KEYS, semanticConfigurationTransport } from "./lib/research-runtime-config.mjs";
 
 if (process.env.ELIOTR_TEST_GATE_REDIRECTED !== "1") {
   const shimHref = new URL("./test-usage-gate-shim.mjs", import.meta.url).href;
@@ -44,6 +47,40 @@ if (process.env.ELIOTR_TEST_GATE_REDIRECTED !== "1") {
   }
   process.exit(0);
 }
+
+async function removeFixtureTemporaryDirectory(temporaryDirectory, temporaryRoot, temporaryPrefix) {
+  const resolvedTemporaryDirectory = resolve(temporaryDirectory);
+  if (resolvedTemporaryDirectory === temporaryRoot ||
+      dirname(resolvedTemporaryDirectory) !== temporaryRoot ||
+      !basename(resolvedTemporaryDirectory).startsWith(temporaryPrefix)) {
+    throw new Error("Refusing to remove an unexpected deployment fixture temporary path");
+  }
+  await rm(resolvedTemporaryDirectory, { recursive: true, force: true });
+}
+
+async function main() {
+const temporaryRoot = resolve(tmpdir());
+const temporaryPrefix = "eliot-deployment-apply-ordering-";
+let temporaryDirectory;
+try {
+  temporaryDirectory = await mkdtemp(join(temporaryRoot, temporaryPrefix));
+  const resolvedTemporaryDirectory = resolve(temporaryDirectory);
+  if (dirname(resolvedTemporaryDirectory) !== temporaryRoot ||
+      !basename(resolvedTemporaryDirectory).startsWith(temporaryPrefix)) {
+    throw new Error("Deployment fixture temporary directory escaped the OS temp root");
+  }
+const repositoryRoot = resolve(fileURLToPath(new URL("../", import.meta.url)));
+const runtimeConfigPath = resolve(resolvedTemporaryDirectory, "research-runtime.json");
+const runtimeConfig = { protocol: "eliotr.research-runtime.v1", vars: {
+  ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON: { protocol: "eliotr.research-semantic-config.test.v1", profile: "fixture" },
+  ELIOTR_MODEL_PROFILE_DEFINITION_JSON: { protocol: "eliotr.model-profile-definition.test.v1", profiles: [] },
+  ELIOTR_MODEL_PROFILE_PROVENANCE_REF: "fixture:model-profile",
+  ELIOTR_MODEL_SPEND_POLICY_JSON: { protocol: "eliotr.model-spend-policy.test.v1", policies: [] },
+  ELIOTR_MODEL_SPEND_POLICY_PROVENANCE_REF: "fixture:model-spend-policy",
+  ELIOTR_RESEARCH_REPORT_CONFIG_JSON: { protocol: "eliotr.research-report-config.test.v1" },
+  ELIOTR_RESEARCH_REPORT_POLICY_PROVENANCE_REF: "fixture:research-report-policy",
+} };
+await writeFile(runtimeConfigPath, `${JSON.stringify(runtimeConfig)}\n`, { flag: "wx", mode: 0o600 });
 
 const now = Date.parse("2026-09-04T23:00:00.000Z");
 function admittedSnapshotJson(accountId = "test-account", at = now) {
@@ -69,13 +106,18 @@ function admittedSnapshotJson(accountId = "test-account", at = now) {
     metrics,
   });
 }
-const environment = { CLOUDFLARE_ACCOUNT_ID: "test-account", CLOUDFLARE_API_TOKEN: "secret-token",
+const baseEnvironment = { CLOUDFLARE_ACCOUNT_ID: "test-account", CLOUDFLARE_API_TOKEN: "secret-token",
   ELIOTR_ENVIRONMENT: "staging", ELIOTR_DEPLOYMENT_GENERATION: "git-test", ELIOTR_CUSTOM_DOMAIN: "1",
   ELIOTR_ACCESS_HOSTNAME: "research.example.com", ELIOTR_OWNER_EMAILS: "owner@example.com",
   ELIOTR_STAGING_TARGET_JSON: JSON.stringify({ protocol: "eliotr.staging-target.v1", isolation: "dedicated-account",
     account_id: "test-account", protected_account_ids: ["production-test-account"], access_hostname: "research.example.com" }),
   ELIOTR_ACCESS_TEAM_DOMAIN: "https://team-example.cloudflareaccess.com", ELIOTR_ACCESS_AUDIENCE: "test-aud",
   ELIOTR_ACCESS_SERVICE_PRINCIPALS: "", ELIOTR_ACCESS_SMOKE_COOKIE: "secret-cookie", ELIOTR_GOOGLE_EXTERNAL_TRANSPORT: "gemini-mcp" };
+const environment = await loadResearchRuntimeEnvironment({ ...baseEnvironment, ELIOTR_RESEARCH_CONFIG_FILE: runtimeConfigPath }, repositoryRoot);
+const runtimeConfigVars = Object.fromEntries(RESEARCH_RUNTIME_CONFIGURATION_KEYS
+  .filter((key) => !RESEARCH_RUNTIME_SEMANTIC_TRANSPORT_KEYS.includes(key) && typeof environment[key] === "string")
+  .map((key) => [key, environment[key]]));
+Object.assign(runtimeConfigVars, semanticConfigurationTransport(environment).vars);
 // Staged snapshots travel via the explicit `usageSnapshot` deploy option
 // (test-called builder path), never ambient env: production never passes it.
 // Under this file's redirected child the standin additionally mints a TEST
@@ -84,7 +126,7 @@ const environment = { CLOUDFLARE_ACCOUNT_ID: "test-account", CLOUDFLARE_API_TOKE
 const defaultUsageSnapshot = admittedSnapshotJson();
 const config = { name: "eliotr-core", minify: true, preview_urls: false, compatibility_date: "2026-08-28",
   vars: { DEPLOYMENT_GENERATION: "git-test", ENVIRONMENT: "staging", ACCESS_TEAM_DOMAIN: "https://team-example.cloudflareaccess.com",
-    ACCESS_AUDIENCE: "test-aud", ACCESS_SERVICE_PRINCIPALS: "", GOOGLE_EXTERNAL_TRANSPORT: "gemini-mcp" },
+    ACCESS_AUDIENCE: "test-aud", ACCESS_SERVICE_PRINCIPALS: "", GOOGLE_EXTERNAL_TRANSPORT: "gemini-mcp", ...runtimeConfigVars },
   d1_databases: [
     { binding: "CORE_DB", database_name: "eliotr-core", database_id: "11111111-1111-4111-8111-111111111111", migrations_dir: "../../infra/d1/core/migrations" },
     { binding: "SEARCH_DB", database_name: "eliotr-search", database_id: "22222222-2222-4222-8222-222222222222", migrations_dir: "../../infra/d1/search/migrations" },
@@ -98,7 +140,7 @@ const assetBytes = "<!doctype html><main>fixture</main>";
 const assetManifest = {"protocol":"eliotr.cloudflare-assets-manifest.v1","state":"LOCAL_ONLY","directory":"apps/eliotr-pwa/dist","files":[{"path":"index.html","bytes":35,"sha256":"a02618fd171637ef11b3b4d923cb91cf9837c902dbd7aca5bd69f8eeb465c59f"}],"excluded_routing_files":["_headers","_redirects"],"manifest_sha256":"42a56ab403ebc72972cf5e99795838d1f331afec0cd0a9aea5a8b128fb5203fd"};
 const alternateVersionId = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
 const versionId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
-const migrationPlan = await readDeploymentMigrationPlan(config, { root: resolve(fileURLToPath(new URL("../", import.meta.url))) });
+const migrationPlan = await readDeploymentMigrationPlan(config, { root: repositoryRoot });
 const bytes = Buffer.from(JSON.stringify(config));
 function harness(overrides = {}) {
   const calls = [];
@@ -205,6 +247,9 @@ const searchMigration = "pnpm exec wrangler d1 migrations apply SEARCH_DB --remo
 await check("successful ordering and no implicit live qualification", async () => {
   const test = harness();
   const receipt = await deployCloudflare(test.options);
+  assert.deepEqual(Object.fromEntries(RESEARCH_RUNTIME_SEMANTIC_TRANSPORT_KEYS
+    .filter((key) => Object.hasOwn(config.vars, key)).map((key) => [key, config.vars[key]])),
+  semanticConfigurationTransport(environment).vars);
   assert.equal(test.calls.filter((call) => call === deployCommand).length, 1);
   assert.ok(test.calls.indexOf(generatedDryRun) < test.calls.indexOf(coreMigration));
   assert.ok(test.calls.indexOf(coreMigration) < test.calls.indexOf(searchMigration));
@@ -301,6 +346,18 @@ await check("local asset drift stops before remote migrations and Worker upload"
   assert.equal(test.receipts.length, 0);
 });
 
+await check("semantic configuration transport drift stops before D1 apply and Worker upload", async () => {
+  const changed = structuredClone(config);
+  const key = "ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON_0";
+  changed.vars[key] = `${changed.vars[key]}x`;
+  const test = harness({ options: { read: async () => Buffer.from(JSON.stringify(changed)) } });
+  await assert.rejects(deployCloudflare(test.options), /Generated deployment semantic configuration drift \(ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON_0\)/u);
+  assert.ok(!test.calls.includes(coreMigration));
+  assert.ok(!test.calls.includes(searchMigration));
+  assert.ok(!test.calls.includes(deployCommand));
+  assert.equal(test.receipts.length, 0);
+});
+
 await check("unreviewed bindings and stale runtime vars cannot sync authority or publish PASS", async () => {
   const drifts = [
     { EXTRA: { type: "plain_text", text: "foreign" } },
@@ -336,3 +393,11 @@ await check("missing or default migration directories stop before D1 apply and W
 });
 
 console.log(`Deployment apply ordering: ${cases} groups passed; live Cloudflare NOT_EXECUTED`);
+} finally {
+  if (temporaryDirectory !== undefined) {
+    await removeFixtureTemporaryDirectory(temporaryDirectory, temporaryRoot, temporaryPrefix);
+  }
+}
+}
+
+await main();

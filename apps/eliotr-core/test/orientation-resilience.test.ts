@@ -2,7 +2,7 @@ import { beforeAll, describe, expect, it, vi } from "vitest";
 import { handleHttp } from "../src/http.js";
 import { orientSources, orientationBody, readOrientationTrace } from "../../eliotr-pwa/src/orientation-api.js";
 import { renderOrientation } from "../../eliotr-pwa/src/orientation-panel.js";
-import { body, count, credential, db, insert, observeDatabase, request, run, runtime,
+import { body, count, credential, db, insert, observeDatabase, principal, request, run, runtime,
   seedSource, setupOrientationDatabase, successful, verifier } from "./orientation-fixture.js";
 
 beforeAll(setupOrientationDatabase);
@@ -90,8 +90,11 @@ describe("orientation restart, input and authority races through real HTTP", () 
   });
   it("uses current membership and never turns metadata-only focus into semantic filtering", async () => {
     await seedSource("member");
+    const projectCreatedAt = new Date().toISOString();
     await insert("project", { project_id: "project-test", title: "Project", generation: 1, default_disclosure: "private",
-      default_model_profile_ref: "model-1", default_depth_profile_ref: "depth-1", default_source_policy_ref: "policy-1", retention_policy_ref: "retention-1", created_at: new Date().toISOString() });
+      default_model_profile_ref: "model-1", default_depth_profile_ref: "depth-1", default_source_policy_ref: "policy-1", retention_policy_ref: "retention-1", created_at: projectCreatedAt });
+    await insert("project_owner", { project_id: "project-test", principal_ref: principal, deployment_generation: "deployment-1",
+      created_at: projectCreatedAt, updated_at: projectCreatedAt });
     await insert("project_source_membership", { project_id: "project-test", source_id: "member", membership_generation: 1, role: "reference",
       valid_from: new Date(Date.now() - 10000).toISOString(), valid_to: null });
     const data = await successful(request("member", { scope_expression: { kind: "PROJECT", project_id: "project-test" }, query: "unmatched focus" }));
