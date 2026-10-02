@@ -132,7 +132,8 @@ export function createResearchQueryService(env: Pick<Env, "CORE_DB" | "SEARCH_DB
       const access = { principal_ref: context.principal_ref, client_class: context.client_class, credential_generation: context.credential_generation };
       const scopePorts = createD1ScopePorts(env.CORE_DB, access);
       const store = createD1RetrievalResultStore(env.CORE_DB, access);
-      const prior = await store.load(key).catch(() => {
+      const prior = await store.load(key).catch((error: unknown) => {
+        if (error instanceof RetrievalQueryError) mapRetrievalError(error);
         fail("RESEARCH_SETTLEMENT_UNCERTAIN", "stored query result is unavailable", 503, true);
       });
       if (prior !== null) {

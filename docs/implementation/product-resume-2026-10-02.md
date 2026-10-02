@@ -448,3 +448,27 @@ remains applicable to unchanged PWA source, not a live Access login or deploymen
 receipt. GET system/session remains read-only. No live lease, grant, report,
 provider/model spend, migration, deployment, manual CI, user settings or
 credentials was mutated, and no implementation status was promoted.
+
+### Functional recovery after parent checkpoint 8fce2caa
+
+The parent normalized only SQLite schema-text line endings in the root migration
+test at 8fce2caa. Its three cases, scoped lint and typecheck PASS locally; the
+migration bytes and structural/guard assertions remain unchanged.
+
+Root reproduced revoked cached-query replay returning a storage-uncertainty
+error. The result store already reports invalidation and missing historical
+identity as typed retrieval errors; the HTTP service discarded those errors in
+its unconditional load catch. The service now preserves their existing typed
+mapping and retains fail-closed uncertainty for unknown failures. No grant,
+result bytes, policy, or scope mutation was added. Three catalog/source tests
+were also aligned with the current explicit-delegated-project rejection code;
+the service reads remain rejected with 403 before SQL.
+
+Validation: `pnpm typecheck` and scoped ESLint PASS. The complete native files
+`research-query-replay.test.ts`, `catalog-service.test.ts`, `index.test.ts`, and
+`source-revisions.test.ts` PASS: 49 tests, four files, 41.77s, one worker. This
+includes revoke/expiry/purge, legacy identity, corruption, exact replay/no-write,
+foreign-owner, and cursor/current-authority cases. Before-fix repros and final
+outputs are retained in `eliotr-provisioner-and-shared-repros-8fce2caa.log` and
+`eliotr-fixture-checkpoint-and-query-replay-8fce2caa.log` under OS temp. The full
+Core suite and aggregate merge gate have not yet been rerun for this change.

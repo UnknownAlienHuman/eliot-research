@@ -171,7 +171,7 @@ describe("HTTP authority boundary", () => {
     expect(await body(response)).toMatchObject({ code: "ACCESS_JWT_MISSING" });
   });
 
-  it("does not let a service principal use the owner-only catalog", async () => {
+  it("requires an explicit delegated project for a service catalog read", async () => {
     const fixture = databaseFixture();
     const response = await handleHttp(
       new Request("https://research.example/api/v1/research/catalog"),
@@ -180,7 +180,7 @@ describe("HTTP authority boundary", () => {
       { accessVerifier: verifier("service_token") },
     );
     expect(response.status).toBe(403);
-    expect(await body(response)).toMatchObject({ code: "PRINCIPAL_CLASS_DENIED" });
+    expect(await body(response)).toMatchObject({ code: "CATALOG_PROJECT_REQUIRED" });
   });
 
   it("blocks protected application routes on a stale Core schema generation", async () => {
