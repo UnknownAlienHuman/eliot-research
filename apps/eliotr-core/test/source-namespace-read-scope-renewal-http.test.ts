@@ -81,6 +81,18 @@ function databaseWithLostBatchAcknowledgement(): typeof db {
   }) as typeof db;
 }
 
+function databaseWithRejectedBatch(): typeof db {
+  return new Proxy(db, {
+    get(target, property) {
+      if (property === "batch") return async () => {
+        throw new Error("simulated D1 batch failure before commit");
+      };
+      const value = Reflect.get(target, property, target);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  }) as typeof db;
+}
+
 function databaseWithDelayedBatch(delayMs: number): { readonly database: typeof db; readonly batchCalls: () => number } {
   let calls = 0;
   const database = new Proxy(db, {
@@ -102,6 +114,7 @@ function databaseWithInterleavedOwnerSnapshot(input: {
   readonly principal: string;
   readonly credentialGeneration: string;
   readonly expiresAt: string;
+  readonly snapshotCount?: number;
 }): typeof db {
   let inserted = false;
   return new Proxy(db, {
@@ -111,20 +124,22 @@ function databaseWithInterleavedOwnerSnapshot(input: {
           inserted = true;
           nowMs += 100;
           const createdAt = new Date(nowMs).toISOString();
-          const snapshotId = `interleaved-${crypto.randomUUID()}`;
-          const digest = crypto.randomUUID().replaceAll("-", "").padEnd(64, "0");
-          await target.prepare(
-            "INSERT INTO scope_snapshot (snapshot_id,revision,resolved_scope_expression_json,participant_generations_json," +
-            "member_source_revision_refs_json,source_owner_generations_json,policy_authority_ref,disclosure_closure_digest," +
-            "purge_ledger_revision,client_fence_ref,snapshot_digest,created_at,expires_at,invalidated_at,invalidation_reason) " +
-            "VALUES (?1,1,'{}','{}','[]','{}','policy-interleaved',?2,0,?3,?4,?5,?6,NULL,NULL)",
-          ).bind(snapshotId, "a".repeat(64), input.credentialGeneration, digest, createdAt, input.expiresAt).run();
-          await target.prepare(
-            "INSERT INTO orientation_request (operation_id,principal_ref,client_class,credential_generation,idempotency_key," +
-            "request_digest,state,snapshot_id,snapshot_revision,result_json,result_digest,created_at,expires_at) " +
-            "VALUES (?1,?2,'owner_pwa',?3,?4,?5,'COMPLETE',?6,1,'{}',?7,?8,?9)",
-          ).bind(`orientation-${snapshotId}`, input.principal, input.credentialGeneration, `idem-${snapshotId}`,
-            "b".repeat(64), snapshotId, "c".repeat(64), createdAt, input.expiresAt).run();
+          for (let index = 0; index < (input.snapshotCount ?? 1); index += 1) {
+            const snapshotId = `interleaved-${index}-${crypto.randomUUID()}`;
+            const digest = crypto.randomUUID().replaceAll("-", "").padEnd(64, "0");
+            await target.prepare(
+              "INSERT INTO scope_snapshot (snapshot_id,revision,resolved_scope_expression_json,participant_generations_json," +
+              "member_source_revision_refs_json,source_owner_generations_json,policy_authority_ref,disclosure_closure_digest," +
+              "purge_ledger_revision,client_fence_ref,snapshot_digest,created_at,expires_at,invalidated_at,invalidation_reason) " +
+              "VALUES (?1,1,'{}','{}','[]','{}','policy-interleaved',?2,0,?3,?4,?5,?6,NULL,NULL)",
+            ).bind(snapshotId, "a".repeat(64), input.credentialGeneration, digest, createdAt, input.expiresAt).run();
+            await target.prepare(
+              "INSERT INTO orientation_request (operation_id,principal_ref,client_class,credential_generation,idempotency_key," +
+              "request_digest,state,snapshot_id,snapshot_revision,result_json,result_digest,created_at,expires_at) " +
+              "VALUES (?1,?2,'owner_pwa',?3,?4,?5,'COMPLETE',?6,1,'{}',?7,?8,?9)",
+            ).bind(`orientation-${snapshotId}`, input.principal, input.credentialGeneration, `idem-${snapshotId}`,
+              "b".repeat(64), snapshotId, "c".repeat(64), createdAt, input.expiresAt).run();
+          }
         }
         return target.batch(statements);
       };
@@ -188,7 +203,8 @@ describe("owner namespace read lease renewal over verified HTTP and D1", () => {
     const principal = `renewal-owner-${crypto.randomUUID()}`;
     const expirySeconds = Math.floor(nowMs / 1000) + 3600;
     const jwtExpiry = new Date(expirySeconds * 1000).toISOString();
-    const target = await seedWorkspace({ principal, expires_at: new Date(nowMs - 60_000).toISOString() });
+    const oldExpiry = new Date(nowMs - 60_000).toISOString();
+    const target = await seedWorkspace({ principal, expires_at: oldExpiry });
     const untouched = await seedWorkspace({ principal, expires_at: new Date((expirySeconds + 3600) * 1000).toISOString() });
     const responses = await Promise.all(Array.from({ length: 3 }, () =>
       postRenew(target.namespace, principal, expirySeconds, 1)));
@@ -205,6 +221,26 @@ describe("owner namespace read lease renewal over verified HTTP and D1", () => {
     expect(await row<{ count: number }>(
       "SELECT COUNT(*) AS count FROM scope_read_policy_lease_refresh_receipt WHERE source_namespace_id=?1 AND state='APPLIED'",
       target.namespace)).toEqual({ count: 1 });
+    expect(await row<{
+      readonly receipt_sequence: number;
+      readonly state: string;
+      readonly old_generation: number;
+      readonly new_generation: number;
+      readonly old_allowed_use_json: string;
+      readonly old_disclosure_ceiling: string;
+      readonly old_created_at: string;
+      readonly old_expires_at: string;
+      readonly new_expires_at: string;
+      readonly access_expires_at: string;
+    }>(
+      "SELECT receipt_sequence,state,old_generation,new_generation,old_allowed_use_json,old_disclosure_ceiling," +
+      "old_created_at,old_expires_at,new_expires_at,access_expires_at " +
+      "FROM scope_read_policy_lease_refresh_receipt WHERE source_namespace_id=?1", target.namespace))
+      .toEqual({
+        receipt_sequence: expect.any(Number), state: "APPLIED", old_generation: 1, new_generation: 2,
+        old_allowed_use_json: target.allowedUseJson, old_disclosure_ceiling: "owner-only",
+        old_created_at: target.createdAt, old_expires_at: oldExpiry, new_expires_at: jwtExpiry, access_expires_at: jwtExpiry,
+      });
     expect(await row<{ count: number }>("SELECT COUNT(*) AS count FROM orientation_request WHERE principal_ref=?1", principal))
       .toEqual({ count: 0 });
     expect(await row<{ count: number }>("SELECT COUNT(*) AS count FROM scope_access_grant WHERE principal_ref=?1", principal))
@@ -261,6 +297,85 @@ describe("owner namespace read lease renewal over verified HTTP and D1", () => {
     expect(modelCalls).toBe(0);
   });
 
+  it("leaves no receipt or policy change after a failed batch and accepts an exact session retry", async () => {
+    const principal = `retry-owner-${crypto.randomUUID()}`;
+    const expiry = Math.floor(nowMs / 1000) + 3600;
+    const issuedAt = Math.floor(nowMs / 1000);
+    const oldExpiry = new Date(nowMs - 1000).toISOString();
+    const workspace = await seedWorkspace({ principal, expires_at: oldExpiry });
+
+    const failed = await postRenew(workspace.namespace, principal, expiry, 1, issuedAt, databaseWithRejectedBatch());
+    expect(failed.status).toBe(503);
+    expect(await row<{ generation: number; expires_at: string }>(
+      "SELECT generation,expires_at FROM scope_read_policy WHERE source_namespace_id=?1", workspace.namespace))
+      .toEqual({ generation: 1, expires_at: oldExpiry });
+    expect(await row<{ count: number }>(
+      "SELECT COUNT(*) AS count FROM scope_read_policy_lease_refresh_receipt WHERE source_namespace_id=?1",
+      workspace.namespace)).toEqual({ count: 0 });
+
+    const retried = await postRenew(workspace.namespace, principal, expiry, 1, issuedAt);
+    expect(retried.status).toBe(200);
+    expect(await row<{ generation: number; expires_at: string }>(
+      "SELECT generation,expires_at FROM scope_read_policy WHERE source_namespace_id=?1", workspace.namespace))
+      .toEqual({ generation: 2, expires_at: new Date(expiry * 1000).toISOString() });
+    expect(await row<{ applied: number; prepared: number }>(
+      "SELECT SUM(CASE WHEN state='APPLIED' THEN 1 ELSE 0 END) AS applied," +
+      "SUM(CASE WHEN state='PREPARED' THEN 1 ELSE 0 END) AS prepared " +
+      "FROM scope_read_policy_lease_refresh_receipt WHERE source_namespace_id=?1", workspace.namespace))
+      .toEqual({ applied: 1, prepared: 0 });
+    expect(modelCalls).toBe(0);
+  });
+
+  it("rolls back the policy CAS and prepared receipt when APPLIED promotion aborts, then accepts the exact retry", async () => {
+    const principal = `promotion-abort-owner-${crypto.randomUUID()}`;
+    const expiry = Math.floor(nowMs / 1000) + 3600;
+    const issuedAt = Math.floor(nowMs / 1000);
+    const jwtExpiry = new Date(expiry * 1000).toISOString();
+    const oldExpiry = new Date(nowMs - 1000).toISOString();
+    const workspace = await seedWorkspace({ principal, expires_at: oldExpiry });
+    const trigger = `reject_lease_receipt_apply_${crypto.randomUUID().replaceAll("-", "")}`;
+    await db.prepare(
+      `CREATE TRIGGER ${trigger} BEFORE UPDATE OF state ON scope_read_policy_lease_refresh_receipt ` +
+      `WHEN OLD.state='PREPARED' AND NEW.state='APPLIED' AND NEW.source_namespace_id='${workspace.namespace}' ` +
+      "BEGIN SELECT RAISE(ABORT,'injected lease receipt promotion failure'); END",
+    ).run();
+
+    try {
+      const failed = await postRenew(workspace.namespace, principal, expiry, 1, issuedAt);
+      expect(failed.status).toBe(503);
+      expect(await row<{ generation: number; expires_at: string }>(
+        "SELECT generation,expires_at FROM scope_read_policy WHERE source_namespace_id=?1", workspace.namespace))
+        .toEqual({ generation: 1, expires_at: oldExpiry });
+      expect(await row<{ total: number; prepared: number; applied: number }>(
+        "SELECT COUNT(*) AS total,COUNT(CASE WHEN state='PREPARED' THEN 1 END) AS prepared," +
+        "COUNT(CASE WHEN state='APPLIED' THEN 1 END) AS applied " +
+        "FROM scope_read_policy_lease_refresh_receipt WHERE source_namespace_id=?1 AND principal_ref=?2",
+        workspace.namespace, principal)).toEqual({ total: 0, prepared: 0, applied: 0 });
+      expect(await row<{ count: number }>(
+        "SELECT COUNT(*) AS count FROM scope_read_policy_history_event " +
+        "WHERE source_namespace_id=?1 AND principal_ref=?2 AND event_kind='LEASE_REFRESH'",
+        workspace.namespace, principal)).toEqual({ count: 0 });
+    } finally {
+      await db.prepare(`DROP TRIGGER ${trigger}`).run();
+    }
+
+    const retried = await postRenew(workspace.namespace, principal, expiry, 1, issuedAt);
+    expect(retried.status).toBe(200);
+    expect(await row<{ generation: number; expires_at: string }>(
+      "SELECT generation,expires_at FROM scope_read_policy WHERE source_namespace_id=?1", workspace.namespace))
+      .toEqual({ generation: 2, expires_at: jwtExpiry });
+    expect(await row<{ total: number; prepared: number; applied: number }>(
+      "SELECT COUNT(*) AS total,COUNT(CASE WHEN state='PREPARED' THEN 1 END) AS prepared," +
+      "COUNT(CASE WHEN state='APPLIED' THEN 1 END) AS applied " +
+      "FROM scope_read_policy_lease_refresh_receipt WHERE source_namespace_id=?1 AND principal_ref=?2",
+      workspace.namespace, principal)).toEqual({ total: 1, prepared: 0, applied: 1 });
+    expect(await row<{ count: number }>(
+      "SELECT COUNT(*) AS count FROM scope_read_policy_history_event " +
+      "WHERE source_namespace_id=?1 AND principal_ref=?2 AND event_kind='LEASE_REFRESH'",
+      workspace.namespace, principal)).toEqual({ count: 1 });
+    expect(modelCalls).toBe(0);
+  });
+
   it("does not advance a policy when the D1 batch runs after the verified JWT expires", async () => {
     const principal = `late-batch-owner-${crypto.randomUUID()}`;
     const expiry = Math.floor(nowMs / 1000) + 2;
@@ -286,7 +401,9 @@ describe("owner namespace read lease renewal over verified HTTP and D1", () => {
     const jwtExpiry = new Date(expiry * 1000).toISOString();
     const workspace = await seedWorkspace({ principal, expires_at: new Date(nowMs - 1000).toISOString() });
     const credentialGeneration = "access-interleaved";
-    const database = databaseWithInterleavedOwnerSnapshot({ principal, credentialGeneration, expiresAt: jwtExpiry });
+    const database = databaseWithInterleavedOwnerSnapshot({
+      principal, credentialGeneration, expiresAt: jwtExpiry, snapshotCount: 2,
+    });
 
     const response = await postRenew(workspace.namespace, principal, expiry, 1, undefined, database);
 
@@ -294,24 +411,47 @@ describe("owner namespace read lease renewal over verified HTTP and D1", () => {
     expect(await row<{ generation: number; expires_at: string }>(
       "SELECT generation,expires_at FROM scope_read_policy WHERE source_namespace_id=?1", workspace.namespace))
       .toEqual({ generation: 2, expires_at: jwtExpiry });
-    const eventOrder = await row<{ snapshot_created_at: string; receipt_created_at: string }>(
-      "SELECT s.created_at AS snapshot_created_at,r.created_at AS receipt_created_at " +
-      "FROM orientation_request o JOIN scope_snapshot s ON s.snapshot_id=o.snapshot_id AND s.revision=o.snapshot_revision " +
-      "JOIN scope_read_policy_lease_refresh_receipt r ON r.principal_ref=o.principal_ref " +
-      "WHERE o.principal_ref=?1 AND r.source_namespace_id=?2 LIMIT 1", principal, workspace.namespace);
-    if (eventOrder === null) throw new Error("interleaved receipt event order was not persisted");
-    expect(Date.parse(eventOrder.snapshot_created_at)).toBeGreaterThan(Date.parse(eventOrder.receipt_created_at));
-    const linkedSnapshot = await row<{ snapshot_id: string }>(
-      "SELECT snapshot_id FROM orientation_request WHERE principal_ref=?1 AND snapshot_id LIKE 'interleaved-%' LIMIT 1", principal);
-    if (linkedSnapshot === null) throw new Error("interleaved owner snapshot was not linked");
-    const events = await db.prepare(
-      "SELECT event_kind,refresh_id,receipt_sequence FROM scope_read_policy_history_event " +
-      "WHERE snapshot_id=?1 ORDER BY event_id",
-    ).bind(linkedSnapshot.snapshot_id).all<{ readonly event_kind: string; readonly refresh_id: string | null; readonly receipt_sequence: number }>();
-    expect(events.success).toBe(true);
-    expect(events.results?.map((event) => event.event_kind)).toEqual(["SNAPSHOT_BASELINE", "LEASE_REFRESH"]);
-    expect(events.results?.[1]?.refresh_id).toMatch(/^scope-lease-refresh-[0-9a-f]{64}$/u);
-    expect(events.results?.[1]?.receipt_sequence).toBeGreaterThan(events.results?.[0]?.receipt_sequence ?? -1);
+    const receipt = await row<{ readonly receipt_sequence: number; readonly refresh_id: string; readonly state: string }>(
+      "SELECT receipt_sequence,refresh_id,state FROM scope_read_policy_lease_refresh_receipt " +
+      "WHERE source_namespace_id=?1 AND principal_ref=?2", workspace.namespace, principal);
+    if (receipt === null) throw new Error("interleaved renewal receipt was not persisted");
+    expect(receipt.state).toBe("APPLIED");
+    expect(receipt.refresh_id).toMatch(/^scope-lease-refresh-[0-9a-f]{64}$/u);
+    const leaseEvent = await row<{
+      readonly history_event_sequence: number;
+      readonly principal_ref: string;
+      readonly source_namespace_id: string;
+      readonly event_kind: string;
+      readonly receipt_sequence: number;
+      readonly refresh_id: string;
+    }>(
+      "SELECT history_event_sequence,principal_ref,source_namespace_id,event_kind,receipt_sequence,refresh_id " +
+      "FROM scope_read_policy_history_event WHERE receipt_sequence=?1 AND refresh_id=?2",
+      receipt.receipt_sequence, receipt.refresh_id);
+    if (leaseEvent === null) throw new Error("interleaved APPLIED receipt has no shared history event");
+    expect(leaseEvent).toEqual({
+      history_event_sequence: expect.any(Number), principal_ref: principal,
+      source_namespace_id: workspace.namespace, event_kind: "LEASE_REFRESH",
+      receipt_sequence: receipt.receipt_sequence, refresh_id: receipt.refresh_id,
+    });
+    const baselines = await db.prepare(
+      "SELECT b.history_event_sequence_floor,b.receipt_sequence_floor " +
+      "FROM scope_read_policy_snapshot_baseline b JOIN orientation_request o " +
+      "ON o.snapshot_id=b.snapshot_id AND o.snapshot_revision=b.snapshot_revision " +
+      "WHERE o.principal_ref=?1 AND o.snapshot_id LIKE 'interleaved-%'",
+    ).bind(principal).all<{
+      readonly history_event_sequence_floor: number;
+      readonly receipt_sequence_floor: number;
+    }>();
+    expect(baselines.success).toBe(true);
+    expect(baselines.results).toHaveLength(2);
+    for (const baseline of baselines.results ?? []) {
+      expect(leaseEvent.history_event_sequence).toBeGreaterThan(baseline.history_event_sequence_floor);
+      expect(receipt.receipt_sequence).toBeGreaterThan(baseline.receipt_sequence_floor);
+    }
+    expect(await row<{ count: number }>(
+      "SELECT COUNT(*) AS count FROM scope_read_policy_history_event WHERE refresh_id=?1", receipt.refresh_id))
+      .toEqual({ count: 1 });
     expect(modelCalls).toBe(0);
   });
 
@@ -320,8 +460,12 @@ describe("owner namespace read lease renewal over verified HTTP and D1", () => {
     const expiry = Math.floor(nowMs / 1000) + 3600;
     const missing = await seedWorkspace({ principal, expires_at: new Date(nowMs - 1).toISOString(), include_policy: false });
     expect((await postRenew(missing.namespace, principal, expiry, 1)).status).toBe(404);
-    const revoked = await seedWorkspace({ principal, expires_at: new Date(nowMs - 1).toISOString(), state: "REVOKED" });
+    const revokedExpiry = new Date(nowMs - 1).toISOString();
+    const revoked = await seedWorkspace({ principal, expires_at: revokedExpiry, state: "REVOKED" });
     expect((await postRenew(revoked.namespace, principal, expiry, 1)).status).toBe(409);
+    expect(await row<{ generation: number; state: string; expires_at: string }>(
+      "SELECT generation,state,expires_at FROM scope_read_policy WHERE source_namespace_id=?1", revoked.namespace))
+      .toEqual({ generation: 1, state: "REVOKED", expires_at: revokedExpiry });
     const foreign = await seedWorkspace({ principal, expires_at: new Date(nowMs - 1).toISOString() });
     expect((await postRenew(foreign.namespace, `other-${crypto.randomUUID()}`, expiry, 1)).status).toBe(404);
     const expiredToken = await postRenew(foreign.namespace, principal, Math.floor(nowMs / 1000) - 1, 1,

@@ -18,12 +18,14 @@ export interface SourceNamespaceLeaseRefreshProof {
   readonly new_generation: number;
   readonly old_allowed_use_json: string;
   readonly old_disclosure_ceiling: string;
+  readonly old_created_at: string;
   readonly old_expires_at: string;
   readonly new_expires_at: string;
   readonly created_at: string;
 }
 
 export interface SourceNamespaceLeaseRefreshReceiptRow {
+  readonly receipt_sequence: unknown;
   readonly refresh_id: unknown;
   readonly source_namespace_id: unknown;
   readonly principal_ref: unknown;
@@ -39,6 +41,7 @@ export interface SourceNamespaceLeaseRefreshReceiptRow {
   readonly new_generation: unknown;
   readonly old_allowed_use_json: unknown;
   readonly old_disclosure_ceiling: unknown;
+  readonly old_created_at: unknown;
   readonly old_expires_at: unknown;
   readonly new_expires_at: unknown;
   readonly created_at: unknown;
@@ -58,6 +61,7 @@ export interface SourceNamespaceLeaseRefreshCurrent {
   readonly generation: number;
   readonly allowed_use_json: string;
   readonly disclosure_ceiling: string;
+  readonly created_at: string;
   readonly state: "ACTIVE" | "REVOKED";
   readonly expires_at: string;
   readonly owner_incarnation_ref: string;
@@ -86,6 +90,9 @@ export async function createSourceNamespaceLeaseRefreshProof(input: {
     input.current.source_admission_policy_revision,
     input.current.policy_ref,
     input.current.generation,
+    input.current.allowed_use_json,
+    input.current.disclosure_ceiling,
+    input.current.created_at,
     input.current.expires_at,
     input.new_generation,
   ];
@@ -105,6 +112,7 @@ export async function createSourceNamespaceLeaseRefreshProof(input: {
     new_generation: input.new_generation,
     old_allowed_use_json: input.current.allowed_use_json,
     old_disclosure_ceiling: input.current.disclosure_ceiling,
+    old_created_at: input.current.created_at,
     old_expires_at: input.current.expires_at,
     new_expires_at: input.session.expires_at,
     created_at: input.created_at,
@@ -112,9 +120,9 @@ export async function createSourceNamespaceLeaseRefreshProof(input: {
 }
 
 const RECEIPT_COLUMNS =
-  "refresh_id,source_namespace_id,principal_ref,client_class,credential_generation,access_expires_at," +
+  "receipt_sequence,refresh_id,source_namespace_id,principal_ref,client_class,credential_generation,access_expires_at," +
   "owner_incarnation_ref,source_owner_generation,ownership_record_revision,source_admission_policy_revision," +
-  "policy_ref,old_generation,new_generation,old_allowed_use_json,old_disclosure_ceiling,old_expires_at," +
+  "policy_ref,old_generation,new_generation,old_allowed_use_json,old_disclosure_ceiling,old_created_at,old_expires_at," +
   "new_expires_at,created_at,state";
 
 export async function readSourceNamespaceLeaseRefreshReceipt(
@@ -148,7 +156,7 @@ export function prepareSourceNamespaceLeaseRefreshInsert(
 ): D1PreparedStatement {
   const columns = "refresh_id,source_namespace_id,principal_ref,client_class,credential_generation,access_expires_at," +
     "owner_incarnation_ref,source_owner_generation,ownership_record_revision,source_admission_policy_revision," +
-    "policy_ref,old_generation,new_generation,old_allowed_use_json,old_disclosure_ceiling,old_expires_at," +
+    "policy_ref,old_generation,new_generation,old_allowed_use_json,old_disclosure_ceiling,old_created_at,old_expires_at," +
     "new_expires_at,created_at,state";
   const lineage = "i.source_namespace_id=?2 AND i.principal_ref=?3 AND i.owner_incarnation_ref=?7 " +
     "AND i.source_owner_generation=?8 AND i.ownership_record_revision=?9 AND i.source_admission_policy_revision=?10 " +
@@ -161,11 +169,12 @@ export function prepareSourceNamespaceLeaseRefreshInsert(
     "AND EXISTS (SELECT 1 FROM json_each(p.allowed_ownership_modes_json) WHERE json_each.value='immutable_import') " +
     "AND EXISTS (SELECT 1 FROM json_each(p.allowed_use_json) WHERE json_each.value='research') " +
     "AND s.source_namespace_id=?2 AND s.principal_ref=?3 AND s.client_class='owner_pwa' AND s.policy_ref=?11 " +
-    "AND s.generation=?12 AND s.allowed_use_json=?14 AND s.disclosure_ceiling=?15 AND s.state='ACTIVE' AND s.expires_at=?16 " +
+    "AND s.generation=?12 AND s.allowed_use_json=?14 AND s.disclosure_ceiling=?15 AND s.created_at=?16 " +
+    "AND s.state='ACTIVE' AND s.expires_at=?17 " +
     "AND p.source_namespace_id=i.source_namespace_id AND p.revision=i.source_admission_policy_revision";
   return database.prepare(
     `INSERT INTO scope_read_policy_lease_refresh_receipt (${columns}) ` +
-    "SELECT ?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,'PREPARED' " +
+    "SELECT ?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,'PREPARED' " +
     "WHERE julianday('now')<julianday(?6) AND EXISTS (SELECT 1 FROM source_namespace_initialization i " +
     "JOIN source_namespace_ownership o ON o.source_namespace_id=i.source_namespace_id " +
     "AND o.ownership_record_revision=i.ownership_record_revision AND o.owner_incarnation_ref=i.owner_incarnation_ref " +
@@ -176,26 +185,27 @@ export function prepareSourceNamespaceLeaseRefreshInsert(
   ).bind(proof.refresh_id, proof.source_namespace_id, proof.principal_ref, proof.client_class,
     proof.credential_generation, proof.access_expires_at, proof.owner_incarnation_ref, proof.source_owner_generation,
     proof.ownership_record_revision, proof.source_admission_policy_revision, proof.policy_ref, proof.old_generation,
-    proof.new_generation, proof.old_allowed_use_json, proof.old_disclosure_ceiling, proof.old_expires_at,
-    proof.new_expires_at, proof.created_at);
+    proof.new_generation, proof.old_allowed_use_json, proof.old_disclosure_ceiling, proof.old_created_at,
+    proof.old_expires_at, proof.new_expires_at, proof.created_at);
 }
 
-export function cleanupPreparedSourceNamespaceLeaseRefresh(
+export function prepareSourceNamespaceLeaseRefreshApply(
   database: D1Database,
   proof: SourceNamespaceLeaseRefreshProof,
 ): D1PreparedStatement {
   return database.prepare(
-    "DELETE FROM scope_read_policy_lease_refresh_receipt WHERE refresh_id=?1 AND state='PREPARED' " +
+    "UPDATE scope_read_policy_lease_refresh_receipt SET state='APPLIED' WHERE refresh_id=?1 AND state='PREPARED' " +
     "AND source_namespace_id=?2 AND principal_ref=?3 AND client_class='owner_pwa' AND credential_generation=?4 " +
     "AND access_expires_at=?5 AND owner_incarnation_ref=?6 AND source_owner_generation=?7 " +
     "AND ownership_record_revision=?8 AND source_admission_policy_revision=?9 AND policy_ref=?10 " +
     "AND old_generation=?11 AND new_generation=?12 AND old_allowed_use_json=?13 " +
-    "AND old_disclosure_ceiling=?14 AND old_expires_at=?15 AND new_expires_at=?16",
+    "AND old_disclosure_ceiling=?14 AND old_created_at=?15 AND old_expires_at=?16 " +
+    "AND new_expires_at=?17 AND created_at=?18",
   ).bind(proof.refresh_id, proof.source_namespace_id, proof.principal_ref, proof.credential_generation,
     proof.access_expires_at, proof.owner_incarnation_ref, proof.source_owner_generation,
     proof.ownership_record_revision, proof.source_admission_policy_revision, proof.policy_ref,
     proof.old_generation, proof.new_generation, proof.old_allowed_use_json, proof.old_disclosure_ceiling,
-    proof.old_expires_at, proof.new_expires_at);
+    proof.old_created_at, proof.old_expires_at, proof.new_expires_at, proof.created_at);
 }
 
 export async function sourceNamespaceLeaseRefreshReceiptMatches(input: {
@@ -206,7 +216,9 @@ export async function sourceNamespaceLeaseRefreshReceiptMatches(input: {
   readonly refresh_id: string;
 }): Promise<boolean> {
   const receipt = input.receipt;
-  if (receipt.refresh_id !== input.refresh_id || receipt.source_namespace_id !== input.current.source_namespace_id ||
+  if (typeof receipt.receipt_sequence !== "number" || !Number.isSafeInteger(receipt.receipt_sequence) ||
+      receipt.receipt_sequence < 1 || receipt.refresh_id !== input.refresh_id ||
+      receipt.source_namespace_id !== input.current.source_namespace_id ||
       receipt.principal_ref !== input.session.principal_ref || receipt.client_class !== CLIENT_CLASS ||
       receipt.credential_generation !== input.session.credential_generation ||
       receipt.access_expires_at !== input.session.expires_at ||
@@ -218,6 +230,7 @@ export async function sourceNamespaceLeaseRefreshReceiptMatches(input: {
       receipt.new_generation !== input.expected_generation + 1 || receipt.state !== "APPLIED" ||
       receipt.old_allowed_use_json !== input.current.allowed_use_json ||
       receipt.old_disclosure_ceiling !== input.current.disclosure_ceiling ||
+      receipt.old_created_at !== input.current.created_at ||
       receipt.new_expires_at !== input.session.expires_at || input.current.state !== "ACTIVE" ||
       input.current.generation !== receipt.new_generation || input.current.expires_at !== input.session.expires_at ||
       typeof receipt.old_expires_at !== "string" || typeof receipt.created_at !== "string") return false;

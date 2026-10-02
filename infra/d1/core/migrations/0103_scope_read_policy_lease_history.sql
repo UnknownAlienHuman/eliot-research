@@ -1,6 +1,5 @@
--- A lease refresh is a narrowly evidenced change to an existing owner read policy.
--- The receipt is inserted in the same D1 batch as the policy CAS and is promoted
--- to APPLIED only by the exact update trigger below.
+-- One atomic renewal batch: PREPARED receipt, exact policy CAS, APPLIED receipt.
+-- Policy history is shared; login never writes into every previous snapshot.
 CREATE TABLE scope_read_policy_lease_refresh_receipt (
   receipt_sequence INTEGER PRIMARY KEY AUTOINCREMENT,
   refresh_id TEXT NOT NULL UNIQUE CHECK(
@@ -24,6 +23,7 @@ CREATE TABLE scope_read_policy_lease_refresh_receipt (
   new_generation INTEGER NOT NULL CHECK(new_generation=old_generation+1),
   old_allowed_use_json TEXT NOT NULL CHECK(json_valid(old_allowed_use_json) AND json_type(old_allowed_use_json)='array'),
   old_disclosure_ceiling TEXT NOT NULL CHECK(length(old_disclosure_ceiling) BETWEEN 1 AND 256),
+  old_created_at TEXT NOT NULL,
   old_expires_at TEXT NOT NULL CHECK(
     old_expires_at GLOB '????-??-??T??:??:??.???Z' AND julianday(old_expires_at) IS NOT NULL AND
     strftime('%Y-%m-%dT%H:%M:%fZ',old_expires_at) IS old_expires_at
@@ -45,124 +45,82 @@ CREATE TABLE scope_read_policy_lease_refresh_receipt (
 CREATE INDEX scope_read_policy_lease_receipt_owner_idx
   ON scope_read_policy_lease_refresh_receipt(principal_ref,client_class,created_at,refresh_id);
 
+
+CREATE INDEX scope_read_policy_lease_prepared_owner_idx
+  ON scope_read_policy_lease_refresh_receipt(principal_ref,client_class,source_namespace_id) WHERE state='PREPARED';
+CREATE INDEX scope_read_policy_lease_applied_sequence_idx
+  ON scope_read_policy_lease_refresh_receipt(receipt_sequence) WHERE state='APPLIED';
+
 CREATE TABLE scope_read_policy_history_event (
-  event_id INTEGER PRIMARY KEY AUTOINCREMENT,
-  snapshot_id TEXT NOT NULL,
-  snapshot_revision INTEGER NOT NULL CHECK(snapshot_revision>0),
-  principal_ref TEXT,
-  event_kind TEXT NOT NULL CHECK(event_kind IN (
-    'LEASE_REFRESH','SEMANTIC_CHANGE','POLICY_INSERT','POLICY_DELETE','PRE_MIGRATION_SEMANTIC','SNAPSHOT_BASELINE'
-  )),
-  receipt_sequence INTEGER CHECK(receipt_sequence IS NULL OR receipt_sequence>=0),
-  refresh_id TEXT,
-  old_source_namespace_id TEXT,
-  old_principal_ref TEXT,
-  old_policy_ref TEXT,
-  old_generation INTEGER,
-  old_allowed_use_json TEXT,
-  old_disclosure_ceiling TEXT,
-  old_state TEXT,
-  old_expires_at TEXT,
-  old_created_at TEXT,
-  new_source_namespace_id TEXT,
-  new_principal_ref TEXT,
-  new_policy_ref TEXT,
-  new_generation INTEGER,
-  new_allowed_use_json TEXT,
-  new_disclosure_ceiling TEXT,
-  new_state TEXT,
-  new_expires_at TEXT,
-  new_created_at TEXT,
-  created_at TEXT NOT NULL CHECK(
-    created_at GLOB '????-??-??T??:??:??.???Z' AND julianday(created_at) IS NOT NULL AND
-    strftime('%Y-%m-%dT%H:%M:%fZ',created_at) IS created_at
-  ),
-  FOREIGN KEY(snapshot_id,snapshot_revision) REFERENCES scope_snapshot(snapshot_id,revision),
-  FOREIGN KEY(refresh_id) REFERENCES scope_read_policy_lease_refresh_receipt(refresh_id),
-  CHECK(
-    (event_kind='LEASE_REFRESH' AND receipt_sequence IS NOT NULL AND refresh_id IS NOT NULL AND
-      old_source_namespace_id IS NOT NULL AND old_principal_ref IS NOT NULL AND old_policy_ref IS NOT NULL AND
-      old_generation IS NOT NULL AND old_allowed_use_json IS NOT NULL AND old_disclosure_ceiling IS NOT NULL AND
-      old_state='ACTIVE' AND old_expires_at IS NOT NULL AND old_created_at IS NOT NULL AND
-      new_source_namespace_id=old_source_namespace_id AND new_principal_ref=old_principal_ref AND
-      new_policy_ref=old_policy_ref AND new_generation=old_generation+1 AND
-      new_allowed_use_json=old_allowed_use_json AND new_disclosure_ceiling=old_disclosure_ceiling AND
-      new_state='ACTIVE' AND new_expires_at IS NOT NULL AND new_created_at=old_created_at)
-    OR
-    (event_kind='SEMANTIC_CHANGE' AND receipt_sequence IS NULL AND refresh_id IS NULL AND
-      old_source_namespace_id IS NOT NULL AND old_principal_ref IS NOT NULL AND old_policy_ref IS NOT NULL AND
-      old_generation IS NOT NULL AND old_allowed_use_json IS NOT NULL AND old_disclosure_ceiling IS NOT NULL AND
-      old_state IN ('ACTIVE','REVOKED') AND old_expires_at IS NOT NULL AND old_created_at IS NOT NULL AND
-      new_source_namespace_id IS NOT NULL AND new_principal_ref IS NOT NULL AND new_policy_ref IS NOT NULL AND
-      new_generation IS NOT NULL AND new_allowed_use_json IS NOT NULL AND new_disclosure_ceiling IS NOT NULL AND
-      new_state IN ('ACTIVE','REVOKED') AND new_expires_at IS NOT NULL AND new_created_at IS NOT NULL)
-    OR
-    (event_kind='POLICY_INSERT' AND receipt_sequence IS NULL AND refresh_id IS NULL AND
-      old_source_namespace_id IS NULL AND old_principal_ref IS NULL AND old_policy_ref IS NULL AND
-      old_generation IS NULL AND old_allowed_use_json IS NULL AND old_disclosure_ceiling IS NULL AND
-      old_state IS NULL AND old_expires_at IS NULL AND old_created_at IS NULL AND
-      new_source_namespace_id IS NOT NULL AND new_principal_ref IS NOT NULL AND new_policy_ref IS NOT NULL AND
-      new_generation IS NOT NULL AND new_allowed_use_json IS NOT NULL AND new_disclosure_ceiling IS NOT NULL AND
-      new_state IN ('ACTIVE','REVOKED') AND new_expires_at IS NOT NULL AND new_created_at IS NOT NULL)
-    OR
-    (event_kind='POLICY_DELETE' AND receipt_sequence IS NULL AND refresh_id IS NULL AND
-      old_source_namespace_id IS NOT NULL AND old_principal_ref IS NOT NULL AND old_policy_ref IS NOT NULL AND
-      old_generation IS NOT NULL AND old_allowed_use_json IS NOT NULL AND old_disclosure_ceiling IS NOT NULL AND
-      old_state IN ('ACTIVE','REVOKED') AND old_expires_at IS NOT NULL AND old_created_at IS NOT NULL AND
-      new_source_namespace_id IS NULL AND new_principal_ref IS NULL AND new_policy_ref IS NULL AND
-      new_generation IS NULL AND new_allowed_use_json IS NULL AND new_disclosure_ceiling IS NULL AND
-      new_state IS NULL AND new_expires_at IS NULL AND new_created_at IS NULL)
-    OR
-    (event_kind='PRE_MIGRATION_SEMANTIC' AND receipt_sequence IS NULL AND refresh_id IS NULL AND principal_ref IS NULL AND
-      old_source_namespace_id IS NULL AND old_principal_ref IS NULL AND old_policy_ref IS NULL AND
-      old_generation IS NULL AND old_allowed_use_json IS NULL AND old_disclosure_ceiling IS NULL AND
-      old_state IS NULL AND old_expires_at IS NULL AND old_created_at IS NULL AND
-      new_source_namespace_id IS NULL AND new_principal_ref IS NULL AND new_policy_ref IS NULL AND
-      new_generation IS NULL AND new_allowed_use_json IS NULL AND new_disclosure_ceiling IS NULL AND
-      new_state IS NULL AND new_expires_at IS NULL AND new_created_at IS NULL)
-    OR
-    (event_kind='SNAPSHOT_BASELINE' AND refresh_id IS NULL AND principal_ref IS NULL AND
-      receipt_sequence IS NOT NULL AND old_source_namespace_id IS NULL AND old_principal_ref IS NULL AND
-      old_policy_ref IS NULL AND old_generation IS NULL AND old_allowed_use_json IS NULL AND
-      old_disclosure_ceiling IS NULL AND old_state IS NULL AND old_expires_at IS NULL AND old_created_at IS NULL AND
-      new_source_namespace_id IS NULL AND new_principal_ref IS NULL AND new_policy_ref IS NULL AND
-      new_generation IS NULL AND new_allowed_use_json IS NULL AND new_disclosure_ceiling IS NULL AND
-      new_state IS NULL AND new_expires_at IS NULL AND new_created_at IS NULL)
-  )
+  history_event_sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+  source_namespace_id TEXT NOT NULL, principal_ref TEXT NOT NULL, client_class TEXT NOT NULL,
+  event_kind TEXT NOT NULL CHECK(event_kind IN ('LEASE_REFRESH','SEMANTIC_CHANGE','POLICY_INSERT','POLICY_DELETE')),
+  receipt_sequence INTEGER UNIQUE REFERENCES scope_read_policy_lease_refresh_receipt(receipt_sequence),
+  refresh_id TEXT UNIQUE REFERENCES scope_read_policy_lease_refresh_receipt(refresh_id),
+  old_policy_ref TEXT, old_generation INTEGER, old_allowed_use_json TEXT, old_disclosure_ceiling TEXT,
+  old_state TEXT, old_expires_at TEXT, old_created_at TEXT,
+  new_policy_ref TEXT, new_generation INTEGER, new_allowed_use_json TEXT, new_disclosure_ceiling TEXT,
+  new_state TEXT, new_expires_at TEXT, new_created_at TEXT,
+  created_at TEXT NOT NULL,
+  CHECK((event_kind='LEASE_REFRESH' AND receipt_sequence IS NOT NULL AND refresh_id IS NOT NULL)
+    OR (event_kind<>'LEASE_REFRESH' AND receipt_sequence IS NULL AND refresh_id IS NULL))
 ) STRICT;
+CREATE INDEX scope_read_policy_history_key_idx ON scope_read_policy_history_event
+  (principal_ref,client_class,source_namespace_id,history_event_sequence);
 
-CREATE INDEX scope_read_policy_history_snapshot_idx
-  ON scope_read_policy_history_event(snapshot_id,snapshot_revision,event_id);
-CREATE UNIQUE INDEX scope_read_policy_history_snapshot_baseline_unique
-  ON scope_read_policy_history_event(snapshot_id,snapshot_revision) WHERE event_kind='SNAPSHOT_BASELINE';
-CREATE UNIQUE INDEX scope_read_policy_history_snapshot_receipt_unique
-  ON scope_read_policy_history_event(snapshot_id,snapshot_revision,receipt_sequence) WHERE event_kind='LEASE_REFRESH';
+-- One retained identity per policy key, including deleted keys. Endpoint seeks
+-- enumerate policy identities, never the entire login history.
+CREATE TABLE scope_read_policy_identity (
+  source_namespace_id TEXT NOT NULL, principal_ref TEXT NOT NULL, client_class TEXT NOT NULL,
+  birth_sequence INTEGER NOT NULL, last_event_sequence INTEGER NOT NULL, semantic_sequence INTEGER NOT NULL,
+  PRIMARY KEY(source_namespace_id,principal_ref,client_class)
+) STRICT, WITHOUT ROWID;
+CREATE INDEX scope_read_policy_identity_owner_idx ON scope_read_policy_identity(principal_ref,client_class,source_namespace_id);
+INSERT INTO scope_read_policy_identity SELECT source_namespace_id,principal_ref,client_class,0,0,0 FROM scope_read_policy;
 
--- Receipt order, not wall-clock time, identifies every transition after a
--- snapshot's immutable baseline. Receipt sequences are globally monotonic.
-INSERT INTO scope_read_policy_history_event(snapshot_id,snapshot_revision,event_kind,receipt_sequence,created_at)
-SELECT snapshot_id,revision,'SNAPSHOT_BASELINE',
-  COALESCE((SELECT MAX(receipt_sequence) FROM scope_read_policy_lease_refresh_receipt WHERE state='APPLIED'),0),
-  strftime('%Y-%m-%dT%H:%M:%fZ','now') FROM scope_snapshot;
-
-CREATE TRIGGER scope_read_policy_history_snapshot_baseline_insert
-AFTER INSERT ON scope_snapshot
-BEGIN
-  INSERT INTO scope_read_policy_history_event(snapshot_id,snapshot_revision,event_kind,receipt_sequence,created_at)
-  SELECT NEW.snapshot_id,NEW.revision,'SNAPSHOT_BASELINE',
-    COALESCE(MAX(CASE WHEN state='APPLIED' THEN receipt_sequence END),0),
-    strftime('%Y-%m-%dT%H:%M:%fZ','now')
-  FROM scope_read_policy_lease_refresh_receipt;
+CREATE TABLE scope_read_policy_snapshot_baseline (
+  snapshot_id TEXT NOT NULL, snapshot_revision INTEGER NOT NULL,
+  history_event_sequence_floor INTEGER NOT NULL, receipt_sequence_floor INTEGER NOT NULL,
+  pre_migration_semantic INTEGER NOT NULL CHECK(pre_migration_semantic IN (0,1)),
+  PRIMARY KEY(snapshot_id,snapshot_revision),
+  FOREIGN KEY(snapshot_id,snapshot_revision) REFERENCES scope_snapshot(snapshot_id,revision)
+) STRICT, WITHOUT ROWID;
+INSERT INTO scope_read_policy_snapshot_baseline
+  SELECT snapshot_id,revision,0,0,CASE WHEN invalidation_reason IN ('READ_POLICY_CHANGED','READ_POLICY_DELETED') THEN 1 ELSE 0 END
+  FROM scope_snapshot;
+CREATE TRIGGER scope_read_policy_snapshot_baseline_insert AFTER INSERT ON scope_snapshot BEGIN
+  INSERT INTO scope_read_policy_snapshot_baseline VALUES(NEW.snapshot_id,NEW.revision,
+    COALESCE((SELECT MAX(history_event_sequence) FROM scope_read_policy_history_event),0),
+    COALESCE((SELECT MAX(receipt_sequence) FROM scope_read_policy_lease_refresh_receipt WHERE state='APPLIED'),0),0);
 END;
-
-CREATE TRIGGER scope_read_policy_history_event_immutable_update
-BEFORE UPDATE ON scope_read_policy_history_event
-BEGIN SELECT RAISE(ABORT,'SCOPE_READ_POLICY_HISTORY_IMMUTABLE'); END;
-
-CREATE TRIGGER scope_read_policy_history_event_immutable_delete
-BEFORE DELETE ON scope_read_policy_history_event
-BEGIN SELECT RAISE(ABORT,'SCOPE_READ_POLICY_HISTORY_IMMUTABLE'); END;
-
+CREATE TRIGGER scope_read_policy_snapshot_baseline_no_update BEFORE UPDATE ON scope_read_policy_snapshot_baseline
+  BEGIN SELECT RAISE(ABORT,'SCOPE_READ_POLICY_HISTORY_IMMUTABLE'); END;
+CREATE TRIGGER scope_read_policy_snapshot_baseline_no_delete BEFORE DELETE ON scope_read_policy_snapshot_baseline
+  BEGIN SELECT RAISE(ABORT,'SCOPE_READ_POLICY_HISTORY_IMMUTABLE'); END;
+CREATE TRIGGER scope_read_policy_history_event_no_update BEFORE UPDATE ON scope_read_policy_history_event
+  BEGIN SELECT RAISE(ABORT,'SCOPE_READ_POLICY_HISTORY_IMMUTABLE'); END;
+CREATE TRIGGER scope_read_policy_history_event_no_delete BEFORE DELETE ON scope_read_policy_history_event
+  BEGIN SELECT RAISE(ABORT,'SCOPE_READ_POLICY_HISTORY_IMMUTABLE'); END;
+CREATE TRIGGER scope_read_policy_history_continuity BEFORE INSERT ON scope_read_policy_history_event
+WHEN EXISTS(SELECT 1 FROM scope_read_policy_identity i JOIN scope_read_policy_history_event p
+  ON p.history_event_sequence=i.last_event_sequence WHERE i.source_namespace_id=NEW.source_namespace_id
+  AND i.principal_ref=NEW.principal_ref AND i.client_class=NEW.client_class AND (p.new_policy_ref IS NOT NEW.old_policy_ref OR p.new_generation IS NOT NEW.old_generation OR p.new_allowed_use_json IS NOT NEW.old_allowed_use_json OR p.new_disclosure_ceiling IS NOT NEW.old_disclosure_ceiling OR p.new_state IS NOT NEW.old_state OR p.new_expires_at IS NOT NEW.old_expires_at OR p.new_created_at IS NOT NEW.old_created_at))
+BEGIN SELECT RAISE(ABORT,'SCOPE_READ_POLICY_HISTORY_DISCONTINUITY'); END;
+CREATE TRIGGER scope_read_policy_history_receipt_guard BEFORE INSERT ON scope_read_policy_history_event
+WHEN NEW.event_kind='LEASE_REFRESH' AND NOT EXISTS (
+  SELECT 1 FROM scope_read_policy_lease_refresh_receipt r
+  WHERE r.receipt_sequence=NEW.receipt_sequence AND r.refresh_id=NEW.refresh_id AND r.state='APPLIED'
+    AND r.source_namespace_id=NEW.source_namespace_id AND r.principal_ref=NEW.principal_ref
+    AND r.client_class=NEW.client_class AND r.policy_ref=NEW.old_policy_ref
+    AND r.old_generation=NEW.old_generation AND r.new_generation=NEW.new_generation
+    AND r.old_allowed_use_json=NEW.old_allowed_use_json AND r.old_disclosure_ceiling=NEW.old_disclosure_ceiling
+    AND r.old_created_at=NEW.old_created_at AND r.old_expires_at=NEW.old_expires_at
+    AND r.new_expires_at=NEW.new_expires_at AND r.access_expires_at=NEW.new_expires_at
+    AND NEW.old_state='ACTIVE' AND NEW.new_state='ACTIVE' AND NEW.new_policy_ref=NEW.old_policy_ref
+    AND NEW.new_allowed_use_json=NEW.old_allowed_use_json AND NEW.new_disclosure_ceiling=NEW.old_disclosure_ceiling
+    AND NEW.new_created_at=NEW.old_created_at
+)
+BEGIN SELECT RAISE(ABORT,'SCOPE_READ_POLICY_HISTORY_RECEIPT_INVALID'); END;
 CREATE TRIGGER scope_read_policy_lease_receipt_insert_guard
 BEFORE INSERT ON scope_read_policy_lease_refresh_receipt
 WHEN NEW.state<>'PREPARED' OR NOT EXISTS (
@@ -180,7 +138,7 @@ WHEN NEW.state<>'PREPARED' OR NOT EXISTS (
   WHERE rp.source_namespace_id=NEW.source_namespace_id AND rp.principal_ref=NEW.principal_ref
     AND rp.client_class=NEW.client_class AND rp.policy_ref=NEW.policy_ref AND rp.generation=NEW.old_generation
     AND rp.allowed_use_json=NEW.old_allowed_use_json AND rp.disclosure_ceiling=NEW.old_disclosure_ceiling
-    AND rp.state='ACTIVE' AND rp.expires_at=NEW.old_expires_at
+    AND rp.state='ACTIVE' AND rp.created_at=NEW.old_created_at AND rp.expires_at=NEW.old_expires_at
     AND o.owner_system_id='eliotr' AND o.status='ACTIVE'
     AND p.instruction_taint='DATA_ONLY' AND p.allowed_effects='READ_ONLY'
     AND p.disclosure_ceiling=NEW.old_disclosure_ceiling
@@ -204,7 +162,8 @@ WHEN NEW.refresh_id IS NOT OLD.refresh_id OR NEW.source_namespace_id IS NOT OLD.
   OR NEW.source_admission_policy_revision IS NOT OLD.source_admission_policy_revision
   OR NEW.policy_ref IS NOT OLD.policy_ref OR NEW.old_generation IS NOT OLD.old_generation
   OR NEW.new_generation IS NOT OLD.new_generation OR NEW.old_allowed_use_json IS NOT OLD.old_allowed_use_json
-  OR NEW.old_disclosure_ceiling IS NOT OLD.old_disclosure_ceiling OR NEW.old_expires_at IS NOT OLD.old_expires_at
+  OR NEW.old_disclosure_ceiling IS NOT OLD.old_disclosure_ceiling OR NEW.old_created_at IS NOT OLD.old_created_at
+  OR NEW.old_expires_at IS NOT OLD.old_expires_at
   OR NEW.new_expires_at IS NOT OLD.new_expires_at OR NEW.created_at IS NOT OLD.created_at
   OR OLD.state<>'PREPARED' OR NEW.state<>'APPLIED'
   OR NOT EXISTS (
@@ -222,7 +181,7 @@ WHEN NEW.refresh_id IS NOT OLD.refresh_id OR NEW.source_namespace_id IS NOT OLD.
     WHERE rp.source_namespace_id=NEW.source_namespace_id AND rp.principal_ref=NEW.principal_ref
       AND rp.client_class=NEW.client_class AND rp.policy_ref=NEW.policy_ref
       AND rp.generation=NEW.new_generation AND rp.allowed_use_json=NEW.old_allowed_use_json
-      AND rp.disclosure_ceiling=NEW.old_disclosure_ceiling AND rp.state='ACTIVE'
+      AND rp.disclosure_ceiling=NEW.old_disclosure_ceiling AND rp.state='ACTIVE' AND rp.created_at=NEW.old_created_at
       AND rp.expires_at=NEW.new_expires_at AND NEW.new_expires_at=NEW.access_expires_at
       AND julianday('now')<julianday(NEW.access_expires_at)
       AND o.owner_system_id='eliotr' AND o.status='ACTIVE'
@@ -241,27 +200,6 @@ BEFORE DELETE ON scope_read_policy_lease_refresh_receipt
 WHEN OLD.state='APPLIED'
 BEGIN SELECT RAISE(ABORT,'SCOPE_READ_POLICY_LEASE_RECEIPT_IMMUTABLE'); END;
 
--- Track every owner snapshot identity, including reservations that have not yet
--- received their first grant. An unrelated namespace policy still participates
--- in the immutable orientation-generation closure for this principal.
-CREATE VIEW scope_read_policy_owner_snapshot_subject AS
-  SELECT snapshot_id,snapshot_revision,principal_ref FROM orientation_request
-    WHERE client_class='owner_pwa' AND snapshot_id IS NOT NULL
-  UNION
-  SELECT snapshot_id,snapshot_revision,principal_ref FROM scope_access_grant
-    WHERE client_class='owner_pwa';
-
--- Old policy invalidations are intentionally a permanent semantic denial. Seed
--- an immutable marker so later scope-input changes cannot erase that boundary.
-INSERT INTO scope_read_policy_history_event(
-  snapshot_id,snapshot_revision,event_kind,created_at
-)
-SELECT snapshot_id,revision,'PRE_MIGRATION_SEMANTIC',
-  COALESCE(invalidated_at,strftime('%Y-%m-%dT%H:%M:%fZ','now'))
-FROM scope_snapshot WHERE invalidation_reason IN ('READ_POLICY_CHANGED','READ_POLICY_DELETED');
-
-DROP TRIGGER orientation_read_policy_changed;
-DROP TRIGGER orientation_read_policy_deleted;
 
 CREATE TRIGGER scope_read_policy_lease_update_guard
 BEFORE UPDATE ON scope_read_policy
@@ -282,115 +220,57 @@ AND NOT EXISTS (
     AND julianday(OLD.expires_at)<julianday(NEW.expires_at)
     AND r.policy_ref=OLD.policy_ref AND r.old_generation=OLD.generation AND r.new_generation=NEW.generation
     AND r.old_allowed_use_json=OLD.allowed_use_json AND r.old_disclosure_ceiling=OLD.disclosure_ceiling
-    AND r.old_expires_at=OLD.expires_at AND r.new_expires_at=NEW.expires_at
+    AND r.old_created_at=OLD.created_at AND r.old_expires_at=OLD.expires_at AND r.new_expires_at=NEW.expires_at
     AND r.access_expires_at=NEW.expires_at
 )
 BEGIN SELECT RAISE(ABORT,'SCOPE_READ_POLICY_LEASE_RECEIPT_MISMATCH'); END;
 
-CREATE TRIGGER orientation_read_policy_changed
-AFTER UPDATE ON scope_read_policy
-BEGIN
-  INSERT INTO scope_read_policy_history_event(
-    snapshot_id,snapshot_revision,principal_ref,event_kind,receipt_sequence,refresh_id,
-    old_source_namespace_id,old_principal_ref,old_policy_ref,old_generation,old_allowed_use_json,
-    old_disclosure_ceiling,old_state,old_expires_at,old_created_at,
-    new_source_namespace_id,new_principal_ref,new_policy_ref,new_generation,new_allowed_use_json,
-    new_disclosure_ceiling,new_state,new_expires_at,new_created_at,created_at
-  )
-  SELECT subject.snapshot_id,subject.snapshot_revision,subject.principal_ref,
-    CASE WHEN exact.refresh_id IS NULL THEN 'SEMANTIC_CHANGE' ELSE 'LEASE_REFRESH' END,
-    exact.receipt_sequence,exact.refresh_id,
-    OLD.source_namespace_id,OLD.principal_ref,OLD.policy_ref,OLD.generation,OLD.allowed_use_json,
-    OLD.disclosure_ceiling,OLD.state,OLD.expires_at,OLD.created_at,
-    NEW.source_namespace_id,NEW.principal_ref,NEW.policy_ref,NEW.generation,NEW.allowed_use_json,
-    NEW.disclosure_ceiling,NEW.state,NEW.expires_at,NEW.created_at,
-    strftime('%Y-%m-%dT%H:%M:%fZ','now')
-  FROM scope_read_policy_owner_snapshot_subject subject
-  LEFT JOIN (
-    SELECT r.refresh_id,r.receipt_sequence FROM scope_read_policy_lease_refresh_receipt r
+
+CREATE TRIGGER scope_read_policy_lease_applied_history AFTER UPDATE ON scope_read_policy_lease_refresh_receipt
+WHEN OLD.state='PREPARED' AND NEW.state='APPLIED' BEGIN
+  INSERT INTO scope_read_policy_history_event(source_namespace_id,principal_ref,client_class,event_kind,
+    receipt_sequence,refresh_id,old_policy_ref,old_generation,old_allowed_use_json,old_disclosure_ceiling,old_state,old_expires_at,old_created_at,new_policy_ref,new_generation,new_allowed_use_json,new_disclosure_ceiling,new_state,new_expires_at,new_created_at,created_at)
+  VALUES(NEW.source_namespace_id,NEW.principal_ref,NEW.client_class,'LEASE_REFRESH',NEW.receipt_sequence,NEW.refresh_id,
+    NEW.policy_ref,NEW.old_generation,NEW.old_allowed_use_json,NEW.old_disclosure_ceiling,'ACTIVE',NEW.old_expires_at,NEW.old_created_at,
+    NEW.policy_ref,NEW.new_generation,NEW.old_allowed_use_json,NEW.old_disclosure_ceiling,'ACTIVE',NEW.new_expires_at,NEW.old_created_at,NEW.created_at);
+  UPDATE scope_read_policy_identity SET last_event_sequence=last_insert_rowid()
+  WHERE source_namespace_id=NEW.source_namespace_id AND principal_ref=NEW.principal_ref AND client_class=NEW.client_class;
+END;
+
+DROP TRIGGER orientation_read_policy_changed;
+DROP TRIGGER orientation_read_policy_deleted;
+CREATE TRIGGER orientation_read_policy_changed AFTER UPDATE ON scope_read_policy
+WHEN NOT EXISTS (SELECT 1 FROM scope_read_policy_lease_refresh_receipt r
     WHERE r.source_namespace_id=OLD.source_namespace_id AND r.principal_ref=OLD.principal_ref
-      AND r.client_class=OLD.client_class AND r.state='PREPARED'
-      AND OLD.state='ACTIVE' AND NEW.state='ACTIVE'
-      AND NEW.source_namespace_id=OLD.source_namespace_id AND NEW.principal_ref=OLD.principal_ref
-      AND NEW.client_class=OLD.client_class AND NEW.policy_ref=OLD.policy_ref
-      AND NEW.allowed_use_json=OLD.allowed_use_json AND NEW.disclosure_ceiling=OLD.disclosure_ceiling
-      AND NEW.created_at=OLD.created_at AND NEW.generation=OLD.generation+1
-      AND julianday(OLD.expires_at)<julianday(NEW.expires_at)
-      AND r.policy_ref=OLD.policy_ref AND r.old_generation=OLD.generation AND r.new_generation=NEW.generation
-      AND r.old_allowed_use_json=OLD.allowed_use_json AND r.old_disclosure_ceiling=OLD.disclosure_ceiling
-      AND r.old_expires_at=OLD.expires_at AND r.new_expires_at=NEW.expires_at
-      AND r.access_expires_at=NEW.expires_at
-    LIMIT 1
-  ) exact ON 1=1
-  WHERE subject.principal_ref IN (OLD.principal_ref,NEW.principal_ref);
-
-  UPDATE scope_read_policy_lease_refresh_receipt SET state='APPLIED'
-  WHERE state='PREPARED' AND source_namespace_id=OLD.source_namespace_id AND principal_ref=OLD.principal_ref
-    AND client_class=OLD.client_class AND policy_ref=OLD.policy_ref AND old_generation=OLD.generation
-    AND new_generation=NEW.generation AND old_allowed_use_json=OLD.allowed_use_json
-    AND old_disclosure_ceiling=OLD.disclosure_ceiling AND old_expires_at=OLD.expires_at
-    AND new_expires_at=NEW.expires_at AND access_expires_at=NEW.expires_at
-    AND OLD.state='ACTIVE' AND NEW.state='ACTIVE' AND NEW.source_namespace_id=OLD.source_namespace_id
-    AND NEW.principal_ref=OLD.principal_ref AND NEW.client_class=OLD.client_class
-    AND NEW.policy_ref=OLD.policy_ref AND NEW.allowed_use_json=OLD.allowed_use_json
-    AND NEW.disclosure_ceiling=OLD.disclosure_ceiling AND NEW.created_at=OLD.created_at
-    AND NEW.generation=OLD.generation+1 AND julianday(OLD.expires_at)<julianday(NEW.expires_at);
-
-  UPDATE scope_snapshot SET invalidated_at=COALESCE(invalidated_at,strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-    invalidation_reason=CASE WHEN EXISTS (
-      SELECT 1 FROM scope_read_policy_lease_refresh_receipt r
-      WHERE r.source_namespace_id=OLD.source_namespace_id AND r.principal_ref=OLD.principal_ref
-        AND r.client_class=OLD.client_class AND r.policy_ref=OLD.policy_ref
-        AND r.old_generation=OLD.generation AND r.new_generation=NEW.generation AND r.state='APPLIED'
-        AND r.old_allowed_use_json=OLD.allowed_use_json AND r.old_disclosure_ceiling=OLD.disclosure_ceiling
-        AND r.old_expires_at=OLD.expires_at AND r.new_expires_at=NEW.expires_at
-        AND r.access_expires_at=NEW.expires_at
-    ) THEN 'READ_POLICY_LEASE_REFRESHED' ELSE 'READ_POLICY_CHANGED' END
-  WHERE invalidated_at IS NULL AND EXISTS (
-    SELECT 1 FROM scope_read_policy_owner_snapshot_subject subject
-    WHERE subject.snapshot_id=scope_snapshot.snapshot_id AND subject.snapshot_revision=scope_snapshot.revision
-      AND subject.principal_ref IN (OLD.principal_ref,NEW.principal_ref)
-  );
+      AND r.client_class=OLD.client_class AND r.state='PREPARED') BEGIN
+  INSERT INTO scope_read_policy_history_event(source_namespace_id,principal_ref,client_class,event_kind,old_policy_ref,old_generation,old_allowed_use_json,old_disclosure_ceiling,old_state,old_expires_at,old_created_at,new_policy_ref,new_generation,new_allowed_use_json,new_disclosure_ceiling,new_state,new_expires_at,new_created_at,created_at) VALUES(OLD.source_namespace_id,OLD.principal_ref,OLD.client_class,
+    'SEMANTIC_CHANGE',OLD.policy_ref,OLD.generation,OLD.allowed_use_json,OLD.disclosure_ceiling,OLD.state,OLD.expires_at,OLD.created_at,CASE WHEN NEW.source_namespace_id=OLD.source_namespace_id AND NEW.principal_ref=OLD.principal_ref AND NEW.client_class=OLD.client_class THEN NEW.policy_ref ELSE NULL END,CASE WHEN NEW.source_namespace_id=OLD.source_namespace_id AND NEW.principal_ref=OLD.principal_ref AND NEW.client_class=OLD.client_class THEN NEW.generation ELSE NULL END,CASE WHEN NEW.source_namespace_id=OLD.source_namespace_id AND NEW.principal_ref=OLD.principal_ref AND NEW.client_class=OLD.client_class THEN NEW.allowed_use_json ELSE NULL END,CASE WHEN NEW.source_namespace_id=OLD.source_namespace_id AND NEW.principal_ref=OLD.principal_ref AND NEW.client_class=OLD.client_class THEN NEW.disclosure_ceiling ELSE NULL END,CASE WHEN NEW.source_namespace_id=OLD.source_namespace_id AND NEW.principal_ref=OLD.principal_ref AND NEW.client_class=OLD.client_class THEN NEW.state ELSE NULL END,CASE WHEN NEW.source_namespace_id=OLD.source_namespace_id AND NEW.principal_ref=OLD.principal_ref AND NEW.client_class=OLD.client_class THEN NEW.expires_at ELSE NULL END,CASE WHEN NEW.source_namespace_id=OLD.source_namespace_id AND NEW.principal_ref=OLD.principal_ref AND NEW.client_class=OLD.client_class THEN NEW.created_at ELSE NULL END,strftime('%Y-%m-%dT%H:%M:%fZ','now'));
+  UPDATE scope_read_policy_identity SET last_event_sequence=last_insert_rowid(),semantic_sequence=last_insert_rowid()
+  WHERE source_namespace_id=OLD.source_namespace_id AND principal_ref=OLD.principal_ref AND client_class=OLD.client_class;
+  INSERT INTO scope_read_policy_history_event(source_namespace_id,principal_ref,client_class,event_kind,old_policy_ref,old_generation,old_allowed_use_json,old_disclosure_ceiling,old_state,old_expires_at,old_created_at,new_policy_ref,new_generation,new_allowed_use_json,new_disclosure_ceiling,new_state,new_expires_at,new_created_at,created_at)
+  SELECT NEW.source_namespace_id,NEW.principal_ref,NEW.client_class,'POLICY_INSERT',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NEW.policy_ref,NEW.generation,NEW.allowed_use_json,NEW.disclosure_ceiling,NEW.state,NEW.expires_at,NEW.created_at,strftime('%Y-%m-%dT%H:%M:%fZ','now')
+  WHERE NOT (NEW.source_namespace_id=OLD.source_namespace_id AND NEW.principal_ref=OLD.principal_ref AND NEW.client_class=OLD.client_class);
+  INSERT INTO scope_read_policy_identity(source_namespace_id,principal_ref,client_class,birth_sequence,last_event_sequence,semantic_sequence)
+  SELECT NEW.source_namespace_id,NEW.principal_ref,NEW.client_class,last_insert_rowid(),last_insert_rowid(),last_insert_rowid()
+  WHERE NOT (NEW.source_namespace_id=OLD.source_namespace_id AND NEW.principal_ref=OLD.principal_ref AND NEW.client_class=OLD.client_class)
+  ON CONFLICT(source_namespace_id,principal_ref,client_class) DO UPDATE SET last_event_sequence=excluded.last_event_sequence,semantic_sequence=excluded.semantic_sequence;
+  UPDATE scope_snapshot SET invalidated_at=COALESCE(invalidated_at,strftime('%Y-%m-%dT%H:%M:%fZ','now')),invalidation_reason='READ_POLICY_CHANGED'
+  WHERE invalidated_at IS NULL AND EXISTS(SELECT 1 FROM scope_access_grant g WHERE g.snapshot_id=scope_snapshot.snapshot_id
+    AND g.snapshot_revision=scope_snapshot.revision AND g.principal_ref=OLD.principal_ref AND g.client_class=OLD.client_class);
 END;
-
-CREATE TRIGGER orientation_read_policy_inserted
-AFTER INSERT ON scope_read_policy
-BEGIN
-  INSERT INTO scope_read_policy_history_event(
-    snapshot_id,snapshot_revision,principal_ref,event_kind,new_source_namespace_id,new_principal_ref,
-    new_policy_ref,new_generation,new_allowed_use_json,new_disclosure_ceiling,new_state,new_expires_at,
-    new_created_at,created_at
-  )
-  SELECT subject.snapshot_id,subject.snapshot_revision,subject.principal_ref,'POLICY_INSERT',
-    NEW.source_namespace_id,NEW.principal_ref,NEW.policy_ref,NEW.generation,NEW.allowed_use_json,
-    NEW.disclosure_ceiling,NEW.state,NEW.expires_at,NEW.created_at,strftime('%Y-%m-%dT%H:%M:%fZ','now')
-  FROM scope_read_policy_owner_snapshot_subject subject WHERE subject.principal_ref=NEW.principal_ref;
-  UPDATE scope_snapshot SET invalidated_at=COALESCE(invalidated_at,strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-    invalidation_reason='READ_POLICY_CHANGED'
-  WHERE invalidated_at IS NULL AND EXISTS (
-    SELECT 1 FROM scope_read_policy_owner_snapshot_subject subject
-    WHERE subject.snapshot_id=scope_snapshot.snapshot_id AND subject.snapshot_revision=scope_snapshot.revision
-      AND subject.principal_ref=NEW.principal_ref
-  );
+CREATE TRIGGER orientation_read_policy_inserted AFTER INSERT ON scope_read_policy BEGIN
+  INSERT INTO scope_read_policy_history_event(source_namespace_id,principal_ref,client_class,event_kind,old_policy_ref,old_generation,old_allowed_use_json,old_disclosure_ceiling,old_state,old_expires_at,old_created_at,new_policy_ref,new_generation,new_allowed_use_json,new_disclosure_ceiling,new_state,new_expires_at,new_created_at,created_at) VALUES(NEW.source_namespace_id,NEW.principal_ref,NEW.client_class,
+    'POLICY_INSERT',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NEW.policy_ref,NEW.generation,NEW.allowed_use_json,NEW.disclosure_ceiling,NEW.state,NEW.expires_at,NEW.created_at,strftime('%Y-%m-%dT%H:%M:%fZ','now'));
+  INSERT INTO scope_read_policy_identity(source_namespace_id,principal_ref,client_class,birth_sequence,last_event_sequence,semantic_sequence)
+  VALUES(NEW.source_namespace_id,NEW.principal_ref,NEW.client_class,last_insert_rowid(),last_insert_rowid(),last_insert_rowid())
+  ON CONFLICT(source_namespace_id,principal_ref,client_class) DO UPDATE SET last_event_sequence=excluded.last_event_sequence,semantic_sequence=excluded.semantic_sequence;
 END;
-
-CREATE TRIGGER orientation_read_policy_deleted
-AFTER DELETE ON scope_read_policy
-BEGIN
-  INSERT INTO scope_read_policy_history_event(
-    snapshot_id,snapshot_revision,principal_ref,event_kind,old_source_namespace_id,old_principal_ref,
-    old_policy_ref,old_generation,old_allowed_use_json,old_disclosure_ceiling,old_state,old_expires_at,
-    old_created_at,created_at
-  )
-  SELECT subject.snapshot_id,subject.snapshot_revision,subject.principal_ref,'POLICY_DELETE',
-    OLD.source_namespace_id,OLD.principal_ref,OLD.policy_ref,OLD.generation,OLD.allowed_use_json,
-    OLD.disclosure_ceiling,OLD.state,OLD.expires_at,OLD.created_at,strftime('%Y-%m-%dT%H:%M:%fZ','now')
-  FROM scope_read_policy_owner_snapshot_subject subject WHERE subject.principal_ref=OLD.principal_ref;
-  UPDATE scope_snapshot SET invalidated_at=COALESCE(invalidated_at,strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-    invalidation_reason='READ_POLICY_DELETED'
-  WHERE invalidated_at IS NULL AND EXISTS (
-    SELECT 1 FROM scope_read_policy_owner_snapshot_subject subject
-    WHERE subject.snapshot_id=scope_snapshot.snapshot_id AND subject.snapshot_revision=scope_snapshot.revision
-      AND subject.principal_ref=OLD.principal_ref
-  );
+CREATE TRIGGER orientation_read_policy_deleted AFTER DELETE ON scope_read_policy BEGIN
+  INSERT INTO scope_read_policy_history_event(source_namespace_id,principal_ref,client_class,event_kind,old_policy_ref,old_generation,old_allowed_use_json,old_disclosure_ceiling,old_state,old_expires_at,old_created_at,new_policy_ref,new_generation,new_allowed_use_json,new_disclosure_ceiling,new_state,new_expires_at,new_created_at,created_at) VALUES(OLD.source_namespace_id,OLD.principal_ref,OLD.client_class,
+    'POLICY_DELETE',OLD.policy_ref,OLD.generation,OLD.allowed_use_json,OLD.disclosure_ceiling,OLD.state,OLD.expires_at,OLD.created_at,NULL,NULL,NULL,NULL,NULL,NULL,NULL,strftime('%Y-%m-%dT%H:%M:%fZ','now'));
+  UPDATE scope_read_policy_identity SET last_event_sequence=last_insert_rowid(),semantic_sequence=last_insert_rowid()
+  WHERE source_namespace_id=OLD.source_namespace_id AND principal_ref=OLD.principal_ref AND client_class=OLD.client_class;
+  UPDATE scope_snapshot SET invalidated_at=COALESCE(invalidated_at,strftime('%Y-%m-%dT%H:%M:%fZ','now')),invalidation_reason='READ_POLICY_DELETED'
+  WHERE invalidated_at IS NULL AND EXISTS(SELECT 1 FROM scope_access_grant g WHERE g.snapshot_id=scope_snapshot.snapshot_id
+    AND g.snapshot_revision=scope_snapshot.revision AND g.principal_ref=OLD.principal_ref AND g.client_class=OLD.client_class);
 END;

@@ -178,3 +178,15 @@ at publication. The publication-absence fixture now uses the API's required
 `application/json` MIME type. The draft-reader test adds the known terminal
 source denial while retaining the unknown-authority 503 control; native proof
 remains pending. No live session, lease, report or deployment is changed.
+
+The PWA source follow-up at `b6671db3` passes PWA typecheck, exact-file ESLint,
+publication fixture syntax and scoped whitespace checks. The root then took
+over the unsaved history integration. Its minimal shared history records one
+event per policy transition and one immutable sequence floor per snapshot;
+indexed policy identities and transition endpoints replace snapshot/login
+fanout and window scans. Original policies are reconstructed at capture time,
+including leases expired at replay time. Original bytes, fresh member-source
+authorization, explicit revocation and the existing semantic-change denial
+remain separate from lease renewal. The receipt prepare, exact policy CAS and
+APPLIED promotion now share one D1 batch. Focused native and mounted functional
+checks are pending on this saved integration checkpoint.

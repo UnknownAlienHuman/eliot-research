@@ -1,7 +1,7 @@
 import type { AuthenticatedRequestContext } from "@eliotr/interfaces";
 import {
-  cleanupPreparedSourceNamespaceLeaseRefresh,
   createSourceNamespaceLeaseRefreshProof,
+  prepareSourceNamespaceLeaseRefreshApply,
   prepareSourceNamespaceLeaseRefreshInsert,
   readAppliedSourceNamespaceLeaseRefresh,
   readSourceNamespaceLeaseRefreshReceipt,
@@ -92,6 +92,7 @@ interface ScopeRenewalRow {
   readonly scope_allowed_use: unknown;
   readonly scope_disclosure: unknown;
   readonly scope_state: unknown;
+  readonly scope_created_at: unknown;
   readonly scope_expires_at: unknown;
 }
 
@@ -102,6 +103,7 @@ interface DecodedScopeRenewalRow {
   readonly generation: number;
   readonly allowed_use_json: string;
   readonly disclosure_ceiling: string;
+  readonly created_at: string;
   readonly state: "ACTIVE" | "REVOKED";
   readonly expires_at: string;
   readonly expires_at_ms: number;
@@ -222,7 +224,8 @@ async function readScope(database: D1Database, namespaceId: string, principalRef
       "p.instruction_taint AS policy_taint,p.allowed_effects AS policy_effects," +
       "s.source_namespace_id AS scope_namespace,s.principal_ref AS scope_principal,s.client_class AS scope_client_class," +
       "s.policy_ref AS scope_policy_ref,s.generation AS scope_generation,s.allowed_use_json AS scope_allowed_use," +
-      "s.disclosure_ceiling AS scope_disclosure,s.state AS scope_state,s.expires_at AS scope_expires_at " +
+      "s.disclosure_ceiling AS scope_disclosure,s.state AS scope_state,s.created_at AS scope_created_at," +
+      "s.expires_at AS scope_expires_at " +
       "FROM source_namespace_initialization i " +
       "JOIN source_namespace_ownership o ON o.source_namespace_id=i.source_namespace_id " +
       "AND o.ownership_record_revision=i.ownership_record_revision AND o.owner_incarnation_ref=i.owner_incarnation_ref " +
@@ -289,6 +292,7 @@ async function readScope(database: D1Database, namespaceId: string, principalRef
     fail("NAMESPACE_STORAGE_UNAVAILABLE", 503, "namespace title is invalid", true);
   }
   const expiry = canonicalTime(row.scope_expires_at, "read policy expiry");
+  const createdAt = canonicalTime(row.scope_created_at, "read policy creation time");
   return {
     source_namespace_id: namespaceId,
     title,
@@ -296,6 +300,7 @@ async function readScope(database: D1Database, namespaceId: string, principalRef
     generation: integerValue(row.scope_generation, "read policy generation"),
     allowed_use_json: allowedUseJson,
     disclosure_ceiling: scopeDisclosure,
+    created_at: createdAt.iso,
     state,
     expires_at: expiry.iso,
     expires_at_ms: expiry.millis,
@@ -395,7 +400,7 @@ export async function renewSourceNamespaceReadScope(input: {
       input.database.prepare(
       "UPDATE scope_read_policy SET generation=?1,expires_at=?2 WHERE source_namespace_id=?3 AND principal_ref=?4 " +
       "AND client_class='owner_pwa' AND policy_ref=?5 AND generation=?6 AND allowed_use_json=?7 AND disclosure_ceiling=?8 " +
-      "AND state='ACTIVE' AND expires_at=?9 AND julianday('now')<julianday(?2) " +
+      "AND state='ACTIVE' AND created_at=?20 AND expires_at=?9 AND julianday('now')<julianday(?2) " +
       "AND EXISTS (SELECT 1 FROM source_namespace_initialization i " +
       "JOIN source_namespace_ownership o ON o.source_namespace_id=i.source_namespace_id AND o.ownership_record_revision=i.ownership_record_revision " +
       "AND o.owner_incarnation_ref=i.owner_incarnation_ref AND o.source_owner_generation=i.source_owner_generation " +
@@ -415,13 +420,15 @@ export async function renewSourceNamespaceReadScope(input: {
       "AND r.source_owner_generation=?11 AND r.ownership_record_revision=?12 " +
       "AND r.source_admission_policy_revision=?13 AND r.policy_ref=?5 AND r.old_generation=?6 " +
       "AND r.new_generation=?1 AND r.old_allowed_use_json=?7 AND r.old_disclosure_ceiling=?8 " +
+      "AND r.old_created_at=?20 " +
          "AND r.old_expires_at=?9 AND r.new_expires_at=?2 AND r.state='PREPARED')",
       ).bind(nextGeneration, access.expires_at, input.namespace_id, input.context.principal_ref, current.policy_ref,
       input.request.expected_generation, current.allowed_use_json, current.disclosure_ceiling, current.expires_at,
       current.owner_incarnation_ref, current.source_owner_generation, current.ownership_record_revision,
       current.source_admission_policy_revision, current.policy_authorized_json, current.policy_modes_json,
-      current.policy_allowed_use_json, current.policy_disclosure_ceiling, proof.refresh_id, access.credential_generation),
-      cleanupPreparedSourceNamespaceLeaseRefresh(input.database, proof),
+      current.policy_allowed_use_json, current.policy_disclosure_ceiling, proof.refresh_id, access.credential_generation,
+      current.created_at),
+      prepareSourceNamespaceLeaseRefreshApply(input.database, proof),
     ]);
   } catch (cause) {
     writeFailure = cause;

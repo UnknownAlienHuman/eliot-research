@@ -222,13 +222,17 @@ async function requireHistoricalScopeRecord(
     if (leaseHistory === null) stale();
   } else {
     const semantic = await database.prepare(
-      "SELECT 1 AS present FROM scope_read_policy_history_event WHERE snapshot_id=?1 AND snapshot_revision=?2 " +
-        "AND event_kind NOT IN ('LEASE_REFRESH','SNAPSHOT_BASELINE') LIMIT 1",
+      "SELECT 1 AS present FROM scope_read_policy_snapshot_baseline b " +
+        "WHERE b.snapshot_id=?1 AND b.snapshot_revision=?2 AND (b.pre_migration_semantic=1 OR EXISTS (" +
+        "SELECT 1 FROM scope_access_grant g JOIN scope_read_policy_identity i " +
+        "ON i.principal_ref=g.principal_ref AND i.client_class=g.client_class " +
+        "WHERE g.snapshot_id=b.snapshot_id AND g.snapshot_revision=b.snapshot_revision " +
+        "AND g.client_class='owner_pwa' AND i.semantic_sequence>b.history_event_sequence_floor)) LIMIT 1",
     ).bind(originalRef.id, originalRef.revision).first<{ readonly present: unknown }>();
     if (semantic !== null) stale();
   }
   if (persisted.invalidated_at === null) {
-    if (leaseHistory?.has_lease_events) stale();
+    if (leaseHistory?.has_lease_events && ownerReader?.allow_lease_refresh !== true) stale();
     return ownerReader?.allow_lease_refresh === true ? leaseHistory : null;
   }
   // Only the exact machine report's independently authorized original grantor
