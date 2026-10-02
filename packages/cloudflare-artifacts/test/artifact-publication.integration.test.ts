@@ -6,7 +6,7 @@ import { canonicalDigest, canonicalJson } from "@eliotr/platform-cloudflare";
 import { invalidateEvidenceHandle } from "@eliotr/cloudflare-evidence";
 import { createNavigationReadAuthority } from "@eliotr/cloudflare-evidence";
 import { createD1ScopeService, createOwnerScopeAuthority } from "../../cloudflare-navigation/src/index.js";
-import { createArtifactDraftStore, encodeArtifactDraftVerificationV2, createArtifactPublicationProducer } from "../src/index.js";
+import { createArtifactDraftStore, encodeArtifactDraftVerificationV2, createArtifactPublicationProducer, type PrepareArtifactDraftInput } from "../src/index.js";
 import { committedEvidenceFreezeFixture, principal as freezePrincipal } from "../../../apps/eliotr-core/test/research-evidence-freeze-fixture.js";
 
 interface TestEnv {
@@ -18,6 +18,14 @@ interface TestEnv {
 const runtime = env as unknown as TestEnv;
 const sha = (value: string) => crypto.subtle.digest("SHA-256", new TextEncoder().encode(value)).then((buffer) =>
   [...new Uint8Array(buffer)].map((byte) => byte.toString(16).padStart(2, "0")).join(""));
+
+function errorCauseText(value: unknown): string {
+  if (value === null || typeof value !== "object") return String(value);
+  const root = value as { readonly message?: unknown; readonly cause?: unknown };
+  const cause = root.cause !== null && typeof root.cause === "object" ? root.cause as { readonly message?: unknown; readonly cause?: unknown } : null;
+  const nested = cause?.cause !== null && typeof cause?.cause === "object" ? cause.cause as { readonly message?: unknown } : null;
+  return [root.message, cause?.message, nested?.message].map(String).join(" ");
+}
 
 async function residency(scopeId: string, principal: string, digest: string): Promise<ObjectResidencyKey> {
   return {
@@ -147,7 +155,9 @@ async function prepareVerifiedDraft(fixture: Awaited<ReturnType<typeof committed
   };
   const manifestBytes = new TextEncoder().encode(canonicalJson({ spec, revision }));
   const draftStore = createArtifactDraftStore(fixture.db, fixture.bucket);
-  await draftStore.prepare({
+  const markdownExportRef = revision.deterministic_export_refs.markdown;
+  if (markdownExportRef === undefined) throw new Error("verified publication fixture is missing its markdown export");
+  const draftInput: PrepareArtifactDraftInput = {
     intent: {
       intent_ref: { id: `draft-intent-${artifactRef.id}`, revision: 1 },
       operation_kind: "REPORT",
@@ -168,12 +178,52 @@ async function prepareVerifiedDraft(fixture: Awaited<ReturnType<typeof committed
         residency: await residency(fixture.scope.snapshot_id, access.principal_ref, await sha("owner evidence ledger")) },
       { object_ref: section.verification_receipt_ref, object_kind: "VERIFICATION_RECEIPT", bytes: verification.bytes,
         residency: await residency(fixture.scope.snapshot_id, access.principal_ref, verification.sha256) },
-      { object_ref: revision.deterministic_export_refs.markdown!, object_kind: "EXPORT", bytes: bodyBytes,
+      { object_ref: markdownExportRef, object_kind: "EXPORT", bytes: bodyBytes,
         residency: await residency(fixture.scope.snapshot_id, access.principal_ref, bodySha) },
     ],
     manifest_residency: await residency(fixture.scope.snapshot_id, access.principal_ref, await sha(new TextDecoder().decode(manifestBytes))),
-  });
-  return { fixture, access, authorization, artifactRef, revision, evidence };
+  };
+  await draftStore.prepare(draftInput);
+  return { fixture, access, authorization, artifactRef, revision, evidence, draftInput };
+}
+
+async function prepareNextDraftRevision(prepared: Awaited<ReturnType<typeof prepareVerifiedDraft>>) {
+  const ref = { id: prepared.artifactRef.id, revision: prepared.artifactRef.revision + 1 } satisfies VersionedRef;
+  const createdAt = new Date().toISOString();
+  const revision: ArtifactRevision = {
+    ...prepared.draftInput.revision,
+    artifact_ref: ref,
+    sections: prepared.draftInput.revision.sections.map((section) => ({
+      ...section,
+      section_ref: { id: section.section_ref.id, revision: section.section_ref.revision + 1 },
+      reused_from_revision_ref: prepared.artifactRef,
+    })),
+    created_at: createdAt,
+  };
+  const manifestBytes = new TextEncoder().encode(canonicalJson({ spec: prepared.draftInput.spec, revision }));
+  const draftInput: PrepareArtifactDraftInput = {
+    ...prepared.draftInput,
+    intent: {
+      intent_ref: { id: `draft-intent-${ref.id}-r${ref.revision}`, revision: 1 },
+      operation_kind: "REPORT",
+      principal_ref: prepared.access.principal_ref,
+      idempotency_key: `draft-${ref.id}-r${ref.revision}`,
+      payload_ref: ref.id,
+      policy_decision_ref: "publication-test-draft-authority",
+      created_at: createdAt,
+    },
+    expected_draft_head_revision: prepared.artifactRef.revision,
+    revision,
+    sections: revision.sections.map((section, index) => {
+      const original = prepared.draftInput.sections[index];
+      if (original === undefined) throw new Error("COW predecessor section is missing");
+      return { ...original, section };
+    }),
+    manifest_residency: await residency(prepared.fixture.scope.snapshot_id, prepared.access.principal_ref,
+      await sha(new TextDecoder().decode(manifestBytes))),
+  };
+  await createArtifactDraftStore(prepared.fixture.db, prepared.fixture.bucket).prepare(draftInput);
+  return { ...prepared, artifactRef: ref, revision, draftInput };
 }
 
 async function freshNavigation(
@@ -272,6 +322,63 @@ describe("artifact publication with actual D1 and R2", () => {
     expect(replay.receipt.publication_ref).toBe(accepted.receipt.publication_ref);
     expect(decisionCalls).toBe(1);
 
+    const raceKeys = ["publication-race-alpha", "publication-race-beta"] as const;
+    const raceDraft = await prepareNextDraftRevision(prepared);
+    const raceProducer = (idempotencyKey: string) => createArtifactPublicationProducer({
+      database: fixture.db,
+      work_bucket: fixture.bucket,
+      require_current: refreshed.require_current,
+      resolve_acceptance_decision: async (request) => ({
+        protocol: "eliotr.artifact-owner-acceptance.v1",
+        mode: "OWNER_EXPLICIT",
+        artifact_ref: request.artifact_ref,
+        expected_draft_head_revision: request.expected_draft_head_revision,
+        expected_publication_revision: request.expected_publication_revision,
+        principal_ref: request.access.principal_ref,
+        credential_generation: request.access.credential_generation,
+        idempotency_key: idempotencyKey,
+        decision_ref: `owner-commit-${idempotencyKey}`,
+        provenance_ref: `owner-route-${idempotencyKey}`,
+        expires_at: request.authorization.expires_at,
+      }),
+    });
+    const raceResults = await Promise.allSettled(raceKeys.map(async (idempotencyKey) => raceProducer(idempotencyKey).accept({
+      ...input,
+      artifact_ref: raceDraft.artifactRef,
+      expected_draft_head_revision: 2,
+      expected_publication_revision: 1,
+      idempotency_key: idempotencyKey,
+      current_authorization: await currentNavigation.current(),
+    })));
+    const raceWinners = raceResults.filter((result): result is PromiseFulfilledResult<Awaited<ReturnType<typeof producer.accept>>> => result.status === "fulfilled");
+    const raceLosers = raceResults.filter((result) => result.status === "rejected");
+    const raceSummary = raceResults.map((result) => result.status === "fulfilled"
+      ? { status: result.status, publication_revision: result.value.receipt.publication_revision }
+      : { status: result.status, code: (result.reason as { readonly code?: unknown })?.code, cause: errorCauseText(result.reason) });
+    if (raceWinners.length !== 1 || raceLosers.length !== 1) throw new Error(`publication CAS race outcomes: ${JSON.stringify(raceSummary)}`);
+    expect(raceWinners).toHaveLength(1);
+    expect(raceLosers).toHaveLength(1);
+    expect(errorCauseText(raceLosers[0]?.reason)).toContain(
+      "UNIQUE constraint failed: artifact_publication_receipt.artifact_id, artifact_publication_receipt.publication_revision",
+    );
+    expect(raceWinners[0]?.value.receipt.publication_revision).toBe(2);
+    const loserIndex = raceResults.findIndex((result) => result.status === "rejected");
+    const loserKey = raceKeys[loserIndex];
+    if (loserKey === undefined) throw new Error("publication race loser key is missing");
+    const loserRows = await fixture.db.prepare(
+      "SELECT " +
+      "(SELECT COUNT(*) FROM operation_intent WHERE principal_ref=?1 AND idempotency_key=?2) AS intents," +
+      "(SELECT COUNT(*) FROM outbox o JOIN operation_intent i ON i.intent_id=o.intent_id AND i.revision=o.intent_revision WHERE i.principal_ref=?1 AND i.idempotency_key=?2) AS outboxes," +
+      "(SELECT COUNT(*) FROM operation_receipt r JOIN operation_intent i ON i.intent_id=r.intent_id AND i.revision=r.intent_revision WHERE i.principal_ref=?1 AND i.idempotency_key=?2) AS operation_receipts," +
+      "(SELECT COUNT(*) FROM artifact_publication_receipt WHERE principal_ref=?1 AND idempotency_key=?2) AS publication_receipts",
+    ).bind(prepared.access.principal_ref, loserKey).first<{
+      readonly intents: number;
+      readonly outboxes: number;
+      readonly operation_receipts: number;
+      readonly publication_receipts: number;
+    }>();
+    expect(loserRows).toEqual({ intents: 0, outboxes: 0, operation_receipts: 0, publication_receipts: 0 });
+
     const fencedDraft = await prepareVerifiedDraft(fixture);
     let currentnessFenceRevoked = false;
     const fencedProducer = createArtifactPublicationProducer({
@@ -324,6 +431,83 @@ describe("artifact publication with actual D1 and R2", () => {
     await expect(producer.accept({ ...input, expected_draft_head_revision: 2 })).rejects.toMatchObject({ code: "ARTIFACT_PUBLICATION_STALE" });
     await expect(producer.accept({ ...input, access: { ...input.access, principal_ref: "other-owner" } })).rejects.toMatchObject({ code: "ARTIFACT_DRAFT_READ_DENIED" });
 
+    const sqlFresh = await freshNavigation(fixture, prepared.access, prepared.evidence.handle.source_namespace_id);
+    const sqlAuthorization = await sqlFresh.navigation.current();
+    let currentAuthorityChecks = 0;
+    let revokeOnPublicationBatch = false;
+    let grantRevokedImmediatelyBeforeBatch = false;
+    const revokeOwnerGrantAtBatch = new Proxy(fixture.db, {
+      get(target, property) {
+        if (property === "batch") {
+          return async (statements: D1PreparedStatement[]) => {
+            if (!revokeOnPublicationBatch) return target.batch(statements);
+            if (grantRevokedImmediatelyBeforeBatch) throw new Error("publication unexpectedly batched twice");
+            const revoked = await target.prepare(
+              "UPDATE scope_access_grant SET state='REVOKED' WHERE authorization_receipt_ref=?1 AND state='ACTIVE' RETURNING snapshot_id",
+            ).bind(sqlAuthorization.authorization_receipt_ref).all<{ readonly snapshot_id: string }>();
+            if (!revoked.success || revoked.results.length < 1) {
+              throw new Error(`test could not revoke a live D1 scope grant at the transaction fence: ${JSON.stringify(revoked.results)}`);
+            }
+            grantRevokedImmediatelyBeforeBatch = true;
+            return target.batch(statements);
+          };
+        }
+        const value = Reflect.get(target, property, target) as unknown;
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    }) as D1Database;
+    const sqlRevocationProducer = createArtifactPublicationProducer({
+      database: revokeOwnerGrantAtBatch,
+      work_bucket: fixture.bucket,
+      require_current: async (scope) => {
+        const current = await sqlFresh.require_current(scope);
+        currentAuthorityChecks += 1;
+        if (currentAuthorityChecks === 1) revokeOnPublicationBatch = true;
+        return current;
+      },
+      resolve_acceptance_decision: async (request) => ({
+        protocol: "eliotr.artifact-owner-acceptance.v1",
+        mode: "OWNER_EXPLICIT",
+        artifact_ref: request.artifact_ref,
+        expected_draft_head_revision: request.expected_draft_head_revision,
+        expected_publication_revision: request.expected_publication_revision,
+        principal_ref: request.access.principal_ref,
+        credential_generation: request.access.credential_generation,
+        idempotency_key: "owner-acceptance-sql-revoked",
+        decision_ref: `owner-commit-${fencedDraft.artifactRef.id}`,
+        provenance_ref: `owner-route-${fencedDraft.artifactRef.id}`,
+        expires_at: request.authorization.expires_at,
+      }),
+    });
+    const sqlRevocationFailure = await sqlRevocationProducer.accept({
+      artifact_ref: fencedDraft.artifactRef,
+      expected_draft_head_revision: 1,
+      expected_publication_revision: null,
+      access: prepared.access,
+      current_navigation: sqlFresh.navigation,
+      current_authorization: sqlAuthorization,
+      search_database: fixture.retrieve.search_database,
+      evidence_bucket: fixture.retrieve.evidence_bucket,
+      deployment_generation: freezePrincipal.deployment_generation,
+      idempotency_key: "owner-acceptance-sql-revoked",
+    }).then(() => null, (error: unknown) => error);
+    expect(sqlRevocationFailure).toMatchObject({ code: "ARTIFACT_PUBLICATION_EFFECT_UNCERTAIN" });
+    expect(errorCauseText(sqlRevocationFailure)).toContain("ARTIFACT_PUBLICATION_OWNER_GRANT_GUARD");
+    expect(grantRevokedImmediatelyBeforeBatch).toBe(true);
+    const sqlLoserRows = await fixture.db.prepare(
+      "SELECT " +
+      "(SELECT COUNT(*) FROM operation_intent WHERE principal_ref=?1 AND idempotency_key=?2) AS intents," +
+      "(SELECT COUNT(*) FROM outbox o JOIN operation_intent i ON i.intent_id=o.intent_id AND i.revision=o.intent_revision WHERE i.principal_ref=?1 AND i.idempotency_key=?2) AS outboxes," +
+      "(SELECT COUNT(*) FROM operation_receipt r JOIN operation_intent i ON i.intent_id=r.intent_id AND i.revision=r.intent_revision WHERE i.principal_ref=?1 AND i.idempotency_key=?2) AS operation_receipts," +
+      "(SELECT COUNT(*) FROM artifact_publication_receipt WHERE principal_ref=?1 AND idempotency_key=?2) AS publication_receipts",
+    ).bind(prepared.access.principal_ref, "owner-acceptance-sql-revoked").first<{
+      readonly intents: number;
+      readonly outboxes: number;
+      readonly operation_receipts: number;
+      readonly publication_receipts: number;
+    }>();
+    expect(sqlLoserRows).toEqual({ intents: 0, outboxes: 0, operation_receipts: 0, publication_receipts: 0 });
+
     await invalidateEvidenceHandle(prepared.fixture.db, prepared.evidence.handle, "REDACTED", "fixture-purge", new Date().toISOString());
     await expect(producer.read({
       artifact_ref: prepared.artifactRef,
@@ -334,5 +518,5 @@ describe("artifact publication with actual D1 and R2", () => {
       evidence_bucket: prepared.fixture.retrieve.evidence_bucket,
       deployment_generation: freezePrincipal.deployment_generation,
     })).rejects.toMatchObject({ code: "ARTIFACT_DRAFT_READ_STALE" });
-  }, 60_000);
+  }, 90_000);
 });

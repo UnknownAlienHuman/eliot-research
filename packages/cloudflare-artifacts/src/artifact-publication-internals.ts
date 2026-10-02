@@ -1,15 +1,5 @@
-import {
-  OperationIntentSchema,
-  VersionedRefSchema,
-  type ArtifactRevision,
-  type OperationIntent,
-  type VersionedRef,
-} from "@eliotr/contracts";
-import {
-  canonicalDigest,
-  canonicalJson,
-  prepareIntentWithOutboxMutation,
-} from "@eliotr/platform-cloudflare";
+import { VersionedRefSchema, type ArtifactRevision, type VersionedRef } from "@eliotr/contracts";
+import { canonicalDigest, canonicalJson } from "@eliotr/platform-cloudflare";
 import type {
   D1NavigationStoreInput,
   EvidenceAccessContext,
@@ -19,7 +9,6 @@ import type {
 import { artifactMayBeAccepted } from "@eliotr/domain";
 import { readReauthorizedArtifactDraftSectionCitations } from "./artifact-draft-citations-reauthorization.js";
 import { readReauthorizedArtifactDraft } from "./artifact-draft-reauthorization.js";
-import type { ArtifactDraftReadError } from "./artifact-draft-reader-core.js";
 import {
   assertArtifactPublicationReady,
   ArtifactPublicationReadinessError,
@@ -101,7 +90,7 @@ export interface ResolveArtifactAcceptanceDecisionInput {
   readonly draft: ArtifactRevision;
 }
 
-export interface ReadArtifactPublicationInput extends ArtifactPublicationAuthorityInput {}
+export type ReadArtifactPublicationInput = ArtifactPublicationAuthorityInput;
 
 export interface ArtifactPublicationReceipt {
   readonly publication_ref: string;
@@ -144,14 +133,6 @@ interface CurrentnessRow {
   readonly current_source_owner_generation: unknown;
   readonly active_owner_generation: unknown;
   readonly invalidation_ref: unknown;
-}
-
-interface PublicationCitationIdentity {
-  readonly source_revision_ref: string;
-  readonly source_namespace_id: string;
-  readonly source_owner_generation: string;
-  readonly excerpt_sha256: string;
-  readonly original_handle_refs: readonly VersionedRef[];
 }
 
 export interface PublicationRow {
