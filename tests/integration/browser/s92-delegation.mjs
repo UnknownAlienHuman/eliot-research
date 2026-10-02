@@ -410,7 +410,7 @@ async function verifyDelegationReceiptDigestBinding() {
   const { prepareProjectAttachment } = await import(pathToFileURL(ATTACH_DIST).href);
   const { canonicalJson, sha256Utf8 } = await import(pathToFileURL(PLATFORM_DIST).href);
   const { ProjectClientGrantSchema } = await import(
-    resolve(ROOT, "packages/contracts/dist/index.js"));
+    pathToFileURL(resolve(ROOT, "packages/contracts/dist/index.js")).href);
   const { db, d1 } = await createDelegationTestDb();
   const nowIso = new Date().toISOString();
   const attachGrant = ProjectClientGrantSchema.parse({
