@@ -190,3 +190,66 @@ authorization, explicit revocation and the existing semantic-change denial
 remain separate from lease renewal. The receipt prepare, exact policy CAS and
 APPLIED promotion now share one D1 batch. Focused native and mounted functional
 checks are pending on this saved integration checkpoint.
+
+### Verified repository checkpoint
+
+The ordinary owner REPORT and the mounted PWA lifecycle both pass on published
+`2876576eb48582bdcb6ddcb8fa389b8e434798f8`. This supersedes the pending functional
+results above. The original REPORT test reads metadata and exact section bytes
+before renewal, renews its existing still-active shorter policy through the public
+POST, and reopens the same metadata and identical bytes with the new credential.
+The original REPORT intent/outbox and model-attempt count stay unchanged.
+
+The server's post-renewal 410 came from a second exact member-policy-closure
+comparison in the artifact reader. The historical scope service had already
+reconstructed the original policy hashes, but the reader still rejected the
+lease-dependent hash change. Its narrow exception now requires the original
+owner grant and a durable APPLIED receipt/history witness after the snapshot's
+immutable floor, with no semantic change or PREPARED receipt. All other scope
+identity comparisons, current navigation/source authorization, revocation and
+purge checks remain. The separate late-purge error classification uses the
+existing typed authority mapper; unknown errors retain retryable 503.
+
+The default mounted browser driver confirms authoritative workspace creation
+readback, renewal of two shorter ACTIVE leases to the verified session expiry,
+Library/Projects/history recovery, no automatic selection/report opening/run/query,
+saved report section/citation/evidence reopening, JWT-expiry global private clearing,
+and a released late history callback remaining fenced. Both exact unpublished
+draft publication paths return structured 404 with application/json. Existing
+browser regressions also pass. Driver corrections use exact current endpoints
+and section buttons, await actual session/configuration readiness, and preserve
+the established offline run-identity continuity while still clearing report bytes.
+JWT expiry clears the run identity as well.
+
+Commands and evidence for the parent-reviewed PR:
+
+| Source checkpoint | Command | Result |
+| --- | --- | --- |
+| 2876576e | Focused native command below | PASS: 5 tests, 28 skipped, 2 files; exit 0, 60.99s |
+| 5a2248b1 | `pnpm --filter @eliotr/core exec vitest run test/source-namespace-read-scope-renewal-http.test.ts test/artifact-draft-reader.test.ts --reporter=verbose --maxWorkers=1` | PASS: 25 tests, 2 files; exit 0, 29.89s |
+| 2876576e | `pnpm test:library-browser` | PASS: default mounted Chromium driver; exit 0 |
+| ae71911d, unchanged PWA source through 2876576e | `pnpm build:pwa` | PASS: static PWA build; exit 0 |
+| 2876576e | `pnpm typecheck` | PASS: repository TypeScript build; exit 0 |
+| 2876576e | `pnpm exec tsc -p apps/eliotr-core/test/tsconfig.json --pretty false` | PASS: native test compilation; exit 0 |
+| 2876576e | Exact-file ESLint over the 23 changed TS/mjs files from 0fd055b2; Node syntax checks for both browser fixture files; `git diff --check 0fd055b2 HEAD` | PASS; exit 0 |
+| 2876576e | `pnpm check:affected` | FAIL: SQL depth 100, contract hashes, boundaries and negative boundary checks PASS, then 18 source-budget violations; exit 1 |
+| 2876576e | `pnpm build:worker` | PASS: local Wrangler minified dry-run; 3373.96 KiB raw / 779.24 KiB gzip; exit 0 |
+
+```text
+pnpm --filter @eliotr/core exec vitest run test/owner-session-history-http.test.ts test/research-run-status.test.ts --reporter=verbose --maxWorkers=1 --testNamePattern 'reopens an original REPORT|reopens an actual synthesized, audited and materialized research-handlers.exploratory.v3 draft after login|denies foreign owners, service tokens|does not turn explicit original-grant revocation|does not revive explicitly revoked original grants'
+```
+
+The five current-checkpoint tests include the original REPORT renewal/reopen,
+actual v3 synthesis/audit/materialization/login plus its late-purge denial, and
+foreign-owner/service and explicit original-grant revoke denials. Earlier failed
+fixture runs are superseded by these saved-checkpoint results.
+
+Read-only inspection of handoff Git blobs confirms the same 18 over-limit areas
+already existed at 0fd055b2. Their measurements are not all unchanged: the touched
+artifact reader grows from 870 to 902 lines; Core and PWA package totals remain
+over their limits. No limits were raised and no violation was waived. The chained
+gates after source budgets did not execute. Full S92, complete CI, live Access
+login/relogin and live migration/deployment qualification remain pending. No Rust
+source changed, and no live lease, report, grant, credentials or deployment was
+mutated. No implementation status was promoted to LIVE. The existing exchange
+branch is published for the parent to review/merge; remote main is parent-owned.
