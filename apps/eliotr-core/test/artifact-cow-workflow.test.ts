@@ -1,0 +1,60 @@
+import { beforeAll, describe, expect, it } from "vitest";
+import { createArtifactSectionReviseWorkflowStore, digest } from "@eliotr/cloudflare-workflows";
+import { startArtifactSectionReviseWorkflow } from "@eliotr/cloudflare-research";
+import { prepareOwnerArtifactReportAdmission } from "../src/artifact-report-admission.js";
+import { admittedArtifactReportFixture } from "./artifact-report-admission-fixture.js";
+import { createArtifactDraftRuntime, draftInput, initializeArtifactDraftRuntime, runtime } from "./artifact-draft-fixture.js";
+
+async function start(tag: string) {
+  const data = await admittedArtifactReportFixture(tag);
+  const admission = await prepareOwnerArtifactReportAdmission(data.configuredEnv,data.context,data.request);
+  const store = createArtifactSectionReviseWorkflowStore(runtime.CORE_DB);
+  const input = { request: data.request,report_admission: admission,store,
+    principal: { principal_ref: data.context.principal_ref,credential_generation: data.context.credential_generation,
+      deployment_generation: runtime.DEPLOYMENT_GENERATION },handler_generation: "artifact-cow-handler-test-v1" };
+  const attempt = await startArtifactSectionReviseWorkflow(input);
+  return { data,admission,store,input,attempt };
+}
+
+describe("dedicated artifact COW W2 over actual D1/R2", () => {
+  beforeAll(initializeArtifactDraftRuntime);
+  it("persists full REPORT witness and exact budget, then reads the next-revision commit immutably", async () => {
+    const data = await start("cow-w2-positive");
+    expect(data.attempt.state).toBe("STARTED");
+    expect(data.attempt.request.report_admission_witness.input_sha256).toBe(data.admission.admission_witness.input_sha256);
+    expect(data.attempt.budget.max_total_usd).toBe(0.02);
+    expect(await startArtifactSectionReviseWorkflow(data.input)).toEqual(data.attempt);
+    const body = new TextEncoder().encode("controlled local output, no provider call");
+    const outputSha = await digest(body);
+    const objectRef = "artifact-cow/w2-test/" + data.attempt.request.operation_id;
+    await runtime.WORK_BUCKET.put(objectRef,body);
+    const actual = await runtime.WORK_BUCKET.get(objectRef);
+    if (actual === null) throw new Error("local R2 output unavailable");
+    const exactSha = await digest(new Uint8Array(await actual.arrayBuffer()));
+    const id = { operation_id: data.attempt.request.operation_id,attempt_ref: data.attempt.attempt_ref,
+      request_sha256: data.attempt.request_sha256,created_at: new Date().toISOString() };
+    const recorded = await data.store.recordOutput({ ...id,output: { output_object_ref: objectRef,output_sha256: outputSha,
+      output_size_bytes: body.byteLength,readback_sha256: exactSha } });
+    expect(recorded.state).toBe("OUTPUT_RECORDED");
+    const nextInput = await draftInput("cow-w2-child", { artifact_id: data.data.request.artifact_ref.id,artifact_revision: 2,
+      expected_head_revision: 1,scope_snapshot_id: data.data.fixture.scope.snapshot_id,
+      principal_ref: data.data.context.principal_ref });
+    const next = await createArtifactDraftRuntime().prepare(nextInput);
+    const draft = { artifact_ref: next.artifact_ref,manifest_sha256: next.manifest.receipt.expected_sha256 };
+    const committed = await data.store.commitReadback({ ...id,draft });
+    expect(committed.state).toBe("COMMITTED");
+    expect(committed.draft?.artifact_ref).toEqual(draft.artifact_ref);
+    expect(await data.store.read(id.operation_id)).toEqual(committed);
+    expect(await data.store.commitReadback({ ...id,draft })).toEqual(committed);
+  },30_000);
+  it("retains UNKNOWN durably and refuses output/commit for an uncertain effect", async () => {
+    const data = await start("cow-w2-unknown");
+    const id = { operation_id: data.attempt.request.operation_id,attempt_ref: data.attempt.attempt_ref,
+      request_sha256: data.attempt.request_sha256,created_at: new Date().toISOString() };
+    expect((await data.store.markEffectUnknown(id)).state).toBe("UNKNOWN");
+    expect((await startArtifactSectionReviseWorkflow(data.input)).state).toBe("UNKNOWN");
+    await expect(data.store.recordOutput({ ...id,output: { output_object_ref: "unknown-output",output_sha256: "b".repeat(64),
+      output_size_bytes: 1,readback_sha256: "b".repeat(64) } })).rejects.toThrow();
+    expect((await data.store.read(id.operation_id))?.state).toBe("UNKNOWN");
+  },30_000);
+});
