@@ -91,7 +91,8 @@ const importing = browserImportFixture();
 const diagnosticFixture = createBrowserMcpDiagnosticFixture();
 const researchReadinessFixture = createBrowserResearchReadinessFixture({ resolvedEvidence });
 const { posted, selectionOrder } = researchReadinessFixture;
-const researchScreen = process.argv.includes("--research-screen") ? createResearchScreenFixture({ envelope, draftWorkflowId, draftArtifact, draftSectionText, draftSectionSha, evidenceSha }) : undefined;
+const researchScreenCanaryEnabled = process.argv.includes("--research-screen");
+const researchScreen = createResearchScreenFixture({ envelope, draftWorkflowId, draftArtifact, draftSectionText, draftSectionSha, evidenceSha });
 const server = createServer((request, response) => {
   void (async () => {
     const url = new URL(request.url, "http://127.0.0.1");
@@ -102,7 +103,11 @@ const server = createServer((request, response) => {
       return json({ type: "urn:eliotr:problem:ACCESS_SESSION_REQUIRED", title: "Owner authorization changed",
         status: 403, code: "ACCESS_SESSION_REQUIRED", trace_id: "browser-auth-denial", retryable: false });
     };
-    if (researchScreen && await researchScreen.handle(request, response, url)) return;
+    if (researchScreenCanaryEnabled && await researchScreen.handle(request, response, url)) return;
+    if (url.pathname === "/api/v1/system/research-configuration") {
+      assert.equal(await researchScreen.handle(request, response, url), true, "research configuration fixture must handle its readiness route");
+      return;
+    }
     if (url.pathname === "/api/v1/system/session") {
       assert.equal(request.method, "GET");
       return json(envelope({ protocol: "eliotr.owner-session.v1", principal_ref: "owner-principal",
@@ -168,6 +173,7 @@ const server = createServer((request, response) => {
       const executionState = readCount === 0 ? "ACTIVE" : "ENGINE_COMPLETED";
       return json(envelope({ protocol: "eliotr.research-run-status.v1", workflow_instance_id: draft ? draftWorkflowId : researchWorkflowId,
         investigation_ref: { id: `research-${draft ? "d".repeat(48) : "c".repeat(48)}`, revision: 1 }, execution_state: executionState,
+        ...(executionState === "ACTIVE" ? { engine_status: "running" } : {}),
         next_stage_index: executionState === "ENGINE_COMPLETED" ? 18 : 3,
         answer: draft && executionState === "ENGINE_COMPLETED" ? { availability: "draft", artifact_ref: draftArtifactRef } : { availability: "unavailable" } }));
     }
@@ -340,13 +346,29 @@ try {
     await wait(`document.querySelector("#research-run [role=status]")?.textContent.includes("Research started")`, `${label}: draft launch`);
     assert.equal(await evaluate('document.querySelector("#research-run [data-workflow-id]").value'), draftWorkflowId);
     await click("#research-run [data-run-refresh]");
-    await wait('document.querySelector("#research-run [role=status]")?.textContent.includes("still processing")', `${label}: draft active status`);
+    await wait('document.querySelector("#research-run [role=status]")?.textContent.includes("Research is processing.")', `${label}: draft active status`);
     await click("#research-run [data-run-refresh]");
-    await wait('document.querySelector("#research-run [role=status]")?.textContent.includes("draft report is ready")', `${label}: draft completed status`);
+    try {
+      await wait('document.querySelector("#research-run [role=status]")?.textContent.includes("draft report is ready")', `${label}: draft completed status`);
+    } catch (error) {
+      const ui = await evaluate(`(() => {
+        const read = (selector) => {
+          const value = document.querySelector(selector)?.textContent;
+          return typeof value === "string" ? value.trim().slice(0, 240) : null;
+        };
+        return { status: read('#research-run [role="status"]'), badge: read('#research-run [data-run-badge]') };
+      })()`).catch((captureError) => ({ capture_error: String(captureError).split(/[\r\n]/u, 1)[0].slice(0, 160) }));
+      const fixtureErrors = errors.slice(-3).map((value) => String(value).split(/[\r\n]/u, 1)[0]
+        .replace(/\bBearer\s+\S+/giu, "Bearer [redacted]")
+        .replace(/((?:authorization|cookie|set-cookie|access[_-]?token|refresh[_-]?token|id[_-]?token|secret|api[_-]?key)\s*[:=]\s*)[^\s,;]+/giu, "$1[redacted]")
+        .slice(0, 256));
+      const summary = error instanceof Error ? error.message : String(error);
+      throw new Error(`${summary}; draft completion diagnostics=${JSON.stringify({ ui, status_get_count: draftRunStatusReads, fixture_errors: fixtureErrors })}`, { cause: error });
+    }
     await wait('document.querySelector("#research-run [data-run-result]")?.textContent.includes("artifact-draft-1:1")', `${label}: draft metadata`);
   };
   await cdp("Runtime.enable"); await cdp("Page.enable"); await cdp("Page.navigate", { url: origin });
-  if (researchScreen) {
+  if (researchScreenCanaryEnabled) {
     await runResearchScreenCanary({ fixture: researchScreen, cdp, evaluate, wait, until, click, openSources, draftSectionText, evidenceText, evidenceSha });
     assert.deepEqual(errors, []);
   } else {
@@ -417,10 +439,25 @@ try {
     const input = document.querySelector('#research-run textarea[name="query"]');
     input.value = "research question"; input.closest("form").requestSubmit();
   })()`);
+  await wait('document.querySelector("#research-run [role=status]")?.textContent === "Owner verified. Your question is ready; nothing was submitted automatically."', "Owner reverified after revision denial");
+  await click('[data-nav-target="#connections-card"]'); await assertView("connections", "#connections-card");
+  await click("#research-configuration [data-research-configuration-refresh]");
+  await wait('document.querySelector("#research-configuration [data-research-configuration-badge]")?.textContent === "READY TO RUN"', "Research configuration refreshed after owner verification");
+  await click('[data-nav-target="#research-card"]'); await assertView("research", "#research-card");
+  assert.equal(await evaluate('document.querySelector(\'#research-run textarea[name="query"]\').value'), "research question");
+  assert.equal(await evaluate('document.querySelector("#research-run form button[type=submit]").disabled'), false);
+  await evaluate(`(() => {
+    document.querySelector('#research-run form').requestSubmit();
+  })()`);
   await wait('document.querySelector("#research-run [role=status]")?.textContent.includes("Research started")', "Research run launch");
   assert.equal(await evaluate('document.querySelector("#research-run [data-workflow-id]").value'), researchWorkflowId);
   await click("#research-run [data-run-refresh]");
-  await wait('document.querySelector("#research-run [role=status]")?.textContent.includes("still processing")', "Research run active status");
+  try {
+    await wait('document.querySelector("#research-run [role=status]")?.textContent.includes("Research is processing.")', "Research run active status");
+  } catch (error) {
+    throw new Error(`${error instanceof Error ? error.message : String(error)}; status GET count=${researchRunStatusReads}`, { cause: error });
+  }
+  assert.equal(researchRunStatusReads, 1, "the active response is the first explicit status refresh");
   await click("#research-run [data-run-refresh]");
   await wait('document.querySelector("#research-run [role=status]")?.textContent.includes("No answer has been generated")', "Research run completed status");
   assert.equal(await evaluate('document.querySelector("#research-run [data-run-result]").textContent.includes("available" )'), false);
