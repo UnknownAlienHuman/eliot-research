@@ -4802,6 +4802,8 @@ function bridgeRepairNetworkSpec(origin) {
     origins: [origin],
     api: [
       ...authenticatedPanelApi(),
+      // Re-pairing remounts the authenticated app and performs this exact session read.
+      { method: "GET", path: "/api/v1/system/session", status: 200 },
       { method: "GET", path: "/__local/", status: 200 },
       { method: "POST", path: "/__local/pair", status: 204 },
       { method: "GET", path: "/api/v1/research/catalog?limit=20", status: 200 },
@@ -5070,6 +5072,24 @@ export function verifyAuthenticatedPanelNetworkRegression(origin = "http://127.0
       assert.throws(() => assertPhaseNetwork(harnessFor(route), "unauth-panel-network", unauthNetworkSpec(origin)));
       negatives += 1;
     }
+  }
+  // The persisted-session read is specific to bridge repair: prove its exact
+  // GET/path/200 registration without turning it into a general authenticated
+  // response exemption.
+  const repairSession = { method: "GET", path: "/api/v1/system/session", status: 200 };
+  const repairSpec = bridgeRepairNetworkSpec(origin);
+  assert.doesNotThrow(() => assertPhaseNetwork(harnessFor(repairSession),
+    "bridge-repair-session-positive", repairSpec),
+  "bridge repair must permit its exact successful session read");
+  for (const changed of [
+    { ...repairSession, status: 401 },
+    { ...repairSession, method: "POST" },
+    { ...repairSession, path: "/api/v1/system/session?limit=1" },
+    { ...repairSession, origin: "http://127.0.0.1:43124" },
+  ]) {
+    assert.throws(() => assertPhaseNetwork(harnessFor(changed),
+      "bridge-repair-session-negative", repairSpec));
+    negatives += 1;
   }
   const changes = routes.find((route) => route.method === "POST");
   const noPost = { ...authedNetworkSpec(origin), mutations: ["/__local/pair"] };

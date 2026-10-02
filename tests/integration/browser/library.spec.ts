@@ -424,12 +424,11 @@ test("S92 92.4c continuity: 94 migrations; v1→v2 source generations upgrade on
   assertS92Honest(outcome, ["PASS"]);
 });
 
-test("S92 92.4d continuity: offline mode; NOT_EXECUTED without Chromium", async () => {
+test("S92 92.4d continuity: offline mode remains NOT_EXECUTED until CDP scenario is wired", async () => {
   const outcome = await runS92ContinuityScenario("s92-continuity-offline");
-  // Live CDP offline emulation needs Chromium; the scenario honestly reports
-  // NOT_EXECUTED after verifying readiness fixture wiring. PASS is accepted
-  // where Chromium exists.
-  assertS92Honest(outcome, ["NOT_EXECUTED", "PASS"]);
+  // This scenario verifies fixture wiring only; it does not run the live CDP
+  // offline canary, regardless of whether Chromium is installed.
+  assertS92Honest(outcome, ["NOT_EXECUTED"]);
 });
 
 test("S92 92.4e continuity: cancel request retained; foreign bindings rejected", async () => {

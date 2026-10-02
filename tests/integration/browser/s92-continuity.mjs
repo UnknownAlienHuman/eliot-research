@@ -270,8 +270,8 @@ async function verifyOffline() {
     return notExecuted(`readiness fixture wiring verified; live CDP offline emulation needs Chromium: ${error.message.slice(0, 160)} ` +
       `(run scripts/test-library-browser.mjs in the S92 browser environment)`);
   }
-  return blocked("Chromium present but no Playwright CDP driver is wired in this module; " +
-    "the live offline canary runs under scripts/test-library-browser.mjs");
+  return notExecuted("readiness fixture wiring verified; the live CDP offline canary is not run here because " +
+    "this module has no Playwright CDP driver; run scripts/test-library-browser.mjs in the S92 browser environment");
 }
 
 // --- 92.4: run cancellation -----------------------------------------------
