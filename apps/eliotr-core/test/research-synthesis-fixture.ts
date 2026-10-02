@@ -39,6 +39,8 @@ export interface CommittedFreezeSynthesisFixtureOptions {
   readonly allowed_verifier_refs?: readonly string[];
   /** Add a second real projected evidence section for downstream citation fixtures. */
   readonly include_counterevidence?: boolean;
+  /** Use the production execution-bound ORIENT lifecycle for the original scope. */
+  readonly orientation_backed_scope?: boolean;
 }
 
 function futureIso(): string {
@@ -350,6 +352,7 @@ export async function committedFreezeSynthesisFixture(options: CommittedFreezeSy
     ...(options.handler_generation === undefined ? {} : { handler_generation: options.handler_generation }),
     ...(options.allowed_verifier_refs === undefined ? {} : { allowed_verifier_refs: options.allowed_verifier_refs }),
     ...(options.include_counterevidence === true ? { include_counterevidence: true } : {}),
+    ...(options.orientation_backed_scope === true ? { orientation_backed_scope: true } : {}),
   });
   const base = await governedModelAttemptFixture("freeze-synthesis", {
     database: freeze.db, bucket: freeze.bucket, request: freeze.stage_zero, principal: freezePrincipal,

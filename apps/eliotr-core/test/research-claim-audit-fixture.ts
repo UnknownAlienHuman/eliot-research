@@ -188,6 +188,8 @@ export interface ResearchClaimAuditStageFixtureOptions {
   readonly handler_generation?: SemanticResearchHandlerGeneration;
   /** Include a second real projected counterevidence section in the committed pack. */
   readonly include_counterevidence?: boolean;
+  /** Use the production execution-bound ORIENT lifecycle for the original scope. */
+  readonly orientation_backed_scope?: boolean;
 }
 
 async function committedAuditInputFixture(options: ResearchClaimAuditStageFixtureOptions = {}) {
@@ -197,6 +199,7 @@ async function committedAuditInputFixture(options: ResearchClaimAuditStageFixtur
     synthesis_prompt: "Produce eliotr.research.synthesis-claims-candidate.v2 from the frozen evidence.",
     allowed_verifier_refs: [AUDIT_VERIFIER_REF],
     ...(options.include_counterevidence === true ? { include_counterevidence: true } : {}),
+    ...(options.orientation_backed_scope === true ? { orientation_backed_scope: true } : {}),
   });
   const synthesis = await fixture.freeze.executor.execute(fixture.stage_twelve, principal, fixture.handler.handler);
   const stage13: StageRequest = {

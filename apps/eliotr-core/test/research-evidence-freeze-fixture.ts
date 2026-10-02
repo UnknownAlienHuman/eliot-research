@@ -9,8 +9,9 @@ import {
   createR2EvidenceContentPort,
   type CloudflareEvidenceResolver,
 } from "@eliotr/cloudflare-evidence";
-import { createD1ScopeService, createOwnerScopeAuthority } from "@eliotr/cloudflare-navigation";
+import { createD1ScopeService, createOwnerScopeAuthority, OWNER_RESEARCH_SCOPE_PROFILE } from "@eliotr/cloudflare-navigation";
 import type { ScopeSnapshot } from "@eliotr/contracts";
+import type { AuthenticatedRequestContext, QueryRequest } from "@eliotr/interfaces";
 import { createD1InvestigationLedgerStore, createInvestigationLedgerService, type CreateLedgerInput, type InvestigationLedgerStore, type LedgerD1Database } from "@eliotr/research";
 import type { ReferenceManifestStore } from "@eliotr/policy";
 import {
@@ -29,6 +30,7 @@ import {
 import { createRetrieveBranchesStageHandler, type RetrieveBranchesStageDependencies } from "../src/research-retrieve-branches.js";
 import { createEvidenceFreezeComposition, createEvidenceFreezePredecessorReader, createEvidenceFreezeWorkflowReaders } from "../src/research-evidence-freeze-composition.js";
 import { SERVER_OWNED_FREEZE_HANDLER_GENERATION } from "../src/research-stage-handlers.js";
+import { prepareResearchRunScope } from "../src/research-run-admission.js";
 import { modelGatewayRequestParametersSha256, modelGatewaySha256, canonicalModelGatewayJson } from "@eliotr/cloudflare-ai";
 import { importAndProject, prepareQ1Namespace, type Q1Runtime } from "./retrieval-q1-fixture.js";
 
@@ -68,6 +70,8 @@ export interface FreezeFixture {
 
 export interface FreezeFixtureOptions {
   readonly handler_generation?: SemanticResearchHandlerGeneration;
+  /** Use the production execution-bound ORIENT lifecycle for the original scope. */
+  readonly orientation_backed_scope?: boolean;
   /** Optional committed-manifest admission used by later-stage reader fixtures. */
   readonly allowed_verifier_refs?: readonly string[];
   /** Add two real top-level evidence sections for multi-handle downstream fixtures. */
@@ -141,15 +145,52 @@ export async function freezeFixture(options: FreezeFixtureOptions = {}): Promise
     .bind(world.namespace, access.principal_ref, `freeze-read-${world.namespace}`, decision.allowed_use_json, decision.disclosure_ceiling, expiresAt, now).run();
   const owner = createOwnerScopeAuthority(db, access, () => nowMs);
   const scopes = createD1ScopeService(db, owner, { now: () => nowMs, ttl_ms: 3_600_000 });
-  const scope = await scopes.freeze({ kind: "SELECTED_SOURCES", source_ids: [`source-${world.namespace}`] }, access.credential_generation);
-  await owner.grant(scope);
+  const scopeExpression = { kind: "SELECTED_SOURCES", source_ids: [`source-${world.namespace}`] } as const;
+  let operationId = "freeze-workflow-operation";
+  let investigationId = "freeze-workflow-investigation";
+  let scope: ScopeSnapshot;
+  if (options.orientation_backed_scope === true) {
+    const idempotencyKey = `freeze-fixture-${world.namespace}`;
+    const request: QueryRequest = {
+      query: "Pinned", product: "RESEARCH", scope_expression: scopeExpression, literals: [],
+      evidence_grade: "E0", budget_ref: "research-budget-v1", max_results: 16,
+    };
+    const requestDigest = await digest(new TextEncoder().encode(JSON.stringify(request)));
+    const runIdentity = await digest(new TextEncoder().encode(
+      `${access.principal_ref}|${idempotencyKey}|${requestDigest}`,
+    ));
+    operationId = `run-${runIdentity.slice(0, 48)}`;
+    investigationId = `research-${runIdentity.slice(0, 48)}`;
+    const context: AuthenticatedRequestContext = {
+      request: new Request("https://research.example/api/v1/research/run", {
+        method: "POST", headers: { "idempotency-key": idempotencyKey },
+      }),
+      principal_ref: access.principal_ref,
+      client_class: access.client_class,
+      credential_generation: access.credential_generation,
+      trace_id: "freeze-orientation-backed-scope",
+      access: {
+        principal_ref: access.principal_ref, credential_generation: access.credential_generation,
+        authentication_method: "cloudflare_access", expires_at: expiresAt,
+      },
+    };
+    const scopeRef = await prepareResearchRunScope(
+      { CORE_DB: db, SEARCH_DB: runtime.SEARCH_DB }, context, request, operationId, requestDigest,
+    );
+    const persisted = await createD1EvidenceAuthorityPort({
+      core_database: db, search_database: runtime.SEARCH_DB,
+    }).loadScope(scopeRef);
+    if (persisted === null) throw new Error("Execution-bound ORIENT scope was not persisted");
+    scope = persisted.snapshot;
+  } else {
+    scope = await scopes.freeze(scopeExpression, access.credential_generation);
+    await owner.grant(scope);
+  }
   await db.batch([
     db.prepare("INSERT INTO investigation_current_policy (policy_generation,policy_authority_ref,state,created_at) VALUES (?1,?2,'ACTIVE',?3)").bind("freeze-policy-v1", scope.policy_authority_ref, now),
     db.prepare("INSERT INTO investigation_current_deployment (deployment_generation,state,created_at) VALUES (?1,'ACTIVE',?2)").bind(principal.deployment_generation, now),
   ]);
 
-  const operationId = "freeze-workflow-operation";
-  const investigationId = "freeze-workflow-investigation";
   const payload = { investigation_id: investigationId, operation_id: operationId, query: "Pinned",
     scope_snapshot_ref: { id: scope.snapshot_id, revision: scope.revision }, evidence_grade: "E0" as const, principal_ref: principal.principal_ref };
   const payloadBytes = new TextEncoder().encode(canonicalEvidenceJson(payload));
@@ -198,7 +239,8 @@ export async function freezeFixture(options: FreezeFixtureOptions = {}): Promise
       async ({ request, input_bytes }) => new TextEncoder().encode(JSON.stringify({ stage: request.stage, input_sha: await digest(input_bytes) })));
   }
   const retrieve: RetrieveBranchesStageDependencies = { database: db, search_database: runtime.SEARCH_DB, work_bucket: runtime.WORK_BUCKET,
-    evidence_bucket: runtime.EVIDENCE_BUCKET, access, navigation, ledger: ledgerStore, profile: retrievalProfile };
+    evidence_bucket: runtime.EVIDENCE_BUCKET, access, navigation, ledger: ledgerStore,
+    profile: options.orientation_backed_scope === true ? OWNER_RESEARCH_SCOPE_PROFILE : retrievalProfile };
   const retrieveRequest: StageRequest = { ...stage_zero, stage: "RETRIEVE_BRANCHES", investigation_ref: previous.investigation_ref, input_manifest: previous.output_manifest };
   const stage_five = await executor.execute(retrieveRequest, principal, createRetrieveBranchesStageHandler(retrieve));
   previous = stage_five;

@@ -278,7 +278,11 @@ describe("owner run status after reauthentication over real HTTP/D1/R2", () => {
 
   it.each([SERVER_OWNED_FREEZE_HANDLER_GENERATION, SERVER_OWNED_SEMANTIC_HANDLER_GENERATION,
     SERVER_OWNED_LEGACY_PROTOCOL_HANDLER_GENERATION, SERVER_OWNED_PROTOCOL_HANDLER_GENERATION] as const)("reopens an actual synthesized, audited and materialized %s draft after login without rerunning the models", async (generation) => {
-    const audited = await researchClaimAuditStageFixture({ include_counterevidence: true, handler_generation: generation });
+    const audited = await researchClaimAuditStageFixture({
+      include_counterevidence: true,
+      handler_generation: generation,
+      ...(generation === SERVER_OWNED_FREEZE_HANDLER_GENERATION ? { orientation_backed_scope: true } : {}),
+    });
     const freeze = audited.fixture.freeze;
     const environment = { database: freeze.db, work_bucket: freeze.bucket,
       manifest_store: freeze.freeze_store, read_stage_five: freeze.readers.read_stage_five };
@@ -363,6 +367,12 @@ describe("owner run status after reauthentication over real HTTP/D1/R2", () => {
       const artifactRef = { id: draftBinding.artifact_id, revision: draftBinding.revision };
       const originalSourceRef = freeze.scope.member_source_revision_refs[0];
       if (originalSourceRef === undefined) throw new Error("Historical report source is missing");
+      const originalOrientation = await freeze.db.prepare(
+        "SELECT state,snapshot_id,snapshot_revision FROM orientation_request WHERE execution_operation_id=?1",
+      ).bind(freeze.operation_id).first<{ state: string; snapshot_id: string; snapshot_revision: number }>();
+      expect(originalOrientation).toMatchObject({
+        state: "COMPLETE", snapshot_id: freeze.scope.snapshot_id, snapshot_revision: freeze.scope.revision,
+      });
       const replacementSourceRef = `source-replacement-${crypto.randomUUID()}`;
       const advanced = await advanceAdmittedSourceHead(originalSourceRef, replacementSourceRef);
 
