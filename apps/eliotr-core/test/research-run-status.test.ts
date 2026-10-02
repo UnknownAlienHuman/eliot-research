@@ -106,7 +106,7 @@ async function advanceAdmittedSourceHead(originalRef: string, replacementRef: st
     admitted_at: new Date().toISOString() });
   await insert("bundle_ingest_operation", { ...operation, operation_id: operationId,
     source_revision_ref: replacementRef, expected_head_revision_ref: originalRef,
-    idempotency_key: `key-${replacementRef}`, candidate_id: `candidate-${replacementRef}` });
+    idempotency_key: `key-${replacementRef}`, candidate_id: `candidate-${replacementRef}`, staging_session_ref: null });
   await insert("source_admission_decision", { ...receipt, source_revision_ref: replacementRef,
     operation_id: operationId, decision_receipt_ref: replacementDecision.decision_receipt_ref,
     decision_json: canonicalEvidenceJson(replacementDecision),
