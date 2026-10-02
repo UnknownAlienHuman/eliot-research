@@ -16,7 +16,6 @@ import { createD1ScopeService, createOwnerScopeAuthority } from "@eliotr/cloudfl
 import { ArtifactPublicationError } from "@eliotr/cloudflare-research";
 import type { Env } from "./env.js";
 import { prepareArtifactReadReauthorization } from "./research-artifact-reauthorization-http.js";
-import { ArtifactReadNotFoundError } from "./artifact-draft-http.js";
 import { HttpRequestError } from "./http-errors.js";
 
 function access(context: AuthenticatedRequestContext): EvidenceAccessContext {
@@ -170,7 +169,7 @@ export async function readOwnerArtifactPublication(
     evidence_bucket: env.EVIDENCE_BUCKET,
     deployment_generation: env.DEPLOYMENT_GENERATION,
   });
-  if (publication === null) throw new ArtifactReadNotFoundError("artifact has no accepted publication");
+  if (publication === null) throw new ArtifactPublicationError("ARTIFACT_PUBLICATION_NOT_FOUND", "artifact has no accepted publication");
   return { protocol: "eliotr.artifact-publication.v1", ...publication };
 }
 
@@ -185,9 +184,9 @@ export async function readOwnerArtifactCurrentPublication(
   current.requireActiveRequest();
   await current.requireCurrent();
   type Head = { head_revision: number; publication_revision: number | null; publication_ref: string | null;
-    draft_revision: number | null; receipt_ref: string | null };
+    draft_revision: number | null; disposition: string | null; receipt_ref: string | null };
   const readHead = () => env.CORE_DB.prepare(
-    "SELECT d.head_revision,h.publication_revision,h.publication_ref,h.draft_revision,p.publication_ref AS receipt_ref " +
+    "SELECT d.head_revision,h.publication_revision,h.publication_ref,h.draft_revision,h.disposition,p.publication_ref AS receipt_ref " +
     "FROM artifact_draft_head d LEFT JOIN artifact_publication_head h ON h.artifact_id=d.artifact_id " +
     "LEFT JOIN artifact_publication_receipt p ON p.artifact_id=h.artifact_id AND p.draft_revision=h.draft_revision " +
     "AND p.publication_ref=h.publication_ref AND p.publication_revision=h.publication_revision WHERE d.artifact_id=?1",
@@ -201,8 +200,8 @@ export async function readOwnerArtifactCurrentPublication(
     const after = await readHead();
     if (after === null || after.head_revision !== head.head_revision || after.publication_ref !== null ||
         after.publication_revision !== head.publication_revision || after.draft_revision !== head.draft_revision ||
-        after.receipt_ref !== head.receipt_ref) stale();
-    throw new ArtifactReadNotFoundError("artifact has no accepted publication");
+        after.receipt_ref !== head.receipt_ref || after.disposition !== head.disposition) stale();
+    throw new ArtifactPublicationError("ARTIFACT_PUBLICATION_NOT_FOUND", "artifact has no accepted publication");
   }
   if (head.receipt_ref !== head.publication_ref || head.draft_revision === null || head.publication_revision === null) stale();
   const publication = await readOwnerArtifactPublication(env, context, { id: artifactRef.id, revision: head.draft_revision });
@@ -211,7 +210,7 @@ export async function readOwnerArtifactCurrentPublication(
   const after = await readHead();
   if (after === null || after.head_revision !== head.head_revision || after.publication_ref !== head.publication_ref ||
       after.publication_revision !== head.publication_revision || after.draft_revision !== head.draft_revision ||
-      after.receipt_ref !== head.receipt_ref || publication.receipt.publication_ref !== head.publication_ref ||
+      after.receipt_ref !== head.receipt_ref || after.disposition !== head.disposition || publication.receipt.publication_ref !== head.publication_ref ||
       publication.receipt.publication_revision !== head.publication_revision) stale();
   return publication;
 }

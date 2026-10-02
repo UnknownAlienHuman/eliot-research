@@ -1,5 +1,6 @@
 import { createResearchConnection, isResearchConnectionFailure } from "./research-run-connection.js";
 import { renderResearchArtifactReport, type ReportRenderOptions } from "./research-run-report.js";
+import { readArtifactPublication } from "./artifact-product-api.js";
 import { mountResearchRunControls, openRunArtifact, runArtifactRenderOptions, type OpenedRunArtifact } from "./research-run-controls.js";
 import { IdentifierSchema } from "@eliotr/contracts";
 import { ApiRequestError, isAuthorizationLoss } from "./api.js";
@@ -239,6 +240,7 @@ export function mountResearchRunPanel(
     busy: () => controller !== undefined || !connection.ready, connectionFailed,
     disposed: () => disposed, generation: deploymentGeneration, setController: (local) => { controller = local; },
     clearPrivate, setActionsDisabled: setReportActionsDisabled, finishAction: finishReportAction,
+    openArtifact: (ref) => { readSavedDraft({ artifact_ref: ref, created_at: new Date().toISOString() }); loadHistory("automatic", true); },
   });
   const readSavedDraft = (draft: ResearchRunSavedDraft): void => {
     if (runControls?.busy) return;
@@ -252,11 +254,13 @@ export function mountResearchRunPanel(
     lastExecutionState = undefined; lastEngineStatus = undefined; lastAnswerAvailability = undefined;
     result.replaceChildren(); result.hidden = true; badge.textContent = "WAITING"; progress.textContent = "Opening saved research…"; status.textContent = "Opening saved research…"; updateButtons();
     void readReauthorizedResearchArtifact(draft.artifact_ref, generation, local.signal)
-      .then((reauthorized) => {
+      .then(async (reauthorized) => {
+        if (!responseIsCurrent(active, local)) return;
+        const publication = await readArtifactPublication(draft.artifact_ref, generation, local.signal);
         if (!responseIsCurrent(active, local)) return;
         lastExecutionState = "ENGINE_COMPLETED"; lastEngineStatus = "complete"; lastAnswerAvailability = "draft";
-        badge.textContent = "DRAFT"; progress.textContent = "Saved draft opened for review."; result.replaceChildren();
-        renderArtifactReport(reauthorized.artifact, { renderSerial: active, deploymentGeneration: reauthorized.deployment_generation, historical: true, ...(draft.workflow_instance_id === undefined ? {} : { workflowInstanceId: draft.workflow_instance_id }), authorizationScopeSnapshotRef: reauthorized.authorization_scope_snapshot_ref, sourceFreshness: reauthorized.source_freshness });
+        badge.textContent = publication?.revision.status ?? "DRAFT"; progress.textContent = "Saved report opened for review."; result.replaceChildren();
+        renderArtifactReport(reauthorized.artifact, { renderSerial: active, deploymentGeneration: reauthorized.deployment_generation, historical: true, ...(draft.workflow_instance_id === undefined ? {} : { workflowInstanceId: draft.workflow_instance_id }), authorizationScopeSnapshotRef: reauthorized.authorization_scope_snapshot_ref, sourceFreshness: reauthorized.source_freshness, ...(publication === null ? {} : { publication }) });
         result.hidden = false; status.textContent = "Saved draft opened. Open a section to recheck its sources."; setReportActionsDisabled(true);
       })
       .catch((error: unknown) => {

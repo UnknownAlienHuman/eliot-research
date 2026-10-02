@@ -1,4 +1,6 @@
 import { ApiRequestError, isAuthorizationLoss } from "./api.js";
+import { createArtifactProductControls } from "./artifact-product-controls.js";
+import type { ArtifactPublicationView } from "./artifact-product-api.js";
 import { readReauthorizedResearchArtifactSection, type ResearchArtifactSectionCitationAuditClaim, type ResearchSourceFreshness } from "./research-run-api.js";
 import { readReauthorizedResearchArtifactSectionCitations } from "./research-run-reauthorization-api.js";
 import { downloadResearchDraftMarkdown, type ResearchMarkdownSection } from "./research-markdown-download.js";
@@ -6,7 +8,7 @@ import { createWikiProposalFromRun } from "./wiki-proposal-create-api.js";
 import type { ArtifactRevision } from "@eliotr/contracts";
 import { AUDIT_DISPOSITION_LABELS, message, wikiProposalErrorText, auditStatusText, decodeSectionBody, codeRef, citationRefKey, renderResearchSourceFreshnessNotice, createResearchReportHeader } from "./research-run-view.js";
 
-export type ReportRenderOptions = { readonly renderSerial: number; readonly deploymentGeneration: string; readonly historical: boolean; readonly workflowInstanceId?: string; readonly investigationRef?: string; readonly authorizationScopeSnapshotRef?: { readonly id: string; readonly revision: number }; readonly sourceFreshness?: ResearchSourceFreshness };
+export type ReportRenderOptions = { readonly renderSerial: number; readonly deploymentGeneration: string; readonly historical: boolean; readonly workflowInstanceId?: string; readonly investigationRef?: string; readonly authorizationScopeSnapshotRef?: { readonly id: string; readonly revision: number }; readonly sourceFreshness?: ResearchSourceFreshness; readonly publication?: ArtifactPublicationView };
 
 interface ReportHooks {
   readonly element: HTMLElement;
@@ -21,6 +23,7 @@ interface ReportHooks {
   clearPrivate(notice?: string): void;
   setActionsDisabled(disabled: boolean): void;
   finishAction(controller: AbortController, serial: number): void;
+  openArtifact(ref: ArtifactRevision["artifact_ref"]): void;
 }
 
 export function renderResearchArtifactReport(artifact: ArtifactRevision, options: ReportRenderOptions, hooks: ReportHooks): void {
@@ -154,11 +157,25 @@ export function renderResearchArtifactReport(artifact: ArtifactRevision, options
   };
   reportActions.append(download);
   if (createWikiDraft !== undefined && wikiDraftStatus !== undefined) reportActions.append(createWikiDraft, wikiDraftStatus);
+  const currentProductView = (): boolean => hooks.isCurrent(options.renderSerial) && !hooks.disposed() && hooks.generation() === options.deploymentGeneration;
+  const product = createArtifactProductControls(artifact, options.deploymentGeneration, reportActions, reportHead, {
+    ready: () => currentProductView() && !hooks.busy(), readyAfterAction: currentProductView,
+    begin: () => { const local = new AbortController(); hooks.setController(local); hooks.setActionsDisabled(true); return local; },
+    finish: (local) => hooks.finishAction(local, options.renderSerial),
+    openArtifact: hooks.openArtifact,
+    failed: (error) => {
+      if (!currentProductView()) return;
+      if (hooks.connectionFailed(error)) return;
+      if (error instanceof ApiRequestError && (isAuthorizationLoss(error) || error.status === 403 || error.status === 409 || error.status === 410 || error.code === "ARTIFACT_DRAFT_READ_NOT_FOUND")) { hooks.clearPrivate(); return; }
+      status.textContent = message(error);
+    },
+  }, options.publication);
   const freshnessNotice = options.sourceFreshness === undefined ? undefined : renderResearchSourceFreshnessNotice(options.sourceFreshness);
   result.append(reportHead, ...(freshnessNotice === undefined ? [] : [freshnessNotice]), technical, reportActions);
   const sections = document.createElement("ul"); sections.className = "research-report-sections";
   artifact.sections.forEach((section, ordinal) => {
     const item = document.createElement("li"); item.className = "research-report-section";
+    product.addSectionAction(section.contract_id, item);
     const sectionHeading = document.createElement("h4"); sectionHeading.textContent = `Section ${ordinal + 1}`;
     const sectionTechnical = document.createElement("details"); sectionTechnical.className = "research-section-details";
     const sectionTechnicalSummary = document.createElement("summary"); sectionTechnicalSummary.textContent = "Section details";

@@ -1,9 +1,9 @@
 # Backend delivery plan
 
 Current execution order, reconciled on 2026-10-02 against `main`
-`6480186ea5ead7052e7122ec1b523713ddc97f21`.
+`f62dbad1d55ab3a48f62de1c31c2196de93bcf96` (parent-reviewed main baseline).
 
-The isolated [product integration checkpoint](product-resume-2026-10-02.md) records actual local COW/publication/restore checks and remaining code separately from live approval. The active result remains S92 integration, not release acceptance.
+The [product integration checkpoint](product-resume-2026-10-02.md) records actual local COW/publication/restore checks and remaining code separately from live approval. The active result remains S92 integration, not release acceptance.
 
 This is the volatile handoff and queue. Refresh `origin/main` and the active task before editing. [PR #292](https://github.com/UnknownAlienHuman/eliot-research/pull/292) preserves the original S01–S99 passports and negative acceptance criteria; it is not a second queue.
 
@@ -43,10 +43,13 @@ and commits a new revision with compare-and-swap. Five unit cases and a real loc
 case verify immutable reuse, refusals and a concurrent one-winner commit.
 This is a local engineering follow-up to merged main `6480186e` and the deployment fixes in
 [draft PR #307](https://github.com/UnknownAlienHuman/eliot-research/pull/307).
-Product composition still needs an authoritative section producer, evidence validators and export
-assembler; ACCEPTED publication is still absent. The S92 COW source probe is not an accepted owner loop.
-Resolve those product paths and inspect actual outcomes instead of treating a successful
-process exit or standalone adapter as full S92 acceptance.
+The existing owner Core section-revise/independent-verification/child materialization path is now
+composed with fresh execution authority and immutable historical provenance. The current bounded
+checkpoint connects the PWA revision and explicit acceptance controls to those existing routes,
+reads the exact current publication CAS through the existing validator, and joins native COW children
+to ACCEPTED readback. Native outcomes and remaining browser/process-restart gaps are recorded in
+[the product checkpoint](product-resume-2026-10-02.md). The S92 source probe remains insufficient for
+full owner-loop acceptance; parent review and complete acceptance are still pending.
 
 Focused local checks for this adapter: `pnpm exec vitest run packages/cloudflare-artifacts/src/artifact-cow.test.ts`
 and `pnpm test:artifacts-worker`. The latter uses real local D1 migrations and R2;
