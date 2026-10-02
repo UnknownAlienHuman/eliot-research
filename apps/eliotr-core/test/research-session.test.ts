@@ -24,7 +24,6 @@ import { parseResearchRunRequest } from "../src/research-session.js";
 
 let admissionEnvironment: Env;
 const admittedWorkflows: string[] = [];
-
 beforeAll(async () => {
   await setupOrientationDatabase();
   for (const sourceId of ["rs-query", "rs-query-neg", "rs-shared", "rs-second", "rs-revoked", "rs-protocol", "rs-legacy-e2"]) await seedSource(sourceId);
@@ -49,6 +48,7 @@ async function workflowCounts() {
   const checkpoints = await count("research_workflow_checkpoint");
   const outbox = await db.prepare("SELECT COUNT(*) AS n FROM outbox WHERE topic = 'research.workflow.checkpoint.v1'").first<number>("n");
   const events = await db.prepare("SELECT COUNT(*) AS n FROM investigation_ledger_event WHERE kind = 'CHECKPOINT'").first<number>("n");
+  if (attempts === null || checkpoints === null || outbox === null || events === null) throw new Error("workflow count readback is unavailable");
   return { attempts, checkpoints, outbox, events };
 }
 function runWithInstalledAdmission(request: Request, actor = verifier()) {
@@ -86,6 +86,18 @@ describe("research.query over real HTTP/D1", () => {
     const counts = [await count("retrieval_query_result"), await count("retrieval_query_trace"), await count("retrieval_scope_profile"), await count("scope_snapshot"), await count("scope_access_grant")];
     const replayed = await body(await run(queryRequest("rs-query")));
     expect(replayed.data).toEqual(firstBody.data);
+    expect([await count("retrieval_query_result"), await count("retrieval_query_trace"), await count("retrieval_scope_profile"), await count("scope_snapshot"), await count("scope_access_grant")]).toEqual(counts);
+    const readStoredQuery = () => db.prepare(
+      "SELECT request_digest, result_json, result_digest FROM retrieval_query_result WHERE principal_ref=?1 AND client_class=?2 AND credential_generation=?3 AND idempotency_key=?4 LIMIT 1",
+    ).bind(principal, "owner_pwa", "credential-v1", "rs-query-rs-query")
+      .first<{ request_digest: string; result_json: string; result_digest: string }>();
+    const storedBefore = await readStoredQuery();
+    expect(storedBefore).not.toBeNull();
+    const changedLimit = await run(queryRequest("rs-query", { max_results: 7 }));
+    expect(changedLimit.status).toBe(409);
+    expect((await body(changedLimit)).code).toBe("RESEARCH_CONFLICT");
+    expect(await readStoredQuery()).toEqual(storedBefore);
+    expect((await body(await run(queryRequest("rs-query")))).data).toEqual(firstBody.data);
     expect([await count("retrieval_query_result"), await count("retrieval_query_trace"), await count("retrieval_scope_profile"), await count("scope_snapshot"), await count("scope_access_grant")]).toEqual(counts);
     expect((await run(queryRequest("rs-query", { query: "different" }))).status).toBe(409);
     expect((await run(queryRequest("rs-query"), verifier("stranger"))).status).toBe(403);

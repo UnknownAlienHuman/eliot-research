@@ -659,3 +659,18 @@ background workflows), and restore same-key/changed-max_results conflict
 coverage while retaining changed-query coverage. These remain PENDING and
 were not mixed into this lint/Rust checkpoint. Release still requires the
 budget repairs and remaining S92/live acceptance; local gates do not qualify it.
+
+Same-key/changed-max_results regression restored, 2026-10-02 21:49 UTC:
+the existing native query case now rejects valid alternate limit 7 under the
+original key with HTTP 409 / `RESEARCH_CONFLICT`, retains the original stored
+request/result digests and exact result JSON, preserves counts and original
+replay, and retains changed-query and foreign-principal negatives. Scoped
+ESLint and strict native-test compilation PASS. Compilation first exposed
+eight inherited nullable-count subtraction errors; an explicit null guard
+now rejects missing readback rather than substituting zero. The file remains
+599 physical lines. Final full native session file PASS 14/14, 24.58s; its
+earlier pre-guard run also passed 14/14 in 24.51s. Logs under OS temp:
+`eliotr-same-key-static-992f793e.log`,
+`eliotr-same-key-max-results-992f793e.log`, and
+`eliotr-same-key-final-992f793e.log`. This closes the preceding max_results
+coverage item; current automatic HTTP semantic-v4 dispatch remains PENDING.
