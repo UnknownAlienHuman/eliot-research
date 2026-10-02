@@ -44,7 +44,7 @@ const PACKAGE_RULES = new Map([
   ["packages/cloudflare-research", new Set(["@eliotr/cloudflare-workflows", "@eliotr/cloudflare-ai", "@eliotr/cloudflare-artifacts", "@eliotr/cloudflare-artifacts/artifact-draft.js", "@eliotr/cloudflare-artifacts/artifact-draft-reader.js", "@eliotr/cloudflare-artifacts/artifact-draft-types.js", "@eliotr/cloudflare-artifacts/artifact-draft-reauthorization.js", "@eliotr/cloudflare-artifacts/artifact-draft-citations-reauthorization.js", "@eliotr/cloudflare-evidence", "@eliotr/contracts", "@eliotr/domain", "@eliotr/platform-cloudflare", "@eliotr/policy", "@eliotr/research", "@eliotr/retrieval"])],
   ["packages/cloudflare-research-stages", new Set(["@eliotr/cloudflare-ai", "@eliotr/cloudflare-evidence", "@eliotr/cloudflare-research", "@eliotr/cloudflare-workflows", "@eliotr/contracts", "@eliotr/domain", "@eliotr/research", "zod"])],
   ["packages/cloudflare-workflows", new Set(["@eliotr/contracts", "@eliotr/domain", "@eliotr/research"])],
-  ["packages/cloudflare-artifacts", new Set(["@eliotr/cloudflare-evidence", "@eliotr/contracts", "@eliotr/platform-cloudflare"])],
+  ["packages/cloudflare-artifacts", new Set(["@eliotr/domain", "@eliotr/cloudflare-evidence", "@eliotr/contracts", "@eliotr/platform-cloudflare"])],
   ["packages/cloudflare-federation", new Set(["@eliotr/contracts"])],
   ["packages/cloudflare-ai", new Set(["@eliotr/contracts", "@eliotr/platform-cloudflare"])],
   ["packages/cloudflare-access", new Set(["@eliotr/platform-cloudflare"])],
