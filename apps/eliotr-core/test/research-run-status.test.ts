@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { reset } from "cloudflare:test";
+import { canonicalEvidenceJson, evidenceSha256 } from "@eliotr/cloudflare-evidence";
+import type { SourceAdmissionDecision } from "@eliotr/contracts";
 import { createD1ScopeService, createOwnerScopeAuthority } from "@eliotr/cloudflare-navigation";
 import { createD1InvestigationLedgerStore, createInvestigationLedgerService, type LedgerD1Database } from "@eliotr/research";
 import { createMonotoneStageExecutor, digest, WorkflowCheckpointStore, type StageRequest } from "@eliotr/cloudflare-research";
@@ -12,7 +14,7 @@ import { principal as freezePrincipal } from "./research-evidence-freeze-fixture
 import type { AccessVerifier } from "@eliotr/cloudflare-access";
 import type { ResearchEngineStatus, ResearchRunStatus } from "@eliotr/interfaces";
 import { handleHttp } from "../src/http.js";
-import { body, db, principal, credential, run, runtime, seedSource, setupOrientationDatabase, verifier, observeDatabase } from "./orientation-fixture.js";
+import { body, db, insert, principal, credential, run, runtime, seedSource, setupOrientationDatabase, verifier, observeDatabase } from "./orientation-fixture.js";
 
 beforeEach(async () => {
   await reset();
@@ -78,6 +80,44 @@ async function storedRun(completed = false) {
       initial_input_manifest: request.input_manifest }, actor, () => async () => bytes);
   }
   return { scope, actor, request, store };
+}
+
+/** Clone an admitted source revision using the owner revision-history fixture pattern,
+ * then advance the real source head with an expected-head predicate so D1 triggers run. */
+async function advanceAdmittedSourceHead(originalRef: string, replacementRef: string): Promise<{
+  readonly source_id: string;
+  readonly head_rev: string;
+  readonly operation_id: string;
+}> {
+  const original = await db.prepare("SELECT * FROM source_revision WHERE source_revision_ref=?1")
+    .bind(originalRef).first<Record<string, string | number | null>>();
+  const operation = await db.prepare("SELECT * FROM bundle_ingest_operation WHERE source_revision_ref=?1")
+    .bind(originalRef).first<Record<string, string | number | null>>();
+  const receipt = await db.prepare("SELECT * FROM source_admission_decision WHERE source_revision_ref=?1")
+    .bind(originalRef).first<Record<string, string | number | null>>();
+  if (original === null || operation === null || receipt === null || typeof original.source_id !== "string") {
+    throw new Error("Missing admitted source revision authority");
+  }
+  const operationId = `op-${replacementRef}`;
+  const decision = JSON.parse(String(receipt.decision_json)) as SourceAdmissionDecision;
+  const replacementDecision = { ...decision, source_revision_ref: replacementRef,
+    decision_receipt_ref: `decision-${replacementRef}` };
+  await insert("source_revision", { ...original, source_revision_ref: replacementRef,
+    admitted_at: new Date().toISOString() });
+  await insert("bundle_ingest_operation", { ...operation, operation_id: operationId,
+    source_revision_ref: replacementRef, expected_head_revision_ref: originalRef,
+    idempotency_key: `key-${replacementRef}`, candidate_id: `candidate-${replacementRef}` });
+  await insert("source_admission_decision", { ...receipt, source_revision_ref: replacementRef,
+    operation_id: operationId, decision_receipt_ref: replacementDecision.decision_receipt_ref,
+    decision_json: canonicalEvidenceJson(replacementDecision),
+    decision_sha256: await evidenceSha256(replacementDecision) });
+  const advanced = await db.prepare(
+    "UPDATE source SET head_rev=?2 WHERE source_id=?1 AND head_rev=?3 RETURNING source_id,head_rev",
+  ).bind(original.source_id, replacementRef, originalRef).first<{ source_id: string; head_rev: string }>();
+  if (advanced === null || advanced.source_id !== original.source_id || advanced.head_rev !== replacementRef) {
+    throw new Error("Source head did not advance from the expected revision");
+  }
+  return { ...advanced, operation_id: operationId };
 }
 
 function refreshed(who = principal, expiresAt = Date.now() + 60_000): AccessVerifier {
@@ -295,7 +335,12 @@ describe("owner run status after reauthentication over real HTTP/D1/R2", () => {
     const readEnv = { ...runtime, DEPLOYMENT_GENERATION: freezePrincipal.deployment_generation };
     const statusUrl = `https://research.example/api/v1/research/run/${freeze.operation_id}`;
     const oldAccess: AccessVerifier = { verify: async () => ({ ...freezePrincipal,
-      authentication_method: "cloudflare_access", expires_at: new Date(Date.now() + 60_000).toISOString() }) };
+      authentication_method: "cloudflare_access", expires_at: new Date(Date.now() + 3_600_000).toISOString() }) };
+    let sourceHistory: {
+      readonly artifact_ref: { readonly id: string; readonly revision: number };
+      readonly original_source_ref: string;
+      readonly section_body_key: string;
+    } | undefined;
     const before = await executionSnapshot();
     const first = await handleHttp(new Request(statusUrl), readEnv, {} as ExecutionContext, { accessVerifier: oldAccess });
     expect(first.status, JSON.stringify(await first.clone().json())).toBe(200);
@@ -310,11 +355,173 @@ describe("owner run status after reauthentication over real HTTP/D1/R2", () => {
     expect(await executionSnapshot()).toEqual(before);
     expect(audited.fixture.provider_calls()).toBe(1);
     expect(audited.auditProviderCalls()).toBe(1);
+    if (generation === SERVER_OWNED_FREEZE_HANDLER_GENERATION) {
+      const draftBinding = await freeze.db.prepare(
+        "SELECT artifact_id,revision FROM artifact_draft_binding WHERE intent_id=(SELECT intent_id FROM research_report_admission WHERE operation_id=?1)",
+      ).bind(freeze.operation_id).first<{ artifact_id: string; revision: number }>();
+      if (draftBinding === null) throw new Error("Materialized saved draft binding is missing");
+      const artifactRef = { id: draftBinding.artifact_id, revision: draftBinding.revision };
+      const originalSourceRef = freeze.scope.member_source_revision_refs[0];
+      if (originalSourceRef === undefined) throw new Error("Historical report source is missing");
+      const replacementSourceRef = `source-replacement-${crypto.randomUUID()}`;
+      const advanced = await advanceAdmittedSourceHead(originalSourceRef, replacementSourceRef);
+
+      const originalScope = await freeze.db.prepare(
+        "SELECT invalidation_reason FROM scope_snapshot WHERE snapshot_id=?1 AND revision=?2",
+      ).bind(freeze.scope.snapshot_id, freeze.scope.revision).first<{ invalidation_reason: string | null }>();
+      expect(originalScope?.invalidation_reason).toBe("SCOPE_INPUT_CHANGED");
+      const oldRevision = await db.prepare(
+        "SELECT r.source_id,r.source_owner_generation,r.purge_state,s.head_rev " +
+        "FROM source_revision r JOIN source s ON s.source_id=r.source_id WHERE r.source_revision_ref=?1",
+      ).bind(originalSourceRef).first<{ source_id: string; source_owner_generation: string; purge_state: string; head_rev: string }>();
+      expect(oldRevision).not.toBeNull();
+      if (oldRevision === null) throw new Error("Historical source revision is missing");
+      expect(oldRevision).toMatchObject({
+        source_id: advanced.source_id, purge_state: "LIVE", head_rev: replacementSourceRef,
+      });
+      const replacement = await db.prepare(
+        "SELECT r.source_id,r.source_owner_generation,r.purge_state,s.head_rev,op.operation_id," +
+        "op.expected_head_revision_ref,d.operation_id AS decision_operation_id,d.decision," +
+        "d.decision_receipt_ref,d.decision_json,d.decision_sha256 " +
+        "FROM source_revision r JOIN source s ON s.source_id=r.source_id " +
+        "JOIN bundle_ingest_operation op ON op.source_revision_ref=r.source_revision_ref " +
+        "JOIN source_admission_decision d ON d.source_revision_ref=r.source_revision_ref " +
+        "WHERE r.source_revision_ref=?1",
+      ).bind(replacementSourceRef).first<{
+        source_id: string; source_owner_generation: string; purge_state: string; head_rev: string;
+        operation_id: string; expected_head_revision_ref: string; decision_operation_id: string;
+        decision: string; decision_receipt_ref: string; decision_json: string; decision_sha256: string;
+      }>();
+      expect(replacement).not.toBeNull();
+      if (replacement === null) throw new Error("Replacement head lacks admitted operation provenance");
+      expect(replacement).toMatchObject({
+        source_id: oldRevision.source_id,
+        source_owner_generation: oldRevision.source_owner_generation,
+        purge_state: "LIVE",
+        head_rev: replacementSourceRef,
+        operation_id: advanced.operation_id,
+        expected_head_revision_ref: originalSourceRef,
+        decision_operation_id: advanced.operation_id,
+        decision: "ADMITTED",
+        decision_receipt_ref: `decision-${replacementSourceRef}`,
+      });
+      const replacementDecision = JSON.parse(replacement.decision_json) as SourceAdmissionDecision;
+      expect(replacementDecision.source_revision_ref).toBe(replacementSourceRef);
+      expect(replacementDecision.decision_receipt_ref).toBe(replacement.decision_receipt_ref);
+      expect(await evidenceSha256(replacementDecision)).toBe(replacement.decision_sha256);
+
+      const sectionObject = await db.prepare(
+        "SELECT receipt_json FROM artifact_draft_object WHERE artifact_id=?1 AND revision=?2 " +
+        "AND object_kind='SECTION_BODY' LIMIT 1",
+      ).bind(artifactRef.id, artifactRef.revision).first<{ receipt_json: string }>();
+      if (sectionObject === null) throw new Error("Saved draft section object receipt is missing");
+      const sectionReceipt = JSON.parse(sectionObject.receipt_json) as { key: string };
+      if (typeof sectionReceipt.key !== "string" || sectionReceipt.key.length === 0) {
+        throw new Error("Saved draft section object key is missing");
+      }
+      sourceHistory = { artifact_ref: artifactRef, original_source_ref: originalSourceRef, section_body_key: sectionReceipt.key };
+
+      const historyUrl = "https://research.example/api/v1/research/runs";
+      const historyResponse = await handleHttp(new Request(historyUrl), readEnv, {} as ExecutionContext,
+        { accessVerifier: oldAccess });
+      expect(historyResponse.status, JSON.stringify(await historyResponse.clone().json())).toBe(200);
+      const history = await body<{ saved_drafts: {
+        artifact_ref: { id: string; revision: number }; workflow_instance_id?: string;
+      }[] }>(historyResponse);
+      const listedDraft = history.data.saved_drafts.find((draft) =>
+        draft.artifact_ref.id === artifactRef.id && draft.artifact_ref.revision === artifactRef.revision);
+      expect(listedDraft).toMatchObject({ artifact_ref: artifactRef, workflow_instance_id: freeze.operation_id });
+
+      const artifactUrl = `https://research.example/api/v1/research/artifact/${encodeURIComponent(artifactRef.id + ":" + artifactRef.revision)}/reauthorize`;
+      const reopened = await handleHttp(new Request(artifactUrl, { method: "POST" }), readEnv, {} as ExecutionContext,
+        { accessVerifier: oldAccess });
+      expect(reopened.status, JSON.stringify(await reopened.clone().json())).toBe(200);
+      const reauthorized = await body<{ source_freshness: {
+        state: string;
+        changed_sources: { saved_revision_ref: string; head_revision_ref: string }[];
+      } }>(reopened);
+      expect(reauthorized.data.source_freshness.state).toBe("PREVIOUS_REVISIONS");
+      expect(reauthorized.data.source_freshness.changed_sources).toContainEqual({
+        saved_revision_ref: originalSourceRef, head_revision_ref: replacementSourceRef,
+      });
+    }
+    const originalOutput = await freeze.bucket.get(previous.output_manifest.object_ref);
+    if (originalOutput === null) throw new Error("Saved materialization object is missing");
+    const originalOutputBytes = new Uint8Array(await originalOutput.arrayBuffer());
+    const originalOutputMetadata = originalOutput.customMetadata ?? {};
     await freeze.bucket.put(previous.output_manifest.object_ref, new TextEncoder().encode("corrupt saved materialization"));
     const corrupt = await handleHttp(new Request(statusUrl), readEnv, {} as ExecutionContext,
       { accessVerifier: refreshed(freezePrincipal.principal_ref) });
     expect(corrupt.status).toBe(409);
     expect((await body(corrupt)).code).toBe("RESEARCH_RUN_STATUS_INVALID");
+    await freeze.bucket.put(previous.output_manifest.object_ref, originalOutputBytes, {
+      sha256: await digest(originalOutputBytes), customMetadata: originalOutputMetadata,
+    });
+    if (sourceHistory !== undefined) {
+      const savedHistory = sourceHistory;
+      let purgedDuringFinalRead = false;
+      const originalGet = freeze.bucket.get.bind(freeze.bucket);
+      const getSpy = vi.spyOn(freeze.bucket, "get").mockImplementation(async (key, options) => {
+        const object = await originalGet(key, options);
+        if (object === null || key !== savedHistory.section_body_key || !("body" in object)) return object;
+        const reader = object.body.getReader();
+        const racedBody = new ReadableStream<Uint8Array>({
+          async pull(controller) {
+            try {
+              const part = await reader.read();
+              if (part.done) {
+                if (!purgedDuringFinalRead) {
+                  const purged = await db.prepare(
+                    "UPDATE source_revision SET purge_state='PURGE_REQUESTED' " +
+                    "WHERE source_revision_ref=?1 RETURNING source_revision_ref",
+                  ).bind(savedHistory.original_source_ref).first<{ source_revision_ref: string }>();
+                  if (purged === null || purged.source_revision_ref !== savedHistory.original_source_ref) {
+                    throw new Error("Historical source purge did not commit during the section read");
+                  }
+                  purgedDuringFinalRead = true;
+                }
+                reader.releaseLock();
+                controller.close();
+              } else {
+                controller.enqueue(part.value);
+              }
+            } catch (error) {
+              controller.error(error);
+            }
+          },
+          async cancel(reason) {
+            await reader.cancel(reason);
+          },
+        });
+        return new Proxy(object, {
+          get(target, property) {
+            if (property === "body") return racedBody;
+            const value = Reflect.get(target, property, target);
+            return typeof value === "function" ? value.bind(target) : value;
+          },
+        });
+      });
+      const racedArtifactUrl = `https://research.example/api/v1/research/artifact/${encodeURIComponent(
+        savedHistory.artifact_ref.id + ":" + savedHistory.artifact_ref.revision,
+      )}/reauthorize`;
+      try {
+        const racedRead = await handleHttp(new Request(racedArtifactUrl, { method: "POST" }), readEnv,
+          {} as ExecutionContext, { accessVerifier: oldAccess });
+        expect([403, 409, 410]).toContain(racedRead.status);
+      } finally {
+        getSpy.mockRestore();
+      }
+      expect(purgedDuringFinalRead).toBe(true);
+      const purgedHistoryResponse = await handleHttp(new Request("https://research.example/api/v1/research/runs"),
+        readEnv, {} as ExecutionContext, { accessVerifier: oldAccess });
+      expect(purgedHistoryResponse.status, JSON.stringify(await purgedHistoryResponse.clone().json())).toBe(200);
+      const purgedHistory = await body<{ saved_drafts: {
+        artifact_ref: { id: string; revision: number };
+      }[] }>(purgedHistoryResponse);
+      expect(purgedHistory.data.saved_drafts.some((draft) =>
+        draft.artifact_ref.id === savedHistory.artifact_ref.id &&
+        draft.artifact_ref.revision === savedHistory.artifact_ref.revision)).toBe(false);
+    }
   }, 60_000);
 
   it("classifies a mismatched current-view read as corruption, using the store's real batch contract", async () => {
