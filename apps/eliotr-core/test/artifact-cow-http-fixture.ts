@@ -18,6 +18,7 @@ import type { Env } from "../src/env.js";
 import { committedFreezeSynthesisFixture } from "./research-synthesis-fixture.js";
 import { principal } from "./research-evidence-freeze-fixture.js";
 import { countResidencyPuts } from "./artifact-draft-fixture.js";
+import { withQ1OwnerIdentity } from "./retrieval-q1-fixture.js";
 
 export const runtime = env as unknown as Env;
 
@@ -56,7 +57,24 @@ function originalPolicy(scopeId: string, claimKind: "observation" | "assumption"
     budget_ref: "cow-http-budget-v1", section_residency: domains, manifest_residency: domains };
 }
 
-export async function originalReport(claimKind: "observation" | "assumption", canonicalLineage = false) {
+function runAfterStatement(statement: D1PreparedStatement, after: () => Promise<void>): D1PreparedStatement {
+  return new Proxy(statement, { get(target, property) {
+    if (property === "run") return async (...args: unknown[]) => {
+      const run = Reflect.get(target, property, target) as (...input: unknown[]) => Promise<unknown>;
+      const result = await Reflect.apply(run, target, args);
+      await after();
+      return result;
+    };
+    const value = Reflect.get(target, property, target);
+    return typeof value === "function" ? value.bind(target) : value;
+  } }) as D1PreparedStatement;
+}
+
+export async function originalReport(
+  claimKind: "observation" | "assumption",
+  canonicalLineage = false,
+  options: { readonly seedVerifiedOwnerNamespace?: boolean } = {},
+) {
   // Give unchanged current read policy a longer lifetime than the original one-hour scope.
   const prepare = runtime.CORE_DB.prepare.bind(runtime.CORE_DB);
   const policyClock = vi.spyOn(runtime.CORE_DB, "prepare").mockImplementation((sql) => {
@@ -65,14 +83,50 @@ export async function originalReport(claimKind: "observation" | "assumption", ca
     return new Proxy(statement, { get(target, property) {
       if (property === "bind") return (...values: unknown[]) => {
         values[5] = new Date(Date.now() + 10_800_000).toISOString();
-        return target.bind(...values);
+        const bound = target.bind(...values);
+        if (options.seedVerifiedOwnerNamespace !== true) return bound;
+        return runAfterStatement(bound, async () => {
+          const namespace = values[0];
+          const ownerPrincipal = values[1];
+          const policyRef = values[2];
+          const createdAt = values[6];
+          if (typeof namespace !== "string" || typeof ownerPrincipal !== "string" ||
+              typeof policyRef !== "string" || typeof createdAt !== "string") {
+            throw new Error("owner history initialization fixture input is invalid");
+          }
+          const owner = await runtime.CORE_DB.prepare(
+            "SELECT owner_incarnation_ref,source_owner_generation,ownership_record_revision,source_admission_policy_revision " +
+            "FROM source_namespace_ownership WHERE source_namespace_id=?1 AND owner_system_id='eliotr' AND status='ACTIVE'",
+          ).bind(namespace).first<{
+            readonly owner_incarnation_ref: string;
+            readonly source_owner_generation: string;
+            readonly ownership_record_revision: number;
+            readonly source_admission_policy_revision: number;
+          }>();
+          if (owner === null) throw new Error("verified owner history namespace was not seeded");
+          await runtime.CORE_DB.prepare(
+            "INSERT INTO source_namespace_initialization (source_namespace_id,principal_ref,credential_generation,profile_id," +
+            "profile_revision,title,idempotency_key,owner_incarnation_ref,source_owner_generation,ownership_record_revision," +
+            "source_admission_policy_revision,scope_policy_ref,scope_policy_generation,request_sha256,created_at) " +
+            "VALUES (?1,?2,'freeze-credential-v1','owner-history-profile',1,'Owner history fixture',?3,?4,?5,?6,?7,?8,1,?9,?10)",
+          ).bind(namespace, ownerPrincipal, `owner-history-init-${namespace}`, owner.owner_incarnation_ref,
+            owner.source_owner_generation, owner.ownership_record_revision, owner.source_admission_policy_revision,
+            policyRef, "d".repeat(64), createdAt).run();
+        });
       };
       const value = Reflect.get(target, property);
       return typeof value === "function" ? value.bind(target) : value;
     } });
   });
-  const audited = canonicalLineage ? await researchClaimAuditStageFixture().finally(() => policyClock.mockRestore()) : undefined;
-  const synthesis = audited?.fixture ?? await committedFreezeSynthesisFixture().finally(() => policyClock.mockRestore());
+  const withOwnerIdentity = <T>(action: () => Promise<T>) => options.seedVerifiedOwnerNamespace === true
+    ? withQ1OwnerIdentity({ owner_system_id: "eliotr", owner_incarnation_ref: "owner-history-incarnation-v1",
+      source_owner_generation: "owner-history-generation-v1" }, action)
+    : action();
+  const audited = canonicalLineage
+    ? await withOwnerIdentity(() => researchClaimAuditStageFixture()).finally(() => policyClock.mockRestore())
+    : undefined;
+  const synthesis = audited?.fixture ?? await withOwnerIdentity(() => committedFreezeSynthesisFixture())
+    .finally(() => policyClock.mockRestore());
   const freeze = synthesis.freeze;
   const status = new WorkflowCheckpointStore(freeze.db);
   const run = await freeze.db.prepare("SELECT policy_generation,policy_authority_ref FROM research_workflow_run WHERE operation_id=?1")

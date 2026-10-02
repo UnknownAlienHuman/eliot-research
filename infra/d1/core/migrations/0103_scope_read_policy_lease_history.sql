@@ -50,6 +50,9 @@ CREATE INDEX scope_read_policy_lease_prepared_owner_idx
   ON scope_read_policy_lease_refresh_receipt(principal_ref,client_class,source_namespace_id) WHERE state='PREPARED';
 CREATE INDEX scope_read_policy_lease_applied_sequence_idx
   ON scope_read_policy_lease_refresh_receipt(receipt_sequence) WHERE state='APPLIED';
+CREATE INDEX scope_read_policy_lease_applied_replay_idx
+  ON scope_read_policy_lease_refresh_receipt(source_namespace_id,principal_ref,client_class,
+    credential_generation,access_expires_at,old_generation) WHERE state='APPLIED';
 
 CREATE TABLE scope_read_policy_history_event (
   history_event_sequence INTEGER PRIMARY KEY AUTOINCREMENT,

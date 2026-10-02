@@ -1,6 +1,6 @@
 import { canonicalEvidenceJson, evidenceSha256 } from "@eliotr/cloudflare-evidence";
 import type { ScopeSnapshot } from "@eliotr/contracts";
-import type { EvidenceSourceAuthority } from "@eliotr/cloudflare-evidence";
+import type { EvidenceAccessContext, EvidenceSourceAuthority } from "@eliotr/cloudflare-evidence";
 import type { SourceRevision } from "@eliotr/contracts";
 import type { OrientationSource } from "./orientation-authority.js";
 import { memberPolicyClosureGeneration } from "./scope-service.js";
@@ -171,7 +171,7 @@ export async function historicalPolicyClosureRef(input: {
 
 /** Reuse the exact full owner policy-authority payload used by orientation freeze. */
 export async function historicalPolicyAuthorityRef(input: {
-  readonly access: HistoricalOwnerAccess;
+  readonly access: EvidenceAccessContext;
   readonly policies: readonly HistoricalPolicyRow[];
   readonly members: readonly string[];
 }): Promise<string> {

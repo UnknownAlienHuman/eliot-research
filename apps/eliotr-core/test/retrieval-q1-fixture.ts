@@ -50,6 +50,27 @@ export interface Q1Namespace {
   readonly owner: string;
   readonly namespace: string;
   readonly revision: string;
+  readonly owner_system_id?: string;
+  readonly owner_incarnation_ref?: string;
+  readonly source_owner_generation?: string;
+}
+
+export interface Q1OwnerIdentity {
+  readonly owner_system_id: string;
+  readonly owner_incarnation_ref: string;
+  readonly source_owner_generation: string;
+}
+
+let q1OwnerIdentityOverride: Q1OwnerIdentity | undefined;
+
+export async function withQ1OwnerIdentity<T>(identity: Q1OwnerIdentity, action: () => Promise<T>): Promise<T> {
+  if (q1OwnerIdentityOverride !== undefined) throw new Error("Q1 owner identity override cannot be nested");
+  q1OwnerIdentityOverride = identity;
+  try {
+    return await action();
+  } finally {
+    q1OwnerIdentityOverride = undefined;
+  }
 }
 
 export interface Q1ProjectedItem {
@@ -163,20 +184,25 @@ export async function prepareQ1Namespace(
   db: D1Database,
   searchDb: D1Database,
   owner: string,
-): Promise<{ readonly namespace: string; readonly revision: string }> {
+): Promise<{ readonly namespace: string; readonly revision: string } & Q1OwnerIdentity> {
   await applyD1Migrations(db, runtime.CORE_MIGRATIONS);
   await applyD1Migrations(searchDb, runtime.SEARCH_MIGRATIONS);
   const id = crypto.randomUUID();
   const namespace = `q1-${id}`;
   const revision = `rev-${id}`;
   const now = new Date().toISOString();
+  const ownerIdentity = q1OwnerIdentityOverride ?? {
+    owner_system_id: "fixture-owner",
+    owner_incarnation_ref: "incarnation-1",
+    source_owner_generation: "owner-generation-1",
+  };
   await db
     .prepare(
       "INSERT INTO source_namespace_ownership (source_namespace_id,ownership_record_revision," +
         "owner_system_id,owner_incarnation_ref,source_owner_generation," +
         "source_admission_policy_revision,status,created_at) VALUES (?1,1,?2,?3,?4,1,'ACTIVE',?5)",
     )
-    .bind(namespace, "fixture-owner", "incarnation-1", "owner-generation-1", now)
+    .bind(namespace, ownerIdentity.owner_system_id, ownerIdentity.owner_incarnation_ref, ownerIdentity.source_owner_generation, now)
     .run();
   await db
     .prepare(
@@ -196,7 +222,7 @@ export async function prepareQ1Namespace(
       now,
     )
     .run();
-  return { namespace, revision };
+  return { namespace, revision, ...ownerIdentity };
 }
 
 export interface Q1ImportOptions {
@@ -219,6 +245,8 @@ export async function importQ1Bundle(
       ...fixture.manifest.origin,
       source_namespace_id: namespace,
       source_revision_ref: revision,
+      ...(world.owner_system_id === undefined ? {} : { owner_system_id: world.owner_system_id }),
+      ...(world.source_owner_generation === undefined ? {} : { source_owner_generation: world.source_owner_generation }),
     },
     source: { ...fixture.manifest.source, logical_id: `source-${namespace}` },
     capabilities: { ...fixture.manifest.capabilities, tables: native },
