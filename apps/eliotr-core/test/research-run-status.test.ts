@@ -448,10 +448,11 @@ describe("owner run status after reauthentication over real HTTP/D1/R2", () => {
       expect(reopened.status, JSON.stringify(await reopened.clone().json())).toBe(200);
       const reauthorized = await body<{ source_freshness: {
         state: string;
-        changed_sources: { saved_revision_ref: string; head_revision_ref: string }[];
+        changed_sources: { source_id: string; saved_revision_ref: string; head_revision_ref: string }[];
       } }>(reopened);
       expect(reauthorized.data.source_freshness.state).toBe("PREVIOUS_REVISIONS");
       expect(reauthorized.data.source_freshness.changed_sources).toContainEqual({
+        source_id: advanced.source_id,
         saved_revision_ref: originalSourceRef, head_revision_ref: replacementSourceRef,
       });
     }
