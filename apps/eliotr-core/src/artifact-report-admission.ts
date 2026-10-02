@@ -153,6 +153,9 @@ export async function prepareOwnerArtifactReportAdmission(
   if (new TextEncoder().encode(canonicalJson(witness)).byteLength > MAX_WITNESS_BYTES) {
     throw new HttpRequestError("ARTIFACT_REPORT_ADMISSION_LIMIT", 413, "Artifact revision authority exceeds the bounded workflow envelope");
   }
+  const maxTotalUsd = spend.rules.filter((r) => r.stage === "SYNTHESIZE" || r.stage === "AUDIT_CLAIMS")
+    .reduce((sum, r) => sum + r.quote.max_total_usd, 0);
+  if (!Number.isFinite(maxTotalUsd) || maxTotalUsd < 0) deny("Artifact REPORT budget is invalid");
   const identity = await canonicalDigest({ principal_ref: context.principal_ref, idempotency_key: request.idempotency_key, request });
   const intentId = "artifact-cow-report-" + identity;
   const prior = await env.CORE_DB.prepare("SELECT created_at FROM operation_intent WHERE intent_id=?1 AND revision=1 LIMIT 1")
@@ -184,8 +187,7 @@ export async function prepareOwnerArtifactReportAdmission(
     policy_generation: policyGeneration, policy_authority_ref: grant.policy_authority_ref,
     purge_revision: scope.purge_ledger_revision, navigation: current.navigation, authorization: grant,
     budget: Object.freeze({ receipt_ref: "artifact-cow-budget-" + inputSha, expires_at_ms: expiryMs,
-      max_total_usd: spend.rules.filter((r) => r.stage === "SYNTHESIZE" || r.stage === "AUDIT_CLAIMS")
-        .reduce((sum, r) => sum + r.quote.max_total_usd, 0) }),
+      max_total_usd: maxTotalUsd }),
     requireCurrent, readback: plan.readback,
     async commit() {
       await requireCurrent();

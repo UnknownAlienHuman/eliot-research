@@ -73,6 +73,11 @@ function citations(overrides: Partial<Omit<ExecutedCitations, "semantic_verifica
   };
 }
 
+function required<T>(value: T | undefined): T {
+  if (value === undefined) throw new Error("publication fixture item missing");
+  return value;
+}
+
 describe("artifact publication readiness", () => {
   it("accepts only executed audit claims that exactly cover and agree with statement labels", () => {
     expect(() => assertArtifactPublicationReady(
@@ -89,7 +94,7 @@ describe("artifact publication readiness", () => {
 
   it("rejects audit evidence that is missing, mismatched, or contradictory without counterevidence", () => {
     const uncovered = revision({ sections: [{
-      ...revision().sections[0]!, statement_labels: { "claim-unreviewed": "SOURCE_SUPPORTED" },
+      ...required(revision().sections[0]), statement_labels: { "claim-unreviewed": "SOURCE_SUPPORTED" },
     }] });
     expect(() => assertArtifactPublicationReady(uncovered, new Map([["section-1:1", citations()]])))
       .toThrowError(ArtifactPublicationReadinessError);
@@ -97,17 +102,17 @@ describe("artifact publication readiness", () => {
     const audit = citations().audit;
     const contradicted = citations({ audit: {
       ...audit,
-      claims: [{ ...audit.claims[0]!, disposition: "CONTRADICTED", counterevidence_handle_refs: [] }],
+      claims: [{ ...required(audit.claims[0]), disposition: "CONTRADICTED", counterevidence_handle_refs: [] }],
     } });
     expect(() => assertArtifactPublicationReady(revision({ sections: [{
-      ...revision().sections[0]!, statement_labels: { "claim-1": "CONTESTED" },
+      ...required(revision().sections[0]), statement_labels: { "claim-1": "CONTESTED" },
     }] }), new Map([["section-1:1", contradicted]])))
       .toThrowError(ArtifactPublicationReadinessError);
   });
 
   it("does not treat redacted dependency labels or zero sections as acceptable", () => {
     const redacted = revision({ sections: [{
-      ...revision().sections[0]!, statement_labels: { "claim-1": "REDACTED_DEPENDENCY" },
+      ...required(revision().sections[0]), statement_labels: { "claim-1": "REDACTED_DEPENDENCY" },
     }] });
     expect(() => assertArtifactPublicationReady(redacted, new Map([["section-1:1", citations()]])))
       .toThrowError(ArtifactPublicationReadinessError);
