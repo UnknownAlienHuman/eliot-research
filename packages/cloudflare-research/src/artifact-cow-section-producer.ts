@@ -3,7 +3,6 @@ import {
   ArtifactSectionRevisionSchema,
   ObjectResidencyKeySchema,
   type AllowedReferenceManifest,
-  type EvidenceLabel,
   type ObjectResidencyKey,
   type ResolvedEvidence,
   type VersionedRef,
@@ -34,6 +33,7 @@ import type { WorkflowPrincipal, ArtifactSectionReviseAttempt } from "@eliotr/cl
 import type { ResidencyDomainProfile } from "./research-model-output-store.js";
 import type { ModelAttemptAuthority } from "./model-attempt-types.js";
 import type { ArtifactCowModelCallContext, ArtifactCowModelOutput } from "./artifact-cow-model-executor.js";
+import { artifactStatementLabels } from "./artifact-statement-labels.js";
 
 const MAX_MODEL_INPUT_BYTES = 256 * 1024;
 
@@ -322,15 +322,7 @@ export function createArtifactCowSectionProducer(dependencies: ArtifactCowSectio
     const ledgerRef = `eliotr.artifact-section-ledger-${identity}`;
     // Project the existing verifier disposition for each exact normalized claim;
     // claim kinds are contract requirements, not statement identities.
-    const statementLabels: Record<string, EvidenceLabel> = Object.fromEntries(translated.map((item) => {
-      const label: EvidenceLabel = item.disposition === "SUPPORTED"
-        ? item.claim_kind === "recommendation" ? "EDITORIAL_RECOMMENDATION"
-          : item.claim_kind === "interpretation" ? "DERIVED_INFERENCE"
-            : item.claim_kind === "assumption" ? "HYPOTHESIS" : "SOURCE_SUPPORTED"
-        : item.disposition === "PARTIALLY_SUPPORTED" || item.disposition === "CONTRADICTED" ? "CONTESTED"
-          : item.disposition === "UNSUPPORTED" ? "HYPOTHESIS" : "UNRESOLVED";
-      return [item.claim_id, label];
-    }));
+    const statementLabels = artifactStatementLabels(translated);
     const section = ArtifactSectionRevisionSchema.parse({
       section_ref: { id: previous.section.section_ref.id, revision: previous.section.section_ref.revision + 1 },
       contract_id: contract.section_id,
