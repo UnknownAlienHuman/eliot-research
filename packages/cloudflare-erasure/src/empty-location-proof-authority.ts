@@ -45,12 +45,97 @@ interface ProjectionProducerRow {
   readonly terminal_guard: unknown;
 }
 
+interface ActiveProjectionLeaseRow {
+  readonly operation_id: unknown;
+}
+
+interface ProjectionLeaseBindingRow {
+  readonly source_revision_ref: unknown;
+  readonly projection_generation: unknown;
+  readonly source_owner_generation: unknown;
+  readonly intent_id: unknown;
+  readonly intent_revision: unknown;
+  readonly intent_kind: unknown;
+  readonly intent_payload_ref: unknown;
+  readonly revision_owner_generation: unknown;
+  readonly source_id: unknown;
+  readonly source_owner_system_id: unknown;
+  readonly current_owner_generation: unknown;
+  readonly namespace_owner_system_id: unknown;
+  readonly namespace_owner_generation: unknown;
+  readonly namespace_status: unknown;
+}
+
 function complete<T>(result: D1Result<T>, label: string): readonly T[] {
   const runtime = result as unknown as { readonly success?: unknown; readonly results?: unknown };
   if (runtime.success !== true || !Array.isArray(runtime.results)) {
     erasureFail("ERASURE_SETTLEMENT_UNCERTAIN", `${label} inventory is incomplete`, true);
   }
   return runtime.results as readonly T[];
+}
+
+async function assertActiveProjectionLeasesBound(
+  core: D1Database,
+  revisionRef: string,
+  subjectRef: string,
+  root: EmptyLocationProofBody["root_identity"],
+): Promise<void> {
+  const leaseRows = complete(await core.prepare(
+    "SELECT operation_id FROM operation_execution_lease WHERE operation_kind='PROJECTION_EXECUTE' " +
+    "AND state='LEASED' ORDER BY operation_id LIMIT 10001",
+  ).all<ActiveProjectionLeaseRow>(), "active projection leases");
+  if (leaseRows.length > 10_000) erasureFail("ERASURE_CLOSURE_INCOMPLETE", "active projection leases exceed their authority bound");
+  if (leaseRows.length === 0) return;
+
+  const writerRows = complete(await core.prepare(
+    "SELECT g.source_revision_ref,g.projection_generation,g.source_owner_generation," +
+    "j.intent_id,j.intent_revision,i.operation_kind AS intent_kind,i.payload_ref AS intent_payload_ref," +
+    "r.source_owner_generation AS revision_owner_generation,r.source_id,s.source_owner_system_id," +
+    "s.source_owner_generation AS current_owner_generation,o.owner_system_id AS namespace_owner_system_id," +
+    "o.source_owner_generation AS namespace_owner_generation,o.status AS namespace_status " +
+    "FROM projection_generation g LEFT JOIN job j ON j.job_id=g.job_id " +
+    "LEFT JOIN operation_intent i ON i.intent_id=j.intent_id AND i.revision=j.intent_revision " +
+    "LEFT JOIN source_revision r ON r.source_revision_ref=g.source_revision_ref " +
+    "LEFT JOIN source s ON s.source_id=r.source_id " +
+    "LEFT JOIN source_namespace_ownership o ON o.source_namespace_id=s.source_namespace_id " +
+    "AND o.status='ACTIVE' AND o.owner_system_id=s.source_owner_system_id " +
+    "AND o.source_owner_generation=s.source_owner_generation " +
+    "ORDER BY g.source_revision_ref,g.projection_generation LIMIT 100001",
+  ).all<ProjectionLeaseBindingRow>(), "projection lease bindings");
+  if (writerRows.length > 100_000) erasureFail("ERASURE_CLOSURE_INCOMPLETE", "projection lease binding inventory exceeds its bound");
+  const bindings = new Map<string, { readonly source_revision_ref: string; readonly source_id: string }[]>();
+  for (const row of writerRows) {
+    if (row.intent_id === null || row.intent_revision === null || row.intent_kind === null || row.intent_payload_ref === null ||
+      row.revision_owner_generation === null || row.source_id === null || row.source_owner_system_id === null ||
+      row.current_owner_generation === null || row.namespace_owner_system_id === null ||
+      row.namespace_owner_generation === null || row.namespace_status === null) continue;
+    const sourceRevisionRef = assertErasureIdentifier(row.source_revision_ref, "projection lease source revision");
+    const sourceId = assertErasureIdentifier(row.source_id, "projection lease source ID");
+    const generation = assertErasureIdentifier(row.projection_generation, "projection lease generation");
+    const intentId = assertErasureIdentifier(row.intent_id, "projection lease intent ID");
+    if (typeof row.intent_revision !== "number" || !Number.isSafeInteger(row.intent_revision) || row.intent_revision < 1) continue;
+    if (row.intent_kind !== "PROJECTION" || row.intent_payload_ref !== sourceRevisionRef ||
+      row.source_owner_generation !== row.revision_owner_generation ||
+      row.source_owner_generation !== row.current_owner_generation ||
+      row.current_owner_generation !== row.namespace_owner_generation ||
+      row.source_owner_system_id !== row.namespace_owner_system_id || row.namespace_status !== "ACTIVE") continue;
+    const operationId = await stableErasureId("projection-execute", intentId, String(row.intent_revision), generation);
+    const prior = bindings.get(operationId) ?? [];
+    prior.push({ source_revision_ref: sourceRevisionRef, source_id: sourceId });
+    bindings.set(operationId, prior);
+  }
+
+  const sourceWideSubject = subjectRef === `source:${root.source_id}`;
+  for (const lease of leaseRows) {
+    const operationId = assertErasureIdentifier(lease.operation_id, "active projection lease operation ID");
+    const matches = bindings.get(operationId) ?? [];
+    if (matches.length !== 1) erasureFail("ERASURE_CLOSURE_INCOMPLETE", "active projection lease has no unique durable source binding");
+    const binding = matches[0];
+    if (binding === undefined) erasureFail("ERASURE_CLOSURE_INCOMPLETE", "active projection lease binding disappeared");
+    if (sourceWideSubject ? binding.source_id === root.source_id : binding.source_revision_ref === revisionRef) {
+      erasureFail("ERASURE_CLOSURE_INCOMPLETE", "a selected source still has an active projection writer");
+    }
+  }
 }
 
 export async function readErasureRootIdentity(
@@ -112,7 +197,7 @@ export async function readEmptyProofAuthorityDigest(
   const producerRows = complete(await core.prepare(
     "SELECT g.projection_generation,g.source_owner_generation,g.state AS projection_state," +
     "j.state AS job_state,j.intent_id,j.intent_revision,COALESCE(t.verified,0) AS terminal_guard " +
-    "FROM projection_generation g JOIN job j ON j.job_id=g.job_id " +
+    "FROM projection_generation g LEFT JOIN job j ON j.job_id=g.job_id " +
     "LEFT JOIN projection_terminal_guard t ON t.source_revision_ref=g.source_revision_ref " +
     "AND t.projection_generation=g.projection_generation " +
     "WHERE g.source_revision_ref=?1 ORDER BY g.projection_generation LIMIT 10001",
@@ -123,6 +208,9 @@ export async function readEmptyProofAuthorityDigest(
     const generation = assertErasureIdentifier(row.projection_generation, "projection producer generation");
     const ownerGeneration = assertErasureIdentifier(row.source_owner_generation, "projection producer owner generation");
     const projectionState = assertErasureIdentifier(row.projection_state, "projection producer state");
+    if (row.job_state === null) {
+      erasureFail("ERASURE_CLOSURE_INCOMPLETE", "projection generation has no durable job row");
+    }
     const jobState = assertErasureIdentifier(row.job_state, "projection producer job state");
     const intentId = assertErasureIdentifier(row.intent_id, "projection producer intent ID");
     const intentRevision = row.intent_revision;
@@ -158,11 +246,7 @@ export async function readEmptyProofAuthorityDigest(
     "OR o.state IN ('PENDING','LEASED','FAILED')) LIMIT 1",
   ).bind(revisionRef).all<{ readonly present: unknown }>(), "queued projection producer");
   if (outstandingIntent.length > 0) erasureFail("ERASURE_CLOSURE_INCOMPLETE", "a queued or active projection producer can still write this source");
-  const anyActiveProjectionLease = complete(await core.prepare(
-    "SELECT 1 AS present FROM operation_execution_lease WHERE operation_kind='PROJECTION_EXECUTE' " +
-    "AND state='LEASED' LIMIT 1",
-  ).all<{ readonly present: unknown }>(), "active projection lease");
-  if (anyActiveProjectionLease.length > 0) erasureFail("ERASURE_CLOSURE_INCOMPLETE", "an in-flight projection writer prevents empty proof");
+  await assertActiveProjectionLeasesBound(core, revisionRef, subjectRef, root);
 
   const result = await core.prepare(
     "SELECT dependency_id,exact_subject_ref,location,canonical_ref,provider_ref,object_identity_digest,shared_reference_key," +
