@@ -87,7 +87,10 @@ export async function readCoreColumnInventory(database: D1Database, tables: read
     let rows: readonly { readonly name: unknown; readonly type: unknown; readonly notnull: unknown; readonly pk: unknown }[];
     try {
       const result = await database.prepare(`PRAGMA table_info(${table})`).all<{ readonly name: unknown; readonly type: unknown; readonly notnull: unknown; readonly pk: unknown }>();
-      rows = [...(result.results ?? [])];
+      if (result.success !== true || !Array.isArray(result.results)) {
+        failBackup("BACKUP_TABLE_MISSING", `backup schema inventory read for ${table} returned an incomplete result`, true, { table });
+      }
+      rows = result.results;
     } catch (cause) {
       failBackup("BACKUP_TABLE_MISSING", `backup schema inventory read for ${table} is unavailable`, true, { table }, cause);
     }

@@ -69,4 +69,17 @@ describe("ER-34 O2 full Core migration coverage", () => {
     const inventory = await readCoreColumnInventory(d1, ["source"]);
     expect(() => assertExportColumnCoverage(inventory, TABLE_SPECS)).toThrowError(expect.objectContaining({ code: "BACKUP_COVERAGE_GAP" }));
   });
+
+  it("fails closed when table or PRAGMA inventory queries return failed or malformed D1 results", async () => {
+    for (const result of [{ success: false, results: [] }, { success: true }]) {
+      const broken = {
+        prepare() {
+          return { async all() { return result; } };
+        },
+      } as unknown as D1Database;
+      await expect(listDurableTables(broken)).rejects.toMatchObject({ code: "BACKUP_TABLE_MISSING" });
+      await expect(readCoreColumnInventory(broken, ["source"]))
+        .rejects.toMatchObject({ code: "BACKUP_TABLE_MISSING" });
+    }
+  });
 });

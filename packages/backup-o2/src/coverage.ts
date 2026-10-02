@@ -211,8 +211,11 @@ export async function listDurableTables(database: D1Database): Promise<readonly 
   } catch (cause) {
     failBackup("BACKUP_TABLE_MISSING", "backup durable-table inventory is unavailable", true, {}, cause);
   }
+  if (result.success !== true || !Array.isArray(result.results)) {
+    failBackup("BACKUP_TABLE_MISSING", "backup durable-table inventory returned an incomplete result", true);
+  }
   const names: string[] = [];
-  for (const row of result.results ?? []) {
+  for (const row of result.results) {
     const name = (row as Record<string, unknown>)["name"];
     if (typeof name !== "string" || name.length === 0) failBackup("BACKUP_ROW_INVALID", "backup table inventory carries a malformed name");
     if (name.startsWith("sqlite_") && name !== "sqlite_sequence" && name !== "sqlite_master") {

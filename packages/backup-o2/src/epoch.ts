@@ -128,7 +128,10 @@ async function readBackupTable(database: D1Database, spec: (typeof TABLE_SPECS)[
   } catch (cause) {
     failBackup("BACKUP_TABLE_MISSING", `backup authority read for ${spec.table} failed`, true, { table: spec.table }, cause);
   }
-  const raw = result.results ?? [];
+  if (result.success !== true || !Array.isArray(result.results)) {
+    failBackup("BACKUP_TABLE_MISSING", `backup authority inventory for ${spec.table} returned an incomplete result`, true, { table: spec.table });
+  }
+  const raw = result.results;
   if (raw.length > maxRows) failBackup("BACKUP_BOUND_EXCEEDED", `backup table ${spec.table} exceeds its row bound`, false, { table: spec.table, limit: String(maxRows) });
   const rows: SnapshotRow[] = raw.map((input, index) => {
     if (typeof input !== "object" || input === null || Array.isArray(input)) failBackup("BACKUP_ROW_INVALID", `backup row ${spec.table}[${index}] is not a record`, false, { table: spec.table });
@@ -175,7 +178,8 @@ async function readMigrationNames(database: D1Database, maxRows: number): Promis
   } catch (cause) {
     failBackup("BACKUP_TABLE_MISSING", "backup migration ledger read failed", true, {}, cause);
   }
-  const rows = result.results ?? [];
+  if (result.success !== true || !Array.isArray(result.results)) failBackup("BACKUP_TABLE_MISSING", "backup migration ledger returned an incomplete result", true);
+  const rows = result.results;
   if (rows.length > maxRows) failBackup("BACKUP_BOUND_EXCEEDED", "backup migration ledger exceeds its row bound", false, { limit: String(maxRows) });
   if (rows.length === 0) failBackup("BACKUP_TABLE_MISSING", "backup migration ledger is empty; refusing ABSENT tolerance");
   return rows.map((row, i) => {
@@ -193,7 +197,8 @@ async function readPurgeLedger(database: D1Database, maxRows: number, signal?: A
   } catch (cause) {
     failBackup("BACKUP_TABLE_MISSING", "backup purge ledger read failed", true, {}, cause);
   }
-  const raw = result.results ?? [];
+  if (result.success !== true || !Array.isArray(result.results)) failBackup("BACKUP_TABLE_MISSING", "backup purge ledger returned an incomplete result", true);
+  const raw = result.results;
   if (raw.length > maxRows) failBackup("BACKUP_BOUND_EXCEEDED", "backup purge ledger exceeds its row bound", false, { limit: String(maxRows) });
   const rows: SnapshotRow[] = raw.map((input) => {
     const r = input as Record<string, unknown>;
@@ -227,6 +232,7 @@ interface D1Snapshot {
   readonly migration_names: readonly string[];
   readonly migration_ledger_digest: string;
   readonly inventory_digest: string;
+  readonly column_inventory: readonly CoreTableInventory[];
 }
 
 export function createBackupEpochPort(ports: BackupSourcePorts, overrides?: { readonly limits?: Partial<BackupExportLimits> }): BackupEpochPort {
@@ -265,6 +271,7 @@ export function createBackupEpochPort(ports: BackupSourcePorts, overrides?: { re
       purge_frontier: purge.frontier, purge_digest: purge.digest,
       schema_generation: schemaGeneration, migration_names: names,
       migration_ledger_digest: migrationLedgerDigest, inventory_digest: inventoryDigest,
+      column_inventory: inventory,
     };
   }
 
@@ -343,8 +350,8 @@ export function createBackupEpochPort(ports: BackupSourcePorts, overrides?: { re
     record("schema", canonicalBackupJson({ manifest_protocol: BACKUP_MANIFEST_PROTOCOL, schema_generation: vector.schema_generation, migration_ledger_digest: vector.migration_ledger_digest, migration_ledger: "PRESENT", migration_count: vector.migration_names.length }));
     record("schema-inventory", canonicalBackupJson({ protocol: BACKUP_MANIFEST_PROTOCOL, schema_inventory_digest: frozen.inventory_digest, cut_id: cut.cut_id }));
     for (const table of specManifest.keys()) {
-      const columns = TABLE_SPECS.find((s) => s.table === table)?.columns ?? {};
-      record("schema-inventory", canonicalBackupJson({ table, columns: Object.keys(columns).sort() }));
+      const columns = frozen.column_inventory.find((entry) => entry.table === table)?.columns.map((column) => column.name) ?? [];
+      record("schema-inventory", canonicalBackupJson({ table, columns: [...columns].sort() }));
     }
     record("purge", canonicalBackupJson({ purge_frontier: vector.purge_frontier, purge_digest: vector.purge_digest }));
     record("r2-objects", canonicalBackupJson({ object_count: r2.entries.length, total_bytes: r2.total_bytes, fingerprint: r2.fingerprint }));
