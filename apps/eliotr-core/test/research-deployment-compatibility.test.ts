@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { reset } from "cloudflare:test";
+import { RESEARCH_WORKFLOW_STAGES } from "@eliotr/domain";
 import { readWorkflowObject, WorkflowCheckpointStore, type StageReceipt,
   type WorkflowCheckpointError } from "@eliotr/cloudflare-research";
 import { ResearchWorkflow } from "../src/research-workflow.js";
@@ -65,7 +66,40 @@ async function executionState(database: D1Database) {
     "SELECT * FROM investigation_ledger_event ORDER BY investigation_id,sequence",
     "SELECT * FROM outbox ORDER BY outbox_id",
   ];
-  return Promise.all(queries.map(async (sql) => (await database.prepare(sql).all()).results));
+  const results = await Promise.all(queries.map(async (sql) => {
+    const result = await database.prepare(sql).all<Record<string, unknown>>();
+    return result.results ?? [];
+  }));
+  // These columns are bounded failure diagnostics, not authorization or execution state.
+  return results.map((rows, queryIndex) => rows.map((row) => Object.fromEntries(Object.entries(row).filter(([key]) =>
+    queryIndex === 0 ? key !== "first_failure_json" && key !== "latest_failure_json"
+      : queryIndex === 1 ? key !== "first_failure_json" : true))));
+}
+
+async function expectRetainedFailure(
+  database: D1Database,
+  phase: "PREPARATION" | "STAGE",
+  stage?: string,
+  attemptStageIndexes: readonly number[] = [],
+) {
+  const run = await database.prepare(
+    "SELECT first_failure_json,latest_failure_json FROM research_workflow_run ORDER BY operation_id LIMIT 1",
+  ).first<{ readonly first_failure_json: string | null; readonly latest_failure_json: string | null }>();
+  if (run === null) throw new Error("workflow failure diagnostic row is missing");
+  const attemptRows = await database.prepare(
+    "SELECT stage_index,first_failure_json FROM research_workflow_attempt WHERE first_failure_json IS NOT NULL ORDER BY stage_index",
+  ).all<{ readonly stage_index: number; readonly first_failure_json: string }>();
+  const expected = {
+    code: "WORKFLOW_AUTHORITY_STALE",
+    phase,
+    ...(stage === undefined ? {} : { stage }),
+    retryable: false,
+  };
+  const decode = (text: string | null) => text === null ? null : JSON.parse(text) as Record<string, unknown>;
+  expect({ first: decode(run.first_failure_json), latest: decode(run.latest_failure_json) })
+    .toEqual({ first: expected, latest: expected });
+  expect((attemptRows.results ?? []).map((row) => ({ stage_index: row.stage_index, failure: decode(row.first_failure_json) })))
+    .toEqual(attemptStageIndexes.map((stage_index) => ({ stage_index, failure: expected })));
 }
 
 describe("S05 real entrypoint continuation across identical backend deployments", () => {
@@ -119,8 +153,17 @@ describe("S05 real entrypoint continuation across identical backend deployments"
     ).all()).results;
   }
 
+  async function expectInterruptedAt(execution: Promise<unknown>, stageIndex: number) {
+    const stage = RESEARCH_WORKFLOW_STAGES[stageIndex];
+    if (stage === undefined) throw new Error("interruption stage is outside the workflow");
+    await expect(execution).rejects.toMatchObject({
+      code: "WORKFLOW_EFFECT_UNCERTAIN",
+      failure: { code: "WORKFLOW_EFFECT_UNCERTAIN", phase: "STAGE", stage, retryable: false },
+    });
+  }
+
   it("resumes A→B→A without replacing the run, earlier receipts, objects or committed effects", async () => {
-    await expect(execute(principal.deployment_generation, 2)).rejects.toBe(interrupted);
+    await expectInterruptedAt(execute(principal.deployment_generation, 2), 2);
     const first = await checkpoints();
     expect(first).toHaveLength(2);
     const firstReceipt = JSON.parse(String(first[0]?.receipt_json)) as StageReceipt;
@@ -128,7 +171,7 @@ describe("S05 real entrypoint continuation across identical backend deployments"
     const originalRun = await fixture.db.prepare("SELECT * FROM research_workflow_run").first();
 
     await activate("pwa-only-b");
-    await expect(execute("pwa-only-b", 4)).rejects.toBe(interrupted);
+    await expectInterruptedAt(execute("pwa-only-b", 4), 4);
     const second = await checkpoints();
     expect(second).toHaveLength(4);
     expect(second.slice(0, 2)).toEqual(first);
@@ -163,7 +206,7 @@ describe("S05 real entrypoint continuation across identical backend deployments"
 
   it.each(["changed", "unknown", "revoked", "cancelled"] as const)(
     "keeps %s authority fail-closed on resume with no new durable effects", async (failure) => {
-      await expect(execute(principal.deployment_generation, 1)).rejects.toBe(interrupted);
+      await expectInterruptedAt(execute(principal.deployment_generation, 1), 1);
       await activate("pwa-only-b", failure === "changed" ? G : failure === "unknown" ? null : F);
       if (failure === "revoked") await fixture.db.prepare("UPDATE scope_access_grant SET state='REVOKED'").run();
       if (failure === "cancelled") {
@@ -175,16 +218,19 @@ describe("S05 real entrypoint continuation across identical backend deployments"
         code: failure === "cancelled" ? "WORKFLOW_CANCELLED" : "WORKFLOW_AUTHORITY_STALE",
       });
       if (failure === "changed" || failure === "unknown") expect(stepCalls).toBe(0);
+      if (failure === "changed" || failure === "unknown") await expectRetainedFailure(fixture.db, "PREPARATION");
+      if (failure === "revoked") await expectRetainedFailure(fixture.db, "STAGE", "FREEZE_PROTOCOL_AND_SCOPE", [0]);
       expect(await executionState(fixture.db)).toEqual(before);
     },
   );
 
   it("rejects an incompatible rotation after entrypoint admission before another stage can commit", async () => {
-    await expect(execute(principal.deployment_generation, 1)).rejects.toBe(interrupted);
+    await expectInterruptedAt(execute(principal.deployment_generation, 1), 1);
     const before = await executionState(fixture.db);
     await expect(execute(principal.deployment_generation, undefined, async (index) => {
       if (index === 1) await activate("incompatible-c", G);
     })).rejects.toMatchObject({ code: "WORKFLOW_AUTHORITY_STALE" });
+    await expectRetainedFailure(fixture.db, "STAGE", "ORIENT");
     expect(await executionState(fixture.db)).toEqual(before);
   });
 });

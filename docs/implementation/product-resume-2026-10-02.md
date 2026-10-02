@@ -540,3 +540,36 @@ Focused logs under OS temp: `eliotr-retrieval-and-change-fixtures-a979c765.log`,
 remain recorded; the final held-scope run is four PASS and the Wiki run seven
 PASS. Workflow continuation diagnostics, older session assumptions, REPORT
 timing and the broader gates remain in progress.
+
+The following focused checkpoint repairs Workflow fixtures: native Step.do
+uses its current three-argument form, the binding fixture supplies its exact
+deployment, and the exploratory fixture durably registers its initial run.
+The complete Workflow file previously passed 34 cases with one obsolete
+preparation-error assertion; that final case now also PASS with the typed
+wrapper and explicit zero-effects assertion. The full deployment-continuation
+file PASS eight cases in 16.81s. Canonical state comparisons exclude only the
+documented run/attempt failure diagnostic columns; separate assertions verify
+their exact closed authority-failure metadata. Receipts, objects, heads,
+checkpoints, cancellation and compatibility fences retain their original checks.
+
+The complete freeze/model-handler/raw-admission/retrieve files PASS 36 cases
+in 153.18s, with Core compilation and scoped lint PASS. Direct revoked-freeze
+composition still reports EVIDENCE_AUTHORIZATION_DENIED; its executor is checked
+against the closed, nonretryable Workflow failure. Four independent output
+preparation checks replace one timed test that constructed four fresh native
+fixtures; all ordering/failure/cancellation/expiry assertions remain. Each now
+takes 1.24-1.34s. Raw namespace/migration setup and revoked-retrieval setup move
+to hooks; actual mutations and negative checks remain timed. No timeout changed.
+
+Primary history PASS five cases in 53.24s on this assembly. The original REPORT
+reopen takes 18.263s under its unchanged 30s limit; temporary phase profiling
+records fixture audit 10.030s, AUDIT_CLAIMS 1.866s, citations 1.341s, coverage
+1.398s, materialization 1.232s and snapshot 42ms. All observed phases complete;
+the prior broad/isolated timeouts remain recorded and are not called a proven
+hang. The temporary profiler was removed after capturing the timings. Its
+console lint failure was thereby removed; final scoped lint PASS. Whole-suite
+load behavior remains to be tested, along with the older session assumptions.
+
+Logs: `eliotr-freeze-and-short-deadline-repros-a979c765.log`,
+`eliotr-freeze-and-fixture-timing-0e1a069c.log`, and
+`eliotr-continuation-and-primary-history-0e1a069c.log` under OS temp.

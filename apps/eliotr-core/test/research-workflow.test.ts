@@ -4,7 +4,7 @@ import { RESEARCH_WORKFLOW_STAGES } from "@eliotr/domain";
 import {
   createMonotoneStageExecutor,
   createWorkflowCheckpointExecutor, decodeReceipt, digest, MAX_WORKFLOW_OUTPUT_BYTES, readWorkflowObject,
-  type StageReceipt, type StageRequest,
+  WorkflowCheckpointStore, type StageReceipt, type StageRequest,
 } from "@eliotr/cloudflare-research";
 import { decodeProtocolScopeCheckpoint } from "@eliotr/cloudflare-research";
 import { SERVER_OWNED_RESEARCH_HANDLER_GENERATION } from "../src/research-stage-handlers.js";
@@ -474,7 +474,7 @@ describe("eliotr.workflow-stage.v1 W2 monotone bounded executor — actual D1/R2
   it("executes the ResearchWorkflow binding via step.do with handle-only <=64KiB results and restart resume", async () => {
     const f = await workflowFixture("w2-binding");
     const { ResearchWorkflow } = await import("../src/research-workflow.js");
-    const env = { CORE_DB: f.db, WORK_BUCKET: f.bucket } as unknown as Env;
+    const env = { CORE_DB: f.db, WORK_BUCKET: f.bucket, DEPLOYMENT_GENERATION: principal.deployment_generation } as unknown as Env;
     const params = {
       operation_id: f.request.operation_id,
       investigation_ref: { ...f.request.investigation_ref },
@@ -486,7 +486,7 @@ describe("eliotr.workflow-stage.v1 W2 monotone bounded executor — actual D1/R2
       deployment_generation: principal.deployment_generation,
     };
     const fakeStep = {
-      do: async (name: string, callback: () => Promise<unknown>) => {
+      do: async (name: string, _options: unknown, callback: () => Promise<unknown>) => {
         expect(name.startsWith("w2-stage-")).toBe(true);
         const outcome = await callback();
         expect(new TextEncoder().encode(JSON.stringify(outcome)).byteLength).toBeLessThanOrEqual(65536);
@@ -507,6 +507,7 @@ describe("eliotr.workflow-stage.v1 W2 monotone bounded executor — actual D1/R2
 
   it("executes the server-owned exploratory generation only for an exploratory W1 lane", async () => {
     const f = await workflowFixture("server-owned", "exploratory");
+    await new WorkflowCheckpointStore(f.db).ensureRun(f.request, principal);
     const { ResearchWorkflow } = await import("../src/research-workflow.js");
     const env = { CORE_DB: f.db, SEARCH_DB: runtime.SEARCH_DB, WORK_BUCKET: f.bucket, DEPLOYMENT_GENERATION: principal.deployment_generation } as unknown as Env;
     const params = {
@@ -520,7 +521,7 @@ describe("eliotr.workflow-stage.v1 W2 monotone bounded executor — actual D1/R2
       deployment_generation: principal.deployment_generation,
     };
     const fakeStep = {
-      do: async (_name: string, callback: () => Promise<unknown>) => callback(),
+      do: async (_name: string, _options: unknown, callback: () => Promise<unknown>) => callback(),
     };
     const first = await ResearchWorkflow.prototype.run.call({ env }, { payload: params } as never, fakeStep as never);
     if (!("state" in first) || !("receipt_refs" in first)) throw new Error("expected the exploratory workflow result");
@@ -550,6 +551,10 @@ describe("eliotr.workflow-stage.v1 W2 monotone bounded executor — actual D1/R2
       principal_ref: principal.principal_ref,
       credential_generation: principal.credential_generation,
       deployment_generation: principal.deployment_generation,
-    } } as never, fakeStep as never)).rejects.toMatchObject({ code: "WORKFLOW_AUTHORITY_STALE" });
+    } } as never, fakeStep as never)).rejects.toMatchObject({
+      code: "WORKFLOW_PREPARATION_FAILED",
+      failure: { code: "WORKFLOW_AUTHORITY_STALE", phase: "PREPARATION", retryable: false },
+    });
+    expect(await counts(typo.db)).toEqual({ attempts: 0, checkpoints: 0, outbox: 0, ledger_events: 0 });
   }, 30_000);
 });

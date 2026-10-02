@@ -137,7 +137,7 @@ describe("production governed model attempt handler over actual D1/R2", () => {
     expect(cancelled.calls()).toBe(0);
   });
 
-  it("prepares output before the route and records preparation failures with cancellation precedence", async () => {
+  it("prepares output before the route", async () => {
     const ordered = await governedModelAttemptFixture("handler-output-order");
     const events: string[] = [];
     const orderedHandler = createGovernedModelAttemptHandler({
@@ -156,7 +156,9 @@ describe("production governed model attempt handler over actual D1/R2", () => {
     await expect(orderedHandler.handler(ordered.invocation("FREEZE_PROTOCOL_AND_SCOPE", ordered.stageAttemptRef)))
       .resolves.toEqual(expect.any(Uint8Array));
     expect(events).toEqual(["prepare", "route"]);
+  });
 
+  it("records output preparation failure without calling the route", async () => {
     const failure = await governedModelAttemptFixture("handler-output-preparation-failed");
     const failing = createGovernedModelAttemptHandler({
       ...failure.dependencies,
@@ -173,7 +175,9 @@ describe("production governed model attempt handler over actual D1/R2", () => {
     await expect(failure.dependencies.attempts.readByIdempotency({
       principal_ref: failure.principal.principal_ref, operation_kind: "REPORT", idempotency_key: failureIdentity.idempotency_key,
     })).resolves.toMatchObject({ state: "FAILED", persisted_state: "FAILED", error_code: "MODEL_OUTPUT_PREPARATION_FAILED" });
+  });
 
+  it("gives cancellation precedence during output preparation without calling the route", async () => {
     const cancelled = await governedModelAttemptFixture("handler-output-preparation-cancelled");
     const controller = new AbortController();
     const cancelledHandler = createGovernedModelAttemptHandler({
@@ -194,7 +198,9 @@ describe("production governed model attempt handler over actual D1/R2", () => {
     await expect(cancelled.dependencies.attempts.readByIdempotency({
       principal_ref: cancelled.principal.principal_ref, operation_kind: "REPORT", idempotency_key: cancelledIdentity.idempotency_key,
     })).resolves.toMatchObject({ state: "CANCELLED", persisted_state: "CANCELLED", error_code: "WORKFLOW_CANCELLED" });
+  });
 
+  it("gives expiry precedence during output preparation without calling the route", async () => {
     const expired = await governedModelAttemptFixture("handler-output-preparation-expired");
     let now = Date.parse("2026-09-10T12:00:00.000Z");
     const expiring = createGovernedModelAttemptHandler({

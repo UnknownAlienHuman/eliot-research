@@ -142,15 +142,19 @@ describe("RETRIEVE_BRANCHES over the persisted protocol scope", () => {
       .rejects.toMatchObject({ code: "RESEARCH_PROTOCOL_FREEZE_AUTHORITY_STALE" });
   });
 
-  it("refuses a revoked held grant before retrieval rows or evidence reads", async () => {
-    const f = await fixture();
-    const { request, handler } = await prepareRetrieveStage(f);
-    const before = await rowCounts(f.db);
-    await f.db.prepare("UPDATE scope_access_grant SET state = 'REVOKED' WHERE snapshot_id = ?1 AND snapshot_revision = ?2 AND principal_ref = ?3")
-      .bind(f.scope.snapshot_id, f.scope.revision, access.principal_ref).run();
-    const inputBytes = await readWorkflowObject(runtime.WORK_BUCKET, request.input_manifest, true);
-    await expect(handler({ request, principal, input_bytes: inputBytes, attempt_ref: "retrieve-revoked-attempt", budget_receipt_ref: "retrieve-budget" }))
-      .rejects.toMatchObject({ code: "EVIDENCE_AUTHORIZATION_DENIED" });
-    expect(await rowCounts(f.db)).toEqual(before);
+  describe("revoked held grant", () => {
+    let f: Awaited<ReturnType<typeof fixture>>;
+    let prepared: Awaited<ReturnType<typeof prepareRetrieveStage>>;
+    beforeEach(async () => { f = await fixture(); prepared = await prepareRetrieveStage(f); });
+    it("refuses a revoked held grant before retrieval rows or evidence reads", async () => {
+      const { request, handler } = prepared;
+      const before = await rowCounts(f.db);
+      await f.db.prepare("UPDATE scope_access_grant SET state = 'REVOKED' WHERE snapshot_id = ?1 AND snapshot_revision = ?2 AND principal_ref = ?3")
+        .bind(f.scope.snapshot_id, f.scope.revision, access.principal_ref).run();
+      const inputBytes = await readWorkflowObject(runtime.WORK_BUCKET, request.input_manifest, true);
+      await expect(handler({ request, principal, input_bytes: inputBytes, attempt_ref: "retrieve-revoked-attempt", budget_receipt_ref: "retrieve-budget" }))
+        .rejects.toMatchObject({ code: "EVIDENCE_AUTHORIZATION_DENIED" });
+      expect(await rowCounts(f.db)).toEqual(before);
+    });
   });
 });
