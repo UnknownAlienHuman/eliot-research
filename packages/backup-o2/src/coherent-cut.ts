@@ -1,4 +1,5 @@
 import { backupSha256Hex, canonicalBackupJson, failBackup } from "./shared.js";
+import { DURABLE_CORE_TABLE_SPECS } from "./core-table-specs.js";
 
 // ER-34 O2 FIX2 coherent-cut protocol + complete column inventory.
 //
@@ -30,7 +31,7 @@ import { backupSha256Hex, canonicalBackupJson, failBackup } from "./shared.js";
 export const BACKUP_MANIFEST_PROTOCOL = "eliotr.backup-manifest.v1";
 export const BACKUP_SCHEMA_INVENTORY_PROTOCOL = "eliotr.backup-schema-inventory.v1";
 
-export type ColumnKind = "text" | "int" | "text-or-null" | "int-or-null";
+export type ColumnKind = "text" | "int" | "real" | "text-or-null" | "int-or-null" | "real-or-null";
 
 export interface TableSpec {
   readonly manifest: string;
@@ -60,11 +61,12 @@ export const TABLE_SPECS: readonly TableSpec[] = [
   { manifest: "generations", table: "projection_generation", order_by: "source_revision_ref, projection_generation", columns: { source_revision_ref: "text", projection_generation: "text", job_id: "text", source_owner_generation: "text", content_sha256: "text", object_residency_key_digest: "text", projector_profile: "text", state: "text", item_count: "int-or-null", item_set_digest: "text-or-null", work_manifest_ref: "text-or-null", work_manifest_sha256: "text-or-null", d1_search_receipt_ref: "text-or-null", d1_search_readback_digest: "text-or-null", semantic_instance_id: "text-or-null", semantic_generation: "text-or-null", semantic_receipt_ref: "text-or-null", semantic_readback_digest: "text-or-null", reason_codes_json: "text", created_at: "text", updated_at: "text" }, required: false },
   { manifest: "retention", table: "backup_epoch", order_by: "backup_epoch_id", columns: { backup_epoch_id: "text", core_export_ref: "text", search_projection_manifest_ref: "text", evidence_manifest_ref: "text", work_manifest_ref: "text", offsite_copy_ref: "text", purge_ledger_revision: "int", verification_state: "text", created_at: "text", verified_at: "text-or-null" }, required: false },
   { manifest: "retention", table: "erasure_hold", order_by: "hold_ref", columns: { hold_ref: "text", exact_subject_ref: "text-or-null", location: "text-or-null", canonical_ref: "text-or-null", policy_or_hold_ref: "text", next_review_at: "text", state: "text", created_at: "text", released_at: "text-or-null" }, required: false },
+  ...DURABLE_CORE_TABLE_SPECS,
 ];
 
 export interface CoreColumnInfo {
   readonly name: string;
-  readonly affinity: "TEXT" | "INTEGER";
+  readonly affinity: "TEXT" | "INTEGER" | "REAL";
   readonly notnull: boolean;
 }
 
@@ -73,17 +75,18 @@ export interface CoreTableInventory {
   readonly columns: readonly CoreColumnInfo[];
 }
 
-function specKindFor(affinity: "TEXT" | "INTEGER", notnull: boolean): ColumnKind {
+function specKindFor(affinity: "TEXT" | "INTEGER" | "REAL", notnull: boolean): ColumnKind {
   if (affinity === "INTEGER") return notnull ? "int" : "int-or-null";
+  if (affinity === "REAL") return notnull ? "real" : "real-or-null";
   return notnull ? "text" : "text-or-null";
 }
 
 export async function readCoreColumnInventory(database: D1Database, tables: readonly string[]): Promise<readonly CoreTableInventory[]> {
   const inventory: CoreTableInventory[] = [];
   for (const table of tables) {
-    let rows: readonly { readonly name: unknown; readonly type: unknown; readonly notnull: unknown }[];
+    let rows: readonly { readonly name: unknown; readonly type: unknown; readonly notnull: unknown; readonly pk: unknown }[];
     try {
-      const result = await database.prepare(`PRAGMA table_info(${table})`).all<{ readonly name: unknown; readonly type: unknown; readonly notnull: unknown }>();
+      const result = await database.prepare(`PRAGMA table_info(${table})`).all<{ readonly name: unknown; readonly type: unknown; readonly notnull: unknown; readonly pk: unknown }>();
       rows = [...(result.results ?? [])];
     } catch (cause) {
       failBackup("BACKUP_TABLE_MISSING", `backup schema inventory read for ${table} is unavailable`, true, { table }, cause);
@@ -91,13 +94,16 @@ export async function readCoreColumnInventory(database: D1Database, tables: read
     inventory.push({
       table,
       columns: rows.map((row) => {
-        if (typeof row.name !== "string" || typeof row.type !== "string" || typeof row.notnull !== "number") {
+        if (typeof row.name !== "string" || typeof row.type !== "string" || typeof row.notnull !== "number" || typeof row.pk !== "number") {
           failBackup("BACKUP_ROW_INVALID", `backup schema inventory for ${table} carries a malformed column`, false, { table });
         }
         return {
           name: row.name,
-          affinity: row.type.toUpperCase().includes("INT") ? "INTEGER" as const : "TEXT" as const,
-          notnull: row.notnull === 1,
+          affinity: row.type.toUpperCase().includes("INT") ? "INTEGER" as const : /REAL|FLOA|DOUB/u.test(row.type.toUpperCase()) ? "REAL" as const : "TEXT" as const,
+          // SQLite reports INTEGER PRIMARY KEY as notnull=0 even though it is
+          // the rowid and cannot be null. Treat every declared PK as required
+          // in the portable record shape; nullable non-key columns stay exact.
+          notnull: row.notnull === 1 || row.pk > 0,
         };
       }),
     });

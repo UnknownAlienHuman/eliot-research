@@ -220,7 +220,7 @@ describe("ER-34 O2 FIX5 VERIFIED resume re-proves durable nonce authority", () =
     const draft = (await h.port.createPortableEpoch(intent("fix5-malformed"), { now_ms: NOW })).draft;
     const op = intent("fix5-malformed-copy");
     const copyId = await copyIdFor(h, draft, op, "key-gen-1");
-    forgeCheckpoints(h, copyId, draft, (i) => `z${"y".repeat(21)}${String(i).padStart(2, "0")}`.slice(0, 24));
+    forgeCheckpoints(h, copyId, draft, (i) => `z${i.toString(16).padStart(23, "0")}`);
     const adapter = remotePresentAdapter(draft, "key-gen-1");
     await expect(h.port.copyOffsite({
       draft, intent: op, encryption_key: h.key, key_generation: "key-gen-1",

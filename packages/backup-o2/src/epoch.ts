@@ -12,7 +12,7 @@ import { canonicalEpochIntentDigest } from "./intent-digest.js";
 import {
   BACKUP_MANIFEST_PROTOCOL, TABLE_SPECS, assertExportColumnCoverage,
   digestCoreColumnInventory, openExportCut, readCoreColumnInventory, sealExportCut,
-  type CutInputs, type OpenCut,
+  type CoreTableInventory, type CutInputs, type OpenCut,
 } from "./coherent-cut.js";
 
 // ER-34 O2 FIX2 portable epoch. IMPLEMENTED_NOT_LIVE. Coherent-cut: phase-1
@@ -96,24 +96,32 @@ async function backupTableExists(database: D1Database, table: string): Promise<b
 function decodeCell(table: string, column: string, kind: string, value: unknown, index: number): unknown {
   const label = `${table}[${index}].${column}`;
   if (value === null) {
-    if (kind === "text-or-null" || kind === "int-or-null") return null;
+    if (kind === "text-or-null" || kind === "int-or-null" || kind === "real-or-null") return null;
     failBackup("BACKUP_ROW_INVALID", `backup row is missing load-bearing column ${label}`, false, { table, column });
   }
   if (kind === "text" || kind === "text-or-null") {
     if (typeof value !== "string") failBackup("BACKUP_ROW_INVALID", `backup row column ${label} is not text`, false, { table, column });
     return value;
   }
+  if (kind === "real" || kind === "real-or-null") {
+    if (typeof value !== "number" || !Number.isFinite(value)) failBackup("BACKUP_ROW_INVALID", `backup row column ${label} is not a finite real`, false, { table, column });
+    return value;
+  }
   if (typeof value !== "number" || !Number.isSafeInteger(value)) failBackup("BACKUP_ROW_INVALID", `backup row column ${label} is not a safe integer`, false, { table, column });
   return value;
 }
 
-async function readBackupTable(database: D1Database, spec: (typeof TABLE_SPECS)[number], maxRows: number, signal?: AbortSignal): Promise<readonly SnapshotRow[]> {
+async function readBackupTable(database: D1Database, spec: (typeof TABLE_SPECS)[number], inventory: CoreTableInventory, maxRows: number, signal?: AbortSignal): Promise<readonly SnapshotRow[]> {
   if (backupAborted(signal)) failBackup("BACKUP_CANCELLED", "backup export was cancelled", true);
   if (!await backupTableExists(database, spec.table)) {
     if (spec.required) failBackup("BACKUP_TABLE_MISSING", `backup required table ${spec.table} is absent`, false, { table: spec.table });
     return [];
   }
-  const columns = Object.keys(spec.columns);
+  const columns = inventory.columns.map((column) => column.name);
+  const columnKinds = Object.fromEntries(columns.map((column) => [column, spec.columns[column]]));
+  if (columns.length === 0 || Object.values(columnKinds).some((kind) => kind === undefined)) {
+    failBackup("BACKUP_COVERAGE_GAP", `backup table ${spec.table} has no complete live column inventory`, false, { table: spec.table });
+  }
   let result: D1Result<Record<string, unknown>>;
   try {
     result = await database.prepare(`SELECT ${columns.join(", ")} FROM ${spec.table} ORDER BY ${spec.order_by} LIMIT ?1`).bind(maxRows + 1).all<Record<string, unknown>>();
@@ -125,7 +133,7 @@ async function readBackupTable(database: D1Database, spec: (typeof TABLE_SPECS)[
   const rows: SnapshotRow[] = raw.map((input, index) => {
     if (typeof input !== "object" || input === null || Array.isArray(input)) failBackup("BACKUP_ROW_INVALID", `backup row ${spec.table}[${index}] is not a record`, false, { table: spec.table });
     const row: Record<string, unknown> = {};
-    for (const [column, kind] of Object.entries(spec.columns)) row[column] = decodeCell(spec.table, column, kind, (input as Record<string, unknown>)[column], index);
+    for (const [column, kind] of Object.entries(columnKinds)) row[column] = decodeCell(spec.table, column, kind as string, (input as Record<string, unknown>)[column], index);
     for (const key of Object.keys(input as Record<string, unknown>)) {
       if (!(key in spec.columns)) failBackup("BACKUP_ROW_INVALID", `backup row ${spec.table}[${index}] carries an unknown load-bearing field`, false, { table: spec.table });
     }
@@ -229,6 +237,7 @@ export function createBackupEpochPort(ports: BackupSourcePorts, overrides?: { re
     const specTables = TABLE_SPECS.map((spec) => spec.table);
     const inventory = await readCoreColumnInventory(ports.core_db, specTables);
     assertExportColumnCoverage(inventory, TABLE_SPECS);
+    const inventoryByTable = new Map(inventory.map((entry) => [entry.table, entry]));
     const inventoryDigest = await digestCoreColumnInventory(inventory);
     const schemaGeneration = await readSchemaGeneration(ports.core_db);
     const names = await readMigrationNames(ports.core_db, limits.max_table_rows);
@@ -236,7 +245,9 @@ export function createBackupEpochPort(ports: BackupSourcePorts, overrides?: { re
     const rows: SnapshotRow[] = [];
     const tables: Record<string, { count: number; digest: string }> = {};
     for (const spec of TABLE_SPECS) {
-      const tableRows = await readBackupTable(ports.core_db, spec, limits.max_table_rows, signal);
+      const liveInventory = inventoryByTable.get(spec.table);
+      if (liveInventory === undefined) failBackup("BACKUP_COVERAGE_GAP", `backup table ${spec.table} has no live schema inventory`, false, { table: spec.table });
+      const tableRows = await readBackupTable(ports.core_db, spec, liveInventory, limits.max_table_rows, signal);
       if (tableRows.length > 0) {
         for (const row of tableRows) rows.push(row);
         const digest = await backupSha256Hex(tableRows.map((row) => canonicalBackupJson(row.row)).join("\n"));
