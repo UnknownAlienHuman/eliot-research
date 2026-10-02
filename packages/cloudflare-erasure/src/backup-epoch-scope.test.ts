@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   scopeBackupEpochsForSubject,
+  scopeBackupEpochsForSubjects,
   type BackupEpochScopeArchive,
   type BackupEpochScopeDraft,
   type BackupEpochScopeSubject,
@@ -52,7 +53,7 @@ async function archive(epochId: string, verification_state: unknown = "VERIFIED"
   return {
     epoch_id: epochId,
     verification_state,
-    draft_json,
+    read_draft_json: async () => draft_json,
     read_plaintext_part: async () => bytes,
   };
 }
@@ -155,6 +156,35 @@ describe("exact source-to-backup-epoch scope", () => {
       copy_authority_epoch_ids: [],
       verify_manifests,
     })).rejects.toMatchObject({ code: "ERASURE_CLOSURE_INCOMPLETE" });
+  });
+
+  it("verifies every archive once and returns source-wide and revision-scoped epochs", async () => {
+    const archives = [await archive("epoch-A"), await archive("epoch-B")];
+    let verifications = 0;
+    const subjects: BackupEpochScopeSubject[] = [
+      subject,
+      {
+        kind: "source-revision",
+        source_id: "source-A",
+        source_owner_generation: "owner-gen-A",
+        source_revision_ref: "revision-A",
+        content_sha256: HASH,
+        object_residency_key_digest: HASH,
+      },
+    ];
+    const result = await scopeBackupEpochsForSubjects({
+      subjects,
+      archives,
+      copy_authority_epoch_ids: [],
+      verify_manifests: async ({ draft }) => {
+        verifications += 1;
+        return { source_rows: draft.epoch_id === "epoch-A"
+          ? [source("source-A", "owner-gen-A"), revision("source-A", "owner-gen-A", "revision-A")]
+          : [source("source-A", "owner-gen-A"), revision("source-A", "owner-gen-A", "revision-B")] };
+      },
+    });
+    expect(result).toEqual([["epoch-A", "epoch-B"], ["epoch-A"]]);
+    expect(verifications).toBe(2);
   });
 
   it("fails closed on malformed verifier output and unverified canonical manifests", async () => {

@@ -13,6 +13,7 @@ import type {
 export interface SourceRevisionInventoryRow {
   readonly source_revision_ref: string;
   readonly source_id: string;
+  readonly source_owner_generation: string;
   readonly original_r2_key?: string;
   readonly normalized_artifact_ref?: string;
   readonly content_sha256: string;

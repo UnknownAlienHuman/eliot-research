@@ -21,6 +21,12 @@ import type {
   RegisteredDependencyRow,
   SourceRevisionInventoryRow,
 } from "./types.js";
+import { verifyPortableBackupManifests, type BackupEpochDraft } from "@eliotr/backup-o2";
+import { readD1BackupEpochScopeInventory } from "./backup-epoch-reader.js";
+import {
+  scopeBackupEpochsForSubjects,
+  type BackupEpochScopeSubject,
+} from "./backup-epoch-scope.js";
 import { enumerateRawIngestDependencies } from "./raw-ingest-inventory.js";
 import { createEmptyLocationProofTarget } from "./empty-location-proof.js";
 import { makeD1SearchEmptyProofFields } from "./empty-location-proof-authority.js";
@@ -38,6 +44,7 @@ import {
 interface RevisionRow {
   readonly source_revision_ref: unknown;
   readonly source_id: unknown;
+  readonly source_owner_generation: unknown;
   readonly original_r2_key: unknown;
   readonly normalized_artifact_ref: unknown;
   readonly content_sha256: unknown;
@@ -126,6 +133,7 @@ function decodeRevision(row: RevisionRow): SourceRevisionInventoryRow {
   return {
     source_revision_ref: assertErasureIdentifier(row.source_revision_ref, "source revision ref"),
     source_id: assertErasureIdentifier(row.source_id, "source ID"),
+    source_owner_generation: assertErasureIdentifier(row.source_owner_generation, "source owner generation"),
     content_sha256: assertErasureSha256(row.content_sha256, "source content digest"),
     object_residency_key_digest: assertErasureSha256(
       row.object_residency_key_digest,
@@ -225,7 +233,7 @@ async function target(
 
 async function revisionRows(database: D1Database, sourceId: string): Promise<readonly SourceRevisionInventoryRow[]> {
   const result = await database.prepare(
-    "SELECT source_revision_ref,source_id,original_r2_key,normalized_artifact_ref," +
+    "SELECT source_revision_ref,source_id,source_owner_generation,original_r2_key,normalized_artifact_ref," +
     "content_sha256,object_residency_key_digest,purge_state FROM source_revision " +
     `WHERE source_id=?1 ORDER BY source_revision_ref LIMIT ${INVENTORY_FETCH_LIMIT}`,
   ).bind(sourceId).all<RevisionRow>();
@@ -234,12 +242,23 @@ async function revisionRows(database: D1Database, sourceId: string): Promise<rea
 
 async function oneRevision(database: D1Database, revisionRef: string): Promise<SourceRevisionInventoryRow> {
   const row = await database.prepare(
-    "SELECT source_revision_ref,source_id,original_r2_key,normalized_artifact_ref," +
+    "SELECT source_revision_ref,source_id,source_owner_generation,original_r2_key,normalized_artifact_ref," +
     "content_sha256,object_residency_key_digest,purge_state FROM source_revision " +
     "WHERE source_revision_ref=?1 LIMIT 1",
   ).bind(revisionRef).first<RevisionRow>();
   if (row === null) erasureFail("ERASURE_INPUT_INVALID", `source revision ${revisionRef} does not exist`);
   return decodeRevision(row);
+}
+
+async function sourceOwnerGeneration(database: D1Database, sourceId: string): Promise<string> {
+  const result = await database.prepare(
+    "SELECT source_id,source_owner_generation FROM source WHERE source_id=?1 LIMIT 2",
+  ).bind(sourceId).all<{ readonly source_id: unknown; readonly source_owner_generation: unknown }>();
+  const rows = boundedRows(result, "backup source root inventory");
+  if (rows.length !== 1 || rows[0]?.source_id !== sourceId) {
+    erasureFail("ERASURE_CLOSURE_INCOMPLETE", "source backup root is absent or ambiguous");
+  }
+  return assertErasureIdentifier(rows[0]?.source_owner_generation, "source owner generation");
 }
 
 async function projections(database: D1Database, revisionRef: string): Promise<readonly ProjectionInventoryRow[]> {
@@ -309,18 +328,39 @@ export function createD1ErasureInventory(
       const request = validateErasureRequest(rawRequest);
       const requestDigest = await erasureDigest(request);
       const revisions: { readonly subject: string; readonly row: SourceRevisionInventoryRow }[] = [];
+      const backupSelections: { readonly exact_subject_ref: string; readonly subject: BackupEpochScopeSubject }[] = [];
       const directTargets: PurgeTarget[] = [];
 
       for (const exactSubjectRef of request.exact_subject_refs) {
         const parsed = parseErasureSubject(exactSubjectRef);
         if (parsed.kind === "source_revision") {
           ensureClosureCapacity(revisions.length, 1, "source revision selection");
-          revisions.push({ subject: exactSubjectRef, row: await oneRevision(dependencies.core_database, parsed.source_revision_ref) });
+          const row = await oneRevision(dependencies.core_database, parsed.source_revision_ref);
+          revisions.push({ subject: exactSubjectRef, row });
+          backupSelections.push({
+            exact_subject_ref: exactSubjectRef,
+            subject: {
+              kind: "source-revision",
+              source_id: row.source_id,
+              source_owner_generation: row.source_owner_generation,
+              source_revision_ref: row.source_revision_ref,
+              content_sha256: row.content_sha256,
+              object_residency_key_digest: row.object_residency_key_digest,
+            },
+          });
         } else if (parsed.kind === "source") {
           const rows = await revisionRows(dependencies.core_database, parsed.source_id);
           if (rows.length === 0) erasureFail("ERASURE_INPUT_INVALID", `source ${parsed.source_id} has no revisions`);
           ensureClosureCapacity(revisions.length, rows.length, "source revision selection");
           for (const row of rows) revisions.push({ subject: exactSubjectRef, row });
+          backupSelections.push({
+            exact_subject_ref: exactSubjectRef,
+            subject: {
+              kind: "source",
+              source_id: parsed.source_id,
+              source_owner_generation: await sourceOwnerGeneration(dependencies.core_database, parsed.source_id),
+            },
+          });
         } else if (parsed.kind === "evidence_handle") {
           await verifyEvidenceHandleRoot(dependencies.core_database, parsed.handle_id, parsed.revision);
           ensureClosureCapacity(directTargets.length, 2, "direct erasure target selection");
@@ -391,7 +431,48 @@ export function createD1ErasureInventory(
         }
       }
       if (request.required_locations.includes("BackupRestorePath")) {
-        erasureFail("ERASURE_CLOSURE_INCOMPLETE", "source-scoped backup archive manifests are unavailable");
+        if (dependencies.work_bucket === undefined || backupSelections.length === 0) {
+          erasureFail("ERASURE_CLOSURE_INCOMPLETE", "source-scoped local backup archive authority is unavailable");
+        }
+        const backupInventory = await readD1BackupEpochScopeInventory(
+          dependencies.core_database,
+          dependencies.work_bucket,
+        );
+        const scopedEpochIds = await scopeBackupEpochsForSubjects({
+          subjects: backupSelections.map(({ subject }) => subject),
+          archives: backupInventory.archives,
+          copy_authority_epoch_ids: backupInventory.copy_authority_epoch_ids,
+          verify_manifests: async ({ draft, plaintext_parts }) => {
+            const verified = await verifyPortableBackupManifests({
+              draft: draft as BackupEpochDraft,
+              plaintext_parts,
+            });
+            return { source_rows: verified.source_rows };
+          },
+        });
+        const subjectsByEpoch = new Map<string, string[]>();
+        for (const [index, epochIds] of scopedEpochIds.entries()) {
+          const exactSubjectRef = backupSelections[index]?.exact_subject_ref;
+          if (exactSubjectRef === undefined) {
+            erasureFail("ERASURE_CLOSURE_INCOMPLETE", "backup scope result lost its exact erasure subject");
+          }
+          for (const epochId of epochIds) {
+            const refs = subjectsByEpoch.get(epochId) ?? [];
+            refs.push(exactSubjectRef);
+            subjectsByEpoch.set(epochId, refs);
+          }
+        }
+        if (subjectsByEpoch.size === 0) {
+          erasureFail("ERASURE_CLOSURE_INCOMPLETE", "no verified backup epoch contains the selected source roots");
+        }
+        for (const [epochId, subjectRefs] of [...subjectsByEpoch.entries()].sort(([left], [right]) => left.localeCompare(right))) {
+          ensureClosureCapacity(generated.length, 1, "source-scoped backup erasure targets");
+          const representativeSubject = [...new Set(subjectRefs)].sort()[0];
+          if (representativeSubject === undefined) {
+            erasureFail("ERASURE_CLOSURE_INCOMPLETE", "backup epoch target has no exact selected subject");
+          }
+          generated.push(await target(representativeSubject, "BackupRestorePath", `backup:${epochId}`));
+        }
       }
 
       for (const { subject, row } of revisions) {

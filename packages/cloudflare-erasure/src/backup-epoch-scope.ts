@@ -7,8 +7,9 @@ const MANIFESTS = [
 ] as const;
 const MAX_EPOCHS = 10_000;
 const MAX_PARTS = 100_000;
-const MAX_PART_BYTES = 64 * 1024 * 1024;
-const MAX_TOTAL_BYTES = 1024 * 1024 * 1024;
+const MAX_PART_BYTES = 8 * 1024 * 1024;
+const MAX_TOTAL_BYTES = 8 * 1024 * 1024;
+const MAX_SCOPED_TARGETS = 100_000;
 
 export interface BackupEpochScopePart {
   readonly manifest: string;
@@ -47,10 +48,10 @@ export interface VerifiedBackupSourceRows {
 export interface BackupEpochScopeArchive {
   readonly epoch_id: unknown;
   readonly verification_state: unknown;
-  /** Exact D1-persisted backup_epoch_receipt.draft_json and D1 epoch state. */
-  readonly draft_json: unknown;
+  /** Reads the exact D1-persisted backup_epoch_receipt.draft_json on demand. */
+  readonly read_draft_json: () => Promise<unknown>;
   /** Resolve every part through an authorized complete local or O2 offsite read path. */
-  readonly read_plaintext_part: (part: BackupEpochScopePart) => Promise<Uint8Array | null>;
+  readonly read_plaintext_part: (part: BackupEpochScopePart, draft: BackupEpochScopeDraft) => Promise<Uint8Array | null>;
 }
 
 export interface BackupEpochScopeSubject {
@@ -154,8 +155,17 @@ function parseDraft(value: unknown, epochId: string): BackupEpochScopeDraft {
     };
   });
   const byManifest = new Map<string, BackupEpochScopePart[]>();
+  let previousManifestOrder = -1;
+  let previousPartIndex = 0;
   let indexedBytes = 0;
   for (const part of parts) {
+    const manifestOrder = MANIFESTS.indexOf(part.manifest as (typeof MANIFESTS)[number]);
+    if (manifestOrder < previousManifestOrder ||
+      (manifestOrder === previousManifestOrder && part.index <= previousPartIndex)) {
+      erasureFail("ERASURE_CLOSURE_INCOMPLETE", "backup epoch part index is not in canonical manifest and part order");
+    }
+    previousManifestOrder = manifestOrder;
+    previousPartIndex = part.index;
     indexedBytes += part.size_bytes;
     if (indexedBytes > MAX_TOTAL_BYTES) erasureFail("ERASURE_CLOSURE_INCOMPLETE", "backup manifest bytes exceed their total bound");
     const list = byManifest.get(part.manifest) ?? [];
@@ -189,10 +199,40 @@ function parseDraft(value: unknown, epochId: string): BackupEpochScopeDraft {
   };
 }
 
-function matchVerifiedRows(
-  subject: BackupEpochScopeSubject,
+interface IndexedSubjects {
+  readonly subjects: readonly BackupEpochScopeSubject[];
+  readonly source_indexes: ReadonlyMap<string, readonly number[]>;
+  readonly revision_indexes: ReadonlyMap<string, readonly number[]>;
+}
+
+function indexSubjects(subjects: readonly BackupEpochScopeSubject[]): IndexedSubjects {
+  const sourceSubjectIndexes = new Map<string, number[]>();
+  const revisionSubjectIndexes = new Map<string, number[]>();
+  for (const [index, subject] of subjects.entries()) {
+    const sourceId = assertErasureIdentifier(subject.source_id, "selected backup source ID");
+    assertErasureIdentifier(subject.source_owner_generation, "selected backup source owner generation");
+    if (subject.kind === "source") {
+      const indexes = sourceSubjectIndexes.get(sourceId) ?? [];
+      indexes.push(index);
+      sourceSubjectIndexes.set(sourceId, indexes);
+    } else if (subject.kind === "source-revision") {
+      const revisionRef = assertErasureIdentifier(subject.source_revision_ref, "selected source revision");
+      const indexes = revisionSubjectIndexes.get(revisionRef) ?? [];
+      indexes.push(index);
+      revisionSubjectIndexes.set(revisionRef, indexes);
+      assertErasureSha256(subject.content_sha256, "selected source content digest");
+      assertErasureSha256(subject.object_residency_key_digest, "selected source residency digest");
+    } else {
+      erasureFail("ERASURE_CLOSURE_INCOMPLETE", "selected backup subject kind is unknown");
+    }
+  }
+  return { subjects, source_indexes: sourceSubjectIndexes, revision_indexes: revisionSubjectIndexes };
+}
+
+function matchingSubjectIndexes(
+  selected: IndexedSubjects,
   result: VerifiedBackupSourceRows,
-): boolean {
+): ReadonlySet<number> {
   if (!Array.isArray(result.source_rows) || result.source_rows.length > 100_000) {
     erasureFail("ERASURE_CLOSURE_INCOMPLETE", "verified backup row set is incomplete or over its bound");
   }
@@ -220,24 +260,35 @@ function matchVerifiedRows(
       erasureFail("ERASURE_CLOSURE_INCOMPLETE", `backup revision ${revisionRef} does not bind to an exact source owner generation`);
     }
   }
-  if (subject.kind === "source") {
-    const generation = sources.get(subject.source_id);
-    if (generation === undefined) return false;
-    if (generation !== subject.source_owner_generation) {
-      erasureFail("ERASURE_CLOSURE_INCOMPLETE", "backup source owner generation differs from the selected source");
+  const matched = new Set<number>();
+  for (const [sourceId, generation] of sources) {
+    const indexes = selected.source_indexes.get(sourceId);
+    if (indexes === undefined) continue;
+    for (const index of indexes) {
+      if (generation !== selected.subjects[index]?.source_owner_generation) {
+        erasureFail("ERASURE_CLOSURE_INCOMPLETE", "backup source owner generation differs from the selected source");
+      }
+      matched.add(index);
     }
-    return true;
   }
-  const revisionRef = assertErasureIdentifier(subject.source_revision_ref, "selected source revision");
-  const row = revisions.get(revisionRef);
-  if (row === undefined) return false;
-  if (assertErasureIdentifier(row.source_id, "backup revision source ID") !== subject.source_id ||
-    assertErasureIdentifier(row.source_owner_generation, "backup revision owner generation") !== subject.source_owner_generation ||
-    assertErasureSha256(row.content_sha256, "backup revision content digest") !== assertErasureSha256(subject.content_sha256, "selected source content digest") ||
-    assertErasureSha256(row.object_residency_key_digest, "backup revision residency digest") !== assertErasureSha256(subject.object_residency_key_digest, "selected source residency digest")) {
-    erasureFail("ERASURE_CLOSURE_INCOMPLETE", "backup source revision differs from the selected root identity");
+  for (const [revisionRef, row] of revisions) {
+    const indexes = selected.revision_indexes.get(revisionRef);
+    if (indexes === undefined) continue;
+    for (const index of indexes) {
+      const subject = selected.subjects[index];
+      if (subject === undefined || subject.kind !== "source-revision") {
+        erasureFail("ERASURE_CLOSURE_INCOMPLETE", "selected backup revision identity is malformed");
+      }
+      if (assertErasureIdentifier(row.source_id, "backup revision source ID") !== subject.source_id ||
+        assertErasureIdentifier(row.source_owner_generation, "backup revision owner generation") !== subject.source_owner_generation ||
+        assertErasureSha256(row.content_sha256, "backup revision content digest") !== assertErasureSha256(subject.content_sha256, "selected source content digest") ||
+        assertErasureSha256(row.object_residency_key_digest, "backup revision residency digest") !== assertErasureSha256(subject.object_residency_key_digest, "selected source residency digest")) {
+        erasureFail("ERASURE_CLOSURE_INCOMPLETE", "backup source revision differs from the selected root identity");
+      }
+      matched.add(index);
+    }
   }
-  return true;
+  return matched;
 }
 
 /**
@@ -247,21 +298,25 @@ function matchVerifiedRows(
  * authenticated offsite authority. DRAFT/PENDING/FAILED, unknown copy epochs,
  * missing parts, or incomplete canonical manifests block the entire result.
  */
-export async function scopeBackupEpochsForSubject(input: {
-  readonly subject: BackupEpochScopeSubject;
+export async function scopeBackupEpochsForSubjects(input: {
+  readonly subjects: readonly BackupEpochScopeSubject[];
   readonly archives: readonly BackupEpochScopeArchive[];
   readonly copy_authority_epoch_ids: readonly string[];
   readonly verify_manifests: VerifyBackupEpochManifests;
-}): Promise<readonly string[]> {
+}): Promise<readonly (readonly string[])[]> {
   if (!Array.isArray(input.archives) || input.archives.length > MAX_EPOCHS || !Array.isArray(input.copy_authority_epoch_ids) ||
-    input.copy_authority_epoch_ids.length > MAX_PARTS) {
+    input.copy_authority_epoch_ids.length > MAX_PARTS || !Array.isArray(input.subjects) || input.subjects.length > MAX_EPOCHS) {
     erasureFail("ERASURE_CLOSURE_INCOMPLETE", "backup epoch or copy-authority inventory exceeds its bound");
   }
-  assertErasureIdentifier(input.subject.source_id, "selected backup source ID");
-  assertErasureIdentifier(input.subject.source_owner_generation, "selected backup source owner generation");
-  if (input.subject.kind !== "source" && input.subject.kind !== "source-revision") {
-    erasureFail("ERASURE_CLOSURE_INCOMPLETE", "selected backup subject kind is unknown");
+  if (input.subjects.length === 0) return [];
+  for (const subject of input.subjects) {
+    assertErasureIdentifier(subject.source_id, "selected backup source ID");
+    assertErasureIdentifier(subject.source_owner_generation, "selected backup source owner generation");
+    if (subject.kind !== "source" && subject.kind !== "source-revision") {
+      erasureFail("ERASURE_CLOSURE_INCOMPLETE", "selected backup subject kind is unknown");
+    }
   }
+  const selected = indexSubjects(input.subjects);
   const byEpoch = new Map<string, BackupEpochScopeArchive>();
   for (const archive of input.archives) {
     const epochId = assertErasureIdentifier(archive.epoch_id, "backup epoch ID");
@@ -271,19 +326,28 @@ export async function scopeBackupEpochsForSubject(input: {
     }
     byEpoch.set(epochId, archive);
   }
+  const seenCopyAuthorityEpochs = new Set<string>();
   for (const rawEpochId of input.copy_authority_epoch_ids) {
     const epochId = assertErasureIdentifier(rawEpochId, "offsite copy epoch ID");
+    if (seenCopyAuthorityEpochs.has(epochId)) {
+      erasureFail("ERASURE_CLOSURE_INCOMPLETE", "offsite copy authority inventory contains duplicate epochs");
+    }
+    seenCopyAuthorityEpochs.add(epochId);
     if (!byEpoch.has(epochId)) erasureFail("ERASURE_CLOSURE_INCOMPLETE", "offsite copy authority references an unverified or unknown epoch");
   }
 
-  const affected: string[] = [];
+  const affected: string[][] = input.subjects.map(() => []);
+  let targetCount = 0;
   for (const [epochId, archive] of byEpoch) {
-    const draft = parseDraft(archive.draft_json, epochId);
+    let draftJson: unknown;
+    try { draftJson = await archive.read_draft_json(); }
+    catch (cause) { erasureFail("ERASURE_SETTLEMENT_UNCERTAIN", "persisted backup epoch receipt readback is unavailable", true, cause); }
+    const draft = parseDraft(draftJson, epochId);
     let totalBytes = 0;
     const plaintext_parts: { manifest: string; index: number; bytes: Uint8Array }[] = [];
     for (const part of draft.part_index) {
       let bytes: Uint8Array | null;
-      try { bytes = await archive.read_plaintext_part(part); }
+      try { bytes = await archive.read_plaintext_part(part, draft); }
       catch (cause) { erasureFail("ERASURE_SETTLEMENT_UNCERTAIN", "backup manifest part readback is unavailable", true, cause); }
       if (!(bytes instanceof Uint8Array) || bytes.byteLength !== part.size_bytes || await digestBytes(bytes) !== part.sha256) {
         erasureFail("ERASURE_CLOSURE_INCOMPLETE", "backup manifest part bytes fail exact persisted identity");
@@ -295,7 +359,28 @@ export async function scopeBackupEpochsForSubject(input: {
     let verified: VerifiedBackupSourceRows;
     try { verified = await input.verify_manifests({ draft, plaintext_parts }); }
     catch (cause) { erasureFail("ERASURE_CLOSURE_INCOMPLETE", "backup canonical manifests could not be verified", false, cause); }
-    if (matchVerifiedRows(input.subject, verified)) affected.push(epochId);
+    for (const index of matchingSubjectIndexes(selected, verified)) {
+      targetCount += 1;
+      if (targetCount > MAX_SCOPED_TARGETS) {
+        erasureFail("ERASURE_CLOSURE_INCOMPLETE", "scoped backup target count exceeds its bound");
+      }
+      affected[index]?.push(epochId);
+    }
   }
-  return affected.sort();
+  return affected.map((epochIds) => epochIds.sort());
+}
+
+export async function scopeBackupEpochsForSubject(input: {
+  readonly subject: BackupEpochScopeSubject;
+  readonly archives: readonly BackupEpochScopeArchive[];
+  readonly copy_authority_epoch_ids: readonly string[];
+  readonly verify_manifests: VerifyBackupEpochManifests;
+}): Promise<readonly string[]> {
+  const [affected = []] = await scopeBackupEpochsForSubjects({
+    subjects: [input.subject],
+    archives: input.archives,
+    copy_authority_epoch_ids: input.copy_authority_epoch_ids,
+    verify_manifests: input.verify_manifests,
+  });
+  return affected;
 }
