@@ -1,7 +1,9 @@
 # Backend delivery plan
 
-Current execution order, reconciled on 2026-10-01 against `main`
-`4c897429688a12e1719ed4b55cca3ec044c94e05`.
+Current execution order, reconciled on 2026-10-02 against `main`
+`6480186ea5ead7052e7122ec1b523713ddc97f21`.
+
+The isolated [product integration checkpoint](product-resume-2026-10-02.md) records actual local COW/publication/restore checks and remaining code separately from live approval. The active result remains S92 integration, not release acceptance.
 
 This is the volatile handoff and queue. Refresh `origin/main` and the active task before editing. [PR #292](https://github.com/UnknownAlienHuman/eliot-research/pull/292) preserves the original S01–S99 passports and negative acceptance criteria; it is not a second queue.
 
