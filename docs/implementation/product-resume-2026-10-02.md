@@ -253,3 +253,198 @@ login/relogin and live migration/deployment qualification remain pending. No Rus
 source changed, and no live lease, report, grant, credentials or deployment was
 mutated. No implementation status was promoted to LIVE. The existing exchange
 branch is published for the parent to review/merge; remote main is parent-owned.
+
+### Bounded reader and independent-gate follow-up
+
+The next source checkpoint is `4633062e51a62957f1ca2b466aad14f32b972016`,
+published only to the existing `agent/product-resume-20261002` exchange. Remote
+main remains `2a26cce4e121181f39f8d539f723540f55db4250`. Commit `0d053b56`
+changes only the renewal fixture's mocked issuer to an explicit example hostname,
+fixing its newly discovered privacy-scan failure without changing the scanner.
+Commit `4633062e` mechanically extracts the reader's contracts/error, immutable
+object readback, and scope fingerprint helpers. The core is now 576 physical
+lines; helpers have 94, 231 and 45 lines. Extracted function bodies and the
+retained SQL/call sequence match ed400819; there is one error-class definition
+and the existing core export re-exports that binding.
+
+The source scanner's exact limits remain 600 physical lines/file, 10,000 source
+lines/package, 614,400 Worker source bytes, and 2,097,152 PWA source bytes. It
+counts TS/TSX/JS/MJS under package/app `src`, including colocated tests. It does
+not measure emitted artifacts or startup/heap/CPU. No limit or check was weakened.
+
+| Source area | Handoff 0fd055b2 | ed400819 | 4633062e |
+| --- | ---: | ---: | ---: |
+| cloudflare-ai/dynamic-route-qualification.ts | 617 lines | 617 | 617 |
+| cloudflare-ai/dynamic-route-rest-codec.ts | 684 | 684 | 684 |
+| cloudflare-ai/model-gateway-response.ts | 609 | 609 | 609 |
+| cloudflare-artifacts/artifact-draft-reader-core.ts | 870 | 902 | 576, within limit |
+| cloudflare-erasure/inventory.ts | 673 | 673 | 673 |
+| cloudflare-research/model-attempt-store.ts | 706 | 706 | 706 |
+| cloudflare-research/research-owner-qualification-renewal.ts | 601 | 601 | 601 |
+| cloudflare-research/research-report-admission.ts | 603 | 603 | 603 |
+| cloudflare-research-stages/research-claim-audit-input.ts | 644 | 644 | 644 |
+| contracts/schema-registry.test.ts | 634 | 634 | 634 |
+| core/http.ts | 859 | 859 | 859 |
+| core/research-semantic-composition.ts | 711 | 711 | 711 |
+| core/wiki-publication-store.ts | 628 | 628 | 628 |
+| cloudflare-ai package | 13,432 lines | 13,432 | 13,432 |
+| cloudflare-research package | 25,670 | 25,670 | 25,670 |
+| core package | 33,435 | 33,455 | 33,455 |
+| pwa package | 16,667 | 16,760 | 16,760 |
+| Worker source bytes | 1,667,487 Git-blob bytes | 1,698,536 Windows-tree bytes | 1,698,536 Windows-tree bytes |
+
+The Worker byte measurements are different representations, so they do not
+establish a like-for-like growth delta. Both exceed the same cap. All 18 failing
+areas existed at the handoff; the reader extraction removes one, leaving 17.
+The PWA source measures 936,778 bytes, within its source-byte cap. The extracted
+artifact package measures 4,818 source lines, within the 10,000-line cap.
+AGENTS and the scanner distinguish
+these maintainability heuristics from S90 release targets: compressed Worker
+at most 4 MiB and initial PWA JavaScript at most 600 KiB gzip, plus runtime/load
+measurements. The mandatory aggregate and CI source-budget job still enforce
+the source limits. No documented standing budget waiver was found.
+
+The previously skipped independent gates were executed on ed400819:
+`work-packets:check`, `branch-hygiene:check`, `delivery:check`, `ingest:check`,
+`projection:check`, `evidence:check`, `erasure:check`, `gemini:check`, and
+`check:implementation-status` all exit 0. Packet coverage is 46 packets and
+561 exclusive claims; branch-hygiene fixtures pass 17 tests without cleaning
+actual branches. The registry remains 43 IMPLEMENTED_NOT_LIVE and zero
+LIVE_QUALIFIED. An additional `launch:code` run exits 1 because required ERASURE
+and RETRIEVAL slices are disabled; no slice was enabled by this task.
+
+On the 4633062e source candidate, `pnpm typecheck`, exact-file ESLint over the
+26 changed TS/mjs files from 0fd055b2, native test compilation
+(`pnpm exec tsc -p apps/eliotr-core/test/tsconfig.json --pretty false`), and
+`pnpm build` all exit 0. The Worker build is a local minified dry-run:
+3373.98 KiB raw / 779.33 KiB gzip. These emitted measurements are distinct from
+the failing raw-source scan.
+
+Full `pnpm lint` exits 1 with 533 errors and four warnings. Of these, 522 errors
+and all warnings are in 25 ignored local/generated files: 24 files under
+`.eliotr-state` and generated `apps/eliotr-pwa/public/agent-inbox/app.js`.
+The remaining 11 errors are in six tracked files unchanged from 0fd055b2:
+`computer-agent-connection-store.ts`, `computer-agent-route-readiness.ts`,
+`build-agent-inbox.mjs`, `research-external-branch-analysis.ts`,
+`external-model-secret-store-codec.mjs`, and `s92-continuity.mjs`. The ESLint
+configuration and lint command are also unchanged. No touched feature file is
+among the findings. This is source classification, not proof that the historical
+handoff ran lint. No ignored user state was removed and no lint rule was relaxed.
+
+`pnpm test:provisioners` initially exits 1 at the new renewal fixture hostname's
+privacy scan. After 0d053b56, the scan and mocked provisioner runner pass, then
+the separate deployment-ordering fixture exits 1 at
+`Generated deployment semantic configuration drift (ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON_0)`.
+Its explicit static fixture is merged with the default ignored local runtime
+configuration. The implicated tracked deploy/test/config-loader files are
+unchanged from 0fd055b2. The drift guard remains intact; the ignored configuration
+was not inspected for content or edited. The skipped local-owner gate was then
+run independently and passes all 36 tests on the combined source candidate.
+
+Every Cargo subgate was attempted independently on ed400819 after `rust:check`
+stopped at its first boundary failure:
+
+| Command | Result |
+| --- | --- |
+| `pnpm rust:boundaries` / first step of `pnpm rust:check` | FAIL, exit 1: abi_version.rs lacks module-level forbid unsafe attribute |
+| `pnpm rust:vectors` | PASS, exit 0 |
+| `pnpm rust:fmt` | FAIL, exit 1: formatting in kill_s10_case_id, kill_s10_ssi_model and kill_s10_stable_id_parser tests |
+| `pnpm rust:clippy` | FAIL, exit 101: 10 expect_used/panic/single_match findings in kill_s10_ssi_model, kill_s10_ssi_parser and kill_s10_stable_id_parser tests |
+| `pnpm rust:test` | PASS, exit 0: nextest workspace/all-features/locked and all workspace doctests |
+| `pnpm rust:deny` | PASS, exit 0 |
+| `pnpm rust:wasm` | PASS, exit 0: default 138 raw / 135 gzip bytes, self-test 1,619,213 raw / 79,478 gzip bytes, zero imports |
+| `pnpm rust:coverage` | PASS, exit 0: pinned nightly branch-aware run meets the 90% line threshold; exact percentage not extracted |
+
+All five Rust failure-source files and the boundary checker have identical blobs
+at 0fd055b2 and ed400819. That establishes inherited source conditions, not a
+historical passing or failing run. Rust remains failed despite the other passing
+subgates. Automatic approval review rejected the proposed one-line
+`#![forbid(unsafe_code)]` edit to abi_version.rs as outside this bounded feature
+scope, citing a standing no-Rust-changes restriction. No edit was applied and no
+alternate path was attempted. The reviewer applied the earlier bounded task
+scope as a no-Rust restriction; no blanket Rust-edit prohibition was found in
+repository AGENTS or the language/runtime contract. The parent explicitly directed continuation in
+authorized files without retrying that rejected edit.
+
+The combined source checkpoint is `10b305e5bf072275269bc89f2467cb0da9f332bb`.
+Its final narrow commit adds O2's explicit classification/column specs for the
+four tables introduced by migration 0103: lease receipt (21 columns), policy
+event (22), policy identity (6), and snapshot baseline (5). All 54 columns are
+portable scope provenance. Live `scope_read_policy` remains NOT_A_BACKUP and
+unknown tables/columns still fail closed. This fixes a real feature integration
+gap discovered by the first full root run; no active access is transferred.
+The backup package is 9,881 source lines, within its cap. No status promotion or
+restore/live qualification claim accompanies this change.
+
+| Source checkpoint | Command | Result |
+| --- | --- | --- |
+| 4633062e, before backup coverage fix | `pnpm test:root --maxWorkers=2` | FAIL, exit 1: 1548 PASS / 5 FAIL; 160 PASS / 3 FAIL files; 55.54s |
+| 10b305e5 source candidate | `pnpm typecheck`; exact-file ESLint over all 29 changed TS/mjs files from 0fd055b2 | PASS, exit 0 each |
+| 10b305e5 source candidate | `pnpm test:root --maxWorkers=2` | FAIL, exit 1: 1552 PASS / 1 FAIL; 162 PASS / 1 FAIL files; 55.99s; all four new backup failures fixed |
+| 4633062e reader source, unchanged by backup-only 10b305e5 | `pnpm test:worker` | FAIL, exit 1: Core 729 PASS / 66 FAIL / 7 SKIP / 1 TODO tests; 81 PASS / 23 FAIL / 1 SKIP files; 967.73s; chained artifact suite skipped |
+| 10b305e5 | `pnpm test:local-owner` | PASS, exit 0: 36 tests, 8.11s |
+| 10b305e5 | `pnpm test:artifacts-worker` | PASS, exit 0: both complete native artifact files, 2 tests, 37.07s |
+| 10b305e5 | `pnpm --filter @eliotr/core exec vitest run test/source-namespace-read-scope-renewal-http.test.ts test/artifact-draft-reader.test.ts --reporter=verbose --maxWorkers=1` | PASS, exit 0: 25 tests, 2 files, 41.86s |
+
+The one remaining root failure is unchanged
+`packages/research/src/research-question-migration.test.ts:63`: raw schema SQL
+retains CRLF from working-tree 0016 and LF from 0069. The trigger bodies match
+after newline representation; migration 0103 does not touch ledger guards. No
+existing guard assertion or user working-tree SQL file was normalized to hide it.
+
+The full Core result is preserved as failed, without inferring a historical run
+from identical source blobs. Representative failures include a navigation fixture
+that never applies 0103, preexisting artifact-batch FK failures whose exact FK
+was not identified, one model-attempt timeout, and Workflow preparation/storage
+failures. No direct 0103 cause was established for these inspected entries. The
+full log has no per-test success output for the changed reader/history files;
+their acceptance comes from the explicit focused commands instead. Further old
+failure classification stopped at the parent's direction. The full Core failure
+still blocks a green mandatory gate.
+
+The five-case primary history command shown above was rerun on 10b305e5:
+four PASS, one FAIL, 28 skipped, exit 1, 90.82s. The actual v3
+materialization/relogin and the three foreign/revoke denials pass. Original REPORT
+hits its existing 30,000ms test timeout (34.80s reported); this is retained as a
+failure rather than weakening the deadline. The one isolated retry below also
+exits 1 at the same timeout: one failed test, 40.38s run / 35.02s test time.
+No test deadline was raised. Original REPORT acceptance is therefore blocked
+on the current source checkpoint; its earlier 2876576e PASS is historical.
+
+```text
+pnpm --filter @eliotr/core exec vitest run test/owner-session-history-http.test.ts --reporter=verbose --maxWorkers=1 --testNamePattern 'reopens an original REPORT'
+```
+
+The final `pnpm check:affected` on 10b305e5 exits 1: exact depth-100 SQL compile,
+normative contract hashes, package boundaries and all negative boundary checks
+PASS, then source budgets FAIL on the same 17 remaining violations in the table.
+The later chained gates do not run in that aggregate; every one was separately
+attempted as recorded above. The aggregate is not presented as passing.
+
+Complete local logs are retained under the existing temporary validation folder
+`C:/Users/kleym/AppData/Local/Temp/eliotr-gates-ed400819/`: provisioner initial and
+post-fixture logs, candidate static/build logs, full root/Core logs, backup
+candidate static/root log, independent owner/artifact log, reader-renewal log,
+primary-history log, isolated original-report log, and final check-affected log.
+The folder name identifies the starting stage; per-row source SHAs above
+identify the actual checked source. Earlier Cargo/independent-gate outputs are
+recorded in the tool transcript and this command/result inventory.
+
+Merge criteria remain separate from later qualification. This is a concrete
+source checkpoint for parent review, with the touched reader budget fixed and
+the new backup integration gap fixed. A green mandatory merge gate is still
+blocked by current original REPORT timeout, the 17 source-budget violations, full lint failures, local provisioner
+fixture/config isolation, the root SQL-newline snapshot failure, full Core native
+failures, and Rust boundaries/fmt/Clippy. No documented waiver was found and no
+CI run was requested. Neither a local emulator nor a passing focused test closes
+those failures. The parent owns the merge decision and remote main.
+
+Live/release qualification is still later work: full S92 local acceptance,
+then approved isolated S94 staging, S93 provider/profile receipts and budget,
+S95 exact-build security/restore evidence, S96 5/20/50-reader load with approved
+spend/stop rules, and S97 retained release receipts/T0-T6/production approval.
+The controlled PWA driver is client-only acceptance; its passing 2876576e result
+remains applicable to unchanged PWA source, not a live Access login or deployment
+receipt. GET system/session remains read-only. No live lease, grant, report,
+provider/model spend, migration, deployment, manual CI, user settings or
+credentials was mutated, and no implementation status was promoted.
