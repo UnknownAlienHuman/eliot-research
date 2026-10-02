@@ -729,3 +729,77 @@ Core/PWA extraction allocation and cycle-free ownership still need measured
 parent review; no mass moves were implemented. This closes the local current
 dispatch coverage gap only. Budget repairs, full S92/final acceptance and
 live qualification remain pending; no main push or deployment is performed.
+
+Bounded canceled-request diagnosis, input `5831293581626c11dfabf7b4e2b8c560f1e4d28e`:
+
+The original focused case reproduces the unfiltered Workerd warning while
+passing all assertions: 1/1 PASS, 11.360s test / 17.73s total. Installed native
+tools are vitest-plugin 1.1.0, Miniflare 5.20260825.0-alpha and Workerd
+1.20260825.1. Temporary call-through tracing observed all 13 exposed native
+binding RPCs settle, including create/get, introspection, output and explicit
+abort/disposal; the pending-call set was empty. Native background tracing
+also proves both ENGINE.init calls settle. The first executes all 18 stages;
+the same-key replay returns from the already-Complete state (native status 5).
+No unfinished application request or Workflow was observed in these traces.
+
+Direct native-console markers avoid Vitest console buffering. The warning
+occurs during the repeated native create, after CREATE_ENTER and before
+PERSIST_WAIT_DONE in waitForPersistedInstanceDelete. That helper awaits the
+local loopback GET /core/workflow-storage/<workflow>/<instance>?waitForPendingDelete=1.
+A direct native create using the exact captured original options, before
+the HTTP replay, reproduces the same warning. The subsequent HTTP replay,
+finite init, foreign-owner 404 and explicit cleanup all complete. Thus the
+reproduction does not require the repeated HTTP handler, a model rerun or
+cleanup at test teardown. This locates the triggering operation; it does
+not identify which C++ I/O context emits the warning or establish its cause.
+
+Holding handles did not survive the inverse control; that hypothesis is
+rejected. Per-instance introspection, removing introspection and importing
+the real entrypoint before dispatch did not remove the warning. The final
+already-started control drains the loopback response body and still warns:
+1/1 PASS, 12.073s test / 19.37s total. No cleanup fix is inferred from these
+results. Two temporary diagnostic variants failed at their own mechanics
+(terminating an already-finite instance; attempting bind on a native RPC
+callable); both were removed and are not acceptance results.
+
+The direct native replay trace passes all original durable/report/replay
+assertions with exactly two provider calls (1/1, 12.608s / 20.30s total).
+Its three real init calls all settle, with both repetitions returning from
+Complete. The ordinary two-create direct-phase trace passes 1/1 in
+11.276s / 18.05s. The preceding unchanged 32/32 adjacent native proof remains
+the functional batch result; no broad suite was repeated for this diagnosis.
+The warning remains unexplained and is not classified as harmless, filtered,
+suppressed or used to claim release qualification. The parent explicitly
+closed this bounded diagnosis after reviewing the completed-request proof.
+
+All temporary test instrumentation and controls are removed. The test has
+the exact original Git blob. Installed Miniflare bytes are restored after
+every instrumented run and SHA-256 matches the saved original:
+5f2b9b1a34eda616376eedfb8da7e58c2107cda1534738b0954a0483db1f5aa6.
+Only this evidence document changes in the checkpoint. All launched test
+runner sessions have exited. No dependency/configuration change, main push,
+deployment, live mutation, paid provider call or budget refactor is made.
+Parent-owned remote main is now `992f793e8bcd0d2549c2e2351fba4e31a849d72e`;
+this checkpoint is published only to the existing exchange branch.
+
+Diagnostic logs under OS temp include
+`eliotr-current-dispatch-warning-baseline-58312935.log`,
+`eliotr-current-dispatch-warning-all-rpc-58312935.log`,
+`eliotr-current-dispatch-warning-native-service-58312935.log`,
+`eliotr-current-dispatch-warning-engine-init-58312935.log`,
+`eliotr-current-dispatch-warning-direct-phases-58312935.log`,
+`eliotr-current-dispatch-warning-replay-create-58312935.log`,
+`eliotr-current-dispatch-warning-direct-replay-58312935.log` and
+`eliotr-current-dispatch-warning-loopback-drain-58312935.log`.
+
+Final cleanup/readback: the restored test's Git blob is
+`59c1d811298615395023b4861f7c69c14de28e23`, equal to HEAD; no Workerd
+process remains. `git diff --check` PASS. Required `pnpm check:affected`
+passes SQL depth (879 recovered, zero failed), contract hashes and package
+boundaries with their negative fixtures, then exits 1 at the same 17 source
+budget violations. Counts and limits are unchanged. Log:
+`eliotr-current-dispatch-diagnosis-affected-58312935.log` under OS temp.
+Static compilation, lint, Rust and broad suites are not rerun for this
+documentation-only checkpoint; their earlier exact-SHA evidence remains
+separate. The warning's C++ cause, budget repairs and S92/live acceptance
+remain unresolved; this bounded investigation is closed by parent direction.
