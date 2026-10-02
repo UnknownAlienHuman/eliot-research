@@ -65,7 +65,7 @@ describe("dedicated artifact COW W2 over actual D1/R2", () => {
     const manifestDigest = await canonicalDigest({ spec: nextInput.spec,revision: nextInput.revision });
     const childInput = { ...nextInput,manifest_residency: { ...nextInput.manifest_residency,
       content_digest: { algorithm: "sha256" as const,digest: manifestDigest } } };
-    await expect(createArtifactDraftRuntime().prepare({ ...childInput,intent: data.admission.intent }))
+    await expect(createArtifactDraftRuntime(runtime.CORE_DB, counted.bucket).prepare({ ...childInput,intent: data.admission.intent }))
       .rejects.toMatchObject({ code: "ARTIFACT_DRAFT_IDEMPOTENCY_CONFLICT" });
     expect(counted.puts()).toBe(0);
     const next = await materialization.prepare(childInput);
