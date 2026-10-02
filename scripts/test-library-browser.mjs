@@ -466,6 +466,9 @@ try {
   const openBundle = async () => { if (!(await evaluate('document.querySelector("#bundle-import details")?.open'))) await click("#bundle-import details > summary"); await assertVisible('input[name="bundle"]', "bundle input"); await assertVisible('#bundle-import button[type="submit"]', "bundle submit"); };
   const launchDraft = async (label) => {
     await assertVisible('#research-run textarea[name="query"]', `${label}: research input`);
+    await click('[data-refresh]');
+    await wait('document.querySelector("#research-run button[type=submit]")?.disabled === false',
+      `${label}: current session and research configuration ready`);
     await evaluate(`(() => { const input = document.querySelector('#research-run textarea[name="query"]'); input.value = "draft research question"; input.closest("form").requestSubmit(); })()`);
     await wait(`document.querySelector("#research-run [role=status]")?.textContent.includes("Research started")`, `${label}: draft launch`);
     assert.equal(await evaluate('document.querySelector("#research-run [data-workflow-id]").value'), draftWorkflowId);
