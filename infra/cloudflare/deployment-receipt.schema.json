@@ -85,6 +85,157 @@
         }
       }
     },
+    "assets": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "manifest",
+        "readback"
+      ],
+      "properties": {
+        "manifest": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "protocol",
+            "state",
+            "directory",
+            "files",
+            "excluded_routing_files",
+            "manifest_sha256"
+          ],
+          "properties": {
+            "protocol": {
+              "const": "eliotr.cloudflare-assets-manifest.v1"
+            },
+            "state": {
+              "const": "LOCAL_ONLY"
+            },
+            "directory": {
+              "const": "apps/eliotr-pwa/dist"
+            },
+            "files": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 20000,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "path",
+                  "bytes",
+                  "sha256"
+                ],
+                "properties": {
+                  "path": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1024
+                  },
+                  "bytes": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 16777216
+                  },
+                  "sha256": {
+                    "$ref": "#/$defs/sha256"
+                  }
+                }
+              }
+            },
+            "excluded_routing_files": {
+              "const": [
+                "_headers",
+                "_redirects"
+              ]
+            },
+            "manifest_sha256": {
+              "$ref": "#/$defs/sha256"
+            }
+          }
+        },
+        "readback": {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "state",
+                "reason"
+              ],
+              "properties": {
+                "state": {
+                  "const": "NOT_EXECUTED"
+                },
+                "reason": {
+                  "const": "access_cookie_missing"
+                }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "state",
+                "results",
+                "deployment_id",
+                "version_id",
+                "active_version_unchanged"
+              ],
+              "properties": {
+                "state": {
+                  "const": "PASS"
+                },
+                "results": {
+                  "type": "array",
+                  "minItems": 1,
+                  "maxItems": 20000,
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "path",
+                      "status",
+                      "bytes",
+                      "sha256"
+                    ],
+                    "properties": {
+                      "path": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 1024
+                      },
+                      "bytes": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 16777216
+                      },
+                      "sha256": {
+                        "$ref": "#/$defs/sha256"
+                      },
+                      "status": {
+                        "const": 200
+                      }
+                    }
+                  }
+                },
+                "deployment_id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "version_id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "active_version_unchanged": {
+                  "const": "PASS"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
     "environment": { "enum": ["staging", "production"] },
     "staging_target": {
       "type": "object",

@@ -236,8 +236,12 @@ do not prove the remote SQL bytes or schema shape.
 Worker readback follows the active deployment to its exact single version at 100% traffic, checks
 runtime settings, named exports, the generation variable and configured resource identities before
 deployment authority synchronization. Cloudflare's ETag is an opaque observation, not a local
-SHA-256 attestation. Asset attachment is checked; authenticated asset-content/build-byte proof and
-product/T4/T6 qualifications remain separate. The current Worker does not deploy/import the Rust
+SHA-256 attestation. A deterministic local PWA manifest is pinned and rehashed between release steps. With an Access
+cookie, every served asset body must match its local byte count/hash, then active deployment/version
+identity is re-read before authority synchronization. A mismatch, redirect, fallback body, deadline
+or local drift fails closed. Without a cookie the receipt explicitly records `NOT_EXECUTED`.
+Root `_headers`/`_redirects` are excluded from served-content hashing; routing and an atomic
+source/build seal are not proved by this observation. Product/T4/T6 qualifications remain separate. The current Worker does not deploy/import the Rust
 Wasm kernel; do not fabricate a mandatory empty Wasm binding or a passing Wasm receipt.
 
 ### R2

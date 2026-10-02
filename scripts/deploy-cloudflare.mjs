@@ -15,6 +15,7 @@ import { loadResearchRuntimeEnvironment, RESEARCH_RUNTIME_CONFIGURATION_KEYS,
 import { synchronizeResearchDeploymentAuthority } from "./lib/research-deployment-authority.mjs";
 import { computeResearchBackendFingerprint } from "./lib/research-backend-fingerprint.mjs";
 import { readDeploymentMigrationPlan, requireUnchangedMigrationPlan, validateDeploymentMigrationDirectories, verifyDeploymentMigrationLedgers } from "./lib/deployment-migrations.mjs";
+import { readDeploymentAssetManifest, verifyDeploymentAssets } from "./lib/deployment-assets.mjs";
 import { validateStagingTarget } from "./lib/staging-isolation.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -67,7 +68,7 @@ export async function deployCloudflare({ confirmLive = false, environment = proc
   execute = run, captureCommand = capture, read = readFile, archive = archiveReceipt,
   save = saveReceipt, fetchImpl = fetch, now = Date.now, log = console.log,
   verifyCode = assertLaunchCodeComplete, readWranglerFile, runWranglerWhoami,
-  usageProviders = null, usageSnapshot = null } = {}) {
+  usageProviders = null, usageSnapshot = null, readAssetManifest = readDeploymentAssetManifest } = {}) {
   const env = await loadResearchRuntimeEnvironment(environment, root);
   // FIX9WC Layer 2 (defense in depth, child exec env only): strip ambient
   // module-loader tokens (--import/--loader/--experimental-loader/--require
@@ -186,6 +187,7 @@ export async function deployCloudflare({ confirmLive = false, environment = proc
   verifyGeneratedSemanticConfiguration(config, env);
   const digest = createHash("sha256").update(bytes).digest("hex");
   const migrationPlan = await readDeploymentMigrationPlan(config, { root });
+  const assetManifest = await readAssetManifest(config, { root });
   const backendFingerprint = computeResearchBackendFingerprint({ root, generated_config: config });
   const requireUnchangedConfig = async () => {
     if (createHash("sha256").update(await read(configPath)).digest("hex") !== digest) {
@@ -195,6 +197,9 @@ export async function deployCloudflare({ confirmLive = false, environment = proc
   const requireUnchangedInputs = async () => {
     await requireUnchangedConfig();
     await requireUnchangedMigrationPlan(config, migrationPlan, { root });
+    if (JSON.stringify(await readAssetManifest(config, { root })) !== JSON.stringify(assetManifest)) {
+      throw new Error("Deployment assets changed during release");
+    }
   };
   // The account-neutral build does not validate generated IDs, routes and runtime variables.
   exec("pnpm", ["exec", "wrangler", "deploy", "--dry-run", "--minify", "--config", deployConfig], core);
@@ -209,6 +214,16 @@ export async function deployCloudflare({ confirmLive = false, environment = proc
   exec("pnpm", ["exec", "wrangler", "deploy", "--config", deployConfig], core);
   await requireUnchangedInputs();
   const worker = await readDeploymentWorker(env, input, config, { fetchImpl });
+  let assetReadback = await verifyDeploymentAssets(assetManifest, input, { fetchImpl });
+  if (assetReadback.state === "PASS") {
+    const afterAssets = await readDeploymentWorker(env, input, config, { fetchImpl });
+    if (afterAssets.deployment_id !== worker.deployment_id || afterAssets.version_id !== worker.version_id) {
+      throw new Error("Active Worker deployment changed during asset readback");
+    }
+    assetReadback = { ...assetReadback, deployment_id: worker.deployment_id,
+      version_id: worker.version_id, active_version_unchanged: "PASS" };
+  }
+  await requireUnchangedInputs();
   const remoteHttpSmoke = await verifyDeploymentSmoke(env, input, { fetchImpl, now });
   const coreDatabase = config.d1_databases.find((database) => database.binding === "CORE_DB");
   if (coreDatabase === undefined || typeof coreDatabase.database_id !== "string") {
@@ -231,6 +246,7 @@ export async function deployCloudflare({ confirmLive = false, environment = proc
     ...(stagingTarget === null ? {} : { staging_target: stagingTarget }),
     worker,
     d1_migrations: migrationReadback,
+    assets: { manifest: assetManifest, readback: assetReadback },
     generated_config_sha256: digest,
     backend_fingerprint: backendFingerprint,
     remote_http_smoke: remoteHttpSmoke,
@@ -241,7 +257,7 @@ export async function deployCloudflare({ confirmLive = false, environment = proc
       workflow_retry_resume: "NOT_EXECUTED", ai_search_exact_resolution: "NOT_EXECUTED",
       google_drive_exchange: "NOT_EXECUTED",
     },
-    note: "Active version, configured resource bindings and migration names are verified. ETag and local migration hashes are not remote content proof; asset content and product/T4/T6 gates remain separate. HTTP generation is verified only when authenticated smoke passes.",
+    note: "Active version, configured resource bindings and migration names are verified. ETag and local migration hashes are not remote content proof; asset body hashes are observed only with authenticated readback and stable active-version observations. This is not an atomic source/build seal; product/T4/T6 gates remain separate. HTTP generation is verified only when authenticated smoke passes.",
     created_at: new Date(now()).toISOString(),
   };
   await save(receipt);

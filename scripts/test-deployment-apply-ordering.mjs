@@ -90,10 +90,13 @@ const config = { name: "eliotr-core", minify: true, preview_urls: false, compati
     { binding: "SEARCH_DB", database_name: "eliotr-search", database_id: "22222222-2222-4222-8222-222222222222", migrations_dir: "../../infra/d1/search/migrations" },
   ] };
 Object.assign(config, {
-  assets: { binding: "ASSETS" }, exports: { ResearchSession: { type: "durable-object", storage: "sqlite" } },
+  assets: { binding: "ASSETS", directory: "../eliotr-pwa/dist" }, exports: { ResearchSession: { type: "durable-object", storage: "sqlite" } },
   r2_buckets: [], queues: { producers: [] }, durable_objects: { bindings: [{ name: "RESEARCH_SESSION", class_name: "ResearchSession" }] },
   workflows: [], analytics_engine_datasets: [],
 });
+const assetBytes = "<!doctype html><main>fixture</main>";
+const assetManifest = {"protocol":"eliotr.cloudflare-assets-manifest.v1","state":"LOCAL_ONLY","directory":"apps/eliotr-pwa/dist","files":[{"path":"index.html","bytes":35,"sha256":"a02618fd171637ef11b3b4d923cb91cf9837c902dbd7aca5bd69f8eeb465c59f"}],"excluded_routing_files":["_headers","_redirects"],"manifest_sha256":"42a56ab403ebc72972cf5e99795838d1f331afec0cd0a9aea5a8b128fb5203fd"};
+const alternateVersionId = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
 const versionId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 const migrationPlan = await readDeploymentMigrationPlan(config, { root: resolve(fileURLToPath(new URL("../", import.meta.url))) });
 const bytes = Buffer.from(JSON.stringify(config));
@@ -103,7 +106,10 @@ function harness(overrides = {}) {
   const provisionerEnvs = [];
   const deploymentRows = new Map();
   let reads = 0;
-  const options = { confirmLive: true, verifyCode: async () => {}, environment, usageSnapshot: defaultUsageSnapshot, now: () => now, log: () => {},
+  let manifestReads = 0;
+  let deploymentsRead = 0;
+  let assetReads = 0;
+  const options = { readAssetManifest: async () => { manifestReads += 1; return overrides.assetDriftAt === manifestReads ? { ...assetManifest, manifest_sha256: "0".repeat(64) } : assetManifest; }, confirmLive: true, verifyCode: async () => {}, environment, usageSnapshot: defaultUsageSnapshot, now: () => now, log: () => {},
     execute(command, args, cwd, env) {
       const name = `${command} ${args.join(" ")}`; calls.push(name);
       if (args[0]?.startsWith("scripts/provision-")) provisionerEnvs.push({ name: args[0], env: { ...env } });
@@ -160,12 +166,17 @@ function harness(overrides = {}) {
         { id: "eliotr-core", compatibility_date: "2026-08-28", has_assets: true,
           exports: { ResearchSession: { type: "durable-object" } } },
       ] });
+      if (String(url) === "https://research.example.com/") {
+        assetReads += 1;
+        return new globalThis.Response(overrides.assetMismatch ? "wrong body" : assetBytes);
+      }
+      if (String(url).endsWith("/deployments")) deploymentsRead += 1;
       if (String(url).endsWith("/deployments")) return globalThis.Response.json({ success: true, result: { deployments: [{
         id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", created_on: new Date(now).toISOString(), strategy: "percentage",
-        versions: [{ version_id: versionId, percentage: overrides.partialTraffic ? 50 : 100 }],
+        versions: [{ version_id: overrides.versionDrift && deploymentsRead > 1 ? alternateVersionId : versionId, percentage: overrides.partialTraffic ? 50 : 100 }],
       }] } });
-      if (String(url).endsWith("/versions/" + versionId)) return globalThis.Response.json({ success: true, result: {
-        id: versionId, number: 9, resources: {
+      if (String(url).endsWith("/versions/" + versionId) || String(url).endsWith("/versions/" + alternateVersionId)) return globalThis.Response.json({ success: true, result: {
+        id: String(url).endsWith(alternateVersionId) ? alternateVersionId : versionId, number: 9, resources: {
           bindings: { ...Object.fromEntries(Object.entries(config.vars).map(([name, text]) => [name, { type: "plain_text", text }])),
             ...overrides.bindingDrift, CORE_DB: { type: "d1", id: config.d1_databases[0].database_id },
             SEARCH_DB: { type: "d1", id: config.d1_databases[1].database_id }, ASSETS: { type: "assets" },
@@ -182,7 +193,7 @@ function harness(overrides = {}) {
         transport_completion_is_research_completion: false, ingest_live_qualified: false,
       } });
     }, ...overrides.options };
-  return { calls, receipts, provisionerEnvs, options };
+  return { calls, receipts, provisionerEnvs, options, assetReads: () => assetReads };
 }
 let cases = 0;
 const check = async (name, action) => { await action(); cases += 1; console.log(`Deployment apply ordering: ${name}: PASS`); };
@@ -203,6 +214,9 @@ await check("successful ordering and no implicit live qualification", async () =
   assert.ok(test.calls.indexOf("archive") < test.calls.indexOf("node scripts/provision-cloudflare-core.mjs"));
   assert.equal(receipt.remote_http_smoke.state, "PASS");
   assert.deepEqual(receipt.worker.vars_readback, { state: "PASS", binding_count: Object.keys(config.vars).length });
+  assert.equal(receipt.assets.readback.state, "PASS");
+  assert.equal(receipt.assets.readback.active_version_unchanged, "PASS");
+  assert.equal(receipt.assets.readback.version_id, receipt.worker.version_id);
   assert.ok(Object.values(receipt.live_conformance).every((state) => state === "NOT_EXECUTED"));
   assert.equal(test.receipts.length, 1);
   assert.ok(!JSON.stringify(receipt).includes("secret-"));
@@ -231,6 +245,8 @@ await check("missing cookie retains NOT_EXECUTED", async () => {
   const test = harness({ options: { environment: { ...environment, ELIOTR_ACCESS_SMOKE_COOKIE: undefined } } });
   const receipt = await deployCloudflare(test.options);
   assert.equal(receipt.remote_http_smoke.state, "NOT_EXECUTED");
+  assert.equal(receipt.assets.readback.state, "NOT_EXECUTED");
+  assert.equal(test.assetReads(), 0);
   assert.equal(test.calls.filter((call) => call.startsWith("GET ")).length, 3);
 });
 await check("migration or deployment failure cannot publish PASS", async () => {
@@ -267,6 +283,23 @@ await check("partial active traffic stops before deployment authority and PASS r
 });
 
 
+await check("asset content or active-version mismatch stops before authority writes and receipt", async () => {
+  for (const override of [{ assetMismatch: true }, { versionDrift: true }]) {
+    const test = harness(override);
+    await assert.rejects(deployCloudflare(test.options), /asset readback|deployment changed/u);
+    assert.equal(test.calls.filter((call) => call.startsWith("POST ")).length, 2);
+    assert.equal(test.receipts.length, 0);
+  }
+});
+
+await check("local asset drift stops before remote migrations and Worker upload", async () => {
+  const test = harness({ assetDriftAt: 2 });
+  await assert.rejects(deployCloudflare(test.options), /assets changed during release/u);
+  assert.ok(!test.calls.includes(coreMigration));
+  assert.ok(!test.calls.includes(searchMigration));
+  assert.ok(!test.calls.includes(deployCommand));
+  assert.equal(test.receipts.length, 0);
+});
 
 await check("unreviewed bindings and stale runtime vars cannot sync authority or publish PASS", async () => {
   const drifts = [
