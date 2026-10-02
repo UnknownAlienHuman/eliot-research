@@ -97,6 +97,11 @@ const server = createServer((request, response) => {
     const url = new URL(request.url, "http://127.0.0.1");
     response.setHeader("cache-control", "no-store");
     const json = (body) => { response.setHeader("content-type", "application/json"); response.end(JSON.stringify(body)); };
+    const accessDenied = () => {
+      response.statusCode = 403;
+      return json({ type: "urn:eliotr:problem:ACCESS_SESSION_REQUIRED", title: "Owner authorization changed",
+        status: 403, code: "ACCESS_SESSION_REQUIRED", trace_id: "browser-auth-denial", retryable: false });
+    };
     if (researchScreen && await researchScreen.handle(request, response, url)) return;
     if (url.pathname === "/api/v1/system/session") {
       assert.equal(request.method, "GET");
@@ -114,7 +119,7 @@ const server = createServer((request, response) => {
     if (url.pathname === "/api/v1/library/revisions") {
       assert.equal(request.method, "GET"); assert.equal(url.searchParams.get("limit"), "10");
       const value = revisionPage(url.searchParams.get("source_id"), url.searchParams.has("cursor"));
-      if (revisionMode === "denied") { response.statusCode = 403; response.end("malformed denial"); return; }
+      if (revisionMode === "denied") return accessDenied();
       if (revisionMode === "delayed") { pendingRevision = () => json(value); return; }
       if (revisionMode === "drift") return json({ ...value, deployment_generation: "changed" });
       return json(value);
@@ -122,7 +127,7 @@ const server = createServer((request, response) => {
     if (url.pathname === "/api/v1/research/catalog") {
       requests.push(url.search);
       assert.equal(url.searchParams.get("limit"), "20");
-      if (mode === "denied") { response.statusCode = 403; response.setHeader("content-type", "text/html"); response.end("Access denied"); return; }
+      if (mode === "denied") return accessDenied();
       if (mode === "delayed") { mode = "newest"; pending = () => json(page("old", "Old response")); return; }
       if (mode === "newest") return json(page("newest", "Newest response"));
       if (mode === "drift") return json({ ...page("wrong", "Wrong generation"), deployment_generation: "changed" });
