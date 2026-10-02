@@ -1,4 +1,5 @@
 import { ApiRequestError, isAuthorizationLoss, requestApi } from "./api.js";
+import { readArtifactPublication, type ArtifactPublicationView } from "./artifact-product-api.js";
 import {
   decodeResearchRunStatus, readResearchArtifact, readReauthorizedResearchArtifact,
   type ResearchArtifactDraftReauthorizationView, type ResearchRunStatusView,
@@ -8,20 +9,25 @@ import type { ArtifactRevision } from "@eliotr/contracts";
 export interface OpenedRunArtifact {
   readonly artifact: ArtifactRevision;
   readonly reauthorized?: ResearchArtifactDraftReauthorizationView;
+  readonly publication: ArtifactPublicationView | null;
 }
 
 /** Legacy author GET stays unchanged. A non-author owner uses the existing
  * independently authorized POST reader; a denial is never treated as success. */
 export async function openRunArtifact(view: ResearchRunStatusView, signal: AbortSignal): Promise<OpenedRunArtifact | undefined> {
   if (view.answer.availability !== "draft") return undefined;
+  let artifact: ArtifactRevision;
   try {
-    return { artifact: await readResearchArtifact(view.answer.artifact_ref, view.deployment_generation, signal) };
+    artifact = await readResearchArtifact(view.answer.artifact_ref, view.deployment_generation, signal);
   } catch (error) {
     if (!(error instanceof ApiRequestError) || error.status !== 404 || error.code !== "ARTIFACT_DRAFT_READ_NOT_FOUND") throw error;
     if (signal.aborted) throw new DOMException("Report read cancelled", "AbortError");
     const reauthorized = await readReauthorizedResearchArtifact(view.answer.artifact_ref, view.deployment_generation, signal);
-    return { artifact: reauthorized.artifact, reauthorized };
+    const publication = await readArtifactPublication(reauthorized.artifact.artifact_ref, view.deployment_generation, signal);
+    return { artifact: reauthorized.artifact, reauthorized, publication };
   }
+  const publication = await readArtifactPublication(artifact.artifact_ref, view.deployment_generation, signal);
+  return { artifact, publication };
 }
 
 /** A reauthorized read does not confer Wiki/publication authority. */
@@ -30,6 +36,7 @@ export function runArtifactRenderOptions(view: ResearchRunStatusView, opened: Op
   return { renderSerial, deploymentGeneration: view.deployment_generation, historical: reauthorized !== undefined,
     ...(reauthorized === undefined ? { workflowInstanceId: view.workflow_instance_id }
       : { authorizationScopeSnapshotRef: reauthorized.authorization_scope_snapshot_ref, sourceFreshness: reauthorized.source_freshness }),
+    ...(opened.publication === null ? {} : { publication: opened.publication }),
     investigationRef: `${view.investigation_ref.id}:${view.investigation_ref.revision}` };
 }
 
