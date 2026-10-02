@@ -5,7 +5,7 @@ import { createD1ScopeService, createOwnerScopeAuthority } from "@eliotr/cloudfl
 import { createArtifactSectionReviseWorkflowStore } from "@eliotr/cloudflare-workflows";
 import { resolveReauthorizedArtifactEvidence } from "@eliotr/cloudflare-research";
 import { principal } from "./research-evidence-freeze-fixture.js";
-import { runtime, fixture, crashBeforeW2Commit, requestBytes } from "./artifact-cow-http-fixture.js";
+import { runtime, fixture, crashBeforeW2Commit, requestBytes, withoutResearchSemanticConfiguration } from "./artifact-cow-http-fixture.js";
 
 describe("owner COW HTTP/runner on native Workerd D1/R2", () => {
   afterEach(() => vi.useRealTimers());
@@ -34,7 +34,7 @@ describe("owner COW HTTP/runner on native Workerd D1/R2", () => {
     expect(puts).toBeGreaterThan(0);
     await data.originalsUnchanged();
     // A restarted request cannot construct a model profile. It must reconcile exact receipts first.
-    const withoutModels = { ...data.configuredEnv, ELIOTR_MODEL_PROFILE_DEFINITION_JSON: "invalid", ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON: undefined };
+    const withoutModels = withoutResearchSemanticConfiguration({ ...data.configuredEnv, ELIOTR_MODEL_PROFILE_DEFINITION_JSON: "invalid" });
     vi.setSystemTime(Date.now() + 1000);
     const recovered = await data.post(withoutModels, "cow-http-crash");
     expect(recovered.status, JSON.stringify(recovered.body)).toBe(200);
@@ -101,7 +101,7 @@ describe("owner COW HTTP/runner on native Workerd D1/R2", () => {
     const puts = data.counted.puts();
     await runtime.CORE_DB.prepare("UPDATE scope_access_grant SET state='REVOKED' WHERE snapshot_id=?1 AND principal_ref=?2")
       .bind(scope.snapshot.snapshot_id, principal.principal_ref).run();
-    const denied = await data.post({ ...data.configuredEnv, ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON: undefined }, "cow-http-revoked-output");
+    const denied = await data.post(withoutResearchSemanticConfiguration(data.configuredEnv), "cow-http-revoked-output");
     expect(denied.status).toBeGreaterThanOrEqual(400);
     expect((await store.read(row.operation_id))?.state).toBe("OUTPUT_RECORDED");
     expect(data.modelCalls()).toBe(2);
@@ -121,7 +121,7 @@ describe("owner COW HTTP/runner on native Workerd D1/R2", () => {
     expect((await createArtifactSectionReviseWorkflowStore(runtime.CORE_DB).read(row.operation_id))?.state).toBe("UNKNOWN");
     const saved = await requestBytes(row.operation_id);
     const puts = data.counted.puts();
-    const replay = await data.post({ ...data.configuredEnv, ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON: undefined }, "cow-http-unknown");
+    const replay = await data.post(withoutResearchSemanticConfiguration(data.configuredEnv), "cow-http-unknown");
     expect(replay.status, JSON.stringify(replay.body)).toBe(200);
     expect(replay.body.data?.state).toBe("UNKNOWN");
     expect(data.modelCalls()).toBe(1);

@@ -36,8 +36,12 @@ let deployment: ModelRouteDeployment;
 let modelTarget: Awaited<ReturnType<typeof modelGatewayDynamicRouteTarget>>;
 
 function digest(bytes: Uint8Array): Promise<string> {
-  return crypto.subtle.digest("SHA-256", bytes).then((raw) =>
-    [...new Uint8Array(raw)].map((byte) => byte.toString(16).padStart(2, "0")).join(""));
+  const digestInput = new Uint8Array(bytes.byteLength);
+  digestInput.set(bytes);
+  return crypto.subtle.digest("SHA-256", digestInput).then((raw) => {
+    if (!(raw instanceof ArrayBuffer)) throw new Error("Web Crypto returned a non-ArrayBuffer digest");
+    return [...new Uint8Array(raw)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  });
 }
 
 async function installTestRoute(): Promise<ModelRouteDeployment> {
@@ -68,6 +72,12 @@ async function installTestRoute(): Promise<ModelRouteDeployment> {
   const artifact = await dynamicRouteJsonArtifact(candidate);
   const registry = createD1DynamicRouteRegistry(runtime.CORE_DB, { environment: "TEST", now: () => now });
   const staged = await registry.stageCandidate(candidate, artifact.sha256);
+  if (typeof staged !== "object" || staged === null || Array.isArray(staged) ||
+      !("candidate_ref" in staged) || typeof staged.candidate_ref !== "string" || staged.candidate_ref.length === 0 ||
+      !("readback_sha256" in staged) || typeof staged.readback_sha256 !== "string" ||
+      !/^[a-f0-9]{64}$/u.test(staged.readback_sha256)) {
+    throw new Error("Controlled COW W3 dynamic-route staging receipt is malformed");
+  }
   await registry.promote({ route_ref: ROUTE, expected_active_route_version: null,
     target_route_version: ROUTE_VERSION, candidate_ref: staged.candidate_ref,
     candidate_sha256: staged.readback_sha256 });
@@ -153,8 +163,8 @@ async function startW2(tag: string) {
     principal: { principal_ref: context.principal_ref, credential_generation: context.credential_generation,
       deployment_generation: freezePrincipal.deployment_generation }, handler_generation: "cow-w3-handler-v1" };
   const attempt = await startArtifactSectionReviseWorkflow(workflowInput);
-  expect(attempt.state).toBe("STARTED");
-  return { input, context, request, configuredEnv, reportAdmission, attempt };
+  if (attempt.state !== "STARTED") throw new Error(`COW W3 test expected a started W2 attempt, received ${attempt.state}`);
+  return { input, context, request, configuredEnv, reportAdmission, attempt: { ...attempt, state: attempt.state } };
 }
 
 async function currentEvidencePack(data: Awaited<ReturnType<typeof startW2>>) {

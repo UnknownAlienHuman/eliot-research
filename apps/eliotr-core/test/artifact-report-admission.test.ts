@@ -17,7 +17,9 @@ describe("dedicated artifact REPORT admission", () => {
   it("persists exact intent/outbox only after installed approval and keeps its full witness immutable", async () => {
     const data = await admittedArtifactReportFixture("report-admission-positive");
     const before = await intents();
-    await expect(prepareOwnerArtifactReportAdmission({ ...data.configuredEnv,ELIOTR_MODEL_SPEND_POLICY_JSON: undefined },data.context,data.request))
+    const { ELIOTR_MODEL_SPEND_POLICY_JSON: _spendPolicy, ...withoutSpendPolicy } = data.configuredEnv;
+    void _spendPolicy;
+    await expect(prepareOwnerArtifactReportAdmission(withoutSpendPolicy, data.context, data.request))
       .rejects.toThrow(/missing/u);
     expect(await intents()).toBe(before);
     const prepared = await prepareOwnerArtifactReportAdmission(data.configuredEnv,data.context,data.request);

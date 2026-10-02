@@ -20,6 +20,24 @@ import { principal } from "./research-evidence-freeze-fixture.js";
 import { countResidencyPuts } from "./artifact-draft-fixture.js";
 
 export const runtime = env as unknown as Env;
+
+export function withoutResearchSemanticConfiguration(environment: Env): Env {
+  const {
+    ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON: _semanticConfig,
+    ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON_0: _semanticConfig0,
+    ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON_1: _semanticConfig1,
+    ELIOTR_RESEARCH_SEMANTIC_CONFIG_REF: _semanticConfigRef,
+    ELIOTR_RESEARCH_SEMANTIC_CONFIG_SHA256: _semanticConfigSha256,
+    ...withoutConfiguration
+  } = environment;
+  void _semanticConfig;
+  void _semanticConfig0;
+  void _semanticConfig1;
+  void _semanticConfigRef;
+  void _semanticConfigSha256;
+  return withoutConfiguration;
+}
+
 const BASE = "https://gateway.ai.cloudflare.com/v1/" + "a".repeat(32) + "/eliotr-reasoning";
 const VERIFIER = "cow-http-independent-verifier-v1";
 const NEXT = () => new Date(Date.now() + 3_600_000).toISOString();
@@ -64,7 +82,7 @@ export async function originalReport(claimKind: "observation" | "assumption", ca
     schema: "eliotr.research.report-admission.v1" as const, policy_ref: "cow-http-original-report-policy-v1", policy_revision: 1,
     config_provenance_ref: "cow-http-original-report-policy-v1", principal_ref: principal.principal_ref,
     client_class: "owner_pwa" as const, ...run, allowed_use: ["research"], disclosure_ceiling: "owner-only",
-    requested_output_class: "private-draft", purpose: "research-report-materialization", expires_at: freeze.scope.expires_at }) };
+    requested_output_class: "private-draft" as const, purpose: "research-report-materialization" as const, expires_at: freeze.scope.expires_at }) };
   const reader = createEvidenceFreezeMaterializeContextReader({ database: freeze.db, work_bucket: freeze.bucket,
     manifest_store: freeze.freeze_store, read_stage_five: freeze.readers.read_stage_five }, freeze.navigation, freeze.readers);
   const environment = { database: freeze.db, work_bucket: freeze.bucket,
@@ -129,6 +147,12 @@ async function installRoute(): Promise<ModelRouteDeployment> {
     qualification_expires_at: NEXT() };
   const registry = createD1DynamicRouteRegistry(runtime.CORE_DB, { environment: "TEST", now: () => created });
   const staged = await registry.stageCandidate(candidate, (await dynamicRouteJsonArtifact(candidate)).sha256);
+  if (typeof staged !== "object" || staged === null || Array.isArray(staged) ||
+      !("candidate_ref" in staged) || typeof staged.candidate_ref !== "string" || staged.candidate_ref.length === 0 ||
+      !("readback_sha256" in staged) || typeof staged.readback_sha256 !== "string" ||
+      !/^[a-f0-9]{64}$/u.test(staged.readback_sha256)) {
+    throw new Error("Controlled COW dynamic-route staging receipt is malformed");
+  }
   await registry.promote({ route_ref: deployment.route_ref, expected_active_route_version: null,
     target_route_version: deployment.route_version, candidate_ref: staged.candidate_ref, candidate_sha256: staged.readback_sha256 });
   const identity = { pricing_snapshot_ref: deployment.pricing_snapshot_ref, route_ref: deployment.route_ref,
@@ -196,7 +220,9 @@ export async function fixture(claimKind: "observation" | "assumption" = "observa
   let modelCalls = 0;
   let failProvider = false;
   const target = await modelGatewayDynamicRouteTarget(deployment);
-  const binding = { gateway: (id: string) => {
+  const binding = {
+    toMarkdown: async () => { throw new Error("COW model fixture must not invoke Markdown conversion"); },
+    gateway: (id: string) => {
     expect(id).toBe("eliotr-reasoning");
     return { getUrl: async () => BASE, getLog: async () => { throw new Error("Controlled response must carry its fingerprint"); } };
   }, run: async (model: string, inputs: Record<string, unknown>) => {
@@ -233,14 +259,15 @@ export async function fixture(claimKind: "observation" | "assumption" = "observa
         "cf-aig-model": "controlled-local-model", "cf-aig-log-id": "cow-http-log-" + modelCalls } });
   } };
   const counted = countResidencyPuts(runtime.WORK_BUCKET);
-  const configuredEnv: Env = { ...runtime, ENVIRONMENT: "development", DEPLOYMENT_GENERATION: principal.deployment_generation,
-    WORK_BUCKET: counted.bucket, AI: binding as unknown as Env["AI"], AI_GATEWAY_REASONING_URL: BASE,
-    ELIOTR_MODEL_GATEWAY_TOKEN: undefined, ELIOTR_MODEL_SPEND_POLICY_JSON: JSON.stringify(spend),
+  const { ELIOTR_MODEL_GATEWAY_TOKEN: _gatewayToken, ...runtimeWithoutGatewayToken } =
+    withoutResearchSemanticConfiguration(runtime);
+  void _gatewayToken;
+  const configuredEnv: Env = { ...runtimeWithoutGatewayToken, ENVIRONMENT: "development", DEPLOYMENT_GENERATION: principal.deployment_generation,
+    WORK_BUCKET: counted.bucket, AI: binding, AI_GATEWAY_REASONING_URL: BASE,
+    ELIOTR_MODEL_SPEND_POLICY_JSON: JSON.stringify(spend),
     ELIOTR_MODEL_SPEND_POLICY_PROVENANCE_REF: "cow-http-spend-source-v1", ELIOTR_RESEARCH_REPORT_CONFIG_JSON: JSON.stringify(report),
     ELIOTR_RESEARCH_REPORT_POLICY_PROVENANCE_REF: "cow-http-report-source-v1", ELIOTR_MODEL_PROFILE_DEFINITION_JSON: JSON.stringify(modelProfile),
-    ELIOTR_MODEL_PROFILE_PROVENANCE_REF: "cow-http-model-profile-source-v1", ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON: JSON.stringify(semantic),
-    ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON_0: undefined, ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON_1: undefined,
-    ELIOTR_RESEARCH_SEMANTIC_CONFIG_REF: undefined, ELIOTR_RESEARCH_SEMANTIC_CONFIG_SHA256: undefined };
+    ELIOTR_MODEL_PROFILE_PROVENANCE_REF: "cow-http-model-profile-source-v1", ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON: JSON.stringify(semantic) };
   const post = async (current: Env, tag: string, ref = original.artifact_ref, service = false) => {
     const request = new Request("https://research.example/api/v1/research/artifact/" + encodeURIComponent(ref.id + ":" + ref.revision) + "/sections/summary/revise", {
       method: "POST", headers: { "content-type": "application/json", "idempotency-key": tag },

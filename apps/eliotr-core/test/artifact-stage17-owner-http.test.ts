@@ -152,7 +152,7 @@ async function throughCoverage(audited: Audited) {
   const policySource = { provenance_ref: "stage17-native-policy-source", read: async () => ({ schema: "eliotr.research.report-admission.v1" as const,
     policy_ref: "stage17-native-policy", policy_revision: 1, config_provenance_ref: "stage17-native-policy-source", principal_ref: principal.principal_ref,
     client_class: "owner_pwa" as const, policy_generation: row.policy_generation, policy_authority_ref: row.policy_authority_ref, allowed_use: ["research"] as const,
-    disclosure_ceiling: "owner-only", requested_output_class: "private-draft", purpose: "research-report-materialization", expires_at: freeze.scope.expires_at }) };
+    disclosure_ceiling: "owner-only", requested_output_class: "private-draft" as const, purpose: "research-report-materialization" as const, expires_at: freeze.scope.expires_at }) };
   const handlers = createResearchStageHandlerFactory({ kind: "server-owned-exploratory", generation, navigation: freeze.navigation, ledger: freeze.ledger,
     resolve_citations: { database: freeze.db, navigation: freeze.navigation, evidence_resolver: freeze.resolver,
       context: createEvidenceFreezePostSynthesisContextReader(environment, freeze.navigation, freeze.readers, "RESOLVE_CITATIONS") },

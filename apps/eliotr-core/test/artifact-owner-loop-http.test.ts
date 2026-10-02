@@ -6,7 +6,7 @@ import { readReauthorizedResearchArtifactSectionCitations } from "../../eliotr-p
 import { handleHttp } from "../src/http.js";
 import type { Env } from "../src/env.js";
 import { principal } from "./research-evidence-freeze-fixture.js";
-import { fixture, runtime, crashBeforeW2Commit } from "./artifact-cow-http-fixture.js";
+import { fixture, runtime, crashBeforeW2Commit, withoutResearchSemanticConfiguration } from "./artifact-cow-http-fixture.js";
 
 const generation = principal.deployment_generation;
 function clientTransport(current: () => Env) {
@@ -62,7 +62,7 @@ describe("PWA clients through owner HTTP, COW and publication on native D1/R2", 
     expect(crash.interrupted()).toBe(true); expect(data.modelCalls()).toBe(2);
     const puts = data.counted.puts(); expect(puts).toBeGreaterThan(0);
     // A fresh HTTP/application composition must settle the durable child before preparing a model.
-    current = { ...data.configuredEnv, ELIOTR_MODEL_PROFILE_DEFINITION_JSON: "invalid", ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON: undefined };
+    current = withoutResearchSemanticConfiguration({ ...data.configuredEnv, ELIOTR_MODEL_PROFILE_DEFINITION_JSON: "invalid" });
     const child = await reviseArtifactSection(data.artifact_ref, "summary", generation);
     expect(keys[1]).toBe(keys[0]); expect(child.state).toBe("COMMITTED");
     const childRef = child.draft?.artifact_ref; if (childRef === undefined) throw new Error("First child missing");
@@ -91,7 +91,7 @@ describe("PWA clients through owner HTTP, COW and publication on native D1/R2", 
     expect(secondRef).toEqual({ ...data.artifact_ref, revision: 3 }); expect(await head(secondRef)).toBe(3);
     expect(data.modelCalls()).toBe(4);
     const secondPuts = data.counted.puts();
-    current = { ...current, ELIOTR_MODEL_PROFILE_DEFINITION_JSON: "invalid", ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON: undefined };
+    current = withoutResearchSemanticConfiguration({ ...current, ELIOTR_MODEL_PROFILE_DEFINITION_JSON: "invalid" });
     const laterHead = await reviseArtifactSection(data.artifact_ref, "summary", generation);
     expect(laterHead.draft?.artifact_ref).toEqual(childRef); expect(data.modelCalls()).toBe(4); expect(data.counted.puts()).toBe(secondPuts);
     await expect(readArtifactPublication(childRef, generation, undefined, true)).rejects.toMatchObject({ status: 409 });
