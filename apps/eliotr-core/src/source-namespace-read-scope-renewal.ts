@@ -1,4 +1,14 @@
 import type { AuthenticatedRequestContext } from "@eliotr/interfaces";
+import {
+  cleanupPreparedSourceNamespaceLeaseRefresh,
+  createSourceNamespaceLeaseRefreshProof,
+  prepareSourceNamespaceLeaseRefreshInsert,
+  readAppliedSourceNamespaceLeaseRefresh,
+  readSourceNamespaceLeaseRefreshReceipt,
+  sourceNamespaceLeaseRefreshReceiptMatches,
+  type SourceNamespaceLeaseRefreshReceiptRow,
+  type SourceNamespaceLeaseRefreshSession,
+} from "./source-namespace-read-scope-lease-receipt.js";
 
 const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/u;
 const CLIENT_CLASS = "owner_pwa" as const;
@@ -105,6 +115,8 @@ interface DecodedScopeRenewalRow {
   readonly policy_disclosure_ceiling: string;
 }
 
+type VerifiedOwnerSession = SourceNamespaceLeaseRefreshSession;
+
 function fail(
   code: SourceNamespaceReadScopeRenewalErrorCode,
   status: number,
@@ -150,12 +162,31 @@ function integerValue(value: unknown, label: string): number {
   return value;
 }
 
-function accessExpiry(context: AuthenticatedRequestContext, nowMs: number): { readonly iso: string; readonly millis: number } {
+function trustedNow(now: () => number): { readonly iso: string; readonly millis: number } {
+  let millis: number;
+  try { millis = now(); } catch (cause) {
+    fail("NAMESPACE_INPUT_INVALID", 400, "server clock is unavailable", false, cause);
+  }
+  if (!Number.isSafeInteger(millis) || millis < 0 || millis > 8_640_000_000_000) {
+    fail("NAMESPACE_INPUT_INVALID", 400, "server clock is invalid");
+  }
+  return { millis, iso: new Date(millis).toISOString() };
+}
+
+function accessExpiry(
+  context: AuthenticatedRequestContext,
+  nowMs: number,
+  expected?: VerifiedOwnerSession,
+): VerifiedOwnerSession {
+  if (context.client_class !== CLIENT_CLASS || !IDENTIFIER.test(context.principal_ref) ||
+      !IDENTIFIER.test(context.credential_generation)) {
+    fail("NAMESPACE_OWNER_REQUIRED", 403, "a current owner access session is required");
+  }
   const access = context.access;
   if (access === undefined || typeof access !== "object") {
     fail("NAMESPACE_OWNER_REQUIRED", 403, "a current owner access session is required");
   }
-  if (access.principal_ref !== context.principal_ref) {
+  if (access.authentication_method !== "cloudflare_access" || access.principal_ref !== context.principal_ref) {
     fail("NAMESPACE_OWNER_REQUIRED", 403, "owner access principal does not match the request");
   }
   if (access.credential_generation !== context.credential_generation) {
@@ -163,7 +194,17 @@ function accessExpiry(context: AuthenticatedRequestContext, nowMs: number): { re
   }
   const expiry = canonicalTime(access.expires_at, "owner access expiry");
   if (expiry.millis <= nowMs) fail("NAMESPACE_OWNER_REQUIRED", 403, "a current owner access session is required");
-  return expiry;
+  if (expected !== undefined && (context.principal_ref !== expected.principal_ref ||
+      context.credential_generation !== expected.credential_generation || access.principal_ref !== expected.principal_ref ||
+      access.credential_generation !== expected.credential_generation || expiry.iso !== expected.expires_at)) {
+    fail("NAMESPACE_OWNER_REQUIRED", 403, "owner access session changed during namespace renewal");
+  }
+  return {
+    principal_ref: context.principal_ref,
+    credential_generation: context.credential_generation,
+    expires_at: expiry.iso,
+    expires_at_ms: expiry.millis,
+  };
 }
 
 async function readScope(database: D1Database, namespaceId: string, principalRef: string): Promise<DecodedScopeRenewalRow> {
@@ -285,29 +326,77 @@ export async function renewSourceNamespaceReadScope(input: {
   readonly context: AuthenticatedRequestContext;
   readonly namespace_id: string;
   readonly request: SourceNamespaceReadScopeRenewalRequest;
-  readonly now_ms: number;
+  readonly now: () => number;
 }): Promise<SourceNamespaceReadScopeRenewalResult> {
   if (!IDENTIFIER.test(input.namespace_id) || !input.request || typeof input.request !== "object" ||
       !Number.isSafeInteger(input.request.expected_generation) || input.request.expected_generation < 1 ||
       input.request.expected_generation > MAX_GENERATION) {
     fail("NAMESPACE_INPUT_INVALID", 400, "namespace renewal input is invalid");
   }
-  if (!Number.isSafeInteger(input.now_ms) || input.now_ms < 0) fail("NAMESPACE_INPUT_INVALID", 400, "server clock is invalid");
-  const access = accessExpiry(input.context, input.now_ms);
+  const access = accessExpiry(input.context, trustedNow(input.now).millis);
   let current = await readScope(input.database, input.namespace_id, input.context.principal_ref);
+  accessExpiry(input.context, trustedNow(input.now).millis, access);
   if (current.state === "REVOKED") fail("NAMESPACE_READ_SCOPE_REVOKED", 409, "revoked owner read policy cannot be renewed");
   if (current.generation !== input.request.expected_generation) {
+    let receipt: SourceNamespaceLeaseRefreshReceiptRow | null;
+    try {
+      receipt = await readAppliedSourceNamespaceLeaseRefresh({
+        database: input.database,
+        namespace_id: input.namespace_id,
+        session: access,
+        expected_generation: input.request.expected_generation,
+      });
+    } catch (cause) {
+      fail("NAMESPACE_STORAGE_UNAVAILABLE", 503, "namespace lease receipt is unavailable", true, cause);
+    }
+    accessExpiry(input.context, trustedNow(input.now).millis, access);
+    try {
+      current = await readScope(input.database, input.namespace_id, input.context.principal_ref);
+    } catch (cause) {
+      fail("NAMESPACE_READ_SCOPE_CONFLICT", 409, "read policy changed during renewal reconciliation", false, cause);
+    }
+    accessExpiry(input.context, trustedNow(input.now).millis, access);
+    if (receipt !== null && typeof receipt.refresh_id === "string") {
+      let matched = false;
+      try {
+        matched = await sourceNamespaceLeaseRefreshReceiptMatches({
+          receipt,
+          current,
+          session: access,
+          expected_generation: input.request.expected_generation,
+          refresh_id: receipt.refresh_id,
+        });
+      } catch (cause) {
+        fail("NAMESPACE_STORAGE_UNAVAILABLE", 503, "namespace lease receipt could not be verified", true, cause);
+      }
+      accessExpiry(input.context, trustedNow(input.now).millis, access);
+      if (matched) return result(current);
+    }
     fail("NAMESPACE_READ_SCOPE_CONFLICT", 409, "read policy generation no longer matches the request");
   }
-  if (current.expires_at_ms >= access.millis) return result(current);
+  if (current.expires_at_ms >= access.expires_at_ms) {
+    accessExpiry(input.context, trustedNow(input.now).millis, access);
+    return result(current);
+  }
   const nextGeneration = current.generation + 1;
   if (nextGeneration > MAX_GENERATION) fail("NAMESPACE_READ_SCOPE_CONFLICT", 409, "read policy generation cannot advance");
+  const proof = await createSourceNamespaceLeaseRefreshProof({
+    namespace_id: input.namespace_id,
+    session: access,
+    current,
+    new_generation: nextGeneration,
+    created_at: trustedNow(input.now).iso,
+  });
+  accessExpiry(input.context, trustedNow(input.now).millis, access);
   let writeFailure: unknown;
   try {
-    await input.database.prepare(
+    await input.database.batch([
+      prepareSourceNamespaceLeaseRefreshInsert(input.database, proof),
+      input.database.prepare(
       "UPDATE scope_read_policy SET generation=?1,expires_at=?2 WHERE source_namespace_id=?3 AND principal_ref=?4 " +
       "AND client_class='owner_pwa' AND policy_ref=?5 AND generation=?6 AND allowed_use_json=?7 AND disclosure_ceiling=?8 " +
-      "AND state='ACTIVE' AND expires_at=?9 AND EXISTS (SELECT 1 FROM source_namespace_initialization i " +
+      "AND state='ACTIVE' AND expires_at=?9 AND julianday('now')<julianday(?2) " +
+      "AND EXISTS (SELECT 1 FROM source_namespace_initialization i " +
       "JOIN source_namespace_ownership o ON o.source_namespace_id=i.source_namespace_id AND o.ownership_record_revision=i.ownership_record_revision " +
       "AND o.owner_incarnation_ref=i.owner_incarnation_ref AND o.source_owner_generation=i.source_owner_generation " +
       "AND o.source_admission_policy_revision=i.source_admission_policy_revision " +
@@ -319,15 +408,25 @@ export async function renewSourceNamespaceReadScope(input: {
       "AND p.instruction_taint='DATA_ONLY' AND p.allowed_effects='READ_ONLY' " +
       "AND EXISTS (SELECT 1 FROM json_each(p.authorized_principal_refs_json) WHERE json_each.value=?4) " +
       "AND EXISTS (SELECT 1 FROM json_each(p.allowed_ownership_modes_json) WHERE json_each.value='immutable_import') " +
-      "AND EXISTS (SELECT 1 FROM json_each(p.allowed_use_json) WHERE json_each.value='research'))",
-    ).bind(nextGeneration, access.iso, input.namespace_id, input.context.principal_ref, current.policy_ref,
+      "AND EXISTS (SELECT 1 FROM json_each(p.allowed_use_json) WHERE json_each.value='research')) " +
+      "AND EXISTS (SELECT 1 FROM scope_read_policy_lease_refresh_receipt r WHERE r.refresh_id=?18 " +
+      "AND r.source_namespace_id=?3 AND r.principal_ref=?4 AND r.client_class='owner_pwa' " +
+      "AND r.credential_generation=?19 AND r.access_expires_at=?2 AND r.owner_incarnation_ref=?10 " +
+      "AND r.source_owner_generation=?11 AND r.ownership_record_revision=?12 " +
+      "AND r.source_admission_policy_revision=?13 AND r.policy_ref=?5 AND r.old_generation=?6 " +
+      "AND r.new_generation=?1 AND r.old_allowed_use_json=?7 AND r.old_disclosure_ceiling=?8 " +
+         "AND r.old_expires_at=?9 AND r.new_expires_at=?2 AND r.state='PREPARED')",
+      ).bind(nextGeneration, access.expires_at, input.namespace_id, input.context.principal_ref, current.policy_ref,
       input.request.expected_generation, current.allowed_use_json, current.disclosure_ceiling, current.expires_at,
       current.owner_incarnation_ref, current.source_owner_generation, current.ownership_record_revision,
       current.source_admission_policy_revision, current.policy_authorized_json, current.policy_modes_json,
-      current.policy_allowed_use_json, current.policy_disclosure_ceiling).run();
+      current.policy_allowed_use_json, current.policy_disclosure_ceiling, proof.refresh_id, access.credential_generation),
+      cleanupPreparedSourceNamespaceLeaseRefresh(input.database, proof),
+    ]);
   } catch (cause) {
     writeFailure = cause;
   }
+  accessExpiry(input.context, trustedNow(input.now).millis, access);
   try {
     current = await readScope(input.database, input.namespace_id, input.context.principal_ref);
   } catch (cause) {
@@ -335,7 +434,40 @@ export async function renewSourceNamespaceReadScope(input: {
     fail("NAMESPACE_SETTLEMENT_UNCERTAIN", 503, "owner read policy renewal settlement is uncertain", true,
       writeFailure ?? (cause instanceof SourceNamespaceReadScopeRenewalError ? cause.failureCause : cause));
   }
-  if (current.state === "ACTIVE" && current.generation === nextGeneration && current.expires_at_ms >= access.millis) return result(current);
+  accessExpiry(input.context, trustedNow(input.now).millis, access);
+  let appliedReceipt: SourceNamespaceLeaseRefreshReceiptRow | null = null;
+  try {
+    appliedReceipt = await readSourceNamespaceLeaseRefreshReceipt(input.database, proof.refresh_id);
+  } catch (cause) {
+    fail("NAMESPACE_SETTLEMENT_UNCERTAIN", 503, "owner read policy receipt settlement is uncertain", true,
+      writeFailure ?? cause);
+  }
+  accessExpiry(input.context, trustedNow(input.now).millis, access);
+  try {
+    current = await readScope(input.database, input.namespace_id, input.context.principal_ref);
+  } catch (cause) {
+    fail("NAMESPACE_SETTLEMENT_UNCERTAIN", 503, "owner read policy final readback is uncertain", true,
+      writeFailure ?? (cause instanceof SourceNamespaceReadScopeRenewalError ? cause.failureCause : cause));
+  }
+  accessExpiry(input.context, trustedNow(input.now).millis, access);
+  let settled = false;
+  if (appliedReceipt !== null) {
+    try {
+      settled = await sourceNamespaceLeaseRefreshReceiptMatches({
+        receipt: appliedReceipt,
+        current,
+        session: access,
+        expected_generation: input.request.expected_generation,
+        refresh_id: proof.refresh_id,
+      });
+    } catch (cause) {
+      fail("NAMESPACE_SETTLEMENT_UNCERTAIN", 503, "owner read policy receipt verification is uncertain", true,
+        writeFailure ?? cause);
+    }
+  }
+  accessExpiry(input.context, trustedNow(input.now).millis, access);
+  if (settled) return result(current);
+  if (current.state === "REVOKED") fail("NAMESPACE_READ_SCOPE_REVOKED", 409, "revoked owner read policy cannot be renewed");
   if (current.generation !== input.request.expected_generation) {
     fail("NAMESPACE_READ_SCOPE_CONFLICT", 409, "read policy renewal lost its generation compare-and-set");
   }

@@ -13,6 +13,7 @@ import { orientationCurrentness } from "./orientation-currentness.js";
 import { issueClientResearchScopeGrant, issueClientQueryScopeGrant, requireClientScopeProvenance, requireClientArtifactScopeSchema, requireClientScopeSchema, type ClientArtifactScopeOrigin } from "./client-scope-grant.js";
 import type { ScopeAuthorityRequest, ScopeRepository } from "./scope-service.js";
 import { ORIENTATION_MAX_SOURCES, orientationFail, orientationId } from "./orientation-input.js";
+import { historicalPolicyAuthorityRef, historicalPolicyClosureRef as computeHistoricalPolicyClosureRef } from "./owner-policy-lease-history.js";
 
 type Bind = string | number | null;
 interface PolicyRow {
@@ -133,7 +134,7 @@ function createReadPolicyAuthority(db: D1Database, context: EvidenceAccessContex
       const { title, kind, source_class: _sourceClass, parser_profile_generation: parser, ...revisionFields } = row;
       const revision = SourceRevisionSchema.parse({ ...revisionFields,
         ...(parser === null ? {} : { parser_profile_generation: parser }) });
-      const policyClosure = `read-${await evidenceSha256({ policy, authority, revision, title, kind })}`;
+      const policyClosure = await computeHistoricalPolicyClosureRef({ policy, authority, revision, title, kind });
       return { revision, authority, policy, policy_uses: uses(policy), policy_closure_ref: policyClosure, title, kind };
     }));
   }
@@ -214,8 +215,8 @@ function createReadPolicyAuthority(db: D1Database, context: EvidenceAccessContex
     if (ceilings.length > 1) orientationFail("ORIENTATION_MIXED_DISCLOSURE", 403);
     const purge = await db.prepare("SELECT COALESCE(MAX(ledger_revision),0) AS revision FROM purge_ledger").first<{ revision: number }>();
     if (!purge || !Number.isSafeInteger(purge.revision) || purge.revision < 0) orientationFail("ORIENTATION_PURGE_UNAVAILABLE", 503);
-    return { policy_authority_ref: `policy-${await evidenceSha256({ access, policies: policyRows,
-      members: loaded.map((source) => source.policy_closure_ref) })}`,
+    return { policy_authority_ref: await historicalPolicyAuthorityRef({ access, policies: policyRows,
+      members: loaded.map((source) => source.policy_closure_ref) }),
     disclosure_closure_digest: await evidenceSha256(loaded.map((source) => ({ ref: source.revision.source_revision_ref,
       disclosure: source.policy.disclosure_ceiling, allowed_use: source.policy_uses }))),
     purge_ledger_revision: purge.revision, client_fence_valid: request.client_fence_ref === access.credential_generation,

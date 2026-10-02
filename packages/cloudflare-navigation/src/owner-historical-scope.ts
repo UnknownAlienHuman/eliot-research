@@ -26,6 +26,7 @@ import { issueClientArtifactScopeGrant, requireClientScopeProvenance, type Clien
 
 import { createD1ScopeProfilePort } from "@eliotr/retrieval";
 import { readOwnerScopeProfile, OWNER_RESEARCH_SCOPE_PROFILE } from "./owner-scope-profile.js";
+import { matchesHistoricalOwnerPolicyAuthority, readOwnerPolicyLeaseHistory, type OwnerPolicyLeaseHistoryProof } from "./owner-policy-lease-history.js";
 
 export interface OwnerHistoricalScopeInput {
   readonly database: D1Database;
@@ -150,14 +151,19 @@ function sameArray(left: readonly string[], right: readonly string[]): boolean {
   return left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
-function requireExactHistoricalIdentity(original: ScopeSnapshot, fresh: ScopeSnapshot): void {
+function requireExactHistoricalIdentity(original: ScopeSnapshot, fresh: ScopeSnapshot, leaseRefreshProven: boolean): void {
+  const originalParticipants = { ...original.participant_generations };
+  const freshParticipants = { ...fresh.participant_generations };
+  if (leaseRefreshProven) {
+    delete originalParticipants["member-policy-closure"];
+    delete freshParticipants["member-policy-closure"];
+  }
   if (canonicalEvidenceJson(original.resolved_scope_expression) !==
       canonicalEvidenceJson(fresh.resolved_scope_expression) ||
       !sameArray([...original.member_source_revision_refs].sort(), [...fresh.member_source_revision_refs].sort()) ||
       canonicalEvidenceJson(original.source_owner_generations) !==
         canonicalEvidenceJson(fresh.source_owner_generations) ||
-      canonicalEvidenceJson(original.participant_generations) !==
-        canonicalEvidenceJson(fresh.participant_generations) ||
+      canonicalEvidenceJson(originalParticipants) !== canonicalEvidenceJson(freshParticipants) ||
       original.disclosure_closure_digest !== fresh.disclosure_closure_digest ||
       fresh.purge_ledger_revision < original.purge_ledger_revision) stale();
 }
@@ -204,16 +210,39 @@ export async function requireHistoricalScopeOrigin(
 async function requireHistoricalScopeRecord(
   database: D1Database, originalRef: VersionedRef, original: ScopeSnapshot,
   independentMachineOwner: boolean,
-): Promise<void> {
+  ownerReader?: { readonly principal_ref: string; readonly allow_lease_refresh: boolean; readonly now: string },
+): Promise<OwnerPolicyLeaseHistoryProof | null> {
   const persisted = await loadScopeAuthority(database, originalRef);
   if (persisted === null || canonicalEvidenceJson(persisted.snapshot) !== canonicalEvidenceJson(original)) stale();
-  if (persisted.invalidated_at === null) return;
+  let leaseHistory: OwnerPolicyLeaseHistoryProof | null = null;
+  if (ownerReader !== undefined) {
+    leaseHistory = await readOwnerPolicyLeaseHistory({ database, snapshot_id: originalRef.id,
+      snapshot_revision: originalRef.revision, principal_ref: ownerReader.principal_ref, now: ownerReader.now,
+      allow_lease_refresh: ownerReader.allow_lease_refresh });
+    if (leaseHistory === null) stale();
+  } else {
+    const semantic = await database.prepare(
+      "SELECT 1 AS present FROM scope_read_policy_history_event WHERE snapshot_id=?1 AND snapshot_revision=?2 " +
+        "AND event_kind NOT IN ('LEASE_REFRESH','SNAPSHOT_BASELINE') LIMIT 1",
+    ).bind(originalRef.id, originalRef.revision).first<{ readonly present: unknown }>();
+    if (semantic !== null) stale();
+  }
+  if (persisted.invalidated_at === null) {
+    if (leaseHistory?.has_lease_events) stale();
+    return ownerReader?.allow_lease_refresh === true ? leaseHistory : null;
+  }
   // Only the exact machine report's independently authorized original grantor
   // may retain historical provenance after the service grant was invalidated.
   // This never changes the old snapshot or the old service's effective authority.
-  if (independentMachineOwner && persisted.invalidation_reason === "CLIENT_DELEGATION_STALE") return;
+  if (independentMachineOwner && persisted.invalidation_reason === "CLIENT_DELEGATION_STALE") return null;
+  if (persisted.invalidation_reason === "READ_POLICY_LEASE_REFRESHED") {
+    if (ownerReader?.allow_lease_refresh !== true || leaseHistory?.has_lease_events !== true) stale();
+    return leaseHistory;
+  }
   if (persisted.invalidation_reason !== "SCOPE_INPUT_CHANGED" ||
       !(await provesSourceHeadAdvance(database, original))) stale();
+  if (ownerReader?.allow_lease_refresh === true) return leaseHistory;
+  return leaseHistory?.has_lease_events ? leaseHistory : null;
 }
 
 async function requireOriginalGrantNotRevoked(
@@ -357,11 +386,32 @@ async function reauthorizeHistoricalScope(
   const maximumMembers = validMaximum(input.max_snapshot_members, profile.max_sources);
   if (parsed.data.member_source_revision_refs.length > maximumMembers) stale();
   await ownerArtifactOrigin?.requireCurrent();
-  const requireHistoricalOrigin = () => requireHistoricalScopeRecord(input.database, originalRef.data,
-    parsed.data, ownerArtifactOrigin?.independentMachine === true);
-  await requireHistoricalOrigin();
   const original = parsed.data;
   const now = input.now ?? Date.now;
+  const allowLeaseRefresh = client === undefined && input.access.client_class === "owner_pwa" &&
+    ownerArtifactOrigin?.independentMachine !== true;
+  const historyPrincipalRef = client?.original_principal_ref ?? input.access.principal_ref;
+  let owner: OwnerScopeAuthority | undefined;
+  const readHistoricalRecord = () => requireHistoricalScopeRecord(input.database, originalRef.data,
+    original, ownerArtifactOrigin?.independentMachine === true, {
+      principal_ref: historyPrincipalRef,
+      allow_lease_refresh: allowLeaseRefresh,
+      now: new Date(now()).toISOString(),
+    });
+  let leaseHistory = await readHistoricalRecord();
+  const requireHistoricalOrigin = async () => {
+    leaseHistory = await readHistoricalRecord();
+    if (leaseHistory !== null && allowLeaseRefresh) {
+      const currentOwner = owner;
+      if (currentOwner === undefined) return;
+      const originalAccess = leaseHistory.original_access;
+      if (originalAccess === null) stale();
+      const sources = await currentOwner.exhaustiveSources(original.member_source_revision_refs);
+      if (!(await matchesHistoricalOwnerPolicyAuthority({ original, sources,
+        baseline_policies: leaseHistory.baseline_policies, access: originalAccess }))) stale();
+    }
+  };
+  await requireHistoricalOrigin();
   const delegated = client === undefined ? undefined : await createProjectClientArtifactAuthority(
     input.database, client.access, original, client.origin, client.original_principal_ref, now,
   );
@@ -369,33 +419,37 @@ async function reauthorizeHistoricalScope(
     client?.original_principal_ref ?? input.access.principal_ref,
     delegated?.original_client_class ?? input.access.client_class));
   await requireOriginalGrant();
-  const owner = delegated?.authority ?? createOwnerScopeAuthority(input.database, input.access, now);
-  if (profile.version === OWNER_RESEARCH_SCOPE_PROFILE.version) await owner.exhaustiveRequireReadPolicy();
-  else await owner.requireReadPolicy();
-  const historicalSources = await owner.exhaustiveSources(original.member_source_revision_refs);
+  const currentOwner = delegated?.authority ?? createOwnerScopeAuthority(input.database, input.access, now);
+  owner = currentOwner;
+  if (profile.version === OWNER_RESEARCH_SCOPE_PROFILE.version) await currentOwner.exhaustiveRequireReadPolicy();
+  else await currentOwner.requireReadPolicy();
+  const historicalSources = await currentOwner.exhaustiveSources(original.member_source_revision_refs);
+  await requireHistoricalOrigin();
   const historicalBySourceId = indexHistoricalSources(historicalSources, original);
   const resolveAtom = (atom: DeterministicScopeAtom, observedAt: string) =>
-    historicalAtomResolver(owner, original, historicalBySourceId, atom, observedAt);
-  const scopes = createD1ScopeService(input.database, owner, {
+    historicalAtomResolver(currentOwner, original, historicalBySourceId, atom, observedAt);
+  const scopes = createD1ScopeService(input.database, currentOwner, {
     now,
     max_snapshot_members: maximumMembers,
     preserve_resolution_errors: true,
     resolveAtom,
-    resolveAuthorityClosure: (request) => owner.exhaustiveResolveAuthorityClosure(request),
+    resolveAuthorityClosure: (request) => currentOwner.exhaustiveResolveAuthorityClosure(request),
   });
   const requireScopeCurrent = ownerArtifactOrigin === undefined
     ? (scope: ScopeSnapshot) => scopes.requireCurrent(scope)
     : orientationCurrentness(input.database, scopes, input.access.principal_ref, now);
   const fresh = await scopes.freeze(original.resolved_scope_expression, input.access.credential_generation);
-  requireExactHistoricalIdentity(original, fresh);
+  await requireHistoricalOrigin();
+  const leaseRefreshProven = allowLeaseRefresh && leaseHistory?.has_lease_events === true;
+  requireExactHistoricalIdentity(original, fresh, leaseRefreshProven);
   await requireScopeCurrent(fresh);
   await createD1ScopeProfilePort(input.database).recordBinding(fresh, profile);
   if (delegated !== undefined && client !== undefined) {
     await issueClientArtifactScopeGrant({ database: input.database, context: client.access, snapshot: fresh,
       lease: delegated.lease, sources: () => owner.exhaustiveSources(fresh.member_source_revision_refs),
       require_current: (scope) => scopes.requireCurrent(scope), now }, client.origin);
-  } else if (profile.version === OWNER_RESEARCH_SCOPE_PROFILE.version) await owner.exhaustiveGrant(fresh);
-  else await owner.grant(fresh);
+  } else if (profile.version === OWNER_RESEARCH_SCOPE_PROFILE.version) await currentOwner.exhaustiveGrant(fresh);
+  else await currentOwner.grant(fresh);
   await requireOriginalGrant();
   const requireCurrent = async (scope: ScopeSnapshot): Promise<ScopeSnapshot> => {
     await requireOriginalGrant();

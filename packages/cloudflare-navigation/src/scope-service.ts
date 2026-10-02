@@ -231,7 +231,7 @@ function sameRecord(left: Readonly<Record<string, string>>, right: Readonly<Reco
 async function participantKey(atom: DeterministicScopeAtom): Promise<string> {
   return `participant-${(await sha256Hex(`eliotr.scope.participant.v1\0${scopeExpressionIdentity(atom)}`)).slice(0, 48)}`;
 }
-async function memberPolicyClosureGeneration(policyClosures: Readonly<Record<string, string>>): Promise<string> {
+export async function memberPolicyClosureGeneration(policyClosures: Readonly<Record<string, string>>): Promise<string> {
   return `policy-closure-${(await sha256Hex(`eliotr.scope.member-policy-closure.v1\0${canonicalJson(policyClosures)}`)).slice(0, 48)}`;
 }
 

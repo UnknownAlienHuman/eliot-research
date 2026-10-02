@@ -497,14 +497,13 @@ export function createSourceNamespaceOwnerService(options: SourceNamespaceOwnerS
     input: SourceNamespaceReadScopeRenewalRequest,
   ): Promise<SourceNamespaceReadScopeRenewalResult> => {
     contextSnapshot(requestContext);
-    const clock = canonicalNow(now);
     try {
       return await renewSourceNamespaceReadScope({
         database: options.database,
         context: requestContext,
         namespace_id: namespaceId,
         request: input,
-        now_ms: clock.millis,
+        now,
       });
     } catch (cause) {
       if (cause instanceof SourceNamespaceReadScopeRenewalError) {
