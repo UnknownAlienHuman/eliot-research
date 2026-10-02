@@ -5,6 +5,7 @@ import type { ApplicationLifecycle } from "@eliotr/interfaces";
 import { createSourceNamespaceOwnerService } from "../src/source-namespace-owner-service.js";
 import { handleHttp } from "../src/http.js";
 import type { NamespaceBootstrapProfileReader } from "../src/source-namespace-bootstrap-profiles.js";
+import { readOwnerPolicyLeaseHistory } from "../../../packages/cloudflare-navigation/src/owner-policy-lease-history.js";
 import { originalReport, runtime } from "./artifact-cow-http-fixture.js";
 import { principal } from "./research-evidence-freeze-fixture.js";
 
@@ -119,6 +120,20 @@ describe("owner session lease history over native HTTP and D1", () => {
       source_namespace_id: namespace.source_namespace_id, read_policy_generation: 2,
       read_expires_at: nextExpiry, read_access: "ACTIVE",
     } });
+
+    const leaseHistory = await readOwnerPolicyLeaseHistory({
+      database: runtime.CORE_DB,
+      snapshot_id: report.freeze.scope.snapshot_id,
+      snapshot_revision: report.freeze.scope.revision,
+      principal_ref: principal.principal_ref,
+      now: new Date().toISOString(),
+      allow_lease_refresh: true,
+    });
+    expect(leaseHistory).not.toBeNull();
+    if (leaseHistory === null) throw new Error("original REPORT owner lease-history proof is missing");
+    expect(leaseHistory.has_lease_events).toBe(true);
+    expect(leaseHistory.original_access).toMatchObject({ principal_ref: principal.principal_ref, client_class: "owner_pwa" });
+    expect(leaseHistory.baseline_policies).toHaveLength(1);
 
     const afterMetadata = await readMetadata(report.artifact_ref, verifier(newCredential, nextExpiry));
     expect(afterMetadata.status, JSON.stringify(await afterMetadata.clone().json())).toBe(200);
