@@ -4,6 +4,7 @@ import type { WikiPageRevision } from "@eliotr/contracts";
 import { count, db, principal, runtime, setupOrientationDatabase } from "./orientation-fixture.js";
 import { createWikiProposalService, publishWikiProposal } from "../src/wiki-service.js";
 import { recordWikiPublicationAuthority } from "../src/wiki-publication-store.js";
+import { wikiPublicationScope } from "./wiki-publication-authority-fixture.js";
 
 beforeAll(async () => { await setupOrientationDatabase(); });
 
@@ -26,6 +27,7 @@ function context(key: string, who = principal): AuthenticatedRequestContext {
 }
 
 async function candidate(tag: string): Promise<WikiPageRevision> {
+  const authority = await wikiPublicationScope(`service-${tag}`);
   const source = `# ${tag}\n\nVerified source body.\n`;
   const bodyKey = `wiki-service/body-${tag}`;
   const evidenceKey = `wiki-service/evidence-${tag}`;
@@ -33,10 +35,10 @@ async function candidate(tag: string): Promise<WikiPageRevision> {
   await runtime.WORK_BUCKET.put(evidenceKey, JSON.stringify({ exact_claims: [`claim-${tag}`] }));
   return {
     page_ref: { id: `service-page-${tag}`, revision: 1 }, page_type: "Source", title: `Source ${tag}`,
-    scope_snapshot_ref: { id: `scope-${tag}`, revision: 1 }, body_object_ref: bodyKey,
+    scope_snapshot_ref: authority.scope, body_object_ref: bodyKey,
     body_sha256: await digest(source), statement_labels: { [`claim-${tag}`]: "SOURCE_SUPPORTED" },
     evidence_map_ref: evidenceKey, counterposition_refs: [], coverage_receipt_ref: { id: `coverage-${tag}`, revision: 1 },
-    limitations: [], dependency_refs: [`source-revision-${tag}`], generator_generation: "wiki-generator-v1",
+    limitations: [], dependency_refs: [authority.dependency], generator_generation: "wiki-generator-v1",
     status: "DRAFT", publication_metadata: { generated_by: "test" }, created_at: "2026-09-11T00:00:00.000Z",
   };
 }

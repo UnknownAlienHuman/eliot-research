@@ -500,3 +500,43 @@ Logs: `eliotr-functional-groups-8fce2caa.log`,
 These focused results close only the identified fixture failures. Further Core
 groups, REPORT timing diagnosis, source budgets, broad lint, Rust and live
 qualification remain open; there is no passing aggregate gate claim.
+
+The next focused fixture checkpoint preserves the current retrieval fallback:
+an authorized projected document can supply bounded, exact LEX context when
+direct text matching misses. Tests now assert the pinned source revision,
+excerpt and SAMPLED coverage; a real empty owner PROJECT tests genuine NONE.
+SEM drift/unpromoted cases still discard SEM and retain independently admitted
+LEX context. Full retrieval/SEM/change files PASS: 18 cases, 24.23s. The change
+feed test uses a canonical empty GLOBAL_LIBRARY scope and exact revocable grant.
+
+Artifact draft fixtures now freeze a canonical empty PROJECT snapshot instead
+of inventing its ID. Migration 0060's change-feed trigger references that
+snapshot through 0043's foreign key; the missing snapshot caused the atomic
+draft batch to roll back. All eight complete artifact storage cases PASS,
+including rollback, lost acknowledgement, concurrency and immutable replay.
+Neither migration nor production admission rules were changed.
+
+Admission fixtures use the production owner installer with explicit local,
+zero-spend configuration. They do not qualify a route or execute paid models;
+native background Workflows are terminated after durable admission. Current
+HTTP input identity and reference-manifest files PASS 14 and two cases. All
+four held-scope cases PASS after using the actual owner profile and a valid
+conflicting profile candidate (a different version retains its 64-source SQL
+ceiling). Foreign/revoked/currentness/idempotency negatives remain unchanged.
+
+Wiki positive fixtures now admit an actual owner scope and current policy and
+deployment, then publish through the public owner service, which builds the
+currentness witness itself. Arbitrary reviewer strings are no longer accepted
+as publication authority. The complete storage/service files PASS seven cases,
+including missing authority, exact objects, one CAS winner, replay and corrupt
+body rejection. Production guards and witness construction are unchanged.
+Scoped Core compilation and lint PASS for these files and helpers.
+
+Focused logs under OS temp: `eliotr-retrieval-and-change-fixtures-a979c765.log`,
+`eliotr-artifact-workflow-admission-groups-a979c765.log`,
+`eliotr-held-scope-profile-fix-a979c765.log`,
+`eliotr-workflow-wiki-and-held-repros-a979c765.log`, and
+`eliotr-wiki-workflow-and-continuation-a979c765.log`. Earlier failed attempts
+remain recorded; the final held-scope run is four PASS and the Wiki run seven
+PASS. Workflow continuation diagnostics, older session assumptions, REPORT
+timing and the broader gates remain in progress.

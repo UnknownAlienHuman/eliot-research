@@ -54,12 +54,29 @@ export interface DraftInputOptions {
   readonly principal_ref?: string;
 }
 
+async function freezeDraftScope(tag: string): Promise<ScopeSnapshot> {
+  const now = Date.now();
+  const credentialGeneration = `draft-fixture-credential-${tag}`;
+  const authority = {
+    resolveAtom: async () => ({ atom_generation_ref: `draft-fixture-atom-${tag}`, members: [] }),
+    resolveAuthorityClosure: async () => ({
+      policy_authority_ref: `draft-fixture-policy-${tag}`,
+      disclosure_closure_digest: "d".repeat(64),
+      purge_ledger_revision: 0,
+      client_fence_valid: true,
+      denied_source_revision_refs: [],
+    }),
+  };
+  const scopes = createD1ScopeService(runtime.CORE_DB, authority, { now: () => now, ttl_ms: 3_600_000 });
+  return scopes.freeze({ kind: "PROJECT", project_id: `draft-fixture-project-${tag}` }, credentialGeneration);
+}
+
 export async function draftInput(tag: string, options: DraftInputOptions = {}): Promise<PrepareArtifactDraftInput> {
   const artifactId = options.artifact_id ?? `artifact-${tag}`;
   const artifactRevision = options.artifact_revision ?? 1;
   const contentTag = options.content_tag ?? tag;
   const domain = options.residency_domain ?? tag;
-  const scopeSnapshotId = options.scope_snapshot_id ?? `scope-snapshot-${tag}`;
+  const scopeSnapshotId = options.scope_snapshot_id ?? (await freezeDraftScope(tag)).snapshot_id;
   const sectionBytes = bytes(`section body ${contentTag}\n`);
   const sectionSha = await digest(sectionBytes);
   const spec = {

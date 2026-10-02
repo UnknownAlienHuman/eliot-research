@@ -2,6 +2,7 @@ import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import { ORIENTATION_PROFILE } from "@eliotr/cloudflare-navigation";
 import type { AuthenticatedRequestContext, QueryRequest, QueryResult } from "@eliotr/interfaces";
+import { createProjectOwnerService } from "../src/project-owner-service.js";
 import {
   createResearchQueryService,
   FAST_SEARCH_PROFILE,
@@ -96,6 +97,13 @@ function fastSearchQueryFor(world: Q1Namespace, query: string): QueryRequest {
   };
 }
 
+function expectPinnedContext(result: QueryResult, world: Q1Namespace): void {
+  expect(result.evidence_pack.resolved_evidence).toHaveLength(1);
+  expect(result.evidence_pack.resolved_evidence[0]).toMatchObject({
+    exact_excerpt: "# Evidence\n\nPinned content.\n", handle: { source_revision_ref: world.revision },
+  });
+}
+
 async function tableCount(table: string): Promise<number> {
   return (await db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).first<{ readonly n: number }>())?.n ?? -1;
 }
@@ -176,12 +184,14 @@ describe("research.query retrieval over real D1/R2", () => {
       headers: { "content-type": "application/json", "idempotency-key": "rq-fast-search-none" },
       body: JSON.stringify(fastSearchQueryFor(world, "absent")),
     }) as { readonly data: QueryResult };
-    expect(noHit.data.evidence_pack.resolved_evidence).toEqual([]);
+    // A lexical miss still supplies bounded, exactly resolved selected-document context.
+    expectPinnedContext(noHit.data, world);
+    expect((await persistedTrace(noHit.data)).candidates_by_lane.LEX).toBe(1);
     const noHitRow = await db
       .prepare("SELECT state, coverage_claim FROM retrieval_query_result WHERE principal_ref = ?1 AND idempotency_key = ?2")
       .bind(owner, "rq-fast-search-none")
       .first<{ readonly state: string; readonly coverage_claim: string }>();
-    expect(noHitRow).toMatchObject({ state: "COMPLETE", coverage_claim: "NONE" });
+    expect(noHitRow).toMatchObject({ state: "COMPLETE", coverage_claim: "SAMPLED" });
     await expect(q1Transport(runtime, owner)("/api/v1/research/query", {
       method: "POST",
       headers: { "content-type": "application/json", "idempotency-key": "rq-fast-search" },
@@ -311,9 +321,13 @@ describe("research.query retrieval over real D1/R2", () => {
     expect(await counts()).toEqual(before);
   });
 
-  it("persists a no-hit NONE result with trace and profile row; replays without duplication and conflicts on changed input", async () => {
+  it("persists an empty-project NONE result with trace and profile row; replays without duplication and conflicts on changed input", async () => {
     const owner = "rq-retrieval-owner";
     const world = await worldWithPolicy(owner);
+    const emptyProject = await createProjectOwnerService({ database: db, deployment_generation: runtime.DEPLOYMENT_GENERATION })
+      .create(contextFor(owner, "rq-empty-project"), { idempotency_key: "rq-empty-project", title: "Empty research scope", source_ids: [] });
+    const request: QueryRequest = { ...queryFor(world, "absent"),
+      scope_expression: { kind: "PROJECT", project_id: emptyProject.project_ref.id } };
     const service = createResearchQueryService({ CORE_DB: db, SEARCH_DB: searchDb, EVIDENCE_BUCKET: runtime.EVIDENCE_BUCKET });
     const before = {
       result: await tableCount("retrieval_query_result"),
@@ -321,8 +335,8 @@ describe("research.query retrieval over real D1/R2", () => {
       profile: await tableCount("retrieval_scope_profile"),
       grant: await tableCount("scope_access_grant"),
     };
-    // "absent" matches no projected section: lanes execute genuinely empty (never an absence claim).
-    const first = await service.query(contextFor(owner, "rq-first"), queryFor(world, "absent"));
+    // Empty canonical membership gives no locator, including no document-context fallback.
+    const first = await service.query(contextFor(owner, "rq-first"), request);
     expect(first.evidence_pack.resolved_evidence).toEqual([]);
     expect(first.evidence_pack.scope_snapshot_ref.revision).toBe(1);
     expect(first.trace_ref.id.startsWith("query-")).toBe(true);
@@ -363,12 +377,12 @@ describe("research.query retrieval over real D1/R2", () => {
     expect(after.profile).toBe(before.profile + 1);
     expect(after.grant).toBe(before.grant + 1);
     // Same idempotency key replays byte-identical bytes without duplicate rows.
-    const replayed = await service.query(contextFor(owner, "rq-first"), queryFor(world, "absent"));
+    const replayed = await service.query(contextFor(owner, "rq-first"), request);
     expect(replayed).toEqual(first);
     expect(await tableCount("retrieval_query_result")).toBe(after.result);
     expect(await tableCount("retrieval_query_trace")).toBe(after.trace);
     // Changed input under the same key conflicts instead of mutating.
-    await expect(service.query(contextFor(owner, "rq-first"), queryFor(world, "different"))).rejects.toMatchObject({ code: "RESEARCH_CONFLICT" });
+    await expect(service.query(contextFor(owner, "rq-first"), { ...request, query: "different" })).rejects.toMatchObject({ code: "RESEARCH_CONFLICT" });
     expect(await tableCount("retrieval_query_result")).toBe(after.result);
   });
 
@@ -462,7 +476,7 @@ describe("research.query retrieval over real D1/R2", () => {
     const world = await worldWithPolicy(owner);
     const service = createResearchQueryService({ CORE_DB: db, SEARCH_DB: searchDb, EVIDENCE_BUCKET: runtime.EVIDENCE_BUCKET });
     const first = await service.query(contextFor(owner, "rq-expiry-first"), queryFor(world, "absent"));
-    expect(first.evidence_pack.resolved_evidence).toEqual([]);
+    expectPinnedContext(first, world);
     const snapshotId = first.evidence_pack.scope_snapshot_ref.id;
     await db.prepare("UPDATE scope_snapshot SET expires_at = ?1 WHERE snapshot_id = ?2").bind("2020-01-01T00:00:00.000Z", snapshotId).run();
     const before = {
@@ -483,7 +497,7 @@ describe("research.query retrieval over real D1/R2", () => {
     const world = await worldWithPolicy(owner);
     const v1 = createResearchQueryService({ CORE_DB: db, SEARCH_DB: searchDb, EVIDENCE_BUCKET: runtime.EVIDENCE_BUCKET });
     const first = await v1.query(contextFor(owner, "rq-profile-first"), queryFor(world, "absent"));
-    expect(first.evidence_pack.resolved_evidence).toEqual([]);
+    expectPinnedContext(first, world);
     const resultsBefore = await tableCount("retrieval_query_result");
     const v2 = createResearchQueryService(
       { CORE_DB: db, SEARCH_DB: searchDb, EVIDENCE_BUCKET: runtime.EVIDENCE_BUCKET },
@@ -500,7 +514,7 @@ describe("research.query retrieval over real D1/R2", () => {
     const world = await worldWithPolicy(owner);
     const service = createResearchQueryService({ CORE_DB: db, SEARCH_DB: searchDb, EVIDENCE_BUCKET: runtime.EVIDENCE_BUCKET });
     const first = await service.query(contextFor(owner, "rq-trace-first"), queryFor(world, "absent"));
-    expect(first.evidence_pack.resolved_evidence).toEqual([]);
+    expectPinnedContext(first, world);
     const snapshot = await db
       .prepare("SELECT snapshot_digest FROM scope_snapshot WHERE snapshot_id = ?1 AND revision = ?2")
       .bind(first.evidence_pack.scope_snapshot_ref.id, first.evidence_pack.scope_snapshot_ref.revision)

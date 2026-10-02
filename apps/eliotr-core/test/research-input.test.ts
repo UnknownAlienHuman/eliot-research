@@ -1,9 +1,9 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { INSTALLED_INQUIRY_PROTOCOL_REFS, RESEARCH_RUN_REQUEST_V2 } from "@eliotr/cloudflare-research";
 import { body, count, db, principal, runtime, seedSource, setupOrientationDatabase, verifier } from "./orientation-fixture.js";
-import { createResearchOwnerRuntimeConfiguration } from "../src/research-owner-runtime-config.js";
+import { admissionTestEnvironment, terminateAdmissionWorkflows } from "./research-admission-fixture.js";
 import { parseResearchRunRequest } from "../src/research-session.js";
-import { SERVER_OWNED_PROTOCOL_HANDLER_GENERATION } from "../src/research-stage-handlers.js";
+import { SERVER_OWNED_BRANCH_HANDLER_GENERATION } from "../src/research-stage-handlers.js";
 import { handleHttp } from "../src/http.js";
 import type { Env } from "../src/env.js";
 
@@ -20,48 +20,7 @@ afterAll(async () => {
 });
 beforeAll(async () => {
   await setupOrientationDatabase();
-  const expires_at = new Date(Date.now() + 86_400_000).toISOString();
-  const deployment = { route_ref: "dynamic/eliotr-balanced" as const, route_version: "s24-fixture-v1",
-    prompt_generation: "s24-prompt-v1", schema_generation: "s24-schema-v1", pricing_snapshot_ref: "s24-pricing-v1" };
-  const residency = { scope_domain_id: "s24-scope", access_domain_id: principal, confidentiality_domain_id: "private",
-    encryption_key_domain_id: "s24-key", retention_domain_id: "s24-retention", erasure_domain_id: "s24-erasure" };
-  // Compile a structurally valid, explicit local-only configuration through the production installer.
-  // No route is qualified and no gateway is contacted. Workflow execution is outside this admission test.
-  const compiled = await createResearchOwnerRuntimeConfiguration({
-    protocol: "eliotr.research-owner-setup.v1",
-    semantic: {
-      synthesis: { max_tokens: 512, request_timeout_ms: 1000 },
-      audit: { max_tokens: 512, request_timeout_ms: 1000, verifier_ref: "s24-verifier", verifier_schema_generation: "s24-audit-v1",
-        allowed_verifier_refs: ["s24-verifier"], policy: { required_dimensions: [], source_requirement_applicable: true,
-          excerpt_requirement_applicable: true, coverage_limitations: ["Local input test; no evidence judgment"], unsupported_precision: [] } },
-      normalization: { section_ref: { id: "s24-section", revision: 1 }, required_precision: "normalized", required_source_class: "document" },
-    },
-    model_profile: { config_provenance_ref: "s24-profile-config", model_profile_ref: "research-model-v1",
-      expires_at, max_context_bytes: 65536, deployment, policy: { allowed_tool_definition_refs: [], allowed_verifier_refs: ["s24-verifier"],
-        permitted_anchor_and_precision_ceilings: ["normalized"], provider_and_policy_generations: { policy: "s24-policy" },
-        permitted_acquisition_or_expansion_routes: [], disclosure_ceiling: "private", allowed_use: ["research"], expires_at } },
-    spend_policy: { protocol: "eliotr.research-owner-spend-template.v1", approved: true, policy_ref: "s24-spend",
-      config_provenance_ref: "s24-spend-config", principal_ref: principal, client_class: "owner_pwa",
-      deployment_generation: runtime.DEPLOYMENT_GENERATION, expires_at, rules: (["SYNTHESIZE", "AUDIT_CLAIMS"] as const).map((stage) => ({
-        stage, deployment, max_input_bytes: 65536, max_output_bytes: 8192,
-        quote: { estimated_model_calls: 1, estimated_input_tokens: 1000, estimated_output_tokens: 512, estimated_embedding_tokens: 0,
-          quoted_neurons: 0, platform_usd: 0, workers_ai_usd: 0, byok_usd: 0, max_total_usd: 0,
-          workflow_steps: 1, expected_sources: 1, expected_sections: 1, confidence: 1 },
-      })) },
-    report: {
-      admission_policy: { protocol: "eliotr.research-owner-report-admission-template.v1", policy_ref: "s24-report", policy_revision: 1,
-        config_provenance_ref: "s24-report-config", principal_ref: principal, client_class: "owner_pwa",
-        deployment_generation: runtime.DEPLOYMENT_GENERATION, allowed_use: ["research"], disclosure_ceiling: "private",
-        requested_output_class: "private-draft", purpose: "research-report-materialization", expires_at },
-      artifact_policy: { kind: "technical_audit", title: "Local input test", audience: "owner", language: "en",
-        section_contract: { section_id: "summary", title: "Summary", purpose: "Summary", required_claim_kinds: ["claim"],
-          required_evidence_classes: ["source"], maximum_utf8_bytes: 4096 }, statement_labels: { claim: "UNRESOLVED" },
-        citation_policy_ref: "s24-citation", verification_policy_ref: "s24-verification", length_policy_ref: "s24-length",
-        export_formats: ["markdown"], include_counterevidence: true, include_methodology: true, budget_ref: "s24-report-budget",
-        section_residency: residency, manifest_residency: residency },
-    },
-  });
-  configured = { ...runtime, ...compiled.vars, ELIOTR_MODEL_GATEWAY_TOKEN: "s24-local-not-a-credential" };
+  configured = await admissionTestEnvironment(runtime, principal, "s24");
 });
 const run = (request: Request) => handleHttp(request, configured, {} as ExecutionContext, { accessVerifier: verifier() });
 function runBody(id: string, fields: Record<string, unknown> = {}) {
@@ -97,10 +56,10 @@ describe("S24 Research end-to-end input identity", () => {
     const started = await body<{ investigation_ref: { id: string; revision: number }; workflow_instance_id: string }>(response);
     expect(response.status, JSON.stringify(started)).toBe(200);
     admitted.push(started.data.workflow_instance_id);
+    await terminateAdmissionWorkflows(runtime, admitted);
     const workflow = await db.prepare("SELECT handler_generation FROM research_workflow_run WHERE operation_id=?1")
       .bind(started.data.workflow_instance_id).first<{ handler_generation: string }>();
-    expect(workflow?.handler_generation).toBe(SERVER_OWNED_PROTOCOL_HANDLER_GENERATION);
-    expect(workflow?.handler_generation).toBe("research-handlers.exploratory.v6");
+    expect(workflow?.handler_generation).toBe(SERVER_OWNED_BRANCH_HANDLER_GENERATION);
     const stored = await db.prepare("SELECT goal, portfolio_ref, input_digest FROM investigation_ledger_head WHERE investigation_id=?1")
       .bind(started.data.investigation_ref.id).first<{ goal: string; portfolio_ref: string; input_digest: string }>();
     expect(stored?.goal).toBe(query);

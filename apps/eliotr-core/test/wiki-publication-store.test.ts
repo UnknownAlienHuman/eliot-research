@@ -1,8 +1,10 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { createWikiPublisher, type DraftRiskClass } from "@eliotr/research";
 import type { WikiPageRevision } from "@eliotr/contracts";
-import { db, runtime, setupOrientationDatabase } from "./orientation-fixture.js";
+import { db, principal, runtime, setupOrientationDatabase } from "./orientation-fixture.js";
 import { createD1R2WikiPublicationPort, recordWikiPublicationAuthority } from "../src/wiki-publication-store.js";
+import { publishWikiProposal } from "../src/wiki-service.js";
+import { wikiOwnerContext, wikiPublicationScope } from "./wiki-publication-authority-fixture.js";
 
 beforeAll(async () => { await setupOrientationDatabase(); });
 
@@ -12,6 +14,7 @@ async function digest(value: string): Promise<string> {
 }
 
 async function fixture(tag: string, riskClass: DraftRiskClass = "D2_ANALYTICAL") {
+  const authority = await wikiPublicationScope(`store-${tag}`);
   const bodyText = `# Wiki ${tag}\n\nExact body.\n`;
   const bodyKey = `wiki-test/body-${tag}`;
   const evidenceKey = `wiki-test/evidence-${tag}`;
@@ -21,7 +24,7 @@ async function fixture(tag: string, riskClass: DraftRiskClass = "D2_ANALYTICAL")
     page_ref: { id: `page-${tag}`, revision: 1 },
     page_type: "Source",
     title: `Source ${tag}`,
-    scope_snapshot_ref: { id: `scope-${tag}`, revision: 1 },
+    scope_snapshot_ref: authority.scope,
     body_object_ref: bodyKey,
     body_sha256: await digest(bodyText),
     statement_labels: { [`claim-${tag}`]: "SOURCE_SUPPORTED" },
@@ -29,16 +32,19 @@ async function fixture(tag: string, riskClass: DraftRiskClass = "D2_ANALYTICAL")
     counterposition_refs: [],
     coverage_receipt_ref: { id: `coverage-${tag}`, revision: 1 },
     limitations: [],
-    dependency_refs: [`source-revision-${tag}`],
+    dependency_refs: [authority.dependency],
     generator_generation: "wiki-generator-v1",
     status: "DRAFT",
     publication_metadata: { source: "local-test" },
     created_at: "2026-09-11T00:00:00.000Z",
   };
-  const context = { principal_ref: "owner-1", idempotency_key: `wiki-${tag}`, now: () => "2026-09-11T01:00:00.000Z" };
+  const context = { principal_ref: principal, idempotency_key: `wiki-${tag}` };
   const publisher = createWikiPublisher(createD1R2WikiPublicationPort(db, runtime.WORK_BUCKET, context));
   const proposalRef = await publisher.propose(page, riskClass);
-  return { page, publisher, proposalRef, context };
+  const publish = () => publishWikiProposal(runtime, wikiOwnerContext(context.idempotency_key), {
+    proposal_ref: proposalRef, expected_head_revision: 0,
+  });
+  return { page, publisher, proposalRef, context, publish };
 }
 
 async function admit(value: Awaited<ReturnType<typeof fixture>>) {
@@ -62,8 +68,8 @@ describe("D1/R2 Wiki publication storage", () => {
     await expect(value.publisher.publish(value.proposalRef, 0, "reviewer-1"))
       .rejects.toMatchObject({ code: "WIKI_PUBLICATION_INCOMPLETE" });
     await admit(value);
-    const published = await value.publisher.publish(value.proposalRef, 0, "reviewer-1");
-    expect(published).toMatchObject({ status: "PUBLISHED", reviewer_ref: "reviewer-1" });
+    const published = await value.publish();
+    expect(published).toMatchObject({ status: "PUBLISHED", reviewer_ref: principal });
     const head = await db.prepare("SELECT revision, manifest_ref, outbox_ref FROM wiki_publication_head WHERE page_id = ?1")
       .bind(value.page.page_ref.id).first<{ revision: number; manifest_ref: string; outbox_ref: string }>();
     expect(head?.revision).toBe(1);
@@ -80,8 +86,8 @@ describe("D1/R2 Wiki publication storage", () => {
     const replayRef = await value.publisher.propose(value.page, "D1_LOW_RISK_ADDITIVE");
     expect(replayRef).toEqual(value.proposalRef);
     await admit(value);
-    const first = await value.publisher.publish(value.proposalRef, 0, "reviewer-1");
-    const second = await value.publisher.publish(value.proposalRef, 0, "reviewer-1");
+    const first = await value.publish();
+    const second = await value.publish();
     expect(second).toEqual(first);
     const revisions = await db.prepare("SELECT COUNT(*) AS n FROM wiki_publication_revision WHERE page_id = ?1")
       .bind(value.page.page_ref.id).first<number>("n");
@@ -106,7 +112,7 @@ describe("D1/R2 Wiki publication storage", () => {
       evidence_map_ref: secondEvidenceKey,
       publication_metadata: { source: "race-b" },
     };
-    const secondContext = { principal_ref: "owner-1", idempotency_key: "wiki-race-b", now: () => "2026-09-11T01:00:00.000Z" };
+    const secondContext = { principal_ref: principal, idempotency_key: "wiki-race-b" };
     const secondPublisher = createWikiPublisher(createD1R2WikiPublicationPort(db, runtime.WORK_BUCKET, secondContext));
     const secondRef = await secondPublisher.propose(secondPage, "D2_ANALYTICAL");
     await admit(first);
@@ -117,8 +123,10 @@ describe("D1/R2 Wiki publication storage", () => {
       dependency_closure_complete: true, conflict_count: 0, changes_current_state: false,
     });
     const results = await Promise.allSettled([
-      first.publisher.publish(first.proposalRef, 0, "reviewer-a"),
-      secondPublisher.publish(secondRef, 0, "reviewer-b"),
+      first.publish(),
+      publishWikiProposal(runtime, wikiOwnerContext(secondContext.idempotency_key), {
+        proposal_ref: secondRef, expected_head_revision: 0,
+      }),
     ]);
     expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
     expect(results.filter((result) => result.status === "rejected")).toHaveLength(1);
