@@ -27,7 +27,7 @@ async function files(root) {
   }
   await visit(root); return out;
 }
-async function nativeRoot(before, publicationRef) {
+async function nativeRoot(before, manifest) {
   const roots = (await readdir(tmpdir())).filter((name) => name.startsWith("miniflare-") && !before.has(name));
   const found = [];
   for (const name of roots) {
@@ -35,12 +35,16 @@ async function nativeRoot(before, publicationRef) {
     for (const path of (await files(root)).filter((file) => file.endsWith(".sqlite") && file.includes("d1"))) {
       const db = new DatabaseSync(path, { readOnly: true });
       try {
-        if (db.prepare("SELECT 1 FROM sqlite_master WHERE name='artifact_publication_receipt'").get() &&
-            db.prepare("SELECT 1 FROM artifact_publication_receipt WHERE publication_ref=?").get(publicationRef)) found.push(root);
+        if (!db.prepare("SELECT 1 FROM sqlite_master WHERE name='artifact_publication_receipt'").get()) continue;
+        const locator = manifest.profile === "original-report"
+          ? db.prepare("SELECT 1 FROM artifact_draft_binding b JOIN research_report_admission r ON r.intent_id=b.intent_id AND r.intent_revision=b.intent_revision WHERE b.artifact_id=? AND b.revision=? AND r.operation_id=?")
+            .get(manifest.artifact.id, manifest.artifact.revision, manifest.run.operation_id)
+          : db.prepare("SELECT 1 FROM artifact_publication_receipt WHERE publication_ref=?").get(manifest.publication.receipt.publication_ref);
+        if (locator) found.push(root);
       } finally { db.close(); }
     }
   }
-  assert.equal(found.length, 1, "Snapshot must identify exactly one actual native accepted fixture");
+  assert.equal(found.length, 1, "Snapshot must identify exactly one actual native artifact binding");
   return found[0];
 }
 async function snapshotStorage(source, paths) {
@@ -71,7 +75,8 @@ async function snapshotStorage(source, paths) {
 // This transports a completed native fixture's actual SQLite databases and R2
 // blobs. No authority row is manufactured, no trigger disabled, no HTTP result
 // intercepted. The native runtime stays idle/alive until coherent backups finish.
-export async function prepareOwnerArtifactSnapshot(paths, identity) {
+export async function prepareOwnerArtifactSnapshot(paths, identity, profile = "accepted-child") {
+  assert.ok(["accepted-child", "original-report"].includes(profile));
   const require = createRequire(import.meta.url);
   const vitest = resolve(dirname(require.resolve("vitest/package.json")), "vitest.mjs");
   const before = new Set(await readdir(tmpdir()));
@@ -89,8 +94,15 @@ export async function prepareOwnerArtifactSnapshot(paths, identity) {
       const manifest = JSON.parse(Buffer.concat(chunks).toString("utf8"));
       assert.equal(manifest.protocol, "eliotr.owner-artifact-native-snapshot.v1");
       assert.deepEqual(manifest.principal, { ...identity, client_class: "owner_pwa" });
-      assert.equal(manifest.publication.revision.status, "ACCEPTED"); assert.equal(manifest.model_calls, 2);
-      const source = await nativeRoot(before, manifest.publication.receipt.publication_ref);
+      assert.equal(manifest.profile, profile); assert.equal(manifest.model_calls, 2);
+      if (profile === "original-report") {
+        assert.equal(manifest.publication, undefined); assert.equal(manifest.artifact.revision, 1);
+        assert.equal(manifest.run.status.workflow_instance_id, manifest.run.operation_id);
+        assert.equal(manifest.run.status.execution_state, "ENGINE_COMPLETED");
+        assert.equal(manifest.run.status.next_stage_index, 18);
+        assert.deepEqual(manifest.run.status.answer, { availability: "draft", artifact_ref: manifest.artifact });
+      } else assert.equal(manifest.publication.revision.status, "ACCEPTED");
+      const source = await nativeRoot(before, manifest);
       manifest.storage = await snapshotStorage(source, paths);
       const config = JSON.parse(await readFile(paths.config, "utf8"));
       for (const database of config.d1_databases) database.database_name = manifest.native_databases[database.binding];
@@ -109,7 +121,7 @@ export async function prepareOwnerArtifactSnapshot(paths, identity) {
   const address = server.address();
   const run = executeLocalAsync([vitest, "run", "test/artifact-owner-browser-fixture.test.ts", "--reporter=verbose", "--maxWorkers=1"], {
     cwd: CORE, capture: false, timeoutMs: 180_000, env: { ...localEnvironment(),
-      ELIOTR_OWNER_ARTIFACT_FIXTURE: JSON.stringify({ ...identity, collector_url: `http://127.0.0.1:${address.port}/snapshot` }) },
+      ELIOTR_OWNER_ARTIFACT_FIXTURE: JSON.stringify({ ...identity, profile, collector_url: `http://127.0.0.1:${address.port}/snapshot` }) },
   });
   const deadline = setTimeout(() => rejectSnapshot(new Error("Native fixture collector deadline exceeded")), 175000);
   // A skipped/successful native CLI without POST must fail too. Both the

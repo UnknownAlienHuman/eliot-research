@@ -21,7 +21,8 @@ async function durableCheckpoint(paths, manifest) {
       if (!database.prepare("SELECT 1 FROM sqlite_master WHERE name='artifact_publication_receipt'").get()) continue;
       assert.equal(result, undefined, "Exactly one canonical Core database is expected");
       const receipts = database.prepare("SELECT * FROM artifact_publication_receipt ORDER BY publication_ref").all();
-      assert.equal(receipts.length, 1); assert.equal(receipts[0].publication_ref, manifest.publication.receipt.publication_ref);
+      assert.equal(receipts.length, manifest.publication === undefined ? 0 : 1);
+      if (manifest.publication !== undefined) assert.equal(receipts[0].publication_ref, manifest.publication.receipt.publication_ref);
       const modelTables = database.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name IN ('research_model_attempt','research_model_output','research_model_spend_admission')").all();
       assert.equal(modelTables.length, 3, "All durable model effect ledgers must exist");
       const effects = Object.fromEntries(modelTables.map(({ name: table }) => {
@@ -76,9 +77,10 @@ async function fixtureMutation(paths, sql) {
 export async function runOwnerArtifactBrowser(harness) {
   const runId = `artifact-${process.pid}-${Date.now()}`;
   const purgeRunId = runId + "-purge";
+  const originalRunId = runId + "-original";
   const guard = await reserveMiniflareForbiddenPorts();
   let directory; let paths; let jwks; let worker; let bridge; let browser;
-  let purgeDirectory; let purgePaths; let purgeWorker;
+  let purgeDirectory; let purgePaths; let purgeWorker; let originalDirectory;
   const receipt = { protocol: "eliotr.owner-artifact-browser.v1", browser: "PENDING", restart: "PENDING",
     current_rights: "PENDING", source_purge: "PENDING", run_reopen: "PENDING", model_after_restart: "PENDING" };
   try {
@@ -93,13 +95,13 @@ export async function runOwnerArtifactBrowser(harness) {
     const issuedAt = Math.floor(Date.now() / 1000);
     const identity = { principal_ref: "freeze-owner", credential_generation: `cf-access-jwt:${OWNER_E2E_KID}:${issuedAt}`,
       deployment_generation: paths.generation };
-    const token = await harness.signOwnerToken(privateKey, { iss: OWNER_E2E_ISSUER, aud: [OWNER_E2E_AUDIENCE],
+    let token = await harness.signOwnerToken(privateKey, { iss: OWNER_E2E_ISSUER, aud: [OWNER_E2E_AUDIENCE],
       sub: identity.principal_ref, type: "app", iat: issuedAt, exp: issuedAt + 3600 });
     process.stdout.write("owner-e2e artifact phase=native-accepted-snapshot\n");
-    const manifest = await prepareOwnerArtifactSnapshot(paths, identity);
-    const artifactPath = "/api/v1/research/artifact/" + encodeURIComponent(manifest.artifact.id + ":" + manifest.artifact.revision);
-    const section = manifest.publication.revision.sections[0];
-    const sectionPath = artifactPath + "/sections/" + encodeURIComponent(section.section_ref.id + ":" + section.section_ref.revision) + "/reauthorize";
+    let manifest = await prepareOwnerArtifactSnapshot(paths, identity);
+    let artifactPath = "/api/v1/research/artifact/" + encodeURIComponent(manifest.artifact.id + ":" + manifest.artifact.revision);
+    let section = manifest.publication.revision.sections[0];
+    let sectionPath = artifactPath + "/sections/" + encodeURIComponent(section.section_ref.id + ":" + section.section_ref.revision) + "/reauthorize";
     await assertMigrationLedgers(paths);
     const baseCheckpoint = await durableCheckpoint(paths, manifest);
     const processIds = [];
@@ -114,8 +116,18 @@ export async function runOwnerArtifactBrowser(harness) {
 
     async function start() {
       worker = await startLocalWorker(paths); processIds.push(worker.diagnostics().pid);
-      assert.ok(Number.isSafeInteger(processIds.at(-1))); await publicationRead();
+      assert.ok(Number.isSafeInteger(processIds.at(-1)));
+      if (manifest.publication !== undefined) await publicationRead();
       const history = await harness.workerJson(worker.origin, "/api/v1/research/runs", { token, worker, phase: "artifact-history-diagnostic" });
+      if (manifest.profile === "original-report") {
+        assert.equal(history.status, 200);
+        const runs = history.data.data.runs.filter((entry) => entry.status.workflow_instance_id === manifest.run.operation_id);
+        assert.equal(runs.length, 1, "Original REPORT must have a real run-history locator");
+        const status = await harness.workerJson(worker.origin, "/api/v1/research/run/" + encodeURIComponent(manifest.run.operation_id),
+          { token, worker, phase: "original-report-run-status" });
+        assert.equal(status.status, 200); assert.deepEqual(status.data.data, manifest.run.status);
+        assert.deepEqual(status.data.data.answer, { availability: "draft", artifact_ref: manifest.artifact });
+      }
       process.stdout.write(JSON.stringify({ phase: "artifact-real-history", status: history.status, code: history.data?.code,
         runs: history.data?.data?.runs?.length, saved_drafts: history.data?.data?.saved_drafts?.map((draft) => draft.artifact_ref) }) + "\n");
     }
@@ -132,9 +144,24 @@ export async function runOwnerArtifactBrowser(harness) {
         throw error;
       }
     }
-    const extras = [["GET", "/api/v1/system/session"], ["GET", "/api/v1/research/runs"], ["POST", artifactPath + "/reauthorize"],
+    let extras = [["GET", "/api/v1/system/session"], ["GET", "/api/v1/research/runs"], ["POST", artifactPath + "/reauthorize"],
       ["GET", artifactPath + "/publication"], ["GET", artifactPath + "/publication/current"], ["POST", sectionPath]];
     async function browserRead(round) {
+      const original = manifest.profile === "original-report";
+      const acceptFresh = original && manifest.publication === undefined;
+      const openAction = original ? "artifact-open-run" : "artifact-open-draft";
+      const openSelector = original ? 'button[aria-label^="Open saved research from"]' : 'button[aria-label^="Open saved research draft"]';
+      async function openRun() {
+        const [response] = await Promise.all([
+          browser.page.waitForResponse((read) => read.request().method() === "GET" && read.url() === bridge.origin +
+            "/api/v1/research/run/" + encodeURIComponent(manifest.run.operation_id), { timeout: 15000 }),
+          browser.page.locator(openSelector).first().click(),
+        ]);
+        assert.equal(response.status(), 200);
+        const status = (await response.json()).data;
+        assert.deepEqual(status, manifest.run.status);
+        assert.deepEqual(status.answer, { availability: "draft", artifact_ref: manifest.artifact });
+      }
       browser = await harness.launchPlaywright(runId);
       browser.registerOp({ kind: "harness-navigation", cause: "goto", scope: "document", sourceDoc: browser.currentDocId(),
         targetDoc: browser.currentDocId() + 1, action: "goto-unauthenticated", role: "startup-probe",
@@ -159,22 +186,44 @@ export async function runOwnerArtifactBrowser(harness) {
         successors: ["artifact-history-refresh"] });
       browser.mintSlotsFor(browser.currentIssuance(), { origin: bridge.origin, extraPaths: extras });
       await browser.page.click("#connect"); await browser.page.waitForFunction(harness.shellReady, null, { timeout: 15000 });
-      await action("artifact-history-refresh", "artifact-open-draft", async () => {
+      await action("artifact-history-refresh", openAction, async () => {
         await harness.showWorkspaceView(browser.page, "#research-card", "research", "artifact owner loop");
         await browser.page.locator("[data-research-history] > summary").click();
         await browser.page.locator("[data-research-history-refresh]").click();
-        try { await browser.page.locator('button[aria-label^="Open saved research draft"]').first().waitFor({ timeout: 15000 }); }
+        try { await browser.page.locator(openSelector).first().waitFor({ timeout: 15000 }); }
         catch (error) {
           process.stdout.write(JSON.stringify({ phase: "artifact-history-browser-diagnostic", status: await browser.page.locator("[data-research-history-status]").textContent(),
             rows: await browser.page.locator("[data-research-history-list]").textContent() }) + "\n");
           throw error;
         }
       }, extras);
-      await action("artifact-open-draft", "artifact-section-open", async () => {
-        await browser.page.locator('button[aria-label^="Open saved research draft"]').first().click();
-        await browser.page.waitForFunction(() => document.querySelector(".research-draft-badge")?.textContent === "ACCEPTED", null, { timeout: 15000 });
-        assert.equal(await browser.page.getByRole("button", { name: "Accept report", exact: true }).isDisabled(), true);
+      await action(openAction, acceptFresh ? "artifact-original-accept" : "artifact-section-open", async () => {
+        if (original) await openRun(); else await browser.page.locator(openSelector).first().click();
+        await browser.page.waitForFunction((status) => document.querySelector(".research-draft-badge")?.textContent === status,
+          acceptFresh ? "DRAFT" : "ACCEPTED", { timeout: 15000 });
+        assert.equal(await browser.page.getByRole("button", { name: "Accept report", exact: true }).isDisabled(), !acceptFresh);
       }, extras);
+      if (acceptFresh) {
+        await action("artifact-original-accept", "artifact-original-reopen", async () => {
+          const [accepted] = await Promise.all([
+            browser.page.waitForResponse((response) => response.request().method() === "POST" &&
+              response.url() === bridge.origin + artifactPath + "/accept", { timeout: 15000 }),
+            browser.page.getByRole("button", { name: "Accept report", exact: true }).click(),
+          ]);
+          assert.equal(accepted.status(), 201);
+          manifest.publication = (await accepted.json()).data;
+          assert.equal(manifest.publication.revision.status, "ACCEPTED");
+          assert.deepEqual(manifest.publication.revision.sections[0], section);
+          await browser.page.waitForFunction(() => document.querySelector(".research-draft-badge")?.textContent === "ACCEPTED", null, { timeout: 15000 });
+        }, extras);
+        await action("artifact-original-reopen", "artifact-section-open", async () => {
+          await browser.page.locator("[data-research-history-refresh]").click();
+          await browser.page.locator(openSelector).first().waitFor({ timeout: 15000 });
+          await openRun();
+          await browser.page.waitForFunction(() => document.querySelector(".research-draft-badge")?.textContent === "ACCEPTED", null, { timeout: 15000 });
+          assert.equal(await browser.page.getByRole("button", { name: "Accept report", exact: true }).isDisabled(), true);
+        }, extras);
+      }
       await action("artifact-section-open", "artifact-acceptance-check", async () => {
         const [opened] = await Promise.all([
           browser.page.waitForResponse((response) => response.request().method() === "POST" &&
@@ -212,7 +261,9 @@ export async function runOwnerArtifactBrowser(harness) {
       }, extras);
       await harness.settleLedger(browser.page, browser);
       const spec = harness.authedNetworkSpec(bridge.origin);
-      const api = [...spec.api, ...extras.map(([method, path]) => ({ method, path, status: 200 }))];
+      const api = [...spec.api, ...extras.map(([method, path]) => ({ method, path,
+        status: method === "POST" && path === artifactPath + "/accept" ? 201 : 200 })),
+      ...(acceptFresh ? [artifactPath + "/publication", artifactPath + "/publication/current"].map((path) => ({ method: "GET", path, status: 404 })) : [])];
       harness.assertPhaseNetwork(browser, `artifact-browser-${round}`, { ...spec, api,
         mutations: [...spec.mutations, ...extras.filter(([method]) => method === "POST").map(([, path]) => path)],
         workerOrigins: [worker.origin, bridge.origin] });
@@ -278,11 +329,40 @@ export async function runOwnerArtifactBrowser(harness) {
     assert.equal(purged.status, 404); assert.equal(purged.data.code, "ARTIFACT_DRAFT_READ_NOT_FOUND");
     receipt.source_purge = "PASS (real Worker refused accepted artifact after exact source-row redaction in an independent native fixture)";
     assert.deepEqual(await durableCheckpoint(purgePaths, purgeManifest), purgeBaseCheckpoint);
-    receipt.run_reopen = "PENDING (this fixture covers the saved COW child; original-run browser coverage remains separate)";
+    await purgeWorker.stop(); assert.notEqual(purgeWorker.diagnostics().exitCode, null); purgeWorker = undefined;
+    originalDirectory = await harness.createMarkedTempDirectory("eliotr-owner-e2e-artifact-original-", originalRunId, "artifact-state");
+    paths = await prepareArtifactProfile(originalDirectory);
+    await harness.applyOwnerE2EProfile(paths, jwks.url);
+    const originalIssuedAt = Math.floor(Date.now() / 1000);
+    const originalIdentity = { principal_ref: "freeze-owner", credential_generation: "cf-access-jwt:" + OWNER_E2E_KID + ":" + originalIssuedAt,
+      deployment_generation: paths.generation };
+    token = await harness.signOwnerToken(privateKey, { iss: OWNER_E2E_ISSUER, aud: [OWNER_E2E_AUDIENCE],
+      sub: originalIdentity.principal_ref, type: "app", iat: originalIssuedAt, exp: originalIssuedAt + 3600 });
+    process.stdout.write("owner-e2e artifact phase=native-original-report-snapshot\n");
+    manifest = await prepareOwnerArtifactSnapshot(paths, originalIdentity, "original-report");
+    await assertMigrationLedgers(paths);
+    artifactPath = "/api/v1/research/artifact/" + encodeURIComponent(manifest.artifact.id + ":" + manifest.artifact.revision);
+    section = manifest.section;
+    sectionPath = artifactPath + "/sections/" + encodeURIComponent(section.section_ref.id + ":" + section.section_ref.revision) + "/reauthorize";
+    extras = [["GET", "/api/v1/system/session"], ["GET", "/api/v1/research/runs"],
+      ["GET", "/api/v1/research/run/" + encodeURIComponent(manifest.run.operation_id)], ["POST", artifactPath + "/reauthorize"],
+      ["GET", artifactPath + "/publication"], ["GET", artifactPath + "/publication/current"], ["POST", sectionPath], ["POST", artifactPath + "/accept"]];
+    const originalDraftCheckpoint = await durableCheckpoint(paths, manifest);
+    await start(); await browserRead("original_before_restart"); await publicationRead();
+    const originalAcceptedCheckpoint = await durableCheckpoint(paths, manifest);
+    assert.deepEqual({ ...originalAcceptedCheckpoint, receipts: [] }, originalDraftCheckpoint,
+      "PWA acceptance must preserve original model effects and every immutable R2 blob");
+    process.stdout.write("owner-e2e artifact phase=true-original-report-worker-restart\n");
+    const originalWorker = worker; await originalWorker.stop(); assert.notEqual(originalWorker.diagnostics().exitCode, null);
+    worker = undefined; await start(); assert.notEqual(processIds.at(-2), processIds.at(-1));
+    await browserRead("original_after_restart"); await publicationRead();
+    assert.deepEqual(await durableCheckpoint(paths, manifest), originalAcceptedCheckpoint);
+    receipt.run_reopen = "PASS (canonical original REPORT history/run status, PWA Accept/reopen and distinct Worker PID restart; exact Stage17 ref/receipt/section/blob readback and unchanged model effects)";
     return receipt;
   } finally {
     const failures = [];
     for (const close of [() => browser?.close(), () => bridge?.close(), () => purgeWorker?.stop(), () => worker?.stop(), () => jwks?.close(),
+      () => originalDirectory === undefined ? undefined : removeHarnessOwned(originalDirectory, originalRunId),
       () => purgeDirectory === undefined ? undefined : removeHarnessOwned(purgeDirectory, purgeRunId),
       () => directory === undefined ? undefined : removeHarnessOwned(directory, runId), () => guard.release()]) {
       try { await close(); } catch (error) { failures.push(error); }

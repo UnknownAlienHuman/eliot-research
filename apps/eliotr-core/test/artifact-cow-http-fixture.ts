@@ -38,7 +38,7 @@ function originalPolicy(scopeId: string, claimKind: "observation" | "assumption"
     budget_ref: "cow-http-budget-v1", section_residency: domains, manifest_residency: domains };
 }
 
-async function originalReport(claimKind: "observation" | "assumption", canonicalLineage = false) {
+export async function originalReport(claimKind: "observation" | "assumption", canonicalLineage = false) {
   // Give unchanged current read policy a longer lifetime than the original one-hour scope.
   const prepare = runtime.CORE_DB.prepare.bind(runtime.CORE_DB);
   const policyClock = vi.spyOn(runtime.CORE_DB, "prepare").mockImplementation((sql) => {
@@ -111,7 +111,7 @@ async function originalReport(claimKind: "observation" | "assumption", canonical
       return saved.snapshot;
     } });
   if (snapshot === null || snapshot.sections[0] === undefined) throw new Error("Original draft snapshot is missing");
-  return { freeze, artifact_ref, context, snapshot };
+  return { freeze, artifact_ref, context, snapshot, original_model_calls: synthesis.provider_calls() + (audited?.auditProviderCalls() ?? 0) };
 }
 
 async function installRoute(): Promise<ModelRouteDeployment> {
