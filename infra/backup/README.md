@@ -20,7 +20,7 @@ divergence in any bound field conflicts with zero new side effects. A controller
 token (`backup_export_cut`) binds D1 tables/schema/migration/purge plus the R2 inventory generation
 to one cut; the phase-2 seal rejects observable drift, including R2 re-put rollback via fresh
 etag/version. Export columns are PRAGMA-verified against the complete schema inventory; unclassified
-new Core tables block export until their explicit canonical coverage is added. and manifests carry the versioned `eliotr.backup-manifest.v1` protocol identifier. The
+new Core tables block export until their explicit canonical coverage is added. Manifests carry the versioned `eliotr.backup-manifest.v1` protocol identifier. The
 complete authority vector (schema generation, migration ledger, per-table counts/digests, purge
 frontier, R2 pagination fingerprints and watermarks) is persisted as a content-addressed `vector`
 manifest; its digest is bound into the epoch, parts and receipts, and reopened independently.
@@ -57,6 +57,6 @@ The installed destination/endpoint/approval must match current D1 controller aut
 independent failure domain. An absent adapter or unverifiable legacy/partial copy blocks completion.
 No endpoint, credentials or live resources were installed by this change.
 
-O4 subject-to-epoch scope reconciliation, complete current-schema export coverage and O3 restore
-acceptance remain required. ERASURE stays disabled; local primitives and test receipts do not
-authorize readiness, deployment or live qualification.
+O4 subject-to-epoch scope reconciliation and O3 restore acceptance remain required.
+ERASURE stays disabled; local primitives and test receipts do not authorize readiness,
+deployment or live qualification.
