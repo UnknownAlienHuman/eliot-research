@@ -674,3 +674,58 @@ earlier pre-guard run also passed 14/14 in 24.51s. Logs under OS temp:
 `eliotr-same-key-max-results-992f793e.log`, and
 `eliotr-same-key-final-992f793e.log`. This closes the preceding max_results
 coverage item; current automatic HTTP semantic-v4 dispatch remains PENDING.
+
+Current automatic HTTP semantic-v4 dispatch local proof, 2026-10-02:
+the new native case starts with no W2 run and launches through the real PWA
+client/HTTP POST. The actual Workflow binding, entrypoint, native steps,
+executor, model admission/settlement and D1/R2 readers execute all 18 stages.
+No manual ensureRun, historical-v2 execution, seeded completed stages or
+Workflow/step/result mocks are used. Controlled responses are confined to
+the exact existing provider endpoint and installed deployment; all other
+outbound requests fail. Exact zero-rate pricing is test-only, with actual
+pricing-store readback, and both W3 attempts settle SUCCEEDED.
+
+The fixture imports/projects real Q1 bytes, installs matching owner-only
+bounded read policy and fresh TEST route candidates through existing stores.
+The production owner installer compiles the same explicit fixture input
+before Miniflare starts: withEnv around HTTP alone was proven insufficient
+for the bound Workflow's this.env. Two inline projects reuse the existing
+Core native harness: baseline bindings are unchanged and the current test
+runs automatically with its compiled bindings, without opt-in or skips.
+
+Assertions read back 18 COMMITTED attempts/checkpoints, 18 checkpoint outbox
+intents and ledger events, exact model output/readback digests and bounded
+receipts. Real PWA clients read completed status/history, DRAFT bytes and
+EXECUTED independent audit with one SUPPORTED claim/SOURCE_SUPPORTED label.
+Same-key HTTP replay creates no second instance; saved bytes and durable
+rows remain identical, with exactly two provider calls. Foreign owner gets
+404. ENGINE_COMPLETED remains transport state, not research disposition.
+
+Commands/results from Core: `pnpm exec tsc -p test/tsconfig.json --pretty
+false` PASS; scoped ESLint over vitest.config.ts, research-current-dispatch
+files and research-admission-fixture.ts PASS; normal `vitest list --config
+vitest.config.ts --filesOnly` discovers the dedicated test; focused native
+case PASS 1/1 (11.471s test, 18.50s total). Adjacent native batch with the
+current case, research-session.test.ts and research-semantic-config-revision
+test at normal maxWorkers=2 PASS 32/32 in 25.35s; current case 13.518s.
+Both runs retained a Workerd canceled/hung request message before PASS;
+its origin is being investigated and is not silently classified as harmless.
+
+Required `pnpm check:affected` again passes SQL depth (879 recovered, zero
+failed), contract hashes and boundaries/negatives, then exits 1 at exactly
+the same 17 source-budget contours. No source budget changed: Core 33465
+lines / 1698945 bytes, research 25669, AI 13432 and PWA 16760 lines.
+Unchanged Rust/full lint and broad suites were not repeated in this stage;
+their prior exact-SHA results remain separate. Logs under OS temp:
+`eliotr-current-dispatch-static-52440d6d.log`,
+`eliotr-current-dispatch-discovery-52440d6d.log`,
+`eliotr-current-dispatch-native-52440d6d.log`,
+`eliotr-current-dispatch-regression-52440d6d.log`, and
+`eliotr-current-dispatch-affected-52440d6d.log`.
+
+The read-only capability proposal for all 17 budget breaches is published
+in [issue 301](https://github.com/UnknownAlienHuman/eliot-research/issues/301#issuecomment-5962168292).
+Core/PWA extraction allocation and cycle-free ownership still need measured
+parent review; no mass moves were implemented. This closes the local current
+dispatch coverage gap only. Budget repairs, full S92/final acceptance and
+live qualification remain pending; no main push or deployment is performed.
