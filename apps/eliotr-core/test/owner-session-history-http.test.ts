@@ -56,7 +56,8 @@ describe("owner session lease history over native HTTP and D1", () => {
     const section = report.snapshot.sections[0]?.section;
     if (sourceRevisionRef === undefined || section === undefined) throw new Error("original REPORT source or section is missing");
     const namespace = await runtime.CORE_DB.prepare(
-      "SELECT source_namespace_id FROM source_revision WHERE source_revision_ref=?1",
+      "SELECT s.source_namespace_id FROM source_revision r JOIN source s ON s.source_id=r.source_id " +
+      "WHERE r.source_revision_ref=?1",
     ).bind(sourceRevisionRef).first<{ readonly source_namespace_id: string }>();
     if (namespace === null) throw new Error("original REPORT namespace is missing");
     const initialization = await runtime.CORE_DB.prepare(

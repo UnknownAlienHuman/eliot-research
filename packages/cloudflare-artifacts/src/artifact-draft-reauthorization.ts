@@ -12,6 +12,7 @@ import {
 } from "@eliotr/cloudflare-evidence";
 import {
   ArtifactDraftReadError,
+  mapAuthorityFailure,
   readArtifactDraftReauthorizedInternal,
   type ArtifactDraftReauthorizedCoreRead,
   type ArtifactDraftSectionRead,
@@ -113,8 +114,7 @@ export async function readReauthorizedArtifactDraft(
       ? await readArtifactDraftReauthorizedInternal(coreInput, artifactRef)
       : await readArtifactDraftReauthorizedInternal({ ...coreInput, section_ref: sectionRef }, artifactRef, sectionRef);
   } catch (error) {
-    if (error instanceof ArtifactDraftReadError) throw error;
-    throw new ArtifactDraftReadError("ARTIFACT_DRAFT_READ_UNAVAILABLE", 503, "draft read authority is unavailable", true);
+    mapAuthorityFailure(error);
   }
   if (read === null) return null;
   const originalScopeRef = parseRef(read.original_scope_snapshot_ref, "original scope");

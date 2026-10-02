@@ -93,6 +93,26 @@ const researchReadinessFixture = createBrowserResearchReadinessFixture({ resolve
 const { posted, selectionOrder } = researchReadinessFixture;
 const researchScreenCanaryEnabled = process.argv.includes("--research-screen");
 const researchScreen = createResearchScreenFixture({ envelope, draftWorkflowId, draftArtifact, draftSectionText, draftSectionSha, evidenceSha });
+const draftArtifactPath = `/api/v1/research/artifact/${encodeURIComponent(`${draftArtifactRef.id}:${draftArtifactRef.revision}`)}`;
+const draftPublicationPaths = new Set([`${draftArtifactPath}/publication`, `${draftArtifactPath}/publication/current`]);
+let ownerResumeScenario = "baseline";
+let ownerSessionAvailable = true;
+let ownerSessionExpiry = new Date(Date.now() + 86_400_000).toISOString();
+let defaultNamespaces = [{ source_namespace_id: "workspace-existing", title: "Existing workspace",
+  read_policy_generation: 5, read_expires_at: new Date(Date.parse(ownerSessionExpiry) + 86_400_000).toISOString(), read_access: "ACTIVE" }];
+let resumeNamespaces = [];
+let createdNamespaceId;
+let createdNamespaceReadbacks = 0;
+let resumeRenewalCount = 0;
+let resumeRunPosts = 0;
+let resumeQueryPosts = 0;
+let resumeEventSequence = 0;
+const resumeEvents = [];
+const resumeReadCounts = { library: 0, projects: 0, history: 0 };
+let holdPrivateHistory = false;
+let pendingPrivateHistory;
+let privateHistoryReleaseCount = 0;
+const noteResumeEvent = (method, path, status) => resumeEvents.push({ sequence: ++resumeEventSequence, method, path, status });
 const server = createServer((request, response) => {
   void (async () => {
     const url = new URL(request.url, "http://127.0.0.1");
@@ -103,16 +123,67 @@ const server = createServer((request, response) => {
       return json({ type: "urn:eliotr:problem:ACCESS_SESSION_REQUIRED", title: "Owner authorization changed",
         status: 403, code: "ACCESS_SESSION_REQUIRED", trace_id: "browser-auth-denial", retryable: false });
     };
+    const policyDenied = () => {
+      response.statusCode = 403;
+      return json({ type: "urn:eliotr:problem:LIBRARY_READ_POLICY_EXPIRED", title: "Workspace read access has expired",
+        status: 403, code: "LIBRARY_READ_POLICY_EXPIRED", trace_id: "browser-policy-denial", retryable: false });
+    };
+    const denyFirstResumeRead = (surface, path) => {
+      if (ownerResumeScenario !== "two-shorter-active") return false;
+      resumeReadCounts[surface] += 1;
+      if (resumeReadCounts[surface] === 1 || resumeRenewalCount < 2) {
+        noteResumeEvent("GET", path, 403);
+        policyDenied();
+        return true;
+      }
+      return false;
+    };
     if (researchScreenCanaryEnabled && await researchScreen.handle(request, response, url)) return;
+    if ((draftPublicationPaths.has(url.pathname) || ownerResumeScenario === "two-shorter-active" &&
+         url.pathname === `${draftArtifactPath}/reauthorize`) &&
+        await researchScreen.handle(request, response, url)) return;
     if (url.pathname === "/api/v1/system/research-configuration") {
       assert.equal(await researchScreen.handle(request, response, url), true, "research configuration fixture must handle its readiness route");
       return;
     }
     if (url.pathname === "/api/v1/system/session") {
       assert.equal(request.method, "GET");
+      if (!ownerSessionAvailable) return accessDenied();
       return json(envelope({ protocol: "eliotr.owner-session.v1", principal_ref: "owner-principal",
         client_class: "owner_pwa", credential_generation: "browser-fixture",
-        expires_at: new Date(Date.now() + 86_400_000).toISOString() }));
+        expires_at: ownerSessionExpiry }));
+    }
+    if (url.pathname === "/api/v1/library/namespaces" && request.method === "GET") {
+      const namespaces = ownerResumeScenario === "two-shorter-active" ? resumeNamespaces : defaultNamespaces;
+      if (ownerResumeScenario !== "two-shorter-active" && createdNamespaceId !== undefined) createdNamespaceReadbacks += 1;
+      return json(envelope({ protocol: "eliotr.owner-namespaces.v1",
+        profiles: [{ profile_ref: { id: "profile-standard", revision: 1 }, title: "Standard" }], namespaces }));
+    }
+    if (url.pathname === "/api/v1/library/namespaces" && request.method === "POST") {
+      const chunks = []; for await (const chunk of request) chunks.push(chunk);
+      const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+      assert.equal(body.profile_ref.id, "profile-standard");
+      createdNamespaceId = "workspace-created-no-policy";
+      defaultNamespaces = [...defaultNamespaces, { source_namespace_id: createdNamespaceId, title: body.title }];
+      return json(envelope({ protocol: "eliotr.owner-namespace.v1", source_namespace_id: createdNamespaceId,
+        title: body.title, created_at: "2026-10-02T12:00:00.000Z" }));
+    }
+    const renewalMatch = url.pathname.match(/^\/api\/v1\/library\/namespaces\/([A-Za-z0-9._:@-]+)\/renew$/u);
+    if (renewalMatch && request.method === "POST") {
+      const chunks = []; for await (const chunk of request) chunks.push(chunk);
+      const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+      const namespaceId = renewalMatch[1];
+      const previous = resumeNamespaces.find((namespace) => namespace.source_namespace_id === namespaceId);
+      assert.ok(previous, `only an existing namespace may renew: ${namespaceId}`);
+      assert.equal(body.expected_generation, previous.read_policy_generation);
+      resumeNamespaces = resumeNamespaces.map((namespace) => namespace.source_namespace_id === namespaceId
+        ? { ...namespace, read_policy_generation: previous.read_policy_generation + 1,
+          read_expires_at: ownerSessionExpiry, read_access: "ACTIVE" } : namespace);
+      resumeRenewalCount += 1;
+      noteResumeEvent("POST", url.pathname, 200);
+      return json(envelope({ protocol: "eliotr.owner-namespace-renewal.v1", source_namespace_id: namespaceId,
+        title: previous.title, read_policy_generation: previous.read_policy_generation + 1,
+        read_expires_at: ownerSessionExpiry, read_access: "ACTIVE" }));
     }
     if (url.pathname.startsWith("/api/v1/ingest/bundles")) return importing.handle(request, response, url);
     if (url.pathname === "/api/v1/system/mcp-diagnostics") return diagnosticFixture.handle(request, response, url);
@@ -129,13 +200,41 @@ const server = createServer((request, response) => {
       if (revisionMode === "drift") return json({ ...value, deployment_generation: "changed" });
       return json(value);
     }
+    if (url.pathname === "/api/v1/research/projects" && request.method === "GET") {
+      if (denyFirstResumeRead("projects", url.pathname)) return;
+      if (ownerResumeScenario === "two-shorter-active") noteResumeEvent("GET", url.pathname, 200);
+      return json(envelope({ protocol: "eliotr.project-owner-list.v1", projects: [{
+        protocol: "eliotr.project-owner.v1", project_ref: { id: "project-1", revision: 1 }, title: "Fixture project",
+        revision: 1, owner_principal_ref: "owner-principal", deployment_generation: "browser-fixture",
+        source_ids: ["source-1"], created_at: "2026-09-01T00:00:00.000Z",
+      }] }));
+    }
+    if (url.pathname === "/api/v1/research/runs" && ownerResumeScenario === "two-shorter-active") {
+      if (denyFirstResumeRead("history", url.pathname)) return;
+      if (holdPrivateHistory) {
+        holdPrivateHistory = false;
+        pendingPrivateHistory = () => {
+          privateHistoryReleaseCount += 1;
+          if (!response.destroyed) json(envelope({ protocol: "eliotr.research-runs.v3", runs: [],
+            saved_drafts: [{ created_at: "2026-09-30T12:00:00.000Z", artifact_ref: draftArtifactRef, workflow_instance_id: draftWorkflowId }],
+            configuration_state: "INSTALLED", checked_at: new Date().toISOString() }));
+        };
+        return;
+      }
+      noteResumeEvent("GET", url.pathname, 200);
+      return json(envelope({ protocol: "eliotr.research-runs.v3", runs: [],
+        saved_drafts: [{ created_at: "2026-09-30T12:00:00.000Z", artifact_ref: draftArtifactRef, workflow_instance_id: draftWorkflowId }],
+        configuration_state: "INSTALLED", checked_at: new Date().toISOString() }));
+    }
     if (url.pathname === "/api/v1/research/catalog") {
       requests.push(url.search);
       assert.equal(url.searchParams.get("limit"), "20");
+      if (denyFirstResumeRead("library", url.pathname)) return;
       if (mode === "denied") return accessDenied();
       if (mode === "delayed") { mode = "newest"; pending = () => json(page("old", "Old response")); return; }
       if (mode === "newest") return json(page("newest", "Newest response"));
       if (mode === "drift") return json({ ...page("wrong", "Wrong generation"), deployment_generation: "changed" });
+      if (ownerResumeScenario === "two-shorter-active") noteResumeEvent("GET", url.pathname, 200);
       if (url.searchParams.has("cursor")) return json(page("source-2", "English source"));
       return json(page("source-1", '<img src=x onerror="window.attacked=true"> Русский источник', "nextFixture"));
     }
@@ -146,8 +245,12 @@ const server = createServer((request, response) => {
       assert.deepEqual([...url.searchParams.entries()], [["source_id", "source-1"]]);
       return json(readiness());
     }
-    if (url.pathname === "/api/v1/research/query") return researchReadinessFixture.handleQuery(request, response, url);
+    if (url.pathname === "/api/v1/research/query") {
+      if (ownerResumeScenario === "two-shorter-active") resumeQueryPosts += 1;
+      return researchReadinessFixture.handleQuery(request, response, url);
+    }
     if (url.pathname === "/api/v1/research/run" && request.method === "POST") {
+      if (ownerResumeScenario === "two-shorter-active") resumeRunPosts += 1;
       assert.ok(request.headers["idempotency-key"]);
       const chunks = []; for await (const chunk of request) chunks.push(chunk);
       const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
@@ -373,6 +476,17 @@ try {
     assert.deepEqual(errors, []);
   } else {
   await wait('document.querySelector("#library")?.textContent.includes("Русский источник")' , "Library first page");
+  const publicationAbsencePaths = [...draftPublicationPaths];
+  const publicationAbsence = await evaluate(`Promise.all(${JSON.stringify(publicationAbsencePaths)}.map(async (path) => {
+    const response = await fetch(path, { method: "GET", credentials: "same-origin", cache: "no-store", redirect: "manual" });
+    const body = await response.json();
+    return { path, status: response.status, contentType: response.headers.get("content-type"), problemStatus: body.status, code: body.code };
+  }))`);
+  assert.deepEqual(publicationAbsence, publicationAbsencePaths.map((path) => ({ path, status: 404,
+    contentType: "application/json", problemStatus: 404, code: "ARTIFACT_PUBLICATION_NOT_FOUND" })),
+  "the default mounted driver must route both exact draft-publication paths to the structured absence fixture");
+  assert.deepEqual(researchScreen.state.seen.filter((request) => publicationAbsencePaths.some((path) => request === `GET ${path}`)),
+    publicationAbsencePaths.map((path) => `GET ${path}`));
   await openSources("Initial Sources"); await assertView("sources", "#library");
   await wait('document.querySelector("#exhaustive-workflow [data-workflow-badge]")?.textContent.trim() === "READY"', "Health event reaches exhaustive panel");
   assert.equal(await evaluate('document.querySelector("#exhaustive-workflow button[type=submit]").disabled'), false);
@@ -595,6 +709,132 @@ try {
   await cdp("Page.reload");
   await openSources("MCP baseline after research checks");
   await runBrowserMcpDiagnosticCanary({ fixture: diagnosticFixture, click, evaluate, wait, assertVisible, assertView, openSources });
+  await openSources("Owner session lifecycle baseline");
+  const namespaceSelect = '#source-namespace [data-namespace-select]';
+  assert.equal(await evaluate('document.querySelector("' + namespaceSelect + '").value'), "workspace-existing");
+  const readbacksBeforeCreate = createdNamespaceReadbacks;
+  await evaluate('(() => { const input = document.querySelector("#source-namespace [data-namespace-title]"); input.value = "Created workspace without policy"; input.dispatchEvent(new Event("input", { bubbles: true })); })()');
+  await wait('document.querySelector("#source-namespace [data-namespace-create]")?.disabled === false', "Workspace creation enabled for verified owner");
+  await click('#source-namespace [data-namespace-create]');
+  await until(() => createdNamespaceId === "workspace-created-no-policy" && createdNamespaceReadbacks > readbacksBeforeCreate,
+    "Created workspace authoritatively read back");
+  await wait('document.querySelector("#source-namespace [data-namespace-status]")?.textContent.includes("It was not selected.")',
+    "Created workspace without active read policy remains unselected");
+  assert.equal(await evaluate('document.querySelector("' + namespaceSelect + '").value'), "workspace-existing");
+  const createdOptionText = await evaluate('Array.from(document.querySelector("' + namespaceSelect + '").options).find((option) => option.value === ' + JSON.stringify(createdNamespaceId) + ')?.textContent');
+  assert.match(createdOptionText, /Created workspace without policy \(access unavailable\)/u);
+  await evaluate('(() => { const select = document.querySelector("' + namespaceSelect + '"); select.value = '
+    + JSON.stringify(createdNamespaceId) + '; select.dispatchEvent(new Event("change", { bubbles: true })); })()');
+  await wait('document.querySelector("#source-namespace [data-namespace-id]")?.textContent === "workspace-created-no-policy"',
+    "Created workspace can be selected for authoritative detail inspection");
+  assert.deepEqual(await evaluate('(() => ({ access: document.querySelector("#source-namespace [data-namespace-read-access]")?.textContent, '
+    + 'expiry: document.querySelector("#source-namespace [data-namespace-read-expires]")?.textContent, '
+    + 'generation: document.querySelector("#source-namespace [data-namespace-read-generation]")?.textContent, '
+    + 'copy: document.querySelector("#source-namespace [data-namespace-access-copy]")?.textContent }))()'), {
+    access: "Unavailable", expiry: "Unavailable", generation: "Unavailable",
+    copy: "The server did not provide an active read policy. No workspace access was granted.",
+  });
+  await evaluate('(() => { const select = document.querySelector("' + namespaceSelect + '"); select.value = "workspace-existing"; select.dispatchEvent(new Event("change", { bubbles: true })); })()');
+  await wait('document.querySelector("#source-namespace [data-namespace-read-access]")?.textContent === "ACTIVE"',
+    "Existing active workspace can be reselected after creation");
+  assert.equal(await evaluate('document.querySelector("#source-namespace [data-namespace-read-generation]").textContent'), "5");
+
+  ownerResumeScenario = "two-shorter-active";
+  ownerSessionAvailable = true;
+  ownerSessionExpiry = new Date(Date.now() + 86_400_000).toISOString();
+  resumeNamespaces = [
+    { source_namespace_id: "workspace-shorter-a", title: "Shorter workspace A", read_policy_generation: 3,
+      read_expires_at: new Date(Date.now() + 6 * 60 * 60_000).toISOString(), read_access: "ACTIVE" },
+    { source_namespace_id: "workspace-shorter-b", title: "Shorter workspace B", read_policy_generation: 8,
+      read_expires_at: new Date(Date.now() + 12 * 60 * 60_000).toISOString(), read_access: "ACTIVE" },
+  ];
+  resumeRenewalCount = 0; resumeRunPosts = 0; resumeQueryPosts = 0; resumeEventSequence = 0; resumeEvents.splice(0);
+  resumeReadCounts.library = 0; resumeReadCounts.projects = 0; resumeReadCounts.history = 0;
+  const resumeReadinessPostsBefore = posted.length;
+  await cdp("Page.reload");
+  await until(() => resumeRenewalCount === 2, "Both shorter active workspace leases renewed", 15000);
+  await wait('document.querySelector("#source-namespace [data-namespace-status]")?.textContent.includes("restored for 2 existing workspaces")',
+    "Both renewed policies confirmed by catalog readback");
+  await wait('Boolean(document.querySelector("#library [data-source]"))', "Library refresh after successful owner-session resume");
+  await wait('document.querySelector("#projects [data-project-list] .project-card h3")?.textContent === "Fixture project"',
+    "Projects refresh after successful owner-session resume");
+  await wait('document.querySelector("#research-run [data-research-history-list] .workflow-recovery-item")?.textContent.includes("Open saved research")',
+    "Saved history refresh after successful owner-session resume");
+  assert.equal(await evaluate('document.querySelector("' + namespaceSelect + '").value'), "",
+    "Two restored workspaces do not cause an automatic selection");
+  assert.equal(await evaluate('document.querySelector("#research-run [data-run-result]").hidden'), true,
+    "Lease restoration does not open a report automatically");
+  assert.equal(await evaluate('document.querySelector("#owner-session [data-owner-session-principal]").textContent'), "owner-principal",
+    "A workspace policy denial does not clear the verified owner session");
+  const renewalEvents = resumeEvents.filter((event) => event.method === "POST");
+  assert.deepEqual(renewalEvents.map((event) => event.path), [
+    "/api/v1/library/namespaces/workspace-shorter-a/renew",
+    "/api/v1/library/namespaces/workspace-shorter-b/renew",
+  ], "Only the two pre-existing shorter active policies are renewed");
+  assert.ok(renewalEvents.every((event) => event.status === 200));
+  assert.deepEqual(resumeNamespaces.map((namespace) => [namespace.source_namespace_id, namespace.read_policy_generation,
+    namespace.read_expires_at, namespace.read_access]), [
+    ["workspace-shorter-a", 4, ownerSessionExpiry, "ACTIVE"],
+    ["workspace-shorter-b", 9, ownerSessionExpiry, "ACTIVE"],
+  ], "Renewals advance existing generations and match the current JWT expiry");
+  const lastRenewalSequence = Math.max(...renewalEvents.map((event) => event.sequence));
+  for (const [surface, path] of [["Library", "/api/v1/research/catalog"], ["Projects", "/api/v1/research/projects"],
+    ["Research history", "/api/v1/research/runs"]]) {
+    assert.ok(resumeEvents.some((event) => event.method === "GET" && event.path === path && event.status === 403),
+      surface + " initially observed the workspace policy denial");
+    assert.ok(resumeEvents.some((event) => event.method === "GET" && event.path === path && event.status === 200 &&
+      event.sequence > lastRenewalSequence), surface + " refreshed after both lease renewals");
+  }
+  assert.equal(resumeRunPosts, 0, "Owner-session resume and saved-history refresh never start a model run");
+  assert.equal(resumeQueryPosts, 0, "Owner-session resume never submits a research query");
+  assert.equal(posted.length, resumeReadinessPostsBefore, "Owner-session resume does not submit a new model request");
+
+  await click('[data-nav-target="#research-card"]');
+  await assertView("research", "#research-card");
+  await click("#research-run [data-research-history] > summary");
+  await click("#research-run [data-research-history-list] .workflow-recovery-item");
+  await wait('document.querySelector("#research-run [data-run-result] .research-report-heading")?.textContent.includes("DRAFT")',
+    "Saved draft reopens after the workspace lease refresh");
+  await wait('document.querySelector("#research-run [data-run-result]").textContent.includes("artifact-draft-1:1")',
+    "Reopened report retains its saved artifact identity");
+  await click('#research-run .research-report-section .research-report-actions > button');
+  await wait('document.querySelector("#research-run .research-section-body")?.textContent === ' + JSON.stringify(draftSectionText),
+    "Reopened saved report section bytes");
+  await click('#research-run [data-open-sources="0"]');
+  await wait('document.querySelector("#research-run [data-open-citation]")?.disabled === false', "Reopened report citations ready");
+  await click('#research-run [data-open-citation="0"]');
+  await wait('document.querySelector(".rail-status").textContent === "VERIFIED" && Boolean(document.querySelector(".evidence-source"))',
+    "Reopened report evidence is privately populated");
+  assert.equal(await evaluate('Boolean(document.querySelector("#library [data-source]"))'), true);
+  assert.equal(await evaluate('Boolean(document.querySelector("#projects [data-project-list] .project-card"))'), true);
+  assert.equal(resumeRunPosts, 0); assert.equal(resumeQueryPosts, 0);
+
+  await wait('document.querySelector("#research-run [data-research-history-refresh]")?.disabled === false', "History refresh is available before expiry");
+  holdPrivateHistory = true;
+  await click("#research-run [data-research-history-refresh]");
+  await until(() => Boolean(pendingPrivateHistory), "Held private history response for expiry fence");
+  ownerSessionAvailable = false;
+  const expiryNow = Date.parse(ownerSessionExpiry) + 1;
+  await evaluate('(() => { const realNow = Date.now; Date.now = () => ' + String(expiryNow)
+    + '; try { window.dispatchEvent(new Event("eliotr:health-updated")); } finally { Date.now = realNow; } })()');
+  await wait('document.querySelector("#owner-session [data-owner-session-principal]")?.textContent === "" && '
+    + 'document.querySelector("#research-run [data-run-result]")?.hidden === true && '
+    + 'document.querySelector("#evidence-detail")?.hidden === true && '
+    + 'document.querySelector("#library [data-library-result]")?.textContent === "" && '
+    + 'document.querySelectorAll("#projects [data-project-list] .project-card").length === 0 && '
+    + 'document.querySelector("#research-run [data-research-history-list]")?.childElementCount === 0',
+  "JWT expiry clears owner session, reports, evidence, Library, Projects, and saved history");
+  assert.equal(await evaluate('document.querySelector("#research-run [data-workflow-id]").value'), "");
+  pendingPrivateHistory?.(); pendingPrivateHistory = undefined;
+  assert.equal(privateHistoryReleaseCount, 1, "The old held history callback is released after expiry");
+  await delay(100);
+  assert.equal(await evaluate('document.querySelector("#research-run [data-run-result]").textContent'), "",
+    "A late history callback cannot repopulate a cleared report");
+  assert.equal(await evaluate('document.querySelector("#research-run [data-research-history-list]").childElementCount'), 0,
+    "A late history callback cannot restore saved private history");
+  assert.equal(await evaluate('document.querySelector("#evidence-detail").hidden'), true);
+  assert.equal(await evaluate('document.querySelectorAll("#projects [data-project-list] .project-card").length'), 0);
+  assert.equal(await evaluate('document.querySelector("#library [data-library-result]").textContent'), "");
   assert.deepEqual(errors, []);
   console.log("Library browser: PASS (built PWA; pagination/filter/selection, same-operation continuation/status and reload/missing-ID discovery, legacy unavailable research run, persisted DRAFT metadata/section digest and literal rendering, generation/session/offline and late-response clearing, XSS, denial, generation drift, stale responses, research.verify → research.open and inert evidence rendering). Backend is controlled; IdP and full ingest-to-evidence NOT_EXECUTED.");
 }
