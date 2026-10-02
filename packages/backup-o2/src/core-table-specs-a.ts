@@ -471,7 +471,9 @@ export const DURABLE_CORE_TABLE_SPECS_A: readonly TableSpec[] = [
       "error_code": "text-or-null",
       "reason_codes_json": "text",
       "started_at": "text",
-      "ended_at": "text-or-null"
+      "ended_at": "text-or-null",
+      "workflow_binding_kind": "text",
+      "cow_operation_id": "text-or-null"
   }, required: false },
   { manifest: "heads", table: "research_reference_manifest", order_by: "manifest_id, manifest_revision", columns: {
       "manifest_id": "text",

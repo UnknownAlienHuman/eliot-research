@@ -135,6 +135,12 @@ export const CANONICAL_EXPORTED_TABLES: ReadonlySet<string> = new Set([
   // never rehydrated as current admission, ownership, or credentials.
   "historical_scope_access_grant",
   "historical_project_client_grant",
+  // Immutable acceptance and per-call COW effect history must survive recovery.
+  "artifact_publication_receipt",
+  "artifact_publication_head",
+  "artifact_section_revise_run",
+  "artifact_section_revise_attempt",
+  "artifact_section_revise_spend_admission",
 ]);
 
 const REBUILD_REQUIRED_TABLES: ReadonlySet<string> = new Set([
@@ -160,6 +166,7 @@ const TRANSIENT_EXCLUDED_TABLES: ReadonlySet<string> = new Set([
   "projection_terminal_guard",
   "evidence_resolution_guard",
   "citation_resolution_guard",
+  "artifact_publication_mutation_guard",
 ]);
 
 const NOT_A_BACKUP_TABLES: ReadonlySet<string> = new Set([

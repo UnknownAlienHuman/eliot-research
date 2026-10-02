@@ -190,6 +190,9 @@ importers:
 
   packages/cloudflare-erasure:
     dependencies:
+      '@eliotr/backup-o2':
+        specifier: workspace:*
+        version: link:../backup-o2
       '@eliotr/contracts':
         specifier: workspace:*
         version: link:../contracts

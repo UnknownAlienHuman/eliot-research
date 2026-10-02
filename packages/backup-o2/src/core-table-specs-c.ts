@@ -359,7 +359,9 @@ export const DURABLE_CORE_TABLE_SPECS_C: readonly TableSpec[] = [
       "quote_json": "text-or-null",
       "authority_json": "text-or-null",
       "stage_attempt_ref": "text-or-null",
-      "stage_request_sha256": "text-or-null"
+      "stage_request_sha256": "text-or-null",
+      "workflow_binding_kind": "text",
+      "cow_operation_id": "text-or-null"
   }, required: false },
   { manifest: "purge", table: "erasure_case", order_by: "erasure_id, revision", columns: {
       "erasure_id": "text",
