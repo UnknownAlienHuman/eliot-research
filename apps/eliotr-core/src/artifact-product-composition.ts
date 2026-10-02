@@ -173,3 +173,45 @@ export async function readOwnerArtifactPublication(
   if (publication === null) throw new ArtifactReadNotFoundError("artifact has no accepted publication");
   return { protocol: "eliotr.artifact-publication.v1", ...publication };
 }
+
+/** Read the exact publication CAS target for the current draft through the existing validator. */
+export async function readOwnerArtifactCurrentPublication(
+  env: Env,
+  context: AuthenticatedRequestContext,
+  artifactRef: VersionedRef,
+): Promise<ArtifactPublicationReadResult> {
+  assertOwner(context);
+  const current = await prepareArtifactReadReauthorization(env, context, artifactRef, "report");
+  current.requireActiveRequest();
+  await current.requireCurrent();
+  type Head = { head_revision: number; publication_revision: number | null; publication_ref: string | null;
+    draft_revision: number | null; receipt_ref: string | null };
+  const readHead = () => env.CORE_DB.prepare(
+    "SELECT d.head_revision,h.publication_revision,h.publication_ref,h.draft_revision,p.publication_ref AS receipt_ref " +
+    "FROM artifact_draft_head d LEFT JOIN artifact_publication_head h ON h.artifact_id=d.artifact_id " +
+    "LEFT JOIN artifact_publication_receipt p ON p.artifact_id=h.artifact_id AND p.draft_revision=h.draft_revision " +
+    "AND p.publication_ref=h.publication_ref AND p.publication_revision=h.publication_revision WHERE d.artifact_id=?1",
+  ).bind(artifactRef.id).first<Head>();
+  const head = await readHead();
+  function stale(): never { throw new HttpRequestError("ARTIFACT_PUBLICATION_STALE", 409, "Draft or publication head changed; reopen the current draft"); }
+  if (head === null || head.head_revision !== artifactRef.revision) stale();
+  if (head.publication_ref === null) {
+    current.requireActiveRequest();
+    await current.requireCurrent();
+    const after = await readHead();
+    if (after === null || after.head_revision !== head.head_revision || after.publication_ref !== null ||
+        after.publication_revision !== head.publication_revision || after.draft_revision !== head.draft_revision ||
+        after.receipt_ref !== head.receipt_ref) stale();
+    throw new ArtifactReadNotFoundError("artifact has no accepted publication");
+  }
+  if (head.receipt_ref !== head.publication_ref || head.draft_revision === null || head.publication_revision === null) stale();
+  const publication = await readOwnerArtifactPublication(env, context, { id: artifactRef.id, revision: head.draft_revision });
+  current.requireActiveRequest();
+  await current.requireCurrent();
+  const after = await readHead();
+  if (after === null || after.head_revision !== head.head_revision || after.publication_ref !== head.publication_ref ||
+      after.publication_revision !== head.publication_revision || after.draft_revision !== head.draft_revision ||
+      after.receipt_ref !== head.receipt_ref || publication.receipt.publication_ref !== head.publication_ref ||
+      publication.receipt.publication_revision !== head.publication_revision) stale();
+  return publication;
+}

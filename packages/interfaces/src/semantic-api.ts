@@ -340,6 +340,9 @@ export interface ArtifactPublicationReceipt {
   readonly manifest_sha256: string;
   readonly verification_set_sha256: string;
   readonly evidence_currentness_sha256: string;
+  readonly acceptance_decision_ref: string;
+  readonly acceptance_provenance_ref: string;
+  readonly acceptance_decision_sha256: string;
   readonly principal_ref: string;
   readonly authorization_receipt_ref: string;
   readonly created_at: string;

@@ -46,6 +46,7 @@ import {
 } from "./artifact-draft-http.js";
 import { readAcceptArtifactRequest, readReviseArtifactSectionRequest } from "./artifact-product-http.js";
 import { reviseOwnerArtifactSection } from "./artifact-section-revise.js";
+import { readOwnerArtifactCurrentPublication } from "./artifact-product-composition.js";
 import {
   dispatchIngestOperation,
 } from "./ingest-http.js";
@@ -610,6 +611,13 @@ async function dispatch(
         await readAcceptArtifactRequest(request, ref, match.route.maximum_request_bytes),
       );
       return apiResult(request, env, result, result.disposition === "CREATED" ? 201 : 200);
+    }
+    case "research.artifact.publication.current": {
+      requireNoQuery(url);
+      await requireEmptyRequestBody(request, "Artifact publication read does not accept a request body");
+      const ref = match.params.ref;
+      if (ref === undefined) throw new ArtifactHttpInputError("artifact reference path parameter is missing");
+      return apiResult(request, env, await readOwnerArtifactCurrentPublication(env, context, parseArtifactRef(ref)));
     }
     case "research.artifact.publication": {
       requireNoQuery(url);
