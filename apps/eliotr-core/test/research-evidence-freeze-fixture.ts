@@ -145,7 +145,9 @@ export async function freezeFixture(options: FreezeFixtureOptions = {}): Promise
     .bind(world.namespace, access.principal_ref, `freeze-read-${world.namespace}`, decision.allowed_use_json, decision.disclosure_ceiling, expiresAt, now).run();
   const owner = createOwnerScopeAuthority(db, access, () => nowMs);
   const scopes = createD1ScopeService(db, owner, { now: () => nowMs, ttl_ms: 3_600_000 });
-  const scopeExpression = { kind: "SELECTED_SOURCES", source_ids: [`source-${world.namespace}`] } as const;
+  const scopeExpression: QueryRequest["scope_expression"] = {
+    kind: "SELECTED_SOURCES", source_ids: [`source-${world.namespace}`],
+  };
   let operationId = "freeze-workflow-operation";
   let investigationId = "freeze-workflow-investigation";
   let scope: ScopeSnapshot;
