@@ -24,6 +24,7 @@ const ContractSchemaOrdinalSchema = PositiveIntegerSchema.max(
 export const CONTRACT_SCHEMA_FAMILIES = [
   "backup",
   "common",
+  "computer-agent",
   "drive-exchange",
   "erasure",
   "evidence",

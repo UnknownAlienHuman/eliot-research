@@ -9,6 +9,11 @@ import schemaCorpusRaw from "../../../docs/contracts/schema-corpus.v1.json?raw";
 import schemaIndexRaw from "../../../docs/contracts/schema-index.v1.json?raw";
 import libraryReadinessFixtureRaw from "../../../tests/fixtures/contracts/eliotr.library-readiness.v1.json?raw";
 import workspaceMcpFixtureRaw from "../../../tests/fixtures/contracts/eliotr.workspace-mcp-plan-input.v2.json?raw";
+import * as computerAgentConnection from "./computer-agent-connection.js";
+import * as computerAgentDispatch from "./computer-agent-dispatch.js";
+import * as computerAgentQualification from "./computer-agent-qualification.js";
+import * as computerAgentRoute from "./computer-agent-route.js";
+import * as researchBranch from "./research-branch.js";
 import * as publicContracts from "./index.js";
 import {
   CompletionDispositionSchema,
@@ -177,6 +182,41 @@ describe("ER-01 public contract registry", () => {
     );
 
     expect(registeredExports).toEqual(publicSchemaExports);
+
+    const additiveSchemaFamilies = [
+      ["computer-agent", computerAgentConnection],
+      ["computer-agent", computerAgentDispatch],
+      ["computer-agent", computerAgentQualification],
+      ["computer-agent", computerAgentRoute],
+      ["research", researchBranch],
+    ] as const;
+    for (const [family, schemaModule] of additiveSchemaFamilies) {
+      for (const [exportName, candidate] of Object.entries(schemaModule)) {
+        if (!(candidate instanceof z.ZodType)) continue;
+        expect(requireContractSchemaDescriptor(exportName)).toMatchObject({
+          family,
+          schema_version: 1,
+          schema_generation: 1,
+          schema_id: buildContractSchemaId(family, exportName, 1, 1),
+        });
+      }
+    }
+
+    expect(
+      registryContracts.ContractSchemaFamilySchema.safeParse("computer-agent")
+        .success,
+    ).toBe(true);
+    for (const [exportName, candidate] of Object.entries(registryContracts)) {
+      if (!(candidate instanceof z.ZodType) || !exportName.endsWith("Schema")) {
+        continue;
+      }
+      expect(requireContractSchemaDescriptor(exportName)).toMatchObject({
+        family: "registry",
+        schema_version: 3,
+        schema_generation: 1,
+        schema_id: buildContractSchemaId("registry", exportName, 3, 1),
+      });
+    }
     expect(new Set(registeredExports).size).toBe(registeredExports.length);
     expect(
       new Set(
