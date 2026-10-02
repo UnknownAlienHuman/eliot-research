@@ -94,5 +94,6 @@ export * from "./artifact-cow-model-executor.js";
 export * from "./artifact-cow-model-runtime.js";
 export * from "./artifact-cow-section-producer.js";
 export * from "./artifact-cow-revision-runner.js";
+export * from "./artifact-cow-draft-materialization.js";
 export * from "./artifact-cow-model-revalidator.js";
 export * from "./artifact-cow-spend-admission.js";

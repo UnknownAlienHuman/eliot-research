@@ -1,5 +1,5 @@
 import { VersionedRefSchema, type OperationIntent, type VersionedRef } from "@eliotr/contracts";
-import { canonicalDigest } from "@eliotr/platform-cloudflare";
+import { canonicalDigest, canonicalJson as platformCanonicalJson } from "@eliotr/platform-cloudflare";
 import type { WorkflowPrincipal } from "@eliotr/cloudflare-workflows";
 import {
   ARTIFACT_SECTION_REVISE_PROTOCOL,
@@ -170,16 +170,6 @@ export function readArtifactSectionReviseWorkflowStatus(
 }
 
 function canonicalJson(value: unknown): string {
-  if (value === null || typeof value === "boolean" || typeof value === "string") return JSON.stringify(value);
-  if (typeof value === "number") {
-    if (!Number.isFinite(value)) stale("canonical material contains a non-finite number");
-    return JSON.stringify(value);
-  }
-  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
-  if (typeof value === "object") {
-    const object = value as Record<string, unknown>;
-    return `{${Object.keys(object).filter((key) => object[key] !== undefined).sort()
-      .map((key) => `${JSON.stringify(key)}:${canonicalJson(object[key])}`).join(",")}}`;
-  }
-  return stale("canonical material contains an unsupported value");
+  try { return platformCanonicalJson(value); }
+  catch { return stale("canonical material contains a non-JSON value"); }
 }

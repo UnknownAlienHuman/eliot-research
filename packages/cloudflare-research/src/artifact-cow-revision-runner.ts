@@ -16,6 +16,8 @@ import {
 import type { ArtifactCowModelCallContext, ArtifactCowModelOutput } from "./artifact-cow-model-executor.js";
 
 export interface RunArtifactCowRevisionInput {
+  /** Current owner/source permission, including durable-result replay. */
+  readonly requireCurrent: () => Promise<unknown>;
   readonly attempt: ArtifactSectionReviseAttempt;
   readonly principal: WorkflowPrincipal;
   readonly model_authority: ModelAttemptAuthority;
@@ -57,12 +59,16 @@ function outputEqual(
  * There is deliberately no acceptance transition in this runner.
  */
 export async function runArtifactCowRevision(input: RunArtifactCowRevisionInput): Promise<ArtifactSectionReviseAttempt> {
+  await input.requireCurrent();
   const initial = await input.workflow.read(input.attempt.request.operation_id);
   if (initial === null || initial.attempt_ref !== input.attempt.attempt_ref || initial.request_sha256 !== input.attempt.request_sha256 ||
       initial.request_json !== input.attempt.request_json || !sameRef(initial.request.artifact_ref, input.attempt.request.artifact_ref)) {
     fail("persisted W2 COW attempt changed before execution");
   }
-  if (initial.state === "COMMITTED") return initial;
+  if (initial.state === "COMMITTED") {
+    await input.requireCurrent();
+    return initial;
+  }
   if (initial.state !== "STARTED" && initial.state !== "OUTPUT_RECORDED") {
     fail("COW W2 attempt is not effect eligible");
   }
@@ -135,5 +141,6 @@ export async function runArtifactCowRevision(input: RunArtifactCowRevisionInput)
       updated.draft.artifact_ref.revision !== initial.request.artifact_ref.revision + 1) {
     fail("committed DRAFT and final W2 child receipt failed exact readback");
   }
+  await input.requireCurrent();
   return updated;
 }

@@ -405,7 +405,10 @@ export const DURABLE_CORE_TABLE_SPECS_A: readonly TableSpec[] = [
       "planned_objects_json": "text",
       "state": "text",
       "created_at": "text",
-      "updated_at": "text"
+      "updated_at": "text",
+      "cow_operation_id": "text-or-null",
+      "cow_attempt_ref": "text-or-null",
+      "cow_request_sha256": "text-or-null"
   }, required: false },
   { manifest: "heads", table: "artifact_draft_head", order_by: "artifact_id", columns: {
       "artifact_id": "text",

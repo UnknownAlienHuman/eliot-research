@@ -508,7 +508,10 @@ export async function prepareArtifactDraft(
     }
   } catch (cause) {
     const raced = await readExactDraft(database, store, snapshot, plan, intentPlan.outbox_id);
-    if (raced !== null) return raced;
+    if (raced !== null) {
+      await admissionMutation?.readback();
+      return raced;
+    }
     const reserved = await readReservationByArtifactRevision(database, snapshot.revision.artifact_ref.id, snapshot.revision.artifact_ref.revision);
     if (reserved !== null) {
       validateReservation(reserved, snapshot, plan.request_sha256);
