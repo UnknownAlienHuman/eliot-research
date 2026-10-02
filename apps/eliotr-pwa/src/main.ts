@@ -3,7 +3,7 @@ import { getSystemHealth, type GoogleExternalTransport, type SystemHealth } from
 import { mountBundleImportPanel } from "./bundle-import-panel.js";
 import { mountGoogleOAuthPanel } from "./google-oauth-panel.js";
 import { mountLibraryPanel } from "./library-panel.js";
-import { mountProjectPanel, type ProjectPanelHandle } from "./project-panel.js";
+import { mountProjectPanel } from "./project-panel.js";
 import { mountClientGrantPanel } from "./client-grant-panel.js";
 import { mountOrientationPanel } from "./orientation-panel.js";
 import { mountRetrievalPanel } from "./retrieval-panel.js";
@@ -201,16 +201,12 @@ function render(health: SystemHealth | null): void {
   const importer = app.querySelector<HTMLElement>("#bundle-import");
   const rawUploadHost = app.querySelector<HTMLElement>("#raw-upload");
   let selectedNamespace: string | undefined;
-  let namespacePanel: ReturnType<typeof mountSourceNamespacePanel> | undefined;
-  let projectPanel: (() => void) & ProjectPanelHandle | undefined;
-  let libraryPanel: ReturnType<typeof mountLibraryPanel> | undefined;
-  let refreshOwnerReadPanes = (): void => {};
   const ownerSessionLifecycle = createOwnerSessionLifecycle({
     deploymentGeneration: () => app.dataset.healthGeneration,
     healthReady: () => !pageClosed && app.dataset.healthReady === "true",
     onVerified: (session, deploymentGeneration) => namespacePanel?.verifyOwnerSession(session, deploymentGeneration),
     onCleared: () => namespacePanel?.clearPrivate("Owner session verification ended. Workspace data was cleared."),
-    refreshReadPanes: () => refreshOwnerReadPanes(),
+    refreshReadPanes: () => { projectPanel?.refresh(); libraryPanel?.refresh(); researchRun?.refreshHistory(); },
   });
   const namespaceSelected = (event: Event): void => {
     const id = (event as CustomEvent<{ sourceNamespaceId?: unknown }>).detail?.sourceNamespaceId;
@@ -218,7 +214,7 @@ function render(health: SystemHealth | null): void {
   };
   app.addEventListener("eliotr:namespace-selected", namespaceSelected);
   const namespaceHost = app.querySelector<HTMLElement>("#source-namespace");
-  namespacePanel = namespaceHost ? mountSourceNamespacePanel(namespaceHost, {
+  const namespacePanel = namespaceHost ? mountSourceNamespacePanel(namespaceHost, {
     deploymentGeneration: () => app.dataset.healthGeneration,
     healthReady: () => app.dataset.healthReady === "true",
     onResumed: ownerSessionLifecycle.onResumed,
@@ -472,12 +468,12 @@ function render(health: SystemHealth | null): void {
     evidenceRail?.select(evidence, evidence.handle.scope_snapshot_ref);
   });
   const projectHost = app.querySelector<HTMLElement>("#projects");
-  projectPanel = projectHost ? mountProjectPanel(projectHost, {
+  const projectPanel = projectHost ? mountProjectPanel(projectHost, {
     deploymentGeneration: () => app.dataset.healthGeneration,
     healthReady: () => app.dataset.healthReady === "true",
     onOpenProject: (projectId) => libraryPanel?.openProject(projectId),
   }) : undefined;
-  libraryPanel = library ? mountLibraryPanel(library, async (id, context) => {
+  const libraryPanel = library ? mountLibraryPanel(library, async (id, context) => {
     // Empty Library callbacks clear protected selection, not retained Research intent.
     if (!id) { retrieval?.clearPrivate(); exhaustive?.clearPrivate(); erasure?.clearPrivate(); return; }
     const selection = selectionSerial;
@@ -491,7 +487,6 @@ function render(health: SystemHealth | null): void {
     exhaustive?.selectSource(id);
     return true;
   }) : undefined;
-  refreshOwnerReadPanes = (): void => { projectPanel?.refresh(); libraryPanel?.refresh(); researchRun?.refreshHistory(); };
   const cleanups = [orientation, retrieval, researchRun, exhaustive, researchChanges, researchConfiguration, wiki, diagnostic, clientGrants, erasure, ownerSession, projectPanel,
     () => erasureHost?.removeEventListener("eliotr:source-erased", sourceErased),
     () => erasureHost?.removeEventListener("eliotr:source-erasure-requested", sourceErased), importer ? mountBundleImportPanel(importer) : undefined,
