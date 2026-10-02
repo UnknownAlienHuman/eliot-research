@@ -60,7 +60,11 @@ describe("S24 migration preserves durable research authority", () => {
     expect(ctx.raw.prepare("SELECT * FROM investigation_ledger_head").all()).toEqual(head);
     expect(ctx.raw.prepare("SELECT * FROM investigation_ledger_event").all()).toEqual(events);
     expect(ctx.raw.prepare("SELECT * FROM research_workflow_run").all()).toEqual(workflows);
-    expect(ctx.raw.prepare(GUARD_SNAPSHOT_SQL).all()).toEqual(guards);
+    const normalizeSqlNewlines = (rows: unknown[]) => rows.map((row) => {
+      const entry = row as { type: string; name: string; sql: string };
+      return { ...entry, sql: entry.sql.replace(/\r\n?/g, "\n") };
+    });
+    expect(normalizeSqlNewlines(ctx.raw.prepare(GUARD_SNAPSHOT_SQL).all())).toEqual(normalizeSqlNewlines(guards));
     expect(ctx.raw.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
     expect(ctx.raw.prepare("PRAGMA foreign_keys").get()).toMatchObject({ foreign_keys: 1 });
     expect(ctx.raw.prepare("SELECT name FROM sqlite_schema WHERE name LIKE '%s24_copy%'").all()).toEqual([]);
