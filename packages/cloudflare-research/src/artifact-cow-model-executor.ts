@@ -168,11 +168,10 @@ function validatePrepared(
   }
 }
 
-function assertReadback(
+function assertReadbackIdentity(
   context: ArtifactCowModelCallContext,
   readback: Awaited<ReturnType<ModelAttemptStore["readByAttempt"]>>,
   identity: string,
-  expectedOutputRef: string,
 ): asserts readback is NonNullable<Awaited<ReturnType<ModelAttemptStore["readByAttempt"]>>> {
   if (readback === null || readback.intent.operation_kind !== "REPORT" ||
       readback.intent.intent_ref.id !== `artifact-cow-operation-${identity}` ||
@@ -184,14 +183,40 @@ function assertReadback(
       readback.authority.credential_generation !== context.principal.credential_generation ||
       readback.authority.deployment_generation !== context.principal.deployment_generation ||
       readback.artifact_cow_binding?.call_slot !== context.call_slot ||
-      readback.artifact_cow_binding?.operation_id !== context.request.operation_id ||
-      readback.output?.output_object_ref !== expectedOutputRef ||
+      readback.artifact_cow_binding?.operation_id !== context.request.operation_id) {
+    fail("ARTIFACT_COW_MODEL_OUTPUT_CORRUPT", "W3 model readback does not match the exact COW call identity");
+  }
+}
+
+function assertSuccessfulReadback(
+  context: ArtifactCowModelCallContext,
+  readback: Awaited<ReturnType<ModelAttemptStore["readByAttempt"]>>,
+  identity: string,
+  expectedOutputRef: string,
+): asserts readback is NonNullable<Awaited<ReturnType<ModelAttemptStore["readByAttempt"]>>> {
+  assertReadbackIdentity(context, readback, identity);
+  if (readback.output?.output_object_ref !== expectedOutputRef ||
       readback.receipt?.output_object_ref !== expectedOutputRef) {
     fail("ARTIFACT_COW_MODEL_OUTPUT_CORRUPT", "W3 model readback does not match the exact COW call slot");
   }
 }
 
 export function createArtifactCowModelExecutor(dependencies: ArtifactCowModelExecutorDependencies) {
+  const readSuccessfulOutput = async (
+    context: ArtifactCowModelCallContext,
+    existing: NonNullable<Awaited<ReturnType<ModelAttemptStore["readByIdempotency"]>>>,
+  ): Promise<Uint8Array> => {
+    await dependencies.revalidateExisting(context, existing);
+    if (existing.output === null) fail("ARTIFACT_COW_MODEL_OUTPUT_CORRUPT", "successful model attempt has no output binding");
+    const bytes = await dependencies.readOutput(existing.output);
+    if (!(bytes instanceof Uint8Array) || bytes.byteLength !== existing.output.output_size_bytes ||
+        bytes.byteLength > MAX_OUTPUT_BYTES || await digest(bytes) !== existing.output.output_sha256 ||
+        existing.output.readback_sha256 !== existing.output.output_sha256) {
+      fail("ARTIFACT_COW_MODEL_OUTPUT_CORRUPT", "persisted model output failed exact byte readback");
+    }
+    return new Uint8Array(bytes);
+  };
+
   return Object.freeze({
     async execute(context: ArtifactCowModelCallContext): Promise<ArtifactCowModelOutput> {
       assertContext(context);
@@ -207,18 +232,13 @@ export function createArtifactCowModelExecutor(dependencies: ArtifactCowModelExe
       const existing = await dependencies.attempts.readByIdempotency({ principal_ref: context.principal.principal_ref,
         operation_kind: "REPORT", idempotency_key: idempotencyKey });
       if (existing !== null) {
-        assertReadback(context, existing, identity, expectedOutputRef);
+        assertReadbackIdentity(context, existing, identity);
         if (existing.state !== "SUCCEEDED" || existing.output === null || existing.receipt === null) {
           fail("ARTIFACT_COW_MODEL_EFFECT_UNKNOWN", "existing provider outcome is not durably successful; automatic retry is forbidden");
         }
-        await dependencies.revalidateExisting(context, existing);
-        const bytes = await dependencies.readOutput(existing.output);
-        if (!(bytes instanceof Uint8Array) || bytes.byteLength !== existing.output.output_size_bytes ||
-            bytes.byteLength > MAX_OUTPUT_BYTES || await digest(bytes) !== existing.output.output_sha256 ||
-            existing.output.readback_sha256 !== existing.output.output_sha256) {
-          fail("ARTIFACT_COW_MODEL_OUTPUT_CORRUPT", "persisted model output failed exact byte readback");
-        }
-        return Object.freeze({ call_slot: context.call_slot, bytes: new Uint8Array(bytes), output: existing.output,
+        assertSuccessfulReadback(context, existing, identity, expectedOutputRef);
+        const bytes = await readSuccessfulOutput(context, existing);
+        return Object.freeze({ call_slot: context.call_slot, bytes, output: existing.output,
           receipt: existing.receipt, model_attempt_id: existing.attempt_id });
       }
 
@@ -245,10 +265,10 @@ export function createArtifactCowModelExecutor(dependencies: ArtifactCowModelExe
       if (!started.should_invoke || started.attempt === null || started.state !== "STARTED") {
         if (started.attempt !== null) {
           const readback = await dependencies.attempts.readByAttempt(started.attempt.attempt_id);
-          assertReadback(context, readback, identity, expectedOutputRef);
+          assertReadbackIdentity(context, readback, identity);
           if (readback.state === "SUCCEEDED" && readback.output !== null && readback.receipt !== null) {
-            const bytes = await dependencies.readOutput(readback.output);
-            if (await digest(bytes) !== readback.output.output_sha256) fail("ARTIFACT_COW_MODEL_OUTPUT_CORRUPT", "recovered model output digest changed");
+            assertSuccessfulReadback(context, readback, identity, expectedOutputRef);
+            const bytes = await readSuccessfulOutput(context, readback);
             return Object.freeze({ call_slot: context.call_slot, bytes, output: readback.output,
               receipt: readback.receipt, model_attempt_id: readback.attempt_id });
           }
@@ -291,7 +311,7 @@ export function createArtifactCowModelExecutor(dependencies: ArtifactCowModelExe
       await dependencies.revalidate(context, prepared);
       const settled = await dependencies.attempts.settleAttempt({ attempt_id: started.attempt.attempt_id,
         state: "SUCCEEDED", receipt, output });
-      assertReadback(context, settled, identity, expectedOutputRef);
+      assertSuccessfulReadback(context, settled, identity, expectedOutputRef);
       if (settled.state !== "SUCCEEDED" || settled.receipt === null || settled.output === null) {
         fail("ARTIFACT_COW_MODEL_EFFECT_UNKNOWN", "successful provider output did not settle durably");
       }
