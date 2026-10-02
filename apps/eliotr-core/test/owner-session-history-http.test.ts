@@ -45,8 +45,18 @@ async function readSection(
 ) {
   return handleHttp(new Request(
     `https://research.example/api/v1/research/artifact/${encodeURIComponent(`${artifactRef.id}:${artifactRef.revision}`)}` +
-    `/sections/${encodeURIComponent(`${sectionRef.id}:${sectionRef.revision}`)}`,
+    `/sections/${encodeURIComponent(`${sectionRef.id}:${sectionRef.revision}`)}/reauthorize`,
+    { method: "POST" },
   ), reportRuntime, {} as ExecutionContext, { accessVerifier, applicationFactory: appFactory() });
+}
+
+async function sectionProblemCode(response: Response): Promise<string> {
+  try {
+    const body = await response.clone().json() as { readonly code?: unknown };
+    return typeof body.code === "string" ? body.code : "unknown-problem";
+  } catch {
+    return "non-json-error";
+  }
 }
 
 describe("owner session lease history over native HTTP and D1", () => {
@@ -82,7 +92,7 @@ describe("owner session lease history over native HTTP and D1", () => {
     expect(beforeMetadata.status).toBe(200);
     const beforeBody = await beforeMetadata.json() as { readonly data: { readonly artifact: unknown } };
     const beforeSection = await readSection(report.artifact_ref, section.section_ref, oldCredential);
-    expect(beforeSection.status).toBe(200);
+    expect(beforeSection.status, beforeSection.status === 200 ? "" : await sectionProblemCode(beforeSection)).toBe(200);
     const originalBytes = new Uint8Array(await beforeSection.arrayBuffer());
     expect(await evidenceSha256Bytes(originalBytes)).toBe(section.body_sha256);
     const modelAttemptCount = await runtime.CORE_DB.prepare(
@@ -115,7 +125,7 @@ describe("owner session lease history over native HTTP and D1", () => {
     const afterBody = await afterMetadata.json() as { readonly data: { readonly artifact: unknown } };
     expect(afterBody.data.artifact).toEqual(beforeBody.data.artifact);
     const afterSection = await readSection(report.artifact_ref, section.section_ref, verifier(newCredential, nextExpiry));
-    expect(afterSection.status).toBe(200);
+    expect(afterSection.status, afterSection.status === 200 ? "" : await sectionProblemCode(afterSection)).toBe(200);
     expect(new Uint8Array(await afterSection.arrayBuffer())).toEqual(originalBytes);
     expect(await runtime.CORE_DB.prepare("SELECT COUNT(*) AS count FROM research_model_attempt")
       .first<{ readonly count: number }>()).toEqual(modelAttemptCount);
