@@ -1,7 +1,6 @@
 import { ArtifactReadNotFoundError, type AuthenticatedRequestContext, type ResearchRunStatus } from "@eliotr/interfaces";
 import { VersionedRefSchema, type VersionedRef } from "@eliotr/contracts";
-import { loadScopeAuthority } from "@eliotr/cloudflare-evidence";
-import { createOwnerScopeAuthority, OrientationError, ScopeServiceError } from "@eliotr/cloudflare-navigation";
+import { OrientationError, ScopeServiceError } from "@eliotr/cloudflare-navigation";
 import { ArtifactDraftReadError } from "@eliotr/cloudflare-research";
 import {
   readHistoricalResearchCoverage,
@@ -52,20 +51,6 @@ function expectedSavedDraftDenial(error: unknown): boolean {
   }
   return error instanceof CatalogInputError && error.code === "RESEARCH_HISTORY_AUTHORITY_STALE" &&
     [403, 404, 409, 410].includes(error.status);
-}
-
-async function requireSavedDraftSourceAccess(
-  authority: ReturnType<typeof createOwnerScopeAuthority>,
-  original: Awaited<ReturnType<typeof loadScopeAuthority>> & {},
-): Promise<void> {
-  if (original === null) invalidHistory("Saved report scope is missing");
-  await authority.requireReadPolicy();
-  const sources = await authority.sources(original.snapshot.member_source_revision_refs);
-  if (sources.length !== original.snapshot.member_source_revision_refs.length || sources.some((source) =>
-    !source.authority.allowed_use.includes("research") ||
-    source.authority.source_owner_generation !== original.snapshot.source_owner_generations[source.authority.source_revision_ref])) {
-    throw new CatalogInputError("RESEARCH_HISTORY_AUTHORITY_STALE", "Saved report source access is no longer current", 409);
-  }
 }
 
 async function readHistoricalWorkflowId(
@@ -168,9 +153,8 @@ export async function readOwnerResearchRuns(env: Env, context: AuthenticatedRequ
       throw error;
     }
   }
-  // Historical report locators contain no document text. Recheck the current owner's
-  // source policy before listing them; POST reauthorization performs full disclosure checks.
-  const authority = createOwnerScopeAuthority(env.CORE_DB, context);
+  // Historical report locators contain no document text; every saved draft still uses
+  // the full read reauthorization path before its locator is listed.
   const drafts = await env.CORE_DB.prepare(
     "SELECT b.artifact_id,b.revision,b.intent_id,b.intent_revision,b.scope_snapshot_id,b.scope_snapshot_revision,b.created_at," +
     "o.origin_client_class FROM artifact_draft_binding b JOIN owner_artifact_read_origin o " +
@@ -179,7 +163,7 @@ export async function readOwnerResearchRuns(env: Env, context: AuthenticatedRequ
   ).bind(context.principal_ref).all<SavedDraftRow>();
   if (!drafts.success) throw new CatalogInputError("RESEARCH_HISTORY_UNAVAILABLE", "Saved reports are temporarily unavailable", 503, true);
   const savedDrafts: { artifact_ref: VersionedRef; created_at: string; workflow_instance_id?: string }[] = [];
-  const machineDraftChecks: (() => Promise<void>)[] = [];
+  const draftChecks: (() => Promise<void>)[] = [];
   for (const row of drafts.results) {
     const ref = VersionedRefSchema.parse({ id: row.artifact_id, revision: row.revision });
     if (typeof row.created_at !== "string" || !Number.isFinite(Date.parse(row.created_at))) invalidHistory("Saved report metadata is invalid");
@@ -195,7 +179,7 @@ export async function readOwnerResearchRuns(env: Env, context: AuthenticatedRequ
         if (!sameRef(read.original_scope_snapshot_ref, originalRef)) invalidHistory("Saved report origin changed");
         await read.requireCurrent();
         savedDrafts.push({ artifact_ref: ref, created_at: row.created_at });
-        machineDraftChecks.push(read.requireCurrent);
+        draftChecks.push(read.requireCurrent);
       } catch (error) {
         if (expectedSavedDraftDenial(error)) continue;
         throw error;
@@ -203,10 +187,10 @@ export async function readOwnerResearchRuns(env: Env, context: AuthenticatedRequ
       // Do not expose machine run controls or owner Wiki promotion via a report locator.
       continue;
     }
-    const original = await loadScopeAuthority(env.CORE_DB, originalRef);
-    if (original === null || original.invalidated_at !== null) continue;
     try {
-      await requireSavedDraftSourceAccess(authority, original);
+      const read = await prepareArtifactReadReauthorization(env, context, ref, "report");
+      if (!sameRef(read.original_scope_snapshot_ref, originalRef)) invalidHistory("Saved report origin changed");
+      await read.requireCurrent();
       const operationId = await readHistoricalWorkflowId(env, row, context.principal_ref, originalRef);
       let workflowInstanceId: string | undefined;
       if (operationId !== null) {
@@ -215,7 +199,7 @@ export async function readOwnerResearchRuns(env: Env, context: AuthenticatedRequ
           work_bucket: env.WORK_BUCKET,
           operation_id: operationId,
           owner: { principal_ref: context.principal_ref, client_class: "owner_pwa" },
-          require_current: () => requireSavedDraftSourceAccess(authority, original),
+          require_current: read.requireCurrent,
           require_artifact: ({ artifact_ref, original_scope_snapshot_ref }) =>
             readReauthorizedHistoricalArtifact(env, context, artifact_ref, original_scope_snapshot_ref),
         });
@@ -227,13 +211,14 @@ export async function readOwnerResearchRuns(env: Env, context: AuthenticatedRequ
         }
       }
       savedDrafts.push({ artifact_ref: ref, created_at: row.created_at, ...(workflowInstanceId === undefined ? {} : { workflow_instance_id: workflowInstanceId }) });
+      draftChecks.push(read.requireCurrent);
     } catch (error) {
       if (expectedSavedDraftDenial(error)) continue;
       throw error;
     }
   }
   for (const requireCurrent of runChecks) await requireCurrent();
-  for (const requireCurrent of machineDraftChecks) await requireCurrent();
+  for (const requireCurrent of draftChecks) await requireCurrent();
   return {
     protocol: "eliotr.research-runs.v3" as const,
     runs,
