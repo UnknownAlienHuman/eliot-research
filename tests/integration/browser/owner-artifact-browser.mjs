@@ -98,6 +98,9 @@ export async function runOwnerArtifactBrowser(harness) {
     async function start() {
       worker = await startLocalWorker(paths); processIds.push(worker.diagnostics().pid);
       assert.ok(Number.isSafeInteger(processIds.at(-1))); await publicationRead();
+      const history = await harness.workerJson(worker.origin, "/api/v1/research/runs", { token, worker, phase: "artifact-history-diagnostic" });
+      process.stdout.write(JSON.stringify({ phase: "artifact-real-history", status: history.status, code: history.data?.code,
+        runs: history.data?.data?.runs?.length, saved_drafts: history.data?.data?.saved_drafts?.map((draft) => draft.artifact_ref) }) + "\n");
     }
     async function action(name, successor, callback, extraPaths = []) {
       await harness.settleLedger(browser.page, browser);
@@ -137,7 +140,12 @@ export async function runOwnerArtifactBrowser(harness) {
         await harness.showWorkspaceView(browser.page, "#research-card", "research", "artifact owner loop");
         await browser.page.locator("[data-research-history] > summary").click();
         await browser.page.locator("[data-research-history-refresh]").click();
-        await browser.page.locator('button[aria-label^="Open saved research draft"]').first().waitFor({ timeout: 15000 });
+        try { await browser.page.locator('button[aria-label^="Open saved research draft"]').first().waitFor({ timeout: 15000 }); }
+        catch (error) {
+          process.stdout.write(JSON.stringify({ phase: "artifact-history-browser-diagnostic", status: await browser.page.locator("[data-research-history-status]").textContent(),
+            rows: await browser.page.locator("[data-research-history-list]").textContent() }) + "\n");
+          throw error;
+        }
       }, extras);
       await action("artifact-open-draft", "artifact-section-open", async () => {
         await browser.page.locator('button[aria-label^="Open saved research draft"]').first().click();
@@ -145,7 +153,17 @@ export async function runOwnerArtifactBrowser(harness) {
         assert.equal(await browser.page.getByRole("button", { name: "Accept report", exact: true }).isDisabled(), true);
       }, extras);
       await action("artifact-section-open", "artifact-acceptance-check", async () => {
+        const nextSection = browser.page.waitForResponse((response) => response.request().method() === "POST" &&
+          response.url() === bridge.origin + sectionPath, { timeout: 15000 });
         await browser.page.getByRole("button", { name: "Open section", exact: true }).first().click();
+        const opened = await nextSection; assert.equal(opened.status(), 200);
+        for (const name of ["x-eliotr-artifact-ref", "x-eliotr-section-ref", "x-eliotr-section-object-ref",
+          "x-eliotr-section-sha256", "x-eliotr-deployment-generation", "content-length"]) {
+          assert.ok(opened.headers()[name], `Actual browser section response must retain ${name}`);
+        }
+        const bytes = await opened.body();
+        assert.equal(createHash("sha256").update(bytes).digest("hex"), section.body_sha256);
+        assert.equal(bytes.toString("utf8"), manifest.section_text);
         await browser.page.locator(".research-section-body").waitFor({ timeout: 15000 });
         assert.equal(await browser.page.locator(".research-section-body").textContent(), manifest.section_text);
       }, extras);

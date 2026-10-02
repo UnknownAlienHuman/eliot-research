@@ -1,4 +1,5 @@
 import { Buffer } from "node:buffer";
+/* global setTimeout: readonly, clearTimeout: readonly */
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { createServer } from "node:http";
@@ -74,10 +75,14 @@ export async function prepareOwnerArtifactSnapshot(paths, identity) {
   const require = createRequire(import.meta.url);
   const vitest = resolve(dirname(require.resolve("vitest/package.json")), "vitest.mjs");
   const before = new Set(await readdir(tmpdir()));
+  let collectorReceived = false;
+  let snapshotSaved = false;
   let resolveSnapshot; let rejectSnapshot;
   const snapshot = new Promise((yes, no) => { resolveSnapshot = yes; rejectSnapshot = no; });
   const server = createServer(async (request, response) => {
     try {
+      assert.equal(collectorReceived, false, "The fixture collector accepts exactly one native snapshot");
+      collectorReceived = true;
       assert.equal(request.method, "POST"); assert.equal(request.url, "/snapshot");
       const chunks = []; let size = 0;
       for await (const chunk of request) { size += chunk.length; assert.ok(size <= 1024 * 1024); chunks.push(chunk); }
@@ -93,22 +98,31 @@ export async function prepareOwnerArtifactSnapshot(paths, identity) {
       assert.equal(config.vars.DEPLOYMENT_GENERATION, identity.deployment_generation);
       await writeFile(paths.config, JSON.stringify(config, null, 2) + "\n");
       await writeFile(resolve(paths.directory, "accepted-artifact-fixture.json"), JSON.stringify(manifest, null, 2) + "\n");
+      snapshotSaved = true;
       response.writeHead(200); response.end("SNAPSHOT_SAVED"); resolveSnapshot(manifest);
     } catch (error) { response.writeHead(500); response.end("SNAPSHOT_FAILED"); rejectSnapshot(error); }
   });
+  server.requestTimeout = 10000; server.headersTimeout = 10000; server.setTimeout(30000, (socket) => socket.destroy());
   await bindChromiumSafeListener((port) => new Promise((yes, no) => {
     server.once("error", no); server.listen(port, "127.0.0.1", () => { server.removeListener("error", no); yes({ server, port: server.address().port }); });
   }));
   const address = server.address();
   const run = executeLocalAsync([vitest, "run", "test/artifact-owner-browser-fixture.test.ts", "--reporter=verbose", "--maxWorkers=1"], {
-    cwd: CORE, capture: true, timeoutMs: 180_000, env: { ...localEnvironment(),
+    cwd: CORE, capture: false, timeoutMs: 180_000, env: { ...localEnvironment(),
       ELIOTR_OWNER_ARTIFACT_FIXTURE: JSON.stringify({ ...identity, collector_url: `http://127.0.0.1:${address.port}/snapshot` }) },
   });
-  // Observe native failure even if it never reaches the collector.
-  const completion = run.catch((error) => { rejectSnapshot(error); throw error; });
+  const deadline = setTimeout(() => rejectSnapshot(new Error("Native fixture collector deadline exceeded")), 175000);
+  // A skipped/successful native CLI without POST must fail too. Both the
+  // collector and subprocess are bounded; neither can strand this harness.
+  const completion = run.then(() => {
+    if (!snapshotSaved) throw new Error("Native fixture exited without saving its accepted snapshot");
+  }).catch((error) => { rejectSnapshot(error); throw error; });
   try {
     const manifest = await snapshot;
     await completion;
     return manifest;
-  } finally { await completion.catch(() => {}); await new Promise((yes) => server.close(yes)); }
+  } finally {
+    clearTimeout(deadline); server.closeAllConnections();
+    await completion.catch(() => {}); await new Promise((yes) => server.close(yes));
+  }
 }

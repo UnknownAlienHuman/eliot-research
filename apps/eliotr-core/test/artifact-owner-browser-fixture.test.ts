@@ -1,5 +1,6 @@
 import { afterEach, expect, test, vi } from "vitest";
 import { env } from "cloudflare:workers";
+import { readOwnerResearchRuns } from "../src/research-run-list.js";
 import { handleHttp } from "../src/http.js";
 import { fixture, runtime } from "./artifact-cow-http-fixture.js";
 import { principal } from "./research-evidence-freeze-fixture.js";
@@ -11,7 +12,7 @@ test.skipIf(binding === undefined)("exports an actual accepted owner artifact fo
   const configuration = JSON.parse(binding ?? "{}") as { collector_url: string };
   const url = new URL(configuration.collector_url);
   expect(url.protocol).toBe("http:"); expect(url.hostname).toBe("127.0.0.1");
-  const data = await fixture();
+  const data = await fixture("observation", true);
   const revised = await data.post(data.configuredEnv, "owner-browser-fixture-revise");
   expect(revised.status).toBe(201);
   const artifact = revised.body.data?.draft?.artifact_ref;
@@ -36,7 +37,9 @@ test.skipIf(binding === undefined)("exports an actual accepted owner artifact fo
       principal_ref: principal.principal_ref, credential_generation: principal.credential_generation,
       authentication_method: "cloudflare_access", expires_at: new Date(Date.now() + 3_600_000).toISOString() }) } });
   expect(sectionResponse.status).toBe(200);
-  const section_text = await sectionResponse.text();
+  const section_text = new TextDecoder("utf-8", { fatal: true }).decode(await sectionResponse.arrayBuffer());
+  const history = await readOwnerResearchRuns(data.configuredEnv, data.context);
+  expect(history.saved_drafts.some((draft) => draft.artifact_ref.id === artifact.id && draft.artifact_ref.revision === artifact.revision)).toBe(true);
   const readPolicies = await runtime.CORE_DB.prepare("SELECT source_namespace_id,principal_ref,client_class,policy_ref,generation FROM scope_read_policy WHERE principal_ref=?1 AND state='ACTIVE'")
     .bind(principal.principal_ref).all();
   const run = await runtime.CORE_DB.prepare("SELECT operation_id FROM research_workflow_run WHERE operation_id=?1")

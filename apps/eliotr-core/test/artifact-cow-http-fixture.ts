@@ -4,8 +4,10 @@ import { canonicalDigest, canonicalJson, type ModelRouteDeployment } from "@elio
 import { modelGatewayDynamicRouteTarget, modelGatewayRequestParametersSha256 } from "@eliotr/cloudflare-ai";
 import { canonicalEvidenceJson, evidenceSha256Bytes, loadScopeAuthority } from "@eliotr/cloudflare-evidence";
 import { WorkflowCheckpointStore } from "@eliotr/cloudflare-workflows";
-import { createEvidenceFreezeMaterializeContextReader, readArtifactDraftCowSnapshot,
+import { createEvidenceFreezeMaterializeContextReader, createEvidenceFreezePostSynthesisContextReader, readArtifactDraftCowSnapshot,
   type ResearchArtifactReportPolicy } from "@eliotr/cloudflare-research";
+import { createResearchCoverageStageHandlerFromFreeze, createResearchCoverageMaterializeStageHandlerFromFreeze } from "@eliotr/cloudflare-research-stages";
+import { researchClaimAuditStageFixture } from "./research-claim-audit-fixture.js";
 import type { AuthenticatedRequestContext } from "@eliotr/interfaces";
 import { createD1DynamicRouteRegistry } from "../../../packages/cloudflare-research/src/model-gateway-deployment-registry-d1.js";
 import { createD1ResearchModelPricingSnapshotStore } from "../../../packages/cloudflare-research/src/research-model-pricing-store.js";
@@ -36,7 +38,7 @@ function originalPolicy(scopeId: string, claimKind: "observation" | "assumption"
     budget_ref: "cow-http-budget-v1", section_residency: domains, manifest_residency: domains };
 }
 
-async function originalReport(claimKind: "observation" | "assumption") {
+async function originalReport(claimKind: "observation" | "assumption", canonicalLineage = false) {
   // Give unchanged current read policy a longer lifetime than the original one-hour scope.
   const prepare = runtime.CORE_DB.prepare.bind(runtime.CORE_DB);
   const policyClock = vi.spyOn(runtime.CORE_DB, "prepare").mockImplementation((sql) => {
@@ -51,16 +53,9 @@ async function originalReport(claimKind: "observation" | "assumption") {
       return typeof value === "function" ? value.bind(target) : value;
     } });
   });
-  const synthesis = await committedFreezeSynthesisFixture().finally(() => policyClock.mockRestore());
+  const audited = canonicalLineage ? await researchClaimAuditStageFixture().finally(() => policyClock.mockRestore()) : undefined;
+  const synthesis = audited?.fixture ?? await committedFreezeSynthesisFixture().finally(() => policyClock.mockRestore());
   const freeze = synthesis.freeze;
-  let previous = await freeze.executor.execute(synthesis.stage_twelve, principal, synthesis.handler.handler);
-  for (const stage of ["VERIFY", "AUDIT_CLAIMS", "RESOLVE_CITATIONS", "CALCULATE_COVERAGE"] as const) {
-    previous = await freeze.executor.execute({ ...synthesis.stage_twelve, stage,
-      investigation_ref: previous.investigation_ref, input_manifest: previous.output_manifest }, principal,
-      async ({ request }) => encoder.encode(JSON.stringify({ stage: request.stage })));
-  }
-  const request = { ...synthesis.stage_twelve, stage: "MATERIALIZE" as const,
-    investigation_ref: previous.investigation_ref, input_manifest: previous.output_manifest };
   const status = new WorkflowCheckpointStore(freeze.db);
   const run = await freeze.db.prepare("SELECT policy_generation,policy_authority_ref FROM research_workflow_run WHERE operation_id=?1")
     .bind(freeze.operation_id).first<{ policy_generation: string; policy_authority_ref: string }>();
@@ -72,16 +67,37 @@ async function originalReport(claimKind: "observation" | "assumption") {
     requested_output_class: "private-draft", purpose: "research-report-materialization", expires_at: freeze.scope.expires_at }) };
   const reader = createEvidenceFreezeMaterializeContextReader({ database: freeze.db, work_bucket: freeze.bucket,
     manifest_store: freeze.freeze_store, read_stage_five: freeze.readers.read_stage_five }, freeze.navigation, freeze.readers);
-  const handler = createResearchStageHandlerFactory({ kind: "server-owned-exploratory", generation: SERVER_OWNED_FREEZE_HANDLER_GENERATION,
-    navigation: freeze.navigation, ledger: freeze.ledger, report_materialize: { database: freeze.db,
-      work_bucket: freeze.bucket, navigation: freeze.navigation, evidence_resolver: freeze.resolver, context: reader,
-      recheck_authority: async () => {
-        const current = await status.readRunStatus(freeze.operation_id, principal);
-        if (current === null) throw new Error("Original REPORT status is missing");
-        return { investigation_id: current.investigation_id, scope_snapshot_id: current.scope_snapshot_id,
-          scope_snapshot_revision: current.scope_snapshot_revision };
-      }, policy_source: policySource, report_policy: originalPolicy(freeze.scope.snapshot_id, claimKind) } })("MATERIALIZE");
-  await freeze.executor.execute(request, principal, handler);
+  const environment = { database: freeze.db, work_bucket: freeze.bucket,
+    manifest_store: freeze.freeze_store, read_stage_five: freeze.readers.read_stage_five };
+  const materialize = { database: freeze.db, work_bucket: freeze.bucket, navigation: freeze.navigation,
+    evidence_resolver: freeze.resolver, recheck_authority: async () => {
+      const current = await status.readRunStatus(freeze.operation_id, principal);
+      if (current === null) throw new Error("Original REPORT status is missing");
+      return { investigation_id: current.investigation_id, scope_snapshot_id: current.scope_snapshot_id,
+        scope_snapshot_revision: current.scope_snapshot_revision };
+    }, policy_source: policySource, report_policy: originalPolicy(freeze.scope.snapshot_id, claimKind) };
+  const handlers = createResearchStageHandlerFactory({ kind: "server-owned-exploratory",
+    generation: SERVER_OWNED_FREEZE_HANDLER_GENERATION, navigation: freeze.navigation, ledger: freeze.ledger,
+    ...(canonicalLineage ? {
+      resolve_citations: { database: freeze.db, navigation: freeze.navigation, evidence_resolver: freeze.resolver,
+        context: createEvidenceFreezePostSynthesisContextReader(environment, freeze.navigation, freeze.readers, "RESOLVE_CITATIONS") },
+      calculate_coverage: createResearchCoverageStageHandlerFromFreeze(environment, freeze.navigation, freeze.readers, { ledger: freeze.ledger }),
+      materialize_handler: createResearchCoverageMaterializeStageHandlerFromFreeze(environment, freeze.navigation, freeze.readers, materialize),
+    } : { report_materialize: { ...materialize, context: reader } }),
+  });
+  let previous = audited === undefined
+    ? await freeze.executor.execute(synthesis.stage_twelve, principal, synthesis.handler.handler)
+    : await freeze.executor.execute(audited.stage14, principal, audited.auditHandler);
+  const stages = canonicalLineage ? ["RESOLVE_CITATIONS", "CALCULATE_COVERAGE"] as const
+    : ["VERIFY", "AUDIT_CLAIMS", "RESOLVE_CITATIONS", "CALCULATE_COVERAGE"] as const;
+  for (const stage of stages) {
+    previous = await freeze.executor.execute({ ...synthesis.stage_twelve, stage,
+      investigation_ref: previous.investigation_ref, input_manifest: previous.output_manifest }, principal,
+      canonicalLineage ? handlers(stage) : async ({ request }) => encoder.encode(JSON.stringify({ stage: request.stage })));
+  }
+  const request = { ...synthesis.stage_twelve, stage: "MATERIALIZE" as const,
+    investigation_ref: previous.investigation_ref, input_manifest: previous.output_manifest };
+  await freeze.executor.execute(request, principal, handlers("MATERIALIZE"));
   const binding = await freeze.db.prepare("SELECT artifact_id,revision FROM artifact_draft_binding WHERE intent_id=(SELECT intent_id FROM research_report_admission WHERE operation_id=?1)")
     .bind(freeze.operation_id).first<{ artifact_id: string; revision: number }>();
   if (binding === null) throw new Error("Original REPORT draft binding is missing");
@@ -125,8 +141,8 @@ async function installRoute(): Promise<ModelRouteDeployment> {
   return deployment;
 }
 
-export async function fixture(claimKind: "observation" | "assumption" = "observation") {
-  const original = await originalReport(claimKind);
+export async function fixture(claimKind: "observation" | "assumption" = "observation", canonicalLineage = false) {
+  const original = await originalReport(claimKind, canonicalLineage);
   const allOriginal = await runtime.WORK_BUCKET.list();
   const originalBytes = new Map<string, string>();
   for (const entry of allOriginal.objects) {
