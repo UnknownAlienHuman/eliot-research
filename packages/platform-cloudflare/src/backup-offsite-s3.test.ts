@@ -80,7 +80,7 @@ function config(fetchImpl: typeof fetch, overrides: Partial<S3OffsiteCopyAdapter
   return {
     provider_kind: "cloudflare-r2",
     bucket_versioning: "disabled",
-    endpoint: "https://0123456789abcdef0123456789abcdef.r2.cloudflarestorage.com",
+    endpoint: "https://" + "a".repeat(32) + ".r2.cloudflarestorage.com",
     bucket: "eliotr-backup-test",
     region: "auto",
     endpoint_identity: "r2-endpoint-config-7",
@@ -123,7 +123,7 @@ describe("R2 S3-compatible offsite adapter", () => {
     expect(receipt.ack_ref).toMatch(/^r2-etag:[a-f0-9]{64}$/);
     const first = fixture.calls[0];
     if (first === undefined) throw new Error("signed request was not captured");
-    expect(new URL(first.url).hostname).toBe("0123456789abcdef0123456789abcdef.r2.cloudflarestorage.com");
+    expect(new URL(first.url).hostname).toBe("a".repeat(32) + ".r2.cloudflarestorage.com");
     const headers = new Headers(first.init.headers);
     expect(headers.get("authorization")).toMatch(/^AWS4-HMAC-SHA256 Credential=AKIAIOSFODNN7EXAMPLE\/20261001\/auto\/s3\/aws4_request,SignedHeaders=/);
     expect(headers.get("x-amz-date")).toBe("20261001T000000Z");

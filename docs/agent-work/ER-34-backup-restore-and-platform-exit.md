@@ -37,7 +37,11 @@ O2 number after 0018 and carries the replay-authority delta forward so fresh and
 databases converge); `scripts/check-boundaries.mjs`,
 `tsconfig.json`, `packages/platform-cloudflare/package.json` and `packages/platform-cloudflare/tsconfig.json`
 are workspace/barrel adjustments only. O2 is IMPLEMENTED_NOT_LIVE; O3 restore/isolation and O4
-source-erasure/purge replay remain explicit fail-closed NOT_IMPLEMENTED with no live receipts.
+source-erasure/purge replay are not accepted as complete. Local O4 copy-intent/erasure-obligation
+primitives and an optional real R2 transport now exist; current-schema coverage, exact epoch subject
+scope and isolated restore acceptance still block readiness. No live receipts exist. Migration
+`0099_backup_erasure_replay.sql` adds immutable copy replay and erasure obligation authority; legacy
+unbound copies fail closed and require explicit controller recovery, never digest-only reconstruction.
 
 ## Read only
 
