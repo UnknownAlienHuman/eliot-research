@@ -596,3 +596,19 @@ budget violations. No limit or configuration was relaxed. Logs are
 `eliotr-root-suite-functional-checkpoint.log`,
 `eliotr-functional-build-dbaedba4.log`, and `eliotr-check-affected-dbaedba4.log`.
 The complete Core gate is the next check; focused passes do not establish it.
+
+Full worker gate reconciliation, 2026-10-02 21:10 UTC: `pnpm test:worker`
+completed with exit 0 on clean, published source checkpoint
+`3e491a830366627625c3d6c74239a0d1f486ef91`. Core PASS: 804 passed, 0 failed,
+1 skipped, 1 todo (806 tests); 104 passed files and 1 skipped (105), 862.45s.
+Artifact-worker PASS: 2/2 tests in 2 files, 24.70s. All original 66 Core
+failures are closed by this full run. Existing deadlines and the default
+two-worker configuration are unchanged. The original primary REPORT reopen
+passed in this full run under its unchanged 30s limit; this reporter does not
+publish its individual duration. The earlier focused 18.263s timing remains
+the measured individual proof. No tests were disabled to obtain this result.
+Log: `eliotr-full-worker-3e491a83.log` under OS temp. No checks remain running.
+This supersedes the preceding pending-full-Core statement. The 17 source
+budget violations, baseline repository lint/Rust gates and pending live/S92
+gates still prevent aggregate release completion. No deployment or live
+mutation was performed; remote main remains parent-owned at `2a26cce4`.
