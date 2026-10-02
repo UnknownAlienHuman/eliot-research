@@ -9,6 +9,7 @@ export default defineConfig(async () => ({
     miniflare: {
       bindings: {
         CORE_MIGRATIONS: await readD1Migrations(fileURLToPath(new URL("../../infra/d1/core/migrations", import.meta.url))),
+        SEARCH_MIGRATIONS: await readD1Migrations(fileURLToPath(new URL("../../infra/d1/search/migrations", import.meta.url))),
       },
     },
     wrangler: {
