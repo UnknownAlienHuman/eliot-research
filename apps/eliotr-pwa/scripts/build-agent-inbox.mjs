@@ -1,5 +1,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
+import { stdout } from "node:process";
+import { TextEncoder } from "node:util";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
 
@@ -81,7 +83,7 @@ await Promise.all([
   writeFile(outputCss, css, { encoding: "utf8", mode: 0o644 }),
 ]);
 
-process.stdout.write(JSON.stringify({
+stdout.write(JSON.stringify({
   protocol: "eliotr.agent-inbox-build.v1",
   script_bytes: new TextEncoder().encode(result.outputText).byteLength,
   css_bytes: new TextEncoder().encode(css).byteLength,

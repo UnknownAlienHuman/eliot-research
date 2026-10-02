@@ -53,7 +53,6 @@ const MIGRATIONS_DIR = join(root, "infra/d1/core/migrations");
 function pass(detail) { return { state: "PASS", detail }; }
 function fail(detail) { return { state: "FAIL", detail }; }
 function notExecuted(detail) { return { state: "NOT_EXECUTED", detail }; }
-function blocked(detail) { return { state: "BLOCKED", detail }; }
 
 function nowSeconds() { return Math.floor(Date.now() / 1000); }
 

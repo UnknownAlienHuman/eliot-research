@@ -85,7 +85,11 @@ export async function readProjectComputerAgentRouteReadiness(input: {
 
   const entries = [];
   for (let priority = 0; priority < route.connections.length; priority += 1) {
-    const entry = route.connections[priority]!;
+    const entry = route.connections[priority];
+    if (entry === undefined) {
+      fail("COMPUTER_AGENT_ROUTE_STORAGE_CORRUPT", 500,
+        "Route contains a missing connection entry");
+    }
     const [exact, current] = await Promise.all([
       readComputerAgentConnectionRevision(input.database,
         entry.connection_id, entry.connection_revision).catch(mapConnection),

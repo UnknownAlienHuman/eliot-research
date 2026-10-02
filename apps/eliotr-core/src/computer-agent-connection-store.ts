@@ -371,7 +371,12 @@ export async function requireEnabledComputerAgentConnectionForTask(
     fail("COMPUTER_AGENT_CONNECTION_STORAGE_CORRUPT", 500,
       "The service actor resolves to multiple computer-agent connections");
   }
-  const connection = await decode(rows[0]!);
+  const row = rows[0];
+  if (row === undefined) {
+    fail("COMPUTER_AGENT_CONNECTION_STORAGE_CORRUPT", 500,
+      "The service actor resolves to multiple computer-agent connections");
+  }
+  const connection = await decode(row);
   if (connection.state !== "ENABLED" || !connection.task_kinds.includes(taskKind)) {
     fail("COMPUTER_AGENT_CONNECTION_DENIED", 403,
       "The computer-agent connection is disabled or lacks the required task capability");

@@ -432,7 +432,7 @@ export function createExternalModelSecretRestClient({ account, token, fetchImpl 
           ...(bodyJson === undefined ? {} : { body: bodyJson }),
           redirect: "error",
         });
-      } catch (cause) {
+      } catch {
         externalModelSecretStoreFail(
           "EXTERNAL_MODEL_SECRET_TRANSPORT_FAILED",
           "Cloudflare Secrets Store request failed",

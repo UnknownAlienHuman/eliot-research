@@ -87,7 +87,6 @@ const ExternalBranchAnalysisOutputSchema = z.object({
   candidate_findings: z.array(CandidateFindingSchema).max(64),
   execution_observation: ExecutionObservationSchema,
 }).strict();
-type ExternalBranchAnalysisOutput = z.infer<typeof ExternalBranchAnalysisOutputSchema>;
 
 export interface ResearchExternalBranchAnalysisDependencies extends ResearchBranchExecutionDependencies {
   readonly resolver: CloudflareEvidenceResolver;
