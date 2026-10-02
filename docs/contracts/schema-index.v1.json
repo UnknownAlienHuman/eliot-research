@@ -123,21 +123,21 @@
     {
       "export_name": "CanonicalFixtureDescriptorSchema",
       "family": "registry",
-      "json_schema_sha256": "17c63ceb20187d47ccaf4b6c83e9839974e297e15aff57a4d150f49fc5061e05",
+      "json_schema_sha256": "dccc66d9b77797cdbb0faec9c4d6b8a55d224f9424e465751d353484bc60bc78",
       "kind": "OBJECT",
       "schema_generation": 1,
-      "schema_id": "urn:eliotr:contracts:registry:canonical-fixture-descriptor:v2:g1",
-      "schema_version": 2,
+      "schema_id": "urn:eliotr:contracts:registry:canonical-fixture-descriptor:v3:g1",
+      "schema_version": 3,
       "structural_strictness": "CLOSED_OBJECT"
     },
     {
       "export_name": "CanonicalFixtureRegistryDocumentSchema",
       "family": "registry",
-      "json_schema_sha256": "a8ba054803ae6af86c0d164d8eaa4993bc7bbd2de4ade0c61af2f4162ccdfbfc",
+      "json_schema_sha256": "196e900e0e5b93fc7e25b4e9fda62455c3c96cc0d16a223167f95e62892c6eed",
       "kind": "OBJECT",
       "schema_generation": 1,
-      "schema_id": "urn:eliotr:contracts:registry:canonical-fixture-registry-document:v2:g1",
-      "schema_version": 2,
+      "schema_id": "urn:eliotr:contracts:registry:canonical-fixture-registry-document:v3:g1",
+      "schema_version": 3,
       "structural_strictness": "CLOSED_OBJECT"
     },
     {
@@ -221,133 +221,553 @@
       "structural_strictness": "NON_OBJECT"
     },
     {
-      "export_name": "ContractCompatibilityClassSchema",
-      "family": "registry",
-      "json_schema_sha256": "7e216e3abceb49767c87545b5c43e91a5f0e83f7f5254d61b3c3a80cb0b3e7e7",
+      "export_name": "ComputerAgentActorSchema",
+      "family": "computer-agent",
+      "json_schema_sha256": "cf8e6dc967350ddcb6ec705615b084e5650758a869b85eeadc939f7c159ee963",
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:computer-agent:computer-agent-actor:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "ComputerAgentComputerCapabilitySchema",
+      "family": "computer-agent",
+      "json_schema_sha256": "ed4ff82d452ba68950954df2d82384505881981fc1f2daed6381e5ae2bbb6229",
       "kind": "ENUM",
       "schema_generation": 1,
-      "schema_id": "urn:eliotr:contracts:registry:contract-compatibility-class:v2:g1",
-      "schema_version": 2,
+      "schema_id": "urn:eliotr:contracts:computer-agent:computer-agent-computer-capability:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "NON_OBJECT"
+    },
+    {
+      "export_name": "ComputerAgentConnectionDisableSchema",
+      "family": "computer-agent",
+      "json_schema_sha256": "8588231fba3da01c46ee49d16b22afa87afe2c2108a56b2932d7f3bac8d1b4ed",
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:computer-agent:computer-agent-connection-disable:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "ComputerAgentConnectionListSchema",
+      "family": "computer-agent",
+      "json_schema_sha256": "fa74f2b3275e9c5be1b29beb7a2068a0ff8046b71ead66ec1251253f4ee8c655",
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:computer-agent:computer-agent-connection-list:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "ComputerAgentConnectionPutSchema",
+      "family": "computer-agent",
+      "json_schema_sha256": "56de9212c71058949c586795859f96017276c7a8de1459519ca5f88fd1de18e5",
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:computer-agent:computer-agent-connection-put:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "ComputerAgentConnectionSchema",
+      "family": "computer-agent",
+      "json_schema_sha256": "20d9ca1c4c016c99f9e2f2daf77affe7fb1b3d5d73ccf4a02ec34678961a97a8",
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:computer-agent:computer-agent-connection:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "ComputerAgentContourSchema",
+      "family": "computer-agent",
+      "json_schema_sha256": "669d38c1d87dedcd337526e5c4ed4ec596ae87fd98562ccd61252da03a140b32",
+      "kind": "ENUM",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:computer-agent:computer-agent-contour:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "NON_OBJECT"
+    },
+    {
+      "export_name": "ComputerAgentDispatchAbandonReasonSchema",
+      "family": "computer-agent",
+      "json_schema_sha256": "52c0c37747913ac564460f3e16fe8b880f3e554a70c0caa84fc00aac2abcfd49",
+      "kind": "ENUM",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:computer-agent:computer-agent-dispatch-abandon-reason:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "NON_OBJECT"
+    },
+    {
+      "export_name": "ComputerAgentDispatchAbandonSchema",
+      "family": "computer-agent",
+      "json_schema_sha256": "d6edede1dcdc0c05011ae5ff6c3052537c17937e398f5d24b83defd24cad7df4",
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:computer-agent:computer-agent-dispatch-abandon:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "ComputerAgentDispatchAbandonmentSchema",
+      "family": "computer-agent",
+      "json_schema_sha256": "22f53f2865ded2effe14f658377ad4d8dd50b5892008df5f2d36f5fda1541d17",
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:computer-agent:computer-agent-dispatch-abandonment:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "ComputerAgentDispatchAcceptSchema",
+      "family": "computer-agent",
+      "json_schema_sha256": "0de146096c4c163790943a2e41ea4e38d965ac33b738d4f79a1c928f384273bb",
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:computer-agent:computer-agent-dispatch-accept:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "ComputerAgentDispatchAcceptanceSchema",
+      "family": "computer-agent",
+      "json_schema_sha256": "4eee0576b170fb5ebb02937c5c88ee70770a278e007b89052eafc1c960fead14",
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:computer-agent:computer-agent-dispatch-acceptance:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "ComputerAgentDispatchCreateSchema",
+      "family": "computer-agent",
+      "json_schema_sha256": "5e55966381c628d37f84ff32e12f13f7b6729ef21fbe87f5296051147ca88b1a",
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:computer-agent:computer-agent-dispatch-create:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "ComputerAgentDispatchDeclineReasonSchema",
+      "family": "computer-agent",
+      "json_schema_sha256": "943aad1183fecdc64ee0991a15da7ecac0130f9f8a301e147b78544825813503",
+      "kind": "ENUM",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:computer-agent:computer-agent-dispatch-decline-reason:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "NON_OBJECT"
+    },
+    {
+      "export_name": "ComputerAgentDispatchDeclineReceiptSchema",
+      "family": "computer-agent",
+      "json_schema_sha256": "a65d88d15e9fb693216fa217564484d5bd5d1c15f320999285f2ab96880baf9b",
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:computer-agent:computer-agent-dispatch-decline-receipt:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "ComputerAgentDispatchDeclineSchema",
+      "family": "computer-agent",
+      "json_schema_sha256": "2bf9d43d67e52360853b46dc6daedabb8f12a3ed2b4c322d48ec0cc9e2f700cf",
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:computer-agent:computer-agent-dispatch-decline:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "ComputerAgentDispatchOfferSchema",
+      "family": "computer-agent",
+      "json_schema_sha256": "69a88b6921f16fee41d2213baaaec531cf1b15ad6bdb3565ceb08c942aa68929",
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:computer-agent:computer-agent-dispatch-offer:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "ComputerAgentDispatchPullSchema",
+      "family": "computer-agent",
+      "json_schema_sha256": "5c4c12903198d2de94d3f467ccbb1d6bf1d69f88a531d770342eace30a31a46c",
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:computer-agent:computer-agent-dispatch-pull:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "ComputerAgentDispatchQualificationSchema",
+      "family": "computer-agent",
+      "json_schema_sha256": "0606c5a40f29e7de3fe2b7329df975e70a70e72ea8db65a2addf72bf352c3663",
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:computer-agent:computer-agent-dispatch-qualification:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "ComputerAgentDispatchReassignSchema",
+      "family": "computer-agent",
+      "json_schema_sha256": "2af4bfad16c4a824101bb7d51dd7b9d8dd017a8222f6ed1995313a872570bd1d",
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:computer-agent:computer-agent-dispatch-reassign:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "ComputerAgentDispatchReassignmentSchema",
+      "family": "computer-agent",
+      "json_schema_sha256": "d1fd845f2d72f32ef19221ece640ebb0479a14c7fe5187cc045ce4f56baddf91",
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:computer-agent:computer-agent-dispatch-reassignment:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "ComputerAgentDispatchRunRequestSchema",
+      "family": "computer-agent",
+      "json_schema_sha256": "9ca912f2dd3a24399913d48d11323abf06036369fa8feb6beb1bcec4717772b5",
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:computer-agent:computer-agent-dispatch-run-request:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "ComputerAgentDispatchSchema",
+      "family": "computer-agent",
+      "json_schema_sha256": "c027bbb945186adbc6402d63e7cd422bde9f5eeb4070afd1246c60f290f3416a",
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:computer-agent:computer-agent-dispatch:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "ComputerAgentDispatchStateSchema",
+      "family": "computer-agent",
+      "json_schema_sha256": "e6b62919d64979a190abe7c23b1a69e4dd2bc49f407062c030ac3095c479b2bb",
+      "kind": "ENUM",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:computer-agent:computer-agent-dispatch-state:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "NON_OBJECT"
+    },
+    {
+      "export_name": "ComputerAgentDispatchStatusSchema",
+      "family": "computer-agent",
+      "json_schema_sha256": "0c5799a741b6704d8e01a0ef12587034df4b010a80c3ca2a58f2a1355dcf8c7e",
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:computer-agent:computer-agent-dispatch-status:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "ComputerAgentPreferredDispatchCreateSchema",
+      "family": "computer-agent",
+      "json_schema_sha256": "24463536e020de50fcc11b7b276dace81c3a2cc8c0faf77e5c7fd2cfdb27f471",
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:computer-agent:computer-agent-preferred-dispatch-create:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "ComputerAgentPreferredDispatchReceiptSchema",
+      "family": "computer-agent",
+      "json_schema_sha256": "e9c4eb415cd17399f4919d861dcb5771ce374827d67847e02a151d796ee8b4ff",
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:computer-agent:computer-agent-preferred-dispatch-receipt:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "ComputerAgentPreferredDispatchSelectionSchema",
+      "family": "computer-agent",
+      "json_schema_sha256": "ffc25141253d5eeceeaa93cea8054eb0f645d6a166cdfe0b3e98c9e90b728929",
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:computer-agent:computer-agent-preferred-dispatch-selection:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "ComputerAgentPreferredDispatchSettlementSchema",
+      "family": "computer-agent",
+      "json_schema_sha256": "e7421884f5d21e019780079b8b164dc3e44c6336ece67ca6e6f758da6ab81e06",
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:computer-agent:computer-agent-preferred-dispatch-settlement:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "ComputerAgentQualificationBindingSchema",
+      "family": "computer-agent",
+      "json_schema_sha256": "04e8da312c681ceb73aae4cdfdb657aa3cfe54db45d784e01c2438de0ecd01a4",
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:computer-agent:computer-agent-qualification-binding:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "ComputerAgentQualificationChallengeSchema",
+      "family": "computer-agent",
+      "json_schema_sha256": "56e19173746986f9f19e754610d45f6238ab54c584be93e331409c00f4b39f26",
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:computer-agent:computer-agent-qualification-challenge:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "ComputerAgentQualificationConfirmationSchema",
+      "family": "computer-agent",
+      "json_schema_sha256": "c7a08d04d898eecdba1570a91067114f5651aa8e343302a3c60221a5e2e4c678",
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:computer-agent:computer-agent-qualification-confirmation:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "ComputerAgentQualificationIssueInputSchema",
+      "family": "computer-agent",
+      "json_schema_sha256": "abec57822a6347f95ed32198485d0163b141f61a349cbb16ebfea04e34a979ba",
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:computer-agent:computer-agent-qualification-issue-input:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "ComputerAgentQualificationStatusSchema",
+      "family": "computer-agent",
+      "json_schema_sha256": "f45c5d82b98db015dd457462a9ea83e618f29117a5788e21766e55c131ad5486",
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:computer-agent:computer-agent-qualification-status:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "ComputerAgentQualificationStatusValueSchema",
+      "family": "computer-agent",
+      "json_schema_sha256": "d33b4f5ffd4cbfde1d67eb4346e5cbd2ded287cd5ac985992a78f48eb0ed3215",
+      "kind": "ENUM",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:computer-agent:computer-agent-qualification-status-value:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "NON_OBJECT"
+    },
+    {
+      "export_name": "ComputerAgentQualificationTransportSchema",
+      "family": "computer-agent",
+      "json_schema_sha256": "f5ee5d39dce9987fcb9c5daffc4b218f46be90e63c2b67d832ef532283ab0466",
+      "kind": "ENUM",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:computer-agent:computer-agent-qualification-transport:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "NON_OBJECT"
+    },
+    {
+      "export_name": "ComputerAgentRouteCapabilityStateSchema",
+      "family": "computer-agent",
+      "json_schema_sha256": "c380306a9ab2dca51d1eb8ff777f0e6f86e6bb5d7dfd43e5d0b9adca170d37c2",
+      "kind": "ENUM",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:computer-agent:computer-agent-route-capability-state:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "NON_OBJECT"
+    },
+    {
+      "export_name": "ComputerAgentRouteConnectionStateSchema",
+      "family": "computer-agent",
+      "json_schema_sha256": "dabc5ba8a0e3d87917af26a76d8af0ab41e80f065b7b65e8f517f0a8cc2071c1",
+      "kind": "ENUM",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:computer-agent:computer-agent-route-connection-state:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "NON_OBJECT"
+    },
+    {
+      "export_name": "ComputerAgentRouteEntrySchema",
+      "family": "computer-agent",
+      "json_schema_sha256": "934bcb892ddfe2252f0b8917e65cc65eda61b57d81d51cd88c4ab31a323552d5",
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:computer-agent:computer-agent-route-entry:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "ComputerAgentRouteQualificationStateSchema",
+      "family": "computer-agent",
+      "json_schema_sha256": "d18572a6519ddb3d03b63b5af1f05cbce0b32b87a5674fd44a930200617dd6f6",
+      "kind": "UNION",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:computer-agent:computer-agent-route-qualification-state:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "NON_OBJECT"
+    },
+    {
+      "export_name": "ComputerAgentTaskKindSchema",
+      "family": "computer-agent",
+      "json_schema_sha256": "225fc9f458639b672b384b8aee53a06ec1a588c073ca3191a7a69cb194a695b6",
+      "kind": "ENUM",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:computer-agent:computer-agent-task-kind:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "NON_OBJECT"
+    },
+    {
+      "export_name": "ComputerAgentTransportCapabilitySchema",
+      "family": "computer-agent",
+      "json_schema_sha256": "282956e202a158063b00ec1f037a310e5efb1fb4dec471f44615fb6eb9d2246f",
+      "kind": "ENUM",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:computer-agent:computer-agent-transport-capability:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "NON_OBJECT"
+    },
+    {
+      "export_name": "ContractCompatibilityClassSchema",
+      "family": "registry",
+      "json_schema_sha256": "077b8117d8af9232ca529cab3a6ae748d582c80266ed25db45797cb8cc53e9e5",
+      "kind": "ENUM",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:registry:contract-compatibility-class:v3:g1",
+      "schema_version": 3,
       "structural_strictness": "NON_OBJECT"
     },
     {
       "export_name": "ContractCompatibilityEntrySchema",
       "family": "registry",
-      "json_schema_sha256": "8c83f6a96400e557fc364b748cc9b9861ea17ce46c10b82bdd02b68d19a0dc20",
+      "json_schema_sha256": "eeb36a04f5cfe4242e4bea8b0a07bc0589fc77daae261c37d8404014edca6518",
       "kind": "OBJECT",
       "schema_generation": 1,
-      "schema_id": "urn:eliotr:contracts:registry:contract-compatibility-entry:v2:g1",
-      "schema_version": 2,
+      "schema_id": "urn:eliotr:contracts:registry:contract-compatibility-entry:v3:g1",
+      "schema_version": 3,
       "structural_strictness": "CLOSED_OBJECT"
     },
     {
       "export_name": "ContractCompatibilityRegistrySchema",
       "family": "registry",
-      "json_schema_sha256": "cab4d5a7acc6176cf11691db326b13a15cf8c13e21992673522564c094cf1112",
+      "json_schema_sha256": "5fc39aad6974d9387945c9a6eccd9424152cadf368bfb49ee985ce72ff936328",
       "kind": "OBJECT",
       "schema_generation": 1,
-      "schema_id": "urn:eliotr:contracts:registry:contract-compatibility-registry:v2:g1",
-      "schema_version": 2,
+      "schema_id": "urn:eliotr:contracts:registry:contract-compatibility-registry:v3:g1",
+      "schema_version": 3,
       "structural_strictness": "CLOSED_OBJECT"
     },
     {
       "export_name": "ContractSchemaCorpusDocumentSchema",
       "family": "registry",
-      "json_schema_sha256": "948d91402d393eeaf097dd44998c1be52f096ad797ea325742385676c5f0eeb2",
+      "json_schema_sha256": "2a55b7746b725e53b63d14853982fba0acb79b5ff1675c48e602e32c9fd7d11f",
       "kind": "OBJECT",
       "schema_generation": 1,
-      "schema_id": "urn:eliotr:contracts:registry:contract-schema-corpus-document:v2:g1",
-      "schema_version": 2,
+      "schema_id": "urn:eliotr:contracts:registry:contract-schema-corpus-document:v3:g1",
+      "schema_version": 3,
       "structural_strictness": "CLOSED_OBJECT"
     },
     {
       "export_name": "ContractSchemaCorpusEntrySchema",
       "family": "registry",
-      "json_schema_sha256": "292167d6e9c1c54bde443164428d6d9f97264ec1eddbaf0ba9bfa13609c192e2",
+      "json_schema_sha256": "efce22f714dc865944ef921d911a22afc288c3693bf26efdea744b7dcf2ad140",
       "kind": "OBJECT",
       "schema_generation": 1,
-      "schema_id": "urn:eliotr:contracts:registry:contract-schema-corpus-entry:v2:g1",
-      "schema_version": 2,
+      "schema_id": "urn:eliotr:contracts:registry:contract-schema-corpus-entry:v3:g1",
+      "schema_version": 3,
       "structural_strictness": "CLOSED_OBJECT"
     },
     {
       "export_name": "ContractSchemaExportNameSchema",
       "family": "registry",
-      "json_schema_sha256": "7bc0057fe11c179ad2144c88640571040f9f73f226586b24496e3927e354e8e9",
+      "json_schema_sha256": "edfa347ad2a4196c8556909205adf2b4e4715203e0d02928b0a6008402f9b5d1",
       "kind": "SCALAR",
       "schema_generation": 1,
-      "schema_id": "urn:eliotr:contracts:registry:contract-schema-export-name:v2:g1",
-      "schema_version": 2,
+      "schema_id": "urn:eliotr:contracts:registry:contract-schema-export-name:v3:g1",
+      "schema_version": 3,
       "structural_strictness": "NON_OBJECT"
     },
     {
       "export_name": "ContractSchemaFamilySchema",
       "family": "registry",
-      "json_schema_sha256": "033ac4c9778f37b9ce9d9fa01d57099ea3bad1e3153fa82386bffdb901de6815",
+      "json_schema_sha256": "d20752b79b5a8170090398f0f84a52c68a5a9af896b6208a7d46f0e0f977b7b9",
       "kind": "ENUM",
       "schema_generation": 1,
-      "schema_id": "urn:eliotr:contracts:registry:contract-schema-family:v2:g1",
-      "schema_version": 2,
+      "schema_id": "urn:eliotr:contracts:registry:contract-schema-family:v3:g1",
+      "schema_version": 3,
       "structural_strictness": "NON_OBJECT"
     },
     {
       "export_name": "ContractSchemaIdSchema",
       "family": "registry",
-      "json_schema_sha256": "af3a3fa3200034355c54f37cd0ad6c2e2dfe84dcdf27d836961cdd040fe66ad0",
+      "json_schema_sha256": "04b189437875a503307770453647876807add2d3c7655f3fd3779b808a117dcf",
       "kind": "SCALAR",
       "schema_generation": 1,
-      "schema_id": "urn:eliotr:contracts:registry:contract-schema-id:v2:g1",
-      "schema_version": 2,
+      "schema_id": "urn:eliotr:contracts:registry:contract-schema-id:v3:g1",
+      "schema_version": 3,
       "structural_strictness": "NON_OBJECT"
     },
     {
       "export_name": "ContractSchemaIdentitySchema",
       "family": "registry",
-      "json_schema_sha256": "29661a760dcc64116ab4bd469125e28e6fe94376bff33889ecf849d8ec8c7251",
+      "json_schema_sha256": "2af571c77694331e71939a66dc8d5a23d8af33175683693c0ef13a2193dced53",
       "kind": "OBJECT",
       "schema_generation": 1,
-      "schema_id": "urn:eliotr:contracts:registry:contract-schema-identity:v2:g1",
-      "schema_version": 2,
+      "schema_id": "urn:eliotr:contracts:registry:contract-schema-identity:v3:g1",
+      "schema_version": 3,
       "structural_strictness": "CLOSED_OBJECT"
     },
     {
       "export_name": "ContractSchemaIndexDocumentSchema",
       "family": "registry",
-      "json_schema_sha256": "09a05bd25607e687ea22d95a4d7e3671c718ba9af9d0381cef4c87327eaf0df1",
+      "json_schema_sha256": "7e5b0b300476faeeac92b75f24992790165cf017466324b069adc7259317da56",
       "kind": "OBJECT",
       "schema_generation": 1,
-      "schema_id": "urn:eliotr:contracts:registry:contract-schema-index-document:v2:g1",
-      "schema_version": 2,
+      "schema_id": "urn:eliotr:contracts:registry:contract-schema-index-document:v3:g1",
+      "schema_version": 3,
       "structural_strictness": "CLOSED_OBJECT"
     },
     {
       "export_name": "ContractSchemaIndexEntrySchema",
       "family": "registry",
-      "json_schema_sha256": "7e4fd1db08188c46dd7054188f59939a14e78b3bfeb98cc3d5eb7712621e2624",
+      "json_schema_sha256": "5130efb10576fc8f5f0a95c012015a3885841a21c8f80f6878851fd1b9370fc1",
       "kind": "OBJECT",
       "schema_generation": 1,
-      "schema_id": "urn:eliotr:contracts:registry:contract-schema-index-entry:v2:g1",
-      "schema_version": 2,
+      "schema_id": "urn:eliotr:contracts:registry:contract-schema-index-entry:v3:g1",
+      "schema_version": 3,
       "structural_strictness": "CLOSED_OBJECT"
     },
     {
       "export_name": "ContractSchemaKindSchema",
       "family": "registry",
-      "json_schema_sha256": "b9abbf9b040e60f67790226a37eba1cd658548fe09b93d438647225f52b470b6",
+      "json_schema_sha256": "5e2b306c5c544acd7bbe255333b80117aa97f12d9e99fe5ddeb2d3d075f381bc",
       "kind": "ENUM",
       "schema_generation": 1,
-      "schema_id": "urn:eliotr:contracts:registry:contract-schema-kind:v2:g1",
-      "schema_version": 2,
+      "schema_id": "urn:eliotr:contracts:registry:contract-schema-kind:v3:g1",
+      "schema_version": 3,
       "structural_strictness": "NON_OBJECT"
     },
     {
       "export_name": "ContractStructuralStrictnessSchema",
       "family": "registry",
-      "json_schema_sha256": "b9d53d755970da46f7c85fcc02a31bc0d4f3e207ab20cfab57dfa84f828e31fc",
+      "json_schema_sha256": "0f1ef40a43738200370d084db9b995bb48eea9340fc0b6ec8a76d86836855637",
       "kind": "ENUM",
       "schema_generation": 1,
-      "schema_id": "urn:eliotr:contracts:registry:contract-structural-strictness:v2:g1",
-      "schema_version": 2,
+      "schema_id": "urn:eliotr:contracts:registry:contract-structural-strictness:v3:g1",
+      "schema_version": 3,
       "structural_strictness": "NON_OBJECT"
     },
     {
@@ -1031,6 +1451,56 @@
       "structural_strictness": "CLOSED_OBJECT"
     },
     {
+      "export_name": "ProjectComputerAgentRouteDisableSchema",
+      "family": "computer-agent",
+      "json_schema_sha256": "32fd14368c26dd55c125458fc2f48aa30d404e4400072d0bdc705481a7695c93",
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:computer-agent:project-computer-agent-route-disable:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "ProjectComputerAgentRoutePutSchema",
+      "family": "computer-agent",
+      "json_schema_sha256": "bbd9a020467a85022c2227b0dc7b80f498ac88fd46273960c3466e942c27e251",
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:computer-agent:project-computer-agent-route-put:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "ProjectComputerAgentRouteReadinessEntrySchema",
+      "family": "computer-agent",
+      "json_schema_sha256": "ce9a48efb661cd9dd3cf2562ae148ee4db395d72dfe86eeae92158c343b6b793",
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:computer-agent:project-computer-agent-route-readiness-entry:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "ProjectComputerAgentRouteReadinessSchema",
+      "family": "computer-agent",
+      "json_schema_sha256": "6700439c14ec427bf2c686ce98030a49966c57432010b34fff6073b945466662",
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:computer-agent:project-computer-agent-route-readiness:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "ProjectComputerAgentRouteSchema",
+      "family": "computer-agent",
+      "json_schema_sha256": "1bbcde150b966c64c0af7079e6b11ec10dee79812bad7f8273739bd3a42f3910",
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:computer-agent:project-computer-agent-route:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
       "export_name": "ProjectSchema",
       "family": "library",
       "json_schema_sha256": "86201296a4ca4c7d5943a10b06fc900c01966e86f13da5d2f29da80b63528307",
@@ -1141,12 +1611,82 @@
       "structural_strictness": "NON_OBJECT"
     },
     {
+      "export_name": "ResearchBranchAnalysisCheckpointSchema",
+      "family": "research",
+      "json_schema_sha256": "01797bdddce539484a555c06024c39b3f0582800211bffb8c8cf2b2c0fbefe74",
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:research:research-branch-analysis-checkpoint:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "ResearchBranchEvidenceItemSchema",
+      "family": "research",
+      "json_schema_sha256": "b352d3d1588cb8c97f0815deae345b3be542659d7f69b6223dc992e47c33e895",
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:research:research-branch-evidence-item:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "ResearchBranchReconciliationCheckpointSchema",
+      "family": "research",
+      "json_schema_sha256": "c806a60255daa79967e6bb5da1e87dcd3f78090dfa607feb49e2a57ea1635745",
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:research:research-branch-reconciliation-checkpoint:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "ResearchBranchResultSchema",
+      "family": "research",
+      "json_schema_sha256": "c8458fd03159cf706125fcb9b7e8eae7165b0decd02bb09845ef91e48014f3cc",
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:research:research-branch-result:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "ResearchBranchRoleSchema",
+      "family": "research",
+      "json_schema_sha256": "ea100e972738c878b10ddc744c20d3f9832a8ad14eddc9a72eaa011ec82ab0b1",
+      "kind": "ENUM",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:research:research-branch-role:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "NON_OBJECT"
+    },
+    {
+      "export_name": "ResearchComputerAgentRouteBindingSchema",
+      "family": "computer-agent",
+      "json_schema_sha256": "eeb35c07d2179a0dc3ca62dced0892ad1ed0c6c96985edde6fdfacb6d320e99e",
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:computer-agent:research-computer-agent-route-binding:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
       "export_name": "ResearchDebtSchema",
       "family": "research",
       "json_schema_sha256": "465cb72b094e0f2882f9b73d41cd4c29aae6a8f50058c2c5e4903f2d16f65f5d",
       "kind": "OBJECT",
       "schema_generation": 1,
       "schema_id": "urn:eliotr:contracts:research:research-debt:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "ResearchReadExtractCheckpointSchema",
+      "family": "research",
+      "json_schema_sha256": "900ae7a44a93aeb30f641ccea387a41280cd0781ecc0703e30bba72c3440091e",
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:research:research-read-extract-checkpoint:v1:g1",
       "schema_version": 1,
       "structural_strictness": "CLOSED_OBJECT"
     },
@@ -1513,6 +2053,6 @@
   ],
   "json_schema_dialect": "https://json-schema.org/draft/2020-12/schema",
   "protocol": "eliotr.contract-schema-index.v1",
-  "registry_generation": 6,
-  "schema_count": 151
+  "registry_generation": 7,
+  "schema_count": 205
 }
