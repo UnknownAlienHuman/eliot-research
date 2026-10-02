@@ -189,16 +189,19 @@ export async function matchesHistoricalOwnerPolicyAuthority(input: {
 }): Promise<boolean> {
   const policies = new Map(input.baseline_policies.map((policy) => [policy.source_namespace_id, policy]));
   const memberClosures: Record<string, string> = {};
+  const members: string[] = [];
   for (const source of input.sources) {
     const baseline = policies.get(source.revision.source_namespace_id);
     if (baseline === undefined) return false;
-    memberClosures[source.revision.source_revision_ref] = await historicalPolicyClosureRef({ policy: baseline,
+    const closure = await historicalPolicyClosureRef({ policy: baseline,
       authority: source.authority, revision: source.revision, title: source.title, kind: source.kind });
+    memberClosures[source.revision.source_revision_ref] = closure;
+    members.push(closure);
   }
   const expected = input.original.participant_generations["member-policy-closure"];
   if (expected === undefined || await memberPolicyClosureGeneration(memberClosures) !== expected) return false;
   const policyAuthorityRef = await historicalPolicyAuthorityRef({ access: input.access,
     policies: input.baseline_policies,
-    members: input.sources.map((source) => memberClosures[source.revision.source_revision_ref]!) });
+    members });
   return policyAuthorityRef === input.original.policy_authority_ref;
 }

@@ -395,7 +395,7 @@ async function reauthorizeHistoricalScope(
   const allowLeaseRefresh = client === undefined && input.access.client_class === "owner_pwa" &&
     ownerArtifactOrigin?.independentMachine !== true;
   const historyPrincipalRef = client?.original_principal_ref ?? input.access.principal_ref;
-  let owner: OwnerScopeAuthority | undefined;
+  const historicalOwner: { authority?: OwnerScopeAuthority } = {};
   const readHistoricalRecord = () => requireHistoricalScopeRecord(input.database, originalRef.data,
     original, ownerArtifactOrigin?.independentMachine === true, {
       principal_ref: historyPrincipalRef,
@@ -406,7 +406,7 @@ async function reauthorizeHistoricalScope(
   const requireHistoricalOrigin = async () => {
     leaseHistory = await readHistoricalRecord();
     if (leaseHistory !== null && allowLeaseRefresh) {
-      const currentOwner = owner;
+      const currentOwner = historicalOwner.authority;
       if (currentOwner === undefined) return;
       const originalAccess = leaseHistory.original_access;
       if (originalAccess === null) stale();
@@ -424,7 +424,7 @@ async function reauthorizeHistoricalScope(
     delegated?.original_client_class ?? input.access.client_class));
   await requireOriginalGrant();
   const currentOwner = delegated?.authority ?? createOwnerScopeAuthority(input.database, input.access, now);
-  owner = currentOwner;
+  historicalOwner.authority = currentOwner;
   if (profile.version === OWNER_RESEARCH_SCOPE_PROFILE.version) await currentOwner.exhaustiveRequireReadPolicy();
   else await currentOwner.requireReadPolicy();
   const historicalSources = await currentOwner.exhaustiveSources(original.member_source_revision_refs);
@@ -450,7 +450,7 @@ async function reauthorizeHistoricalScope(
   await createD1ScopeProfilePort(input.database).recordBinding(fresh, profile);
   if (delegated !== undefined && client !== undefined) {
     await issueClientArtifactScopeGrant({ database: input.database, context: client.access, snapshot: fresh,
-      lease: delegated.lease, sources: () => owner.exhaustiveSources(fresh.member_source_revision_refs),
+      lease: delegated.lease, sources: () => currentOwner.exhaustiveSources(fresh.member_source_revision_refs),
       require_current: (scope) => scopes.requireCurrent(scope), now }, client.origin);
   } else if (profile.version === OWNER_RESEARCH_SCOPE_PROFILE.version) await currentOwner.exhaustiveGrant(fresh);
   else await currentOwner.grant(fresh);

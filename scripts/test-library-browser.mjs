@@ -445,6 +445,22 @@ try {
   const visible = (selector) => evaluate(`(() => { const node = document.querySelector(${JSON.stringify(selector)}); return Boolean(node && !node.hidden && node.getClientRects().length && getComputedStyle(node).display !== "none"); })()`);
   const assertVisible = async (selector, label) => assert.equal(await visible(selector), true, `${label}: control is visible`);
   const click = async (selector) => { await assertVisible(selector, `click ${selector}`); return evaluate(`document.querySelector(${JSON.stringify(selector)}).click()`); };
+  const researchSectionDiagnostic = async () => ({
+    fixturePaths: researchScreen.state.seen.filter((request) => request.includes("/api/v1/research/artifact/")).slice(-20),
+    dom: await evaluate(`(() => {
+      const safeText = (value) => (value ?? "").trim().slice(0, 160);
+      const buttons = (selector) => [...document.querySelectorAll(selector)].map((button) => ({
+        text: safeText(button.textContent), disabled: button.disabled, hidden: button.hidden,
+      }));
+      return {
+        status: safeText(document.querySelector("#research-run [role=status]")?.textContent),
+        sectionError: safeText(document.querySelector("#research-run .research-section-error")?.textContent),
+        resultButtons: buttons("#research-run [data-run-result] button"),
+        sectionButtons: buttons("#research-run .research-report-section .research-report-actions > button"),
+        sectionBodyPresent: Boolean(document.querySelector("#research-run .research-section-body")),
+      };
+    })()`),
+  });
   const assertView = async (view, navTarget, focused = true) => { const state = await evaluate(`(() => { const section = document.querySelector(${JSON.stringify(`[data-workspace-view="${view}"]`)}); const views = [...document.querySelectorAll("[data-workspace-view]")]; return { visible: Boolean(section && !section.hidden && section.getClientRects().length), count: views.filter((item) => !item.hidden && item.getClientRects().length).length, active: document.querySelector(${JSON.stringify(`[data-nav-target="${navTarget}"]` )})?.getAttribute("aria-current"), focused: document.activeElement === section }; })()`); assert.deepEqual(state, { visible: true, count: 1, active: "page", focused }, `Workspace ${view}`); };
   const openSources = async (label) => { await wait('Boolean(document.querySelector("[data-nav-target=\\"#library\\"]"))', `${label}: navigation`); await click('[data-nav-target="#library"]'); if (!(await visible("#library [data-first]"))) await click("[data-source-chooser-toggle]"); if (!(await visible("#library [data-source]"))) await click("#library [data-first]"); await wait('Boolean(document.querySelector("#library [data-source]"))', `${label}: visible source controls`); };
   const openBundle = async () => { if (!(await evaluate('document.querySelector("#bundle-import details")?.open'))) await click("#bundle-import details > summary"); await assertVisible('input[name="bundle"]', "bundle input"); await assertVisible('#bundle-import button[type="submit"]', "bundle submit"); };
@@ -589,8 +605,13 @@ try {
   await click("#research-run [data-recover]");
   await wait('document.querySelector("#research-run [role=status]")?.textContent.includes("No answer has been generated")', "Research run handle recovery");
   await launchDraft("Initial draft");
-  await click('#research-run [data-run-result] button');
-  await wait(`document.querySelector("#research-run .research-section-body")?.textContent === ${JSON.stringify(draftSectionText)}`, "Draft section open");
+  await click('#research-run .research-report-section .research-report-actions > button');
+  try {
+    await wait(`document.querySelector("#research-run .research-section-body")?.textContent === ${JSON.stringify(draftSectionText)}`, "Draft section open");
+  } catch (error) {
+    const diagnostic = await researchSectionDiagnostic().catch((diagnosticError) => ({ diagnosticError: String(diagnosticError) }));
+    throw new Error(`${error instanceof Error ? error.message : String(error)}; section diagnostic=${JSON.stringify(diagnostic)}`, { cause: error });
+  }
   assert.ok(researchScreen.state.seen.includes(`POST ${draftSectionPath}/reauthorize`),
     "The default mounted driver routes the exact report-section reauthorization path");
   assert.equal(await evaluate('document.querySelector("#research-run .research-section-body").tagName'), "PRE");
@@ -606,14 +627,14 @@ try {
   await wait('document.querySelector("#research-run [data-run-result]").hidden && document.querySelector("#research-run [data-workflow-id]").value === ""', "Draft generation clearing");
   await launchDraft("Session clearing");
   researchScreen.state.holdSection = true;
-  await click('#research-run [data-run-result] button');
+  await click('#research-run .research-report-section .research-report-actions > button');
   await until(() => Boolean(researchScreen.state.pendingSection), "Delayed draft section reauthorization");
   await evaluate('window.dispatchEvent(new Event("eliotr:authorization-cleared"))');
   await wait('document.querySelector("#research-run [data-run-result]").hidden && document.querySelector("#research-run [data-workflow-id]").value === ""', "Draft session clearing");
   researchScreen.release(); researchScreen.state.holdSection = false; await delay(100);
   assert.equal(await evaluate('document.querySelector("#research-run .research-section-body")'), null);
   await launchDraft("Offline clearing");
-  await click('#research-run [data-run-result] button');
+  await click('#research-run .research-report-section .research-report-actions > button');
   await wait(`document.querySelector("#research-run .research-section-body")?.textContent === ${JSON.stringify(draftSectionText)}`, "Second draft section open");
   await evaluate('window.dispatchEvent(new Event("offline"))');
   await wait('document.querySelector("#research-run [data-run-result]").hidden && document.querySelector("#research-run [data-workflow-id]").value === ""', "Draft offline clearing");
