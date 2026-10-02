@@ -205,8 +205,9 @@ function assertRequiredClaimKinds(contract: ArtifactSectionContract, claims: Art
   if (contract.required_claim_kinds.some((kind) => !kinds.has(kind))) fail("normalized synthesis omitted a required claim kind");
 }
 
-function residency(template: ObjectResidencyKey): ObjectResidencyKey {
-  return ObjectResidencyKeySchema.omit({ content_digest: true }).parse(template) as ObjectResidencyKey;
+function residency(template: ObjectResidencyKey): Omit<ObjectResidencyKey, "content_digest"> {
+  const { content_digest: _digest, ...domains } = ObjectResidencyKeySchema.parse(template);
+  return domains;
 }
 
 /**
@@ -233,7 +234,7 @@ export function createArtifactCowSectionProducer(dependencies: ArtifactCowSectio
         !sameRef(parent.freeze.scope_snapshot_ref, parent.spec.scope_snapshot_ref) ||
         dependencies.attempt.request.spec_digest !== parent.revision.spec_digest ||
         !sameRef(dependencies.attempt.request.evidence_freeze_ref, parent.freeze.freeze_ref) ||
-        !sameRef(dependencies.attempt.request.scope_snapshot_ref, parent.spec.scope_snapshot_ref)) {
+        !sameRef(dependencies.model_authority.scope_snapshot_ref, dependencies.attempt.request.scope_snapshot_ref)) {
       fail("COW model producer is not bound to the exact spec, freeze and scope");
     }
     const manifest = await requireReferenceManifest(parent);
@@ -388,7 +389,7 @@ export function createArtifactCowSectionProducer(dependencies: ArtifactCowSectio
       ...section,
       verification_receipt_ref: verified.verification_receipt_ref,
     });
-    const template = ObjectResidencyKeySchema.omit({ content_digest: true }).parse(previous.residency);
+    const template = residency(previous.residency);
     const bodyResidency = { ...template, content_digest: { algorithm: "sha256" as const, digest: bodySha } };
     return Object.freeze({
       section: compiledSection,

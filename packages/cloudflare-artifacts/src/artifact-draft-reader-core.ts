@@ -424,6 +424,13 @@ export async function readArtifactDraftCowSnapshotInternal(
   return readArtifactDraftCore(input, artifactRef, undefined, false, true) as Promise<ArtifactDraftCowSnapshot | null>;
 }
 
+export async function readArtifactDraftCowSnapshotReauthorizedInternal(
+  input: ArtifactDraftReauthorizationCoreInput,
+  artifactRef: VersionedRef,
+): Promise<ArtifactDraftReauthorizedCoreRead<ArtifactDraftCowSnapshot> | null> {
+  return readArtifactDraftCore(input, artifactRef, undefined, false, true) as Promise<ArtifactDraftReauthorizedCoreRead<ArtifactDraftCowSnapshot> | null>;
+}
+
 export async function readArtifactDraftReauthorizedInternal(
   input: ArtifactDraftReauthorizationSectionReadInput,
   artifactRef: VersionedRef,

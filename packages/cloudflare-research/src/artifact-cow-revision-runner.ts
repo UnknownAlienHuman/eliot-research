@@ -33,6 +33,8 @@ export interface RunArtifactCowRevisionInput {
     readonly createIntent: ArtifactCowPorts["createIntent"];
     readonly prepare: ArtifactCowPorts["prepare"];
   };
+  /** Exact authorized child readback; runs before any producer or model construction. */
+  readonly readFinalizedChild: () => Promise<ArtifactSectionReviseAttempt["draft"] | null>;
   readonly now?: () => number;
 }
 
@@ -58,20 +60,38 @@ function outputEqual(
  * the immutable artifact COW DRAFT writer, and the final W2 readback transition.
  * There is deliberately no acceptance transition in this runner.
  */
-export async function runArtifactCowRevision(input: RunArtifactCowRevisionInput): Promise<ArtifactSectionReviseAttempt> {
+/** Reconcile a durable child effect before preparing any model or section producer. */
+export async function reconcileArtifactCowRevision(input: Pick<RunArtifactCowRevisionInput,
+  "requireCurrent" | "attempt" | "workflow" | "readFinalizedChild" | "now">): Promise<ArtifactSectionReviseAttempt> {
   await input.requireCurrent();
   const initial = await input.workflow.read(input.attempt.request.operation_id);
   if (initial === null || initial.attempt_ref !== input.attempt.attempt_ref || initial.request_sha256 !== input.attempt.request_sha256 ||
       initial.request_json !== input.attempt.request_json || !sameRef(initial.request.artifact_ref, input.attempt.request.artifact_ref)) {
     fail("persisted W2 COW attempt changed before execution");
   }
-  if (initial.state === "COMMITTED") {
-    await input.requireCurrent();
-    return initial;
-  }
-  if (initial.state !== "STARTED" && initial.state !== "OUTPUT_RECORDED") {
+  if (initial.state !== "STARTED" && initial.state !== "OUTPUT_RECORDED" && initial.state !== "COMMITTED") {
     fail("COW W2 attempt is not effect eligible");
   }
+  if (initial.state === "OUTPUT_RECORDED" || initial.state === "COMMITTED") {
+    const child = await input.readFinalizedChild();
+    if (child !== null && child !== undefined) {
+      if (!sameRef(child.artifact_ref, { id: initial.request.artifact_ref.id, revision: initial.request.artifact_ref.revision + 1 }) ||
+          !/^[a-f0-9]{64}$/u.test(child.manifest_sha256)) fail("finalized child is not the exact admitted revision");
+      await input.requireCurrent();
+      const committed = await input.workflow.commitReadback({ operation_id: initial.request.operation_id,
+        attempt_ref: initial.attempt_ref, request_sha256: initial.request_sha256, draft: child,
+        created_at: new Date((input.now ?? Date.now)()).toISOString() });
+      await input.requireCurrent();
+      return committed;
+    }
+    if (initial.state === "COMMITTED") fail("committed COW child is unavailable");
+  }
+  return initial;
+}
+
+export async function runArtifactCowRevision(input: RunArtifactCowRevisionInput): Promise<ArtifactSectionReviseAttempt> {
+  const initial = await reconcileArtifactCowRevision(input);
+  if (initial.state === "COMMITTED") return initial;
 
   const sectionProducer = createArtifactCowSectionProducer({
     ...input.producer,

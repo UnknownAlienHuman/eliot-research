@@ -3,7 +3,7 @@ import { canonicalDigest, canonicalJson } from "@eliotr/platform-cloudflare";
 import { type NavigationReadAuthority } from "@eliotr/cloudflare-evidence";
 import { createArtifactSectionReviseWorkflowStore, type ArtifactSectionReviseAttempt } from "@eliotr/cloudflare-workflows";
 import { ArtifactDraftError, createArtifactDraftStore, type ArtifactCowPorts, type ArtifactDraftAdmissionPort,
-  type PrepareArtifactDraftInput } from "@eliotr/cloudflare-artifacts";
+  readReauthorizedArtifactDraftCowSnapshot, type PrepareArtifactDraftInput } from "@eliotr/cloudflare-artifacts";
 
 function deny(message: string): never {
   throw new ArtifactDraftError("ARTIFACT_DRAFT_EFFECT_UNCERTAIN", message);
@@ -120,5 +120,39 @@ export async function createArtifactCowDraftMaterialization(input: {
     };
     return createArtifactDraftStore(database, input.work_bucket, admission).prepare(draft);
   };
-  return Object.freeze({ createIntent, prepare, requireCurrent });
+  const readFinalizedChild = async () => {
+    const current = await requireCurrent();
+    if (current.state !== "OUTPUT_RECORDED" && current.state !== "COMMITTED") return null;
+    const reserved = await database.prepare(
+      "SELECT state,artifact_id,artifact_revision,cow_operation_id,cow_attempt_ref,cow_request_sha256 FROM artifact_draft_reservation WHERE intent_id=?1 AND intent_revision=1 LIMIT 1",
+    ).bind(intent.intent_ref.id).first<{ state: string; artifact_id: string; artifact_revision: number;
+      cow_operation_id: string; cow_attempt_ref: string; cow_request_sha256: string }>();
+    if (reserved === null || reserved.state !== "FINALIZED") return null;
+    if (reserved.artifact_id !== childRef.id || reserved.artifact_revision !== childRef.revision ||
+        reserved.cow_operation_id !== attempt.request.operation_id || reserved.cow_attempt_ref !== attempt.attempt_ref ||
+        reserved.cow_request_sha256 !== attempt.request_sha256) deny("finalized child differs from its exact COW attempt");
+    const binding = await database.prepare(
+      "SELECT b.manifest_sha256,b.spec_ref_id,b.spec_ref_revision,b.scope_snapshot_id,b.scope_snapshot_revision " +
+      "FROM artifact_draft_binding b JOIN outbox o ON (o.intent_id,o.intent_revision)=(b.intent_id,b.intent_revision) " +
+      "WHERE b.intent_id=?1 AND b.intent_revision=1 AND b.artifact_id=?2 AND b.revision=?3 AND o.payload_sha256=b.manifest_sha256",
+    ).bind(intent.intent_ref.id, childRef.id, childRef.revision).first<{ manifest_sha256: string;
+      spec_ref_id: string; spec_ref_revision: number; scope_snapshot_id: string; scope_snapshot_revision: number }>();
+    if (binding === null) deny("finalized child has no exact manifest/outbox authority");
+    const grant = await navigation.current();
+    const snapshot = await readReauthorizedArtifactDraftCowSnapshot({ database, work_bucket: input.work_bucket,
+      artifact_ref: childRef, access: navigation.access, reauthorization: { navigation, authorization: grant } });
+    const parent = await database.prepare(
+      "SELECT spec_ref_id,spec_ref_revision,scope_snapshot_id,scope_snapshot_revision FROM artifact_draft_binding WHERE artifact_id=?1 AND revision=?2",
+    ).bind(attempt.request.artifact_ref.id, attempt.request.artifact_ref.revision).first<Record<string, unknown>>();
+    if (snapshot === null || parent === null || snapshot.revision.spec_digest !== attempt.request.spec_digest ||
+        canonicalJson(snapshot.revision.evidence_freeze_ref) !== canonicalJson(attempt.request.evidence_freeze_ref) ||
+        binding.spec_ref_id !== parent.spec_ref_id || binding.spec_ref_revision !== parent.spec_ref_revision ||
+        binding.scope_snapshot_id !== parent.scope_snapshot_id || binding.scope_snapshot_revision !== parent.scope_snapshot_revision ||
+        await canonicalDigest({ spec: snapshot.spec, revision: snapshot.revision }) !== binding.manifest_sha256) {
+      deny("finalized child changed immutable parent provenance or manifest bytes");
+    }
+    await requireCurrent();
+    return { artifact_ref: childRef, manifest_sha256: binding.manifest_sha256 };
+  };
+  return Object.freeze({ createIntent, prepare, requireCurrent, readFinalizedChild });
 }

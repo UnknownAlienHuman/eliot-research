@@ -70,6 +70,7 @@ export const ROUTES: readonly RouteDefinition[] = [
   { method: "POST", path: "/api/v1/research/navigation/expand", operation: "research.navigation.expand", auth: "owner", maximum_request_bytes: 131072, response_mode: "json" },
   { method: "GET", path: "/api/v1/research/trace/:ref", operation: "research.trace", auth: "owner", maximum_request_bytes: 0, response_mode: "json" },
   { method: "GET", path: "/api/v1/research/artifact/:ref", operation: "research.artifact", auth: "owner_or_service", maximum_request_bytes: 0, response_mode: "json" },
+  { method: "POST", path: "/api/v1/research/artifact/:ref/sections/:section_id/revise", operation: "research.artifact.section.revise", auth: "owner", maximum_request_bytes: 2048, response_mode: "json" },
   { method: "POST", path: "/api/v1/research/artifact/:ref/accept", operation: "research.artifact.accept", auth: "owner", maximum_request_bytes: 2048, response_mode: "json" },
   { method: "GET", path: "/api/v1/research/artifact/:ref/publication", operation: "research.artifact.publication", auth: "owner", maximum_request_bytes: 0, response_mode: "json" },
   { method: "POST", path: "/api/v1/research/artifact/:ref/reauthorize", operation: "research.artifact.reauthorize", auth: "owner_or_service", maximum_request_bytes: 0, response_mode: "json" },

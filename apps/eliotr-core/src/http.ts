@@ -44,7 +44,8 @@ import {
   parseArtifactRef,
   parseArtifactSectionRef,
 } from "./artifact-draft-http.js";
-import { readAcceptArtifactRequest } from "./artifact-product-http.js";
+import { readAcceptArtifactRequest, readReviseArtifactSectionRequest } from "./artifact-product-http.js";
+import { reviseOwnerArtifactSection } from "./artifact-section-revise.js";
 import {
   dispatchIngestOperation,
 } from "./ingest-http.js";
@@ -590,6 +591,15 @@ async function dispatch(
       const ref = match.params.ref;
       if (ref === undefined) throw new ArtifactHttpInputError("artifact reference path parameter is missing");
       return apiResult(request, env, await application.services.semantic.artifact(context, parseArtifactRef(ref)));
+    }
+    case "research.artifact.section.revise": {
+      requireNoQuery(url);
+      const ref = match.params.ref;
+      const sectionId = match.params.section_id;
+      if (ref === undefined || sectionId === undefined) throw new ArtifactHttpInputError("artifact or section identity is missing");
+      const result = await reviseOwnerArtifactSection(env, context,
+        await readReviseArtifactSectionRequest(request, ref, sectionId, match.route.maximum_request_bytes));
+      return apiResult(request, env, result, result.disposition === "CREATED" ? 201 : 200);
     }
     case "research.artifact.accept": {
       requireNoQuery(url);
