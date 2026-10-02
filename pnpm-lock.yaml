@@ -175,12 +175,27 @@ importers:
       '@eliotr/contracts':
         specifier: workspace:*
         version: link:../contracts
+      '@eliotr/domain':
+        specifier: workspace:*
+        version: link:../domain
       '@eliotr/platform-cloudflare':
         specifier: workspace:*
         version: link:../platform-cloudflare
 
+  packages/cloudflare-backup:
+    dependencies:
+      '@eliotr/backup-o2':
+        specifier: workspace:*
+        version: link:../backup-o2
+      '@eliotr/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+
   packages/cloudflare-erasure:
     dependencies:
+      '@eliotr/backup-o2':
+        specifier: workspace:*
+        version: link:../backup-o2
       '@eliotr/contracts':
         specifier: workspace:*
         version: link:../contracts
@@ -404,6 +419,9 @@ importers:
       '@eliotr/backup-o2':
         specifier: workspace:*
         version: link:../backup-o2
+      '@eliotr/cloudflare-backup':
+        specifier: workspace:*
+        version: link:../cloudflare-backup
       '@eliotr/contracts':
         specifier: workspace:*
         version: link:../contracts

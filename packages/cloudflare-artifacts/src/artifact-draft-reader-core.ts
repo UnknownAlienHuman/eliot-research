@@ -41,6 +41,7 @@ import {
 } from "@eliotr/platform-cloudflare";
 
 import { hasDelegatedArtifactReadAuthority, hasOwnerArtifactReadAuthority } from "./artifact-draft-read-authority.js";
+import type { ArtifactDraftReferencedObjectInput, ArtifactDraftSectionInput } from "./artifact-draft-types.js";
 
 const MANIFEST_PREFIX = "artifact-draft/manifest";
 const SECTION_PREFIX = "artifact-draft/section";
@@ -118,6 +119,15 @@ export interface ArtifactDraftSectionRead {
   readonly body_sha256: string;
   readonly size_bytes: number;
   readonly body: Uint8Array;
+}
+
+/** Exact, fully byte-verified DRAFT snapshot used by the internal COW writer. */
+export interface ArtifactDraftCowSnapshot {
+  readonly spec: ArtifactSpec;
+  readonly revision: ArtifactRevision;
+  readonly sections: readonly ArtifactDraftSectionInput[];
+  readonly referenced_objects: readonly ArtifactDraftReferencedObjectInput[];
+  readonly manifest_residency: ObjectResidencyKey;
 }
 
 export interface ArtifactDraftReauthorizedCoreRead<T> {
@@ -407,6 +417,20 @@ export async function readArtifactDraftInternal(
   return readArtifactDraftCore(input, artifactRef, sectionRef, citations) as Promise<ArtifactRevision | ArtifactDraftSectionRead | ArtifactDraftSectionCitationsRead | null>;
 }
 
+export async function readArtifactDraftCowSnapshotInternal(
+  input: ArtifactDraftReadInput,
+  artifactRef: VersionedRef,
+): Promise<ArtifactDraftCowSnapshot | null> {
+  return readArtifactDraftCore(input, artifactRef, undefined, false, true) as Promise<ArtifactDraftCowSnapshot | null>;
+}
+
+export async function readArtifactDraftCowSnapshotReauthorizedInternal(
+  input: ArtifactDraftReauthorizationCoreInput,
+  artifactRef: VersionedRef,
+): Promise<ArtifactDraftReauthorizedCoreRead<ArtifactDraftCowSnapshot> | null> {
+  return readArtifactDraftCore(input, artifactRef, undefined, false, true) as Promise<ArtifactDraftReauthorizedCoreRead<ArtifactDraftCowSnapshot> | null>;
+}
+
 export async function readArtifactDraftReauthorizedInternal(
   input: ArtifactDraftReauthorizationSectionReadInput,
   artifactRef: VersionedRef,
@@ -434,13 +458,14 @@ type ArtifactDraftCoreInput =
   | ArtifactDraftReauthorizationCoreInput
   | ArtifactDraftReauthorizationSectionReadInput;
 
-type ArtifactDraftCoreValue = ArtifactRevision | ArtifactDraftSectionRead | ArtifactDraftSectionCitationsRead;
+type ArtifactDraftCoreValue = ArtifactRevision | ArtifactDraftSectionRead | ArtifactDraftSectionCitationsRead | ArtifactDraftCowSnapshot;
 
 async function readArtifactDraftCore(
   input: ArtifactDraftCoreInput,
   artifactRef: VersionedRef,
   sectionRef?: VersionedRef,
   citations = false,
+  includeCowObjects = false,
 ): Promise<ArtifactDraftCoreValue | ArtifactDraftReauthorizedCoreRead<ArtifactDraftCoreValue> | null> {
   const reauthorization = "reauthorization" in input ? input.reauthorization : undefined;
   const workflowOperation = "workflow_operation_id" in input ? input.workflow_operation_id : undefined;
@@ -688,7 +713,7 @@ async function readArtifactDraftCore(
       store,
       row,
       expectedObject,
-      selectedSectionValue !== undefined && expectedObject.object_kind === "SECTION_BODY" &&
+      includeCowObjects || selectedSectionValue !== undefined && expectedObject.object_kind === "SECTION_BODY" &&
         expectedObject.object_ref === selectedSectionValue.body_object_ref && expectedObject.section_ordinal === selectedSectionOrdinal ||
         citations && selectedSectionValue !== undefined &&
           (expectedObject.object_ref === selectedSectionValue.verification_receipt_ref || expectedObject.object_ref === parsedManifest.revision.dependency_manifest_ref),
@@ -797,6 +822,45 @@ async function readArtifactDraftCore(
       body_sha256: selectedSectionValue.body_sha256,
       size_bytes: body.bytes.byteLength,
       body: new Uint8Array(ownedBody),
+    });
+  }
+  if (includeCowObjects) {
+    const sections: ArtifactDraftSectionInput[] = parsedManifest.revision.sections.map((section, ordinal) => {
+      const body = storedByRef.get(section.body_object_ref);
+      if (body?.bytes === undefined || body.row.section_ordinal !== ordinal || body.sha256 !== section.body_sha256) {
+        fail("ARTIFACT_DRAFT_READ_INTEGRITY", 409, "COW section body is unavailable or inconsistent");
+      }
+      return {
+        section,
+        bytes: new Uint8Array(body.bytes),
+        residency: ObjectResidencyKeySchema.parse(body.residency),
+      };
+    });
+    const referenceRefs = new Map<string, ExpectedObject["object_kind"]>();
+    referenceRefs.set(parsedManifest.revision.dependency_manifest_ref, "DEPENDENCY_MANIFEST");
+    for (const section of parsedManifest.revision.sections) {
+      referenceRefs.set(section.evidence_ledger_ref, "EVIDENCE_LEDGER");
+      referenceRefs.set(section.verification_receipt_ref, "VERIFICATION_RECEIPT");
+    }
+    for (const ref of Object.values(parsedManifest.revision.deterministic_export_refs)) referenceRefs.set(ref, "EXPORT");
+    const referenced_objects: ArtifactDraftReferencedObjectInput[] = [...referenceRefs].map(([ref, kind]) => {
+      const stored = storedByRef.get(ref);
+      if (stored?.bytes === undefined || stored.row.object_kind !== kind) {
+        fail("ARTIFACT_DRAFT_READ_INTEGRITY", 409, "COW referenced object is unavailable or inconsistent");
+      }
+      return {
+        object_ref: ref,
+        object_kind: kind as ArtifactDraftReferencedObjectInput["object_kind"],
+        bytes: new Uint8Array(stored.bytes),
+        residency: ObjectResidencyKeySchema.parse(stored.residency),
+      };
+    });
+    return wrapResult({
+      spec: parsedManifest.spec,
+      revision: parsedManifest.revision,
+      sections,
+      referenced_objects,
+      manifest_residency: ObjectResidencyKeySchema.parse(manifestObject.residency),
     });
   }
   return wrapResult(parsedManifest.revision);

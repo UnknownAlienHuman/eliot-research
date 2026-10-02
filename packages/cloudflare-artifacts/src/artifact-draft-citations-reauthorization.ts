@@ -277,6 +277,68 @@ function sourceFingerprint(
   )));
 }
 
+/** Resolve an immutable saved handle under separate current owner authority.
+ * The original handle is provenance; only the fresh resolution grants byte access. */
+export async function resolveReauthorizedArtifactEvidence(input: Pick<ArtifactDraftCitationReauthorizationInput,
+  "database" | "search_database" | "evidence_bucket" | "access" | "current_navigation" | "current_authorization" | "now"> & {
+  readonly original_handle_ref: VersionedRef;
+  readonly original_scope_snapshot_ref: VersionedRef;
+  readonly expected_excerpt_sha256: string;
+}): Promise<{ readonly original_handle: EvidenceHandle; readonly resolved: ResolvedEvidence }> {
+  const access = accessSnapshot(input.access);
+  const navigation = input.current_navigation;
+  const authorization = authorizationSnapshot(input.current_authorization);
+  if (canonicalEvidenceJson(access) !== canonicalEvidenceJson(navigation.access)) {
+    fail("ARTIFACT_DRAFT_READ_DENIED", 403, "saved evidence access differs from current authorization");
+  }
+  let original: EvidenceHandle | null;
+  try { original = await loadEvidenceHandle(input.database, parseRef(input.original_handle_ref, "saved handle")); }
+  catch (error) { mapEvidenceError(error); }
+  if (original === null || original.terminal_state !== "LIVE" ||
+      !exactEvidenceRef(original.scope_snapshot_ref, input.original_scope_snapshot_ref) ||
+      original.excerpt_sha256 !== input.expected_excerpt_sha256) {
+    fail("ARTIFACT_DRAFT_READ_STALE", 410, "saved evidence handle differs from immutable provenance");
+  }
+  const beforeGrant = await navigation.current();
+  if (canonicalEvidenceJson(beforeGrant) !== canonicalEvidenceJson(authorization)) {
+    fail("ARTIFACT_DRAFT_READ_STALE", 410, "saved evidence authorization changed");
+  }
+  const beforeSources = await navigation.sources([original.source_revision_ref], beforeGrant);
+  const source = beforeSources[0];
+  if (beforeSources.length !== 1 || source === undefined || source.source_revision_ref !== original.source_revision_ref ||
+      source.source_owner_generation !== original.source_owner_generation || source.source_namespace_id !== original.source_namespace_id ||
+      source.object_residency_key_digest !== original.object_residency_key_digest) {
+    fail("ARTIFACT_DRAFT_READ_STALE", 410, "saved evidence source authority changed");
+  }
+  const scopeRef = { id: navigation.scope.snapshot_id, revision: navigation.scope.revision };
+  const resolver = createCloudflareEvidenceResolver({
+    authority: createD1EvidenceAuthorityPort({ core_database: input.database, search_database: input.search_database,
+      ...(input.now === undefined ? {} : { now: input.now }) }),
+    content: createR2EvidenceContentPort({ evidence_bucket: input.evidence_bucket }),
+    ...(input.now === undefined ? {} : { now: input.now }),
+  });
+  const candidate = await pinnedCandidate(input.search_database, original);
+  let fresh: ResolvedEvidence;
+  try { fresh = await resolver.resolveCandidate({ candidate, scope_snapshot_ref: scopeRef, access }); }
+  catch (error) { mapEvidenceError(error); }
+  const bytes = evidenceUtf8Bytes(fresh.exact_excerpt);
+  if (bytes.byteLength !== original.excerpt_byte_length || await evidenceSha256Bytes(bytes) !== original.excerpt_sha256) {
+    fail("ARTIFACT_DRAFT_READ_INTEGRITY", 409, "fresh evidence bytes differ from saved evidence");
+  }
+  requireFreshEvidence(original, fresh, scopeRef, source, authorization, access, navigation.timestamp());
+  const afterGrant = await navigation.current();
+  if (canonicalEvidenceJson(afterGrant) !== canonicalEvidenceJson(authorization) ||
+      sourceFingerprint(await navigation.sources([original.source_revision_ref], afterGrant)) !== sourceFingerprint(beforeSources)) {
+    fail("ARTIFACT_DRAFT_READ_STALE", 410, "saved evidence authority changed during read");
+  }
+  const settledOriginal = await loadEvidenceHandle(input.database, original.handle_ref);
+  if (settledOriginal === null || settledOriginal.terminal_state !== "LIVE" ||
+      canonicalEvidenceJson(settledOriginal) !== canonicalEvidenceJson(original)) {
+    fail("ARTIFACT_DRAFT_READ_STALE", 410, "saved evidence became terminal or changed during read");
+  }
+  return { original_handle: original, resolved: fresh };
+}
+
 export async function readReauthorizedArtifactDraftSectionCitations(
   rawInput: ArtifactDraftCitationReauthorizationInput,
 ): Promise<ArtifactDraftSectionCitationsReauthorizedRead | null> {
@@ -343,49 +405,13 @@ export async function readReauthorizedArtifactDraftSectionCitations(
     fail("ARTIFACT_DRAFT_READ_STALE", 410, "fresh citation authorization changed");
   }
   const beforeSourceFingerprint = sourceFingerprint(beforeSources);
-  const authority = createD1EvidenceAuthorityPort({
-    core_database: input.database,
-    search_database: input.search_database,
-    ...(input.now === undefined ? {} : { now: input.now }),
-  });
-  const content = createR2EvidenceContentPort({ evidence_bucket: input.evidence_bucket });
-  const resolver = createCloudflareEvidenceResolver({
-    authority,
-    content,
-    ...(input.now === undefined ? {} : { now: input.now }),
-  });
   const citedEvidence: ReauthorizedCitationEvidence[] = [];
-  const nowIso = navigation.timestamp();
   for (const item of original.cited_evidence) {
-    const handle = handles.get(evidenceRefKey(item.handle_ref));
-    if (handle === undefined) fail("ARTIFACT_DRAFT_READ_INTEGRITY", 409, "saved citation handle readback disappeared");
-    const source = beforeSources.find((candidate) => candidate.source_revision_ref === handle.source_revision_ref);
-    if (source === undefined || source.source_owner_generation !== handle.source_owner_generation ||
-        source.source_namespace_id !== handle.source_namespace_id ||
-        source.object_residency_key_digest !== handle.object_residency_key_digest) {
-      fail("ARTIFACT_DRAFT_READ_STALE", 410, "saved citation source authority changed");
-    }
-    const candidate = await pinnedCandidate(input.search_database, handle);
-    let fresh;
-    try {
-      fresh = await resolver.resolveCandidate({ candidate, scope_snapshot_ref: scopeRef, access });
-    } catch (error) {
-      mapEvidenceError(error);
-    }
-    try {
-      const bytes = evidenceUtf8Bytes(fresh.exact_excerpt);
-      if (bytes.byteLength !== handle.excerpt_byte_length || await evidenceSha256Bytes(bytes) !== handle.excerpt_sha256) {
-        fail("ARTIFACT_DRAFT_READ_INTEGRITY", 409, "fresh citation bytes differ from saved evidence");
-      }
-    } catch (error) {
-      mapEvidenceError(error);
-    }
-    requireFreshEvidence(handle, fresh, scopeRef, source, authorization, access, nowIso);
-    citedEvidence.push({
-      original_handle_ref: item.handle_ref,
-      handle_ref: fresh.handle.handle_ref,
-      excerpt_sha256: handle.excerpt_sha256,
-    });
+    const { resolved } = await resolveReauthorizedArtifactEvidence({ ...input,
+      original_handle_ref: item.handle_ref, original_scope_snapshot_ref: originalScopeRef,
+      expected_excerpt_sha256: item.excerpt_sha256 });
+    citedEvidence.push({ original_handle_ref: item.handle_ref,
+      handle_ref: resolved.handle.handle_ref, excerpt_sha256: item.excerpt_sha256 });
   }
   let afterGrant: ScopeAuthorization;
   let afterSources: Awaited<ReturnType<NavigationReadAuthority["sources"]>>;

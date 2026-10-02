@@ -45,6 +45,18 @@ export interface ModelAttemptAuthority {
   readonly expires_at: string;
 }
 
+/** Dedicated W2 authority used only by the versioned artifact-section COW operation. */
+export interface ArtifactSectionReviseWorkflowBinding {
+  readonly protocol: "eliotr.artifact.section.revise.v1";
+  readonly call_slot: "SYNTHESIZE" | "INDEPENDENT_VERIFY";
+  readonly operation_id: string;
+  readonly attempt_ref: string;
+  readonly scope_snapshot_ref: VersionedRef;
+  readonly policy_authority_ref: string;
+  readonly authorization_receipt_ref: string;
+  readonly purge_revision: number;
+}
+
 export interface ModelAttemptReservationInput {
   readonly intent: OperationIntent;
   readonly idempotency_key: string;
@@ -62,6 +74,8 @@ export interface ModelAttemptReservationInput {
   readonly workflow_stage_request_sha256?: string;
   /** W2 execution-grant locator; distinct from the W3 cost reservation ID. */
   readonly workflow_budget_receipt_ref: string;
+  /** Omitted for ordinary research stages; never inferred from caller-supplied stage fields. */
+  readonly artifact_cow_binding?: ArtifactSectionReviseWorkflowBinding;
 }
 
 export interface ModelAttemptReservation {
@@ -78,6 +92,7 @@ export interface ModelAttemptReservation {
   readonly stage_attempt_ref: string;
   readonly stage_request_sha256: string;
   readonly workflow_budget_receipt_ref: string;
+  readonly artifact_cow_binding?: ArtifactSectionReviseWorkflowBinding;
 }
 
 export interface ModelAttemptStart {
@@ -118,6 +133,7 @@ export interface ModelAttemptReadback {
   readonly stage_attempt_ref: string;
   readonly stage_request_sha256: string;
   readonly workflow_budget_receipt_ref: string;
+  readonly artifact_cow_binding?: ArtifactSectionReviseWorkflowBinding;
   readonly authority: ModelAttemptAuthority;
   readonly receipt: ModelCallReceipt | null;
   readonly operation_receipt: OperationReceipt | null;

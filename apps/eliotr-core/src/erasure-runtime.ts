@@ -4,6 +4,8 @@ import {
   type AiSearchErasureNamespaceBinding,
 } from "@eliotr/cloudflare-erasure";
 import type { Env } from "./env.js";
+import { createBackupPurgeReplayPort } from "@eliotr/platform-cloudflare";
+import { createInstalledBackupOffsiteR2Resolver } from "./backup-offsite-composition.js";
 import {
   createErasureCoordinator,
   type ErasureCoordinator,
@@ -18,6 +20,10 @@ export function createConfiguredErasureCoordinator(env: Env): ErasureCoordinator
     managed_search: createAiSearchErasureNamespace(
       env.AI_SEARCH as unknown as AiSearchErasureNamespaceBinding,
     ),
+    backup: createBackupPurgeReplayPort({
+      core_db: env.CORE_DB,
+      resolve_adapter: createInstalledBackupOffsiteR2Resolver(env),
+    }),
     worker_id: `erasure:${env.DEPLOYMENT_GENERATION}`,
   });
   return createErasureCoordinator(backend);

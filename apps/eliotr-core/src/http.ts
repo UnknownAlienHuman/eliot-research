@@ -44,6 +44,8 @@ import {
   parseArtifactRef,
   parseArtifactSectionRef,
 } from "./artifact-draft-http.js";
+import { readAcceptArtifactRequest, readReviseArtifactSectionRequest } from "./artifact-product-http.js";
+import { reviseOwnerArtifactSection } from "./artifact-section-revise.js";
 import {
   dispatchIngestOperation,
 } from "./ingest-http.js";
@@ -589,6 +591,32 @@ async function dispatch(
       const ref = match.params.ref;
       if (ref === undefined) throw new ArtifactHttpInputError("artifact reference path parameter is missing");
       return apiResult(request, env, await application.services.semantic.artifact(context, parseArtifactRef(ref)));
+    }
+    case "research.artifact.section.revise": {
+      requireNoQuery(url);
+      const ref = match.params.ref;
+      const sectionId = match.params.section_id;
+      if (ref === undefined || sectionId === undefined) throw new ArtifactHttpInputError("artifact or section identity is missing");
+      const result = await reviseOwnerArtifactSection(env, context,
+        await readReviseArtifactSectionRequest(request, ref, sectionId, match.route.maximum_request_bytes));
+      return apiResult(request, env, result, result.disposition === "CREATED" ? 201 : 200);
+    }
+    case "research.artifact.accept": {
+      requireNoQuery(url);
+      const ref = match.params.ref;
+      if (ref === undefined) throw new ArtifactHttpInputError("artifact reference path parameter is missing");
+      const result = await application.services.semantic.acceptArtifact(
+        context,
+        await readAcceptArtifactRequest(request, ref, match.route.maximum_request_bytes),
+      );
+      return apiResult(request, env, result, result.disposition === "CREATED" ? 201 : 200);
+    }
+    case "research.artifact.publication": {
+      requireNoQuery(url);
+      await requireEmptyRequestBody(request, "Artifact publication read does not accept a request body");
+      const ref = match.params.ref;
+      if (ref === undefined) throw new ArtifactHttpInputError("artifact reference path parameter is missing");
+      return apiResult(request, env, await application.services.semantic.artifactPublication(context, parseArtifactRef(ref)));
     }
     case "research.artifact.section":
     case "research.artifact.section.citations": {

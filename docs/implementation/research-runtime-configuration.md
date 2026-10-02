@@ -1,5 +1,8 @@
 # Research runtime configuration
 
+Deployment hostnames are redacted as `<ELIOTR_ACCESS_HOSTNAME>`; resolve the exact target
+from the ignored operator profile. Historical deployment evidence is not approval for a new deploy.
+
 The research Worker receives its server-owned semantic configuration from one
 operator-installed envelope. Use this same envelope for local launch,
 Cloudflare foundation generation, and deployment readback. It keeps the
@@ -236,7 +239,7 @@ hostname. Account-wide preview Access policies still apply.
 
 When a local remote preview cannot start, use the deployed Worker bindings:
 
-    node scripts/install-research-model-authority.mjs qualify --input qualification-request.json --worker-url https://eliotr-core.kleymor-metal.workers.dev
+    node scripts/install-research-model-authority.mjs qualify --input qualification-request.json --worker-url https://<ELIOTR_ACCESS_HOSTNAME>
 
 This mode uses the existing Cloudflare Access session through `cloudflared access curl`.
 The operator still performs both actual Gateway control-plane reads and stores the

@@ -11,8 +11,8 @@ import { assertO2MigrationAuthority } from "./migration-gate.js";
 import { canonicalEpochIntentDigest } from "./intent-digest.js";
 import {
   BACKUP_MANIFEST_PROTOCOL, TABLE_SPECS, assertExportColumnCoverage,
-  digestCoreColumnInventory, openExportCut, readCoreColumnInventory, sealExportCut,
-  type CutInputs, type OpenCut,
+  BACKUP_SCHEMA_INVENTORY_PROTOCOL, digestCoreColumnInventory, openExportCut, readCoreColumnInventory, sealExportCut,
+  type CoreTableInventory, type CutInputs, type OpenCut,
 } from "./coherent-cut.js";
 
 // ER-34 O2 FIX2 portable epoch. IMPLEMENTED_NOT_LIVE. Coherent-cut: phase-1
@@ -96,36 +96,47 @@ async function backupTableExists(database: D1Database, table: string): Promise<b
 function decodeCell(table: string, column: string, kind: string, value: unknown, index: number): unknown {
   const label = `${table}[${index}].${column}`;
   if (value === null) {
-    if (kind === "text-or-null" || kind === "int-or-null") return null;
+    if (kind === "text-or-null" || kind === "int-or-null" || kind === "real-or-null") return null;
     failBackup("BACKUP_ROW_INVALID", `backup row is missing load-bearing column ${label}`, false, { table, column });
   }
   if (kind === "text" || kind === "text-or-null") {
     if (typeof value !== "string") failBackup("BACKUP_ROW_INVALID", `backup row column ${label} is not text`, false, { table, column });
     return value;
   }
+  if (kind === "real" || kind === "real-or-null") {
+    if (typeof value !== "number" || !Number.isFinite(value)) failBackup("BACKUP_ROW_INVALID", `backup row column ${label} is not a finite real`, false, { table, column });
+    return value;
+  }
   if (typeof value !== "number" || !Number.isSafeInteger(value)) failBackup("BACKUP_ROW_INVALID", `backup row column ${label} is not a safe integer`, false, { table, column });
   return value;
 }
 
-async function readBackupTable(database: D1Database, spec: (typeof TABLE_SPECS)[number], maxRows: number, signal?: AbortSignal): Promise<readonly SnapshotRow[]> {
+async function readBackupTable(database: D1Database, spec: (typeof TABLE_SPECS)[number], inventory: CoreTableInventory, maxRows: number, signal?: AbortSignal): Promise<readonly SnapshotRow[]> {
   if (backupAborted(signal)) failBackup("BACKUP_CANCELLED", "backup export was cancelled", true);
   if (!await backupTableExists(database, spec.table)) {
     if (spec.required) failBackup("BACKUP_TABLE_MISSING", `backup required table ${spec.table} is absent`, false, { table: spec.table });
     return [];
   }
-  const columns = Object.keys(spec.columns);
+  const columns = inventory.columns.map((column) => column.name);
+  const columnKinds = Object.fromEntries(columns.map((column) => [column, spec.columns[column]]));
+  if (columns.length === 0 || Object.values(columnKinds).some((kind) => kind === undefined)) {
+    failBackup("BACKUP_COVERAGE_GAP", `backup table ${spec.table} has no complete live column inventory`, false, { table: spec.table });
+  }
   let result: D1Result<Record<string, unknown>>;
   try {
     result = await database.prepare(`SELECT ${columns.join(", ")} FROM ${spec.table} ORDER BY ${spec.order_by} LIMIT ?1`).bind(maxRows + 1).all<Record<string, unknown>>();
   } catch (cause) {
     failBackup("BACKUP_TABLE_MISSING", `backup authority read for ${spec.table} failed`, true, { table: spec.table }, cause);
   }
-  const raw = result.results ?? [];
+  if (result.success !== true || !Array.isArray(result.results)) {
+    failBackup("BACKUP_TABLE_MISSING", `backup authority inventory for ${spec.table} returned an incomplete result`, true, { table: spec.table });
+  }
+  const raw = result.results;
   if (raw.length > maxRows) failBackup("BACKUP_BOUND_EXCEEDED", `backup table ${spec.table} exceeds its row bound`, false, { table: spec.table, limit: String(maxRows) });
   const rows: SnapshotRow[] = raw.map((input, index) => {
     if (typeof input !== "object" || input === null || Array.isArray(input)) failBackup("BACKUP_ROW_INVALID", `backup row ${spec.table}[${index}] is not a record`, false, { table: spec.table });
     const row: Record<string, unknown> = {};
-    for (const [column, kind] of Object.entries(spec.columns)) row[column] = decodeCell(spec.table, column, kind, (input as Record<string, unknown>)[column], index);
+    for (const [column, kind] of Object.entries(columnKinds)) row[column] = decodeCell(spec.table, column, kind as string, (input as Record<string, unknown>)[column], index);
     for (const key of Object.keys(input as Record<string, unknown>)) {
       if (!(key in spec.columns)) failBackup("BACKUP_ROW_INVALID", `backup row ${spec.table}[${index}] carries an unknown load-bearing field`, false, { table: spec.table });
     }
@@ -167,7 +178,8 @@ async function readMigrationNames(database: D1Database, maxRows: number): Promis
   } catch (cause) {
     failBackup("BACKUP_TABLE_MISSING", "backup migration ledger read failed", true, {}, cause);
   }
-  const rows = result.results ?? [];
+  if (result.success !== true || !Array.isArray(result.results)) failBackup("BACKUP_TABLE_MISSING", "backup migration ledger returned an incomplete result", true);
+  const rows = result.results;
   if (rows.length > maxRows) failBackup("BACKUP_BOUND_EXCEEDED", "backup migration ledger exceeds its row bound", false, { limit: String(maxRows) });
   if (rows.length === 0) failBackup("BACKUP_TABLE_MISSING", "backup migration ledger is empty; refusing ABSENT tolerance");
   return rows.map((row, i) => {
@@ -185,7 +197,8 @@ async function readPurgeLedger(database: D1Database, maxRows: number, signal?: A
   } catch (cause) {
     failBackup("BACKUP_TABLE_MISSING", "backup purge ledger read failed", true, {}, cause);
   }
-  const raw = result.results ?? [];
+  if (result.success !== true || !Array.isArray(result.results)) failBackup("BACKUP_TABLE_MISSING", "backup purge ledger returned an incomplete result", true);
+  const raw = result.results;
   if (raw.length > maxRows) failBackup("BACKUP_BOUND_EXCEEDED", "backup purge ledger exceeds its row bound", false, { limit: String(maxRows) });
   const rows: SnapshotRow[] = raw.map((input) => {
     const r = input as Record<string, unknown>;
@@ -219,6 +232,7 @@ interface D1Snapshot {
   readonly migration_names: readonly string[];
   readonly migration_ledger_digest: string;
   readonly inventory_digest: string;
+  readonly column_inventory: readonly CoreTableInventory[];
 }
 
 export function createBackupEpochPort(ports: BackupSourcePorts, overrides?: { readonly limits?: Partial<BackupExportLimits> }): BackupEpochPort {
@@ -229,6 +243,7 @@ export function createBackupEpochPort(ports: BackupSourcePorts, overrides?: { re
     const specTables = TABLE_SPECS.map((spec) => spec.table);
     const inventory = await readCoreColumnInventory(ports.core_db, specTables);
     assertExportColumnCoverage(inventory, TABLE_SPECS);
+    const inventoryByTable = new Map(inventory.map((entry) => [entry.table, entry]));
     const inventoryDigest = await digestCoreColumnInventory(inventory);
     const schemaGeneration = await readSchemaGeneration(ports.core_db);
     const names = await readMigrationNames(ports.core_db, limits.max_table_rows);
@@ -236,7 +251,9 @@ export function createBackupEpochPort(ports: BackupSourcePorts, overrides?: { re
     const rows: SnapshotRow[] = [];
     const tables: Record<string, { count: number; digest: string }> = {};
     for (const spec of TABLE_SPECS) {
-      const tableRows = await readBackupTable(ports.core_db, spec, limits.max_table_rows, signal);
+      const liveInventory = inventoryByTable.get(spec.table);
+      if (liveInventory === undefined) failBackup("BACKUP_COVERAGE_GAP", `backup table ${spec.table} has no live schema inventory`, false, { table: spec.table });
+      const tableRows = await readBackupTable(ports.core_db, spec, liveInventory, limits.max_table_rows, signal);
       if (tableRows.length > 0) {
         for (const row of tableRows) rows.push(row);
         const digest = await backupSha256Hex(tableRows.map((row) => canonicalBackupJson(row.row)).join("\n"));
@@ -254,6 +271,7 @@ export function createBackupEpochPort(ports: BackupSourcePorts, overrides?: { re
       purge_frontier: purge.frontier, purge_digest: purge.digest,
       schema_generation: schemaGeneration, migration_names: names,
       migration_ledger_digest: migrationLedgerDigest, inventory_digest: inventoryDigest,
+      column_inventory: inventory,
     };
   }
 
@@ -315,7 +333,12 @@ export function createBackupEpochPort(ports: BackupSourcePorts, overrides?: { re
     };
     const specManifest = new Map<string, string>();
     for (const spec of TABLE_SPECS) specManifest.set(spec.table, spec.manifest);
-    for (const row of frozen.rows) record(specManifest.get(row.table) ?? "sources", canonicalBackupJson({ table: row.table, row: row.row }));
+    for (const row of frozen.rows) {
+      // Purge rows are emitted once below from the dedicated stable ledger
+      // read; avoid duplicating them in their regular table manifest.
+      if (row.table === "purge_ledger") continue;
+      record(specManifest.get(row.table) ?? "sources", canonicalBackupJson({ table: row.table, row: row.row }));
+    }
     for (const row of frozen.purge_rows) record("purge", canonicalBackupJson({ table: row.table, row: row.row }));
     for (const table of ["publication", "federation_reference_manifest", "navigation_artifact"] as const) {
       if (!await backupTableExists(ports.core_db, table)) record("heads", canonicalBackupJson({ table, status: "TABLE_ABSENT" }));
@@ -330,10 +353,12 @@ export function createBackupEpochPort(ports: BackupSourcePorts, overrides?: { re
     for (const [id, head] of [...heads.entries()].sort()) record("heads", canonicalBackupJson({ kind: "investigation", id, head_revision: head }));
     for (const line of rebuildManifestLines()) record("rebuild", line);
     record("schema", canonicalBackupJson({ manifest_protocol: BACKUP_MANIFEST_PROTOCOL, schema_generation: vector.schema_generation, migration_ledger_digest: vector.migration_ledger_digest, migration_ledger: "PRESENT", migration_count: vector.migration_names.length }));
-    record("schema-inventory", canonicalBackupJson({ protocol: BACKUP_MANIFEST_PROTOCOL, schema_inventory_digest: frozen.inventory_digest, cut_id: cut.cut_id }));
+    record("schema-inventory", canonicalBackupJson({ protocol: BACKUP_MANIFEST_PROTOCOL, inventory_protocol: BACKUP_SCHEMA_INVENTORY_PROTOCOL, schema_inventory_digest: frozen.inventory_digest, cut_id: cut.cut_id }));
     for (const table of specManifest.keys()) {
-      const columns = TABLE_SPECS.find((s) => s.table === table)?.columns ?? {};
-      record("schema-inventory", canonicalBackupJson({ table, columns: Object.keys(columns).sort() }));
+      const inventory = frozen.column_inventory.find((entry) => entry.table === table);
+      const columns = inventory?.columns.map((column) => column.name) ?? [];
+      const column_shapes = inventory?.columns ?? [];
+      record("schema-inventory", canonicalBackupJson({ table, columns, column_shapes }));
     }
     record("purge", canonicalBackupJson({ purge_frontier: vector.purge_frontier, purge_digest: vector.purge_digest }));
     record("r2-objects", canonicalBackupJson({ object_count: r2.entries.length, total_bytes: r2.total_bytes, fingerprint: r2.fingerprint }));

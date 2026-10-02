@@ -137,7 +137,7 @@ interface CurrentInvestigationPolicyRow {
   readonly state: unknown;
 }
 
-function modelGatewayConfiguration(env: Env): ResearchModelGatewayRuntimeConfig {
+export function modelGatewayConfiguration(env: Env): ResearchModelGatewayRuntimeConfig {
   const token = env.ELIOTR_MODEL_GATEWAY_TOKEN;
   if (typeof token === "string" && token.trim() !== "") {
     try { validateModelGatewayToken(token); }

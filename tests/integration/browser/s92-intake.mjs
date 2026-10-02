@@ -12,7 +12,7 @@
 // State discipline: missing credentials/environment -> NOT_EXECUTED
 // (honest skip, never a fake PASS); unmet prerequisite -> BLOCKED;
 // assertion failure -> FAIL with reason. Anything needing a live model
-// response -> PENDING_OWNER_D1B (owner decision D1(b)) after asserting
+// response -> NOT_EXECUTED (current approved gateway configuration and execution authorization) after asserting
 // the fail-closed configuration.
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
@@ -342,7 +342,7 @@ export async function verifyS92IntakeReadPolicyGrant() {
 
 // ---------------------------------------------------------------------------
 // 92.1e — model policy D1: local-disabled sentinel; live model is
-// PENDING_OWNER_D1B. Fail-closed is asserted, never a fake model response.
+// NOT_EXECUTED. Fail-closed is asserted, never a fake model response.
 // ---------------------------------------------------------------------------
 
 export async function verifyS92IntakeModelD1FailClosed() {
@@ -366,9 +366,9 @@ export async function verifyS92IntakeModelD1FailClosed() {
   // Any network attempt at the sentinel is unreachable: fail-closed, not a model.
   await assert.rejects(fetch(reasoningUrl), "fetch to the disabled sentinel must reject");
   return {
-    state: "PENDING_OWNER_D1B",
+    state: "NOT_EXECUTED",
     detail: "fail-closed proven (sentinel URL, no gateway credential in local env, fetch rejects); " +
-      "live model response assertions require owner decision D1(b): point S92 at a real gateway",
+      "live model response assertions require current approved gateway configuration and execution authorization: point S92 at a real gateway",
   };
 }
 

@@ -5,8 +5,8 @@
 // attach) and S99 (normalized client bundle ingest) migration guards.
 //
 // State discipline: PASS (held against the real code), FAIL (reason in
-// detail), NOT_EXECUTED (honest skip), BLOCKED (prerequisite in detail),
-// PENDING_OWNER_D1B (model policy D1(b): live model dispatch stops after
+// detail), NOT_EXECUTED (honest skip), BLOCKED (prerequisite in detail).
+// Model dispatch remains NOT_EXECUTED in this local test mode after
 // proving the fail-closed path; model output is never invented).
 //
 // Execution (plain node; the module self-registers a resolver for the
@@ -47,8 +47,8 @@ for (const pkg of readdirSync(resolve(ROOT, "packages"))) {
 }
 register(
   `data:text/javascript,${encodeURIComponent(
-    `export async function resolve(specifier, context, next) { const map = ${JSON.stringify(DIST_MAP)}; ` +
-      `if (Object.hasOwn(map, specifier)) return { url: "file://" + map[specifier], shortCircuit: true }; ` +
+    `import { pathToFileURL } from "node:url"; export async function resolve(specifier, context, next) { const map = ${JSON.stringify(DIST_MAP)}; ` +
+      `if (Object.hasOwn(map, specifier)) return { url: pathToFileURL(map[specifier]).href, shortCircuit: true }; ` +
       `return next(specifier, context); }`,
   )}`,
 );
@@ -167,7 +167,7 @@ async function createDelegationTestDb() {
   return { db, d1 };
 }
 
-const ISSUER = "https://s92-delegation.cloudflareaccess.com";const GRANTEE_1 = { issuer: ISSUER, authentication_method: "service_token", subject: "machine-01.access" };
+const ISSUER = "https://s92-delegation-example.cloudflareaccess.com";const GRANTEE_1 = { issuer: ISSUER, authentication_method: "service_token", subject: "machine-01.access" };
 const GRANTEE_2 = { issuer: ISSUER, authentication_method: "service_token", subject: "machine-02.access" };
 
 function ownerContext(traceId) {
@@ -252,7 +252,7 @@ async function expectGrantFailure(ClientGrantError, label, action, expectedCode)
 async function verifyGrantIssuanceOwnerOnly() {
   const blocked = checkDist();
   if (blocked) return blocked;
-  const { ClientGrantError, createProjectClientGrantService } = await import(NAV_DIST);
+  const { ClientGrantError, createProjectClientGrantService } = await import(pathToFileURL(NAV_DIST).href);
   const { database: machineDb, touches: machineTouches } = untouchedDatabase();
   const machineService = createProjectClientGrantService({ database: machineDb, trusted_issuers: [ISSUER] });
   await expectGrantFailure(
@@ -295,7 +295,7 @@ async function verifyGrantPositivePath() {
   const blocked = checkDist();
   if (blocked) return blocked;
   const { ClientGrantError, createProjectClientGrantService, authorizeProjectClientGrant, readClientGrant } =
-    await import(NAV_DIST);
+    await import(pathToFileURL(NAV_DIST).href);
   const { d1 } = await createDelegationTestDb();
   const service = createProjectClientGrantService({ database: d1, trusted_issuers: [ISSUER] });
 
@@ -407,8 +407,8 @@ async function verifyNormalizedIngestGuards() {
 async function verifyDelegationReceiptDigestBinding() {
   const blocked = checkDist();
   if (blocked) return blocked;
-  const { prepareProjectAttachment } = await import(ATTACH_DIST);
-  const { canonicalJson, sha256Utf8 } = await import(PLATFORM_DIST);
+  const { prepareProjectAttachment } = await import(pathToFileURL(ATTACH_DIST).href);
+  const { canonicalJson, sha256Utf8 } = await import(pathToFileURL(PLATFORM_DIST).href);
   const { ProjectClientGrantSchema } = await import(
     resolve(ROOT, "packages/contracts/dist/index.js"));
   const { db, d1 } = await createDelegationTestDb();
@@ -474,8 +474,8 @@ async function verifyDelegationReceiptDigestBinding() {
 async function verifyModelDispatchFailClosed() {
   const blocked = checkDist();
   if (blocked) return blocked;
-  const { ModelGatewayExecutionError, resolveModelGatewayReasoningEndpoint } = await import(AI_DIST);
-  const { createResearchModelGatewayBindingFetch } = await import(BINDING_DIST);
+  const { ModelGatewayExecutionError, resolveModelGatewayReasoningEndpoint } = await import(pathToFileURL(AI_DIST).href);
+  const { createResearchModelGatewayBindingFetch } = await import(pathToFileURL(BINDING_DIST).href);
   const { localConfig } = await import("../../../scripts/lib/local-launch.mjs");
   const canonical = JSON.parse(await readFile(resolve(ROOT, "apps/eliotr-core/wrangler.jsonc"), "utf8"));
   const profile = localConfig(canonical, join(tmpdir(), "s92-delegation-fakeroot"));
@@ -506,12 +506,12 @@ async function verifyModelDispatchFailClosed() {
     "missing binding must throw ModelGatewayExecutionError");
   assert.equal(bindingError.code, "MODEL_GATEWAY_REQUEST_INVALID");
   return {
-    state: "PENDING_OWNER_D1B",
+    state: "NOT_EXECUTED",
     detail:
       "Local default AI_GATEWAY_REASONING_URL is the unroutable https://example.invalid/local-disabled; " +
       "endpoint validation and the Worker binding constructor both fail closed with " +
       "MODEL_GATEWAY_REQUEST_INVALID (non-retryable). Any scenario needing a live model " +
-      "response stays PENDING_OWNER_D1B — no model output is ever invented.",
+      "response stays NOT_EXECUTED — no model output is ever invented.",
   };
 }
 

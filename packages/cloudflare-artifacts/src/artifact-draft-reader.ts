@@ -1,6 +1,10 @@
 import {
   ArtifactDraftReadError,
+  readArtifactDraftCowSnapshotInternal,
+  readArtifactDraftCowSnapshotReauthorizedInternal,
+  type ArtifactDraftReauthorizationCoreInput,
   readArtifactDraftInternal,
+  type ArtifactDraftCowSnapshot,
   type ArtifactDraftReadInput,
   type ArtifactDraftSectionCitationsRead,
   type ArtifactDraftSectionRead,
@@ -10,6 +14,7 @@ import { VersionedRefSchema, type ArtifactRevision, type VersionedRef } from "@e
 
 export {
   ArtifactDraftReadError,
+  type ArtifactDraftCowSnapshot,
   type ArtifactDraftReadErrorCode,
   type ArtifactDraftReadInput,
   type ArtifactDraftSectionCitationsRead,
@@ -20,15 +25,16 @@ export {
   ArtifactDraftSectionCitationsError,
   type ArtifactDraftSectionCitationsContext,
 } from "./artifact-draft-citations-reader.js";
-export type {
-  ArtifactDraftSemanticAudit,
-  ArtifactDraftSemanticAuditClaim,
-  ArtifactDraftVerificationAnyEncoded,
-  ArtifactDraftVerificationCitation,
-  ArtifactDraftVerificationEncoded,
-  ArtifactDraftVerificationRecord,
-  ArtifactDraftVerificationV2Encoded,
-  ArtifactDraftVerificationV2Record,
+export {
+  decodeArtifactDraftVerificationAny,
+  type ArtifactDraftSemanticAudit,
+  type ArtifactDraftSemanticAuditClaim,
+  type ArtifactDraftVerificationAnyEncoded,
+  type ArtifactDraftVerificationCitation,
+  type ArtifactDraftVerificationEncoded,
+  type ArtifactDraftVerificationRecord,
+  type ArtifactDraftVerificationV2Encoded,
+  type ArtifactDraftVerificationV2Record,
 } from "./artifact-draft-verification.js";
 
 function validRef(value: unknown, label: string): VersionedRef {
@@ -54,6 +60,28 @@ export async function readArtifactDraft(input: ArtifactDraftReadInput): Promise<
   const artifactRef = validRef(input.artifact_ref, "draft reference");
   requireDirectReader(input);
   try { return await readArtifactDraftInternal(input, artifactRef); }
+  catch (error) { return mapFailure(error); }
+}
+
+/** Reads all exact immutable parent bytes through the same direct-owner authority fence. */
+export async function readArtifactDraftCowSnapshot(
+  input: ArtifactDraftReadInput,
+): Promise<ArtifactDraftCowSnapshot | null> {
+  const artifactRef = validRef(input.artifact_ref, "draft reference");
+  requireDirectReader(input);
+  try { return await readArtifactDraftCowSnapshotInternal(input, artifactRef); }
+  catch (error) { return mapFailure(error); }
+}
+
+/** Exact historical COW bytes under separate current owner authorization. */
+export async function readReauthorizedArtifactDraftCowSnapshot(
+  input: ArtifactDraftReauthorizationCoreInput & { readonly artifact_ref: VersionedRef },
+): Promise<ArtifactDraftCowSnapshot | null> {
+  const artifactRef = validRef(input.artifact_ref, "draft reference");
+  if (input.access.client_class !== "owner_pwa") {
+    throw new ArtifactDraftReadError("ARTIFACT_DRAFT_READ_DENIED", 403, "COW snapshot requires current owner authority");
+  }
+  try { return (await readArtifactDraftCowSnapshotReauthorizedInternal(input, artifactRef))?.value ?? null; }
   catch (error) { return mapFailure(error); }
 }
 

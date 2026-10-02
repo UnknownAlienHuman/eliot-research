@@ -86,3 +86,14 @@ export * from "./research-branch-role-server-preparation.js";
 export * from "./research-branch-role-manifest-store.js";
 export { decodeResearchReadExtractCheckpoint } from "./research-branch-execution-shared.js";
 export * from "./research-external-branch-analysis.js";
+
+export * from "@eliotr/cloudflare-artifacts/artifact-publication.js";
+export * from "./artifact-cow-freeze-reader.js";
+export * from "./artifact-cow-product.js";
+export * from "./artifact-cow-model-executor.js";
+export * from "./artifact-cow-model-runtime.js";
+export * from "./artifact-cow-section-producer.js";
+export * from "./artifact-cow-revision-runner.js";
+export * from "./artifact-cow-draft-materialization.js";
+export * from "./artifact-cow-model-revalidator.js";
+export * from "./artifact-cow-spend-admission.js";

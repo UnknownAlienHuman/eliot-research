@@ -121,6 +121,7 @@ ELIOTR_ACCESS_SERVICE_PRINCIPALS   optional comma-separated signed service-token
                                     empty denies every service principal
 ELIOTR_OWNER_EMAILS                required: owner email list from the local ignored profile
 ELIOTR_ENVIRONMENT                 optional: staging|production; live default is production
+ELIOTR_STAGING_TARGET_JSON         required for staging live apply: exact dedicated-account declaration below
 ELIOTR_DEPLOYMENT_GENERATION       optional; defaults to git-<short-sha>
 ELIOTR_CUSTOM_DOMAIN               required: 0 for this profile (workers.dev only; 1 is out of scope here)
 ELIOTR_ALLOWED_ADDITIONAL_ACCESS_POLICY_IDS
@@ -128,6 +129,22 @@ ELIOTR_ALLOWED_ADDITIONAL_ACCESS_POLICY_IDS
 ELIOTR_ACCESS_SMOKE_COOKIE         optional CF_Authorization value for authenticated HTTP smoke
 ELIOTR_SMOKE_BASE_URL              optional; must equal https://ELIOTR_ACCESS_HOSTNAME (optional trailing slash)
 ```
+
+A staging live apply must provide an ignored local `ELIOTR_STAGING_TARGET_JSON` value with exactly
+`protocol`, `isolation`, `account_id`, `protected_account_ids` and `access_hostname`:
+
+```json
+{"protocol":"eliotr.staging-target.v1","isolation":"dedicated-account","account_id":"staging-example-account","protected_account_ids":["production-example-account"],"access_hostname":"staging.example.com"}
+```
+
+The account and hostname must exactly match the selected deployment environment. The protected
+account list must be nonempty, unique and exclude the target account. Missing declarations,
+same-account profiles, identity drift and extra approval flags fail before credential loading,
+commands or remote calls. Fixed resource names currently support a dedicated account only;
+a reviewed same-account profile still needs complete naming and reconciliation support.
+The receipt stores declaration/account digests. This destination guard does not establish owner
+approval, account isolation remotely, paid usage permission or S94 acceptance. Obtain the explicit
+approval for the exact target and deployment window independently before live apply.
 
 See `.env.example` for placeholder shapes (fictional values only). Google credentials, provider
 keys, OAuth tokens and Access cookies are secrets. Add runtime secrets with `wrangler secret put`
@@ -210,7 +227,18 @@ The provisioner lists by exact database name, rejects duplicates/jurisdiction dr
 UUIDs into the generated config. The deployer applies both additive migration streams before exposing the
 new Worker generation. The exact generated config is identity-validated and dry-run before either remote
 migration stream. Its digest is rechecked between release steps; drift stops the next effect. Do not
-depend on Wrangler's automatic D1 config mutation.
+depend on Wrangler's automatic D1 config mutation. After both apply commands, bounded read-only
+D1 API queries compare each remote `d1_migrations` ledger with the exact local migration names.
+Missing, extra, duplicate or malformed rows stop before Worker upload, deployment authority changes
+and a new successful receipt. The local migration bundle hash is recorded separately: ledger names
+do not prove the remote SQL bytes or schema shape.
+
+Worker readback follows the active deployment to its exact single version at 100% traffic, checks
+runtime settings, named exports, the generation variable and configured resource identities before
+deployment authority synchronization. Cloudflare's ETag is an opaque observation, not a local
+SHA-256 attestation. Asset attachment is checked; authenticated asset-content/build-byte proof and
+product/T4/T6 qualifications remain separate. The current Worker does not deploy/import the Rust
+Wasm kernel; do not fabricate a mandatory empty Wasm binding or a passing Wasm receipt.
 
 ### R2
 
@@ -265,9 +293,19 @@ a previous receipt is moved to `cloudflare-deployment-receipt.json.previous`; a 
 leave the previous PASS at the current receipt path. The previous file is historical evidence, not a
 statement about the current environment.
 
-Worker inventory readback checks the expected compatibility date, static assets and `ResearchSession`
-export. This bounded observation is **not** attestation of every binding or the exact deployed code
-version. A large/ambiguous inventory fails closed rather than claiming a matching deployment.
+Worker readback requires one active deployment with 100% traffic on one version, then
+checks that version's resources: every configured typed runtime variable, D1/R2/Queue/DO/Workflow,
+AI/Search/Vectorize/Analytics/assets bindings, runtime compatibility and exports. Unknown bindings
+fail closed; optional secret bindings are restricted to the reviewed runtime names and secret type.
+Secret values are never read or recorded. The receipt records variable count and equality only.
+The version identifier and API etag are observations, not a SHA-256 proof of uploaded code bytes.
+A large/ambiguous inventory or stale variable fails before deployment authority synchronization.
+
+Canonical and generated D1 configs must explicitly resolve both repository migration directories;
+Wrangler's omitted default directory is refused. Local bundle digests bind the selected SQL files;
+remote ledgers prove the exact applied names, not historical remote SQL byte equality.
+The staging target declaration binds the requested account and excludes declared protected IDs.
+It does not prove that the account contains no production resources or supply owner authorization.
 
 Authenticated HTTP smoke runs only with an Access cookie. Both `/healthz` and the capabilities envelope
 must report the expected deployment generation; health must be ready and timestamped within two minutes.

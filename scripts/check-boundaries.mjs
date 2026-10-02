@@ -23,6 +23,18 @@ const FORBIDDEN_IMPORTS = [
   "sqlite3",
 ];
 
+// These exact files execute as host-side Node tooling, never inside a Worker
+// or browser bundle. Keep filesystem exceptions file- and specifier-specific:
+// SQLite migration coverage tests read checked-in migration SQL, and the PWA
+// build script reads TypeScript/CSS sources before writing its generated asset.
+const HOST_FILESYSTEM_IMPORTS = new Map([
+  ["packages/backup-o2/src/coverage-full-chain.test.ts", new Set(["node:fs"])],
+  ["packages/cloudflare-backup/src/isolated-restore-preflight.test.ts", new Set(["node:fs/promises"])],
+  ["packages/cloudflare-research/src/research-model-qualification-renewal.test.ts", new Set(["node:fs"])],
+  ["packages/cloudflare-research/src/research-model-spend-admission-branch-stages.test.ts", new Set(["node:fs"])],
+  ["apps/eliotr-pwa/scripts/build-agent-inbox.mjs", new Set(["node:fs/promises"])],
+]);
+
 const PACKAGE_RULES = new Map([
   ["packages/contracts", new Set(["zod"])],
   ["packages/domain", new Set(["@eliotr/contracts"])],
@@ -30,18 +42,19 @@ const PACKAGE_RULES = new Map([
   ["packages/retrieval", new Set(["@eliotr/contracts", "@eliotr/domain", "@eliotr/policy"])],
   ["packages/research", new Set(["@eliotr/contracts", "@eliotr/domain", "@eliotr/policy", "@eliotr/retrieval"])],
   ["packages/backup-o2", new Set(["@eliotr/contracts"])],
-  ["packages/platform-cloudflare", new Set(["@eliotr/backup-o2", "@eliotr/contracts", "@eliotr/domain", "@eliotr/retrieval", "@eliotr/research"])],
-  ["packages/cloudflare-research", new Set(["@eliotr/cloudflare-workflows", "@eliotr/cloudflare-ai", "@eliotr/cloudflare-artifacts", "@eliotr/cloudflare-artifacts/artifact-draft.js", "@eliotr/cloudflare-artifacts/artifact-draft-reader.js", "@eliotr/cloudflare-artifacts/artifact-draft-types.js", "@eliotr/cloudflare-artifacts/artifact-draft-reauthorization.js", "@eliotr/cloudflare-artifacts/artifact-draft-citations-reauthorization.js", "@eliotr/cloudflare-evidence", "@eliotr/contracts", "@eliotr/domain", "@eliotr/platform-cloudflare", "@eliotr/policy", "@eliotr/research", "@eliotr/retrieval"])],
+  ["packages/cloudflare-backup", new Set(["@eliotr/backup-o2", "@eliotr/contracts"])],
+  ["packages/platform-cloudflare", new Set(["@eliotr/cloudflare-backup", "@eliotr/backup-o2", "@eliotr/contracts", "@eliotr/domain", "@eliotr/retrieval", "@eliotr/research"])],
+  ["packages/cloudflare-research", new Set(["@eliotr/cloudflare-workflows", "@eliotr/cloudflare-ai", "@eliotr/cloudflare-artifacts", "@eliotr/cloudflare-artifacts/artifact-draft.js", "@eliotr/cloudflare-artifacts/artifact-draft-reader.js", "@eliotr/cloudflare-artifacts/artifact-draft-types.js", "@eliotr/cloudflare-artifacts/artifact-publication.js", "@eliotr/cloudflare-artifacts/artifact-draft-reauthorization.js", "@eliotr/cloudflare-artifacts/artifact-draft-citations-reauthorization.js", "@eliotr/cloudflare-evidence", "@eliotr/contracts", "@eliotr/domain", "@eliotr/platform-cloudflare", "@eliotr/policy", "@eliotr/research", "@eliotr/retrieval"])],
   ["packages/cloudflare-research-stages", new Set(["@eliotr/cloudflare-ai", "@eliotr/cloudflare-evidence", "@eliotr/cloudflare-research", "@eliotr/cloudflare-workflows", "@eliotr/contracts", "@eliotr/domain", "@eliotr/research", "zod"])],
   ["packages/cloudflare-workflows", new Set(["@eliotr/contracts", "@eliotr/domain", "@eliotr/research"])],
-  ["packages/cloudflare-artifacts", new Set(["@eliotr/cloudflare-evidence", "@eliotr/contracts", "@eliotr/platform-cloudflare"])],
+  ["packages/cloudflare-artifacts", new Set(["@eliotr/domain", "@eliotr/cloudflare-evidence", "@eliotr/contracts", "@eliotr/platform-cloudflare"])],
   ["packages/cloudflare-federation", new Set(["@eliotr/contracts"])],
   ["packages/cloudflare-ai", new Set(["@eliotr/contracts", "@eliotr/platform-cloudflare"])],
   ["packages/cloudflare-access", new Set(["@eliotr/platform-cloudflare"])],
   ["packages/cloudflare-workspace-mcp", new Set(["@eliotr/cloudflare-access", "@eliotr/contracts", "@eliotr/platform-cloudflare"])],
   ["packages/cloudflare-raw-ingest", new Set(["@eliotr/contracts", "@eliotr/interfaces", "@eliotr/platform-cloudflare"])],
   ["packages/cloudflare-markdown", new Set(["@eliotr/platform-cloudflare"])],
-  ["packages/cloudflare-erasure", new Set(["@eliotr/contracts"])],
+  ["packages/cloudflare-erasure", new Set(["@eliotr/backup-o2", "@eliotr/contracts"])],
   ["packages/cloudflare-projection", new Set([
     "@eliotr/contracts",
     "@eliotr/platform-cloudflare",
@@ -114,15 +127,18 @@ for (const sourceRoot of SOURCE_ROOTS) {
   for (const file of await walk(fullRoot)) {
     const owner = ownerFor(file);
     if (!owner) continue;
+    const normalizedPath = projectPath(file);
     const source = await readFile(file, "utf8");
     for (const specifier of importsOf(source)) {
-      if (FORBIDDEN_IMPORTS.some((prefix) => specifier === prefix || specifier.startsWith(prefix))) {
-        errors.push(`${projectPath(file)} imports forbidden module ${specifier}`);
+      const allowedHostFilesystemImport = HOST_FILESYSTEM_IMPORTS.get(normalizedPath)?.has(specifier) === true;
+      if (!allowedHostFilesystemImport &&
+          FORBIDDEN_IMPORTS.some((prefix) => specifier === prefix || specifier.startsWith(prefix))) {
+        errors.push(`${normalizedPath} imports forbidden module ${specifier}`);
       }
       if (!specifier.startsWith("@eliotr/")) continue;
       const allowed = PACKAGE_RULES.get(owner);
       if (!allowed?.has(specifier)) {
-        errors.push(`${projectPath(file)} violates dependency direction with ${specifier}`);
+        errors.push(`${normalizedPath} violates dependency direction with ${specifier}`);
       }
     }
   }

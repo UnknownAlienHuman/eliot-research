@@ -75,6 +75,11 @@ export interface Env {
   readonly GOOGLE_OAUTH_GOOGLE_EMAIL?: string;
   /** Explicit operator attestation that the OAuth client is published (Production). */
   readonly GOOGLE_OAUTH_PRODUCTION_EVIDENCE_REF?: string;
+  /** Optional installed R2 offsite transport; destination authority remains in D1. */
+  readonly ELIOTR_BACKUP_OFFSITE_R2_CONFIG_JSON?: string;
+  /** Server credentials for the installed offsite transport; never caller fields. */
+  readonly ELIOTR_BACKUP_OFFSITE_R2_ACCESS_KEY_ID?: string;
+  readonly ELIOTR_BACKUP_OFFSITE_R2_SECRET_ACCESS_KEY?: string;
   readonly OWNER_NOTIFICATION_WEBHOOK?: string;
 }
 

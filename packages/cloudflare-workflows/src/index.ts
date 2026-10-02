@@ -9,3 +9,4 @@ export * from "./committed-lineage.js";
 export * from "./external-agent-task-codec.js";
 export * from "./external-agent-task-store.js";
 export * from "./external-agent-task-payload.js";
+export * from "./artifact-cow-workflow.js";

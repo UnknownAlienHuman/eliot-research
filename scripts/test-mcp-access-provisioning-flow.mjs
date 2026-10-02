@@ -13,7 +13,7 @@ import {
 
 const account = "account-test";
 const hostname = "research.example.test";
-const team = "https://mcp-team.cloudflareaccess.com";
+const team = "https://mcp-team-example.cloudflareaccess.com";
 const ordinaryAud = "ordinary-aud";
 const mcpAud = "mcp-aud";
 const tokenA = "123e4567-e89b-12d3-a456-426614174000";

@@ -5,7 +5,7 @@ Baseline: `origin/main @ 8db894c6`. S92 passport: PR #292 → EXECUTION-STEPS-03
 compile, local runtime, command sequence. Scenario modules (92.1–92.6)
 were delivered in `e5c8ec47` and registered in `9c1e4788`. Reconciled against
 `main @ 4c897429` on 2026-10-01. Their permitted
-`BLOCKED`/`NOT_EXECUTED`/`PENDING_OWNER_D1B` outcomes are not full acceptance.
+`BLOCKED`/`NOT_EXECUTED` outcomes are not full acceptance.
 
 ## 0. Prereqs
 
@@ -174,6 +174,6 @@ Before actual D1(b) execution:
    replay an unknown paid effect or promote from HTTP success alone.
 
 Until this current-generation execution evidence exists, live-model assertions
-remain `PENDING_OWNER_D1B`/`NOT_EXECUTED`; D1(a)'s configuration/readiness/denial
+remain `NOT_EXECUTED`; D1(a)'s configuration/readiness/denial
 results remain valid within their stated local scope. D1(b) by itself does not
 satisfy S93 quality, S95 native/security or S96 measured-cost acceptance.

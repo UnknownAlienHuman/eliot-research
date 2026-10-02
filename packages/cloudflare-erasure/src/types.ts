@@ -13,6 +13,7 @@ import type {
 export interface SourceRevisionInventoryRow {
   readonly source_revision_ref: string;
   readonly source_id: string;
+  readonly source_owner_generation: string;
   readonly original_r2_key?: string;
   readonly normalized_artifact_ref?: string;
   readonly content_sha256: string;
@@ -147,8 +148,8 @@ export interface ErasureInvalidationPort {
 }
 
 export interface BackupErasurePort {
-  purge(epochRef: string, erasureRef: string): Promise<{ readonly receipt_ref: string }>;
-  verifyAbsent(epochRef: string, erasureRef: string): Promise<{ readonly absent: boolean; readonly receipt_ref: string }>;
+  purge(epochRef: string, erasureRef: string, context: { readonly target_id: string; readonly fence: ErasureFence }): Promise<{ readonly receipt_ref: string }>;
+  verifyAbsent(epochRef: string, erasureRef: string, context: { readonly target_id: string; readonly fence: ErasureFence }): Promise<{ readonly absent: boolean; readonly receipt_ref: string }>;
 }
 
 export interface ManagedSearchErasureItem {

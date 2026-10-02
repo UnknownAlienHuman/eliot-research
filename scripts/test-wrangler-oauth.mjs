@@ -42,6 +42,8 @@ const baseEnvironment = {
   ELIOTR_DEPLOYMENT_GENERATION: "git-test",
   ELIOTR_CUSTOM_DOMAIN: "1",
   ELIOTR_ACCESS_HOSTNAME: "research.example.com",
+  ELIOTR_STAGING_TARGET_JSON: JSON.stringify({ protocol: "eliotr.staging-target.v1", isolation: "dedicated-account",
+    account_id: ACCOUNT, protected_account_ids: ["production-test-account"], access_hostname: "research.example.com" }),
   ELIOTR_OWNER_EMAILS: "owner@example.com",
   ELIOTR_ACCESS_TEAM_DOMAIN: "https://team-example.cloudflareaccess.com",
   ELIOTR_ACCESS_AUDIENCE: "test-aud",

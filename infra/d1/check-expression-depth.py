@@ -1,5 +1,6 @@
-"""Compile repository D1 schema at the observed depth limit; never execute probe writes."""
+"""Compile repository D1 schema and recovered application SQL; never execute probe writes."""
 from pathlib import Path
+import json
 import re
 import sqlite3
 import sys
@@ -53,6 +54,13 @@ def calibrate() -> None:
             raise RuntimeError("CALIBRATION_FAILED")
         db.execute("DROP TRIGGER depth_probe_guard")
         db.execute(sql).close()
+        try:
+            explain(db, "SELECT * FROM __d1_depth_negative_probe__")
+        except sqlite3.Error as error:
+            if category(error) != "SQL_COMPILE_FAILED":
+                raise RuntimeError("NEGATIVE_COMPILER_CALIBRATION_FAILED") from None
+        else:
+            raise RuntimeError("NEGATIVE_COMPILER_CALIBRATION_FAILED")
     finally:
         db.close()
 
@@ -60,6 +68,25 @@ def calibrate() -> None:
 def columns(db: sqlite3.Connection, name: str) -> list[str]:
     # Hidden/generated columns cannot be INSERTed/UPDATEd explicitly.
     return [row[1] for row in db.execute(f"PRAGMA table_xinfo({quoted(name)})") if row[6] == 0]
+
+
+def explain(db: sqlite3.Connection, sql: str) -> None:
+    """Compile with inert bindings; Python's sqlite wrapper otherwise rejects ? parameters."""
+    statement = "EXPLAIN " + sql
+    try:
+        db.execute(statement).close()
+    except sqlite3.ProgrammingError as error:
+        message = str(error)
+        positional = re.search(r"statement uses (\d+), and there are 0 supplied", message)
+        if positional:
+            db.execute(statement, (None,) * int(positional[1])).close()
+            return
+        if "You did not supply a value for binding parameter" in message:
+            names = set(re.findall(r"(?<![\w])[\:@$]([A-Za-z_][A-Za-z_0-9]*)", sql))
+            if names:
+                db.execute(statement, {name: None for name in names}).close()
+                return
+        raise
 
 
 def write_shapes(name: str, names: list[str], operations: set[str]):
@@ -78,7 +105,7 @@ def write_shapes(name: str, names: list[str], operations: set[str]):
         yield "DELETE", f"DELETE FROM {target} WHERE 0"
 
 
-def check_store(store: str) -> tuple[int, int]:
+def check_store(store: str, application_queries: list[dict], application_status: list[list[str]]) -> tuple[int, int]:
     directory = ROOT / "infra" / "d1" / store / "migrations"
     migrations = sorted(directory.glob("*.sql"))
     if not migrations:
@@ -111,7 +138,7 @@ def check_store(store: str) -> tuple[int, int]:
             nonlocal statements, failures
             statements += 1
             try:
-                db.execute("EXPLAIN " + sql).close()
+                explain(db, sql)
             except sqlite3.Error as error:
                 failures += 1
                 print(f"FAIL {store} object={name} shape={kind} {category(error)}")
@@ -130,6 +157,17 @@ def check_store(store: str) -> tuple[int, int]:
                 raise RuntimeError("WRITABLE_COLUMNS_MISSING")
             for kind, sql in write_shapes(name, fields, operations):
                 compile_shape(name, "VIEW_" + kind, sql)
+        store_app_successes = 0
+        for index, query in enumerate(application_queries):
+            try:
+                explain(db, query["sql"])
+                application_status[index].append("OK")
+                store_app_successes += 1
+            except sqlite3.Error as error:
+                failure = category(error)
+                application_status[index].append(failure)
+        rejected = len(application_queries) - store_app_successes
+        print(f"D1_APP_SQL {store}: compiled={store_app_successes}/{len(application_queries)} candidate_schema_rejected={rejected}")
         print(f"D1_DEPTH {store}: migrations={len(migrations)} tables={len(tables)} "
               f"views={len(views)} statements={statements} failures={failures}")
         return statements, failures
@@ -143,13 +181,49 @@ def main() -> int:
         return 2
     started = time.monotonic()
     try:
+        if len(sys.argv) != 2 or sys.argv[1] != "--application-sql-stdin":
+            print("D1_DEPTH_SETUP_FAILED: invoke the Node wrapper to extract application SQL.")
+            return 2
+        inventory = json.load(sys.stdin)
+        application_queries = inventory.get("queries")
+        unresolved = inventory.get("unresolved")
+        if not isinstance(application_queries, list) or not isinstance(unresolved, list):
+            print("D1_DEPTH_SETUP_FAILED: application SQL inventory is invalid.")
+            return 2
+        if any(not isinstance(query, dict) or not isinstance(query.get("sql"), str) or not isinstance(query.get("location"), str) for query in application_queries):
+            print("D1_DEPTH_SETUP_FAILED: recovered application SQL entry is invalid.")
+            return 2
+        if any(not isinstance(site, dict) or not isinstance(site.get("location"), str) or not isinstance(site.get("reason"), str) for site in unresolved):
+            print("D1_DEPTH_SETUP_FAILED: unresolved application SQL entry is invalid.")
+            return 2
+        fixture_files = inventory.get("excludedFixtureFiles")
+        if not isinstance(fixture_files, list) or any(not isinstance(path, str) for path in fixture_files):
+            print("D1_DEPTH_SETUP_FAILED: fixture SQL classification is invalid.")
+            return 2
         calibrate()
         print(f"D1_DEPTH compiler=SQLite/{sqlite3.sqlite_version} limit={DEPTH} calibration=PASS")
-        results = [check_store(store) for store in STORES]
+        application_status = [[] for _ in application_queries]
+        results = [check_store(store, application_queries, application_status) for store in STORES]
     except (sqlite3.Error, OSError, RuntimeError):
         print("D1_DEPTH_SETUP_FAILED: compiler, calibration or schema inventory unavailable.")
         return 2
-    failures = sum(result[1] for result in results)
+    app_failures = 0
+    for query, statuses in zip(application_queries, application_status):
+        if "OK" not in statuses:
+            app_failures += 1
+            failure_category = "EXPRESSION_DEPTH_EXCEEDED" if statuses and all(status == "EXPRESSION_DEPTH_EXCEEDED" for status in statuses) else "SQL_COMPILE_FAILED"
+            print(f"FAIL application object=source shape=PREPARE location={query['location']} {failure_category}")
+    if unresolved:
+        print(f"D1_APP_SQL unresolved={len(unresolved)} (dynamic or non-SQL prepare sites; see bounded source list below)")
+        for site in unresolved[:30]:
+            print(f"D1_APP_SQL unresolved {site['location']} {site['reason']}")
+        if len(unresolved) > 30:
+            print(f"D1_APP_SQL unresolved_sites_omitted={len(unresolved) - 30}")
+    print(f"D1_APP_SQL recovered={len(application_queries)} failed={app_failures} unresolved={len(unresolved)} scanned_files={inventory.get('scannedFiles', 0)}")
+    print(f"D1_APP_SQL excluded_fixture_sources={len(fixture_files)}")
+    for path in fixture_files[:30]:
+        print(f"D1_APP_SQL excluded_fixture {path} FIXTURE_ONLY_SQL")
+    failures = sum(result[1] for result in results) + app_failures
     print(f"D1_DEPTH {'FAIL' if failures else 'PASS'}: failures={failures} "
           f"elapsed_seconds={time.monotonic() - started:.3f}")
     return 1 if failures else 0

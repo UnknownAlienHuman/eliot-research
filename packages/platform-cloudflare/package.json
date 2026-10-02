@@ -18,6 +18,7 @@
     "@eliotr/contracts": "workspace:*",
     "@eliotr/domain": "workspace:*",
     "@eliotr/retrieval": "workspace:*",
-    "@eliotr/research": "workspace:*"
+    "@eliotr/research": "workspace:*",
+    "@eliotr/cloudflare-backup": "workspace:*"
   }
 }

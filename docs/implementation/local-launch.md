@@ -1,9 +1,12 @@
 # Local launch checkpoint
 
+Deployment hostnames are redacted as `<ELIOTR_ACCESS_HOSTNAME>`; resolve the exact target
+from the ignored operator profile. Historical deployment evidence is not approval for a new deploy.
+
 ## Deployed owner workspace
 
 The private Cloudflare workspace is available at
-[eliotr-core.kleymor-metal.workers.dev](https://eliotr-core.kleymor-metal.workers.dev).
+[<ELIOTR_ACCESS_HOSTNAME>](https://<ELIOTR_ACCESS_HOSTNAME>).
 Choose the existing workspace, add a document, select it in Sources and press **Read document**.
 Reading and downloading use the exact admitted normalized bytes, require the current owner read
 policy, and do not depend on a search index or model. This reader is bounded to 2 MiB per document;

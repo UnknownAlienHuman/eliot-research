@@ -1,7 +1,9 @@
 # Backend delivery plan
 
-Current execution order, reconciled on 2026-10-01 against `main`
-`4c897429688a12e1719ed4b55cca3ec044c94e05`.
+Current execution order, reconciled on 2026-10-02 against `main`
+`6480186ea5ead7052e7122ec1b523713ddc97f21`.
+
+The isolated [product integration checkpoint](product-resume-2026-10-02.md) records actual local COW/publication/restore checks and remaining code separately from live approval. The active result remains S92 integration, not release acceptance.
 
 This is the volatile handoff and queue. Refresh `origin/main` and the active task before editing. [PR #292](https://github.com/UnknownAlienHuman/eliot-research/pull/292) preserves the original S01–S99 passports and negative acceptance criteria; it is not a second queue.
 
@@ -34,10 +36,21 @@ are delivered in `9c1e4788`. Reuse the six `s92-*.mjs` modules and their
 `library.spec.ts` registrations; do not start a second harness. Delivery
 of these scenarios does not establish their full acceptance: the runner
 explicitly permits `BLOCKED`, `NOT_EXECUTED` and `PENDING_OWNER_D1B` outcomes.
-`ArtifactCompiler.reviseSection` remains an interface-only COW entry point;
-the S92 COW probe also reports the absent ACCEPTED-publication producer.
-Resolve these existing product paths and inspect actual outcomes instead
-of treating a successful test-process exit as an accepted owner loop.
+The standalone `CloudflareArtifactCowAdapter` now implements section revision over
+immutable D1/R2 DRAFT artifacts in `packages/cloudflare-artifacts/src/artifact-cow.ts`.
+It validates the exact parent/spec/freeze/evidence boundary, reuses unchanged section object keys,
+and commits a new revision with compare-and-swap. Five unit cases and a real local Workerd D1/R2
+case verify immutable reuse, refusals and a concurrent one-winner commit.
+This is a local engineering follow-up to merged main `6480186e` and the deployment fixes in
+[draft PR #307](https://github.com/UnknownAlienHuman/eliot-research/pull/307).
+Product composition still needs an authoritative section producer, evidence validators and export
+assembler; ACCEPTED publication is still absent. The S92 COW source probe is not an accepted owner loop.
+Resolve those product paths and inspect actual outcomes instead of treating a successful
+process exit or standalone adapter as full S92 acceptance.
+
+Focused local checks for this adapter: `pnpm exec vitest run packages/cloudflare-artifacts/src/artifact-cow.test.ts`
+and `pnpm test:artifacts-worker`. The latter uses real local D1 migrations and R2;
+it is included in `test:worker` and makes no live provider calls.
 
 At this baseline, `node scripts/check-launch-code.mjs` reports disabled
 required slices `ERASURE` and `RETRIEVAL`. The implementation registry

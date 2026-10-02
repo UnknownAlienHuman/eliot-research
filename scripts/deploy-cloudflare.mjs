@@ -14,6 +14,8 @@ import { loadResearchRuntimeEnvironment, RESEARCH_RUNTIME_CONFIGURATION_KEYS,
   RESEARCH_RUNTIME_SEMANTIC_TRANSPORT_KEYS, semanticConfigurationTransport } from "./lib/research-runtime-config.mjs";
 import { synchronizeResearchDeploymentAuthority } from "./lib/research-deployment-authority.mjs";
 import { computeResearchBackendFingerprint } from "./lib/research-backend-fingerprint.mjs";
+import { readDeploymentMigrationPlan, requireUnchangedMigrationPlan, validateDeploymentMigrationDirectories, verifyDeploymentMigrationLedgers } from "./lib/deployment-migrations.mjs";
+import { validateStagingTarget } from "./lib/staging-isolation.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const core = resolve(root, "apps/eliotr-core");
@@ -80,9 +82,13 @@ export async function deployCloudflare({ confirmLive = false, environment = proc
   }
   let input;
   let oauth = null;
+  let stagingTarget = null;
   if (confirmLive) {
     await verifyCode();
     env.ELIOTR_ENVIRONMENT ??= "production";
+    // A staging label does not isolate fixed-name resources. Reject a missing,
+    // mismatched or protected target before credential load or any command.
+    stagingTarget = validateStagingTarget(env);
     // Local-only credential load (profile file + clock). No remote effect yet,
     // so launch:code and the local gates below still precede every remote call.
     if (resolveAuthMode(env) === WRANGLER_OAUTH_MODE) {
@@ -96,6 +102,7 @@ export async function deployCloudflare({ confirmLive = false, environment = proc
       env.ELIOTR_DEPLOYMENT_GENERATION = `git-${revision}`;
     }
     const canonicalConfig = JSON.parse(await readFile(resolve(core, "wrangler.jsonc"), "utf8"));
+    validateDeploymentMigrationDirectories(canonicalConfig, { root });
     env.ELIOTR_GOOGLE_EXTERNAL_TRANSPORT = readConfiguredTransport(canonicalConfig);
     input = validateDeploymentInput(env);
   }
@@ -178,22 +185,29 @@ export async function deployCloudflare({ confirmLive = false, environment = proc
   const config = validateGeneratedDeployment(bytes, env, input);
   verifyGeneratedSemanticConfiguration(config, env);
   const digest = createHash("sha256").update(bytes).digest("hex");
+  const migrationPlan = await readDeploymentMigrationPlan(config, { root });
   const backendFingerprint = computeResearchBackendFingerprint({ root, generated_config: config });
   const requireUnchangedConfig = async () => {
     if (createHash("sha256").update(await read(configPath)).digest("hex") !== digest) {
       throw new Error("Generated deployment config changed during release");
     }
   };
+  const requireUnchangedInputs = async () => {
+    await requireUnchangedConfig();
+    await requireUnchangedMigrationPlan(config, migrationPlan, { root });
+  };
   // The account-neutral build does not validate generated IDs, routes and runtime variables.
   exec("pnpm", ["exec", "wrangler", "deploy", "--dry-run", "--minify", "--config", deployConfig], core);
-  await requireUnchangedConfig();
+  await requireUnchangedInputs();
   for (const binding of ["CORE_DB", "SEARCH_DB"]) {
     exec("pnpm", ["exec", "wrangler", "d1", "migrations", "apply", binding, "--remote", "--config", deployConfig], core);
-    await requireUnchangedConfig();
+    await requireUnchangedInputs();
   }
+  const migrationReadback = await verifyDeploymentMigrationLedgers(env, input, migrationPlan, { fetchImpl });
+  await requireUnchangedInputs();
   // Canonical generated vars win; Wrangler preserves secrets without --keep-vars.
   exec("pnpm", ["exec", "wrangler", "deploy", "--config", deployConfig], core);
-  await requireUnchangedConfig();
+  await requireUnchangedInputs();
   const worker = await readDeploymentWorker(env, input, config, { fetchImpl });
   const remoteHttpSmoke = await verifyDeploymentSmoke(env, input, { fetchImpl, now });
   const coreDatabase = config.d1_databases.find((database) => database.binding === "CORE_DB");
@@ -214,7 +228,9 @@ export async function deployCloudflare({ confirmLive = false, environment = proc
     protocol: "eliotr.cloudflare-deployment-receipt.v1",
     deployment_generation: env.ELIOTR_DEPLOYMENT_GENERATION,
     environment: env.ELIOTR_ENVIRONMENT,
+    ...(stagingTarget === null ? {} : { staging_target: stagingTarget }),
     worker,
+    d1_migrations: migrationReadback,
     generated_config_sha256: digest,
     backend_fingerprint: backendFingerprint,
     remote_http_smoke: remoteHttpSmoke,
@@ -225,7 +241,7 @@ export async function deployCloudflare({ confirmLive = false, environment = proc
       workflow_retry_resume: "NOT_EXECUTED", ai_search_exact_resolution: "NOT_EXECUTED",
       google_drive_exchange: "NOT_EXECUTED",
     },
-    note: "Inventory/export readback is not full binding or version attestation. HTTP generation is verified only when authenticated smoke passes. Product and T4/T6 gates remain separate.",
+    note: "Active version, configured resource bindings and migration names are verified. ETag and local migration hashes are not remote content proof; asset content and product/T4/T6 gates remain separate. HTTP generation is verified only when authenticated smoke passes.",
     created_at: new Date(now()).toISOString(),
   };
   await save(receipt);

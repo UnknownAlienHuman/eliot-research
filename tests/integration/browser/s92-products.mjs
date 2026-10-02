@@ -20,17 +20,17 @@
 //     reasoningEndpoint() / gatewayToken() validators (fail-closed proof for
 //     the controlled external model).
 //
-// Model policy (owner decision D1): the local default is
+// Model policy (local test mode D1): the local default is
 // AI_GATEWAY_REASONING_URL=https://example.invalid/local-disabled and there
 // is NO local fake model gateway. Live-model assertions are therefore
-// PENDING_OWNER_D1B by construction; this file asserts readiness plumbing
+// NOT_EXECUTED by construction; this file asserts readiness plumbing
 // and fail-closed behavior, and never invents model output.
 //
 // State discipline (matches library.spec.ts harness style):
 //   missing entry point / environment -> NOT_EXECUTED (honest skip)
 //   unmet prerequisite                 -> BLOCKED
 //   assertion failure                  -> FAIL with reason
-//   live model dependent               -> PENDING_OWNER_D1B
+//   live model dependent               -> NOT_EXECUTED
 //
 // Plain-node runnable: `node tests/integration/browser/s92-products.mjs`
 // runs every SCENARIOS entry and prints a summary. The parent integrates
@@ -484,9 +484,9 @@ export async function verifyS92ProductAdmission(product) {
 export function verifyS92LiveModelAssertions() {
   // Owner decision D1(b) — a real gateway — is required before any of these
   // can execute. They are registered so the runner reaches them, and they
-  // stay PENDING_OWNER_D1B instead of faking PASS.
+  // stay NOT_EXECUTED instead of faking PASS.
   return {
-    state: "PENDING_OWNER_D1B",
+    state: "NOT_EXECUTED",
     detail:
       "pending owner D1(b): live model response per product (ASK/COMPARE/FACT_CHECK/DEEP_RESEARCH/REPORT); " +
       "W3 attempt/reservation/fingerprint/pricing/output settlement against the controlled gateway; " +

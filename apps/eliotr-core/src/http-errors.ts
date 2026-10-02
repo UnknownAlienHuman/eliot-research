@@ -37,6 +37,7 @@ import {
   rawCaptureProblem,
 } from "@eliotr/cloudflare-raw-ingest";
 import { ExternalAgentTaskError } from "@eliotr/cloudflare-workflows";
+import { ArtifactPublicationError, ArtifactPublicationReadinessError } from "@eliotr/cloudflare-research";
 
 export class HttpRequestError extends Error {
   public readonly code: string;
@@ -99,6 +100,17 @@ function mapIngestStorageError(request: Request, error: IngestStorageError, prob
 }
 
 export function mapError(request: Request, error: unknown, problemResponse: ProblemResponse): Response {
+  if (error instanceof ArtifactPublicationError) {
+    const status = error.code === "ARTIFACT_PUBLICATION_DENIED" ? 403
+      : error.code === "ARTIFACT_PUBLICATION_NOT_FOUND" ? 404
+      : error.code === "ARTIFACT_PUBLICATION_INPUT_INVALID" ? 400
+      : error.retryable || error.code === "ARTIFACT_PUBLICATION_EFFECT_UNCERTAIN" ? 503
+      : 409;
+    return problemResponse(request, status, error.code, "Artifact publication could not be completed", status === 503);
+  }
+  if (error instanceof ArtifactPublicationReadinessError) {
+    return problemResponse(request, 409, error.code, "Artifact publication requirements are not satisfied", false);
+  }
   if (error instanceof ErasureAdmissionError) {
     return problemResponse(request, error.code === "ERASURE_PERMISSION_DENIED" ? 403 : 409,
       error.code, error.message, false);

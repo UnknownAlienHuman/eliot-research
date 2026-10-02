@@ -284,6 +284,7 @@ export async function expireOffsiteCopy(input: {
     try {
       journalRef = (await input.adapter.delete(partRef, `expiry:${expiryKey}`)).journal_ref;
     } catch (cause) {
+      if (typeof cause === "object" && cause !== null && "code" in cause && cause.code === "BACKUP_OFFSITE_UNCERTAIN") throw cause;
       failBackup("BACKUP_OBJECT_UNREADABLE", "offsite expiry delete attempt failed", true, {}, cause);
     }
     journalRefs.push(journalRef);
