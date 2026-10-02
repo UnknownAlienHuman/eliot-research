@@ -12,6 +12,7 @@ import {
 import {
   assertExhaustiveTableCoverage,
   CANONICAL_EXPORTED_TABLES,
+  classifyDurableTable,
   listDurableTables,
 } from "./coverage.js";
 
@@ -57,6 +58,26 @@ describe("ER-34 O2 full Core migration coverage", () => {
 
     const inventory = await readCoreColumnInventory(d1, [...CANONICAL_EXPORTED_TABLES].sort());
     assertExportColumnCoverage(inventory, TABLE_SPECS);
+    expect(classifyDurableTable("scope_access_grant")).toBe("NOT_A_BACKUP");
+    expect(classifyDurableTable("project_client_grant")).toBe("NOT_A_BACKUP");
+    expect(classifyDurableTable("historical_scope_access_grant")).toBe("CANONICAL_EXPORTED");
+    expect(classifyDurableTable("historical_project_client_grant")).toBe("CANONICAL_EXPORTED");
+    expect(database.prepare("SELECT COUNT(*) AS n FROM historical_scope_access_grant").get()).toEqual({ n: 0 });
+    expect(database.prepare("SELECT COUNT(*) AS n FROM historical_project_client_grant").get()).toEqual({ n: 0 });
+  });
+
+  it("keeps portable grant provenance immutable and separate from active grants", () => {
+    const database = migratedCore();
+    database.prepare(`INSERT INTO historical_scope_access_grant(
+      archive_revision,snapshot_id,snapshot_revision,principal_ref,client_class,credential_generation,
+      policy_authority_ref,authorization_receipt_ref,allowed_use_json,disclosure_ceiling,state,expires_at,
+      created_at,event_kind,recorded_at
+    ) VALUES (1,'snapshot-old',1,'author-old','owner_pwa','credential-old','policy-old','receipt-old','[]',
+      'local','EXPIRED','2025-01-01T00:00:00.000Z','2024-01-01T00:00:00.000Z','BACKFILL','2025-01-01T00:00:00.000Z')`).run();
+    expect(() => database.prepare("UPDATE historical_scope_access_grant SET state='ACTIVE' WHERE archive_id=1").run()).toThrow();
+    expect(() => database.prepare("DELETE FROM historical_scope_access_grant WHERE archive_id=1").run()).toThrow();
+    expect(database.prepare("SELECT state FROM historical_scope_access_grant WHERE archive_id=1").get()).toEqual({ state: "EXPIRED" });
+    expect(database.prepare("SELECT COUNT(*) AS n FROM scope_access_grant").get()).toEqual({ n: 0 });
   });
 
   it("rejects a newly added table and an unlisted column instead of silently omitting either", async () => {

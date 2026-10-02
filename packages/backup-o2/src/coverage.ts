@@ -131,6 +131,10 @@ export const CANONICAL_EXPORTED_TABLES: ReadonlySet<string> = new Set([
   "orientation_request",
   "orientation_authority_epoch",
   "google_oauth_intent_receipt",
+  // Historical authorization facts are portable provenance only. They are
+  // never rehydrated as current admission, ownership, or credentials.
+  "historical_scope_access_grant",
+  "historical_project_client_grant",
 ]);
 
 const REBUILD_REQUIRED_TABLES: ReadonlySet<string> = new Set([
