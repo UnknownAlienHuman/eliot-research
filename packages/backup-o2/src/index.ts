@@ -14,6 +14,7 @@ export * from "./destination-policy.js";
 export * from "./hold-authority.js";
 export * from "./nonce-authority.js";
 export * from "./offsite.js";
+export * from "./portable-manifest.js";
 export * from "./expiry.js";
 export * from "./o4-authority.js";
 export * from "./purge-replay.js";
