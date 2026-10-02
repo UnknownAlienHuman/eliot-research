@@ -162,6 +162,18 @@ async function responseBody(upstream, maxBytes) {
   } finally { await reader.cancel().catch(() => {}); }
 }
 
+function isArtifactSectionReadRoute(method, url) {
+  if (url.search) return false;
+  const parts = url.pathname.split("/");
+  const section = parts.length === 8 && parts[1] === "api" && parts[2] === "v1" &&
+    parts[3] === "research" && parts[4] === "artifact" && parts[5].length > 0 &&
+    parts[6] === "sections" && parts[7].length > 0;
+  const reauthorized = parts.length === 9 && parts[1] === "api" && parts[2] === "v1" &&
+    parts[3] === "research" && parts[4] === "artifact" && parts[5].length > 0 &&
+    parts[6] === "sections" && parts[7].length > 0 && parts[8] === "reauthorize";
+  return (method === "GET" && section) || (method === "POST" && reauthorized);
+}
+
 /** A local developer tool only. No bridge code or alternate identity issuer enters the Worker bundle. */
 export async function startOwnerBridge({ workerOrigin, token, generation, port = 8787,
   fetchImpl = fetch, now = Date.now, lifetimeMs = 15 * 60 * 1000, timeoutMs = 15000 } = {}) {
@@ -295,6 +307,16 @@ export async function startOwnerBridge({ workerOrigin, token, generation, port =
       response.setHeader("content-security-policy", "default-src 'self'; script-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'");
       for (const name of ["content-range", "accept-ranges", "etag"]) {
         if (upstream.headers.has(name)) response.setHeader(name, upstream.headers.get(name));
+      }
+      // Artifact section readback binds exact object bytes to the declared artifact,
+      // section, object, digest and deployment. Forward only these fields on the two
+      // corresponding read routes; length describes the decoded bytes emitted below.
+      if ((upstream.status === 200 || upstream.status === 206) && isArtifactSectionReadRoute(request.method, url)) {
+        for (const name of ["x-eliotr-artifact-ref", "x-eliotr-section-ref", "x-eliotr-section-object-ref",
+          "x-eliotr-section-sha256", "x-eliotr-deployment-generation"]) {
+          if (upstream.headers.has(name)) response.setHeader(name, upstream.headers.get(name));
+        }
+        response.setHeader("content-length", String(bytes.byteLength));
       }
       response.statusCode = upstream.status; response.end(bytes);
     } catch { problem(response, 502, "LOCAL_REQUEST_FAILED"); }
