@@ -6,12 +6,12 @@ import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
 import type { BackupEpoch } from "@eliotr/contracts";
-import { BACKUP_MANIFEST_PROTOCOL, BACKUP_SCHEMA_INVENTORY_PROTOCOL, TABLE_SPECS, digestCoreColumnInventory, readCoreColumnInventory } from "./coherent-cut.js";
-import { rebuildManifestLines } from "./coverage.js";
-import type { BackupEpochDraft, BackupPartRef } from "./epoch.js";
-import { destinationDescriptorDigest, destinationPolicyDigest, type BackupDestinationPolicy } from "./destination-policy.js";
-import type { OffsiteCopyAdapter, OffsiteStoredPart } from "./offsite.js";
-import { backupSha256Hex, canonicalBackupJson } from "./shared.js";
+import { BACKUP_MANIFEST_PROTOCOL, BACKUP_SCHEMA_INVENTORY_PROTOCOL, TABLE_SPECS, digestCoreColumnInventory, readCoreColumnInventory } from "@eliotr/backup-o2";
+import { rebuildManifestLines } from "@eliotr/backup-o2";
+import type { BackupEpochDraft, BackupPartRef } from "@eliotr/backup-o2";
+import { destinationDescriptorDigest, destinationPolicyDigest, type BackupDestinationPolicy } from "@eliotr/backup-o2";
+import type { OffsiteCopyAdapter, OffsiteStoredPart } from "@eliotr/backup-o2";
+import { backupSha256Hex, canonicalBackupJson } from "@eliotr/backup-o2";
 import { verifyIsolatedRestorePreflight, type IsolatedRestorePreflightInput } from "./isolated-restore-preflight.js";
 
 const MIGRATION_DIR = fileURLToPath(new URL("../../../infra/d1/core/migrations/", import.meta.url));

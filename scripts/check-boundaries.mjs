@@ -29,6 +29,7 @@ const FORBIDDEN_IMPORTS = [
 // build script reads TypeScript/CSS sources before writing its generated asset.
 const HOST_FILESYSTEM_IMPORTS = new Map([
   ["packages/backup-o2/src/coverage-full-chain.test.ts", new Set(["node:fs"])],
+  ["packages/cloudflare-backup/src/isolated-restore-preflight.test.ts", new Set(["node:fs/promises"])],
   ["packages/cloudflare-research/src/research-model-qualification-renewal.test.ts", new Set(["node:fs"])],
   ["packages/cloudflare-research/src/research-model-spend-admission-branch-stages.test.ts", new Set(["node:fs"])],
   ["apps/eliotr-pwa/scripts/build-agent-inbox.mjs", new Set(["node:fs/promises"])],
@@ -41,7 +42,7 @@ const PACKAGE_RULES = new Map([
   ["packages/retrieval", new Set(["@eliotr/contracts", "@eliotr/domain", "@eliotr/policy"])],
   ["packages/research", new Set(["@eliotr/contracts", "@eliotr/domain", "@eliotr/policy", "@eliotr/retrieval"])],
   ["packages/backup-o2", new Set(["@eliotr/contracts"])],
-  ["packages/cloudflare-backup", new Set(["@eliotr/backup-o2"])],
+  ["packages/cloudflare-backup", new Set(["@eliotr/backup-o2", "@eliotr/contracts"])],
   ["packages/platform-cloudflare", new Set(["@eliotr/cloudflare-backup", "@eliotr/backup-o2", "@eliotr/contracts", "@eliotr/domain", "@eliotr/retrieval", "@eliotr/research"])],
   ["packages/cloudflare-research", new Set(["@eliotr/cloudflare-workflows", "@eliotr/cloudflare-ai", "@eliotr/cloudflare-artifacts", "@eliotr/cloudflare-artifacts/artifact-draft.js", "@eliotr/cloudflare-artifacts/artifact-draft-reader.js", "@eliotr/cloudflare-artifacts/artifact-draft-types.js", "@eliotr/cloudflare-artifacts/artifact-publication.js", "@eliotr/cloudflare-artifacts/artifact-draft-reauthorization.js", "@eliotr/cloudflare-artifacts/artifact-draft-citations-reauthorization.js", "@eliotr/cloudflare-evidence", "@eliotr/contracts", "@eliotr/domain", "@eliotr/platform-cloudflare", "@eliotr/policy", "@eliotr/research", "@eliotr/retrieval"])],
   ["packages/cloudflare-research-stages", new Set(["@eliotr/cloudflare-ai", "@eliotr/cloudflare-evidence", "@eliotr/cloudflare-research", "@eliotr/cloudflare-workflows", "@eliotr/contracts", "@eliotr/domain", "@eliotr/research", "zod"])],

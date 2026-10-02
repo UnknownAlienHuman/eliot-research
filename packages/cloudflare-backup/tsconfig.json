@@ -15,6 +15,9 @@
   "references": [
     {
       "path": "../backup-o2"
+    },
+    {
+      "path": "../contracts"
     }
   ]
 }

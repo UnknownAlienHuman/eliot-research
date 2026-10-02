@@ -1,15 +1,15 @@
 import { BackupEpochSchema, type BackupEpoch } from "@eliotr/contracts";
-import { BACKUP_MANIFEST_PROTOCOL, BACKUP_SCHEMA_INVENTORY_PROTOCOL, TABLE_SPECS, digestCoreColumnInventory, readCoreColumnInventory, type CoreTableInventory } from "./coherent-cut.js";
-import type { BackupEpochDraft } from "./epoch.js";
-import { openOffsiteBackupPart, type BackupOffsiteReadAuthority, type OffsiteCopyAdapter } from "./offsite.js";
-import { BACKUP_PORTABLE_MANIFEST_NAMES, verifyPortableBackupManifests, type PlaintextBackupPart, type VerifiedPortableBackupManifests } from "./portable-manifest.js";
-import { destinationDescriptorDigest, destinationPolicyDigest, type BackupDestinationPolicy } from "./destination-policy.js";
-import { readBlockingHoldAuthority } from "./hold-authority.js";
-import { backupAborted, backupSha256Hex, canonicalBackupJson, failBackup } from "./shared.js";
+import { BACKUP_MANIFEST_PROTOCOL, BACKUP_SCHEMA_INVENTORY_PROTOCOL, TABLE_SPECS, digestCoreColumnInventory, readCoreColumnInventory, type CoreTableInventory } from "@eliotr/backup-o2";
+import type { BackupEpochDraft } from "@eliotr/backup-o2";
+import { openOffsiteBackupPart, type BackupOffsiteReadAuthority, type OffsiteCopyAdapter } from "@eliotr/backup-o2";
+import { BACKUP_PORTABLE_MANIFEST_NAMES, verifyPortableBackupManifests, type PlaintextBackupPart, type VerifiedPortableBackupManifests } from "@eliotr/backup-o2";
+import { destinationDescriptorDigest, destinationPolicyDigest, type BackupDestinationPolicy } from "@eliotr/backup-o2";
+import { readBlockingHoldAuthority } from "@eliotr/backup-o2";
+import { backupAborted, backupSha256Hex, canonicalBackupJson, failBackup } from "@eliotr/backup-o2";
 
 const SHA256 = /^[a-f0-9]{64}$/u;
 const MANIFESTS = BACKUP_PORTABLE_MANIFEST_NAMES;
-const RESTORE_READ_LIMITS = { max_parts: 4096, max_part_bytes: 1024 * 1024, max_manifest_bytes: 64 * 1024 * 1024, max_total_manifest_bytes: 128 * 1024 * 1024, max_inventory_rows: 100_000, max_bucket_pages: 1000 } as const;
+const RESTORE_READ_LIMITS = { max_parts: 4096, max_part_bytes: 1024 * 1024, max_manifest_bytes: 8 * 1024 * 1024, max_total_manifest_bytes: 8 * 1024 * 1024, max_inventory_rows: 100_000, max_bucket_pages: 1000 } as const;
 const CONTROL_TABLES = new Set(["d1_migrations", "schema_state", "investigation_ledger_epoch", "orientation_authority_epoch"]);
 
 function checkedDatabase(database: D1Database): D1Database {
