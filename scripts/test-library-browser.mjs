@@ -335,8 +335,8 @@ try {
   const openSources = async (label) => { await wait('Boolean(document.querySelector("[data-nav-target=\\"#library\\"]"))', `${label}: navigation`); await click('[data-nav-target="#library"]'); if (!(await visible("#library [data-first]"))) await click("[data-source-chooser-toggle]"); if (!(await visible("#library [data-source]"))) await click("#library [data-first]"); await wait('Boolean(document.querySelector("#library [data-source]"))', `${label}: visible source controls`); };
   const openBundle = async () => { if (!(await evaluate('document.querySelector("#bundle-import details")?.open'))) await click("#bundle-import details > summary"); await assertVisible('input[name="bundle"]', "bundle input"); await assertVisible('#bundle-import button[type="submit"]', "bundle submit"); };
   const launchDraft = async (label) => {
-    await assertVisible('#research-run input[name="query"]', `${label}: research input`);
-    await evaluate(`(() => { const input = document.querySelector('#research-run input[name="query"]'); input.value = "draft research question"; input.closest("form").requestSubmit(); })()`);
+    await assertVisible('#research-run textarea[name="query"]', `${label}: research input`);
+    await evaluate(`(() => { const input = document.querySelector('#research-run textarea[name="query"]'); input.value = "draft research question"; input.closest("form").requestSubmit(); })()`);
     await wait(`document.querySelector("#research-run [role=status]")?.textContent.includes("Research started")`, `${label}: draft launch`);
     assert.equal(await evaluate('document.querySelector("#research-run [data-workflow-id]").value'), draftWorkflowId);
     await click("#research-run [data-run-refresh]");
@@ -411,10 +411,10 @@ try {
   await click('[data-nav-target="#connections-card"]'); await assertView("connections", "#connections-card");
   await evaluate("history.back()"); await wait('location.hash === "#research-card" && document.querySelector("#research-view")?.hidden === false', "Browser Back to Research"); await assertView("research", "#research-card");
   assert.deepEqual(await evaluate('({ scope: document.querySelector("#corpus-lens [data-result]").textContent.includes("scope-fixture"), evidence: document.querySelector(".evidence-source")?.textContent, rail: document.querySelector(".rail-status").textContent })'), { scope: true, evidence: evidenceText, rail: "VERIFIED" });
-  await assertVisible('#research-run input[name="query"]', "Research query input");
+  await assertVisible('#research-run textarea[name="query"]', "Research query input");
   await assertVisible('#research-run form button[type="submit"]', "Research submit");
   await evaluate(`(() => {
-    const input = document.querySelector('#research-run input[name="query"]');
+    const input = document.querySelector('#research-run textarea[name="query"]');
     input.value = "research question"; input.closest("form").requestSubmit();
   })()`);
   await wait('document.querySelector("#research-run [role=status]")?.textContent.includes("Research started")', "Research run launch");
