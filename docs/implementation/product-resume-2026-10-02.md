@@ -612,3 +612,50 @@ This supersedes the preceding pending-full-Core statement. The 17 source
 budget violations, baseline repository lint/Rust gates and pending live/S92
 gates still prevent aggregate release completion. No deployment or live
 mutation was performed; remote main remains parent-owned at `2a26cce4`.
+
+Bounded baseline lint/Rust recovery, 2026-10-02 21:28 UTC, input `e11d7408`:
+the parent explicitly expanded ownership to the five inherited Rust failure
+files, six tracked lint files and `eslint.config.mjs`. Three Luna/max lanes
+made disjoint changes; root reviewed and ran all checks serially. The single
+normal approval-path retry of the ABI module's required unsafe-code forbid
+attribute was accepted. The historical rejection above was not bypassed.
+
+`pnpm typecheck` and full `pnpm lint` PASS, exit 0. Two array element reads now
+use explicit typed fail-closed guards instead of non-null assertions. The
+inbox builder imports native Node stdout/TextEncoder; unused type/catch/helper
+bindings are removed. Existing source rules are unchanged. Newly ignored lint
+inputs are exactly root `.eliotr-state/**` and generated inbox `app.js`.
+The audit discovered hand-authored `local-namespace.d.mts` lacked config;
+existing TypeScript rules now also apply to `.mts/.cts`. Final metadata audit
+PASS: all 1232 tracked code paths configured (1035 .ts, 195 .mjs, 1 .js,
+1 .mts), zero ignored/uncovered tracked files and no missing required error
+rules. The inbox generator PASS with exact JS/CSS SHA-256 bytes unchanged.
+
+Full existing `pnpm rust:check` PASS, exit 0: boundaries and synthetic
+negatives; shared/differential vectors; workspace fmt and strict Clippy;
+nextest 313/313 with zero skipped; workspace doctests; deny; default/self-test
+Wasm; pinned nightly branch-aware coverage with the 90% line floor. Default
+Wasm is 138 raw / 135 gzip bytes; self-test 1619213 / 79478, zero imports in
+both. All 21 tests in the four S10 files remain; explicit error, line, kind,
+size-boundary and mutation-kill assertions are retained, with always-on
+failure assertions replacing denied expect/panic calls. No lint allowances.
+
+Required `pnpm check:affected` passes SQL depth, contracts, boundaries and
+their negatives, then FAILS at the same 17 source-budget contours. Current
+Core source count is 33465 lines and Worker source is 1698945 bytes; the
+research package is 25669 lines. No budget limits or unrelated code changed.
+Full Core was not repeated in this mechanical lint/Rust stage; its preceding
+804-pass proof is at `3e491a83`. No runtime state or secret was read/deleted,
+and no remote main push, deployment, live mutation or manual CI was attempted.
+Logs under OS temp: `eliotr-lint-rust-static-e11d7408.log`,
+`eliotr-lint-coverage-e11d7408.json`,
+`eliotr-agent-inbox-build-lint-e11d7408.log`,
+`eliotr-rust-recovery-e11d7408.log`, and
+`eliotr-lint-rust-affected-e11d7408.log`.
+
+Next narrow coverage work, separately identified by parent review: prove
+automatic current HTTP async dispatch end-to-end (admission fixtures stop
+background workflows), and restore same-key/changed-max_results conflict
+coverage while retaining changed-query coverage. These remain PENDING and
+were not mixed into this lint/Rust checkpoint. Release still requires the
+budget repairs and remaining S92/live acceptance; local gates do not qualify it.
