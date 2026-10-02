@@ -25,9 +25,10 @@ const FORBIDDEN_IMPORTS = [
 
 // These exact files execute as host-side Node tooling, never inside a Worker
 // or browser bundle. Keep filesystem exceptions file- and specifier-specific:
-// the two SQLite migration tests read checked-in migration SQL, and the PWA
+// SQLite migration coverage tests read checked-in migration SQL, and the PWA
 // build script reads TypeScript/CSS sources before writing its generated asset.
 const HOST_FILESYSTEM_IMPORTS = new Map([
+  ["packages/backup-o2/src/coverage-full-chain.test.ts", new Set(["node:fs"])],
   ["packages/cloudflare-research/src/research-model-qualification-renewal.test.ts", new Set(["node:fs"])],
   ["packages/cloudflare-research/src/research-model-spend-admission-branch-stages.test.ts", new Set(["node:fs"])],
   ["apps/eliotr-pwa/scripts/build-agent-inbox.mjs", new Set(["node:fs/promises"])],
