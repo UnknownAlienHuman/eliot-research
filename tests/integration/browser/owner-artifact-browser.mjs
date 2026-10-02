@@ -5,7 +5,7 @@ import { readdir, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { createHash } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
-import { prepareLocal, removeHarnessOwned, executeLocalD1WithRetryAsync, wranglerArgs } from "../../../scripts/lib/local-launch.mjs";
+import { prepareLocal, removeHarnessOwned, executeLocal, executeLocalD1WithRetryAsync, wranglerArgs, ROOT } from "../../../scripts/lib/local-launch.mjs";
 import { startLocalWorker } from "../../../scripts/lib/local-worker.mjs";
 import { startOwnerBridge } from "../../../scripts/lib/local-owner-bridge.mjs";
 import { reserveMiniflareForbiddenPorts } from "../../../scripts/lib/miniflare-port-guard.mjs";
@@ -20,9 +20,10 @@ async function durableCheckpoint(paths, manifest) {
     try {
       if (!database.prepare("SELECT 1 FROM sqlite_master WHERE name='artifact_publication_receipt'").get()) continue;
       assert.equal(result, undefined, "Exactly one canonical Core database is expected");
-      const receipts = database.prepare("SELECT * FROM artifact_publication_receipt ORDER BY receipt_ref").all();
-      assert.equal(receipts.length, 1); assert.equal(receipts[0].receipt_ref, manifest.publication.receipt.receipt_ref);
-      const modelTables = database.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE '%model%' AND name LIKE '%receipt%'").all();
+      const receipts = database.prepare("SELECT * FROM artifact_publication_receipt ORDER BY publication_ref").all();
+      assert.equal(receipts.length, 1); assert.equal(receipts[0].publication_ref, manifest.publication.receipt.publication_ref);
+      const modelTables = database.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name IN ('research_model_attempt','research_model_output','research_model_spend_admission')").all();
+      assert.equal(modelTables.length, 3, "All durable model effect ledgers must exist");
       const effects = Object.fromEntries(modelTables.map(({ name: table }) => {
         assert.match(table, /^[a-z_]+$/u); return [table, database.prepare(`SELECT count(*) AS n FROM ${table}`).get().n];
       }));
@@ -38,9 +39,12 @@ async function durableCheckpoint(paths, manifest) {
   }
   return { ...result, blobs };
 }
-async function fixtureMutation(paths, sql) {
-  await executeLocalD1WithRetryAsync(wranglerArgs(paths, ["d1", "execute", "CORE_DB", "--command", sql, "--json"]),
+function sqlText(value) { assert.equal(typeof value, "string"); return "'" + value.replaceAll("'", "''") + "'"; }
+async function fixtureMutation(paths, sql, expectedChanges) {
+  const output = await executeLocalD1WithRetryAsync(wranglerArgs(paths, ["d1", "execute", "CORE_DB", "--command", sql, "--json"]),
     { capture: true, timeoutMs: 30000 });
+  const changes = JSON.parse(output).reduce((total, item) => total + item.meta.changes, 0);
+  assert.equal(changes, expectedChanges, "Exact fixture authority mutation must change only its selected rows");
 }
 
 export async function runOwnerArtifactBrowser(harness) {
@@ -51,7 +55,13 @@ export async function runOwnerArtifactBrowser(harness) {
     current_rights: "PENDING", source_purge: "PENDING", run_reopen: "PENDING", model_after_restart: "PENDING" };
   try {
     directory = await harness.createMarkedTempDirectory("eliotr-owner-e2e-artifact-", runId, "artifact-state");
-    paths = await prepareLocal({ stateDirectory: directory, log: () => {} });
+    // Native Workerd applies both real migration streams before making the
+    // accepted artifact. Do not migrate a disposable empty DB that is replaced
+    // by that snapshot; verify the saved native migration ledgers below.
+    paths = await prepareLocal({ stateDirectory: directory, log: () => {}, execute: (args, options) => {
+      if (args[1] === "d1" && args[2] === "migrations" && args[3] === "apply") return;
+      return executeLocal(args, options);
+    } });
     const { privateKey, publicJwk } = await harness.createOwnerE2EKey();
     jwks = await harness.startJwksServer(publicJwk);
     await harness.applyOwnerE2EProfile(paths, jwks.url);
@@ -65,6 +75,19 @@ export async function runOwnerArtifactBrowser(harness) {
     const artifactPath = "/api/v1/research/artifact/" + encodeURIComponent(manifest.artifact.id + ":" + manifest.artifact.revision);
     const section = manifest.publication.revision.sections[0];
     const sectionPath = artifactPath + "/sections/" + encodeURIComponent(section.section_ref.id + ":" + section.section_ref.revision) + "/reauthorize";
+    const migrationRoot = resolve(paths.persist, "v3", "d1", "miniflare-D1DatabaseObject");
+    const seenLedgers = [];
+    for (const name of (await readdir(migrationRoot)).filter((item) => item.endsWith(".sqlite") && item !== "metadata.sqlite")) {
+      const db = new DatabaseSync(resolve(migrationRoot, name), { readOnly: true });
+      try {
+        const isCore = Boolean(db.prepare("SELECT 1 FROM sqlite_master WHERE name='artifact_publication_receipt'").get());
+        const stream = isCore ? "core" : "search";
+        const expected = (await readdir(resolve(ROOT, "infra/d1", stream, "migrations"))).filter((item) => item.endsWith(".sql")).sort();
+        assert.deepEqual(db.prepare("SELECT name FROM d1_migrations ORDER BY name").all().map((row) => row.name), expected);
+        seenLedgers.push(stream);
+      } finally { db.close(); }
+    }
+    assert.deepEqual(seenLedgers.sort(), ["core", "search"]);
     const baseCheckpoint = await durableCheckpoint(paths, manifest);
     const processIds = [];
     async function publicationRead() {
@@ -131,9 +154,14 @@ export async function runOwnerArtifactBrowser(harness) {
         await browser.page.waitForFunction(() => document.querySelector(".research-publication-status")?.textContent?.includes("ACCEPTED"), null, { timeout: 15000 });
       }, extras);
       await action("artifact-health-refresh", "artifact-health-refresh", async () => {
+        const nextHealth = browser.page.waitForResponse((response) => response.request().method() === "GET" &&
+          response.url() === bridge.origin + "/api/v1/system/health", { timeout: 15000 });
         await browser.page.locator("[data-refresh]").click();
+        const freshHealth = await nextHealth; assert.equal(freshHealth.status(), 200); await freshHealth.finished();
         await browser.page.waitForFunction((generation) => document.querySelector("#app")?.dataset.healthReady === "true" &&
-          document.querySelector("#app")?.dataset.healthGeneration === generation, paths.generation, { timeout: 15000 });
+          document.querySelector("#app")?.dataset.healthGeneration === generation &&
+          document.querySelector("[data-refresh]")?.disabled === false, paths.generation, { timeout: 15000 });
+        await harness.settleLedger(browser.page, browser);
         assert.equal(await browser.page.locator("[data-run-badge]").textContent(), "ACCEPTED");
         assert.equal(await browser.page.locator(".research-draft-badge").textContent(), "ACCEPTED");
       }, extras);
@@ -156,13 +184,18 @@ export async function runOwnerArtifactBrowser(harness) {
     assert.deepEqual(await durableCheckpoint(paths, manifest), baseCheckpoint);
     receipt.restart = "PASS (distinct Worker PIDs, same persistent D1/R2, exact receipt/section/blob readback)";
     receipt.model_after_restart = "PASS (model receipt counts and original blobs unchanged; local gateways disabled)";
-    const sqlPrincipal = identity.principal_ref.replaceAll("'", "''");
-    await fixtureMutation(paths, `UPDATE scope_read_policy SET state='REVOKED' WHERE principal_ref='${sqlPrincipal}' AND state='ACTIVE'`);
+    const policies = manifest.read_policy_keys;
+    assert.ok(policies.length > 0);
+    const policyKeys = policies.map((policy) => `(source_namespace_id=${sqlText(policy.source_namespace_id)} AND principal_ref=${sqlText(policy.principal_ref)} AND client_class=${sqlText(policy.client_class)} AND policy_ref=${sqlText(policy.policy_ref)} AND generation=${policy.generation})`).join(" OR ");
+    await fixtureMutation(paths, `UPDATE scope_read_policy SET state='REVOKED' WHERE state='ACTIVE' AND (${policyKeys})`, policies.length);
     const denied = await harness.workerJson(worker.origin, artifactPath + "/publication", { token, worker, phase: "artifact-revoked-read" });
     assert.equal(denied.status, 404); assert.equal(denied.data.code, "ARTIFACT_DRAFT_READ_NOT_FOUND");
     receipt.current_rights = "PASS (real Worker publication read refused after local current policy revocation)";
-    await fixtureMutation(paths, `UPDATE scope_read_policy SET state='ACTIVE' WHERE principal_ref='${sqlPrincipal}' AND state='REVOKED'`);
-    await fixtureMutation(paths, "UPDATE source_revision SET purge_state='REDACTED'");
+    await fixtureMutation(paths, `UPDATE scope_read_policy SET state='ACTIVE' WHERE state='REVOKED' AND (${policyKeys})`, policies.length);
+    await publicationRead();
+    const sourceRefs = manifest.source_revision_refs;
+    assert.equal(sourceRefs.length, 1, "This fixture has exactly one admitted cited source");
+    await fixtureMutation(paths, `UPDATE source_revision SET purge_state='REDACTED' WHERE source_revision_ref=${sqlText(sourceRefs[0])} AND purge_state='LIVE'`, 1);
     const purged = await harness.workerJson(worker.origin, artifactPath + "/publication", { token, worker, phase: "artifact-purged-read" });
     assert.equal(purged.status, 404); assert.equal(purged.data.code, "ARTIFACT_DRAFT_READ_NOT_FOUND");
     receipt.source_purge = "PASS (real Worker refused accepted artifact after exact source purge)";

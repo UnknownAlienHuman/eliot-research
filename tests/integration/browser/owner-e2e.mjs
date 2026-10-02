@@ -1982,7 +1982,8 @@ export const OP_ACTIONS = Object.freeze(["harness-start", "goto-unauthenticated"
   "click-rotation-connect", "probe-issue", "probe-mid", "probe-retry", "probe-rogue", "pair-probe", "pair-retry",
   "artifact-history-refresh", "artifact-open-draft", "artifact-section-open", "artifact-acceptance-check", "artifact-health-refresh",
   "framenavigated"]);
-export const OP_TRANSITIONS = Object.freeze(["harness-start→goto-unauthenticated", "goto-unauthenticated→goto-pairing",
+export const OP_TRANSITIONS = Object.freeze(["click-connect\u2192artifact-history-refresh", "artifact-history-refresh\u2192artifact-open-draft", "artifact-open-draft\u2192artifact-section-open", "artifact-section-open\u2192artifact-acceptance-check", "artifact-acceptance-check\u2192artifact-health-refresh", "artifact-health-refresh\u2192artifact-health-refresh",
+  "harness-start→goto-unauthenticated", "goto-unauthenticated→goto-pairing",
   "goto-pairing→click-connect", "click-connect→reload-authed-retrieval", "reload-authed-retrieval→goto-jwt-matrix",
   "goto-jwt-matrix→goto-post-restart", "goto-post-restart→goto-repairing", "goto-repairing→click-reconnect",
   "click-reconnect→goto-logout", "click-reconnect→reload-exhaustive-recovery", "reload-exhaustive-recovery→select-recovered-workflow",

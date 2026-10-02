@@ -26,7 +26,7 @@ async function files(root) {
   }
   await visit(root); return out;
 }
-async function nativeRoot(before, receiptRef) {
+async function nativeRoot(before, publicationRef) {
   const roots = (await readdir(tmpdir())).filter((name) => name.startsWith("miniflare-") && !before.has(name));
   const found = [];
   for (const name of roots) {
@@ -35,7 +35,7 @@ async function nativeRoot(before, receiptRef) {
       const db = new DatabaseSync(path, { readOnly: true });
       try {
         if (db.prepare("SELECT 1 FROM sqlite_master WHERE name='artifact_publication_receipt'").get() &&
-            db.prepare("SELECT 1 FROM artifact_publication_receipt WHERE receipt_ref=?").get(receiptRef)) found.push(root);
+            db.prepare("SELECT 1 FROM artifact_publication_receipt WHERE publication_ref=?").get(publicationRef)) found.push(root);
       } finally { db.close(); }
     }
   }
@@ -71,6 +71,8 @@ async function snapshotStorage(source, paths) {
 // blobs. No authority row is manufactured, no trigger disabled, no HTTP result
 // intercepted. The native runtime stays idle/alive until coherent backups finish.
 export async function prepareOwnerArtifactSnapshot(paths, identity) {
+  const require = createRequire(import.meta.url);
+  const vitest = resolve(dirname(require.resolve("vitest/package.json")), "vitest.mjs");
   const before = new Set(await readdir(tmpdir()));
   let resolveSnapshot; let rejectSnapshot;
   const snapshot = new Promise((yes, no) => { resolveSnapshot = yes; rejectSnapshot = no; });
@@ -83,7 +85,7 @@ export async function prepareOwnerArtifactSnapshot(paths, identity) {
       assert.equal(manifest.protocol, "eliotr.owner-artifact-native-snapshot.v1");
       assert.deepEqual(manifest.principal, { ...identity, client_class: "owner_pwa" });
       assert.equal(manifest.publication.revision.status, "ACCEPTED"); assert.equal(manifest.model_calls, 2);
-      const source = await nativeRoot(before, manifest.publication.receipt.receipt_ref);
+      const source = await nativeRoot(before, manifest.publication.receipt.publication_ref);
       manifest.storage = await snapshotStorage(source, paths);
       const config = JSON.parse(await readFile(paths.config, "utf8"));
       for (const database of config.d1_databases) database.database_name = manifest.native_databases[database.binding];
@@ -95,11 +97,9 @@ export async function prepareOwnerArtifactSnapshot(paths, identity) {
     } catch (error) { response.writeHead(500); response.end("SNAPSHOT_FAILED"); rejectSnapshot(error); }
   });
   await bindChromiumSafeListener((port) => new Promise((yes, no) => {
-    server.once("error", no); server.listen(port, "127.0.0.1", () => { server.removeListener("error", no); yes(); });
+    server.once("error", no); server.listen(port, "127.0.0.1", () => { server.removeListener("error", no); yes({ server, port: server.address().port }); });
   }));
   const address = server.address();
-  const require = createRequire(import.meta.url);
-  const vitest = require.resolve("vitest/vitest.mjs");
   const run = executeLocalAsync([vitest, "run", "test/artifact-owner-browser-fixture.test.ts", "--reporter=verbose", "--maxWorkers=1"], {
     cwd: CORE, capture: true, timeoutMs: 180_000, env: { ...localEnvironment(),
       ELIOTR_OWNER_ARTIFACT_FIXTURE: JSON.stringify({ ...identity, collector_url: `http://127.0.0.1:${address.port}/snapshot` }) },

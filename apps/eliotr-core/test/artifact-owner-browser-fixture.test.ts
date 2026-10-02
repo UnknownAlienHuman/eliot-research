@@ -24,7 +24,7 @@ test.skipIf(binding === undefined)("exports an actual accepted owner artifact fo
     verify: async () => ({ principal_ref: principal.principal_ref, credential_generation: principal.credential_generation,
       authentication_method: "cloudflare_access", expires_at: new Date(Date.now() + 3_600_000).toISOString() }) } });
   expect(response.status).toBe(201);
-  const publication = await response.json() as { data: { revision: { status: string; sections: { section_ref: { id: string; revision: number }; body_sha256: string }[] }; receipt: { receipt_ref: string } } };
+  const publication = await response.json() as { data: { revision: { status: string; sections: { section_ref: { id: string; revision: number }; body_sha256: string }[] }; receipt: { publication_ref: string } } };
   expect(publication.data.revision.status).toBe("ACCEPTED"); expect(data.modelCalls()).toBe(2);
   await data.originalsUnchanged();
   const section = publication.data.revision.sections[0];
@@ -37,11 +37,13 @@ test.skipIf(binding === undefined)("exports an actual accepted owner artifact fo
       authentication_method: "cloudflare_access", expires_at: new Date(Date.now() + 3_600_000).toISOString() }) } });
   expect(sectionResponse.status).toBe(200);
   const section_text = await sectionResponse.text();
+  const readPolicies = await runtime.CORE_DB.prepare("SELECT source_namespace_id,principal_ref,client_class,policy_ref,generation FROM scope_read_policy WHERE principal_ref=?1 AND state='ACTIVE'")
+    .bind(principal.principal_ref).all();
   const run = await runtime.CORE_DB.prepare("SELECT operation_id FROM research_workflow_run WHERE operation_id=?1")
     .bind(data.freeze.operation_id).first();
   const result = await fetch(url, { method: "POST", headers: { "content-type": "application/json" },
     body: JSON.stringify({ protocol: "eliotr.owner-artifact-native-snapshot.v1", artifact, publication: publication.data,
-      principal, run, section_text, model_calls: data.modelCalls(), native_buckets: { EVIDENCE_BUCKET: "eliotr-evidence-test", WORK_BUCKET: "eliotr-work-test" },
+      principal, run, section_text, read_policy_keys: readPolicies.results, source_revision_refs: data.freeze.scope.member_source_revision_refs, model_calls: data.modelCalls(), native_buckets: { EVIDENCE_BUCKET: "eliotr-evidence-test", WORK_BUCKET: "eliotr-work-test" },
       native_databases: { CORE_DB: "eliotr-core-test", SEARCH_DB: "eliotr-search-test" } }) });
   expect(result.status).toBe(200); expect(await result.text()).toBe("SNAPSHOT_SAVED");
 }, 170_000);
