@@ -1980,6 +1980,7 @@ export const OP_ACTIONS = Object.freeze(["harness-start", "goto-unauthenticated"
   "reload-exhaustive-recovery", "select-recovered-workflow",
   "goto-logout", "click-logout", "goto-post-logout-clean", "goto-rotation", "goto-rotation-pairing",
   "click-rotation-connect", "probe-issue", "probe-mid", "probe-retry", "probe-rogue", "pair-probe", "pair-retry",
+  "artifact-history-refresh", "artifact-open-draft", "artifact-section-open", "artifact-acceptance-check", "artifact-health-refresh",
   "framenavigated"]);
 export const OP_TRANSITIONS = Object.freeze(["harness-start→goto-unauthenticated", "goto-unauthenticated→goto-pairing",
   "goto-pairing→click-connect", "click-connect→reload-authed-retrieval", "reload-authed-retrieval→goto-jwt-matrix",
@@ -7344,8 +7345,16 @@ export async function runOwnerE2E() {
   return receipt;
 }
 
+export async function runOwnerArtifactE2E() {
+  const { runOwnerArtifactBrowser } = await import("./owner-artifact-browser.mjs");
+  return runOwnerArtifactBrowser({ createMarkedTempDirectory, createOwnerE2EKey, startJwksServer, signOwnerToken,
+    applyOwnerE2EProfile, launchPlaywright, showWorkspaceView, workerJson, settleLedger, shellReady,
+    readBrowserStorage, assertNoPrivateStorage, assertUnauthLedger, assertPhaseNetwork, unauthNetworkSpec,
+    authedNetworkSpec, summarizePhaseLedger });
+}
+
 if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])) {
-  runOwnerE2E().then(
+  (process.argv.includes("--owner-artifact") ? runOwnerArtifactE2E() : runOwnerE2E()).then(
     (receipt) => { globalThis.console.log(JSON.stringify(receipt, null, 2)); },
     (error) => { globalThis.console.error(error?.stack ?? String(error)); process.exitCode = 1; },
   );

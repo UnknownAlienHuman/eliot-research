@@ -33,8 +33,15 @@ import { modelGatewayRequestParametersSha256, modelGatewaySha256, canonicalModel
 import { importAndProject, prepareQ1Namespace, type Q1Runtime } from "./retrieval-q1-fixture.js";
 
 const runtime = env as unknown as Q1Runtime;
-const access = { principal_ref: "freeze-owner", client_class: "owner_pwa" as const, credential_generation: "freeze-credential-v1" };
-export const principal: WorkflowPrincipal = { ...access, deployment_generation: "freeze-deployment-v1" };
+// The browser fixture creates canonical receipts under its real signed local
+// identity. Normal native tests retain the original isolated fixture identity.
+const fixtureBinding = (env as unknown as { OWNER_ARTIFACT_FIXTURE?: string }).OWNER_ARTIFACT_FIXTURE;
+const browserIdentity = fixtureBinding === undefined ? undefined : JSON.parse(fixtureBinding) as {
+  principal_ref: string; credential_generation: string; deployment_generation: string;
+};
+const access = { principal_ref: browserIdentity?.principal_ref ?? "freeze-owner", client_class: "owner_pwa" as const,
+  credential_generation: browserIdentity?.credential_generation ?? "freeze-credential-v1" };
+export const principal: WorkflowPrincipal = { ...access, deployment_generation: browserIdentity?.deployment_generation ?? "freeze-deployment-v1" };
 const retrievalProfile = { version: "retrieval-scope-v1", max_sources: 64, max_results: 16 } as const;
 
 export interface FreezeFixture {

@@ -1,3 +1,4 @@
+import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { cloudflareTest, readD1Migrations } from "@cloudflare/vitest-plugin";
 import { defineConfig } from "vitest/config";
@@ -9,6 +10,7 @@ export default defineConfig(async () => ({
       // test profile from starting an unnecessary remote bindings proxy.
       remoteBindings: false,
       miniflare: { bindings: {
+        ...(process.env.ELIOTR_OWNER_ARTIFACT_FIXTURE === undefined ? {} : { OWNER_ARTIFACT_FIXTURE: process.env.ELIOTR_OWNER_ARTIFACT_FIXTURE }),
         CORE_MIGRATIONS: await readD1Migrations(fileURLToPath(new URL("../../infra/d1/core/migrations", import.meta.url))),
         SEARCH_MIGRATIONS: await readD1Migrations(fileURLToPath(new URL("../../infra/d1/search/migrations", import.meta.url))),
       } },

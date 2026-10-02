@@ -1,0 +1,180 @@
+/* global document: readonly */
+import assert from "node:assert/strict";
+import process from "node:process";
+import { readdir, readFile } from "node:fs/promises";
+import { resolve } from "node:path";
+import { createHash } from "node:crypto";
+import { DatabaseSync } from "node:sqlite";
+import { prepareLocal, removeHarnessOwned, executeLocalD1WithRetryAsync, wranglerArgs } from "../../../scripts/lib/local-launch.mjs";
+import { startLocalWorker } from "../../../scripts/lib/local-worker.mjs";
+import { startOwnerBridge } from "../../../scripts/lib/local-owner-bridge.mjs";
+import { reserveMiniflareForbiddenPorts } from "../../../scripts/lib/miniflare-port-guard.mjs";
+import { OWNER_E2E_ISSUER, OWNER_E2E_AUDIENCE, OWNER_E2E_KID } from "./owner-e2e.mjs";
+import { prepareOwnerArtifactSnapshot } from "./owner-artifact-snapshot.mjs";
+
+async function durableCheckpoint(paths, manifest) {
+  const directory = resolve(paths.persist, "v3", "d1", "miniflare-D1DatabaseObject");
+  let result;
+  for (const name of (await readdir(directory)).filter((file) => file.endsWith(".sqlite") && file !== "metadata.sqlite")) {
+    const database = new DatabaseSync(resolve(directory, name), { readOnly: true });
+    try {
+      if (!database.prepare("SELECT 1 FROM sqlite_master WHERE name='artifact_publication_receipt'").get()) continue;
+      assert.equal(result, undefined, "Exactly one canonical Core database is expected");
+      const receipts = database.prepare("SELECT * FROM artifact_publication_receipt ORDER BY receipt_ref").all();
+      assert.equal(receipts.length, 1); assert.equal(receipts[0].receipt_ref, manifest.publication.receipt.receipt_ref);
+      const modelTables = database.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE '%model%' AND name LIKE '%receipt%'").all();
+      const effects = Object.fromEntries(modelTables.map(({ name: table }) => {
+        assert.match(table, /^[a-z_]+$/u); return [table, database.prepare(`SELECT count(*) AS n FROM ${table}`).get().n];
+      }));
+      result = { receipts, effects };
+    } finally { database.close(); }
+  }
+  assert.ok(result, "Actual persisted Core checkpoint must exist");
+  const blobs = [];
+  for (const item of manifest.storage) {
+    const bytes = await readFile(resolve(paths.persist, "v3", item.resource, item.path));
+    assert.equal(bytes.length, item.bytes); assert.equal(createHash("sha256").update(bytes).digest("hex"), item.sha256);
+    blobs.push(item.sha256);
+  }
+  return { ...result, blobs };
+}
+async function fixtureMutation(paths, sql) {
+  await executeLocalD1WithRetryAsync(wranglerArgs(paths, ["d1", "execute", "CORE_DB", "--command", sql, "--json"]),
+    { capture: true, timeoutMs: 30000 });
+}
+
+export async function runOwnerArtifactBrowser(harness) {
+  const runId = `artifact-${process.pid}-${Date.now()}`;
+  const guard = await reserveMiniflareForbiddenPorts();
+  let directory; let paths; let jwks; let worker; let bridge; let browser;
+  const receipt = { protocol: "eliotr.owner-artifact-browser.v1", browser: "PENDING", restart: "PENDING",
+    current_rights: "PENDING", source_purge: "PENDING", run_reopen: "PENDING", model_after_restart: "PENDING" };
+  try {
+    directory = await harness.createMarkedTempDirectory("eliotr-owner-e2e-artifact-", runId, "artifact-state");
+    paths = await prepareLocal({ stateDirectory: directory, log: () => {} });
+    const { privateKey, publicJwk } = await harness.createOwnerE2EKey();
+    jwks = await harness.startJwksServer(publicJwk);
+    await harness.applyOwnerE2EProfile(paths, jwks.url);
+    const issuedAt = Math.floor(Date.now() / 1000);
+    const identity = { principal_ref: "freeze-owner", credential_generation: `cf-access-jwt:${OWNER_E2E_KID}:${issuedAt}`,
+      deployment_generation: paths.generation };
+    const token = await harness.signOwnerToken(privateKey, { iss: OWNER_E2E_ISSUER, aud: [OWNER_E2E_AUDIENCE],
+      sub: identity.principal_ref, type: "app", iat: issuedAt, exp: issuedAt + 3600 });
+    process.stdout.write("owner-e2e artifact phase=native-accepted-snapshot\n");
+    const manifest = await prepareOwnerArtifactSnapshot(paths, identity);
+    const artifactPath = "/api/v1/research/artifact/" + encodeURIComponent(manifest.artifact.id + ":" + manifest.artifact.revision);
+    const section = manifest.publication.revision.sections[0];
+    const sectionPath = artifactPath + "/sections/" + encodeURIComponent(section.section_ref.id + ":" + section.section_ref.revision) + "/reauthorize";
+    const baseCheckpoint = await durableCheckpoint(paths, manifest);
+    const processIds = [];
+    async function publicationRead() {
+      const read = await harness.workerJson(worker.origin, artifactPath + "/publication", { token, worker, phase: "artifact-publication-read" });
+      assert.equal(read.status, 200, `Real persisted publication read failed: ${JSON.stringify(read.data)?.slice(0, 500)}`);
+      assert.deepEqual(read.data.data.receipt, manifest.publication.receipt); assert.equal(read.data.data.revision.status, "ACCEPTED");
+    }
+    async function start() {
+      worker = await startLocalWorker(paths); processIds.push(worker.diagnostics().pid);
+      assert.ok(Number.isSafeInteger(processIds.at(-1))); await publicationRead();
+    }
+    async function action(name, successor, callback, extraPaths = []) {
+      await harness.settleLedger(browser.page, browser);
+      browser.registerOp({ kind: "harness-action", cause: "recovery-selection", scope: "document", sourceDoc: browser.currentDocId(),
+        targetDoc: browser.currentDocId(), action: name, role: "catalog-read", from: browser.currentOp().id, successors: [successor] });
+      browser.mintSlotsFor(browser.currentIssuance(), { origin: bridge.origin, extraPaths });
+      await callback();
+    }
+    const extras = [["GET", "/api/v1/research/runs"], ["POST", artifactPath + "/reauthorize"],
+      ["GET", artifactPath + "/publication"], ["GET", artifactPath + "/publication/current"], ["POST", sectionPath]];
+    async function browserRead(round) {
+      browser = await harness.launchPlaywright(runId);
+      browser.registerOp({ kind: "harness-navigation", cause: "goto", scope: "document", sourceDoc: browser.currentDocId(),
+        targetDoc: browser.currentDocId() + 1, action: "goto-unauthenticated", role: "startup-probe",
+        from: browser.currentOp().id, successors: ["goto-pairing", "framenavigated"] });
+      browser.mintSlotsFor(browser.currentIssuance(), { origin: worker.origin });
+      await browser.page.goto(worker.origin, { waitUntil: "domcontentloaded", timeout: 15000 });
+      await browser.page.waitForFunction(harness.shellReady, null, { timeout: 15000 });
+      await harness.settleLedger(browser.page, browser);
+      harness.assertUnauthLedger(browser, "artifact-unauthenticated", worker.origin);
+      harness.assertNoPrivateStorage(await harness.readBrowserStorage(browser.page), "artifact-unauthenticated");
+      browser.resetLedger();
+      bridge = await startOwnerBridge({ workerOrigin: worker.origin, token, generation: paths.generation, port: 0 });
+      browser.adoptIssuance(browser.setRole(browser.currentIssuance(), "pair-action"));
+      browser.registerOp({ kind: "harness-navigation", cause: "goto-pairing", scope: "document", sourceDoc: browser.currentDocId(),
+        targetDoc: browser.currentDocId() + 1, action: "goto-pairing", role: "pair-action", from: browser.currentOp().id,
+        successors: ["click-connect", "framenavigated"] });
+      browser.mintSlotsFor(browser.currentIssuance(), { origin: bridge.origin, extraPaths: extras });
+      await browser.page.goto(bridge.pairingUrl, { waitUntil: "domcontentloaded", timeout: 15000 });
+      await harness.settleLedger(browser.page, browser);
+      browser.registerOp({ kind: "harness-action", cause: "pair-action", scope: "document", sourceDoc: browser.currentDocId(),
+        targetDoc: browser.currentDocId(), action: "click-connect", role: "pair-action", from: browser.currentOp().id,
+        successors: ["artifact-history-refresh"] });
+      browser.mintSlotsFor(browser.currentIssuance(), { origin: bridge.origin, extraPaths: extras });
+      await browser.page.click("#connect"); await browser.page.waitForFunction(harness.shellReady, null, { timeout: 15000 });
+      await action("artifact-history-refresh", "artifact-open-draft", async () => {
+        await harness.showWorkspaceView(browser.page, "#research-card", "research", "artifact owner loop");
+        await browser.page.locator("[data-research-history] > summary").click();
+        await browser.page.locator("[data-research-history-refresh]").click();
+        await browser.page.locator('button[aria-label^="Open saved research draft"]').first().waitFor({ timeout: 15000 });
+      }, extras);
+      await action("artifact-open-draft", "artifact-section-open", async () => {
+        await browser.page.locator('button[aria-label^="Open saved research draft"]').first().click();
+        await browser.page.waitForFunction(() => document.querySelector(".research-draft-badge")?.textContent === "ACCEPTED", null, { timeout: 15000 });
+        assert.equal(await browser.page.getByRole("button", { name: "Accept report", exact: true }).isDisabled(), true);
+      }, extras);
+      await action("artifact-section-open", "artifact-acceptance-check", async () => {
+        await browser.page.getByRole("button", { name: "Open section", exact: true }).first().click();
+        await browser.page.locator(".research-section-body").waitFor({ timeout: 15000 });
+        assert.equal(await browser.page.locator(".research-section-body").textContent(), manifest.section_text);
+      }, extras);
+      await action("artifact-acceptance-check", "artifact-health-refresh", async () => {
+        await browser.page.getByRole("button", { name: "Check acceptance", exact: true }).click();
+        await browser.page.waitForFunction(() => document.querySelector(".research-publication-status")?.textContent?.includes("ACCEPTED"), null, { timeout: 15000 });
+      }, extras);
+      await action("artifact-health-refresh", "artifact-health-refresh", async () => {
+        await browser.page.locator("[data-refresh]").click();
+        await browser.page.waitForFunction((generation) => document.querySelector("#app")?.dataset.healthReady === "true" &&
+          document.querySelector("#app")?.dataset.healthGeneration === generation, paths.generation, { timeout: 15000 });
+        assert.equal(await browser.page.locator("[data-run-badge]").textContent(), "ACCEPTED");
+        assert.equal(await browser.page.locator(".research-draft-badge").textContent(), "ACCEPTED");
+      }, extras);
+      await harness.settleLedger(browser.page, browser);
+      const spec = harness.authedNetworkSpec(bridge.origin);
+      const api = [...spec.api, ...extras.map(([method, path]) => ({ method, path, status: 200 }))];
+      harness.assertPhaseNetwork(browser, `artifact-browser-${round}`, { ...spec, api,
+        mutations: [...spec.mutations, ...extras.filter(([method]) => method === "POST").map(([, path]) => path)],
+        workerOrigins: [worker.origin, bridge.origin] });
+      receipt[`browser_${round}`] = harness.summarizePhaseLedger(browser);
+      assert.deepEqual(browser.pageErrors, []); assert.deepEqual(browser.consoleErrors, []);
+      await browser.close(); browser = undefined; await bridge.close(); bridge = undefined;
+    }
+    await start(); await browserRead("before_restart"); receipt.browser = "PASS";
+    assert.deepEqual(await durableCheckpoint(paths, manifest), baseCheckpoint);
+    process.stdout.write("owner-e2e artifact phase=true-worker-process-restart\n");
+    const oldWorker = worker; await oldWorker.stop(); assert.notEqual(oldWorker.diagnostics().exitCode, null);
+    worker = undefined; await start(); assert.notEqual(processIds[0], processIds[1]);
+    await browserRead("after_restart");
+    assert.deepEqual(await durableCheckpoint(paths, manifest), baseCheckpoint);
+    receipt.restart = "PASS (distinct Worker PIDs, same persistent D1/R2, exact receipt/section/blob readback)";
+    receipt.model_after_restart = "PASS (model receipt counts and original blobs unchanged; local gateways disabled)";
+    const sqlPrincipal = identity.principal_ref.replaceAll("'", "''");
+    await fixtureMutation(paths, `UPDATE scope_read_policy SET state='REVOKED' WHERE principal_ref='${sqlPrincipal}' AND state='ACTIVE'`);
+    const denied = await harness.workerJson(worker.origin, artifactPath + "/publication", { token, worker, phase: "artifact-revoked-read" });
+    assert.equal(denied.status, 404); assert.equal(denied.data.code, "ARTIFACT_DRAFT_READ_NOT_FOUND");
+    receipt.current_rights = "PASS (real Worker publication read refused after local current policy revocation)";
+    await fixtureMutation(paths, `UPDATE scope_read_policy SET state='ACTIVE' WHERE principal_ref='${sqlPrincipal}' AND state='REVOKED'`);
+    await fixtureMutation(paths, "UPDATE source_revision SET purge_state='REDACTED'");
+    const purged = await harness.workerJson(worker.origin, artifactPath + "/publication", { token, worker, phase: "artifact-purged-read" });
+    assert.equal(purged.status, 404); assert.equal(purged.data.code, "ARTIFACT_DRAFT_READ_NOT_FOUND");
+    receipt.source_purge = "PASS (real Worker refused accepted artifact after exact source purge)";
+    assert.deepEqual(await durableCheckpoint(paths, manifest), baseCheckpoint);
+    receipt.run_reopen = "PENDING (accepted COW child has no immutable original REPORT run output binding; Stage17 original draft acceptance remains blocked)";
+    return receipt;
+  } finally {
+    const failures = [];
+    for (const close of [() => browser?.close(), () => bridge?.close(), () => worker?.stop(), () => jwks?.close(),
+      () => directory === undefined ? undefined : removeHarnessOwned(directory, runId), () => guard.release()]) {
+      try { await close(); } catch (error) { failures.push(error); }
+    }
+    assert.deepEqual(failures, [], "Every owned fixture/process/browser resource must be released");
+  }
+}
