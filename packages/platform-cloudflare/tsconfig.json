@@ -27,6 +27,9 @@
     },
     {
       "path": "../backup-o2"
+    },
+    {
+      "path": "../cloudflare-backup"
     }
   ]
 }

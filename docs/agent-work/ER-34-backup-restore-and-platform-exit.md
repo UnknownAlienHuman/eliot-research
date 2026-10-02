@@ -12,6 +12,7 @@ outside the paths below.
 ## Owned paths
 
 - `packages/backup-o2/**`
+- `packages/cloudflare-backup/**`
 - `packages/backup-o2/src/intent-digest.ts`
 - `packages/backup-o2/src/migration-gate.ts`
 - `packages/backup-o2/src/coherent-cut.ts`
@@ -44,8 +45,11 @@ research/freeze/evidence and erasure history. Failed or malformed D1 inventory/e
 tables and unlisted columns block the epoch instead of producing a selective backup. Installation-local
 current grants, credentials, policy/controller authority and short-lived leases require fresh admission;
 they are not transferred as active authority. Future additive migrations must extend the explicit specs.
-Exact epoch subject scope, isolated payload restore, fresh purge-ledger reconciliation and restored
-historical authorship/read re-admission still block O3/O4 readiness. No live receipts exist. Migration
+Migration `0101_backup_historical_grant_provenance.sql` adds immutable historical grant/grantor
+snapshots and revocation/delete observations, backfilled only from rows present at installation.
+These records preserve provenance; they never install current access, and older missing histories
+remain unavailable. Exact epoch subject scope, isolated payload restore, fresh purge-ledger
+reconciliation and restored historical authorship/read re-admission still block O3/O4 readiness. No live receipts exist. Migration
 `0099_backup_erasure_replay.sql` adds immutable copy replay and erasure obligation authority; legacy
 unbound copies fail closed and require explicit controller recovery, never digest-only reconstruction.
 

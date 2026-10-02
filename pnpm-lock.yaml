@@ -179,6 +179,12 @@ importers:
         specifier: workspace:*
         version: link:../platform-cloudflare
 
+  packages/cloudflare-backup:
+    dependencies:
+      '@eliotr/backup-o2':
+        specifier: workspace:*
+        version: link:../backup-o2
+
   packages/cloudflare-erasure:
     dependencies:
       '@eliotr/contracts':
@@ -404,6 +410,9 @@ importers:
       '@eliotr/backup-o2':
         specifier: workspace:*
         version: link:../backup-o2
+      '@eliotr/cloudflare-backup':
+        specifier: workspace:*
+        version: link:../cloudflare-backup
       '@eliotr/contracts':
         specifier: workspace:*
         version: link:../contracts
