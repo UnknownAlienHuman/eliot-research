@@ -444,10 +444,10 @@ test("S92 92.4f continuity: same-run recovery converges; no repeated effect", as
 
 // ---------------------------------------------------------------------------
 // S92 local product acceptance: 92.5 copy-on-write scenarios (s92-cow.mjs).
-// Verified export identity/tamper, change-review entry point, publication
-// acceptance, history readback, model policy D1 — against compiled dist.
-// Honest states: PASS, BLOCKED for unimplemented prerequisites,
-// NOT_EXECUTED for missing fixtures, NOT_EXECUTED for live model.
+// Verified export identity/tamper and model policy D1 execute against compiled
+// dist. Change-review may be BLOCKED when its product implementation is absent;
+// publication/history stay NOT_EXECUTED until this wrapper executes their actual
+// owner/D1/R2 readback paths with exact fixtures.
 // ---------------------------------------------------------------------------
 
 type S92CowScenario = { name: string; run: () => Promise<S92ScenarioOutcome> };
@@ -476,18 +476,19 @@ test("S92 92.5c COW: change-review entry point; BLOCKED until reviseSection land
   assertS92Honest(outcome, ["BLOCKED", "PASS"]);
 });
 
-test("S92 92.5d COW: publication acceptance; BLOCKED until producer composed", async () => {
+test("S92 92.5d COW: publication readback is NOT_EXECUTED by this wrapper", async () => {
   const outcome = await runS92CowScenario("s92-cow-publication-accepted");
-  // The ACCEPTED publication producer is not composed; the scenario honestly
-  // reports BLOCKED. PASS is accepted once it exists.
-  assertS92Honest(outcome, ["BLOCKED", "PASS"]);
+  // Separate native/HTTP and owner-browser suites retain their own evidence;
+  // this wrapper has no admitted draft/current owner session and invokes none.
+  // It cannot infer PASS from source text or another suite's result.
+  assertS92Honest(outcome, ["NOT_EXECUTED"]);
 });
 
-test("S92 92.5e COW: history readback; NOT_EXECUTED without prepared D1/R2", async () => {
+test("S92 92.5e COW: history readback remains NOT_EXECUTED until this wrapper executes it", async () => {
   const outcome = await runS92CowScenario("s92-cow-history-readback");
-  // No prepared local D1/R2 in this environment; the scenario honestly
-  // reports NOT_EXECUTED. PASS is accepted with fixtures present.
-  assertS92Honest(outcome, ["NOT_EXECUTED", "PASS"]);
+  // A profile directory alone is not a bound D1/R2 fixture or exact history
+  // assertion. Accept only NOT_EXECUTED until readArtifactDraft readback runs.
+  assertS92Honest(outcome, ["NOT_EXECUTED"]);
 });
 
 test("S92 92.5f COW: model policy D1 fail-closed verified", async () => {
