@@ -31,21 +31,80 @@ export const CANONICAL_EXPORTED_TABLES: ReadonlySet<string> = new Set([
   "backup_epoch",
   "erasure_hold",
   "purge_ledger",
-]);
-
-const REBUILD_REQUIRED_TABLES: ReadonlySet<string> = new Set([
-  "source_readiness",
+  // Durable Core state named by architecture §16.1. Full explicit column
+  // specs live in core-table-specs.ts; no PRAGMA wildcard export is used.
+  "investigation_ledger_event",
+  "investigation_ledger_command",
+  "investigation_ledger_head",
+  "investigation_ledger_epoch",
+  "research_workflow_run",
+  "research_workflow_attempt",
+  "research_workflow_checkpoint",
+  "research_workflow_citation_binding",
+  "retrieval_query_result",
+  "retrieval_query_trace",
+  "retrieval_exhaustive_job",
+  "retrieval_exhaustive_shard",
+  "retrieval_exhaustive_workflow",
+  "raw_file_capture",
+  "raw_markdown_conversion",
+  "raw_normalized_admission",
+  "workspace_mcp_observation",
+  "workspace_mcp_raw_normalized_admission",
+  "artifact_draft_reservation",
+  "artifact_draft_head",
+  "artifact_draft_binding",
+  "artifact_draft_object",
+  "research_model_attempt",
+  "research_reference_manifest",
+  "research_model_fingerprint",
+  "research_model_output",
+  "research_model_pricing_snapshot",
+  "dynamic_route_candidate",
+  "dynamic_route_active_generation",
+  "dynamic_route_qualification_proof",
+  "dynamic_route_active_qualification",
+  "wiki_publication_proposal",
+  "wiki_publication_authority",
+  "wiki_publication_revision",
+  "wiki_publication_head",
+  "wiki_publication_outbox",
+  "wiki_owner_edit_binding",
+  "source_namespace_initialization",
+  "raw_ingest_erasure_member",
+  "model_route_qualification_probe",
+  "model_route_qualification_dispatch",
+  "project_mutation_guard",
+  "project_mutation_receipt",
+  "research_report_admission",
+  "research_external_agent_task",
+  "research_external_agent_task_progress",
+  "research_external_agent_task_payload",
+  "research_computer_agent_route_binding",
+  "project_computer_agent_route",
+  "project_computer_agent_route_entry",
+  "computer_agent_dispatch",
+  "computer_agent_dispatch_acceptance",
+  "computer_agent_dispatch_abandonment",
+  "computer_agent_dispatch_decline",
+  "computer_agent_dispatch_reassignment",
+  "computer_agent_preferred_dispatch_selection",
+  "computer_agent_preferred_dispatch_settlement",
+  "research_model_spend_admission",
+  "research_semantic_config_revision",
+  // Durable action history and idempotency authority. Restoring source data
+  // without these records could replay paid or externally visible effects.
   "operation_intent",
   "operation_attempt",
   "operation_receipt",
   "outbox",
   "job",
+  "delivery_inbox",
   "investigation_event",
   "investigation_checkpoint",
   "evidence_freeze",
   "claim_audit",
   "coverage_receipt",
-  "artifact_revision",
   "research_debt",
   "budget_reservation",
   "erasure_case",
@@ -54,38 +113,53 @@ const REBUILD_REQUIRED_TABLES: ReadonlySet<string> = new Set([
   "erasure_target",
   "erasure_stage_receipt",
   "erasure_dependent_invalidation",
-  "backup_purge_obligation",
   "erasure_terminal_guard",
+  "backup_purge_obligation",
+  "erasure_admission_request",
   "federation_reference_manifest",
   "federation_job",
   "navigation_artifact",
-  "source_admission_policy",
   "bundle_ingest_operation",
+  "bundle_ingest_commit_guard",
   "source_acquisition_candidate",
   "qualification_report",
   "source_admission_decision",
-  "bundle_ingest_commit_guard",
-  "projection_terminal_guard",
-  "scope_access_grant",
-  "evidence_handle_identity",
-  "evidence_resolution_receipt",
-  "evidence_resolution_guard",
-  "citation_resolution_receipt",
-  "citation_resolution_guard",
-  "scope_read_policy",
-  "orientation_request",
-  "orientation_authority_epoch",
-  "google_exchange_connection",
   "drive_observation",
   "incident",
+  "evidence_resolution_receipt",
+  "citation_resolution_receipt",
+  "orientation_request",
+  "orientation_authority_epoch",
+  "google_oauth_intent_receipt",
+  // Historical authorization facts are portable provenance only. They are
+  // never rehydrated as current admission, ownership, or credentials.
+  "historical_scope_access_grant",
+  "historical_project_client_grant",
+]);
+
+const REBUILD_REQUIRED_TABLES: ReadonlySet<string> = new Set([
+  "source_readiness",
+  // Change-feed offsets are derived from authoritative Core events and are
+  // regenerated after restore rather than treated as source records.
+  "research_change_feed",
+  "evidence_handle_identity",
   "health_snapshot",
-  "google_oauth_intent",
 ]);
 
 const TRANSIENT_EXCLUDED_TABLES: ReadonlySet<string> = new Set([
   "operation_execution_lease",
-  "delivery_inbox",
   "drive_cursor",
+  // Short-lived guards and plans carry no committed user payload or external
+  // action result; the owning controller reissues them after restore.
+  "investigation_ledger_guard",
+  "workspace_mcp_plan",
+  "mcp_client_diagnostic_challenge",
+  "wiki_owner_publication_guard",
+  "computer_agent_connection_qualification_binding",
+  "raw_ingest_erasure_guard",
+  "projection_terminal_guard",
+  "evidence_resolution_guard",
+  "citation_resolution_guard",
 ]);
 
 const NOT_A_BACKUP_TABLES: ReadonlySet<string> = new Set([
@@ -100,6 +174,30 @@ const NOT_A_BACKUP_TABLES: ReadonlySet<string> = new Set([
   "backup_offsite_copy_receipt",
   "backup_offsite_nonce_authority",
   "backup_export_cut",
+  // O4 retains controller-only replay authority; portable recovery cannot
+  // recreate the original grant from copy digests or claim erasure closure.
+  "backup_offsite_copy_replay_authority",
+  "backup_erasure_replay_obligation",
+  // Installation-local policies, credentials and current grants must be
+  // re-admitted at the restored controller, never copied as transferable.
+  "investigation_current_policy",
+  "investigation_current_deployment",
+  "investigation_ledger_authority",
+  "google_oauth_reconnect_intent",
+  "google_oauth_disconnect_receipt",
+  "google_exchange_connection",
+  // In-flight OAuth state contains encrypted credentials/secrets; users must
+  // start a fresh authorization after controller recovery.
+  "google_oauth_intent",
+  "erasure_admission_policy",
+  "retrieval_scope_profile",
+  "project_owner",
+  "project_client_grant",
+  "dynamic_route_rest_binding",
+  "computer_agent_connection",
+  "source_admission_policy",
+  "scope_access_grant",
+  "scope_read_policy",
 ]);
 
 export function classifyDurableTable(table: string): DurableStatus {
@@ -117,8 +215,11 @@ export async function listDurableTables(database: D1Database): Promise<readonly 
   } catch (cause) {
     failBackup("BACKUP_TABLE_MISSING", "backup durable-table inventory is unavailable", true, {}, cause);
   }
+  if (result.success !== true || !Array.isArray(result.results)) {
+    failBackup("BACKUP_TABLE_MISSING", "backup durable-table inventory returned an incomplete result", true);
+  }
   const names: string[] = [];
-  for (const row of result.results ?? []) {
+  for (const row of result.results) {
     const name = (row as Record<string, unknown>)["name"];
     if (typeof name !== "string" || name.length === 0) failBackup("BACKUP_ROW_INVALID", "backup table inventory carries a malformed name");
     if (name.startsWith("sqlite_") && name !== "sqlite_sequence" && name !== "sqlite_master") {

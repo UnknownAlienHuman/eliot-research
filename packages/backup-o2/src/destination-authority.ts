@@ -25,6 +25,7 @@ export interface StoredDestinationAuthority {
   readonly principal_ref: string;
   readonly policy_decision_ref: string;
   readonly policy: BackupDestinationPolicy;
+  readonly policy_json: string;
   readonly policy_digest: string;
   readonly authorization_receipt_ref: string;
   readonly state: "AUTHORIZED" | "REVOKED";
@@ -72,6 +73,7 @@ function parseAuthorityRow(row: AuthorityRow): StoredDestinationAuthority {
     principal_ref: row.principal_ref,
     policy_decision_ref: row.policy_decision_ref,
     policy,
+    policy_json: row.policy_json,
     policy_digest: row.policy_digest,
     authorization_receipt_ref: row.authorization_receipt_ref,
     state: row.state,

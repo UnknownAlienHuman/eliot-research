@@ -78,6 +78,9 @@
     },
     {
       "path": "packages/cloudflare-workflows"
+    },
+    {
+      "path": "packages/cloudflare-backup"
     }
   ]
 }

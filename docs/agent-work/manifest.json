@@ -911,6 +911,7 @@
       ],
       "owned_paths": [
         "packages/backup-o2/**",
+        "packages/cloudflare-backup/**",
         "packages/backup-o2/src/intent-digest.ts",
         "packages/backup-o2/src/migration-gate.ts",
         "packages/backup-o2/src/coherent-cut.ts",
