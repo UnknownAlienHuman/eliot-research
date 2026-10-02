@@ -573,3 +573,26 @@ load behavior remains to be tested, along with the older session assumptions.
 Logs: `eliotr-freeze-and-short-deadline-repros-a979c765.log`,
 `eliotr-freeze-and-fixture-timing-0e1a069c.log`, and
 `eliotr-continuation-and-primary-history-0e1a069c.log` under OS temp.
+
+Session fixtures now separate current asynchronous semantic-v4 HTTP admission
+from supported historical-v2 DO execution. HTTP proves durable ledger/run/R2
+SHA identity, exact replay, current authority and zero model attempts, with
+background native instances terminated after admission. Historical fixtures
+register fresh v2 requests through the checkpoint store, never rewrite an
+admitted run's generation. Actual DO execution/replay proves all 18 compact
+receipts and exact indexed evidence with the original one-result bound. Missing
+manifest, foreign owner, malformed/stale request, revocation, canonical cancel
+and real DO eviction checks remain. The full session file PASS 14/14 in 23.13s;
+Core compilation and scoped lint PASS. Earlier failed assertions are retained
+in `eliotr-session-functional-dbaedba4.log` and
+`eliotr-session-final-dbaedba4.log`; final proof is
+`eliotr-session-verified-dbaedba4.log` under OS temp.
+
+Full root PASS 1553/1553 in 163 files, 18.45s, after the parent's CRLF fix.
+Current `pnpm build` PASS: Worker 3375.86 KiB raw / 779.58 KiB gzip and PWA built,
+with Wrangler dry-run only. Required `pnpm check:affected` passes depth SQL,
+contracts and boundaries/negative checks, then stops at the same 17 source
+budget violations. No limit or configuration was relaxed. Logs are
+`eliotr-root-suite-functional-checkpoint.log`,
+`eliotr-functional-build-dbaedba4.log`, and `eliotr-check-affected-dbaedba4.log`.
+The complete Core gate is the next check; focused passes do not establish it.
