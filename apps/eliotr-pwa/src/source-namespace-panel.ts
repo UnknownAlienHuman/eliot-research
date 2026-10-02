@@ -1,10 +1,13 @@
-import { ApiRequestError } from "./api.js";
+import { ApiRequestError, isAuthorizationLoss } from "./api.js";
+import { isOwnerSessionUnexpired, type OwnerSession } from "./owner-session-api.js";
 import {
+  createOwnerNamespaceResumeCoordinator,
   createSourceNamespace,
-  renewSourceNamespace,
+  ownerNamespaceNeedsResume,
   readSourceNamespaces,
+  renewSourceNamespace,
   type CreatedSourceNamespace,
-  type RenewedSourceNamespace,
+  type OwnerNamespaceResumeResult,
   type SourceNamespaceCatalog,
   type SourceNamespaceProfile,
   type SourceNamespaceSummary,
@@ -15,17 +18,23 @@ export interface SourceNamespacePanelOptions {
   readonly healthReady: () => boolean;
 }
 
+export interface SourceNamespacePanelHandle {
+  clearPrivate(message?: string): void;
+  refresh(): void;
+  verifyOwnerSession(session: OwnerSession, deploymentGeneration: string): void;
+}
+
 function isOnline(): boolean {
   return typeof navigator === "undefined" || navigator.onLine !== false;
 }
 
 function privateFailure(error: unknown): boolean {
-  return error instanceof ApiRequestError &&
-    (error.status === 401 || error.status === 403 || error.status === 409 || error.code === "API_GENERATION_MISMATCH");
+  return isAuthorizationLoss(error) || error instanceof ApiRequestError &&
+    (error.status === 409 || error.code === "API_GENERATION_MISMATCH");
 }
 
 function failureText(error: unknown, operation: "load" | "create" | "renew"): string {
-  if (error instanceof ApiRequestError && (error.status === 401 || error.status === 403)) {
+  if (isAuthorizationLoss(error)) {
     return "Authorization changed. Sign in again before managing workspaces.";
   }
   if (error instanceof ApiRequestError && (error.status === 409 || error.code === "API_GENERATION_MISMATCH")) {
@@ -50,6 +59,10 @@ function isExpired(namespace: SourceNamespaceSummary | undefined): boolean {
   return namespace?.read_access === "EXPIRED";
 }
 
+function hasActiveReadAccess(namespace: SourceNamespaceSummary | undefined): boolean {
+  return namespace?.read_access === "ACTIVE";
+}
+
 function profileRefText(profile: SourceNamespaceProfile): string {
   return `${profile.profile_ref.id}@${profile.profile_ref.revision}`;
 }
@@ -65,7 +78,7 @@ function selectedNamespace(
 export function mountSourceNamespacePanel(
   element: HTMLElement,
   options: SourceNamespacePanelOptions,
-): (() => void) & { clearPrivate(): void; refresh(): void } {
+): (() => void) & SourceNamespacePanelHandle {
   element.innerHTML = `
     <div class="workflow-head">
       <div><span class="eyebrow">Workspace</span><h2>Choose a workspace</h2></div>
@@ -137,11 +150,15 @@ export function mountSourceNamespacePanel(
   let serial = 0;
   let controller: AbortController | undefined;
   let catalog: SourceNamespaceCatalog | undefined;
+  let verifiedSession: OwnerSession | undefined;
+  let verifiedSessionGeneration: string | undefined;
   let selectedId: string | undefined;
   let selectedProfile: SourceNamespaceProfile | undefined;
   let announcedSelectionId: string | undefined;
   let createProfileKey: string | undefined;
   let loadedGeneration: string | undefined;
+  let resumeComplete = false;
+  let unresolvedNamespaceIds = new Set<string>();
   let statusMessage = "Workspaces appear when the owner service is ready.";
   let operation: "idle" | "loading" | "creating" | "renewing" = "idle";
   let attemptPayload: string | undefined;
@@ -151,11 +168,22 @@ export function mountSourceNamespacePanel(
     const value = options.deploymentGeneration();
     return value !== undefined && value !== "" && value !== "unreachable" && value !== "generation pending" ? value : undefined;
   };
-  const canRequest = (): boolean => options.healthReady() && isOnline() && generation() !== undefined;
+  const healthyConnection = (): boolean => options.healthReady() && isOnline() && generation() !== undefined;
+  const ownerSessionIsCurrent = (): boolean => verifiedSession !== undefined &&
+    verifiedSessionGeneration !== undefined && verifiedSessionGeneration === generation() &&
+    isOwnerSessionUnexpired(verifiedSession);
+  const canRequest = (): boolean => healthyConnection() && ownerSessionIsCurrent();
+  const resumeCoordinator = createOwnerNamespaceResumeCoordinator({
+    readCatalog: readSourceNamespaces,
+    renewNamespace: renewSourceNamespace,
+    isCurrent: (binding) => canRequest() && verifiedSession === binding.session &&
+      verifiedSessionGeneration === binding.deploymentGeneration && generation() === binding.deploymentGeneration,
+  });
   const stop = (): void => {
     serial += 1;
     controller?.abort();
     controller = undefined;
+    resumeCoordinator.clear();
     operation = "idle";
   };
 
@@ -177,22 +205,30 @@ export function mountSourceNamespacePanel(
   };
 
   const render = (): void => {
-    const ready = canRequest();
+    const hasOwnerSession = canRequest();
     const namespaces = catalog?.namespaces ?? [];
     const profiles = catalog?.profiles ?? [];
     const setupMissing = catalog !== undefined && namespaces.length === 0 && profiles.length === 0;
     const existingWorkspaceWithoutProfile = catalog !== undefined && namespaces.length > 0 && profiles.length === 0;
-    stateNode.textContent = operation === "loading" ? "Refreshing" : operation === "creating" ? "Creating" : operation === "renewing" ? "Renewing" : setupMissing ? "Setup required" : ready ? "Ready" : "Waiting";
+    const needsAttention = unresolvedNamespaceIds.size > 0 || namespaces.some((namespace) => namespace.read_access !== "ACTIVE");
+    const ready = hasOwnerSession && resumeComplete && catalog !== undefined && !needsAttention;
+    stateNode.textContent = operation === "loading" ? "Restoring access" : operation === "creating" ? "Creating" : operation === "renewing" ? "Renewing" : setupMissing ? "Setup required" : needsAttention ? "Needs attention" : ready ? "Ready" : "Waiting";
     introNode.textContent = setupMissing
       ? "No workspace is available yet. Server setup is required before adding documents."
+      : !hasOwnerSession
+      ? healthyConnection()
+        ? "Verifying the owner session before loading workspaces."
+        : "The owner workspace is not ready yet. Check the server before choosing a workspace."
+      : needsAttention
+      ? "Some workspace access needs attention. The panel keeps each existing policy as it is until the server confirms an update."
       : ready
       ? "Choose where new documents should be added."
-      : "The owner workspace is not ready yet. Check the server before choosing a workspace.";
-    refreshButton.disabled = !ready || operation !== "idle";
-    select.disabled = !ready || catalog === undefined || catalog.namespaces.length === 0;
-    titleInput.disabled = !ready || operation !== "idle";
-    profileSelect.disabled = !ready || operation !== "idle" || catalog?.profiles.length === 0;
-    createButton.disabled = !ready || operation !== "idle" || catalog?.profiles.length === 0 || titleInput.value.trim().length === 0;
+      : "Workspaces are being checked against the current owner session.";
+    refreshButton.disabled = !hasOwnerSession || operation !== "idle";
+    select.disabled = !hasOwnerSession || !resumeComplete || operation !== "idle" || catalog === undefined || catalog.namespaces.length === 0;
+    titleInput.disabled = !hasOwnerSession || !resumeComplete || operation !== "idle";
+    profileSelect.disabled = !hasOwnerSession || !resumeComplete || operation !== "idle" || catalog?.profiles.length === 0;
+    createButton.disabled = !hasOwnerSession || !resumeComplete || operation !== "idle" || catalog?.profiles.length === 0 || titleInput.value.trim().length === 0;
     form.hidden = existingWorkspaceWithoutProfile;
     createCopy.hidden = existingWorkspaceWithoutProfile;
     createUnavailable.hidden = !existingWorkspaceWithoutProfile;
@@ -210,7 +246,9 @@ export function mountSourceNamespacePanel(
       for (const namespace of namespaces) {
         const option = document.createElement("option");
         option.value = namespace.source_namespace_id;
-        option.textContent = isExpired(namespace) ? `${namespace.title} (access expired)` : namespace.title;
+        option.textContent = isExpired(namespace)
+          ? `${namespace.title} (access expired)`
+          : namespace.read_access === undefined ? `${namespace.title} (access unavailable)` : namespace.title;
         select.append(option);
       }
       select.value = selectedId ?? "";
@@ -231,22 +269,32 @@ export function mountSourceNamespacePanel(
     details.hidden = chosen === undefined;
     namespaceIdNode.textContent = chosen?.source_namespace_id ?? "";
     profileRefNode.textContent = selectedProfile === undefined ? "" : profileRefText(selectedProfile);
-    readAccessNode.textContent = chosen === undefined ? "" : chosen.read_access ?? "ACTIVE";
+    readAccessNode.textContent = chosen === undefined ? "" : unresolvedNamespaceIds.has(chosen.source_namespace_id)
+      ? "Restoration not confirmed"
+      : chosen.read_access ?? "Unavailable";
     readExpiresNode.textContent = chosen?.read_expires_at ?? "Unavailable";
     readGenerationNode.textContent = chosen?.read_policy_generation === undefined ? "Unavailable" : String(chosen.read_policy_generation);
     accessSection.hidden = chosen === undefined;
     accessTitle.textContent = chosen?.title ?? "";
-    accessState.textContent = chosen === undefined ? "" : isExpired(chosen) ? "Expired" : "Active";
+    accessState.textContent = chosen === undefined ? "" : unresolvedNamespaceIds.has(chosen.source_namespace_id)
+      ? "Needs attention"
+      : isExpired(chosen) ? "Expired" : chosen.read_access ?? "Unavailable";
     accessCopy.textContent = chosen === undefined
       ? ""
+      : unresolvedNamespaceIds.has(chosen.source_namespace_id)
+      ? "Workspace access could not be confirmed for this owner session. Refresh to check the current server state."
+      : chosen.read_access === undefined
+      ? "The server did not provide an active read policy. No workspace access was granted."
       : isExpired(chosen)
       ? chosen.read_policy_generation === undefined
-        ? "Workspace access expired. Refresh workspaces before renewing access."
-        : `Workspace access expired on ${accessExpiryText(chosen.read_expires_at)}. Renew it before adding documents.`
+        ? "Workspace access expired, and its policy generation is unavailable. No automatic renewal was attempted."
+        : `Workspace access expired on ${accessExpiryText(chosen.read_expires_at)}. The current owner session is being checked for a safe renewal.`
       : chosen.read_expires_at === undefined
       ? "Workspace access is active."
       : `Workspace access is active until ${accessExpiryText(chosen.read_expires_at)}.`;
-    renewButton.disabled = !ready || operation !== "idle" || !isExpired(chosen) || chosen?.read_policy_generation === undefined;
+    renewButton.disabled = !hasOwnerSession || operation !== "idle" || chosen === undefined ||
+      verifiedSession === undefined || chosen.read_policy_generation === Number.MAX_SAFE_INTEGER ||
+      !ownerNamespaceNeedsResume(chosen, verifiedSession);
     if (catalog === undefined) {
       listCopy.textContent = ready ? "Loading workspaces…" : "Workspaces appear after the owner service is ready.";
       createCopy.textContent = "Workspace creation options appear when the owner service is ready.";
@@ -267,10 +315,14 @@ export function mountSourceNamespacePanel(
   const clearPrivate = (message = "Workspace data cleared. Check the server before choosing a workspace."): void => {
     stop();
     catalog = undefined;
+    verifiedSession = undefined;
+    verifiedSessionGeneration = undefined;
     selectedId = undefined;
     selectedProfile = undefined;
     createProfileKey = undefined;
     loadedGeneration = undefined;
+    resumeComplete = false;
+    unresolvedNamespaceIds = new Set();
     attemptPayload = undefined;
     attemptKey = undefined;
     statusMessage = message;
@@ -278,94 +330,117 @@ export function mountSourceNamespacePanel(
     dispatchSelectionClear(true);
   };
 
-  const load = async (automatic = false): Promise<void> => {
+  const applyResumeResult = (result: OwnerNamespaceResumeResult): void => {
+    const received = result.catalog;
+    if (received === undefined) return;
+    catalog = received;
+    loadedGeneration = received.deployment_generation;
+    resumeComplete = true;
+    unresolvedNamespaceIds = new Set(result.unresolvedNamespaceIds);
+    const chosen = selectedNamespace(received.namespaces, selectedId);
+    const previousSelectedId = selectedId;
+    if (chosen === undefined) {
+      selectedId = undefined;
+      selectedProfile = undefined;
+      if (previousSelectedId !== undefined) dispatchSelectionClear();
+    } else if (!hasActiveReadAccess(chosen)) {
+      dispatchSelectionClear();
+    } else if (announcedSelectionId !== chosen.source_namespace_id) {
+      dispatchSelection(chosen.source_namespace_id, chosen.title);
+    }
+    if (createProfileKey === undefined || !received.profiles.some((profile) => profileRefText(profile) === createProfileKey)) {
+      createProfileKey = received.profiles[0] === undefined ? undefined : profileRefText(received.profiles[0]);
+    }
+    if (selectedId === undefined && received.namespaces.length === 1) {
+      const onlyNamespace = received.namespaces[0];
+      if (onlyNamespace !== undefined && hasActiveReadAccess(onlyNamespace)) {
+        selectedId = onlyNamespace.source_namespace_id;
+        dispatchSelection(onlyNamespace.source_namespace_id, onlyNamespace.title);
+      }
+    }
+    const workspacesWithoutPolicy = received.namespaces.filter((namespace) => namespace.read_access === undefined);
+    if (result.unresolvedNamespaceIds.length > 0) {
+      const unresolvedTitles = received.namespaces
+        .filter((namespace) => result.unresolvedNamespaceIds.includes(namespace.source_namespace_id))
+        .map((namespace) => `"${namespace.title}"`);
+      statusMessage = `Access restoration was not confirmed for ${unresolvedTitles.join(", ") || "one or more workspaces"}. Refresh to check the current server state.`;
+    } else if (workspacesWithoutPolicy.length > 0) {
+      statusMessage = `Read access could not be confirmed for ${workspacesWithoutPolicy.length} existing workspace${workspacesWithoutPolicy.length === 1 ? "" : "s"}. No policy was created.`;
+    } else if (result.renewedNamespaceIds.length + result.confirmedNamespaceIds.length > 0) {
+      const restoredCount = result.renewedNamespaceIds.length + result.confirmedNamespaceIds.length;
+      statusMessage = `Workspace access was restored for ${restoredCount} existing workspace${restoredCount === 1 ? "" : "s"} through the current owner session.`;
+    } else if (received.profiles.length === 0) {
+      statusMessage = received.namespaces.length === 0
+        ? "Setup required: no workspace is available and no server-installed profile is configured."
+        : "Existing workspace available. Choose it or import a document.";
+    } else {
+      statusMessage = "Existing workspace access already covers the current owner session. Choose a workspace or create one.";
+    }
+    render();
+  };
+
+  const load = async (): Promise<void> => {
     const currentGeneration = generation();
-    if (!canRequest() || currentGeneration === undefined || operation !== "idle" ||
-        (automatic && loadedGeneration === currentGeneration)) return;
+    const currentSession = verifiedSession;
+    if (!canRequest() || currentGeneration === undefined || currentSession === undefined || operation !== "idle") return;
     stop();
     const active = serial;
-    const local = new AbortController();
-    controller = local;
+    controller = new AbortController();
     operation = "loading";
     statusMessage = "Reading available workspaces…";
     render();
     try {
-      const received = await readSourceNamespaces(currentGeneration, local.signal);
-      if (disposed || active !== serial) return;
-      if (generation() !== currentGeneration) {
+      const result = await resumeCoordinator.run(currentSession, currentGeneration);
+      if (disposed || active !== serial || result.stale) return;
+      if (generation() !== currentGeneration || verifiedSession !== currentSession ||
+          verifiedSessionGeneration !== currentGeneration) {
         clearPrivate("The workspace changed. Refresh before choosing a workspace.");
         return;
       }
-      catalog = received;
-      loadedGeneration = received.deployment_generation;
-      const chosen = selectedNamespace(received.namespaces, selectedId);
-      const previousSelectedId = selectedId;
-      if (chosen === undefined) {
-        selectedId = undefined;
-        selectedProfile = undefined;
-        if (previousSelectedId !== undefined) dispatchSelectionClear();
-      } else if (isExpired(chosen)) {
-        dispatchSelectionClear();
-      } else if (announcedSelectionId !== chosen.source_namespace_id) {
-        dispatchSelection(chosen.source_namespace_id, chosen.title);
+      if (result.catalog === undefined) {
+        statusMessage = "Workspace access could not be confirmed. Refresh workspaces to check the current server state.";
+        render();
+        return;
       }
-      if (createProfileKey === undefined || !received.profiles.some((profile) => profileRefText(profile) === createProfileKey)) {
-        createProfileKey = received.profiles[0] === undefined ? undefined : profileRefText(received.profiles[0]);
-      }
-      if (selectedId === undefined && received.namespaces.length === 1) {
-        const onlyNamespace = received.namespaces[0];
-        if (onlyNamespace !== undefined) {
-          selectedId = onlyNamespace.source_namespace_id;
-          if (!isExpired(onlyNamespace)) dispatchSelection(onlyNamespace.source_namespace_id, onlyNamespace.title);
-        }
-      }
-      statusMessage = received.profiles.length === 0
-        ? received.namespaces.length === 0
-          ? "Setup required: no workspace is available and no server-installed profile is configured."
-          : "Existing workspace available. Choose it or import a document."
-        : "Choose a workspace or create one before adding a document.";
-      render();
+      applyResumeResult(result);
     } catch (error) {
       if (disposed || active !== serial || (error instanceof Error && error.name === "AbortError")) return;
       if (privateFailure(error)) clearPrivate(failureText(error, "load"));
-      else { statusMessage = failureText(error, "load"); render(); }
+      else { resumeComplete = false; statusMessage = failureText(error, "load"); render(); }
     } finally {
       if (active === serial) { controller = undefined; operation = "idle"; render(); }
     }
   };
 
-  const renew = async (): Promise<void> => {
-    const chosen = selectedNamespace(catalog?.namespaces ?? [], selectedId);
-    if (!canRequest() || operation !== "idle" || chosen === undefined || !isExpired(chosen) ||
-        chosen.read_policy_generation === undefined) return;
-    const currentGeneration = generation();
-    if (currentGeneration === undefined) return;
-    const expectedPolicyGeneration = chosen.read_policy_generation;
-    stop();
-    const active = serial;
-    const local = new AbortController();
-    controller = local;
-    operation = "renewing";
-    statusMessage = `Renewing access for “${chosen.title}”…`;
-    render();
-    try {
-      const renewed = await renewSourceNamespace(chosen.source_namespace_id, expectedPolicyGeneration, currentGeneration, local.signal);
-      if (disposed || active !== serial) return;
-      if (generation() !== currentGeneration) {
-        clearPrivate("The workspace changed. Refresh before choosing a workspace.");
-        return;
-      }
-      applyRenewed(renewed);
-    } catch (error) {
-      if (disposed || active !== serial || (error instanceof Error && error.name === "AbortError")) return;
-      if (error instanceof ApiRequestError && error.status === 409 && error.code !== "API_GENERATION_MISMATCH") {
-        statusMessage = "Workspace access changed. Refresh workspaces and try again.";
-        render();
-      } else if (privateFailure(error)) clearPrivate(failureText(error, "renew"));
-      else { statusMessage = failureText(error, "renew"); render(); }
-    } finally {
-      if (active === serial) { controller = undefined; operation = "idle"; render(); }
+  const verifyOwnerSession = (session: OwnerSession, deploymentGeneration: string): void => {
+    if (disposed) return;
+    if (!healthyConnection() || generation() !== deploymentGeneration || !isOwnerSessionUnexpired(session)) {
+      clearPrivate("The deployment changed before workspace access could be checked.");
+      return;
     }
+    if (verifiedSession?.principal_ref === session.principal_ref &&
+        verifiedSession.credential_generation === session.credential_generation &&
+        verifiedSession.expires_at === session.expires_at && verifiedSessionGeneration === deploymentGeneration &&
+        resumeComplete) return;
+    const sameOwner = verifiedSession?.principal_ref === session.principal_ref &&
+      verifiedSessionGeneration === deploymentGeneration;
+    if (!sameOwner && (verifiedSession !== undefined || catalog !== undefined || selectedId !== undefined)) {
+      clearPrivate("The verified owner changed. Workspace data was cleared before checking the new session.");
+    } else {
+      stop();
+    }
+    verifiedSession = session;
+    verifiedSessionGeneration = deploymentGeneration;
+    statusMessage = "Verified owner session. Checking existing workspace access.";
+    render();
+    void load();
+  };
+
+  const renew = (): void => {
+    const chosen = selectedNamespace(catalog?.namespaces ?? [], selectedId);
+    if (!canRequest() || operation !== "idle" || chosen === undefined || verifiedSession === undefined ||
+        !ownerNamespaceNeedsResume(chosen, verifiedSession)) return;
+    void load();
   };
 
   const create = async (): Promise<void> => {
@@ -403,29 +478,6 @@ export function mountSourceNamespacePanel(
     } finally {
       if (active === serial) { controller = undefined; operation = "idle"; render(); }
     }
-  };
-
-  const applyRenewed = (renewed: RenewedSourceNamespace): void => {
-    const currentCatalog = catalog;
-    if (currentCatalog === undefined) return;
-    catalog = {
-      ...currentCatalog,
-      namespaces: currentCatalog.namespaces.map((namespace) => namespace.source_namespace_id === renewed.source_namespace_id
-        ? {
-          ...namespace,
-          title: renewed.title,
-          read_policy_generation: renewed.read_policy_generation,
-          read_expires_at: renewed.read_expires_at,
-          read_access: renewed.read_access,
-        }
-        : namespace),
-    };
-    selectedId = renewed.source_namespace_id;
-    loadedGeneration = renewed.deployment_generation;
-    statusMessage = `Workspace “${renewed.title}” access renewed until ${accessExpiryText(renewed.read_expires_at)}.`;
-    render();
-    dispatchSelection(renewed.source_namespace_id, renewed.title);
-    window.dispatchEvent(new Event("eliotr:raw-admission-completed"));
   };
 
   const applyCreated = (created: CreatedSourceNamespace, profile: SourceNamespaceProfile): void => {
@@ -466,11 +518,13 @@ export function mountSourceNamespacePanel(
     }
     selectedId = namespace.source_namespace_id;
     selectedProfile = undefined;
-    statusMessage = isExpired(namespace)
-      ? `Workspace “${namespace.title}” needs renewed access before adding documents.`
-      : `Workspace “${namespace.title}” selected.`;
+    statusMessage = !hasActiveReadAccess(namespace)
+      ? isExpired(namespace)
+        ? `Workspace "${namespace.title}" needs current-session access before adding documents.`
+        : `Read access for workspace "${namespace.title}" is unavailable.`
+      : `Workspace "${namespace.title}" selected.`;
     render();
-    if (isExpired(namespace)) dispatchSelectionClear();
+    if (!hasActiveReadAccess(namespace)) dispatchSelectionClear();
     else dispatchSelection(namespace.source_namespace_id, namespace.title);
   };
   titleInput.oninput = () => render();
@@ -478,7 +532,7 @@ export function mountSourceNamespacePanel(
     createProfileKey = profileSelect.value || undefined;
     render();
   };
-  refreshButton.onclick = () => { void load(false); };
+  refreshButton.onclick = () => { void load(); };
   renewButton.onclick = () => { void renew(); };
   form.onsubmit = (event) => { event.preventDefault(); void create(); };
 
@@ -497,7 +551,7 @@ export function mountSourceNamespacePanel(
       return;
     }
     render();
-    if (catalog === undefined && operation === "idle") void load(true);
+    if (catalog === undefined && operation === "idle") void load();
   };
   const onPageHide = (): void => clearPrivate("Workspace data cleared when the page was closed.");
   window.addEventListener("offline", onOffline);
@@ -506,7 +560,6 @@ export function mountSourceNamespacePanel(
   const app = element.closest("#app");
   app?.addEventListener("eliotr:health-lost", onHealthLost);
   app?.addEventListener("eliotr:health-updated", onHealthUpdated);
-  if (canRequest()) void load(true);
   render();
 
   const cleanup = (): void => {
@@ -520,5 +573,5 @@ export function mountSourceNamespacePanel(
     app?.removeEventListener("eliotr:health-updated", onHealthUpdated);
     element.replaceChildren();
   };
-  return Object.assign(cleanup, { clearPrivate, refresh: () => { void load(false); } });
+  return Object.assign(cleanup, { clearPrivate, refresh: () => { void load(); }, verifyOwnerSession });
 }

@@ -71,3 +71,31 @@ See [Research runtime configuration](research-runtime-configuration.md) for the
 envelope path, canonicalization, environment conflict rules, and the
 installed-versus-live boundary. The parser and typed reader are in
 apps/eliotr-core/src/source-namespace-bootstrap-profiles.ts.
+
+## Owner session read access
+
+After a healthy deployment or reconnect, the PWA verifies the current owner through
+`GET /api/v1/system/session` and loads the namespace catalog. It automatically uses
+`POST /api/v1/library/namespaces/:id/renew` with the catalog's exact
+`expected_generation` for each existing ACTIVE policy whose read lease ends before
+the verified session. This includes a still-valid shorter lease and an expired
+lease. A lease already covering the session needs no mutation. The existing workspace
+choice is retained; this lifecycle does not submit or restart Research.
+
+The verified principal, credential generation and deployment fence every completion.
+Renewal cannot extend beyond that JWT's expiry, add a policy, restore REVOKED access,
+change allowed use or disclosure, or bypass changed owner/admission lineage. The
+initial owner grant remains the explicit bootstrap grant described above. A CAS
+conflict is reconciled through one catalog readback; partial or uncertain failures
+remain visible and do not cause a blind mutation retry.
+
+Saved reports retain their original snapshot, freeze, evidence and R2 bytes. A fresh
+owner session supplies current read authority. Lease-only continuity requires exact
+persisted renewal receipts and proof that the historical policy closure differs
+only in the recorded generation and lease expiry; semantic policy changes, revoked
+rights and purged sources still deny the read. Renewing owner read access does not
+extend a delegated client's grant or renew execution/model permission.
+
+This session integration is local implementation work. Real Cloudflare login/relogin,
+multiple live tabs and deployed acceptance require their own receipts; compilation
+or controlled local responses do not establish live qualification.

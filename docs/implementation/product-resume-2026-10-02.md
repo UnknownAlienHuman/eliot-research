@@ -96,3 +96,46 @@ The bounded Core section-revise/runner recovery composition is connected and use
 Restore preflight is not disaster recovery. O2 offsite copy currently transports the 15 encrypted manifest parts and R2 object inventory, not R2 payload bytes. Missing code includes authenticated bounded payload transport, exact current purge/terminal-target/backup-obligation reconciliation before writes, canonical VERIFIED backup_epoch linkage, and a coherent WORK_BUCKET manifest-part sink that avoids self-inventory drift. Missing or ambiguous archive authority must continue to block BackupRestorePath; never fabricate VERIFIED rows or traffic readiness.
 
 After those code gaps, S94/S93/S95/S96/S97 need an exact approved isolated target and their own native/live evidence. Current instructions prohibit live apply, spending and new credentials; the next engineering steps need no new A/B choice.
+
+## Owner session lease integration checkpoint (2026-10-02)
+
+The owner's requested session behavior is automatic read-lease refresh after verified
+Cloudflare owner login or reconnect. The existing identity GET remains read-only;
+the PWA invokes the existing namespace renewal POST with exact catalog generation.
+Every existing same-owner ACTIVE policy shorter than the verified JWT is eligible,
+including a still-valid shorter lease. Initial grants, revoked or missing policy,
+changed ownership/admission and delegated-client authority retain their existing
+boundaries. The workspace chooser and Research execution remain explicit.
+
+Implementation is split among three Luna/max agents with disjoint write ownership:
+Core renewal and native HTTP checks, PWA session/catalog lifecycle, and immutable
+history/SQL receipt proof. The root owns documentation and publication. The session
+checkpoint starts from [0f1b7215](https://github.com/UnknownAlienHuman/eliot-research/commit/0f1b7215)
+on the existing exchange branch; no new branch, worktree or PR is created.
+
+Lease refresh must atomically record the verified owner session and exact old/new
+policy tuple beside the existing fenced CAS, then read back the applied receipt.
+Historical reads retain their original snapshot and R2 bytes. A lease event cannot
+waive an arbitrary member policy-closure mismatch: proof must reconstruct the old
+policy tuple against current source authority and match the original closure.
+Semantic events, current revocation, owner/admission drift and purge still deny.
+The existing delegated-grant revocation trigger is retained.
+
+Compilation, scoped lint, depth-100 SQL and focused signed-session/native
+HTTP/history/PWA checks are pending during assembly. Full S92, the inherited
+source-budget failures, Linux CI and real deployed login/relogin remain separate
+pending acceptance. No deployment, live write, paid call or manual CI dispatch is
+part of this checkpoint.
+
+First reviewable session checkpoint: the PWA client uses the existing strict
+session/catalog/renew endpoints; the Core receipt/history integration remains in
+assembly and is not qualified by the client checks. PWA `typecheck` and scoped
+ESLint over its five changed source files and `tests/library.test.ts` pass.
+`pnpm exec vitest run --config vitest.config.ts tests/library.test.ts -t "verified owner namespace resume lifecycle"`
+passes 4 tests with 7 unrelated existing tests skipped. These controlled transport
+checks exercise expired and still-valid shorter leases, all eligible workspaces,
+covered-lease no-op, same-session coalescing, stale credential/deployment completion,
+exact 409 readback and malformed success receipts. They do not establish actual
+browser login/relogin, multiple live tabs, native historical REPORT reopening or
+live Cloudflare acceptance. The prior publication-fixture 404 browser failure at
+0f1b7215 also remains unresolved in this checkpoint.

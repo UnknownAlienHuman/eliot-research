@@ -276,6 +276,8 @@ function render(health: SystemHealth | null): void {
   const ownerSession = ownerSessionHost ? mountOwnerSessionPanel(ownerSessionHost, {
     deploymentGeneration: () => app.dataset.healthGeneration,
     healthReady: () => app.dataset.healthReady === "true",
+    onVerified: (session, deploymentGeneration) => namespacePanel?.verifyOwnerSession(session, deploymentGeneration),
+    onCleared: () => namespacePanel?.clearPrivate("Owner session verification ended. Workspace data was cleared."),
   }) : undefined;
   const evidenceEmpty = app.querySelector<HTMLElement>("#evidence-empty");
   const evidenceDetail = app.querySelector<HTMLElement>("#evidence-detail");

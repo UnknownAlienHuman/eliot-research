@@ -1,9 +1,11 @@
 import { ApiRequestError, isAuthorizationLoss } from "./api.js";
-import { readOwnerSession, type OwnerSession } from "./owner-session-api.js";
+import { isOwnerSessionUnexpired, readOwnerSession, type OwnerSession } from "./owner-session-api.js";
 
 export interface OwnerSessionPanelOptions {
   readonly deploymentGeneration: () => string | undefined;
   readonly healthReady: () => boolean;
+  readonly onVerified?: (session: OwnerSession, deploymentGeneration: string) => void;
+  readonly onCleared?: () => void;
 }
 
 function online(): boolean {
@@ -58,6 +60,7 @@ export function mountOwnerSessionPanel(
   let controller: AbortController | undefined;
   let session: OwnerSession | undefined;
   let sessionGeneration: string | undefined;
+  let expiryTimer: number | undefined;
 
   const currentGeneration = (): string | undefined => {
     const generation = options.deploymentGeneration();
@@ -92,10 +95,12 @@ export function mountOwnerSessionPanel(
     controller = undefined;
     session = undefined;
     sessionGeneration = undefined;
+    clearExpiryTimer();
     summary.textContent = message;
     status.textContent = "";
     details.open = false;
     renderSession();
+    options.onCleared?.();
   };
   const refresh = (): void => {
     if (disposed || controller !== undefined) return;
@@ -120,18 +125,25 @@ export function mountOwnerSessionPanel(
       try {
         const response = await readOwnerSession(generation, local.signal);
         if (mine !== serial || disposed || currentGeneration() !== generation) return;
+        if (!isOwnerSessionUnexpired(response)) {
+          throw new ApiRequestError({ status: 401, code: "ACCESS_SESSION_EXPIRED", message: "The verified owner session has expired." });
+        }
         session = response;
         sessionGeneration = generation;
+        scheduleExpiry(response);
         summary.textContent = "Current owner session is available.";
         status.textContent = "Read from the current deployment.";
         renderSession();
+        options.onVerified?.(response, generation);
       } catch (error) {
         if (mine !== serial || disposed) return;
         session = undefined;
         sessionGeneration = undefined;
+        clearExpiryTimer();
         summary.textContent = failureMessage(error);
         status.textContent = "";
         renderSession();
+        options.onCleared?.();
       } finally {
         if (controller === local) {
           controller = undefined;
@@ -145,24 +157,57 @@ export function mountOwnerSessionPanel(
   const authorizationCleared = (): void => clearPrivate("Authorization changed. Sign in again to read the current owner session.");
   const healthLost = (): void => clearPrivate("The server connection changed. Read the current owner session again when ready.");
   const healthUpdated = (): void => {
+    if (session !== undefined && !isOwnerSessionUnexpired(session)) {
+      expireSession(session);
+      return;
+    }
     if (session !== undefined && sessionGeneration !== currentGeneration()) {
       clearPrivate("The deployment changed. Read the current owner session again.");
       return;
     }
+    if (session === undefined && options.healthReady() && online() && currentGeneration() !== undefined) {
+      refresh();
+      return;
+    }
     updateButton();
   };
+  function clearExpiryTimer(): void {
+    if (expiryTimer !== undefined) window.clearTimeout(expiryTimer);
+    expiryTimer = undefined;
+  }
+  function scheduleExpiry(current: OwnerSession): void {
+    clearExpiryTimer();
+    const remaining = Date.parse(current.expires_at) - Date.now();
+    if (!Number.isFinite(remaining)) return;
+    if (remaining <= 0) {
+      expireSession(current);
+      return;
+    }
+    expiryTimer = window.setTimeout(() => expireSession(current), Math.min(remaining, 2_147_483_647));
+  }
+  function expireSession(current: OwnerSession): void {
+    if (disposed || session !== current) return;
+    if (isOwnerSessionUnexpired(current)) {
+      scheduleExpiry(current);
+      return;
+    }
+    clearPrivate("Owner session expired. Checking the current verified session again.");
+    if (options.healthReady() && online() && currentGeneration() !== undefined) refresh();
+  }
   readButton.onclick = refresh;
   window.addEventListener("offline", offline);
   window.addEventListener("eliotr:authorization-cleared", authorizationCleared);
   window.addEventListener("eliotr:health-lost", healthLost);
   window.addEventListener("eliotr:health-updated", healthUpdated);
   updateButton();
+  if (options.healthReady() && online() && currentGeneration() !== undefined) refresh();
 
   const cleanup = (): void => {
     disposed = true;
     serial += 1;
     controller?.abort();
     controller = undefined;
+    clearExpiryTimer();
     readButton.onclick = null;
     window.removeEventListener("offline", offline);
     window.removeEventListener("eliotr:authorization-cleared", authorizationCleared);

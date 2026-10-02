@@ -11,6 +11,11 @@ export interface OwnerSession {
   readonly client_class: string;
 }
 
+export function isOwnerSessionUnexpired(session: OwnerSession, now = Date.now()): boolean {
+  const expiresAt = Date.parse(session.expires_at);
+  return Number.isFinite(expiresAt) && expiresAt > now;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
