@@ -116,7 +116,12 @@ export async function admitArtifactCowModelSpend(
   const authorityJson = canonicalJson(prepared.authority);
   const intentJson = canonicalJson(intent);
   const expectedDeploymentJson = canonicalJson(deployment);
-  const stageRequestJson = context.workflow_attempt.request_json;
+  if (context.workflow_attempt.request_json !== canonicalJson(context.request)) {
+    fail("COW run request bytes differ from the exact admitted request");
+  }
+  // The public workflow readback exposes run request bytes. D1 persists the
+  // attempt envelope separately, including the exact admitted attempt ref.
+  const stageRequestJson = canonicalJson({ request: context.request, attempt_ref: context.workflow_attempt.attempt_ref });
   const rowValues = [input.authorization_ref, intent.intent_ref.id, context.call_slot, context.request.operation_id,
     context.workflow_attempt.attempt_ref, context.workflow_attempt.request_sha256, context.workflow_attempt.budget.receipt_ref,
     stageRequestJson, intent.intent_ref.id, intent.intent_ref.revision, intentJson, prepared.quote.reservation_id,

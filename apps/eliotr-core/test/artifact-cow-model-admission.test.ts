@@ -21,7 +21,7 @@ import { retrieveWithHeldScope } from "../src/research-retrieval-composition.js"
 import { createArtifactDraftRuntime, draftInput, runtime } from "./artifact-draft-fixture.js";
 import { freezeFixture, principal as freezePrincipal } from "./research-evidence-freeze-fixture.js";
 
-const ROUTE = "dynamic/eliotr-cow-w3";
+const ROUTE = "dynamic/eliotr-economy";
 const ROUTE_VERSION = "cow-w3-test-v1";
 const PROMPT_GENERATION = "cow-w3-prompt-v1";
 const SCHEMA_GENERATION = "cow-w3-schema-v1";
@@ -91,12 +91,12 @@ async function installTestRoute(): Promise<ModelRouteDeployment> {
 
 async function configureReportPolicy(): Promise<void> {
   const now = new Date().toISOString();
-  await runtime.CORE_DB.prepare("UPDATE investigation_current_policy SET state='REVOKED' WHERE policy_authority_ref=?1 AND state='ACTIVE'")
+  await runtime.CORE_DB.prepare("UPDATE investigation_current_policy SET state='RETIRED' WHERE policy_authority_ref=?1 AND state='ACTIVE'")
     .bind(freeze.scope.policy_authority_ref).run();
   await runtime.CORE_DB.prepare("INSERT INTO investigation_current_policy(policy_generation,policy_authority_ref,state,created_at) VALUES (?1,?2,'ACTIVE',?3)")
     .bind(CURRENT_POLICY, freeze.scope.policy_authority_ref, now).run();
   await runtime.CORE_DB.prepare("INSERT OR IGNORE INTO investigation_current_deployment(deployment_generation,state,created_at) VALUES (?1,'ACTIVE',?2)")
-    .bind(runtime.DEPLOYMENT_GENERATION, now).run();
+    .bind(freezePrincipal.deployment_generation, now).run();
 }
 
 async function startW2(tag: string) {
@@ -120,7 +120,7 @@ async function startW2(tag: string) {
   const spend = { protocol: "eliotr.research-owner-spend-template.v1", approved: true,
     policy_ref: "cow-w3-spend-policy", config_provenance_ref: "cow-w3-spend-policy-install",
     principal_ref: context.principal_ref, client_class: "owner_pwa",
-    deployment_generation: runtime.DEPLOYMENT_GENERATION, expires_at: freeze.scope.expires_at,
+    deployment_generation: freezePrincipal.deployment_generation, expires_at: freeze.scope.expires_at,
     rules: ["SYNTHESIZE", "AUDIT_CLAIMS"].map((stage) => ({ stage, quote, max_input_bytes: 8192,
       max_output_bytes: 2048, deployment })) };
   const { content_digest: _draftDigest, ...residency } = input.manifest_residency;
@@ -130,7 +130,7 @@ async function startW2(tag: string) {
     protocol: "eliotr.research-owner-report-admission-template.v1", policy_ref: "cow-w3-report-policy",
     policy_revision: 1, config_provenance_ref: "cow-w3-report-policy-install",
     principal_ref: context.principal_ref, client_class: "owner_pwa",
-    deployment_generation: runtime.DEPLOYMENT_GENERATION, allowed_use: ["research"],
+    deployment_generation: freezePrincipal.deployment_generation, allowed_use: ["research"],
     disclosure_ceiling: "owner-only", requested_output_class: "private-draft",
     purpose: "research-report-materialization", expires_at: freeze.scope.expires_at },
     artifact_policy: { kind: input.spec.kind, title: input.spec.title, audience: input.spec.audience,
@@ -141,6 +141,7 @@ async function startW2(tag: string) {
       include_methodology: input.spec.include_methodology, budget_ref: input.spec.budget_ref,
       section_residency: residency, manifest_residency: residency } };
   const configuredEnv: Env = { ...runtime,
+    DEPLOYMENT_GENERATION: freezePrincipal.deployment_generation,
     ELIOTR_MODEL_SPEND_POLICY_JSON: JSON.stringify(spend),
     ELIOTR_MODEL_SPEND_POLICY_PROVENANCE_REF: "cow-w3-spend-policy-install",
     ELIOTR_RESEARCH_REPORT_CONFIG_JSON: JSON.stringify(report),
@@ -150,7 +151,7 @@ async function startW2(tag: string) {
   const store = createArtifactSectionReviseWorkflowStore(runtime.CORE_DB);
   const workflowInput = { request, report_admission: reportAdmission, store,
     principal: { principal_ref: context.principal_ref, credential_generation: context.credential_generation,
-      deployment_generation: runtime.DEPLOYMENT_GENERATION }, handler_generation: "cow-w3-handler-v1" };
+      deployment_generation: freezePrincipal.deployment_generation }, handler_generation: "cow-w3-handler-v1" };
   const attempt = await startArtifactSectionReviseWorkflow(workflowInput);
   expect(attempt.state).toBe("STARTED");
   return { input, context, request, configuredEnv, reportAdmission, attempt };
@@ -275,7 +276,7 @@ async function runW3(data: Awaited<ReturnType<typeof startW2>>, tag: string, fai
   const residency = { ...domains, scope_domain_id: data.attempt.request.scope_snapshot_ref.id,
     access_domain_id: data.context.principal_ref };
   const workflowPrincipal = { principal_ref: data.context.principal_ref, client_class: "owner_pwa" as const,
-    credential_generation: data.context.credential_generation, deployment_generation: runtime.DEPLOYMENT_GENERATION };
+    credential_generation: data.context.credential_generation, deployment_generation: freezePrincipal.deployment_generation };
   const contexts = (["SYNTHESIZE", "INDEPENDENT_VERIFY"] as const).map((call_slot) => ({
     request: data.attempt.request,
     workflow_attempt: data.attempt,

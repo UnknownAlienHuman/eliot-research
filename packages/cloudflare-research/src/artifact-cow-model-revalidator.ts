@@ -128,7 +128,9 @@ export function createD1ArtifactCowModelRevalidator(input: {
         current.attempt_state !== "STARTED" || current.output_json !== null ||
         !Number.isSafeInteger(current.budget_expires_at_ms) || (current.budget_expires_at_ms as number) <= nowMs ||
         current.budget_expires_at_ms !== context.workflow_attempt.budget.expires_at_ms ||
-        typeof current.request_json !== "string" || current.request_json !== context.workflow_attempt.request_json) {
+        typeof current.request_json !== "string" ||
+        context.workflow_attempt.request_json !== canonicalJson(context.request) ||
+        current.request_json !== canonicalJson({ request: context.request, attempt_ref: context.workflow_attempt.attempt_ref })) {
       stale("COW W2 parent, attempt, owner grant, purge, freeze, scope or budget is no longer current");
     }
 
