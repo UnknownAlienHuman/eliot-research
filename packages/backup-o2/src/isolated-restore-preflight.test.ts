@@ -221,11 +221,33 @@ describe("isolated restore preflight", () => {
     } finally { f.primary.close(); f.target.close(); }
   });
 
-  it("rejects current purge-ledger drift before decrypting or writing", async () => {
+  it("blocks a later purge before reading offsite bytes or writing to the isolated target", async () => {
     const f = await fixture();
     try {
+      // The epoch was captured with an empty purge ledger. This row is a
+      // later erasure, so restore must stop before opening the offsite copy
+      // or exposing any bytes in the isolated target.
       f.primary.prepare("INSERT INTO purge_ledger(erasure_id,non_revealing_subject_digest,disposition,receipt_ref,created_at) VALUES(?,?,?,?,?)").run("erasure-new", H("4"), "COMPLETE", "receipt-new", NOW);
-      await expect(verifyIsolatedRestorePreflight(f.input)).rejects.toMatchObject({ code: "BACKUP_RESTORE_NOT_IMPLEMENTED" });
+      let offsiteReads = 0;
+      const originalGet = f.input.offsite.get.bind(f.input.offsite);
+      const offsite = { ...f.input.offsite, async get(ref: string) { offsiteReads += 1; return originalGet(ref); } };
+      const targetWrites: string[] = [];
+      const trackTargetWrites = (bucket: R2Bucket, name: string): R2Bucket => ({
+        ...bucket,
+        async put() { targetWrites.push(name); throw new Error("preflight must never write target payloads"); },
+      } as unknown as R2Bucket);
+      const input = {
+        ...f.input,
+        offsite,
+        target: {
+          ...f.input.target,
+          evidence_bucket: trackTargetWrites(f.input.target.evidence_bucket, "evidence"),
+          work_bucket: trackTargetWrites(f.input.target.work_bucket, "work"),
+        },
+      };
+      await expect(verifyIsolatedRestorePreflight(input)).rejects.toMatchObject({ code: "BACKUP_RESTORE_NOT_IMPLEMENTED" });
+      expect(offsiteReads).toBe(0);
+      expect(targetWrites).toEqual([]);
       expect(f.adapter.objects.size).toBe(MANIFEST_NAMES.length);
       expect(f.target.prepare("SELECT COUNT(*) AS n FROM source").get()).toEqual({ n: 0 });
     } finally { f.primary.close(); f.target.close(); }
