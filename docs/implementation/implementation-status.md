@@ -90,26 +90,50 @@ stored bytes through the same verified historical manifest and owner authority. 
 `application/octet-stream`, `no-store` and `nosniff`; artifact, section and object reference headers
 are percent-encoded and must be decoded with `decodeURIComponent`. Section selection does not bypass
 verification of the manifest's other declared objects. The explicitly configured exploratory.v3
-composition attaches a DRAFT through stage 17; the ordinary public run still uses exploratory.v2.
+composition attaches a DRAFT through stage 17; the unqualified `research.run` entrypoint retains exploratory.v2; explicit-protocol and deployed owner paths are distinguished below.
 The local D1/R2 reader suite passed 12 cases at source `0118208`; the subsequent Unicode-header change
 passed its one affected case at `5de069f` with the other 11 skipped.
 
-The section's `/citations` endpoint returns its stored verification reference and exact cited handle
-and excerpt digests after the same owner and current-scope checks. The PWA opens those sources through
-the existing evidence reader and visibly retains `DRAFT` and `NOT_EXECUTED` semantics. The native
-Worker AI Gateway adapter and persisted model-profile authority reader now support the configured
-source-to-draft path; configured v3 now executes source verification at stage 13 and binds its receipt
-to the committed synthesis bytes and current frozen evidence. The actual local source-to-draft case
-passed at `0c0506e`, including replay and revoked reads; semantic verification remains `NOT_EXECUTED`
-and stages 14–16 and model responses remain controlled in local acceptance. Configured REPORT
-admission now executes inside the stage-17 handler and the final artifact transaction; its separate
-actual D1/R2 case passed at `74203c9`, including missing-policy/revoked-grant refusal and replay.
-Installed production policies, actual provider/profile configuration, semantic stage composition and
-the remaining governed stages are still open.
+The section's `/citations` endpoint returns its stored verification reference and exact cited
+handle and excerpt digests after the same owner and current-scope checks. The PWA opens sources
+through the existing evidence reader and retains `DRAFT` and `NOT_EXECUTED` labels. The native
+Worker AI Gateway adapter and persisted model-profile authority reader support the configured
+source-to-DRAFT path: configured v3 executes source verification at stage 13 and binds its receipt to
+committed synthesis bytes and current frozen evidence. The actual local source-to-DRAFT case passed
+at `0c0506e`, including replay and revoked reads. Configured REPORT admission executes inside the
+stage-17 handler and final artifact transaction; its separate D1/R2 case passed at `74203c9`,
+including missing-policy/revoked-grant refusal and replay. In configured v3 local acceptance, stages
+14–16 and model responses remain controlled, and semantic verification is `NOT_EXECUTED`; these
+local tests are not live semantic/provider qualification.
 
-These draft transitions do not establish semantic verification or accepted publication. The artifact
-compiler, publication checks, Wiki/change products and complete report user loop remain open in the
-launch plan. Local D1/R2 and HTTP acceptance is separate from deployed Access/storage qualification.
+Separately, new explicit-protocol admissions select v7 (`research-handlers.exploratory.v7`);
+delegated computer-agent runs select v8. Idempotent replay keeps its stored generation and prior
+generations remain accepted. These routes compose branch execution, evidence freeze/reconciliation,
+per-role model calls and spend admission; `model.roles` is assembled server-side from the installed
+`ELIOTR_MODEL_PROFILE_DEFINITION_JSON` policy and committed stage-five evidence. See the
+[backend delivery plan](backend-delivery-plan.md). Production/operator policy installation and exact
+provider qualification, S37/S93 acceptance and remaining release gates remain open.
+
+The deployed owner PWA path is distinct from configured v3 and the unqualified `research.run`
+entrypoint. The Sep 14 live acceptance records a bounded project run on `git-a68e21c` completing
+all 18 stages, with four `SUPPORTED` claim assessments, a saved/reopened DRAFT and incomplete
+coverage. This does not establish full-scope completion or general launch acceptance. See
+[live document/project acceptance](live-document-project-acceptance-2026-09-14.md).
+
+These local draft tests do not establish semantic verification or accepted-artifact publication.
+The bounded owner from-run Wiki proposal/review/publish/reopen path and owner editing, republishing
+and reopening of Wiki revision 2 have live evidence; the report remains DRAFT and its coverage limits
+and unresolved labels are retained. This does not complete full WIKI readiness or the accepted-artifact
+lifecycle.
+
+Live change evidence includes `ARTIFACT_DRAFTED`, `RESEARCH_COMPLETED`, `WIKI_PUBLISHED` and a
+D1 `SOURCE_UPDATED` receipt at sequence 5/revision 2. The `SOURCE_ADMITTED` request/display path
+was delivered in `4a6dd30`, but the live-acceptance note says that follow-up was not yet deployed at
+its stop checkpoint. Erasure-event coverage and the full `research.changes` lifecycle remain open.
+At exact checkpoint `8415793a`, PWA owner revision/acceptance controls and COW have focused native
+HTTP verification; browser/process-restart and live-provider qualification remain pending. See the
+[product integration checkpoint](product-resume-2026-10-02.md). Local D1/R2 and HTTP acceptance is
+separate from deployed Access/storage qualification.
 
 ## Evidence must match the claim
 
