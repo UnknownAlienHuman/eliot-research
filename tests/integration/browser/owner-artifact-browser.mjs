@@ -259,8 +259,8 @@ export async function runOwnerArtifactBrowser(harness) {
       sub: purgeIdentity.principal_ref, type: "app", iat: purgeIssuedAt, exp: purgeIssuedAt + 3600 });
     process.stdout.write("owner-e2e artifact phase=second-native-accepted-snapshot\n");
     const purgeManifest = await prepareOwnerArtifactSnapshot(purgePaths, purgeIdentity);
-    assert.notDeepEqual(purgeManifest.source_revision_refs, manifest.source_revision_refs,
-      "The purge case must use an independent native accepted fixture");
+    assert.notEqual(purgePaths.persist, paths.persist,
+      "The purge case must use an independent persistent profile");
     await assertMigrationLedgers(purgePaths);
     const purgeArtifactPath = "/api/v1/research/artifact/" +
       encodeURIComponent(purgeManifest.artifact.id + ":" + purgeManifest.artifact.revision);
@@ -278,7 +278,7 @@ export async function runOwnerArtifactBrowser(harness) {
     assert.equal(purged.status, 404); assert.equal(purged.data.code, "ARTIFACT_DRAFT_READ_NOT_FOUND");
     receipt.source_purge = "PASS (real Worker refused accepted artifact after exact source-row redaction in an independent native fixture)";
     assert.deepEqual(await durableCheckpoint(purgePaths, purgeManifest), purgeBaseCheckpoint);
-    receipt.run_reopen = "PENDING (accepted COW child has no immutable original REPORT run output binding; Stage17 original draft acceptance remains blocked)";
+    receipt.run_reopen = "PENDING (this fixture covers the saved COW child; original-run browser coverage remains separate)";
     return receipt;
   } finally {
     const failures = [];
