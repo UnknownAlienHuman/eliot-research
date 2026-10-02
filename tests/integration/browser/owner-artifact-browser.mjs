@@ -200,16 +200,25 @@ export async function runOwnerArtifactBrowser(harness) {
         }
       }, extras);
       await action(openAction, acceptFresh ? "artifact-original-accept" : "artifact-section-open", async () => {
-        if (original) await openRun(); else await browser.page.locator(openSelector).first().click();
+        if (acceptFresh) {
+          const [absent] = await Promise.all([
+            browser.page.waitForResponse((response) => response.request().method() === "GET" &&
+              response.url() === bridge.origin + artifactPath + "/publication", { timeout: 15000 }),
+            openRun(),
+          ]);
+          assert.equal(absent.status(), 404); assert.equal((await absent.json()).code, "ARTIFACT_PUBLICATION_NOT_FOUND");
+        } else if (original) await openRun(); else await browser.page.locator(openSelector).first().click();
         await browser.page.waitForFunction((status) => document.querySelector(".research-draft-badge")?.textContent === status,
           acceptFresh ? "DRAFT" : "ACCEPTED", { timeout: 15000 });
         assert.equal(await browser.page.getByRole("button", { name: "Accept report", exact: true }).isDisabled(), !acceptFresh);
       }, extras);
       if (acceptFresh) {
         await action("artifact-original-accept", "artifact-original-reopen", async () => {
-          const [accepted] = await Promise.all([
+          const [accepted, absentHead] = await Promise.all([
             browser.page.waitForResponse((response) => response.request().method() === "POST" &&
               response.url() === bridge.origin + artifactPath + "/accept", { timeout: 15000 }),
+            browser.page.waitForResponse((response) => response.request().method() === "GET" &&
+              response.url() === bridge.origin + artifactPath + "/publication/current", { timeout: 15000 }),
             browser.page.waitForEvent("dialog", { timeout: 15000 }).then(async (dialog) => {
               assert.equal(dialog.type(), "confirm");
               assert.equal(dialog.message(), "Accept this exact report revision after reviewing its sections and sources?");
@@ -217,6 +226,7 @@ export async function runOwnerArtifactBrowser(harness) {
             }),
             browser.page.getByRole("button", { name: "Accept report", exact: true }).click(),
           ]);
+          assert.equal(absentHead.status(), 404); assert.equal((await absentHead.json()).code, "ARTIFACT_PUBLICATION_NOT_FOUND");
           assert.equal(accepted.status(), 201);
           manifest.publication = (await accepted.json()).data;
           assert.equal(manifest.publication.revision.status, "ACCEPTED");
@@ -275,7 +285,11 @@ export async function runOwnerArtifactBrowser(harness) {
         mutations: [...spec.mutations, ...extras.filter(([method]) => method === "POST").map(([, path]) => path)],
         workerOrigins: [worker.origin, bridge.origin] });
       receipt[`browser_${round}`] = harness.summarizePhaseLedger(browser);
-      assert.deepEqual(browser.pageErrors, []); assert.deepEqual(browser.consoleErrors, []);
+      assert.deepEqual(browser.pageErrors, []);
+      const expectedConsole = acceptFresh ? [artifactPath + "/publication", artifactPath + "/publication/current"].map((path) =>
+        "Failed to load resource: the server responded with a status of 404 (Not Found) @" + (bridge.origin + path).slice(0, 160)) : [];
+      assert.deepEqual([...browser.consoleErrors].sort(), expectedConsole.sort(),
+        "Only the two exact typed absence responses may log during first original REPORT acceptance");
       await browser.close(); browser = undefined; await bridge.close(); bridge = undefined;
     }
     await start(); await browserRead("before_restart"); receipt.browser = "PASS";
