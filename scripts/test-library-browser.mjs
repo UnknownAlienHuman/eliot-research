@@ -642,7 +642,7 @@ try {
   await click('#research-run .research-report-section .research-report-actions > button');
   await wait(`document.querySelector("#research-run .research-section-body")?.textContent === ${JSON.stringify(draftSectionText)}`, "Second draft section open");
   await evaluate('window.dispatchEvent(new Event("offline"))');
-  await wait('document.querySelector("#research-run [data-run-result]").hidden && document.querySelector("#research-run [data-workflow-id]").value === ""', "Draft offline clearing");
+  await wait('document.querySelector("#research-run [data-run-result]").hidden && document.querySelector("#research-run [data-workflow-id]").value === ' + JSON.stringify(draftWorkflowId), "Draft offline bytes clear while the run identity is retained");
   await evaluate('window.dispatchEvent(new Event("offline"))');
   await wait('document.querySelector("#evidence-empty").hidden === false && document.querySelector(".rail-status").textContent === "No excerpt selected"', "Evidence offline clearing");
   assert.equal(await evaluate('document.querySelector("#research-run [data-run-result]").hidden && document.querySelector("#research-run [data-run-result]").textContent === ""'), true);
@@ -859,7 +859,7 @@ try {
     + 'document.querySelectorAll("#projects [data-project-list] .project-card").length === 0 && '
     + 'document.querySelector("#research-run [data-research-history-list]")?.childElementCount === 0',
   "JWT expiry clears owner session, reports, evidence, Library, Projects, and saved history");
-  assert.equal(await evaluate('document.querySelector("#research-run [data-workflow-id]").value'), "");
+  assert.equal(await evaluate('document.querySelector("#research-run [data-workflow-id]").value'), draftWorkflowId);
   pendingPrivateHistory?.(); pendingPrivateHistory = undefined;
   assert.equal(privateHistoryReleaseCount, 1, "The old held history callback is released after expiry");
   await delay(100);
