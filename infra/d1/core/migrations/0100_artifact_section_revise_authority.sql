@@ -209,6 +209,31 @@ WHEN (NEW.operation_id,NEW.attempt_number,NEW.expected_run_revision,NEW.attempt_
   OR NOT ((OLD.state='STARTED' AND NEW.state IN ('OUTPUT_RECORDED','UNKNOWN','CANCELLED'))
        OR (OLD.state='OUTPUT_RECORDED' AND NEW.state='COMMITTED'))
 BEGIN SELECT RAISE(ABORT, 'ARTIFACT_COW_ATTEMPT_CONFLICT'); END;
+-- A COMMITTED receipt must name a real CAS-written child with the same immutable spec/freeze.
+CREATE TRIGGER artifact_section_revise_attempt_commit_readback
+BEFORE UPDATE OF state ON artifact_section_revise_attempt
+WHEN NEW.state='COMMITTED'
+BEGIN
+  SELECT RAISE(ABORT,'ARTIFACT_COW_DRAFT_READBACK_INVALID') WHERE NOT EXISTS (
+    SELECT 1 FROM artifact_section_revise_run run
+    JOIN artifact_revision child ON child.artifact_id=run.artifact_id AND child.revision=run.parent_revision+1 AND child.status='DRAFT'
+    JOIN artifact_draft_head head ON head.artifact_id=child.artifact_id AND head.head_revision=child.revision
+    JOIN artifact_draft_binding parent_binding ON parent_binding.artifact_id=run.artifact_id AND parent_binding.revision=run.parent_revision
+    JOIN artifact_draft_binding child_binding ON child_binding.artifact_id=child.artifact_id AND child_binding.revision=child.revision
+    JOIN artifact_draft_object manifest ON manifest.artifact_id=child.artifact_id AND manifest.revision=child.revision AND manifest.object_kind='MANIFEST'
+    WHERE run.operation_id=NEW.operation_id AND run.current_attempt_ref=NEW.attempt_ref
+      AND json_extract(NEW.output_json,'$.draft.artifact_ref.id')=child.artifact_id
+      AND json_extract(NEW.output_json,'$.draft.artifact_ref.revision')=child.revision
+      AND child.spec_digest=json_extract(run.request_json,'$.spec_digest')
+      AND child.evidence_freeze_id=json_extract(run.request_json,'$.evidence_freeze_ref.id')
+      AND child.evidence_freeze_revision=json_extract(run.request_json,'$.evidence_freeze_ref.revision')
+      AND child_binding.scope_snapshot_id=parent_binding.scope_snapshot_id
+      AND child_binding.scope_snapshot_revision=parent_binding.scope_snapshot_revision
+      AND child_binding.principal_ref=run.principal_ref
+      AND json_extract(manifest.receipt_json,'$.expected_sha256')=json_extract(NEW.output_json,'$.draft.manifest_sha256')
+      AND json_extract(manifest.receipt_json,'$.readback_sha256')=json_extract(NEW.output_json,'$.draft.manifest_sha256')
+  );
+END;
 CREATE TRIGGER artifact_section_revise_attempt_no_delete
 BEFORE DELETE ON artifact_section_revise_attempt
 BEGIN SELECT RAISE(ABORT, 'ARTIFACT_COW_IMMUTABLE'); END;

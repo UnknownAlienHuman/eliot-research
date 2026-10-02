@@ -1,4 +1,5 @@
 import { beforeAll, describe, expect, it } from "vitest";
+import { canonicalDigest } from "@eliotr/platform-cloudflare";
 import { createArtifactSectionReviseWorkflowStore, digest } from "@eliotr/cloudflare-workflows";
 import { startArtifactSectionReviseWorkflow } from "@eliotr/cloudflare-research";
 import { prepareOwnerArtifactReportAdmission } from "../src/artifact-report-admission.js";
@@ -36,10 +37,20 @@ describe("dedicated artifact COW W2 over actual D1/R2", () => {
     const recorded = await data.store.recordOutput({ ...id,output: { output_object_ref: objectRef,output_sha256: outputSha,
       output_size_bytes: body.byteLength,readback_sha256: exactSha } });
     expect(recorded.state).toBe("OUTPUT_RECORDED");
-    const nextInput = await draftInput("cow-w2-child", { artifact_id: data.data.request.artifact_ref.id,artifact_revision: 2,
+    await expect(data.store.commitReadback({ ...id,draft: { artifact_ref: { id: data.data.request.artifact_ref.id,revision: 2 },
+      manifest_sha256: "b".repeat(64) } })).rejects.toThrow();
+    expect((await data.store.read(id.operation_id))?.state).toBe("OUTPUT_RECORDED");
+    const childFixture = await draftInput("cow-w2-child", { artifact_id: data.data.request.artifact_ref.id,artifact_revision: 2,
       expected_head_revision: 1,scope_snapshot_id: data.data.fixture.scope.snapshot_id,
       principal_ref: data.data.context.principal_ref });
-    const next = await createArtifactDraftRuntime().prepare(nextInput);
+    const parent = data.data.fixture.input;
+    const nextInput = { ...childFixture,spec: parent.spec,revision: { ...childFixture.revision,
+      spec_ref: parent.revision.spec_ref,spec_digest: parent.revision.spec_digest,evidence_freeze_ref: parent.revision.evidence_freeze_ref } };
+    const manifestDigest = await canonicalDigest({ spec: nextInput.spec,revision: nextInput.revision });
+    const next = await createArtifactDraftRuntime().prepare({ ...nextInput,manifest_residency: { ...nextInput.manifest_residency,
+      content_digest: { algorithm: "sha256",digest: manifestDigest } } });
+    await expect(data.store.commitReadback({ ...id,draft: { artifact_ref: next.artifact_ref,manifest_sha256: "b".repeat(64) } })).rejects.toThrow();
+    expect((await data.store.read(id.operation_id))?.state).toBe("OUTPUT_RECORDED");
     const draft = { artifact_ref: next.artifact_ref,manifest_sha256: next.manifest.receipt.expected_sha256 };
     const committed = await data.store.commitReadback({ ...id,draft });
     expect(committed.state).toBe("COMMITTED");
