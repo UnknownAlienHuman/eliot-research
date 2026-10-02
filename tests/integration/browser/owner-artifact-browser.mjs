@@ -39,18 +39,46 @@ async function durableCheckpoint(paths, manifest) {
   }
   return { ...result, blobs };
 }
+async function assertMigrationLedgers(paths) {
+  const migrationRoot = resolve(paths.persist, "v3", "d1", "miniflare-D1DatabaseObject");
+  const seenLedgers = [];
+  for (const name of (await readdir(migrationRoot)).filter((item) => item.endsWith(".sqlite") && item !== "metadata.sqlite")) {
+    const db = new DatabaseSync(resolve(migrationRoot, name), { readOnly: true });
+    try {
+      const isCore = Boolean(db.prepare("SELECT 1 FROM sqlite_master WHERE name='artifact_publication_receipt'").get());
+      const stream = isCore ? "core" : "search";
+      const expected = (await readdir(resolve(ROOT, "infra/d1", stream, "migrations"))).filter((item) => item.endsWith(".sql")).sort();
+      assert.deepEqual(db.prepare("SELECT name FROM d1_migrations ORDER BY name").all().map((row) => row.name), expected);
+      seenLedgers.push(stream);
+    } finally { db.close(); }
+  }
+  assert.deepEqual(seenLedgers.sort(), ["core", "search"]);
+}
+async function prepareArtifactProfile(stateDirectory) {
+  return prepareLocal({ stateDirectory, log: () => {}, execute: (args, options) => {
+    if (args[1] === "d1" && args[2] === "migrations" && args[3] === "apply") return;
+    return executeLocal(args, options);
+  } });
+}
 function sqlText(value) { assert.equal(typeof value, "string"); return "'" + value.replaceAll("'", "''") + "'"; }
-async function fixtureMutation(paths, sql, expectedChanges) {
+async function fixtureMutation(paths, sql) {
   const output = await executeLocalD1WithRetryAsync(wranglerArgs(paths, ["d1", "execute", "CORE_DB", "--command", sql, "--json"]),
     { capture: true, timeoutMs: 30000 });
-  const changes = JSON.parse(output).reduce((total, item) => total + item.meta.changes, 0);
-  assert.equal(changes, expectedChanges, "Exact fixture authority mutation must change only its selected rows");
+  const statements = JSON.parse(output);
+  assert.ok(Array.isArray(statements) && statements.length > 0, "Fixture mutation must return a JSON D1 result");
+  return statements.flatMap((item) => {
+    assert.equal(item.success, true, "Fixture mutation must succeed");
+    assert.ok(Array.isArray(item.results), "Fixture mutation must return its selected rows");
+    return item.results;
+  });
 }
 
 export async function runOwnerArtifactBrowser(harness) {
   const runId = `artifact-${process.pid}-${Date.now()}`;
+  const purgeRunId = runId + "-purge";
   const guard = await reserveMiniflareForbiddenPorts();
   let directory; let paths; let jwks; let worker; let bridge; let browser;
+  let purgeDirectory; let purgePaths; let purgeWorker;
   const receipt = { protocol: "eliotr.owner-artifact-browser.v1", browser: "PENDING", restart: "PENDING",
     current_rights: "PENDING", source_purge: "PENDING", run_reopen: "PENDING", model_after_restart: "PENDING" };
   try {
@@ -58,10 +86,7 @@ export async function runOwnerArtifactBrowser(harness) {
     // Native Workerd applies both real migration streams before making the
     // accepted artifact. Do not migrate a disposable empty DB that is replaced
     // by that snapshot; verify the saved native migration ledgers below.
-    paths = await prepareLocal({ stateDirectory: directory, log: () => {}, execute: (args, options) => {
-      if (args[1] === "d1" && args[2] === "migrations" && args[3] === "apply") return;
-      return executeLocal(args, options);
-    } });
+    paths = await prepareArtifactProfile(directory);
     const { privateKey, publicJwk } = await harness.createOwnerE2EKey();
     jwks = await harness.startJwksServer(publicJwk);
     await harness.applyOwnerE2EProfile(paths, jwks.url);
@@ -75,27 +100,18 @@ export async function runOwnerArtifactBrowser(harness) {
     const artifactPath = "/api/v1/research/artifact/" + encodeURIComponent(manifest.artifact.id + ":" + manifest.artifact.revision);
     const section = manifest.publication.revision.sections[0];
     const sectionPath = artifactPath + "/sections/" + encodeURIComponent(section.section_ref.id + ":" + section.section_ref.revision) + "/reauthorize";
-    const migrationRoot = resolve(paths.persist, "v3", "d1", "miniflare-D1DatabaseObject");
-    const seenLedgers = [];
-    for (const name of (await readdir(migrationRoot)).filter((item) => item.endsWith(".sqlite") && item !== "metadata.sqlite")) {
-      const db = new DatabaseSync(resolve(migrationRoot, name), { readOnly: true });
-      try {
-        const isCore = Boolean(db.prepare("SELECT 1 FROM sqlite_master WHERE name='artifact_publication_receipt'").get());
-        const stream = isCore ? "core" : "search";
-        const expected = (await readdir(resolve(ROOT, "infra/d1", stream, "migrations"))).filter((item) => item.endsWith(".sql")).sort();
-        assert.deepEqual(db.prepare("SELECT name FROM d1_migrations ORDER BY name").all().map((row) => row.name), expected);
-        seenLedgers.push(stream);
-      } finally { db.close(); }
-    }
-    assert.deepEqual(seenLedgers.sort(), ["core", "search"]);
+    await assertMigrationLedgers(paths);
     const baseCheckpoint = await durableCheckpoint(paths, manifest);
     const processIds = [];
-    async function publicationRead() {
-      const read = await harness.workerJson(worker.origin, artifactPath + "/publication", { token, worker, phase: "artifact-publication-read" });
-      assert.equal(read.status, 200, `Real persisted publication read failed: ${JSON.stringify(read.data)?.slice(0, 500)}`);
-      assert.deepEqual(read.data.data.receipt, manifest.publication.receipt); assert.equal(read.data.data.revision.status, "ACCEPTED");
+    async function publicationRead(targetWorker = worker, targetManifest = manifest, targetArtifactPath = artifactPath,
+      targetToken = token, phase = "artifact-publication-read") {
+      const read = await harness.workerJson(targetWorker.origin, targetArtifactPath + "/publication",
+        { token: targetToken, worker: targetWorker, phase });
+      assert.equal(read.status, 200, "Real persisted publication read failed: " + JSON.stringify(read.data)?.slice(0, 500));
+      assert.deepEqual(read.data.data.receipt, targetManifest.publication.receipt);
+      assert.equal(read.data.data.revision.status, "ACCEPTED");
     }
-    async function start() {
+
       worker = await startLocalWorker(paths); processIds.push(worker.diagnostics().pid);
       assert.ok(Number.isSafeInteger(processIds.at(-1))); await publicationRead();
       const history = await harness.workerJson(worker.origin, "/api/v1/research/runs", { token, worker, phase: "artifact-history-diagnostic" });
@@ -183,12 +199,12 @@ export async function runOwnerArtifactBrowser(harness) {
         const [freshHealth] = await Promise.all([
           browser.page.waitForResponse((response) => response.request().method() === "GET" &&
             response.url() === bridge.origin + "/api/v1/system/health", { timeout: 15000 }),
-          browser.page.locator("[data-refresh]").click(),
+          browser.page.locator(".content-actions > button[data-refresh]").click(),
         ]);
         assert.equal(freshHealth.status(), 200); await freshHealth.finished();
         await browser.page.waitForFunction((generation) => document.querySelector("#app")?.dataset.healthReady === "true" &&
           document.querySelector("#app")?.dataset.healthGeneration === generation &&
-          document.querySelector("[data-refresh]")?.disabled === false, paths.generation, { timeout: 15000 });
+          document.querySelector(".content-actions > button[data-refresh]")?.disabled === false, paths.generation, { timeout: 15000 });
         await harness.settleLedger(browser.page, browser);
         assert.equal(await browser.page.locator("[data-run-badge]").textContent(), "ACCEPTED");
         assert.equal(await browser.page.locator(".research-draft-badge").textContent(), "ACCEPTED");
@@ -214,25 +230,59 @@ export async function runOwnerArtifactBrowser(harness) {
     receipt.model_after_restart = "PASS (model receipt counts and original blobs unchanged; local gateways disabled)";
     const policies = manifest.read_policy_keys;
     assert.ok(policies.length > 0);
-    const policyKeys = policies.map((policy) => `(source_namespace_id=${sqlText(policy.source_namespace_id)} AND principal_ref=${sqlText(policy.principal_ref)} AND client_class=${sqlText(policy.client_class)} AND policy_ref=${sqlText(policy.policy_ref)} AND generation=${policy.generation})`).join(" OR ");
-    await fixtureMutation(paths, `UPDATE scope_read_policy SET state='REVOKED' WHERE state='ACTIVE' AND (${policyKeys})`, policies.length);
+    const policyKeys = policies.map((policy) => "(source_namespace_id=" + sqlText(policy.source_namespace_id) +
+      " AND principal_ref=" + sqlText(policy.principal_ref) + " AND client_class=" + sqlText(policy.client_class) +
+      " AND policy_ref=" + sqlText(policy.policy_ref) + " AND generation=" + policy.generation + ")").join(" OR ");
+    const revokedRows = await fixtureMutation(paths, "UPDATE scope_read_policy SET state='REVOKED' WHERE state='ACTIVE' AND (" +
+      policyKeys + ") RETURNING source_namespace_id,principal_ref,client_class,policy_ref,generation");
+    const canonicalPolicyRows = (rows) => rows.map((policy) => [policy.source_namespace_id, policy.principal_ref,
+      policy.client_class, policy.policy_ref, policy.generation])
+      .sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)));
+    assert.deepEqual(canonicalPolicyRows(revokedRows), canonicalPolicyRows(policies),
+      "Revocation must return exactly the selected canonical policy rows");
     const denied = await harness.workerJson(worker.origin, artifactPath + "/publication", { token, worker, phase: "artifact-revoked-read" });
     assert.equal(denied.status, 404); assert.equal(denied.data.code, "ARTIFACT_DRAFT_READ_NOT_FOUND");
-    receipt.current_rights = "PASS (real Worker publication read refused after local current policy revocation)";
-    await fixtureMutation(paths, `UPDATE scope_read_policy SET state='ACTIVE' WHERE state='REVOKED' AND (${policyKeys})`, policies.length);
-    await publicationRead();
-    const sourceRefs = manifest.source_revision_refs;
-    assert.equal(sourceRefs.length, 1, "This fixture has exactly one admitted cited source");
-    await fixtureMutation(paths, `UPDATE source_revision SET purge_state='REDACTED' WHERE source_revision_ref=${sqlText(sourceRefs[0])} AND purge_state='LIVE'`, 1);
-    const purged = await harness.workerJson(worker.origin, artifactPath + "/publication", { token, worker, phase: "artifact-purged-read" });
-    assert.equal(purged.status, 404); assert.equal(purged.data.code, "ARTIFACT_DRAFT_READ_NOT_FOUND");
-    receipt.source_purge = "PASS (real Worker refused accepted artifact after exact source purge)";
+    receipt.current_rights = "PASS (real Worker refused the accepted artifact after exact read-policy revocation)";
     assert.deepEqual(await durableCheckpoint(paths, manifest), baseCheckpoint);
+
+    // A revoked policy permanently invalidates its existing scope. Exercise source
+    // redaction in a second native accepted fixture with its own persistent profile.
+    await worker.stop(); assert.notEqual(worker.diagnostics().exitCode, null); worker = undefined;
+    purgeDirectory = await harness.createMarkedTempDirectory("eliotr-owner-e2e-artifact-purge-", purgeRunId, "artifact-state");
+    purgePaths = await prepareArtifactProfile(purgeDirectory);
+    await harness.applyOwnerE2EProfile(purgePaths, jwks.url);
+    const purgeIssuedAt = Math.floor(Date.now() / 1000);
+    const purgeIdentity = { principal_ref: "freeze-owner", credential_generation: "cf-access-jwt:" + OWNER_E2E_KID + ":" + purgeIssuedAt,
+      deployment_generation: purgePaths.generation };
+    const purgeToken = await harness.signOwnerToken(privateKey, { iss: OWNER_E2E_ISSUER, aud: [OWNER_E2E_AUDIENCE],
+      sub: purgeIdentity.principal_ref, type: "app", iat: purgeIssuedAt, exp: purgeIssuedAt + 3600 });
+    process.stdout.write("owner-e2e artifact phase=second-native-accepted-snapshot\n");
+    const purgeManifest = await prepareOwnerArtifactSnapshot(purgePaths, purgeIdentity);
+    assert.notDeepEqual(purgeManifest.source_revision_refs, manifest.source_revision_refs,
+      "The purge case must use an independent native accepted fixture");
+    await assertMigrationLedgers(purgePaths);
+    const purgeArtifactPath = "/api/v1/research/artifact/" +
+      encodeURIComponent(purgeManifest.artifact.id + ":" + purgeManifest.artifact.revision);
+    const purgeBaseCheckpoint = await durableCheckpoint(purgePaths, purgeManifest);
+    purgeWorker = await startLocalWorker(purgePaths);
+    assert.ok(Number.isSafeInteger(purgeWorker.diagnostics().pid));
+    await publicationRead(purgeWorker, purgeManifest, purgeArtifactPath, purgeToken, "artifact-purge-fixture-publication-read");
+    const sourceRefs = purgeManifest.source_revision_refs;
+    assert.equal(sourceRefs.length, 1, "The independent purge fixture must cite exactly one admitted source");
+    const purgedRows = await fixtureMutation(purgePaths, "UPDATE source_revision SET purge_state='REDACTED' WHERE source_revision_ref=" +
+      sqlText(sourceRefs[0]) + " AND purge_state='LIVE' RETURNING source_revision_ref");
+    assert.deepEqual(purgedRows, [{ source_revision_ref: sourceRefs[0] }], "Redaction must return exactly the selected source revision");
+    const purged = await harness.workerJson(purgeWorker.origin, purgeArtifactPath + "/publication",
+      { token: purgeToken, worker: purgeWorker, phase: "artifact-purged-read" });
+    assert.equal(purged.status, 404); assert.equal(purged.data.code, "ARTIFACT_DRAFT_READ_NOT_FOUND");
+    receipt.source_purge = "PASS (real Worker refused accepted artifact after exact source-row redaction in an independent native fixture)";
+    assert.deepEqual(await durableCheckpoint(purgePaths, purgeManifest), purgeBaseCheckpoint);
     receipt.run_reopen = "PENDING (accepted COW child has no immutable original REPORT run output binding; Stage17 original draft acceptance remains blocked)";
-    return receipt;
+
   } finally {
     const failures = [];
-    for (const close of [() => browser?.close(), () => bridge?.close(), () => worker?.stop(), () => jwks?.close(),
+    for (const close of [() => browser?.close(), () => bridge?.close(), () => purgeWorker?.stop(), () => worker?.stop(), () => jwks?.close(),
+      () => purgeDirectory === undefined ? undefined : removeHarnessOwned(purgeDirectory, purgeRunId),
       () => directory === undefined ? undefined : removeHarnessOwned(directory, runId), () => guard.release()]) {
       try { await close(); } catch (error) { failures.push(error); }
     }
