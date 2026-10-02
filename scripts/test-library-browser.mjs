@@ -95,6 +95,12 @@ const researchScreenCanaryEnabled = process.argv.includes("--research-screen");
 const researchScreen = createResearchScreenFixture({ envelope, draftWorkflowId, draftArtifact, draftSectionText, draftSectionSha, evidenceSha });
 const draftArtifactPath = `/api/v1/research/artifact/${encodeURIComponent(`${draftArtifactRef.id}:${draftArtifactRef.revision}`)}`;
 const draftPublicationPaths = new Set([`${draftArtifactPath}/publication`, `${draftArtifactPath}/publication/current`]);
+const draftSectionPath = `${draftArtifactPath}/sections/${encodeURIComponent(`${draftSectionRef.id}:${draftSectionRef.revision}`)}`;
+const draftReauthorizationPaths = new Set([
+  `${draftArtifactPath}/reauthorize`,
+  `${draftSectionPath}/reauthorize`,
+  `${draftSectionPath}/citations/reauthorize`,
+]);
 let ownerResumeScenario = "baseline";
 let ownerSessionAvailable = true;
 let ownerSessionExpiry = new Date(Date.now() + 86_400_000).toISOString();
@@ -139,8 +145,7 @@ const server = createServer((request, response) => {
       return false;
     };
     if (researchScreenCanaryEnabled && await researchScreen.handle(request, response, url)) return;
-    if ((draftPublicationPaths.has(url.pathname) || ownerResumeScenario === "two-shorter-active" &&
-         url.pathname === `${draftArtifactPath}/reauthorize`) &&
+    if ((draftPublicationPaths.has(url.pathname) || draftReauthorizationPaths.has(url.pathname)) &&
         await researchScreen.handle(request, response, url)) return;
     if (url.pathname === "/api/v1/system/research-configuration") {
       assert.equal(await researchScreen.handle(request, response, url), true, "research configuration fixture must handle its readiness route");
@@ -586,22 +591,26 @@ try {
   await launchDraft("Initial draft");
   await click('#research-run [data-run-result] button');
   await wait(`document.querySelector("#research-run .research-section-body")?.textContent === ${JSON.stringify(draftSectionText)}`, "Draft section open");
+  assert.ok(researchScreen.state.seen.includes(`POST ${draftSectionPath}/reauthorize`),
+    "The default mounted driver routes the exact report-section reauthorization path");
   assert.equal(await evaluate('document.querySelector("#research-run .research-section-body").tagName'), "PRE");
   assert.equal(await evaluate('document.querySelector("#research-run .research-section-body").querySelector("em")'), null);
   await click('#research-run [data-open-sources="0"]');
   await wait('document.querySelector("#research-run .research-citation-state")?.textContent.includes("Opening a source checks its current bytes")', "Draft citation state");
   await click('#research-run [data-open-citation="0"]');
   await wait('document.querySelector(".rail-status").textContent === "VERIFIED" && Boolean(document.querySelector(".evidence-source"))', "Draft cited source verify and open");
+  assert.ok(researchScreen.state.seen.includes(`POST ${draftSectionPath}/citations/reauthorize`),
+    "The default mounted driver routes the exact citation reauthorization path");
   assert.equal(await evaluate('document.querySelector(".evidence-source").textContent'), evidenceText);
   await evaluate('document.querySelector("#app").dispatchEvent(new CustomEvent("eliotr:health-lost", { detail: { reason: "generation-changed" } }))');
   await wait('document.querySelector("#research-run [data-run-result]").hidden && document.querySelector("#research-run [data-workflow-id]").value === ""', "Draft generation clearing");
   await launchDraft("Session clearing");
-  sectionMode = "delayed";
+  researchScreen.state.holdSection = true;
   await click('#research-run [data-run-result] button');
-  await until(() => Boolean(pendingSection), "Delayed draft section request");
+  await until(() => Boolean(researchScreen.state.pendingSection), "Delayed draft section reauthorization");
   await evaluate('window.dispatchEvent(new Event("eliotr:authorization-cleared"))');
   await wait('document.querySelector("#research-run [data-run-result]").hidden && document.querySelector("#research-run [data-workflow-id]").value === ""', "Draft session clearing");
-  pendingSection?.(); pendingSection = undefined; sectionMode = "normal"; await delay(100);
+  researchScreen.release(); researchScreen.state.holdSection = false; await delay(100);
   assert.equal(await evaluate('document.querySelector("#research-run .research-section-body")'), null);
   await launchDraft("Offline clearing");
   await click('#research-run [data-run-result] button');
