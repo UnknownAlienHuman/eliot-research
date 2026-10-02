@@ -111,7 +111,7 @@ export async function runOwnerArtifactBrowser(harness) {
         await callback();
       } catch (error) {
         const detail = error instanceof Error ? (error.stack ?? error.message) : String(error);
-        process.stderr.write(`owner-e2e artifact action=${name} failed: ${detail}\\n`);
+        process.stderr.write(`owner-e2e artifact action=${name} failed: ${detail}\n`);
         throw error;
       }
     }
