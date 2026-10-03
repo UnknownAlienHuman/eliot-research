@@ -1,3 +1,5 @@
+@import "./workspace.css";
+
 :root {
   color-scheme: dark;
   --ink: #edf2fc; --muted: #a5b4cc; --dim: #7f91b0; --canvas: #0b101b;

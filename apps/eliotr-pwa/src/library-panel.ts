@@ -6,25 +6,60 @@ import { readLibraryReadiness, type LibrarySelectionContext } from "./library-re
 import { renderLibraryReadiness } from "./library-readiness-panel.js";
 
 export function renderLibrary(page: LibraryPage): string {
-  return `<h3>Projects on this page</h3>${page.projects.length ? page.projects.map((project, index) =>
-    `<p><button type="button" data-project="${index}">${escapeHtml(project.title)}</button></p>`).join("") : "<p>No readable projects on this page.</p>"}
-    <h3>Sources on this page</h3>${page.sources.length ? page.sources.map((source, index) =>
-      `<article class="source-card"><strong>${escapeHtml(source.title)}</strong>
-       <details><summary>Source identifier</summary><code>${escapeHtml(source.id)}</code></details>
-       <p>Permitted source. Search readiness is checked when you select it.</p>
-       <button type="button" data-source="${index}">Open source</button>
-       <button type="button" data-versions="${index}">Versions and readiness</button></article>`).join("") : "<p>No readable source heads on this page.</p>"}`;
+  return `<details class="library-project-filters"><summary>Projects${page.projects.length ? ` · ${page.projects.length} on this page` : ""}</summary>
+      ${page.projects.length ? page.projects.map((project, index) =>
+        `<p><button type="button" class="library-project-filter" data-project="${index}">${escapeHtml(project.title)}</button></p>`).join("") : "<p>No readable projects on this page.</p>"}
+    </details>
+    <h3>Documents</h3>${page.sources.length ? page.sources.map((source, index) =>
+      `<article class="source-card library-source-card"><div class="library-source-heading"><h4>${escapeHtml(source.title)}</h4>
+       <button class="button" type="button" data-source="${index}">Open source</button></div>
+       <details class="library-source-details"><summary>Source details and versions</summary>
+         <code>${escapeHtml(source.id)}</code>
+         <button class="button button--quiet" type="button" data-versions="${index}">Versions and recorded states</button>
+       </details></article>`).join("") : "<p>No readable documents on this page.</p>"}`;
+}
+
+function libraryErrorText(error: unknown, subject: string): string {
+  if (!(error instanceof ApiRequestError)) return `${subject} could not be loaded. Try again.`;
+  if (error.status === 401 || error.status === 403 || error.code.startsWith("ACCESS_")) {
+    return `Access changed. Sign in again, then retry ${subject.toLowerCase()}.`;
+  }
+  if (error.retryable) return `${subject} is temporarily unavailable. Try again in a moment.`;
+  return `${subject} could not be loaded. Check the workspace and try again.`;
+}
+
+function renderLibraryError(target: HTMLElement, error: unknown, subject: string): void {
+  const reason = document.createElement("p"); reason.className = "library-error-reason";
+  reason.textContent = libraryErrorText(error, subject);
+  target.replaceChildren(reason);
+  if (!(error instanceof ApiRequestError)) return;
+  const details = document.createElement("details"); details.className = "library-error-details";
+  const summary = document.createElement("summary"); summary.textContent = "Technical details";
+  const fields = document.createElement("dl");
+  const add = (label: string, value: string | undefined): void => {
+    if (value === undefined || value.length === 0) return;
+    const term = document.createElement("dt"); term.textContent = label;
+    const description = document.createElement("dd"); description.textContent = value;
+    fields.append(term, description);
+  };
+  add("Code", error.code);
+  add("Status", String(error.status));
+  add("Message", error.message);
+  add("Trace", error.traceId ?? undefined);
+  details.append(summary, fields); target.append(details);
 }
 
 export function mountLibraryPanel(element: HTMLElement, onSelectSource: (id: string, context?: LibrarySelectionContext) => void | boolean | Promise<void | boolean>): (() => void) & { clearPrivate(): void; openProject(projectId: string): void; refresh(): void } {
-  element.innerHTML = `<h2>Library</h2><p>Only sources permitted by your current read policy are shown.</p>
-    <p><button type="button" data-first>All sources / refresh</button> <button type="button" data-next disabled>Next page</button></p>
-    <div data-scope></div><p role="status" aria-live="polite"></p><section data-library-result></section><section data-library-versions></section>
+  element.innerHTML = `<h2>Library</h2><p class="library-intro">Documents available under your current access.</p>
+    <p class="library-actions"><button class="button button--quiet" type="button" data-first>All sources</button></p>
+    <div class="library-scope" data-scope></div><p class="library-status" role="status" aria-live="polite"></p>
+    <section data-library-result></section><p class="library-pagination"><button class="button button--quiet" type="button" data-next disabled>Next page</button></p>
+    <section data-library-versions></section>
     <section data-library-readiness aria-live="polite"></section>`;
   const first = element.querySelector<HTMLButtonElement>("[data-first]");
   const next = element.querySelector<HTMLButtonElement>("[data-next]");
   const scope = element.querySelector("[data-scope]");
-  const status = element.querySelector('[role="status"]'); const result = element.querySelector("[data-library-result]");
+  const status = element.querySelector<HTMLElement>('[role="status"]'); const result = element.querySelector("[data-library-result]");
   const versions = element.querySelector<HTMLElement>("[data-library-versions]");
   const readiness = element.querySelector<HTMLElement>("[data-library-readiness]");
   if (!first || !next || !scope || !status || !result || !versions || !readiness) throw new Error("Library panel is incomplete");
@@ -110,8 +145,8 @@ export function mountLibraryPanel(element: HTMLElement, onSelectSource: (id: str
       };
     } catch (error) {
       if (mine !== serial || disposed) return;
-      clear(error instanceof ApiRequestError ? `${error.code}: ${error.message}${error.traceId ? ` · trace ${error.traceId}` : ""}` :
-        "Library request failed. Reload the first page.");
+      clear(libraryErrorText(error, "Library"));
+      renderLibraryError(status, error, "Library");
     }
   };
   const checkReadiness = async (sourceId: string, deploymentGeneration: string,
@@ -138,9 +173,7 @@ export function mountLibraryPanel(element: HTMLElement, onSelectSource: (id: str
         dispatchScopeChange("source-currentness");
         return;
       }
-      readiness.textContent = error instanceof ApiRequestError
-        ? `${error.code}: ${error.message}`
-        : "Active readiness could not be checked. Search can still be retried after refresh.";
+      renderLibraryError(readiness, error, "Active search readiness");
     }
   };
   const openProject = (projectId: string, title?: string): void => {

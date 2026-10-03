@@ -12,11 +12,12 @@ import {
 } from "./orientation-api.js";
 
 export function renderOrientation(view: OrientationView): string {
-  return `${view.cards.map((card, index) => { const map = view.maps.find((candidate) => candidate.source_revision_ref === card.source_revision_ref); return `<article class="source-card"><h3>${escapeHtml(card.title)}</h3>
-      <p>${escapeHtml(card.quality_status)}</p>
-      <button class="button button--quiet" type="button" data-read-document="${index}">Read document</button>
-      ${map === undefined ? `<p>Sections are unavailable for this source.</p>` : `<button class="button button--quiet" type="button" data-expand-map="${index}">Expand sections</button><div data-navigation-expansion="${index}" aria-live="polite"></div>`}
-      <details class="source-details"><summary>Source details</summary><div class="health-details-content">
+  return `${view.cards.map((card, index) => { const map = view.maps.find((candidate) => candidate.source_revision_ref === card.source_revision_ref); return `<article class="source-card orientation-source-card">
+      <div class="orientation-source-heading"><div><h3>${escapeHtml(card.title)}</h3><p class="orientation-quality-status">${escapeHtml(card.quality_status)}</p></div>
+        <button class="button" type="button" data-read-document="${index}">Read document</button></div>
+      ${map === undefined ? `<p class="orientation-map-unavailable">Document sections are unavailable.</p>` : `<details class="orientation-map-details"><summary>Browse document sections</summary>
+        <button class="button button--quiet" type="button" data-expand-map="${index}">Load sections</button><div data-navigation-expansion="${index}" aria-live="polite"></div></details>`}
+      <details class="source-details"><summary>Source metadata</summary><div class="health-details-content">
         <span>Source type: ${escapeHtml(card.source_kind)}</span><span>Revision: <code>${escapeHtml(card.source_revision_ref)}</code></span>
         <span>Reason codes: ${escapeHtml(view.maps.find((map) => map.source_revision_ref === card.source_revision_ref)?.unresolved_structure.join(", ") ?? "DOCUMENT_MAP_MISSING")}</span>
       </div></details></article>`; }).join("")}
@@ -130,19 +131,21 @@ function renderNavigationExpansion(
 }
 export function mountOrientationPanel(element: HTMLElement): (() => void) & { selectSource(id: string): Promise<boolean> } {
   element.innerHTML = `<h2>Read admitted documents</h2>
-    <details class="orientation-advanced-selection"><summary>Advanced selection</summary>
-      <form><label>Source IDs (optional, separated by commas)<input name="sources" maxlength="16000" autocomplete="off" placeholder="Blank: authorized library, at most 64 sources"></label>
-      <label>Focus (metadata only)<input name="focus" maxlength="256" autocomplete="off"></label>
-      <button type="submit">Load sources</button><button type="button" data-cancel disabled>Cancel</button></form>
-    </details>
-    <details class="orientation-technical-details"><summary>About this view</summary><p>Corpus Lens is navigation metadata only. It does not provide citation evidence, full document structure, or research synthesis.</p></details>
-    <p role="status" aria-live="polite"></p><section data-result></section>
+    <p class="orientation-status" role="status" aria-live="polite">Choose a source from the Library to read its admitted text.</p>
     <section class="document-reader" data-document-reader hidden aria-labelledby="document-reader-title">
       <div class="document-reader-heading"><div><span class="eyebrow">Admitted document</span><h3 id="document-reader-title">Document</h3></div><span data-document-reader-size></span></div>
       <p data-document-reader-status role="status" aria-live="polite"></p>
       <pre class="document-reader-body" data-document-reader-body tabindex="0"></pre>
       <div class="document-reader-actions"><button class="button button--quiet" type="button" data-close-document>Close</button><button class="button button--quiet" type="button" data-download-document hidden>Download</button></div>
-    </section><details class="orientation-trace-output" data-trace-details hidden><summary>Trace output</summary><pre data-trace-result hidden></pre></details>`;
+    </section>
+    <section data-result></section>
+    <details class="orientation-advanced-selection"><summary>Advanced source selection</summary>
+      <form><label>Source IDs (optional, separated by commas)<input name="sources" maxlength="16000" autocomplete="off" placeholder="Blank: authorized library, at most 64 sources"></label>
+      <label>Focus (metadata only)<input name="focus" maxlength="256" autocomplete="off"></label>
+      <button type="submit">Load sources</button><button type="button" data-cancel disabled>Cancel</button></form>
+    </details>
+    <details class="orientation-technical-details"><summary>About this view</summary><p>Corpus Lens navigates current source metadata and admitted document text. It does not mark displayed text as verified evidence or provide research synthesis.</p></details>
+    <details class="orientation-trace-output" data-trace-details hidden><summary>Trace output</summary><pre data-trace-result hidden></pre></details>`;
   const form = element.querySelector("form"); const status = element.querySelector('[role="status"]');
   const result = element.querySelector("[data-result]"); const traceResult = element.querySelector<HTMLPreElement>("[data-trace-result]");
   const traceDetails = element.querySelector<HTMLDetailsElement>("[data-trace-details]");

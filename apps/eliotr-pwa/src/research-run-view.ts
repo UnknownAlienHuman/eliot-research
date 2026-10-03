@@ -224,10 +224,16 @@ export function createResearchRunView(element: HTMLElement, healthReady: boolean
     <p class="workflow-status workflow-progress-summary" data-run-progress aria-live="polite">${idleProgressText(healthReady, configurationReady)}</p>
     <form class="research-question-form"><label>Question<textarea name="query" rows="4" autocomplete="off" required placeholder="What would you like to learn from your sources?" class="research-question-input"></textarea></label>
     <div class="research-question-controls"><label>Scope<select name="scope"><option value="library">Entire authorized Library</option><option value="project" disabled>Selected project</option><option value="selected" disabled>Selected source</option></select></label>
-    <div class="workflow-actions"><button type="submit" class="button">Start research</button><button type="button" class="button button--quiet" data-run-refresh disabled>Refresh status</button></div></div></form>
+    <div class="workflow-actions"><button type="submit" class="button">Start research</button></div></div></form>
     <button class="research-configuration-link workspace-jump" type="button" data-nav-target="#research-configuration-card" aria-controls="research-configuration-card">Connections and research configuration</button>
-    <p class="workflow-status" role="status" aria-live="polite">${idleProgressText(healthReady, configurationReady)}</p>
-    <div class="workflow-actions" role="group" aria-label="Manage the loaded research run"><button type="button" class="button button--quiet" data-run-cancel disabled>Stop research</button><button type="button" class="button button--quiet" data-run-resume disabled>Recover research</button></div>
+    <p class="workflow-status workflow-action-feedback" role="status" aria-live="polite"></p>
+    <details class="workflow-recovery research-run-controls"><summary>Run controls</summary>
+      <div class="workflow-actions" role="group" aria-label="Manage the loaded research run">
+        <button type="button" class="button button--quiet" data-run-refresh disabled>Refresh status</button>
+        <button type="button" class="button button--quiet" data-run-cancel disabled>Stop research</button>
+        <button type="button" class="button button--quiet" data-run-resume disabled>Recover research</button>
+      </div>
+    </details>
     <section data-run-result hidden></section>
     <details class="workflow-recovery research-history" data-research-history><summary>Recent research</summary><div class="workflow-recovery-head"><h3 id="research-history-title">Saved runs and drafts</h3><button type="button" class="button button--quiet" data-research-history-refresh disabled>Refresh</button></div>
       <p class="workflow-recovery-status" data-research-history-status>Recent research appears after the current session is ready.</p><div class="workflow-recovery-list" data-research-history-list></div></details>
@@ -276,10 +282,17 @@ export function renderResearchHistoryList(list: HTMLElement, status: HTMLElement
   researchHistoryCards(view).forEach((card) => list.append(render(card)));
 }
 
-export function renderResearchStatusHeading(result: HTMLElement, view: ResearchRunStatusView): HTMLParagraphElement {
+export function renderResearchStatusHeading(result: HTMLElement, view: ResearchRunStatusView): HTMLElement {
   result.replaceChildren();
   const heading = document.createElement("p"); const strong = document.createElement("strong"); strong.textContent = statusText(view); heading.append(strong);
-  const identity = document.createElement("p"); identity.append("Run ID ", codeRef(view.workflow_instance_id), " · investigation ", codeRef(view.investigation_ref.id));
+  const identity = document.createElement("details"); identity.className = "research-technical-details";
+  const summary = document.createElement("summary"); summary.textContent = "Run details";
+  const fields = document.createElement("dl"); fields.className = "research-technical-fields";
+  for (const [label, value] of [["Run ID", view.workflow_instance_id], ["Investigation", view.investigation_ref.id]] as const) {
+    const term = document.createElement("dt"); term.textContent = label;
+    const detail = document.createElement("dd"); detail.append(codeRef(value)); fields.append(term, detail);
+  }
+  identity.append(summary, fields);
   result.append(heading);
   return identity;
 }

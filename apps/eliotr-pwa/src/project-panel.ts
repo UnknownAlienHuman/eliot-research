@@ -71,23 +71,31 @@ export function mountProjectPanel(
   options: ProjectPanelOptions,
 ): (() => void) & ProjectPanelHandle {
   element.innerHTML = `
-    <section class="project-panel" aria-labelledby="project-panel-title">
-      <div class="tool-heading"><div><span class="eyebrow">Projects</span><h2 id="project-panel-title">Organize your research</h2></div><button class="button button--quiet" type="button" data-project-refresh>Refresh Projects</button></div>
-      <p class="project-intro">Create an empty project or organize the admitted sources you can currently read.</p>
-      <p class="project-status" role="status" aria-live="polite">Waiting for the owner workspace.</p>
-      <section class="project-list" data-project-list aria-label="Saved projects"></section>
-      <button class="button button--quiet" type="button" data-project-more-projects hidden>Load more projects</button>
-      <form class="project-editor" data-project-form>
-        <div class="tool-heading"><div><span class="eyebrow">Project details</span><h3 data-project-editor-heading>New project</h3></div></div>
-        <label>Project name<input data-project-title name="title" maxlength="512" autocomplete="off" required></label>
-        <fieldset class="project-source-options"><legend>Admitted sources</legend><div data-project-sources></div></fieldset>
-        <p class="project-source-note" data-project-source-note></p>
-        <button class="button button--quiet" type="button" data-project-more-sources hidden>Load more sources</button>
-        <div class="project-actions"><button class="button" type="submit" data-project-save>Save project</button><button class="button button--quiet" type="button" data-project-cancel hidden>Cancel editing</button></div>
-      </form>
+    <p class="project-status" role="status" aria-live="polite">Waiting for the owner workspace.</p>
+    <section class="project-panel" data-project-root aria-labelledby="project-panel-title">
+      <h3 id="project-panel-title">Projects</h3>
+      <div class="project-panel-content">
+        <div class="project-toolbar"><p class="project-intro">Group admitted sources for a focused research scope.</p>
+          <button class="button button--quiet" type="button" data-project-refresh>Refresh Projects</button>
+          <button class="button" type="button" data-project-new>New project</button></div>
+        <section class="project-list" data-project-list aria-label="Saved projects"></section>
+        <button class="button button--quiet" type="button" data-project-more-projects hidden>Load more projects</button>
+        <details class="project-editor-details" data-project-editor-details>
+          <summary><span class="eyebrow">Project details</span><span data-project-editor-heading>New project</span></summary>
+          <form class="project-editor" data-project-form>
+            <label>Project name<input data-project-title name="title" maxlength="512" autocomplete="off" required></label>
+            <fieldset class="project-source-options"><legend>Admitted sources</legend><div data-project-sources></div></fieldset>
+            <p class="project-source-note" data-project-source-note></p>
+            <button class="button button--quiet" type="button" data-project-more-sources hidden>Load more sources</button>
+            <div class="project-actions"><button class="button" type="submit" data-project-save>Save project</button><button class="button button--quiet" type="button" data-project-cancel hidden>Cancel editing</button></div>
+          </form>
+        </details>
+      </div>
     </section>`;
 
   const refreshButton = element.querySelector<HTMLButtonElement>("[data-project-refresh]");
+  const newButton = element.querySelector<HTMLButtonElement>("[data-project-new]");
+  const editorDetails = element.querySelector<HTMLDetailsElement>("[data-project-editor-details]");
   const status = element.querySelector<HTMLElement>("[data-project-status]") ?? element.querySelector<HTMLElement>(".project-status");
   const list = element.querySelector<HTMLElement>("[data-project-list]");
   const moreProjectsButton = element.querySelector<HTMLButtonElement>("[data-project-more-projects]");
@@ -99,7 +107,7 @@ export function mountProjectPanel(
   const moreSourcesButton = element.querySelector<HTMLButtonElement>("[data-project-more-sources]");
   const saveButton = element.querySelector<HTMLButtonElement>("[data-project-save]");
   const cancelButton = element.querySelector<HTMLButtonElement>("[data-project-cancel]");
-  if (!refreshButton || !status || !list || !moreProjectsButton || !form || !editorHeading || !titleInput || !sourceOptions || !sourceNote || !moreSourcesButton || !saveButton || !cancelButton) {
+  if (!refreshButton || !newButton || !editorDetails || !status || !list || !moreProjectsButton || !form || !editorHeading || !titleInput || !sourceOptions || !sourceNote || !moreSourcesButton || !saveButton || !cancelButton) {
     throw new Error("Project panel is incomplete");
   }
 
@@ -124,6 +132,7 @@ export function mountProjectPanel(
   const updateButtons = (): void => {
     const ready = options.healthReady() && navigator.onLine && currentGeneration() !== undefined;
     refreshButton.disabled = operation !== "idle" || !ready;
+    newButton.disabled = operation !== "idle" || !ready;
     moreProjectsButton.disabled = operation !== "idle" || !ready;
     moreProjectsButton.hidden = projectCursor === undefined;
     moreSourcesButton.disabled = operation !== "idle" || !ready;
@@ -154,6 +163,7 @@ export function mountProjectPanel(
           editing = project;
           attemptFingerprint = "";
           attemptKey = undefined;
+          editorDetails.open = true;
           renderEditor();
           titleInput.focus({ preventScroll: true });
         }
@@ -406,6 +416,9 @@ export function mountProjectPanel(
           editing = undefined;
           attemptFingerprint = "";
           attemptKey = undefined;
+          const focusWasInsideEditor = editorDetails.contains(document.activeElement);
+          editorDetails.open = false;
+          if (focusWasInsideEditor) editorDetails.querySelector<HTMLElement>("summary")?.focus({ preventScroll: true });
           void load();
         }
       } catch (error) {
@@ -426,7 +439,18 @@ export function mountProjectPanel(
     editing = undefined;
     attemptFingerprint = "";
     attemptKey = undefined;
+    editorDetails.open = false;
     renderEditor();
+    newButton.focus({ preventScroll: true });
+  };
+  newButton.onclick = () => {
+    if (operation !== "idle" || disposed) return;
+    editing = undefined;
+    attemptFingerprint = "";
+    attemptKey = undefined;
+    editorDetails.open = true;
+    renderEditor();
+    titleInput.focus({ preventScroll: true });
   };
   refreshButton.onclick = () => { void load(); };
   moreProjectsButton.onclick = () => { void loadMoreProjects(); };

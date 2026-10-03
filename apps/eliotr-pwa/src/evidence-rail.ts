@@ -48,7 +48,10 @@ function renderVerified(detail: HTMLElement, opened: Awaited<ReturnType<typeof v
   );
   const note = document.createElement("p"); note.className = "evidence-note";
   note.textContent = "Matches the selected scope and source revision.";
-  detail.replaceChildren(heading, state, source, metadata, note);
+  const provenance = document.createElement("details"); provenance.className = "evidence-provenance";
+  const summary = document.createElement("summary"); summary.textContent = "Revision and verification";
+  provenance.append(summary, metadata);
+  detail.replaceChildren(heading, state, source, note, provenance);
 }
 
 export function mountEvidenceRail(
@@ -58,6 +61,9 @@ export function mountEvidenceRail(
 ): EvidenceRailController {
   let serial = 0;
   let controller: AbortController | undefined;
+  let returnFocus: HTMLElement | undefined;
+  const rail = detail.closest<HTMLElement>(".panel--evidence");
+  const close = rail?.querySelector<HTMLButtonElement>("[data-close-evidence]");
   detail.tabIndex = -1;
 
   const focusOpenedEvidence = (): void => {
@@ -75,6 +81,7 @@ export function mountEvidenceRail(
   };
 
   const openHandle = (selectedScope: VersionedRef, handleRef: VersionedRef, expectedExcerptSha256?: string): void => {
+    returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : undefined;
     clear();
     const current = ++serial;
     controller = new AbortController();
@@ -92,8 +99,15 @@ export function mountEvidenceRail(
       .catch((error: unknown) => {
         if (current !== serial || (error instanceof Error && error.name === "AbortError")) return;
         detail.replaceChildren();
-        const failure = document.createElement("p"); failure.className = "evidence-error"; failure.textContent = errorText(error);
-        detail.append(failure); status.textContent = "UNAVAILABLE";
+        const failure = document.createElement("p"); failure.className = "evidence-error";
+        failure.textContent = error instanceof ApiRequestError && (error.status === 401 || error.status === 403)
+          ? "Source access changed. Check your session in Connections, then reopen this citation."
+          : "This excerpt could not be verified. Reconnect and reopen the citation.";
+        const diagnostics = document.createElement("details"); diagnostics.className = "evidence-provenance";
+        const summary = document.createElement("summary"); summary.textContent = "Technical details";
+        const reason = document.createElement("p"); reason.textContent = errorText(error);
+        diagnostics.append(summary, reason);
+        detail.append(failure, diagnostics); status.textContent = "UNAVAILABLE";
       });
   };
 
@@ -105,5 +119,14 @@ export function mountEvidenceRail(
     openHandle(selectedScope, evidence.handle.handle_ref, evidence.handle.excerpt_sha256);
   };
 
-  return { clear, select, selectHandle: openHandle, dispose: clear };
+  const dismiss = (): void => { clear(); if (returnFocus?.isConnected) returnFocus.focus({ preventScroll: true }); };
+  const escape = (event: KeyboardEvent): void => {
+    if (event.key === "Escape" && !detail.hidden) { event.preventDefault(); dismiss(); }
+  };
+  close?.addEventListener("click", dismiss);
+  rail?.addEventListener("keydown", escape);
+  return { clear, select, selectHandle: openHandle, dispose: () => {
+    clear(); close?.removeEventListener("click", dismiss);
+    rail?.removeEventListener("keydown", escape);
+  } };
 }

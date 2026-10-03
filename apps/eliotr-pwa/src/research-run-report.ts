@@ -31,6 +31,9 @@ export function renderResearchArtifactReport(artifact: ArtifactRevision, options
   const { element, result, status } = hooks;
   const { reportHead, technical } = createResearchReportHeader(artifact, options);
   const reportActions = document.createElement("div"); reportActions.className = "research-report-actions";
+  const reportActionsDetails = document.createElement("details"); reportActionsDetails.className = "research-report-actions-details";
+  const reportActionsSummary = document.createElement("summary"); reportActionsSummary.textContent = "Report actions";
+  reportActionsDetails.append(reportActionsSummary, reportActions);
   const download = document.createElement("button"); download.type = "button"; download.className = "button button--quiet"; download.textContent = "Download Markdown";
   if (artifact.sections.length === 0) {
     download.disabled = true; download.dataset.reportActionUnavailable = "true";
@@ -173,11 +176,10 @@ export function renderResearchArtifactReport(artifact: ArtifactRevision, options
     },
   }, options.publication);
   const freshnessNotice = options.sourceFreshness === undefined ? undefined : renderResearchSourceFreshnessNotice(options.sourceFreshness);
-  result.append(reportHead, ...(freshnessNotice === undefined ? [] : [freshnessNotice]), technical, reportActions);
+  result.append(reportHead, ...(freshnessNotice === undefined ? [] : [freshnessNotice]), technical);
   const sections = document.createElement("ul"); sections.className = "research-report-sections";
   artifact.sections.forEach((section, ordinal) => {
     const item = document.createElement("li"); item.className = "research-report-section";
-    product.addSectionAction(section.contract_id, item);
     const sectionHeading = document.createElement("h4"); sectionHeading.textContent = `Section ${ordinal + 1}`;
     const sectionTechnical = document.createElement("details"); sectionTechnical.className = "research-section-details";
     const sectionTechnicalSummary = document.createElement("summary"); sectionTechnicalSummary.textContent = "Section details";
@@ -191,6 +193,10 @@ export function renderResearchArtifactReport(artifact: ArtifactRevision, options
     sectionField("Evidence ledger", section.evidence_ledger_ref);
     sectionField("Verification receipt", section.verification_receipt_ref);
     sectionTechnical.append(sectionTechnicalSummary, sectionTechnicalFields);
+    const sectionActionDetails = document.createElement("details"); sectionActionDetails.className = "research-section-actions-details";
+    const sectionActionSummary = document.createElement("summary"); sectionActionSummary.textContent = "Section actions";
+    sectionActionDetails.append(sectionActionSummary);
+    product.addSectionAction(section.contract_id, sectionActionDetails);
     const open = document.createElement("button"); open.type = "button"; open.className = "button button--quiet"; open.textContent = "Open section";
     open.onclick = () => {
       if (!hooks.isCurrent(options.renderSerial) || hooks.busy()) return;
@@ -201,7 +207,7 @@ export function renderResearchArtifactReport(artifact: ArtifactRevision, options
           if (!hooks.isCurrent(options.renderSerial) || hooks.generation() !== options.deploymentGeneration) return;
           if (readback.body_object_ref !== section.body_object_ref || readback.body_sha256 !== section.body_sha256) throw new ApiRequestError({ status: 502, code: "RESEARCH_ARTIFACT_SECTION_INVALID", message: "The report section changed during reauthorization" });
           const body = document.createElement("pre"); body.className = "research-section-body"; body.textContent = decodeSectionBody(readback.bytes);
-          item.querySelector(".research-section-body")?.remove(); item.append(body); status.textContent = "Report section opened.";
+          item.querySelector(".research-section-body")?.remove(); item.insertBefore(body, sectionTechnical); status.textContent = "Report section opened.";
         })
         .catch((error: unknown) => {
           if (!hooks.isCurrent(options.renderSerial) || (error instanceof Error && error.name === "AbortError")) return;
@@ -270,7 +276,7 @@ export function renderResearchArtifactReport(artifact: ArtifactRevision, options
             });
             list.append(actions);
           }
-          item.append(list); status.textContent = citations.semantic_verification === "EXECUTED"
+          item.insertBefore(list, actions); status.textContent = citations.semantic_verification === "EXECUTED"
             ? "Claim check loaded. Review each verdict and its evidence."
             : "Cited sources loaded; fresh verification is still required.";
         })
@@ -285,7 +291,7 @@ export function renderResearchArtifactReport(artifact: ArtifactRevision, options
         .finally(() => hooks.finishAction(local, options.renderSerial));
     };
     const actions = document.createElement("div"); actions.className = "research-report-actions"; actions.append(open, sources);
-    item.append(sectionHeading, sectionTechnical, actions); sections.append(item);
+    item.append(sectionHeading, sectionTechnical, actions, sectionActionDetails); sections.append(item);
   });
-  result.append(sections);
+  result.append(sections, reportActionsDetails);
 }

@@ -1,4 +1,5 @@
 import "./styles.css";
+import { renderWorkspaceShell } from "./workspace-shell.js";
 import { getSystemHealth, type GoogleExternalTransport, type SystemHealth } from "./api.js";
 import { mountBundleImportPanel } from "./bundle-import-panel.js";
 import { mountGoogleOAuthPanel } from "./google-oauth-panel.js";
@@ -70,10 +71,10 @@ function googleConnectorLabel(transport: GoogleExternalTransport | undefined): s
 
 function healthSummary(health: SystemHealth | null, failure?: HealthFailure): string {
   if (health === null) return "Checking current deployment…";
-  if (failure?.kind === "access") return "Sign-in verification unavailable. Retry the server check or sign in again.";
+  if (failure?.kind === "access") return "Sign-in could not be verified. Check Connections or sign in again.";
   if (failure?.kind === "network") return "Server unavailable. Retry server check.";
   if (failure !== undefined) return "Server check failed. Retry server check.";
-  if (health.ready) return "Server ready. Workspace access is shown in Connections.";
+  if (health.ready) return "Workspace is ready.";
   if (health.blocking_reason_codes.includes("HEALTH_ENDPOINT_UNREACHABLE")) return "Server unavailable. Retry server check.";
   return "Server responded. Workspace needs attention.";
 }
@@ -116,87 +117,10 @@ function renderGoogleConnector(health: SystemHealth | null): void {
 }
 
 function render(health: SystemHealth | null): void {
-  app.innerHTML = `
-    <header class="topbar">
-      <a class="brand" href="/" aria-label="Eliot Research home"><span class="brand-mark">E</span><span>Eliot Research</span></a>
-      <div class="topbar-meta"><span class="workspace-label">PRIVATE WORKSPACE</span><span id="health-badge">${healthBadge(health)}</span></div>
-    </header>
-    <div class="health-strip" role="status" aria-live="polite">
-      <span class="health-dot" aria-hidden="true"></span><strong>Owner API</strong>
-      <span id="health-summary">${healthSummary(health)}</span>
-      <span class="health-generation">${displayText(health?.deployment_generation, "generation pending")}</span>
-      <details class="health-details"><summary>Details</summary><div id="health-details" class="health-details-content">${healthDetails(health)}</div></details>
-    </div>
-    <main class="workspace" aria-label="Research workspace">
-      <aside class="panel panel--corpus" aria-label="Research navigation">
-        <div class="sidebar-heading"><span class="eyebrow">Workspace</span></div>
-        <nav class="workspace-nav" aria-label="Primary">
-          <button class="nav-item nav-item--active" type="button" data-nav-target="#library" aria-controls="sources-view" aria-current="page"><span class="nav-icon">⌂</span><span>Sources</span></button>
-          <button class="nav-item" type="button" data-nav-target="#research-card" aria-controls="research-view"><span class="nav-icon">⌕</span><span>Research</span></button>
-          <button class="nav-item" type="button" data-nav-target="#wiki-card" aria-controls="wiki-view"><span class="nav-icon">▤</span><span>Wiki</span></button>
-          <button class="nav-item" type="button" data-nav-target="#connections-card" aria-controls="connections-card"><span class="nav-icon">◌</span><span>Connections</span></button>
-        </nav>
-        <button class="source-chooser-toggle" type="button" data-source-chooser-toggle aria-controls="library" aria-expanded="false"><span>Choose a source</span><span data-source-chooser-state>Show list</span></button>
-        <div id="library"></div>
-      </aside>
-      <section class="panel panel--investigation" aria-label="Investigation workspace">
-        <div class="content-heading"><div><span class="eyebrow" data-workspace-eyebrow>Sources</span><h1 data-workspace-title>Sources</h1><p class="lede" data-workspace-lede>Import or select admitted sources, then open Corpus Lens for structure and readiness.</p></div><div class="content-actions"><span class="profile-chip" data-workspace-owner-profile>E0 · owner read</span><button class="button button--quiet" type="button" data-refresh>Refresh</button></div></div>
-        <section id="sources-view" class="workspace-view" data-workspace-view="sources" tabindex="-1" aria-label="Sources">
-          <div class="workspace-cards">
-            <article class="intro-card"><div class="intro-card-mark">◎</div><div><strong>Start with your sources</strong><p>Import a folder or choose an admitted source from the Library before opening its structure.</p><div class="intro-card-actions"><button class="button button--quiet workspace-jump" type="button" data-nav-target="#corpus-lens-card">Open Corpus Lens</button></div></div></article>
-          </div>
-          <div class="tool-stack">
-            <section class="tool-card" id="projects-card"><div id="projects"></div></section>
-            <section class="tool-card tool-card--import"><div id="source-namespace"></div><div class="tool-divider"></div><div id="raw-upload"></div><div class="tool-divider"></div><div id="bundle-import"></div></section>
-            <section class="tool-card" id="corpus-lens-card"><div id="corpus-lens"></div></section>
-            <details class="tool-card"><summary>Delete selected document</summary><div id="erasure"></div></details>
-          </div>
-        </section>
-        <section id="research-view" class="workspace-view" data-workspace-view="research" tabindex="-1" aria-label="Research" hidden>
-          <div class="tool-stack">
-            <section class="tool-card tool-card--research" id="research-card"><div id="research-run"></div></section>
-            <div class="research-context" aria-label="Search evidence status"><div><span>Search coverage</span><strong id="coverage">Not queried</strong><span id="coverage-note">Run a search to measure sampled resolution.</span></div><div><span>Evidence</span><strong id="evidence-count">0 resolved</strong><span>Verified excerpts in this session.</span></div></div>
-            <details class="tool-card research-tools" id="research-tools" open><summary>Search and full-source scans</summary><div id="retrieval"></div><div class="tool-divider"></div><div id="exhaustive-workflow"></div></details>
-            <details class="tool-card" id="research-changes-card"><summary>Recent activity</summary><div id="research-changes"></div></details>
-          </div>
-        </section>
-        <section id="wiki-view" class="workspace-view" data-workspace-view="wiki" tabindex="-1" aria-label="Wiki" hidden>
-          <div class="workspace-cards">
-            <article class="intro-card"><div class="intro-card-mark">▤</div><div><strong>Review saved Wiki proposals</strong><p>Review proposals and read saved page text.</p></div></article>
-          </div>
-          <div class="tool-stack"><section class="tool-card" id="wiki-card"><div id="wiki"></div></section></div>
-        </section>
-        <section id="connections-card" class="workspace-view" data-workspace-view="connections" tabindex="-1" aria-label="Connections" hidden>
-          <div class="connection-stack">
-            <section class="connection-card research-configuration-card" id="research-configuration-card"><div id="research-configuration"></div></section>
-            <article class="connection-card" id="client-grants-card"><div id="client-grants"></div></article>
-            <article class="connection-card" id="connection-agent-card"><div id="mcp-client-diagnostic"></div></article>
-            <article class="connection-card" id="connection-server-card">
-              <div class="connection-heading"><div><span class="eyebrow">Server check</span><h2>Owner API</h2></div><span id="connection-server-state" class="connection-state connection-state--pending">Checking</span></div>
-              <p id="connection-server-copy" class="connection-copy">Checking the server. This check covers API and schema readiness only.</p>
-              <dl class="connection-facts"><dt>Deployment</dt><dd id="connection-deployment">generation pending</dd><dt>Core schema</dt><dd id="connection-core-generation">Unknown</dd><dt>Search schema</dt><dd id="connection-search-generation">Unknown</dd></dl>
-              <details class="connection-details"><summary>Readback</summary><div id="connection-health-details" class="health-details-content">${healthDetails(health)}</div></details>
-              <div class="connection-actions"><button class="button button--quiet" type="button" data-connection-refresh>Retry server check</button></div>
-            </article>
-            <article class="connection-card" id="connection-workspace-card">
-              <div class="connection-heading"><div><span class="eyebrow">Workspace connection</span><h2>Google Drive</h2></div><span id="connection-transport-state" class="connection-state connection-state--unknown">Unknown</span></div>
-              <p id="connection-transport-copy" class="connection-copy">${escapeHtml(googleTransportExplanation(health?.google_external_transport))}</p>
-              <div class="connection-profile"><span class="eyebrow">Owner profile</span><strong>E0 · owner read</strong></div>
-              <div id="google-oauth"></div>
-              <div id="owner-session"></div>
-            </article>
-          </div>
-          <details class="access-boundary"><summary>Access and privacy</summary><p>All reads resolve through the owner API. Private data is never cached in the browser.</p></details>
-        </section>
-      </section>
-      <aside class="panel panel--evidence" aria-label="Evidence details">
-        <div class="evidence-heading"><div><span class="eyebrow">Evidence details</span><h2>Evidence</h2></div><span class="rail-status">No excerpt selected</span></div>
-        <div id="evidence-empty" class="evidence-empty"><span class="evidence-glyph">✦</span><strong>Select an excerpt</strong><p>The source text and verification details will appear here.</p></div>
-        <article id="evidence-detail" class="evidence-detail" hidden></article>
-        <div class="system-facts"><span class="eyebrow">System facts</span><dl><dt>Core schema</dt><dd id="core-generation">${displayText(health?.core_schema_generation, "Unknown")}</dd><dt>Search schema</dt><dd id="search-generation">${displayText(health?.search_schema_generation, "Unknown")}</dd><dt>Connector</dt><dd id="connector-mode">${googleConnectorLabel(health?.google_external_transport)}</dd></dl></div>
-      </aside>
-    </main>
-  `;
+  app.innerHTML = renderWorkspaceShell({
+    healthBadge: healthBadge(health), healthSummary: healthSummary(health),
+    healthDetails: healthDetails(health), workspaceConnection: escapeHtml(googleTransportExplanation(health?.google_external_transport)),
+  });
   const lens = app.querySelector<HTMLElement>("#corpus-lens");
   const importer = app.querySelector<HTMLElement>("#bundle-import");
   const rawUploadHost = app.querySelector<HTMLElement>("#raw-upload");
@@ -290,11 +214,11 @@ function render(health: SystemHealth | null): void {
   app.addEventListener("research:evidence-selected", selectResearchEvidence);
   type WorkspaceViewName = "sources" | "research" | "wiki" | "connections";
   type WorkspaceViewDefinition = { name: WorkspaceViewName; title: string; lede: string; sectionSelector: string; historyHash: string; anchorSelector: string };
-  const sourcesView: WorkspaceViewDefinition = { name: "sources", title: "Sources", lede: "Import or select admitted sources, then open Corpus Lens for structure and readiness.", sectionSelector: "#sources-view", historyHash: "#library", anchorSelector: "#library" };
+  const sourcesView: WorkspaceViewDefinition = { name: "sources", title: "Documents", lede: "Choose a document to read, or add a source to your library.", sectionSelector: "#sources-view", historyHash: "#library", anchorSelector: "#library" };
   const workspaceViews: Record<string, WorkspaceViewDefinition> = {
     "#library": sourcesView,
     "#corpus-lens-card": { ...sourcesView, anchorSelector: "#corpus-lens-card" },
-    "#research-card": { name: "research", title: "Research", lede: "Choose sources, ask a question, and inspect the saved answer with its exact citations.", sectionSelector: "#research-view", historyHash: "#research-card", anchorSelector: "#research-card" },
+    "#research-card": { name: "research", title: "Research", lede: "Ask your documents a question. Read the saved report alongside its sources.", sectionSelector: "#research-view", historyHash: "#research-card", anchorSelector: "#research-card" },
     "#wiki-card": { name: "wiki", title: "Wiki", lede: "Review saved Wiki proposals and read their current owner-authorized page text.", sectionSelector: "#wiki-view", historyHash: "#wiki-card", anchorSelector: "#wiki-card" },
     "#connections-card": { name: "connections", title: "Connections", lede: "Check the server and workspace connection; client activity appears only after a manual check.", sectionSelector: "#connections-card", historyHash: "#connections-card", anchorSelector: "#connections-card" },
     "#research-configuration-card": { name: "connections", title: "Connections", lede: "Check the server and workspace connection; client activity appears only after a manual check.", sectionSelector: "#connections-card", historyHash: "#research-configuration-card", anchorSelector: "#research-configuration-card" },
@@ -353,6 +277,8 @@ function render(health: SystemHealth | null): void {
     setWorkspaceView("#library", { history: true, focus: true });
   };
   const handleSourceVersionFormRequested = (): void => {
+    const importCard = app.querySelector<HTMLDetailsElement>("#source-import-card");
+    if (importCard) importCard.open = true;
     setSourceChooserExpanded(true);
     setWorkspaceView("#library", { history: true, focus: true });
   };
@@ -482,6 +408,10 @@ function render(health: SystemHealth | null): void {
       if (!orientation || !(await orientation.selectSource(id))) return false;
     }
     if (selection !== selectionSerial || pageClosed || !navigator.onLine || app.dataset.healthReady !== "true") return false;
+    if (!context?.sourceRevisionRef) {
+      if (sourceChooserViewport.matches) setSourceChooserExpanded(false);
+      setWorkspaceView("#corpus-lens-card", { anchor: true });
+    }
     retrieval?.selectSource(id, context);
     researchRun?.selectSource(id, context);
     exhaustive?.selectSource(id);
