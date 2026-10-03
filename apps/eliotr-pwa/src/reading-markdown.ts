@@ -14,7 +14,7 @@ type BlockNode =
   | { readonly type: "table" | "tableHead" | "tableBody" | "tableRow"; readonly children: readonly ReadingNode[] }
   | { readonly type: "tableCell"; readonly header: boolean; readonly children: readonly ReadingNode[] }
   | { readonly type: "heading"; readonly level: number; readonly children: readonly ReadingNode[] }
-  | { readonly type: "list"; readonly ordered: boolean; readonly children: readonly ReadingNode[] }
+  | { readonly type: "list"; readonly ordered: boolean; readonly start: number | null; readonly children: readonly ReadingNode[] }
   | { readonly type: "codeBlock"; readonly text: string }
   | { readonly type: "rule" };
 
@@ -176,10 +176,15 @@ function renderNode(value: unknown, depth: number, spend: () => boolean): Node |
 
   switch (value.type) {
     case "text":
-    case "code":
       return onlyKeys(value, ["type", "text"]) && typeof value.text === "string"
         ? document.createTextNode(value.text)
         : null;
+    case "code": {
+      if (!onlyKeys(value, ["type", "text"]) || typeof value.text !== "string") return null;
+      const code = document.createElement("code");
+      code.textContent = value.text;
+      return code;
+    }
     case "break":
       return onlyKeys(value, ["type"]) ? document.createElement("br") : null;
     case "image": {
@@ -233,9 +238,12 @@ function renderNode(value: unknown, depth: number, spend: () => boolean): Node |
       return appendChildren(document.createElement(`h${value.level}`), value.children, depth, spend);
     }
     case "list": {
-      if (!onlyKeys(value, ["type", "ordered", "children"]) ||
+      if (!onlyKeys(value, ["type", "ordered", "start", "children"]) ||
         typeof value.ordered !== "boolean" || !Array.isArray(value.children)) return null;
-      return appendChildren(document.createElement(value.ordered ? "ol" : "ul"), value.children, depth, spend);
+      if (value.ordered ? typeof value.start !== "number" || !Number.isInteger(value.start) || value.start < 0 || value.start > 999_999_999 : value.start !== null) return null;
+      const list = document.createElement(value.ordered ? "ol" : "ul");
+      if (value.ordered) list.setAttribute("start", String(value.start));
+      return appendChildren(list, value.children, depth, spend);
     }
     case "codeBlock": {
       if (!onlyKeys(value, ["type", "text"]) || typeof value.text !== "string") return null;

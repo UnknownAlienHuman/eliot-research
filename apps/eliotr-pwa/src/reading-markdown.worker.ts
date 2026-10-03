@@ -11,7 +11,7 @@ type BlockNode =
   | { type: "table" | "tableHead" | "tableBody" | "tableRow"; children: ReadingNode[] }
   | { type: "tableCell"; header: boolean; children: ReadingNode[] }
   | { type: "heading"; level: number; children: ReadingNode[] }
-  | { type: "list"; ordered: boolean; children: ReadingNode[] }
+  | { type: "list"; ordered: boolean; start: number | null; children: ReadingNode[] }
   | { type: "codeBlock"; text: string }
   | { type: "rule" };
 
@@ -44,7 +44,7 @@ type BlockContainer =
   | { type: "table" | "tableHead" | "tableBody" | "tableRow"; children: ReadingNode[] }
   | { type: "tableCell"; header: boolean; children: ReadingNode[] }
   | { type: "heading"; level: number; children: ReadingNode[] }
-  | { type: "list"; ordered: boolean; children: ReadingNode[] };
+  | { type: "list"; ordered: boolean; start: number | null; children: ReadingNode[] };
 
 interface Frame {
   node: BlockContainer;
@@ -129,11 +129,14 @@ function readBlocks(tokens: readonly ParserToken[], budget: NodeBudget): BlockNo
         open({ type: "blockquote", children: [] }, "blockquote_close", frames.length + 1);
         break;
       case "bullet_list_open":
-        open({ type: "list", ordered: false, children: [] }, "bullet_list_close", frames.length + 1);
+        open({ type: "list", ordered: false, start: null, children: [] }, "bullet_list_close", frames.length + 1);
         break;
-      case "ordered_list_open":
-        open({ type: "list", ordered: true, children: [] }, "ordered_list_close", frames.length + 1);
+      case "ordered_list_open": {
+        const start = Number(token.attrGet("start") ?? 1);
+        if (!Number.isInteger(start) || start < 0 || start > 999_999_999) throw new Error("Invalid ordered list start");
+        open({ type: "list", ordered: true, start, children: [] }, "ordered_list_close", frames.length + 1);
         break;
+      }
       case "list_item_open":
         open({ type: "listItem", children: [] }, "list_item_close", frames.length + 1);
         break;
