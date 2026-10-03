@@ -1,10 +1,37 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { resolve } from "node:path";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { deployCloudflare } from "./deploy-cloudflare.mjs";
+import { loadResearchRuntimeEnvironment, RESEARCH_RUNTIME_CONFIGURATION_KEYS,
+  RESEARCH_RUNTIME_SEMANTIC_TRANSPORT_KEYS, semanticConfigurationTransport } from "./lib/research-runtime-config.mjs";
 // Deployment checks exercise launch order and do not model billing admission.
 
+async function removeFixture(directory, temporaryRoot, prefix) {
+  const absolute = resolve(directory);
+  if (dirname(absolute) !== temporaryRoot || !basename(absolute).startsWith(prefix)) {
+    throw new Error("Refusing to remove an unexpected orchestration fixture path");
+  }
+  await rm(absolute, { recursive: true, force: true });
+}
+
+async function main() {
+const temporaryRoot = resolve(tmpdir());
+const prefix = "eliotr-deployment-orchestration-";
+const temporaryDirectory = await mkdtemp(join(temporaryRoot, prefix));
+try {
+const runtimeConfigPath = resolve(temporaryDirectory, "research-runtime.json");
+await writeFile(runtimeConfigPath, JSON.stringify({ protocol: "eliotr.research-runtime.v1", vars: {
+  ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON: { protocol: "eliotr.research-semantic-config.test.v1", profile: "orchestration-fixture" },
+  ELIOTR_MODEL_PROFILE_DEFINITION_JSON: { protocol: "eliotr.model-profile-definition.test.v1", profiles: [] },
+  ELIOTR_MODEL_PROFILE_PROVENANCE_REF: "fixture:model-profile",
+  ELIOTR_MODEL_SPEND_POLICY_JSON: { protocol: "eliotr.model-spend-policy.test.v1", policies: [] },
+  ELIOTR_MODEL_SPEND_POLICY_PROVENANCE_REF: "fixture:model-spend-policy",
+  ELIOTR_RESEARCH_REPORT_CONFIG_JSON: { protocol: "eliotr.research-report-config.test.v1" },
+  ELIOTR_RESEARCH_REPORT_POLICY_PROVENANCE_REF: "fixture:research-report-policy",
+} }), { flag: "wx", mode: 0o600 });
 const now = Date.parse("2026-09-04T23:00:00.000Z");
 /*
 function admittedSnapshotJson(accountId = "test-account", at = now) {
@@ -31,25 +58,30 @@ function admittedSnapshotJson(accountId = "test-account", at = now) {
   });
 }
 */
-const environment = { CLOUDFLARE_ACCOUNT_ID: "test-account", CLOUDFLARE_API_TOKEN: "secret-token",
+const repositoryRoot = resolve(fileURLToPath(new URL("../", import.meta.url)));
+const environment = await loadResearchRuntimeEnvironment({ CLOUDFLARE_ACCOUNT_ID: "test-account", CLOUDFLARE_API_TOKEN: "secret-token",
   ELIOTR_ENVIRONMENT: "staging", ELIOTR_DEPLOYMENT_GENERATION: "git-test", ELIOTR_CUSTOM_DOMAIN: "1",
   ELIOTR_ACCESS_HOSTNAME: "research.example.com", ELIOTR_OWNER_EMAILS: "owner@example.com",
   ELIOTR_STAGING_TARGET_JSON: JSON.stringify({ protocol: "eliotr.staging-target.v1", isolation: "dedicated-account",
     account_id: "test-account", protected_account_ids: ["production-test-account"], access_hostname: "research.example.com" }),
   ELIOTR_ACCESS_TEAM_DOMAIN: "https://team-example.cloudflareaccess.com", ELIOTR_ACCESS_AUDIENCE: "test-aud",
-  ELIOTR_ACCESS_SERVICE_PRINCIPALS: "", ELIOTR_ACCESS_SMOKE_COOKIE: "secret-cookie", ELIOTR_GOOGLE_EXTERNAL_TRANSPORT: "gemini-mcp" };
+  ELIOTR_ACCESS_SERVICE_PRINCIPALS: "", ELIOTR_ACCESS_SMOKE_COOKIE: "secret-cookie", ELIOTR_GOOGLE_EXTERNAL_TRANSPORT: "gemini-mcp",
+  ELIOTR_RESEARCH_CONFIG_FILE: runtimeConfigPath }, repositoryRoot);
+const runtimeConfigVars = Object.fromEntries(RESEARCH_RUNTIME_CONFIGURATION_KEYS
+  .filter((key) => !RESEARCH_RUNTIME_SEMANTIC_TRANSPORT_KEYS.includes(key) && typeof environment[key] === "string")
+  .map((key) => [key, environment[key]]));
 const config = { name: "eliotr-core", minify: true, preview_urls: false, compatibility_date: "2026-08-28",
-  vars: { DEPLOYMENT_GENERATION: "git-test", ENVIRONMENT: "staging", ACCESS_TEAM_DOMAIN: "https://team-example.cloudflareaccess.com",
+  vars: { ...runtimeConfigVars, ...semanticConfigurationTransport(environment).vars,
+    DEPLOYMENT_GENERATION: "git-test", ENVIRONMENT: "staging", ACCESS_TEAM_DOMAIN: "https://team-example.cloudflareaccess.com",
     ACCESS_AUDIENCE: "test-aud", ACCESS_SERVICE_PRINCIPALS: "", GOOGLE_EXTERNAL_TRANSPORT: "gemini-mcp" },
   d1_databases: [
     { binding: "CORE_DB", database_name: "eliotr-core", database_id: "11111111-1111-4111-8111-111111111111", migrations_dir: "../../infra/d1/core/migrations" },
     { binding: "SEARCH_DB", database_name: "eliotr-search", database_id: "22222222-2222-4222-8222-222222222222", migrations_dir: "../../infra/d1/search/migrations" },
   ] };
 const bytes = Buffer.from(JSON.stringify(config));
-const repositoryRoot = resolve(fileURLToPath(new URL("../", import.meta.url)));
 const buildInputManifest = Object.freeze({ protocol: "eliotr.deployment-build-inputs.v1",
   root: repositoryRoot, sha256: "a".repeat(64) });
-const workerEntrypoint = resolve(repositoryRoot, "apps/eliotr-core/src/index.ts");
+const workerEntrypoint = resolve(repositoryRoot, ".eliotr-state/deployment-worker-12345678-1234-4234-8234-123456789abc/index.js");
 const sha256 = (value) => createHash("sha256").update(value).digest("hex");
 const generatedConfigPin = { path: "apps/eliotr-core/wrangler.deploy.jsonc", sha256: sha256(bytes),
   byte_length: bytes.byteLength, worker_name: "eliotr-core", worker_main: "apps/eliotr-core/src/index.ts",
@@ -74,6 +106,8 @@ function harness(overrides = {}) {
     execute(command, args, cwd, env) {
       const name = `${command} ${args.join(" ")}`; calls.push(name);
       events.push(`command:${name}`);
+      assert.equal(env.ELIOTR_RESEARCH_CONFIG_FILE, runtimeConfigPath);
+      assert.equal(env.ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON, environment.ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON);
       if (env.ELIOTR_DEPLOYMENT_GENERATION !== undefined) assert.equal(env.ELIOTR_DEPLOYMENT_GENERATION, "git-test");
       assert.equal(resolve(cwd), resolve(fileURLToPath(new URL("../", import.meta.url)),
         args.includes("--config") ? "apps/eliotr-core" : "."));
@@ -100,6 +134,7 @@ function harness(overrides = {}) {
         transport_completion_is_research_completion: false, ingest_live_qualified: false,
       } });
     }, ...overrides.options };
+  options.environment = { ...options.environment, ELIOTR_RESEARCH_CONFIG_FILE: runtimeConfigPath };
   return { calls, receipts, options, events };
 }
 let cases = 0;
@@ -110,7 +145,13 @@ const coreMigration = "pnpm exec wrangler d1 migrations apply CORE_DB --remote -
 
 await check("dry run has no remote or receipt effects", async () => {
   const test = harness({ options: { confirmLive: false, environment: {} } });
-  test.options.execute = (command, args) => test.calls.push(`${command} ${args.join(" ")}`);
+  test.options.execute = (command, args, _cwd, env) => {
+    const name = `${command} ${args.join(" ")}`;
+    test.calls.push(name);
+    test.events.push(`command:${name}`);
+    assert.equal(env.ELIOTR_RESEARCH_CONFIG_FILE, runtimeConfigPath);
+    assert.equal(env.ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON, environment.ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON);
+  };
   assert.equal(await deployCloudflare(test.options), null);
   assert.deepEqual(test.calls, ["pnpm check", "pnpm build:pwa", "pnpm --filter @eliotr/core cf:types",
     "pnpm --filter @eliotr/core deploy:dry-run"]);
@@ -133,7 +174,7 @@ await check("every failed preflight precedes archive and mutation", async () => 
 });
 await check("generated config dry-run fails before remote D1 mutation", async () => {
   const test = harness({ failCommand: generatedDryRun });
-  await assert.rejects(deployCloudflare(test.options), (error) => { console.log(`fixture stage error: ${error.message}`); return true; });
+  await assert.rejects(deployCloudflare(test.options), /injected command failure/u);
   assert.ok(test.calls.some((call) => call.startsWith(generatedDryRun)),
     `the frozen-entry bundle dry-run was actually reached; calls: ${JSON.stringify(test.calls)}`);
   assert.ok(!test.calls.includes(coreMigration));
@@ -167,7 +208,7 @@ await check("maintenance records launch blockers and budget findings", async () 
     log: (message) => logs.push(message) } });
   assert.equal(await deployCloudflare(test.options), null);
   assert.deepEqual(test.calls, ["pnpm --filter @eliotr/core typecheck",
-    "pnpm exec eslint scripts/deploy-cloudflare.mjs scripts/lib/deployment-maintenance.mjs scripts/check-launch-code.mjs",
+    "pnpm exec eslint scripts/deploy-cloudflare.mjs scripts/lib/deployment-maintenance.mjs scripts/lib/deployment-build-inputs.mjs scripts/check-launch-code.mjs",
     "pnpm boundaries:check", "pnpm boundaries:negative", "pnpm build:pwa", "pnpm --filter @eliotr/core cf:types",
     "pnpm --filter @eliotr/core deploy:dry-run"]);
   assert.ok(logs.some((message) => message.includes("known launch blocker")));
@@ -181,7 +222,7 @@ await check("maintenance records launch blockers and budget findings", async () 
 });
 await check("maintenance compile, lint, boundary and artifact gates still block", async () => {
   const commands = ["pnpm --filter @eliotr/core typecheck",
-    "pnpm exec eslint scripts/deploy-cloudflare.mjs scripts/lib/deployment-maintenance.mjs scripts/check-launch-code.mjs",
+    "pnpm exec eslint scripts/deploy-cloudflare.mjs scripts/lib/deployment-maintenance.mjs scripts/lib/deployment-build-inputs.mjs scripts/check-launch-code.mjs",
     "pnpm boundaries:check", "pnpm boundaries:negative", "pnpm build:pwa", "pnpm --filter @eliotr/core cf:types",
     "pnpm --filter @eliotr/core deploy:dry-run"];
   for (const command of commands) {
@@ -207,3 +248,9 @@ await check("Access verify-existing refusal stops before Worker upload", async (
   assert.equal(test.receipts.length, 0);
 });
 console.log(`Deployment orchestration: ${cases} groups passed; live Cloudflare NOT_EXECUTED`);
+} finally {
+  await removeFixture(temporaryDirectory, temporaryRoot, prefix);
+}
+}
+
+await main();
