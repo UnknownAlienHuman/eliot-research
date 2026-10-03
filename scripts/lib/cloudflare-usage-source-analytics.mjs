@@ -198,7 +198,7 @@ function decodeGraphqlPayload(body, definition, accountId, httpStatus) {
         fail(definition.group, "MALFORMED", `${definition.group} analytics sum was invalid`, { httpStatus });
       }
       const total = sums[i] + value;
-      if (!Number.isFinite(total)) {
+      if (!Number.isSafeInteger(total)) {
         fail(definition.group, "MALFORMED", `${definition.group} analytics sum was invalid`, { httpStatus });
       }
       sums[i] = total;

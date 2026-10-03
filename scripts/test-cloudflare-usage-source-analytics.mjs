@@ -142,6 +142,24 @@ test("missing D1 row sums remain unknown instead of filling zero", async () => {
   assert.deepEqual(result.values, { d1_rows_read: 5 });
 });
 
+test("safe row values cannot produce an unsafe aggregate", async () => {
+  for (let i = 0; i < CASES.length; i += 1) {
+    const definition = CASES[i];
+    const sum = Object.fromEntries(definition.fields.map((field) => [field, Number.MAX_SAFE_INTEGER]));
+    const increment = Object.fromEntries(definition.fields.map((field) => [field, 1]));
+    const provider = providers(async () => graphqlResponse(definition.dataset, [{ sum }, { sum: increment }]))[i];
+    await assert.rejects(
+      provider.collect({ accountId: ACCOUNT_ID, bearer: BEARER, now: NOW }),
+      (error) => error.code === "MALFORMED" && !error.message.includes(BEARER),
+    );
+  }
+  const boundary = providers(async () => graphqlResponse(CASES[0].dataset, [
+    { sum: { requests: Number.MAX_SAFE_INTEGER - 1 } }, { sum: { requests: 1 } },
+  ]))[0];
+  const result = await boundary.collect({ accountId: ACCOUNT_ID, bearer: BEARER, now: NOW });
+  assert.equal(result.values.workers_requests, Number.MAX_SAFE_INTEGER);
+});
+
 test("GraphQL errors become a safe provider-data gap without echoing provider text", async () => {
   const secretBody = `sensitive-provider-message-${BEARER}`;
   const provider = providers(async () => graphqlResponse(CASES[0].dataset, [], {
