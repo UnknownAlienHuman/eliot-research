@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
+import { dirname, isAbsolute, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { readDeploymentWorker, validateDeploymentInput, validateGeneratedDeployment,
   verifyDeploymentSmoke } from "./lib/deployment-verification.mjs";
@@ -13,6 +13,7 @@ import { assertMaintenanceCapabilityProfile, readActiveDeploymentIdentity, readA
   selectDeploymentGoogleTransport, selectDeploymentAiSearchNamespaces,
   verifyDeploymentSchemaGenerations } from "./lib/deployment-maintenance.mjs";
 import { loadMaintenanceRouteUpdate, requireUnchangedMaintenanceRouteUpdate } from "./lib/deployment-route-update.mjs";
+import { captureMaintenanceAiGateways, requireSameMaintenanceAiGateways } from "./lib/deployment-ai-gateways.mjs";
 import { loadResearchRuntimeEnvironment, RESEARCH_RUNTIME_CONFIGURATION_KEYS,
   RESEARCH_RUNTIME_SEMANTIC_TRANSPORT_KEYS, semanticConfigurationTransport } from "./lib/research-runtime-config.mjs";
 import { synchronizeResearchDeploymentAuthority } from "./lib/research-deployment-authority.mjs";
@@ -89,6 +90,8 @@ export async function deployCloudflare({ confirmLive = false, environment = proc
   readReleaseBlockers = readFullReleaseBlockers, readSchemaGenerations = verifyDeploymentSchemaGenerations,
   readWorker = readDeploymentWorker,
   readBackendFingerprint = computeResearchBackendFingerprint,
+  captureAiGateways = captureMaintenanceAiGateways,
+  checkAiGateways = requireSameMaintenanceAiGateways,
   captureBuildInputs = captureDeploymentBuildInputs,
   checkBuildInputs = requireUnchangedDeploymentBuildInputs,
   pinGeneratedConfig = pinGeneratedDeploymentConfig,
@@ -106,6 +109,14 @@ export async function deployCloudflare({ confirmLive = false, environment = proc
   if (preserveGoogleTransport !== undefined &&
       (purpose !== MAINTENANCE_PURPOSE || preserveGoogleTransport !== "disabled")) {
     throw new Error("Google transport preservation is maintenance-only and accepts disabled only");
+  }
+  const preserveAiGateways = env.ELIOTR_MAINTENANCE_PRESERVE_AI_GATEWAYS;
+  if (preserveAiGateways !== undefined &&
+      (purpose !== MAINTENANCE_PURPOSE || !confirmLive || preserveAiGateways !== "existing" ||
+       env.ELIOTR_CLOUDFLARE_AUTH_MODE !== "wrangler-oauth" ||
+       typeof env.ELIOTR_CLOUDFLARE_MCP_CWD !== "string" ||
+       !isAbsolute(env.ELIOTR_CLOUDFLARE_MCP_CWD.trim()))) {
+    throw new Error("AI Gateway preservation requires confirmed live maintenance, managed Wrangler OAuth, and MCP CWD");
   }
   if (env.ELIOTR_MAINTENANCE_PRESERVE_AI_SEARCH !== undefined &&
       (purpose !== MAINTENANCE_PURPOSE || env.ELIOTR_MAINTENANCE_PRESERVE_AI_SEARCH !== "absent")) {
@@ -131,6 +142,8 @@ export async function deployCloudflare({ confirmLive = false, environment = proc
   let fullReleaseBlockers = null;
   let candidateCapabilityProfile = null;
   let routeUpdate = null;
+  let maintenanceAiGateways = null;
+  const maintenanceAiGatewayReadbacks = {};
   let sourceBudgetState = null;
   let sourceBudgetFindings = null;
   if (confirmLive) {
@@ -193,6 +206,9 @@ export async function deployCloudflare({ confirmLive = false, environment = proc
     exec("pnpm", ["--filter", "@eliotr/core", "typecheck"]);
     exec("pnpm", ["exec", "eslint", "scripts/deploy-cloudflare.mjs", "scripts/lib/deployment-maintenance.mjs",
       "scripts/lib/deployment-route-update.mjs", "scripts/test-deployment-route-update.mjs",
+      "scripts/lib/deployment-ai-gateways.mjs", "scripts/test-deployment-ai-gateways.mjs",
+      "scripts/test-deployment-maintenance.mjs", "scripts/test-deployment-apply-ordering.mjs",
+      "scripts/test-deployment-orchestration.mjs",
       "scripts/lib/deployment-build-inputs.mjs",
       "scripts/check-launch-code.mjs"]);
     exec("pnpm", ["boundaries:check"]);
@@ -257,13 +273,23 @@ export async function deployCloudflare({ confirmLive = false, environment = proc
     assertMaintenanceCapabilityProfile({ candidate: candidateCapabilityProfile,
       observed: current.capabilities, generatedConfig: maintenanceConfig, activeWorkerIdentity: activeWorkerBaseline,
       routeUpdate, routeUpdatePhase: "before" });
+    if (preserveAiGateways === "existing") {
+      maintenanceAiGateways = await captureAiGateways({ env, input,
+        activeWorkerIdentity: activeWorkerBaseline, candidate: candidateCapabilityProfile,
+        observed: current.capabilities });
+      if (maintenanceAiGateways?.state !== "PINNED" ||
+          maintenanceAiGateways?.protocol !== "eliotr.maintenance-ai-gateway-profile.v1") {
+        throw new Error("Maintenance AI Gateway baseline could not be pinned");
+      }
+    }
     if (preserveAiSearch !== undefined) env.ELIOTR_MAINTENANCE_PRESERVE_AI_SEARCH = preserveAiSearch;
     maintenanceBaseline = { active: activeWorkerBaseline, capabilities: current };
   }
 
   // All predictable cross-product drift must fail before the first remote mutation.
   const activeProvisioners = provisioners.filter((name) =>
-    name !== "provision-ai-search" || env.ELIOTR_MAINTENANCE_PRESERVE_AI_SEARCH !== "absent");
+    (name !== "provision-ai-search" || env.ELIOTR_MAINTENANCE_PRESERVE_AI_SEARCH !== "absent") &&
+    (name !== "provision-ai-gateways" || maintenanceAiGateways === null));
   for (const name of activeProvisioners) execute("node", [`scripts/${name}.mjs`, "--check-only"], root, provisionerEnv(name));
   // Preserve prior evidence but never leave an old PASS at the current receipt path after a failure.
   await archive();
@@ -271,6 +297,7 @@ export async function deployCloudflare({ confirmLive = false, environment = proc
   const configPath = resolve(core, deployConfig);
   const bytes = await read(configPath);
   const config = validateGeneratedDeployment(bytes, env, input);
+  if (maintenanceAiGateways !== null) assertMaintenanceAiGatewayTargets(maintenanceAiGateways, config);
   verifyGeneratedSemanticConfiguration(config, env);
   const digest = createHash("sha256").update(bytes).digest("hex");
   const generatedConfigPin = await pinGeneratedConfig({ root, path: configPath });
@@ -338,6 +365,11 @@ export async function deployCloudflare({ confirmLive = false, environment = proc
       assertMaintenanceCapabilityProfile({ candidate: candidateCapabilityProfile,
         observed: currentCapabilities.capabilities, generatedConfig: config, activeWorkerIdentity: currentIdentity,
         routeUpdate, routeUpdatePhase: "before" });
+      if (maintenanceAiGateways !== null) await recordMaintenanceAiGatewayReadback({
+        profile: maintenanceAiGateways, readbacks: maintenanceAiGatewayReadbacks, stage: "before_upload",
+        result: await checkAiGateways({ profile: maintenanceAiGateways, env, input,
+          activeWorkerIdentity: currentIdentity }),
+      });
     }
     await requireUnchangedInputs();
   }
@@ -373,6 +405,12 @@ export async function deployCloudflare({ confirmLive = false, environment = proc
     if (candidateCapabilities.generation !== env.ELIOTR_DEPLOYMENT_GENERATION) {
       throw new Error("Maintenance capability readback does not match candidate generation before authority synchronization");
     }
+    if (maintenanceAiGateways !== null) await recordMaintenanceAiGatewayReadback({
+      profile: maintenanceAiGateways, readbacks: maintenanceAiGatewayReadbacks,
+      stage: "after_upload_before_authority_sync",
+      result: await checkAiGateways({ profile: maintenanceAiGateways, env, input,
+        activeWorkerIdentity: uploadedIdentity }),
+    });
   }
   await requireUnchangedInputs();
   const coreDatabase = config.d1_databases.find((database) => database.binding === "CORE_DB");
@@ -396,6 +434,12 @@ export async function deployCloudflare({ confirmLive = false, environment = proc
       postSyncWorker.deployment_id !== worker.deployment_id || postSyncWorker.version_id !== worker.version_id) {
     throw new Error("Active Worker deployment changed after authority synchronization");
   }
+  if (maintenanceAiGateways !== null) await recordMaintenanceAiGatewayReadback({
+    profile: maintenanceAiGateways, readbacks: maintenanceAiGatewayReadbacks,
+    stage: "after_authority_sync",
+    result: await checkAiGateways({ profile: maintenanceAiGateways, env, input,
+      activeWorkerIdentity: postSyncIdentity }),
+  });
   if (purpose === MAINTENANCE_PURPOSE) {
     const finalCapabilities = await readCapabilities({ input, fetchImpl: ownerFetch });
     if (routeUpdate !== null) await requireUnchangedMaintenanceRouteUpdate({ routeUpdate });
@@ -434,6 +478,17 @@ export async function deployCloudflare({ confirmLive = false, environment = proc
       removed_route_count: 0,
       service_principal_allowlist: "EMPTY_PRESERVED",
     } }),
+    ...(maintenanceAiGateways === null ? {} : { maintenance_ai_gateways: {
+      protocol: maintenanceAiGateways.protocol,
+      profile_sha256: maintenanceAiGateways.profile_sha256,
+      gateways: {
+        reasoning: { id: "eliotr-reasoning", presence: "PRESENT", settings: maintenanceAiGateways.gateways.reasoning },
+        retrieval: maintenanceAiGateways.gateways.retrieval === null
+          ? { id: "eliotr-retrieval", presence: "ABSENT" }
+          : { id: "eliotr-retrieval", presence: "PRESENT", settings: maintenanceAiGateways.gateways.retrieval },
+      },
+      readbacks: maintenanceAiGatewayReadbacks,
+    } }),
     live_conformance: {
       d1_write_readback: "NOT_EXECUTED", r2_immutable_put_readback: "NOT_EXECUTED",
       queue_duplicate_delivery: "NOT_EXECUTED", durable_object_hibernation: "NOT_EXECUTED",
@@ -442,7 +497,7 @@ export async function deployCloudflare({ confirmLive = false, environment = proc
     },
     note: (purpose === MAINTENANCE_PURPOSE
       ? buildMaintenanceNote(fullReleaseBlockers, sourceBudgetState, sourceBudgetFindings, migrationReadback,
-        schemaGenerationReadback, routeUpdate)
+        schemaGenerationReadback, routeUpdate, maintenanceAiGateways)
       : "Active version, configured resource bindings and migration names are verified. ETag and local migration hashes are not remote content proof; asset body hashes are observed only with authenticated readback and stable active-version observations. Product/T4/T6 gates remain separate. HTTP generation is verified only when authenticated smoke passes.") +
       ` Build input manifest captured before gates: ${testedInputs.sha256}; prepared Worker artifact: ${workerBundle.sha256}. ` +
       "Source membership/bytes, generated config, metafile inputs and emitted files were rechecked immediately before upload; the prepared entrypoint was deployed with --no-bundle. " +
@@ -472,7 +527,7 @@ if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.m
 }
 
 function buildMaintenanceNote(blockers, sourceBudgetState, sourceBudgetFindings, migrationReadback,
-  schemaGenerationReadback, routeUpdate) {
+  schemaGenerationReadback, routeUpdate, maintenanceAiGateways) {
   const items = Array.isArray(blockers) ? blockers : [];
   const blockerText = items.length === 0 ? "No known full-release blockers were reported" :
     `Full-release blockers (${items.length}): ${items.join("; ")}`;
@@ -481,13 +536,38 @@ function buildMaintenanceNote(blockers, sourceBudgetState, sourceBudgetFindings,
   const routeState = routeUpdate === null
     ? "Authenticated candidate capability profile matched the active Worker before upload and after synchronization. "
     : "Authenticated readback matched the pinned baseline routes before upload and the exact candidate routes after upload; all non-route capability fields remained unchanged. ";
+  const aiGatewayState = maintenanceAiGateways === null ? "" :
+    `Existing AI Gateway inventory and settings were pinned by managed OAuth GET-only readback and rechecked before upload, after upload, and after authority synchronization; reasoning remained present and retrieval remained ${maintenanceAiGateways.gateways.retrieval === null ? "absent" : "present"}. No AI Gateway resource was created or edited. `;
   return `Worker/assets maintenance deployment only; this receipt does not qualify a full release. ${blockerText}. ` +
     `Source-maintainability budget gate: ${sourceBudgetState ?? "NOT_EXECUTED"}. ` +
     `${sourceBudgetFindings === null ? "No source-budget failure output was observed. " : `Source-budget findings: ${sourceBudgetFindings}. `}` +
     `D1 migrations were not applied; exact existing migration ledger readback: ${ledgerState}; ` +
     `required Core/Search schema generation readback: ${schemaState}. ` +
-    routeState +
+    routeState + aiGatewayState +
     "ETag and local migration hashes are not remote content proof; product and workload gates remain separate.";
+}
+
+function assertMaintenanceAiGatewayTargets(profile, config) {
+  if (profile?.protocol !== "eliotr.maintenance-ai-gateway-profile.v1" ||
+      typeof profile.targets?.reasoning_url !== "string" || typeof profile.targets?.retrieval_url !== "string" ||
+      config?.vars?.AI_GATEWAY_REASONING_URL !== profile.targets.reasoning_url ||
+      config?.vars?.AI_GATEWAY_RETRIEVAL_URL !== profile.targets.retrieval_url) {
+    throw new Error("Generated deployment AI Gateway URLs do not match the pinned maintenance profile");
+  }
+}
+
+async function recordMaintenanceAiGatewayReadback({ profile, readbacks, stage, result } = {}) {
+  const expectedRetrieval = profile?.gateways?.retrieval === null ? "ABSENT" : "PRESENT";
+  const presence = result?.gateway_presence;
+  if (result?.state !== "PASS" || result.protocol !== profile?.protocol ||
+      result.profile_sha256 !== profile?.profile_sha256 || presence === null || typeof presence !== "object" ||
+      Array.isArray(presence) || Object.keys(presence).length !== 2 ||
+      presence.reasoning !== "PRESENT" || presence.retrieval !== expectedRetrieval ||
+      !["before_upload", "after_upload_before_authority_sync", "after_authority_sync"].includes(stage)) {
+    throw new Error("Maintenance AI Gateway readback does not match the pinned profile");
+  }
+  readbacks[stage] = Object.freeze({ state: "PASS", profile_sha256: profile.profile_sha256,
+    gateway_presence: Object.freeze({ reasoning: presence.reasoning, retrieval: presence.retrieval }) });
 }
 
 function canonicalJson(value) {

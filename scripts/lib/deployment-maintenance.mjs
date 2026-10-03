@@ -107,6 +107,14 @@ export async function readActiveDeploymentIdentity({ env, input, fetchImpl = fet
   const accessServicePrincipals = accessServicePrincipalBindings.length === 1 &&
     accessServicePrincipalBindings[0].type === "plain_text" &&
     typeof accessServicePrincipalBindings[0].text === "string" ? accessServicePrincipalBindings[0].text : null;
+  const reasoningGatewayBindings = bindings.filter((binding) => binding.name === "AI_GATEWAY_REASONING_URL");
+  const retrievalGatewayBindings = bindings.filter((binding) => binding.name === "AI_GATEWAY_RETRIEVAL_URL");
+  const aiGatewayUrls = Object.freeze({
+    reasoning: reasoningGatewayBindings.length === 1 && reasoningGatewayBindings[0].type === "plain_text" &&
+      typeof reasoningGatewayBindings[0].text === "string" ? reasoningGatewayBindings[0].text : null,
+    retrieval: retrievalGatewayBindings.length === 1 && retrievalGatewayBindings[0].type === "plain_text" &&
+      typeof retrievalGatewayBindings[0].text === "string" ? retrievalGatewayBindings[0].text : null,
+  });
   const federationPrincipalRef = principalBindings.length === 0 ? null :
     principalBindings.length === 1 && principalBindings[0].type === "plain_text" && bounded(principalBindings[0].text)
       ? principalBindings[0].text : undefined;
@@ -126,6 +134,7 @@ export async function readActiveDeploymentIdentity({ env, input, fetchImpl = fet
     generation, federation_principal_ref: federationPrincipalRef, federation_cursor_key_bound: federationCursorKeyBound,
     access_service_principals: accessServicePrincipals,
     google_external_transport: googleTransport,
+    ai_gateway_urls: aiGatewayUrls,
     ai_search_bound: bindings.some((binding) => binding.name === "AI_SEARCH" ||
       ["ai_search_namespace", "ai_search"].includes(binding.type)),
     traffic_percentage: 100 });

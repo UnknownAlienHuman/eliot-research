@@ -230,6 +230,27 @@ await check("active Worker service-principal readback preserves only exact plain
   assert.equal((await read({ name: "ACCESS_SERVICE_PRINCIPALS", type: "json", text: "" }))
     .access_service_principals, null);
 });
+await check("active Worker gateway URLs preserve only unique exact plain-text bindings", async () => {
+  const reasoning = "https://gateway.ai.cloudflare.com/v1/fixture-account/eliotr-reasoning";
+  const retrieval = "https://gateway.ai.cloudflare.com/v1/fixture-account/eliotr-retrieval";
+  const read = (bindings) => readActiveDeploymentIdentity({ env, input, readJson: workerReadback((data) => {
+    data[2].result.resources.bindings.push(...bindings);
+  }) });
+  assert.deepEqual((await read([
+    { name: "AI_GATEWAY_REASONING_URL", type: "plain_text", text: reasoning },
+    { name: "AI_GATEWAY_RETRIEVAL_URL", type: "plain_text", text: retrieval },
+  ])).ai_gateway_urls, { reasoning, retrieval });
+  assert.deepEqual((await read([])).ai_gateway_urls, { reasoning: null, retrieval: null });
+  assert.deepEqual((await read([
+    { name: "AI_GATEWAY_REASONING_URL", type: "json", text: reasoning },
+    { name: "AI_GATEWAY_RETRIEVAL_URL", type: "plain_text", text: retrieval },
+  ])).ai_gateway_urls, { reasoning: null, retrieval });
+  await assert.rejects(read([
+    { name: "AI_GATEWAY_REASONING_URL", type: "plain_text", text: reasoning },
+    { name: "AI_GATEWAY_REASONING_URL", type: "plain_text", text: reasoning },
+    { name: "AI_GATEWAY_RETRIEVAL_URL", type: "plain_text", text: retrieval },
+  ]));
+});
 await check("active Worker readback detects AI Search handles under any binding name", async () => {
   for (const binding of [{ name: "AI_SEARCH", type: "ai_search_namespace" },
     { name: "CUSTOM_SEARCH", type: "ai_search_namespace" }, { name: "CUSTOM_SEARCH", type: "ai_search" }]) {

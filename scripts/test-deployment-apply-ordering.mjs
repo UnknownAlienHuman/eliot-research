@@ -146,7 +146,10 @@ for (const key of Object.keys(unknownUsageSnapshot.metrics)) {
 }
 process.env.ELIOTR_TEST_SPAWN_SNAPSHOT_JSON = JSON.stringify(unknownUsageSnapshot);
 const config = { name: "eliotr-core", minify: true, preview_urls: false, compatibility_date: "2026-08-28",
-  vars: { DEPLOYMENT_GENERATION: "git-test", ENVIRONMENT: "staging", ACCESS_TEAM_DOMAIN: "https://team-example.cloudflareaccess.com",
+  vars: { DEPLOYMENT_GENERATION: "git-test", ENVIRONMENT: "staging",
+    AI_GATEWAY_REASONING_URL: "https://gateway.ai.cloudflare.com/v1/test-account/eliotr-reasoning",
+    AI_GATEWAY_RETRIEVAL_URL: "https://gateway.ai.cloudflare.com/v1/test-account/eliotr-retrieval",
+    ACCESS_TEAM_DOMAIN: "https://team-example.cloudflareaccess.com",
     ACCESS_AUDIENCE: "test-aud", ACCESS_SERVICE_PRINCIPALS: "", GOOGLE_EXTERNAL_TRANSPORT: "gemini-mcp", ...runtimeConfigVars },
   d1_databases: [
     { binding: "CORE_DB", database_name: "eliotr-core", database_id: "11111111-1111-4111-8111-111111111111", migrations_dir: "../../infra/d1/core/migrations" },
@@ -578,6 +581,134 @@ await check("maintenance deploy records blockers and budget findings without cla
   assert.ok(receipt.note.includes("D1 migrations were not applied"));
   assert.ok(logs.some((message) => message.includes("Source budgets: FAIL (17 violations)")));
   assert.equal(test.receipts.length, 1);
+});
+
+await check("live maintenance can pin and preserve existing AI Gateway inventory through all deployment stages", async () => {
+  const sequence = [];
+  const profile = Object.freeze({ state: "PINNED", protocol: "eliotr.maintenance-ai-gateway-profile.v1",
+    profile_sha256: "c".repeat(64),
+    targets: Object.freeze({ reasoning_url: config.vars.AI_GATEWAY_REASONING_URL,
+      retrieval_url: config.vars.AI_GATEWAY_RETRIEVAL_URL }),
+    gateways: Object.freeze({ reasoning: Object.freeze({ id: "eliotr-reasoning", authentication: true,
+      cache_invalidate_on_update: false, cache_ttl: 0, collect_logs: false,
+      rate_limiting_interval: 0, rate_limiting_limit: 0 }), retrieval: null }) });
+  let readbackCount = 0;
+  const gatewayEnvironment = { ...environment, ELIOTR_MAINTENANCE_PRESERVE_AI_GATEWAYS: "existing",
+    ELIOTR_CLOUDFLARE_AUTH_MODE: "wrangler-oauth", ELIOTR_CLOUDFLARE_MCP_CWD: "C:\\Development\\Cloudflare" };
+  const test = harness({ options: { purpose: "MAINTENANCE", environment: gatewayEnvironment,
+    readWranglerFile: async () => 'oauth_token = "fixture-oauth"\nexpiration_time = 4102444800\n',
+    runWranglerWhoami: async () => "Account test-account via browser OAuth",
+    captureAiGateways: async ({ env, input, activeWorkerIdentity, candidate, observed }) => {
+      sequence.push("capture");
+      assert.equal(env.ELIOTR_MAINTENANCE_PRESERVE_AI_GATEWAYS, "existing");
+      assert.equal(input.origin, "https://research.example.com");
+      assert.deepEqual(activeWorkerIdentity.ai_gateway_urls, {
+        reasoning: config.vars.AI_GATEWAY_REASONING_URL, retrieval: config.vars.AI_GATEWAY_RETRIEVAL_URL,
+      });
+      assert.ok(candidate.disabled_slices.includes("RETRIEVAL"));
+      assert.ok(observed.disabled_slices.includes("RETRIEVAL"));
+      return profile;
+    },
+    checkAiGateways: async ({ profile: pinned, activeWorkerIdentity }) => {
+      readbackCount += 1;
+      sequence.push(`gateway-readback-${readbackCount}`);
+      assert.equal(pinned, profile);
+      assert.deepEqual(activeWorkerIdentity.ai_gateway_urls, {
+        reasoning: profile.targets.reasoning_url, retrieval: profile.targets.retrieval_url,
+      });
+      return Object.freeze({ state: "PASS", protocol: profile.protocol, profile_sha256: profile.profile_sha256,
+        gateway_presence: Object.freeze({ reasoning: "PRESENT", retrieval: "ABSENT" }) });
+    } } });
+  const execute = test.options.execute;
+  test.options.execute = (command, args, cwd, env) => {
+    const name = `${command} ${args.join(" ")}`;
+    if (args[0]?.startsWith("scripts/provision-") && args.includes("--check-only")) sequence.push("provisioner-check");
+    if (name === deployCommand) sequence.push("upload");
+    return execute(command, args, cwd, env);
+  };
+  const fetch = test.options.fetchImpl;
+  test.options.fetchImpl = (url, init) => {
+    if (init?.method === "POST" && Array.isArray(JSON.parse(init.body)?.batch)) sequence.push("authority-sync");
+    return fetch(url, init);
+  };
+
+  const receipt = await deployCloudflare(test.options);
+  assert.equal(readbackCount, 3);
+  assert.ok(sequence.indexOf("capture") < sequence.indexOf("provisioner-check"));
+  assert.ok(sequence.indexOf("gateway-readback-1") < sequence.indexOf("upload"));
+  assert.ok(sequence.indexOf("upload") < sequence.indexOf("gateway-readback-2"));
+  assert.ok(sequence.indexOf("gateway-readback-2") < sequence.indexOf("authority-sync"));
+  assert.ok(sequence.indexOf("authority-sync") < sequence.indexOf("gateway-readback-3"));
+  assert.ok(!test.calls.some((call) => call.startsWith("node scripts/provision-ai-gateways.mjs")));
+  assert.deepEqual(test.calls.filter((call) => call.endsWith("--check-only")), [
+    "node scripts/provision-cloudflare-access.mjs --check-only",
+    "node scripts/provision-cloudflare-core.mjs --check-only",
+  ]);
+  assert.deepEqual(receipt.maintenance_ai_gateways.gateways, {
+    reasoning: { id: "eliotr-reasoning", presence: "PRESENT", settings: profile.gateways.reasoning },
+    retrieval: { id: "eliotr-retrieval", presence: "ABSENT" },
+  });
+  assert.deepEqual(receipt.maintenance_ai_gateways.readbacks, {
+    before_upload: { state: "PASS", profile_sha256: profile.profile_sha256,
+      gateway_presence: { reasoning: "PRESENT", retrieval: "ABSENT" } },
+    after_upload_before_authority_sync: { state: "PASS", profile_sha256: profile.profile_sha256,
+      gateway_presence: { reasoning: "PRESENT", retrieval: "ABSENT" } },
+    after_authority_sync: { state: "PASS", profile_sha256: profile.profile_sha256,
+      gateway_presence: { reasoning: "PRESENT", retrieval: "ABSENT" } },
+  });
+  assert.match(receipt.note, /does not qualify a full release/u);
+  assert.match(receipt.note, /retrieval remained absent/u);
+  assert.equal(test.authorityBatches(), 2);
+  assert.equal(test.receipts.length, 1);
+});
+
+await check("gateway preservation opt-in rejects dry-run and full-release requests before gates", async () => {
+  const gatewayEnvironment = { ...environment, ELIOTR_MAINTENANCE_PRESERVE_AI_GATEWAYS: "existing",
+    ELIOTR_CLOUDFLARE_AUTH_MODE: "wrangler-oauth", ELIOTR_CLOUDFLARE_MCP_CWD: "C:\\Development\\Cloudflare" };
+  for (const options of [
+    { purpose: "MAINTENANCE", confirmLive: false },
+    { purpose: "FULL_RELEASE", confirmLive: true },
+  ]) {
+    const test = harness({ options: { ...options, environment: gatewayEnvironment } });
+    await assert.rejects(deployCloudflare(test.options), /AI Gateway preservation requires confirmed live maintenance/u);
+    assert.deepEqual(test.calls, []);
+    assert.deepEqual(test.buildEvents(), []);
+  }
+});
+
+await check("gateway baseline failure and fresh readback drift fail closed around upload and authority", async () => {
+  const gatewayEnvironment = { ...environment, ELIOTR_MAINTENANCE_PRESERVE_AI_GATEWAYS: "existing",
+    ELIOTR_CLOUDFLARE_AUTH_MODE: "wrangler-oauth", ELIOTR_CLOUDFLARE_MCP_CWD: "C:\\Development\\Cloudflare" };
+  const profile = { state: "PINNED", protocol: "eliotr.maintenance-ai-gateway-profile.v1",
+    profile_sha256: "d".repeat(64), targets: { reasoning_url: config.vars.AI_GATEWAY_REASONING_URL,
+      retrieval_url: config.vars.AI_GATEWAY_RETRIEVAL_URL },
+    gateways: { reasoning: { id: "eliotr-reasoning", authentication: true, cache_invalidate_on_update: false,
+      cache_ttl: 0, collect_logs: false, rate_limiting_interval: 0, rate_limiting_limit: 0 }, retrieval: null } };
+  const base = { purpose: "MAINTENANCE", environment: gatewayEnvironment,
+    readWranglerFile: async () => 'oauth_token = "fixture-oauth"\nexpiration_time = 4102444800\n',
+    runWranglerWhoami: async () => "Account test-account via browser OAuth" };
+  const baselineFailure = harness({ options: { ...base, captureAiGateways: async () => {
+    throw new Error("fixture AI Gateway baseline readback failed");
+  } } });
+  await assert.rejects(deployCloudflare(baselineFailure.options), /fixture AI Gateway baseline readback failed/u);
+  assert.ok(!baselineFailure.calls.some((call) => call.endsWith("--check-only")));
+  assert.ok(!baselineFailure.calls.includes(deployCommand));
+  assert.equal(baselineFailure.receipts.length, 0);
+
+  for (const failureReadback of [1, 2]) {
+    let readbackCount = 0;
+    const drift = harness({ options: { ...base, captureAiGateways: async () => profile,
+      checkAiGateways: async () => {
+        readbackCount += 1;
+        return { state: failureReadback === readbackCount ? "FAIL" : "PASS", protocol: profile.protocol,
+          profile_sha256: profile.profile_sha256,
+          gateway_presence: { reasoning: "PRESENT", retrieval: "ABSENT" } };
+      } } });
+    await assert.rejects(deployCloudflare(drift.options), /Maintenance AI Gateway readback/u);
+    assert.equal(drift.calls.filter((call) => call === deployCommand).length, failureReadback === 1 ? 0 : 1);
+    assert.equal(drift.authorityBatches(), 0);
+    assert.equal(drift.receipts.length, 0);
+  }
 });
 
 await check("capability expansion after upload is refused before deployment-authority synchronization", async () => {

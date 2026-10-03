@@ -4,7 +4,8 @@
 // exports, or persists an OAuth credential. It starts a volatile app-server
 // tool context in an explicitly supplied local project directory and permits
 // only the fixed account/Access requests and existing eliotr-core identity reads
-// used by the Access provisioner.
+// used by the Access provisioner. An explicitly selected AI Gateway readback
+// mode is separately restricted to the complete account gateway inventory GET.
 
 import { spawn as nodeSpawn, spawnSync } from "node:child_process";
 import { isAbsolute } from "node:path";
@@ -17,6 +18,7 @@ const SERVER_URL = "https://mcp.cloudflare.com/mcp";
 const DEFAULT_TIMEOUT_MS = 30_000;
 const MAX_LINE_BYTES = 512 * 1024;
 const MAX_ACCESS_LIST_PAGES = 100;
+const MAX_AI_GATEWAY_LIST_PAGES = 100;
 
 export class CloudflareMcpOAuthError extends Error {
   constructor(code, message) {
@@ -79,18 +81,64 @@ function accessListDescriptor(path, accountSegment) {
   return { base, page: policy[2] === undefined ? 1 : Number(policy[2]) };
 }
 
+function aiGatewayListDescriptor(path, accountSegment) {
+  const base = `/accounts/${accountSegment}/ai-gateway/gateways`;
+  if (path === `${base}?per_page=100`) return { base, page: 1 };
+  const page = path.match(new RegExp(`^${base}\\?page=([1-9][0-9]{0,2})&per_page=100$`, "u"));
+  if (page === null) return null;
+  const number = Number(page[1]);
+  return number >= 2 && number <= MAX_AI_GATEWAY_LIST_PAGES ? { base, page: number } : null;
+}
+
+function validateAiGatewayPage(info, listed, descriptor) {
+  const keys = ["page", "per_page", "count", "total_count", "total_pages"];
+  if (info === null || typeof info !== "object" || Array.isArray(info) ||
+      Object.keys(info).some((key) => !keys.includes(key)) ||
+      !Number.isSafeInteger(info.page) || !Number.isSafeInteger(info.per_page) ||
+      !Number.isSafeInteger(info.count) || !Number.isSafeInteger(info.total_count) ||
+      (Object.hasOwn(info, "total_pages") && !Number.isSafeInteger(info.total_pages)) ||
+      !Array.isArray(listed) || info.page !== descriptor.page || info.per_page !== 100 ||
+      info.count !== listed.length || info.count < 0 || info.count > info.per_page ||
+      info.total_count < info.count || info.total_count < 0) {
+    fail("MCP_PROTOCOL_INVALID", "Cloudflare AI Gateway inventory pagination is malformed");
+  }
+  const totalPages = Math.ceil(info.total_count / info.per_page);
+  const hasTotalPages = Object.hasOwn(info, "total_pages");
+  if (totalPages > MAX_AI_GATEWAY_LIST_PAGES ||
+      (hasTotalPages && (info.total_pages !== totalPages || info.total_pages < 0)) ||
+      (totalPages === 0 && (info.page !== 1 || listed.length !== 0)) ||
+      (totalPages > 0 && info.page > totalPages) ||
+      (totalPages > 0 && info.page < totalPages && info.count !== info.per_page) ||
+      (totalPages > 0 && info.page === totalPages && info.count === 0)) {
+    fail("MCP_PROTOCOL_INVALID", "Cloudflare AI Gateway inventory pagination is incomplete");
+  }
+  for (const item of listed) {
+    if (item === null || typeof item !== "object" || Array.isArray(item) ||
+        typeof item.id !== "string" || !/^[a-z0-9][a-z0-9_-]{0,127}$/u.test(item.id)) {
+      fail("MCP_PROTOCOL_INVALID", "Cloudflare AI Gateway inventory contains an invalid gateway identity");
+    }
+  }
+  return { totalPages, hasTotalPages };
+}
+
 function isWorkerIdentityPath(path, accountSegment) {
   const scripts = `/accounts/${accountSegment}/workers/scripts`;
   return path === scripts || path === `${scripts}/eliotr-core/deployments` ||
     new RegExp(`^${scripts}/eliotr-core/versions/[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$`, "u").test(path);
 }
 
-function checkKnownRequest(accountId, method, path, body) {
+function checkKnownRequest(accountId, method, path, body, resourceReadback) {
   if (typeof method !== "string" || (method !== "GET" && method !== "POST") ||
       typeof path !== "string" || path.length > 512 || !path.startsWith("/accounts/")) {
     fail("MCP_REQUEST_INVALID", "Cloudflare MCP request is outside the fixed Access transport");
   }
   const accountSegment = encodeURIComponent(accountId);
+  if (resourceReadback === "ai-gateways") {
+    if (method !== "GET" || aiGatewayListDescriptor(path, accountSegment) === null || body !== undefined) {
+      fail("MCP_REQUEST_INVALID", "Cloudflare MCP request is outside the fixed AI Gateway readback");
+    }
+    return;
+  }
   const accountPath = `/accounts/${accountSegment}`;
   const appPath = `${accountPath}/access/apps`;
   if (method === "GET" && isWorkerIdentityPath(path, accountSegment)) {
@@ -221,6 +269,10 @@ export function createCloudflareMcpTransport(options = {}) {
   const cwd = checkCwd(options.cwd);
   const accountId = checkAccountId(options.accountId);
   const timeoutMs = checkTimeout(options.timeoutMs);
+  const resourceReadback = options.resourceReadback;
+  if (resourceReadback !== undefined && resourceReadback !== "ai-gateways") {
+    fail("MCP_RESOURCE_SCOPE_INVALID", "Cloudflare MCP resource readback scope is unsupported");
+  }
   const spawnProcess = options.spawnProcess ?? defaultSpawn;
   const runCli = options.runCli ?? defaultRunCli;
   const sourceEnv = options.env ?? process.env;
@@ -318,7 +370,7 @@ export function createCloudflareMcpTransport(options = {}) {
   }
 
   async function requestPage(method, path, body) {
-    checkKnownRequest(accountId, method, path, body);
+    checkKnownRequest(accountId, method, path, body, resourceReadback);
     const threadId = await ensureReady();
     const result = await rpc("mcpServer/tool/call", {
       threadId,
@@ -328,11 +380,16 @@ export function createCloudflareMcpTransport(options = {}) {
     });
     const envelope = cloudflareEnvelopeFrom(result);
     const workerIdentityRead = method === "GET" && isWorkerIdentityPath(path, encodeURIComponent(accountId));
+    const gatewayList = method === "GET" && resourceReadback === "ai-gateways"
+      ? aiGatewayListDescriptor(path, encodeURIComponent(accountId)) : null;
     if (!envelope.success || envelope.status < 200 || envelope.status >= 300 ||
-        (workerIdentityRead && (envelope.status !== 200 || (Array.isArray(envelope.errors) && envelope.errors.length > 0)))) {
+        (workerIdentityRead && (envelope.status !== 200 || (Array.isArray(envelope.errors) && envelope.errors.length > 0))) ||
+        (gatewayList !== null && (envelope.status !== 200 ||
+          (envelope.errors !== undefined && (!Array.isArray(envelope.errors) || envelope.errors.length > 0))))) {
       throw new CloudflareMcpOAuthError("MCP_REQUEST_FAILED", `${method} ${path} failed (${envelope.status})`);
     }
-    const list = method === "GET" ? accessListDescriptor(path, encodeURIComponent(accountId)) : null;
+    const list = method === "GET" && resourceReadback === undefined
+      ? accessListDescriptor(path, encodeURIComponent(accountId)) : null;
     if (list !== null) {
       const info = envelope.result_info;
       const listed = envelope.result;
@@ -352,17 +409,31 @@ export function createCloudflareMcpTransport(options = {}) {
             typeof item.id !== "string" || item.id.length === 0 || item.id.length > 256)) {
         throw new CloudflareMcpOAuthError("MCP_PROTOCOL_INVALID", "Cloudflare Access list pagination is incomplete");
       }
-      return { list, listed, info };
+      return { list, listed, info, totalPages: info.total_pages, hasTotalPages: true };
+    }
+    if (gatewayList !== null) {
+      const info = envelope.result_info;
+      const listed = envelope.result;
+      const pagination = validateAiGatewayPage(info, listed, gatewayList);
+      return { list: gatewayList, listed, info, ...pagination };
     }
     return envelope.result ?? envelope;
   }
 
   async function request(method, path, body) {
-    checkKnownRequest(accountId, method, path, body);
-    const list = method === "GET" ? accessListDescriptor(path, encodeURIComponent(accountId)) : null;
+    checkKnownRequest(accountId, method, path, body, resourceReadback);
+    const list = method === "GET" ? (resourceReadback === "ai-gateways"
+      ? aiGatewayListDescriptor(path, encodeURIComponent(accountId))
+      : accessListDescriptor(path, encodeURIComponent(accountId))) : null;
     if (list === null) return requestPage(method, path, body);
+    const gatewayList = resourceReadback === "ai-gateways";
+    if (gatewayList && list.page !== 1) {
+      fail("MCP_REQUEST_INVALID", "AI Gateway inventory reads must begin at page one");
+    }
     const all = [];
     let firstInfo;
+    let firstTotalPages;
+    let firstHasTotalPages;
     const ids = new Set();
     // Canonicalize the first policy read to the bounded page size too. A bare
     // policy URL otherwise uses Cloudflare's default page size, while follow-up
@@ -370,19 +441,23 @@ export function createCloudflareMcpTransport(options = {}) {
     let current = list.page === 1 ? `${list.base}?per_page=100` : path;
     for (let page = 1; page <= MAX_ACCESS_LIST_PAGES; page += 1) {
       const result = await requestPage("GET", current);
-      if (firstInfo === undefined) firstInfo = result.info;
+      if (firstInfo === undefined) {
+        firstInfo = result.info;
+        firstTotalPages = result.totalPages;
+        firstHasTotalPages = result.hasTotalPages;
+      }
       if (result.info.per_page !== firstInfo.per_page || result.info.total_count !== firstInfo.total_count ||
-          result.info.total_pages !== firstInfo.total_pages) {
-        throw new CloudflareMcpOAuthError("MCP_PROTOCOL_INVALID", "Cloudflare Access list pagination changed during read");
+          result.totalPages !== firstTotalPages || result.hasTotalPages !== firstHasTotalPages) {
+        throw new CloudflareMcpOAuthError("MCP_PROTOCOL_INVALID", `${gatewayList ? "Cloudflare AI Gateway" : "Cloudflare Access"} list pagination changed during read`);
       }
       for (const item of result.listed) {
         if (ids.has(item.id)) throw new CloudflareMcpOAuthError("MCP_PROTOCOL_INVALID", "Cloudflare Access list repeats an item");
         ids.add(item.id);
       }
       all.push(...result.listed);
-      if (result.info.total_pages === 0 || page === result.info.total_pages) {
+      if (result.totalPages === 0 || page === result.totalPages) {
         if (result.info.total_count !== all.length) {
-          throw new CloudflareMcpOAuthError("MCP_PROTOCOL_INVALID", "Cloudflare Access list pagination is incomplete");
+          throw new CloudflareMcpOAuthError("MCP_PROTOCOL_INVALID", `${gatewayList ? "Cloudflare AI Gateway" : "Cloudflare Access"} list pagination is incomplete`);
         }
         return all;
       }
@@ -392,6 +467,9 @@ export function createCloudflareMcpTransport(options = {}) {
   }
 
   async function verifyAccount() {
+    if (resourceReadback === "ai-gateways") {
+      fail("MCP_REQUEST_INVALID", "AI Gateway readback transport verifies scope through its exact account list path");
+    }
     const value = await request("GET", `/accounts/${encodeURIComponent(accountId)}`);
     const returned = value?.id ?? value?.account?.id;
     if (returned !== accountId) fail("MCP_ACCOUNT_MISMATCH", "Cloudflare MCP account readback does not match the requested account");

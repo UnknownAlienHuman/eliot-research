@@ -328,6 +328,25 @@ planned managed resource is namespace `eliotr`, instance `private-prose-g2`; it 
 `default` namespace. [Wrangler can create a missing namespace on deploy](https://developers.cloudflare.com/workers/wrangler/configuration/#ai-search-namespaces), so an absent disabled binding
 must not be uploaded accidentally.
 
+An existing AI Gateway configuration may differ from the canonical provisioning manifest or have
+one gateway absent. A confirmed live `MAINTENANCE` deployment may opt into exact preservation with
+`ELIOTR_MAINTENANCE_PRESERVE_AI_GATEWAYS=existing`. The deployer captures the complete account
+gateway inventory through the registered Cloudflare MCP connection using managed OAuth and GET-only
+requests. It requires one authenticated `eliotr-reasoning` gateway; `eliotr-retrieval` may be present
+or absent. Both account-scoped Worker URL bindings must match the captured target URLs, and
+`RETRIEVAL` must remain disabled in both source and authenticated capability profiles. The captured
+presence and the seven normalized settings tracked in `infra/cloudflare/ai-gateways.json` per
+existing gateway are pinned, then freshly read and compared before upload, after upload before
+deployment-authority synchronization, and after that synchronization. The generated Worker
+configuration must retain the exact pinned URLs. This narrow exception skips only AI Gateway
+provisioning and does not create, edit, or delete a gateway, enable
+retrieval, change Access, or apply migrations. It preserves an absent retrieval gateway as absent;
+it does not make the canonical full release configuration pass or qualify Research/model operations.
+This comparison covers the manifest's `id`, authentication, cache, logging, and rate-limit fields;
+untracked API fields such as `byok_only` are outside its preservation proof.
+Without this explicit opt-in, normal AI Gateway `--check-only` and `--verify-existing` behavior is
+unchanged.
+
 Maintenance normally requires the exact active route surface to remain unchanged. A product update
 that intentionally changes routes may opt into one pinned route update by setting
 `ELIOTR_MAINTENANCE_ROUTE_UPDATE_FILE` to an ignored intent file under `.eliotr-state/`. This opt-in
