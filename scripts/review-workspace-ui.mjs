@@ -5,12 +5,13 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import process from "node:process";
 import { fileURLToPath, URL } from "node:url";
+import ts from "typescript";
 
 // Uses the existing controlled-HTTP runner unchanged on disk. Its legacy screen
 // canary expects offline input erasure; this review verifies current retained-intent
 // behavior, plus layout, exact source bytes, disclosure controls and keyboard focus.
 // The document fixture is committed design documentation, never product demo data.
-function reviewCanary({fixture,cdp,evaluate,wait,until,draftSectionText,evidenceText,evidenceSha,documentText,setReaderText}) {
+function reviewCanary({fixture,cdp,evaluate,wait,until,draftSectionText,evidenceText,evidenceSha,documentText,setReaderText,markdownFixture,markdownDOMAssertion}) {
   return (async () => {
     const dir=process.env.ELIOTR_SCREENSHOT_DIR;
     const nav='[data-nav-target="#research-card"]', query='#research-run textarea[name="query"]';
@@ -170,7 +171,7 @@ function reviewCanary({fixture,cdp,evaluate,wait,until,draftSectionText,evidence
       assert.equal(await evaluate('document.querySelector(".research-section-body").textContent'),draftSectionText);
       assert.equal(fixture.state.starts.length,1);await shot("saved-report-reopened-1440x900");
       await openSources("Safe Markdown test");
-      const unsafe='# Чтение\n\n<script>window.__readingInjected=true</script>\n\n[unsafe](javascript:alert(1)) [svg](data:image/svg+xml,evil) ![Картинка](https://example.invalid/image.png)\n\n**Русский текст** и `READY SHA-256 <img onerror=alert(1)>`\n\n| Заголовок | Значение |\n| --- | --- |\n| READY | SHA-256 |';
+      const unsafe=markdownFixture;
       setReaderText(unsafe);await act("#library [data-source]");
       await wait('Boolean(document.querySelector("[data-document-formatted] table"))',"Safe semantic table");
       assert.equal(await evaluate('document.querySelector("[data-document-reader-body]").textContent'),unsafe);
@@ -178,6 +179,11 @@ function reviewCanary({fixture,cdp,evaluate,wait,until,draftSectionText,evidence
       assert.equal(await evaluate('Boolean(window.__readingInjected)'),false);
       assert.equal(await evaluate('[...document.querySelectorAll("[data-document-formatted] a")].some(a=>/^(javascript|data):/i.test(a.href))'),false);
       assert.ok((await evaluate('document.querySelector("[data-document-formatted]").textContent')).includes('READY SHA-256 <img onerror=alert(1)>'));
+      assert.equal(await evaluate(`(()=>{${markdownDOMAssertion};assertReadingMarkdownDOM(document.querySelector("[data-document-formatted]"));return true;})()`),true,"Tracked Markdown assertions pass against the real DOM and Worker");
+      const fidelityDownload=await evaluate('(async()=>{const create=URL.createObjectURL,activate=HTMLAnchorElement.prototype.click;let blob;URL.createObjectURL=value=>{blob=value;return create(value);};HTMLAnchorElement.prototype.click=()=>{};try{document.querySelector("[data-download-document]").click();return [...new Uint8Array(await blob.arrayBuffer())];}finally{URL.createObjectURL=create;HTMLAnchorElement.prototype.click=activate;}})()');
+      assert.deepEqual(fidelityDownload,[...Buffer.from(unsafe,"utf8")],"Markdown fidelity original bytes unchanged");
+      await shot("markdown-fidelity-1440x900");
+      console.log("Markdown real DOM and Worker PASS: inline code element/typography, ordered start=3, exact original download.");
       await act("[data-close-document]");setReaderText(documentText);
       await evaluate('document.querySelector("[data-theme-toggle]").click()');await cdp("Page.reload");
       await wait('document.documentElement.dataset.theme==="light"',"Theme persists");await evaluate('document.querySelector("[data-theme-toggle]").click()');
@@ -210,13 +216,24 @@ process.env.ELIOTR_UI_REVIEW_PHASE = phase;
 if (!process.argv.includes("--research-screen")) process.argv.push("--research-screen");
 const runner = new URL("./test-library-browser.mjs", import.meta.url);
 const document = await readFile(resolve(root, "docs/design/README.md"), "utf8");
+const markdownTestPath = resolve(root, "apps/eliotr-pwa/src/reading-markdown.test.ts");
+const markdownTests = await readFile(markdownTestPath, "utf8");
+const markdownAST = ts.createSourceFile(markdownTestPath, markdownTests, ts.ScriptTarget.Latest, true);
+const domAssertion = markdownAST.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === "assertReadingMarkdownDOM");
+const fixtureDeclaration = markdownAST.statements.filter(ts.isVariableStatement).flatMap(node => [...node.declarationList.declarations])
+  .find(node => node.name.getText(markdownAST) === "READING_MARKDOWN_DOM_FIXTURE");
+assert.ok(domAssertion && fixtureDeclaration?.initializer && ts.isStringLiteral(fixtureDeclaration.initializer), "Tracked Markdown browser assertions and fixture are present");
+const markdownDOMAssertion = ts.transpileModule(domAssertion.getText(markdownAST).replace(/^export\s+/u, ""), {
+  compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None },
+}).outputText;
+const markdownFixture = fixtureDeclaration.initializer.text;
 let source = await readFile(runner, "utf8");
 const replace = (from, to) => { assert.ok(source.includes(from), `Existing runner anchor changed: ${from.slice(0, 80)}`); source = source.replace(from, to); };
 replace('import { createResearchScreenFixture, runResearchScreenCanary } from "./lib/browser-research-screen-fixture.mjs";', 'import { createResearchScreenFixture } from "./lib/browser-research-screen-fixture.mjs";\nconst runResearchScreenCanary = ' + reviewCanary.toString() + ';');
 source = source.replaceAll(/from "(\.\/[^" ]+)"/gu, (_, relative) => `from "${new URL(relative, runner).href}"`);
 replace('const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");', `const root = ${JSON.stringify(root)};\nconst reviewDocument = ${JSON.stringify(document)};\nconst reviewReaderState={text:reviewDocument};`);
 replace('readFile, rm', 'readFile, writeFile, rm');
-replace('draftSectionText, evidenceText, evidenceSha });', 'draftSectionText, evidenceText, evidenceSha, documentText: reviewDocument, setReaderText:text=>{reviewReaderState.text=text;} });');
+replace('draftSectionText, evidenceText, evidenceSha });', `draftSectionText, evidenceText, evidenceSha, documentText: reviewDocument, setReaderText:text=>{reviewReaderState.text=text;}, markdownFixture:${JSON.stringify(markdownFixture)}, markdownDOMAssertion:${JSON.stringify(markdownDOMAssertion)} });`);
 const sectionAnchor = source.match(/const draftSectionText = [^\n]+\r?\n/u)?.[0];
 assert.ok(sectionAnchor, "Existing section fixture anchor changed");
 replace(sectionAnchor, `const draftSectionText = ${JSON.stringify(document.slice(0, 2200))};\n`);
