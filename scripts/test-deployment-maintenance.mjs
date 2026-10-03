@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { createHash, randomUUID } from "node:crypto";
+import { readFile, unlink, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { readCompositionCapabilityProfile } from "./check-launch-code.mjs";
@@ -7,6 +8,7 @@ import { assertMaintenanceCapabilityProfile, readActiveDeploymentIdentity,
   readAuthenticatedCapabilities, requireSameMaintenanceCapabilityReadback,
   selectDeploymentGoogleTransport, selectDeploymentAiSearchNamespaces,
   verifyDeploymentSchemaGenerations } from "./lib/deployment-maintenance.mjs";
+import { loadMaintenanceRouteUpdate } from "./lib/deployment-route-update.mjs";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const candidate = await readCompositionCapabilityProfile({ root });
@@ -93,6 +95,82 @@ await check("generation may change only while the complete capability profile st
     current: { ...current, generation: "git-unrelated" } }));
 });
 
+const updateRouteBefore = { method: "GET", path: "/api/v1/system/health", operation: "system.health",
+  auth: "owner", maximum_request_bytes: 0, response_mode: "json" };
+const updateRouteAfter = { ...updateRouteBefore, auth: "owner_or_service" };
+const updateRouteAdded = { method: "GET", path: "/api/v1/system/capabilities", operation: "system.capabilities",
+  auth: "owner", maximum_request_bytes: 0, response_mode: "json" };
+const updateBaselineRoutes = [updateRouteBefore];
+const updateCandidateRoutes = [updateRouteAfter, updateRouteAdded].sort((left, right) =>
+  `${left.method}\n${left.path}`.localeCompare(`${right.method}\n${right.path}`));
+const routeDigest = (routes) => createHash("sha256").update(JSON.stringify(routes)).digest("hex");
+const updateSourceHead = "0123456789abcdef0123456789abcdef01234567";
+const updateCandidateGeneration = `git-${updateSourceHead.slice(0, 12)}`;
+const updateDeploymentId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+const updateVersionId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+const updateIdentity = { worker_id: "eliotr-core", deployment_id: updateDeploymentId, version_id: updateVersionId,
+  generation, federation_principal_ref: null, federation_cursor_key_bound: false, ai_search_bound: false,
+  access_service_principals: "" };
+const updateIntent = {
+  protocol: "eliotr.maintenance-route-update.v1",
+  account_id: "fixture-account",
+  hostname: "fixture.example.com",
+  baseline: { deployment_id: updateDeploymentId, version_id: updateVersionId, generation,
+    routes_sha256: routeDigest(updateBaselineRoutes) },
+  candidate: { source_head: updateSourceHead, generation: updateCandidateGeneration,
+    routes_sha256: routeDigest(updateCandidateRoutes) },
+  baseline_routes: updateBaselineRoutes,
+  candidate_routes: updateCandidateRoutes,
+  added_routes: [updateRouteAdded],
+  changed_routes: [{ before: updateRouteBefore, after: updateRouteAfter }],
+  service_principals: "",
+};
+const updateIntentPath = resolve(root, ".eliotr-state", `deployment-route-update-fixture-${randomUUID()}.json`);
+await writeFile(updateIntentPath, `${JSON.stringify(updateIntent)}\n`, { flag: "wx" });
+try {
+  const routeUpdate = await loadMaintenanceRouteUpdate({ path: updateIntentPath, root,
+    sourceHead: updateSourceHead, candidateGeneration: updateCandidateGeneration,
+    accountId: "fixture-account", hostname: "fixture.example.com", activeWorkerIdentity: updateIdentity,
+    candidateRoutes: updateCandidateRoutes, observedRoutes: updateBaselineRoutes });
+  const candidateWithUpdate = { ...candidate, routes: updateCandidateRoutes };
+  const baselineWithUpdate = { ...observed, routes: updateBaselineRoutes };
+  const configWithEmptyPrincipals = { ...config, vars: { ...config.vars, ACCESS_SERVICE_PRINCIPALS: "" } };
+  const checkRouteProfile = (routes, phase, active = updateIdentity, generated = configWithEmptyPrincipals) =>
+    assertMaintenanceCapabilityProfile({ candidate: candidateWithUpdate,
+      observed: { ...observed, routes }, generatedConfig: generated,
+      activeWorkerIdentity: active, routeUpdate, routeUpdatePhase: phase });
+  await check("default maintenance still rejects route differences", () => {
+    assert.throws(() => compare(candidateWithUpdate, baselineWithUpdate), /route surface/u);
+  });
+  await check("pinned route update accepts exact before and after route snapshots", () => {
+    assert.equal(checkRouteProfile(updateBaselineRoutes, "before").profile, "pinned-route-update");
+    assert.equal(checkRouteProfile(updateCandidateRoutes, "after").intent_sha256, routeUpdate.intent_sha256);
+    const baseline = { generation, capabilities: baselineWithUpdate };
+    const current = { generation: updateCandidateGeneration,
+      capabilities: { ...observed, routes: updateCandidateRoutes,
+        deployment_generation: updateCandidateGeneration } };
+    assert.equal(requireSameMaintenanceCapabilityReadback({ baseline, current, routeUpdate }).profile,
+      "pinned-route-update");
+    assert.throws(() => checkRouteProfile([...updateCandidateRoutes, updateRouteAdded], "after"));
+  });
+  await check("pinned route update rejects service admission and non-route drift", () => {
+    assert.throws(() => checkRouteProfile(updateBaselineRoutes, "before",
+      { ...updateIdentity, access_service_principals: "agent.access" }), /service-principal allowlist/u);
+    assert.throws(() => checkRouteProfile(updateBaselineRoutes, "before", updateIdentity,
+      { ...configWithEmptyPrincipals, vars: { ...configWithEmptyPrincipals.vars,
+        ACCESS_SERVICE_PRINCIPALS: "agent.access" } }), /service-principal allowlist/u);
+    const baseline = { generation, capabilities: baselineWithUpdate };
+    const current = { generation: updateCandidateGeneration,
+      capabilities: { ...observed, routes: updateCandidateRoutes,
+        deployment_generation: updateCandidateGeneration,
+        orientation_max_sources: candidateWithUpdate.orientation_max_sources + 1 } };
+    assert.throws(() => requireSameMaintenanceCapabilityReadback({ baseline, current, routeUpdate }),
+      /profile changed/u);
+  });
+} finally {
+  await unlink(updateIntentPath);
+}
+
 async function alteredSource(path, change) {
   const target = resolve(root, path);
   const source = await readFile(target, "utf8");
@@ -141,6 +219,16 @@ await check("existing Worker readback pins one 100 percent version and generatio
   assert.equal(result.version_id, versionId);
   assert.equal(result.traffic_percentage, 100);
   assert.equal(result.ai_search_bound, false);
+  assert.equal(result.access_service_principals, null);
+});
+await check("active Worker service-principal readback preserves only exact plain-text values", async () => {
+  const read = (binding) => readActiveDeploymentIdentity({ env, input, readJson: workerReadback((data) => {
+    data[2].result.resources.bindings.push(binding);
+  }) });
+  assert.equal((await read({ name: "ACCESS_SERVICE_PRINCIPALS", type: "plain_text", text: "" }))
+    .access_service_principals, "");
+  assert.equal((await read({ name: "ACCESS_SERVICE_PRINCIPALS", type: "json", text: "" }))
+    .access_service_principals, null);
 });
 await check("active Worker readback detects AI Search handles under any binding name", async () => {
   for (const binding of [{ name: "AI_SEARCH", type: "ai_search_namespace" },

@@ -12,6 +12,7 @@ import { assertMaintenanceCapabilityProfile, readActiveDeploymentIdentity, readA
   readFullReleaseBlockers, requireSameMaintenanceCapabilityReadback,
   selectDeploymentGoogleTransport, selectDeploymentAiSearchNamespaces,
   verifyDeploymentSchemaGenerations } from "./lib/deployment-maintenance.mjs";
+import { loadMaintenanceRouteUpdate, requireUnchangedMaintenanceRouteUpdate } from "./lib/deployment-route-update.mjs";
 import { loadResearchRuntimeEnvironment, RESEARCH_RUNTIME_CONFIGURATION_KEYS,
   RESEARCH_RUNTIME_SEMANTIC_TRANSPORT_KEYS, semanticConfigurationTransport } from "./lib/research-runtime-config.mjs";
 import { synchronizeResearchDeploymentAuthority } from "./lib/research-deployment-authority.mjs";
@@ -95,6 +96,12 @@ export async function deployCloudflare({ confirmLive = false, environment = proc
   readAssetManifest = readDeploymentAssetManifest } = {}) {
   if (![FULL_RELEASE_PURPOSE, MAINTENANCE_PURPOSE].includes(purpose)) throw new Error("Deployment purpose is invalid");
   const env = await loadResearchRuntimeEnvironment(environment, root);
+  const maintenanceRouteUpdatePath = env.ELIOTR_MAINTENANCE_ROUTE_UPDATE_FILE;
+  if (maintenanceRouteUpdatePath !== undefined &&
+      (purpose !== MAINTENANCE_PURPOSE || !confirmLive || typeof maintenanceRouteUpdatePath !== "string" ||
+       maintenanceRouteUpdatePath.length === 0)) {
+    throw new Error("Pinned route updates require a confirmed live maintenance deployment and an intent file");
+  }
   const preserveGoogleTransport = env.ELIOTR_MAINTENANCE_PRESERVE_GOOGLE_TRANSPORT;
   if (preserveGoogleTransport !== undefined &&
       (purpose !== MAINTENANCE_PURPOSE || preserveGoogleTransport !== "disabled")) {
@@ -123,6 +130,7 @@ export async function deployCloudflare({ confirmLive = false, environment = proc
   let stagingTarget = null;
   let fullReleaseBlockers = null;
   let candidateCapabilityProfile = null;
+  let routeUpdate = null;
   let sourceBudgetState = null;
   let sourceBudgetFindings = null;
   if (confirmLive) {
@@ -184,6 +192,7 @@ export async function deployCloudflare({ confirmLive = false, environment = proc
     }
     exec("pnpm", ["--filter", "@eliotr/core", "typecheck"]);
     exec("pnpm", ["exec", "eslint", "scripts/deploy-cloudflare.mjs", "scripts/lib/deployment-maintenance.mjs",
+      "scripts/lib/deployment-route-update.mjs", "scripts/test-deployment-route-update.mjs",
       "scripts/lib/deployment-build-inputs.mjs",
       "scripts/check-launch-code.mjs"]);
     exec("pnpm", ["boundaries:check"]);
@@ -227,6 +236,13 @@ export async function deployCloudflare({ confirmLive = false, environment = proc
     if (current.generation !== activeWorkerBaseline.generation) {
       throw new Error("Maintenance capability generation is not pinned to the active Worker version");
     }
+    if (maintenanceRouteUpdatePath !== undefined) {
+      routeUpdate = await loadMaintenanceRouteUpdate({ path: maintenanceRouteUpdatePath, root,
+        sourceHead: testedInputs.git_head, candidateGeneration: env.ELIOTR_DEPLOYMENT_GENERATION,
+        accountId: env.CLOUDFLARE_ACCOUNT_ID, hostname: env.ELIOTR_ACCESS_HOSTNAME,
+        activeWorkerIdentity: activeWorkerBaseline, candidateRoutes: candidateCapabilityProfile.routes,
+        observedRoutes: current.capabilities.routes, read });
+    }
     const canonicalConfig = JSON.parse(await read(resolve(core, "wrangler.jsonc"), "utf8"));
     const transport = selectDeploymentGoogleTransport({ purpose, preserve: preserveGoogleTransport,
       canonicalTransport: readConfiguredTransport(canonicalConfig),
@@ -237,8 +253,10 @@ export async function deployCloudflare({ confirmLive = false, environment = proc
       activeWorkerIdentity: activeWorkerBaseline, candidate: candidateCapabilityProfile });
     const maintenanceConfig = { ...canonicalConfig, ai_search_namespaces: namespaces,
       vars: { ...canonicalConfig.vars, GOOGLE_EXTERNAL_TRANSPORT: transport } };
+    if (routeUpdate !== null) await requireUnchangedMaintenanceRouteUpdate({ routeUpdate });
     assertMaintenanceCapabilityProfile({ candidate: candidateCapabilityProfile,
-      observed: current.capabilities, generatedConfig: maintenanceConfig, activeWorkerIdentity: activeWorkerBaseline });
+      observed: current.capabilities, generatedConfig: maintenanceConfig, activeWorkerIdentity: activeWorkerBaseline,
+      routeUpdate, routeUpdatePhase: "before" });
     if (preserveAiSearch !== undefined) env.ELIOTR_MAINTENANCE_PRESERVE_AI_SEARCH = preserveAiSearch;
     maintenanceBaseline = { active: activeWorkerBaseline, capabilities: current };
   }
@@ -275,6 +293,7 @@ export async function deployCloudflare({ confirmLive = false, environment = proc
   };
   let workerBundle = null;
   const requireUnchangedInputs = async () => {
+    if (routeUpdate !== null) await requireUnchangedMaintenanceRouteUpdate({ routeUpdate });
     await requireUnchangedConfig();
     await checkBuildInputs({ root, manifest: testedInputs, generatedConfigPin });
     if (workerBundle !== null) await checkBundle({ root, manifest: testedInputs, attestation: workerBundle });
@@ -315,8 +334,10 @@ export async function deployCloudflare({ confirmLive = false, environment = proc
           canonicalJson(currentCapabilities.capabilities) !== canonicalJson(maintenanceBaseline.capabilities.capabilities)) {
         throw new Error("Active Worker capabilities changed during maintenance preflight");
       }
+      if (routeUpdate !== null) await requireUnchangedMaintenanceRouteUpdate({ routeUpdate });
       assertMaintenanceCapabilityProfile({ candidate: candidateCapabilityProfile,
-        observed: currentCapabilities.capabilities, generatedConfig: config, activeWorkerIdentity: currentIdentity });
+        observed: currentCapabilities.capabilities, generatedConfig: config, activeWorkerIdentity: currentIdentity,
+        routeUpdate, routeUpdatePhase: "before" });
     }
     await requireUnchangedInputs();
   }
@@ -343,9 +364,12 @@ export async function deployCloudflare({ confirmLive = false, environment = proc
   }
   if (purpose === MAINTENANCE_PURPOSE) {
     const candidateCapabilities = await readCapabilities({ input, fetchImpl: ownerFetch });
+    if (routeUpdate !== null) await requireUnchangedMaintenanceRouteUpdate({ routeUpdate });
     assertMaintenanceCapabilityProfile({ candidate: candidateCapabilityProfile,
-      observed: candidateCapabilities.capabilities, generatedConfig: config, activeWorkerIdentity: uploadedIdentity });
-    requireSameMaintenanceCapabilityReadback({ baseline: maintenanceBaseline.capabilities, current: candidateCapabilities });
+      observed: candidateCapabilities.capabilities, generatedConfig: config, activeWorkerIdentity: uploadedIdentity,
+      routeUpdate, routeUpdatePhase: "after" });
+    requireSameMaintenanceCapabilityReadback({ baseline: maintenanceBaseline.capabilities,
+      current: candidateCapabilities, routeUpdate });
     if (candidateCapabilities.generation !== env.ELIOTR_DEPLOYMENT_GENERATION) {
       throw new Error("Maintenance capability readback does not match candidate generation before authority synchronization");
     }
@@ -374,9 +398,12 @@ export async function deployCloudflare({ confirmLive = false, environment = proc
   }
   if (purpose === MAINTENANCE_PURPOSE) {
     const finalCapabilities = await readCapabilities({ input, fetchImpl: ownerFetch });
+    if (routeUpdate !== null) await requireUnchangedMaintenanceRouteUpdate({ routeUpdate });
     assertMaintenanceCapabilityProfile({ candidate: candidateCapabilityProfile,
-      observed: finalCapabilities.capabilities, generatedConfig: config, activeWorkerIdentity: postSyncIdentity });
-    requireSameMaintenanceCapabilityReadback({ baseline: maintenanceBaseline.capabilities, current: finalCapabilities });
+      observed: finalCapabilities.capabilities, generatedConfig: config, activeWorkerIdentity: postSyncIdentity,
+      routeUpdate, routeUpdatePhase: "after" });
+    requireSameMaintenanceCapabilityReadback({ baseline: maintenanceBaseline.capabilities,
+      current: finalCapabilities, routeUpdate });
     if (finalCapabilities.generation !== env.ELIOTR_DEPLOYMENT_GENERATION) {
       throw new Error("Maintenance capability readback does not match candidate deployment generation");
     }
@@ -394,6 +421,19 @@ export async function deployCloudflare({ confirmLive = false, environment = proc
     backend_fingerprint: backendFingerprint,
     remote_http_smoke: remoteHttpSmoke,
     deployment_authority_sync: deploymentAuthority,
+    ...(routeUpdate === null ? {} : { maintenance_route_update: {
+      protocol: routeUpdate.protocol,
+      intent_sha256: routeUpdate.intent_sha256,
+      source_head: testedInputs.git_head,
+      baseline_generation: maintenanceBaseline.active.generation,
+      candidate_generation: env.ELIOTR_DEPLOYMENT_GENERATION,
+      baseline_route_count: routeUpdate.baseline_routes.length,
+      candidate_route_count: routeUpdate.candidate_routes.length,
+      added_route_count: routeUpdate.added_routes.length,
+      changed_route_count: routeUpdate.changed_routes.length,
+      removed_route_count: 0,
+      service_principal_allowlist: "EMPTY_PRESERVED",
+    } }),
     live_conformance: {
       d1_write_readback: "NOT_EXECUTED", r2_immutable_put_readback: "NOT_EXECUTED",
       queue_duplicate_delivery: "NOT_EXECUTED", durable_object_hibernation: "NOT_EXECUTED",
@@ -401,7 +441,8 @@ export async function deployCloudflare({ confirmLive = false, environment = proc
       google_drive_exchange: "NOT_EXECUTED",
     },
     note: (purpose === MAINTENANCE_PURPOSE
-      ? buildMaintenanceNote(fullReleaseBlockers, sourceBudgetState, sourceBudgetFindings, migrationReadback, schemaGenerationReadback)
+      ? buildMaintenanceNote(fullReleaseBlockers, sourceBudgetState, sourceBudgetFindings, migrationReadback,
+        schemaGenerationReadback, routeUpdate)
       : "Active version, configured resource bindings and migration names are verified. ETag and local migration hashes are not remote content proof; asset body hashes are observed only with authenticated readback and stable active-version observations. Product/T4/T6 gates remain separate. HTTP generation is verified only when authenticated smoke passes.") +
       ` Build input manifest captured before gates: ${testedInputs.sha256}; prepared Worker artifact: ${workerBundle.sha256}. ` +
       "Source membership/bytes, generated config, metafile inputs and emitted files were rechecked immediately before upload; the prepared entrypoint was deployed with --no-bundle. " +
@@ -430,18 +471,22 @@ if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.m
   }
 }
 
-function buildMaintenanceNote(blockers, sourceBudgetState, sourceBudgetFindings, migrationReadback, schemaGenerationReadback) {
+function buildMaintenanceNote(blockers, sourceBudgetState, sourceBudgetFindings, migrationReadback,
+  schemaGenerationReadback, routeUpdate) {
   const items = Array.isArray(blockers) ? blockers : [];
   const blockerText = items.length === 0 ? "No known full-release blockers were reported" :
     `Full-release blockers (${items.length}): ${items.join("; ")}`;
   const ledgerState = migrationReadback?.state === "PASS" ? "PASS" : "NOT_VERIFIED";
   const schemaState = schemaGenerationReadback?.state === "PASS" ? "PASS" : "NOT_VERIFIED";
+  const routeState = routeUpdate === null
+    ? "Authenticated candidate capability profile matched the active Worker before upload and after synchronization. "
+    : "Authenticated readback matched the pinned baseline routes before upload and the exact candidate routes after upload; all non-route capability fields remained unchanged. ";
   return `Worker/assets maintenance deployment only; this receipt does not qualify a full release. ${blockerText}. ` +
     `Source-maintainability budget gate: ${sourceBudgetState ?? "NOT_EXECUTED"}. ` +
     `${sourceBudgetFindings === null ? "No source-budget failure output was observed. " : `Source-budget findings: ${sourceBudgetFindings}. `}` +
     `D1 migrations were not applied; exact existing migration ledger readback: ${ledgerState}; ` +
     `required Core/Search schema generation readback: ${schemaState}. ` +
-    "Authenticated candidate capability profile matched the active Worker before upload and after synchronization. " +
+    routeState +
     "ETag and local migration hashes are not remote content proof; product and workload gates remain separate.";
 }
 

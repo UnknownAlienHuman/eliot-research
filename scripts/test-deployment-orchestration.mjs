@@ -249,7 +249,7 @@ await check("maintenance records launch blockers and budget findings", async () 
     log: (message) => logs.push(message) } });
   assert.equal(await deployCloudflare(test.options), null);
   assert.deepEqual(test.calls, ["pnpm --filter @eliotr/core typecheck",
-    "pnpm exec eslint scripts/deploy-cloudflare.mjs scripts/lib/deployment-maintenance.mjs scripts/lib/deployment-build-inputs.mjs scripts/check-launch-code.mjs",
+    "pnpm exec eslint scripts/deploy-cloudflare.mjs scripts/lib/deployment-maintenance.mjs scripts/lib/deployment-route-update.mjs scripts/test-deployment-route-update.mjs scripts/lib/deployment-build-inputs.mjs scripts/check-launch-code.mjs",
     "pnpm boundaries:check", "pnpm boundaries:negative", "pnpm build:pwa", "pnpm --filter @eliotr/core cf:types",
     "pnpm --filter @eliotr/core deploy:dry-run"]);
   assert.ok(logs.some((message) => message.includes("known launch blocker")));
@@ -263,7 +263,7 @@ await check("maintenance records launch blockers and budget findings", async () 
 });
 await check("maintenance compile, lint, boundary and artifact gates still block", async () => {
   const commands = ["pnpm --filter @eliotr/core typecheck",
-    "pnpm exec eslint scripts/deploy-cloudflare.mjs scripts/lib/deployment-maintenance.mjs scripts/lib/deployment-build-inputs.mjs scripts/check-launch-code.mjs",
+    "pnpm exec eslint scripts/deploy-cloudflare.mjs scripts/lib/deployment-maintenance.mjs scripts/lib/deployment-route-update.mjs scripts/test-deployment-route-update.mjs scripts/lib/deployment-build-inputs.mjs scripts/check-launch-code.mjs",
     "pnpm boundaries:check", "pnpm boundaries:negative", "pnpm build:pwa", "pnpm --filter @eliotr/core cf:types",
     "pnpm --filter @eliotr/core deploy:dry-run"];
   for (const command of commands) {

@@ -328,6 +328,24 @@ planned managed resource is namespace `eliotr`, instance `private-prose-g2`; it 
 `default` namespace. [Wrangler can create a missing namespace on deploy](https://developers.cloudflare.com/workers/wrangler/configuration/#ai-search-namespaces), so an absent disabled binding
 must not be uploaded accidentally.
 
+Maintenance normally requires the exact active route surface to remain unchanged. A product update
+that intentionally changes routes may opt into one pinned route update by setting
+`ELIOTR_MAINTENANCE_ROUTE_UPDATE_FILE` to an ignored intent file under `.eliotr-state/`. This opt-in
+is valid only for a confirmed live maintenance deployment; it is rejected for dry runs and full
+releases. The intent pins the active deployment/version/generation and complete live route set, plus
+the candidate Git head/generation and complete statically extracted route set. It permits route
+additions with non-public authentication and `owner` to `owner_or_service` auth changes only; it
+permits no route removals or other edits to existing route definitions. The intent file's SHA-256
+is rechecked throughout the deployment.
+
+Before upload, fresh readback must still match the pinned active route set. After upload and after
+deployment-authority synchronization, authenticated capabilities must match the exact pinned
+candidate routes, while every non-route capability remains unchanged. The generated and active
+Worker `ACCESS_SERVICE_PRINCIPALS` values must both remain exactly empty, and the Access provisioner
+must verify the existing owner-only policy without changing it; adding `owner_or_service` handlers
+does not grant a service identity. This option changes only the Worker API surface. It does not
+apply migrations, alter Access policy, enable Google transport or bind AI Search.
+
 For owner HTTP readback, `ELIOTR_OWNER_HTTP_TRANSPORT=cloudflared` selects the official
 `cloudflared access curl` client; `ELIOTR_CLOUDFLARED_BINARY` optionally supplies its executable path.
 The client manages its existing application login/cache and token injection. The deployer does not

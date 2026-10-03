@@ -539,13 +539,14 @@ await check("maintenance deploy records blockers and budget findings without cla
   const snapshot = JSON.parse(process.env.ELIOTR_TEST_SPAWN_SNAPSHOT_JSON);
   assert.equal(Object.values(snapshot.metrics).filter((value) => value === "unknown").length, 18);
   assert.equal(snapshot.metrics.ai_search_instances, 5);
-  assert.equal(test.calls.filter((call) => call.endsWith("--verify-existing")).length, 4);
+  assert.equal(test.calls.filter((call) => call.endsWith("--verify-existing")).length, 3);
   assert.deepEqual(test.calls.filter((call) => call.endsWith("--verify-existing")), [
     "node scripts/provision-cloudflare-access.mjs --verify-existing",
     "node scripts/provision-cloudflare-core.mjs --verify-existing",
-    "node scripts/provision-ai-search.mjs --verify-existing",
     "node scripts/provision-ai-gateways.mjs --verify-existing",
   ]);
+  assert.ok(!test.calls.some((call) => call.startsWith("node scripts/provision-ai-search.mjs")),
+    "verified-absent AI Search remains unprovisioned during maintenance");
   assert.ok(test.calls.includes("pnpm budgets:check"));
   assert.ok(!test.calls.includes("pnpm check"));
   assert.ok(test.calls.indexOf("pnpm boundaries:check") < test.calls.indexOf("pnpm boundaries:negative"));

@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { readDeploymentJson } from "./deployment-verification.mjs";
 import { launchCodeBlockers, readConfiguredTransport } from "../check-launch-code.mjs";
+import { assertRouteUpdateProfile, assertRouteUpdateReadback } from "./deployment-route-update.mjs";
 
 const require = createRequire(import.meta.url);
 const ts = require("typescript");
@@ -102,6 +103,10 @@ export async function readActiveDeploymentIdentity({ env, input, fetchImpl = fet
     ? generationBindings[0].text : null;
   const principalBindings = bindings.filter((binding) => binding.name === "FEDERATION_SERVER_PRINCIPAL_REF");
   const cursorBindings = bindings.filter((binding) => binding.name === "FEDERATION_CURSOR_HMAC_KEY");
+  const accessServicePrincipalBindings = bindings.filter((binding) => binding.name === "ACCESS_SERVICE_PRINCIPALS");
+  const accessServicePrincipals = accessServicePrincipalBindings.length === 1 &&
+    accessServicePrincipalBindings[0].type === "plain_text" &&
+    typeof accessServicePrincipalBindings[0].text === "string" ? accessServicePrincipalBindings[0].text : null;
   const federationPrincipalRef = principalBindings.length === 0 ? null :
     principalBindings.length === 1 && principalBindings[0].type === "plain_text" && bounded(principalBindings[0].text)
       ? principalBindings[0].text : undefined;
@@ -119,6 +124,7 @@ export async function readActiveDeploymentIdentity({ env, input, fetchImpl = fet
   return Object.freeze({ worker_id: "eliotr-core", compatibility_date: "2026-08-28", has_assets: true,
     deployment_id: active.id, version_id: active.versions[0].version_id, version_number: current.number,
     generation, federation_principal_ref: federationPrincipalRef, federation_cursor_key_bound: federationCursorKeyBound,
+    access_service_principals: accessServicePrincipals,
     google_external_transport: googleTransport,
     ai_search_bound: bindings.some((binding) => binding.name === "AI_SEARCH" ||
       ["ai_search_namespace", "ai_search"].includes(binding.type)),
@@ -146,7 +152,7 @@ export async function readAuthenticatedCapabilities({ input, fetchImpl = fetch, 
 }
 
 /** Require the candidate Worker to preserve every observed capability except its generation. */
-export function requireSameMaintenanceCapabilityReadback({ baseline, current } = {}) {
+export function requireSameMaintenanceCapabilityReadback({ baseline, current, routeUpdate } = {}) {
   if (!isRecord(baseline) || !isRecord(current) || !bounded(baseline.generation) || !bounded(current.generation) ||
       !isRecord(baseline.capabilities) || !isRecord(current.capabilities) ||
       baseline.capabilities.deployment_generation !== baseline.generation ||
@@ -155,16 +161,23 @@ export function requireSameMaintenanceCapabilityReadback({ baseline, current } =
   }
   validateObservedCapabilityProfile(baseline.capabilities);
   validateObservedCapabilityProfile(current.capabilities);
-  const normalized = { ...current.capabilities, deployment_generation: baseline.generation };
+  if (routeUpdate !== undefined && routeUpdate !== null) {
+    assertRouteUpdateReadback({ routeUpdate, baselineRoutes: baseline.capabilities.routes,
+      currentRoutes: current.capabilities.routes });
+  }
+  const normalized = { ...current.capabilities, deployment_generation: baseline.generation,
+    ...(routeUpdate === undefined || routeUpdate === null ? {} : { routes: baseline.capabilities.routes }) };
   if (!sameJson(normalized, baseline.capabilities)) {
     fail("Maintenance capability profile changed during Worker deployment");
   }
   return Object.freeze({ state: "PASS", generation_changed: current.generation !== baseline.generation,
-    profile: "unchanged" });
+    profile: routeUpdate === undefined || routeUpdate === null ? "unchanged" : "pinned-route-update",
+    ...(routeUpdate === undefined || routeUpdate === null ? {} : { intent_sha256: routeUpdate.intent_sha256 }) });
 }
 
 /** Require an unchanged, non-expanding candidate capability profile. */
-export function assertMaintenanceCapabilityProfile({ candidate, observed, generatedConfig, activeWorkerIdentity } = {}) {
+export function assertMaintenanceCapabilityProfile({ candidate, observed, generatedConfig, activeWorkerIdentity,
+  routeUpdate, routeUpdatePhase = "before" } = {}) {
   if (!isRecord(candidate) || !isRecord(observed) || !isRecord(generatedConfig?.vars) || !isRecord(activeWorkerIdentity)) {
     fail("Maintenance capability comparison inputs are invalid");
   }
@@ -198,8 +211,17 @@ export function assertMaintenanceCapabilityProfile({ candidate, observed, genera
   if (!GOOGLE_TRANSPORTS.has(transport) || observed.google_external_transport !== transport) {
     fail("Maintenance Google external transport would change");
   }
-  if (!Array.isArray(candidate.routes) || !sameJson(normalizeRoutes(candidate.routes), normalizeRoutes(observed.routes))) {
-    fail("Maintenance route surface is dynamic, changed or broader");
+  if (routeUpdate === undefined || routeUpdate === null) {
+    if (!Array.isArray(candidate.routes) || !sameJson(normalizeRoutes(candidate.routes), normalizeRoutes(observed.routes))) {
+      fail("Maintenance route surface is dynamic, changed or broader");
+    }
+  } else {
+    if (generatedConfig.vars.ACCESS_SERVICE_PRINCIPALS !== "" ||
+        activeWorkerIdentity.access_service_principals !== "") {
+      fail("Pinned maintenance route updates require the unchanged empty Access service-principal allowlist");
+    }
+    assertRouteUpdateProfile({ routeUpdate, candidateRoutes: candidate.routes,
+      observedRoutes: observed.routes, phase: routeUpdatePhase });
   }
   if (candidate.orientation_profile !== observed.orientation_profile ||
       candidate.orientation_max_sources !== observed.orientation_max_sources ||
@@ -220,7 +242,9 @@ export function assertMaintenanceCapabilityProfile({ candidate, observed, genera
     fail("Maintenance cannot prove unchanged federation capability configuration");
   }
   return Object.freeze({ state: "PASS", generation: observed.deployment_generation,
-    profile: "unchanged", exact_evidence_resolution_required: true,
+    profile: routeUpdate === undefined || routeUpdate === null ? "unchanged" : "pinned-route-update",
+    ...(routeUpdate === undefined || routeUpdate === null ? {} : { intent_sha256: routeUpdate.intent_sha256 }),
+    exact_evidence_resolution_required: true,
     transport_completion_is_research_completion: false, disabled_retrieval_erasure: "PASS" });
 }
 
