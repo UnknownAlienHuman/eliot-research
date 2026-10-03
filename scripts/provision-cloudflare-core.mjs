@@ -364,6 +364,8 @@ function buildGeneratedConfig(d1Results, publicRoute, accessRuntime, mcpAccessRu
   if (mcpAccessRuntime !== null) {
     generated.vars = applyMcpRuntimeVars(generated.vars, mcpAccessRuntime);
   }
+  generated.vars = omitUnusedMcpPlaceholderVars(generated.vars, preserveGoogleTransport,
+    accessRuntime?.mcpAccessRuntime, mcpAccessRuntime);
 
   if (publicRoute.customDomainMode === "1") {
     generated.routes = [{ pattern: publicRoute.accessHostname, custom_domain: true }];
@@ -374,6 +376,24 @@ function buildGeneratedConfig(d1Results, publicRoute, accessRuntime, mcpAccessRu
   }
   generated.preview_urls = false;
   return generated;
+}
+
+function omitUnusedMcpPlaceholderVars(vars, preservedGoogleTransport, receiptMcpRuntime, coreMcpRuntime) {
+  if (preservedGoogleTransport !== "disabled" ||
+      (receiptMcpRuntime !== null && receiptMcpRuntime !== undefined) ||
+      (coreMcpRuntime !== null && coreMcpRuntime !== undefined)) return vars;
+  const placeholders = {
+    MCP_HOSTNAME: "mcp.replace-me.example",
+    MCP_ACCESS_TEAM_DOMAIN: "https://replace-me.cloudflareaccess.com",
+    MCP_ACCESS_AUDIENCE: "replace-me",
+    MCP_ACCESS_AUTH_PROFILE: "service-token",
+    MCP_ACCESS_SERVICE_TOKEN_CLIENT_ID: "replace-me.access",
+  };
+  const result = { ...vars };
+  for (const [key, placeholder] of Object.entries(placeholders)) {
+    if (result[key] === placeholder) delete result[key];
+  }
+  return result;
 }
 
 function validateHostname(hostname, label) {
