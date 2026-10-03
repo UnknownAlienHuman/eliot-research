@@ -11,7 +11,7 @@ BEGIN SELECT RAISE(ABORT, 'WORKFLOW_CONFLICT'); END;
 CREATE TRIGGER research_workflow_first_failure_json_shape BEFORE UPDATE OF first_failure_json ON research_workflow_run
 WHEN NEW.first_failure_json IS NOT NULL
 BEGIN
- SELECT CASE WHEN COALESCE((json_valid(NEW.first_failure_json) AND length(CAST(NEW.first_failure_json AS BLOB))<=1024
+ SELECT (CASE WHEN COALESCE((json_valid(NEW.first_failure_json) AND length(CAST(NEW.first_failure_json AS BLOB))<=1024
  AND json_type(NEW.first_failure_json)='object'
  AND json_extract(NEW.first_failure_json,'$.code') IN (
    'WORKFLOW_INPUT_INVALID',
@@ -80,16 +80,16 @@ BEGIN
    'MATERIALIZE'
  ))
  AND (json_extract(NEW.first_failure_json,'$.retryable')=0 OR
-   json_extract(NEW.first_failure_json,'$.phase')='PREPARATION' AND json_extract(NEW.first_failure_json,'$.code')='WORKFLOW_STORAGE_UNAVAILABLE')),0)<>1 THEN RAISE(ABORT,'WORKFLOW_CONFLICT') END;
- SELECT CASE WHEN EXISTS (SELECT 1 FROM json_each(NEW.first_failure_json) WHERE key NOT IN ('code','phase','stage','retryable'))
-   OR (SELECT COUNT(*) FROM json_each(NEW.first_failure_json)) <> CASE json_extract(NEW.first_failure_json,'$.phase') WHEN 'PREPARATION' THEN 3 ELSE 4 END
-   THEN RAISE(ABORT,'WORKFLOW_CONFLICT') END;
+   json_extract(NEW.first_failure_json,'$.phase')='PREPARATION' AND json_extract(NEW.first_failure_json,'$.code')='WORKFLOW_STORAGE_UNAVAILABLE')),0)<>1 THEN RAISE(ABORT,'WORKFLOW_CONFLICT') END);
+ SELECT (CASE WHEN EXISTS (SELECT 1 FROM json_each(NEW.first_failure_json) WHERE key NOT IN ('code','phase','stage','retryable'))
+   OR (SELECT COUNT(*) FROM json_each(NEW.first_failure_json)) <> (CASE json_extract(NEW.first_failure_json,'$.phase') WHEN 'PREPARATION' THEN 3 ELSE 4 END)
+   THEN RAISE(ABORT,'WORKFLOW_CONFLICT') END);
 END;
 
 CREATE TRIGGER research_workflow_latest_failure_json_shape BEFORE UPDATE OF latest_failure_json ON research_workflow_run
 WHEN NEW.latest_failure_json IS NOT NULL
 BEGIN
- SELECT CASE WHEN COALESCE((json_valid(NEW.latest_failure_json) AND length(CAST(NEW.latest_failure_json AS BLOB))<=1024
+ SELECT (CASE WHEN COALESCE((json_valid(NEW.latest_failure_json) AND length(CAST(NEW.latest_failure_json AS BLOB))<=1024
  AND json_type(NEW.latest_failure_json)='object'
  AND json_extract(NEW.latest_failure_json,'$.code') IN (
    'WORKFLOW_INPUT_INVALID',
@@ -158,10 +158,10 @@ BEGIN
    'MATERIALIZE'
  ))
  AND (json_extract(NEW.latest_failure_json,'$.retryable')=0 OR
-   json_extract(NEW.latest_failure_json,'$.phase')='PREPARATION' AND json_extract(NEW.latest_failure_json,'$.code')='WORKFLOW_STORAGE_UNAVAILABLE')),0)<>1 THEN RAISE(ABORT,'WORKFLOW_CONFLICT') END;
- SELECT CASE WHEN EXISTS (SELECT 1 FROM json_each(NEW.latest_failure_json) WHERE key NOT IN ('code','phase','stage','retryable'))
-   OR (SELECT COUNT(*) FROM json_each(NEW.latest_failure_json)) <> CASE json_extract(NEW.latest_failure_json,'$.phase') WHEN 'PREPARATION' THEN 3 ELSE 4 END
-   THEN RAISE(ABORT,'WORKFLOW_CONFLICT') END;
+   json_extract(NEW.latest_failure_json,'$.phase')='PREPARATION' AND json_extract(NEW.latest_failure_json,'$.code')='WORKFLOW_STORAGE_UNAVAILABLE')),0)<>1 THEN RAISE(ABORT,'WORKFLOW_CONFLICT') END);
+ SELECT (CASE WHEN EXISTS (SELECT 1 FROM json_each(NEW.latest_failure_json) WHERE key NOT IN ('code','phase','stage','retryable'))
+   OR (SELECT COUNT(*) FROM json_each(NEW.latest_failure_json)) <> (CASE json_extract(NEW.latest_failure_json,'$.phase') WHEN 'PREPARATION' THEN 3 ELSE 4 END)
+   THEN RAISE(ABORT,'WORKFLOW_CONFLICT') END);
 END;
 
 DROP TRIGGER research_workflow_run_transition;
@@ -207,7 +207,7 @@ BEGIN SELECT RAISE(ABORT, 'WORKFLOW_CONFLICT'); END;
 CREATE TRIGGER research_workflow_attempt_failure_shape BEFORE UPDATE OF first_failure_json ON research_workflow_attempt
 WHEN NEW.first_failure_json IS NOT NULL
 BEGIN
- SELECT CASE WHEN COALESCE((json_valid(NEW.first_failure_json) AND length(CAST(NEW.first_failure_json AS BLOB))<=1024
+ SELECT (CASE WHEN COALESCE((json_valid(NEW.first_failure_json) AND length(CAST(NEW.first_failure_json AS BLOB))<=1024
  AND json_type(NEW.first_failure_json)='object'
  AND json_extract(NEW.first_failure_json,'$.code') IN (
    'WORKFLOW_INPUT_INVALID',
@@ -276,12 +276,12 @@ BEGIN
    'MATERIALIZE'
  ))
  AND (json_extract(NEW.first_failure_json,'$.retryable')=0 OR
-   json_extract(NEW.first_failure_json,'$.phase')='PREPARATION' AND json_extract(NEW.first_failure_json,'$.code')='WORKFLOW_STORAGE_UNAVAILABLE')),0)<>1 THEN RAISE(ABORT,'WORKFLOW_CONFLICT') END;
- SELECT CASE WHEN EXISTS (SELECT 1 FROM json_each(NEW.first_failure_json) WHERE key NOT IN ('code','phase','stage','retryable'))
-   OR (SELECT COUNT(*) FROM json_each(NEW.first_failure_json)) <> CASE json_extract(NEW.first_failure_json,'$.phase') WHEN 'PREPARATION' THEN 3 ELSE 4 END
-   THEN RAISE(ABORT,'WORKFLOW_CONFLICT') END; SELECT CASE WHEN json_extract(NEW.first_failure_json,'$.phase') NOT IN ('STAGE','RECOVERY')
+   json_extract(NEW.first_failure_json,'$.phase')='PREPARATION' AND json_extract(NEW.first_failure_json,'$.code')='WORKFLOW_STORAGE_UNAVAILABLE')),0)<>1 THEN RAISE(ABORT,'WORKFLOW_CONFLICT') END);
+ SELECT (CASE WHEN EXISTS (SELECT 1 FROM json_each(NEW.first_failure_json) WHERE key NOT IN ('code','phase','stage','retryable'))
+   OR (SELECT COUNT(*) FROM json_each(NEW.first_failure_json)) <> (CASE json_extract(NEW.first_failure_json,'$.phase') WHEN 'PREPARATION' THEN 3 ELSE 4 END)
+   THEN RAISE(ABORT,'WORKFLOW_CONFLICT') END); SELECT (CASE WHEN json_extract(NEW.first_failure_json,'$.phase') NOT IN ('STAGE','RECOVERY')
    OR json_extract(NEW.first_failure_json,'$.stage') IS NOT json_extract(NEW.request_json,'$.stage')
-   THEN RAISE(ABORT,'WORKFLOW_CONFLICT') END;
+   THEN RAISE(ABORT,'WORKFLOW_CONFLICT') END);
 END;
 
 DROP TRIGGER research_workflow_attempt_transition;
