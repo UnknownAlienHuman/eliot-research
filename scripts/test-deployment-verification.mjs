@@ -214,6 +214,23 @@ await check("Worker inventory export/compatibility/assets fail closed", async ()
   delete withoutOptionalSecret.resources.bindings.GOOGLE_CLIENT_SECRET;
   assert.deepEqual((await read({ versionResponse: { success: true, result: withoutOptionalSecret } })).vars_readback,
     attestation.vars_readback);
+  await check("optional compatibility flags normalize only omission, preserving malformed and drift rejection", async () => {
+    const omitted = structuredClone(version);
+    delete omitted.resources.script_runtime.compatibility_flags;
+    assert.deepEqual(await read({ versionResponse: { success: true, result: omitted } }), attestation);
+    const required = { ...config, compatibility_flags: ["nodejs_compat"] };
+    await assert.rejects(read({ versionResponse: { success: true, result: omitted } }, required), /flags drift/u);
+    await assert.rejects(read({}, required), /flags drift/u);
+    const matching = structuredClone(version);
+    matching.resources.script_runtime.compatibility_flags = ["nodejs_compat"];
+    assert.deepEqual(await read({ versionResponse: { success: true, result: matching } }, required), attestation);
+    await assert.rejects(read({ versionResponse: { success: true, result: matching } }), /flags drift/u);
+    for (const flags of [null, "nodejs_compat", {}, [null], [1], ["other_flag"]]) {
+      const malformed = structuredClone(version);
+      malformed.resources.script_runtime.compatibility_flags = flags;
+      await assert.rejects(read({ versionResponse: { success: true, result: malformed } }, required), /flags drift/u);
+    }
+  });
   for (const inventory of [{ success: false, result: [worker] }, { result: [worker] },
     { success: true, result: [] }, { success: true, result: [worker, worker] },
     { success: true, result: [{ ...worker, has_assets: false }] },

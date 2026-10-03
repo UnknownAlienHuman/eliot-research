@@ -220,7 +220,9 @@ export async function readDeploymentWorker(env, input, config, options = {}) {
     ? runtime.compatibility_date.slice(0, 10) : null;
   if (versionDate !== config.compatibility_date) fail("Worker version compatibility drift");
   const expectedFlags = [...(config.compatibility_flags ?? [])].sort();
-  const actualFlags = runtime.compatibility_flags;
+  // Workers Versions GET declares this array optional; omission represents no flags.
+  // https://developers.cloudflare.com/api/resources/workers/subresources/scripts/subresources/versions/methods/get/
+  const actualFlags = Object.hasOwn(runtime, "compatibility_flags") ? runtime.compatibility_flags : [];
   if (!Array.isArray(actualFlags) || actualFlags.some((flag) => typeof flag !== "string") ||
       JSON.stringify([...actualFlags].sort()) !== JSON.stringify(expectedFlags)) {
     fail("Worker version compatibility flags drift");
