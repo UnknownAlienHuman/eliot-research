@@ -74,8 +74,13 @@ retrieval, authentication semantics, or database schemas.
    service-principal allow-list). The generated file is ignored and must never become source authority.
 5. Use **hostname-based Cloudflare Access** for the deployment hostname. Do not enable Worker-level
    Access because `ResearchSession` requires WebSocket upgrades.
-6. Before deployment run repository checks, PWA build, generated binding types, and a minified Wrangler
-   dry run. Apply additive Core/Search D1 migrations, then deploy the Worker exactly once.
+6. Before deployment run the checks for its explicit full-release or maintenance purpose, PWA build,
+   generated binding types, and a minified Wrangler dry run. Deploy the Worker exactly once after
+   exact existing migration-ledger and required schema-generation readback; never apply migrations
+   within Worker deployment. [ADR-0009](../adr/0009-control-plane-deployment-and-runtime-cost-authority.md)
+   supersedes the former combined migration/deployment step and the exact 18-counter billing
+   prerequisite for guarded existing-Worker deployment and the separate reviewed bounded D1 operation.
+   Resource creation and heavy runtime admission remain governed by their existing controls.
 7. Read the deployed Worker through the Cloudflare API and verify the expected export/binding surface.
    Execute authenticated HTTP and WebSocket smoke only when explicit smoke credentials are supplied.
 8. Write non-secret receipts under ignored `.eliotr-state/`; every unexecuted live gate remains

@@ -7,9 +7,10 @@ import { readDeploymentWorker, validateDeploymentInput, validateGeneratedDeploym
   verifyDeploymentSmoke } from "./lib/deployment-verification.mjs";
 import { injectOAuthBearer, loadWranglerOAuthCredential, resolveAuthMode, scrubTokenEnv,
   stripNodeOptionsLoaderTokens, verifyWranglerOAuthAccount, WRANGLER_OAUTH_MODE, WranglerOAuthError, LOGIN_INSTRUCTION } from "./lib/cloudflare-wrangler-oauth.mjs";
-import { isUsageAdmissionCapability, runUsagePreflight } from "./lib/cloudflare-usage-admission.mjs";
-
-import { assertLaunchCodeComplete, readConfiguredTransport } from "./check-launch-code.mjs";
+import { assertLaunchCodeComplete, readConfiguredTransport, readCompositionCapabilityProfile } from "./check-launch-code.mjs";
+import { assertMaintenanceCapabilityProfile, readActiveDeploymentIdentity, readAuthenticatedCapabilities,
+  readFullReleaseBlockers, requireSameMaintenanceCapabilityReadback,
+  verifyDeploymentSchemaGenerations } from "./lib/deployment-maintenance.mjs";
 import { loadResearchRuntimeEnvironment, RESEARCH_RUNTIME_CONFIGURATION_KEYS,
   RESEARCH_RUNTIME_SEMANTIC_TRANSPORT_KEYS, semanticConfigurationTransport } from "./lib/research-runtime-config.mjs";
 import { synchronizeResearchDeploymentAuthority } from "./lib/research-deployment-authority.mjs";
@@ -25,6 +26,8 @@ const receiptPath = resolve(root, ".eliotr-state/cloudflare-deployment-receipt.j
 const provisioners = ["provision-cloudflare-access", "provision-cloudflare-core", "provision-ai-search",
   "provision-ai-gateways"];
 const SEMANTIC_SERVER_CONFIGURATION_KEYS = RESEARCH_RUNTIME_CONFIGURATION_KEYS;
+const FULL_RELEASE_PURPOSE = "FULL_RELEASE";
+const MAINTENANCE_PURPOSE = "MAINTENANCE";
 
 function run(command, args, cwd, env) {
   const result = spawnSync(command, args, { cwd, env, stdio: "inherit", shell: process.platform === "win32" });
@@ -34,6 +37,12 @@ function run(command, args, cwd, env) {
 function capture(command, args, cwd, env) {
   const result = spawnSync(command, args, { cwd, env, encoding: "utf8", shell: process.platform === "win32" });
   return !result.error && result.status === 0 ? result.stdout.trim() || null : null;
+}
+
+function captureSourceBudget(command, args, cwd, env) {
+  const result = spawnSync(command, args, { cwd, env, encoding: "utf8", shell: process.platform === "win32" });
+  return { status: result.status, stdout: result.stdout ?? "", stderr: result.stderr ?? "",
+    error: result.error?.code ?? null };
 }
 
 function verifyGeneratedSemanticConfiguration(config, environment) {
@@ -68,7 +77,13 @@ export async function deployCloudflare({ confirmLive = false, environment = proc
   execute = run, captureCommand = capture, read = readFile, archive = archiveReceipt,
   save = saveReceipt, fetchImpl = fetch, now = Date.now, log = console.log,
   verifyCode = assertLaunchCodeComplete, readWranglerFile, runWranglerWhoami,
-  usageProviders = null, usageSnapshot = null, readAssetManifest = readDeploymentAssetManifest } = {}) {
+  purpose = FULL_RELEASE_PURPOSE, captureBudget = captureSourceBudget,
+  readCapabilityProfile = readCompositionCapabilityProfile,
+  readActiveWorker = readActiveDeploymentIdentity, readCapabilities = readAuthenticatedCapabilities,
+  readReleaseBlockers = readFullReleaseBlockers, readSchemaGenerations = verifyDeploymentSchemaGenerations,
+  readWorker = readDeploymentWorker,
+  readAssetManifest = readDeploymentAssetManifest } = {}) {
+  if (![FULL_RELEASE_PURPOSE, MAINTENANCE_PURPOSE].includes(purpose)) throw new Error("Deployment purpose is invalid");
   const env = await loadResearchRuntimeEnvironment(environment, root);
   // FIX9WC Layer 2 (defense in depth, child exec env only): strip ambient
   // module-loader tokens (--import/--loader/--experimental-loader/--require
@@ -84,8 +99,16 @@ export async function deployCloudflare({ confirmLive = false, environment = proc
   let input;
   let oauth = null;
   let stagingTarget = null;
+  let fullReleaseBlockers = null;
+  let candidateCapabilityProfile = null;
+  let sourceBudgetState = null;
+  let sourceBudgetFindings = null;
   if (confirmLive) {
-    await verifyCode();
+    if (purpose === FULL_RELEASE_PURPOSE) await verifyCode();
+    else {
+      fullReleaseBlockers = await readReleaseBlockers({ root, read });
+      candidateCapabilityProfile = await readCapabilityProfile({ root, read });
+    }
     env.ELIOTR_ENVIRONMENT ??= "production";
     // A staging label does not isolate fixed-name resources. Reject a missing,
     // mismatched or protected target before credential load or any command.
@@ -102,7 +125,7 @@ export async function deployCloudflare({ confirmLive = false, environment = proc
       if (!revision) throw new Error("Set ELIOTR_DEPLOYMENT_GENERATION when Git revision is unavailable");
       env.ELIOTR_DEPLOYMENT_GENERATION = `git-${revision}`;
     }
-    const canonicalConfig = JSON.parse(await readFile(resolve(core, "wrangler.jsonc"), "utf8"));
+    const canonicalConfig = JSON.parse(await read(resolve(core, "wrangler.jsonc"), "utf8"));
     validateDeploymentMigrationDirectories(canonicalConfig, { root });
     env.ELIOTR_GOOGLE_EXTERNAL_TRANSPORT = readConfiguredTransport(canonicalConfig);
     input = validateDeploymentInput(env);
@@ -111,12 +134,41 @@ export async function deployCloudflare({ confirmLive = false, environment = proc
   const provisionerEnv = (name) => name === "provision-cloudflare-access" && env.ELIOTR_ACCESS_TRANSPORT === "cloudflare-mcp"
     ? scrubTokenEnv(env)
     : env;
-  exec("pnpm", ["check"]);
-  exec("pnpm", ["build:pwa"]);
-  exec("pnpm", ["--filter", "@eliotr/core", "cf:types"]);
-  exec("pnpm", ["--filter", "@eliotr/core", "deploy:dry-run"]);
+  if (purpose === FULL_RELEASE_PURPOSE) {
+    exec("pnpm", ["check"]);
+    exec("pnpm", ["build:pwa"]);
+    exec("pnpm", ["--filter", "@eliotr/core", "cf:types"]);
+    exec("pnpm", ["--filter", "@eliotr/core", "deploy:dry-run"]);
+  } else {
+    fullReleaseBlockers ??= await readReleaseBlockers({ root, read });
+    candidateCapabilityProfile ??= await readCapabilityProfile({ root, read });
+    const budget = captureBudget("pnpm", ["budgets:check"], root, env);
+    if (budget.error !== null || budget.stdout.length + budget.stderr.length > 64 * 1024) {
+      throw new Error(`Maintenance source-budget command failed (${budget.error ?? "output limit"})`);
+    }
+    if (budget.status === 0 && /(?:^|\r?\n)Source budgets: PASS(?:\r?\n|$)/u.test(budget.stdout)) {
+      sourceBudgetState = "PASS";
+    } else {
+      const failure = /(?:^|\r?\n)Source budgets: FAIL \((\d+) violations\)(?:\r?\n|$)/u.exec(budget.stdout);
+      if (budget.status !== 1 || failure === null) throw new Error("Maintenance source-budget result could not be classified");
+      sourceBudgetState = `FAIL (${failure[1]} violations)`;
+      sourceBudgetFindings = `${budget.stdout}${budget.stderr}`.trim().slice(0, 4096);
+      if (`${budget.stdout}${budget.stderr}`.trim().length > 4096) sourceBudgetFindings += " [truncated after 4096 characters]";
+      log(`${budget.stdout}${budget.stderr}`.trim());
+    }
+    exec("pnpm", ["--filter", "@eliotr/core", "typecheck"]);
+    exec("pnpm", ["exec", "eslint", "scripts/deploy-cloudflare.mjs", "scripts/lib/deployment-maintenance.mjs",
+      "scripts/check-launch-code.mjs"]);
+    exec("pnpm", ["boundaries:negative"]);
+    exec("pnpm", ["build:pwa"]);
+    exec("pnpm", ["--filter", "@eliotr/core", "cf:types"]);
+    exec("pnpm", ["--filter", "@eliotr/core", "deploy:dry-run"]);
+  }
   if (!confirmLive) {
-    log("Dry-run gates passed. No remote provisioning or deployment was executed.");
+    if (purpose === MAINTENANCE_PURPOSE) {
+      log(JSON.stringify({ purpose, full_release_blockers: fullReleaseBlockers,
+        source_budget_gate: sourceBudgetState, deployment: "NOT_EXECUTED" }));
+    } else log("Dry-run gates passed. No remote provisioning or deployment was executed.");
     return null;
   }
 
@@ -136,51 +188,25 @@ export async function deployCloudflare({ confirmLive = false, environment = proc
     await verifyWranglerOAuthAccount({ expectedAccountId: env.CLOUDFLARE_ACCOUNT_ID, getWhoamiOutput });
   }
 
-  // FIX1-B usage-envelope gate (strict deny-by-default): usage preflight
-  // before the first remote mutation. Local gates above (pnpm check, PWA
-  // build, cf:types, deploy:dry-run, provisioner --check-only) are the
-  // enumerated proven metadata-only/zero-billable SEALED allowlist. BLOCKED
-  // denies everything; SEALED authorizes only that allowlist after fresh
-  // account binding/inventory receipt. Worker upload/exposure, route/domain,
-  // D1 migrations/queries, R2 writes, Queue create/config/produce/consume,
-  // Workflow/DO exec, Workers AI, AI Search index/query and Vectorize
-  // writes/queries must not occur while any required metric is
-  // unknown/stale/untrusted — so ADMITTED alone never suffices: the gate
-  // additionally requires the same-process admission capability minted by the
-  // fresh live collection lifecycle above. Injected providers, staged
-  // snapshots, and persisted receipts can yield the ADMITTED label but never
-  // the capability, so they deny here before the first remote mutation.
-  // Access runs first in both check-only and apply loops and is read back
-  // before any Worker surface exists; any partial failure aborts before the
-  // single Worker deploy, leaving no public workers.dev path
-  // (preview_urls=false is enforced by validateGeneratedDeployment).
-  // An explicit usageProviders value is forwarded verbatim as a test seam.
-  // The omitted/null default lets the OAuth lifecycle build its branded live
-  // registry; usageSnapshot remains an explicit test-called builder path.
-  {
-    const usageGate = await runUsagePreflight({
-      env: { ...process.env, ...env },
-      nowMs: now(),
-      readFile: readWranglerFile ?? read,
-      getWhoamiOutput: runWranglerWhoami,
-      providers: usageProviders,
-      snapshot: usageSnapshot,
-      writeReceipt: false,
-      cwd: root,
-    });
-    if (usageGate.decision === "BLOCKED") {
-      throw new Error(`Cloudflare usage preflight BLOCKED deployment before any mutation. ${usageGate.evaluation.reasons.join("; ")}`);
+  const activeWorkerBaseline = await readActiveWorker({ env, input, fetchImpl });
+  let maintenanceBaseline = null;
+  if (purpose === MAINTENANCE_PURPOSE) {
+    if (input.cookie === null) throw new Error("Maintenance requires ELIOTR_ACCESS_SMOKE_COOKIE for authenticated capability comparison");
+    const current = await readCapabilities({ input, fetchImpl });
+    if (current.generation !== activeWorkerBaseline.generation) {
+      throw new Error("Maintenance capability generation is not pinned to the active Worker version");
     }
-    if (usageGate.decision !== "ADMITTED" || !isUsageAdmissionCapability(usageGate.capability)) {
-      throw new Error(`Cloudflare usage preflight ${usageGate.decision} denies remote deployment: only a fresh ADMITTED aggregate with a same-process admission capability authorizes Worker upload, D1 migrations, and provisioner apply. ${usageGate.evaluation.reasons.join("; ")} Zero billable bindings were invoked.`);
-    }
+    const canonicalConfig = JSON.parse(await read(resolve(core, "wrangler.jsonc"), "utf8"));
+    assertMaintenanceCapabilityProfile({ candidate: candidateCapabilityProfile,
+      observed: current.capabilities, generatedConfig: canonicalConfig, activeWorkerIdentity: activeWorkerBaseline });
+    maintenanceBaseline = { active: activeWorkerBaseline, capabilities: current };
   }
 
   // All predictable cross-product drift must fail before the first remote mutation.
   for (const name of provisioners) execute("node", [`scripts/${name}.mjs`, "--check-only"], root, provisionerEnv(name));
   // Preserve prior evidence but never leave an old PASS at the current receipt path after a failure.
   await archive();
-  for (const name of provisioners) execute("node", [`scripts/${name}.mjs`], root, provisionerEnv(name));
+  for (const name of provisioners) execute("node", [`scripts/${name}.mjs`, "--verify-existing"], root, provisionerEnv(name));
   const configPath = resolve(core, deployConfig);
   const bytes = await read(configPath);
   const config = validateGeneratedDeployment(bytes, env, input);
@@ -189,6 +215,14 @@ export async function deployCloudflare({ confirmLive = false, environment = proc
   const migrationPlan = await readDeploymentMigrationPlan(config, { root });
   const assetManifest = await readAssetManifest(config, { root });
   const backendFingerprint = computeResearchBackendFingerprint({ root, generated_config: config });
+  const priorWorkerConfig = { ...config, vars: { ...config.vars,
+    DEPLOYMENT_GENERATION: activeWorkerBaseline.generation } };
+  const priorWorkerEnv = { ...env, ELIOTR_DEPLOYMENT_GENERATION: activeWorkerBaseline.generation };
+  const priorWorkerReadback = await readWorker(priorWorkerEnv, input, priorWorkerConfig, { fetchImpl });
+  if (priorWorkerReadback.deployment_id !== activeWorkerBaseline.deployment_id ||
+      priorWorkerReadback.version_id !== activeWorkerBaseline.version_id) {
+    throw new Error("Worker bindings do not match the active configured resource identities");
+  }
   const requireUnchangedConfig = async () => {
     if (createHash("sha256").update(await read(configPath)).digest("hex") !== digest) {
       throw new Error("Generated deployment config changed during release");
@@ -204,19 +238,38 @@ export async function deployCloudflare({ confirmLive = false, environment = proc
   // The account-neutral build does not validate generated IDs, routes and runtime variables.
   exec("pnpm", ["exec", "wrangler", "deploy", "--dry-run", "--minify", "--config", deployConfig], core);
   await requireUnchangedInputs();
-  for (const binding of ["CORE_DB", "SEARCH_DB"]) {
-    exec("pnpm", ["exec", "wrangler", "d1", "migrations", "apply", binding, "--remote", "--config", deployConfig], core);
-    await requireUnchangedInputs();
-  }
   const migrationReadback = await verifyDeploymentMigrationLedgers(env, input, migrationPlan, { fetchImpl });
   await requireUnchangedInputs();
+  const schemaGenerationReadback = await readSchemaGenerations({ env, input, plan: migrationPlan,
+    root, fetchImpl, read });
+  await requireUnchangedInputs();
+  {
+    const currentCapabilities = purpose === MAINTENANCE_PURPOSE
+      ? await readCapabilities({ input, fetchImpl }) : null;
+    const currentIdentity = await readActiveWorker({ env, input, fetchImpl });
+    const currentWorker = await readWorker(priorWorkerEnv, input, priorWorkerConfig, { fetchImpl });
+    if (canonicalJson(currentIdentity) !== canonicalJson(activeWorkerBaseline) ||
+        currentWorker.deployment_id !== priorWorkerReadback.deployment_id ||
+        currentWorker.version_id !== priorWorkerReadback.version_id) {
+      throw new Error("Active Worker version or bindings changed during deployment preflight");
+    }
+    if (purpose === MAINTENANCE_PURPOSE) {
+      if (currentCapabilities.generation !== maintenanceBaseline.capabilities.generation ||
+          canonicalJson(currentCapabilities.capabilities) !== canonicalJson(maintenanceBaseline.capabilities.capabilities)) {
+        throw new Error("Active Worker capabilities changed during maintenance preflight");
+      }
+      assertMaintenanceCapabilityProfile({ candidate: candidateCapabilityProfile,
+        observed: currentCapabilities.capabilities, generatedConfig: config, activeWorkerIdentity: currentIdentity });
+    }
+    await requireUnchangedInputs();
+  }
   // Canonical generated vars win; Wrangler preserves secrets without --keep-vars.
   exec("pnpm", ["exec", "wrangler", "deploy", "--config", deployConfig], core);
   await requireUnchangedInputs();
-  const worker = await readDeploymentWorker(env, input, config, { fetchImpl });
+  const worker = await readWorker(env, input, config, { fetchImpl });
   let assetReadback = await verifyDeploymentAssets(assetManifest, input, { fetchImpl });
   if (assetReadback.state === "PASS") {
-    const afterAssets = await readDeploymentWorker(env, input, config, { fetchImpl });
+    const afterAssets = await readWorker(env, input, config, { fetchImpl });
     if (afterAssets.deployment_id !== worker.deployment_id || afterAssets.version_id !== worker.version_id) {
       throw new Error("Active Worker deployment changed during asset readback");
     }
@@ -225,6 +278,21 @@ export async function deployCloudflare({ confirmLive = false, environment = proc
   }
   await requireUnchangedInputs();
   const remoteHttpSmoke = await verifyDeploymentSmoke(env, input, { fetchImpl, now });
+  const uploadedIdentity = await readActiveWorker({ env, input, fetchImpl });
+  if (uploadedIdentity.generation !== env.ELIOTR_DEPLOYMENT_GENERATION ||
+      uploadedIdentity.deployment_id !== worker.deployment_id || uploadedIdentity.version_id !== worker.version_id) {
+    throw new Error("Uploaded Worker identity does not match the candidate deployment before authority synchronization");
+  }
+  if (purpose === MAINTENANCE_PURPOSE) {
+    const candidateCapabilities = await readCapabilities({ input, fetchImpl });
+    assertMaintenanceCapabilityProfile({ candidate: candidateCapabilityProfile,
+      observed: candidateCapabilities.capabilities, generatedConfig: config, activeWorkerIdentity: uploadedIdentity });
+    requireSameMaintenanceCapabilityReadback({ baseline: maintenanceBaseline.capabilities, current: candidateCapabilities });
+    if (candidateCapabilities.generation !== env.ELIOTR_DEPLOYMENT_GENERATION) {
+      throw new Error("Maintenance capability readback does not match candidate generation before authority synchronization");
+    }
+  }
+  await requireUnchangedInputs();
   const coreDatabase = config.d1_databases.find((database) => database.binding === "CORE_DB");
   if (coreDatabase === undefined || typeof coreDatabase.database_id !== "string") {
     throw new Error("Generated deployment is missing CORE_DB identity");
@@ -239,6 +307,23 @@ export async function deployCloudflare({ confirmLive = false, environment = proc
     fetch_impl: fetchImpl,
     now,
   });
+  const postSyncIdentity = await readActiveWorker({ env, input, fetchImpl });
+  const postSyncWorker = await readWorker(env, input, config, { fetchImpl });
+  if (postSyncIdentity.generation !== env.ELIOTR_DEPLOYMENT_GENERATION ||
+      postSyncIdentity.deployment_id !== worker.deployment_id || postSyncIdentity.version_id !== worker.version_id ||
+      postSyncWorker.deployment_id !== worker.deployment_id || postSyncWorker.version_id !== worker.version_id) {
+    throw new Error("Active Worker deployment changed after authority synchronization");
+  }
+  if (purpose === MAINTENANCE_PURPOSE) {
+    const finalCapabilities = await readCapabilities({ input, fetchImpl });
+    assertMaintenanceCapabilityProfile({ candidate: candidateCapabilityProfile,
+      observed: finalCapabilities.capabilities, generatedConfig: config, activeWorkerIdentity: postSyncIdentity });
+    requireSameMaintenanceCapabilityReadback({ baseline: maintenanceBaseline.capabilities, current: finalCapabilities });
+    if (finalCapabilities.generation !== env.ELIOTR_DEPLOYMENT_GENERATION) {
+      throw new Error("Maintenance capability readback does not match candidate deployment generation");
+    }
+  }
+  await requireUnchangedInputs();
   const receipt = {
     protocol: "eliotr.cloudflare-deployment-receipt.v1",
     deployment_generation: env.ELIOTR_DEPLOYMENT_GENERATION,
@@ -257,7 +342,9 @@ export async function deployCloudflare({ confirmLive = false, environment = proc
       workflow_retry_resume: "NOT_EXECUTED", ai_search_exact_resolution: "NOT_EXECUTED",
       google_drive_exchange: "NOT_EXECUTED",
     },
-    note: "Active version, configured resource bindings and migration names are verified. ETag and local migration hashes are not remote content proof; asset body hashes are observed only with authenticated readback and stable active-version observations. This is not an atomic source/build seal; product/T4/T6 gates remain separate. HTTP generation is verified only when authenticated smoke passes.",
+    note: purpose === MAINTENANCE_PURPOSE
+      ? buildMaintenanceNote(fullReleaseBlockers, sourceBudgetState, sourceBudgetFindings, migrationReadback, schemaGenerationReadback)
+      : "Active version, configured resource bindings and migration names are verified. ETag and local migration hashes are not remote content proof; asset body hashes are observed only with authenticated readback and stable active-version observations. This is not an atomic source/build seal; product/T4/T6 gates remain separate. HTTP generation is verified only when authenticated smoke passes.",
     created_at: new Date(now()).toISOString(),
   };
   await save(receipt);
@@ -266,9 +353,40 @@ export async function deployCloudflare({ confirmLive = false, environment = proc
 }
 
 if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
-  await deployCloudflare({ confirmLive: process.argv.includes("--confirm-live") ||
-    process.env.ELIOTR_CONFIRM_LIVE_DEPLOY === "1" }).catch((error) => {
-    console.error(error.message);
-    process.exitCode = 1;
-  });
+  const args = process.argv.slice(2);
+  const allowed = new Set(["--confirm-live", "--maintenance"]);
+  if (args.some((argument) => !allowed.has(argument)) || new Set(args).size !== args.length) {
+    console.error("Deployment arguments are invalid");
+    process.exitCode = 2;
+  } else {
+    await deployCloudflare({ confirmLive: args.includes("--confirm-live") ||
+      process.env.ELIOTR_CONFIRM_LIVE_DEPLOY === "1",
+    purpose: args.includes("--maintenance") ? MAINTENANCE_PURPOSE : FULL_RELEASE_PURPOSE }).catch((error) => {
+      console.error(error.message);
+      process.exitCode = 1;
+    });
+  }
+}
+
+function buildMaintenanceNote(blockers, sourceBudgetState, sourceBudgetFindings, migrationReadback, schemaGenerationReadback) {
+  const items = Array.isArray(blockers) ? blockers : [];
+  const blockerText = items.length === 0 ? "No known full-release blockers were reported" :
+    `Full-release blockers (${items.length}): ${items.join("; ")}`;
+  const ledgerState = migrationReadback?.state === "PASS" ? "PASS" : "NOT_VERIFIED";
+  const schemaState = schemaGenerationReadback?.state === "PASS" ? "PASS" : "NOT_VERIFIED";
+  return `Worker/assets maintenance deployment only; this receipt does not qualify a full release. ${blockerText}. ` +
+    `Source-maintainability budget gate: ${sourceBudgetState ?? "NOT_EXECUTED"}. ` +
+    `${sourceBudgetFindings === null ? "No source-budget failure output was observed. " : `Source-budget findings: ${sourceBudgetFindings}. `}` +
+    `D1 migrations were not applied; exact existing migration ledger readback: ${ledgerState}; ` +
+    `required Core/Search schema generation readback: ${schemaState}. ` +
+    "Authenticated candidate capability profile matched the active Worker before upload and after synchronization. " +
+    "ETag and local migration hashes are not remote content proof; product and workload gates remain separate.";
+}
+
+function canonicalJson(value) {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (value !== null && typeof value === "object") {
+    return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(",")}}`;
+  }
+  return JSON.stringify(value);
 }

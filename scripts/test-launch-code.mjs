@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import { assertLaunchCodeComplete, launchCodeBlockers, readConfiguredTransport } from "./check-launch-code.mjs";
+import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { assertLaunchCodeComplete, launchCodeBlockers, readCompositionCapabilityProfile, readConfiguredTransport } from "./check-launch-code.mjs";
 import { deployCloudflare } from "./deploy-cloudflare.mjs";
 const composition = (slices = "", operations = "") =>
   `function createApplication() { return { disabled_slices: [${slices}] }; } ${operations}`;
@@ -74,6 +76,34 @@ assert.ok(drive, "The normative Drive implementation must be explicitly inventor
 if (drive.state === "IN_PROGRESS" || drive.state === "SCAFFOLD_FAIL_CLOSED") {
   assert.ok(launchCodeBlockers({ ...complete, entries: [drive] }, composition()).includes(`${drive.id}: ${drive.path}`));
 }
+const repositoryRoot = fileURLToPath(new URL("../", import.meta.url));
+const routePath = resolve(repositoryRoot, "packages/interfaces/src/routes.ts");
+const sourceFiles = ["apps/eliotr-core/src/composition-root.ts", "packages/interfaces/src/routes.ts",
+  "packages/contracts/src/research.ts", "packages/cloudflare-navigation/src/orientation-input.ts"];
+const sourceMap = new Map(await Promise.all(sourceFiles.map(async (path) => {
+  const absolute = resolve(repositoryRoot, path);
+  return [absolute, await readFile(absolute, "utf8")];
+})));
+const profileRead = async (changed = sourceMap) => readCompositionCapabilityProfile({ root: repositoryRoot,
+  read: async (path) => {
+    const text = changed.get(resolve(path));
+    if (text === undefined) throw new Error("missing fixture source");
+    return text;
+  } });
+const capabilityProfile = await profileRead();
+assert.equal(capabilityProfile.protocol, "eliotr.capabilities.v1");
+assert.equal(capabilityProfile.routes.length, 105);
+assert.ok(capabilityProfile.routes.some((route) => route.path === "/api/v1/system/capabilities"));
+const routeText = sourceMap.get(routePath);
+await assert.rejects(profileRead(new Map(sourceMap).set(routePath,
+  routeText.replace("{ RESEARCH_REQUEST_MAX_BYTES }", "{ RESEARCH_REQUEST_MAX_BYTES as REQUEST_BYTES }"))), /may not be aliased/u);
+await assert.rejects(profileRead(new Map(sourceMap).set(routePath, `${routeText}\nROUTES.push({});\n`)), /executable or dynamic expansion/u);
+const firstRoute = routeText.split("\n").find((line) => line.startsWith("  { method:"));
+assert.ok(firstRoute);
+await assert.rejects(profileRead(new Map(sourceMap).set(routePath,
+  routeText.replace("] as const;", `${firstRoute}\n] as const;`))), /routes contain duplicates/u);
+await assert.rejects(readCompositionCapabilityProfile({ root: repositoryRoot,
+  read: async () => { throw new Error("source unavailable"); } }), /source unavailable/u);
 await assert.rejects(assertLaunchCodeComplete(), /LIVE_DEPLOY_BLOCKED/);
 const forbidden = () => assert.fail("unfinished code must fail before any command, credential readback or remote effect");
 await assert.rejects(deployCloudflare({ confirmLive: true, environment: {}, execute: forbidden,

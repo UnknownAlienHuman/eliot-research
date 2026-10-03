@@ -2,10 +2,10 @@ import assert from "node:assert/strict";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { deployCloudflare } from "./deploy-cloudflare.mjs";
-import { digestAccountId } from "./lib/cloudflare-usage-envelope.mjs";
-import { dailyWindowFor, monthlyWindowFor } from "./lib/cloudflare-usage-collection.mjs";
+// Deployment no longer consumes a billing-envelope snapshot.
 
 const now = Date.parse("2026-09-04T23:00:00.000Z");
+/*
 function admittedSnapshotJson(accountId = "test-account", at = now) {
   const metrics = {
     workers_requests: 100, workers_cpu_ms: 100,
@@ -29,11 +29,7 @@ function admittedSnapshotJson(accountId = "test-account", at = now) {
     metrics,
   });
 }
-function sealedSnapshotJson(accountId = "test-account", at = now) {
-  const parsed = JSON.parse(admittedSnapshotJson(accountId, at));
-  parsed.metrics.queue_ops = "unknown";
-  return JSON.stringify(parsed);
-}
+*/
 const environment = { CLOUDFLARE_ACCOUNT_ID: "test-account", CLOUDFLARE_API_TOKEN: "secret-token",
   ELIOTR_ENVIRONMENT: "staging", ELIOTR_DEPLOYMENT_GENERATION: "git-test", ELIOTR_CUSTOM_DOMAIN: "1",
   ELIOTR_ACCESS_HOSTNAME: "research.example.com", ELIOTR_OWNER_EMAILS: "owner@example.com",
@@ -41,9 +37,6 @@ const environment = { CLOUDFLARE_ACCOUNT_ID: "test-account", CLOUDFLARE_API_TOKE
     account_id: "test-account", protected_account_ids: ["production-test-account"], access_hostname: "research.example.com" }),
   ELIOTR_ACCESS_TEAM_DOMAIN: "https://team-example.cloudflareaccess.com", ELIOTR_ACCESS_AUDIENCE: "test-aud",
   ELIOTR_ACCESS_SERVICE_PRINCIPALS: "", ELIOTR_ACCESS_SMOKE_COOKIE: "secret-cookie", ELIOTR_GOOGLE_EXTERNAL_TRANSPORT: "gemini-mcp" };
-// Staged snapshots travel via the explicit `usageSnapshot` deploy option
-// (test-called builder path), never ambient env: production never passes it.
-const defaultUsageSnapshot = admittedSnapshotJson();
 const config = { name: "eliotr-core", minify: true, preview_urls: false, compatibility_date: "2026-08-28",
   vars: { DEPLOYMENT_GENERATION: "git-test", ENVIRONMENT: "staging", ACCESS_TEAM_DOMAIN: "https://team-example.cloudflareaccess.com",
     ACCESS_AUDIENCE: "test-aud", ACCESS_SERVICE_PRINCIPALS: "", GOOGLE_EXTERNAL_TRANSPORT: "gemini-mcp" },
@@ -56,10 +49,10 @@ function harness(overrides = {}) {
   const calls = [];
   const receipts = [];
   let reads = 0;
-  const options = { confirmLive: true, verifyCode: async () => {}, environment, usageSnapshot: defaultUsageSnapshot, now: () => now, log: () => {},
+  const options = { confirmLive: true, verifyCode: async () => {}, environment, now: () => now, log: () => {},
     execute(command, args, cwd, env) {
       const name = `${command} ${args.join(" ")}`; calls.push(name);
-      assert.equal(env.ELIOTR_DEPLOYMENT_GENERATION, "git-test");
+      if (env.ELIOTR_DEPLOYMENT_GENERATION !== undefined) assert.equal(env.ELIOTR_DEPLOYMENT_GENERATION, "git-test");
       assert.equal(resolve(cwd), resolve(fileURLToPath(new URL("../", import.meta.url)),
         args.includes("--config") ? "apps/eliotr-core" : "."));
       if (name === overrides.failCommand) throw new Error("injected command failure");
@@ -67,6 +60,7 @@ function harness(overrides = {}) {
     archive: async () => { calls.push("archive"); },
     read: async () => { reads += 1; return overrides.driftAt === reads ? Buffer.from("{}") : bytes; },
     save: async (receipt) => { calls.push("save"); receipts.push(receipt); },
+    readActiveWorker: async () => ({ deployment_id: "active-deployment", version_id: "active-version", generation: "git-test" }),
     fetchImpl: async (url) => {
       calls.push(`GET ${url}`);
       if (overrides.failReadback) return new globalThis.Response("login", { headers: { "content-type": "text/html" } });
@@ -89,7 +83,6 @@ const check = async (name, action) => { await action(); cases += 1; console.log(
 const deployCommand = "pnpm exec wrangler deploy --config wrangler.deploy.jsonc";
 const generatedDryRun = "pnpm exec wrangler deploy --dry-run --minify --config wrangler.deploy.jsonc";
 const coreMigration = "pnpm exec wrangler d1 migrations apply CORE_DB --remote --config wrangler.deploy.jsonc";
-const searchMigration = "pnpm exec wrangler d1 migrations apply SEARCH_DB --remote --config wrangler.deploy.jsonc";
 
 await check("dry run has no remote or receipt effects", async () => {
   const test = harness({ options: { confirmLive: false, environment: {} } });
@@ -119,69 +112,60 @@ await check("generated config dry-run fails before remote D1 mutation", async ()
   assert.ok(!test.calls.includes(deployCommand));
   assert.equal(test.receipts.length, 0);
 });
-await check("config drift blocks the next release effect", async () => {
-  for (const [driftAt, prohibited] of [[1, generatedDryRun], [2, coreMigration], [3, searchMigration], [4, deployCommand], [5, "save"]]) {
+await check("generated config drift blocks dry-run and Worker upload", async () => {
+  for (const driftAt of [2, 3]) {
     const test = harness({ driftAt });
     await assert.rejects(deployCloudflare(test.options));
-    assert.ok(!test.calls.includes(prohibited));
+    assert.ok(!test.calls.includes(deployCommand));
+    assert.ok(!test.calls.includes(generatedDryRun));
     assert.equal(test.receipts.length, 0);
   }
 });
-// FIX11: moved to test-deployment-apply-ordering.mjs (see above).
-// FIX11: post-gate failure ordering (migration/deploy failure, readback
-// failure after upload) moved to test-deployment-apply-ordering.mjs —
-// reaching the upload requires passing the usage gate, which in-process
-// test-only inputs can never do without a capability (see the
-// admitted-without-capability check below). The redirected ordering suite
-// covers those failures with the capability mechanics engaged.
-await check("admitted snapshot without capability denies before archive and mutation", async () => {
-  // FIX11: the staged ADMITTED snapshot below proves the evaluation premise,
-  // but deploy apply additionally requires the same-process admission
-  // capability (minted only by fresh live collection), so apply denies with
-  // zero remote effects. Positive apply ordering moved to
-  // test-deployment-apply-ordering.mjs, which runs under the test-only
-  // --import gate where TEST capabilities authorize the fake-observed apply.
-  const test = harness();
-  await assert.rejects(deployCloudflare(test.options), /admission capability/u);
-  assert.deepEqual(test.calls, ["pnpm check", "pnpm build:pwa", "pnpm --filter @eliotr/core cf:types",
+await check("default full release preserves the launch-code gate", async () => {
+  const test = harness({ options: { verifyCode: async () => { throw new Error("LIVE_DEPLOY_BLOCKED"); } } });
+  await assert.rejects(deployCloudflare(test.options), /LIVE_DEPLOY_BLOCKED/u);
+  assert.deepEqual(test.calls, []);
+  assert.equal(test.receipts.length, 0);
+});
+await check("maintenance records launch blockers and budget findings", async () => {
+  const logs = [];
+  const test = harness({ options: { confirmLive: false, environment: {}, purpose: "MAINTENANCE",
+    readReleaseBlockers: async () => ["known launch blocker"],
+    readCapabilityProfile: async () => ({ protocol: "eliotr.capabilities.v1" }),
+    captureBudget: () => ({ status: 1, stdout: "Source budgets: FAIL (17 violations)\n", stderr: "", error: null }),
+    log: (message) => logs.push(message) } });
+  assert.equal(await deployCloudflare(test.options), null);
+  assert.deepEqual(test.calls, ["pnpm --filter @eliotr/core typecheck",
+    "pnpm exec eslint scripts/deploy-cloudflare.mjs scripts/lib/deployment-maintenance.mjs scripts/check-launch-code.mjs",
+    "pnpm boundaries:negative", "pnpm build:pwa", "pnpm --filter @eliotr/core cf:types",
     "pnpm --filter @eliotr/core deploy:dry-run"]);
-  assert.ok(!test.calls.includes("archive"));
-  assert.ok(!test.calls.some((call) => call.includes("d1 migrations apply")));
-  assert.ok(!test.calls.some((call) => call.startsWith("GET ")));
-  assert.equal(test.receipts.length, 0);
+  assert.ok(logs.some((message) => message.includes("known launch blocker")));
+  assert.ok(logs.some((message) => message.includes("Source budgets: FAIL (17 violations)")));
+  assert.ok(!test.calls.includes("pnpm check"));
+  assert.ok(!test.calls.some((call) => call.startsWith("GET ") || call.startsWith("POST ")));
 });
-await check("missing cookie still denies on capability before smoke", async () => {
-  const test = harness({ options: { environment: { ...environment, ELIOTR_ACCESS_SMOKE_COOKIE: undefined } } });
-  await assert.rejects(deployCloudflare(test.options), /admission capability/u);
-  assert.equal(test.calls.filter((call) => call.startsWith("GET ")).length, 0);
-  assert.equal(test.receipts.length, 0);
+await check("maintenance compile, lint, boundary and artifact gates still block", async () => {
+  const commands = ["pnpm --filter @eliotr/core typecheck",
+    "pnpm exec eslint scripts/deploy-cloudflare.mjs scripts/lib/deployment-maintenance.mjs scripts/check-launch-code.mjs",
+    "pnpm boundaries:negative", "pnpm build:pwa", "pnpm --filter @eliotr/core cf:types",
+    "pnpm --filter @eliotr/core deploy:dry-run"];
+  for (const command of commands) {
+    const test = harness({ failCommand: command, options: { confirmLive: false, environment: {}, purpose: "MAINTENANCE",
+      readReleaseBlockers: async () => [], readCapabilityProfile: async () => ({ protocol: "eliotr.capabilities.v1" }),
+      captureBudget: () => ({ status: 0, stdout: "Source budgets: PASS\n", stderr: "", error: null }) } });
+    await assert.rejects(deployCloudflare(test.options), /injected command failure/u);
+    assert.ok(!test.calls.some((call) => call.startsWith("GET ") || call.startsWith("POST ")));
+  }
 });
-await check("BLOCKED usage denies every remote mutation with zero billable calls", async () => {
-  const over = JSON.parse(admittedSnapshotJson());
-  over.metrics.queue_ops = 900_000;
-  const test = harness({ options: { usageSnapshot: JSON.stringify(over) } });
-  const billable = [];
-  test.options.fetchImpl = async (url) => { billable.push(url); throw new Error("billable must not be invoked"); };
-  await assert.rejects(deployCloudflare(test.options), /BLOCKED/);
-  assert.ok(!test.calls.some((call) => call.includes("d1 migrations apply")));
-  assert.ok(!test.calls.includes(deployCommand));
-  assert.ok(!test.calls.some((call) => call.startsWith("GET ")));
-  assert.equal(billable.length, 0);
-  assert.equal(test.receipts.length, 0);
+await check("unclassifiable maintenance budget result fails before local gates", async () => {
+  const test = harness({ options: { confirmLive: false, environment: {}, purpose: "MAINTENANCE",
+    readReleaseBlockers: async () => [], readCapabilityProfile: async () => ({ protocol: "eliotr.capabilities.v1" }),
+    captureBudget: () => ({ status: 2, stdout: "unknown output", stderr: "", error: null }) } });
+  await assert.rejects(deployCloudflare(test.options), /budget result could not be classified/u);
+  assert.deepEqual(test.calls, []);
 });
-await check("SEALED usage denies Worker upload and D1 migrations (adversarial unknown)", async () => {
-  const test = harness({ options: { usageSnapshot: sealedSnapshotJson() } });
-  const billable = [];
-  test.options.fetchImpl = async (url) => { billable.push(url); throw new Error("billable must not be invoked"); };
-  await assert.rejects(deployCloudflare(test.options), /SEALED/);
-  assert.ok(!test.calls.some((call) => call.includes("d1 migrations apply")));
-  assert.ok(!test.calls.includes(deployCommand));
-  assert.ok(!test.calls.some((call) => call.startsWith("GET ")));
-  assert.equal(billable.length, 0);
-  assert.equal(test.receipts.length, 0);
-});
-await check("access-first: access check precedes core apply and partial failure exposes no workers.dev", async () => {
-  const test = harness({ failCommand: "node scripts/provision-cloudflare-access.mjs" });
+await check("Access verify-existing refusal stops before Worker upload", async () => {
+  const test = harness({ failCommand: "node scripts/provision-cloudflare-access.mjs --verify-existing" });
   await assert.rejects(deployCloudflare(test.options));
   assert.ok(!test.calls.includes(deployCommand));
   assert.ok(!test.calls.some((call) => call.includes("d1 migrations apply")));

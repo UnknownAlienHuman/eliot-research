@@ -1,9 +1,18 @@
 # Cloudflare provision and deploy runbook
 
-**Deployment hold:** `deploy-cloudflare.mjs --confirm-live` rejects registered unfinished mandatory
-product paths before any remote effect. Develop/test locally with [local-launch.md](local-launch.md);
-do not bypass the hold by invoking raw Wrangler deployment. Removing this negative hold still requires
-all normative code, security and live qualification gates.
+**Deployment gate:** `deploy-cloudflare.mjs --confirm-live` defaults to `FULL_RELEASE`, retaining
+`assertLaunchCodeComplete`, `pnpm check`, and the full release gates. Explicit `--maintenance`
+selects `MAINTENANCE`: it records launch blockers and source-budget findings while still requiring
+compile, lint, boundary, build, binding, and Wrangler artifact checks. Both purposes use the guarded
+path and standard Wrangler deployment of one Worker version to 100% traffic with exact readback.
+Neither purpose applies D1 migrations. The four resource children run `--verify-existing` with
+GET-only exact readback; missing or drifted resources fail closed. The existing exact 18-counter
+usage envelope is not a prerequisite for this existing-resource deployment, but remains unknown and
+remains required by operations whose heavy-operation policy needs it. Apply D1 migrations separately
+through the pinned bounded migration operation described below. Resource creation and AI Search
+provisioning retain their existing admission controls. Deployment alone never promotes a product
+contour to `LIVE_QUALIFIED`. See
+[ADR-0009](../adr/0009-control-plane-deployment-and-runtime-cost-authority.md).
 
 This runbook deploys one Worker/PWA contour without committing Cloudflare account state. It is safe to
 hand to a deployment agent; no step requires reading the architecture master document.
@@ -134,17 +143,26 @@ remain outside tracked documentation; this receipt proves metadata transport, no
 | `vectorize_queried_dims_month` | dimensions/month | [Vectorize info](https://developers.cloudflare.com/api/resources/vectorize/subresources/indexes/methods/info/) has no monthly queried-dimension quantity; Wrangler has no documented Vectorize-specific scope. |
 | `vectorize_stored_dims_month` | dimensions/month | Per-index `dimensions` and `vectorCount` are current stock, not exact account-wide monthly stored dimensions. |
 
-This source inventory qualifies neither a complete account ledger nor a release. Dependent
-heavy-work admission remains `SEALED` until every required counter has the existing authoritative
-coverage proof. Full S92 and live product acceptance remain pending.
+This source inventory still qualifies neither a complete account ledger nor a release. The existing
+18 required counters remain `UNKNOWN`; diagnostic D1/GraphQL samples do not become canonical usage,
+and unknown is not zero. Their status does not block guarded deployment of an already existing
+Worker when exact deployment readback succeeds. D1 migrations use a separately reviewed bounded
+operation and do not acquire a general spend capability from this deployment decision. Resource
+creation, AI Search indexing/query work, model calls, and other heavy operations retain their
+existing usage-admission policies. The 18 counters stay unknown until exact evidence is qualified;
+ADR-0009 does not mint a capability or alter usage authority. Full S92 and live product acceptance
+remain pending.
 
-The documented candidate for exact billing evidence is Usage v2 with an accepted Billing Read
-credential and restricted-endpoint availability for the account. Enabling that source is a separate
-access decision; a fresh receipt must still qualify all 18 metric IDs, units, windows, and complete
-coverage before admission can open. The public specification and a new credential alone do not
-prove that coverage. If that access is unavailable, the owner must explicitly revise the requirement
-for exact billable usage and approve another admission evidence contract. This checkpoint makes
-neither change, and dependent deployment remains stopped.
+Model calls retain their existing operation-specific budgets, reservations, authorization,
+cancellation, idempotency, and qualification controls; the exact usage proof applies where the
+existing operation policy requires it. AI Search indexing/reindexing/query work keeps its existing
+heavy-operation controls. Read-only verification of an existing AI Search namespace/instance does
+not initiate indexing. If an AI Search namespace or instance is absent, its provisioning path
+remains behind the existing admission gate before any AI Search mutation; do not create a fresh
+instance while that gate is sealed. A Worker deployment can activate behavior that consumes runtime
+resources; this change makes no claim that deployment is free or has no operational effect. The
+18 counters stay unknown until exact evidence is qualified; this runbook change does not mint a
+capability or alter usage authority. Full S92 and live product acceptance remain pending.
 
 ## Preconditions
 
@@ -296,14 +314,63 @@ Git.
 ### D1
 
 The provisioner lists by exact database name, rejects duplicates/jurisdiction drift and injects returned
-UUIDs into the generated config. The deployer applies both additive migration streams before exposing the
-new Worker generation. The exact generated config is identity-validated and dry-run before either remote
-migration stream. Its digest is rechecked between release steps; drift stops the next effect. Do not
-depend on Wrangler's automatic D1 config mutation. After both apply commands, bounded read-only
-D1 API queries compare each remote `d1_migrations` ledger with the exact local migration names.
-Missing, extra, duplicate or malformed rows stop before Worker upload, deployment authority changes
-and a new successful receipt. The local migration bundle hash is recorded separately: ledger names
-do not prove the remote SQL bytes or schema shape.
+UUIDs into the generated config. The Worker deployer never runs `wrangler d1 migrations apply`.
+It identity-validates and dry-runs the generated config, then compares each remote `d1_migrations`
+ledger with the exact local migration names and reads the required Core/Search schema-generation
+markers. A missing, extra, duplicate, malformed, or pending ledger; a missing schema marker; or local
+input drift stops before Worker upload, deployment-authority changes, and a successful receipt. The
+local migration bundle hash is recorded separately: ledger names do not prove remote SQL bytes or
+schema shape.
+
+### Separate bounded D1 migration operation
+
+Use `scripts/migrate-cloudflare-d1.mjs` only for one explicit, reviewed, bounded migration intent.
+This separate bounded operation does not require the exact 18-counter billing envelope. Its
+reviewed risk profile, exact SQL/target pins, count/byte/time bounds, Time Travel bookmark and
+reconciliation govern this operation; migration application can consume resources. Resource
+creation and heavy runtime operations retain their existing admission requirements.
+The versioned intent binds the exact account, generated-config digest, database binding/name/UUID,
+entire ordered pending migration suffix, per-file SQL hashes, bundle digest, risk review, schema
+probes, and maximum migration count, SQL bytes, deadline, and runtime. The operation validates the
+local plan without network or Wrangler when `--confirm-live` is absent:
+
+```bash
+node scripts/migrate-cloudflare-d1.mjs --plan ./reviewed-core-migration-intent.json
+```
+
+Live use requires explicit confirmation and the same plan file:
+
+```bash
+node scripts/migrate-cloudflare-d1.mjs --plan ./reviewed-core-migration-intent.json --confirm-live
+```
+
+The command checks the exact account and database identity, production/staging isolation, OAuth
+profile where selected, full pending migration suffix, config and SQL hashes, and each declared
+schema probe. It captures the current Time Travel bookmark, records the attempt before running the
+standard remote migration command against the pinned database name, then reconciles both the exact
+ledger and schema probes. The bookmark is a readback, not a newly created backup. Ledger names are
+not proof of remote SQL bytes. Restore remains an explicit manual recovery action.
+
+The SQL classifier fails closed outside its documented bounded grammar: `PRAGMA foreign_keys=ON`,
+literal-keyed `schema_state` generation updates, `CREATE TABLE`, `ALTER TABLE ... ADD COLUMN`,
+`CREATE VIEW`, `CREATE TRIGGER`, named trigger/view replacement, and `CREATE INDEX` only on a table created earlier
+within the same approved operation. It rejects table rebuild/copy migrations, data backfills,
+unsupported or unbounded DML, and index builds on pre-existing tables. The current candidate support
+matrix below is derived from local files relative to the last known Core ledger `0066`; it does not
+assert that any candidate is currently pending remotely. Read the live ledger in a new exact intent.
+
+| Candidate Core migration after `0066` | Offline bounded-operation support | Review note |
+|---|---|---|
+| `0067`, `0072`, `0077`-`0080`, `0083`-`0094`, `0097`-`0099` | Supported (21 files) | Bounded schema/metadata forms; exact declared objects and final literal metadata values require readback. |
+| `0068`, `0075`, `0081`, `0082`, `0095`, `0100`, `0102` | Review required (7 files) | Column checks/references fall outside the bounded ADD COLUMN grammar. |
+| `0069`, `0071`, `0076`, `0096`, `0101`, `0103` | Review required (6 files) | Rebuild/copy/backfill or foreign-key deferral/disabling is outside this operation. |
+| `0070`, `0073`, `0074` | Review required (3 files) | Index build targets a pre-existing table. |
+
+The migration command never silently omits an unsupported migration. If any selected file falls
+outside the classifier's allowed grammar, the whole intent is refused before the first migration
+effect. After command start, timeout, cancellation, or lost acknowledgement is recorded as
+`UNKNOWN`; partial ledger progress is preserved and reconciled without automatic restore, retry, or
+resume. Continuing requires a new intent after reviewing the live ledger and resulting schema.
 
 Worker readback follows the active deployment to its exact single version at 100% traffic, checks
 runtime settings, named exports, the generation variable and configured resource identities before
