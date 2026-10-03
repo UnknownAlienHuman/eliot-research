@@ -220,24 +220,16 @@ export function currentResearchRunBadge(state: ResearchRunStatusView["execution_
 }
 
 export function createResearchRunView(element: HTMLElement, healthReady: boolean, configurationReady: boolean) {
-  element.innerHTML = `<div class="workflow-head"><div><span class="eyebrow">Research</span><h2>Ask a question</h2></div><span class="workflow-badge" data-run-badge>${idleBadgeText(healthReady, configurationReady)}</span></div>
+  element.innerHTML = `<div class="research-toolbar"><details class="research-run-controls research-actions-menu"><summary>Research tools</summary><div class="research-menu-content"><div class="workflow-actions" role="group" aria-label="Manage the loaded research run"><button type="button" class="button button--quiet" data-run-refresh disabled>Refresh status</button><button type="button" class="button button--quiet" data-run-cancel disabled>Stop research</button><button type="button" class="button button--quiet" data-run-resume disabled>Recover research</button></div><details class="research-recovery" data-run-recovery><summary>Open a known run</summary><label>Run ID<input data-workflow-id maxlength="128" autocomplete="off" placeholder="Paste a known run ID"></label><button type="button" class="button button--quiet" data-recover>Load status</button></details><div data-research-search-home></div></div></details></div><details class="research-composer" open><summary>New question</summary><div class="workflow-head"><span class="workflow-badge" data-run-badge>${idleBadgeText(healthReady, configurationReady)}</span></div>
     <p class="workflow-status workflow-progress-summary" data-run-progress aria-live="polite">${idleProgressText(healthReady, configurationReady)}</p>
-    <form class="research-question-form"><label>Question<textarea name="query" rows="4" autocomplete="off" required placeholder="What would you like to learn from your sources?" class="research-question-input"></textarea></label>
-    <div class="research-question-controls"><label>Scope<select name="scope"><option value="library">Entire authorized Library</option><option value="project" disabled>Selected project</option><option value="selected" disabled>Selected source</option></select></label>
+    <form class="research-question-form"><label><span class="visually-hidden">Question</span><textarea name="query" rows="2" autocomplete="off" required placeholder="What would you like to learn from your sources?" class="research-question-input"></textarea></label>
+    <div class="research-question-controls"><label><span class="visually-hidden">Research scope</span><select name="scope" aria-label="Research scope"><option value="library">All authorized sources</option><option value="project" disabled>Selected project</option><option value="selected" disabled>Selected source</option></select></label>
     <div class="workflow-actions"><button type="submit" class="button">Start research</button></div></div></form>
-    <button class="research-configuration-link workspace-jump" type="button" data-nav-target="#research-configuration-card" aria-controls="research-configuration-card">Connections and research configuration</button>
+    <button class="research-configuration-link workspace-jump" type="button" data-nav-target="#research-configuration-card" aria-controls="research-configuration-card">Check research configuration</button></details>
     <p class="workflow-status workflow-action-feedback" role="status" aria-live="polite"></p>
-    <details class="workflow-recovery research-run-controls"><summary>Run controls</summary>
-      <div class="workflow-actions" role="group" aria-label="Manage the loaded research run">
-        <button type="button" class="button button--quiet" data-run-refresh disabled>Refresh status</button>
-        <button type="button" class="button button--quiet" data-run-cancel disabled>Stop research</button>
-        <button type="button" class="button button--quiet" data-run-resume disabled>Recover research</button>
-      </div>
-    </details>
     <section data-run-result hidden></section>
-    <details class="workflow-recovery research-history" data-research-history><summary>Recent research</summary><div class="workflow-recovery-head"><h3 id="research-history-title">Saved runs and drafts</h3><button type="button" class="button button--quiet" data-research-history-refresh disabled>Refresh</button></div>
-      <p class="workflow-recovery-status" data-research-history-status>Recent research appears after the current session is ready.</p><div class="workflow-recovery-list" data-research-history-list></div></details>
-    <details class="workflow-recovery research-recovery" data-run-recovery><summary>Open a known run</summary><label>Run ID<input data-workflow-id maxlength="128" autocomplete="off" placeholder="Paste a known run ID"></label><button type="button" class="button button--quiet" data-recover>Load status</button></details>`;
+    <details class="workflow-recovery research-history" data-research-history><summary>Recent work</summary><div class="workflow-recovery-head"><h3 id="research-history-title">Saved runs and drafts</h3><button type="button" class="button button--quiet" data-research-history-refresh disabled>Refresh</button></div>
+      <p class="workflow-recovery-status" data-research-history-status>Recent research appears after the current session is ready.</p><div class="workflow-recovery-list" data-research-history-list></div><div data-research-activity-home></div></details>`;
   const form = element.querySelector<HTMLFormElement>("form");
   const badge = element.querySelector<HTMLElement>("[data-run-badge]");
   const progress = element.querySelector<HTMLElement>("[data-run-progress]");

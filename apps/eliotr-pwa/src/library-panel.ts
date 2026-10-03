@@ -10,9 +10,8 @@ export function renderLibrary(page: LibraryPage): string {
       ${page.projects.length ? page.projects.map((project, index) =>
         `<p><button type="button" class="library-project-filter" data-project="${index}">${escapeHtml(project.title)}</button></p>`).join("") : "<p>No readable projects on this page.</p>"}
     </details>
-    <h3>Documents</h3>${page.sources.length ? page.sources.map((source, index) =>
-      `<article class="source-card library-source-card"><div class="library-source-heading"><h4>${escapeHtml(source.title)}</h4>
-       <button class="button" type="button" data-source="${index}">Open source</button></div>
+    ${page.sources.length ? page.sources.map((source, index) =>
+      `<article class="source-card library-source-card"><div class="library-source-heading"><h3><button class="library-source-title" type="button" data-source="${index}" aria-label="Read ${escapeHtml(source.title)}">${escapeHtml(source.title)}</button></h3></div>
        <details class="library-source-details"><summary>Source details and versions</summary>
          <code>${escapeHtml(source.id)}</code>
          <button class="button button--quiet" type="button" data-versions="${index}">Versions and recorded states</button>
@@ -50,9 +49,9 @@ function renderLibraryError(target: HTMLElement, error: unknown, subject: string
 }
 
 export function mountLibraryPanel(element: HTMLElement, onSelectSource: (id: string, context?: LibrarySelectionContext) => void | boolean | Promise<void | boolean>): (() => void) & { clearPrivate(): void; openProject(projectId: string): void; refresh(): void } {
-  element.innerHTML = `<h2>Library</h2><p class="library-intro">Documents available under your current access.</p>
+  element.innerHTML = `<h2 class="visually-hidden">Document Library</h2>
     <p class="library-actions"><button class="button button--quiet" type="button" data-first>All sources</button></p>
-    <div class="library-scope" data-scope></div><p class="library-status" role="status" aria-live="polite"></p>
+    <div class="library-scope" data-scope></div><div class="library-status" role="status" aria-live="polite"></div>
     <section data-library-result></section><p class="library-pagination"><button class="button button--quiet" type="button" data-next disabled>Next page</button></p>
     <section data-library-versions></section>
     <section data-library-readiness aria-live="polite"></section>`;

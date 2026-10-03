@@ -1,5 +1,7 @@
 import "./styles.css";
 import { renderWorkspaceShell } from "./workspace-shell.js";
+import { mountWorkspaceChrome } from "./workspace-chrome.js";
+import { mountWorkspaceTheme } from "./workspace-theme.js";
 import { getSystemHealth, type GoogleExternalTransport, type SystemHealth } from "./api.js";
 import { mountBundleImportPanel } from "./bundle-import-panel.js";
 import { mountGoogleOAuthPanel } from "./google-oauth-panel.js";
@@ -121,6 +123,7 @@ function render(health: SystemHealth | null): void {
     healthBadge: healthBadge(health), healthSummary: healthSummary(health),
     healthDetails: healthDetails(health), workspaceConnection: escapeHtml(googleTransportExplanation(health?.google_external_transport)),
   });
+  const themeCleanup = mountWorkspaceTheme(app);
   const lens = app.querySelector<HTMLElement>("#corpus-lens");
   const importer = app.querySelector<HTMLElement>("#bundle-import");
   const rawUploadHost = app.querySelector<HTMLElement>("#raw-upload");
@@ -147,22 +150,6 @@ function render(health: SystemHealth | null): void {
   renderGoogleConnector(health);
   const orientation = lens ? mountOrientationPanel(lens) : undefined;
   const library = app.querySelector<HTMLElement>("#library");
-  const sourcePanel = app.querySelector<HTMLElement>(".panel--corpus");
-  const sourceChooserToggle = app.querySelector<HTMLButtonElement>("[data-source-chooser-toggle]");
-  const sourceChooserState = app.querySelector<HTMLElement>("[data-source-chooser-state]");
-  const sourceChooserViewport = window.matchMedia("(max-width: 720px)");
-  let sourceChooserExpanded = !sourceChooserViewport.matches;
-  const setSourceChooserExpanded = (expanded: boolean): void => {
-    sourceChooserExpanded = expanded;
-    if (sourcePanel) sourcePanel.dataset.sourceChooserCollapsed = expanded ? "false" : "true";
-    sourceChooserToggle?.setAttribute("aria-expanded", String(expanded));
-    if (sourceChooserState) sourceChooserState.textContent = expanded ? "Hide list" : "Show list";
-  };
-  const toggleSourceChooser = (): void => setSourceChooserExpanded(!sourceChooserExpanded);
-  const handleSourceChooserViewport = (): void => setSourceChooserExpanded(!sourceChooserViewport.matches);
-  sourceChooserToggle?.addEventListener("click", toggleSourceChooser);
-  sourceChooserViewport.addEventListener("change", handleSourceChooserViewport);
-  setSourceChooserExpanded(sourceChooserExpanded);
   const retrievalHost = app.querySelector<HTMLElement>("#retrieval");
   const retrieval = retrievalHost ? mountRetrievalPanel(retrievalHost, () => app.dataset.healthReady === "true") : undefined;
   let researchConfigurationStartState: ResearchConfigurationStartState | null = null;
@@ -207,6 +194,8 @@ function render(health: SystemHealth | null): void {
   const evidenceStatus = app.querySelector<HTMLElement>(".rail-status");
   const evidenceRail = evidenceEmpty && evidenceDetail && evidenceStatus
     ? mountEvidenceRail(evidenceEmpty, evidenceDetail, evidenceStatus) : undefined;
+  const workspaceChrome = mountWorkspaceChrome(app);
+  const setSourceChooserExpanded = workspaceChrome.setSourceChooserExpanded;
   const selectResearchEvidence = (event: Event): void => {
     const detail = (event as CustomEvent<{ scopeSnapshotRef?: VersionedRef; handleRef?: VersionedRef; excerptSha256?: string }>).detail;
     if (detail?.scopeSnapshotRef !== undefined && detail.handleRef !== undefined) evidenceRail?.selectHandle(detail.scopeSnapshotRef, detail.handleRef, detail.excerptSha256);
@@ -248,7 +237,7 @@ function render(health: SystemHealth | null): void {
     if (workspace) workspace.dataset.activeView = view.name;
     const ownerProfile = app.querySelector<HTMLElement>("[data-workspace-owner-profile]");
     if (ownerProfile) ownerProfile.hidden = view.name === "connections";
-    if (view.name !== "sources" && sourceChooserViewport.matches) setSourceChooserExpanded(false);
+    if (view.name !== "sources") setSourceChooserExpanded(false);
     for (const item of app.querySelectorAll<HTMLButtonElement>('.workspace-nav [data-nav-target]')) {
       const active = workspaceViews[item.dataset.navTarget ?? ""]?.name === view.name;
       item.classList.toggle("nav-item--active", active);
@@ -265,6 +254,7 @@ function render(health: SystemHealth | null): void {
     if (title) title.textContent = view.title;
     const lede = app.querySelector<HTMLElement>("[data-workspace-lede]");
     if (lede) lede.textContent = view.lede;
+    workspaceChrome.sync();
     if (options.history !== false && window.location.hash !== view.historyHash) {
       history.pushState({ eliotrWorkspaceView: view.name }, "", `${window.location.pathname}${window.location.search}${view.historyHash}`);
     }
@@ -409,7 +399,7 @@ function render(health: SystemHealth | null): void {
     }
     if (selection !== selectionSerial || pageClosed || !navigator.onLine || app.dataset.healthReady !== "true") return false;
     if (!context?.sourceRevisionRef) {
-      if (sourceChooserViewport.matches) setSourceChooserExpanded(false);
+      setSourceChooserExpanded(false);
       setWorkspaceView("#corpus-lens-card", { anchor: true });
     }
     retrieval?.selectSource(id, context);
@@ -423,7 +413,7 @@ function render(health: SystemHealth | null): void {
     namespacePanel, () => app.removeEventListener("eliotr:namespace-selected", namespaceSelected),
     rawUploadHost ? mountRawFilePanel(rawUploadHost, { generation: () => app.dataset.healthGeneration, ready: () => app.dataset.healthReady === "true", sourceNamespace: () => selectedNamespace }) : undefined,
     libraryPanel];
-  window.addEventListener("pagehide", () => { pageClosed = true; healthSerial += 1; healthController?.abort(); cleanups.forEach((cleanup) => cleanup?.()); googleOAuthCleanup?.(); googleOAuthCleanup = undefined; mountedGoogleTransport = null; evidenceRail?.dispose(); sourceChooserToggle?.removeEventListener("click", toggleSourceChooser); sourceChooserViewport.removeEventListener("change", handleSourceChooserViewport); rawUploadHost?.removeEventListener("eliotr:find-in-library", handleFindInLibrary); rawUploadHost?.removeEventListener(SOURCE_VERSION_FORM_REQUESTED_EVENT, handleSourceVersionFormRequested); app.removeEventListener("library:scope-changed", clearEvidenceOnScopeChange); window.removeEventListener("offline", clearEvidenceOnEvent); window.removeEventListener("online", refreshHealth); window.removeEventListener("eliotr:authorization-cleared", clearEvidenceOnAuthorization); window.removeEventListener("eliotr:raw-admission-completed", refreshAfterSourceAdmission); retrievalHost?.removeEventListener("retrieval:started", clearEvidenceOnQueryStart); researchRunHost?.removeEventListener("research:started", clearEvidenceOnQueryStart); researchRunHost?.removeEventListener("research:private-cleared", clearEvidenceOnQueryStart); exhaustiveHost?.removeEventListener("exhaustive:started", clearEvidenceOnQueryStart); app.removeEventListener("eliotr:health-lost", clearEvidenceOnHealthLost); app.removeEventListener("eliotr:health-lost", clearResearchConfiguration); app.removeEventListener("eliotr:health-updated", refreshResearchConfiguration); app.removeEventListener("eliotr:health-updated", refreshResearchChanges); app.removeEventListener("eliotr:health-updated", refreshWiki); app.removeEventListener("eliotr:health-updated", refreshProjects); window.removeEventListener("popstate", handleLocationChange); window.removeEventListener("hashchange", handleLocationChange); app.removeEventListener("research:evidence-selected", selectResearchEvidence); }, { once: true });
+  window.addEventListener("pagehide", () => { pageClosed = true; healthSerial += 1; healthController?.abort(); cleanups.forEach((cleanup) => cleanup?.()); googleOAuthCleanup?.(); googleOAuthCleanup = undefined; mountedGoogleTransport = null; evidenceRail?.dispose(); workspaceChrome.dispose(); themeCleanup(); rawUploadHost?.removeEventListener("eliotr:find-in-library", handleFindInLibrary); rawUploadHost?.removeEventListener(SOURCE_VERSION_FORM_REQUESTED_EVENT, handleSourceVersionFormRequested); app.removeEventListener("library:scope-changed", clearEvidenceOnScopeChange); window.removeEventListener("offline", clearEvidenceOnEvent); window.removeEventListener("online", refreshHealth); window.removeEventListener("eliotr:authorization-cleared", clearEvidenceOnAuthorization); window.removeEventListener("eliotr:raw-admission-completed", refreshAfterSourceAdmission); retrievalHost?.removeEventListener("retrieval:started", clearEvidenceOnQueryStart); researchRunHost?.removeEventListener("research:started", clearEvidenceOnQueryStart); researchRunHost?.removeEventListener("research:private-cleared", clearEvidenceOnQueryStart); exhaustiveHost?.removeEventListener("exhaustive:started", clearEvidenceOnQueryStart); app.removeEventListener("eliotr:health-lost", clearEvidenceOnHealthLost); app.removeEventListener("eliotr:health-lost", clearResearchConfiguration); app.removeEventListener("eliotr:health-updated", refreshResearchConfiguration); app.removeEventListener("eliotr:health-updated", refreshResearchChanges); app.removeEventListener("eliotr:health-updated", refreshWiki); app.removeEventListener("eliotr:health-updated", refreshProjects); window.removeEventListener("popstate", handleLocationChange); window.removeEventListener("hashchange", handleLocationChange); app.removeEventListener("research:evidence-selected", selectResearchEvidence); }, { once: true });
 }
 
 function refreshHealth(): void {

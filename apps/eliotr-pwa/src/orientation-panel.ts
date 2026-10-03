@@ -2,6 +2,7 @@ import type { EvidenceHandle } from "@eliotr/contracts";
 import { ApiRequestError } from "./api.js";
 import { MAX_DOCUMENT_BYTES, readAdmittedDocument, type AdmittedDocument } from "./document-reader-api.js";
 import { escapeHtml } from "./html.js";
+import { renderReadingMarkdown } from "./reading-markdown.js";
 import {
   expandNavigation,
   type NavigationExpansionResult,
@@ -130,15 +131,15 @@ function renderNavigationExpansion(
   return panel;
 }
 export function mountOrientationPanel(element: HTMLElement): (() => void) & { selectSource(id: string): Promise<boolean> } {
-  element.innerHTML = `<h2>Read admitted documents</h2>
+  element.innerHTML = `<h2 class="visually-hidden">Document reader</h2>
     <p class="orientation-status" role="status" aria-live="polite">Choose a source from the Library to read its admitted text.</p>
     <section class="document-reader" data-document-reader hidden aria-labelledby="document-reader-title">
-      <div class="document-reader-heading"><div><span class="eyebrow">Admitted document</span><h3 id="document-reader-title">Document</h3></div><span data-document-reader-size></span></div>
+      <div class="document-reader-heading"><h2 id="document-reader-title" tabindex="-1">Document</h2><details class="document-reader-menu"><summary>Document actions</summary><span data-document-reader-size></span><div class="document-reader-actions"><button class="button button--quiet" type="button" data-close-document>Back to documents</button><button class="button button--quiet" type="button" data-download-document hidden>Download original</button></div></details></div>
       <p data-document-reader-status role="status" aria-live="polite"></p>
-      <pre class="document-reader-body" data-document-reader-body tabindex="0"></pre>
-      <div class="document-reader-actions"><button class="button button--quiet" type="button" data-close-document>Close</button><button class="button button--quiet" type="button" data-download-document hidden>Download</button></div>
+      <div class="reading-view" data-document-formatted></div>
+      <details class="document-original"><summary>Original text</summary><pre class="document-reader-body" data-document-reader-body tabindex="0"></pre></details>
     </section>
-    <section data-result></section>
+    <details class="document-source-context" data-source-context><summary>Source details and sections</summary><section data-result></section></details>
     <details class="orientation-advanced-selection"><summary>Advanced source selection</summary>
       <form><label>Source IDs (optional, separated by commas)<input name="sources" maxlength="16000" autocomplete="off" placeholder="Blank: authorized library, at most 64 sources"></label>
       <label>Focus (metadata only)<input name="focus" maxlength="256" autocomplete="off"></label>
@@ -155,12 +156,16 @@ export function mountOrientationPanel(element: HTMLElement): (() => void) & { se
   const documentSize = element.querySelector<HTMLElement>("[data-document-reader-size]");
   const documentStatus = element.querySelector<HTMLElement>("[data-document-reader-status]");
   const documentBody = element.querySelector<HTMLPreElement>("[data-document-reader-body]");
+  const documentFormatted = element.querySelector<HTMLElement>("[data-document-formatted]");
+  const sourceContext = element.querySelector<HTMLDetailsElement>("[data-source-context]");
   const closeDocument = element.querySelector<HTMLButtonElement>("[data-close-document]");
   const downloadDocument = element.querySelector<HTMLButtonElement>("[data-download-document]");
   if (!form || !status || !result || !traceResult || !traceDetails || !cancel || !documentReader || !documentTitle || !documentSize ||
-      !documentStatus || !documentBody || !closeDocument || !downloadDocument) throw new Error("Corpus Lens panel is incomplete");
+      !documentStatus || !documentBody || !documentFormatted || !sourceContext || !closeDocument || !downloadDocument) throw new Error("Corpus Lens panel is incomplete");
   let controller: AbortController | undefined; let active = 0; let key = ""; let previous = "";
   let readerController: AbortController | undefined; let readerSerial = 0;
+  let formattingController: AbortController | undefined;
+  let readSelectedSource = false;
   let navigationController: AbortController | undefined; let navigationSerial = 0;
   let openedDocument: AdmittedDocument | undefined; let downloadUrl: string | undefined;
   let lastReadButton: HTMLButtonElement | undefined;
@@ -187,10 +192,11 @@ export function mountOrientationPanel(element: HTMLElement): (() => void) & { se
   };
   const clearReader = (message = ""): void => {
     readerSerial += 1; readerController?.abort(); readerController = undefined; openedDocument = undefined;
+    formattingController?.abort(); formattingController = undefined;
     const button = lastReadButton; lastReadButton = undefined; if (button) button.disabled = false;
     if (downloadUrl !== undefined) { URL.revokeObjectURL(downloadUrl); downloadUrl = undefined; }
     documentReader.hidden = true; documentTitle.textContent = "Document"; documentSize.textContent = "";
-    documentStatus.textContent = message; documentBody.textContent = ""; downloadDocument.hidden = true;
+    documentStatus.textContent = message; documentBody.textContent = ""; documentFormatted.replaceChildren(); downloadDocument.hidden = true;
   };
   const stop = () => {
     active += 1; navigationSerial += 1; controller?.abort(); navigationController?.abort();
@@ -211,13 +217,16 @@ export function mountOrientationPanel(element: HTMLElement): (() => void) & { se
       .then((document) => {
         if (mine !== readerSerial || local.signal.aborted || disposed) return;
         openedDocument = document; documentBody.textContent = document.text;
+        formattingController = new AbortController();
+        void renderReadingMarkdown(documentFormatted, document.text, formattingController.signal);
         documentSize.textContent = formatBytes(document.sizeBytes);
         documentStatus.textContent = "Normalized text loaded from the admitted document.";
-        downloadDocument.hidden = false; documentReader.scrollIntoView({ block: "start" }); documentBody.focus({ preventScroll: true });
+        sourceContext.open = false;
+        downloadDocument.hidden = false; documentReader.scrollIntoView({ block: "start" }); documentTitle.focus({ preventScroll: true });
       })
       .catch((error: unknown) => {
         if (mine !== readerSerial || disposed) return;
-        documentBody.textContent = ""; documentSize.textContent = ""; downloadDocument.hidden = true;
+        documentBody.textContent = ""; documentFormatted.replaceChildren(); documentSize.textContent = ""; downloadDocument.hidden = true;
         documentStatus.textContent = documentErrorText(error);
       })
       .finally(() => {
@@ -350,6 +359,7 @@ export function mountOrientationPanel(element: HTMLElement): (() => void) & { se
   };
   cancel.onclick = () => { stop(); status.textContent = "Request cancelled. Retry unchanged inputs to reconcile the same operation."; };
   const submitSelection = (): Promise<boolean> => {
+    const autoRead = readSelectedSource; readSelectedSource = false;
     stop(); const serial = ++active; controller = new AbortController();
     result.replaceChildren(); traceResult.textContent = ""; traceResult.hidden = true;
     if (!navigator.onLine) { status.textContent = "Offline. Private source metadata is not cached."; const unavailable = Promise.resolve(false); pendingSelection = unavailable; return unavailable; }
@@ -365,6 +375,10 @@ export function mountOrientationPanel(element: HTMLElement): (() => void) & { se
         status.textContent = "Sources loaded. Choose a document to read.";
         result.innerHTML = renderOrientation(view);
         wireOrientation(view, serial);
+        if (autoRead && view.cards.length === 1) {
+          const readButton = result.querySelector<HTMLButtonElement>("[data-read-document]");
+          if (readButton) readDocument(view, 0, readButton);
+        } else sourceContext.open = true;
         return true;
       }).catch((error: unknown) => {
         if (serial === active) {
@@ -397,7 +411,7 @@ export function mountOrientationPanel(element: HTMLElement): (() => void) & { se
       orientationBody([id], "");
       const sources = element.querySelector<HTMLInputElement>('input[name="sources"]');
       if (!sources) throw new Error("Source selector is missing");
-      sources.value = id; form.requestSubmit(); return pendingSelection;
+      sources.value = id; readSelectedSource = true; form.requestSubmit(); return pendingSelection;
     },
   });
 }

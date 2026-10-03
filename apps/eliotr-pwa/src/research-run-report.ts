@@ -4,6 +4,7 @@ import type { ArtifactPublicationView } from "./artifact-product-api.js";
 import { readReauthorizedResearchArtifactSection, type ResearchArtifactSectionCitationAuditClaim, type ResearchSourceFreshness } from "./research-run-api.js";
 import { readReauthorizedResearchArtifactSectionCitations } from "./research-run-reauthorization-api.js";
 import { downloadResearchDraftMarkdown, type ResearchMarkdownSection } from "./research-markdown-download.js";
+import { renderReadingMarkdown } from "./reading-markdown.js";
 import { createWikiProposalFromRun } from "./wiki-proposal-create-api.js";
 import type { ArtifactRevision } from "@eliotr/contracts";
 import { AUDIT_DISPOSITION_LABELS, message, wikiProposalErrorText, auditStatusText, decodeSectionBody, codeRef, citationRefKey, renderResearchSourceFreshnessNotice, createResearchReportHeader } from "./research-run-view.js";
@@ -178,6 +179,7 @@ export function renderResearchArtifactReport(artifact: ArtifactRevision, options
   const freshnessNotice = options.sourceFreshness === undefined ? undefined : renderResearchSourceFreshnessNotice(options.sourceFreshness);
   result.append(reportHead, ...(freshnessNotice === undefined ? [] : [freshnessNotice]), technical);
   const sections = document.createElement("ul"); sections.className = "research-report-sections";
+  const sectionReaders: (() => Promise<void>)[] = [];
   artifact.sections.forEach((section, ordinal) => {
     const item = document.createElement("li"); item.className = "research-report-section";
     const sectionHeading = document.createElement("h4"); sectionHeading.textContent = `Section ${ordinal + 1}`;
@@ -197,28 +199,40 @@ export function renderResearchArtifactReport(artifact: ArtifactRevision, options
     const sectionActionSummary = document.createElement("summary"); sectionActionSummary.textContent = "Section actions";
     sectionActionDetails.append(sectionActionSummary);
     product.addSectionAction(section.contract_id, sectionActionDetails);
-    const open = document.createElement("button"); open.type = "button"; open.className = "button button--quiet"; open.textContent = "Open section";
-    open.onclick = () => {
-      if (!hooks.isCurrent(options.renderSerial) || hooks.busy()) return;
+    const open = document.createElement("button"); open.type = "button"; open.className = "button button--quiet"; open.textContent = "Open section"; open.dataset.readReportSection = String(ordinal);
+    const readSection = (): Promise<void> => {
+      if (!hooks.isCurrent(options.renderSerial) || hooks.busy() || hooks.disposed()) return Promise.resolve();
       const local = new AbortController(); hooks.setController(local); hooks.setActionsDisabled(true); status.textContent = "Reading report section…";
       const read = readReauthorizedResearchArtifactSection(artifact.artifact_ref, section.section_ref, options.deploymentGeneration, local.signal);
-      void read
-        .then((readback) => {
+      return read
+        .then(async (readback) => {
           if (!hooks.isCurrent(options.renderSerial) || hooks.generation() !== options.deploymentGeneration) return;
           if (readback.body_object_ref !== section.body_object_ref || readback.body_sha256 !== section.body_sha256) throw new ApiRequestError({ status: 502, code: "RESEARCH_ARTIFACT_SECTION_INVALID", message: "The report section changed during reauthorization" });
-          const body = document.createElement("pre"); body.className = "research-section-body"; body.textContent = decodeSectionBody(readback.bytes);
-          item.querySelector(".research-section-body")?.remove(); item.insertBefore(body, sectionTechnical); status.textContent = "Report section opened.";
+          const text = decodeSectionBody(readback.bytes);
+          const reading = document.createElement("div"); reading.className = "research-section-reading";
+          const formatted = document.createElement("div"); formatted.className = "reading-view";
+          const original = document.createElement("details"); original.className = "research-section-original";
+          const originalSummary = document.createElement("summary"); originalSummary.textContent = "Original text";
+          const body = document.createElement("pre"); body.className = "research-section-body"; body.textContent = text;
+          original.append(originalSummary, body); reading.append(formatted, original);
+          item.querySelector(".research-section-reading")?.remove(); item.querySelector(".research-section-error")?.remove();
+          item.insertBefore(reading, sectionTechnical);
+          await renderReadingMarkdown(formatted, text, local.signal);
+          if (hooks.isCurrent(options.renderSerial) && !local.signal.aborted && hooks.generation() === options.deploymentGeneration) status.textContent = "Report section opened.";
         })
         .catch((error: unknown) => {
           if (!hooks.isCurrent(options.renderSerial) || (error instanceof Error && error.name === "AbortError")) return;
           if (hooks.connectionFailed(error)) return;
           if (error instanceof ApiRequestError && (isAuthorizationLoss(error) || error.status === 409 || error.status === 410)) { hooks.clearPrivate(); return; }
-          if (error instanceof ApiRequestError && error.status === 403) item.querySelector(".research-section-body")?.remove();
+          if (error instanceof ApiRequestError && error.status === 403) item.querySelector(".research-section-reading")?.remove();
           const failure = document.createElement("p"); failure.className = "research-section-error"; failure.textContent = message(error); item.querySelector(".research-section-error")?.remove(); item.append(failure);
           status.textContent = "The report section could not be opened.";
         })
         .finally(() => hooks.finishAction(local, options.renderSerial));
     };
+    open.onclick = () => { void readSection(); };
+    sectionReaders.push(readSection);
+    sectionActionDetails.append(open);
     const sources = document.createElement("button"); sources.type = "button"; sources.className = "button button--quiet"; sources.textContent = "Open sources"; sources.dataset.openSources = String(ordinal);
     sources.onclick = () => {
       if (!hooks.isCurrent(options.renderSerial) || hooks.busy()) return;
@@ -290,8 +304,16 @@ export function renderResearchArtifactReport(artifact: ArtifactRevision, options
         })
         .finally(() => hooks.finishAction(local, options.renderSerial));
     };
-    const actions = document.createElement("div"); actions.className = "research-report-actions"; actions.append(open, sources);
+    const actions = document.createElement("div"); actions.className = "research-report-actions"; actions.append(sources);
     item.append(sectionHeading, sectionTechnical, actions, sectionActionDetails); sections.append(item);
   });
   result.append(sections, reportActionsDetails);
+  // Existing reauthorization and byte-integrity checks precede each derived view.
+  // A changed render, authority loss, or an owner action stops this bounded read.
+  window.setTimeout(() => { void (async () => {
+    for (const read of sectionReaders.slice(0, 32)) {
+      if (!hooks.isCurrent(options.renderSerial) || hooks.disposed() || hooks.busy() || document.visibilityState === "hidden" || hooks.generation() !== options.deploymentGeneration) break;
+      await read();
+    }
+  })(); }, 0);
 }
