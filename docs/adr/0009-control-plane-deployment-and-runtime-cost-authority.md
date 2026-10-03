@@ -41,7 +41,10 @@ must have separate operation records.
    inspection without `--confirm-live` makes no Cloudflare or Wrangler calls.
 4. The migration operation's SQL classifier accepts only its explicit bounded DDL and metadata
    forms. It rejects rebuild/copy/backfill operations, unsupported data changes, and indexes on
-   pre-existing tables. Every accepted migration must have its required schema probes. A current
+   pre-existing tables. Every accepted migration must have its required schema probes, including
+   absence or an exact reviewed initial definition for every created object and the expected final
+   definition. Case-insensitive pre-effect schema inspection rejects conflicting objects before SQL
+   application or ledger advancement. A current
    D1 Time Travel bookmark is recorded before application; it is evidence of the observed bookmark,
    not a newly created backup. Timeout, cancellation, or lost acknowledgement after start remains
    `UNKNOWN`; partial ledger progress is retained and reconciled. It never restores or reapplies a
@@ -49,9 +52,15 @@ must have separate operation records.
 5. Full release remains the default deployment purpose and retains `assertLaunchCodeComplete`,
    `pnpm check`, the PWA build, generated binding types, Wrangler dry-run, and the full release
    gates. Explicit `--maintenance` records the current full-release blockers and source-budget
-   findings, then runs meaningful compile, lint, boundary, build, binding, and artifact gates; those
-   gates still block on failure. A maintenance receipt reports its purpose and does not qualify a
-   full release.
+   findings, then runs meaningful compile, lint, actual repository boundary checks, supplemental
+   negative boundary fixtures, build, binding, and artifact gates; those gates still block on failure.
+   Actual source/configuration file membership and bytes are captured before profile inspection and
+   gates, including installed runtime dependency inputs. Generated configuration is pinned after
+   exact resource readback; the generated-config dry run emits an explicit metafile and prepared
+   bundle. Metafile inputs must belong to the captured set, and unchanged prepared bytes are uploaded
+   with `--no-bundle`. These bounded local correspondence checks do not attest compiler internals or
+   make the remote operation atomic. A maintenance receipt reports its purpose and does not qualify
+   a full release.
 6. Maintenance pins the current active Worker identity and authenticated capability profile before
    upload. The source-derived candidate profile must preserve slices, routes, Google transport,
    federation settings, orientation limits, and safety invariants. Before deployment-authority

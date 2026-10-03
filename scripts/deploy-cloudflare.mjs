@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
@@ -17,6 +17,9 @@ import { synchronizeResearchDeploymentAuthority } from "./lib/research-deploymen
 import { computeResearchBackendFingerprint } from "./lib/research-backend-fingerprint.mjs";
 import { readDeploymentMigrationPlan, requireUnchangedMigrationPlan, validateDeploymentMigrationDirectories, verifyDeploymentMigrationLedgers } from "./lib/deployment-migrations.mjs";
 import { readDeploymentAssetManifest, verifyDeploymentAssets } from "./lib/deployment-assets.mjs";
+import { captureDeploymentBuildInputs, requireUnchangedDeploymentBuildInputs,
+  pinGeneratedDeploymentConfig, attestDeploymentBundle,
+  requireUnchangedDeploymentBundle } from "./lib/deployment-build-inputs.mjs";
 import { validateStagingTarget } from "./lib/staging-isolation.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -82,6 +85,11 @@ export async function deployCloudflare({ confirmLive = false, environment = proc
   readActiveWorker = readActiveDeploymentIdentity, readCapabilities = readAuthenticatedCapabilities,
   readReleaseBlockers = readFullReleaseBlockers, readSchemaGenerations = verifyDeploymentSchemaGenerations,
   readWorker = readDeploymentWorker,
+  readBackendFingerprint = computeResearchBackendFingerprint,
+  captureBuildInputs = captureDeploymentBuildInputs,
+  checkBuildInputs = requireUnchangedDeploymentBuildInputs,
+  pinGeneratedConfig = pinGeneratedDeploymentConfig,
+  attestBundle = attestDeploymentBundle, checkBundle = requireUnchangedDeploymentBundle,
   readAssetManifest = readDeploymentAssetManifest } = {}) {
   if (![FULL_RELEASE_PURPOSE, MAINTENANCE_PURPOSE].includes(purpose)) throw new Error("Deployment purpose is invalid");
   const env = await loadResearchRuntimeEnvironment(environment, root);
@@ -96,6 +104,8 @@ export async function deployCloudflare({ confirmLive = false, environment = proc
     if (String(stripped).trim() === "") delete env.NODE_OPTIONS;
     else env.NODE_OPTIONS = stripped;
   }
+  // Capture bytes and path membership before profile inspection or any local gate.
+  const testedInputs = await captureBuildInputs({ root });
   let input;
   let oauth = null;
   let stagingTarget = null;
@@ -158,12 +168,15 @@ export async function deployCloudflare({ confirmLive = false, environment = proc
     }
     exec("pnpm", ["--filter", "@eliotr/core", "typecheck"]);
     exec("pnpm", ["exec", "eslint", "scripts/deploy-cloudflare.mjs", "scripts/lib/deployment-maintenance.mjs",
+      "scripts/lib/deployment-build-inputs.mjs",
       "scripts/check-launch-code.mjs"]);
+    exec("pnpm", ["boundaries:check"]);
     exec("pnpm", ["boundaries:negative"]);
     exec("pnpm", ["build:pwa"]);
     exec("pnpm", ["--filter", "@eliotr/core", "cf:types"]);
     exec("pnpm", ["--filter", "@eliotr/core", "deploy:dry-run"]);
   }
+  await checkBuildInputs({ root, manifest: testedInputs });
   if (!confirmLive) {
     if (purpose === MAINTENANCE_PURPOSE) {
       log(JSON.stringify({ purpose, full_release_blockers: fullReleaseBlockers,
@@ -212,9 +225,11 @@ export async function deployCloudflare({ confirmLive = false, environment = proc
   const config = validateGeneratedDeployment(bytes, env, input);
   verifyGeneratedSemanticConfiguration(config, env);
   const digest = createHash("sha256").update(bytes).digest("hex");
+  const generatedConfigPin = await pinGeneratedConfig({ root, path: configPath });
+  if (generatedConfigPin.sha256 !== digest) throw new Error("Generated deployment config changed before artifact preparation");
   const migrationPlan = await readDeploymentMigrationPlan(config, { root });
   const assetManifest = await readAssetManifest(config, { root });
-  const backendFingerprint = computeResearchBackendFingerprint({ root, generated_config: config });
+  const backendFingerprint = readBackendFingerprint({ root, generated_config: config });
   const priorWorkerConfig = { ...config, vars: { ...config.vars,
     DEPLOYMENT_GENERATION: activeWorkerBaseline.generation } };
   const priorWorkerEnv = { ...env, ELIOTR_DEPLOYMENT_GENERATION: activeWorkerBaseline.generation };
@@ -228,15 +243,27 @@ export async function deployCloudflare({ confirmLive = false, environment = proc
       throw new Error("Generated deployment config changed during release");
     }
   };
+  let workerBundle = null;
   const requireUnchangedInputs = async () => {
     await requireUnchangedConfig();
+    await checkBuildInputs({ root, manifest: testedInputs, generatedConfigPin });
+    if (workerBundle !== null) await checkBundle({ root, manifest: testedInputs, attestation: workerBundle });
+    if (readBackendFingerprint({ root, generated_config: config }) !== backendFingerprint) {
+      throw new Error("Backend execution inputs changed during deployment");
+    }
     await requireUnchangedMigrationPlan(config, migrationPlan, { root });
     if (JSON.stringify(await readAssetManifest(config, { root })) !== JSON.stringify(assetManifest)) {
       throw new Error("Deployment assets changed during release");
     }
   };
   // The account-neutral build does not validate generated IDs, routes and runtime variables.
-  exec("pnpm", ["exec", "wrangler", "deploy", "--dry-run", "--minify", "--config", deployConfig], core);
+  await requireUnchangedInputs();
+  const bundleDirectory = resolve(root, ".eliotr-state", `deployment-worker-${randomUUID()}`);
+  const metafilePath = resolve(bundleDirectory, "bundle-meta.json");
+  exec("pnpm", ["exec", "wrangler", "deploy", "--dry-run", "--minify", "--config", deployConfig,
+    "--outdir", bundleDirectory, "--metafile", metafilePath], core);
+  workerBundle = await attestBundle({ root, manifest: testedInputs, outdir: bundleDirectory,
+    metafilePath, generatedConfigPin });
   await requireUnchangedInputs();
   const migrationReadback = await verifyDeploymentMigrationLedgers(env, input, migrationPlan, { fetchImpl });
   await requireUnchangedInputs();
@@ -264,7 +291,8 @@ export async function deployCloudflare({ confirmLive = false, environment = proc
     await requireUnchangedInputs();
   }
   // Canonical generated vars win; Wrangler preserves secrets without --keep-vars.
-  exec("pnpm", ["exec", "wrangler", "deploy", "--config", deployConfig], core);
+  exec("pnpm", ["exec", "wrangler", "deploy", workerBundle.entrypoint,
+    "--no-bundle", "--config", deployConfig], core);
   await requireUnchangedInputs();
   const worker = await readWorker(env, input, config, { fetchImpl });
   let assetReadback = await verifyDeploymentAssets(assetManifest, input, { fetchImpl });
@@ -342,9 +370,12 @@ export async function deployCloudflare({ confirmLive = false, environment = proc
       workflow_retry_resume: "NOT_EXECUTED", ai_search_exact_resolution: "NOT_EXECUTED",
       google_drive_exchange: "NOT_EXECUTED",
     },
-    note: purpose === MAINTENANCE_PURPOSE
+    note: (purpose === MAINTENANCE_PURPOSE
       ? buildMaintenanceNote(fullReleaseBlockers, sourceBudgetState, sourceBudgetFindings, migrationReadback, schemaGenerationReadback)
-      : "Active version, configured resource bindings and migration names are verified. ETag and local migration hashes are not remote content proof; asset body hashes are observed only with authenticated readback and stable active-version observations. This is not an atomic source/build seal; product/T4/T6 gates remain separate. HTTP generation is verified only when authenticated smoke passes.",
+      : "Active version, configured resource bindings and migration names are verified. ETag and local migration hashes are not remote content proof; asset body hashes are observed only with authenticated readback and stable active-version observations. Product/T4/T6 gates remain separate. HTTP generation is verified only when authenticated smoke passes.") +
+      ` Build input manifest captured before gates: ${testedInputs.sha256}; prepared Worker artifact: ${workerBundle.sha256}. ` +
+      "Source membership/bytes, generated config, metafile inputs and emitted files were rechecked immediately before upload; the prepared entrypoint was deployed with --no-bundle. " +
+      "This is a bounded local input/artifact correspondence check, not a cryptographic attestation of compiler or tool internals or an atomic remote source/build seal.",
     created_at: new Date(now()).toISOString(),
   };
   await save(receipt);

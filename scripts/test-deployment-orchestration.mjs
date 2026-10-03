@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { deployCloudflare } from "./deploy-cloudflare.mjs";
-// Deployment no longer consumes a billing-envelope snapshot.
+// Deployment checks exercise launch order and do not model billing admission.
 
 const now = Date.parse("2026-09-04T23:00:00.000Z");
 /*
@@ -45,17 +46,40 @@ const config = { name: "eliotr-core", minify: true, preview_urls: false, compati
     { binding: "SEARCH_DB", database_name: "eliotr-search", database_id: "22222222-2222-4222-8222-222222222222", migrations_dir: "../../infra/d1/search/migrations" },
   ] };
 const bytes = Buffer.from(JSON.stringify(config));
+const repositoryRoot = resolve(fileURLToPath(new URL("../", import.meta.url)));
+const buildInputManifest = Object.freeze({ protocol: "eliotr.deployment-build-inputs.v1",
+  root: repositoryRoot, sha256: "a".repeat(64) });
+const workerEntrypoint = resolve(repositoryRoot, "apps/eliotr-core/src/index.ts");
+const sha256 = (value) => createHash("sha256").update(value).digest("hex");
+const generatedConfigPin = { path: "apps/eliotr-core/wrangler.deploy.jsonc", sha256: sha256(bytes),
+  byte_length: bytes.byteLength, worker_name: "eliotr-core", worker_main: "apps/eliotr-core/src/index.ts",
+  assets_directory: "apps/eliotr-pwa/dist" };
+const assetManifest = { protocol: "eliotr.cloudflare-assets-manifest.v1", manifest_sha256: "c".repeat(64) };
 function harness(overrides = {}) {
   const calls = [];
   const receipts = [];
   let reads = 0;
-  const options = { confirmLive: true, verifyCode: async () => {}, environment, now: () => now, log: () => {},
+  const events = overrides.events ?? [];
+  const options = { confirmLive: true, verifyCode: async () => { events.push("verify-code"); }, environment, now: () => now, log: () => {},
+    captureBuildInputs: async () => { events.push("capture-build-inputs"); return buildInputManifest; },
+    checkBuildInputs: async () => { events.push("check-build-inputs"); return true; },
+    pinGeneratedConfig: async () => generatedConfigPin,
+    readAssetManifest: async () => assetManifest,
+    readBackendFingerprint: () => "d".repeat(64),
+    attestBundle: async () => ({ protocol: "eliotr.deployment-worker-bundle.v1", sha256: "e".repeat(64),
+      manifest_sha256: buildInputManifest.sha256, generated_config: generatedConfigPin, entrypoint: workerEntrypoint }),
+    checkBundle: async () => true,
+    readWorker: async () => ({ deployment_id: "active-deployment", version_id: "active-version" }),
+    readSchemaGenerations: async () => ({ state: "PASS", streams: [] }),
     execute(command, args, cwd, env) {
       const name = `${command} ${args.join(" ")}`; calls.push(name);
+      events.push(`command:${name}`);
       if (env.ELIOTR_DEPLOYMENT_GENERATION !== undefined) assert.equal(env.ELIOTR_DEPLOYMENT_GENERATION, "git-test");
       assert.equal(resolve(cwd), resolve(fileURLToPath(new URL("../", import.meta.url)),
         args.includes("--config") ? "apps/eliotr-core" : "."));
-      if (name === overrides.failCommand) throw new Error("injected command failure");
+      if (name === overrides.failCommand || (typeof overrides.failCommand === "string" && name.startsWith(overrides.failCommand))) {
+        throw new Error("injected command failure");
+      }
     },
     archive: async () => { calls.push("archive"); },
     read: async () => { reads += 1; return overrides.driftAt === reads ? Buffer.from("{}") : bytes; },
@@ -76,12 +100,12 @@ function harness(overrides = {}) {
         transport_completion_is_research_completion: false, ingest_live_qualified: false,
       } });
     }, ...overrides.options };
-  return { calls, receipts, options };
+  return { calls, receipts, options, events };
 }
 let cases = 0;
 const check = async (name, action) => { await action(); cases += 1; console.log(`Deployment ordering: ${name}: PASS`); };
-const deployCommand = "pnpm exec wrangler deploy --config wrangler.deploy.jsonc";
-const generatedDryRun = "pnpm exec wrangler deploy --dry-run --minify --config wrangler.deploy.jsonc";
+const deployCommand = `pnpm exec wrangler deploy ${workerEntrypoint} --no-bundle --config wrangler.deploy.jsonc`;
+const generatedDryRun = "pnpm exec wrangler deploy --dry-run --minify --config wrangler.deploy.jsonc --outdir ";
 const coreMigration = "pnpm exec wrangler d1 migrations apply CORE_DB --remote --config wrangler.deploy.jsonc";
 
 await check("dry run has no remote or receipt effects", async () => {
@@ -90,6 +114,8 @@ await check("dry run has no remote or receipt effects", async () => {
   assert.equal(await deployCloudflare(test.options), null);
   assert.deepEqual(test.calls, ["pnpm check", "pnpm build:pwa", "pnpm --filter @eliotr/core cf:types",
     "pnpm --filter @eliotr/core deploy:dry-run"]);
+  assert.equal(test.events[0], "capture-build-inputs");
+  assert.ok(test.events.indexOf("command:pnpm --filter @eliotr/core deploy:dry-run") < test.events.indexOf("check-build-inputs"));
 });
 await check("invalid smoke input fails even before local commands", async () => {
   const test = harness({ options: { environment: { ...environment, ELIOTR_SMOKE_BASE_URL: "https://wrong.example" } } });
@@ -107,7 +133,9 @@ await check("every failed preflight precedes archive and mutation", async () => 
 });
 await check("generated config dry-run fails before remote D1 mutation", async () => {
   const test = harness({ failCommand: generatedDryRun });
-  await assert.rejects(deployCloudflare(test.options));
+  await assert.rejects(deployCloudflare(test.options), (error) => { console.log(`fixture stage error: ${error.message}`); return true; });
+  assert.ok(test.calls.some((call) => call.startsWith(generatedDryRun)),
+    `the frozen-entry bundle dry-run was actually reached; calls: ${JSON.stringify(test.calls)}`);
   assert.ok(!test.calls.includes(coreMigration));
   assert.ok(!test.calls.includes(deployCommand));
   assert.equal(test.receipts.length, 0);
@@ -117,37 +145,44 @@ await check("generated config drift blocks dry-run and Worker upload", async () 
     const test = harness({ driftAt });
     await assert.rejects(deployCloudflare(test.options));
     assert.ok(!test.calls.includes(deployCommand));
-    assert.ok(!test.calls.includes(generatedDryRun));
+    assert.ok(!test.calls.some((call) => call.startsWith(generatedDryRun)));
     assert.equal(test.receipts.length, 0);
   }
 });
-await check("default full release preserves the launch-code gate", async () => {
-  const test = harness({ options: { verifyCode: async () => { throw new Error("LIVE_DEPLOY_BLOCKED"); } } });
+await check("default full release preserves the launch-code gate after capturing inputs", async () => {
+  const events = [];
+  const test = harness({ events, options: { verifyCode: async () => { events.push("verify-code"); throw new Error("LIVE_DEPLOY_BLOCKED"); } } });
   await assert.rejects(deployCloudflare(test.options), /LIVE_DEPLOY_BLOCKED/u);
   assert.deepEqual(test.calls, []);
+  assert.deepEqual(test.events, ["capture-build-inputs", "verify-code"]);
   assert.equal(test.receipts.length, 0);
 });
 await check("maintenance records launch blockers and budget findings", async () => {
   const logs = [];
-  const test = harness({ options: { confirmLive: false, environment: {}, purpose: "MAINTENANCE",
-    readReleaseBlockers: async () => ["known launch blocker"],
-    readCapabilityProfile: async () => ({ protocol: "eliotr.capabilities.v1" }),
-    captureBudget: () => ({ status: 1, stdout: "Source budgets: FAIL (17 violations)\n", stderr: "", error: null }),
+  const events = [];
+  const test = harness({ events, options: { confirmLive: false, environment: {}, purpose: "MAINTENANCE",
+    readReleaseBlockers: async () => { events.push("read-full-release-blockers"); return ["known launch blocker"]; },
+    readCapabilityProfile: async () => { events.push("read-candidate-capability-profile"); return { protocol: "eliotr.capabilities.v1" }; },
+    captureBudget: () => { events.push("capture-source-budget"); return { status: 1, stdout: "Source budgets: FAIL (17 violations)\n", stderr: "", error: null }; },
     log: (message) => logs.push(message) } });
   assert.equal(await deployCloudflare(test.options), null);
   assert.deepEqual(test.calls, ["pnpm --filter @eliotr/core typecheck",
     "pnpm exec eslint scripts/deploy-cloudflare.mjs scripts/lib/deployment-maintenance.mjs scripts/check-launch-code.mjs",
-    "pnpm boundaries:negative", "pnpm build:pwa", "pnpm --filter @eliotr/core cf:types",
+    "pnpm boundaries:check", "pnpm boundaries:negative", "pnpm build:pwa", "pnpm --filter @eliotr/core cf:types",
     "pnpm --filter @eliotr/core deploy:dry-run"]);
   assert.ok(logs.some((message) => message.includes("known launch blocker")));
   assert.ok(logs.some((message) => message.includes("Source budgets: FAIL (17 violations)")));
   assert.ok(!test.calls.includes("pnpm check"));
   assert.ok(!test.calls.some((call) => call.startsWith("GET ") || call.startsWith("POST ")));
+  assert.equal(test.events[0], "capture-build-inputs");
+  assert.ok(test.events.indexOf("capture-build-inputs") < test.events.indexOf("read-full-release-blockers"));
+  assert.ok(test.events.indexOf("capture-source-budget") < test.events.indexOf("command:pnpm --filter @eliotr/core deploy:dry-run"));
+  assert.ok(test.events.indexOf("command:pnpm --filter @eliotr/core deploy:dry-run") < test.events.indexOf("check-build-inputs"));
 });
 await check("maintenance compile, lint, boundary and artifact gates still block", async () => {
   const commands = ["pnpm --filter @eliotr/core typecheck",
     "pnpm exec eslint scripts/deploy-cloudflare.mjs scripts/lib/deployment-maintenance.mjs scripts/check-launch-code.mjs",
-    "pnpm boundaries:negative", "pnpm build:pwa", "pnpm --filter @eliotr/core cf:types",
+    "pnpm boundaries:check", "pnpm boundaries:negative", "pnpm build:pwa", "pnpm --filter @eliotr/core cf:types",
     "pnpm --filter @eliotr/core deploy:dry-run"];
   for (const command of commands) {
     const test = harness({ failCommand: command, options: { confirmLive: false, environment: {}, purpose: "MAINTENANCE",

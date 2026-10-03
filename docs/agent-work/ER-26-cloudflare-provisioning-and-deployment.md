@@ -75,7 +75,9 @@ retrieval, authentication semantics, or database schemas.
 5. Use **hostname-based Cloudflare Access** for the deployment hostname. Do not enable Worker-level
    Access because `ResearchSession` requires WebSocket upgrades.
 6. Before deployment run the checks for its explicit full-release or maintenance purpose, PWA build,
-   generated binding types, and a minified Wrangler dry run. Deploy the Worker exactly once after
+   generated binding types, and a minified Wrangler dry run. Capture actual build input membership
+   and bytes before the gates, validate the generated-config bundle metafile against those inputs,
+   and deploy the unchanged prepared entrypoint with `--no-bundle`. Deploy the Worker exactly once after
    exact existing migration-ledger and required schema-generation readback; never apply migrations
    within Worker deployment. [ADR-0009](../adr/0009-control-plane-deployment-and-runtime-cost-authority.md)
    supersedes the former combined migration/deployment step and the exact 18-counter billing

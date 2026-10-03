@@ -63,11 +63,12 @@ function validateSchemaProbes(probes, migrationNames) {
   const covered = new Set();
   const unique = new Set();
   for (const probe of probes) {
-    if (!exactKeys(probe, ["object_type", "name", "create_sql_sha256", "migration_names"]) ||
+    if (!exactKeys(probe, ["object_type", "name", "before_sql_sha256", "create_sql_sha256", "migration_names"]) ||
         !["table", "index", "trigger", "view"].includes(probe.object_type) ||
         typeof probe.name !== "string" || !SCHEMA_NAME.test(probe.name) || probe.name.toLowerCase().startsWith("sqlite_") ||
+        !(probe.before_sql_sha256 === null || HASH.test(probe.before_sql_sha256)) ||
         !HASH.test(probe.create_sql_sha256) || !validMigrationNames(probe.migration_names)) return false;
-    const identity = `${probe.object_type}\u0000${probe.name}`;
+    const identity = `${probe.object_type}\u0000${probe.name.toLowerCase()}`;
     if (unique.has(identity) || probe.migration_names.some((name) => !migrationNames.includes(name))) return false;
     unique.add(identity);
     for (const name of probe.migration_names) covered.add(name);
@@ -542,6 +543,11 @@ export function classifyDeploymentMigrationSql(text, { earlierCreatedTables = []
   return Object.freeze({ classification, statement_count: statements.length,
     index_build_cost_reviewed: hasIndexBuild, newly_created_tables: Object.freeze(newlyCreatedTables),
     required_schema_objects: Object.freeze(requiredSchemaObjects.map((entry) => Object.freeze(entry))),
+    created_schema_objects: Object.freeze([...createdObjects.values()].map((entry) => Object.freeze({
+      object_type: entry.object_type, name: entry.name,
+      replacement: droppedObjects.some((drop) => drop.object_type === entry.object_type &&
+        drop.name.toLowerCase() === entry.name.toLowerCase()),
+    }))),
     must_probe_schema_objects: Object.freeze(mustProbeSchemaObjects.map((entry) => Object.freeze(entry))),
     metadata_markers: Object.freeze([...metadataMarkers].map(([key, value]) => Object.freeze({ key, value }))),
     bounded_metadata_writes: statements.filter((statement) => parseSchemaStateInsert(statement) !== null ||
@@ -557,6 +563,7 @@ async function readPendingSql(intent, root, localBundle, read) {
   const createdTables = [];
   const requiredObjectsByMigration = [];
   const metadataMarkers = new Map();
+  const firstCreatedObjects = new Map();
   for (let index = 0; index < intent.migration_names.length; index += 1) {
     const name = intent.migration_names[index];
     const local = entries.get(name);
@@ -577,6 +584,10 @@ async function readPendingSql(intent, root, localBundle, read) {
     if (admitted.classification === "schema_metadata_only") classification = admitted.classification;
     indexBuildCostReviewed ||= admitted.index_build_cost_reviewed;
     createdTables.push(...admitted.newly_created_tables);
+    for (const object of admitted.created_schema_objects) {
+      const key = `${object.object_type}:${object.name.toLowerCase()}`;
+      if (!firstCreatedObjects.has(key)) firstCreatedObjects.set(key, object);
+    }
     for (const marker of admitted.metadata_markers) metadataMarkers.set(marker.key, marker.value);
     requiredObjectsByMigration.push({ name, required_schema_objects: admitted.required_schema_objects,
       must_probe_schema_objects: admitted.must_probe_schema_objects });
@@ -600,6 +611,15 @@ async function readPendingSql(intent, root, localBundle, read) {
     }
   }
   if (createdTables.length > 64) fail("Approved migration set creates more tables than the bounded preflight supports");
+  for (const probe of intent.schema_probes) {
+    const created = firstCreatedObjects.get(`${probe.object_type}:${probe.name.toLowerCase()}`);
+    if (created !== undefined && !created.replacement && probe.before_sql_sha256 !== null) {
+      fail("A newly created schema object requires an absence precondition");
+    }
+    if (created === undefined && probe.before_sql_sha256 === null) {
+      fail("An existing schema object requires its exact reviewed initial SQL hash");
+    }
+  }
   if (metadataMarkers.size > 64) fail("Approved migration set writes more metadata markers than the bounded readback supports");
   return { pending, totalBytes, classification, indexBuildCostReviewed, createdTables, requiredObjectsByMigration,
     metadataMarkers: [...metadataMarkers].sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)
@@ -717,10 +737,11 @@ function receiptPath(root, intentId) {
   return resolve(root, RECEIPT_DIRECTORY, `${intentId}.json`);
 }
 
-function validSchemaProbeObservation(value) {
+function validSchemaProbeObservation(value, { before = false } = {}) {
   return exactKeys(value, ["object_type", "name", "expected_sql_sha256", "observed_sql_sha256", "migration_names", "state"]) &&
     ["table", "index", "trigger", "view"].includes(value.object_type) && SCHEMA_NAME.test(value.name) &&
-    HASH.test(value.expected_sql_sha256) && (value.observed_sql_sha256 === null || HASH.test(value.observed_sql_sha256)) &&
+    (HASH.test(value.expected_sql_sha256) || (before && value.expected_sql_sha256 === null)) &&
+    (value.observed_sql_sha256 === null || HASH.test(value.observed_sql_sha256)) &&
     validMigrationNames(value.migration_names) && ["PASS", "MISMATCH", "UNAVAILABLE"].includes(value.state);
 }
 
@@ -737,7 +758,8 @@ function validObservation(value) {
     ["BEFORE_APPLY", "AFTER_APPLY", "RETRY_RECONCILIATION"].includes(value.kind) && isoDate(value.observed_at) &&
     ["EXISTING", "UNAVAILABLE"].includes(value.ledger_state) && validMigrationNames(value.applied_names, { allowEmpty: true }) &&
     validMigrationNames(value.pending_names, { allowEmpty: true }) && ["NOT_RUN", "PASS", "MISMATCH", "UNAVAILABLE"].includes(value.schema_state) &&
-    Array.isArray(value.schema_probes) && value.schema_probes.length <= 64 && value.schema_probes.every(validSchemaProbeObservation) &&
+    Array.isArray(value.schema_probes) && value.schema_probes.length <= 64 &&
+    value.schema_probes.every((probe) => validSchemaProbeObservation(probe, { before: value.kind === "BEFORE_APPLY" })) &&
     Array.isArray(value.metadata_markers) && value.metadata_markers.length <= 64 && value.metadata_markers.every(validMetadataMarkerObservation);
 }
 
@@ -925,28 +947,51 @@ async function readSchemaProbes(env, input, intent, { fetchImpl, signal, timeout
   return outcome("PASS");
 }
 
-async function requireNewTablesAbsent(env, input, intent, createdTables, { fetchImpl, signal, timeoutMs, now = Date.now }) {
+async function readSchemaPreconditions(env, input, intent, { fetchImpl, signal, timeoutMs, now = Date.now }) {
   const cutoff = now() + timeoutMs;
-  for (const name of createdTables) {
-    if (signal?.aborted) fail("Operation cancelled during bounded schema preflight");
+  const observations = [];
+  const outcome = (state) => ({ state, observations, metadata_markers: [] });
+  for (const probe of intent.schema_probes) {
+    if (signal?.aborted) return outcome("UNAVAILABLE");
     const remaining = Math.floor(cutoff - now());
-    if (remaining < 1) fail("Schema preflight exceeded its bounded read budget");
+    if (remaining < 1) return outcome("UNAVAILABLE");
     const url = `${input.apiBase}/accounts/${encodeURIComponent(intent.account_id)}/d1/database/${encodeURIComponent(intent.database.database_id)}/query`;
-    const body = JSON.stringify({ sql: "SELECT type, name FROM sqlite_master WHERE type = ? AND name = ? LIMIT 2",
-      params: ["table", name] });
+    // SQLite schema identifiers are case-insensitive. Query all object types so
+    // a differently cased or cross-type name cannot hide a conflicting object.
+    const body = JSON.stringify({ sql: "SELECT type, name, sql FROM sqlite_master WHERE name = ? COLLATE NOCASE LIMIT 2",
+      params: [probe.name] });
     const request = (address, init) => fetchImpl(address, { ...init,
       ...(signal === undefined ? {} : { signal: AbortSignal.any([init.signal, signal]) }), method: "POST", body });
-    const { data } = await readDeploymentJson(url, {
-      Authorization: `Bearer ${env.CLOUDFLARE_API_TOKEN}`, "Content-Type": "application/json",
-    }, { fetchImpl: request, timeoutMs: Math.min(5_000, remaining), maxBytes: 256 * 1024 });
-    const result = data?.result?.[0];
-    if (data?.success !== true || (Array.isArray(data.errors) && data.errors.length > 0) ||
-        !Array.isArray(data.result) || data.result.length !== 1 || result?.success !== true ||
-        !Array.isArray(result.results) || result.results.length !== 0 || result.meta?.changed_db !== false ||
-        result.meta?.rows_written !== 0) {
-      fail("A migration-created table already exists or its preflight readback is ambiguous");
+    const observation = { object_type: probe.object_type, name: probe.name,
+      expected_sql_sha256: probe.before_sql_sha256, observed_sql_sha256: null,
+      migration_names: [...probe.migration_names], state: "UNAVAILABLE" };
+    try {
+      const { data } = await readDeploymentJson(url, {
+        Authorization: `Bearer ${env.CLOUDFLARE_API_TOKEN}`, "Content-Type": "application/json",
+      }, { fetchImpl: request, timeoutMs: Math.min(5_000, remaining), maxBytes: 256 * 1024 });
+      const result = data?.result?.[0];
+      if (data?.success !== true || (Array.isArray(data.errors) && data.errors.length > 0) ||
+          !Array.isArray(data.result) || data.result.length !== 1 || result?.success !== true ||
+          !Array.isArray(result.results) || result.results.length > 2 || result.meta?.changed_db !== false ||
+          result.meta?.rows_written !== 0) {
+        observations.push(observation);
+        return outcome("UNAVAILABLE");
+      }
+      const row = result.results.length === 1 ? result.results[0] : null;
+      if (isObject(row) && typeof row.sql === "string") observation.observed_sql_sha256 = sha256(Buffer.from(row.sql, "utf8"));
+      const matches = probe.before_sql_sha256 === null ? result.results.length === 0 :
+        isObject(row) && Object.keys(row).length === 3 && row.type === probe.object_type &&
+        typeof row.name === "string" && row.name.toLowerCase() === probe.name.toLowerCase() &&
+        observation.observed_sql_sha256 === probe.before_sql_sha256;
+      observation.state = matches ? "PASS" : "MISMATCH";
+      observations.push(observation);
+      if (!matches) return outcome("MISMATCH");
+    } catch {
+      observations.push(observation);
+      return outcome("UNAVAILABLE");
     }
   }
+  return outcome("PASS");
 }
 
 function makeObservation(kind, observedAt, ledger, schema = { state: "NOT_RUN", observations: [], metadata_markers: [] }) {
@@ -1145,9 +1190,12 @@ export async function runDeploymentMigrationOperation({ intent, root = ROOT, env
       fail("Complete D1 pending ledger changed before migration apply");
     }
     check();
-    await requireNewTablesAbsent(env, input, intent, local.sql.createdTables, {
+    const preconditions = await readSchemaPreconditions(env, input, intent, {
       fetchImpl, signal, timeoutMs: Math.min(30_000, deadline()), now,
     });
+    receipt.observations[receipt.observations.length - 1] = makeObservation("BEFORE_APPLY", new Date(now()).toISOString(), before, preconditions);
+    await persistObservedReceipt(receipt, path, saveReceipt);
+    if (preconditions.state !== "PASS") fail("Exact schema object preconditions failed before migration apply");
     check();
   } catch (error) {
     await markAttemptNotStarted(receipt, path, saveReceipt, now);

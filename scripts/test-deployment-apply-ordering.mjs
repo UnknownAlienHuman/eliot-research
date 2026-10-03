@@ -15,12 +15,14 @@
 //   node scripts/test-deployment-apply-ordering.mjs
 
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { deployCloudflare } from "./deploy-cloudflare.mjs";
+import { readCompositionCapabilityProfile } from "./check-launch-code.mjs";
 import { readDeploymentMigrationPlan } from "./lib/deployment-migrations.mjs";
 import { digestAccountId } from "./lib/cloudflare-usage-envelope.mjs";
 import { dailyWindowFor, monthlyWindowFor } from "./lib/cloudflare-usage-collection.mjs";
@@ -28,7 +30,8 @@ import { stripNodeOptionsLoaderTokens } from "./lib/cloudflare-wrangler-oauth.mj
 import { loadResearchRuntimeEnvironment, RESEARCH_RUNTIME_CONFIGURATION_KEYS,
   RESEARCH_RUNTIME_SEMANTIC_TRANSPORT_KEYS, semanticConfigurationTransport } from "./lib/research-runtime-config.mjs";
 
-if (process.env.ELIOTR_TEST_GATE_REDIRECTED !== "1") {
+const directExecution = process.argv[1] !== undefined && pathToFileURL(resolve(process.argv[1])).href === import.meta.url;
+if (directExecution && process.env.ELIOTR_TEST_GATE_REDIRECTED !== "1") {
   const shimHref = new URL("./test-usage-gate-shim.mjs", import.meta.url).href;
   const childEnv = { ...process.env, ELIOTR_TEST_GATE_REDIRECTED: "1" };
   if (childEnv.NODE_OPTIONS !== undefined && childEnv.NODE_OPTIONS !== null) {
@@ -70,6 +73,23 @@ try {
     throw new Error("Deployment fixture temporary directory escaped the OS temp root");
   }
 const repositoryRoot = resolve(fileURLToPath(new URL("../", import.meta.url)));
+const candidateCapabilityProfile = await readCompositionCapabilityProfile({ root: repositoryRoot });
+function observedCapabilities(generation) {
+  return {
+    protocol: candidateCapabilityProfile.protocol,
+    deployment_generation: generation,
+    google_external_transport: "gemini-mcp",
+    enabled_slices: [...candidateCapabilityProfile.enabled_slices],
+    partial_slices: [...candidateCapabilityProfile.partial_slices],
+    disabled_slices: [...candidateCapabilityProfile.disabled_slices],
+    federation_configured: false,
+    orientation_profile: candidateCapabilityProfile.orientation_profile,
+    orientation_max_sources: candidateCapabilityProfile.orientation_max_sources,
+    orientation_max_results: candidateCapabilityProfile.orientation_max_results,
+    routes: candidateCapabilityProfile.routes.map((route) => ({ ...route })),
+    ...candidateCapabilityProfile.safety_invariants,
+  };
+}
 const runtimeConfigPath = resolve(resolvedTemporaryDirectory, "research-runtime.json");
 const runtimeConfig = { protocol: "eliotr.research-runtime.v1", vars: {
   ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON: { protocol: "eliotr.research-semantic-config.test.v1", profile: "fixture" },
@@ -118,12 +138,13 @@ const runtimeConfigVars = Object.fromEntries(RESEARCH_RUNTIME_CONFIGURATION_KEYS
   .filter((key) => !RESEARCH_RUNTIME_SEMANTIC_TRANSPORT_KEYS.includes(key) && typeof environment[key] === "string")
   .map((key) => [key, environment[key]]));
 Object.assign(runtimeConfigVars, semanticConfigurationTransport(environment).vars);
-// Staged snapshots travel via the explicit `usageSnapshot` deploy option
-// (test-called builder path), never ambient env: production never passes it.
-// Under this file's redirected child the standin additionally mints a TEST
-// capability for the ADMITTED fixture, which is what authorizes the
-// fake-observed apply below (production capabilities remain unmintable here).
-const defaultUsageSnapshot = admittedSnapshotJson();
+// This valid fixture keeps the 18 unresolved billing counters UNKNOWN. A
+// deployment must not read or promote them into an exact admission receipt.
+const unknownUsageSnapshot = JSON.parse(admittedSnapshotJson());
+for (const key of Object.keys(unknownUsageSnapshot.metrics)) {
+  if (key !== "ai_search_instances") unknownUsageSnapshot.metrics[key] = "unknown";
+}
+process.env.ELIOTR_TEST_SPAWN_SNAPSHOT_JSON = JSON.stringify(unknownUsageSnapshot);
 const config = { name: "eliotr-core", minify: true, preview_urls: false, compatibility_date: "2026-08-28",
   vars: { DEPLOYMENT_GENERATION: "git-test", ENVIRONMENT: "staging", ACCESS_TEAM_DOMAIN: "https://team-example.cloudflareaccess.com",
     ACCESS_AUDIENCE: "test-aud", ACCESS_SERVICE_PRINCIPALS: "", GOOGLE_EXTERNAL_TRANSPORT: "gemini-mcp", ...runtimeConfigVars },
@@ -142,18 +163,69 @@ const alternateVersionId = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
 const versionId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 const migrationPlan = await readDeploymentMigrationPlan(config, { root: repositoryRoot });
 const bytes = Buffer.from(JSON.stringify(config));
+const generatedConfigPath = resolve(repositoryRoot, "apps/eliotr-core/wrangler.deploy.jsonc");
+const workerEntrypoint = resolve(repositoryRoot, "apps/eliotr-core/src/index.ts");
+const buildInputManifest = Object.freeze({ protocol: "eliotr.deployment-build-inputs.v1",
+  root: repositoryRoot, sha256: "a".repeat(64) });
+const bundleSha256 = "b".repeat(64);
+const sha256 = (value) => createHash("sha256").update(value).digest("hex");
 function harness(overrides = {}) {
   const calls = [];
   const receipts = [];
   const provisionerEnvs = [];
   const deploymentRows = new Map();
+  let authorityBatches = 0;
+  let capabilityReads = 0;
+  let fingerprintReads = 0;
+  let uploadStarted = false;
   let reads = 0;
   let manifestReads = 0;
   let deploymentsRead = 0;
   let assetReads = 0;
-  const options = { readAssetManifest: async () => { manifestReads += 1; return overrides.assetDriftAt === manifestReads ? { ...assetManifest, manifest_sha256: "0".repeat(64) } : assetManifest; }, confirmLive: true, verifyCode: async () => {}, environment, usageSnapshot: defaultUsageSnapshot, now: () => now, log: () => {},
+  let buildInputChecks = 0;
+  let bundleChecks = 0;
+  let bundleAttestations = 0;
+  let generatedConfigPins = 0;
+  const buildEvents = [];
+  const options = { readAssetManifest: async () => { manifestReads += 1; return overrides.assetDriftAt === manifestReads ? { ...assetManifest, manifest_sha256: "0".repeat(64) } : assetManifest; },
+    ...(overrides.backendDriftAt === undefined ? {} : { readBackendFingerprint: () => {
+      fingerprintReads += 1;
+      return fingerprintReads === overrides.backendDriftAt ? "0".repeat(64) : "a".repeat(64);
+    } }),
+    confirmLive: true, verifyCode: async () => { buildEvents.push("verify-code"); }, environment, now: () => now, log: () => {},
+    captureBuildInputs: async () => { buildEvents.push("capture-build-inputs"); return buildInputManifest; },
+    checkBuildInputs: async () => {
+      buildInputChecks += 1;
+      buildEvents.push(`check-build-inputs-${buildInputChecks}`);
+      if (overrides.buildInputDriftAt === buildInputChecks) throw new Error("fixture deployment build input drift");
+      return true;
+    },
+    pinGeneratedConfig: async () => {
+      generatedConfigPins += 1;
+      buildEvents.push("pin-generated-config");
+      return { path: "apps/eliotr-core/wrangler.deploy.jsonc", sha256: sha256(bytes), byte_length: bytes.byteLength,
+        worker_name: "eliotr-core", worker_main: "apps/eliotr-core/src/index.ts", assets_directory: "apps/eliotr-pwa/dist" };
+    },
+    attestBundle: async ({ outdir, metafilePath, generatedConfigPin }) => {
+      bundleAttestations += 1;
+      buildEvents.push("attest-worker-bundle");
+      assert.ok(resolve(outdir).startsWith(resolve(repositoryRoot, ".eliotr-state")));
+      assert.ok(resolve(metafilePath).startsWith(resolve(outdir)));
+      assert.equal(generatedConfigPin.sha256, sha256(bytes));
+      return { protocol: "eliotr.deployment-worker-bundle.v1", root: repositoryRoot,
+        manifest_sha256: buildInputManifest.sha256, generated_config: generatedConfigPin,
+        outdir: resolve(outdir), entrypoint: workerEntrypoint, sha256: bundleSha256 };
+    },
+    checkBundle: async () => {
+      bundleChecks += 1;
+      buildEvents.push(`check-worker-bundle-${bundleChecks}`);
+      if (overrides.bundleDriftAt === bundleChecks) throw new Error("fixture prepared Worker artifact drift");
+      return true;
+    },
     execute(command, args, cwd, env) {
       const name = `${command} ${args.join(" ")}`; calls.push(name);
+      if (name.startsWith("pnpm ")) buildEvents.push(`command:${name}`);
+      if (name === deployCommand) uploadStarted = true;
       if (args[0]?.startsWith("scripts/provision-")) provisionerEnvs.push({ name: args[0], env: { ...env } });
       assert.equal(env.ELIOTR_DEPLOYMENT_GENERATION, "git-test");
       assert.equal(resolve(cwd), resolve(fileURLToPath(new URL("../", import.meta.url)),
@@ -161,19 +233,46 @@ function harness(overrides = {}) {
       if (name === overrides.failCommand) throw new Error("injected command failure");
     },
     archive: async () => { calls.push("archive"); },
-    read: async () => { reads += 1; return overrides.driftAt === reads ? Buffer.from("{}") : bytes; },
+    read: async (path, encoding) => {
+      if (resolve(path) !== generatedConfigPath) return readFile(path, encoding);
+      reads += 1;
+      return overrides.driftAt === reads ? Buffer.from("{}") : bytes;
+    },
     save: async (receipt) => { calls.push("save"); receipts.push(receipt); },
+    readReleaseBlockers: async () => { buildEvents.push("read-full-release-blockers"); return ["fixture full-release blocker"]; },
+    readCapabilityProfile: async () => { buildEvents.push("read-candidate-capability-profile"); return candidateCapabilityProfile; },
+    captureBudget: (command, args) => {
+      calls.push(`${command} ${args.join(" ")}`);
+      return { status: 1, stdout: "Source budgets: FAIL (17 violations)\n", stderr: "", error: null };
+    },
+    readCapabilities: async () => {
+      capabilityReads += 1;
+      const capabilities = observedCapabilities("git-test");
+      if (overrides.expandCapabilitiesAt === capabilityReads) capabilities.enabled_slices.push("MAINTENANCE_EXPANSION");
+      return { generation: "git-test", capabilities };
+    },
     fetchImpl: async (url, init = {}) => {
       const method = init.method ?? "GET";
       calls.push(`${method} ${url}`);
       if (method === "POST" && String(url).includes("/d1/database/")) {
         const query = JSON.parse(init.body);
+        if (Array.isArray(query.batch)) authorityBatches += 1;
+        if (overrides.failAuthoritySync && Array.isArray(query.batch)) {
+          return globalThis.Response.json({ success: false, errors: [{ code: 1001 }], result: [] });
+        }
         if (query.sql?.startsWith("SELECT name FROM d1_migrations")) {
           const stream = migrationPlan.find((entry) => String(url).includes(entry.database_id));
           const names = [...stream.migration_names];
           if (overrides.ledgerDrift === stream.binding) names.pop();
           return globalThis.Response.json({ success: true, result: [{ success: true,
             results: names.map((name) => ({ name })), meta: { rows_written: 0, changed_db: false } }] });
+        }
+        if (query.sql === "SELECT value FROM schema_state WHERE key = 'schema_generation' LIMIT 2") {
+          const stream = migrationPlan.find((entry) => String(url).includes(entry.database_id));
+          const required = stream.binding === "CORE_DB" ? "core-v11-owner-orientation" : "search-v4-ai-search-generation-registry";
+          const value = overrides.schemaMismatch === stream.binding ? "stale-generation" : required;
+          return globalThis.Response.json({ success: true, result: [{ success: true,
+            results: [{ value }], meta: { changed_db: false, rows_written: 0 } }] });
         }
         const batch = query.batch;
         const result = batch.map(({ sql, params }) => {
@@ -203,7 +302,7 @@ function harness(overrides = {}) {
         });
         return globalThis.Response.json({ success: true, result });
       }
-      if (overrides.failReadback) return new globalThis.Response("login", { headers: { "content-type": "text/html" } });
+      if (overrides.failReadback && uploadStarted) return new globalThis.Response("login", { headers: { "content-type": "text/html" } });
       if (String(url).endsWith("/workers/scripts")) return globalThis.Response.json({ success: true, result: [
         { id: "eliotr-core", compatibility_date: "2026-08-28", has_assets: true,
           exports: { ResearchSession: { type: "durable-object" } } },
@@ -235,28 +334,47 @@ function harness(overrides = {}) {
         transport_completion_is_research_completion: false, ingest_live_qualified: false,
       } });
     }, ...overrides.options };
-  return { calls, receipts, provisionerEnvs, options, assetReads: () => assetReads };
+  return { calls, receipts, provisionerEnvs, options, assetReads: () => assetReads,
+    authorityBatches: () => authorityBatches, capabilityReads: () => capabilityReads, fingerprintReads: () => fingerprintReads,
+    buildInputChecks: () => buildInputChecks, bundleChecks: () => bundleChecks,
+    bundleAttestations: () => bundleAttestations, generatedConfigPins: () => generatedConfigPins,
+    buildEvents: () => [...buildEvents] };
 }
 let cases = 0;
 const check = async (name, action) => { await action(); cases += 1; console.log(`Deployment apply ordering: ${name}: PASS`); };
-const deployCommand = "pnpm exec wrangler deploy --config wrangler.deploy.jsonc";
-const generatedDryRun = "pnpm exec wrangler deploy --dry-run --minify --config wrangler.deploy.jsonc";
-const coreMigration = "pnpm exec wrangler d1 migrations apply CORE_DB --remote --config wrangler.deploy.jsonc";
-const searchMigration = "pnpm exec wrangler d1 migrations apply SEARCH_DB --remote --config wrangler.deploy.jsonc";
+const deployCommand = `pnpm exec wrangler deploy ${workerEntrypoint} --no-bundle --config wrangler.deploy.jsonc`;
+const generatedDryRunPrefix = "pnpm exec wrangler deploy --dry-run --minify --config wrangler.deploy.jsonc --outdir ";
+const generatedDryRunIndex = (calls) => calls.findIndex((call) => call.startsWith(generatedDryRunPrefix));
 
-await check("successful ordering and no implicit live qualification", async () => {
+await check("existing Worker deploy proceeds with 18 UNKNOWN counters and no migration apply", async () => {
   const test = harness();
   const receipt = await deployCloudflare(test.options);
+  const snapshot = JSON.parse(process.env.ELIOTR_TEST_SPAWN_SNAPSHOT_JSON);
+  assert.equal(Object.values(snapshot.metrics).filter((value) => value === "unknown").length, 18);
+  assert.equal(snapshot.metrics.ai_search_instances, 5);
   assert.deepEqual(Object.fromEntries(RESEARCH_RUNTIME_SEMANTIC_TRANSPORT_KEYS
     .filter((key) => Object.hasOwn(config.vars, key)).map((key) => [key, config.vars[key]])),
   semanticConfigurationTransport(environment).vars);
   assert.equal(test.calls.filter((call) => call === deployCommand).length, 1);
-  assert.ok(test.calls.indexOf(generatedDryRun) < test.calls.indexOf(coreMigration));
-  assert.ok(test.calls.indexOf(coreMigration) < test.calls.indexOf(searchMigration));
-  assert.ok(test.calls.indexOf(searchMigration) < test.calls.indexOf(deployCommand));
+  const events = test.buildEvents();
+  assert.equal(events[0], "capture-build-inputs");
+  assert.ok(events.indexOf("capture-build-inputs") < events.indexOf("verify-code"));
+  assert.ok(events.indexOf("command:pnpm --filter @eliotr/core deploy:dry-run") < events.indexOf("check-build-inputs-1"));
+  assert.ok(generatedDryRunIndex(test.calls) < test.calls.indexOf(deployCommand));
+  assert.ok(!test.calls.some((call) => call.includes("wrangler d1 migrations apply")));
+  assert.ok(!test.calls.some((call) => /\/(?:billable|billing)\/usage(?:\?|$)/u.test(call)));
   assert.equal(test.calls.filter((call) => call.endsWith("--check-only")).length, 4);
+  assert.deepEqual(test.calls.filter((call) => call.endsWith("--verify-existing")), [
+    "node scripts/provision-cloudflare-access.mjs --verify-existing",
+    "node scripts/provision-cloudflare-core.mjs --verify-existing",
+    "node scripts/provision-ai-search.mjs --verify-existing",
+    "node scripts/provision-ai-gateways.mjs --verify-existing",
+  ]);
+  assert.ok(test.calls.includes("pnpm check"), "default FULL_RELEASE retains the full repository check");
+  assert.ok(test.calls.some((call) => call.startsWith("POST ") && call.includes("/d1/database/") &&
+    call.includes("/query")), "existing migration and schema state is read before upload");
   assert.ok(!test.calls.some((call) => call.includes("--keep-vars")));
-  assert.ok(test.calls.indexOf("archive") < test.calls.indexOf("node scripts/provision-cloudflare-core.mjs"));
+  assert.ok(test.calls.indexOf("archive") < test.calls.indexOf("node scripts/provision-cloudflare-access.mjs --verify-existing"));
   assert.equal(receipt.remote_http_smoke.state, "PASS");
   assert.deepEqual(receipt.worker.vars_readback, { state: "PASS", binding_count: Object.keys(config.vars).length });
   assert.equal(receipt.assets.readback.state, "PASS");
@@ -292,15 +410,15 @@ await check("missing cookie retains NOT_EXECUTED", async () => {
   assert.equal(receipt.remote_http_smoke.state, "NOT_EXECUTED");
   assert.equal(receipt.assets.readback.state, "NOT_EXECUTED");
   assert.equal(test.assetReads(), 0);
-  assert.equal(test.calls.filter((call) => call.startsWith("GET ")).length, 3);
+  assert.ok(test.calls.some((call) => call.startsWith("GET ")), "existing Worker identity stays read-only checked");
 });
-await check("migration or deployment failure cannot publish PASS", async () => {
-  for (const command of [coreMigration, searchMigration, deployCommand]) {
-    const test = harness({ failCommand: command });
-    await assert.rejects(deployCloudflare(test.options));
-    assert.equal(test.receipts.length, 0);
-    assert.ok(!test.calls.some((call) => call.startsWith("GET ")));
-  }
+await check("Worker deployment failure cannot publish PASS", async () => {
+  const test = harness({ failCommand: deployCommand });
+  await assert.rejects(deployCloudflare(test.options));
+  assert.equal(test.receipts.length, 0);
+  assert.ok(test.calls.some((call) => call.startsWith("GET ")), "active Worker identity is checked before the failed upload");
+  assert.ok(!test.calls.some((call) => call.includes("wrangler d1 migrations apply")));
+  assert.equal(test.authorityBatches(), 0);
 });
 await check("readback failure after upload is not successful deployment", async () => {
   const test = harness({ failReadback: true });
@@ -309,51 +427,73 @@ await check("readback failure after upload is not successful deployment", async 
   assert.ok(test.calls.includes("archive"));
   assert.equal(test.receipts.length, 0);
 });
+await check("deployment-authority synchronization failure after upload cannot publish PASS", async () => {
+  const test = harness({ failAuthoritySync: true });
+  await assert.rejects(deployCloudflare(test.options));
+  assert.ok(test.calls.includes(deployCommand));
+  assert.ok(test.calls.some((call) => call.startsWith("POST ") && call.includes("/query")));
+  assert.equal(test.receipts.length, 0);
+});
 
 await check("migration ledger mismatch stops before Worker upload and authority writes", async () => {
   for (const binding of ["CORE_DB", "SEARCH_DB"]) {
     const test = harness({ ledgerDrift: binding });
     await assert.rejects(deployCloudflare(test.options), /migration plan or ledger/u);
     assert.ok(!test.calls.includes(deployCommand));
-    assert.ok(!test.calls.some((call) => call.startsWith("GET ")));
+    assert.ok(test.calls.some((call) => call.startsWith("GET ")), "identity readback precedes the ledger refusal");
+    assert.equal(test.authorityBatches(), 0);
     assert.equal(test.receipts.length, 0);
   }
 });
-await check("partial active traffic stops before deployment authority and PASS receipt", async () => {
+await check("required schema-generation drift stops before Worker upload", async () => {
+  for (const binding of ["CORE_DB", "SEARCH_DB"]) {
+    const test = harness({ schemaMismatch: binding });
+    await assert.rejects(deployCloudflare(test.options), /schema generation/u);
+    assert.ok(!test.calls.includes(deployCommand));
+    assert.equal(test.calls.filter((call) => call.startsWith("POST ")).length, binding === "CORE_DB" ? 3 : 4,
+      "both ledgers are read and schema marker checks stop at the first mismatch");
+    assert.equal(test.receipts.length, 0);
+  }
+});
+await check("partial active traffic stops before upload and authority synchronization", async () => {
   const test = harness({ partialTraffic: true });
-  await assert.rejects(deployCloudflare(test.options), /active deployment/u);
-  assert.ok(test.calls.includes(deployCommand));
-  assert.equal(test.calls.filter((call) => call.startsWith("POST ")).length, 2, "only read-only ledger queries can precede refusal");
+  await assert.rejects(deployCloudflare(test.options), /active 100% Worker/u);
+  assert.ok(!test.calls.includes(deployCommand));
+  assert.equal(test.calls.filter((call) => call.startsWith("POST ")).length, 0,
+    "partial traffic fails the active identity read before D1 or upload");
+  assert.equal(test.authorityBatches(), 0);
   assert.equal(test.receipts.length, 0);
 });
 
 
-await check("asset content or active-version mismatch stops before authority writes and receipt", async () => {
-  for (const override of [{ assetMismatch: true }, { versionDrift: true }]) {
+await check("asset content or active-version mismatch stops at its intended stage", async () => {
+  for (const [override, expectedUpload, expectedD1Reads] of [
+    [{ assetMismatch: true }, true, 4], [{ versionDrift: true }, false, 0],
+  ]) {
     const test = harness(override);
-    await assert.rejects(deployCloudflare(test.options), /asset readback|deployment changed/u);
-    assert.equal(test.calls.filter((call) => call.startsWith("POST ")).length, 2);
+    await assert.rejects(deployCloudflare(test.options), /asset readback|deployment changed|active configured resource identities/u);
+    assert.equal(test.calls.includes(deployCommand), expectedUpload);
+    assert.equal(test.calls.filter((call) => call.startsWith("POST ")).length, expectedD1Reads);
+    assert.equal(test.authorityBatches(), 0);
     assert.equal(test.receipts.length, 0);
   }
 });
 
-await check("local asset drift stops before remote migrations and Worker upload", async () => {
+await check("local asset drift stops before Worker upload", async () => {
   const test = harness({ assetDriftAt: 2 });
   await assert.rejects(deployCloudflare(test.options), /assets changed during release/u);
-  assert.ok(!test.calls.includes(coreMigration));
-  assert.ok(!test.calls.includes(searchMigration));
+  assert.ok(!test.calls.some((call) => call.includes("wrangler d1 migrations apply")));
   assert.ok(!test.calls.includes(deployCommand));
   assert.equal(test.receipts.length, 0);
 });
 
-await check("semantic configuration transport drift stops before D1 apply and Worker upload", async () => {
+await check("semantic configuration transport drift stops before Worker upload", async () => {
   const changed = structuredClone(config);
   const key = "ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON_0";
   changed.vars[key] = `${changed.vars[key]}x`;
   const test = harness({ options: { read: async () => Buffer.from(JSON.stringify(changed)) } });
   await assert.rejects(deployCloudflare(test.options), /Generated deployment semantic configuration drift \(ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON_0\)/u);
-  assert.ok(!test.calls.includes(coreMigration));
-  assert.ok(!test.calls.includes(searchMigration));
+  assert.ok(!test.calls.some((call) => call.includes("wrangler d1 migrations apply")));
   assert.ok(!test.calls.includes(deployCommand));
   assert.equal(test.receipts.length, 0);
 });
@@ -371,25 +511,113 @@ await check("unreviewed bindings and stale runtime vars cannot sync authority or
   for (const bindingDrift of drifts) {
     const test = harness({ bindingDrift });
     await assert.rejects(deployCloudflare(test.options));
-    assert.ok(test.calls.includes(deployCommand));
-    assert.equal(test.calls.filter((call) => call.startsWith("POST ")).length, 2,
-      "only read-only ledger queries may precede refusal");
+    assert.ok(!test.calls.includes(deployCommand));
+    assert.equal(test.authorityBatches(), 0,
+      "unreviewed runtime bindings fail before upload and authority synchronization");
     assert.equal(test.receipts.length, 0);
   }
 });
-await check("missing or default migration directories stop before D1 apply and Worker upload", async () => {
+await check("missing or default migration directories stop before Worker upload", async () => {
   for (const migrations_dir of [undefined, "migrations", "../../foreign"]) {
     const changed = structuredClone(config);
     if (migrations_dir === undefined) delete changed.d1_databases[0].migrations_dir;
     else changed.d1_databases[0].migrations_dir = migrations_dir;
     const test = harness({ options: { read: async () => Buffer.from(JSON.stringify(changed)) } });
     await assert.rejects(deployCloudflare(test.options), /migration plan or ledger/u);
-    assert.ok(!test.calls.includes(generatedDryRun));
-    assert.ok(!test.calls.includes(coreMigration));
+    assert.equal(generatedDryRunIndex(test.calls), -1);
+    assert.ok(!test.calls.some((call) => call.includes("wrangler d1 migrations apply")));
     assert.ok(!test.calls.includes(deployCommand));
     assert.equal(test.calls.filter((call) => call.startsWith("POST ")).length, 0);
     assert.equal(test.receipts.length, 0);
   }
+});
+
+await check("maintenance deploy records blockers and budget findings without claiming a full release", async () => {
+  const logs = [];
+  const test = harness({ options: { purpose: "MAINTENANCE", log: (message) => logs.push(message) } });
+  const receipt = await deployCloudflare(test.options);
+  const snapshot = JSON.parse(process.env.ELIOTR_TEST_SPAWN_SNAPSHOT_JSON);
+  assert.equal(Object.values(snapshot.metrics).filter((value) => value === "unknown").length, 18);
+  assert.equal(snapshot.metrics.ai_search_instances, 5);
+  assert.equal(test.calls.filter((call) => call.endsWith("--verify-existing")).length, 4);
+  assert.deepEqual(test.calls.filter((call) => call.endsWith("--verify-existing")), [
+    "node scripts/provision-cloudflare-access.mjs --verify-existing",
+    "node scripts/provision-cloudflare-core.mjs --verify-existing",
+    "node scripts/provision-ai-search.mjs --verify-existing",
+    "node scripts/provision-ai-gateways.mjs --verify-existing",
+  ]);
+  assert.ok(test.calls.includes("pnpm budgets:check"));
+  assert.ok(!test.calls.includes("pnpm check"));
+  assert.ok(test.calls.indexOf("pnpm boundaries:check") < test.calls.indexOf("pnpm boundaries:negative"));
+  assert.equal(test.calls.filter((call) => call === deployCommand).length, 1);
+  const events = test.buildEvents();
+  assert.equal(events[0], "capture-build-inputs");
+  assert.ok(events.indexOf("capture-build-inputs") < events.indexOf("read-full-release-blockers"));
+  assert.ok(events.indexOf("read-full-release-blockers") < events.indexOf("read-candidate-capability-profile"));
+  assert.ok(events.indexOf("command:pnpm --filter @eliotr/core deploy:dry-run") < events.indexOf("check-build-inputs-1"));
+  assert.equal(test.generatedConfigPins(), 1);
+  assert.equal(test.bundleAttestations(), 1);
+  assert.ok(test.buildInputChecks() >= 8, "sealed repository inputs are rechecked throughout the maintenance flow");
+  assert.ok(test.bundleChecks() >= 5, "the prepared bundle is rechecked before upload and authority synchronization");
+  assert.ok(test.calls.includes(deployCommand) && deployCommand.includes(`${workerEntrypoint} --no-bundle`));
+  assert.ok(!test.calls.some((call) => /\/(?:billable|billing)\/usage(?:\?|$)/u.test(call)));
+  const identityReads = test.calls.map((call, index) => ({ call, index }))
+    .filter(({ call }) => call.startsWith("GET ") && call.endsWith("/deployments"));
+  const firstGate = test.calls.findIndex((call) => call.endsWith("--check-only"));
+  const dryRunIndex = generatedDryRunIndex(test.calls);
+  const uploadIndex = test.calls.indexOf(deployCommand);
+  assert.ok(identityReads.some(({ index }) => index < firstGate), "active Worker is pinned before provisioning checks");
+  assert.ok(identityReads.some(({ index }) => dryRunIndex < index && index < uploadIndex),
+    "active Worker identity is rechecked before upload");
+  assert.ok(identityReads.some(({ index }) => index > uploadIndex), "candidate Worker identity is read back after upload");
+  assert.ok(test.capabilityReads() >= 3, "active and candidate capability profiles are read before authority sync");
+  assert.ok(!test.calls.some((call) => call.includes("wrangler d1 migrations apply")));
+  assert.ok(receipt.note.includes("fixture full-release blocker"));
+  assert.ok(receipt.note.includes("Source-maintainability budget gate: FAIL (17 violations)"));
+  assert.ok(receipt.note.includes("D1 migrations were not applied"));
+  assert.ok(logs.some((message) => message.includes("Source budgets: FAIL (17 violations)")));
+  assert.equal(test.receipts.length, 1);
+});
+
+await check("capability expansion after upload is refused before deployment-authority synchronization", async () => {
+  const test = harness({ expandCapabilitiesAt: 3, options: { purpose: "MAINTENANCE" } });
+  await assert.rejects(deployCloudflare(test.options), /Maintenance capability enabled_slices would change or broaden/u);
+  assert.equal(test.capabilityReads(), 3, "the changed third profile read is the candidate pre-CAS readback");
+  assert.equal(test.calls.filter((call) => call === deployCommand).length, 1);
+  assert.equal(test.authorityBatches(), 0);
+  assert.equal(test.receipts.length, 0);
+});
+
+await check("backend input drift at dry-run, preupload and pre-CAS boundaries cannot advance authority or receipts", async () => {
+  for (const [stage, driftAt, expectedUpload, expectedD1Reads] of [
+    ["after dry-run", 2, false, 0], ["immediately preupload", 5, false, 4], ["pre-CAS after upload", 8, true, 4],
+  ]) {
+    const test = harness({ backendDriftAt: driftAt, options: { purpose: "MAINTENANCE" } });
+    await assert.rejects(deployCloudflare(test.options), /Backend execution inputs changed during deployment/u, stage);
+    assert.equal(test.fingerprintReads(), driftAt, stage);
+    assert.equal(test.calls.includes(deployCommand), expectedUpload, stage);
+    assert.equal(test.calls.filter((call) => call.startsWith("POST ")).length, expectedD1Reads, stage);
+    assert.equal(test.authorityBatches(), 0, stage);
+    assert.equal(test.receipts.length, 0, stage);
+  }
+});
+
+await check("source seal drift before build and prepared bundle drift before CAS block their next effect", async () => {
+  const sourceDrift = harness({ buildInputDriftAt: 2, options: { purpose: "MAINTENANCE" } });
+  await assert.rejects(deployCloudflare(sourceDrift.options), /fixture deployment build input drift/u);
+  assert.equal(sourceDrift.buildInputChecks(), 2);
+  assert.equal(generatedDryRunIndex(sourceDrift.calls), -1);
+  assert.equal(sourceDrift.calls.includes(deployCommand), false);
+  assert.equal(sourceDrift.authorityBatches(), 0);
+  assert.equal(sourceDrift.receipts.length, 0);
+
+  const bundleDrift = harness({ bundleDriftAt: 7, options: { purpose: "MAINTENANCE" } });
+  await assert.rejects(deployCloudflare(bundleDrift.options), /fixture prepared Worker artifact drift/u);
+  assert.equal(bundleDrift.bundleChecks(), 7);
+  assert.equal(bundleDrift.calls.filter((call) => call === deployCommand).length, 1);
+  assert.equal(bundleDrift.calls.filter((call) => call.startsWith("POST ")).length, 4);
+  assert.equal(bundleDrift.authorityBatches(), 0);
+  assert.equal(bundleDrift.receipts.length, 0);
 });
 
 console.log(`Deployment apply ordering: ${cases} groups passed; live Cloudflare NOT_EXECUTED`);

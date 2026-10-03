@@ -305,9 +305,26 @@ change. `pnpm check` also invokes the pinned Rust gates from `LANGUAGE_RUNTIME_C
 toolchain and the pinned Cargo tools before running it locally.
 
 `cf:preflight:remote` performs only GET/readback operations. `cf:deploy` repeats local gates, repeats the
-remote preflight, then performs create-or-verify provisioning. It writes the account-specific
+remote preflight, then verifies the existing resources without creating them. It writes the account-specific
 `apps/eliotr-core/wrangler.deploy.jsonc` locally. The file and `.eliotr-state/` receipts are ignored by
 Git.
+
+Before candidate-profile inspection or local gates, the deployer captures actual bytes and file
+membership for its explicit Worker/package and PWA source/configuration inputs, build scripts,
+root manifests/lockfiles, installed pnpm state, and runtime dependency files. Untracked build inputs
+are refused, including ignored imported files. The only generated-source exceptions are declared
+outputs; an exception does not authorize importing arbitrary files outside the captured inventory.
+Maintenance runs both `boundaries:check` against the repository and the supplemental negative
+fixtures. Source changes during or after gates stop the operation.
+
+After resource readback generates the deployment configuration, its bytes are pinned separately.
+A minified Wrangler dry run writes a dedicated bundle and esbuild metafile. Every reported input
+must match the pre-gate inventory, and the emitted Worker entrypoint and ancillary files are hashed
+and checked again immediately before upload. The normal single-step deployment uploads that
+prepared entrypoint with `--no-bundle`. The receipt note records both manifest and artifact digests.
+This bounds local input/artifact correspondence; it does not cryptographically attest compiler or
+tool internals or make an atomic remote source/build seal. Authenticated assets and active-version
+readback remain separate requirements.
 
 ## Resource behavior
 
@@ -346,7 +363,14 @@ node scripts/migrate-cloudflare-d1.mjs --plan ./reviewed-core-migration-intent.j
 
 The command checks the exact account and database identity, production/staging isolation, OAuth
 profile where selected, full pending migration suffix, config and SQL hashes, and each declared
-schema probe. It captures the current Time Travel bookmark, records the attempt before running the
+schema probe. Every probe includes `before_sql_sha256` (null for required absence, otherwise the
+reviewed initial SQLite CREATE SQL hash) and the final `create_sql_sha256`. Fresh table, view,
+trigger, and index creation requires absence. Named view/trigger replacement can require either
+absence or an exact reviewed existing definition; existing ALTER targets and metadata tables
+require their reviewed initial hash. The pre-effect lookup compares names case-insensitively
+across all schema object types, so a conflicting object cannot hide behind `IF NOT EXISTS`.
+A mismatch records `FAILED`/`NOT_STARTED` before applying SQL or advancing the migration ledger.
+It captures the current Time Travel bookmark, records the attempt before running the
 standard remote migration command against the pinned database name, then reconciles both the exact
 ledger and schema probes. The bookmark is a readback, not a newly created backup. Ledger names are
 not proof of remote SQL bytes. Restore remains an explicit manual recovery action.
