@@ -7,6 +7,7 @@ import { applyAccessRuntimeVars, applyMcpRuntimeVars, resolveAccessRuntimeConfig
   resolveMcpAccessRuntimeConfiguration } from "./lib/access-runtime-config.mjs";
 import { LOGIN_INSTRUCTION, loadWranglerOAuthCredential, resolveAuthMode,
   scrubTokenEnv, verifyWranglerOAuthAccount, WRANGLER_OAUTH_MODE } from "./lib/cloudflare-wrangler-oauth.mjs";
+import { CLOUDFLARE_MCP_TRANSPORT, createCloudflareMcpTransport } from "./lib/cloudflare-mcp-oauth.mjs";
 import { isUsageAdmissionCapability, runUsagePreflight } from "./lib/cloudflare-usage-admission.mjs";
 import { loadResearchRuntimeEnvironment, RESEARCH_RUNTIME_CONFIGURATION_KEYS,
   RESEARCH_RUNTIME_SEMANTIC_TRANSPORT_KEYS, semanticConfigurationTransport } from "./lib/research-runtime-config.mjs";
@@ -50,6 +51,15 @@ try {
   authMode = resolveAuthMode(process.env);
 } catch (error) {
   console.error(error?.message ?? String(error));
+  process.exit(2);
+}
+const accessTransport = (process.env.ELIOTR_ACCESS_TRANSPORT ?? "wrangler").trim() || "wrangler";
+if (accessTransport !== "wrangler" && accessTransport !== CLOUDFLARE_MCP_TRANSPORT) {
+  console.error("ELIOTR_ACCESS_TRANSPORT must be wrangler or cloudflare-mcp");
+  process.exit(2);
+}
+if (accessTransport === CLOUDFLARE_MCP_TRANSPORT && authMode !== WRANGLER_OAUTH_MODE) {
+  console.error(`ELIOTR_ACCESS_TRANSPORT=${CLOUDFLARE_MCP_TRANSPORT} requires ELIOTR_CLOUDFLARE_AUTH_MODE=${WRANGLER_OAUTH_MODE}; static-token mode is prohibited`);
   process.exit(2);
 }
 if (authMode === WRANGLER_OAUTH_MODE) {
@@ -169,6 +179,25 @@ async function request(method, path, { body, extraHeaders, allow404 = false } = 
     throw new Error(`${method} ${path} failed (${response.status}): ${JSON.stringify(payload.errors ?? payload, null, 2)}`);
   }
   return payload.result ?? payload;
+}
+
+async function readAccessApplications() {
+  const path = `/accounts/${enc(accountId)}/access/apps?per_page=100`;
+  if (accessTransport !== CLOUDFLARE_MCP_TRANSPORT) return request("GET", path);
+  const transport = createCloudflareMcpTransport({
+    cwd: process.env.ELIOTR_CLOUDFLARE_MCP_CWD,
+    accountId,
+    // The core provisioner may receive an ephemeral OAuth bearer in its child
+    // environment for Wrangler REST reads. The managed MCP transport must not
+    // inherit any static-token-shaped variable.
+    env: scrubTokenEnv(process.env),
+  });
+  try {
+    await transport.verifyAccount();
+    return await transport.request("GET", path);
+  } finally {
+    transport.close();
+  }
 }
 
 function assertManifest() {
@@ -415,7 +444,7 @@ const queuePlans = await inspectQueues();
 // the wire) working while live drift still fails closed below.
 let liveAccessBinding = null;
 if (accessReceipt?.application?.id) {
-  const liveApps = await request("GET", `/accounts/${enc(accountId)}/access/apps?per_page=100`);
+  const liveApps = await readAccessApplications();
   const candidates = (Array.isArray(liveApps) ? liveApps : []).filter((app) => app?.id === accessReceipt.application.id);
   if (candidates.length > 1) throw new Error("ambiguous live Access application binding; refusing to proceed");
   const live = candidates[0] ?? null;
