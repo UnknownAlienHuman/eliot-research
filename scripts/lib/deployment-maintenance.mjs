@@ -36,6 +36,26 @@ export function selectDeploymentGoogleTransport({ purpose, canonicalTransport, p
   return preserve;
 }
 
+/** Preserve an absent managed-search binding only while its product slices stay disabled. */
+export function selectDeploymentAiSearchNamespaces({ purpose, canonicalConfig, preserve,
+  activeWorkerIdentity, candidate } = {}) {
+  if (preserve === undefined) return canonicalConfig.ai_search_namespaces;
+  const namespaces = canonicalConfig?.ai_search_namespaces ?? [];
+  const instances = canonicalConfig?.ai_search ?? [];
+  if (purpose !== "MAINTENANCE" || preserve !== "absent" || activeWorkerIdentity?.ai_search_bound !== false ||
+      !Array.isArray(namespaces) || namespaces.length > 1 ||
+      namespaces.some((item) => !isRecord(item) || item.binding !== "AI_SEARCH" || item.namespace !== "eliotr" ||
+        item.remote !== true || Object.keys(item).some((key) => !["binding", "namespace", "remote"].includes(key))) ||
+      !Array.isArray(instances) || instances.length !== 0 || !isRecord(candidate) ||
+      !Array.isArray(candidate.disabled_slices) || !Array.isArray(candidate.enabled_slices) ||
+      !Array.isArray(candidate.partial_slices) || ["RETRIEVAL", "ERASURE"].some((slice) =>
+        !candidate.disabled_slices.includes(slice) || candidate.enabled_slices.includes(slice) ||
+        candidate.partial_slices.includes(slice))) {
+    fail("Maintenance AI Search preservation requires a verified absent binding and disabled retrieval/erasure");
+  }
+  return [];
+}
+
 /** Read a bounded active-Worker identity and generation before maintenance upload. */
 export async function readActiveDeploymentIdentity({ env, input, fetchImpl = fetch, readJson = readDeploymentJson,
   readRequest } = {}) {
@@ -100,17 +120,20 @@ export async function readActiveDeploymentIdentity({ env, input, fetchImpl = fet
     deployment_id: active.id, version_id: active.versions[0].version_id, version_number: current.number,
     generation, federation_principal_ref: federationPrincipalRef, federation_cursor_key_bound: federationCursorKeyBound,
     google_external_transport: googleTransport,
+    ai_search_bound: bindings.some((binding) => binding.name === "AI_SEARCH" ||
+      ["ai_search_namespace", "ai_search"].includes(binding.type)),
     traffic_percentage: 100 });
 }
 
 /** Read the authenticated active Worker capability profile through the Access hostname. */
 export async function readAuthenticatedCapabilities({ input, fetchImpl = fetch, readJson = readDeploymentJson } = {}) {
-  if (!isRecord(input) || typeof input.origin !== "string" || typeof input.cookie !== "string" ||
-      input.cookie.length < 1 || input.cookie.length > 16_384 || !/^[A-Za-z0-9._~-]+$/u.test(input.cookie)) {
+  const cloudflared = input?.ownerHttpTransport === "cloudflared" && !input.cookie;
+  if (!isRecord(input) || typeof input.origin !== "string" || (!cloudflared && (typeof input.cookie !== "string" ||
+      input.cookie.length < 1 || input.cookie.length > 16_384 || !/^[A-Za-z0-9._~-]+$/u.test(input.cookie)))) {
     fail("Maintenance requires an authenticated capability readback cookie");
   }
   const { data, status } = await readJson(`${input.origin}/api/v1/system/capabilities`, {
-    Cookie: `CF_Authorization=${input.cookie}`, Accept: "application/json",
+    ...(input.cookie ? { Cookie: `CF_Authorization=${input.cookie}` } : {}), Accept: "application/json",
   }, { fetchImpl, maxBytes: 64 * 1024 });
   if (status !== 200 || !isRecord(data) || Object.keys(data).length !== 3 ||
       !Object.hasOwn(data, "data") || !Object.hasOwn(data, "trace_id") || !Object.hasOwn(data, "deployment_generation") ||
@@ -159,6 +182,12 @@ export function assertMaintenanceCapabilityProfile({ candidate, observed, genera
       candidate.enabled_slices.includes("RETRIEVAL") || candidate.partial_slices.includes("RETRIEVAL") ||
       candidate.enabled_slices.includes("ERASURE") || candidate.partial_slices.includes("ERASURE")) {
     fail("Maintenance must keep RETRIEVAL and ERASURE disabled");
+  }
+  const configuredAiSearch = (generatedConfig.ai_search_namespaces?.length ?? 0) > 0 ||
+    (generatedConfig.ai_search?.length ?? 0) > 0;
+  if (typeof activeWorkerIdentity.ai_search_bound !== "boolean" ||
+      configuredAiSearch !== activeWorkerIdentity.ai_search_bound) {
+    fail("Maintenance AI Search binding presence would change");
   }
   if (!isRecord(candidate.safety_invariants) || !sameJson(candidate.safety_invariants, SAFETY) ||
       Object.entries(SAFETY).some(([key, expected]) => observed[key] !== expected)) {

@@ -10,7 +10,8 @@ import { injectOAuthBearer, loadWranglerOAuthCredential, resolveAuthMode, scrubT
 import { assertLaunchCodeComplete, readConfiguredTransport, readCompositionCapabilityProfile } from "./check-launch-code.mjs";
 import { assertMaintenanceCapabilityProfile, readActiveDeploymentIdentity, readAuthenticatedCapabilities,
   readFullReleaseBlockers, requireSameMaintenanceCapabilityReadback,
-  selectDeploymentGoogleTransport, verifyDeploymentSchemaGenerations } from "./lib/deployment-maintenance.mjs";
+  selectDeploymentGoogleTransport, selectDeploymentAiSearchNamespaces,
+  verifyDeploymentSchemaGenerations } from "./lib/deployment-maintenance.mjs";
 import { loadResearchRuntimeEnvironment, RESEARCH_RUNTIME_CONFIGURATION_KEYS,
   RESEARCH_RUNTIME_SEMANTIC_TRANSPORT_KEYS, semanticConfigurationTransport } from "./lib/research-runtime-config.mjs";
 import { synchronizeResearchDeploymentAuthority } from "./lib/research-deployment-authority.mjs";
@@ -21,6 +22,7 @@ import { captureDeploymentBuildInputs, requireUnchangedDeploymentBuildInputs,
   pinGeneratedDeploymentConfig, attestDeploymentBundle,
   requireUnchangedDeploymentBundle } from "./lib/deployment-build-inputs.mjs";
 import { validateStagingTarget } from "./lib/staging-isolation.mjs";
+import { createCloudflaredOwnerFetch } from "./lib/cloudflare-owner-http.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const core = resolve(root, "apps/eliotr-core");
@@ -98,6 +100,10 @@ export async function deployCloudflare({ confirmLive = false, environment = proc
       (purpose !== MAINTENANCE_PURPOSE || preserveGoogleTransport !== "disabled")) {
     throw new Error("Google transport preservation is maintenance-only and accepts disabled only");
   }
+  if (env.ELIOTR_MAINTENANCE_PRESERVE_AI_SEARCH !== undefined &&
+      (purpose !== MAINTENANCE_PURPOSE || env.ELIOTR_MAINTENANCE_PRESERVE_AI_SEARCH !== "absent")) {
+    throw new Error("AI Search preservation is maintenance-only and accepts absent only");
+  }
   // FIX9WC Layer 2 (defense in depth, child exec env only): strip ambient
   // module-loader tokens (--import/--loader/--experimental-loader/--require
   // plus values) from NODE_OPTIONS so a poisoned env can never auto-load test
@@ -112,6 +118,7 @@ export async function deployCloudflare({ confirmLive = false, environment = proc
   // Capture bytes and path membership before profile inspection or any local gate.
   const testedInputs = await captureBuildInputs({ root });
   let input;
+  let ownerFetch = fetchImpl;
   let oauth = null;
   let stagingTarget = null;
   let fullReleaseBlockers = null;
@@ -144,6 +151,10 @@ export async function deployCloudflare({ confirmLive = false, environment = proc
     validateDeploymentMigrationDirectories(canonicalConfig, { root });
     env.ELIOTR_GOOGLE_EXTERNAL_TRANSPORT = preserveGoogleTransport ?? readConfiguredTransport(canonicalConfig);
     input = validateDeploymentInput(env);
+    if (input.ownerHttpTransport === "cloudflared") {
+      ownerFetch = createCloudflaredOwnerFetch({ origin: input.origin, environment: env,
+        binary: env.ELIOTR_CLOUDFLARED_BINARY ?? "cloudflared" });
+    }
   }
   const exec = (command, args, cwd = root) => execute(command, args, cwd, env);
   const provisionerEnv = (name) => name === "provision-cloudflare-access" && env.ELIOTR_ACCESS_TRANSPORT === "cloudflare-mcp"
@@ -209,8 +220,10 @@ export async function deployCloudflare({ confirmLive = false, environment = proc
   const activeWorkerBaseline = await readActiveWorker({ env, input, fetchImpl });
   let maintenanceBaseline = null;
   if (purpose === MAINTENANCE_PURPOSE) {
-    if (input.cookie === null) throw new Error("Maintenance requires ELIOTR_ACCESS_SMOKE_COOKIE for authenticated capability comparison");
-    const current = await readCapabilities({ input, fetchImpl });
+    if (input.cookie === null && input.ownerHttpTransport !== "cloudflared") {
+      throw new Error("Maintenance requires cookie or cloudflared owner HTTP authentication for capability comparison");
+    }
+    const current = await readCapabilities({ input, fetchImpl: ownerFetch });
     if (current.generation !== activeWorkerBaseline.generation) {
       throw new Error("Maintenance capability generation is not pinned to the active Worker version");
     }
@@ -218,17 +231,25 @@ export async function deployCloudflare({ confirmLive = false, environment = proc
     const transport = selectDeploymentGoogleTransport({ purpose, preserve: preserveGoogleTransport,
       canonicalTransport: readConfiguredTransport(canonicalConfig),
       observedTransport: activeWorkerBaseline.google_external_transport });
-    const maintenanceConfig = { ...canonicalConfig, vars: { ...canonicalConfig.vars, GOOGLE_EXTERNAL_TRANSPORT: transport } };
+    const preserveAiSearch = env.ELIOTR_MAINTENANCE_PRESERVE_AI_SEARCH ??
+      (activeWorkerBaseline.ai_search_bound === false ? "absent" : undefined);
+    const namespaces = selectDeploymentAiSearchNamespaces({ purpose, canonicalConfig, preserve: preserveAiSearch,
+      activeWorkerIdentity: activeWorkerBaseline, candidate: candidateCapabilityProfile });
+    const maintenanceConfig = { ...canonicalConfig, ai_search_namespaces: namespaces,
+      vars: { ...canonicalConfig.vars, GOOGLE_EXTERNAL_TRANSPORT: transport } };
     assertMaintenanceCapabilityProfile({ candidate: candidateCapabilityProfile,
       observed: current.capabilities, generatedConfig: maintenanceConfig, activeWorkerIdentity: activeWorkerBaseline });
+    if (preserveAiSearch !== undefined) env.ELIOTR_MAINTENANCE_PRESERVE_AI_SEARCH = preserveAiSearch;
     maintenanceBaseline = { active: activeWorkerBaseline, capabilities: current };
   }
 
   // All predictable cross-product drift must fail before the first remote mutation.
-  for (const name of provisioners) execute("node", [`scripts/${name}.mjs`, "--check-only"], root, provisionerEnv(name));
+  const activeProvisioners = provisioners.filter((name) =>
+    name !== "provision-ai-search" || env.ELIOTR_MAINTENANCE_PRESERVE_AI_SEARCH !== "absent");
+  for (const name of activeProvisioners) execute("node", [`scripts/${name}.mjs`, "--check-only"], root, provisionerEnv(name));
   // Preserve prior evidence but never leave an old PASS at the current receipt path after a failure.
   await archive();
-  for (const name of provisioners) execute("node", [`scripts/${name}.mjs`, "--verify-existing"], root, provisionerEnv(name));
+  for (const name of activeProvisioners) execute("node", [`scripts/${name}.mjs`, "--verify-existing"], root, provisionerEnv(name));
   const configPath = resolve(core, deployConfig);
   const bytes = await read(configPath);
   const config = validateGeneratedDeployment(bytes, env, input);
@@ -281,7 +302,7 @@ export async function deployCloudflare({ confirmLive = false, environment = proc
   await requireUnchangedInputs();
   {
     const currentCapabilities = purpose === MAINTENANCE_PURPOSE
-      ? await readCapabilities({ input, fetchImpl }) : null;
+      ? await readCapabilities({ input, fetchImpl: ownerFetch }) : null;
     const currentIdentity = await readActiveWorker({ env, input, fetchImpl });
     const currentWorker = await readWorker(priorWorkerEnv, input, priorWorkerConfig, { fetchImpl });
     if (canonicalJson(currentIdentity) !== canonicalJson(activeWorkerBaseline) ||
@@ -304,7 +325,7 @@ export async function deployCloudflare({ confirmLive = false, environment = proc
     "--no-bundle", "--config", deployConfig], core);
   await requireUnchangedInputs();
   const worker = await readWorker(env, input, config, { fetchImpl });
-  let assetReadback = await verifyDeploymentAssets(assetManifest, input, { fetchImpl });
+  let assetReadback = await verifyDeploymentAssets(assetManifest, input, { fetchImpl: ownerFetch });
   if (assetReadback.state === "PASS") {
     const afterAssets = await readWorker(env, input, config, { fetchImpl });
     if (afterAssets.deployment_id !== worker.deployment_id || afterAssets.version_id !== worker.version_id) {
@@ -314,14 +335,14 @@ export async function deployCloudflare({ confirmLive = false, environment = proc
       version_id: worker.version_id, active_version_unchanged: "PASS" };
   }
   await requireUnchangedInputs();
-  const remoteHttpSmoke = await verifyDeploymentSmoke(env, input, { fetchImpl, now });
+  const remoteHttpSmoke = await verifyDeploymentSmoke(env, input, { fetchImpl: ownerFetch, now });
   const uploadedIdentity = await readActiveWorker({ env, input, fetchImpl });
   if (uploadedIdentity.generation !== env.ELIOTR_DEPLOYMENT_GENERATION ||
       uploadedIdentity.deployment_id !== worker.deployment_id || uploadedIdentity.version_id !== worker.version_id) {
     throw new Error("Uploaded Worker identity does not match the candidate deployment before authority synchronization");
   }
   if (purpose === MAINTENANCE_PURPOSE) {
-    const candidateCapabilities = await readCapabilities({ input, fetchImpl });
+    const candidateCapabilities = await readCapabilities({ input, fetchImpl: ownerFetch });
     assertMaintenanceCapabilityProfile({ candidate: candidateCapabilityProfile,
       observed: candidateCapabilities.capabilities, generatedConfig: config, activeWorkerIdentity: uploadedIdentity });
     requireSameMaintenanceCapabilityReadback({ baseline: maintenanceBaseline.capabilities, current: candidateCapabilities });
@@ -352,7 +373,7 @@ export async function deployCloudflare({ confirmLive = false, environment = proc
     throw new Error("Active Worker deployment changed after authority synchronization");
   }
   if (purpose === MAINTENANCE_PURPOSE) {
-    const finalCapabilities = await readCapabilities({ input, fetchImpl });
+    const finalCapabilities = await readCapabilities({ input, fetchImpl: ownerFetch });
     assertMaintenanceCapabilityProfile({ candidate: candidateCapabilityProfile,
       observed: finalCapabilities.capabilities, generatedConfig: config, activeWorkerIdentity: postSyncIdentity });
     requireSameMaintenanceCapabilityReadback({ baseline: maintenanceBaseline.capabilities, current: finalCapabilities });

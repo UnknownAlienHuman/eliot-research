@@ -221,18 +221,21 @@ await check("confirmed disabled reaches every read-only provisioner without chan
     readCapabilityProfile: async () => candidate, readReleaseBlockers: async () => [],
     captureBudget: () => ({ status: 0, stdout: "Source budgets: PASS\n", stderr: "", error: null }),
     readActiveWorker: async () => ({ deployment_id: "active-deployment", version_id: "active-version", generation: "git-test",
-      google_external_transport: "disabled", federation_principal_ref: null, federation_cursor_key_bound: false }),
+      google_external_transport: "disabled", federation_principal_ref: null, federation_cursor_key_bound: false,
+      ai_search_bound: false }),
     readCapabilities: async () => ({ generation: "git-test", capabilities }),
   } });
   const execute = test.options.execute;
   test.options.execute = (command, args, cwd, env) => {
     assert.equal(env.ELIOTR_GOOGLE_EXTERNAL_TRANSPORT, "disabled");
     assert.equal(env.ELIOTR_MAINTENANCE_PRESERVE_GOOGLE_TRANSPORT, "disabled");
+    if (command === "node") assert.equal(env.ELIOTR_MAINTENANCE_PRESERVE_AI_SEARCH, "absent");
     return execute(command, args, cwd, env);
   };
   await assert.rejects(deployCloudflare(test.options), /injected command failure/u);
   assert.ok(test.calls.includes("node scripts/provision-cloudflare-core.mjs --check-only"));
   assert.ok(test.calls.includes("node scripts/provision-cloudflare-access.mjs --verify-existing"));
+  assert.ok(!test.calls.some((call) => call.startsWith("node scripts/provision-ai-search.mjs")));
   assert.ok(!test.calls.includes(deployCommand));
   assert.equal(config.vars.GOOGLE_EXTERNAL_TRANSPORT, "gemini-mcp");
 });

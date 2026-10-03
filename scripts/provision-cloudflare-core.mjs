@@ -12,8 +12,9 @@ import { loadResearchRuntimeEnvironment, RESEARCH_RUNTIME_CONFIGURATION_KEYS,
   RESEARCH_RUNTIME_SEMANTIC_TRANSPORT_KEYS, semanticConfigurationTransport } from "./lib/research-runtime-config.mjs";
 
 import { validateDeploymentMigrationDirectories } from "./lib/deployment-migrations.mjs";
-import { readConfiguredTransport } from "./check-launch-code.mjs";
-import { readActiveDeploymentIdentity, selectDeploymentGoogleTransport } from "./lib/deployment-maintenance.mjs";
+import { readConfiguredTransport, readCompositionCapabilityProfile } from "./check-launch-code.mjs";
+import { readActiveDeploymentIdentity, selectDeploymentGoogleTransport,
+  selectDeploymentAiSearchNamespaces } from "./lib/deployment-maintenance.mjs";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // Isolated state root for tests: ELIOTR_STATE_DIRECTORY overrides the shared
@@ -30,8 +31,12 @@ if (checkOnly && verifyExisting) {
   process.exit(2);
 }
 const preserveGoogleTransport = process.env.ELIOTR_MAINTENANCE_PRESERVE_GOOGLE_TRANSPORT;
+const preserveAiSearch = process.env.ELIOTR_MAINTENANCE_PRESERVE_AI_SEARCH;
 if (preserveGoogleTransport !== undefined && (preserveGoogleTransport !== "disabled" || (!checkOnly && !verifyExisting))) {
   throw new Error("Google transport preservation accepts disabled in check-only or verify-existing only");
+}
+if (preserveAiSearch !== undefined && (preserveAiSearch !== "absent" || (!checkOnly && !verifyExisting))) {
+  throw new Error("AI Search preservation accepts absent in check-only or verify-existing only");
 }
 const showHelp = process.argv.includes("--help") || process.argv.includes("-h");
 if (showHelp) {
@@ -113,7 +118,7 @@ const canonicalConfig = parseStrictJsonCompatibleJsonc(await readFile(canonicalP
 const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
 const enc = encodeURIComponent;
 const SEMANTIC_SERVER_CONFIGURATION_KEYS = RESEARCH_RUNTIME_CONFIGURATION_KEYS;
-const activeTransport = preserveGoogleTransport === undefined ? null :
+const activeTransport = preserveGoogleTransport === undefined && preserveAiSearch === undefined ? null :
   await readActiveDeploymentIdentity({ env: { CLOUDFLARE_ACCOUNT_ID: accountId, CLOUDFLARE_API_TOKEN: token },
     input: { apiBase } });
 const googleTransport = selectDeploymentGoogleTransport({ purpose: "MAINTENANCE", preserve: preserveGoogleTransport,
@@ -122,6 +127,9 @@ if (preserveGoogleTransport !== undefined && process.env.ELIOTR_GOOGLE_EXTERNAL_
     process.env.ELIOTR_GOOGLE_EXTERNAL_TRANSPORT !== googleTransport) {
   throw new Error("Configured Google transport differs from freshly preserved transport");
 }
+const aiSearchNamespaces = selectDeploymentAiSearchNamespaces({ purpose: "MAINTENANCE", canonicalConfig,
+  preserve: preserveAiSearch, activeWorkerIdentity: activeTransport,
+  candidate: preserveAiSearch === undefined ? undefined : await readCompositionCapabilityProfile({ root: repositoryRoot }) });
 
 function parseStrictJsonCompatibleJsonc(text, label) {
   try {
@@ -296,6 +304,7 @@ function validatePublicRouteConfiguration() {
 
 function buildGeneratedConfig(d1Results, publicRoute, accessRuntime, mcpAccessRuntime) {
   const generated = structuredClone(canonicalConfig);
+  if (preserveAiSearch !== undefined) generated.ai_search_namespaces = aiSearchNamespaces;
   const ids = new Map(d1Results.map((item) => [item.spec.binding, item.existing.uuid]));
   generated.d1_databases = generated.d1_databases.map((item) => {
     const databaseId = ids.get(item.binding);

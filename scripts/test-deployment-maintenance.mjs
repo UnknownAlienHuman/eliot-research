@@ -5,12 +5,13 @@ import { fileURLToPath } from "node:url";
 import { readCompositionCapabilityProfile } from "./check-launch-code.mjs";
 import { assertMaintenanceCapabilityProfile, readActiveDeploymentIdentity,
   readAuthenticatedCapabilities, requireSameMaintenanceCapabilityReadback,
-  selectDeploymentGoogleTransport, verifyDeploymentSchemaGenerations } from "./lib/deployment-maintenance.mjs";
+  selectDeploymentGoogleTransport, selectDeploymentAiSearchNamespaces,
+  verifyDeploymentSchemaGenerations } from "./lib/deployment-maintenance.mjs";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const candidate = await readCompositionCapabilityProfile({ root });
 const generation = "git-fixture-active";
-const identity = { federation_principal_ref: null, federation_cursor_key_bound: false };
+const identity = { federation_principal_ref: null, federation_cursor_key_bound: false, ai_search_bound: false };
 const config = { vars: { GOOGLE_EXTERNAL_TRANSPORT: "gemini-mcp" } };
 const observed = { protocol: candidate.protocol, deployment_generation: generation,
   google_external_transport: "gemini-mcp", enabled_slices: candidate.enabled_slices,
@@ -49,6 +50,23 @@ await check("source-derived profile matches unchanged authenticated capabilities
   assert.ok(candidate.routes.length > 0);
   assert.ok(candidate.disabled_slices.includes("ERASURE"));
   assert.ok(candidate.disabled_slices.includes("RETRIEVAL"));
+});
+await check("maintenance preserves verified absent AI Search without changing full-release bindings", () => {
+  const canonicalConfig = { ai_search_namespaces: [{ binding: "AI_SEARCH", namespace: "eliotr", remote: true }] };
+  const fields = { purpose: "MAINTENANCE", canonicalConfig, preserve: "absent", activeWorkerIdentity: identity, candidate };
+  assert.deepEqual(selectDeploymentAiSearchNamespaces(fields), []);
+  assert.deepEqual(selectDeploymentAiSearchNamespaces({ ...fields, purpose: "FULL_RELEASE", preserve: undefined }),
+    canonicalConfig.ai_search_namespaces);
+  for (const changed of [
+    { purpose: "FULL_RELEASE" }, { preserve: "present" }, { activeWorkerIdentity: {} },
+    { activeWorkerIdentity: { ...identity, ai_search_bound: true } },
+    { canonicalConfig: { ai_search_namespaces: [{ binding: "AI_SEARCH", namespace: "other", remote: true }] } },
+    { canonicalConfig: { ...canonicalConfig, ai_search: [{ binding: "OTHER_SEARCH", instance_name: "other" }] } },
+    { canonicalConfig: { ...canonicalConfig, ai_search: {} } },
+    { candidate: { ...candidate, enabled_slices: [...candidate.enabled_slices, "RETRIEVAL"] } },
+    { candidate: { ...candidate, disabled_slices: ["RETRIEVAL"] } },
+  ]) assert.throws(() => selectDeploymentAiSearchNamespaces({ ...fields, ...changed }));
+  assert.throws(() => compare(candidate, observed, { ...config, ...canonicalConfig }), /binding presence would change/u);
 });
 await check("maintenance refuses slices, route limits, transport and federation expansion", () => {
   assert.throws(() => compare({ ...candidate, enabled_slices: [...candidate.enabled_slices, "ERASURE"] }));
@@ -122,6 +140,16 @@ await check("existing Worker readback pins one 100 percent version and generatio
   assert.equal(result.generation, generation);
   assert.equal(result.version_id, versionId);
   assert.equal(result.traffic_percentage, 100);
+  assert.equal(result.ai_search_bound, false);
+});
+await check("active Worker readback detects AI Search handles under any binding name", async () => {
+  for (const binding of [{ name: "AI_SEARCH", type: "ai_search_namespace" },
+    { name: "CUSTOM_SEARCH", type: "ai_search_namespace" }, { name: "CUSTOM_SEARCH", type: "ai_search" }]) {
+    const active = await readActiveDeploymentIdentity({ env, input, readJson: workerReadback((data) => {
+      data[2].result.resources.bindings.push(binding);
+    }) });
+    assert.equal(active.ai_search_bound, true);
+  }
 });
 await check("preserved transport requires a fresh exact active-version plain-text binding", async () => {
   const read = (binding) => readActiveDeploymentIdentity({ env, input, readJson: workerReadback((data) => {

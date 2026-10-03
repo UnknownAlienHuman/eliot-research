@@ -52,12 +52,15 @@ export function validateDeploymentInput(env) {
   const cookie = env.ELIOTR_ACCESS_SMOKE_COOKIE;
   if (cookie !== undefined && cookie !== "" &&
       (!boundedString(cookie, 16_384) || !/^[A-Za-z0-9._~-]+$/u.test(cookie))) fail("Invalid Access smoke cookie");
+  const ownerHttpTransport = env.ELIOTR_OWNER_HTTP_TRANSPORT ?? "cookie";
+  if (!["cookie", "cloudflared"].includes(ownerHttpTransport) ||
+      (ownerHttpTransport === "cloudflared" && cookie)) fail("Invalid owner HTTP transport");
   const api = new URL(env.CLOUDFLARE_API_BASE_URL ?? "https://api.cloudflare.com/client/v4");
   const official = api.protocol === "https:" && api.hostname === "api.cloudflare.com" && api.port === "";
   const fixture = api.protocol === "http:" && ["127.0.0.1", "localhost", "[::1]"].includes(api.hostname);
   if ((!official && !fixture) || api.username || api.password || api.search || api.hash ||
       !["/client/v4", "/client/v4/"].includes(api.pathname)) fail("Invalid Cloudflare API origin");
-  return { origin, cookie: cookie || null, apiBase: api.href.replace(/\/$/u, ""),
+  return { origin, cookie: cookie || null, ownerHttpTransport, apiBase: api.href.replace(/\/$/u, ""),
     access: validateAccessRuntimeConfiguration(env), googleExternalTransport };
 }
 
@@ -141,9 +144,11 @@ export async function readDeploymentJson(url, headers, {
 }
 
 export async function verifyDeploymentSmoke(env, input, options = {}) {
-  if (!input.cookie) return { state: "NOT_EXECUTED", reason: "ELIOTR_ACCESS_SMOKE_COOKIE is not set; authenticated HTTP smoke was not executed." };
+  if (!input.cookie && input.ownerHttpTransport !== "cloudflared") {
+    return { state: "NOT_EXECUTED", reason: "Owner HTTP authentication is not configured; authenticated HTTP smoke was not executed." };
+  }
   const generation = env.ELIOTR_DEPLOYMENT_GENERATION;
-  const headers = { Cookie: `CF_Authorization=${input.cookie}`, Accept: "application/json" };
+  const headers = { ...(input.cookie ? { Cookie: `CF_Authorization=${input.cookie}` } : {}), Accept: "application/json" };
   const results = [];
   for (const path of ["/healthz", "/api/v1/system/capabilities"]) {
     const { data, status } = await readDeploymentJson(`${input.origin}${path}`, headers, options);

@@ -317,6 +317,25 @@ outputs; an exception does not authorize importing arbitrary files outside the c
 Maintenance runs both `boundaries:check` against the repository and the supplemental negative
 fixtures. Source changes during or after gates stop the operation.
 
+Maintenance preserves the existing Access application's display names, session duration and launcher
+setting while verifying its exact hostname, identity/AUD and unchanged owner allow policy. The `24h`
+and display-name defaults in `infra/cloudflare/access.json` originated in scaffold commit `554641f65`;
+they remain creation defaults, not instructions to rewrite a verified existing maintenance target.
+Maintenance also preserves a freshly verified absent `AI_SEARCH` binding while `RETRIEVAL` and
+`ERASURE` remain disabled. It omits AI Search provisioning and removes only that binding from the
+ignored generated deployment config. Full-release configuration and gates remain unchanged. The
+planned managed resource is namespace `eliotr`, instance `private-prose-g2`; it is not the account's
+`default` namespace. [Wrangler can create a missing namespace on deploy](https://developers.cloudflare.com/workers/wrangler/configuration/#ai-search-namespaces), so an absent disabled binding
+must not be uploaded accidentally.
+
+For owner HTTP readback, `ELIOTR_OWNER_HTTP_TRANSPORT=cloudflared` selects the official
+`cloudflared access curl` client; `ELIOTR_CLOUDFLARED_BINARY` optionally supplies its executable path.
+The client manages its existing application login/cache and token injection. The deployer does not
+read or copy its JWT and receives only bounded response bytes, HTTP status and content type.
+Normal existing-application browser sign-in may occur; each request has a bounded deadline. The same
+capability, health freshness/generation and asset byte/hash validators remain mandatory. Control-plane
+OAuth is separate from this owner session. Cookie transport remains available; the two are not mixed.
+
 After resource readback generates the deployment configuration, its bytes are pinned separately.
 A minified Wrangler dry run writes a dedicated bundle and esbuild metafile. Every reported input
 must match the pre-gate inventory, and the emitted Worker entrypoint and ancillary files are hashed

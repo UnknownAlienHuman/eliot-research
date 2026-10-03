@@ -78,10 +78,11 @@ export async function verifyDeploymentAssets(manifest, input, { fetchImpl = glob
     throw new Error("Deployment asset readback inputs are invalid");
   }
   const origin = parseExactOrigin(input.origin);
-  if (input.cookie === undefined || input.cookie === null || input.cookie === "") {
+  const cloudflared = input.ownerHttpTransport === "cloudflared" && !input.cookie;
+  if (!cloudflared && (input.cookie === undefined || input.cookie === null || input.cookie === "")) {
     return { state: "NOT_EXECUTED", reason: "access_cookie_missing" };
   }
-  if (typeof input.cookie !== "string" || input.cookie.length > 16_384 || !/^[A-Za-z0-9._~-]+$/u.test(input.cookie) || typeof fetchImpl !== "function" ||
+  if ((!cloudflared && (typeof input.cookie !== "string" || input.cookie.length > 16_384 || !/^[A-Za-z0-9._~-]+$/u.test(input.cookie))) || typeof fetchImpl !== "function" ||
       !Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 300_000) {
     throw new Error("Deployment asset readback inputs are invalid");
   }
@@ -191,7 +192,7 @@ async function readAssets(routes, origin, cookie, fetchImpl, signal) {
         method: "GET",
         redirect: "manual",
         cache: "no-store",
-        headers: { Cookie: `CF_Authorization=${cookie}`, Accept: "*/*" },
+        headers: { ...(cookie ? { Cookie: `CF_Authorization=${cookie}` } : {}), Accept: "*/*" },
         signal,
       });
     } catch {
