@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { readCompositionCapabilityProfile } from "./check-launch-code.mjs";
 import { assertMaintenanceCapabilityProfile, readActiveDeploymentIdentity,
   readAuthenticatedCapabilities, requireSameMaintenanceCapabilityReadback,
-  verifyDeploymentSchemaGenerations } from "./lib/deployment-maintenance.mjs";
+  selectDeploymentGoogleTransport, verifyDeploymentSchemaGenerations } from "./lib/deployment-maintenance.mjs";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const candidate = await readCompositionCapabilityProfile({ root });
@@ -24,6 +24,25 @@ const compare = (replacement = candidate, actual = observed, generatedConfig = c
     generatedConfig, activeWorkerIdentity: active });
 let cases = 0;
 const check = async (name, action) => { await action(); cases += 1; console.log(`Maintenance: ${name}: PASS`); };
+
+await check("full release keeps canonical transport; maintenance preserves only confirmed disabled", () => {
+  const canonicalTransport = "gemini-mcp";
+  assert.equal(selectDeploymentGoogleTransport({ purpose: "FULL_RELEASE", canonicalTransport,
+    observedTransport: "disabled" }), canonicalTransport);
+  assert.equal(selectDeploymentGoogleTransport({ purpose: "MAINTENANCE", canonicalTransport,
+    preserve: "disabled", observedTransport: "disabled" }), "disabled");
+  assert.equal(compare(candidate, { ...observed, google_external_transport: "disabled" },
+    { vars: { GOOGLE_EXTERNAL_TRANSPORT: "disabled" } }).state, "PASS");
+  for (const fields of [
+    { purpose: "FULL_RELEASE", preserve: "disabled", observedTransport: "disabled" },
+    { preserve: "disabled" }, { preserve: "disabled", observedTransport: "unknown" },
+    { preserve: "disabled", observedTransport: "gemini-mcp" },
+    { preserve: "disabled", observedTransport: "drive-exchange" },
+    { preserve: "gemini-mcp", observedTransport: "gemini-mcp" },
+    { preserve: "drive-exchange", observedTransport: "drive-exchange" },
+    { preserve: "unknown", observedTransport: "disabled" },
+  ]) assert.throws(() => selectDeploymentGoogleTransport({ purpose: "MAINTENANCE", canonicalTransport, ...fields }));
+});
 
 await check("source-derived profile matches unchanged authenticated capabilities", () => {
   assert.equal(compare().state, "PASS");
@@ -103,6 +122,21 @@ await check("existing Worker readback pins one 100 percent version and generatio
   assert.equal(result.generation, generation);
   assert.equal(result.version_id, versionId);
   assert.equal(result.traffic_percentage, 100);
+});
+await check("preserved transport requires a fresh exact active-version plain-text binding", async () => {
+  const read = (binding) => readActiveDeploymentIdentity({ env, input, readJson: workerReadback((data) => {
+    if (binding) data[2].result.resources.bindings.push(binding);
+  }) });
+  const binding = { name: "GOOGLE_EXTERNAL_TRANSPORT", type: "plain_text", text: "disabled" };
+  const active = await read(binding);
+  assert.equal(selectDeploymentGoogleTransport({ purpose: "MAINTENANCE", canonicalTransport: "gemini-mcp",
+    preserve: "disabled", observedTransport: active.google_external_transport }), "disabled");
+  for (const replacement of [null, { ...binding, type: "json" }, { ...binding, text: "unknown" },
+    { ...binding, text: "gemini-mcp" }]) {
+    const other = await read(replacement);
+    assert.throws(() => selectDeploymentGoogleTransport({ purpose: "MAINTENANCE", canonicalTransport: "gemini-mcp",
+      preserve: "disabled", observedTransport: other.google_external_transport }));
+  }
 });
 await check("missing Worker, partial traffic, duplicate bindings and API errors deny", async () => {
   const mutations = [

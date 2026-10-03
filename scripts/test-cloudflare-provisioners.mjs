@@ -64,6 +64,7 @@ function emptyState() {
     mutations: [],
     requests: [],
     sequence: 0,
+    workerGoogleTransport: null,
   };
 }
 let state = emptyState();
@@ -137,6 +138,21 @@ const server = createServer(async (req, res) => {
         state.r2.set(item.name, item);
         return json(res, success(item));
       }
+    }
+
+    if (tail[0] === "workers" && tail[1] === "scripts" && method === "GET" && state.workerGoogleTransport !== null) {
+      const versionId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+      if (tail.length === 2) return json(res, success([{ id: "eliotr-core", compatibility_date: "2026-08-28", has_assets: true }]));
+      if (tail[2] === "eliotr-core" && tail[3] === "deployments") return json(res, success({ deployments: [{
+        id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", created_on: "2026-10-03T12:00:00Z", strategy: "percentage",
+        versions: [{ version_id: versionId, percentage: 100 }],
+      }] }));
+      if (tail[2] === "eliotr-core" && tail[3] === "versions" && tail[4] === versionId) return json(res, success({
+        id: versionId, number: 9, resources: { script_runtime: { compatibility_date: "2026-08-28" }, bindings: [
+          { name: "DEPLOYMENT_GENERATION", type: "plain_text", text: "git-existing" },
+          { name: "GOOGLE_EXTERNAL_TRANSPORT", type: "plain_text", text: state.workerGoogleTransport },
+        ] },
+      }));
     }
 
     if (tail[0] === "queues") {
@@ -652,6 +668,7 @@ try {
   const coreScript = "scripts/provision-cloudflare-core.mjs";
   async function seedExisting() {
     reset();
+    state.workerGoogleTransport = "disabled";
     await rm(join(isolatedStateDirectory, "cloudflare-access-receipt.json"), { force: true });
     state.organization = { auth_domain: "mock-team-example.cloudflareaccess.com" };
     for (const spec of foundationDesired.d1_databases) state.d1.set(spec.name, { uuid: `existing-${spec.name}`, name: spec.name });
@@ -689,6 +706,33 @@ try {
   const accessReadback = JSON.parse(await readFile(join(isolatedStateDirectory, "cloudflare-access-receipt.json"), "utf8"));
   assert.equal(accessReadback.application.id, "existing-owner-app");
   assert.equal(accessReadback.mcp.application.id, "existing-mcp-app");
+
+  const preserveEnv = { ...verifyEnv, ELIOTR_GOOGLE_EXTERNAL_TRANSPORT: undefined,
+    ELIOTR_MAINTENANCE_PRESERVE_GOOGLE_TRANSPORT: "disabled" };
+  await seedExisting();
+  for (const script of [accessScript, coreScript]) {
+    state.requests.length = 0;
+    expectPass(await run(script, ["--verify-existing"], preserveEnv), `${script} preserve active disabled`);
+    assertGetOnly(`${script} preserve active disabled`);
+    assert.ok(state.requests.some((item) => item.pathname.includes(`/workers/scripts/eliotr-core/versions/`)));
+  }
+  assert.equal(JSON.parse(await readFile(generatedConfigPath, "utf8")).vars.GOOGLE_EXTERNAL_TRANSPORT, "disabled");
+  assert.equal(await readFile(canonicalConfigPath, "utf8"), canonicalConfigBefore);
+  for (const script of [accessScript, coreScript]) {
+    for (const transport of ["gemini-mcp", "unknown", null]) {
+      state.workerGoogleTransport = transport;
+      state.requests.length = 0;
+      expectFail(await run(script, ["--verify-existing"], preserveEnv), `${script} unconfirmed disabled`);
+      assertGetOnly(`${script} unconfirmed disabled`);
+    }
+    for (const args of [[], ["--verify-existing"]]) {
+      state.requests.length = 0;
+      expectFail(await run(script, args, { ...preserveEnv,
+        ELIOTR_MAINTENANCE_PRESERVE_GOOGLE_TRANSPORT: args.length ? "gemini-mcp" : "disabled" }),
+      `${script} enabling or mutation-mode preservation`);
+      assertGetOnly(`${script} enabling or mutation-mode preservation`, true);
+    }
+  }
 
   const missingCases = [
     [coreScript, () => state.d1.delete("eliotr-core")],

@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { deployCloudflare } from "./deploy-cloudflare.mjs";
+import { readCompositionCapabilityProfile } from "./check-launch-code.mjs";
 import { loadResearchRuntimeEnvironment, RESEARCH_RUNTIME_CONFIGURATION_KEYS,
   RESEARCH_RUNTIME_SEMANTIC_TRANSPORT_KEYS, semanticConfigurationTransport } from "./lib/research-runtime-config.mjs";
 // Deployment checks exercise launch order and do not model billing admission.
@@ -197,6 +198,43 @@ await check("default full release preserves the launch-code gate after capturing
   assert.deepEqual(test.calls, []);
   assert.deepEqual(test.events, ["capture-build-inputs", "verify-code"]);
   assert.equal(test.receipts.length, 0);
+});
+await check("transport preservation rejects full release and enabling selectors before gates", async () => {
+  for (const [purpose, preserve] of [["FULL_RELEASE", "disabled"], ["MAINTENANCE", "gemini-mcp"],
+    ["MAINTENANCE", "unknown"]]) {
+    const test = harness({ options: { purpose, environment: { ...environment,
+      ELIOTR_MAINTENANCE_PRESERVE_GOOGLE_TRANSPORT: preserve } } });
+    await assert.rejects(deployCloudflare(test.options), /maintenance-only/u);
+    assert.deepEqual(test.calls, []);
+  }
+});
+await check("confirmed disabled reaches every read-only provisioner without changing canonical transport", async () => {
+  const candidate = await readCompositionCapabilityProfile({ root: repositoryRoot });
+  const capabilities = { protocol: candidate.protocol, deployment_generation: "git-test",
+    google_external_transport: "disabled", enabled_slices: candidate.enabled_slices,
+    partial_slices: candidate.partial_slices, disabled_slices: candidate.disabled_slices,
+    federation_configured: false, orientation_profile: candidate.orientation_profile,
+    orientation_max_sources: candidate.orientation_max_sources,
+    orientation_max_results: candidate.orientation_max_results, routes: candidate.routes, ...candidate.safety_invariants };
+  const test = harness({ failCommand: "node scripts/provision-cloudflare-access.mjs --verify-existing", options: {
+    purpose: "MAINTENANCE", environment: { ...environment, ELIOTR_MAINTENANCE_PRESERVE_GOOGLE_TRANSPORT: "disabled" },
+    readCapabilityProfile: async () => candidate, readReleaseBlockers: async () => [],
+    captureBudget: () => ({ status: 0, stdout: "Source budgets: PASS\n", stderr: "", error: null }),
+    readActiveWorker: async () => ({ deployment_id: "active-deployment", version_id: "active-version", generation: "git-test",
+      google_external_transport: "disabled", federation_principal_ref: null, federation_cursor_key_bound: false }),
+    readCapabilities: async () => ({ generation: "git-test", capabilities }),
+  } });
+  const execute = test.options.execute;
+  test.options.execute = (command, args, cwd, env) => {
+    assert.equal(env.ELIOTR_GOOGLE_EXTERNAL_TRANSPORT, "disabled");
+    assert.equal(env.ELIOTR_MAINTENANCE_PRESERVE_GOOGLE_TRANSPORT, "disabled");
+    return execute(command, args, cwd, env);
+  };
+  await assert.rejects(deployCloudflare(test.options), /injected command failure/u);
+  assert.ok(test.calls.includes("node scripts/provision-cloudflare-core.mjs --check-only"));
+  assert.ok(test.calls.includes("node scripts/provision-cloudflare-access.mjs --verify-existing"));
+  assert.ok(!test.calls.includes(deployCommand));
+  assert.equal(config.vars.GOOGLE_EXTERNAL_TRANSPORT, "gemini-mcp");
 });
 await check("maintenance records launch blockers and budget findings", async () => {
   const logs = [];

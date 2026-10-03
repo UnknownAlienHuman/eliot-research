@@ -10,7 +10,7 @@ import { injectOAuthBearer, loadWranglerOAuthCredential, resolveAuthMode, scrubT
 import { assertLaunchCodeComplete, readConfiguredTransport, readCompositionCapabilityProfile } from "./check-launch-code.mjs";
 import { assertMaintenanceCapabilityProfile, readActiveDeploymentIdentity, readAuthenticatedCapabilities,
   readFullReleaseBlockers, requireSameMaintenanceCapabilityReadback,
-  verifyDeploymentSchemaGenerations } from "./lib/deployment-maintenance.mjs";
+  selectDeploymentGoogleTransport, verifyDeploymentSchemaGenerations } from "./lib/deployment-maintenance.mjs";
 import { loadResearchRuntimeEnvironment, RESEARCH_RUNTIME_CONFIGURATION_KEYS,
   RESEARCH_RUNTIME_SEMANTIC_TRANSPORT_KEYS, semanticConfigurationTransport } from "./lib/research-runtime-config.mjs";
 import { synchronizeResearchDeploymentAuthority } from "./lib/research-deployment-authority.mjs";
@@ -93,6 +93,11 @@ export async function deployCloudflare({ confirmLive = false, environment = proc
   readAssetManifest = readDeploymentAssetManifest } = {}) {
   if (![FULL_RELEASE_PURPOSE, MAINTENANCE_PURPOSE].includes(purpose)) throw new Error("Deployment purpose is invalid");
   const env = await loadResearchRuntimeEnvironment(environment, root);
+  const preserveGoogleTransport = env.ELIOTR_MAINTENANCE_PRESERVE_GOOGLE_TRANSPORT;
+  if (preserveGoogleTransport !== undefined &&
+      (purpose !== MAINTENANCE_PURPOSE || preserveGoogleTransport !== "disabled")) {
+    throw new Error("Google transport preservation is maintenance-only and accepts disabled only");
+  }
   // FIX9WC Layer 2 (defense in depth, child exec env only): strip ambient
   // module-loader tokens (--import/--loader/--experimental-loader/--require
   // plus values) from NODE_OPTIONS so a poisoned env can never auto-load test
@@ -137,7 +142,7 @@ export async function deployCloudflare({ confirmLive = false, environment = proc
     }
     const canonicalConfig = JSON.parse(await read(resolve(core, "wrangler.jsonc"), "utf8"));
     validateDeploymentMigrationDirectories(canonicalConfig, { root });
-    env.ELIOTR_GOOGLE_EXTERNAL_TRANSPORT = readConfiguredTransport(canonicalConfig);
+    env.ELIOTR_GOOGLE_EXTERNAL_TRANSPORT = preserveGoogleTransport ?? readConfiguredTransport(canonicalConfig);
     input = validateDeploymentInput(env);
   }
   const exec = (command, args, cwd = root) => execute(command, args, cwd, env);
@@ -210,8 +215,12 @@ export async function deployCloudflare({ confirmLive = false, environment = proc
       throw new Error("Maintenance capability generation is not pinned to the active Worker version");
     }
     const canonicalConfig = JSON.parse(await read(resolve(core, "wrangler.jsonc"), "utf8"));
+    const transport = selectDeploymentGoogleTransport({ purpose, preserve: preserveGoogleTransport,
+      canonicalTransport: readConfiguredTransport(canonicalConfig),
+      observedTransport: activeWorkerBaseline.google_external_transport });
+    const maintenanceConfig = { ...canonicalConfig, vars: { ...canonicalConfig.vars, GOOGLE_EXTERNAL_TRANSPORT: transport } };
     assertMaintenanceCapabilityProfile({ candidate: candidateCapabilityProfile,
-      observed: current.capabilities, generatedConfig: canonicalConfig, activeWorkerIdentity: activeWorkerBaseline });
+      observed: current.capabilities, generatedConfig: maintenanceConfig, activeWorkerIdentity: activeWorkerBaseline });
     maintenanceBaseline = { active: activeWorkerBaseline, capabilities: current };
   }
 

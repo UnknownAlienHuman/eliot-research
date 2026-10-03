@@ -12,6 +12,8 @@ import { loadResearchRuntimeEnvironment, RESEARCH_RUNTIME_CONFIGURATION_KEYS,
   RESEARCH_RUNTIME_SEMANTIC_TRANSPORT_KEYS, semanticConfigurationTransport } from "./lib/research-runtime-config.mjs";
 
 import { validateDeploymentMigrationDirectories } from "./lib/deployment-migrations.mjs";
+import { readConfiguredTransport } from "./check-launch-code.mjs";
+import { readActiveDeploymentIdentity, selectDeploymentGoogleTransport } from "./lib/deployment-maintenance.mjs";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // Isolated state root for tests: ELIOTR_STATE_DIRECTORY overrides the shared
@@ -26,6 +28,10 @@ const verifyExisting = process.argv.includes("--verify-existing");
 if (checkOnly && verifyExisting) {
   console.error("--check-only and --verify-existing cannot be used together");
   process.exit(2);
+}
+const preserveGoogleTransport = process.env.ELIOTR_MAINTENANCE_PRESERVE_GOOGLE_TRANSPORT;
+if (preserveGoogleTransport !== undefined && (preserveGoogleTransport !== "disabled" || (!checkOnly && !verifyExisting))) {
+  throw new Error("Google transport preservation accepts disabled in check-only or verify-existing only");
 }
 const showHelp = process.argv.includes("--help") || process.argv.includes("-h");
 if (showHelp) {
@@ -107,6 +113,15 @@ const canonicalConfig = parseStrictJsonCompatibleJsonc(await readFile(canonicalP
 const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
 const enc = encodeURIComponent;
 const SEMANTIC_SERVER_CONFIGURATION_KEYS = RESEARCH_RUNTIME_CONFIGURATION_KEYS;
+const activeTransport = preserveGoogleTransport === undefined ? null :
+  await readActiveDeploymentIdentity({ env: { CLOUDFLARE_ACCOUNT_ID: accountId, CLOUDFLARE_API_TOKEN: token },
+    input: { apiBase } });
+const googleTransport = selectDeploymentGoogleTransport({ purpose: "MAINTENANCE", preserve: preserveGoogleTransport,
+  canonicalTransport: readConfiguredTransport(canonicalConfig), observedTransport: activeTransport?.google_external_transport });
+if (preserveGoogleTransport !== undefined && process.env.ELIOTR_GOOGLE_EXTERNAL_TRANSPORT !== undefined &&
+    process.env.ELIOTR_GOOGLE_EXTERNAL_TRANSPORT !== googleTransport) {
+  throw new Error("Configured Google transport differs from freshly preserved transport");
+}
 
 function parseStrictJsonCompatibleJsonc(text, label) {
   try {
@@ -294,6 +309,7 @@ function buildGeneratedConfig(d1Results, publicRoute, accessRuntime, mcpAccessRu
   generated.vars = applyAccessRuntimeVars({
     ...generated.vars,
     ENVIRONMENT: environment,
+    GOOGLE_EXTERNAL_TRANSPORT: googleTransport,
     DEPLOYMENT_GENERATION: deploymentGeneration,
     AI_GATEWAY_REASONING_URL: `https://gateway.ai.cloudflare.com/v1/${accountId}/eliotr-reasoning`,
     AI_GATEWAY_RETRIEVAL_URL: `https://gateway.ai.cloudflare.com/v1/${accountId}/eliotr-retrieval`,
@@ -369,7 +385,7 @@ if (accessReceipt) {
   accessDisposition = "CREATE";
 }
 
-if (canonicalConfig.vars.GOOGLE_EXTERNAL_TRANSPORT === "gemini-mcp") {
+if (googleTransport === "gemini-mcp") {
   mcpAccessRuntime = resolveMcpAccessRuntimeConfiguration(process.env, accessReceipt, {
     ordinaryAudience: accessRuntime?.audience,
     publicHostname: publicRoute.accessHostname,

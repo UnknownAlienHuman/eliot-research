@@ -26,6 +26,16 @@ const isRecord = (value) => value !== null && typeof value === "object" && !Arra
 const bounded = (value, maximum = 256) => typeof value === "string" && value.length > 0 && value.length <= maximum &&
   !/[\u0000-\u0020\u007f]/u.test(value);
 
+/** The sole maintenance exception preserves a freshly observed disabled Google transport. */
+export function selectDeploymentGoogleTransport({ purpose, canonicalTransport, preserve, observedTransport } = {}) {
+  if (!GOOGLE_TRANSPORTS.has(canonicalTransport)) fail("Canonical Google transport is invalid");
+  if (preserve === undefined) return canonicalTransport;
+  if (purpose !== "MAINTENANCE" || preserve !== "disabled" || observedTransport !== preserve) {
+    fail("Maintenance Google transport preservation requires freshly verified disabled transport");
+  }
+  return preserve;
+}
+
 /** Read a bounded active-Worker identity and generation before maintenance upload. */
 export async function readActiveDeploymentIdentity({ env, input, fetchImpl = fetch, readJson = readDeploymentJson } = {}) {
   if (!isRecord(env) || !isRecord(input) || typeof input.apiBase !== "string" ||
@@ -71,6 +81,9 @@ export async function readActiveDeploymentIdentity({ env, input, fetchImpl = fet
     principalBindings.length === 1 && principalBindings[0].type === "plain_text" && bounded(principalBindings[0].text)
       ? principalBindings[0].text : undefined;
   const federationCursorKeyBound = cursorBindings.length === 1 && cursorBindings[0].type === "secret_text";
+  const googleBindings = bindings.filter((binding) => binding.name === "GOOGLE_EXTERNAL_TRANSPORT");
+  const googleTransport = googleBindings.length === 1 && googleBindings[0].type === "plain_text" &&
+    GOOGLE_TRANSPORTS.has(googleBindings[0].text) ? googleBindings[0].text : null;
   if (!isRecord(current) || current.id !== active.versions[0].version_id ||
       !Number.isSafeInteger(current.number) || current.number < 1 ||
       typeof runtimeDate !== "string" || runtimeDate.slice(0, 10) !== "2026-08-28" ||
@@ -81,6 +94,7 @@ export async function readActiveDeploymentIdentity({ env, input, fetchImpl = fet
   return Object.freeze({ worker_id: "eliotr-core", compatibility_date: "2026-08-28", has_assets: true,
     deployment_id: active.id, version_id: active.versions[0].version_id, version_number: current.number,
     generation, federation_principal_ref: federationPrincipalRef, federation_cursor_key_bound: federationCursorKeyBound,
+    google_external_transport: googleTransport,
     traffic_percentage: 100 });
 }
 

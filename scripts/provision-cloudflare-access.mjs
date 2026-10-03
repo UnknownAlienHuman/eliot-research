@@ -8,6 +8,7 @@ import { LOGIN_INSTRUCTION, loadWranglerOAuthCredential, resolveAuthMode,
 import { CLOUDFLARE_MCP_TRANSPORT, createCloudflareMcpTransport } from "./lib/cloudflare-mcp-oauth.mjs";
 import { isUsageAdmissionCapability, runUsagePreflight } from "./lib/cloudflare-usage-admission.mjs";
 import { readConfiguredTransport } from "./check-launch-code.mjs";
+import { readActiveDeploymentIdentity, selectDeploymentGoogleTransport } from "./lib/deployment-maintenance.mjs";
 import {
   applyMcp,
   buildMcpReceipt,
@@ -29,6 +30,10 @@ const verifyExisting = process.argv.includes("--verify-existing");
 if (checkOnly && verifyExisting) {
   console.error("--check-only and --verify-existing cannot be used together");
   process.exit(2);
+}
+const preserveGoogleTransport = process.env.ELIOTR_MAINTENANCE_PRESERVE_GOOGLE_TRANSPORT;
+if (preserveGoogleTransport !== undefined && (preserveGoogleTransport !== "disabled" || (!checkOnly && !verifyExisting))) {
+  throw new Error("Google transport preservation accepts disabled in check-only or verify-existing only");
 }
 const showHelp = process.argv.includes("--help") || process.argv.includes("-h");
 if (showHelp) {
@@ -158,14 +163,20 @@ const policyName = desired.policy.name;
 const configuredGoogleTransport = process.env.ELIOTR_GOOGLE_EXTERNAL_TRANSPORT;
 const canonicalConfig = JSON.parse(await readFile(resolve(repositoryRoot, "apps/eliotr-core/wrangler.jsonc"), "utf8"));
 const canonicalGoogleTransport = readConfiguredTransport(canonicalConfig);
-const googleTransport = configuredGoogleTransport ?? "disabled";
+const activeTransport = preserveGoogleTransport === undefined ? null :
+  await readActiveDeploymentIdentity({ env: { CLOUDFLARE_ACCOUNT_ID: accountId, CLOUDFLARE_API_TOKEN: token },
+    input: { apiBase } });
+const selectedGoogleTransport = selectDeploymentGoogleTransport({ purpose: "MAINTENANCE", preserve: preserveGoogleTransport,
+  canonicalTransport: canonicalGoogleTransport, observedTransport: activeTransport?.google_external_transport });
+const googleTransport = configuredGoogleTransport ?? (preserveGoogleTransport === undefined ? "disabled" : selectedGoogleTransport);
 if (!["disabled", "gemini-mcp", "drive-exchange"].includes(googleTransport)) {
   throw new Error("ELIOTR_GOOGLE_EXTERNAL_TRANSPORT must be disabled, gemini-mcp, or drive-exchange");
 }
-if (configuredGoogleTransport !== undefined && googleTransport !== canonicalGoogleTransport) {
+if (configuredGoogleTransport !== undefined && googleTransport !== selectedGoogleTransport) {
   throw new Error("ELIOTR_GOOGLE_EXTERNAL_TRANSPORT differs from the canonical Core deployment config");
 }
-if (!checkOnly && configuredGoogleTransport === undefined && canonicalGoogleTransport !== "disabled") {
+if (!checkOnly && configuredGoogleTransport === undefined && canonicalGoogleTransport !== "disabled" &&
+    preserveGoogleTransport === undefined) {
   throw new Error("ELIOTR_GOOGLE_EXTERNAL_TRANSPORT must be explicit before issuing an owner-only Access receipt");
 }
 const mcpEnabled = googleTransport === "gemini-mcp";
