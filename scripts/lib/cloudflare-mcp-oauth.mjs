@@ -3,7 +3,8 @@
 // The MCP connection is managed by Codex. This module never reads, prints,
 // exports, or persists an OAuth credential. It starts a volatile app-server
 // tool context in an explicitly supplied local project directory and permits
-// only the fixed account/Access requests used by the Access provisioner.
+// only the fixed account/Access requests and existing eliotr-core identity reads
+// used by the Access provisioner.
 
 import { spawn as nodeSpawn, spawnSync } from "node:child_process";
 import { isAbsolute } from "node:path";
@@ -78,6 +79,12 @@ function accessListDescriptor(path, accountSegment) {
   return { base, page: policy[2] === undefined ? 1 : Number(policy[2]) };
 }
 
+function isWorkerIdentityPath(path, accountSegment) {
+  const scripts = `/accounts/${accountSegment}/workers/scripts`;
+  return path === scripts || path === `${scripts}/eliotr-core/deployments` ||
+    new RegExp(`^${scripts}/eliotr-core/versions/[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$`, "u").test(path);
+}
+
 function checkKnownRequest(accountId, method, path, body) {
   if (typeof method !== "string" || (method !== "GET" && method !== "POST") ||
       typeof path !== "string" || path.length > 512 || !path.startsWith("/accounts/")) {
@@ -86,6 +93,10 @@ function checkKnownRequest(accountId, method, path, body) {
   const accountSegment = encodeURIComponent(accountId);
   const accountPath = `/accounts/${accountSegment}`;
   const appPath = `${accountPath}/access/apps`;
+  if (method === "GET" && isWorkerIdentityPath(path, accountSegment)) {
+    if (body !== undefined) fail("MCP_REQUEST_INVALID", "Worker identity read cannot carry a body");
+    return;
+  }
   if (method === "GET" && path === accountPath) {
     if (body !== undefined) fail("MCP_REQUEST_INVALID", "account read cannot carry a body");
     return;
@@ -316,7 +327,9 @@ export function createCloudflareMcpTransport(options = {}) {
       arguments: { code: fixedCode(method, path, body) },
     });
     const envelope = cloudflareEnvelopeFrom(result);
-    if (!envelope.success || envelope.status < 200 || envelope.status >= 300) {
+    const workerIdentityRead = method === "GET" && isWorkerIdentityPath(path, encodeURIComponent(accountId));
+    if (!envelope.success || envelope.status < 200 || envelope.status >= 300 ||
+        (workerIdentityRead && (envelope.status !== 200 || (Array.isArray(envelope.errors) && envelope.errors.length > 0)))) {
       throw new CloudflareMcpOAuthError("MCP_REQUEST_FAILED", `${method} ${path} failed (${envelope.status})`);
     }
     const list = method === "GET" ? accessListDescriptor(path, encodeURIComponent(accountId)) : null;

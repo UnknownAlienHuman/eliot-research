@@ -37,16 +37,21 @@ export function selectDeploymentGoogleTransport({ purpose, canonicalTransport, p
 }
 
 /** Read a bounded active-Worker identity and generation before maintenance upload. */
-export async function readActiveDeploymentIdentity({ env, input, fetchImpl = fetch, readJson = readDeploymentJson } = {}) {
+export async function readActiveDeploymentIdentity({ env, input, fetchImpl = fetch, readJson = readDeploymentJson,
+  readRequest } = {}) {
   if (!isRecord(env) || !isRecord(input) || typeof input.apiBase !== "string" ||
-      typeof env.CLOUDFLARE_ACCOUNT_ID !== "string" || typeof env.CLOUDFLARE_API_TOKEN !== "string") {
+      typeof env.CLOUDFLARE_ACCOUNT_ID !== "string" ||
+      (readRequest === undefined ? typeof env.CLOUDFLARE_API_TOKEN !== "string" : typeof readRequest !== "function")) {
     fail("Maintenance Worker identity inputs are invalid");
   }
   const account = encodeURIComponent(env.CLOUDFLARE_ACCOUNT_ID);
   const base = `${input.apiBase}/accounts/${account}/workers/scripts/eliotr-core`;
-  const headers = { Authorization: `Bearer ${env.CLOUDFLARE_API_TOKEN}` };
+  const headers = readRequest === undefined ? { Authorization: `Bearer ${env.CLOUDFLARE_API_TOKEN}` } : undefined;
   const read = async (url) => {
-    const { data } = await readJson(url, headers, { fetchImpl, maxBytes: 1024 * 1024 });
+    // The managed MCP transport validates its HTTP envelope and returns only result.
+    // An explicitly selected transport never falls back to a raw bearer request.
+    const data = readRequest === undefined ? (await readJson(url, headers, { fetchImpl, maxBytes: 1024 * 1024 })).data :
+      { success: true, result: await readRequest(url.slice(input.apiBase.length)) };
     if (Array.isArray(data?.errors) && data.errors.length > 0) fail("Maintenance Worker identity readback contains errors");
     return data;
   };

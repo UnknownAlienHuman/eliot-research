@@ -165,7 +165,7 @@ const canonicalConfig = JSON.parse(await readFile(resolve(repositoryRoot, "apps/
 const canonicalGoogleTransport = readConfiguredTransport(canonicalConfig);
 const activeTransport = preserveGoogleTransport === undefined ? null :
   await readActiveDeploymentIdentity({ env: { CLOUDFLARE_ACCOUNT_ID: accountId, CLOUDFLARE_API_TOKEN: token },
-    input: { apiBase } });
+    input: { apiBase }, ...(mcpTransport === null ? {} : { readRequest: (path) => request("GET", path) }) });
 const selectedGoogleTransport = selectDeploymentGoogleTransport({ purpose: "MAINTENANCE", preserve: preserveGoogleTransport,
   canonicalTransport: canonicalGoogleTransport, observedTransport: activeTransport?.google_external_transport });
 const googleTransport = configuredGoogleTransport ?? (preserveGoogleTransport === undefined ? "disabled" : selectedGoogleTransport);
