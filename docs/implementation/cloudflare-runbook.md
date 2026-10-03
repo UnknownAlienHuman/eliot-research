@@ -45,16 +45,26 @@ local profile, and live readback fails closed before any Cloudflare mutation. Br
 any financial/billing consent cannot be automated: a human completes them in the browser; scripts
 only consume the resulting local OAuth profile. A $1 usage alert is advisory monitoring only and does not enforce a billing cap.
 
-### Current browser-OAuth API scope limitation
+### Browser-OAuth source compatibility
 
-As observed on 2026-09-09 with Wrangler 4.127.1, the current browser-OAuth profile can still be
-valid for the account while a read-only Access organization request returns HTTP 403 and the
-collector classifies Usage v2 billing HTTP 403 as `AUTH_SCOPE_DENIED`. The available Wrangler
-scopes do not establish Access-management or billing authority, and the exact cause may also be
-endpoint entitlement or restricted API availability. These responses are typed authority gaps,
-not evidence of zero usage. Preflight must keep the affected values unknown/sealed; it must not
-fabricate counters, treat dashboard state as API evidence, or fall back to a static token. Resolving
-these permissions must preserve the existing usage and product-completion gates.
+The owner granted every scope requested by Wrangler 4.127.1, and normal browser login was
+restored on 2026-10-03. This does not establish compatibility with every Cloudflare API:
+[full application access grants the application's requested scopes](https://developers.cloudflare.com/fundamentals/oauth/authorizing-an-application/).
+Wrangler's [scope catalog](https://github.com/cloudflare/workers-sdk/blob/main/packages/workers-auth/src/core/scopes.ts)
+includes account analytics and D1 write access, but no Billing scope. The
+[Usage v2 specification](https://developers.cloudflare.com/api/resources/billing/subresources/usage/methods/get_account_usage_v2/)
+is Alpha/Restricted and does not document a Wrangler OAuth grant; token-based billing access
+has separate [Billing Read/Edit permissions](https://developers.cloudflare.com/billing/understand/billing-permissions/).
+The default collector therefore excludes both Billing routes. It does not retry a denied route
+through another credential, method, or transport.
+
+The historical 2026-09-09 collector label `AUTH_SCOPE_DENIED` for any 401/403 was too specific.
+Current diagnostics distinguish HTTP 401 authentication failure, HTTP 403 authorization denial,
+HTTP 404 resource not found, other HTTP failures, and a missing/invalid status. Status alone
+does not prove missing owner consent, a missing scope, endpoint entitlement, or unsupported
+OAuth. Source limitations describe unsupported counter coverage separately. Errors retain only
+fixed safe codes and numeric HTTP status; raw provider bodies, errors, URLs, and credentials are
+excluded. Unknown quantities seal admission and never become zero.
 
 The user selected the installed official Cloudflare MCP plugin on 2026-09-09. Reconnecting its
 existing project-local server with `codex mcp login cloudflare-api` restored managed OAuth.
@@ -70,9 +80,71 @@ labels that endpoint Alpha/Restricted; the precise authorization or entitlement 
 unconfirmed. Keep those counters unknown. Account-specific readbacks belong only in ignored
 operator state and the local MCP map.
 
-The local operator policy still declares `free-tier` with `paid_overage:false`, while the current
-account plan readback shows Paid; that policy/account-plan distinction is an unresolved
+The local operator policy declares `free-tier` with `paid_overage:false`, while the historical
+2026-09-09 account plan readback showed Paid; that policy/account-plan distinction is an unresolved
 configuration reconciliation item, and no tier thresholds are inferred here.
+
+### Usage source coverage (2026-10-03)
+
+The canonical snapshot has 19 required metrics. Complete AI Search instance inventory is the
+one point-count source; the other 18 remain `unknown` for admission with the current qualified
+sources. D1 metadata and documented GraphQL samples are exposed separately as
+`readback.provider_results[].diagnostic_values`, with untrusted metric provenance. Their values
+cannot mint an admission capability or change the canonical monthly/daily windows.
+
+D1 collection performs bounded list/detail reads and inventory reconciliation. Its `file_size`
+sum is observed current bytes across separate reads, with collection timestamps; it is neither
+atomic nor a monthly storage quantity. GraphQL observations are bounded, possibly partial,
+adaptive samples for the requested interval. Cloudflare explicitly states
+[GraphQL analytics is not a measure of billable usage](https://developers.cloudflare.com/analytics/graphql-api/);
+[sampling](https://developers.cloudflare.com/analytics/graphql-api/sampling/) and
+[record/date limits](https://developers.cloudflare.com/analytics/graphql-api/limits/) prevent
+assuming complete exact monthly coverage. An empty, truncated, malformed, denied, or
+undocumented response never establishes a billable zero.
+
+A fresh 2026-10-03 exact-account `wrangler whoami` verification and a single bounded
+Workers GraphQL query returned HTTP 200 with no GraphQL errors and the documented numeric
+response shape under the existing OAuth profile. This confirms that transport for that read;
+it does not establish every dataset's entitlement or complete billing coverage. The standard
+registry collects D1 stock and Workers/D1/Queues/DO analytics separately. R2 operation classes
+remain uncollected because the documented `actionType` description does not qualify its literal
+mapping to pricing names. No additional transport or credential is substituted for a failed read.
+D1 list/detail metadata collection also succeeded under that verified profile, with matching
+inventory and file-size readbacks across both passes. Account-specific sizes and identifiers
+remain outside tracked documentation; this receipt proves metadata transport, not monthly usage.
+
+| Unknown admission counter | Unit/window | Official read source and precise limitation |
+|---|---|---|
+| `workers_requests` | requests/month | [Workers analytics](https://developers.cloudflare.com/analytics/graphql-api/tutorials/querying-workers-metrics/) `workersInvocationsAdaptive.sum.requests`: adaptive diagnostic only. |
+| `workers_cpu_ms` | CPU-ms/month | Same source documents CPU quantiles, not an exact CPU total. |
+| `d1_storage_bytes` | bytes/month | [D1 metadata](https://developers.cloudflare.com/api/resources/d1/subresources/database/methods/get/) `file_size`: current stock; GET accepts D1 Read or D1 Write. |
+| `d1_rows_read` | rows/month | [D1 analytics](https://developers.cloudflare.com/d1/observability/metrics-analytics/) `rowsRead`: adaptive observation, 31-day retention. |
+| `d1_rows_written` | rows/month | Same source, `rowsWritten`: adaptive observation, 31-day retention. |
+| `r2_storage_gb_month` | GB-month/month | [R2 analytics](https://developers.cloudflare.com/r2/platform/metrics-analytics/) reports storage maxima; [pricing](https://developers.cloudflare.com/r2/pricing/) uses average daily peak storage. Bucket inventory has no GB-month quantity. |
+| `r2_class_a_ops` | operations/month | R2 adaptive operations grouped by `actionType` can diagnose requests; exact billable Class A monthly coverage is unqualified. |
+| `r2_class_b_ops` | operations/month | Same limitation for Class B; unknown actions must not be guessed into a class. |
+| `queue_ops` | operations/month | [Queues analytics](https://developers.cloudflare.com/queues/observability/metrics/) `sum.billableOperations`: adaptive reads/writes/deletes, diagnostic only. |
+| `do_requests` | requests/month | [Durable Objects analytics](https://developers.cloudflare.com/durable-objects/observability/metrics-and-analytics/) `sum.requests`: adaptive observation; [WebSocket billing](https://developers.cloudflare.com/durable-objects/platform/pricing/) uses a 20:1 ratio that metrics do not apply. |
+| `do_gb_seconds` | GB-seconds/month | Documented CPU time does not establish billed duration multiplied by memory. |
+| `do_sql_reads` | rows/month | No exact account-wide OAuth monthly SQL-read source is qualified; no undocumented field aliases are invented. |
+| `do_sql_writes` | rows/month | Same limitation for SQL writes. |
+| `do_storage_bytes` | bytes/month | DO `max.storedBytes` is a stock statistic, not monthly storage usage. |
+| `workers_ai_neurons_per_day` | neurons/day | [Workers AI pricing](https://developers.cloudflare.com/workers-ai/platform/pricing/) directs usage monitoring to its dashboard; no documented exact daily API source is qualified. |
+| `ai_search_queries_month` | queries/month | [AI Search stats](https://developers.cloudflare.com/api/resources/ai_search/subresources/namespaces/subresources/instances/methods/stats/) report indexing status and managed-instance metadata, not account-wide monthly search usage. |
+| `vectorize_queried_dims_month` | dimensions/month | [Vectorize info](https://developers.cloudflare.com/api/resources/vectorize/subresources/indexes/methods/info/) has no monthly queried-dimension quantity; Wrangler has no documented Vectorize-specific scope. |
+| `vectorize_stored_dims_month` | dimensions/month | Per-index `dimensions` and `vectorCount` are current stock, not exact account-wide monthly stored dimensions. |
+
+This source inventory qualifies neither a complete account ledger nor a release. Dependent
+heavy-work admission remains `SEALED` until every required counter has the existing authoritative
+coverage proof. Full S92 and live product acceptance remain pending.
+
+The documented candidate for exact billing evidence is Usage v2 with an accepted Billing Read
+credential and restricted-endpoint availability for the account. Enabling that source is a separate
+access decision; a fresh receipt must still qualify all 18 metric IDs, units, windows, and complete
+coverage before admission can open. The public specification and a new credential alone do not
+prove that coverage. If that access is unavailable, the owner must explicitly revise the requirement
+for exact billable usage and approve another admission evidence contract. This checkpoint makes
+neither change, and dependent deployment remains stopped.
 
 ## Preconditions
 

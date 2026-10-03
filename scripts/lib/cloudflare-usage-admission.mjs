@@ -167,6 +167,7 @@ export async function runUsagePreflight(options = {}) {
     // Omitted/null selects the default live registry after OAuth identity
     // verification. An explicit [] remains a test-only empty override.
     providers = null,
+    signal,
     cwd = process.cwd(),
     // Explicit test-only snapshot (object/JSON). Never ambient env;
     // production entry points must never pass it. Real-envelope
@@ -294,10 +295,11 @@ export async function runUsagePreflight(options = {}) {
     providers: collectionProviders,
     whoamiOutput: oauthWhoamiOutput,
     source: USAGE_SOURCE_LIVE,
+    signal,
   });
   const evaluation = evaluateUsageSnapshot(snapshot, { expectedAccountDigest: expectedDigest, now: nowMs, maxAgeMs });
   if (evaluation.decision !== "ADMITTED") {
-    evaluation.reasons.unshift(`live profile verified for ${accountRef(expectedAccountId)}; no authoritative counter aggregate exposed, heavy work sealed; ledger+full-inventory required`);
+    evaluation.reasons.unshift(`live profile verified for ${accountRef(expectedAccountId)}; required counters lack complete authoritative coverage, heavy work sealed; see per-metric source limitations`);
   }
   const capability = usingDefaultLiveRegistry && isLiveAdmissibleForCapability(snapshot, evaluation)
     ? mintLiveCapability() : null;
