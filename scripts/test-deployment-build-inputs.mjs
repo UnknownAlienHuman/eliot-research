@@ -182,6 +182,28 @@ test("attests the exact Worker input graph and emitted outputs, then detects any
   });
 });
 
+test("accepts esbuild's bundled input runtime marker but rejects it in emitted imports", async () => {
+  await withFixture(async (root) => {
+    const manifest = await captureDeploymentBuildInputs({ root });
+    await generatedConfig(root);
+    const pin = await pinGeneratedDeploymentConfig({ root });
+    const bundle = await emitBundle(root);
+    const meta = JSON.parse(await readFile(bundle.metafilePath, "utf8"));
+    const runtime = { path: "<runtime>", kind: "import-statement", external: true };
+    meta.inputs["src/index.ts"].imports = [runtime];
+    await writeFile(bundle.metafilePath, JSON.stringify(meta));
+    await assert.doesNotReject(() => attestDeploymentBundle({ root, manifest, ...bundle, generatedConfigPin: pin }));
+    const output = Object.values(meta.outputs).find((item) => item.entryPoint);
+    output.imports = [runtime];
+    await writeFile(bundle.metafilePath, JSON.stringify(meta));
+    await assert.rejects(() => attestDeploymentBundle({ root, manifest, ...bundle, generatedConfigPin: pin }), /unsupported external import/u);
+    output.imports = [];
+    meta.inputs["src/index.ts"].imports = [{ ...runtime, kind: "dynamic-import" }];
+    await writeFile(bundle.metafilePath, JSON.stringify(meta));
+    await assert.rejects(() => attestDeploymentBundle({ root, manifest, ...bundle, generatedConfigPin: pin }), /unsupported external import/u);
+  });
+});
+
 test("fails closed on an unsealed metafile input, unsupported external, or extra output", async () => {
   await withFixture(async (root) => {
     const manifest = await captureDeploymentBuildInputs({ root });

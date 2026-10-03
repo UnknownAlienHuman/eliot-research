@@ -520,11 +520,15 @@ async function resolveMetaInput(root, manifest, inputName) {
   throw new Error(`Wrangler bundle imported an unsealed input: ${normalized}`);
 }
 
-function validateImports(imports, description) {
+function validateImports(imports, description, { inputMetadata = false } = {}) {
   if (!Array.isArray(imports)) throw new Error(`${description} has no valid import list`);
   for (const item of imports) {
     if (!item || typeof item.path !== "string") throw new Error(`${description} contains an invalid import`);
-    if (item.external === true && !ALLOWED_EXTERNAL_IMPORTS.has(item.path)) {
+    // esbuild reports its bundled helper runtime as an input-only metadata edge.
+    // It must never survive as an external import of the emitted Worker.
+    const bundledRuntime = inputMetadata && item.path === "<runtime>"
+      && item.kind === "import-statement" && item.external === true;
+    if (item.external === true && !bundledRuntime && !ALLOWED_EXTERNAL_IMPORTS.has(item.path)) {
       throw new Error(`Wrangler bundle has an unsupported external import: ${item.path}`);
     }
     if (item.external !== undefined && typeof item.external !== "boolean") throw new Error(`${description} has an invalid external marker`);
@@ -563,7 +567,7 @@ export async function attestDeploymentBundle({ root = process.cwd(), manifest, o
   const inputFiles = [];
   for (const [inputName, details] of Object.entries(metafile.inputs).sort(([a], [b]) => a.localeCompare(b))) {
     if (!details || !Number.isSafeInteger(details.bytes) || details.bytes < 0) throw new Error(`Invalid byte count for Wrangler input ${inputName}`);
-    validateImports(details.imports, `Wrangler input ${inputName}`);
+    validateImports(details.imports, `Wrangler input ${inputName}`, { inputMetadata: true });
     const resolved = await resolveMetaInput(absoluteRoot, manifest, inputName);
     if (details.bytes !== resolved.byte_length) throw new Error(`Wrangler input byte count changed: ${inputName}`);
     inputFiles.push({ ...resolved, metafile_path: normalizeMetaPath(inputName), imports: details.imports
