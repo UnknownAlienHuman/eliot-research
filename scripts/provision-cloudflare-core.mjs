@@ -22,9 +22,14 @@ const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
 let token = process.env.CLOUDFLARE_API_TOKEN;
 const apiBase = process.env.CLOUDFLARE_API_BASE_URL ?? "https://api.cloudflare.com/client/v4";
 const checkOnly = process.argv.includes("--check-only");
+const verifyExisting = process.argv.includes("--verify-existing");
+if (checkOnly && verifyExisting) {
+  console.error("--check-only and --verify-existing cannot be used together");
+  process.exit(2);
+}
 const showHelp = process.argv.includes("--help") || process.argv.includes("-h");
 if (showHelp) {
-  console.log("Usage: scripts/provision-cloudflare-core.mjs [--check-only] [--help]\nProvisions the Cloudflare foundation (D1/R2/Queues) from infra/cloudflare/resources.json. --check-only prints the plan with zero mutations.");
+  console.log("Usage: scripts/provision-cloudflare-core.mjs [--check-only | --verify-existing] [--help]\nProvisions the Cloudflare foundation (D1/R2/Queues) from infra/cloudflare/resources.json. --check-only prints the plan with zero mutations. --verify-existing performs GET-only exact readback, writes ignored local config/receipt, and fails if any resource is missing.");
   process.exitCode = 0;
 }
 if (!showHelp) {
@@ -73,16 +78,11 @@ if (authMode === WRANGLER_OAUTH_MODE) {
   process.exit(2);
 }
 
-// FIX1-B usage-envelope gate (narrow): usage preflight before the first
-// remote mutation. In-process shared runner writes the redacted admission
-// receipt. BLOCKED exits in every mode; any other non-ADMITTED decision
-// (SEALED) exits in apply mode — SEALED never POSTs/PUTs/PATCHes/DELETEs,
-// uploads a Worker, or applies a migration. ADMITTED alone never suffices:
-// apply additionally requires the same-process admission capability minted by
-// the fresh live collection lifecycle (staged snapshots and persisted
-// receipts carry none). Check-only inspection stays read-only metadata
-// (GET inventory lists, local config generation).
-{
+// Default apply retains the fresh live-usage admission fence. Check-only and
+// verify-existing are read-only inspection paths and skip usage collection;
+// verify-existing also guards every Cloudflare request as GET-only while it
+// writes local generated config and receipt files from exact readbacks.
+if (!checkOnly && !verifyExisting) {
   let usageGate;
   try {
     usageGate = await runUsagePreflight({ env: process.env, nowMs: Date.now(), writeReceipt: true,
@@ -130,6 +130,9 @@ function assertUnique(values, label) {
 }
 
 async function request(method, path, { body, extraHeaders, allow404 = false } = {}) {
+  if (verifyExisting && method !== "GET") {
+    throw new Error(`--verify-existing permits GET requests only; refused ${method} ${path}`);
+  }
   const response = await fetch(`${apiBase}${path}`, {
     method,
     headers: { ...headers, ...extraHeaders },
@@ -399,6 +402,20 @@ if (accessReceipt?.application?.id) {
     throw new Error("live Access AUD drift vs receipt; refusing stale receipt");
   }
   liveAccessBinding = { id: live.id, aud: accessReceipt.aud ?? live.aud ?? null };
+}
+
+if (verifyExisting) {
+  const missing = [
+    ...d1Plans.filter((item) => item.existing === null).map((item) => `D1 ${item.spec.name}`),
+    ...r2Plans.filter((item) => item.existing === null).map((item) => `R2 ${item.spec.name}`),
+    ...queuePlans.filter((item) => item.existing === null).map((item) => `Queue ${item.spec.name}`),
+  ];
+  if (!accessRuntime || !accessReceipt?.application?.id || !liveAccessBinding) {
+    missing.push("verified Access authority receipt");
+  }
+  if (missing.length > 0) {
+    throw new Error(`--verify-existing found missing resource: ${missing.join(", ")}`);
+  }
 }
 
 if (checkOnly) {

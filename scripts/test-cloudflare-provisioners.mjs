@@ -5,6 +5,7 @@ import { access, mkdir, mkdtemp, readFile, rename, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { runInNewContext } from "node:vm";
 import { digestAccountId, evaluateUsageSnapshot } from "./lib/cloudflare-usage-envelope.mjs";
 import { dailyWindowFor, monthlyWindowFor } from "./lib/cloudflare-usage-collection.mjs";
 import {
@@ -30,7 +31,10 @@ const aiSearchDesired = JSON.parse(await readFile(
 ));
 const backupRoot = resolve(repositoryRoot, `.eliotr-provisioner-test-backup-${process.pid}`);
 const backupGeneratedConfigPath = resolve(backupRoot, "wrangler.deploy.jsonc");
+const foundationReceiptPath = resolve(repositoryRoot, ".eliotr-state/cloudflare-foundation-receipt.json");
+const backupFoundationReceiptPath = resolve(backupRoot, "cloudflare-foundation-receipt.json");
 let generatedConfigBackedUp = false;
+let foundationReceiptBackedUp = false;
 async function exists(path) {
   try { await access(path); return true; } catch { return false; }
 }
@@ -38,6 +42,11 @@ if (await exists(generatedConfigPath)) {
   await mkdir(backupRoot, { recursive: true });
   await rename(generatedConfigPath, backupGeneratedConfigPath);
   generatedConfigBackedUp = true;
+}
+if (await exists(foundationReceiptPath)) {
+  await mkdir(backupRoot, { recursive: true });
+  await rename(foundationReceiptPath, backupFoundationReceiptPath);
+  foundationReceiptBackedUp = true;
 }
 
 function emptyState() {
@@ -51,6 +60,7 @@ function emptyState() {
     accessApps: new Map(),
     accessPolicies: new Map(),
     serviceTokens: new Map(),
+    organization: null,
     mutations: [],
     requests: [],
     sequence: 0,
@@ -95,6 +105,10 @@ const server = createServer(async (req, res) => {
     const accountIndex = parts.indexOf("accounts");
     if (accountIndex < 0 || parts[accountIndex + 1] !== accountId) return json(res, notFound("unknown account"));
     const tail = parts.slice(accountIndex + 2);
+
+    if (tail[0] === "access" && tail[1] === "organizations" && method === "GET") {
+      return json(res, state.organization ? success(state.organization) : notFound());
+    }
 
     if (tail[0] === "d1" && tail[1] === "database") {
       if (method === "GET") {
@@ -602,6 +616,121 @@ try {
     assert.equal(mutationCount(), 0, "managed MCP CREATE plan mutated");
   }
 
+  // Exercise the actual private request wrappers in an isolated VM, without
+  // adding production exports, loaders, or transport seams. GET is the
+  // positive control; every other method must fail before either transport.
+  const provisioners = ["cloudflare-core", "cloudflare-access", "ai-search", "ai-gateways"]
+    .map((name) => `scripts/provision-${name}.mjs`);
+  for (const script of provisioners) {
+    const source = (await readFile(resolve(repositoryRoot, script), "utf8")).replace(/\r\n/gu, "\n");
+    const start = source.indexOf("async function request(");
+    const end = source.indexOf("\n}\n", start);
+    assert.ok(start >= 0 && end > start, `${script} request wrapper is missing`);
+    for (const viaMcp of script.includes("cloudflare-access") ? [false, true] : [false]) {
+      let calls = 0;
+      const observe = () => { calls += 1; return { observed: true }; };
+      const request = runInNewContext(`(${source.slice(start, end + 2)})`, {
+        verifyExisting: true, apiBase: "https://example.invalid", headers: {},
+        mcpTransport: viaMcp ? { request: async () => observe() } : null,
+        fetch: async () => globalThis.Response.json({ success: true, result: observe() }),
+      });
+      assert.equal(JSON.stringify(await request("GET", "/fixture")), '{"observed":true}');
+      assert.equal(calls, 1, `${script} GET control did not reach transport`);
+      for (const method of ["POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS", "get"]) {
+        await assert.rejects(request(method, "/fixture"), /permits GET requests only/u);
+      }
+      assert.equal(calls, 1, `${script} non-GET reached transport`);
+    }
+  }
+
+  const foundationDesired = JSON.parse(await readFile(resolve(repositoryRoot, "infra/cloudflare/resources.json"), "utf8"));
+  const gatewaysDesired = JSON.parse(await readFile(resolve(repositoryRoot, "infra/cloudflare/ai-gateways.json"), "utf8"));
+  const verifyEnv = { ELIOTR_CLOUDFLARE_AUTH_MODE: "api-token", ELIOTR_GOOGLE_EXTERNAL_TRANSPORT: "gemini-mcp",
+    ELIOTR_MCP_ACCESS_AUTH_PROFILE: "managed-oauth", ELIOTR_MCP_ACCESS_TEAM_DOMAIN: commonEnv.ELIOTR_ACCESS_TEAM_DOMAIN,
+    ELIOTR_MCP_ACCESS_AUDIENCE: "mock-mcp-audience" };
+  const accessScript = "scripts/provision-cloudflare-access.mjs";
+  const coreScript = "scripts/provision-cloudflare-core.mjs";
+  async function seedExisting() {
+    reset();
+    await rm(join(isolatedStateDirectory, "cloudflare-access-receipt.json"), { force: true });
+    state.organization = { auth_domain: "mock-team-example.cloudflareaccess.com" };
+    for (const spec of foundationDesired.d1_databases) state.d1.set(spec.name, { uuid: `existing-${spec.name}`, name: spec.name });
+    for (const spec of foundationDesired.r2_buckets) state.r2.set(spec.name, { name: spec.name, jurisdiction: spec.jurisdiction, storage_class: spec.storage_class });
+    for (const spec of foundationDesired.queues) state.queues.set(spec.name, { queue_id: `existing-${spec.name}`, queue_name: spec.name });
+    state.aiNamespace = { id: "existing-namespace", name: aiSearchDesired.namespace,
+      description: "Eliot Research private managed retrieval namespace" };
+    for (const spec of aiSearchDesired.instances) state.aiInstances.set(spec.id, structuredClone(spec.create));
+    for (const spec of gatewaysDesired.gateways) state.gateways.set(spec.id, structuredClone(spec));
+    for (const mcp of [false, true]) {
+      const id = mcp ? "existing-mcp-app" : "existing-owner-app";
+      const domain = `${accessHostname}${mcp ? "/mcp" : ""}`;
+      state.accessApps.set(id, { id, name: `${mcp ? "Eliot Research MCP" : "Eliot Research"}: ${domain}`,
+        type: "self_hosted", domain, destinations: [{ type: "public", uri: domain }],
+        session_duration: "24h", app_launcher_visible: false,
+        aud: mcp ? "mock-mcp-audience" : commonEnv.ELIOTR_ACCESS_AUDIENCE,
+        ...(mcp ? { path_cookie_attribute: true, oauth_configuration: { enabled: true } } : {}) });
+      state.accessPolicies.set(id, [{ id: `policy-${id}`, name: mcp ? `Eliot Research MCP: ${domain}` : "Eliot Research owners",
+        decision: "allow", include: [{ email: { email: ownerEmail } }], exclude: [], require: [] }]);
+    }
+  }
+  function assertGetOnly(label, allowNoReads = false) {
+    if (!allowNoReads) assert.ok(state.requests.length > 0, `${label} did not exercise remote readback`);
+    assert.ok(state.requests.every((item) => item.method === "GET"), `${label} sent a non-GET request`);
+    assert.equal(mutationCount(), 0, `${label} mutated a resource`);
+  }
+  await seedExisting();
+  for (const script of [accessScript, coreScript, "scripts/provision-ai-search.mjs", "scripts/provision-ai-gateways.mjs"]) {
+    state.requests.length = 0;
+    expectPass(await run(script, ["--verify-existing"], verifyEnv), `${script} existing resources`);
+    assertGetOnly(script);
+  }
+  assert.equal(await readFile(canonicalConfigPath, "utf8"), canonicalConfigBefore);
+  assert.equal(await exists(generatedConfigPath), true);
+  const accessReadback = JSON.parse(await readFile(join(isolatedStateDirectory, "cloudflare-access-receipt.json"), "utf8"));
+  assert.equal(accessReadback.application.id, "existing-owner-app");
+  assert.equal(accessReadback.mcp.application.id, "existing-mcp-app");
+
+  const missingCases = [
+    [coreScript, () => state.d1.delete("eliotr-core")],
+    [coreScript, () => state.r2.delete("eliotr-work")],
+    [coreScript, () => state.queues.delete("eliotr-jobs")],
+    [coreScript, () => rm(join(isolatedStateDirectory, "cloudflare-access-receipt.json"), { force: true }), true],
+    [accessScript, () => state.accessApps.delete("existing-owner-app")],
+    [accessScript, () => state.accessPolicies.set("existing-owner-app", [])],
+    [accessScript, () => state.accessApps.delete("existing-mcp-app")],
+    [accessScript, () => state.accessPolicies.set("existing-mcp-app", [])],
+    [accessScript, () => { state.organization = null; }],
+    ["scripts/provision-ai-search.mjs", () => { state.aiNamespace = null; }],
+    ["scripts/provision-ai-search.mjs", () => state.aiInstances.delete(aiSearchDesired.instances[0].id)],
+    ["scripts/provision-ai-gateways.mjs", () => state.gateways.delete(gatewaysDesired.gateways[0].id)],
+  ];
+  const driftCases = [
+    [coreScript, () => { state.r2.get("eliotr-work").storage_class = "InfrequentAccess"; }],
+    [coreScript, () => { state.d1.get("eliotr-core").uuid = ""; }],
+    [coreScript, () => { state.accessApps.get("existing-owner-app").aud = "substituted-audience"; }],
+    [accessScript, () => { state.accessApps.get("existing-owner-app").session_duration = "48h"; }],
+    [accessScript, () => { state.accessPolicies.get("existing-owner-app")[0].include = [{ email: { email: "other@example.invalid" } }]; }],
+    [accessScript, () => { state.accessApps.get("existing-mcp-app").aud = commonEnv.ELIOTR_ACCESS_AUDIENCE; }],
+    [accessScript, () => { state.accessPolicies.get("existing-mcp-app")[0].decision = "bypass"; }],
+    ["scripts/provision-ai-search.mjs", () => { state.aiInstances.get(aiSearchDesired.instances[0].id).embedding_model = "@cf/incompatible/model"; }],
+    ["scripts/provision-ai-gateways.mjs", () => { state.gateways.get(gatewaysDesired.gateways[0].id).authentication = false; }],
+  ];
+  for (const [kind, cases] of [["missing", missingCases], ["drift", driftCases]]) {
+    for (const [script, change, allowNoReads] of cases) {
+      await seedExisting();
+      if (script === coreScript) expectPass(await run(accessScript, ["--verify-existing"], verifyEnv), "Access authority setup");
+      if (kind === "missing") expectPass(await run(script, ["--check-only"], verifyEnv), "existing-resource preflight");
+      await change();
+      state.requests.length = 0;
+      const result = await run(script, ["--verify-existing"], verifyEnv);
+      expectFail(result, `${script} ${kind}`);
+      assert.match(result.stderr, allowNoReads ? /MCP Access receipt is required/u :
+        kind === "missing" ? /missing resource/u : /drift|stable uuid|audience must differ/iu);
+      assertGetOnly(`${script} ${kind}`, allowNoReads);
+    }
+  }
+  console.log(`- verify-existing: ${provisioners.length} positives, ${missingCases.length} missing, ${driftCases.length} drift, GET-only transport guards: PASS`);
+
   console.log("Cloudflare provisioner mock conformance: PASS");
   console.log("- check-only mutations: 0");
   console.log("- poisoned ambient env: SEALED BEFORE FIRST CALL, zero mutations");
@@ -619,6 +748,11 @@ try {
 } finally {
   await new Promise((resolveClose) => server.close(resolveClose));
   await rm(generatedConfigPath, { force: true });
+  await rm(foundationReceiptPath, { force: true });
+  if (foundationReceiptBackedUp) {
+    await mkdir(dirname(foundationReceiptPath), { recursive: true });
+    await rename(backupFoundationReceiptPath, foundationReceiptPath);
+  }
   await rm(isolatedStateDirectory, { recursive: true, force: true });
   if (generatedConfigBackedUp) {
     await mkdir(dirname(generatedConfigPath), { recursive: true });

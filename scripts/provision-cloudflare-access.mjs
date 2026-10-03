@@ -25,9 +25,14 @@ const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
 let token = process.env.CLOUDFLARE_API_TOKEN;
 const apiBase = process.env.CLOUDFLARE_API_BASE_URL ?? "https://api.cloudflare.com/client/v4";
 const checkOnly = process.argv.includes("--check-only");
+const verifyExisting = process.argv.includes("--verify-existing");
+if (checkOnly && verifyExisting) {
+  console.error("--check-only and --verify-existing cannot be used together");
+  process.exit(2);
+}
 const showHelp = process.argv.includes("--help") || process.argv.includes("-h");
 if (showHelp) {
-  console.log("Usage: scripts/provision-cloudflare-access.mjs [--check-only] [--help]\nProvisions the hostname-based Cloudflare Access application and owner policy. --check-only prints the plan with zero mutations.");
+  console.log("Usage: scripts/provision-cloudflare-access.mjs [--check-only | --verify-existing] [--help]\nProvisions hostname-based Cloudflare Access. --check-only prints the plan with zero mutations. --verify-existing performs GET-only exact readback, writes an ignored local receipt, and fails if the application or required policies are missing.");
   process.exitCode = 0;
 }
 if (!showHelp) {
@@ -103,14 +108,11 @@ if (accessTransport === CLOUDFLARE_MCP_TRANSPORT) {
   process.exit(2);
 }
 
-// FIX1-B usage-envelope gate (narrow): usage preflight before the first
-// remote mutation. In-process shared runner writes the redacted admission
-// receipt. BLOCKED exits in every mode; any other non-ADMITTED decision
-// (SEALED) exits in apply mode — SEALED never POSTs app or policy creates.
-// ADMITTED alone never suffices in apply mode: the same-process admission
-// capability minted by fresh live collection is additionally required.
-// Check-only inspection stays read-only metadata.
-{
+// Default apply retains the fresh live-usage admission fence. Check-only and
+// verify-existing are read-only inspection paths and skip usage collection;
+// verify-existing also guards the direct API and MCP request wrapper as
+// GET-only while it writes the local receipt from exact readbacks.
+if (!checkOnly && !verifyExisting) {
   let usageGate;
   try {
     usageGate = await runUsagePreflight({ env: process.env, nowMs: Date.now(), writeReceipt: true,
@@ -178,6 +180,9 @@ function validateHostname(value) {
 }
 
 async function request(method, path, body) {
+  if (verifyExisting && method !== "GET") {
+    throw new Error(`--verify-existing permits GET requests only; refused ${method} ${path}`);
+  }
   if (mcpTransport !== null) return mcpTransport.request(method, path, body);
   const response = await fetch(`${apiBase}${path}`, {
     method,
@@ -352,6 +357,9 @@ if (hostnameCollisions.length > 0) {
 let application = exactApps[0] ?? null;
 let applicationDisposition = "VERIFIED";
 let policyDisposition = "VERIFIED";
+if (verifyExisting && application === null) {
+  throw new Error(`--verify-existing found missing resource: Access application ${appName}`);
+}
 
 function assertApplicationContour(candidate) {
   const drift = [];
@@ -374,8 +382,20 @@ if (application && (!checkOnly || mcpConfig)) {
 // GET-only team-origin preflight (live organization readback wins; the
 // environment fallback exists only for mocks/transition and must reconcile).
 const teamPreflight = await fetchLiveTeamDomain();
+if (verifyExisting && teamPreflight.source !== "CLOUDFLARE_READBACK") {
+  throw new Error("--verify-existing found missing resource: Cloudflare Access team-origin readback");
+}
 let mcpState = null;
 if (mcpConfig) mcpState = await preflightMcp({ config: mcpConfig, applications, request, accountId, enc, teamDomain: teamPreflight.teamDomain, ordinaryApplication: application, resolveOrdinaryAud: resolveLiveAud, equal, freshApplication });
+if (verifyExisting && mcpConfig) {
+  const mcpPlan = mcpPlanSummary(mcpConfig, mcpState);
+  const missingMcp = [];
+  if (mcpPlan.application.disposition === "CREATE") missingMcp.push(`MCP Access application ${mcpConfig.appName}`);
+  if (mcpPlan.policy.disposition === "CREATE") missingMcp.push(`MCP Access owner policy ${mcpConfig.policyName}`);
+  if (missingMcp.length > 0) {
+    throw new Error(`--verify-existing found missing resource: ${missingMcp.join(", ")}`);
+  }
+}
 
 function strictPlanBase(extra) {
   return {
@@ -434,6 +454,9 @@ function classifyPolicies(items) {
 }
 
 let classified = classifyPolicies(policies);
+if (verifyExisting && !classified.owner) {
+  throw new Error(`--verify-existing found missing resource: Access owner policy ${policyName}`);
+}
 if (!classified.owner && checkOnly) {
   const liveAud = resolveLiveAud(application);
   console.log(JSON.stringify(strictPlanBase({

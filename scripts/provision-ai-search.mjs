@@ -16,9 +16,14 @@ let token = process.env.CLOUDFLARE_API_TOKEN;
 const apiBase = process.env.CLOUDFLARE_API_BASE_URL ??
   "https://api.cloudflare.com/client/v4";
 const checkOnly = process.argv.includes("--check-only");
+const verifyExisting = process.argv.includes("--verify-existing");
+if (checkOnly && verifyExisting) {
+  console.error("--check-only and --verify-existing cannot be used together");
+  process.exit(2);
+}
 const showHelp = process.argv.includes("--help") || process.argv.includes("-h");
 if (showHelp) {
-  console.log("Usage: scripts/provision-ai-search.mjs [--check-only] [--help]\nProvisions the AI Search namespace and instances from infra/ai-search/instances.json. --check-only prints the plan with zero mutations.");
+  console.log("Usage: scripts/provision-ai-search.mjs [--check-only | --verify-existing] [--help]\nProvisions the AI Search namespace and instances from infra/ai-search/instances.json. --check-only prints the plan with zero mutations. --verify-existing performs GET-only exact readback and fails if the namespace or any desired instance is missing.");
   process.exitCode = 0;
 }
 if (!showHelp) {
@@ -65,14 +70,10 @@ if (authMode === WRANGLER_OAUTH_MODE) {
   process.exit(2);
 }
 
-// FIX1-B usage-envelope gate (narrow): usage preflight before the first
-// remote mutation. In-process shared runner writes the redacted admission
-// receipt. BLOCKED exits in every mode; any other non-ADMITTED decision
-// (SEALED) exits in apply mode — SEALED never POSTs instance or namespace
-// creates. ADMITTED alone never suffices in apply mode: the same-process
-// admission capability minted by fresh live collection is additionally
-// required. Check-only inspection stays read-only metadata.
-{
+// Default apply retains the fresh live-usage admission fence. Check-only and
+// verify-existing are read-only inspection paths and skip usage collection;
+// verify-existing guards every Cloudflare request as GET-only.
+if (!checkOnly && !verifyExisting) {
   let usageGate;
   try {
     usageGate = await runUsagePreflight({ env: process.env, nowMs: Date.now(), writeReceipt: true,
@@ -101,6 +102,9 @@ const headers = {
 const enc = encodeURIComponent;
 
 async function request(method, path, body, allow404 = false) {
+  if (verifyExisting && method !== "GET") {
+    throw new Error(`--verify-existing permits GET requests only; refused ${method} ${path}`);
+  }
   const response = await fetch(`${apiBase}${path}`, {
     method,
     headers,
@@ -365,6 +369,9 @@ const namespacePath =
 const namespaceCollectionPath =
   `/accounts/${enc(accountId)}/ai-search/namespaces`;
 const namespace = await request("GET", namespacePath, undefined, true);
+if (verifyExisting && namespace === null) {
+  throw new Error(`--verify-existing found missing resource: AI Search namespace ${desired.namespace}`);
+}
 let namespaceDisposition;
 if (namespace === null && checkOnly) {
   console.log(
@@ -429,6 +436,9 @@ for (const spec of desired.instances) {
     console.log(`verified AI Search instance ${spec.id}`);
     receipts.push({ id: spec.id, disposition: "VERIFIED" });
     continue;
+  }
+  if (verifyExisting) {
+    throw new Error(`--verify-existing found missing resource: AI Search instance ${spec.id}`);
   }
   if (checkOnly) {
     receipts.push({ id: spec.id, disposition: "CREATE" });
