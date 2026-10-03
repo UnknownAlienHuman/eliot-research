@@ -47,7 +47,7 @@ CREATE TABLE artifact_publication_receipt (
 CREATE TRIGGER artifact_publication_receipt_guard
 BEFORE INSERT ON artifact_publication_receipt
 BEGIN
-  SELECT CASE WHEN NOT EXISTS (
+  SELECT (CASE WHEN NOT EXISTS (
     SELECT 1 FROM operation_intent i JOIN outbox o ON o.intent_id=i.intent_id AND o.intent_revision=i.revision
     JOIN operation_attempt a ON a.intent_id=i.intent_id AND a.intent_revision=i.revision AND a.attempt_id=NEW.attempt_id
     JOIN operation_receipt r ON r.intent_id=i.intent_id AND r.intent_revision=i.revision
@@ -59,15 +59,15 @@ BEGIN
       AND r.outcome='ACCEPTED' AND r.reconciliation_required=1
       AND EXISTS(SELECT 1 FROM json_each(r.output_refs_json) WHERE value=NEW.publication_ref)
       AND julianday(NEW.authorization_expires_at)>julianday(NEW.created_at)
-  ) THEN RAISE(ABORT,'ARTIFACT_PUBLICATION_OPERATION_GUARD') END;
-  SELECT CASE WHEN
+  ) THEN RAISE(ABORT,'ARTIFACT_PUBLICATION_OPERATION_GUARD') END);
+  SELECT (CASE WHEN
     json_extract(NEW.acceptance_decision_json,'$.protocol') IS NOT 'eliotr.artifact-owner-acceptance.v1'
     OR json_extract(NEW.acceptance_decision_json,'$.mode') IS NOT 'OWNER_EXPLICIT'
     OR json_extract(NEW.acceptance_decision_json,'$.artifact_ref.id') IS NOT NEW.artifact_id
     OR json_extract(NEW.acceptance_decision_json,'$.artifact_ref.revision') IS NOT NEW.draft_revision
     OR json_extract(NEW.acceptance_decision_json,'$.expected_draft_head_revision') IS NOT NEW.expected_draft_head_revision
     OR json_type(NEW.acceptance_decision_json,'$.expected_publication_revision') IS NOT
-      CASE WHEN NEW.expected_publication_revision IS NULL THEN 'null' ELSE 'integer' END
+      (CASE WHEN NEW.expected_publication_revision IS NULL THEN 'null' ELSE 'integer' END)
     OR json_extract(NEW.acceptance_decision_json,'$.expected_publication_revision') IS NOT NEW.expected_publication_revision
     OR json_extract(NEW.acceptance_decision_json,'$.principal_ref') IS NOT NEW.principal_ref
     OR json_extract(NEW.acceptance_decision_json,'$.credential_generation') IS NOT NEW.credential_generation
@@ -78,8 +78,8 @@ BEGIN
     OR julianday(json_extract(NEW.acceptance_decision_json,'$.expires_at')) IS NULL
     OR julianday(json_extract(NEW.acceptance_decision_json,'$.expires_at'))<=julianday(NEW.created_at)
     OR julianday(json_extract(NEW.acceptance_decision_json,'$.expires_at'))>julianday(NEW.authorization_expires_at)
-    THEN RAISE(ABORT,'ARTIFACT_PUBLICATION_OWNER_COMMIT_GUARD') END;
-  SELECT CASE WHEN NOT EXISTS (
+    THEN RAISE(ABORT,'ARTIFACT_PUBLICATION_OWNER_COMMIT_GUARD') END);
+  SELECT (CASE WHEN NOT EXISTS (
     SELECT 1 FROM artifact_revision r JOIN artifact_draft_binding b ON b.artifact_id=r.artifact_id AND b.revision=r.revision
     JOIN artifact_draft_head h ON h.artifact_id=r.artifact_id
     JOIN artifact_draft_object m ON m.artifact_id=r.artifact_id AND m.revision=r.revision AND m.object_kind='MANIFEST'
@@ -90,8 +90,8 @@ BEGIN
       AND h.head_revision=NEW.expected_draft_head_revision AND h.head_revision=NEW.draft_revision
       AND json_extract(m.receipt_json,'$.expected_sha256')=NEW.manifest_sha256
       AND json_extract(m.receipt_json,'$.readback_sha256')=NEW.manifest_sha256
-  ) THEN RAISE(ABORT,'ARTIFACT_PUBLICATION_DRAFT_OR_OWNER_GUARD') END;
-  SELECT CASE WHEN NOT EXISTS (
+  ) THEN RAISE(ABORT,'ARTIFACT_PUBLICATION_DRAFT_OR_OWNER_GUARD') END);
+  SELECT (CASE WHEN NOT EXISTS (
     SELECT 1 FROM scope_access_grant g JOIN scope_snapshot s
       ON s.snapshot_id=g.snapshot_id AND s.revision=g.snapshot_revision
     WHERE g.snapshot_id=NEW.authorization_scope_id AND g.snapshot_revision=NEW.authorization_scope_revision
@@ -107,10 +107,10 @@ BEGIN
       AND EXISTS(SELECT 1 FROM research_deployment_compatible d
         WHERE d.origin_deployment_generation=NEW.deployment_generation)
       AND EXISTS(SELECT 1 FROM json_each(g.allowed_use_json) WHERE value='research')
-  ) THEN RAISE(ABORT,'ARTIFACT_PUBLICATION_OWNER_GRANT_GUARD') END;
-  SELECT CASE WHEN NEW.purge_ledger_revision<>coalesce((SELECT max(ledger_revision) FROM purge_ledger),0)
-    THEN RAISE(ABORT,'ARTIFACT_PUBLICATION_PURGE_FENCE') END;
-  SELECT CASE WHEN EXISTS(
+  ) THEN RAISE(ABORT,'ARTIFACT_PUBLICATION_OWNER_GRANT_GUARD') END);
+  SELECT (CASE WHEN NEW.purge_ledger_revision<>coalesce((SELECT max(ledger_revision) FROM purge_ledger),0)
+    THEN RAISE(ABORT,'ARTIFACT_PUBLICATION_PURGE_FENCE') END);
+  SELECT (CASE WHEN EXISTS(
     SELECT 1 FROM json_each(NEW.verification_set_json) s
     WHERE json_type(s.value,'$.section_ref.id') IS NOT 'text'
        OR json_type(s.value,'$.verification_receipt_ref') IS NOT 'text'
@@ -121,8 +121,8 @@ BEGIN
           WHERE NOT EXISTS(SELECT 1 FROM json_each(NEW.evidence_currentness_json) c
              WHERE json_extract(c.value,'$.handle_id')=json_extract(h.value,'$.id')
                AND json_extract(c.value,'$.handle_revision')=json_extract(h.value,'$.revision')))
-  ) THEN RAISE(ABORT,'ARTIFACT_PUBLICATION_VERIFICATION_COVERAGE_GUARD') END;
-  SELECT CASE WHEN EXISTS(
+  ) THEN RAISE(ABORT,'ARTIFACT_PUBLICATION_VERIFICATION_COVERAGE_GUARD') END);
+  SELECT (CASE WHEN EXISTS(
     SELECT 1 FROM json_each(NEW.evidence_currentness_json) e
     WHERE json_type(e.value,'$.handle_id') IS NOT 'text' OR json_type(e.value,'$.handle_revision') IS NOT 'integer'
        OR json_type(e.value,'$.source_revision_ref') IS NOT 'text' OR json_type(e.value,'$.source_namespace_id') IS NOT 'text'
@@ -142,7 +142,7 @@ BEGIN
            AND own.source_owner_generation=eh.source_owner_generation
            AND NOT EXISTS(SELECT 1 FROM evidence_handle_invalidation inv WHERE inv.handle_id=eh.handle_id AND inv.handle_revision=eh.revision)
        )
-  ) THEN RAISE(ABORT,'ARTIFACT_PUBLICATION_EVIDENCE_STALE') END;
+  ) THEN RAISE(ABORT,'ARTIFACT_PUBLICATION_EVIDENCE_STALE') END);
 END;
 CREATE TRIGGER artifact_publication_receipt_no_update BEFORE UPDATE ON artifact_publication_receipt
 BEGIN SELECT RAISE(ABORT,'ARTIFACT_PUBLICATION_RECEIPT_IMMUTABLE'); END;
@@ -163,23 +163,23 @@ CREATE TRIGGER artifact_publication_head_insert_guard BEFORE INSERT ON artifact_
 WHEN NEW.disposition='ACCEPTED'
   AND NOT EXISTS(SELECT 1 FROM artifact_publication_head WHERE artifact_id=NEW.artifact_id)
 BEGIN
-  SELECT CASE WHEN NEW.publication_revision<>1 OR NOT EXISTS(
+  SELECT (CASE WHEN NEW.publication_revision<>1 OR NOT EXISTS(
     SELECT 1 FROM artifact_publication_receipt p JOIN artifact_draft_head d
       ON d.artifact_id=p.artifact_id AND d.head_revision=p.draft_revision
     WHERE p.publication_ref=NEW.publication_ref AND p.artifact_id=NEW.artifact_id
       AND p.publication_revision=NEW.publication_revision AND p.draft_revision=NEW.draft_revision
-  ) THEN RAISE(ABORT,'ARTIFACT_PUBLICATION_HEAD_CAS') END;
+  ) THEN RAISE(ABORT,'ARTIFACT_PUBLICATION_HEAD_CAS') END);
 END;
 CREATE TRIGGER artifact_publication_head_update_guard BEFORE UPDATE ON artifact_publication_head
 WHEN NEW.disposition='ACCEPTED'
 BEGIN
-  SELECT CASE WHEN NEW.publication_revision<>OLD.publication_revision+1 OR NOT EXISTS(
+  SELECT (CASE WHEN NEW.publication_revision<>OLD.publication_revision+1 OR NOT EXISTS(
     SELECT 1 FROM artifact_publication_receipt p JOIN artifact_draft_head d
       ON d.artifact_id=p.artifact_id AND d.head_revision=p.draft_revision
     WHERE p.publication_ref=NEW.publication_ref AND p.artifact_id=NEW.artifact_id
       AND p.publication_revision=NEW.publication_revision AND p.draft_revision=NEW.draft_revision
       AND p.expected_publication_revision=OLD.publication_revision
-  ) THEN RAISE(ABORT,'ARTIFACT_PUBLICATION_HEAD_CAS') END;
+  ) THEN RAISE(ABORT,'ARTIFACT_PUBLICATION_HEAD_CAS') END);
 END;
 CREATE TRIGGER artifact_publication_head_identity_guard BEFORE UPDATE ON artifact_publication_head
 WHEN NEW.artifact_id IS NOT OLD.artifact_id

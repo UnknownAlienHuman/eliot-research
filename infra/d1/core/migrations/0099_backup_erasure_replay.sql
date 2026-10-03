@@ -65,7 +65,7 @@ CREATE INDEX backup_erasure_replay_target_idx
 CREATE TRIGGER backup_copy_replay_shape_guard
 BEFORE INSERT ON backup_offsite_copy_replay_authority
 BEGIN
-  SELECT CASE WHEN NEW.state <> 'INTENT'
+  SELECT (CASE WHEN NEW.state <> 'INTENT'
     OR json_type(NEW.operation_intent_json) IS NOT 'object'
     OR json_extract(NEW.operation_intent_json,'$.operation_kind') IS NOT 'BACKUP'
     OR json_extract(NEW.operation_intent_json,'$.principal_ref') IS NOT NEW.principal_ref
@@ -75,12 +75,12 @@ BEGIN
         AND a.policy_decision_ref=NEW.policy_decision_ref AND a.state='AUTHORIZED'
         AND a.policy_json=NEW.destination_policy_json AND a.policy_digest=NEW.policy_digest
         AND a.authorized_at=NEW.authority_authorized_at)
-    THEN RAISE(ABORT,'BACKUP_COPY_REPLAY_AUTHORITY_INVALID') END;
+    THEN RAISE(ABORT,'BACKUP_COPY_REPLAY_AUTHORITY_INVALID') END);
 END;
 CREATE TRIGGER backup_copy_replay_transition_guard
 BEFORE UPDATE ON backup_offsite_copy_replay_authority
 BEGIN
-  SELECT CASE WHEN
+  SELECT (CASE WHEN
     (NEW.copy_id,NEW.epoch_id,NEW.destination_id,NEW.principal_ref,NEW.policy_decision_ref,
       NEW.operation_intent_json,NEW.key_generation,NEW.expires_at,NEW.primary_failure_domain,
       NEW.destination_policy_json,NEW.intent_digest,NEW.policy_digest,NEW.descriptor_digest,
@@ -96,7 +96,7 @@ BEGIN
         AND r.key_generation=NEW.key_generation AND r.expires_at=NEW.expires_at
         AND r.intent_digest=NEW.intent_digest AND r.policy_digest=NEW.policy_digest
         AND r.descriptor_digest=NEW.descriptor_digest AND r.authority_authorized_at=NEW.authority_authorized_at)
-    THEN RAISE(ABORT,'BACKUP_COPY_REPLAY_IDENTITY_CONFLICT') END;
+    THEN RAISE(ABORT,'BACKUP_COPY_REPLAY_IDENTITY_CONFLICT') END);
 END;
 CREATE TRIGGER backup_copy_replay_no_delete
 BEFORE DELETE ON backup_offsite_copy_replay_authority
@@ -105,7 +105,7 @@ BEGIN SELECT RAISE(ABORT,'BACKUP_COPY_REPLAY_IMMUTABLE'); END;
 CREATE TRIGGER backup_erasure_replay_insert_guard
 BEFORE INSERT ON backup_erasure_replay_obligation
 BEGIN
-  SELECT CASE WHEN NEW.state<>'PENDING' OR NOT EXISTS (
+  SELECT (CASE WHEN NEW.state<>'PENDING' OR NOT EXISTS (
     SELECT 1 FROM erasure_target t JOIN erasure_execution e
       ON e.erasure_id=t.erasure_id AND e.revision=t.erasure_revision
     JOIN backup_offsite_copy_replay_authority c ON c.copy_id=NEW.copy_id
@@ -113,7 +113,7 @@ BEGIN
       AND t.target_id=NEW.target_id AND t.location='BackupRestorePath' AND t.target_kind='OBJECT'
       AND t.canonical_ref='backup:'||NEW.backup_epoch_id AND c.epoch_id=NEW.backup_epoch_id
       AND e.state NOT IN ('COMPLETE','BLOCKED','FAILED') AND e.lease_owner IS NOT NULL
-  ) THEN RAISE(ABORT,'BACKUP_ERASURE_REPLAY_TARGET_INVALID') END;
+  ) THEN RAISE(ABORT,'BACKUP_ERASURE_REPLAY_TARGET_INVALID') END);
 END;
 CREATE TRIGGER backup_erasure_replay_transition_guard
 BEFORE UPDATE ON backup_erasure_replay_obligation
