@@ -322,8 +322,11 @@ A minified Wrangler dry run writes a dedicated bundle and esbuild metafile. Ever
 must match the pre-gate inventory, and the emitted Worker entrypoint and ancillary files are hashed
 and checked again immediately before upload. The normal single-step deployment uploads that
 prepared entrypoint with `--no-bundle`. The receipt note records both manifest and artifact digests.
-This bounds local input/artifact correspondence; it does not cryptographically attest compiler or
-tool internals or make an atomic remote source/build seal. Authenticated assets and active-version
+These are bounded local integrity checks. The metafile records input paths and byte counts, not
+the exact bytes read by the compiler. A same-size edit during compilation that is restored before
+the next hash check may evade this observation; unchanged pre/post snapshots do not prove an
+immutable source-to-artifact seal. The checks do not cryptographically attest compiler or tool
+internals or make an atomic remote source/build seal. Authenticated assets and active-version
 readback remain separate requirements.
 
 ## Resource behavior

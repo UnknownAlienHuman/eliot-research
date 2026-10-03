@@ -375,7 +375,8 @@ export async function deployCloudflare({ confirmLive = false, environment = proc
       : "Active version, configured resource bindings and migration names are verified. ETag and local migration hashes are not remote content proof; asset body hashes are observed only with authenticated readback and stable active-version observations. Product/T4/T6 gates remain separate. HTTP generation is verified only when authenticated smoke passes.") +
       ` Build input manifest captured before gates: ${testedInputs.sha256}; prepared Worker artifact: ${workerBundle.sha256}. ` +
       "Source membership/bytes, generated config, metafile inputs and emitted files were rechecked immediately before upload; the prepared entrypoint was deployed with --no-bundle. " +
-      "This is a bounded local input/artifact correspondence check, not a cryptographic attestation of compiler or tool internals or an atomic remote source/build seal.",
+      "Metafile paths and byte counts do not attest the exact bytes read by the compiler; a same-size edit restored between checks may evade this observation. " +
+      "These are bounded local integrity checks, not an immutable source-to-artifact seal, a cryptographic attestation of compiler/tool internals or an atomic remote source/build seal.",
     created_at: new Date(now()).toISOString(),
   };
   await save(receipt);

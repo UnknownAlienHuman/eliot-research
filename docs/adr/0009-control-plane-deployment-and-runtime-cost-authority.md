@@ -58,8 +58,9 @@ must have separate operation records.
    gates, including installed runtime dependency inputs. Generated configuration is pinned after
    exact resource readback; the generated-config dry run emits an explicit metafile and prepared
    bundle. Metafile inputs must belong to the captured set, and unchanged prepared bytes are uploaded
-   with `--no-bundle`. These bounded local correspondence checks do not attest compiler internals or
-   make the remote operation atomic. A maintenance receipt reports its purpose and does not qualify
+   with `--no-bundle`. These bounded local integrity checks do not attest the exact bytes read during
+   a same-size edit-and-restore race, compiler internals, or an atomic immutable source-to-artifact
+   seal. They do not make the remote operation atomic. A maintenance receipt reports its purpose and does not qualify
    a full release.
 6. Maintenance pins the current active Worker identity and authenticated capability profile before
    upload. The source-derived candidate profile must preserve slices, routes, Google transport,

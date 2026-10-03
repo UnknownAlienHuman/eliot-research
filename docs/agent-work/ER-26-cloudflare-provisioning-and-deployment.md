@@ -111,6 +111,9 @@ retrieval, authentication semantics, or database schemas.
   forbidden. Receipts contain read-back authority, never an environment value labelled as readback.
 - Deployment does not claim Google Drive, ingestion, retrieval-quality, erasure, or workload live gates
   that were not executed.
+- Local deployment integrity checks pin pre/post file membership and bytes, metafile paths/sizes,
+  and emitted artifacts. They do not prove the exact bytes read during a same-size edit-and-restore
+  race or an atomic immutable source-to-artifact seal; acceptance receipts must retain that limit.
 - Rollback preserves the previous Worker deployment and AI Search generation until their declared
   rollback horizons expire.
 

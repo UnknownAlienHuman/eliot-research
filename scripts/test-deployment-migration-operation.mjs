@@ -49,19 +49,23 @@ function removeTemporaryDirectory(path, parent, prefix) {
   return rm(target, { recursive: true, force: true });
 }
 
-async function createFixture(action) {
+async function createFixture(action, { ifNotExists = false } = {}) {
   const parent = resolve(tmpdir());
   const prefix = "eliotr-d1-operation-";
   const root = await mkdtemp(join(parent, prefix));
   try {
+    const fixtureMigrationA = ifNotExists ? migrationA.replace("CREATE VIEW", "CREATE VIEW IF NOT EXISTS") : migrationA;
+    const fixtureMigrationB = ifNotExists ? migrationB
+      .replace("CREATE INDEX", "CREATE INDEX IF NOT EXISTS")
+      .replace("CREATE TRIGGER", "CREATE TRIGGER IF NOT EXISTS") : migrationB;
     const coreDirectory = join(root, "infra/d1/core/migrations");
     const searchDirectory = join(root, "infra/d1/search/migrations");
     const configDirectory = join(root, "apps/eliotr-core");
     await Promise.all([mkdir(coreDirectory, { recursive: true }), mkdir(searchDirectory, { recursive: true }),
       mkdir(configDirectory, { recursive: true })]);
     await Promise.all([
-      writeFile(join(coreDirectory, migrationNames[0]), migrationA),
-      writeFile(join(coreDirectory, migrationNames[1]), migrationB),
+      writeFile(join(coreDirectory, migrationNames[0]), fixtureMigrationA),
+      writeFile(join(coreDirectory, migrationNames[1]), fixtureMigrationB),
       writeFile(join(searchDirectory, "0001_search_fixture.sql"), "CREATE TABLE search_fixture (id INTEGER PRIMARY KEY) STRICT;\n"),
     ]);
     const config = { name: "eliotr-core", preview_urls: false, vars: { ENVIRONMENT: "production" }, d1_databases: [
@@ -90,7 +94,7 @@ async function createFixture(action) {
         risk_review: { classification: "schema_metadata_only", summary: "Bounded fixture schema and marker updates reviewed.",
           reviewed_bundle_sha256: reviewed, index_build_cost_reviewed: true },
         schema_probes: selectedProbes, max_migrations: names.length,
-        max_sql_bytes: names.reduce((sum, name) => sum + Buffer.byteLength(name === migrationNames[0] ? migrationA : migrationB), 0),
+        max_sql_bytes: names.reduce((sum, name) => sum + Buffer.byteLength(name === migrationNames[0] ? fixtureMigrationA : fixtureMigrationB), 0),
         deadline_at: "2030-01-01T00:00:00.000Z", max_runtime_ms: 60_000,
       };
     };
@@ -417,6 +421,26 @@ await createFixture(async ({ root, intentFor }) => {
     assert.equal(saved.overall_state, "UNKNOWN");
     assert.equal(test.calls.filter((call) => call.includes("wrangler d1 migrations apply")).length, 1);
   });
+});
+
+await check("literal IF NOT EXISTS view, trigger and index conflicts cannot apply or advance the ledger", async () => {
+  await createFixture(async ({ root, intentFor }) => {
+    const firstSql = await readFile(join(root, "infra/d1/core/migrations", migrationNames[0]), "utf8");
+    const secondSql = await readFile(join(root, "infra/d1/core/migrations", migrationNames[1]), "utf8");
+    assert.match(firstSql, /CREATE VIEW IF NOT EXISTS fixture_view/u);
+    assert.match(secondSql, /CREATE TRIGGER IF NOT EXISTS fixture_table_b_insert/u);
+    assert.match(secondSql, /CREATE INDEX IF NOT EXISTS fixture_table_b_idx/u);
+    for (const name of ["fixture_view", "fixture_table_b_insert", "fixture_table_b_idx"]) {
+      const test = cloudflareHarness({ root, intent: intentFor(), preflightMismatch: name });
+      await assert.rejects(test.run(), /Exact schema object preconditions failed/u);
+      assert.deepEqual(test.getApplied(), []);
+      assert.equal(test.calls.some((call) => call.includes("wrangler d1 migrations apply")), false);
+      const receipt = JSON.parse([...test.receipts.values()].at(-1));
+      assert.equal(receipt.overall_state, "FAILED");
+      assert.equal(receipt.attempt_history[0].command_outcome, "NOT_STARTED");
+      assert.equal(receipt.observations.at(-1).schema_probes.find((probe) => probe.name === name)?.state, "MISMATCH");
+    }
+  }, { ifNotExists: true });
 });
 
 console.log(`D1 migration operation: ${groups} groups passed; live Cloudflare NOT_EXECUTED`);
