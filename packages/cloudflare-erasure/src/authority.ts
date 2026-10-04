@@ -17,10 +17,8 @@ import {
 import { resetErasureAttempt } from "./authority-reset.js";
 import { assertErasureLocatorsRetained, retainErasureLocatorsStatement } from "./closure-locators.js";
 import { appendPurgeLedger } from "./ledger.js";
-import { createD1ErasureRestoreFenceStore, type SharedExecutionFence } from "./shared-execution-fence.js";
-import type {
-  ErasureAuthorityPort,
-} from "./types.js";
+import { createD1ErasureAuthorityFenceLifecycle } from "./authority-fence-lifecycle.js";
+import type { ErasureAuthorityPort } from "./types.js";
 interface ExecutionRow {
   readonly request_json: unknown;
   readonly request_sha256: unknown;
@@ -152,34 +150,7 @@ export function createD1ErasureAuthority(
   const leaseMs = dependencies.lease_ms ?? 5 * 60_000;
   const clock = dependencies.now ?? Date.now;
   assertErasureIdentifier(workerId, "erasure worker ID");
-  const sharedFenceStore = createD1ErasureRestoreFenceStore({ database, now: clock, lease_ms: leaseMs });
-  const sharedFences = new Map<string, SharedExecutionFence>();
-  const sharedFenceKey = (fence: ErasureFence): string =>
-    `${fence.erasure_id}\u0000${fence.revision}\u0000${fence.lease_generation}`;
-  const releaseSharedFence = async (fence: ErasureFence): Promise<void> => {
-    const key = sharedFenceKey(fence);
-    const shared = sharedFences.get(key);
-    if (shared === undefined) return;
-    await shared.release();
-    sharedFences.delete(key);
-  };
-  const assertFence = async (fence: ErasureFence): Promise<void> => {
-    const row = await database.prepare(
-      "SELECT lease_owner,lease_generation,lease_until FROM erasure_execution " +
-      "WHERE erasure_id=?1 AND revision=?2 AND lease_owner=?3 AND lease_generation=?4 " +
-      "AND lease_until>?5 AND state NOT IN ('COMPLETE','BLOCKED') LIMIT 1",
-    ).bind(
-      fence.erasure_id,
-      fence.revision,
-      fence.lease_owner,
-      fence.lease_generation,
-      clock(),
-    ).first<LeaseRow>();
-    if (row === null) erasureFail("ERASURE_LEASE_LOST", "erasure execution fence is stale", true);
-    const shared = sharedFences.get(sharedFenceKey(fence));
-    if (shared === undefined) erasureFail("ERASURE_LEASE_LOST", "shared erasure/restore execution fence is absent", true);
-    await shared.assertCurrent();
-  };
+  const fenceLifecycle = createD1ErasureAuthorityFenceLifecycle({ database, now: clock, lease_ms: leaseMs });
   return {
     async acquire(rawRequest) {
       const request = validateErasureRequest(rawRequest);
@@ -191,10 +162,7 @@ export function createD1ErasureAuthority(
         const terminal = await decodeTerminal(existing);
         if (terminal !== null) return { disposition: "TERMINAL", receipt: terminal };
       }
-      const shared = await sharedFenceStore.acquireErasure({
-        erasure_id: request.erasure_ref.id,
-        revision: request.erasure_ref.revision,
-      });
+      const shared = await fenceLifecycle.acquireErasure(request.erasure_ref.id, request.erasure_ref.revision);
       if (shared === null) {
         erasureFail("ERASURE_LEASE_LOST", "an unsettled restore or another erasure owns the shared execution fence", true);
       }
@@ -277,18 +245,18 @@ export function createD1ErasureAuthority(
           revision: request.erasure_ref.revision,
         };
         activeFence = fence;
-        sharedFences.set(sharedFenceKey(fence), shared);
+        fenceLifecycle.remember(fence, shared);
         await resetErasureAttempt(database, fence, isoFromMs(nowMs));
         return { disposition: "ACQUIRED", fence };
       } catch (cause) {
-        if (activeFence !== undefined) sharedFences.delete(sharedFenceKey(activeFence));
+        if (activeFence !== undefined) fenceLifecycle.forget(activeFence);
         await shared.release();
         throw cause;
       }
     },
-    assertFence,
+    assertFence: fenceLifecycle.assertCurrent,
     async advance(fence, expectedState, nextState, receiptRef, payloadDigest) {
-      await assertFence(fence);
+      await fenceLifecycle.assertCurrent(fence);
       const now = isoFromMs(clock());
       const row = await database.prepare(
         "UPDATE erasure_execution SET state=?6,updated_at=?7 WHERE erasure_id=?1 AND revision=?2 " +
@@ -318,7 +286,7 @@ export function createD1ErasureAuthority(
       ).bind(fence.erasure_id, fence.revision, nextState, now).run();
     },
     async persistClosure(fence, closure) {
-      await assertFence(fence);
+      await fenceLifecycle.assertCurrent(fence);
       const execution = await database.prepare(
         "SELECT request_sha256 FROM erasure_execution WHERE erasure_id=?1 AND revision=?2 " +
         "AND lease_owner=?3 AND lease_generation=?4 AND state='QUARANTINE_AND_REVOKE' LIMIT 1",
@@ -375,7 +343,7 @@ export function createD1ErasureAuthority(
       }
     },
     async blockersFor(request, fence, closure) {
-      await assertFence(fence);
+      await fenceLifecycle.assertCurrent(fence);
       const rows = await database.prepare(
         "SELECT hold_ref,exact_subject_ref,location,canonical_ref,policy_or_hold_ref,next_review_at " +
         "FROM erasure_hold WHERE state='ACTIVE' ORDER BY hold_ref LIMIT 10000",
@@ -421,7 +389,7 @@ export function createD1ErasureAuthority(
       return blockers;
     },
     async recordBlockedTarget(fence, target, blocker) {
-      await assertFence(fence);
+      await fenceLifecycle.assertCurrent(fence);
       const row = await database.prepare(
         "UPDATE erasure_target SET state='BLOCKED',retention_or_hold_ref=?4,next_review_at=?5," +
         "last_error_code=?6,updated_at=?7 WHERE erasure_id=?1 AND erasure_revision=?2 " +
@@ -440,7 +408,7 @@ export function createD1ErasureAuthority(
       }
     },
     async recordPurge(fence, receipt) {
-      await assertFence(fence);
+      await fenceLifecycle.assertCurrent(fence);
       const state = receipt.disposition === "BLOCKED" ? "BLOCKED" : "PURGE_REQUESTED";
       const row = await database.prepare(
         "UPDATE erasure_target SET state=?4,delete_receipt_ref=?5,last_error_code=?6,updated_at=?7 " +
@@ -460,7 +428,7 @@ export function createD1ErasureAuthority(
       }
     },
     async recordAbsence(fence, receipt) {
-      await assertFence(fence);
+      await fenceLifecycle.assertCurrent(fence);
       const state = receipt.absent ? "ABSENT" : "FAILED";
       const row = await database.prepare(
         "UPDATE erasure_target SET state=?4,absence_receipt_ref=?5,last_error_code=?6,updated_at=?7 " +
@@ -480,7 +448,7 @@ export function createD1ErasureAuthority(
       }
     },
     async appendLedger(request, fence, closure, completedTargets, blockers) {
-      await assertFence(fence);
+      await fenceLifecycle.assertCurrent(fence);
       return appendPurgeLedger(
         database,
         request,
@@ -491,7 +459,7 @@ export function createD1ErasureAuthority(
       );
     },
     async recordInvalidations(fence, invalidations) {
-      await assertFence(fence);
+      await fenceLifecycle.assertCurrent(fence);
       const now = isoFromMs(clock());
       await database.batch(invalidations.map((item) => database.prepare(
         "INSERT INTO erasure_dependent_invalidation(erasure_id,erasure_revision,dependent_ref," +
@@ -511,7 +479,7 @@ export function createD1ErasureAuthority(
       )));
     },
     async settle(request, fence, closure, completedTargets, blockers, ledger) {
-      await assertFence(fence);
+      await fenceLifecycle.assertCurrent(fence);
       const requestedLocations = [...request.required_locations].sort();
       const completedLocations = requestedLocations.filter((location) => {
         const targets = closure.targets.filter((target) => target.location === location);
@@ -608,7 +576,7 @@ export function createD1ErasureAuthority(
       if (readback === null || canonicalErasureJson(readback) !== receiptJson) {
         erasureFail("ERASURE_SETTLEMENT_UNCERTAIN", "terminal erasure receipt readback mismatch", true);
       }
-      await releaseSharedFence(fence);
+      await fenceLifecycle.release(fence);
       return readback;
     },
     async fail(fence, errorCode) {
@@ -624,7 +592,7 @@ export function createD1ErasureAuthority(
         errorCode,
         isoFromMs(clock()),
       ).run();
-      await releaseSharedFence(fence);
+      await fenceLifecycle.release(fence);
     },
   };
 }
