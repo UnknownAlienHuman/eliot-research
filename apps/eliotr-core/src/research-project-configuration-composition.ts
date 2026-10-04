@@ -1,5 +1,8 @@
 import type { AuthenticatedRequestContext } from "@eliotr/interfaces";
-import { ResearchProjectModelConfigurationError } from "@eliotr/cloudflare-research";
+import {
+  ResearchProjectModelConfigurationError,
+  type ResearchProjectModelConfigurationBundle,
+} from "@eliotr/cloudflare-research";
 import type { Env } from "./env.js";
 import { HttpRequestError } from "./http-errors.js";
 import {
@@ -8,6 +11,33 @@ import {
   ResearchProjectModelConfigurationAuthorityError,
 } from "./research-project-configuration.js";
 import { readResearchConfigurationReadiness } from "./research-configuration-readiness.js";
+
+const LEGACY_SEMANTIC_CONFIGURATION_KEYS = [
+  "ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON",
+  "ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON_0",
+  "ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON_1",
+] as const;
+
+type LegacySemanticConfigurationKey = typeof LEGACY_SEMANTIC_CONFIGURATION_KEYS[number];
+
+function withoutLegacySemanticConfiguration<T extends object>(source: T): Omit<T, LegacySemanticConfigurationKey> {
+  const copy = { ...source } as Record<string, unknown>;
+  for (const key of LEGACY_SEMANTIC_CONFIGURATION_KEYS) delete copy[key];
+  return copy as unknown as Omit<T, LegacySemanticConfigurationKey>;
+}
+
+/** Compose selected project vars with their immutable semantic revision identity. */
+export function composeSelectedProjectResearchReadinessEnv(
+  env: Env,
+  bundle: ResearchProjectModelConfigurationBundle,
+): Env {
+  return {
+    ...withoutLegacySemanticConfiguration(env),
+    ...withoutLegacySemanticConfiguration(bundle.vars),
+    ELIOTR_RESEARCH_SEMANTIC_CONFIG_REF: bundle.semantic_revision.revision_ref,
+    ELIOTR_RESEARCH_SEMANTIC_CONFIG_SHA256: bundle.semantic_revision.config_sha256,
+  };
+}
 
 /** Keep every read and CAS in one authenticated project's authority generation. */
 export function createOwnerResearchProjectConfigurationService(
@@ -70,14 +100,7 @@ export async function readOwnerProjectResearchReadiness(
   }
   if (selected === null) return unavailable();
   const bundle = selected.configuration;
-  const { ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON_0: _first,
-    ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON_1: _second, ...baseEnv } = env;
-  void _first; void _second;
-  const selectedEnv = {
-    ...baseEnv, ...bundle.vars,
-    ELIOTR_RESEARCH_SEMANTIC_CONFIG_REF: bundle.semantic_revision.revision_ref,
-    ELIOTR_RESEARCH_SEMANTIC_CONFIG_SHA256: bundle.semantic_revision.config_sha256,
-  };
+  const selectedEnv = composeSelectedProjectResearchReadinessEnv(env, bundle);
   return readResearchConfigurationReadiness(selectedEnv, context,
     { selected_model_selections: bundle.model_selections });
 }
