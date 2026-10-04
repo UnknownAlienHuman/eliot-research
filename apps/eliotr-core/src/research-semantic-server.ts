@@ -16,7 +16,7 @@ import {
 import type { InvestigationLedgerStore } from "@eliotr/research";
 import { createD1ScopeProfilePort, type RetrievalQueryAccess } from "@eliotr/retrieval";
 import { fail, readCommittedStageLineage, readWorkflowObject, WorkflowCheckpointError, workflowFailure, retainWorkflowFailure,
-  WorkflowCheckpointStore, type WorkflowObject, type WorkflowPrincipal, type WorkflowStartedAttemptRecovery } from "@eliotr/cloudflare-workflows";
+  WorkflowCheckpointStore, type WorkflowObject, type WorkflowPrincipal } from "@eliotr/cloudflare-workflows";
 import { ResearchOwnerSpendPolicyError } from "./research-owner-spend-policy.js";
 import {
   createD1ModelGatewayDeploymentRegistry,
@@ -41,9 +41,12 @@ import {
   type ResearchClaimAuditVerifierAuthority,
 } from "@eliotr/cloudflare-research-stages";
 import { readResearchSemanticConfiguration, type Env } from "./env.js";
-import { readResearchRunConfiguration, type ResolvedResearchRunConfiguration } from "./research-run-configuration.js";
-import { bindResearchSelectedModelTransport, resolveResearchSelectedModelTransport,
-  ResearchSelectedModelTransportError } from "./research-selected-model-transport.js";
+import { readResearchRunConfiguration } from "./research-run-configuration.js";
+import {
+  bindHandlersToRunConfiguration,
+  bindResearchSemanticStageModelTransports,
+  type ResearchSemanticBranchStage,
+} from "./research-semantic-run-configuration-bindings.js";
 import {
   resolveResearchSemanticConfig,
   semanticConfigCheckpointError,
@@ -132,58 +135,6 @@ function preparationError(error: unknown): WorkflowCheckpointError {
 function installed(value: string | undefined): string {
   if (value === undefined || value.trim() === "") configurationMissing();
   return value;
-}
-
-function selectedModelTransport(input: Parameters<typeof resolveResearchSelectedModelTransport>[0]) {
-  try { return resolveResearchSelectedModelTransport(input); }
-  catch (error) {
-    if (error instanceof ResearchSelectedModelTransportError) configurationInvalid();
-    throw error;
-  }
-}
-
-function bindSelectedModelTransport(
-  gateway: ResearchModelGatewayRuntimeConfig,
-  selection: ReturnType<typeof resolveResearchSelectedModelTransport>,
-): ResearchModelGatewayRuntimeConfig {
-  try { return bindResearchSelectedModelTransport(gateway, selection); }
-  catch (error) {
-    if (error instanceof ResearchSelectedModelTransportError) configurationInvalid();
-    throw error;
-  }
-}
-
-function bindHandlersToRunConfiguration(
-  env: Env,
-  actor: { readonly operation_id: string; readonly investigation_id: string; readonly principal_ref: string; readonly deployment_generation: string },
-  expected: ResolvedResearchRunConfiguration,
-  handlers: ResearchStageHandlerFactory,
-): ResearchStageHandlerFactory {
-  const revalidate = async () => {
-    const current = await readResearchRunConfiguration(env, actor);
-    if (current.mode !== expected.mode || current.configuration_ref !== expected.configuration_ref ||
-        current.configuration_sha256 !== expected.configuration_sha256) fail("WORKFLOW_AUTHORITY_STALE");
-  };
-  const wrapped = (stage: Parameters<ResearchStageHandlerFactory>[0]) => {
-    const handler = handlers(stage);
-    return async (call: Parameters<typeof handler>[0]) => {
-      if (call.request.operation_id !== actor.operation_id ||
-          call.request.investigation_ref.id !== actor.investigation_id ||
-          call.principal.principal_ref !== actor.principal_ref ||
-          call.principal.deployment_generation !== actor.deployment_generation) fail("WORKFLOW_AUTHORITY_STALE");
-      await revalidate();
-      return handler(call);
-    };
-  };
-  const recoverStartedAttempt = handlers.recoverStartedAttempt;
-  if (recoverStartedAttempt === undefined) return wrapped;
-  const recovery: WorkflowStartedAttemptRecovery = async (call) => {
-    if (call.request.operation_id !== actor.operation_id || call.principal_ref !== actor.principal_ref ||
-        call.deployment_generation !== actor.deployment_generation) fail("WORKFLOW_AUTHORITY_STALE");
-    await revalidate();
-    return recoverStartedAttempt(call);
-  };
-  return Object.assign(wrapped, { recoverStartedAttempt: recovery });
 }
 
 interface CurrentInvestigationPolicyRow {
@@ -317,20 +268,13 @@ async function assembleResearchSemanticServerHandlers(input: ResearchSemanticSer
   const spend = createResearchModelSpendPolicyService({ database: env.CORE_DB, navigation,
     operation_id: input.operation_id, policy, deployment_registry: deploymentRegistry,
     ...(snapshotRunConfiguration === undefined ? {} : { run_configuration: snapshotRunConfiguration }) });
-  const synthesisTransport = selectedModelTransport({
+  const stageModelBindings = bindResearchSemanticStageModelTransports({
+    gateway, policy_rules: policy.rules,
+    include_branch_stages: config.roles !== undefined,
     ...(snapshotRunConfiguration === undefined ? {} : { run_configuration: snapshotRunConfiguration }),
-    stage: "SYNTHESIZE",
   });
-  const auditTransport = selectedModelTransport({
-    ...(snapshotRunConfiguration === undefined ? {} : { run_configuration: snapshotRunConfiguration }),
-    stage: "AUDIT_CLAIMS",
-  });
-  if ((synthesisTransport !== undefined && (synthesisTransport.selection.route_ref !== synthesisRule.deployment.route_ref ||
-      synthesisTransport.selection.route_version !== synthesisRule.deployment.route_version)) ||
-      (auditTransport !== undefined && (auditTransport.selection.route_ref !== auditRule.deployment.route_ref ||
-      auditTransport.selection.route_version !== auditRule.deployment.route_version))) configurationInvalid();
-  const synthesisGateway = bindSelectedModelTransport(gateway, synthesisTransport);
-  const auditGateway = bindSelectedModelTransport(gateway, auditTransport);
+  const { synthesis_transport: synthesisTransport, audit_transport: auditTransport,
+    synthesis_gateway: synthesisGateway, audit_gateway: auditGateway } = stageModelBindings;
   const prepareSynthesis = createResearchSynthesisPreparation({ spend_admission: spend.admissions });
   const prepareAudit = createResearchClaimAuditPreparation({ spend_admission: spend.admissions });
   const reportSource = createBoundResearchOwnerReportConfigSource({
@@ -460,20 +404,6 @@ async function assembleResearchSemanticServerHandlers(input: ResearchSemanticSer
       client_class: navigation.access.client_class,
       credential_generation: navigation.access.credential_generation,
     });
-    const branchStages = ["ANALYZE_BRANCHES", "COUNTER_SEARCH"] as const;
-    const branchTransports = new Map<(typeof branchStages)[number], NonNullable<ReturnType<typeof resolveResearchSelectedModelTransport>>>();
-    const branchGateways = new Map<(typeof branchStages)[number], ResearchModelGatewayRuntimeConfig>();
-    if (snapshotRunConfiguration !== undefined) {
-      for (const stage of branchStages) {
-        const rule = policy.rules.find((entry) => entry.stage === stage);
-        if (rule === undefined) configurationInvalid();
-        const transport = selectedModelTransport({ run_configuration: snapshotRunConfiguration, stage });
-        if (transport === undefined || transport.selection.route_ref !== rule.deployment.route_ref ||
-            transport.selection.route_version !== rule.deployment.route_version) configurationInvalid();
-        branchTransports.set(stage, transport);
-        branchGateways.set(stage, bindSelectedModelTransport(gateway, transport));
-      }
-    }
     const readBranchRoleStageFive = async (
       readerInput: { operation_id: string; investigation_id: string; principal: WorkflowPrincipal },
     ) => {
@@ -514,13 +444,9 @@ async function assembleResearchSemanticServerHandlers(input: ResearchSemanticSer
         trusted_parameters: promptParameters(roleConfig.trusted_parameters),
         request_timeout_ms: roleConfig.request_timeout_ms,
       }),
-      ...(snapshotRunConfiguration === undefined ? {} : {
-        gateway_for_stage: (stage: (typeof branchStages)[number]) => {
-          const selected = branchGateways.get(stage);
-          if (selected === undefined) configurationInvalid();
-          return selected;
-        },
-        prompt_for_stage: (role: ResearchBranchRole, stage: (typeof branchStages)[number]) => {
+      ...(stageModelBindings.branch_gateway_for_stage === undefined ? {} : {
+        gateway_for_stage: stageModelBindings.branch_gateway_for_stage,
+        prompt_for_stage: (role: ResearchBranchRole, stage: ResearchSemanticBranchStage) => {
           const prompt = createResearchBranchRoleServerPromptInput({
             role,
             work_bucket: env.WORK_BUCKET,
@@ -531,7 +457,7 @@ async function assembleResearchSemanticServerHandlers(input: ResearchSemanticSer
             trusted_parameters: promptParameters(roleConfig.trusted_parameters),
             request_timeout_ms: roleConfig.request_timeout_ms,
           });
-          const selected = branchTransports.get(stage);
+          const selected = stageModelBindings.branch_transport_for_stage?.(stage);
           if (selected === undefined) configurationInvalid();
           return { ...prompt, request_capabilities: selected.request_capabilities };
         },

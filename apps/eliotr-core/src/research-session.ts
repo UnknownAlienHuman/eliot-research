@@ -25,10 +25,8 @@ import { createD1InvestigationLedgerStore, createInvestigationLedgerService, Led
 import type { LedgerD1Database } from "@eliotr/research";
 import { createResearchStageHandlerFactory, SERVER_OWNED_RESEARCH_HANDLER_GENERATION, SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION, SERVER_OWNED_FREEZE_HANDLER_GENERATION, SERVER_OWNED_SEMANTIC_HANDLER_GENERATION, SERVER_OWNED_LEGACY_PROTOCOL_HANDLER_GENERATION, SERVER_OWNED_PROTOCOL_HANDLER_GENERATION, SERVER_OWNED_BRANCH_HANDLER_GENERATION, SERVER_OWNED_EXTERNAL_AGENT_HANDLER_GENERATION, isSemanticResearchHandlerGeneration, isBranchExecutionHandlerGeneration, SERVER_RETRIEVAL_SCOPE_PROFILE } from "./research-stage-handlers.js";
 import { createResearchSemanticServerHandlers } from "./research-semantic-server.js";
-import { attachResearchRunConfiguration, captureResearchRunConfiguration, readResearchRunConfiguration } from "./research-run-configuration.js";
-import type { ResolvedResearchRunConfiguration } from "./research-run-configuration.js";
-import { ResearchRunProjectSelectionFailure } from "./research-run-configuration-errors.js";
-import { createResearchProjectModelConfigurationServiceFromEnv, readSelectedResearchProjectConfiguration } from "./research-project-configuration.js";
+import { attachResearchRunConfiguration, readResearchRunConfiguration } from "./research-run-configuration.js";
+import { resolveResearchRunAdmissionConfiguration } from "./research-run-configuration-admission.js";
 import { RESEARCH_QUALIFICATION_RENEWAL_MARKER } from "./research-qualification-renewal.js";
 import { isResearchQuestionText, ScopeExpressionSchema, VersionedRefSchema } from "@eliotr/contracts";
 import type { VersionedRef } from "@eliotr/contracts";
@@ -94,51 +92,6 @@ export function parseResearchRunRequest(raw: unknown): QueryRequest {
     fail("RESEARCH_PROFILE_UNSUPPORTED", "inquiry protocol is not installed", 422);
   }
   return { ...base, request_version: RESEARCH_RUN_REQUEST_V2, inquiry_protocol_ref: parsedRef.data };
-}
-function uniqueProjectScopeId(expression: QueryRequest["scope_expression"]): string {
-  const projects = new Set<string>();
-  const visit = (value: QueryRequest["scope_expression"]): void => {
-    if (value.kind === "PROJECT") projects.add(value.project_id);
-    else if (value.kind === "UNION" || value.kind === "INTERSECT" || value.kind === "EXCEPT") {
-      visit(value.left); visit(value.right);
-    }
-  };
-  visit(expression);
-  if (projects.size !== 1) fail("RESEARCH_AGENT_NOT_CONFIGURED",
-    "A selected model configuration for one owned project is required before research can run", 503);
-  const projectId = projects.values().next().value as string | undefined;
-  if (projectId === undefined) fail("RESEARCH_AGENT_NOT_CONFIGURED",
-    "A selected model configuration for one owned project is required before research can run", 503);
-  return projectId;
-}
-function mapRunConfigurationError(error: unknown): never {
-  const code = error instanceof Error && "code" in error ? String((error as { code: unknown }).code) : "";
-  if (error instanceof ResearchRunProjectSelectionFailure && error.code === "RESEARCH_AGENT_NOT_CONFIGURED" &&
-      error.status === 503 && error.cause instanceof ResearchServiceError &&
-      error.cause.code === "RESEARCH_AGENT_NOT_CONFIGURED" && error.cause.status === 503 &&
-      error.cause.retryable === false) {
-    fail("RESEARCH_AGENT_NOT_CONFIGURED",
-      "A selected model configuration for one owned project is required before research can run", 503);
-  }
-  if (code === "RESEARCH_PROJECT_MODEL_CONFIGURATION_OWNER_REQUIRED") {
-    fail("RESEARCH_OWNER_REQUIRED", "an authenticated owner session is required", 403);
-  }
-  if (code === "WORKFLOW_AUTHORITY_STALE" || code.includes("PROJECT_AUTHORITY_STALE") ||
-      code.endsWith("_AUTHORITY_CHANGED") || code.endsWith("_PROJECT_NOT_FOUND")) {
-    fail("RESEARCH_AUTHORITY_STALE", "research run configuration authority is no longer current", 409);
-  }
-  if (code === "WORKFLOW_STORAGE_UNAVAILABLE" || code.includes("STORAGE_UNAVAILABLE") ||
-      code === "RESEARCH_RUN_CONFIGURATION_UNRESOLVED") {
-    fail("RESEARCH_SETTLEMENT_UNCERTAIN", "research run configuration readback is unavailable", 503, true);
-  }
-  if (code === "WORKFLOW_CONFIGURATION_INVALID" || code === "WORKFLOW_CONFIGURATION_MISSING" ||
-      code.startsWith("RESEARCH_PROJECT_MODEL_CONFIGURATION_") || code === "RESEARCH_MODEL_CONFIGURATION_QUALIFICATION_REQUIRED") {
-    fail("RESEARCH_AGENT_NOT_CONFIGURED", "a valid saved project model configuration is required", 503);
-  }
-  if (code.startsWith("WORKFLOW_")) {
-    fail("RESEARCH_CONFLICT", "research run configuration could not be bound", 409);
-  }
-  throw error;
 }
 function idempotencyKey(context: AuthenticatedRequestContext): string { const key = context.request.headers.get("idempotency-key"); if (typeof key !== "string" || key.length < 1 || key.length > 256 || /[\u0000-\u0020\u007f]/u.test(key)) fail("RESEARCH_INPUT_INVALID", "idempotency-key header is required"); return key; }
 // IMPLEMENTED_NOT_LIVE: ER-24 research.query retrieval composition over injected RetrievalQueryPorts with frozen 64-source scope-profile versioning; RETRIEVAL slice enablement remains separate.
@@ -381,52 +334,16 @@ export function createResearchRunService(env: Env): { run(context: Authenticated
       if (scopeAuthority === null) fail("RESEARCH_AUTHORITY_STALE", "scope snapshot is unavailable", 409);
       const runConfigurationActor = Object.freeze({ operation_id, investigation_id,
         principal_ref: context.principal_ref, deployment_generation: admittedDeploymentGeneration });
-      let admissionConfiguration: ResolvedResearchRunConfiguration;
-      try {
-        if (pre === null) {
-          admissionConfiguration = await captureResearchRunConfiguration(env, {
-            ...runConfigurationActor,
-            select_project_configuration: async () => {
-              let projectId: string;
-              try { projectId = uniqueProjectScopeId(request.scope_expression); }
-              catch (error) {
-                if (error instanceof ResearchServiceError && error.code === "RESEARCH_AGENT_NOT_CONFIGURED" &&
-                    error.status === 503 && error.retryable === false) {
-                  throw new ResearchRunProjectSelectionFailure(error.code, error.status, error);
-                }
-                throw error;
-              }
-              const scopePorts = createD1ScopePorts(db, { principal_ref: context.principal_ref,
-                client_class: context.client_class, credential_generation: context.credential_generation });
-              const projectConfigurationService = createResearchProjectModelConfigurationServiceFromEnv(env,
-                async (authorityContext, authorizedProjectId) => {
-                  if (authorityContext.principal_ref !== context.principal_ref ||
-                      authorityContext.credential_generation !== context.credential_generation ||
-                      authorizedProjectId !== projectId) {
-                    fail("RESEARCH_AUTHORITY_STALE", "project configuration authority changed", 409);
-                  }
-                  await scopePorts.requireCurrentScope(scopeAuthority.snapshot).catch(mapRetrievalError);
-                  await delegated?.requireScopeCurrent(scopeAuthority.snapshot);
-                });
-              const selected = await readSelectedResearchProjectConfiguration(
-                projectConfigurationService, context, projectId);
-              if (selected === null) return null;
-              return { configuration_ref: selected.configuration_ref,
-                configuration_sha256: selected.configuration_sha256,
-                selection_revision: selected.selection_revision,
-                configuration_json: selected.configuration_json };
-            },
-          });
-        } else if (priorWorkflow?.configuration_required === 0) {
-          admissionConfiguration = await readResearchRunConfiguration(env, runConfigurationActor);
-        } else {
-          if (priorWorkflow !== null && priorWorkflow.configuration_required !== 1) {
-            fail("RESEARCH_AUTHORITY_STALE", "stored run configuration binding is malformed", 409);
-          }
-          // Retries may reuse a captured snapshot, but never resolve today's project selection.
-          admissionConfiguration = await captureResearchRunConfiguration(env, runConfigurationActor);
-        }
-      } catch (error) { mapRunConfigurationError(error); }
+      const admissionConfiguration = await resolveResearchRunAdmissionConfiguration(env, {
+        actor: runConfigurationActor, context, scope_expression: request.scope_expression, new_run: pre === null,
+        ...(priorWorkflow === null ? {} : { configuration_required: priorWorkflow.configuration_required }),
+        require_current_scope: async () => {
+          const scopePorts = createD1ScopePorts(db, { principal_ref: context.principal_ref,
+            client_class: context.client_class, credential_generation: context.credential_generation });
+          await scopePorts.requireCurrentScope(scopeAuthority.snapshot).catch(mapRetrievalError);
+          await delegated?.requireScopeCurrent(scopeAuthority.snapshot);
+        },
+      });
       const planningSources = installedProtocol === null
         ? []
         : await loadResearchPlanningSources(
