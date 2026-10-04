@@ -1,0 +1,28 @@
+{
+  "name": "@eliotr/cloudflare-model-transport",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    "./model-gateway-execution-contract.js": "./src/model-gateway-execution-contract.ts",
+    "./model-gateway-execution.js": "./src/model-gateway-execution.ts",
+    "./model-gateway-http-failure.js": "./src/model-gateway-http-failure.ts",
+    "./model-gateway-http-request.js": "./src/model-gateway-http-request.ts",
+    "./model-gateway-openrouter-response.js": "./src/model-gateway-openrouter-response.ts",
+    "./model-gateway-provider-native-request.js": "./src/model-gateway-provider-native-request.ts",
+    "./model-gateway-provider-native-response.js": "./src/model-gateway-provider-native-response.ts",
+    "./model-gateway-request.js": "./src/model-gateway-request.ts",
+    "./model-gateway-response.js": "./src/model-gateway-response.ts",
+    "./model-gateway-transport-policy.js": "./src/model-gateway-transport-policy.ts"
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc -b --pretty false",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@eliotr/contracts": "workspace:*",
+    "@eliotr/platform-cloudflare": "workspace:*"
+  }
+}

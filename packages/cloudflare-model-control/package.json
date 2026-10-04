@@ -1,0 +1,46 @@
+{
+  "name": "@eliotr/cloudflare-model-control",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": "./src/index.ts",
+    "./model-gateway-deployment-registry-d1.js": "./src/model-gateway-deployment-registry-d1.ts",
+    "./model-gateway-qualification-d1.js": "./src/model-gateway-qualification-d1.ts",
+    "./model-gateway-qualification-readers.js": "./src/model-gateway-qualification-readers.ts",
+    "./research-model-profile-binding.js": "./src/research-model-profile-binding.ts",
+    "./research-model-profile-config.js": "./src/research-model-profile-config.ts",
+    "./research-model-pricing-store.js": "./src/research-model-pricing-store.ts",
+    "./research-model-pricing-quote.js": "./src/research-model-pricing-quote.ts",
+    "./research-model-qualification-store.js": "./src/research-model-qualification-store.ts",
+    "./research-model-qualification.js": "./src/research-model-qualification.ts",
+    "./research-model-qualification-renewal.js": "./src/research-model-qualification-renewal.ts",
+    "./research-model-qualification-dispatch.js": "./src/research-model-qualification-dispatch.ts",
+    "./research-qualification-prompt.js": "./src/research-qualification-prompt.ts",
+    "./research-qualification-manifest-store.js": "./src/research-qualification-manifest-store.ts",
+    "./research-model-prompt.js": "./src/research-model-prompt.ts",
+    "./research-model-fingerprint-store.js": "./src/research-model-fingerprint-store.ts",
+    "./research-model-gateway-binding.js": "./src/research-model-gateway-binding.ts",
+    "./research-model-gateway-runtime.js": "./src/research-model-gateway-runtime.ts",
+    "./research-model-catalog.js": "./src/research-model-catalog.ts",
+    "./research-provider-model-catalog.js": "./src/research-provider-model-catalog.ts",
+    "./research-prepared-model-transport-policies.js": "./src/research-prepared-model-transport-policies.ts"
+  },
+  "types": "./src/index.ts",
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc -b --pretty false"
+  },
+  "dependencies": {
+    "@eliotr/cloudflare-ai": "workspace:*",
+    "@eliotr/cloudflare-evidence": "workspace:*",
+    "@eliotr/cloudflare-workflows": "workspace:*",
+    "@eliotr/contracts": "workspace:*",
+    "@eliotr/platform-cloudflare": "workspace:*",
+    "@eliotr/policy": "workspace:*",
+    "@eliotr/retrieval": "workspace:*",
+    "zod": "4.4.3",
+    "@eliotr/interfaces": "workspace:*"
+  }
+}

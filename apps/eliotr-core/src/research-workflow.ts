@@ -9,7 +9,11 @@ import {
   createWorkflowCheckpointExecutor, MAX_WORKFLOW_RECEIPT_BYTES, WorkflowObjectSchema,
   type StageReceipt, type WorkflowExecutionPorts, type WorkflowObject, type WorkflowPrincipal,
 } from "@eliotr/cloudflare-research";
-import { WorkflowCheckpointError, type WorkflowStartedAttemptRecovery } from "@eliotr/cloudflare-workflows";
+import {
+  executeResearchWorkflowSequence,
+  WorkflowCheckpointError,
+  type WorkflowStartedAttemptRecovery,
+} from "@eliotr/cloudflare-workflows";
 import { createD1ScopePorts } from "@eliotr/retrieval";
 import { createD1InvestigationLedgerStore } from "@eliotr/research";
 import type { LedgerD1Database } from "@eliotr/research";
@@ -310,66 +314,49 @@ export class ResearchWorkflow extends WorkflowEntrypoint<Env, ResearchWorkflowPa
       }
       const ports = createServerPorts(this.env.CORE_DB, params.operation_id, handlers.recoverStartedAttempt);
       const executor = createWorkflowCheckpointExecutor(this.env.CORE_DB, this.env.WORK_BUCKET, ports);
-      let investigation_ref: VersionedRef = { ...params.investigation_ref };
-      let input_manifest: WorkflowObject = params.initial_input_manifest;
-      const receipt_refs: string[] = [];
-      let output_manifest: WorkflowObject = input_manifest;
-      for (let index = 0; index < RESEARCH_WORKFLOW_STAGES.length; index += 1) {
-        const stage = RESEARCH_WORKFLOW_STAGES[index] as ResearchWorkflowStage;
-        activeStage = stage;
-        const request = {
-          protocol: "eliotr.workflow-stage.v1" as const,
+      const result: ResearchWorkflowResult = await executeResearchWorkflowSequence({
+        params: {
           operation_id: params.operation_id,
-          investigation_ref: { ...investigation_ref },
-          stage,
+          investigation_ref: params.investigation_ref,
           idempotency_key: params.idempotency_key,
           handler_generation: params.handler_generation,
-          input_manifest,
-        };
-        const executeStage = async (): Promise<StageReceipt> => {
-          try {
-            const outcome = await executor.execute(request, principal, handlers(stage));
-            const text = JSON.stringify(outcome);
-            if (new TextEncoder().encode(text).byteLength > MAX_WORKFLOW_RECEIPT_BYTES) failWorkflow("WORKFLOW_INPUT_INVALID");
-            if ("completion_disposition" in outcome) failWorkflow("WORKFLOW_INPUT_INVALID");
-            return outcome;
-          } catch (error) {
-            // The executor already records handler/recovery failures before step serialization.
-            const failure = workflowFailure(error, "STAGE", stage);
-            await retainWorkflowFailure(this.env.CORE_DB, params.operation_id, principal, failure);
-            if (failure.code === "WORKFLOW_OUTPUT_CORRUPT") {
-              throw new NonRetryableError(failure.code, "WorkflowCheckpointError");
+          initial_input_manifest: params.initial_input_manifest,
+        },
+        executeStage: async (request, index) => {
+          const stage = request.stage;
+          activeStage = stage;
+          const executeStage = async (): Promise<StageReceipt> => {
+            try {
+              const outcome = await executor.execute(request, principal, handlers(stage));
+              const text = JSON.stringify(outcome);
+              if (new TextEncoder().encode(text).byteLength > MAX_WORKFLOW_RECEIPT_BYTES) failWorkflow("WORKFLOW_INPUT_INVALID");
+              if ("completion_disposition" in outcome) failWorkflow("WORKFLOW_INPUT_INVALID");
+              return outcome;
+            } catch (error) {
+              // The executor already records handler/recovery failures before step serialization.
+              const failure = workflowFailure(error, "STAGE", stage);
+              await retainWorkflowFailure(this.env.CORE_DB, params.operation_id, principal, failure);
+              if (failure.code === "WORKFLOW_OUTPUT_CORRUPT") {
+                throw new NonRetryableError(failure.code, "WorkflowCheckpointError");
+              }
+              throw error;
             }
-            throw error;
-          }
-        };
-        const stepName = `w2-stage-${String(index).padStart(2, "0")}-${stage}`;
-        nativeStepPending = true;
-        const receipt = isResearchModelStage(stage)
-          ? await step.do(stepName, {
-            retries: { limit: 0, delay: 0 },
-            timeout: researchStageBudgetLeaseMs(stage),
-          }, executeStage)
-          : await step.do(stepName, {
-            retries: { limit: 0, delay: 0 },
-          }, executeStage);
-        nativeStepPending = false;
-        const expectedEngine = index === RESEARCH_WORKFLOW_STAGES.length - 1 ? "ENGINE_COMPLETED" : "CHECKPOINTED";
-        if (receipt.engine_state !== expectedEngine || receipt.operation_id !== params.operation_id || receipt.stage !== stage) {
-          failWorkflow("WORKFLOW_OUTPUT_CORRUPT");
-        }
-        receipt_refs.push(receipt.receipt_ref);
-        investigation_ref = { ...receipt.investigation_ref };
-        input_manifest = receipt.output_manifest;
-        output_manifest = receipt.output_manifest;
-      }
-      const result: ResearchWorkflowResult = {
-        operation_id: params.operation_id,
-        investigation_ref: { ...investigation_ref },
-        state: "ENGINE_COMPLETED",
-        receipt_refs: [...receipt_refs],
-        output_manifest_ref: output_manifest.object_ref,
-      };
+          };
+          const stepName = `w2-stage-${String(index).padStart(2, "0")}-${stage}`;
+          nativeStepPending = true;
+          const receipt = isResearchModelStage(stage)
+            ? await step.do(stepName, {
+              retries: { limit: 0, delay: 0 },
+              timeout: researchStageBudgetLeaseMs(stage),
+            }, executeStage)
+            : await step.do(stepName, {
+              retries: { limit: 0, delay: 0 },
+            }, executeStage);
+          nativeStepPending = false;
+          return receipt;
+        },
+        invalidReceipt: () => failWorkflow("WORKFLOW_OUTPUT_CORRUPT"),
+      });
       if (new TextEncoder().encode(JSON.stringify(result)).byteLength > MAX_WORKFLOW_RECEIPT_BYTES) {
         failWorkflow("WORKFLOW_INPUT_INVALID");
       }

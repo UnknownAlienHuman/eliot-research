@@ -483,6 +483,7 @@ export function mountResearchProviderKeyPanel(
       removeUnresolvedOperation(operationId);
       notice = { summary: "Ключ сохранён. Проверьте модель, чтобы использовать его в новых исследованиях.", explanation: "Текущая модель и уже начатые исследования не изменились. Для новых исследований нужна отдельная квалификация и выбор точной конфигурации." };
       noticeTone = "configured";
+      app?.dispatchEvent(new CustomEvent("eliotr:provider-key-configurations-changed", { detail: { projectId: projectAtStart } }));
     }).catch((error: unknown) => {
       if (!requestStillCurrent(mine, projectAtStart, generation, ownerAtStart)) return;
       notice = researchProviderKeyErrorCopy(error, "write");

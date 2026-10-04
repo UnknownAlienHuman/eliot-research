@@ -1,4 +1,5 @@
 import {
+  decodeResearchProjectModelConfigurationBundle,
   createD1ResearchProjectModelConfigurationStore,
   createResearchSemanticConfigRevisionStore,
   ResearchSemanticConfigRevisionError,
@@ -9,6 +10,7 @@ import {
   type ResearchProjectModelSelection,
 } from "@eliotr/cloudflare-research";
 import type { AuthenticatedRequestContext } from "@eliotr/interfaces";
+import type { ProviderNativeModelAuthorityPort } from "@eliotr/cloudflare-native-models";
 import type { Env } from "./env.js";
 import { parseResearchSemanticConfiguration } from "./research-semantic-server.js";
 import {
@@ -18,6 +20,8 @@ import {
   selectedEffort,
   type ConfigurationValidation,
 } from "./research-project-configuration-validation.js";
+import { createOwnerResearchProviderNativeModelAuthority } from "./research-provider-native-model-authority.js";
+import type { ResearchProviderKeyModelUseDbPhase } from "./research-provider-key-model-use-store.js";
 export { ResearchProjectModelConfigurationAuthorityError };
 export const RESEARCH_PROJECT_MODEL_CONFIGURATION_PROTOCOL =
   "eliotr.research-project-model-configuration.v1" as const;
@@ -70,6 +74,11 @@ export type AssertCurrentResearchProjectAuthority = (
   projectId: string,
 ) => Promise<void>;
 
+export type ResearchProjectNativeModelAuthorityFactory = (
+  context: AuthenticatedRequestContext,
+  projectId: string,
+) => ProviderNativeModelAuthorityPort;
+
 interface CurrentResearchProjectAuthority {
   readonly owner_id: string;
   readonly project_generation: number;
@@ -113,7 +122,9 @@ function ownerContext(context: AuthenticatedRequestContext, now: () => number): 
 
 export function createResearchProjectModelConfigurationService(options: {
   readonly database: D1Database;
+  readonly env?: Env;
   readonly assertCurrentProjectAuthority?: AssertCurrentResearchProjectAuthority;
+  readonly native_model_authority?: ResearchProjectNativeModelAuthorityFactory;
   readonly deployment_environment?: "TEST" | "PRODUCTION";
   readonly deployment_generation?: string;
   readonly now?: () => number;
@@ -126,6 +137,17 @@ export function createResearchProjectModelConfigurationService(options: {
   const environment = options.deployment_environment ?? "PRODUCTION";
   const store: ResearchProjectModelConfigurationStore = createD1ResearchProjectModelConfigurationStore(options.database);
   const semanticRevisionStore = createResearchSemanticConfigRevisionStore(options.database);
+
+  function nativeAuthorityFor(
+    configuration: ResearchProjectModelConfigurationBundle,
+    context: AuthenticatedRequestContext,
+    project: string,
+  ): ProviderNativeModelAuthorityPort | undefined {
+    if (!configuration.model_selections.some((selection) => selection.candidate_kind === "provider-native-v1")) {
+      return undefined;
+    }
+    return options.native_model_authority?.(context, project);
+  }
 
   async function assertAuthority(context: AuthenticatedRequestContext, project: string): Promise<CurrentResearchProjectAuthority> {
     const owner = ownerContext(context, now);
@@ -163,11 +185,13 @@ export function createResearchProjectModelConfigurationService(options: {
     ...(options.deployment_generation === undefined ? {} : { deployment_generation: options.deployment_generation }),
     now,
   });
-  async function summarize(revision: ResearchProjectModelConfigurationRevision): Promise<ResearchProjectModelConfigurationSummary> {
+  async function summarize(revision: ResearchProjectModelConfigurationRevision,
+    context: AuthenticatedRequestContext): Promise<ResearchProjectModelConfigurationSummary> {
     let validated: ConfigurationValidation | undefined;
     let qualificationState: "qualified" | "qualification_required" = "qualified";
     try {
-      validated = await validateConfiguration(revision.configuration, revision.owner_id, revision.project_id);
+      validated = await validateConfiguration(revision.configuration, revision.owner_id, revision.project_id,
+        nativeAuthorityFor(revision.configuration, context, revision.project_id));
     } catch (cause) {
       if (!(cause instanceof ResearchProjectModelConfigurationAuthorityError)) throw cause;
       qualificationState = "qualification_required";
@@ -190,10 +214,11 @@ export function createResearchProjectModelConfigurationService(options: {
       model_selections: Object.freeze(modelSelections) });
   }
 
-  async function selectedReceipt(selection: ResearchProjectModelConfigurationSelection): Promise<ResearchProjectModelConfigurationSelectionReceipt> {
+  async function selectedReceipt(selection: ResearchProjectModelConfigurationSelection,
+    context: AuthenticatedRequestContext): Promise<ResearchProjectModelConfigurationSelectionReceipt> {
     return Object.freeze({ protocol: RESEARCH_PROJECT_MODEL_CONFIGURATION_PROTOCOL,
       project_id: selection.project_id, selection_revision: selection.selection_revision,
-      selected: await summarize(selection.revision) });
+      selected: await summarize(selection.revision, context) });
   }
 
   async function authorized<T>(context: AuthenticatedRequestContext, projectRaw: string,
@@ -222,8 +247,8 @@ export function createResearchProjectModelConfigurationService(options: {
           store.listRevisions(owner, project, limit, input.after),
           store.readSelected(owner, project),
         ]);
-        const selected = selection === null ? null : await summarize(selection.revision);
-        const revisions = await Promise.all(page.revisions.map(summarize));
+        const selected = selection === null ? null : await summarize(selection.revision, context);
+        const revisions = await Promise.all(page.revisions.map((revision) => summarize(revision, context)));
         return Object.freeze({ protocol: RESEARCH_PROJECT_MODEL_CONFIGURATION_PROTOCOL,
           project_id: project, selection_revision: selection?.selection_revision ?? null, selected,
           revisions: Object.freeze(revisions), next_cursor: page.next_cursor });
@@ -234,7 +259,8 @@ export function createResearchProjectModelConfigurationService(options: {
       return authorized(context, projectRaw, async (owner, project) => {
         const selection = await store.readSelected(owner, project);
         if (selection === null) return null;
-        await validateConfiguration(selection.revision.configuration, owner, project);
+        await validateConfiguration(selection.revision.configuration, owner, project,
+          nativeAuthorityFor(selection.revision.configuration, context, project));
         return Object.freeze({ protocol: RESEARCH_PROJECT_MODEL_CONFIGURATION_PROTOCOL,
           owner_id: owner, project_id: project, selection_revision: selection.selection_revision,
           configuration_ref: selection.configuration_ref, configuration_sha256: selection.configuration_sha256,
@@ -252,11 +278,12 @@ export function createResearchProjectModelConfigurationService(options: {
         if (revision === null) {
           fail("RESEARCH_PROJECT_MODEL_CONFIGURATION_NOT_FOUND", 404, "Saved model configuration was not found for this owner project");
         }
-        await validateConfiguration(revision.configuration, owner, project);
+        await validateConfiguration(revision.configuration, owner, project,
+          nativeAuthorityFor(revision.configuration, context, project));
         const selection = await store.selectExisting({ owner_id: owner, project_id: project,
           expected_project_generation: projectGeneration,
           expected_revision: input.expected_revision, configuration_ref: input.configuration_ref });
-        return selectedReceipt(selection);
+        return selectedReceipt(selection, context);
       });
     },
 
@@ -265,7 +292,9 @@ export function createResearchProjectModelConfigurationService(options: {
       readonly configuration: unknown;
     }) {
       return authorized(context, projectRaw, async (owner, project, projectGeneration) => {
-        const validated = await validateConfiguration(input.configuration, owner, project);
+        const parsedInput = await decodeResearchProjectModelConfigurationBundle(input.configuration);
+        const validated = await validateConfiguration(input.configuration, owner, project,
+          nativeAuthorityFor(parsedInput.bundle, context, project));
         const writeAuthority = await assertAuthority(context, project);
         if (writeAuthority.owner_id !== owner || writeAuthority.project_generation !== projectGeneration) {
           fail("RESEARCH_PROJECT_MODEL_CONFIGURATION_AUTHORITY_CHANGED", 409,
@@ -294,7 +323,7 @@ export function createResearchProjectModelConfigurationService(options: {
         const selection = await store.saveAndSelect({ owner_id: owner, project_id: project,
           expected_project_generation: projectGeneration,
           expected_revision: input.expected_revision, configuration: validated.bundle });
-        return selectedReceipt(selection);
+        return selectedReceipt(selection, context);
       });
     },
   });
@@ -309,6 +338,9 @@ export function createResearchProjectModelConfigurationServiceFromEnv(
   }
   return createResearchProjectModelConfigurationService({
     database: env.CORE_DB,
+    env,
+    native_model_authority: (context, projectId) => createOwnerResearchProviderNativeModelAuthority(env, context,
+      projectId, ["CONFIGURATION_IMPORT", "SELECTION_READBACK", "COMPLETE"] satisfies readonly ResearchProviderKeyModelUseDbPhase[]),
     ...(assertCurrentProjectAuthority === undefined ? {} : { assertCurrentProjectAuthority }),
     deployment_environment: env.ENVIRONMENT === "development" ? "TEST" : "PRODUCTION",
     deployment_generation: env.DEPLOYMENT_GENERATION,

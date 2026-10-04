@@ -24,6 +24,8 @@ export const ROUTES: readonly RouteDefinition[] = [
   { method: "POST", path: "/api/v1/research/projects/:project_id/model-configuration/revisions", operation: "research.project-model-configuration.import", auth: "owner", maximum_request_bytes: 262144, response_mode: "json" },
   { method: "GET", path: "/api/v1/projects/:project_id/model-provider-key", operation: "project.provider-key-configuration.read", auth: "owner", maximum_request_bytes: 0, response_mode: "json" },
   { method: "POST", path: "/api/v1/projects/:project_id/model-provider-key", operation: "project.provider-key-configuration.create", auth: "owner", maximum_request_bytes: 8192, response_mode: "json" },
+  { method: "POST", path: "/api/v1/projects/:project_id/model-provider-key/:key_operation_id/check-and-use", operation: "project.provider-key-model-use.start", auth: "owner", maximum_request_bytes: 2048, response_mode: "json" },
+  { method: "GET", path: "/api/v1/projects/:project_id/model-provider-key/model-use/:operation_id", operation: "project.provider-key-model-use.read", auth: "owner", maximum_request_bytes: 0, response_mode: "json" },
   { method: "GET", path: "/api/v1/system/computer-agents", operation: "system.computer-agents.list", auth: "owner", maximum_request_bytes: 0, response_mode: "json" },
   { method: "PUT", path: "/api/v1/system/computer-agents/:connection_id", operation: "system.computer-agents.put", auth: "owner", maximum_request_bytes: 24576, response_mode: "json" },
   { method: "DELETE", path: "/api/v1/system/computer-agents/:connection_id", operation: "system.computer-agents.disable", auth: "owner", maximum_request_bytes: 1024, response_mode: "json" },

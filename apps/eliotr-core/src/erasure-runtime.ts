@@ -1,18 +1,20 @@
 import {
   createAiSearchErasureNamespace,
-  createConfiguredErasureBackend,
   type AiSearchErasureNamespaceBinding,
 } from "@eliotr/cloudflare-erasure";
-import type { Env } from "./env.js";
 import { createBackupPurgeReplayPort } from "@eliotr/platform-cloudflare";
-import { createInstalledBackupOffsiteR2Resolver } from "./backup-offsite-composition.js";
 import {
-  createErasureCoordinator,
+  createConfiguredErasureCoordinator as createConfiguredErasureCoordinatorInLibrary,
   type ErasureCoordinator,
-} from "./erasure-coordinator.js";
+} from "@eliotr/cloudflare-erasure-operations";
+import { createInstalledBackupOffsiteR2Resolver } from "./backup-offsite-composition.js";
+import type { Env } from "./env.js";
 
+export type { ErasureCoordinator };
+
+/** Core adapts Worker bindings and the application-owned backup resolver to erasure operations. */
 export function createConfiguredErasureCoordinator(env: Env): ErasureCoordinator {
-  const backend = createConfiguredErasureBackend({
+  return createConfiguredErasureCoordinatorInLibrary({
     core_database: env.CORE_DB,
     search_database: env.SEARCH_DB,
     evidence_bucket: env.EVIDENCE_BUCKET,
@@ -26,5 +28,4 @@ export function createConfiguredErasureCoordinator(env: Env): ErasureCoordinator
     }),
     worker_id: `erasure:${env.DEPLOYMENT_GENERATION}`,
   });
-  return createErasureCoordinator(backend);
 }

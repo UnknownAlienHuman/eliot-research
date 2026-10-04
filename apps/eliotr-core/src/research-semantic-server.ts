@@ -64,6 +64,7 @@ import { createResearchBranchRoleServerPromptInput } from "./research-branch-rol
 import type { ResearchStageHandlerFactory } from "./research-stage-handlers.js";
 import { requireResearchDeploymentCompatibility } from "./research-deployment-compatibility.js";
 import { routeResearchComputerAgentStages } from "./research-external-agent-routing.js";
+import { createResearchSemanticNativeModelRuntime } from "./research-semantic-native-model-runtime.js";
 
 const PromptSchema = z.object({
   prompt: z.string().min(1), max_tokens: z.number().int().positive().safe(),
@@ -204,7 +205,10 @@ async function assembleResearchSemanticServerHandlers(input: ResearchSemanticSer
       runConfiguration.configuration_ref === null || runConfiguration.configuration_sha256 === null
     ? undefined
     : Object.freeze({ mode: runConfiguration.mode, configuration_ref: runConfiguration.configuration_ref,
-      configuration_sha256: runConfiguration.configuration_sha256, model_selections: runConfiguration.model_selections });
+      configuration_sha256: runConfiguration.configuration_sha256, project_owner_ref: runConfiguration.project_owner_ref,
+      project_id: runConfiguration.project_id, model_selections: runConfiguration.model_selections });
+  const nativeModelRuntime = createResearchSemanticNativeModelRuntime({ env, run_configuration: snapshotRunConfiguration,
+    owner_ref: principal.principal_ref });
   const gateway = modelGatewayConfiguration(env);
   if (!researchSemanticConfigurationInstalled(env)) configurationMissing();
   await requireResearchDeploymentCompatibility(env.CORE_DB, principal.deployment_generation, env.DEPLOYMENT_GENERATION);
@@ -267,6 +271,7 @@ async function assembleResearchSemanticServerHandlers(input: ResearchSemanticSer
   const deploymentRegistry = createD1ModelGatewayDeploymentRegistry(env.CORE_DB, { environment: deploymentEnvironment });
   const spend = createResearchModelSpendPolicyService({ database: env.CORE_DB, navigation,
     operation_id: input.operation_id, policy, deployment_registry: deploymentRegistry,
+    ...(nativeModelRuntime.authority === undefined ? {} : { native_model_authority: nativeModelRuntime.authority }),
     ...(snapshotRunConfiguration === undefined ? {} : { run_configuration: snapshotRunConfiguration }) });
   const stageModelBindings = bindResearchSemanticStageModelTransports({
     gateway, policy_rules: policy.rules,
@@ -321,6 +326,28 @@ async function assembleResearchSemanticServerHandlers(input: ResearchSemanticSer
     await navigation.current();
     const selected = auditTransport?.selection;
     if (snapshotRunConfiguration !== undefined && selected === undefined) fail("WORKFLOW_QUALIFICATION_STALE");
+    if (selected?.candidate_kind === "provider-native-v1") {
+      if (snapshotRunConfiguration?.mode !== "snapshot-v2") fail("WORKFLOW_QUALIFICATION_STALE");
+      const resolved = await nativeModelRuntime.resolvePinned("AUDIT_CLAIMS");
+      if (resolved === undefined) fail("WORKFLOW_QUALIFICATION_STALE");
+      const deployment = (() => {
+        try { return decodeModelRouteDeployment(resolved.candidate.candidate.preparation.deployment); }
+        catch { fail("WORKFLOW_OUTPUT_CORRUPT"); }
+      })();
+      const qualification = resolved.proof.qualification.qualification;
+      const receipt = IdentifierSchema.safeParse(qualification.observation_ref);
+      const expires = IsoDateTimeSchema.safeParse(qualification.expires_at);
+      if (qualification.tier !== "LIVE" || canonicalJson(deployment) !== canonicalJson(auditDeployment) ||
+          !receipt.success || !expires.success ||
+          !config.audit.allowed_verifier_refs.includes(config.audit.verifier_ref)) {
+        fail("WORKFLOW_QUALIFICATION_STALE");
+      }
+      await navigation.current();
+      return Object.freeze({ allowed_verifier_refs: Object.freeze([...config.audit.allowed_verifier_refs]),
+        verifier_ref: config.audit.verifier_ref, verifier_schema_generation: config.audit.verifier_schema_generation,
+        deployment, deployment_generation: principal.deployment_generation,
+        qualification_receipt_ref: receipt.data, qualification_expires_at: expires.data, qualified: true, current: true });
+    }
     const readCandidate = async () => {
       try {
         return await (selected === undefined
@@ -386,6 +413,13 @@ async function assembleResearchSemanticServerHandlers(input: ResearchSemanticSer
   const verifier = await readVerifier();
   let roles: ResearchSemanticRolesModelDependencies | undefined;
   const roleConfig = config.roles;
+  const nativeBranchPricing = new Map<ResearchSemanticBranchStage, ResearchSemanticRolesModelDependencies["pricing"]>();
+  if (roleConfig !== undefined) {
+    for (const stage of ["ANALYZE_BRANCHES", "COUNTER_SEARCH"] as const) {
+      const stagePricing = await nativeModelRuntime.pricingForStage(stage);
+      if (stagePricing !== undefined) nativeBranchPricing.set(stage, stagePricing);
+    }
+  }
   if (roleConfig !== undefined) {
     let modelPolicy: ReferenceManifestPolicyProfile;
     try {
@@ -399,6 +433,7 @@ async function assembleResearchSemanticServerHandlers(input: ResearchSemanticSer
     const roleEvidenceResolver = createCloudflareEvidenceResolver({
       authority: roleEvidenceAuthority, content: roleEvidenceContent, now: () => Date.now(),
     });
+    const rolePricing = createD1ResearchModelPricingQuotePort(env.CORE_DB, { now: () => Date.now() });
     const roleNavigationAccess: RetrievalQueryAccess = Object.freeze({
       principal_ref: navigation.access.principal_ref,
       client_class: navigation.access.client_class,
@@ -462,7 +497,9 @@ async function assembleResearchSemanticServerHandlers(input: ResearchSemanticSer
           return { ...prompt, request_capabilities: selected.request_capabilities };
         },
       }),
-      pricing: createD1ResearchModelPricingQuotePort(env.CORE_DB, { now: () => Date.now() }),
+      pricing: rolePricing,
+      pricing_for_stage: (stage) => nativeBranchPricing.get(stage) ?? rolePricing,
+      ...(nativeModelRuntime.authority === undefined ? {} : { native_model_authority: nativeModelRuntime.authority }),
       spend_authorization: spend.admissions,
       prepare: createResearchBranchRoleServerPreparation({
         read_stage_five: readBranchRoleStageFive,
@@ -480,6 +517,8 @@ async function assembleResearchSemanticServerHandlers(input: ResearchSemanticSer
     principal, retrieval_profile: retrievalProfile,
     ...(snapshotRunConfiguration === undefined ? {} : { run_configuration: snapshotRunConfiguration }),
     model_profile: { raw: env.ELIOTR_MODEL_PROFILE_DEFINITION_JSON, provenance_ref: installed(env.ELIOTR_MODEL_PROFILE_PROVENANCE_REF) },
+    ...(nativeModelRuntime.authority === undefined ? {} : { native_model_authority: nativeModelRuntime.authority }),
+    model_profile_route_authority: nativeModelRuntime.profileRouteAuthority(deploymentRegistry),
     semantic_config: { revision_ref: resolvedSemanticConfig.revision_ref, config_sha256: resolvedSemanticConfig.config_sha256 },
     deployment_environment: deploymentEnvironment, recheck_authority: recheckAuthority,
     manifest: { residency_template: residency, max_context_bytes: synthesisRule.max_input_bytes },

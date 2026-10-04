@@ -12,3 +12,6 @@ export * from "./external-agent-task-payload.js";
 export * from "./artifact-cow-workflow.js";
 export * from "./research-run-configuration-store.js";
 export * from "./research-run-status.js";
+export * from "./research-run-control.js";
+export * from "./research-workflow-sequence.js";
+export * from "./workflow-lease.js";

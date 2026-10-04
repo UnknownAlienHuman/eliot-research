@@ -11,6 +11,7 @@ import {
   decodeModelRouteDeployment,
   type ModelRouteDeployment,
 } from "@eliotr/platform-cloudflare";
+import type { ProviderNativeModelAuthorityPort } from "@eliotr/cloudflare-native-models";
 import {
   createD1DynamicRouteQualificationProofStore,
   createD1ModelGatewayDeploymentRegistry,
@@ -245,7 +246,8 @@ export function createResearchProjectModelConfigurationValidator(options: {
   readonly deployment_environment?: "TEST" | "PRODUCTION";
   readonly deployment_generation?: string;
   readonly now?: () => number;
-}): (raw: unknown, expectedOwner: string, project: string) => Promise<ConfigurationValidation> {
+}): (raw: unknown, expectedOwner: string, project: string,
+  nativeAuthority?: ProviderNativeModelAuthorityPort) => Promise<ConfigurationValidation> {
   const now = options.now ?? (() => Date.now());
   const environment = options.deployment_environment ?? "PRODUCTION";
   const deployments = createD1ModelGatewayDeploymentRegistry(options.database, { environment });
@@ -256,6 +258,7 @@ export function createResearchProjectModelConfigurationValidator(options: {
     raw: unknown,
     expectedOwner: string,
     project: string,
+    nativeAuthority?: ProviderNativeModelAuthorityPort,
   ): Promise<ConfigurationValidation> {
     const storeDecoded = await decodeResearchProjectModelConfigurationBundle(raw);
     const bundle = storeDecoded.bundle;
@@ -374,6 +377,31 @@ export function createResearchProjectModelConfigurationValidator(options: {
           try { normalizeModelGatewayReasoningEffort(configured.reasoning_effort, transport.capabilities); }
           catch (cause) { qualificationRequired(`${rule.stage} selected reasoning effort is outside the saved transport capabilities`, cause); }
         }
+      }
+      if (selection.candidate_kind === "provider-native-v1") {
+        if (version !== "v2" || nativeAuthority === undefined) {
+          qualificationRequired(`${rule.stage} provider-native authority is unavailable for this configuration`);
+        }
+        let resolvedNative;
+        try {
+          resolvedNative = await nativeAuthority.resolvePinned({ selection, owner_ref: expectedOwner,
+            project_id: project, allow_expired_snapshot_v2: false });
+        } catch (cause) {
+          qualificationRequired(`${rule.stage} exact provider-native qualification is missing, revoked, stale, or mismatched`, cause);
+        }
+        const preparation = resolvedNative.candidate.candidate.preparation;
+        if (resolvedNative.selection.stage !== selection.stage ||
+            resolvedNative.selection.route_ref !== rule.deployment.route_ref ||
+            resolvedNative.selection.route_version !== rule.deployment.route_version ||
+            preparation.owner_ref !== expectedOwner || preparation.project_id !== project ||
+            preparation.stage !== selection.stage || !same(preparation.deployment, rule.deployment) ||
+            !same(resolvedNative.selection.transport_policy, transport)) {
+          qualificationRequired(`${rule.stage} provider-native candidate differs from the exact saved application tuple`);
+        }
+        if (selection.stage === "SYNTHESIZE" || selection.stage === "AUDIT_CLAIMS") {
+          await validateOwnerPromptBinding(semantic, selection.stage, rule.deployment, transport);
+        }
+        continue;
       }
       const pinned: PinnedModelSelection = selection;
       try {

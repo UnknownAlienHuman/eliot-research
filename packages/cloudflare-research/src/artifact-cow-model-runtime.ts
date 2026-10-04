@@ -14,7 +14,7 @@ import {
 } from "./research-model-prompt.js";
 import { createResearchModelOutputStore } from "./research-model-output-store.js";
 import { createArtifactCowModelExecutor, type ArtifactCowModelExecutorDependencies } from "./artifact-cow-model-executor.js";
-import { createD1ArtifactCowModelRevalidator } from "./artifact-cow-model-revalidator.js";
+import { createD1ArtifactCowModelRevalidator, type ArtifactCowNativeModelSelectionResolver } from "./artifact-cow-model-revalidator.js";
 import { createModelAttemptStore } from "./model-attempt-store.js";
 
 /** Production model route dependencies; all prompt and spend values are server assembled. */
@@ -24,6 +24,8 @@ export interface ArtifactCowModelRuntimeDependencies {
   readonly gateway: ResearchModelGatewayRuntimeConfig;
   readonly prompt: ResearchModelPromptCompilerDependencies;
   readonly pricing: ModelGatewayPricingPort;
+  /** Core-resolved Native pin; omitted for legacy and DynamicRoute selections. */
+  readonly resolve_native_model_selection?: ArtifactCowNativeModelSelectionResolver;
   readonly prepare: ArtifactCowModelExecutorDependencies["prepare"];
   readonly revalidateExisting: ArtifactCowModelExecutorDependencies["revalidateExisting"];
   /** Per-W2 invocation cancellation signal; never retained across operations. */
@@ -84,6 +86,7 @@ export function createArtifactCowModelRuntime(dependencies: ArtifactCowModelRunt
       }
       const runConfiguration = request.run_configuration;
       let transportPolicy: ReturnType<typeof validateModelGatewayTransportPolicy> | undefined;
+      let nativePricing: ModelGatewayPricingPort | undefined;
       let rawDeployment: unknown | null;
       if (runConfiguration === null || runConfiguration === undefined) {
         rawDeployment = await deployments.resolve(input.route_ref);
@@ -105,9 +108,6 @@ export function createArtifactCowModelRuntime(dependencies: ArtifactCowModelRunt
         }
         const selection = selected;
         transportPolicy = validateModelGatewayTransportPolicy(selection.transport_policy);
-        if (transportPolicy.api !== "compat-chat-completions") {
-          throw new Error("COW selected provider API is unsupported by the current response path");
-        }
         const configuredPolicy = dependencies.gateway.transport_policy;
         if (configuredPolicy !== undefined && canonicalJson(configuredPolicy) !== canonicalJson(transportPolicy)) {
           throw new Error("COW runtime transport differs from the immutable selected model");
@@ -116,10 +116,25 @@ export function createArtifactCowModelRuntime(dependencies: ArtifactCowModelRunt
             !Object.prototype.hasOwnProperty.call(dependencies.gateway, "gateway_token")) {
           throw new Error("COW selected BYOK model has no configured HTTP gateway credential route");
         }
-        rawDeployment = await deployments.resolvePinned(expected, selection as {
-          readonly route_ref: string; readonly route_version: string; readonly candidate_ref: string;
-          readonly candidate_sha256: string; readonly qualification_ref: string; readonly qualification_sha256: string;
-        }, { allow_expired_qualification: pin.mode === "snapshot-v2" });
+        if (selection.candidate_kind === "provider-native-v1") {
+          if (dependencies.resolve_native_model_selection === undefined) {
+            throw new Error("COW Native model authority is unavailable for the immutable run selection");
+          }
+          const resolved = await dependencies.resolve_native_model_selection({
+            selection,
+            allow_expired_snapshot_v2: pin.mode === "snapshot-v2",
+          });
+          if (canonicalJson(resolved.transport_policy) !== canonicalJson(transportPolicy)) {
+            throw new Error("COW Native transport policy differs from the immutable run selection");
+          }
+          nativePricing = resolved.pricing_port;
+          rawDeployment = resolved.deployment;
+        } else {
+          rawDeployment = await deployments.resolvePinned(expected, selection as {
+            readonly route_ref: string; readonly route_version: string; readonly candidate_ref: string;
+            readonly candidate_sha256: string; readonly qualification_ref: string; readonly qualification_sha256: string;
+          }, { allow_expired_qualification: pin.mode === "snapshot-v2" });
+        }
       }
       if (rawDeployment === null) throw new Error("COW model route is not available under its admitted selection");
       const deployment = decodeModelRouteDeployment(rawDeployment);
@@ -145,6 +160,15 @@ export function createArtifactCowModelRuntime(dependencies: ArtifactCowModelRunt
           const stage = admission.call_slot === "SYNTHESIZE" ? "SYNTHESIZE" : "AUDIT_CLAIMS";
           const selected = (pin.model_selections as Array<Record<string, unknown>>).find((item) => item.stage === stage);
           if (selected === undefined) return null;
+          if (selected.candidate_kind === "provider-native-v1") {
+            if (dependencies.resolve_native_model_selection === undefined) return null;
+            const resolved = await dependencies.resolve_native_model_selection({
+              selection: selected,
+              allow_expired_snapshot_v2: pin.mode === "snapshot-v2",
+            });
+            return canonicalJson(resolved.transport_policy) === canonicalJson(transportPolicy)
+              ? resolved.deployment : null;
+          }
           return deployments.resolvePinned(expected, selected as {
             readonly route_ref: string; readonly route_version: string; readonly candidate_ref: string;
             readonly candidate_sha256: string; readonly qualification_ref: string; readonly qualification_sha256: string;
@@ -158,7 +182,7 @@ export function createArtifactCowModelRuntime(dependencies: ArtifactCowModelRunt
         ...runtime,
         outputs: outputStorage.outputs,
         fingerprints,
-        pricing: dependencies.pricing,
+        pricing: nativePricing ?? dependencies.pricing,
       });
       return adapter.execute(input);
     },
@@ -167,6 +191,9 @@ export function createArtifactCowModelRuntime(dependencies: ArtifactCowModelRunt
   const revalidate = createD1ArtifactCowModelRevalidator({
     database: dependencies.database,
     route_authority: deployments,
+    ...(dependencies.resolve_native_model_selection === undefined ? {} : {
+      resolve_native_model_selection: dependencies.resolve_native_model_selection,
+    }),
     ...(dependencies.now === undefined ? {} : { now: dependencies.now }),
   });
 

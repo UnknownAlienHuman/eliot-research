@@ -4,6 +4,20 @@ import { z } from "zod";
 import { ModelAttemptError, type ModelAttemptReservationInput } from "./model-attempt-types.js";
 import type { ArtifactCowModelCallContext } from "./artifact-cow-model-executor.js";
 import type { PinnedModelSelection } from "./model-gateway-deployment-registry-d1.js";
+import type { ModelGatewayPricingPort } from "@eliotr/cloudflare-ai";
+
+export interface ArtifactCowNativeModelSelectionResolution {
+  readonly deployment: ModelRouteDeployment;
+  readonly transport_policy: unknown;
+  readonly pricing_port: ModelGatewayPricingPort;
+}
+
+export interface ArtifactCowNativeModelSelectionResolver {
+  (input: Readonly<{
+    selection: unknown;
+    allow_expired_snapshot_v2: boolean;
+  }>): Promise<ArtifactCowNativeModelSelectionResolution>;
+}
 
 interface CurrentCowRow {
   readonly operation_id: unknown;
@@ -99,6 +113,7 @@ function deploymentFrom(row: CowSpendRow): ModelRouteDeployment {
 export function createD1ArtifactCowModelRevalidator(input: {
   readonly database: D1Database;
   readonly route_authority: ArtifactCowModelRouteAuthority;
+  readonly resolve_native_model_selection?: ArtifactCowNativeModelSelectionResolver;
   readonly now?: () => number;
 }): (context: ArtifactCowModelCallContext, prepared: ModelAttemptReservationInput) => Promise<void> {
   const now = input.now ?? (() => Date.now());
@@ -203,11 +218,13 @@ export function createD1ArtifactCowModelRevalidator(input: {
           typeof pin.configuration_ref !== "string" || typeof pin.configuration_sha256 !== "string" ||
           !Array.isArray(pin.model_selections)) stale("COW original run pin identity is incomplete");
       const stage = spend.call_slot === "SYNTHESIZE" ? "SYNTHESIZE" : "AUDIT_CLAIMS";
-      const matches = pin.model_selections.filter((item): item is PinnedModelSelection & { readonly stage: string } =>
+      const matches = pin.model_selections.filter((item): item is PinnedModelSelection & {
+        readonly stage: string; readonly candidate_kind?: unknown; readonly transport_policy?: unknown;
+      } =>
         typeof item === "object" && item !== null && !Array.isArray(item) && (item as { stage?: unknown }).stage === stage);
       const selection = matches[0];
       if (matches.length !== 1 || selection === undefined || selection.route_ref !== expectedDeployment.route_ref ||
-          selection.route_version !== expectedDeployment.route_version || input.route_authority.resolvePinned === undefined) {
+          selection.route_version !== expectedDeployment.route_version) {
         stale("COW original run has no exact pinned qualification for this model slot");
       }
       const row = await input.database.prepare(
@@ -219,9 +236,26 @@ export function createD1ArtifactCowModelRevalidator(input: {
       if (row === null || row.configuration_ref !== pin.configuration_ref || row.configuration_sha256 !== pin.configuration_sha256) {
         stale("COW original run configuration pointer changed or disappeared");
       }
-      currentDeploymentRaw = await input.route_authority.resolvePinned(expectedDeployment, selection, {
-        allow_expired_qualification: pin.mode === "snapshot-v2",
-      });
+      if (selection.candidate_kind === "provider-native-v1") {
+        if (input.resolve_native_model_selection === undefined) {
+          stale("COW Native model authority is unavailable for the immutable run selection");
+        }
+        const resolved = await input.resolve_native_model_selection({
+          selection,
+          allow_expired_snapshot_v2: pin.mode === "snapshot-v2",
+        });
+        if (canonicalJson(resolved.transport_policy) !== canonicalJson(selection.transport_policy)) {
+          stale("COW Native transport policy differs from the immutable run selection");
+        }
+        currentDeploymentRaw = resolved.deployment;
+      } else {
+        if (input.route_authority.resolvePinned === undefined) {
+          stale("COW dynamic model pin resolver is unavailable");
+        }
+        currentDeploymentRaw = await input.route_authority.resolvePinned(expectedDeployment, selection, {
+          allow_expired_qualification: pin.mode === "snapshot-v2",
+        });
+      }
     }
     if (currentDeploymentRaw === null) stale("COW model deployment is not active");
     let currentDeployment: ModelRouteDeployment;

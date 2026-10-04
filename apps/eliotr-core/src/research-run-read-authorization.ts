@@ -2,6 +2,7 @@ import { createNavigationReadAuthority, loadScopeAuthority } from "@eliotr/cloud
 import { OrientationError, ScopeServiceError, reauthorizeOwnerHistoricalScope, reauthorizeOwnerRunScope, type OwnerMachineRunOrigin } from "@eliotr/cloudflare-navigation";
 import { ArtifactDraftReadError, WorkflowCheckpointError, WorkflowCheckpointStore } from "@eliotr/cloudflare-research";
 import type { WorkflowRunStatus } from "@eliotr/cloudflare-research";
+import { requireWorkflowRunStatusContinuity as requireRunStatusContinuity } from "@eliotr/cloudflare-workflows";
 import { readHistoricalResearchCoverage, readOwnerMachineHistoricalResearchCoverage, type HistoricalResearchArtifactBinding } from "@eliotr/cloudflare-research-stages";
 import type { AuthenticatedRequestContext, ResearchRunStatus } from "@eliotr/interfaces";
 import { NavigationError } from "@eliotr/retrieval";
@@ -60,15 +61,7 @@ function mapReadFailure(error: unknown): never {
   throw error;
 }
 
-export function requireRunStatusContinuity(left: WorkflowRunStatus, right: WorkflowRunStatus): void {
-  if (left.operation_id !== right.operation_id || left.investigation_id !== right.investigation_id ||
-      left.initial_revision !== right.initial_revision || left.principal_ref !== right.principal_ref ||
-      left.credential_generation !== right.credential_generation ||
-      left.deployment_generation !== right.deployment_generation ||
-      left.scope_snapshot_id !== right.scope_snapshot_id || left.scope_snapshot_revision !== right.scope_snapshot_revision ||
-      right.next_stage_index < left.next_stage_index ||
-      (left.state !== "ACTIVE" && right.state !== left.state)) corrupt();
-}
+export { requireRunStatusContinuity };
 
 /** A refreshed owner session can read history; it cannot renew execution authority.
  * The stored credential is provenance only. All authorization uses the current caller.

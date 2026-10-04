@@ -173,3 +173,19 @@ These observations apply to deployed source `2f47196507011bf9d75e71808a0d11d0a9a
 - Report DRAFT, citation/source and same-artifact reopen acceptance remain NOT ACCEPTED. Research MCP authorization is being checked against official documentation. No Cloudflare support message was sent. The free functional-only constraint and deferred cognitive, quality and load tests remain in force.
 
 Correction to the earlier general expiry description: the owner V2 path validates exact saved candidate/proof/observation bindings and explicit revocation under the versioned configuration policy. New V2 runs pin that saved selection and bypass calendar-only qualification renewal; authority, source scope, spend and material configuration checks still apply. This is verified against the supplied owner instructions and source paths, not a new live run using an expired proof.
+
+## 2026-10-04 native Workflow diagnosis checkpoint
+
+A read-only Cloudflare API request returned HTTP 200 for the exact failed instance
+`run-2b607e3c7569b95f26d35af2e4250c90fe5920143bfefc3e` of
+`eliotr-research-workflow`. Its version is
+`c4e79fa9-562e-43fc-9d92-0a8c91b77d6f`, and its status is `errored`.
+The failed step is `w2-stage-10-RECONCILE-1`, with one attempt from
+10:58:27.539 to 10:58:29.819 UTC. Both instance and step expose only
+`WorkflowCheckpointError: WORKFLOW_EFFECT_UNCERTAIN`.
+
+This establishes the failed native step, not its underlying exception. The older
+stage-8 instance log and the later scope invalidation do not establish this
+failure's cause. No instance retry, recovery, model call or remote mutation was
+performed for this diagnosis. Normal Run, Report DRAFT, citation/source and reopen
+acceptance remain open.

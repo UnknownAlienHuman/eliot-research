@@ -1,0 +1,39 @@
+{
+  "name": "@eliotr/cloudflare-model-execution",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": "./src/index.ts",
+    "./model-attempt-handler.js": "./src/model-attempt-handler.ts",
+    "./model-attempt-types.js": "./src/model-attempt-types.ts",
+    "./model-attempt-store.js": "./src/model-attempt-store.ts",
+    "./model-attempt-readback.js": "./src/model-attempt-readback.ts",
+    "./research-model-attempt-revalidator.js": "./src/research-model-attempt-revalidator.ts",
+    "./research-model-output-store.js": "./src/research-model-output-store.ts",
+    "./research-model-output-preparation.js": "./src/research-model-output-preparation.ts",
+    "./research-model-stage-handler.js": "./src/research-model-stage-handler.ts",
+    "./research-model-spend-admission.js": "./src/research-model-spend-admission.ts",
+    "./research-model-spend-policy.js": "./src/research-model-spend-policy.ts",
+    "./research-model-spend-observation.js": "./src/research-model-spend-observation.ts",
+    "./research-model-spend-settlement.js": "./src/research-model-spend-settlement.ts",
+    "./research-model-spend-admission-types.js": "./src/research-model-spend-admission-types.ts"
+  },
+  "types": "./src/index.ts",
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc -b --pretty false"
+  },
+  "dependencies": {
+    "@eliotr/cloudflare-ai": "workspace:*",
+    "@eliotr/cloudflare-evidence": "workspace:*",
+    "@eliotr/cloudflare-model-control": "workspace:*",
+    "@eliotr/cloudflare-native-models": "workspace:*",
+    "@eliotr/cloudflare-workflows": "workspace:*",
+    "@eliotr/contracts": "workspace:*",
+    "@eliotr/platform-cloudflare": "workspace:*",
+    "@eliotr/research": "workspace:*",
+    "zod": "4.4.3"
+  }
+}

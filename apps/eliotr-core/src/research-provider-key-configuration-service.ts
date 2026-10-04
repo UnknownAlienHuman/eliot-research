@@ -7,6 +7,13 @@ import {
 } from "@eliotr/contracts";
 import { OpenRouterProviderKeyRestError, type OpenRouterProviderKeyErrorCode } from "@eliotr/cloudflare-ai";
 import type { AuthenticatedRequestContext } from "@eliotr/interfaces";
+import {
+  ConfiguredProviderKeyOperationReadError,
+  readConfiguredProviderKeyOperation,
+} from "./research-provider-key-configured-operation.js";
+import type { ConfiguredResearchProviderKeyOperation } from "./research-provider-key-configured-operation.js";
+
+export type { ConfiguredResearchProviderKeyOperation } from "./research-provider-key-configured-operation.js";
 
 const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/u;
 const ACCOUNT_ID = /^[A-Fa-f0-9]{32}$/u;
@@ -86,20 +93,6 @@ interface SafeConfiguredReadback {
   readonly provider_config_id: string;
   readonly secret_id: string;
   readonly observed_modified_at: string;
-}
-
-/** Internal server-to-server metadata used by a later explicit check-and-use action. */
-export interface ConfiguredResearchProviderKeyOperation {
-  readonly owner_id: string;
-  readonly project_id: string;
-  readonly operation_id: string;
-  readonly provider_id: "openrouter";
-  readonly account_id: string;
-  readonly gateway_id: string;
-  readonly alias: string;
-  readonly provider_config_id: string;
-  readonly status: "configured_not_qualified";
-  readonly created_at: string;
 }
 
 function validIdentifier(value: unknown, label: string): string {
@@ -360,14 +353,19 @@ export function createResearchProviderKeyConfigurationService(options: {
         fail("RESEARCH_PROVIDER_KEY_CONFIGURATION_INPUT_INVALID", 400,
           "Provider key operation ID is invalid");
       }
-      const row = await operation(before.owner_id, project, operationIdRaw);
-      if (row === null) {
+      let readback: Awaited<ReturnType<typeof readConfiguredProviderKeyOperation>>;
+      try { readback = await readConfiguredProviderKeyOperation(options.database, before.owner_id, project, operationIdRaw); }
+      catch (cause) {
+        const code = cause instanceof ConfiguredProviderKeyOperationReadError ? cause.code : "STORAGE_UNAVAILABLE";
+        fail(code === "STORAGE_UNAVAILABLE" ? "RESEARCH_PROVIDER_KEY_CONFIGURATION_STORAGE_UNAVAILABLE" :
+          "RESEARCH_PROVIDER_KEY_CONFIGURATION_READBACK_INVALID", 503,
+          "Provider key operation readback is unavailable", true, cause);
+      }
+      if (readback.status === "missing") {
         fail("RESEARCH_PROVIDER_KEY_CONFIGURATION_OPERATION_NOT_FOUND", 404,
           "Configured provider key operation was not found");
       }
-      const safe = mapOperation(row);
-      if (safe.status !== "configured_not_qualified" || safe.provider_config_id === null ||
-          typeof row.account_id !== "string" || typeof row.gateway_id !== "string") {
+      if (readback.status !== "configured") {
         fail("RESEARCH_PROVIDER_KEY_CONFIGURATION_NOT_CONFIGURED", 409,
           "This provider key operation has no acknowledged configuration");
       }
@@ -376,10 +374,7 @@ export function createResearchProviderKeyConfigurationService(options: {
         fail("RESEARCH_PROVIDER_KEY_CONFIGURATION_AUTHORITY_CHANGED", 409,
           "Current project authority changed while reading configured provider metadata");
       }
-      return Object.freeze({ owner_id: before.owner_id, project_id: project,
-        operation_id: operationIdRaw, provider_id: PROVIDER_ID, account_id: row.account_id,
-        gateway_id: row.gateway_id, alias: safe.alias, provider_config_id: safe.provider_config_id,
-        status: "configured_not_qualified", created_at: safe.created_at });
+      return readback.operation;
     },
 
     async read(context: AuthenticatedRequestContext, projectRaw: string, operationId?: string) {

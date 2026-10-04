@@ -17,7 +17,7 @@ import {
   AiSearchFunctionalProbeError,
   createAiSearchFunctionalProbe,
   type AiSearchFunctionalProbeErrorCode,
-} from "./ai-search-functional-probe.js";
+} from "@eliotr/cloudflare-search-probe";
 import { readReadiness } from "./readiness.js";
 
 const MAX_QUERY_BYTES = 4096;

@@ -4,6 +4,7 @@ import {
   type ModelGatewayRequestCapabilitiesV1,
   type ModelGatewayTransportPolicyV1,
 } from "@eliotr/cloudflare-ai";
+import { decodeProviderNativeModelSelection } from "@eliotr/cloudflare-native-models";
 import type { ResearchModelGatewayRuntimeConfig } from "@eliotr/cloudflare-research";
 import type { ResearchRunModelSelection, ResearchRunConfigurationModeWithLegacy } from "./research-run-configuration.js";
 
@@ -18,6 +19,8 @@ export type ResearchSelectedModelStage = typeof RESEARCH_SELECTED_MODEL_STAGES[n
 
 export interface ResearchSelectedModelTransportConfiguration {
   readonly mode: ResearchRunConfigurationModeWithLegacy;
+  readonly project_owner_ref?: string | null;
+  readonly project_id?: string | null;
   readonly model_selections?: readonly ResearchRunModelSelection[];
 }
 
@@ -90,6 +93,17 @@ export function resolveResearchSelectedModelTransport(input: {
   if (matching.length !== 1) invalid(`snapshot has duplicate selected models for ${input.stage}`);
   const selection = matching[0];
   if (selection === undefined) required(`snapshot has no selected model for ${input.stage}`);
+  if (selection.candidate_kind === "provider-native-v1") {
+    try {
+      if (canonicalModelGatewayJson(decodeProviderNativeModelSelection(selection)) !==
+          canonicalModelGatewayJson(selection)) {
+        invalid("snapshot Native model selection is not canonically encoded");
+      }
+    } catch (cause) {
+      if (cause instanceof ResearchSelectedModelTransportError) throw cause;
+      invalid("snapshot Native model selection is invalid", cause);
+    }
+  }
   if (typeof selection.route_ref !== "string" || selection.route_ref.length === 0 ||
       typeof selection.route_version !== "string" || selection.route_version.length === 0 ||
       typeof selection.candidate_ref !== "string" || selection.candidate_ref.length === 0 ||

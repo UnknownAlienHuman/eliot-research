@@ -1,0 +1,31 @@
+{
+  "name": "@eliotr/pwa-research-workspace",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./research-run-panel": "./src/research-run-panel.ts",
+    "./research-changes-panel": "./src/research-changes-panel.ts",
+    "./research-configuration-panel": "./src/research-configuration-panel.ts",
+    "./research-run-api": "./src/research-run-api.ts",
+    "./research-run-report": "./src/research-run-report.ts",
+    "./research-run-reauthorization-api": "./src/research-run-reauthorization-api.ts",
+    "./wiki-proposal-create-api": "./src/wiki-proposal-create-api.ts",
+    "./research-model-configuration-api": "./src/research-model-configuration-api.ts"
+  },
+  "types": "./src/index.ts",
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc -b --pretty false",
+    "test": "vitest run --root ../.. packages/pwa-research-workspace --reporter=verbose"
+  },
+  "dependencies": {
+    "@eliotr/contracts": "workspace:*",
+    "@eliotr/pwa-http-client": "workspace:*",
+    "@eliotr/pwa-source-workspace": "workspace:*"
+  },
+  "devDependencies": {
+    "vitest": "4.1.11"
+  }
+}

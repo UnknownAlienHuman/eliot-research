@@ -91,7 +91,8 @@ function selectedConfiguration(input: ResearchRunConfigurationAdmissionInput, en
     });
     const selected = await readSelectedResearchProjectConfiguration(service, input.context, projectId);
     if (selected === null) return null;
-    return { configuration_ref: selected.configuration_ref,
+    return { owner_ref: input.context.principal_ref, project_id: projectId,
+      configuration_ref: selected.configuration_ref,
       configuration_sha256: selected.configuration_sha256,
       selection_revision: selected.selection_revision,
       configuration_json: selected.configuration_json };

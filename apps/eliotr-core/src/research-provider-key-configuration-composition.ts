@@ -15,12 +15,12 @@ const ACCOUNT_ID = /^[a-f0-9]{32}$/u;
 const GATEWAY_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/u;
 const MAX_CONTROL_TOKEN_LENGTH = 4_096;
 
-interface InstalledGatewayIdentity {
+export interface InstalledGatewayIdentity {
   readonly account_id: string;
   readonly gateway_id: string;
 }
 
-function installedGatewayIdentity(raw: unknown): InstalledGatewayIdentity | undefined {
+export function installedGatewayIdentity(raw: unknown): InstalledGatewayIdentity | undefined {
   if (typeof raw !== "string") return undefined;
   let url: URL;
   try { url = new URL(raw); }

@@ -1,5 +1,5 @@
 import type { BackupEpochDraft, BackupPartRef } from "./epoch.js";
-import { TABLE_SPECS, BACKUP_MANIFEST_PROTOCOL, BACKUP_SCHEMA_INVENTORY_PROTOCOL, assertExportColumnCoverage, digestCoreColumnInventory, type CoreTableInventory } from "./coherent-cut.js";
+import { BACKUP_MANIFEST_PROTOCOL, BACKUP_SCHEMA_INVENTORY_PROTOCOL, assertExportColumnCoverage, coreTableSpecsForMigrationNames, digestCoreColumnInventory, type CoreTableInventory, type TableSpec } from "./coherent-cut.js";
 import { rebuildManifestLines } from "./coverage.js";
 import { backupSha256Hex, canonicalBackupJson, failBackup } from "./shared.js";
 import { BACKUP_R2_PAYLOAD_PROTOCOL, backupR2ObjectIdentity, type R2ObjectEntry } from "./r2-inventory.js";
@@ -167,6 +167,12 @@ export async function verifyPortableBackupManifests(input: {
     await backupSha256Hex(`migration-ledger\n${(migrationNames as string[]).join("\n")}`) !== draft.migration_ledger_digest) {
     invalid("backup migration ledger names do not match their durable digest");
   }
+  let tableSpecs: readonly TableSpec[];
+  try {
+    tableSpecs = coreTableSpecsForMigrationNames(migrationNames as string[]);
+  } catch {
+    invalid("backup migration ledger has an incomplete provider-authority migration chain");
+  }
 
   const inventoryLines = objectLines(manifests["schema-inventory"] ?? [], "schema-inventory");
   const inventoryRoot = oneLine<Record<string, unknown>>(inventoryLines, (line) => "schema_inventory_digest" in line, "schema-inventory");
@@ -177,7 +183,7 @@ export async function verifyPortableBackupManifests(input: {
   }
   const declaredTables = inventoryLines.filter((line) => "table" in line);
   const tableNames = declaredTables.map((line) => line["table"]);
-  const expectedTables = [...new Set(TABLE_SPECS.map((spec) => spec.table))].sort();
+  const expectedTables = [...new Set(tableSpecs.map((spec) => spec.table))].sort();
   if (tableNames.some((name) => typeof name !== "string") || [...tableNames as string[]].sort().some((name, i) => name !== expectedTables[i]) || tableNames.length !== expectedTables.length) {
     invalid("backup schema inventory table set is incomplete or unrecognized");
   }
@@ -188,7 +194,7 @@ export async function verifyPortableBackupManifests(input: {
     const table = line["table"] as string;
     const columns = line["columns"];
     const shapes = line["column_shapes"];
-    const known = TABLE_SPECS.find((spec) => spec.table === table);
+    const known = tableSpecs.find((spec) => spec.table === table);
     if (!Array.isArray(columns) || columns.some((column) => typeof column !== "string") || !Array.isArray(shapes) || shapes.length !== columns.length) {
       invalid(`backup schema inventory has malformed columns for ${table}`);
     }
@@ -202,7 +208,7 @@ export async function verifyPortableBackupManifests(input: {
     if (new Set(parsedShapes.map((column) => column.name)).size !== parsedShapes.length) invalid(`backup schema inventory duplicates a column for ${table}`);
     parsedInventory.push({ table, columns: parsedShapes });
   }
-  assertExportColumnCoverage(parsedInventory, TABLE_SPECS);
+  assertExportColumnCoverage(parsedInventory, tableSpecs);
   parsedInventory.sort((left, right) => left.table < right.table ? -1 : left.table > right.table ? 1 : 0);
   if (await digestCoreColumnInventory(parsedInventory) !== inventoryRoot["schema_inventory_digest"]) invalid("backup schema inventory digest does not match its exact column shapes");
 
@@ -217,8 +223,8 @@ export async function verifyPortableBackupManifests(input: {
       const row = line["row"];
       if (typeof line["table"] !== "string" || !isRecord(row)) invalid(`backup ${name} manifest contains a malformed portable row`);
       const table = line["table"];
-      const spec = TABLE_SPECS.find((entry) => entry.table === table);
-      if (spec === undefined || (table === "purge_ledger" ? name !== "purge" : name !== spec.manifest)) invalid(`backup row for ${table} appears in an unknown or incorrect manifest`);
+      const spec = tableSpecs.find((entry) => entry.table === table);
+      if (spec === undefined || !expectedTables.includes(table) || (table === "purge_ledger" ? name !== "purge" : name !== spec.manifest)) invalid(`backup row for ${table} appears in an unknown or incorrect manifest`);
       const shapes = columnShapesByTable.get(table);
       const columns = tableInventory.get(table);
       if (shapes === undefined || columns === undefined || !exactKeys(row, columns)) invalid(`backup row for ${table} does not match its exact portable column inventory`);

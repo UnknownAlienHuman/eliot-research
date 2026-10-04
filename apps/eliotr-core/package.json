@@ -34,7 +34,18 @@
     "@eliotr/cloudflare-markdown": "workspace:*",
     "@eliotr/cloudflare-workflows": "workspace:*",
     "@eliotr/cloudflare-federation": "workspace:*",
-    "zod": "4.4.3"
+    "zod": "4.4.3",
+    "@eliotr/cloudflare-computer-agent": "workspace:*",
+    "@eliotr/cloudflare-wiki": "workspace:*",
+    "@eliotr/cloudflare-model-control": "workspace:*",
+    "@eliotr/cloudflare-native-models": "workspace:*",
+    "@eliotr/cloudflare-erasure-operations": "workspace:*",
+    "@eliotr/cloudflare-research-runtime": "workspace:*",
+    "@eliotr/cloudflare-search-probe": "workspace:*",
+    "@eliotr/cloudflare-model-transport": "workspace:*",
+    "@eliotr/cloudflare-research-branches": "workspace:*",
+    "@eliotr/cloudflare-research-configuration": "workspace:*",
+    "@eliotr/cloudflare-backup": "workspace:*"
   },
   "devDependencies": {
     "wrangler": "4.143.1",

@@ -5,7 +5,9 @@ import { fileURLToPath } from "node:url";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { describe, expect, it } from "vitest";
 import {
+  assertCoreTableMigrationPresence,
   assertExportColumnCoverage,
+  coreTableSpecsForMigrationNames,
   readCoreColumnInventory,
   TABLE_SPECS,
 } from "./coherent-cut.js";
@@ -17,6 +19,18 @@ import {
 } from "./coverage.js";
 
 const migrationDirectory = resolve(dirname(fileURLToPath(import.meta.url)), "../../../infra/d1/core/migrations");
+const PROVIDER_AUTHORITY_TABLES = [
+  "research_provider_key_configuration_operation",
+  "research_provider_key_model_use_operation",
+  "research_provider_key_model_use_stage_operation",
+  "research_provider_key_model_price_observation",
+  "provider_native_model_preparation",
+  "provider_native_model_qualification_attempt",
+  "provider_native_model_qualification_observation",
+  "provider_native_model_candidate",
+  "provider_native_model_qualification_proof",
+  "provider_native_model_qualification_revocation",
+] as const;
 
 function d1Database(db: DatabaseSync): D1Database {
   return {
@@ -70,6 +84,11 @@ describe("ER-34 O2 full Core migration coverage", () => {
     ]) {
       expect(classifyDurableTable(table)).toBe("CANONICAL_EXPORTED");
     }
+    for (const table of PROVIDER_AUTHORITY_TABLES) {
+      expect(classifyDurableTable(table)).toBe("CANONICAL_EXPORTED");
+      expect(CANONICAL_EXPORTED_TABLES.has(table)).toBe(true);
+      expect(TABLE_SPECS.some((spec) => spec.table === table)).toBe(true);
+    }
     expect(CANONICAL_EXPORTED_TABLES.has("scope_read_policy")).toBe(false);
     expect(classifyDurableTable("scope_read_policy")).toBe("NOT_A_BACKUP");
     expect(database.prepare("SELECT COUNT(*) AS n FROM historical_scope_access_grant").get()).toEqual({ n: 0 });
@@ -99,6 +118,32 @@ describe("ER-34 O2 full Core migration coverage", () => {
     database.exec("ALTER TABLE source ADD COLUMN unclassified_probe TEXT");
     const inventory = await readCoreColumnInventory(d1, ["source"]);
     expect(() => assertExportColumnCoverage(inventory, TABLE_SPECS)).toThrowError(expect.objectContaining({ code: "BACKUP_COVERAGE_GAP" }));
+  });
+
+  it("keeps pre-0109 manifest inventory stable and rejects partial provider-authority schema chains", () => {
+    const migrations = readdirSync(migrationDirectory)
+      .filter((name) => /^\d{4}_.+\.sql$/u.test(name))
+      .sort();
+    const preProviderAuthority = migrations.filter((name) => name < "0109_research_provider_key_configuration.sql");
+    const legacySpecs = coreTableSpecsForMigrationNames(preProviderAuthority);
+    for (const table of PROVIDER_AUTHORITY_TABLES) {
+      expect(legacySpecs.some((spec) => spec.table === table)).toBe(false);
+    }
+    const currentSpecs = coreTableSpecsForMigrationNames(migrations);
+    for (const table of PROVIDER_AUTHORITY_TABLES) {
+      expect(currentSpecs.some((spec) => spec.table === table)).toBe(true);
+    }
+
+    expect(() => coreTableSpecsForMigrationNames([
+      "0109_research_provider_key_configuration.sql",
+      "0111_provider_native_model_authority.sql",
+    ])).toThrowError(expect.objectContaining({ code: "BACKUP_COVERAGE_GAP" }));
+    expect(() => assertCoreTableMigrationPresence(
+      ["research_provider_key_configuration_operation"], [],
+    )).toThrowError(expect.objectContaining({ code: "BACKUP_COVERAGE_GAP" }));
+    expect(() => assertCoreTableMigrationPresence(
+      [], ["0109_research_provider_key_configuration.sql"],
+    )).toThrowError(expect.objectContaining({ code: "BACKUP_COVERAGE_GAP" }));
   });
 
   it("fails closed when table or PRAGMA inventory queries return failed or malformed D1 results", async () => {

@@ -2,7 +2,7 @@ import {
   evidenceSha256Bytes,
   evidenceUtf8Bytes,
 } from "@eliotr/cloudflare-evidence";
-import { APPLICATION_MODEL_ROUTES, canonicalJson } from "@eliotr/platform-cloudflare";
+import { canonicalJson } from "@eliotr/platform-cloudflare";
 import {
   createD1ResearchRunConfigurationStore,
   RESEARCH_RUN_CONFIGURATION_PROTOCOL,
@@ -18,21 +18,17 @@ import {
   translateResearchProjectSelectionFailure,
 } from "./research-run-configuration-errors.js";
 import { resolveResearchSemanticConfig } from "./research-semantic-config-revision.js";
+import { parseResearchRunModelSelections as parseModelSelections,
+  type ResearchRunModelSelection } from "./research-run-model-selection-codec.js";
+
+export type { ResearchRunModelSelection } from "./research-run-model-selection-codec.js";
 
 export type ResearchRunConfigurationModeWithLegacy = "legacy-installed" | ResearchRunConfigurationMode;
 
-export interface ResearchRunModelSelection {
-  readonly stage: string;
-  readonly route_ref: string;
-  readonly route_version: string;
-  readonly candidate_ref: string;
-  readonly candidate_sha256: string;
-  readonly qualification_ref: string;
-  readonly qualification_sha256: string;
-  readonly transport_policy: Readonly<Record<string, unknown>>;
-}
-
 export interface SelectedResearchProjectConfiguration {
+  /** Supplied by run admission only after resolving the exact current owner/project scope. */
+  readonly owner_ref?: string;
+  readonly project_id?: string;
   readonly configuration_ref: string;
   readonly configuration_sha256: string;
   readonly selection_revision: number;
@@ -47,6 +43,8 @@ export interface ResolvedResearchRunConfiguration {
   readonly model_selections: readonly ResearchRunModelSelection[];
   readonly project_configuration_ref: string | null;
   readonly project_configuration_sha256: string | null;
+  readonly project_owner_ref: string | null;
+  readonly project_id: string | null;
 }
 
 export interface CaptureResearchRunConfigurationInput extends ResearchRunConfigurationAssociation {
@@ -58,7 +56,13 @@ interface SnapshotEnvelope {
   readonly protocol: typeof RESEARCH_RUN_CONFIGURATION_PROTOCOL;
   readonly mode: ResearchRunConfigurationMode;
   readonly association: ResearchRunConfigurationAssociation;
-  readonly project_configuration: { readonly configuration_ref: string; readonly configuration_sha256: string; readonly selection_revision: number } | null;
+  readonly project_configuration: {
+    readonly configuration_ref: string;
+    readonly configuration_sha256: string;
+    readonly selection_revision: number;
+    readonly owner_ref?: string;
+    readonly project_id?: string;
+  } | null;
   readonly model_selections: readonly ResearchRunModelSelection[];
   readonly semantic: {
     readonly source: "revision" | "legacy-installed";
@@ -95,9 +99,6 @@ const PROJECT_RUNTIME_KEYS = new Set([
   "ELIOTR_RESEARCH_REPORT_CONFIG_JSON",
   "ELIOTR_RESEARCH_REPORT_POLICY_PROVENANCE_REF",
 ]);
-const MODEL_SELECTION_KEYS = new Set(["stage", "route_ref", "route_version", "candidate_ref", "candidate_sha256",
-  "qualification_ref", "qualification_sha256", "transport_policy"]);
-
 function checkpoint(code: ConstructorParameters<typeof WorkflowCheckpointError>[0]): never {
   throw new WorkflowCheckpointError(code);
 }
@@ -114,13 +115,6 @@ function exactKeys(value: Record<string, unknown>, expected: ReadonlySet<string>
 
 function identifier(value: unknown): string {
   if (typeof value !== "string" || !ID_RE.test(value)) checkpoint("WORKFLOW_CONFIGURATION_INVALID");
-  return value;
-}
-
-function modelRouteReference(value: unknown): string {
-  if (typeof value !== "string" || !(APPLICATION_MODEL_ROUTES as readonly string[]).includes(value)) {
-    checkpoint("WORKFLOW_CONFIGURATION_INVALID");
-  }
   return value;
 }
 
@@ -149,31 +143,6 @@ function provenance(value: unknown): string {
   return identifier(value);
 }
 
-function parseModelSelections(value: unknown): readonly ResearchRunModelSelection[] {
-  if (!Array.isArray(value) || value.length < 2 || value.length > 32) checkpoint("WORKFLOW_CONFIGURATION_INVALID");
-  const stages = new Set<string>();
-  const routes = new Set<string>();
-  return Object.freeze(value.map((raw) => {
-    const item = object(raw, "model selection");
-    exactKeys(item, MODEL_SELECTION_KEYS);
-    const stage = identifier(item.stage);
-    const routeRef = modelRouteReference(item.route_ref);
-    const routeVersion = identifier(item.route_version);
-    const candidateRef = identifier(item.candidate_ref);
-    const candidateSha = digest(item.candidate_sha256);
-    const qualificationRef = identifier(item.qualification_ref);
-    const qualificationSha = digest(item.qualification_sha256);
-    const selectionKey = `${stage}\u0000${routeRef}`;
-    if (stages.has(stage) || routes.has(selectionKey)) checkpoint("WORKFLOW_CONFIGURATION_INVALID");
-    stages.add(stage);
-    routes.add(selectionKey);
-    const transportPolicy = object(item.transport_policy, "transport policy");
-    return Object.freeze({ stage, route_ref: routeRef, route_version: routeVersion, candidate_ref: candidateRef,
-      candidate_sha256: candidateSha, qualification_ref: qualificationRef, qualification_sha256: qualificationSha,
-      transport_policy: Object.freeze({ ...transportPolicy }) });
-  }));
-}
-
 async function parseSnapshotRecord(record: ResearchRunConfigurationRecord): Promise<SnapshotEnvelope> {
   let parsed: unknown;
   try { parsed = JSON.parse(record.configuration_json) as unknown; }
@@ -191,12 +160,17 @@ async function parseSnapshotRecord(record: ResearchRunConfigurationRecord): Prom
   let projectConfiguration: SnapshotEnvelope["project_configuration"] = null;
   if (root.project_configuration !== null) {
     const source = object(root.project_configuration, "project configuration provenance");
-    exactKeys(source, new Set(["configuration_ref", "configuration_sha256", "selection_revision"]));
+    const oldKeys = new Set(["configuration_ref", "configuration_sha256", "selection_revision"]);
+    const nativeKeys = new Set([...oldKeys, "owner_ref", "project_id"]);
+    if (Object.keys(source).length === oldKeys.size) exactKeys(source, oldKeys);
+    else exactKeys(source, nativeKeys);
     if (!Number.isSafeInteger(source.selection_revision) || (source.selection_revision as number) < 1) {
       checkpoint("WORKFLOW_CONFIGURATION_INVALID");
     }
     projectConfiguration = Object.freeze({ configuration_ref: identifier(source.configuration_ref),
-      configuration_sha256: digest(source.configuration_sha256), selection_revision: source.selection_revision as number });
+      configuration_sha256: digest(source.configuration_sha256), selection_revision: source.selection_revision as number,
+      ...(source.owner_ref === undefined ? {} : { owner_ref: identifier(source.owner_ref) }),
+      ...(source.project_id === undefined ? {} : { project_id: identifier(source.project_id) }) });
   }
   const semantic = object(root.semantic, "semantic configuration");
   exactKeys(semantic, new Set(["source", "config_json", "revision_ref", "config_sha256"]));
@@ -225,11 +199,16 @@ async function parseSnapshotRecord(record: ResearchRunConfigurationRecord): Prom
   const expectedMode = typeof object(spend, "spend policy").protocol === "string" &&
     (object(spend, "spend policy").protocol as string).endsWith("template.v2") ? "snapshot-v2" : "snapshot-v1";
   if (record.mode !== expectedMode) checkpoint("WORKFLOW_CONFIGURATION_INVALID");
+  const modelSelections = parseModelSelections(root.model_selections);
+  const hasNativeSelection = modelSelections.some((selection) => selection.candidate_kind === "provider-native-v1");
+  if (hasNativeSelection && (projectConfiguration?.owner_ref === undefined || projectConfiguration.project_id === undefined)) {
+    checkpoint("WORKFLOW_CONFIGURATION_INVALID");
+  }
   return Object.freeze({ protocol: RESEARCH_RUN_CONFIGURATION_PROTOCOL, mode: record.mode,
     association: Object.freeze({ operation_id: record.operation_id, investigation_id: record.investigation_id,
       principal_ref: record.principal_ref, deployment_generation: record.deployment_generation }),
     project_configuration: projectConfiguration,
-    model_selections: parseModelSelections(root.model_selections),
+    model_selections: modelSelections,
     semantic: Object.freeze({ source: semanticSource as SnapshotEnvelope["semantic"]["source"], config_json: semanticJson,
       revision_ref: semanticRevision, config_sha256: semanticSha }),
     model_profile: Object.freeze({ config_json: requiredJson(modelProfile.config_json, "model profile"),
@@ -281,11 +260,15 @@ function overlay(env: Env, snapshot: SnapshotEnvelope): Env {
 
 async function resolved(env: Env, record: ResearchRunConfigurationRecord): Promise<ResolvedResearchRunConfiguration> {
   const snapshot = await parseSnapshotRecord(record);
+  const hasNativeSelection = snapshot.model_selections.some((selection) => selection.candidate_kind === "provider-native-v1");
+  if (hasNativeSelection && record.mode !== "snapshot-v2") checkpoint("WORKFLOW_CONFIGURATION_INVALID");
   return Object.freeze({ env: overlay(env, snapshot), mode: record.mode,
     configuration_ref: record.configuration_ref, configuration_sha256: record.configuration_sha256,
     model_selections: snapshot.model_selections,
     project_configuration_ref: snapshot.project_configuration?.configuration_ref ?? null,
-    project_configuration_sha256: snapshot.project_configuration?.configuration_sha256 ?? null });
+    project_configuration_sha256: snapshot.project_configuration?.configuration_sha256 ?? null,
+    project_owner_ref: snapshot.project_configuration?.owner_ref ?? null,
+    project_id: snapshot.project_configuration?.project_id ?? null });
 }
 
 function runBindingError(error: unknown): never {
@@ -329,7 +312,8 @@ function sameAssociation(record: ResearchRunConfigurationRecord, actor: Research
 
 function legacy(env: Env): ResolvedResearchRunConfiguration {
   return Object.freeze({ env, mode: "legacy-installed", configuration_ref: null, configuration_sha256: null,
-    model_selections: Object.freeze([]), project_configuration_ref: null, project_configuration_sha256: null });
+    model_selections: Object.freeze([]), project_configuration_ref: null, project_configuration_sha256: null,
+    project_owner_ref: null, project_id: null });
 }
 
 function sourceString(value: unknown, _label: string): string {
@@ -412,7 +396,9 @@ async function composeSnapshot(
     envelope = source.envelope;
     vars = source.vars;
     projectConfiguration = Object.freeze({ configuration_ref: selectedProject.configuration_ref,
-      configuration_sha256: selectedProject.configuration_sha256, selection_revision: selectedProject.selection_revision });
+      configuration_sha256: selectedProject.configuration_sha256, selection_revision: selectedProject.selection_revision,
+      ...(selectedProject.owner_ref === undefined ? {} : { owner_ref: identifier(selectedProject.owner_ref) }),
+      ...(selectedProject.project_id === undefined ? {} : { project_id: identifier(selectedProject.project_id) }) });
   }
   let sourceEnv = env;
   let projectSemantic: Record<string, unknown> | undefined;
@@ -460,9 +446,14 @@ async function composeSnapshot(
       !modelSelections.some((selection) => selection.stage === "AUDIT_CLAIMS")) {
     checkpoint("WORKFLOW_CONFIGURATION_MISSING");
   }
+  const hasNativeSelection = modelSelections.some((selection) => selection.candidate_kind === "provider-native-v1");
+  if (hasNativeSelection && (projectConfiguration?.owner_ref === undefined || projectConfiguration.project_id === undefined)) {
+    checkpoint("WORKFLOW_CONFIGURATION_INVALID");
+  }
   const spend = jsonObject(spendJson, "spend policy");
   const mode: ResearchRunConfigurationMode = typeof spend.protocol === "string" && spend.protocol.endsWith("template.v2")
     ? "snapshot-v2" : "snapshot-v1";
+  if (hasNativeSelection && mode !== "snapshot-v2") checkpoint("WORKFLOW_CONFIGURATION_INVALID");
   const runtimeEnv: Env = {
     ...sourceEnv,
     ELIOTR_MODEL_PROFILE_DEFINITION_JSON: profileJson,

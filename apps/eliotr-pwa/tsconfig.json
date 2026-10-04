@@ -25,6 +25,9 @@
     },
     {
       "path": "../../packages/contracts"
+    },
+    {
+      "path": "../../packages/pwa-research-workspace"
     }
   ]
 }

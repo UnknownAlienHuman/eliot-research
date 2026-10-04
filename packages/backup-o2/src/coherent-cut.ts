@@ -57,6 +57,56 @@ export const TABLE_SPECS: readonly TableSpec[] = [
   ...DURABLE_CORE_TABLE_SPECS,
 ];
 
+const AUTHORITY_TABLE_INTRODUCTIONS: Readonly<Record<string, string>> = {
+  research_provider_key_configuration_operation: "0109_research_provider_key_configuration.sql",
+  research_provider_key_model_use_operation: "0110_research_provider_key_model_use.sql",
+  research_provider_key_model_use_stage_operation: "0110_research_provider_key_model_use.sql",
+  research_provider_key_model_price_observation: "0110_research_provider_key_model_use.sql",
+  provider_native_model_preparation: "0111_provider_native_model_authority.sql",
+  provider_native_model_qualification_attempt: "0111_provider_native_model_authority.sql",
+  provider_native_model_qualification_observation: "0111_provider_native_model_authority.sql",
+  provider_native_model_candidate: "0111_provider_native_model_authority.sql",
+  provider_native_model_qualification_proof: "0111_provider_native_model_authority.sql",
+  provider_native_model_qualification_revocation: "0111_provider_native_model_authority.sql",
+};
+
+const AUTHORITY_MIGRATION_CHAIN = [
+  "0109_research_provider_key_configuration.sql",
+  "0110_research_provider_key_model_use.sql",
+  "0111_provider_native_model_authority.sql",
+] as const;
+
+/**
+ * Select the additive 0109–0111 table specs that belong to a persisted Core
+ * migration ledger. All pre-existing table specs stay required by the
+ * portable inventory; only these three known schema additions are conditional.
+ */
+export function coreTableSpecsForMigrationNames(migrationNames: readonly string[]): readonly TableSpec[] {
+  const names = new Set(migrationNames);
+  for (let index = 1; index < AUTHORITY_MIGRATION_CHAIN.length; index += 1) {
+    const migration = AUTHORITY_MIGRATION_CHAIN[index];
+    const predecessor = AUTHORITY_MIGRATION_CHAIN[index - 1];
+    if (migration !== undefined && predecessor !== undefined && names.has(migration) && !names.has(predecessor)) {
+      failBackup("BACKUP_COVERAGE_GAP", `backup migration ledger contains ${migration} without its provider-authority predecessor ${predecessor}`, false);
+    }
+  }
+  return TABLE_SPECS.filter((spec) => {
+    const migration = AUTHORITY_TABLE_INTRODUCTIONS[spec.table];
+    return migration === undefined || names.has(migration);
+  });
+}
+
+/** Fail closed on DDL tables that disagree with their introducing migration. */
+export function assertCoreTableMigrationPresence(existingTables: readonly string[], migrationNames: readonly string[]): void {
+  const existing = new Set(existingTables);
+  const names = new Set(migrationNames);
+  for (const [table, migration] of Object.entries(AUTHORITY_TABLE_INTRODUCTIONS)) {
+    if (existing.has(table) !== names.has(migration)) {
+      failBackup("BACKUP_COVERAGE_GAP", `backup table ${table} presence disagrees with introducing migration ${migration}`, false, { table });
+    }
+  }
+}
+
 export interface CoreColumnInfo {
   readonly name: string;
   readonly affinity: "TEXT" | "INTEGER" | "REAL";

@@ -11,6 +11,8 @@ import {
   ResearchProjectModelConfigurationAuthorityError,
 } from "./research-project-configuration.js";
 import { readResearchConfigurationReadiness } from "./research-configuration-readiness.js";
+import { createOwnerResearchProviderNativeModelAuthority } from "./research-provider-native-model-authority.js";
+import type { ResearchProviderKeyModelUseDbPhase } from "./research-provider-key-model-use-store.js";
 
 const LEGACY_SEMANTIC_CONFIGURATION_KEYS = [
   "ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON",
@@ -102,5 +104,10 @@ export async function readOwnerProjectResearchReadiness(
   const bundle = selected.configuration;
   const selectedEnv = composeSelectedProjectResearchReadinessEnv(env, bundle);
   return readResearchConfigurationReadiness(selectedEnv, context,
-    { selected_model_selections: bundle.model_selections });
+    { selected_model_selections: bundle.model_selections,
+      project_owner_ref: selected.owner_id, project_id: selected.project_id,
+      ...(bundle.model_selections.some((selection) => selection.candidate_kind === "provider-native-v1")
+        ? { native_model_authority: createOwnerResearchProviderNativeModelAuthority(env, context, selected.project_id,
+          ["CONFIGURATION_IMPORT", "SELECTION_READBACK", "COMPLETE"] satisfies readonly ResearchProviderKeyModelUseDbPhase[]) }
+        : {}) });
 }

@@ -1,0 +1,36 @@
+{
+  "name": "@eliotr/cloudflare-wiki",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": "./src/index.ts",
+    "./wiki-owner-edit-proposal": "./src/wiki-owner-edit-proposal.ts",
+    "./wiki-owner-edit-review-admission": "./src/wiki-owner-edit-review-admission.ts",
+    "./wiki-owner-edit-review-proof": "./src/wiki-owner-edit-review-proof.ts",
+    "./wiki-owner-publication-guard": "./src/wiki-owner-publication-guard.ts",
+    "./wiki-proposal-from-research-run": "./src/wiki-proposal-from-research-run.ts",
+    "./wiki-proposal-reauthorization": "./src/wiki-proposal-reauthorization.ts",
+    "./wiki-publication-store": "./src/wiki-publication-store.ts",
+    "./wiki-publication-store-support": "./src/wiki-publication-store-support.ts",
+    "./wiki-review-admission": "./src/wiki-review-admission.ts",
+    "./wiki-runtime": "./src/wiki-runtime.ts",
+    "./wiki-service": "./src/wiki-service.ts"
+  },
+  "types": "./src/index.ts",
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc -b --pretty false"
+  },
+  "dependencies": {
+    "@eliotr/cloudflare-evidence": "workspace:*",
+    "@eliotr/cloudflare-navigation": "workspace:*",
+    "@eliotr/cloudflare-research": "workspace:*",
+    "@eliotr/cloudflare-research-stages": "workspace:*",
+    "@eliotr/contracts": "workspace:*",
+    "@eliotr/interfaces": "workspace:*",
+    "@eliotr/research": "workspace:*",
+    "@eliotr/retrieval": "workspace:*"
+  }
+}

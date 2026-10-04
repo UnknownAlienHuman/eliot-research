@@ -1,10 +1,12 @@
 import { canonicalDigest, canonicalJson } from "@eliotr/platform-cloudflare";
+import { createProviderNativeModelZeroPricePort } from "@eliotr/cloudflare-native-models";
 import { createCloudflareEvidenceResolver, createD1EvidenceAuthorityPort, createR2EvidenceContentPort,
   evidenceSha256Bytes, type NavigationReadAuthority } from "@eliotr/cloudflare-evidence";
 import { createArtifactCowModelRuntime, createD1ResearchModelPricingQuotePort, createResearchReferenceManifestService,
   createResearchReferenceManifestStore, createModelProfileDefinition, readOwnerModelProfileTemplateV2,
   parseResearchModelProfileDefinition, decodeEvidenceFreezeStageInput,
-  type ArtifactCowSectionProducerDependencies, type ReferenceManifestStorageContext, type ResearchModelSpendPolicy } from "@eliotr/cloudflare-research";
+  type ArtifactCowSectionProducerDependencies, type ReferenceManifestStorageContext, type ResearchModelSpendPolicy,
+  type ArtifactCowNativeModelSelectionResolver } from "@eliotr/cloudflare-research";
 import { WorkflowCheckpointStore, readCommittedStageLineage, readWorkflowObject, type ArtifactSectionReviseAttempt } from "@eliotr/cloudflare-workflows";
 import { parseResearchClaimAuditPolicy } from "@eliotr/cloudflare-research-stages";
 import type { ModelCallInput, TrustedSemanticClaimAuditInput } from "@eliotr/research";
@@ -14,6 +16,8 @@ import type { createOwnerArtifactCowPorts } from "./artifact-section-revise-port
 import { modelGatewayConfiguration, parseResearchSemanticConfiguration, researchSemanticPromptParameters } from "./research-semantic-server.js";
 import { resolveResearchSemanticConfig } from "./research-semantic-config-revision.js";
 import { readResearchRunConfiguration } from "./research-run-configuration.js";
+import { createResearchProviderNativeModelAuthority } from "./research-provider-native-model-authority.js";
+import { createResearchProviderNativeModelCurrentScopeReader } from "./research-provider-native-model-current-scope.js";
 import { resolveResearchSelectedModelTransport } from "./research-selected-model-transport.js";
 import type { Env } from "./env.js";
 import { HttpRequestError } from "./http-errors.js";
@@ -51,6 +55,27 @@ export async function createOwnerArtifactCowModel(input: {
     }
     runtimeEnv = runConfiguration.env;
   }
+  let resolveNativeModelSelection: ArtifactCowNativeModelSelectionResolver | undefined;
+  const nativeSelections = runConfiguration?.model_selections.filter((selection) => selection.candidate_kind === "provider-native-v1") ?? [];
+  if (nativeSelections.length > 0) {
+    const ownerRef = runConfiguration?.project_owner_ref;
+    const projectId = runConfiguration?.project_id;
+    if (runConfiguration === undefined || (runConfiguration.mode !== "snapshot-v1" && runConfiguration.mode !== "snapshot-v2") ||
+        typeof ownerRef !== "string" || typeof projectId !== "string") {
+      deny("Original COW Native selection has no captured project authority");
+    }
+    const currentScope = createResearchProviderNativeModelCurrentScopeReader({ database: env.CORE_DB,
+      owner_ref: ownerRef, project_id: projectId, model_selections: runConfiguration.model_selections });
+    const nativeAuthority = createResearchProviderNativeModelAuthority({ env, current_scope: currentScope });
+    resolveNativeModelSelection = async (selectionInput) => {
+      const resolved = await nativeAuthority.resolvePinned({ selection: selectionInput.selection,
+        owner_ref: ownerRef, project_id: projectId,
+        allow_expired_snapshot_v2: selectionInput.allow_expired_snapshot_v2 });
+      const preparation = resolved.candidate.candidate.preparation;
+      return Object.freeze({ deployment: preparation.deployment, transport_policy: preparation.transport_policy,
+        pricing_port: createProviderNativeModelZeroPricePort(preparation, resolved.pricing_snapshot) });
+    };
+  }
   const config = parseResearchSemanticConfiguration((await resolveResearchSemanticConfig({ env: runtimeEnv, database: env.CORE_DB })).config_json);
   const profileRaw = JSON.parse(runtimeEnv.ELIOTR_MODEL_PROFILE_DEFINITION_JSON ?? "null") as unknown;
   const profileProvenance = runtimeEnv.ELIOTR_MODEL_PROFILE_PROVENANCE_REF;
@@ -76,7 +101,8 @@ export async function createOwnerArtifactCowModel(input: {
   if (auditRule === undefined) deny("Independent verification has no admitted REPORT slot");
   const environment = env.ENVIRONMENT === "development" ? "TEST" : "PRODUCTION";
   const admission = await createOwnerArtifactCowModelAdmission({ env, attempt, navigation,
-    evidence_pack: cow.fresh_pack, deployment_environment: environment });
+    evidence_pack: cow.fresh_pack, deployment_environment: environment,
+    ...(resolveNativeModelSelection === undefined ? {} : { resolve_native_model_selection: resolveNativeModelSelection }) });
   const resolver = createCloudflareEvidenceResolver({ authority: createD1EvidenceAuthorityPort({
     core_database: env.CORE_DB, search_database: env.SEARCH_DB }),
     content: createR2EvidenceContentPort({ evidence_bucket: env.EVIDENCE_BUCKET }) });
@@ -103,6 +129,7 @@ export async function createOwnerArtifactCowModel(input: {
   const runtime = createArtifactCowModelRuntime({ database: env.CORE_DB, work_bucket: env.WORK_BUCKET,
     gateway: modelGatewayConfiguration(runtimeEnv), signal: context.request.signal, deployment_environment: environment,
     pricing: createD1ResearchModelPricingQuotePort(env.CORE_DB), prepare: admission.prepare, revalidateExisting: admission.revalidateExisting,
+    ...(resolveNativeModelSelection === undefined ? {} : { resolve_native_model_selection: resolveNativeModelSelection }),
     prompt: { manifest_service: manifests, request_timeout_ms: Math.min(config.synthesis.request_timeout_ms, config.audit.request_timeout_ms),
       build_manifest_input: async (call, deployment) => ({ evidence_pack: call.evidence_pack, navigation, resolver,
         policy: modelProfile.policy, manifest_ref: { id: "artifact-cow-manifest-" + await canonicalDigest({ output: call.output_object_ref,
@@ -122,9 +149,13 @@ export async function createOwnerArtifactCowModel(input: {
   });
   const activeVerifier = selectedAudit === undefined
     ? await runtime.deployments.resolve(auditRule.deployment.route_ref)
-    : await runtime.deployments.resolvePinned(auditRule.deployment, selectedAudit.selection, {
-        allow_expired_qualification: runConfiguration?.mode === "snapshot-v2",
-      });
+    : selectedAudit.selection.candidate_kind === "provider-native-v1"
+      ? resolveNativeModelSelection === undefined ? deny("Native independent-verifier authority is unavailable")
+        : (await resolveNativeModelSelection({ selection: selectedAudit.selection,
+            allow_expired_snapshot_v2: runConfiguration?.mode === "snapshot-v2" })).deployment
+      : await runtime.deployments.resolvePinned(auditRule.deployment, selectedAudit.selection, {
+          allow_expired_qualification: runConfiguration?.mode === "snapshot-v2",
+        });
   if (canonicalJson(activeVerifier) !== canonicalJson(auditRule.deployment)) deny("Independent verifier deployment changed");
   const stageTen = await readCommittedStageLineage(new WorkflowCheckpointStore(env.CORE_DB), cow.historical.operation_id, "FREEZE_EVIDENCE");
   const historicalInput = await decodeEvidenceFreezeStageInput(await readWorkflowObject(env.WORK_BUCKET, stageTen.request.input_manifest, true));

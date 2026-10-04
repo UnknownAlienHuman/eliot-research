@@ -6,6 +6,7 @@ import {
   admitArtifactCowModelSpend, createD1ModelGatewayDeploymentRegistry, ModelAttemptError,
   type ArtifactCowModelCallContext, type ArtifactCowModelExecutorDependencies,
   type ModelAttemptAuthority, type ModelAttemptReadback, type ModelAttemptReservationInput,
+  type ArtifactCowNativeModelSelectionResolver,
 } from "@eliotr/cloudflare-research";
 import type { ModelCallInput } from "@eliotr/research";
 import { resolveResearchOwnerSpendPolicy } from "./research-owner-spend-policy.js";
@@ -24,6 +25,8 @@ export interface OwnerArtifactCowModelAdmissionInput {
   readonly navigation: NavigationReadAuthority;
   /** Re-resolved evidence for that current scope, never a browser payload. */
   readonly evidence_pack: ModelCallInput["evidence_pack"];
+  /** Core-bound Native resolver for an exact selection captured by the run. */
+  readonly resolve_native_model_selection?: ArtifactCowNativeModelSelectionResolver;
   readonly deployment_environment?: "PRODUCTION" | "TEST";
   readonly now?: () => number;
 }
@@ -63,7 +66,8 @@ export async function createOwnerArtifactCowModelAdmission(input: OwnerArtifactC
 
   async function originalConfiguration() {
     const raw = witness.material.run_configuration;
-    if (raw === null) return Object.freeze({ env, mode: "legacy-installed" as const, model_selections: Object.freeze([]) });
+    if (raw === null) return Object.freeze({ env, mode: "legacy-installed" as const, model_selections: Object.freeze([]),
+      project_owner_ref: null, project_id: null });
     if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
       stale("COW report witness has no exact original run configuration identity");
     }
@@ -84,7 +88,8 @@ export async function createOwnerArtifactCowModelAdmission(input: OwnerArtifactC
         canonicalJson(selected.model_selections) !== canonicalJson(pin.model_selections)) {
       stale("COW original run snapshot differs from the REPORT witness");
     }
-    return Object.freeze({ env: selected.env, mode: selected.mode, model_selections: selected.model_selections });
+    return Object.freeze({ env: selected.env, mode: selected.mode, model_selections: selected.model_selections,
+      project_owner_ref: selected.project_owner_ref, project_id: selected.project_id });
   }
 
   async function requireCurrent(context?: ArtifactCowModelCallContext) {
@@ -142,16 +147,36 @@ export async function createOwnerArtifactCowModelAdmission(input: OwnerArtifactC
     const matches = value.pinned_configuration.model_selections.filter((selection) => selection.stage === stage);
     let resolved: unknown | null;
     if (value.pinned_configuration.mode === "legacy-installed") {
+      if (matches.length !== 0) stale("legacy COW route cannot contain a selected model configuration");
       resolved = await routes.resolve(rule.deployment.route_ref);
     } else {
       const selection = matches[0];
       if (matches.length !== 1 || selection === undefined || selection.route_ref !== rule.deployment.route_ref ||
-          selection.route_version !== rule.deployment.route_version || typeof routes.resolvePinned !== "function") {
+          selection.route_version !== rule.deployment.route_version) {
         stale("COW model selection is missing or differs from the original run snapshot");
       }
-      resolved = await routes.resolvePinned(rule.deployment, selection, {
-        allow_expired_qualification: value.pinned_configuration.mode === "snapshot-v2",
-      });
+      if (selection.candidate_kind === "provider-native-v1") {
+        if (typeof value.pinned_configuration.project_owner_ref !== "string" ||
+            typeof value.pinned_configuration.project_id !== "string" ||
+            input.resolve_native_model_selection === undefined) {
+          stale("COW Native run snapshot has no captured project authority");
+        }
+        const native = await input.resolve_native_model_selection({
+          selection,
+          allow_expired_snapshot_v2: value.pinned_configuration.mode === "snapshot-v2",
+        });
+        if (canonicalJson(native.transport_policy) !== canonicalJson(selection.transport_policy)) {
+          stale("COW Native transport policy differs from the original run snapshot");
+        }
+        resolved = native.deployment;
+      } else {
+        if (selection.candidate_kind !== undefined || typeof routes.resolvePinned !== "function") {
+          stale("COW dynamic model pin resolver is unavailable");
+        }
+        resolved = await routes.resolvePinned(rule.deployment, selection, {
+          allow_expired_qualification: value.pinned_configuration.mode === "snapshot-v2",
+        });
+      }
     }
     if (resolved === null || canonicalJson(decodeModelRouteDeployment(resolved)) !== canonicalJson(rule.deployment)) {
       stale("COW model deployment differs from the original run snapshot");

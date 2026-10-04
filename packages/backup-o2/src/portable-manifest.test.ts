@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { TABLE_SPECS, BACKUP_MANIFEST_PROTOCOL, BACKUP_SCHEMA_INVENTORY_PROTOCOL, digestCoreColumnInventory, type CoreTableInventory } from "./coherent-cut.js";
+import { BACKUP_MANIFEST_PROTOCOL, BACKUP_SCHEMA_INVENTORY_PROTOCOL, coreTableSpecsForMigrationNames, digestCoreColumnInventory, type CoreTableInventory } from "./coherent-cut.js";
 import { backupSha256Hex, canonicalBackupJson } from "./shared.js";
 import { rebuildManifestLines } from "./coverage.js";
 import { BACKUP_PORTABLE_MANIFEST_NAMES, verifyPortableBackupManifests } from "./portable-manifest.js";
@@ -12,12 +12,14 @@ async function fixture(): Promise<{
   readonly draft: BackupEpochDraft;
   readonly plaintext_parts: readonly { readonly manifest: string; readonly index: number; readonly bytes: Uint8Array }[];
 }> {
+  const migrationNames = ["0001_base.sql"];
+  const tableSpecs = coreTableSpecsForMigrationNames(migrationNames);
   const emptyDigest = await backupSha256Hex("");
-  const migrationDigest = await backupSha256Hex("migration-ledger\n0001_base.sql");
-  const tableNames = [...new Set(TABLE_SPECS.map((spec) => spec.table))].sort();
+  const migrationDigest = await backupSha256Hex(`migration-ledger\n${migrationNames.join("\n")}`);
+  const tableNames = [...new Set(tableSpecs.map((spec) => spec.table))].sort();
   const tables = Object.fromEntries(await Promise.all(tableNames.map(async (table) => [table, { count: 0, digest: await backupSha256Hex(`${table}:EMPTY`) }] as const)));
   const coreInventory: CoreTableInventory[] = tableNames.map((table) => {
-    const spec = TABLE_SPECS.find((entry) => entry.table === table);
+    const spec = tableSpecs.find((entry) => entry.table === table);
     const columns = Object.entries(spec?.columns ?? {}).map(([name, kind]) => ({
       name,
       affinity: kind.startsWith("int") ? "INTEGER" as const : kind.startsWith("real") ? "REAL" as const : "TEXT" as const,
@@ -34,7 +36,7 @@ async function fixture(): Promise<{
   const purgeDigest = emptyDigest;
   const vector = {
     schema_generation: "schema-v1",
-    migration_names: ["0001_base.sql"],
+    migration_names: migrationNames,
     migration_ledger_digest: migrationDigest,
     tables,
     purge_frontier: 0,
@@ -104,7 +106,7 @@ describe("ER-34 portable manifest verification", () => {
     const input = await fixture();
     const result = await verifyPortableBackupManifests(input);
     expect(result.vector["schema_generation"]).toBe("schema-v1");
-    expect(result.manifests["schema-inventory"]).toHaveLength(new Set(TABLE_SPECS.map((spec) => spec.table)).size + 1);
+    expect(result.manifests["schema-inventory"]).toHaveLength(new Set(coreTableSpecsForMigrationNames(["0001_base.sql"]).map((spec) => spec.table)).size + 1);
     expect(result.source_rows).toEqual([]);
     expect(result.purge_ledger).toEqual([]);
   });

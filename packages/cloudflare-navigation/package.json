@@ -5,7 +5,9 @@
   "type": "module",
   "sideEffects": false,
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./project-owner-contract.js": "./src/project-owner-contract.ts",
+    "./project-owner-storage.js": "./src/project-owner-storage.ts"
   },
   "types": "./src/index.ts",
   "scripts": {

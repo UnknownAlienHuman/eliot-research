@@ -15,7 +15,6 @@ import {
   IsoDateTimeSchema,
   ResolvedEvidenceSchema,
   Sha256Schema,
-  VersionedRefSchema,
   type ResolvedEvidence,
   type VersionedRef,
 } from "@eliotr/contracts";
@@ -39,7 +38,6 @@ import {
   MAX_WORKFLOW_OUTPUT_BYTES,
   parseRequest,
   snapshotPrincipal,
-  WorkflowCheckpointError,
   type StageRequest,
   type WorkflowPrincipal,
 } from "@eliotr/cloudflare-workflows";
@@ -67,57 +65,13 @@ import {
   parseResearchClaimAuditPolicy,
   type ResearchClaimAuditPolicy,
 } from "./research-claim-audit-policy.js";
+import { detached, snapshotNormalization, withResearchClaimAuditInputDiagnostics } from "./research-claim-audit-input-support.js";
+import type { ResearchClaimAuditInputDiagnosticState, ResearchClaimAuditNormalizationConfig } from "./research-claim-audit-input-support.js";
+export type { ResearchClaimAuditNormalizationConfig } from "./research-claim-audit-input-support.js";
 import { z } from "zod";
 
 const PROTOCOL = "eliotr.research.audit-claims-input.v1" as const;
 const MAX_REFS = 512;
-
-type ResearchClaimAuditInputFailurePhase =
-  | "VERIFIER"
-  | "VERIFY_INPUT"
-  | "CONTEXT"
-  | "SYNTHESIS"
-  | "NORMALIZE"
-  | "SOURCES"
-  | "RESOLVE"
-  | "SOURCE_COMPARE"
-  | "FINAL_AUTHORITY"
-  | "MATERIAL";
-
-interface ResearchClaimAuditInputDiagnosticState {
-  phase: ResearchClaimAuditInputFailurePhase;
-  material_bytes?: number;
-  max_context_bytes?: number;
-}
-
-function logResearchClaimAuditInputFailure(
-  state: ResearchClaimAuditInputDiagnosticState,
-  error: unknown,
-): void {
-  console.error(JSON.stringify({
-    event: "research_claim_audit_input_failed",
-    phase: state.phase,
-    code: error instanceof WorkflowCheckpointError
-      ? error.code
-      : "UNCLASSIFIED",
-    ...(state.material_bytes === undefined ? {} : {
-      material_bytes: state.material_bytes,
-      max_context_bytes: state.max_context_bytes,
-    }),
-  }));
-}
-
-async function withResearchClaimAuditInputDiagnostics<T>(
-  state: ResearchClaimAuditInputDiagnosticState,
-  operation: () => Promise<T>,
-): Promise<T> {
-  try {
-    return await operation();
-  } catch (error) {
-    logResearchClaimAuditInputFailure(state, error);
-    throw error;
-  }
-}
 
 const ModelDeploymentSchema = z.object({
   route_ref: IdentifierSchema,
@@ -126,12 +80,6 @@ const ModelDeploymentSchema = z.object({
   schema_generation: IdentifierSchema,
   parameters_digest: Sha256Schema,
   pricing_snapshot_ref: IdentifierSchema,
-}).strict();
-
-const ResearchClaimAuditNormalizationConfigSchema = z.object({
-  section_ref: VersionedRefSchema,
-  required_precision: IdentifierSchema,
-  required_source_class: IdentifierSchema,
 }).strict();
 
 const ResearchClaimAuditVerifierAuthoritySchema = z.object({
@@ -146,7 +94,6 @@ const ResearchClaimAuditVerifierAuthoritySchema = z.object({
   current: z.boolean(),
 }).strict();
 
-export type ResearchClaimAuditNormalizationConfig = z.infer<typeof ResearchClaimAuditNormalizationConfigSchema>;
 export type ResearchClaimAuditModelDeployment = EvidenceFreezeModelDefinition["deployment"];
 
 export interface ResearchClaimAuditVerifierAuthority {
@@ -224,28 +171,6 @@ export interface ResearchClaimAuditInputReader {
   }): Promise<ResearchClaimAuditInputSnapshot>;
 }
 
-function deepFreeze<T>(value: T): T {
-  if (value !== null && typeof value === "object" && !Object.isFrozen(value)) {
-    Object.freeze(value);
-    for (const child of Object.values(value as Record<string, unknown>)) deepFreeze(child);
-  }
-  return value;
-}
-
-/** Canonical clone prevents caller-owned nested objects from changing after an await. */
-function detached<T>(value: T, code: "WORKFLOW_INPUT_INVALID" | "WORKFLOW_OUTPUT_CORRUPT" | "WORKFLOW_AUTHORITY_STALE" = "WORKFLOW_INPUT_INVALID"): T {
-  let text: string;
-  try { text = canonicalEvidenceJson(value); }
-  catch { fail(code); }
-  try {
-    const parsed = JSON.parse(text) as T;
-    if (canonicalEvidenceJson(parsed) !== text) fail(code);
-    return deepFreeze(parsed);
-  } catch {
-    fail(code);
-  }
-}
-
 function snapshotNavigationGrant(value: ScopeAuthorization): ScopeAuthorization {
   return detached(value, "WORKFLOW_AUTHORITY_STALE");
 }
@@ -258,12 +183,6 @@ function snapshotResolvedEvidence(value: readonly ResolvedEvidence[]): readonly 
   const parsed = z.array(ResolvedEvidenceSchema).safeParse(value);
   if (!parsed.success) fail("WORKFLOW_AUTHORITY_STALE");
   return detached(parsed.data, "WORKFLOW_AUTHORITY_STALE");
-}
-
-function snapshotNormalization(value: ResearchClaimAuditNormalizationConfig): ResearchClaimAuditNormalizationConfig {
-  const parsed = ResearchClaimAuditNormalizationConfigSchema.safeParse(value);
-  if (!parsed.success) fail("WORKFLOW_INPUT_INVALID");
-  return detached(parsed.data);
 }
 
 function parseVerifierAuthority(

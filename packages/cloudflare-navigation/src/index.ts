@@ -129,3 +129,19 @@ export { createNavigationExpandService } from "./navigation-expand-service.js";
 export type {
   NavigationExpandEnvironment,
 } from "./navigation-expand-service.js";
+export {
+  createProjectOwnerCapability,
+  ProjectOwnerError,
+} from "./project-owner-service.js";
+export type {
+  ProjectOwnerCapabilityOptions,
+  ProjectOwnerCapability,
+  ProjectOwnerActor,
+  ProjectOwnerCreateInput,
+  ProjectOwnerUpdateInput,
+  ProjectOwnerResult,
+  ProjectOwnerErrorCode,
+  ProjectOwnerSourceAuthority,
+  PreparedProjectAttachment,
+  ProjectAttachmentBinding,
+} from "./project-owner-service.js";

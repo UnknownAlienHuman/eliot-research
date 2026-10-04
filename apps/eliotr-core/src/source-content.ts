@@ -1,21 +1,11 @@
 import type { AuthenticatedRequestContext } from "@eliotr/interfaces";
-import { canonicalEvidenceJson, readAdmittedNormalizedMarkdown } from "@eliotr/cloudflare-evidence";
+import { canonicalEvidenceJson, readSettledAdmittedNormalizedMarkdown } from "@eliotr/cloudflare-evidence";
+import type { ProjectSourceContent } from "@eliotr/cloudflare-evidence";
 import { catalogEligibility } from "./catalog-queries.js";
 import { beginCatalogRead, CatalogInputError, validateRequestIdentifier } from "./catalog-service.js";
 import type { Env } from "./env.js";
 
-export interface ProjectSourceContent {
-  readonly project_id: string;
-  readonly source_id: string;
-  readonly source_revision_ref: string;
-  readonly content_sha256: string;
-  readonly bytes: Uint8Array;
-  readonly size_bytes: number;
-  readonly context_sha256: string;
-  readonly authority_generation: number;
-  readonly observed_at: number;
-  readonly expires_at: number;
-}
+export type { ProjectSourceContent } from "@eliotr/cloudflare-evidence";
 
 /** Owner document reading is independent of search projections and citation handles. */
 export async function readSourceContent(
@@ -38,13 +28,13 @@ export async function readSourceContent(
   if (source === undefined) {
     throw new CatalogInputError("LIBRARY_SOURCE_NOT_FOUND", "The current document is not available", 404);
   }
-  const content = await readAdmittedNormalizedMarkdown(env.EVIDENCE_BUCKET, source.authority);
-  // Re-read owner policy, admission and source authority after the bounded R2 read.
-  // The catalog fence additionally detects head changes, revocation and time expiry.
-  const [settled] = await fence.authority.sources([revision]);
-  if (settled === undefined || canonicalEvidenceJson(settled) !== canonicalEvidenceJson(source)) {
-    throw new CatalogInputError("DOCUMENT_AUTHORITY_CHANGED", "The document changed; refresh the source", 409, true);
-  }
+  // The evidence package performs the bounded R2 read and then invokes this Core-owned D1 authority recheck.
+  const content = await readSettledAdmittedNormalizedMarkdown(env.EVIDENCE_BUCKET, source.authority, async () => {
+    const [settled] = await fence.authority.sources([revision]);
+    if (settled === undefined || canonicalEvidenceJson(settled) !== canonicalEvidenceJson(source)) {
+      throw new CatalogInputError("DOCUMENT_AUTHORITY_CHANGED", "The document changed; refresh the source", 409, true);
+    }
+  });
   await fence.finish();
   return new Response(content.bytes.slice().buffer, {
     status: 200,
@@ -108,17 +98,18 @@ export async function readProjectSourceContent(
       source.revision.source_revision_ref !== revision) {
     throw new CatalogInputError("LIBRARY_SOURCE_NOT_FOUND", "The current document is not available", 404);
   }
-  const content = await readAdmittedNormalizedMarkdown(env.EVIDENCE_BUCKET, source.authority);
-  await fence.authority.requireReadPolicy();
-  const [settled] = await fence.authority.sources([revision]);
-  const settledMembership = await readMembership();
-  if (settled === undefined || settledMembership?.source_id !== membership.source_id ||
-      settledMembership.source_revision_ref !== revision ||
-      canonicalEvidenceJson(settledMembership) !== canonicalEvidenceJson(membership) ||
-      canonicalEvidenceJson(settled) !== canonicalEvidenceJson(source) ||
-      content.readback_sha256 !== source.revision.content_sha256) {
-    throw new CatalogInputError("DOCUMENT_AUTHORITY_CHANGED", "The document changed; refresh the source", 409, true);
-  }
+  const content = await readSettledAdmittedNormalizedMarkdown(env.EVIDENCE_BUCKET, source.authority, async (readback) => {
+    await fence.authority.requireReadPolicy();
+    const [settled] = await fence.authority.sources([revision]);
+    const settledMembership = await readMembership();
+    if (settled === undefined || settledMembership?.source_id !== membership.source_id ||
+        settledMembership.source_revision_ref !== revision ||
+        canonicalEvidenceJson(settledMembership) !== canonicalEvidenceJson(membership) ||
+        canonicalEvidenceJson(settled) !== canonicalEvidenceJson(source) ||
+        readback.readback_sha256 !== source.revision.content_sha256) {
+      throw new CatalogInputError("DOCUMENT_AUTHORITY_CHANGED", "The document changed; refresh the source", 409, true);
+    }
+  });
   await fence.finish();
   return {
     project_id: project,

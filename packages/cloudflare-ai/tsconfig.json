@@ -20,6 +20,9 @@
     },
     {
       "path": "../cloudflare-projection"
+    },
+    {
+      "path": "../cloudflare-model-transport"
     }
   ]
 }

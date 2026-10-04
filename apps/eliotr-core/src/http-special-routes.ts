@@ -22,6 +22,8 @@ import { handleResearchProjectModelConfiguration,
 import { createOwnerResearchProjectConfigurationService } from "./research-project-configuration-composition.js";
 import { handleResearchProviderKeyConfiguration } from "./research-provider-key-configuration-http.js";
 import { createResearchProviderKeyConfigurationComposition } from "./research-provider-key-configuration-composition.js";
+import { createResearchProviderKeyModelUseComposition } from "./research-provider-key-model-use-composition.js";
+import { handleResearchProviderKeyModelUseHttp } from "./research-provider-key-model-use-http.js";
 import { handleAiSearchFunctionalProbeHttp } from "./ai-search-functional-probe-http.js";
 import {
   handleMcpClientDiagnosticIssue,
@@ -108,6 +110,21 @@ export async function dispatchHttpSpecialRoute(input: {
       const composition = createResearchProviderKeyConfigurationComposition(input.env);
       return handleResearchProviderKeyConfiguration(input.request, input.env, input.context, projectId,
         input.match.route.maximum_request_bytes, composition.service);
+    }
+    case "project.provider-key-model-use.start":
+    case "project.provider-key-model-use.read": {
+      const projectId = input.match.params.project_id ?? "";
+      const composition = createResearchProviderKeyModelUseComposition(input.env, input.context, projectId);
+      return handleResearchProviderKeyModelUseHttp(
+        input.request,
+        input.env,
+        input.context,
+        projectId,
+        input.match.params.key_operation_id ?? "",
+        input.match.params.operation_id ?? "",
+        input.match.route.maximum_request_bytes,
+        composition,
+      );
     }
     case "system.computer-agent-qualifications.status":
     case "system.computer-agent-qualifications.issue":

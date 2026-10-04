@@ -14,9 +14,10 @@ import { claimEpochReceipt, peekEpochReplay, parsePersistedEpochReplay } from ".
 import { assertO2MigrationAuthority } from "./migration-gate.js";
 import { canonicalEpochIntentDigest } from "./intent-digest.js";
 import {
-  BACKUP_MANIFEST_PROTOCOL, TABLE_SPECS, assertExportColumnCoverage,
+  BACKUP_MANIFEST_PROTOCOL, assertExportColumnCoverage, assertCoreTableMigrationPresence,
+  coreTableSpecsForMigrationNames,
   BACKUP_SCHEMA_INVENTORY_PROTOCOL, digestCoreColumnInventory, openExportCut, readCoreColumnInventory, sealExportCut,
-  type CoreTableInventory, type CutInputs, type OpenCut,
+  type CoreTableInventory, type CutInputs, type OpenCut, type TableSpec,
 } from "./coherent-cut.js";
 
 // ER-34 O2 FIX2 portable epoch. IMPLEMENTED_NOT_LIVE. Coherent-cut: phase-1
@@ -128,7 +129,7 @@ function decodeCell(table: string, column: string, kind: string, value: unknown,
   return value;
 }
 
-async function readBackupTable(database: D1Database, spec: (typeof TABLE_SPECS)[number], inventory: CoreTableInventory, maxRows: number, signal?: AbortSignal): Promise<readonly SnapshotRow[]> {
+async function readBackupTable(database: D1Database, spec: TableSpec, inventory: CoreTableInventory, maxRows: number, signal?: AbortSignal): Promise<readonly SnapshotRow[]> {
   if (backupAborted(signal)) failBackup("BACKUP_CANCELLED", "backup export was cancelled", true);
   if (!await backupTableExists(database, spec.table)) {
     if (spec.required) failBackup("BACKUP_TABLE_MISSING", `backup required table ${spec.table} is absent`, false, { table: spec.table });
@@ -240,6 +241,7 @@ async function buildManifest(name: string, lines: readonly string[], maxBytes: n
 }
 
 interface D1Snapshot {
+  readonly table_specs: readonly TableSpec[];
   readonly vector_tables: Record<string, { count: number; digest: string }>;
   readonly rows: readonly SnapshotRow[];
   readonly purge_rows: readonly SnapshotRow[];
@@ -256,18 +258,21 @@ export function createBackupEpochPort(ports: BackupSourcePorts, overrides?: { re
   const limits = resolveBackupExportLimits(overrides?.limits);
 
   async function snapshotD1(signal?: AbortSignal): Promise<D1Snapshot> {
-    assertExhaustiveTableCoverage(await listDurableTables(ports.core_db));
-    const specTables = TABLE_SPECS.map((spec) => spec.table);
+    const existingTables = await listDurableTables(ports.core_db);
+    assertExhaustiveTableCoverage(existingTables);
+    const names = await readMigrationNames(ports.core_db, limits.max_table_rows);
+    const tableSpecs = coreTableSpecsForMigrationNames(names);
+    assertCoreTableMigrationPresence(existingTables, names);
+    const specTables = tableSpecs.map((spec) => spec.table);
     const inventory = await readCoreColumnInventory(ports.core_db, specTables);
-    assertExportColumnCoverage(inventory, TABLE_SPECS);
+    assertExportColumnCoverage(inventory, tableSpecs);
     const inventoryByTable = new Map(inventory.map((entry) => [entry.table, entry]));
     const inventoryDigest = await digestCoreColumnInventory(inventory);
     const schemaGeneration = await readSchemaGeneration(ports.core_db);
-    const names = await readMigrationNames(ports.core_db, limits.max_table_rows);
     const migrationLedgerDigest = await backupSha256Hex(`migration-ledger\n${names.join("\n")}`);
     const rows: SnapshotRow[] = [];
     const tables: Record<string, { count: number; digest: string }> = {};
-    for (const spec of TABLE_SPECS) {
+    for (const spec of tableSpecs) {
       const liveInventory = inventoryByTable.get(spec.table);
       if (liveInventory === undefined) failBackup("BACKUP_COVERAGE_GAP", `backup table ${spec.table} has no live schema inventory`, false, { table: spec.table });
       const tableRows = await readBackupTable(ports.core_db, spec, liveInventory, limits.max_table_rows, signal);
@@ -284,6 +289,7 @@ export function createBackupEpochPort(ports: BackupSourcePorts, overrides?: { re
     }
     const purge = await readPurgeLedger(ports.core_db, limits.max_table_rows, signal);
     return {
+      table_specs: tableSpecs,
       vector_tables: tables, rows, purge_rows: purge.rows,
       purge_frontier: purge.frontier, purge_digest: purge.digest,
       schema_generation: schemaGeneration, migration_names: names,
@@ -349,7 +355,7 @@ export function createBackupEpochPort(ports: BackupSourcePorts, overrides?: { re
       else lines.push(line);
     };
     const specManifest = new Map<string, string>();
-    for (const spec of TABLE_SPECS) specManifest.set(spec.table, spec.manifest);
+    for (const spec of frozen.table_specs) specManifest.set(spec.table, spec.manifest);
     for (const row of frozen.rows) {
       // Purge rows are emitted once below from the dedicated stable ledger
       // read; avoid duplicating them in their regular table manifest.

@@ -150,6 +150,19 @@ export const CANONICAL_EXPORTED_TABLES: ReadonlySet<string> = new Set([
   "artifact_section_revise_run",
   "artifact_section_revise_attempt",
   "artifact_section_revise_spend_admission",
+  // Owner-created provider-key and native qualification facts are immutable
+  // idempotency/proof history. Active provider keys and current project grants
+  // remain NOT_A_BACKUP; these records are portable provenance only.
+  "research_provider_key_configuration_operation",
+  "research_provider_key_model_use_operation",
+  "research_provider_key_model_use_stage_operation",
+  "research_provider_key_model_price_observation",
+  "provider_native_model_preparation",
+  "provider_native_model_qualification_attempt",
+  "provider_native_model_qualification_observation",
+  "provider_native_model_candidate",
+  "provider_native_model_qualification_proof",
+  "provider_native_model_qualification_revocation",
 ]);
 
 const REBUILD_REQUIRED_TABLES: ReadonlySet<string> = new Set([

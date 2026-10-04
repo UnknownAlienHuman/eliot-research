@@ -10,6 +10,7 @@ import {
   type StoredDynamicRouteCandidate,
 } from "@eliotr/cloudflare-research";
 import type { AuthenticatedRequestContext } from "@eliotr/interfaces";
+import type { ProviderNativeModelAuthorityPort } from "@eliotr/cloudflare-native-models";
 import type { Env } from "./env.js";
 import type { ResearchRunModelSelection } from "./research-run-configuration.js";
 import {
@@ -179,6 +180,9 @@ export async function readResearchConfigurationReadiness(
   options: Readonly<{
     readonly selected_model_selections?: readonly ResearchRunModelSelection[];
     readonly mode?: "snapshot-v1" | "snapshot-v2";
+    readonly project_owner_ref?: string;
+    readonly project_id?: string;
+    readonly native_model_authority?: ProviderNativeModelAuthorityPort;
   }> = {},
 ): Promise<ResearchConfigurationReadiness> {
   const status = readResearchConfigurationStatus(env, owner);
@@ -249,6 +253,26 @@ export async function readResearchConfigurationReadiness(
         if (selection === undefined) failure(`selected project configuration has no exact ${stage} tuple`);
         if (selection.route_ref !== route.route_ref || selection.route_version !== route.route_version) {
           failure(`selected project configuration ${stage} route differs from the installed spend rule`);
+        }
+        if (selection.candidate_kind === "provider-native-v1") {
+          if (mode !== "snapshot-v2" || options.project_owner_ref === undefined || options.project_id === undefined ||
+              options.native_model_authority === undefined) {
+            failure(`selected ${stage} provider-native authority is unavailable`);
+          }
+          const resolvedNative = await options.native_model_authority.resolvePinned({ selection,
+            owner_ref: options.project_owner_ref, project_id: options.project_id,
+            allow_expired_snapshot_v2: false });
+          const preparation = resolvedNative.candidate.candidate.preparation;
+          if (resolvedNative.selection.stage !== stage || preparation.owner_ref !== options.project_owner_ref ||
+              preparation.project_id !== options.project_id || preparation.stage !== stage ||
+              canonicalJson(preparation.deployment) !== canonicalJson(route)) {
+            failure(`selected ${stage} provider-native candidate differs from the exact installed tuple`);
+          }
+          const expiresAt = resolvedNative.proof.qualification.qualification.expires_at;
+          const expires = Date.parse(expiresAt);
+          if (!Number.isFinite(expires) || expires <= Date.now()) failure(`selected ${stage} provider-native proof has expired`);
+          return Object.freeze({ qualification_state: expires > Date.now() + RENEWAL_WINDOW_MS
+            ? "current" : "renewal_required", expires_at: expiresAt });
         }
         const proof = await proofStore.readPinned({ route_ref: selection.route_ref, route_version: selection.route_version,
           candidate_ref: selection.candidate_ref, candidate_sha256: selection.candidate_sha256,

@@ -217,7 +217,7 @@
     },
     {
       "id": "implemented-branch-execution",
-      "path": "packages/cloudflare-research/src/research-branch-execution.ts",
+      "path": "packages/cloudflare-research-branches/src/research-branch-execution.ts",
       "sentinel": "IMPLEMENTED_NOT_LIVE: S37 shared governed branch executor for READ_AND_EXTRACT, ANALYZE_BRANCHES and COUNTER_SEARCH with exact scope/protocol/planning/W1/stage-five revalidation and receipt-based recovery; v7 activation in semantic composition and live model/evidence qualification remain separate.",
       "owner_packets": [
         "ER-09",
@@ -234,7 +234,7 @@
     },
     {
       "id": "implemented-branch-role-model",
-      "path": "packages/cloudflare-research/src/research-branch-role-model.ts",
+      "path": "packages/cloudflare-research-branches/src/research-branch-role-model.ts",
       "sentinel": "IMPLEMENTED_NOT_LIVE: S37 per-role branch model execution derives role-scoped stage requests and dispatches role-bound model stage handlers through the server-owned W3 preparation seam; role prompt compilation wiring and live model qualification remain separate.",
       "owner_packets": [
         "ER-24"
@@ -250,7 +250,7 @@
     },
     {
       "id": "implemented-w1-branch-observations",
-      "path": "packages/cloudflare-research/src/research-w1-observations.ts",
+      "path": "packages/cloudflare-research-branches/src/research-w1-observations.ts",
       "sentinel": "IMPLEMENTED_NOT_LIVE: S37 session-level settling of v7 branch execution observations onto the W1 investigation ledger head as one OBSERVED event bound to the committed reconciliation checkpoint; EvidenceFreeze binding of the reconciliation checkpoint and live ledger qualification remain separate.",
       "owner_packets": [
         "ER-08",
@@ -267,7 +267,7 @@
     },
     {
       "id": "implemented-branch-role-spend-admission",
-      "path": "packages/cloudflare-research/src/research-model-spend-policy.ts",
+      "path": "packages/cloudflare-model-execution/src/research-model-spend-policy.ts",
       "sentinel": "IMPLEMENTED_NOT_LIVE: S37 branch-aware W3 spend admission for ANALYZE_BRANCHES/COUNTER_SEARCH admits per-role model spend against the durable stage-level W2 authority with role-scoped identities; D1-backed admission readback qualification remains open.",
       "owner_packets": [
         "ER-24"
@@ -306,7 +306,7 @@
     },
     {
       "id": "implemented-007",
-      "path": "apps/eliotr-core/src/ingest-service.ts",
+      "path": "packages/cloudflare-raw-ingest/src/ingest-service.ts",
       "sentinel": "IMPLEMENTED_NOT_LIVE: ER-14/ER-21/ER-29 ingest requires remote R2/D1/Queue receipts.",
       "owner_packets": [
         "ER-13",
@@ -361,7 +361,7 @@
     },
     {
       "id": "pending-002",
-      "path": "apps/eliotr-core/src/erasure-coordinator.ts",
+      "path": "packages/cloudflare-erasure-operations/src/erasure-coordinator.ts",
       "sentinel": "IMPLEMENTED_NOT_LIVE: ER-28 exact erasure coordinator",
       "owner_packets": [
         "ER-28"
@@ -382,7 +382,7 @@
     },
     {
       "id": "pending-003",
-      "path": "apps/eliotr-core/src/federation-service.ts",
+      "path": "packages/cloudflare-federation/src/federation-service.ts",
       "sentinel": "IMPLEMENTED_NOT_LIVE: ER-22 federation boundary is locally composed and requires independent-peer deployed receipts.",
       "owner_packets": [
         "ER-22"
@@ -782,7 +782,7 @@
     },
     {
       "id": "implemented-library-active-readiness",
-      "path": "apps/eliotr-core/src/library-readiness.ts",
+      "path": "packages/cloudflare-research-runtime/src/library-readiness.ts",
       "sentinel": "IMPLEMENTED_NOT_LIVE: ER-24 owner readiness composes active D1 projection and currentness readback; deployment qualification remains separate.",
       "owner_packets": [
         "ER-01",
@@ -804,7 +804,7 @@
     },
     {
       "id": "implemented-raw-normalized-admission",
-      "path": "apps/eliotr-core/src/raw-normalized-admission.ts",
+      "path": "packages/cloudflare-raw-ingest/src/raw-normalized-admission-service.ts",
       "sentinel": "IMPLEMENTED_NOT_LIVE: ER-37 owner raw conversion admission composes immutable capture and conversion readback with governed normalized ingest; deployed qualification remains separate.",
       "owner_packets": [
         "ER-01",

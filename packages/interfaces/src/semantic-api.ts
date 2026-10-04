@@ -1,13 +1,12 @@
 import type {
-  EvidenceHandle,
-  LocatorCandidate,
-  ResolvedEvidence,
   RetrievalTrace,
   ScopeExpression,
   VersionedRef,
   ArtifactRevision,
   WikiPageRevision,
   ResearchWorkflowStage,
+  VerifyEvidenceRequest,
+  VerifyEvidenceResult,
 } from "@eliotr/contracts";
 import type {
   EvidencePack,
@@ -17,6 +16,8 @@ import type {
   OrientationResult,
 } from "@eliotr/retrieval";
 import type { AuthenticatedRequestContext } from "./http.js";
+
+export type { VerifyEvidenceRequest, VerifyEvidenceResult };
 
 export const SEMANTIC_API_OPERATIONS = [
   "research.catalog",
@@ -445,15 +446,6 @@ export interface ExhaustiveWorkflowPage {
   readonly protocol: "eliotr.exhaustive-workflow-page.v1";
   readonly items: readonly ExhaustiveWorkflowSummary[];
   readonly next_cursor?: string;
-}
-
-export type VerifyEvidenceRequest =
-  | { readonly scope_snapshot_ref: VersionedRef; readonly locator_candidate: LocatorCandidate }
-  | { readonly scope_snapshot_ref: VersionedRef; readonly handle_ref: VersionedRef };
-
-export interface VerifyEvidenceResult {
-  readonly resolved_evidence: ResolvedEvidence;
-  readonly handle: EvidenceHandle;
 }
 
 export interface SemanticApi {

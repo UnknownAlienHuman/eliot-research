@@ -53,9 +53,18 @@ importers:
       '@eliotr/cloudflare-ai':
         specifier: workspace:*
         version: link:../../packages/cloudflare-ai
+      '@eliotr/cloudflare-backup':
+        specifier: workspace:*
+        version: link:../../packages/cloudflare-backup
+      '@eliotr/cloudflare-computer-agent':
+        specifier: workspace:*
+        version: link:../../packages/cloudflare-computer-agent
       '@eliotr/cloudflare-erasure':
         specifier: workspace:*
         version: link:../../packages/cloudflare-erasure
+      '@eliotr/cloudflare-erasure-operations':
+        specifier: workspace:*
+        version: link:../../packages/cloudflare-erasure-operations
       '@eliotr/cloudflare-evidence':
         specifier: workspace:*
         version: link:../../packages/cloudflare-evidence
@@ -65,6 +74,15 @@ importers:
       '@eliotr/cloudflare-markdown':
         specifier: workspace:*
         version: link:../../packages/cloudflare-markdown
+      '@eliotr/cloudflare-model-control':
+        specifier: workspace:*
+        version: link:../../packages/cloudflare-model-control
+      '@eliotr/cloudflare-model-transport':
+        specifier: workspace:*
+        version: link:../../packages/cloudflare-model-transport
+      '@eliotr/cloudflare-native-models':
+        specifier: workspace:*
+        version: link:../../packages/cloudflare-native-models
       '@eliotr/cloudflare-navigation':
         specifier: workspace:*
         version: link:../../packages/cloudflare-navigation
@@ -77,9 +95,24 @@ importers:
       '@eliotr/cloudflare-research':
         specifier: workspace:*
         version: link:../../packages/cloudflare-research
+      '@eliotr/cloudflare-research-branches':
+        specifier: workspace:*
+        version: link:../../packages/cloudflare-research-branches
+      '@eliotr/cloudflare-research-configuration':
+        specifier: workspace:*
+        version: link:../../packages/cloudflare-research-configuration
+      '@eliotr/cloudflare-research-runtime':
+        specifier: workspace:*
+        version: link:../../packages/cloudflare-research-runtime
       '@eliotr/cloudflare-research-stages':
         specifier: workspace:*
         version: link:../../packages/cloudflare-research-stages
+      '@eliotr/cloudflare-search-probe':
+        specifier: workspace:*
+        version: link:../../packages/cloudflare-search-probe
+      '@eliotr/cloudflare-wiki':
+        specifier: workspace:*
+        version: link:../../packages/cloudflare-wiki
       '@eliotr/cloudflare-workflows':
         specifier: workspace:*
         version: link:../../packages/cloudflare-workflows
@@ -135,6 +168,9 @@ importers:
       '@eliotr/pwa-http-client':
         specifier: workspace:*
         version: link:../../packages/pwa-http-client
+      '@eliotr/pwa-research-workspace':
+        specifier: workspace:*
+        version: link:../../packages/pwa-research-workspace
       '@eliotr/pwa-source-workspace':
         specifier: workspace:*
         version: link:../../packages/pwa-source-workspace
@@ -169,6 +205,9 @@ importers:
 
   packages/cloudflare-ai:
     dependencies:
+      '@eliotr/cloudflare-model-transport':
+        specifier: workspace:*
+        version: link:../cloudflare-model-transport
       '@eliotr/cloudflare-projection':
         specifier: workspace:*
         version: link:../cloudflare-projection
@@ -209,6 +248,21 @@ importers:
         specifier: workspace:*
         version: link:../contracts
 
+  packages/cloudflare-computer-agent:
+    dependencies:
+      '@eliotr/cloudflare-navigation':
+        specifier: workspace:*
+        version: link:../cloudflare-navigation
+      '@eliotr/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@eliotr/interfaces':
+        specifier: workspace:*
+        version: link:../interfaces
+      '@eliotr/platform-cloudflare':
+        specifier: workspace:*
+        version: link:../platform-cloudflare
+
   packages/cloudflare-erasure:
     dependencies:
       '@eliotr/backup-o2':
@@ -217,6 +271,18 @@ importers:
       '@eliotr/contracts':
         specifier: workspace:*
         version: link:../contracts
+
+  packages/cloudflare-erasure-operations:
+    dependencies:
+      '@eliotr/cloudflare-erasure':
+        specifier: workspace:*
+        version: link:../cloudflare-erasure
+      '@eliotr/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@eliotr/interfaces':
+        specifier: workspace:*
+        version: link:../interfaces
 
   packages/cloudflare-evidence:
     dependencies:
@@ -241,9 +307,96 @@ importers:
       '@eliotr/contracts':
         specifier: workspace:*
         version: link:../contracts
+      '@eliotr/interfaces':
+        specifier: workspace:*
+        version: link:../interfaces
 
   packages/cloudflare-markdown:
     dependencies:
+      '@eliotr/platform-cloudflare':
+        specifier: workspace:*
+        version: link:../platform-cloudflare
+
+  packages/cloudflare-model-control:
+    dependencies:
+      '@eliotr/cloudflare-ai':
+        specifier: workspace:*
+        version: link:../cloudflare-ai
+      '@eliotr/cloudflare-evidence':
+        specifier: workspace:*
+        version: link:../cloudflare-evidence
+      '@eliotr/cloudflare-workflows':
+        specifier: workspace:*
+        version: link:../cloudflare-workflows
+      '@eliotr/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@eliotr/interfaces':
+        specifier: workspace:*
+        version: link:../interfaces
+      '@eliotr/platform-cloudflare':
+        specifier: workspace:*
+        version: link:../platform-cloudflare
+      '@eliotr/policy':
+        specifier: workspace:*
+        version: link:../policy
+      '@eliotr/retrieval':
+        specifier: workspace:*
+        version: link:../retrieval
+      zod:
+        specifier: 4.4.3
+        version: 4.4.3
+
+  packages/cloudflare-model-execution:
+    dependencies:
+      '@eliotr/cloudflare-ai':
+        specifier: workspace:*
+        version: link:../cloudflare-ai
+      '@eliotr/cloudflare-evidence':
+        specifier: workspace:*
+        version: link:../cloudflare-evidence
+      '@eliotr/cloudflare-model-control':
+        specifier: workspace:*
+        version: link:../cloudflare-model-control
+      '@eliotr/cloudflare-native-models':
+        specifier: workspace:*
+        version: link:../cloudflare-native-models
+      '@eliotr/cloudflare-workflows':
+        specifier: workspace:*
+        version: link:../cloudflare-workflows
+      '@eliotr/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@eliotr/platform-cloudflare':
+        specifier: workspace:*
+        version: link:../platform-cloudflare
+      '@eliotr/research':
+        specifier: workspace:*
+        version: link:../research
+      zod:
+        specifier: 4.4.3
+        version: 4.4.3
+
+  packages/cloudflare-model-transport:
+    dependencies:
+      '@eliotr/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@eliotr/platform-cloudflare':
+        specifier: workspace:*
+        version: link:../platform-cloudflare
+
+  packages/cloudflare-native-models:
+    dependencies:
+      '@eliotr/cloudflare-ai':
+        specifier: workspace:*
+        version: link:../cloudflare-ai
+      '@eliotr/cloudflare-model-control':
+        specifier: workspace:*
+        version: link:../cloudflare-model-control
+      '@eliotr/contracts':
+        specifier: workspace:*
+        version: link:../contracts
       '@eliotr/platform-cloudflare':
         specifier: workspace:*
         version: link:../platform-cloudflare
@@ -313,6 +466,15 @@ importers:
       '@eliotr/cloudflare-evidence':
         specifier: workspace:*
         version: link:../cloudflare-evidence
+      '@eliotr/cloudflare-model-control':
+        specifier: workspace:*
+        version: link:../cloudflare-model-control
+      '@eliotr/cloudflare-model-execution':
+        specifier: workspace:*
+        version: link:../cloudflare-model-execution
+      '@eliotr/cloudflare-research-branches':
+        specifier: workspace:*
+        version: link:../cloudflare-research-branches
       '@eliotr/cloudflare-workflows':
         specifier: workspace:*
         version: link:../cloudflare-workflows
@@ -337,6 +499,126 @@ importers:
       zod:
         specifier: 4.4.3
         version: 4.4.3
+
+  packages/cloudflare-research-branches:
+    dependencies:
+      '@eliotr/cloudflare-ai':
+        specifier: workspace:*
+        version: link:../cloudflare-ai
+      '@eliotr/cloudflare-evidence':
+        specifier: workspace:*
+        version: link:../cloudflare-evidence
+      '@eliotr/cloudflare-model-control':
+        specifier: workspace:*
+        version: link:../cloudflare-model-control
+      '@eliotr/cloudflare-model-execution':
+        specifier: workspace:*
+        version: link:../cloudflare-model-execution
+      '@eliotr/cloudflare-workflows':
+        specifier: workspace:*
+        version: link:../cloudflare-workflows
+      '@eliotr/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@eliotr/domain':
+        specifier: workspace:*
+        version: link:../domain
+      '@eliotr/platform-cloudflare':
+        specifier: workspace:*
+        version: link:../platform-cloudflare
+      '@eliotr/policy':
+        specifier: workspace:*
+        version: link:../policy
+      '@eliotr/research':
+        specifier: workspace:*
+        version: link:../research
+      '@eliotr/retrieval':
+        specifier: workspace:*
+        version: link:../retrieval
+      zod:
+        specifier: 4.4.3
+        version: 4.4.3
+
+  packages/cloudflare-research-configuration:
+    dependencies:
+      '@eliotr/cloudflare-ai':
+        specifier: workspace:*
+        version: link:../cloudflare-ai
+      '@eliotr/cloudflare-evidence':
+        specifier: workspace:*
+        version: link:../cloudflare-evidence
+      '@eliotr/cloudflare-model-control':
+        specifier: workspace:*
+        version: link:../cloudflare-model-control
+      '@eliotr/cloudflare-research':
+        specifier: workspace:*
+        version: link:../cloudflare-research
+      '@eliotr/cloudflare-research-stages':
+        specifier: workspace:*
+        version: link:../cloudflare-research-stages
+      '@eliotr/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@eliotr/platform-cloudflare':
+        specifier: workspace:*
+        version: link:../platform-cloudflare
+      zod:
+        specifier: 4.4.3
+        version: 4.4.3
+
+  packages/cloudflare-research-runtime:
+    dependencies:
+      '@eliotr/cloudflare-ai':
+        specifier: workspace:*
+        version: link:../cloudflare-ai
+      '@eliotr/cloudflare-evidence':
+        specifier: workspace:*
+        version: link:../cloudflare-evidence
+      '@eliotr/cloudflare-model-control':
+        specifier: workspace:*
+        version: link:../cloudflare-model-control
+      '@eliotr/cloudflare-model-execution':
+        specifier: workspace:*
+        version: link:../cloudflare-model-execution
+      '@eliotr/cloudflare-navigation':
+        specifier: workspace:*
+        version: link:../cloudflare-navigation
+      '@eliotr/cloudflare-projection':
+        specifier: workspace:*
+        version: link:../cloudflare-projection
+      '@eliotr/cloudflare-research':
+        specifier: workspace:*
+        version: link:../cloudflare-research
+      '@eliotr/cloudflare-research-branches':
+        specifier: workspace:*
+        version: link:../cloudflare-research-branches
+      '@eliotr/cloudflare-research-stages':
+        specifier: workspace:*
+        version: link:../cloudflare-research-stages
+      '@eliotr/cloudflare-workflows':
+        specifier: workspace:*
+        version: link:../cloudflare-workflows
+      '@eliotr/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@eliotr/domain':
+        specifier: workspace:*
+        version: link:../domain
+      '@eliotr/interfaces':
+        specifier: workspace:*
+        version: link:../interfaces
+      '@eliotr/platform-cloudflare':
+        specifier: workspace:*
+        version: link:../platform-cloudflare
+      '@eliotr/policy':
+        specifier: workspace:*
+        version: link:../policy
+      '@eliotr/research':
+        specifier: workspace:*
+        version: link:../research
+      '@eliotr/retrieval':
+        specifier: workspace:*
+        version: link:../retrieval
 
   packages/cloudflare-research-stages:
     dependencies:
@@ -365,6 +647,54 @@ importers:
         specifier: 4.4.3
         version: 4.4.3
 
+  packages/cloudflare-search-probe:
+    dependencies:
+      '@eliotr/cloudflare-ai':
+        specifier: workspace:*
+        version: link:../cloudflare-ai
+      '@eliotr/cloudflare-evidence':
+        specifier: workspace:*
+        version: link:../cloudflare-evidence
+      '@eliotr/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@eliotr/platform-cloudflare':
+        specifier: workspace:*
+        version: link:../platform-cloudflare
+      '@eliotr/retrieval':
+        specifier: workspace:*
+        version: link:../retrieval
+      zod:
+        specifier: 4.4.3
+        version: 4.4.3
+
+  packages/cloudflare-wiki:
+    dependencies:
+      '@eliotr/cloudflare-evidence':
+        specifier: workspace:*
+        version: link:../cloudflare-evidence
+      '@eliotr/cloudflare-navigation':
+        specifier: workspace:*
+        version: link:../cloudflare-navigation
+      '@eliotr/cloudflare-research':
+        specifier: workspace:*
+        version: link:../cloudflare-research
+      '@eliotr/cloudflare-research-stages':
+        specifier: workspace:*
+        version: link:../cloudflare-research-stages
+      '@eliotr/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@eliotr/interfaces':
+        specifier: workspace:*
+        version: link:../interfaces
+      '@eliotr/research':
+        specifier: workspace:*
+        version: link:../research
+      '@eliotr/retrieval':
+        specifier: workspace:*
+        version: link:../retrieval
+
   packages/cloudflare-workflows:
     dependencies:
       '@eliotr/cloudflare-evidence':
@@ -391,9 +721,21 @@ importers:
       '@eliotr/cloudflare-access':
         specifier: workspace:*
         version: link:../cloudflare-access
+      '@eliotr/cloudflare-computer-agent':
+        specifier: workspace:*
+        version: link:../cloudflare-computer-agent
+      '@eliotr/cloudflare-raw-ingest':
+        specifier: workspace:*
+        version: link:../cloudflare-raw-ingest
+      '@eliotr/cloudflare-workflows':
+        specifier: workspace:*
+        version: link:../cloudflare-workflows
       '@eliotr/contracts':
         specifier: workspace:*
         version: link:../contracts
+      '@eliotr/interfaces':
+        specifier: workspace:*
+        version: link:../interfaces
       '@eliotr/platform-cloudflare':
         specifier: workspace:*
         version: link:../platform-cloudflare
@@ -482,6 +824,22 @@ importers:
       '@eliotr/contracts':
         specifier: workspace:*
         version: link:../contracts
+
+  packages/pwa-research-workspace:
+    dependencies:
+      '@eliotr/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@eliotr/pwa-http-client':
+        specifier: workspace:*
+        version: link:../pwa-http-client
+      '@eliotr/pwa-source-workspace':
+        specifier: workspace:*
+        version: link:../pwa-source-workspace
+    devDependencies:
+      vitest:
+        specifier: 4.1.11
+        version: 4.1.11(@types/node@26.4.0)(vite@8.2.2(@types/node@26.4.0)(esbuild@0.28.1)(yaml@2.9.0))
 
   packages/pwa-source-workspace:
     dependencies:

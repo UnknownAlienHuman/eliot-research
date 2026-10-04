@@ -6,3 +6,5 @@ export * from "./isolated-restore-preflight.js";
 export * from "./restore-store.js";
 export * from "./restore-executor.js";
 export * from "./restore-erasure-gate.js";
+export { BackupR2ConfigurationError, readInstalledBackupR2Profile, requireInstalledBackupR2Authority, readInstalledBackupR2Credentials, createInstalledBackupOffsiteR2Resolver } from "./installed-offsite-configuration.js";
+export type { BackupR2Environment, InstalledBackupR2Profile, InstalledBackupAdapterAuthority } from "./installed-offsite-configuration.js";

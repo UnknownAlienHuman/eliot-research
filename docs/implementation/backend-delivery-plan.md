@@ -1,15 +1,16 @@
 # Backend delivery plan
 
 Current execution order, refreshed on 2026-10-04 against `main`
-`6019032bc8f7c5b57e5096787e6cb617dbdfa649`.
+`760c26b4787a1e3f8a2211e83f114d2bca0bb65a`.
 
 The [October 3 functional integration checkpoint](product-resume-2026-10-03.md)
 records the owner configuration, immutable run capture, MCP, provisioning and
 remaining real deployment/evidence checks. Assembly is in progress; no full
 release or live Research acceptance is claimed. The owner-directed phase is full
 product-code assembly before release and acceptance. Provider calls must remain
-free. Functional and same-document quality acceptance follow the assembled
-release; neither is established by compilation or an existing provider receipt.
+free. Functional and same-document acceptance follow the assembled release;
+cognitive and quality evaluations are deferred by the owner. Compilation and an
+existing provider receipt do not establish that acceptance.
 
 The current assembly covers catalog-based model configuration and native BYOK
 transport, durable owner/delegated policy parity, the existing AI Search evidence
@@ -17,11 +18,65 @@ path, useful bounded MCP reads and results, and the adaptive owner workspace.
 The observed Research failure at RECONCILE is under diagnosis. Native MCP client
 authorization remains unverified. These are open items, not completed acceptance.
 
+This code checkpoint assembles native-model and capability libraries above that
+published baseline. Model Control, Model Execution, Model Transport,
+Research Branches, Research Runtime, Research Configuration, Computer Agent,
+Wiki, Erasure Operations, Search Probe and browser Research Workspace now have
+explicit library boundaries. They share the existing Worker/PWA deployments;
+they are not new services. The workspace manifest/import audit and finite
+package-boundary scan passed during assembly. Those results do not establish
+its runtime behavior.
+
+Owner key use is composed through a durable operation/stage record
+(migration 0110), provider-native preparation, one-shot connectivity observation,
+candidate/proof/revocation records (0111), whole-project selection CAS and native
+Run/COW resolution. Connectivity probes have a separate fixed server-owned
+prompt, schema, parameters and deployment tuple. They must not claim execution
+of the installed Research stage prompt or qualification of project answers.
+Raw request/response bytes and their recomputed digests remain distinct from
+corpus EvidenceHandles and residency objects. OpenRouter requests enforce zero
+maximum prices and disabled provider fallback; a zero-price quote is not a
+measured provider invoice or a permanent entitlement to a free model.
+
+The new, unapplied observation tables use explicitly named canonical Base64
+TEXT columns for the bounded raw bodies. Readers decode them losslessly and
+verify the actual decoded byte lengths and digests. This storage representation
+keeps the existing portable backup protocol usable without misdeclaring binary
+values as text. Backup classification and explicit column specs cover the
+complete 0109-0111 operation/preparation/attempt/observation/candidate/proof/
+revocation chain, including uncertain attempts and revoked proofs.
+Only those ten tables receive an explicit introduction-migration map, so verified
+older v1 epochs can retain their original table/vector shape while newer cuts
+must include their full chain. This does not complete O3 restore: historical
+imports still need its isolated authority establishment because insertion guards
+require current owner/operation/pricing state. Those guards must not be bypassed
+or satisfied with invented owner/selection records.
+
+The integrated Core/PWA TypeScript build passed on Node 24.19.0 after the listed
+interface, import and fixture repairs. Scoped ESLint covered 442 changed files;
+its final type-only import repair passed a targeted check. The depth-100 SQL
+compiler passed on SQLite 3.50.4 including 0110/0111: 110 Core migrations and
+971 recovered application SQL sites, with zero failures. Its 119 dynamic or
+unresolved sites remain separately reported. The first failed SQL output is
+preserved; wrong column access, missing composite uniqueness, premature proof
+binding and oversized preparation/proof guards were repaired without changing
+the table columns. The ten backup column specs match the new tables.
+
+The source scan has two remaining aggregate Core failures: 21,425 physical lines
+and 1,148,046 raw bytes against the 10,000-line/600-KiB source heuristics. Every
+counted file is at most 600 lines and every other package at most 10,000 lines.
+No source-budget pass or emitted-size improvement is claimed. Publication uses
+the captured file manifest and non-forced main push; no deployment or model call
+was made for this checkpoint.
+Normal functional runs and same-document functional NotebookLM checks follow
+code assembly. Cognitive and quality evaluation remain deferred.
+
 The adaptive reading panels and system/light/dark theme are published in
 `310628db`. The portable backup table catalog now belongs to Contracts; its
 contents and order are preserved, and Contracts/O2 compilation and scoped lint
-passed. O2 has 8,428 source lines after this relocation. Contracts retains its
-existing oversized schema-registry test; other source-budget excesses remain.
+passed at that earlier relocation checkpoint. The schema-registry test is now
+split with its existing coverage preserved; the current remaining source-budget
+failures are the two Core aggregates above.
 No behavioral or live acceptance was run for the relocation.
 
 The current external-model requirement is OpenRouter
@@ -43,13 +98,18 @@ credential or provider key has been installed for this packet. The documented
 native OpenRouter path and response decoder are implemented; a real request has
 not verified them.
 
-An owner action to check and select a newly configured key still needs a genuine
-provider-native candidate, qualification observation and immutable resolver.
-The existing Dynamic Route installation/readback and its compatibility endpoint
-cannot stand in for native OpenRouter authority; that qualifier rejects native
-transport policies before database or provider effects. The native path must also pass
-project-selection CAS, normal-run spend admission and COW guards; adding a form
-or transport alone does not complete this requirement.
+The owner check/select action now creates separate provider-native candidates
+and connectivity proofs and uses their immutable resolver through project CAS,
+readiness, run capture, per-stage spend admission, model execution and COW.
+Captured owner/project bindings and the completed 0110 operation are required
+for run/COW resolution. Native profile and audit reads use these exact saved
+pins; stage-specific zero-price quote ports accompany them. Marker-omitted
+Dynamic Route selections retain their existing path. The old Dynamic Route
+qualifier continues to reject native transport policies before effects.
+Snapshot-v2 may retain the initial immutable price/proof past calendar expiry;
+current key/revocation checks and physical zero-price/no-fallback enforcement
+remain required on execution. Real operation, replay and refusal acceptance is
+pending.
 
 Assembly also relocates ingest services into Raw Ingest, AI Search control and
 generation code into Projection, exact reference manifests into Evidence,
@@ -59,7 +119,7 @@ exports preserve existing callers; these remain libraries in the same Worker
 and static PWA deployment. Source budgets and the remaining larger capability
 cuts remain open. This relocation does not prove smaller emitted bundles.
 
-The D1 depth-100 compiler passed against SQLite 3.50.4 for this assembly,
+At the published `760c26b` baseline, the D1 depth-100 compiler passed against SQLite 3.50.4,
 including migration 0109: 941 recovered application SQL sites compiled across
 the matching schemas, with 119 dynamic or unresolved sites reported separately.
 The first combined Core/PWA TypeScript build found integration typing and test

@@ -22,6 +22,7 @@ import { mountErasurePanel } from "./erasure-panel.js";
 import { mountSourceNamespacePanel } from "./source-namespace-panel.js";
 import { mountResearchConfigurationPanel, type ResearchConfigurationStartState } from "./research-configuration-panel.js";
 import { mountResearchProviderKeyPanel } from "./research-provider-key-panel.js";
+import { mountResearchProviderKeyModelUsePanel } from "./research-provider-key-model-use-panel.js";
 import { mountOwnerSessionPanel } from "./owner-session-panel.js";
 import { createOwnerSessionLifecycle } from "./owner-session-lifecycle.js";
 import { escapeHtml } from "./html.js";
@@ -180,6 +181,12 @@ function render(health: SystemHealth | null): void {
   }) : undefined;
   const providerKeyHost = app.querySelector<HTMLElement>("#research-provider-key");
   const providerKeyPanel = providerKeyHost ? mountResearchProviderKeyPanel(providerKeyHost, {
+    deploymentGeneration: () => app.dataset.healthGeneration,
+    healthReady: () => app.dataset.healthReady === "true",
+    ownerSessionScopeEpoch: () => ownerSessionScopeEpoch,
+  }) : undefined;
+  const providerKeyUseHost = app.querySelector<HTMLElement>("#research-provider-key-model-use");
+  const providerKeyUsePanel = providerKeyUseHost ? mountResearchProviderKeyModelUsePanel(providerKeyUseHost, {
     deploymentGeneration: () => app.dataset.healthGeneration,
     healthReady: () => app.dataset.healthReady === "true",
     ownerSessionScopeEpoch: () => ownerSessionScopeEpoch,
@@ -427,7 +434,7 @@ function render(health: SystemHealth | null): void {
     exhaustive?.selectSource(id);
     return true;
   }) : undefined;
-  const cleanups = [orientation, retrieval, researchRun, exhaustive, researchChanges, researchConfiguration, providerKeyPanel, wiki, diagnostic, clientGrants, erasure, ownerSession, projectPanel,
+  const cleanups = [orientation, retrieval, researchRun, exhaustive, researchChanges, researchConfiguration, providerKeyPanel, providerKeyUsePanel, wiki, diagnostic, clientGrants, erasure, ownerSession, projectPanel,
     () => erasureHost?.removeEventListener("eliotr:source-erased", sourceErased),
     () => erasureHost?.removeEventListener("eliotr:source-erasure-requested", sourceErased), importer ? mountBundleImportPanel(importer) : undefined,
     namespacePanel, () => app.removeEventListener("eliotr:namespace-selected", namespaceSelected),

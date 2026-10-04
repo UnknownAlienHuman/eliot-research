@@ -10,9 +10,10 @@ const actor = Object.freeze({ operation_id: "run-admission-test", investigation_
 const context = { principal_ref: actor.principal_ref, credential_generation: "credential-test",
   client_class: "owner_pwa", request: new Request("https://owner.example/api/v1/research/run") } as unknown as AuthenticatedRequestContext;
 const snapshot = { env, mode: "snapshot-v1", configuration_ref: "rrc-test", configuration_sha256: "a".repeat(64),
-  model_selections: [], project_configuration_ref: "rpmc-test", project_configuration_sha256: "b".repeat(64) } as ResolvedResearchRunConfiguration;
+  model_selections: [], project_configuration_ref: "rpmc-test", project_configuration_sha256: "b".repeat(64),
+  project_owner_ref: null, project_id: null } as ResolvedResearchRunConfiguration;
 const legacy = { ...snapshot, mode: "legacy-installed", configuration_ref: null, configuration_sha256: null,
-  project_configuration_ref: null, project_configuration_sha256: null } as ResolvedResearchRunConfiguration;
+  project_configuration_ref: null, project_configuration_sha256: null, project_owner_ref: null, project_id: null } as ResolvedResearchRunConfiguration;
 const scope = (scope_expression: QueryRequest["scope_expression"], new_run: boolean,
   configuration_required?: number): Parameters<typeof resolveResearchRunAdmissionConfiguration>[1] => ({
   actor, context, scope_expression, new_run,

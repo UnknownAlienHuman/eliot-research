@@ -1,7 +1,17 @@
-import { IdentifierSchema, OperationIntentSchema, VersionedRefSchema, type OperationIntent, type VersionedRef } from "@eliotr/contracts";
+import { IdentifierSchema, OperationIntentSchema, VersionedRefSchema, type VersionedRef } from "@eliotr/contracts";
 import { canonicalJson, decodeModelRouteDeployment, type ModelRouteDeployment } from "@eliotr/platform-cloudflare";
 import type { ModelCallInput } from "@eliotr/research";
 import type { StageRequest, WorkflowPrincipal } from "@eliotr/cloudflare-workflows";
+import type {
+  ResearchModelSpendAdmissionPreparationPort,
+  ResearchSynthesisSpendAdmissionReadRequest,
+  ResearchSynthesisSpendAdmissionRecord,
+} from "@eliotr/cloudflare-model-execution/research-model-spend-admission-types.js";
+export type {
+  ResearchModelSpendAdmissionPreparationPort,
+  ResearchSynthesisSpendAdmissionReadRequest,
+  ResearchSynthesisSpendAdmissionRecord,
+} from "@eliotr/cloudflare-model-execution/research-model-spend-admission-types.js";
 import type { EvidenceFreezeSynthesisContext } from "./research-evidence-freeze-composition.js";
 import type { ModelAttemptPreparationContext } from "./model-attempt-handler.js";
 import { validatedRequest } from "./model-attempt-store.js";
@@ -11,51 +21,6 @@ const SYNTHESIS_STAGE = "SYNTHESIZE" as const;
 const OPERATION_KIND = "REPORT" as const;
 const SHA256 = /^[a-f0-9]{64}$/u;
 const MAX_CALL_BYTES = 256 * 1024;
-
-/** Exact durable W2 key, before the W3 model reservation exists. */
-export interface ResearchSynthesisSpendAdmissionReadRequest {
-  readonly operation_id: string;
-  readonly stage_index: 12 | 14;
-  readonly stage_attempt_ref: string;
-  readonly stage_request_sha256: string;
-  readonly principal_ref: string;
-  readonly credential_generation: string;
-  readonly deployment_generation: string;
-  readonly workflow_budget_receipt_ref: string;
-}
-
-/**
- * A server-owned authorization issued before W3 reservation.  The D1 reader
- * projects the canonical intent, quote, authority and deployment JSON from
- * the durable admission row; the preparation callback never prices or infers
- * spend authority from a scope or model profile.
- */
-export interface ResearchSynthesisSpendAdmissionRecord extends ResearchSynthesisSpendAdmissionReadRequest {
-  readonly authorization_ref: string;
-  readonly decision_digest: string;
-  readonly reservation_id: string;
-  readonly quote_ref: string;
-  readonly route_ref: string;
-  readonly scope_snapshot_ref: VersionedRef;
-  readonly workflow_authorization_receipt_ref: string;
-  readonly policy_generation: string;
-  readonly currentness_digest: string;
-  readonly expires_at: string;
-  readonly intent: OperationIntent;
-  readonly admission_ref: VersionedRef;
-  readonly admission_sha256: string;
-  readonly created_at: string;
-  readonly quote: ModelCostQuote;
-  readonly authority: ModelAttemptAuthority;
-  readonly deployment: ModelRouteDeployment;
-  readonly max_input_bytes: number;
-  readonly max_output_bytes: number;
-}
-
-/** Shared preparation projection supplied by the durable admission store. */
-export interface ResearchModelSpendAdmissionPreparationPort {
-  readPreparation(input: ResearchSynthesisSpendAdmissionReadRequest): Promise<ResearchSynthesisSpendAdmissionRecord | null>;
-}
 
 export interface ResearchSynthesisPreparationDependencies {
   /** Reads a previously authorized, server-owned quote/authority/deployment. */

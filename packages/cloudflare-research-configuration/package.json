@@ -1,0 +1,32 @@
+{
+  "name": "@eliotr/cloudflare-research-configuration",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": "./src/index.ts",
+    "./research-owner-document-preset.js": "./src/research-owner-document-preset.ts",
+    "./research-owner-profile.js": "./src/research-owner-profile.ts",
+    "./research-owner-report-policy.js": "./src/research-owner-report-policy.ts",
+    "./research-owner-route-plan.js": "./src/research-owner-route-plan.ts",
+    "./research-owner-runtime-config.js": "./src/research-owner-runtime-config.ts",
+    "./research-owner-semantic-config.js": "./src/research-owner-semantic-config.ts",
+    "./research-owner-spend-policy.js": "./src/research-owner-spend-policy.ts"
+  },
+  "types": "./src/index.ts",
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc -b --pretty false"
+  },
+  "dependencies": {
+    "@eliotr/cloudflare-ai": "workspace:*",
+    "@eliotr/cloudflare-evidence": "workspace:*",
+    "@eliotr/cloudflare-model-control": "workspace:*",
+    "@eliotr/cloudflare-research": "workspace:*",
+    "@eliotr/cloudflare-research-stages": "workspace:*",
+    "@eliotr/contracts": "workspace:*",
+    "@eliotr/platform-cloudflare": "workspace:*",
+    "zod": "4.4.3"
+  }
+}

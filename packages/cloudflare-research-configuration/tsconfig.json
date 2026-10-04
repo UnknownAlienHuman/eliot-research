@@ -1,0 +1,19 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "dist",
+    "tsBuildInfoFile": "dist/.tsbuildinfo",
+    "types": ["@cloudflare/workers-types"]
+  },
+  "include": ["src/**/*.ts"],
+  "references": [
+    { "path": "../cloudflare-ai" },
+    { "path": "../cloudflare-evidence" },
+    { "path": "../cloudflare-model-control" },
+    { "path": "../cloudflare-research" },
+    { "path": "../cloudflare-research-stages" },
+    { "path": "../contracts" },
+    { "path": "../platform-cloudflare" }
+  ]
+}

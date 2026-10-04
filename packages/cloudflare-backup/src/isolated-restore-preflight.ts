@@ -1,5 +1,5 @@
 import { BackupEpochSchema, type BackupEpoch } from "@eliotr/contracts";
-import { BACKUP_MANIFEST_PROTOCOL, BACKUP_R2_PAYLOAD_PROTOCOL, BACKUP_SCHEMA_INVENTORY_PROTOCOL, TABLE_SPECS, digestCoreColumnInventory, readCoreColumnInventory, type CoreTableInventory } from "@eliotr/backup-o2";
+import { BACKUP_MANIFEST_PROTOCOL, BACKUP_R2_PAYLOAD_PROTOCOL, BACKUP_SCHEMA_INVENTORY_PROTOCOL, assertCoreTableMigrationPresence, coreTableSpecsForMigrationNames, digestCoreColumnInventory, listDurableTables, readCoreColumnInventory, type CoreTableInventory, type TableSpec } from "@eliotr/backup-o2";
 import type { BackupEpochDraft } from "@eliotr/backup-o2";
 import { openOffsiteBackupPart, type BackupOffsiteReadAuthority, type OffsiteCopyAdapter } from "@eliotr/backup-o2";
 import { BACKUP_PORTABLE_MANIFEST_NAMES, verifyPortableBackupManifests, type PlaintextBackupPart, type VerifiedPortableBackupManifests } from "@eliotr/backup-o2";
@@ -356,12 +356,7 @@ export async function verifyIsolatedRestorePreflight(input: IsolatedRestorePrefl
   await assertNoUnsettledErasure(primaryDb);
   await assertCleanTarget(targetDb);
   await Promise.all([assertEmptyBucket(target.evidence_bucket, input.signal), assertEmptyBucket(target.work_bucket, input.signal)]);
-  const expectedNames = TABLE_SPECS.map((spec) => spec.table);
-  const [targetGeneration, targetMigrations, targetInventory] = await Promise.all([
-    schemaGeneration(targetDb), migrationDigest(targetDb),
-    readCoreColumnInventory(targetDb, expectedNames),
-  ]);
-  const targetInventoryDigest = await digestCoreColumnInventory(targetInventory);
+  const [targetGeneration, targetMigrations] = await Promise.all([schemaGeneration(targetDb), migrationDigest(targetDb)]);
   if (targetGeneration !== draft.schema_generation || targetMigrations !== draft.migration_ledger_digest) failBackup("BACKUP_VECTOR_UNVERIFIABLE", "isolated restore target schema generation or migration ledger does not exactly match the epoch");
   const request: RestoreAdmissionRequest = {
     epoch_id: draft.epoch_id,
@@ -381,6 +376,17 @@ export async function verifyIsolatedRestorePreflight(input: IsolatedRestorePrefl
   abortIfNeeded(input.signal);
   const manifests = await openVerifiedManifests(input, policy, row);
   if (!manifests.payload_supported) failBackup("BACKUP_PAYLOAD_UNSUPPORTED", "backup R2 inventory predates authenticated payload transport and cannot be restored");
+  const migrationNames = manifests.vector["migration_names"];
+  if (!Array.isArray(migrationNames) || migrationNames.some((name) => typeof name !== "string")) failBackup("BACKUP_VECTOR_UNVERIFIABLE", "verified backup migration ledger is malformed");
+  let tableSpecs: readonly TableSpec[];
+  try { tableSpecs = coreTableSpecsForMigrationNames(migrationNames as string[]); }
+  catch { failBackup("BACKUP_VECTOR_UNVERIFIABLE", "verified backup migration ledger has an incomplete provider-authority migration chain"); }
+  const expectedNames = tableSpecs.map((spec) => spec.table);
+  const targetTableNames = await listDurableTables(targetDb);
+  try { assertCoreTableMigrationPresence(targetTableNames, migrationNames as string[]); }
+  catch { failBackup("BACKUP_VECTOR_UNVERIFIABLE", "isolated restore target tables disagree with the exact epoch migration ledger"); }
+  const targetInventory = await readCoreColumnInventory(targetDb, expectedNames);
+  const targetInventoryDigest = await digestCoreColumnInventory(targetInventory);
   const inventoryLines = manifests.manifests["schema-inventory"] ?? [];
   if (inventoryLines.length !== targetInventory.length + 1) failBackup("BACKUP_VECTOR_UNVERIFIABLE", "isolated restore schema inventory has missing or extra lines");
   const inventoryRecords = inventoryLines.map((line) => {
@@ -420,10 +426,15 @@ export async function verifyIsolatedRestorePreflight(input: IsolatedRestorePrefl
   await input.admission.assertCurrentAdmission(request);
   await assertCleanTarget(targetDb);
   await Promise.all([assertEmptyBucket(target.evidence_bucket, input.signal), assertEmptyBucket(target.work_bucket, input.signal)]);
-  const [finalGeneration, finalMigrations, finalInventory] = await Promise.all([
-    schemaGeneration(targetDb), migrationDigest(targetDb), readCoreColumnInventory(targetDb, expectedNames),
+  const [finalGeneration, finalMigrations, finalTableNames, finalInventory] = await Promise.all([
+    schemaGeneration(targetDb), migrationDigest(targetDb), listDurableTables(targetDb),
+    readCoreColumnInventory(targetDb, expectedNames),
   ]);
-  if (finalGeneration !== targetGeneration || finalMigrations !== targetMigrations || await digestCoreColumnInventory(finalInventory) !== targetInventoryDigest) failBackup("BACKUP_VECTOR_DRIFT", "isolated restore target schema changed while manifests were being verified", true);
+  if (finalGeneration !== targetGeneration || finalMigrations !== targetMigrations ||
+      canonicalBackupJson(finalTableNames) !== canonicalBackupJson(targetTableNames) ||
+      await digestCoreColumnInventory(finalInventory) !== targetInventoryDigest) failBackup("BACKUP_VECTOR_DRIFT", "isolated restore target schema changed while manifests were being verified", true);
+  try { assertCoreTableMigrationPresence(finalTableNames, migrationNames as string[]); }
+  catch { failBackup("BACKUP_VECTOR_DRIFT", "isolated restore target table set changed while manifests were being verified", true); }
   return {
     state: "PREFLIGHT_VERIFIED_NO_WRITES", draft, copy_ref: request.offsite_copy_ref,
     target: { account_id: target.account_id, failure_domain: target.failure_domain, environment_ref: target.environment_ref, resources: target.resources },

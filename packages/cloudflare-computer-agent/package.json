@@ -1,0 +1,39 @@
+{
+  "name": "@eliotr/cloudflare-computer-agent",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": "./src/index.ts",
+    "./runtime": "./src/runtime.ts",
+    "./computer-agent-http-support": "./src/computer-agent-http-support.ts",
+    "./computer-agent-connection-http": "./src/computer-agent-connection-http.ts",
+    "./computer-agent-connection-store": "./src/computer-agent-connection-store.ts",
+    "./computer-agent-dispatch-abandonment": "./src/computer-agent-dispatch-abandonment.ts",
+    "./computer-agent-dispatch-decline": "./src/computer-agent-dispatch-decline.ts",
+    "./computer-agent-dispatch-error": "./src/computer-agent-dispatch-error.ts",
+    "./computer-agent-dispatch-http": "./src/computer-agent-dispatch-http.ts",
+    "./computer-agent-dispatch-reassignment": "./src/computer-agent-dispatch-reassignment.ts",
+    "./computer-agent-dispatch-record": "./src/computer-agent-dispatch-record.ts",
+    "./computer-agent-dispatch-status": "./src/computer-agent-dispatch-status.ts",
+    "./computer-agent-dispatch-store": "./src/computer-agent-dispatch-store.ts",
+    "./computer-agent-preferred-dispatch": "./src/computer-agent-preferred-dispatch.ts",
+    "./computer-agent-qualification-http": "./src/computer-agent-qualification-http.ts",
+    "./computer-agent-qualification-store": "./src/computer-agent-qualification-store.ts",
+    "./computer-agent-route-http": "./src/computer-agent-route-http.ts",
+    "./computer-agent-route-readiness": "./src/computer-agent-route-readiness.ts",
+    "./computer-agent-route-store": "./src/computer-agent-route-store.ts"
+  },
+  "types": "./src/index.ts",
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc -b --pretty false"
+  },
+  "dependencies": {
+    "@eliotr/cloudflare-navigation": "workspace:*",
+    "@eliotr/contracts": "workspace:*",
+    "@eliotr/interfaces": "workspace:*",
+    "@eliotr/platform-cloudflare": "workspace:*"
+  }
+}

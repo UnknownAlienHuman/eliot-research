@@ -27,10 +27,11 @@ const RUNTIME_VAR_KEYS = [
 ] as const;
 const BUNDLE_KEYS = new Set(["protocol", "semantic_revision", "model_selections", "vars"]);
 const SEMANTIC_REVISION_KEYS = new Set(["revision_ref", "config_sha256"]);
-const MODEL_SELECTION_KEYS = new Set([
+const MODEL_SELECTION_REQUIRED_KEYS = new Set([
   "stage", "route_ref", "route_version", "candidate_ref", "candidate_sha256",
   "qualification_ref", "qualification_sha256", "transport_policy",
 ]);
+const MODEL_SELECTION_NATIVE_KEYS = new Set([...MODEL_SELECTION_REQUIRED_KEYS, "candidate_kind"]);
 const VAR_KEYS = new Set<string>(RUNTIME_VAR_KEYS);
 
 export type ResearchProjectModelConfigurationErrorCode =
@@ -63,6 +64,7 @@ export interface ResearchProjectModelRuntimeVars {
 }
 
 export interface ResearchProjectModelSelection {
+  readonly candidate_kind?: "provider-native-v1";
   readonly stage: string;
   readonly route_ref: string;
   readonly route_version: string;
@@ -242,14 +244,21 @@ function runtimeVars(value: unknown): ResearchProjectModelRuntimeVars {
 
 function routeSelection(value: unknown): ResearchProjectModelSelection {
   const record = plainObject(value, "configuration.model_selections[]");
-  exactKeys(record, MODEL_SELECTION_KEYS, "configuration.model_selections[]");
+  const native = Object.prototype.hasOwnProperty.call(record, "candidate_kind");
+  exactKeys(record, native ? MODEL_SELECTION_NATIVE_KEYS : MODEL_SELECTION_REQUIRED_KEYS, "configuration.model_selections[]");
   let transportPolicy: ModelGatewayTransportPolicyV1;
   try {
     transportPolicy = validateModelGatewayTransportPolicy(record.transport_policy);
   } catch (cause) {
     failure("RESEARCH_PROJECT_MODEL_CONFIGURATION_INPUT_INVALID", "model selection transport policy is invalid", 400, false, cause);
   }
+  if (native && (record.candidate_kind !== "provider-native-v1" || transportPolicy.api !== "openrouter-chat-completions" ||
+      transportPolicy.provider !== "openrouter" || transportPolicy.billing.mode !== "byok" ||
+      transportPolicy.billing.free_only !== true)) {
+    failure("RESEARCH_PROJECT_MODEL_CONFIGURATION_INPUT_INVALID", "native model selection marker or free-only OpenRouter policy is invalid");
+  }
   return Object.freeze({
+    ...(native ? { candidate_kind: "provider-native-v1" as const } : {}),
     stage: identifier(record.stage, "model selection stage"),
     route_ref: identifier(record.route_ref, "model selection route_ref"),
     route_version: identifier(record.route_version, "model selection route_version"),

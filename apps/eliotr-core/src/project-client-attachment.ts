@@ -1,15 +1,17 @@
-import { authorizeProjectClientGrant, nextOrientationBoundary, type ClientGrantLease } from "@eliotr/cloudflare-navigation";
+import {
+  authorizeProjectClientGrant,
+  nextOrientationBoundary,
+  type ClientGrantLease,
+} from "@eliotr/cloudflare-navigation";
+import { readActiveMembershipIds } from "@eliotr/cloudflare-navigation/project-owner-storage.js";
+import type { ProjectAttachmentBinding as NavigationProjectAttachmentBinding } from "@eliotr/cloudflare-navigation/project-owner-contract.js";
 import { canonicalJson, sha256Utf8 } from "@eliotr/platform-cloudflare";
 import { ROUTES, type AuthenticatedRequestContext } from "@eliotr/interfaces";
-import { eligibleCount, readActiveMembershipIds } from "./project-owner-storage.js";
+import { eligibleCount } from "./project-owner-storage.js";
 import { fail, nowValue, type ProjectOwnerResult, type ProjectOwnerUpdateInput } from "./project-owner-contract.js";
 
 /** The actor journals the command; the grantor independently supplies source authority. */
-export interface ProjectAttachmentBinding {
-  readonly grant_id: string;
-  readonly grant_revision: number;
-  readonly owner_principal_ref: string;
-}
+export type ProjectAttachmentBinding = NavigationProjectAttachmentBinding;
 
 /** Private command envelope, not a new public project DTO or permission store. */
 export async function prepareProjectAttachment(db: D1Database, context: AuthenticatedRequestContext,
@@ -101,8 +103,9 @@ export async function prepareProjectAttachment(db: D1Database, context: Authenti
     return result;
   }
 
-  return { lease, binding, receiptKey, requestSha, beforeWrite, disclose,
-    guardValues: () => {
+  return { actor_principal_ref: context.principal_ref, binding, receipt_key: receiptKey, request_sha256: requestSha,
+    cas_sql: PROJECT_ATTACHMENT_CAS, before_write: beforeWrite, disclose,
+    guard_values: () => {
       if (deadline === undefined) fail("PROJECT_STORAGE_UNAVAILABLE", 503, "Attachment write authority was not captured", true);
       return [grant.grant_id, grant.revision, new Date(deadline).toISOString()] as const;
     } };
