@@ -6,10 +6,7 @@ import {
   validateAiSearchGenerationRegistry,
 } from "./ai-search-generation.js";
 import { assertCloudflareAiSearchInstanceProfile } from "./ai-search-profile.js";
-import {
-  canonicalModelGatewayJson,
-  modelGatewaySha256,
-} from "./model-gateway-request.js";
+import { canonicalProjectionJson, projectionSha256Utf8 } from "./canonical.js";
 import {
   AI_SEARCH_GENERATION_REGISTRY_MAX_BYTES,
   AI_SEARCH_GENERATION_REGISTRY_SCHEMA,
@@ -20,6 +17,7 @@ import {
 } from "./ai-search-generation-registry-contract.js";
 import {
   aiSearchRegistryDigest,
+  aiSearchRegistryInputFailure as inputFailure,
   aiSearchRegistryIdentifier,
   aiSearchRegistryInteger,
   aiSearchRegistryReadbackFailure as readbackFailure,
@@ -122,6 +120,29 @@ function optionalChoice<const T extends string>(
   return value as T;
 }
 
+function exactAiSearchRegistryArray(
+  value: unknown,
+  label: string,
+  fail: (message: string, cause?: unknown) => never,
+): readonly unknown[] {
+  if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype) {
+    fail(`${label} must be a plain array`);
+  }
+  if (
+    Object.keys(value).length !== value.length ||
+    Object.getOwnPropertySymbols(value).length > 0
+  ) {
+    fail(`${label} must be a dense array without extra properties`);
+  }
+  for (let index = 0; index < value.length; index += 1) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+    if (descriptor === undefined || !("value" in descriptor)) {
+      fail(`${label}[${index}] cannot be missing or an accessor`);
+    }
+  }
+  return value;
+}
+
 function decodeProfile(raw: unknown, label: string): AiSearchInstanceProfile {
   const value = exactAiSearchRegistryObject(raw, PROFILE_KEYS, label, readbackFailure);
   const indexMethod = exactAiSearchRegistryObject(
@@ -130,10 +151,12 @@ function decodeProfile(raw: unknown, label: string): AiSearchInstanceProfile {
     `${label}.index_method`,
     readbackFailure,
   );
-  if (!Array.isArray(value.metadata_fields)) {
-    readbackFailure(`${label}.metadata_fields must be an array`);
-  }
-  const metadataFields = value.metadata_fields.map((entry, index) =>
+  const metadataFieldValues = exactAiSearchRegistryArray(
+    value.metadata_fields,
+    `${label}.metadata_fields`,
+    readbackFailure,
+  );
+  const metadataFields = metadataFieldValues.map((entry, index) =>
     aiSearchRegistryIdentifier(entry, `${label}.metadata_fields[${index}]`, readbackFailure),
   );
   const fusionMethod = optionalChoice(
@@ -263,15 +286,17 @@ function decodeRegistry(
   namespace: string,
 ): AiSearchGenerationRegistry {
   const value = exactAiSearchRegistryObject(raw, REGISTRY_KEYS, "registry", readbackFailure);
-  if (
-    !Array.isArray(value.generations) ||
-    value.generations.length > MAX_GENERATIONS
-  ) {
+  const generationValues = exactAiSearchRegistryArray(
+    value.generations,
+    "registry.generations",
+    readbackFailure,
+  );
+  if (generationValues.length > MAX_GENERATIONS) {
     readbackFailure(
       `registry.generations must contain at most ${MAX_GENERATIONS} entries`,
     );
   }
-  const generations = value.generations.map(decodeRecord);
+  const generations = generationValues.map(decodeRecord);
   for (const record of generations) {
     if (record.namespace !== namespace) {
       readbackFailure("registry generation belongs to another namespace");
@@ -379,7 +404,8 @@ export function buildAiSearchGenerationRegistryArtifact(
 export async function aiSearchGenerationRegistryArtifactDigest(
   artifact: AiSearchGenerationRegistryArtifact,
 ): Promise<string> {
-  const json = canonicalModelGatewayJson(artifact);
+  validateArtifactDigestInput(artifact);
+  const json = canonicalProjectionJson(artifact);
   if (
     new TextEncoder().encode(json).byteLength >
     AI_SEARCH_GENERATION_REGISTRY_MAX_BYTES
@@ -389,7 +415,61 @@ export async function aiSearchGenerationRegistryArtifactDigest(
       "AI Search generation registry exceeds its byte envelope",
     );
   }
-  return modelGatewaySha256(json);
+  return projectionSha256Utf8(json);
+}
+
+function validateArtifactDigestInput(
+  raw: unknown,
+): asserts raw is AiSearchGenerationRegistryArtifact {
+  const value = exactAiSearchRegistryObject(
+    raw,
+    ARTIFACT_KEYS,
+    "generation registry artifact",
+    inputFailure,
+  );
+  if (value.schema !== AI_SEARCH_GENERATION_REGISTRY_SCHEMA) {
+    inputFailure("generation registry schema is unsupported");
+  }
+  aiSearchRegistryIdentifier(
+    value.namespace,
+    "generation registry namespace",
+    inputFailure,
+  );
+  aiSearchRegistryInteger(
+    value.revision,
+    "generation registry revision",
+    1,
+    inputFailure,
+    "generation registry revision must be a positive safe integer",
+  );
+  const registry = exactAiSearchRegistryObject(
+    value.registry,
+    REGISTRY_KEYS,
+    "generation registry",
+    inputFailure,
+  );
+  const generations = exactAiSearchRegistryArray(
+    registry.generations,
+    "generation registry generations",
+    inputFailure,
+  );
+  if (generations.length > MAX_GENERATIONS) {
+    inputFailure("generation registry generations exceed their bound");
+  }
+  if (registry.active_head_generation !== null) {
+    aiSearchRegistryIdentifier(
+      registry.active_head_generation,
+      "generation registry active head",
+      inputFailure,
+    );
+  }
+  for (let index = 0; index < generations.length; index += 1) {
+    try {
+      decodeRecord(generations[index], index);
+    } catch (cause) {
+      inputFailure(`generation registry record ${index} is invalid`, cause);
+    }
+  }
 }
 
 export async function decodeAiSearchGenerationRegistrySnapshot(

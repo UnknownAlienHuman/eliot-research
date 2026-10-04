@@ -110,7 +110,8 @@ platform-cloudflare  → application ports
 google-drive-exchange → contracts/domain/policy
 interfaces            → application services
 apps/eliotr-core       → composition root and Cloudflare control plane only
-apps/eliotr-pwa        → contracts + HTTPS API only
+apps/eliotr-pwa        → contracts + browser feature libs + HTTPS API only
+browser feature libs  → contracts + pwa-http-client; Research UI → Source UI
 
 Rust pure crates       → no Cloudflare/runtime dependency
 eliotr-kernel-wasm     → Rust pure crates only
@@ -118,6 +119,12 @@ TypeScript Worker      → versioned Wasm ABI + Cloudflare bindings
 ```
 
 The automated boundary check is authoritative for allowed package imports.
+
+[ADR-0015](docs/adr/0015-browser-capability-libraries.md) permits the finite browser-only
+libraries `pwa-http-client`, `pwa-source-workspace`, `pwa-research-workspace`, and
+`pwa-knowledge-workspace`. The static PWA composes them; they receive no Worker bindings,
+provider credentials, backend authority, or additional deployment. The isolated agent inbox
+retains its standalone build and session rules.
 
 ## Implementation-state gate
 

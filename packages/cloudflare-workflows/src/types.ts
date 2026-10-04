@@ -87,6 +87,7 @@ export type WorkflowErrorCode =
   | "WORKFLOW_QUALIFICATION_STALE"
   | "WORKFLOW_PREPARATION_FAILED";
 export class WorkflowCheckpointError extends Error {
+  /** Safe underlying diagnosis; the outer code can remain WORKFLOW_EFFECT_UNCERTAIN. */
   constructor(readonly code: WorkflowErrorCode, readonly failure?: WorkflowFailure) {
     super(code);
     this.name = "WorkflowCheckpointError";

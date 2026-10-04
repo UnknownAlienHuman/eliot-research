@@ -2,7 +2,9 @@ import {
   canonicalModelGatewayJson,
   modelGatewayRequestParametersSha256,
   modelGatewaySha256,
+  normalizeModelGatewayReasoningEffort,
   validateModelGatewayTransportPolicy,
+  type ModelGatewayRequestCapabilitiesV1,
 } from "@eliotr/cloudflare-ai";
 import {
   canonicalJson,
@@ -175,13 +177,16 @@ function templateVersion(
 export function selectedEffort(
   semantic: ReturnType<typeof parseResearchSemanticConfiguration>,
   stage: string,
+  capabilities?: ModelGatewayRequestCapabilitiesV1,
 ): "low" | "medium" | "high" | "max" | null {
   const parameters = stage === "SYNTHESIZE" ? semantic.synthesis.trusted_parameters
     : stage === "AUDIT_CLAIMS" ? semantic.audit.trusted_parameters
       : semantic.roles?.trusted_parameters;
   const value = parameters?.reasoning_effort;
-  return typeof value === "string" && REASONING_EFFORT.has(value)
-    ? value as "low" | "medium" | "high" | "max" : null;
+  if (typeof value !== "string" || !REASONING_EFFORT.has(value)) return null;
+  if (capabilities === undefined) return value as "low" | "medium" | "high" | "max";
+  try { return normalizeModelGatewayReasoningEffort(value, capabilities); }
+  catch { return null; }
 }
 
 async function validateOwnerPromptBinding(
@@ -214,7 +219,7 @@ async function validateOwnerPromptBinding(
     stream: false,
   };
   const [parameterSha, promptSha, schemaSha] = await Promise.all([
-    modelGatewayRequestParametersSha256(params, transportPolicy.capabilities),
+    modelGatewayRequestParametersSha256(params, transportPolicy.capabilities, transportPolicy.api),
     modelGatewaySha256(canonicalModelGatewayJson({ content_kind: "eliotr.research.owner-prompt.v1", prompt: promptMatch.prompt })),
     modelGatewaySha256(canonicalModelGatewayJson({ content_kind: "eliotr.research.owner-output-schema.v1", output_schema: promptMatch.output_schema })),
   ]);
@@ -341,16 +346,13 @@ export function createResearchProjectModelConfigurationValidator(options: {
       let transport;
       try { transport = validateModelGatewayTransportPolicy(selection.transport_policy); }
       catch (cause) { qualificationRequired(`${rule.stage} transport policy is invalid`, cause); }
-      if (transport.api !== "compat-chat-completions") {
-        qualificationRequired(`${rule.stage} provider API requires a response decoder the current runtime does not support`);
-      }
       if (selection.stage === "SYNTHESIZE" || selection.stage === "AUDIT_CLAIMS") {
         await validateOwnerPromptBinding(semantic, selection.stage, rule.deployment, transport);
       } else {
         const configured = semantic.roles?.trusted_parameters ?? semantic.audit.trusted_parameters;
-        if (configured.reasoning_effort !== undefined &&
-            !transport.capabilities.reasoning_efforts.includes(configured.reasoning_effort)) {
-          qualificationRequired(`${rule.stage} selected reasoning effort is outside the saved transport capabilities`);
+        if (configured.reasoning_effort !== undefined) {
+          try { normalizeModelGatewayReasoningEffort(configured.reasoning_effort, transport.capabilities); }
+          catch (cause) { qualificationRequired(`${rule.stage} selected reasoning effort is outside the saved transport capabilities`, cause); }
         }
         const paramSha = await modelGatewayRequestParametersSha256({
           model: rule.deployment.route_ref,
@@ -359,7 +361,7 @@ export function createResearchProjectModelConfigurationValidator(options: {
           ...(configured.reasoning_effort === undefined ? {} : { reasoning_effort: configured.reasoning_effort }),
           ...(configured.response_format === undefined ? {} : { response_format: configured.response_format }),
           stream: false,
-        }, transport.capabilities);
+        }, transport.capabilities, transport.api);
         if (rule.deployment.parameters_digest !== paramSha) {
           fail("RESEARCH_PROJECT_MODEL_CONFIGURATION_INPUT_INVALID", 400,
             `${rule.stage} deployment request parameters do not match the saved semantic policy`);
@@ -368,9 +370,9 @@ export function createResearchProjectModelConfigurationValidator(options: {
       if (selection.stage === "SYNTHESIZE" || selection.stage === "AUDIT_CLAIMS") {
         const configured = selection.stage === "SYNTHESIZE" ? semantic.synthesis.trusted_parameters
           : semantic.audit.trusted_parameters;
-        if (configured.reasoning_effort !== undefined &&
-            !transport.capabilities.reasoning_efforts.includes(configured.reasoning_effort)) {
-          qualificationRequired(`${rule.stage} selected reasoning effort is outside the saved transport capabilities`);
+        if (configured.reasoning_effort !== undefined) {
+          try { normalizeModelGatewayReasoningEffort(configured.reasoning_effort, transport.capabilities); }
+          catch (cause) { qualificationRequired(`${rule.stage} selected reasoning effort is outside the saved transport capabilities`, cause); }
         }
       }
       const pinned: PinnedModelSelection = selection;

@@ -9,6 +9,7 @@ export * from "./d1-search-exact.js";
 export { pinReadyGenerations, requirePinnedCoverage, readD1SearchChannelReadback, readD1ManagedSemanticReadback } from "./d1-search-authority.js";
 export type { D1ManagedSemanticReadback, D1SearchChannelReadback, PinnedGeneration } from "./d1-search-authority.js";
 export * from "./managed-index.js";
+export * from "./ai-search.js";
 export * from "./core-authority.js";
 export * from "./core-settlement.js";
 export * from "./projection-delivery-handler.js";

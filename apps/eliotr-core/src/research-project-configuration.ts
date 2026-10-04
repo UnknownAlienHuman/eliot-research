@@ -181,7 +181,7 @@ export function createResearchProjectModelConfigurationService(options: {
       ...selection,
       provider_id: selection.transport_policy.provider,
       model_id: selection.transport_policy.model,
-      effective_reasoning_effort: semantic === undefined ? null : selectedEffort(semantic, selection.stage),
+      effective_reasoning_effort: semantic === undefined ? null : selectedEffort(semantic, selection.stage, selection.transport_policy.capabilities),
     }));
     return Object.freeze({ configuration_ref: revision.configuration_ref,
       configuration_sha256: revision.configuration_sha256, created_at: revision.created_at,

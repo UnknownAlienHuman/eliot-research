@@ -5,10 +5,13 @@ import {
   canonicalJson, createD1IngestAdmissionAuthority, createR2StagedBundlePort, IngestAuthorityError,
   requireCurrentIngestPolicy, type IngestClientAuthorization, type StagedBundlePort,
 } from "@eliotr/platform-cloudflare";
+import {
+  createIngestService,
+  createSourceAdmissionService,
+  IngestServiceError,
+} from "@eliotr/cloudflare-raw-ingest";
 import type { Env } from "./env.js";
 import { authorizeIngestPromotion } from "./ingest-promotion-authorization.js";
-import { createSourceAdmissionService } from "./source-admission-service.js";
-import { createIngestService, IngestServiceError } from "./ingest-service.js";
 
 type IngestApi = ReturnType<typeof createIngestService>;
 interface IngestLocator {

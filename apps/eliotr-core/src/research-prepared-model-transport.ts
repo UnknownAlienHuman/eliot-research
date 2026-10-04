@@ -171,9 +171,6 @@ export function parseResearchPreparedModelTransportPolicies(
     } catch (cause) {
       invalid("prepared model transport policy is invalid", cause);
     }
-    if (policy.api !== "compat-chat-completions") {
-      invalid("prepared model transport API is not supported by the qualification response path");
-    }
     if (row.provider !== policy.provider || row.model !== policy.model) {
       invalid("prepared model identity differs from its transport policy");
     }

@@ -140,7 +140,7 @@ export const MCP_RESEARCH_TOOLS = {
   },
   eliotr_query: {
     name: "eliotr_query",
-    description: "Run project-authorized FAST_SEARCH through the HTTP query service. Returns original evidence pack and trace references, not a generated answer. Persisted work is replayed only with the same idempotency key, request and current authority. No model dispatch.",
+    description: "Run project-authorized FAST_SEARCH through the existing query service. Returns the original evidence pack, trace references, authoritative coverage_claim, and synthesis_status NOT_REQUESTED with a static note; it does not generate an answer. Persisted work is replayed only with the same idempotency key, request and current authority. No model dispatch.",
     inputSchema: {
       type: "object", additionalProperties: false, required: ["client_grant_id", "idempotency_key", "request"],
       $defs: { scope },

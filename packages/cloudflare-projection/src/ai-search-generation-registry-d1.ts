@@ -18,7 +18,7 @@ import {
   aiSearchRegistryWriteFailure as writeFailure,
   exactAiSearchRegistryObject,
 } from "./ai-search-registry-validation.js";
-import { canonicalModelGatewayJson } from "./model-gateway-request.js";
+import { canonicalProjectionJson } from "./canonical.js";
 
 const COMMAND_KEYS = new Set([
   "artifact",
@@ -112,7 +112,7 @@ async function decodeStoredRow(
       "D1 generation registry row revision differs from artifact revision",
     );
   }
-  if (canonicalModelGatewayJson(snapshot.artifact) !== json) {
+  if (canonicalProjectionJson(snapshot.artifact) !== json) {
     readbackFailure("D1 generation registry artifact_json is not canonical");
   }
   return snapshot;
@@ -175,7 +175,7 @@ async function decodeCommand(
     expected_revision: expectedRevision,
     expected_artifact_sha256: expectedArtifactSha256,
     snapshot,
-    artifact_json: canonicalModelGatewayJson(snapshot.artifact),
+    artifact_json: canonicalProjectionJson(snapshot.artifact),
   });
 }
 

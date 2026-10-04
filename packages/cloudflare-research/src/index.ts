@@ -61,7 +61,24 @@ export * from "./research-model-spend-policy.js";
 export * from "./research-model-spend-observation.js";
 export * from "./research-synthesis-preparation.js";
 export * from "./research-held-scope.js";
-export * from "./research-run-status.js";
+export { readResearchRunStatus } from "./research-run-status.js";
+export type { RunStatusAuthoritySnapshot, RunStatusReadInput } from "./research-run-status.js";
+export {
+  RESEARCH_RUN_CONFIGURATION_PROTOCOL,
+  RESEARCH_RUN_CONFIGURATION_MAX_BYTES,
+  ResearchRunConfigurationStoreError,
+  deriveResearchRunConfigurationRef,
+  createD1ResearchRunConfigurationStore,
+} from "./research-run-configuration-store.js";
+export type {
+  ResearchRunConfigurationMode,
+  ResearchRunConfigurationStoreErrorCode,
+  ResearchRunConfigurationAssociation,
+  ResearchRunConfigurationWriteInput,
+  ResearchRunConfigurationRecord,
+  ResearchRunConfigurationWriteReceipt,
+  ResearchRunConfigurationStore,
+} from "./research-run-configuration-store.js";
 export * from "./research-materialize-result.js";
 export * from "./research-materialize-stage-handler.js";
 export type { ResearchV2MaterializationCandidate } from "./research-v2-materialize-adapter.js";
@@ -99,5 +116,4 @@ export * from "./artifact-cow-revision-runner.js";
 export * from "./artifact-cow-draft-materialization.js";
 export * from "./artifact-cow-model-revalidator.js";
 export * from "./artifact-cow-spend-admission.js";
-export * from "./research-run-configuration-store.js";
 export * from "./research-project-configuration-store.js";

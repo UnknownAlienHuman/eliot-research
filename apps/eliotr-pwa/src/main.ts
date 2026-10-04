@@ -21,6 +21,7 @@ import { mountMcpClientDiagnosticPanel } from "./mcp-client-diagnostic-panel.js"
 import { mountErasurePanel } from "./erasure-panel.js";
 import { mountSourceNamespacePanel } from "./source-namespace-panel.js";
 import { mountResearchConfigurationPanel, type ResearchConfigurationStartState } from "./research-configuration-panel.js";
+import { mountResearchProviderKeyPanel } from "./research-provider-key-panel.js";
 import { mountOwnerSessionPanel } from "./owner-session-panel.js";
 import { createOwnerSessionLifecycle } from "./owner-session-lifecycle.js";
 import { escapeHtml } from "./html.js";
@@ -128,11 +129,24 @@ function render(health: SystemHealth | null): void {
   const importer = app.querySelector<HTMLElement>("#bundle-import");
   const rawUploadHost = app.querySelector<HTMLElement>("#raw-upload");
   let selectedNamespace: string | undefined;
+  let ownerSessionScopeSerial = 0;
+  let ownerSessionScopeEpoch: number | undefined;
+  const publishOwnerSessionScope = (verified: boolean): void => {
+    ownerSessionScopeSerial += 1;
+    ownerSessionScopeEpoch = verified ? ownerSessionScopeSerial : undefined;
+    app.dispatchEvent(new Event("eliotr:owner-session-scope-changed"));
+  };
   const ownerSessionLifecycle = createOwnerSessionLifecycle({
     deploymentGeneration: () => app.dataset.healthGeneration,
     healthReady: () => !pageClosed && app.dataset.healthReady === "true",
-    onVerified: (session, deploymentGeneration) => namespacePanel?.verifyOwnerSession(session, deploymentGeneration),
-    onCleared: () => namespacePanel?.clearPrivate("Owner session verification ended. Workspace data was cleared."),
+    onVerified: (session, deploymentGeneration) => {
+      publishOwnerSessionScope(true);
+      namespacePanel?.verifyOwnerSession(session, deploymentGeneration);
+    },
+    onCleared: () => {
+      publishOwnerSessionScope(false);
+      namespacePanel?.clearPrivate("Owner session verification ended. Workspace data was cleared.");
+    },
     refreshReadPanes: () => { projectPanel?.refresh(); libraryPanel?.refresh(); researchRun?.refreshHistory(); },
   });
   const namespaceSelected = (event: Event): void => {
@@ -163,6 +177,12 @@ function render(health: SystemHealth | null): void {
   const researchConfiguration = researchConfigurationHost ? mountResearchConfigurationPanel(researchConfigurationHost, {
     deploymentGeneration: () => app.dataset.healthGeneration,
     onStateChange: (state) => { researchConfigurationStartState = state; researchRun?.refreshAvailability(); },
+  }) : undefined;
+  const providerKeyHost = app.querySelector<HTMLElement>("#research-provider-key");
+  const providerKeyPanel = providerKeyHost ? mountResearchProviderKeyPanel(providerKeyHost, {
+    deploymentGeneration: () => app.dataset.healthGeneration,
+    healthReady: () => app.dataset.healthReady === "true",
+    ownerSessionScopeEpoch: () => ownerSessionScopeEpoch,
   }) : undefined;
   const wikiHost = app.querySelector<HTMLElement>("#wiki");
   const wiki = wikiHost ? mountWikiPanel(wikiHost, () => app.dataset.healthGeneration, () => app.dataset.healthReady === "true") : undefined;
@@ -407,7 +427,7 @@ function render(health: SystemHealth | null): void {
     exhaustive?.selectSource(id);
     return true;
   }) : undefined;
-  const cleanups = [orientation, retrieval, researchRun, exhaustive, researchChanges, researchConfiguration, wiki, diagnostic, clientGrants, erasure, ownerSession, projectPanel,
+  const cleanups = [orientation, retrieval, researchRun, exhaustive, researchChanges, researchConfiguration, providerKeyPanel, wiki, diagnostic, clientGrants, erasure, ownerSession, projectPanel,
     () => erasureHost?.removeEventListener("eliotr:source-erased", sourceErased),
     () => erasureHost?.removeEventListener("eliotr:source-erasure-requested", sourceErased), importer ? mountBundleImportPanel(importer) : undefined,
     namespacePanel, () => app.removeEventListener("eliotr:namespace-selected", namespaceSelected),

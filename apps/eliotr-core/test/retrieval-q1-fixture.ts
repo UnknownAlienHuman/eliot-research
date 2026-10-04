@@ -25,9 +25,9 @@ import {
 import type { ScopeSnapshot } from "@eliotr/contracts";
 import type { RetrievalRequest } from "@eliotr/retrieval";
 import { bundleFixture } from "../../../packages/platform-cloudflare/src/ingest-test-fixture.js";
-import { prepareBrowserBundle } from "../../eliotr-pwa/src/bundle-input.js";
-import { importBrowserBundle } from "../../eliotr-pwa/src/bundle-import.js";
-import type { ImportTransport } from "../../eliotr-pwa/src/bundle-import-api.js";
+import { prepareBrowserBundle } from "../../../packages/pwa-source-workspace/src/bundle-input.js";
+import { importBrowserBundle } from "../../../packages/pwa-source-workspace/src/bundle-import.js";
+import type { ImportTransport } from "../../../packages/pwa-source-workspace/src/bundle-import-api.js";
 import { decodeApiProblem } from "../../eliotr-pwa/src/api.js";
 import { handleHttp } from "../src/http.js";
 import { PROJECTION_EXECUTION_PROFILE } from "../src/projection-execution-handler.js";

@@ -1,11 +1,17 @@
 import { isResearchQuestionText } from "@eliotr/contracts";
 import type { ModelRouteDeployment } from "@eliotr/platform-cloudflare";
 import { modelGatewayExecutionFailure } from "./model-gateway-execution-contract.js";
-import type { ModelGatewayRequestCapabilitiesV1 } from "./model-gateway-transport-policy.js";
+import {
+  normalizeModelGatewayReasoningEffort,
+  type ModelGatewayApi,
+  type ModelGatewayRequestCapabilitiesV1,
+} from "./model-gateway-transport-policy.js";
+import { modelGatewayProviderNativeParameterProjection } from "./model-gateway-provider-native-request.js";
 
 export {
   validateModelGatewayRequestCapabilities,
   validateModelGatewayTransportPolicy,
+  normalizeModelGatewayReasoningEffort,
 } from "./model-gateway-transport-policy.js";
 export type {
   ModelGatewayApi,
@@ -16,6 +22,7 @@ export type {
 const JSON_BODY_KEYS = new Set([
   "max_completion_tokens",
   "max_tokens",
+  "max_output_tokens",
   "messages",
   "model",
   "reasoning_effort",
@@ -29,6 +36,7 @@ const JSON_BODY_KEYS = new Set([
 const PARAMETER_KEYS = Object.freeze([
   "max_completion_tokens",
   "max_tokens",
+  "max_output_tokens",
   "reasoning_effort",
   "response_format",
   "seed",
@@ -393,22 +401,25 @@ function validateRequestParameters(
   body: Record<string, unknown>,
   capabilities?: ModelGatewayRequestCapabilitiesV1,
 ): void {
+  const tokenFields = ["max_tokens", "max_completion_tokens", "max_output_tokens"] as const;
   const tokenField = capabilities?.max_output_tokens_field ?? "max_tokens";
-  const otherTokenField = tokenField === "max_tokens"
-    ? "max_completion_tokens"
-    : "max_tokens";
-  if (body[otherTokenField] !== undefined) {
+  if (tokenFields.filter((field) => body[field] !== undefined).length !== 1 ||
+      body[tokenField] === undefined) {
     modelGatewayExecutionFailure(
       "MODEL_GATEWAY_REQUEST_INVALID",
-      `model request must use ${tokenField} for the selected API`,
+      `model request must use only ${tokenField} for the selected API`,
     );
   }
   safeInteger(body[tokenField], `model request ${tokenField}`, 1, 1_000_000);
-  const allowedEfforts = capabilities?.reasoning_efforts ?? ["low", "medium", "high"];
   if (
     body.reasoning_effort !== undefined &&
-    (typeof body.reasoning_effort !== "string" ||
-      !allowedEfforts.includes(body.reasoning_effort as "low" | "medium" | "high" | "max"))
+    (capabilities === undefined
+      ? typeof body.reasoning_effort !== "string" || !["low", "medium", "high"].includes(body.reasoning_effort)
+      : (typeof body.reasoning_effort !== "string" ||
+        (!capabilities.reasoning_efforts.includes(body.reasoning_effort as "low" | "medium" | "high" | "max") &&
+         capabilities.reasoning_effort_normalizations?.[
+           body.reasoning_effort as "low" | "medium" | "high" | "max"
+         ] === undefined)))
   ) {
     modelGatewayExecutionFailure(
       "MODEL_GATEWAY_REQUEST_INVALID",
@@ -435,6 +446,22 @@ function validateRequestParameters(
   }
 }
 
+export async function modelGatewayRequestParametersSha256(
+  rawBody: unknown,
+  capabilities?: ModelGatewayRequestCapabilitiesV1,
+  api: ModelGatewayApi = "compat-chat-completions",
+): Promise<string> {
+  const projectedBody = capabilities === undefined
+    ? rawBody
+    : modelGatewayBodyForCapabilities(rawBody, capabilities);
+  const body = exactObject(projectedBody, JSON_BODY_KEYS, "model request body");
+  validateRequestParameters(body, capabilities);
+  const parameters = modelGatewayProviderNativeParameterProjection(body, api, capabilities);
+  return modelGatewaySha256(
+    canonicalModelGatewayJson(parameters),
+  );
+}
+
 function parameterProjection(
   body: Record<string, unknown>,
 ): Readonly<Record<string, unknown>> {
@@ -443,17 +470,6 @@ function parameterProjection(
     if (body[key] !== undefined) projection[key] = body[key];
   }
   return Object.freeze(projection);
-}
-
-export async function modelGatewayRequestParametersSha256(
-  rawBody: unknown,
-  capabilities?: ModelGatewayRequestCapabilitiesV1,
-): Promise<string> {
-  const body = exactObject(rawBody, JSON_BODY_KEYS, "model request body");
-  validateRequestParameters(body, capabilities);
-  return modelGatewaySha256(
-    canonicalModelGatewayJson(parameterProjection(body)),
-  );
 }
 
 export async function validateModelGatewayRequestBody(
@@ -466,7 +482,10 @@ export async function validateModelGatewayRequestBody(
   readonly body: string;
   readonly parameters_sha256: string;
 }> {
-  const body = exactObject(raw, JSON_BODY_KEYS, "model request body");
+  const normalizedRaw = capabilities === undefined
+    ? raw
+    : modelGatewayBodyForCapabilities(raw, capabilities);
+  const body = exactObject(normalizedRaw, JSON_BODY_KEYS, "model request body");
   const target = await modelGatewayDynamicRouteTarget(deployment);
   if (body.model !== target.model) {
     modelGatewayExecutionFailure(
@@ -515,20 +534,29 @@ export function modelGatewayBodyForCapabilities(
   capabilities: ModelGatewayRequestCapabilitiesV1,
 ): unknown {
   const body = exactObject(raw, JSON_BODY_KEYS, "model request body");
+  const tokenFields = ["max_tokens", "max_completion_tokens", "max_output_tokens"] as const;
   const tokenField = capabilities.max_output_tokens_field;
-  const otherTokenField = tokenField === "max_tokens"
-    ? "max_completion_tokens"
-    : "max_tokens";
-  if (body[tokenField] !== undefined && body[otherTokenField] !== undefined) {
+  const otherTokenFields = tokenFields.filter((field) => field !== tokenField);
+  const presentTokenFields = tokenFields.filter((field) => body[field] !== undefined);
+  if (presentTokenFields.length > 1) {
     modelGatewayExecutionFailure(
       "MODEL_GATEWAY_REQUEST_INVALID",
       "model request cannot contain both output token fields",
     );
   }
-  if (body[tokenField] !== undefined || body[otherTokenField] === undefined) {
+  const sourceField = presentTokenFields[0];
+  const normalizedEffort = body.reasoning_effort === undefined
+    ? undefined
+    : normalizeModelGatewayReasoningEffort(body.reasoning_effort, capabilities);
+  if ((sourceField === undefined || sourceField === tokenField) &&
+      (normalizedEffort === undefined || normalizedEffort === body.reasoning_effort)) {
     return raw;
   }
-  const normalized: Record<string, unknown> = { ...body, [tokenField]: body[otherTokenField] };
-  delete normalized[otherTokenField];
+  const normalized: Record<string, unknown> = { ...body };
+  if (sourceField !== undefined && sourceField !== tokenField) {
+    normalized[tokenField] = body[sourceField];
+    for (const field of otherTokenFields) delete normalized[field];
+  }
+  if (normalizedEffort !== undefined) normalized.reasoning_effort = normalizedEffort;
   return normalized;
 }

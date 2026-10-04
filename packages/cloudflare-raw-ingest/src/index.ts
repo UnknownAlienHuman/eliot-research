@@ -6,3 +6,5 @@ export * from "./raw-normalized-types.js";
 export * from "./raw-normalized-snapshot-view.js";
 export * from "./raw-normalized-candidate-reader.js";
 export * from "./raw-normalized-admission.js";
+export * from "./source-admission-service.js";
+export * from "./ingest-service.js";

@@ -20,6 +20,8 @@ import { handleResearchModelCatalog } from "./research-model-catalog-http.js";
 import { handleResearchProjectModelConfiguration,
   handleResearchProjectModelConfigurationImport } from "./research-project-configuration-http.js";
 import { createOwnerResearchProjectConfigurationService } from "./research-project-configuration-composition.js";
+import { handleResearchProviderKeyConfiguration } from "./research-provider-key-configuration-http.js";
+import { createResearchProviderKeyConfigurationComposition } from "./research-provider-key-configuration-composition.js";
 import { handleAiSearchFunctionalProbeHttp } from "./ai-search-functional-probe-http.js";
 import {
   handleMcpClientDiagnosticIssue,
@@ -100,6 +102,13 @@ export async function dispatchHttpSpecialRoute(input: {
     }
     case "system.research.models":
       return handleResearchModelCatalog(input.request, input.env, input.context);
+    case "project.provider-key-configuration.read":
+    case "project.provider-key-configuration.create": {
+      const projectId = input.match.params.project_id ?? "";
+      const composition = createResearchProviderKeyConfigurationComposition(input.env);
+      return handleResearchProviderKeyConfiguration(input.request, input.env, input.context, projectId,
+        input.match.route.maximum_request_bytes, composition.service);
+    }
     case "system.computer-agent-qualifications.status":
     case "system.computer-agent-qualifications.issue":
       return handleComputerAgentQualificationOwnerHttp(input.request, input.env, input.context,

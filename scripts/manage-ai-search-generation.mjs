@@ -263,11 +263,11 @@ async function loadDesiredState(path) {
 async function loadCloudflareAiModule() {
   try {
     const [profile, generation, registry, store, primary] = await Promise.all([
-      loadCompiledWorkspaceModule("packages/cloudflare-ai/dist/ai-search-profile.js"),
-      loadCompiledWorkspaceModule("packages/cloudflare-ai/dist/ai-search-generation.js"),
-      loadCompiledWorkspaceModule("packages/cloudflare-ai/dist/ai-search-generation-registry.js"),
-      loadCompiledWorkspaceModule("packages/cloudflare-ai/dist/ai-search-generation-registry-d1.js"),
-      loadCompiledWorkspaceModule("packages/cloudflare-ai/dist/ai-search-primary-profile.js"),
+      loadCompiledWorkspaceModule("packages/cloudflare-projection/dist/ai-search-profile.js"),
+      loadCompiledWorkspaceModule("packages/cloudflare-projection/dist/ai-search-generation.js"),
+      loadCompiledWorkspaceModule("packages/cloudflare-projection/dist/ai-search-generation-registry.js"),
+      loadCompiledWorkspaceModule("packages/cloudflare-projection/dist/ai-search-generation-registry-d1.js"),
+      loadCompiledWorkspaceModule("packages/cloudflare-projection/dist/ai-search-primary-profile.js"),
     ]);
     return Object.freeze({
       ...profile,

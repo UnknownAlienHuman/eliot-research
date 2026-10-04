@@ -1,9 +1,10 @@
 // IMPLEMENTED_NOT_LIVE: ER-24 ResearchSession executes durable sessions over DO storage with W2 D1/R2 checkpoints; research.query/run are composed; hibernation WebSocket transport and live receipts remain separate.
 import { DurableObject } from "cloudflare:workers";
-import { ORIENTATION_PROFILE, createD1ScopeService, createOwnerScopeAuthority, createProjectClientScopeAuthority, OWNER_RESEARCH_MAX_SELECTED_SOURCES, readOwnerScopeProfile } from "@eliotr/cloudflare-navigation";
-import { createD1ScopePorts, createD1ScopeProfilePort, createD1RetrievalResultStore, retrievalRequestDigest, RetrievalQueryError } from "@eliotr/retrieval";
+import { ORIENTATION_PROFILE, OWNER_RESEARCH_MAX_SELECTED_SOURCES, readOwnerScopeProfile } from "@eliotr/cloudflare-navigation";
+import { createD1ScopePorts, createD1ScopeProfilePort, RetrievalQueryError } from "@eliotr/retrieval";
+import type { ScopeProfileBinding } from "@eliotr/retrieval";
 import { createD1EvidenceAuthorityPort, createNavigationReadAuthority } from "@eliotr/cloudflare-evidence";
-import { loadHeldResearchScope, retrieveWithHeldScope } from "./research-retrieval-composition.js";
+import { loadHeldResearchScope } from "./research-retrieval-composition.js";
 import {
   createMonotoneStageExecutor,
   WorkflowCheckpointStore,
@@ -30,7 +31,7 @@ import { resolveResearchRunAdmissionConfiguration } from "./research-run-configu
 import { RESEARCH_QUALIFICATION_RENEWAL_MARKER } from "./research-qualification-renewal.js";
 import { isResearchQuestionText, ScopeExpressionSchema, VersionedRefSchema } from "@eliotr/contracts";
 import type { VersionedRef } from "@eliotr/contracts";
-import { inspectScopeExpression, scopeExpressionIdentity } from "@eliotr/domain";
+import { inspectScopeExpression } from "@eliotr/domain";
 import type { AuthenticatedRequestContext, QueryRequest, QueryResult, ResearchRunStatus } from "@eliotr/interfaces";
 import { readResearchEngineStatus, researchRunFailure } from "./research-run-failure.js";
 import { ResearchServiceError, failResearch as fail } from "./research-service-error.js";
@@ -48,6 +49,13 @@ import { researchStageBudgetLeaseMs } from "./research-runtime-duration.js";
 import { prepareReauthenticatedRunRead, readReauthenticatedRunAnswer } from "./research-run-read-authorization.js";
 import { prepareProjectClientRunRead, readProjectClientRunAnswer } from "./research-client-run-read.js";
 import { requireResearchDeploymentCompatibility } from "./research-deployment-compatibility.js";
+import {
+  createResearchQueryExecutor,
+  mapRetrievalError,
+  requireMcpFastSearchCoverageClaim,
+} from "./research-query-execution-result.js";
+import type { McpFastSearchQueryResult, ResearchQueryEnvironment } from "./research-query-execution-result.js";
+export type { McpFastSearchQueryResult } from "./research-query-execution-result.js";
 export const RESEARCH_SESSION_PROTOCOL = "eliotr.research-session.v1";
 const RUN_BUDGET = "research-budget-v1";
 const POLICY_GEN = "research-policy-v1";
@@ -98,8 +106,7 @@ function idempotencyKey(context: AuthenticatedRequestContext): string { const ke
 export const RETRIEVAL_SCOPE_PROFILE_VERSION = SERVER_RETRIEVAL_SCOPE_PROFILE.version;
 export const RETRIEVAL_SCOPE_MAX_SOURCES = SERVER_RETRIEVAL_SCOPE_PROFILE.max_sources;
 export const RETRIEVAL_SCOPE_MAX_RESULTS = SERVER_RETRIEVAL_SCOPE_PROFILE.max_results;
-const RETRIEVAL_QUERY_BUDGET_MS = 30_000;
-export interface ResearchQueryOptions { readonly scopeProfile?: { readonly version: string; readonly max_sources: number; readonly max_results: number } }
+export interface ResearchQueryOptions { readonly scopeProfile?: ScopeProfileBinding }
 function mapComputerAgentRouteError(error: unknown): never {
   if (!(error instanceof ComputerAgentRouteError)) throw error;
   if (error.retryable) {
@@ -111,74 +118,29 @@ function mapComputerAgentRouteError(error: unknown): never {
   }
   fail("RESEARCH_CONFLICT", "Computer-agent project route conflicts with this run", 409);
 }
-function mapRetrievalError(error: unknown): never {
-  if (error instanceof ResearchServiceError) throw error;
-  if (!(error instanceof RetrievalQueryError)) throw error;
-  const status = error.code === "RETRIEVAL_INPUT_INVALID" ? 400 : error.code === "RETRIEVAL_AUTHORITY_STALE" ? 403 : error.code === "RETRIEVAL_RESOLUTION_UNCERTAIN" ? 503 : 409;
-  const code = error.code === "RETRIEVAL_INPUT_INVALID" ? "RESEARCH_INPUT_INVALID" : error.code === "RETRIEVAL_RESOLUTION_UNCERTAIN" ? "RESEARCH_SETTLEMENT_UNCERTAIN" : error.code === "RETRIEVAL_BUDGET_STOP" ? "RESEARCH_BUDGET_STOP" : error.code === "RETRIEVAL_CANCELLED" ? "RESEARCH_CANCELLED" : error.code === "RETRIEVAL_SCOPE_STALE" || error.code === "RETRIEVAL_AUTHORITY_STALE" ? "RESEARCH_AUTHORITY_STALE" : "RESEARCH_CONFLICT";
-  fail(code, error.message, status, status === 503);
-}
-export function createResearchQueryService(env: Pick<Env, "CORE_DB" | "SEARCH_DB" | "EVIDENCE_BUCKET"> & { readonly AI_SEARCH?: Env["AI_SEARCH"] }, options?: ResearchQueryOptions): { query(context: AuthenticatedRequestContext, request: QueryRequest): Promise<QueryResult> } {
+export function createResearchQueryService(env: ResearchQueryEnvironment, options?: ResearchQueryOptions): {
+  query(context: AuthenticatedRequestContext, request: QueryRequest): Promise<QueryResult>;
+  queryForMcp(context: AuthenticatedRequestContext, request: QueryRequest): Promise<McpFastSearchQueryResult>;
+} {
   const profile = options?.scopeProfile ?? { version: RETRIEVAL_SCOPE_PROFILE_VERSION, max_sources: RETRIEVAL_SCOPE_MAX_SOURCES, max_results: RETRIEVAL_SCOPE_MAX_RESULTS };
   if (profile.max_sources > RETRIEVAL_SCOPE_MAX_SOURCES || profile.max_results > RETRIEVAL_SCOPE_MAX_RESULTS) fail("RESEARCH_PROFILE_UNSUPPORTED", "research.query scope profile exceeds the metadata-Lens bound", 422);
+  const executeQuery = createResearchQueryExecutor({
+    env,
+    profile,
+    parseRequest: parseResearchQueryRequest,
+    idempotencyKey,
+  });
   return {
     async query(context, request) {
-      const parsed = parseResearchQueryRequest(request);
-      if (context.client_class !== "owner_pwa" && parsed.product !== "FAST_SEARCH") {
-        fail("RESEARCH_PROFILE_UNSUPPORTED", "delegated research.query currently supports FAST_SEARCH only", 422);
+      return (await executeQuery(context, request, false)).result;
+    },
+    async queryForMcp(context, request) {
+      const execution = await executeQuery(context, request, true);
+      if (execution.coverage_claim === undefined) {
+        fail("RESEARCH_SETTLEMENT_UNCERTAIN", "FAST_SEARCH coverage readback is unavailable", 503, true);
       }
-      const key = idempotencyKey(context);
-      const delegated = context.client_class === "owner_pwa" ? undefined
-        : await createProjectClientScopeAuthority(env.CORE_DB, context, parsed.scope_expression);
-      if (context.request.signal.aborted) fail("RESEARCH_CANCELLED", "research query is cancelled", 409);
-      const access = { principal_ref: context.principal_ref, client_class: context.client_class, credential_generation: context.credential_generation };
-      const scopePorts = createD1ScopePorts(env.CORE_DB, access);
-      const store = createD1RetrievalResultStore(env.CORE_DB, access);
-      const prior = await store.load(key).catch((error: unknown) => {
-        if (error instanceof RetrievalQueryError) mapRetrievalError(error);
-        fail("RESEARCH_SETTLEMENT_UNCERTAIN", "stored query result is unavailable", 503, true);
-      });
-      if (prior !== null) {
-        const scope = prior.result.trace.scope_snapshot;
-        await delegated?.requireScopeCurrent(scope);
-        await scopePorts.requireCurrentScope(scope).catch(mapRetrievalError);
-        await createD1ScopeProfilePort(env.CORE_DB).requireBinding(scope, profile).catch(mapRetrievalError);
-        if (scopeExpressionIdentity(parsed.scope_expression) !== scopeExpressionIdentity(scope.resolved_scope_expression)) {
-          fail("RESEARCH_CONFLICT", "idempotency identity is bound to a different scope expression", 409);
-        }
-        const digest = await retrievalRequestDigest({ raw_query: parsed.query, product: parsed.product, literals: [...parsed.literals], requested_limit: parsed.max_results, scope_digest: scope.digest });
-        if (digest !== prior.request_digest) fail("RESEARCH_CONFLICT", "idempotency identity is bound to different inputs", 409);
-        await scopePorts.requireCurrentScope(scope).catch(mapRetrievalError);
-        await delegated?.requireScopeCurrent(scope);
-        if (context.request.signal.aborted) fail("RESEARCH_CANCELLED", "research query is cancelled", 409);
-        return { evidence_pack: prior.result.evidence_pack, trace_ref: prior.result.trace.trace_ref };
-      }
-      const authority = delegated?.authority ?? createOwnerScopeAuthority(env.CORE_DB, context);
-      await authority.requireReadPolicy();
-      const freezer = createD1ScopeService(env.CORE_DB, authority, { max_snapshot_members: profile.max_sources,
-        ...(delegated === undefined ? {} : { preserve_resolution_errors: true }) });
-      const snapshot = await freezer.freeze(parsed.scope_expression, context.credential_generation);
-      await createD1ScopeProfilePort(env.CORE_DB).recordBinding(snapshot, profile).catch(mapRetrievalError);
-      await freezer.requireCurrent(snapshot);
-      await authority.grant(snapshot);
-      await delegated?.requireScopeCurrent(snapshot);
-      await scopePorts.requireCurrentScope(snapshot);
-      const deadlineMs = Date.now() + RETRIEVAL_QUERY_BUDGET_MS;
-      const result = await retrieveWithHeldScope(env, {
-        access,
-        scope_snapshot: snapshot,
-        raw_query: parsed.query,
-        product: parsed.product,
-        literals: [],
-        requested_limit: parsed.max_results,
-        deadline_ms: deadlineMs,
-        idempotency_key: key,
-        signal: context.request.signal,
-        profile,
-      }).catch(mapRetrievalError);
-      await delegated?.requireScopeCurrent(snapshot);
-      if (context.request.signal.aborted) fail("RESEARCH_CANCELLED", "research query is cancelled", 409);
-      return { evidence_pack: result.evidence_pack, trace_ref: result.trace.trace_ref };
+      return { ...execution.result,
+        coverage_claim: requireMcpFastSearchCoverageClaim(execution.coverage_claim) };
     },
   };
 }

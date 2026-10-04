@@ -9,10 +9,9 @@ import type {
   PreparedIngestOperation,
   StagedBundlePort,
 } from "@eliotr/platform-cloudflare";
+import { createIngestService, type SourceAdmissionService } from "@eliotr/cloudflare-raw-ingest";
 import { describe, expect, it, vi } from "vitest";
 import { dispatchIngestOperation, IngestHttpInputError } from "../src/ingest-http.js";
-import { createIngestService } from "../src/ingest-service.js";
-import type { SourceAdmissionService } from "../src/source-admission-service.js";
 
 const A = "a".repeat(64);
 const B = "b".repeat(64);

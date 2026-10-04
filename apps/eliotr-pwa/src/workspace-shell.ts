@@ -57,6 +57,7 @@ export function renderWorkspaceShell(copy: WorkspaceShellCopy): string {
         <section id="connections-card" class="workspace-view" data-workspace-view="connections" tabindex="-1" aria-label="Connections" hidden>
           <div class="connection-stack">
             <section class="connection-card research-configuration-card" id="research-configuration-card"><div id="research-configuration"></div></section>
+            <article class="connection-card" id="research-provider-key-card"><div id="research-provider-key"></div></article>
             <article class="connection-card" id="connection-server-card">
               <div class="connection-heading"><h2>Workspace connection</h2><span id="connection-server-state" class="connection-state connection-state--pending">Checking</span></div>
               <p id="connection-server-copy" class="connection-copy">Checking API and schema readiness.</p>

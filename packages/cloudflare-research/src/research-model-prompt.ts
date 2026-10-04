@@ -3,6 +3,7 @@ import {
   modelGatewayDynamicRouteTarget,
   modelGatewaySha256,
   ModelGatewayExecutionError,
+  validateModelGatewayRequestCapabilities,
   validateModelGatewayRequestBody,
   type CompiledModelGatewayPrompt,
   type ModelCallInput,
@@ -50,21 +51,11 @@ function fail(message: string): never {
 function parseRequestCapabilities(
   value: ModelGatewayRequestCapabilitiesV1,
 ): ModelGatewayRequestCapabilitiesV1 {
-  if (value === null || typeof value !== "object" || Array.isArray(value) ||
-      Object.getPrototypeOf(value) !== Object.prototype ||
-      Object.keys(value).sort().join(",") !== "max_output_tokens_field,reasoning_efforts" ||
-      (value.max_output_tokens_field !== "max_tokens" &&
-       value.max_output_tokens_field !== "max_completion_tokens") ||
-      !Array.isArray(value.reasoning_efforts) || value.reasoning_efforts.length > 4 ||
-      value.reasoning_efforts.some((effort) => effort !== "low" && effort !== "medium" &&
-        effort !== "high" && effort !== "max") ||
-      new Set(value.reasoning_efforts).size !== value.reasoning_efforts.length) {
+  try {
+    return validateModelGatewayRequestCapabilities(value);
+  } catch {
     fail("selected model request capabilities are invalid");
   }
-  return Object.freeze({
-    max_output_tokens_field: value.max_output_tokens_field,
-    reasoning_efforts: Object.freeze([...value.reasoning_efforts]),
-  });
 }
 
 function refKey(ref: { readonly id: string; readonly revision: number }): string {

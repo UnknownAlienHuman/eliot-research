@@ -108,10 +108,8 @@ export async function createResearchOwnerRoutePlan(
       throw new Error("research owner transport policy is invalid", { cause });
     }
   }
-  if (transportPolicy !== undefined && transportPolicy.api !== "compat-chat-completions") {
-    throw new Error("research owner selected provider API is unsupported by the model response path");
-  }
   const requestCapabilities = transportPolicy?.capabilities;
+  const api = transportPolicy?.api;
   const tokenField = requestCapabilities?.max_output_tokens_field ?? "max_tokens";
   const parameters = {
     model: routeRef,
@@ -127,7 +125,7 @@ export async function createResearchOwnerRoutePlan(
   }
 
   const [parametersDigest, promptDigest, schemaDigest, routeDefinitionSha256] = await Promise.all([
-    modelGatewayRequestParametersSha256(parameters, requestCapabilities),
+    modelGatewayRequestParametersSha256(parameters, requestCapabilities, api),
     modelGatewaySha256(canonicalModelGatewayJson({
       content_kind: "eliotr.research.owner-prompt.v1",
       prompt: prompt.prompt,

@@ -1,29 +1,4 @@
-export * from "./ai-search-profile.js";
-export * from "./ai-search-primary-profile.js";
-export * from "./ai-search-generation.js";
-export * from "./ai-search-generation-registry-contract.js";
-export * from "./ai-search-generation-registry-codec.js";
-export { createAiSearchGenerationRegistryService } from "./ai-search-generation-registry.js";
-export { createD1AiSearchGenerationRegistryStore } from "./ai-search-generation-registry-d1.js";
-export {
-  AiSearchProvisioningError,
-  compileAiSearchCreateRequest,
-  type AiSearchCreateRequest,
-  type AiSearchInstanceProvisioningSpec,
-  type AiSearchProvisioningDisposition,
-  type AiSearchProvisioningInstance,
-  type AiSearchProvisioningNamespace,
-  type AiSearchProvisioningReceipt,
-} from "./ai-search-provisioning-contract.js";
-export {
-  decodeAiSearchInstanceInfo,
-  decodeAiSearchInstanceListPage,
-  type AiSearchInstanceReadback,
-  type AiSearchInstanceSummary,
-  type AiSearchListPage,
-  type AiSearchMetadataDefinition,
-} from "./ai-search-provisioning-decode.js";
-export { ensureAiSearchInstance } from "./ai-search-provisioning.js";
+export * from "@eliotr/cloudflare-projection/ai-search";
 export {
   ModelGatewayExecutionError,
   type CompiledModelGatewayPrompt,
@@ -52,16 +27,29 @@ export { prepareModelGatewayHttpRequest, prepareModelGatewayBindingRequest, reas
 export { rejectModelGatewayHttpFailure } from "./model-gateway-http-failure.js";
 export {
   canonicalModelGatewayJson,
+  modelGatewayBodyForCapabilities,
   modelGatewayDynamicRouteTarget,
   modelGatewayRequestParametersSha256,
   modelGatewaySha256,
+  normalizeModelGatewayReasoningEffort,
+  validateModelGatewayRequestCapabilities,
   validateModelGatewayRequestBody,
   validateModelGatewayTransportPolicy,
   type ModelGatewayDynamicRouteTarget,
+  type ModelGatewayApi,
   type ModelGatewayRequestCapabilitiesV1,
   type ModelGatewayTransportPolicyV1,
 } from "./model-gateway-request.js";
 export { decodeModelGatewayBody, decodeModelGatewayResponse } from "./model-gateway-response.js";
+export {
+  decodeModelGatewayProviderBody,
+  decodeModelGatewayProviderNativeResponse,
+} from "./model-gateway-provider-native-response.js";
+export {
+  modelGatewayProviderNativePath,
+  modelGatewayProviderNativeParameterProjection,
+  modelGatewayProviderNativeRequest,
+} from "./model-gateway-provider-native-request.js";
 export {
   createModelGatewayFetchAdapter,
   executeObservedModelGatewayCall,
@@ -78,9 +66,19 @@ export {
   dynamicRouteRestBindingSha256,
 } from "./dynamic-route-rest-binding-codec.js";
 export * from "./dynamic-route-rest-control-plane.js";
-export * from "./ai-search-managed-read.js";
 export * from "./custom-provider-rest-contract.js";
 export { customProviderModelTarget } from "./custom-provider-rest-codec.js";
 export { ensureCloudflareCustomProvider } from "./custom-provider-rest.js";
 export * from "./provider-config-rest-contract.js";
 export { ensureCloudflareProviderConfig } from "./provider-config-rest.js";
+export { createCloudflareOpenRouterProviderKeyPort } from "./provider-key-rest.js";
+export {
+  OpenRouterProviderKeyRestError,
+  type CloudflareOpenRouterProviderKeyDependencies,
+  type OpenRouterProviderKeyConfiguredReceipt,
+  type OpenRouterProviderKeyCreatePort,
+  type OpenRouterProviderKeyCreateRequest,
+  type OpenRouterProviderKeyEffect,
+  type OpenRouterProviderKeyErrorCode,
+  type OpenRouterProviderKeyExecutionContext,
+} from "./provider-key-rest-contract.js";

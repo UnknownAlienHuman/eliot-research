@@ -1,6 +1,6 @@
 import type { PreparedIngestOperation, StagedBundleVerification } from "@eliotr/platform-cloudflare";
+import { createSourceAdmissionService } from "@eliotr/cloudflare-raw-ingest";
 import { describe, expect, it } from "vitest";
-import { createSourceAdmissionService } from "../src/source-admission-service.js";
 
 const A = "a".repeat(64);
 const B = "b".repeat(64);

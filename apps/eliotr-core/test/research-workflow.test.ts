@@ -88,12 +88,45 @@ describe("eliotr.workflow-checkpoint.v1 — actual D1/R2 single-stage execution"
   it("does not call a handler twice after unknown execution", async () => {
     const f = await workflowFixture("unknown");
     let calls = 0;
-    await expect(f.executor.execute(f.request, principal, async () => { calls += 1; throw new Error("unknown upstream settlement"); }))
+    const unknown = Object.assign(new Error("private unknown upstream settlement"), {
+      code: "MODEL_PROFILE_BINDING_AUTHORITY_STALE_EXTRA",
+    });
+    await expect(f.executor.execute(f.request, principal, async () => { calls += 1; throw unknown; }))
       .rejects.toMatchObject({ code: "WORKFLOW_EFFECT_UNCERTAIN" });
+    const stored = await f.db.prepare(`SELECT first_failure_json, latest_failure_json
+      FROM research_workflow_run WHERE operation_id=?1`).bind(f.request.operation_id)
+      .first<{ first_failure_json: string | null; latest_failure_json: string | null }>();
+    expect(JSON.parse(stored?.first_failure_json ?? "null")).toEqual({
+      code: "WORKFLOW_EFFECT_UNCERTAIN", phase: "STAGE", stage: f.request.stage, retryable: false,
+    });
+    expect(stored?.latest_failure_json ?? "").not.toContain("private unknown");
     await expect(createWorkflowCheckpointExecutor(f.db, f.bucket, f.ports).execute(f.request, principal,
       async () => { calls += 1; return resultBytes(); })).rejects.toMatchObject({ code: "WORKFLOW_EFFECT_UNCERTAIN" });
     expect(calls).toBe(1);
     expect(await counts(f.db)).toEqual({ attempts: 1, checkpoints: 0, outbox: 0, ledger_events: 0 });
+  });
+
+  it("retains an exact typed handler diagnosis without changing uncertain-effect semantics", async () => {
+    const f = await workflowFixture("typed-failure");
+    let calls = 0;
+    const typed = Object.assign(new Error("private model-profile detail"), {
+      code: "MODEL_PROFILE_BINDING_AUTHORITY_STALE",
+    });
+    await expect(f.executor.execute(f.request, principal, async () => { calls += 1; throw typed; }))
+      .rejects.toMatchObject({ code: "WORKFLOW_EFFECT_UNCERTAIN", failure: {
+        code: "MODEL_PROFILE_BINDING_AUTHORITY_STALE", phase: "STAGE",
+        stage: f.request.stage, retryable: false,
+      } });
+    const stored = await f.db.prepare(`SELECT first_failure_json, latest_failure_json
+      FROM research_workflow_run WHERE operation_id=?1`).bind(f.request.operation_id)
+      .first<{ first_failure_json: string | null; latest_failure_json: string | null }>();
+    const expected = { code: "MODEL_PROFILE_BINDING_AUTHORITY_STALE", phase: "STAGE",
+      stage: f.request.stage, retryable: false };
+    expect(JSON.parse(stored?.first_failure_json ?? "null")).toEqual(expected);
+    expect(JSON.parse(stored?.latest_failure_json ?? "null")).toEqual(expected);
+    expect(stored?.first_failure_json).not.toContain("private model-profile detail");
+    expect(await counts(f.db)).toEqual({ attempts: 1, checkpoints: 0, outbox: 0, ledger_events: 0 });
+    expect(calls).toBe(1);
   });
 
   it("reconciles a lost attempt-reservation ACK before the single handler call", async () => {

@@ -2,9 +2,9 @@
   "protocol": "eliotr.ai-search-generation-registry-capability.v1",
   "status": "IMPLEMENTED_NOT_LIVE",
   "authority": {
-    "lifecycle": "packages/cloudflare-ai/src/ai-search-generation.ts",
-    "durable_service": "packages/cloudflare-ai/src/ai-search-generation-registry.ts",
-    "d1_backend": "packages/cloudflare-ai/src/ai-search-generation-registry-d1.ts",
+    "lifecycle": "packages/cloudflare-projection/src/ai-search-generation.ts",
+    "durable_service": "packages/cloudflare-projection/src/ai-search-generation-registry.ts",
+    "d1_backend": "packages/cloudflare-projection/src/ai-search-generation-registry-d1.ts",
     "d1_schema": "infra/d1/search/migrations/0004_ai_search_generation_registry.sql",
     "binding": "SEARCH_DB"
   },

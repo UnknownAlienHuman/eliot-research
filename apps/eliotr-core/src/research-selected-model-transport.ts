@@ -104,9 +104,6 @@ export function resolveResearchSelectedModelTransport(input: {
   } catch (cause) {
     invalid("snapshot selected transport policy is invalid", cause);
   }
-  if (transportPolicy.api !== "compat-chat-completions") {
-    invalid("selected provider API is not supported by the current model response path");
-  }
   return Object.freeze({
     selection,
     transport_policy: transportPolicy,

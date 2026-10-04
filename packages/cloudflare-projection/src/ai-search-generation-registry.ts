@@ -25,7 +25,7 @@ import {
   decodeAiSearchGenerationRegistryStoreReceipt,
   sameAiSearchGenerationRegistrySnapshot,
 } from "./ai-search-generation-registry-codec.js";
-import { canonicalModelGatewayJson } from "./model-gateway-request.js";
+import { canonicalProjectionJson } from "./canonical.js";
 
 const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/u;
 const MAX_GENERATIONS = 64;
@@ -58,14 +58,14 @@ function canonicalProfile(
 }
 
 function recordFingerprint(record: AiSearchGenerationRecord): string {
-  return canonicalModelGatewayJson({
+  return canonicalProjectionJson({
     ...record,
     profile: canonicalProfile(record.profile),
   });
 }
 
 function declarationFingerprint(record: AiSearchGenerationRecord): string {
-  return canonicalModelGatewayJson({
+  return canonicalProjectionJson({
     namespace: record.namespace,
     generation: record.generation,
     profile: canonicalProfile(record.profile),

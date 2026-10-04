@@ -24,6 +24,8 @@ export interface Env {
   readonly ELIOTR_MODEL_GATEWAY_TOKEN?: string;
   /** Dedicated read-only Dynamic Route control-plane credential; never used for model calls. */
   readonly ELIOTR_MODEL_GATEWAY_READ_TOKEN?: string;
+  /** Dedicated server-only Cloudflare API credential for provider-key management; never caller supplied or used for model calls. */
+  readonly ELIOTR_MODEL_PROVIDER_CONTROL_TOKEN?: string;
   /** Installed server model definition and its provenance; no request may override either. */
   readonly ELIOTR_MODEL_PROFILE_DEFINITION_JSON?: string;
   readonly ELIOTR_MODEL_PROFILE_PROVENANCE_REF?: string;

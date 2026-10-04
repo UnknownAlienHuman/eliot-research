@@ -1,4 +1,9 @@
 import { ApiRequestError, requestApiWithStatuses } from "./api.js";
+import { decodeResearchModelTransportPolicy } from "./research-model-transport-policy-decoder.js";
+import type { ResearchModelEffectiveReasoningEffort, ResearchModelTransportPolicy } from "./research-model-transport-policy-decoder.js";
+
+export { researchModelSelectionApiLabel, researchModelSelectionBillingLabel, researchModelSelectionEffortLabel } from "./research-model-transport-policy-decoder.js";
+export type { ResearchModelEffectiveReasoningEffort, ResearchModelTransportPolicy } from "./research-model-transport-policy-decoder.js";
 
 export const RESEARCH_MODEL_CATALOG_PROTOCOL = "eliotr.research-model-catalog.v1" as const;
 export const RESEARCH_PROJECT_MODEL_CONFIGURATION_PROTOCOL =
@@ -11,7 +16,6 @@ const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/u;
 const TRACE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
 const MODEL_IDENTIFIER = /^(?:@[A-Za-z0-9][A-Za-z0-9._:@/-]{0,254}|[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255})$/u;
 const PROVIDER_IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,63}$/u;
-const BYOK_ALIAS = /^[A-Za-z0-9._-]{1,128}$/u;
 const MAX_CATALOG_STRING_BYTES = 8_192;
 const MAX_PROPERTY_DEPTH = 8;
 const MAX_PROPERTY_NODES = 1_024;
@@ -315,21 +319,6 @@ export function researchModelCatalogQualificationLabel(): string {
   return "Catalog listing only · exact route qualification is required before selection";
 }
 
-export type ResearchModelTransportPolicy = Readonly<{
-  version: 1;
-  transport: "cloudflare-ai-gateway";
-  api: "compat-chat-completions" | "openai-responses" | "anthropic-messages";
-  provider: string;
-  model: string;
-  billing: Readonly<{ mode: "unified" }> | Readonly<{ mode: "byok"; alias: string }>;
-  capabilities: Readonly<{
-    max_output_tokens_field: "max_tokens" | "max_completion_tokens";
-    reasoning_efforts: readonly ("low" | "medium" | "high" | "max")[];
-  }>;
-}>;
-
-export type ResearchModelEffectiveReasoningEffort = "low" | "medium" | "high" | "max";
-
 export type ResearchModelSelectionSummary = Readonly<{
   stage: "ANALYZE_BRANCHES" | "COUNTER_SEARCH" | "SYNTHESIZE" | "AUDIT_CLAIMS";
   route_ref: string;
@@ -387,45 +376,6 @@ function timestamp(value: unknown, label: string): string {
   return text;
 }
 
-function decodeTransportPolicy(value: unknown): ResearchModelTransportPolicy {
-  const raw = exactRecord(value, ["version", "transport", "api", "provider", "model", "billing", "capabilities"], "model transport policy");
-  if (raw.version !== 1 || raw.transport !== "cloudflare-ai-gateway" ||
-      (raw.api !== "compat-chat-completions" && raw.api !== "openai-responses" && raw.api !== "anthropic-messages")) {
-    schemaMismatch("model transport policy is unsupported");
-  }
-  const billingRecord = isRecord(raw.billing) && raw.billing.mode === "unified"
-    ? exactRecord(raw.billing, ["mode"], "model billing policy")
-    : exactRecord(raw.billing, ["mode", "alias"], "model billing policy");
-  let billing: ResearchModelTransportPolicy["billing"];
-  if (billingRecord.mode === "unified") {
-    billing = Object.freeze({ mode: "unified" });
-  } else if (billingRecord.mode === "byok") {
-    const alias = boundedText(billingRecord.alias, "BYOK alias", 128);
-    if (!BYOK_ALIAS.test(alias)) schemaMismatch("BYOK alias is invalid");
-    billing = Object.freeze({ mode: "byok", alias });
-  } else {
-    schemaMismatch("model billing mode is unsupported");
-  }
-  const capabilities = exactRecord(raw.capabilities, ["max_output_tokens_field", "reasoning_efforts"], "model request capabilities");
-  if (capabilities.max_output_tokens_field !== "max_tokens" && capabilities.max_output_tokens_field !== "max_completion_tokens") {
-    schemaMismatch("model output token parameter is unsupported");
-  }
-  const allowedEfforts = ["low", "medium", "high", "max"] as const;
-  if (!Array.isArray(capabilities.reasoning_efforts) || capabilities.reasoning_efforts.length > allowedEfforts.length ||
-      capabilities.reasoning_efforts.some((effort) => !allowedEfforts.includes(effort as typeof allowedEfforts[number])) ||
-      new Set(capabilities.reasoning_efforts).size !== capabilities.reasoning_efforts.length) {
-    schemaMismatch("model reasoning effort capabilities are invalid");
-  }
-  const provider = boundedText(raw.provider, "transport provider", 128);
-  if (!/^[A-Za-z0-9._:@/-]{1,128}$/u.test(provider)) schemaMismatch("transport provider is invalid");
-  const model = boundedText(raw.model, "transport model", 256);
-  if (!MODEL_IDENTIFIER.test(model)) schemaMismatch("transport model is invalid");
-  return Object.freeze({ version: 1, transport: "cloudflare-ai-gateway", api: raw.api,
-    provider, model, billing,
-    capabilities: Object.freeze({ max_output_tokens_field: capabilities.max_output_tokens_field,
-      reasoning_efforts: Object.freeze([...capabilities.reasoning_efforts]) as ResearchModelTransportPolicy["capabilities"]["reasoning_efforts"] }) });
-}
-
 function decodeModelSelection(value: unknown): ResearchModelSelectionSummary {
   if (!isRecord(value)) schemaMismatch("model selection is invalid");
   const legacySummary = !Object.hasOwn(value, "effective_reasoning_effort");
@@ -443,7 +393,7 @@ function decodeModelSelection(value: unknown): ResearchModelSelectionSummary {
   if (effort !== null && effort !== "low" && effort !== "medium" && effort !== "high" && effort !== "max") {
     schemaMismatch("effective reasoning effort is invalid");
   }
-  const transportPolicy = decodeTransportPolicy(raw.transport_policy);
+  const transportPolicy = decodeResearchModelTransportPolicy(raw.transport_policy);
   if (providerId !== transportPolicy.provider || modelId !== transportPolicy.model) {
     schemaMismatch("model selection identity does not match its transport policy");
   }
@@ -565,24 +515,6 @@ export async function selectResearchProjectModelConfiguration(projectId: string,
     ...(signal === undefined ? {} : { signal }),
   }, [200]);
   return decodeSelectionReceipt(raw, expectedGeneration, projectId, configurationRef);
-}
-
-export function researchModelSelectionBillingLabel(policy: ResearchModelTransportPolicy): string {
-  return policy.billing.mode === "unified" ? "Unified billing" :
-    policy.billing.alias === "default" ? "BYOK · default alias (secret stays server-side)" :
-      `BYOK · alias ${policy.billing.alias} (secret stays server-side)`;
-}
-
-export function researchModelSelectionApiLabel(policy: ResearchModelTransportPolicy): string {
-  if (policy.api === "compat-chat-completions") return "Chat Completions compatible API";
-  if (policy.api === "openai-responses") return "OpenAI Responses API";
-  return "Anthropic Messages API";
-}
-
-export function researchModelSelectionEffortLabel(policy: ResearchModelTransportPolicy): string {
-  return policy.capabilities.reasoning_efforts.length === 0
-    ? "Reasoning effort: not declared by this transport"
-    : `Declared reasoning efforts: ${policy.capabilities.reasoning_efforts.join(", ")}`;
 }
 
 export function researchModelSelectionEffectiveEffortLabel(selection: ResearchModelSelectionSummary): string {

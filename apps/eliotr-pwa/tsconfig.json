@@ -18,6 +18,12 @@
   ],
   "references": [
     {
+      "path": "../../packages/pwa-http-client"
+    },
+    {
+      "path": "../../packages/pwa-source-workspace"
+    },
+    {
       "path": "../../packages/contracts"
     }
   ]

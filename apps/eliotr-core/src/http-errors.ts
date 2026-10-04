@@ -30,8 +30,8 @@ import { NamespaceBootstrapProfileError } from "./source-namespace-bootstrap-pro
 import { SourceNamespaceOwnerError } from "./source-namespace-owner-service.js";
 import { ProjectOwnerError } from "./project-owner-contract.js";
 import { ErasureAdmissionError, ErasureRuntimeError } from "@eliotr/cloudflare-erasure";
-import { IngestServiceError } from "./ingest-service.js";
 import {
+  IngestServiceError,
   RawCaptureError,
   RawCaptureHttpError,
   rawCaptureProblem,

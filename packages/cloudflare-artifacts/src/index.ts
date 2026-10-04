@@ -12,3 +12,5 @@ export {
 } from "./artifact-draft-verification.js";
 
 export * from "./artifact-publication.js";
+export * from "./artifact-cow-product.js";
+export * from "./artifact-cow-draft-materialization.js";

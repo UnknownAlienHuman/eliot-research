@@ -8,6 +8,7 @@ import {
   parseDynamicRouteQualificationProbeInput,
   validateModelGatewayTransportPolicy,
   type DynamicRouteQualificationProbeInput,
+  type ModelGatewayApi,
   type ModelGatewayRequestCapabilitiesV1,
   type ModelGatewayTransportPolicyV1,
   type ModelGatewayExecutionObservation,
@@ -401,6 +402,7 @@ async function claimMatches(
 export function bindQualificationPromptCompiler(
   compiler: ModelGatewayPromptCompilerPort,
   requestCapabilities?: ModelGatewayRequestCapabilitiesV1,
+  api: ModelGatewayApi = "compat-chat-completions",
 ): ModelGatewayPromptCompilerPort {
   return Object.freeze({
     async compile(
@@ -412,7 +414,7 @@ export function bindQualificationPromptCompiler(
           !("request_body" in raw) || !("request_body_sha256" in raw) || !("request_timeout_ms" in raw)) {
         modelFailure("MODEL_GATEWAY_PROMPT_COMPILE_FAILED", "qualification compiler returned an invalid compiled prompt");
       }
-      const parametersDigest = await modelGatewayRequestParametersSha256(raw.request_body, requestCapabilities);
+      const parametersDigest = await modelGatewayRequestParametersSha256(raw.request_body, requestCapabilities, api);
       if (parametersDigest !== deployment.parameters_digest) {
         modelFailure("MODEL_GATEWAY_PROMPT_COMPILE_FAILED", "qualification prompt parameters differ from the deployed generation");
       }
@@ -441,13 +443,17 @@ export function createResearchModelQualificationDispatch(
       modelFailure("MODEL_GATEWAY_REQUEST_INVALID", "qualification transport policy is invalid", cause);
     }
     if (transportPolicy.api !== "compat-chat-completions") {
-      modelFailure("MODEL_GATEWAY_REQUEST_INVALID", "qualification provider API is not supported");
+      modelFailure("MODEL_GATEWAY_REQUEST_INVALID", "Dynamic Route qualification requires the compatibility Chat Completions API");
     }
     if (dependencies.gateway.transport_policy === undefined ||
         canonicalModelGatewayJson(dependencies.gateway.transport_policy) !== canonicalModelGatewayJson(transportPolicy)) {
       modelFailure("MODEL_GATEWAY_REQUEST_INVALID", "qualification gateway differs from the exact selected transport policy");
     }
     requestCapabilities = transportPolicy.capabilities;
+  }
+  if (dependencies.gateway.transport_policy !== undefined &&
+      dependencies.gateway.transport_policy.api !== "compat-chat-completions") {
+    modelFailure("MODEL_GATEWAY_REQUEST_INVALID", "Dynamic Route qualification requires the compatibility Chat Completions API");
   }
   return Object.freeze({
     async execute(
@@ -492,7 +498,7 @@ export function createResearchModelQualificationDispatch(
         database: dependencies.core_database,
         work_bucket: dependencies.work_bucket,
         gateway: dependencies.gateway,
-        prompt_compiler: bindQualificationPromptCompiler(compiler, requestCapabilities),
+        prompt_compiler: bindQualificationPromptCompiler(compiler, requestCapabilities, transportPolicy?.api),
         now: dependencies.now,
       });
       await native.assertPricingSnapshot(probe);

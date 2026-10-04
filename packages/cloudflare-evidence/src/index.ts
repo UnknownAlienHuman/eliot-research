@@ -18,3 +18,5 @@ export {
   type NavigationReadAuthority,
 } from "./navigation-storage-authority.js";
 export * from "./exhaustive-manifest.js";
+export * from "./research-reference-manifest.js";
+export * from "./research-reference-manifest-store.js";

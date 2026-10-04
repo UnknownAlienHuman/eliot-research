@@ -34,6 +34,67 @@ const selection: ResearchPreparedModelTransportSelectionV1 = Object.freeze({
   model: "@cf/zai-org/glm-5.3-flash",
   transport_policy: unifiedPolicy,
 });
+const responsesPolicy: ModelGatewayTransportPolicyV1 = Object.freeze({
+  version: 1,
+  transport: "cloudflare-ai-gateway",
+  api: "openai-responses",
+  provider: "openai",
+  model: "openai/gpt-4.1-mini",
+  billing: Object.freeze({ mode: "byok", alias: "named-research-key" }),
+  capabilities: Object.freeze({
+    max_output_tokens_field: "max_output_tokens",
+    reasoning_efforts: Object.freeze(["low", "high", "max"] as const),
+  }),
+});
+const responsesSelection: ResearchPreparedModelTransportSelectionV1 = Object.freeze({
+  stage: "SYNTHESIZE",
+  route_ref: "dynamic/eliotr-balanced",
+  route_version: "route-v4",
+  provider: responsesPolicy.provider,
+  model: responsesPolicy.model,
+  transport_policy: responsesPolicy,
+});
+const anthropicPolicy: ModelGatewayTransportPolicyV1 = Object.freeze({
+  version: 1,
+  transport: "cloudflare-ai-gateway",
+  api: "anthropic-messages",
+  provider: "anthropic",
+  model: "claude-sonnet-4-6",
+  billing: Object.freeze({ mode: "byok", alias: "default" }),
+  capabilities: Object.freeze({
+    max_output_tokens_field: "max_tokens",
+    reasoning_efforts: Object.freeze(["low", "medium", "high", "max"] as const),
+  }),
+});
+const anthropicSelection: ResearchPreparedModelTransportSelectionV1 = Object.freeze({
+  stage: "AUDIT_CLAIMS",
+  route_ref: "dynamic/eliotr-audit-verifier",
+  route_version: "route-v2",
+  provider: anthropicPolicy.provider,
+  model: anthropicPolicy.model,
+  transport_policy: anthropicPolicy,
+});
+const openrouterPolicy: ModelGatewayTransportPolicyV1 = Object.freeze({
+  version: 1,
+  transport: "cloudflare-ai-gateway",
+  api: "openrouter-chat-completions",
+  provider: "openrouter",
+  model: "stealth/space-bunny-alpha",
+  billing: Object.freeze({ mode: "byok", alias: "openrouter-project-key" }),
+  capabilities: Object.freeze({
+    max_output_tokens_field: "max_tokens",
+    reasoning_efforts: Object.freeze(["low", "max"] as const),
+    response_format_normalization: "json-schema-to-json-object" as const,
+  }),
+});
+const openrouterSelection: ResearchPreparedModelTransportSelectionV1 = Object.freeze({
+  stage: "SYNTHESIZE",
+  route_ref: "dynamic/eliotr-balanced",
+  route_version: "route-v5",
+  provider: openrouterPolicy.provider,
+  model: openrouterPolicy.model,
+  transport_policy: openrouterPolicy,
+});
 
 function envelope(
   rows: readonly ResearchPreparedModelTransportSelectionV1[] = [selection],
@@ -67,6 +128,25 @@ describe("parseResearchPreparedModelTransportPolicies", () => {
     expect(Object.isFrozen(parsed?.model_selections[0]?.transport_policy)).toBe(true);
   });
 
+  it("accepts exact native provider policies for distinct prepared stages", () => {
+    const parsed = parseResearchPreparedModelTransportPolicies(envelope([
+      responsesSelection,
+      anthropicSelection,
+    ]));
+    expect(parsed?.model_selections.map((row) => [row.stage, row.transport_policy.api])).toEqual([
+      ["SYNTHESIZE", "openai-responses"],
+      ["AUDIT_CLAIMS", "anthropic-messages"],
+    ]);
+    expect(parsed?.model_selections[0]?.transport_policy.billing).toEqual({ mode: "byok", alias: "named-research-key" });
+  });
+
+  it("preserves the selected OpenRouter response-format normalizer in the exact saved envelope", () => {
+    const parsed = parseResearchPreparedModelTransportPolicies(envelope([openrouterSelection]));
+    expect(parsed?.model_selections[0]?.transport_policy.api).toBe("openrouter-chat-completions");
+    expect(parsed?.model_selections[0]?.transport_policy.capabilities.response_format_normalization)
+      .toBe("json-schema-to-json-object");
+  });
+
   it("rejects noncanonical, oversized, unknown-field, and secret-bearing envelopes", () => {
     expect(() => parseResearchPreparedModelTransportPolicies(JSON.stringify({
       protocol: RESEARCH_PREPARED_MODEL_TRANSPORT_PROTOCOL,
@@ -81,7 +161,7 @@ describe("parseResearchPreparedModelTransportPolicies", () => {
     ]))).toThrow("prepared model transport policy is invalid");
   });
 
-  it("rejects identity conflicts, duplicate or unordered stages, and unsupported APIs", () => {
+  it("rejects identity conflicts, duplicate or unordered stages, and API/capability mismatches", () => {
     expect(() => parseResearchPreparedModelTransportPolicies(envelope([
       { ...selection, provider: "other-provider" },
     ]))).toThrow("identity differs");
@@ -92,8 +172,14 @@ describe("parseResearchPreparedModelTransportPolicies", () => {
       { ...selection, stage: "ANALYZE_BRANCHES" },
     ]))).toThrow("canonical stage order");
     expect(() => parseResearchPreparedModelTransportPolicies(envelope([
-      { ...selection, transport_policy: { ...unifiedPolicy, api: "openai-responses" } } as ResearchPreparedModelTransportSelectionV1,
-    ]))).toThrow("not supported by the qualification response path");
+      { ...responsesSelection, transport_policy: {
+        ...responsesPolicy,
+        capabilities: { ...responsesPolicy.capabilities, max_output_tokens_field: "max_completion_tokens" },
+      } } as unknown as ResearchPreparedModelTransportSelectionV1,
+    ]))).toThrow("prepared model transport policy is invalid");
+    expect(() => parseResearchPreparedModelTransportPolicies(envelope([
+      { ...responsesSelection, transport_policy: { ...responsesPolicy, provider: "anthropic" } } as ResearchPreparedModelTransportSelectionV1,
+    ]))).toThrow("prepared model transport policy is invalid");
   });
 });
 
@@ -153,9 +239,9 @@ describe("bindResearchPreparedModelTransportPolicy", () => {
       .toEqual(unifiedPolicy);
 
     const byok: ResearchPreparedModelTransportSelectionV1 = {
-      ...selection,
+      ...responsesSelection,
       transport_policy: {
-        ...unifiedPolicy,
+        ...responsesPolicy,
         billing: { mode: "byok", alias: "operator-provider-key" },
       },
     };

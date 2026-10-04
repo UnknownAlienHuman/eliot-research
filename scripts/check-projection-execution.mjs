@@ -18,7 +18,7 @@ const runtimeSource = readFileSync(
   "utf8",
 );
 const primaryProfileSource = readFileSync(
-  resolve(root, "packages/cloudflare-ai/src/ai-search-primary-profile.ts"),
+  resolve(root, "packages/cloudflare-projection/src/ai-search-primary-profile.ts"),
   "utf8",
 );
 function exportedString(source, name) {

@@ -34,7 +34,7 @@ const HOST_FILESYSTEM_IMPORTS = new Map([
   ["packages/cloudflare-research/src/research-model-qualification-renewal.test.ts", new Set(["node:fs"])],
   ["packages/cloudflare-research/src/research-model-spend-admission-branch-stages.test.ts", new Set(["node:fs"])],
   ["packages/cloudflare-research/src/research-project-configuration-store.test.ts", new Set(["node:fs"])],
-  ["packages/cloudflare-research/src/research-run-configuration-store.test.ts", new Set(["node:fs"])],
+  ["packages/cloudflare-workflows/src/research-run-configuration-store.test.ts", new Set(["node:fs"])],
   ["apps/eliotr-core/test/research-runtime-config-parity.test.ts", new Set(["node:fs/promises"])],
   ["apps/eliotr-pwa/scripts/build-agent-inbox.mjs", new Set(["node:fs/promises"])],
 ]);
@@ -50,13 +50,13 @@ const PACKAGE_RULES = new Map([
   ["packages/platform-cloudflare", new Set(["@eliotr/cloudflare-backup", "@eliotr/backup-o2", "@eliotr/contracts", "@eliotr/domain", "@eliotr/retrieval", "@eliotr/research"])],
   ["packages/cloudflare-research", new Set(["@eliotr/cloudflare-workflows", "@eliotr/cloudflare-ai", "@eliotr/cloudflare-artifacts", "@eliotr/cloudflare-artifacts/artifact-draft.js", "@eliotr/cloudflare-artifacts/artifact-draft-reader.js", "@eliotr/cloudflare-artifacts/artifact-draft-types.js", "@eliotr/cloudflare-artifacts/artifact-publication.js", "@eliotr/cloudflare-artifacts/artifact-draft-reauthorization.js", "@eliotr/cloudflare-artifacts/artifact-draft-citations-reauthorization.js", "@eliotr/cloudflare-evidence", "@eliotr/contracts", "@eliotr/domain", "@eliotr/platform-cloudflare", "@eliotr/policy", "@eliotr/research", "@eliotr/retrieval"])],
   ["packages/cloudflare-research-stages", new Set(["@eliotr/cloudflare-ai", "@eliotr/cloudflare-evidence", "@eliotr/cloudflare-research", "@eliotr/cloudflare-workflows", "@eliotr/contracts", "@eliotr/domain", "@eliotr/research", "zod"])],
-  ["packages/cloudflare-workflows", new Set(["@eliotr/contracts", "@eliotr/domain", "@eliotr/research"])],
-  ["packages/cloudflare-artifacts", new Set(["@eliotr/domain", "@eliotr/cloudflare-evidence", "@eliotr/contracts", "@eliotr/platform-cloudflare"])],
+  ["packages/cloudflare-workflows", new Set(["@eliotr/contracts", "@eliotr/domain", "@eliotr/research", "@eliotr/cloudflare-evidence", "@eliotr/platform-cloudflare"])],
+  ["packages/cloudflare-artifacts", new Set(["@eliotr/domain", "@eliotr/cloudflare-evidence", "@eliotr/contracts", "@eliotr/platform-cloudflare", "@eliotr/cloudflare-workflows"])],
   ["packages/cloudflare-federation", new Set(["@eliotr/contracts"])],
-  ["packages/cloudflare-ai", new Set(["@eliotr/contracts", "@eliotr/platform-cloudflare"])],
+  ["packages/cloudflare-ai", new Set(["@eliotr/contracts", "@eliotr/platform-cloudflare", "@eliotr/cloudflare-projection", "@eliotr/cloudflare-projection/ai-search"])],
   ["packages/cloudflare-access", new Set(["@eliotr/platform-cloudflare"])],
   ["packages/cloudflare-workspace-mcp", new Set(["@eliotr/cloudflare-access", "@eliotr/contracts", "@eliotr/platform-cloudflare"])],
-  ["packages/cloudflare-raw-ingest", new Set(["@eliotr/contracts", "@eliotr/interfaces", "@eliotr/platform-cloudflare"])],
+  ["packages/cloudflare-raw-ingest", new Set(["@eliotr/contracts", "@eliotr/domain", "@eliotr/interfaces", "@eliotr/platform-cloudflare"])],
   ["packages/cloudflare-markdown", new Set(["@eliotr/platform-cloudflare"])],
   ["packages/cloudflare-erasure", new Set(["@eliotr/backup-o2", "@eliotr/contracts"])],
   ["packages/cloudflare-projection", new Set([
@@ -69,12 +69,17 @@ const PACKAGE_RULES = new Map([
     "@eliotr/contracts",
     "@eliotr/domain",
     "@eliotr/platform-cloudflare",
+    "@eliotr/policy",
     "@eliotr/retrieval",
   ])],
   ["packages/google-drive-exchange", new Set(["@eliotr/contracts", "@eliotr/domain", "@eliotr/policy"])],
   ["packages/interfaces", new Set(["@eliotr/contracts", "@eliotr/domain", "@eliotr/policy", "@eliotr/retrieval", "@eliotr/research", "@eliotr/google-drive-exchange"])],
   ["packages/testkit", new Set(["@eliotr/contracts", "@eliotr/domain", "@eliotr/policy", "@eliotr/retrieval", "@eliotr/research", "@eliotr/google-drive-exchange", "@eliotr/interfaces"])],
-  ["apps/eliotr-pwa", new Set(["@eliotr/contracts"])],
+  ["packages/pwa-http-client", new Set(["@eliotr/contracts"])],
+  ["packages/pwa-source-workspace", new Set(["@eliotr/contracts", "@eliotr/pwa-http-client"])],
+  ["packages/pwa-research-workspace", new Set(["@eliotr/contracts", "@eliotr/pwa-http-client", "@eliotr/pwa-source-workspace"])],
+  ["packages/pwa-knowledge-workspace", new Set(["@eliotr/contracts", "@eliotr/pwa-http-client", "@eliotr/pwa-source-workspace"])],
+  ["apps/eliotr-pwa", new Set(["@eliotr/contracts", "@eliotr/pwa-http-client", "@eliotr/pwa-source-workspace", "@eliotr/pwa-source-workspace/navigation-expand-api", "@eliotr/pwa-research-workspace", "@eliotr/pwa-knowledge-workspace"])],
   ["apps/eliotr-core", new Set([
     "@eliotr/cloudflare-access",
     "@eliotr/cloudflare-workspace-mcp",
@@ -103,7 +108,7 @@ const PACKAGE_RULES = new Map([
 async function walk(dir) {
   const out = [];
   for (const entry of await readdir(dir, { withFileTypes: true })) {
-    if (["node_modules", "dist", ".wrangler", ".git"].includes(entry.name)) continue;
+    if (["node_modules", "dist", "dist-types", ".wrangler", ".git"].includes(entry.name)) continue;
     const full = join(dir, entry.name);
     if (entry.isDirectory()) out.push(...await walk(full));
     else if ([".ts", ".tsx", ".mts", ".cts", ".js", ".mjs"].includes(extname(entry.name))) out.push(full);

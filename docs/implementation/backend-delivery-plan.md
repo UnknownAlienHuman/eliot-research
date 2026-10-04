@@ -1,7 +1,7 @@
 # Backend delivery plan
 
 Current execution order, refreshed on 2026-10-04 against `main`
-`310628db14006199ec0d268ddf3145c1540288a0`.
+`6019032bc8f7c5b57e5096787e6cb617dbdfa649`.
 
 The [October 3 functional integration checkpoint](product-resume-2026-10-03.md)
 records the owner configuration, immutable run capture, MCP, provisioning and
@@ -25,9 +25,51 @@ existing oversized schema-registry test; other source-budget excesses remain.
 No behavioral or live acceptance was run for the relocation.
 
 The current external-model requirement is OpenRouter
-`stealth/space-bunny-alpha`, through the native Cloudflare provider endpoint,
-with owner settings for key replacement. The supplied key remains private;
-credentials and qualification are separate states. Implementation is in progress.
+`stealth/space-bunny-alpha` at `https://openrouter.ai/api/v1`, through the native
+Cloudflare provider endpoint, with owner settings for key replacement. The key
+settings packet creates a non-default, immutable BYOK alias through Cloudflare's
+provider-config API and reads its metadata back. Access, project ownership, CSRF
+defense, account/gateway binding, idempotency and uncertain-effect handling apply
+before it can report configuration. It never returns or persists the provider
+key. Existing aliases remain available to pinned runs. Configuration does not
+establish qualification or selection.
+
+The server management port requires the dedicated Worker secret
+`ELIOTR_MODEL_PROVIDER_CONTROL_TOKEN`. Cloudflare documents Secrets Store Write
+for provider-config creation; its account scope is broader than a single
+gateway. The GET permission is not explicitly enumerated in the API reference,
+so successful metadata preflight is required before sending a key. No management
+credential or provider key has been installed for this packet. The documented
+native OpenRouter path and response decoder are implemented; a real request has
+not verified them.
+
+An owner action to check and select a newly configured key still needs a genuine
+provider-native candidate, qualification observation and immutable resolver.
+The existing Dynamic Route installation/readback and its compatibility endpoint
+cannot stand in for native OpenRouter authority; that qualifier rejects native
+transport policies before database or provider effects. The native path must also pass
+project-selection CAS, normal-run spend admission and COW guards; adding a form
+or transport alone does not complete this requirement.
+
+Assembly also relocates ingest services into Raw Ingest, AI Search control and
+generation code into Projection, exact reference manifests into Evidence,
+run-configuration storage/status into Workflows, and COW product materialization
+into Artifacts. Browser HTTP and Source libraries follow ADR-0015. Compatibility
+exports preserve existing callers; these remain libraries in the same Worker
+and static PWA deployment. Source budgets and the remaining larger capability
+cuts remain open. This relocation does not prove smaller emitted bundles.
+
+The D1 depth-100 compiler passed against SQLite 3.50.4 for this assembly,
+including migration 0109: 941 recovered application SQL sites compiled across
+the matching schemas, with 119 dynamic or unresolved sites reported separately.
+The first combined Core/PWA TypeScript build found integration typing and test
+location/import issues; the assigned owners repaired those exact issues. The
+final ordered Core/PWA build passed on Node 24.19.0, and scoped ESLint passed
+for all 158 changed source files. The package-boundary scan also passed after
+removing destination self-imports and distinguishing generated PWA type output
+from source. Acceptance suites, release builds, native client
+authorization, live model calls and the same-document NotebookLM comparison
+remain pending. The historical RECONCILE failure cause remains unresolved.
 
 The [product integration checkpoint](product-resume-2026-10-02.md) records actual local COW/publication/restore checks and remaining code separately from live approval. The active result remains S92 integration, not release acceptance.
 

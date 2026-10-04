@@ -1,6 +1,7 @@
 import type { AuthenticatedRequestContext } from "@eliotr/interfaces";
 import { apiResult, HttpRequestError } from "./http.js";
 import { createResearchModelCatalogService, ResearchModelCatalogError } from "./research-model-catalog.js";
+import { createResearchProviderModelCatalogTransports } from "./research-provider-model-catalog.js";
 import type { Env } from "./env.js";
 
 /** The catalog is descriptive; this read never installs or qualifies a model. */
@@ -38,7 +39,15 @@ export async function handleResearchModelCatalog(
   };
   const workersAi = typeof env.AI?.models === "function" ? env.AI as Pick<Ai, "models"> : undefined;
   const service = createResearchModelCatalogService({ database: env.CORE_DB,
-    ...(workersAi === undefined ? {} : { workersAi }) });
+    ...(workersAi === undefined ? {} : { workersAi }),
+    externalProviders: createResearchProviderModelCatalogTransports({
+      gateway_base_url: env.AI_GATEWAY_REASONING_URL,
+      ...(env.ELIOTR_MODEL_GATEWAY_TOKEN === undefined ? {} : { gateway_token: env.ELIOTR_MODEL_GATEWAY_TOKEN }),
+      ...(env.ELIOTR_RESEARCH_MODEL_TRANSPORT_POLICIES_JSON === undefined ? {} : {
+        prepared_transport_policies_json: env.ELIOTR_RESEARCH_MODEL_TRANSPORT_POLICIES_JSON,
+      }),
+    }),
+  });
   const providerId = query.get("provider_id");
   try {
     const result = providerId === null || providerId === "cloudflare-workers-ai"

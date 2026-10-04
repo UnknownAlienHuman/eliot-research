@@ -10,6 +10,7 @@ import { inputIdentifier, normalizeUpdate } from "./project-owner-contract.js";
 import { readResponseBodyWithinBytes, RuntimeLimitError } from "@eliotr/platform-cloudflare";
 import { GeminiMcpToolError, MAX_MCP_RESPONSE_BYTES, MCP_RESEARCH_TOOLS, type McpResearchToolCall, type McpToolCallContext } from "@eliotr/cloudflare-workspace-mcp";
 import { createResearchQueryService, createResearchRunService, parseResearchRunRequest, parseResearchQueryRequest } from "./research-session.js";
+import type { McpFastSearchQueryResult } from "./research-session.js";
 import { mapError as mapHttpError } from "./http-errors.js";
 import { createEvidenceService } from "./evidence-service.js";
 import { reopenOwnerArtifactDraft, reopenOwnerArtifactSection, reopenOwnerArtifactSectionCitations } from "./research-artifact-reauthorization-http.js";
@@ -52,6 +53,22 @@ const MANAGED_OAUTH_TOOLS = new Set([
   "eliotr_query", "eliotr_run", "eliotr_run_status", "eliotr_report", "eliotr_section",
   "eliotr_citations", "eliotr_verify", "eliotr_open", "eliotr_source_read",
 ]);
+
+export interface McpFastSearchResponse extends McpFastSearchQueryResult {
+  readonly synthesis_status: "NOT_REQUESTED";
+  readonly synthesis_note: string;
+}
+
+const MCP_FAST_SEARCH_SYNTHESIS_NOTE =
+  "FAST_SEARCH returns retrieved evidence and trace references; it does not generate an answer.";
+
+export function mcpFastSearchResponse(result: McpFastSearchQueryResult): McpFastSearchResponse {
+  return {
+    ...result,
+    synthesis_status: "NOT_REQUESTED",
+    synthesis_note: MCP_FAST_SEARCH_SYNTHESIS_NOTE,
+  };
+}
 
 function mcpAccessIssuer(env: Env): string {
   const raw = env.MCP_ACCESS_TEAM_DOMAIN;
@@ -333,7 +350,9 @@ export function createMcpResearchToolCall(env: Env, request: Request): McpResear
           if (managedOAuth && (query.scope_expression.kind !== "PROJECT" || query.scope_expression.project_id !== projectId)) {
             throw new GeminiMcpToolError("MCP_PROJECT_SCOPE_MISMATCH", "Search scope must match project_id");
           }
-          execute = () => createResearchQueryService(env).query(context, query);
+          execute = async () => mcpFastSearchResponse(
+            await createResearchQueryService(env).queryForMcp(context, query),
+          );
           break;
         }
         case "eliotr_recover":

@@ -24,7 +24,7 @@ import {
   modelGatewaySha256,
   validateModelGatewayTransportPolicy,
 } from "./model-gateway-request.js";
-import { decodeModelGatewayResponse } from "./model-gateway-response.js";
+import { decodeSelectedModelGatewayResponse } from "./model-gateway-response.js";
 import {
   assertModelGatewayObservedIdentity,
   validateModelGatewayTransportSelection,
@@ -495,10 +495,11 @@ async function executeObservedModelGatewayCall(
   }
   if (!rawResponse.ok) await rejectModelGatewayHttpFailure(rawResponse);
 
-  const decoded = await decodeModelGatewayResponse(
+  const decoded = await decodeSelectedModelGatewayResponse(
     rawResponse,
     deployment,
     input.max_output_bytes,
+    transportPolicy,
   );
   assertModelGatewayObservedIdentity(transportPolicy, decoded.fingerprint.provider, decoded.fingerprint.exact_model_id);
   await persistOutput(

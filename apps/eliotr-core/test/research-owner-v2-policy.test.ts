@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { canonicalJson } from "@eliotr/platform-cloudflare";
-import { modelGatewayRequestParametersSha256 } from "@eliotr/cloudflare-ai";
+import {
+  modelGatewayRequestParametersSha256,
+  type ModelGatewayRequestCapabilitiesV1,
+  type ModelGatewayTransportPolicyV1,
+} from "@eliotr/cloudflare-ai";
 import { admissionTestConfiguration } from "./research-current-dispatch-config.js";
 import {
   createResearchOwnerRuntimeConfiguration,
@@ -143,6 +147,69 @@ describe("owner v2 permanent settings and prepared transport", () => {
     }, selected?.transport_policy.capabilities);
     expect(expectedDigest).toBe(profile.deployment.parameters_digest);
     expect(canonicalJson(first.vars.ELIOTR_MODEL_SPEND_POLICY_JSON)).toBe(canonicalJson(second.vars.ELIOTR_MODEL_SPEND_POLICY_JSON));
+  });
+
+  it("binds an explicit OpenRouter JSON-object normalization into the generated runtime digest", async () => {
+    const input = v2Input(generation);
+    const policy: ModelGatewayTransportPolicyV1 = {
+      version: 1,
+      transport: "cloudflare-ai-gateway",
+      api: "openrouter-chat-completions",
+      provider: "openrouter",
+      model: "stealth/space-bunny-alpha",
+      billing: { mode: "byok", alias: "openrouter-test-key" },
+      capabilities: {
+        max_output_tokens_field: "max_tokens",
+        reasoning_efforts: ["low", "high", "max"],
+        response_format_normalization: "json-schema-to-json-object",
+      },
+    };
+    const model_selections = input.transport_policies?.model_selections.map((selection) => ({
+      ...selection,
+      provider: policy.provider,
+      model: policy.model,
+      transport_policy: policy,
+    }));
+    if (model_selections === undefined) throw new Error("fixture transport selections are missing");
+    const compiled = await createResearchOwnerRuntimeConfiguration({
+      ...input,
+      transport_policies: {
+        protocol: RESEARCH_PREPARED_MODEL_TRANSPORT_PROTOCOL,
+        model_selections,
+      },
+    });
+    const profile = JSON.parse(requiredRuntimeVar(compiled.vars, "ELIOTR_MODEL_PROFILE_DEFINITION_JSON")) as {
+      readonly deployment: { readonly route_ref: string; readonly parameters_digest: string };
+    };
+    const semantic = JSON.parse(requiredRuntimeVar(compiled.vars, "ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON")) as {
+      readonly synthesis: { readonly trusted_parameters: {
+        readonly max_tokens: number;
+        readonly reasoning_effort?: string;
+        readonly response_format?: unknown;
+      } };
+    };
+    const trusted = semantic.synthesis.trusted_parameters;
+    const request = {
+      model: profile.deployment.route_ref,
+      messages: [],
+      max_tokens: trusted.max_tokens,
+      ...(trusted.reasoning_effort === undefined ? {} : { reasoning_effort: trusted.reasoning_effort }),
+      ...(trusted.response_format === undefined ? {} : { response_format: trusted.response_format }),
+      stream: false,
+    };
+    const expected = await modelGatewayRequestParametersSha256(request, policy.capabilities, policy.api);
+    const schemaPreservingCapabilities: ModelGatewayRequestCapabilitiesV1 = {
+      max_output_tokens_field: "max_tokens",
+      reasoning_efforts: ["low", "high", "max"],
+    };
+    const schemaPreserving = await modelGatewayRequestParametersSha256(
+      request,
+      schemaPreservingCapabilities,
+      policy.api,
+    );
+
+    expect(profile.deployment.parameters_digest).toBe(expected);
+    expect(profile.deployment.parameters_digest).not.toBe(schemaPreserving);
   });
 
   it("still blocks v1 and v2 when the current project grant has expired", async () => {

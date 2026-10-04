@@ -115,6 +115,7 @@ async function semanticParametersDigest(
 ): Promise<string> {
   const tokenField = selection?.transport_policy.capabilities.max_output_tokens_field ?? "max_tokens";
   const capabilities = selection?.transport_policy.capabilities;
+  const api = selection?.transport_policy.api;
   const parameters = {
     model: routeRef,
     messages: [],
@@ -129,7 +130,7 @@ async function semanticParametersDigest(
   };
   return modelGatewayRequestParametersSha256({
     ...parameters,
-  }, capabilities);
+  }, capabilities, api);
 }
 
 function fillParametersDigest(

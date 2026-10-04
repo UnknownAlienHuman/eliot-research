@@ -3,9 +3,10 @@ import {
   modelGatewayRequestParametersSha256,
   type ModelCallInput,
   type ModelGatewayPromptCompilerPort,
+  type ModelGatewayTransportPolicyV1,
 } from "@eliotr/cloudflare-ai";
 import type { ModelRouteDeployment } from "@eliotr/platform-cloudflare";
-import { bindQualificationPromptCompiler } from "./research-model-qualification-dispatch.js";
+import { bindQualificationPromptCompiler, createResearchModelQualificationDispatch } from "./research-model-qualification-dispatch.js";
 
 const capabilities = Object.freeze({
   max_output_tokens_field: "max_completion_tokens" as const,
@@ -40,6 +41,16 @@ const compiler: ModelGatewayPromptCompilerPort = {
   },
 };
 
+const openRouterPolicy: ModelGatewayTransportPolicyV1 = Object.freeze({
+  version: 1,
+  transport: "cloudflare-ai-gateway",
+  api: "openrouter-chat-completions",
+  provider: "openrouter",
+  model: "stealth/space-bunny-alpha",
+  billing: Object.freeze({ mode: "byok", alias: "configured-key" }),
+  capabilities: Object.freeze({ max_output_tokens_field: "max_tokens", reasoning_efforts: Object.freeze(["low", "max"] as const) }),
+});
+
 describe("qualification prompt parameter digest", () => {
   it("checks the final request with the same selected token-field and effort capabilities", async () => {
     const bound = bindQualificationPromptCompiler(compiler, capabilities);
@@ -66,5 +77,35 @@ describe("qualification prompt parameter digest", () => {
     await expect(bound.compile({} as ModelCallInput, await deployment())).rejects.toMatchObject({
       code: "MODEL_GATEWAY_REQUEST_INVALID",
     });
+  });
+
+  it("rejects native transport before a Dynamic Route qualification can claim or dispatch it", () => {
+    let effects = 0;
+    const database = { prepare() { effects += 1; throw new Error("unexpected database access"); } } as unknown as D1Database;
+    const bucket = { get() { effects += 1; throw new Error("unexpected bucket access"); } } as unknown as R2Bucket;
+    const gateway = {
+      reasoning_gateway_base_url: "https://gateway.invalid",
+      gateway_token: "test-token",
+      transport_policy: openRouterPolicy,
+      fetch: async () => { effects += 1; throw new Error("unexpected provider request"); },
+    };
+
+    let failure: unknown;
+    try {
+      createResearchModelQualificationDispatch({
+        core_database: database,
+        search_database: database,
+        work_bucket: bucket,
+        evidence_bucket: bucket,
+        gateway,
+        transport_policy: openRouterPolicy,
+        now: () => "2026-10-04T00:00:00.000Z",
+      });
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(failure).toMatchObject({ code: "MODEL_GATEWAY_REQUEST_INVALID", retryable: false });
+    expect(effects).toBe(0);
   });
 });

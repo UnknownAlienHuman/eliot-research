@@ -9,7 +9,9 @@
   "scripts": { "build": "tsc -b", "typecheck": "tsc -b --pretty false" },
   "dependencies": {
     "@eliotr/contracts": "workspace:*",
+    "@eliotr/cloudflare-evidence": "workspace:*",
     "@eliotr/domain": "workspace:*",
+    "@eliotr/platform-cloudflare": "workspace:*",
     "@eliotr/research": "workspace:*",
     "zod": "4.4.3"
   }

@@ -16,6 +16,7 @@
   "dependencies": {
     "@eliotr/contracts": "workspace:*",
     "@eliotr/domain": "workspace:*",
+    "@eliotr/policy": "workspace:*",
     "@eliotr/platform-cloudflare": "workspace:*",
     "@eliotr/retrieval": "workspace:*"
   }

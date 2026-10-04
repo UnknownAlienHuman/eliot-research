@@ -1,6 +1,7 @@
 import {
   prepareModelGatewayCall,
   type ModelGatewayCallPolicy,
+  type ModelGatewayCallTarget,
   type ModelRouteDeployment,
 } from "@eliotr/platform-cloudflare";
 import {
@@ -12,11 +13,17 @@ import {
 import {
   canonicalModelGatewayJson,
   modelGatewayBodyForCapabilities,
+  modelGatewayRequestParametersSha256,
   modelGatewaySha256,
   validateModelGatewayTransportPolicy,
   validateModelGatewayRequestBody,
   type ModelGatewayTransportPolicyV1,
 } from "./model-gateway-request.js";
+import {
+  modelGatewayProviderNativePath,
+  modelGatewayProviderNativeRequest,
+} from "./model-gateway-provider-native-request.js";
+import type { ModelGatewayApi } from "./model-gateway-transport-policy.js";
 
 const SHA256 = /^[a-f0-9]{64}$/u;
 const ACCOUNT_ID = /^[a-f0-9]{32}$/u;
@@ -82,7 +89,10 @@ function safeInteger(
   return value;
 }
 
-export function reasoningEndpoint(baseUrl: string): string {
+export function reasoningEndpoint(
+  baseUrl: string,
+  api: ModelGatewayApi = "compat-chat-completions",
+): string {
   let url: URL;
   try {
     url = new URL(baseUrl);
@@ -118,7 +128,7 @@ export function reasoningEndpoint(baseUrl: string): string {
       "reasoning gateway base URL must identify the exact account and eliotr-reasoning gateway",
     );
   }
-  return `${url.origin}/v1/${parts[1]}/eliotr-reasoning/compat/chat/completions`;
+  return `${url.origin}/v1/${parts[1]}/eliotr-reasoning${modelGatewayProviderNativePath(api)}`;
 }
 
 export function gatewayToken(value: unknown): string {
@@ -138,11 +148,14 @@ export function gatewayToken(value: unknown): string {
   return value;
 }
 
-function validatePolicy(policy: ModelGatewayCallPolicy): void {
+function validatePolicy(
+  policy: ModelGatewayCallPolicy,
+  target: ModelGatewayCallTarget,
+): void {
   if (
     policy.gateway_id !== "eliotr-reasoning" ||
-    policy.provider !== "compat" ||
-    policy.endpoint !== "chat/completions"
+    policy.provider !== target.provider ||
+    policy.endpoint !== target.endpoint
   ) {
     modelGatewayExecutionFailure(
       "MODEL_GATEWAY_REQUEST_INVALID",
@@ -166,6 +179,16 @@ function validatePolicy(policy: ModelGatewayCallPolicy): void {
       "model gateway policy headers violate logging or cache requirements",
     );
   }
+}
+
+function callTarget(api: ModelGatewayApi | undefined): ModelGatewayCallTarget {
+  if (api === undefined || api === "compat-chat-completions") {
+    return { provider: "compat", endpoint: "chat/completions" };
+  }
+  if (api === "openai-chat-completions") return { provider: "openai", endpoint: "chat/completions" };
+  if (api === "openrouter-chat-completions") return { provider: "openrouter", endpoint: "chat/completions" };
+  if (api === "openai-responses") return { provider: "openai", endpoint: "responses" };
+  return { provider: "anthropic", endpoint: "v1/messages" };
 }
 
 export async function prepareModelGatewayBindingRequest(
@@ -197,13 +220,6 @@ async function prepareModelGatewayRequest(
   const transportPolicy = rawTransportPolicy === undefined
     ? undefined
     : validateModelGatewayTransportPolicy(rawTransportPolicy);
-  if (transportPolicy !== undefined &&
-      transportPolicy.api !== "compat-chat-completions") {
-    modelGatewayExecutionFailure(
-      "MODEL_GATEWAY_REQUEST_INVALID",
-      "selected provider API is unsupported by the response decoder",
-    );
-  }
   if (bindingTransport && transportPolicy?.billing.mode === "byok") {
     modelGatewayExecutionFailure(
       "MODEL_GATEWAY_REQUEST_INVALID",
@@ -211,8 +227,9 @@ async function prepareModelGatewayRequest(
     );
   }
   let policy: ModelGatewayCallPolicy;
+  const target = callTarget(transportPolicy?.api);
   try {
-    policy = prepareModelGatewayCall(input, deployment);
+    policy = prepareModelGatewayCall(input, deployment, target);
   } catch (cause) {
     modelGatewayExecutionFailure(
       "MODEL_GATEWAY_REQUEST_INVALID",
@@ -220,11 +237,13 @@ async function prepareModelGatewayRequest(
       { cause },
     );
   }
-  validatePolicy(policy);
+  validatePolicy(policy, target);
   const byokHeaders = transportPolicy?.billing.mode === "byok"
     ? {
-        "cf-aig-byok-alias": transportPolicy.billing.alias,
         "cf-aig-no-wholesale": "true",
+        ...(transportPolicy.billing.alias === "default"
+          ? {}
+          : { "cf-aig-byok-alias": transportPolicy.billing.alias }),
       }
     : {};
   const maximumInputBytes = safeInteger(
@@ -259,14 +278,33 @@ async function prepareModelGatewayRequest(
     maximumOutputBytes,
     transportPolicy?.capabilities,
   );
+  const internalBody = JSON.parse(validated.body) as unknown;
+  const wireBody = transportPolicy === undefined ||
+      transportPolicy.api === "compat-chat-completions"
+    ? internalBody
+    : modelGatewayProviderNativeRequest(internalBody, transportPolicy);
+  const canonicalWireBody = canonicalModelGatewayJson(wireBody);
+  const wireBodyBytes = utf8Bytes(canonicalWireBody);
+  if (wireBodyBytes > MAX_REQUEST_BYTES || wireBodyBytes > maximumInputBytes) {
+    modelGatewayExecutionFailure(
+      "MODEL_GATEWAY_REQUEST_INVALID",
+      "canonical provider request exceeds the reserved input byte budget",
+    );
+  }
+  const parametersSha256 = transportPolicy === undefined
+    ? validated.parameters_sha256
+    : await modelGatewayRequestParametersSha256(
+        internalBody,
+        transportPolicy.capabilities,
+        transportPolicy.api,
+      );
   if (!SHA256.test(compiled.request_body_sha256)) {
     modelGatewayExecutionFailure(
       "MODEL_GATEWAY_REQUEST_INVALID",
       "compiled model request digest is not canonical SHA-256",
     );
   }
-  const bodySha256 = await modelGatewaySha256(validated.body);
-  if (validated.parameters_sha256 !== deployment.parameters_digest) {
+  if (parametersSha256 !== deployment.parameters_digest) {
     modelGatewayExecutionFailure(
       "MODEL_GATEWAY_REQUEST_INVALID",
       "compiled model parameters differ from the deployed parameter generation",
@@ -278,20 +316,24 @@ async function prepareModelGatewayRequest(
     1,
     300_000,
   );
+  const bodySha256 = await modelGatewaySha256(canonicalWireBody);
   return Object.freeze({
-    url: reasoningEndpoint(baseUrl),
+    url: reasoningEndpoint(baseUrl, transportPolicy?.api),
     method: "POST",
     headers: Object.freeze({
       Accept: "application/json",
       "Content-Type": "application/json",
+      ...(transportPolicy?.api === "anthropic-messages"
+        ? { "anthropic-version": "2023-06-01" }
+        : {}),
       ...policy.headers,
       ...byokHeaders,
       "cf-aig-request-timeout": String(requestTimeout),
       "cf-aig-max-attempts": "1",
     }),
-    body: validated.body,
+    body: canonicalWireBody,
     body_sha256: bodySha256,
-    parameters_sha256: validated.parameters_sha256,
+    parameters_sha256: parametersSha256,
     request_timeout_ms: requestTimeout,
   });
 }

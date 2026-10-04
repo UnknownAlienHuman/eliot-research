@@ -4,7 +4,9 @@ import {
   readResearchProjectModelConfiguration,
   researchModelCatalogAdapterForRouteProvider,
   researchModelBillingLabel,
+  researchModelSelectionApiLabel,
   researchModelSelectionEffectiveEffortLabel,
+  researchModelSelectionEffortLabel,
   selectResearchProjectModelConfiguration,
   type ResearchModelSelectionSummary,
   type ResearchModelCatalogEntry,
@@ -166,9 +168,45 @@ describe("project model configuration API", () => {
     const selected = result.selected;
     const selection = selected?.model_selections[0];
     if (!selection) throw new Error("decoded project configuration did not include its selected model");
+    expect(Object.hasOwn(selection.transport_policy.capabilities, "reasoning_effort_normalizations")).toBe(false);
+    expect(Object.hasOwn(selection.transport_policy.capabilities, "response_format_normalization")).toBe(false);
     expect(researchModelSelectionEffectiveEffortLabel(selection)).toBe("Effective reasoning effort: max");
     expect(JSON.stringify(result)).not.toContain("api_key");
     expect(researchModelBillingLabel(catalogEntry())).toContain("account entitlement not established by catalog");
+  });
+
+  it("decodes the exact OpenRouter chat policy while preserving optional wire capabilities", async () => {
+    const policy = {
+      version: 1,
+      transport: "cloudflare-ai-gateway",
+      api: "openrouter-chat-completions",
+      provider: "openrouter",
+      model: "stealth/space-bunny-alpha",
+      billing: { mode: "byok", alias: "default" },
+      capabilities: {
+        max_output_tokens_field: "max_output_tokens",
+        reasoning_efforts: ["max"],
+        reasoning_effort_normalizations: { medium: "max" },
+        response_format_normalization: "json-schema-to-json-object",
+      },
+    } as const;
+    const saved = revision({ model_selections: [modelSelection({
+      provider_id: "openrouter", model_id: "stealth/space-bunny-alpha", transport_policy: policy,
+    })] });
+    installFetch(envelope({
+      protocol: "eliotr.research-project-model-configuration.v1", project_id: projectId, selection_revision: 3,
+      selected: saved, revisions: [saved], next_cursor: null,
+    }));
+
+    const result = await readResearchProjectModelConfiguration(projectId, generation);
+    const decoded = result.selected?.model_selections[0]?.transport_policy;
+    if (!decoded) throw new Error("decoded project configuration did not include its transport policy");
+
+    expect(decoded).toEqual(policy);
+    expect(researchModelSelectionApiLabel(decoded)).toContain("OpenRouter Chat Completions API");
+    expect(researchModelSelectionApiLabel(decoded)).toContain("JSON Schema becomes JSON Object");
+    expect(researchModelSelectionEffortLabel(decoded)).toContain("normalizes medium → max");
+    expect(JSON.stringify(result)).not.toMatch(/api[_-]?key|secret/iu);
   });
 
   it("keeps a missing legacy effort unknown instead of deriving it from transport capabilities", async () => {
@@ -267,5 +305,33 @@ describe("project model configuration API", () => {
       selected: blank, revisions: [blank], next_cursor: null,
     }));
     await expect(readResearchProjectModelConfiguration(projectId, generation)).rejects.toMatchObject({ code: "API_RESPONSE_SCHEMA_MISMATCH" });
+  });
+
+  it("rejects inconsistent effort aliases and native-provider identities", async () => {
+    const invalidPolicies = [
+      {
+        api: "openrouter-chat-completions", provider: "openrouter", model: "stealth/space-bunny-alpha",
+        billing: { mode: "byok", alias: "default" },
+        capabilities: { max_output_tokens_field: "max_output_tokens", reasoning_efforts: ["max", "high"],
+          reasoning_effort_normalizations: { high: "max" } },
+      },
+      {
+        api: "openrouter-chat-completions", provider: "openrouter", model: "stealth/space-bunny-alpha",
+        billing: { mode: "unified" },
+        capabilities: { max_output_tokens_field: "max_output_tokens", reasoning_efforts: ["max"] },
+      },
+    ];
+    for (const policy of invalidPolicies) {
+      const saved = revision({ model_selections: [modelSelection({
+        provider_id: policy.provider, model_id: policy.model,
+        transport_policy: { version: 1, transport: "cloudflare-ai-gateway", ...policy },
+      })] });
+      installFetch(envelope({
+        protocol: "eliotr.research-project-model-configuration.v1", project_id: projectId, selection_revision: 3,
+        selected: saved, revisions: [saved], next_cursor: null,
+      }));
+      await expect(readResearchProjectModelConfiguration(projectId, generation))
+        .rejects.toMatchObject({ code: "API_RESPONSE_SCHEMA_MISMATCH" });
+    }
   });
 });
