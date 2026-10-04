@@ -12,6 +12,7 @@ import {
 } from "../../packages/cloudflare-ai/src/index.js";
 import type { ApplicationModelRoute, ModelRouteDeployment } from "../../packages/platform-cloudflare/src/index.js";
 import { createD1DynamicRouteQualificationProofStore } from "../../packages/cloudflare-research/src/model-gateway-qualification-d1.js";
+import { createD1ModelGatewayDeploymentRegistry } from "../../packages/cloudflare-research/src/model-gateway-deployment-registry-d1.js";
 import {
   createResearchModelCandidateStagingService,
   type ResearchModelCandidateStageInput,
@@ -186,6 +187,72 @@ async function fixture(database: D1Database, observedModel = MODEL, persistObser
   });
 }
 
+async function qualificationRenewal(
+  database: D1Database,
+  base: StageFixture,
+  options: Readonly<{
+    now: string;
+    verifiedAt: string;
+    expiresAt: string;
+    suffix: string;
+    provisioning?: DynamicRouteProvisioningReceipt;
+    controlPlaneReadbackRef?: string;
+  }>,
+): Promise<StageFixture> {
+  const provisioning = options.provisioning ?? base.preparation.provisioning as DynamicRouteProvisioningReceipt;
+  const deployment = base.preparation.deployment;
+  const probeKey = `stage-probe-${options.suffix}`;
+  const claimRef = `stage-probe-claim-${options.suffix}`;
+  const observationStore = createD1ResearchModelQualificationObservationStore(database, () => options.now);
+  await observationStore.claim({ probe_idempotency_key: probeKey, probe_input_sha256: "c".repeat(64), claim_ref: claimRef });
+  const observationReceipt = await observationStore.putImmutable(Object.freeze({
+    protocol: "eliotr.dynamic-route-qualification-observation.v1",
+    probe_idempotency_key: probeKey,
+    probe_input_sha256: "c".repeat(64),
+    route_fingerprint_ref: `fingerprint-${options.suffix}`,
+    route_fingerprint: {
+      route_ref: deployment.route_ref,
+      route_version: deployment.route_version,
+      prompt_generation: deployment.prompt_generation,
+      schema_generation: deployment.schema_generation,
+      parameters_digest: deployment.parameters_digest,
+      pricing_snapshot_ref: deployment.pricing_snapshot_ref,
+      provider: base.preparation.pricing_snapshot.provider,
+      exact_model_id: base.preparation.pricing_snapshot.exact_model_id,
+    },
+    gateway_log_id: `gateway-log-${options.suffix}`,
+    request_body_sha256: "d".repeat(64),
+    request_parameters_sha256: "e".repeat(64),
+    response_body_sha256: "f".repeat(64),
+    response_model: base.preparation.pricing_snapshot.exact_model_id,
+    verified_at: options.verifiedAt,
+    expires_at: options.expiresAt,
+  }), claimRef);
+  const qualification = validateDynamicRouteQualification({
+    tier: "LIVE",
+    gateway_id: "eliotr-reasoning",
+    route_ref: deployment.route_ref,
+    route_version: deployment.route_version,
+    prompt_generation: deployment.prompt_generation,
+    schema_generation: deployment.schema_generation,
+    parameters_digest: deployment.parameters_digest,
+    pricing_snapshot_ref: deployment.pricing_snapshot_ref,
+    provider_route_id: provisioning.provider_route_id,
+    provider_route_name: provisioning.provider_route_name,
+    route_definition_sha256: provisioning.route_definition_sha256,
+    provider_snapshot_sha256: provisioning.provider_snapshot_sha256,
+    control_plane_readback_ref: options.controlPlaneReadbackRef ?? `control-plane-readback-${options.suffix}`,
+    execution_probe_ref: executionProbeRef(observationReceipt),
+    verified_at: options.verifiedAt,
+    expires_at: options.expiresAt,
+  }, provisioning, { environment: "PRODUCTION", expected_active_route_version: null, now: options.now });
+  return Object.freeze({
+    protocol: "eliotr.research-model-candidate-stage-request.v1",
+    preparation: Object.freeze({ ...base.preparation, provisioning }),
+    qualification,
+  });
+}
+
 describe("research model candidate staging", () => {
   it("stages and resolves an exact LIVE pin without touching active pointers", async () => {
     const database = testDatabase();
@@ -210,6 +277,101 @@ describe("research model candidate staging", () => {
     expect((await database.prepare("SELECT candidate_ref FROM dynamic_route_candidate").bind().all()).results).toEqual([
       { candidate_ref: receipt.candidate_ref },
     ]);
+    expect((await database.prepare("SELECT route_ref FROM dynamic_route_active_generation").bind().all()).results).toHaveLength(0);
+    expect((await database.prepare("SELECT route_ref FROM dynamic_route_active_qualification").bind().all()).results).toHaveLength(0);
+  });
+
+  it("renews a proof on the exact immutable candidate after its embedded qualification expiry", async () => {
+    const database = testDatabase();
+    const original = await fixture(database);
+    const staging = createResearchModelCandidateStagingService({ database, now: () => NOW });
+    const originalReceipt = await staging.stage(original);
+    const originalProofStore = createD1DynamicRouteQualificationProofStore(database, { now: () => NOW });
+    const originalProof = await originalProofStore.readPinned({
+      route_ref: originalReceipt.deployment.route_ref,
+      route_version: originalReceipt.deployment.route_version,
+      candidate_ref: originalReceipt.candidate_ref,
+      candidate_sha256: originalReceipt.candidate_sha256,
+      qualification_ref: originalReceipt.qualification_ref,
+      qualification_sha256: originalReceipt.qualification_sha256,
+    });
+
+    const renewedNow = "2026-10-04T12:30:00.000Z";
+    const renewed = await qualificationRenewal(database, original, {
+      now: renewedNow,
+      verifiedAt: "2026-10-04T12:26:00.000Z",
+      expiresAt: "2026-10-04T12:55:00.000Z",
+      suffix: "renewed-v1",
+      controlPlaneReadbackRef: original.qualification.control_plane_readback_ref,
+    });
+    const renewedReceipt = await createResearchModelCandidateStagingService({ database, now: () => renewedNow }).stage(renewed);
+
+    expect(renewedReceipt.candidate_ref).toBe(originalReceipt.candidate_ref);
+    expect(renewedReceipt.candidate_sha256).toBe(originalReceipt.candidate_sha256);
+    expect(renewedReceipt.qualification_ref).not.toBe(originalReceipt.qualification_ref);
+    expect(renewedReceipt.qualification_sha256).not.toBe(originalReceipt.qualification_sha256);
+    expect(renewedReceipt.execution_probe_ref).toBe(renewed.qualification.execution_probe_ref);
+    expect(renewedReceipt.qualification_expires_at).toBe(renewed.qualification.expires_at);
+
+    const proofStore = createD1DynamicRouteQualificationProofStore(database, { now: () => renewedNow });
+    const retainedProof = await proofStore.readPinned({
+      route_ref: originalReceipt.deployment.route_ref,
+      route_version: originalReceipt.deployment.route_version,
+      candidate_ref: originalReceipt.candidate_ref,
+      candidate_sha256: originalReceipt.candidate_sha256,
+      qualification_ref: originalReceipt.qualification_ref,
+      qualification_sha256: originalReceipt.qualification_sha256,
+    });
+    const renewedProof = await proofStore.readPinned({
+      route_ref: renewedReceipt.deployment.route_ref,
+      route_version: renewedReceipt.deployment.route_version,
+      candidate_ref: renewedReceipt.candidate_ref,
+      candidate_sha256: renewedReceipt.candidate_sha256,
+      qualification_ref: renewedReceipt.qualification_ref,
+      qualification_sha256: renewedReceipt.qualification_sha256,
+    });
+    expect(retainedProof?.qualification).toEqual(originalProof?.qualification);
+    expect(renewedProof?.qualification).toEqual(renewed.qualification);
+    await expect(createD1ModelGatewayDeploymentRegistry(database, { environment: "PRODUCTION", now: () => renewedNow })
+      .resolvePinned(renewedReceipt.deployment, {
+        route_ref: renewedReceipt.deployment.route_ref,
+        route_version: renewedReceipt.deployment.route_version,
+        candidate_ref: renewedReceipt.candidate_ref,
+        candidate_sha256: renewedReceipt.candidate_sha256,
+        qualification_ref: renewedReceipt.qualification_ref,
+        qualification_sha256: renewedReceipt.qualification_sha256,
+      })).resolves.toEqual(renewedReceipt.deployment);
+    expect((await database.prepare("SELECT candidate_ref FROM dynamic_route_candidate").bind().all()).results).toHaveLength(1);
+    expect((await database.prepare("SELECT qualification_ref FROM dynamic_route_qualification_proof").bind().all()).results).toHaveLength(2);
+    expect((await database.prepare("SELECT route_ref FROM dynamic_route_active_generation").bind().all()).results).toHaveLength(0);
+    expect((await database.prepare("SELECT route_ref FROM dynamic_route_active_qualification").bind().all()).results).toHaveLength(0);
+  });
+
+  it("rejects an existing candidate whose provider fingerprint differs before candidate or proof writes", async () => {
+    const database = testDatabase();
+    const original = await fixture(database);
+    const originalReceipt = await createResearchModelCandidateStagingService({ database, now: () => NOW }).stage(original);
+    const baseProvisioning = original.preparation.provisioning as DynamicRouteProvisioningReceipt;
+    const mismatchedProvisioning: DynamicRouteProvisioningReceipt = Object.freeze({
+      ...baseProvisioning,
+      provider_snapshot_sha256: "9".repeat(64),
+      control_plane_receipt_ref: "control-plane-stage-mismatch-v1",
+    });
+    const mismatched = await qualificationRenewal(database, original, {
+      now: "2026-10-04T12:30:00.000Z",
+      verifiedAt: "2026-10-04T12:26:00.000Z",
+      expiresAt: "2026-10-04T12:55:00.000Z",
+      suffix: "mismatch-v1",
+      provisioning: mismatchedProvisioning,
+      controlPlaneReadbackRef: "control-plane-readback-mismatch-v1",
+    });
+
+    await expect(createResearchModelCandidateStagingService({ database, now: () => "2026-10-04T12:30:00.000Z" }).stage(mismatched))
+      .rejects.toMatchObject({ code: "RESEARCH_MODEL_STAGE_CANDIDATE_MISMATCH" });
+    expect((await database.prepare("SELECT candidate_ref FROM dynamic_route_candidate").bind().all()).results).toEqual([
+      { candidate_ref: originalReceipt.candidate_ref },
+    ]);
+    expect((await database.prepare("SELECT qualification_ref FROM dynamic_route_qualification_proof").bind().all()).results).toHaveLength(1);
     expect((await database.prepare("SELECT route_ref FROM dynamic_route_active_generation").bind().all()).results).toHaveLength(0);
     expect((await database.prepare("SELECT route_ref FROM dynamic_route_active_qualification").bind().all()).results).toHaveLength(0);
   });

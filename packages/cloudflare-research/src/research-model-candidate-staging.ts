@@ -13,8 +13,10 @@ import {
   createD1ModelGatewayDeploymentRegistry,
 } from "./model-gateway-deployment-registry-d1.js";
 import {
+  decodeStoredDynamicRouteCandidate,
   createD1DynamicRouteQualificationProofStore,
   dynamicRouteCandidateArtifact,
+  type StoredDynamicRouteCandidate,
 } from "./model-gateway-qualification-d1.js";
 import {
   createD1ResearchModelPricingSnapshotStore,
@@ -47,6 +49,7 @@ export type ResearchModelCandidateStagingErrorCode =
   | "RESEARCH_MODEL_STAGE_INPUT_INVALID"
   | "RESEARCH_MODEL_STAGE_PRICING_MISMATCH"
   | "RESEARCH_MODEL_STAGE_OBSERVATION_MISMATCH"
+  | "RESEARCH_MODEL_STAGE_CANDIDATE_MISMATCH"
   | "RESEARCH_MODEL_STAGE_READBACK_MISMATCH";
 
 export class ResearchModelCandidateStagingError extends Error {
@@ -125,6 +128,29 @@ function canonicalClock(now: () => string): string {
 function sameDeployment(left: unknown, right: ModelRouteDeployment): boolean {
   try { return canonicalModelGatewayJson(left) === canonicalModelGatewayJson(right); }
   catch { return false; }
+}
+
+function candidateProvisioningIdentity(candidate: StoredDynamicRouteCandidate["candidate"]): unknown {
+  return Object.freeze({
+    schema: candidate.schema,
+    deployment: candidate.deployment,
+    provider_route_id: candidate.provider_route_id,
+    provider_route_name: candidate.provider_route_name,
+    route_definition_sha256: candidate.route_definition_sha256,
+    provider_snapshot_sha256: candidate.provider_snapshot_sha256,
+    control_plane_receipt_ref: candidate.control_plane_receipt_ref,
+    qualification_tier: candidate.qualification_tier,
+    control_plane_readback_ref: candidate.control_plane_readback_ref,
+  });
+}
+
+function candidateProvisioningMatches(
+  existing: StoredDynamicRouteCandidate,
+  requested: ReturnType<typeof buildDynamicRouteCandidate>,
+): boolean {
+  return existing.candidate.qualification_tier === "LIVE" &&
+    canonicalModelGatewayJson(candidateProvisioningIdentity(existing.candidate)) ===
+      canonicalModelGatewayJson(candidateProvisioningIdentity(requested));
 }
 
 function parsePricing(value: unknown): ResearchModelPricingSnapshot {
@@ -252,21 +278,47 @@ export function createResearchModelCandidateStagingService(dependencies: Researc
 
       const candidate = buildDynamicRouteCandidate(provisioning, stage.qualification);
       const candidateArtifact = await dynamicRouteCandidateArtifact(candidate);
-      const candidateWrite = decodeDynamicRouteCandidateWriteReceipt(
-        await createD1DynamicRouteRegistry(database, { environment: "PRODUCTION", now: () => current })
-          .stageCandidate(candidate, candidateArtifact.sha256),
-        candidateArtifact.sha256,
-      );
+      let candidateSelection: Readonly<{ candidate_ref: string; candidate_sha256: string }>;
+      let existingRow: StoredDynamicRouteCandidate["row"] | null;
+      try {
+        existingRow = await database.prepare(
+          "SELECT candidate_ref, candidate_sha256, candidate_json, route_ref, route_version, staged_at " +
+          "FROM dynamic_route_candidate WHERE route_ref = ?1 AND route_version = ?2 LIMIT 1",
+        ).bind(provisioning.deployment.route_ref, provisioning.deployment.route_version)
+          .first<StoredDynamicRouteCandidate["row"]>();
+      } catch (cause) {
+        fail("RESEARCH_MODEL_STAGE_READBACK_MISMATCH", "existing immutable candidate could not be read before staging", cause);
+      }
+      if (existingRow === null) {
+        const writeReceipt = decodeDynamicRouteCandidateWriteReceipt(
+          await createD1DynamicRouteRegistry(database, { environment: "PRODUCTION", now: () => current })
+            .stageCandidate(candidate, candidateArtifact.sha256),
+          candidateArtifact.sha256,
+        );
+        candidateSelection = Object.freeze({ candidate_ref: writeReceipt.candidate_ref, candidate_sha256: candidateArtifact.sha256 });
+      } else {
+        let existing: StoredDynamicRouteCandidate;
+        try {
+          existing = await decodeStoredDynamicRouteCandidate(existingRow, "existing immutable route candidate", "DYNAMIC_ROUTE_REGISTRY_STAGE_FAILED");
+        } catch (cause) {
+          fail("RESEARCH_MODEL_STAGE_CANDIDATE_MISMATCH", "existing immutable candidate is malformed", cause);
+        }
+        if (existing.sha256 !== existing.row.candidate_sha256 ||
+            !candidateProvisioningMatches(existing, candidate)) {
+          fail("RESEARCH_MODEL_STAGE_CANDIDATE_MISMATCH", "existing immutable candidate differs from the exact prepared route/provider fingerprint");
+        }
+        candidateSelection = Object.freeze({ candidate_ref: existing.row.candidate_ref, candidate_sha256: existing.sha256 });
+      }
       const proofWrite = await createD1DynamicRouteQualificationProofStore(database, { now: () => current }).putImmutable({
-        candidate_ref: candidateWrite.candidate_ref,
-        candidate_sha256: candidateArtifact.sha256,
+        candidate_ref: candidateSelection.candidate_ref,
+        candidate_sha256: candidateSelection.candidate_sha256,
         qualification: stage.qualification,
       });
       const selection = Object.freeze({
         route_ref: provisioning.deployment.route_ref,
         route_version: provisioning.deployment.route_version,
-        candidate_ref: candidateWrite.candidate_ref,
-        candidate_sha256: candidateArtifact.sha256,
+        candidate_ref: candidateSelection.candidate_ref,
+        candidate_sha256: candidateSelection.candidate_sha256,
         qualification_ref: proofWrite.qualification_ref,
         qualification_sha256: proofWrite.proof_sha256,
       });
