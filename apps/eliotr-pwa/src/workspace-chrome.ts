@@ -12,13 +12,29 @@ export interface WorkspaceChromeController {
 }
 
 function focusAndReveal(element: HTMLElement): void {
-  element.scrollIntoView({ behavior: "smooth", block: "start" });
+  const behavior = window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth";
+  element.scrollIntoView({ behavior, block: "start" });
   element.focus({ preventScroll: true });
 }
 
 function restorePosition(node: Node, parent: Node | null, next: Node | null): void {
   if (parent === null || !parent.isConnected) return;
   parent.insertBefore(node, next?.parentNode === parent ? next : null);
+}
+
+function restoreAttribute(element: HTMLElement, name: string, value: string | null): void {
+  if (value === null) element.removeAttribute(name);
+  else element.setAttribute(name, value);
+}
+
+function syncPaneToggle(toggle: HTMLButtonElement | null, collapsed: boolean, paneName: string): void {
+  if (!toggle) return;
+  const action = collapsed ? "Show" : "Hide";
+  toggle.setAttribute("aria-expanded", String(!collapsed));
+  toggle.setAttribute("aria-label", `${action} ${paneName} panel`);
+  toggle.title = `${action} ${paneName} panel`;
+  const label = toggle.querySelector<HTMLElement>("[data-pane-toggle-label]");
+  if (label) label.textContent = action;
 }
 
 /** Presentation-only DOM placement for the persistent library, reader, and report. */
@@ -30,12 +46,18 @@ export function mountWorkspaceChrome(root: HTMLElement): WorkspaceChromeControll
   const dialog = app.querySelector<HTMLDialogElement>("dialog.library-drawer");
   const libraryNodes = app.querySelectorAll<HTMLElement>("#library");
   const library = libraryNodes.length === 1 ? libraryNodes[0] : null;
+  const sourcesPanel = app.querySelector<HTMLElement>(".panel--sources");
+  const inspectorPanel = app.querySelector<HTMLElement>(".panel--inspector");
   const documentListHome = app.querySelector<HTMLElement>("#document-list-home");
   const librarySidebarHome = app.querySelector<HTMLElement>("#library-sidebar-home");
   const inspectorDefaultHint = app.querySelector<HTMLElement>("[data-inspector-default]");
   const inspectorReportHint = app.querySelector<HTMLElement>("[data-inspector-report]");
   const mobileLayout = window.matchMedia("(max-width: 900px)");
+  const threeColumnLayout = window.matchMedia("(min-width: 1280px)");
   const chooser = app.querySelector<HTMLButtonElement>("[data-source-chooser-toggle]");
+  const chooserLabel = app.querySelector<HTMLElement>("[data-source-chooser-label]");
+  const sourcesPaneToggle = app.querySelector<HTMLButtonElement>("[data-sources-pane-toggle]");
+  const inspectorPaneToggle = app.querySelector<HTMLButtonElement>("[data-inspector-pane-toggle]");
   const chooserState = app.querySelector<HTMLElement>("[data-source-chooser-state]");
   const closeLibrary = dialog?.querySelector<HTMLButtonElement>("[data-close-library]");
   const readingBack = app.querySelector<HTMLButtonElement>("[data-reading-back]");
@@ -58,7 +80,7 @@ export function mountWorkspaceChrome(root: HTMLElement): WorkspaceChromeControll
   const history = researchRun?.querySelector<HTMLDetailsElement>("[data-research-history]");
   const historySummary = history?.querySelector<HTMLElement>("summary");
 
-  if (!workspace || !dialog || !library || !documentListHome || !librarySidebarHome || !inspectorDefaultHint || !inspectorReportHint) {
+  if (!workspace || !dialog || !library || !sourcesPanel || !inspectorPanel || !sourcesPaneToggle || !inspectorPaneToggle || !documentListHome || !librarySidebarHome || !inspectorDefaultHint || !inspectorReportHint) {
     throw new Error("Workspace chrome requires Sources and context homes plus a library dialog and one #library");
   }
 
@@ -70,7 +92,19 @@ export function mountWorkspaceChrome(root: HTMLElement): WorkspaceChromeControll
   const originalLibraryTabIndex = library.getAttribute("tabindex");
   const originalReading = app.getAttribute("data-reading");
   const originalResearchReady = app.getAttribute("data-research-run-ready");
+  const originalSourcesCollapsed = app.getAttribute("data-sources-collapsed");
+  const originalInspectorCollapsed = app.getAttribute("data-inspector-collapsed");
   const originalInputModality = app.getAttribute("data-input-modality");
+  const originalSourcesScrollTop = sourcesPanel.scrollTop;
+  const originalInspectorScrollTop = inspectorPanel.scrollTop;
+  const originalChooserLabel = chooserLabel?.textContent ?? null;
+  const originalPaneToggleState = [sourcesPaneToggle, inspectorPaneToggle].map((toggle) => ({
+    toggle,
+    text: toggle.querySelector<HTMLElement>("[data-pane-toggle-label]")?.textContent ?? null,
+    expanded: toggle.getAttribute("aria-expanded"),
+    label: toggle.getAttribute("aria-label"),
+    title: toggle.getAttribute("title"),
+  }));
   app.dataset.inputModality = "pointer";
   const notePointer = (): void => { app.dataset.inputModality = "pointer"; };
   const noteKeyboard = (event: KeyboardEvent): void => {
@@ -87,6 +121,23 @@ export function mountWorkspaceChrome(root: HTMLElement): WorkspaceChromeControll
   let reportWasOpen = false;
   let returnFocus: HTMLElement | null = null;
   let restoreFocusOnClose = false;
+  let sourcesScrollTop = originalSourcesScrollTop;
+  let inspectorScrollTop = originalInspectorScrollTop;
+
+  const sourcesCollapsed = (): boolean => app.dataset.sourcesCollapsed === "true";
+  const inspectorCollapsed = (): boolean => app.dataset.inspectorCollapsed === "true";
+  const setSourcesCollapsed = (collapsed: boolean): void => {
+    if (sourcesCollapsed() === collapsed) return;
+    if (collapsed) sourcesScrollTop = sourcesPanel.scrollTop;
+    if (collapsed) app.dataset.sourcesCollapsed = "true";
+    else { delete app.dataset.sourcesCollapsed; sourcesPanel.scrollTop = sourcesScrollTop; }
+  };
+  const setInspectorCollapsed = (collapsed: boolean): void => {
+    if (inspectorCollapsed() === collapsed) return;
+    if (collapsed) inspectorScrollTop = inspectorPanel.scrollTop;
+    if (collapsed) app.dataset.inspectorCollapsed = "true";
+    else { delete app.dataset.inspectorCollapsed; inspectorPanel.scrollTop = inspectorScrollTop; }
+  };
 
   const inlineLibraryIsActive = (): boolean => mobileLayout.matches &&
     (workspace.dataset.activeView ?? "sources") === "sources" && (reader == null || reader.hidden !== false);
@@ -173,8 +224,9 @@ export function mountWorkspaceChrome(root: HTMLElement): WorkspaceChromeControll
 
   const syncChooserState = (): void => {
     const inline = inlineLibraryIsActive();
-    const expanded = !mobileLayout.matches || inline || dialog.open;
+    const expanded = mobileLayout.matches ? inline || dialog.open : !sourcesCollapsed();
     chooser?.setAttribute("aria-expanded", String(expanded));
+    if (chooserLabel) chooserLabel.textContent = mobileLayout.matches || expanded ? "Sources" : "Show sources";
     if (chooserState) {
       chooserState.textContent = inline ? "List in Documents" : dialog.open ? "Hide list" : "Show list";
     }
@@ -187,6 +239,8 @@ export function mountWorkspaceChrome(root: HTMLElement): WorkspaceChromeControll
 
   const sync = (): void => {
     if (disposed) return;
+    syncPaneToggle(sourcesPaneToggle, sourcesCollapsed(), "Sources");
+    syncPaneToggle(inspectorPaneToggle, inspectorCollapsed(), "Context");
     syncReportPlacement();
     syncLibraryLocation();
     const reading = syncReadingState();
@@ -204,7 +258,9 @@ export function mountWorkspaceChrome(root: HTMLElement): WorkspaceChromeControll
       return;
     }
     if (!mobileLayout.matches) {
+      if (sourcesCollapsed()) setSourcesCollapsed(false);
       focusInlineLibrary();
+      syncChooserState();
       return;
     }
     if (!dialog.open && typeof dialog.showModal === "function") {
@@ -227,6 +283,8 @@ export function mountWorkspaceChrome(root: HTMLElement): WorkspaceChromeControll
   };
 
   const handleChooserClick = (): void => setSourceChooserExpanded(true);
+  const handleSourcesPaneToggle = (): void => { setSourcesCollapsed(!sourcesCollapsed()); sync(); };
+  const handleInspectorPaneToggle = (): void => { setInspectorCollapsed(!inspectorCollapsed()); sync(); };
   const handleCloseLibrary = (): void => {
     closeDialog(true);
     sync();
@@ -259,6 +317,8 @@ export function mountWorkspaceChrome(root: HTMLElement): WorkspaceChromeControll
   };
 
   chooser?.addEventListener("click", handleChooserClick);
+  sourcesPaneToggle.addEventListener("click", handleSourcesPaneToggle);
+  inspectorPaneToggle.addEventListener("click", handleInspectorPaneToggle);
   closeLibrary?.addEventListener("click", handleCloseLibrary);
   dialog.addEventListener("cancel", handleDialogCancel);
   dialog.addEventListener("close", handleDialogClose);
@@ -278,8 +338,18 @@ export function mountWorkspaceChrome(root: HTMLElement): WorkspaceChromeControll
   if (badge) observer.observe(badge, { childList: true, characterData: true, subtree: true });
   if (progress) observer.observe(progress, { childList: true, characterData: true, subtree: true });
   for (const feedback of feedbackNodes) observer.observe(feedback, { childList: true, characterData: true, subtree: true });
-  const onResponsiveLayoutChange = (): void => sync();
+  const onResponsiveLayoutChange = (): void => {
+    sync();
+    const active = app.ownerDocument.activeElement;
+    if (!(active instanceof HTMLElement) || active.getClientRects().length > 0) return;
+    if (sourcesPanel.contains(active) || library.contains(active)) {
+      (chooser ?? workspace).focus({ preventScroll: true });
+    } else if (inspectorPanel.contains(active)) {
+      workspace.focus({ preventScroll: true });
+    }
+  };
   mobileLayout.addEventListener("change", onResponsiveLayoutChange);
+  threeColumnLayout.addEventListener("change", onResponsiveLayoutChange);
 
   sync();
 
@@ -288,11 +358,14 @@ export function mountWorkspaceChrome(root: HTMLElement): WorkspaceChromeControll
     disposed = true;
     observer.disconnect();
     mobileLayout.removeEventListener("change", onResponsiveLayoutChange);
+    threeColumnLayout.removeEventListener("change", onResponsiveLayoutChange);
     app.ownerDocument.removeEventListener("pointerdown", notePointer, true);
     app.ownerDocument.removeEventListener("keydown", noteKeyboard, true);
     if (originalInputModality === null) delete app.dataset.inputModality;
     else app.setAttribute("data-input-modality", originalInputModality);
     chooser?.removeEventListener("click", handleChooserClick);
+    sourcesPaneToggle.removeEventListener("click", handleSourcesPaneToggle);
+    inspectorPaneToggle.removeEventListener("click", handleInspectorPaneToggle);
     closeLibrary?.removeEventListener("click", handleCloseLibrary);
     dialog.removeEventListener("cancel", handleDialogCancel);
     dialog.removeEventListener("close", handleDialogClose);
@@ -308,6 +381,18 @@ export function mountWorkspaceChrome(root: HTMLElement): WorkspaceChromeControll
     else app.setAttribute("data-reading", originalReading);
     if (originalResearchReady === null) delete app.dataset.researchRunReady;
     else app.setAttribute("data-research-run-ready", originalResearchReady);
+    restoreAttribute(app, "data-sources-collapsed", originalSourcesCollapsed);
+    restoreAttribute(app, "data-inspector-collapsed", originalInspectorCollapsed);
+    sourcesPanel.scrollTop = originalSourcesScrollTop;
+    inspectorPanel.scrollTop = originalInspectorScrollTop;
+    if (chooserLabel && originalChooserLabel !== null) chooserLabel.textContent = originalChooserLabel;
+    for (const state of originalPaneToggleState) {
+      const label = state.toggle.querySelector<HTMLElement>("[data-pane-toggle-label]");
+      if (label && state.text !== null) label.textContent = state.text;
+      restoreAttribute(state.toggle, "aria-expanded", state.expanded);
+      restoreAttribute(state.toggle, "aria-label", state.label);
+      restoreAttribute(state.toggle, "title", state.title);
+    }
     if (chooser) {
       if (originalChooserExpanded === null) chooser.removeAttribute("aria-expanded");
       else chooser.setAttribute("aria-expanded", originalChooserExpanded);

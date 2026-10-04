@@ -1,13 +1,21 @@
 # Backend delivery plan
 
-Current execution order, refreshed on 2026-10-03 against `main`
-`78c6595fd8cf1292b55dd64fd13898306bb40360`.
+Current execution order, refreshed on 2026-10-04 against `main`
+`a590c4fe796e37db25b17be10d2facd2caf206a5`.
 
 The [October 3 functional integration checkpoint](product-resume-2026-10-03.md)
 records the owner configuration, immutable run capture, MCP, provisioning and
 remaining real deployment/evidence checks. Assembly is in progress; no full
-release or live Research acceptance is claimed. Only free bounded functional
-checks are authorized; cognitive, quality and load tests are deferred.
+release or live Research acceptance is claimed. The owner-directed phase is full
+product-code assembly before release and acceptance. Provider calls must remain
+free. Functional and same-document quality acceptance follow the assembled
+release; neither is established by compilation or an existing provider receipt.
+
+The current assembly covers catalog-based model configuration and native BYOK
+transport, durable owner/delegated policy parity, the existing AI Search evidence
+path, useful bounded MCP reads and results, and the adaptive owner workspace.
+The observed Research failure at RECONCILE is under diagnosis. Native MCP client
+authorization remains unverified. These are open items, not completed acceptance.
 
 The [product integration checkpoint](product-resume-2026-10-02.md) records actual local COW/publication/restore checks and remaining code separately from live approval. The active result remains S92 integration, not release acceptance.
 
