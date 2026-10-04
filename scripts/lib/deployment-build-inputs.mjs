@@ -289,8 +289,8 @@ function assertPackageVersions(rootPackage, corePackage, wranglerPackage, zodPac
   if (corePackage.dependencies?.zod !== "4.4.3" || zodPackage.name !== "zod" || zodPackage.version !== "4.4.3") {
     throw new Error("Deployment build-input seal requires the core runtime's exact installed zod@4.4.3");
   }
-  if (rootPackage.devDependencies?.wrangler !== "4.127.1" || wranglerPackage.name !== "wrangler" || wranglerPackage.version !== "4.127.1") {
-    throw new Error("Deployment build-input seal requires the exact installed wrangler@4.127.1");
+  if (rootPackage.devDependencies?.wrangler !== "4.143.1" || wranglerPackage.name !== "wrangler" || wranglerPackage.version !== "4.143.1") {
+    throw new Error("Deployment build-input seal requires the exact installed wrangler@4.143.1");
   }
 }
 

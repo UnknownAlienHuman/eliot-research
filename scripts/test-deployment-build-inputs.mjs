@@ -33,7 +33,7 @@ async function fixture() {
   const files = {
     ".npmrc": "engine-strict=true\n",
     "eslint.config.mjs": "export default [];\n",
-    "package.json": JSON.stringify({ packageManager: "pnpm@11.23.0", devDependencies: { wrangler: "4.127.1" } }),
+    "package.json": JSON.stringify({ packageManager: "pnpm@11.23.0", devDependencies: { wrangler: "4.143.1" } }),
     "pnpm-lock.yaml": "lockfileVersion: '9.0'\n",
     "pnpm-workspace.yaml": "packages:\n  - apps/*\n  - packages/*\n",
     "tsconfig.base.json": JSON.stringify({ compilerOptions: { strict: true } }),
@@ -62,7 +62,7 @@ async function fixture() {
     "apps/eliotr-pwa/node_modules/markdown-it/index.js": "module.exports = function MarkdownIt() {};\n",
     "apps/eliotr-pwa/node_modules/markdown-it/node_modules/entities/package.json": JSON.stringify({ name: "entities", version: "1.2.0" }),
     "apps/eliotr-pwa/node_modules/markdown-it/node_modules/entities/index.js": "exports.decode = (x) => x;\n",
-    "node_modules/wrangler/package.json": JSON.stringify({ name: "wrangler", version: "4.127.1" }),
+    "node_modules/wrangler/package.json": JSON.stringify({ name: "wrangler", version: "4.143.1" }),
     "node_modules/.pnpm/lock.yaml": "lockfileVersion: '9.0'\n",
     "node_modules/.modules.yaml": "packageManager: pnpm@11.23.0\n",
   };
@@ -133,6 +133,16 @@ test("captures exact source and runtime inputs while excluding generated source 
     await assert.doesNotReject(() => requireUnchangedDeploymentBuildInputs({ root, manifest }));
     await writeFile(path.join(root, "apps/eliotr-core/src/index.ts"), "export default { fetch() { return new Response('drift'); } };\n");
     await assert.rejects(() => requireUnchangedDeploymentBuildInputs({ root, manifest }), /changed after their initial seal/u);
+  });
+});
+
+test("rejects a stale installed Wrangler against the exact workspace pin", async () => {
+  await withFixture(async (root) => {
+    await put(root, "node_modules/wrangler/package.json", JSON.stringify({ name: "wrangler", version: "4.127.1" }));
+    await assert.rejects(
+      () => captureDeploymentBuildInputs({ root }),
+      /requires the exact installed wrangler@4\.143\.1/u,
+    );
   });
 });
 
