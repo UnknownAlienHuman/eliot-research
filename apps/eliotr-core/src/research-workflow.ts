@@ -32,6 +32,7 @@ import {
   type ResearchQualificationRenewalMarker,
 } from "./research-qualification-renewal.js";
 import { isResearchModelStage, researchStageBudgetLeaseMs } from "./research-runtime-duration.js";
+import { readD1BoundedResearchWorkflowLeaseExpiry } from "./research-workflow-budget.js";
 import { loadResearchExecutionAccess, requireClientResearchExecution } from "./research-client-execution.js";
 import { requireResearchDeploymentCompatibility } from "./research-deployment-compatibility.js";
 import { readResearchRunConfiguration } from "./research-run-configuration.js";
@@ -161,9 +162,11 @@ function createServerPorts(
       } catch {
         // Fall through to a fresh bounded grant; SQL guards still enforce authority.
       }
+      const expiresAtMs = await readD1BoundedResearchWorkflowLeaseExpiry(database, request.stage);
+      if (expiresAtMs === null) failWorkflow("WORKFLOW_BUDGET_STOP");
       const grant = {
         receipt_ref: `w2-budget:${request.operation_id}:${request.stage}`,
-        expires_at_ms: Date.now() + researchStageBudgetLeaseMs(request.stage),
+        expires_at_ms: expiresAtMs,
       };
       grants.set(key, grant);
       return grant;
