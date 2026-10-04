@@ -130,3 +130,23 @@ restore closure remain separate outstanding criteria.
 - Native Research OAuth remains uncompleted; an Access-allowed log does not establish OAuth success. The source-budget
   check remains 22 FAIL, and broader release, ERASURE and RETRIEVAL remain open. Cognitive, quality and load testing remain
   explicitly deferred.
+
+## 2026-10-04 live functional checkpoint — 07:35 UTC
+
+This is a later, bounded checkpoint. Earlier checkpoint sections remain intact as historical observations; they are not rewritten or reused as current authority. The statements below apply only to the items and times explicitly listed here.
+
+- Product fix `f85bff6874defd04b35161725f035ca4f7a09714` removes the legacy JSON overlay from selected-project readiness. One focused regression, Core typecheck, scoped lint, and an independent read-only audit passed.
+- The normal Worker deployment at 07:23 UTC completed as version 65. All 11 asset readbacks matched that version, and authority rotation passed. This maintenance deployment is not a full release: the source-budget gate remains FAIL at 22 findings, and Erasure and Retrieval remain disabled.
+- Renewed LIVE proofs remain bound to the same immutable candidates. Project configuration import created revision 1 at 06:57 UTC; a fresh readiness check for the selected configuration passed at 07:24 UTC.
+- One actual PWA run was created and accepted at 07:27 UTC. It reached `ANALYZE_BRANCHES`. At 07:34 UTC, a `GET` status read surfaced `WORKFLOW_STAGE_OUT_OF_ORDER`, with stage 8 expected next; an answer was unavailable. The run did not produce an available Report artifact. Q1, Report, and reopen acceptance remain NOT ACCEPTED.
+- Native Research OAuth remains incomplete after the provider returned `invalid_request` for a malformed consent request. No successful native client authorization is claimed.
+- Cognitive, quality, and load testing remain deferred. Do not infer model calls or a completed report from run creation or stage progress.
+
+## 2026-10-04 local integration checkpoint
+
+- Full native step-7 output matches the committed D1 predecessor byte for byte. A migration-backed regression reproduces a false stage-order rejection when Worker time is ahead of D1 and the requested lease is exactly ten minutes. The rejected live insert retained no expiry, so its specific failed predicate remains unproven.
+- Fresh workflow leases are now bounded by both Worker and D1 clocks. Existing cached grants, persisted attempts, recovery rules, stage durations, and the migration's ten-minute cap remain unchanged. The focused lease regression, unified Core typecheck, and independent source audit passed.
+- Run admission and semantic binding were extracted without changing selected-project capture for new runs or immutable snapshot replay for existing operations. Independent review caught and corrected an optional-role regression and a declaration-order error before publication; the final source audit passed.
+- The PWA presents one failed-run headline and retains diagnostic fields in Run details, including when a draft is available. Its focused tests, typecheck, lint, and independent source audit passed; browser verification of the new assets is still pending.
+- Development tooling now uses Wrangler 4.143.1 and Cloudflare Vitest plugin 1.3.2. A frozen install and actual installed-version checks passed. Compatible patched transitive dependencies were updated; the previously identified unpatched advisory remains open.
+- These are local integration results, not a completed live scenario. The original run remains failed without an answer. Changed backend fingerprints cannot resume it under the existing compatibility policy; do not rewrite its snapshot or fingerprint. A new run requires deployment of the fix and current qualification proofs. Q1, Report, and reopen acceptance remain NOT ACCEPTED.
