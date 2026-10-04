@@ -17,6 +17,7 @@ import {
 import {
   createD1ResearchModelQualificationObservationStore,
 } from "./research-model-qualification-store.js";
+import { createDynamicRouteQualificationProofReaders } from "./model-gateway-qualification-readers.js";
 
 const PROTOCOL = "eliotr.dynamic-route-qualification-proof.v1" as const;
 const OBSERVATION_PROTOCOL = "eliotr.dynamic-route-qualification-observation.v1" as const;
@@ -496,41 +497,18 @@ export function createD1DynamicRouteQualificationProofStore(
     return raw === null ? null : latestRow(raw, "stored latest qualification", "DYNAMIC_ROUTE_QUALIFICATION_INVALID");
   }
 
-  return Object.freeze({
-    async readLatest(rawIdentity: DynamicRouteQualificationCandidateIdentity): Promise<DynamicRouteQualificationProof | null> {
-      const identity = identityInput(rawIdentity, "DYNAMIC_ROUTE_QUALIFICATION_INVALID");
-      const pointer = await readLatestPointer(identity);
-      if (pointer === null) return null;
-      if (pointer.route_ref !== identity.route_ref || pointer.route_version !== identity.route_version ||
-          pointer.candidate_ref !== identity.candidate_ref || pointer.candidate_sha256 !== identity.candidate_sha256) {
-        fail("DYNAMIC_ROUTE_QUALIFICATION_INVALID", "latest qualification points at another immutable candidate");
-      }
-      const candidate = await readCandidate(identity.candidate_ref);
-      if (candidate === null || candidate.sha256 !== identity.candidate_sha256) {
-        fail("DYNAMIC_ROUTE_QUALIFICATION_INVALID", "latest qualification candidate is missing or changed");
-      }
-      const stored = await readProofByRef(pointer.qualification_ref, candidate);
-      if (stored.sha256 !== pointer.qualification_sha256) fail("DYNAMIC_ROUTE_QUALIFICATION_INVALID", "latest qualification digest differs from its proof");
-      return stored.proof;
-    },
+  const proofReaders = createDynamicRouteQualificationProofReaders({
+    fail,
+    identifier,
+    digest,
+    identityInput,
+    readCandidate,
+    readProofByRef,
+    readLatestPointer,
+  });
 
-    async readPinned(rawInput: DynamicRoutePinnedQualificationReadInput): Promise<DynamicRouteQualificationProof | null> {
-      const identity = identityInput(rawInput, "DYNAMIC_ROUTE_QUALIFICATION_INVALID");
-      const qualificationRef = identifier(rawInput.qualification_ref, "pinned qualification reference", "DYNAMIC_ROUTE_QUALIFICATION_INVALID");
-      const qualificationSha = digest(rawInput.qualification_sha256, "pinned qualification digest", "DYNAMIC_ROUTE_QUALIFICATION_INVALID");
-      const candidate = await readCandidate(identity.candidate_ref);
-      if (candidate === null || candidate.sha256 !== identity.candidate_sha256 ||
-          candidate.row.route_ref !== identity.route_ref || candidate.row.route_version !== identity.route_version) {
-        fail("DYNAMIC_ROUTE_QUALIFICATION_INVALID", "pinned qualification candidate is missing or changed");
-      }
-      const stored = await readProofByRef(qualificationRef, candidate);
-      if (stored.sha256 !== qualificationSha || stored.proof.route_ref !== identity.route_ref ||
-          stored.proof.route_version !== identity.route_version || stored.proof.candidate_ref !== identity.candidate_ref ||
-          stored.proof.candidate_sha256 !== identity.candidate_sha256) {
-        fail("DYNAMIC_ROUTE_QUALIFICATION_INVALID", "pinned qualification proof identity or digest differs from the run configuration");
-      }
-      return stored.proof;
-    },
+  return Object.freeze({
+    ...proofReaders,
 
     async putImmutable(input: DynamicRouteQualificationProofWriteInput): Promise<DynamicRouteQualificationProofWriteReceipt> {
       const candidateRef = identifier(input.candidate_ref, "qualification candidate", "DYNAMIC_ROUTE_QUALIFICATION_INVALID");

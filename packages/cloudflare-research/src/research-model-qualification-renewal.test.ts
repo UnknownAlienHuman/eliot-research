@@ -12,6 +12,7 @@ import {
 } from "@eliotr/cloudflare-ai";
 import type { ApplicationModelRoute } from "@eliotr/platform-cloudflare";
 import { createD1DynamicRouteRegistry, createD1ModelGatewayDeploymentRegistry } from "./model-gateway-deployment-registry-d1.js";
+import { createD1DynamicRouteQualificationProofStore } from "./model-gateway-qualification-d1.js";
 import { createD1ResearchModelQualificationObservationStore } from "./research-model-qualification-store.js";
 import {
   createResearchModelQualificationRenewal,
@@ -322,6 +323,10 @@ describe("research model qualification renewal single-flight", () => {
     const current = createD1ModelGatewayDeploymentRegistry(database, { now: () => NOW, environment: "TEST" });
     await expect(current.resolve(route)).resolves.toEqual(pinnedY.value.deployment);
     await expect(current.resolvePinned(expected, selection)).resolves.toEqual(expected);
+    await expect(createD1DynamicRouteQualificationProofStore(database, { now: () => NOW }).readPinned({
+      ...selection,
+      qualification_sha256: "0".repeat(64),
+    })).rejects.toMatchObject({ code: "DYNAMIC_ROUTE_QUALIFICATION_INVALID" });
 
     const afterExpiry = createD1ModelGatewayDeploymentRegistry(database, {
       now: () => "2026-10-01T14:00:00.000Z", environment: "TEST",
