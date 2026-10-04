@@ -228,10 +228,10 @@ export function mountResearchModelConfigurationPanel(
       setText(status, notice ?? (selected
         ? selectedIsSelectable
           ? "New runs use this saved project selection. Started runs retain their original model snapshot."
-          : "The saved project selection remains in history, but its qualification is no longer current. New runs are blocked until a currently qualified configuration is selected."
+          : "The saved selection remains in history, but the server could not validate its exact configuration. New runs are blocked until an eligible saved configuration is selected."
         : revisions.length === 0 ? "No saved qualified model configuration is available for this project yet."
           : "Choose a saved qualified model configuration to use for new runs."));
-      setText(explanation, "Catalog browsing and selection do not qualify a model or test provider access. Historical configurations whose exact qualification expired, was revoked, or is unavailable remain readable but cannot be selected for new runs. The server rechecks qualification on selection; no model call is made here. BYOK shows only the alias, not key or live credential status; a missing key does not switch to unified billing.");
+      setText(explanation, "The server checks each saved configuration under its own rules. A saved choice remains eligible while its exact proof and current owner/project checks pass; missing, mismatched, unavailable, or revoked proof blocks selection. An unchanged saved choice can remain eligible after its model proof date passes. Catalog browsing does not confirm account access, billing, or credentials, and this view makes no model request. BYOK shows only the alias, not a key or live credential status; a missing key does not switch to unified billing.");
       setText(catalogStatus, catalogError !== undefined
         ? researchModelConfigurationErrorCopy(catalogError).summary
         : catalog === undefined ? "The catalog has not been read yet."

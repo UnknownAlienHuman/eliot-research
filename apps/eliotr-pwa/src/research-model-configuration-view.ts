@@ -77,8 +77,8 @@ export function renderResearchModelConfigurationRevision(revision: ResearchModel
   article.append(heading);
   const note = document.createElement("p");
   note.textContent = revision.qualification_state === "qualified"
-    ? "Saved exact configuration with current qualification. The server checks it again when selected; this view does not invoke a model or establish live credential status."
-    : "Historical saved configuration. Current qualification for its exact route is not confirmed, so it cannot be selected for new runs until the operator prepares a currently qualified configuration.";
+    ? "Saved exact configuration is eligible under its saved rules. The server rechecks this choice before a new run. This view does not test provider credentials or invoke a model."
+    : "The server could not validate this saved configuration under its saved rules, so it cannot be selected. Save another configuration that passes the required checks.";
   article.append(note);
   appendLine(article, "Configuration digest", revision.configuration_sha256);
   appendLine(article, "Semantic revision", `${revision.semantic_revision.revision_ref} · SHA-256 ${revision.semantic_revision.config_sha256}`);
@@ -121,7 +121,7 @@ export function renderResearchModelCatalogEntry(
   if (prepared.length === 0) {
     const blocked = document.createElement("p");
     blocked.textContent = stale
-      ? "A saved configuration matches this catalog item, but current qualification for its exact route is not confirmed. It remains in history and cannot be selected for new runs."
+      ? "A saved configuration matches this catalog item, but the server could not validate its exact configuration. It remains in history and cannot be selected."
       : "No saved exact qualified project configuration matches this catalog item. It cannot be selected directly.";
     article.append(blocked);
   } else {
@@ -157,7 +157,7 @@ export function researchModelConfigurationIsSelectable(revision: ResearchModelCo
 }
 
 export function researchModelConfigurationQualificationLabel(revision: ResearchModelConfigurationRevision): string {
-  return revision.qualification_state === "qualified" ? "qualified currently" : "qualification required";
+  return revision.qualification_state === "qualified" ? "Eligible for selection" : "Not eligible for selection";
 }
 
 export function researchModelConfigurationMatchesCatalog(
