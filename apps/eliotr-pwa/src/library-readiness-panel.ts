@@ -36,11 +36,26 @@ function qualityLabel(value: LibraryReadinessView["quality_state"]): string {
   return value === "high_fidelity" ? "high fidelity" : value === "unqualified" ? "not qualified" : value;
 }
 
+function currentnessSummary(currentness: LibraryReadinessView["currentness"]): string {
+  if (currentness.verification === "VERIFIED") {
+    const observation = currentness.value;
+    const label = observation.observation_freshness === "current_confirmed"
+      ? "Source was confirmed current"
+      : "Saved source observation verified";
+    const freshness = observation.observation_freshness === "current_confirmed"
+      ? ""
+      : ` · ${escapeHtml(freshnessLabel(observation.observation_freshness))}`;
+    return `<strong>${label}</strong>${freshness} · observed ${escapeHtml(observation.observed_at)}`;
+  }
+
+  const unavailable = currentness.reason_codes.some((reason) => reason.endsWith("_UNAVAILABLE"));
+  const label = unavailable ? "Currentness evidence unavailable" : "Currentness not verified";
+  return `<strong>${label}</strong> · saved record says ${escapeHtml(freshnessLabel(currentness.recorded_freshness))}
+    <details><summary>Why</summary><small>Recorded freshness ${escapeHtml(currentness.recorded_freshness)} · ${currentness.reason_codes.map(escapeHtml).join(", ")}</small></details>`;
+}
+
 export function renderLibraryReadiness(readiness: LibraryReadinessView): string {
-  const currentness = readiness.currentness.verification === "VERIFIED"
-    ? `<strong>Source is current</strong> · observed ${escapeHtml(readiness.currentness.value.observed_at)}`
-    : `<strong>Freshness not verified</strong> · ${escapeHtml(freshnessLabel(readiness.currentness.recorded_freshness))}
-       <details><summary>Why</summary><small>Recorded freshness ${escapeHtml(readiness.currentness.recorded_freshness)} · ${readiness.currentness.reason_codes.map(escapeHtml).join(", ")}</small></details>`;
+  const currentness = currentnessSummary(readiness.currentness);
   return `<section class="readiness-card" aria-label="Active search readiness">
     <p><strong>Search readiness</strong> · ${escapeHtml(qualityLabel(readiness.quality_state))} · observed ${escapeHtml(readiness.observed_at)}</p>
     <p>${currentness}</p>

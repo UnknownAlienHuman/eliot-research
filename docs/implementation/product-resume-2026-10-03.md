@@ -117,3 +117,16 @@ restore closure remain separate outstanding criteria.
 - Only free bounded functional checks remain authorized; quality/load are deferred. Last recorded source-budget result:
   22 findings vs 18 baseline, not rechecked here. Full-release gates and production restore remain unaccepted; no new ADR
   authority or overall completion is claimed.
+
+## 2026-10-04 live acceptance checkpoint
+
+- Standard normal Worker deployment PASS: version and 11 assets were read back, and authority rotation was verified.
+- The snapshot-currentness fix and one guarded, balanced D1 repair passed. Core Readiness is VERIFIED; the original capture
+  bytes and capture time were preserved.
+- Native Cloudflare MCP transport recorded two real GLM qualifications as LIVE. Candidate and proof records are staged in
+  D1 without global promotion.
+- Import and Report remain NOT EXECUTED: local assembly normalization and missing CSRF consumed the 15-minute proof
+  window. Historical expired proofs remain preserved; renewal is pending.
+- Native Research OAuth remains uncompleted; an Access-allowed log does not establish OAuth success. The source-budget
+  check remains 22 FAIL, and broader release, ERASURE and RETRIEVAL remain open. Cognitive, quality and load testing remain
+  explicitly deferred.
