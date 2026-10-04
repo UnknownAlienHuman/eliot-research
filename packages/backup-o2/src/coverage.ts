@@ -38,6 +38,7 @@ export const CANONICAL_EXPORTED_TABLES: ReadonlySet<string> = new Set([
   "investigation_ledger_head",
   "investigation_ledger_epoch",
   "research_workflow_run",
+  "research_run_configuration",
   "research_workflow_attempt",
   "research_workflow_checkpoint",
   "research_workflow_citation_binding",
@@ -64,6 +65,8 @@ export const CANONICAL_EXPORTED_TABLES: ReadonlySet<string> = new Set([
   "dynamic_route_active_generation",
   "dynamic_route_qualification_proof",
   "dynamic_route_active_qualification",
+  "dynamic_route_qualification_revocation",
+  "research_project_model_configuration_revision",
   "wiki_publication_proposal",
   "wiki_publication_authority",
   "wiki_publication_revision",
@@ -191,6 +194,14 @@ const NOT_A_BACKUP_TABLES: ReadonlySet<string> = new Set([
   // recreate the original grant from copy digests or claim erasure closure.
   "backup_offsite_copy_replay_authority",
   "backup_erasure_replay_obligation",
+  // Restore lifecycle rows are target-bound controller authority, not
+  // portable source state. An ATTEMPTING/UNKNOWN row cannot be reconstructed
+  // from source data without proving side-effect settlement; a receipt is
+  // valid only for its exact target and purge frontier. Copying these rows
+  // could replay or falsely suppress a restore after deployment recovery.
+  "backup_restore_intent",
+  "backup_restore_attempt",
+  "backup_restore_receipt",
   // Installation-local policies, credentials and current grants must be
   // re-admitted at the restored controller, never copied as transferable.
   "investigation_current_policy",
@@ -205,6 +216,10 @@ const NOT_A_BACKUP_TABLES: ReadonlySet<string> = new Set([
   "erasure_admission_policy",
   "retrieval_scope_profile",
   "project_owner",
+  // The current selected project model configuration is owner-controlled
+  // authority. Restore the immutable revision history, then require the live
+  // owner to select it again under current admission and route qualification.
+  "research_project_model_configuration_selection",
   "project_client_grant",
   "dynamic_route_rest_binding",
   "computer_agent_connection",

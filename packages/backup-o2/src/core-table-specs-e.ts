@@ -3,6 +3,30 @@ import type { TableSpec } from "./coherent-cut.js";
 // Canonical publication and COW authority introduced by migrations 0098/0100.
 // Preserve these histories during recovery to prevent duplicate acceptance or paid effects.
 export const DURABLE_CORE_TABLE_SPECS_E: readonly TableSpec[] = [
+  { manifest: "heads", table: "research_run_configuration", order_by: "operation_id", columns: {
+    "operation_id": "text",
+    "investigation_id": "text",
+    "principal_ref": "text",
+    "deployment_generation": "text",
+    "protocol": "text",
+    "mode": "text",
+    "configuration_ref": "text",
+    "configuration_sha256": "text",
+    "configuration_json": "text",
+    "byte_length": "int",
+    "created_at": "text"
+  }, required: false },
+  { manifest: "projects", table: "research_project_model_configuration_revision", order_by: "owner_id, project_id, configuration_ref", columns: {
+    "owner_id": "text",
+    "project_id": "text",
+    "configuration_ref": "text",
+    "configuration_sha256": "text",
+    "configuration_json": "text",
+    "byte_length": "int",
+    "protocol": "text",
+    "created_at": "text",
+    "created_by_principal_ref": "text"
+  }, required: false },
   { manifest: "heads", table: "artifact_publication_receipt", order_by: "publication_ref", columns: {
     "publication_ref": "text",
     "artifact_id": "text",
@@ -188,5 +212,17 @@ export const DURABLE_CORE_TABLE_SPECS_E: readonly TableSpec[] = [
     "history_event_sequence_floor": "int",
     "receipt_sequence_floor": "int",
     "pre_migration_semantic": "int"
+  }, required: false },
+  { manifest: "retention", table: "backup_restore_intent", order_by: "restore_id", columns: {
+    "restore_id": "text", "principal_ref": "text", "idempotency_key": "text", "intent_id": "text",
+    "intent_revision": "int", "intent_digest": "text", "epoch_id": "text", "offsite_copy_ref": "text",
+    "target_binding_json": "text", "state": "text", "created_at": "text", "updated_at": "text"
+  }, required: false },
+  { manifest: "retention", table: "backup_restore_attempt", order_by: "restore_id, attempt_number", columns: {
+    "restore_id": "text", "attempt_number": "int", "attempt_id": "text", "state": "text", "attempt_json": "text",
+    "started_at": "text", "ended_at": "text-or-null", "error_code": "text-or-null", "readback_digest": "text-or-null"
+  }, required: false },
+  { manifest: "retention", table: "backup_restore_receipt", order_by: "restore_id", columns: {
+    "restore_id": "text", "attempt_number": "int", "receipt_json": "text", "receipt_digest": "text", "created_at": "text"
   }, required: false },
 ];

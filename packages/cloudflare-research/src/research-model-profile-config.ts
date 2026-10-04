@@ -25,6 +25,8 @@ export interface PersistedModelProfileAuthorityReaderOptions {
   readonly operation_id: string;
   readonly investigation_id: string;
   readonly principal: Pick<WorkflowPrincipal, "principal_ref" | "credential_generation" | "deployment_generation">;
+  /** snapshot-v2 runs may continue from a compatible prior deployment generation. */
+  readonly allow_compatible_deployment_generation?: boolean;
 }
 
 interface StoredModelProfileAuthorityRow {
@@ -41,6 +43,9 @@ interface StoredModelProfileAuthorityRow {
   readonly current_revision: unknown;
   readonly ledger_revision: unknown;
   readonly model_profile_ref: unknown;
+  readonly scope_expires_at: unknown;
+  readonly grant_expires_at: unknown;
+  readonly run_budget_expires_at_ms: unknown;
 }
 
 interface ModelProfileAuthorityRow {
@@ -57,6 +62,9 @@ interface ModelProfileAuthorityRow {
   readonly current_revision: number;
   readonly ledger_revision: number;
   readonly model_profile_ref: string;
+  readonly scope_expires_at: string;
+  readonly grant_expires_at: string;
+  readonly run_budget_expires_at_ms: number | null;
 }
 
 function authorityStale(message: string, cause?: unknown): never {
@@ -77,6 +85,18 @@ function authorityRevision(value: unknown, label: string): number {
   return value as number;
 }
 
+function authorityMillis(value: unknown, label: string): number {
+  if (!Number.isSafeInteger(value) || (value as number) < 1) authorityStale(`${label} is invalid`);
+  return value as number;
+}
+
+function authorityTime(value: unknown, label: string): string {
+  if (typeof value !== "string" || !Number.isFinite(Date.parse(value)) || new Date(Date.parse(value)).toISOString() !== value) {
+    authorityStale(`${label} is invalid`);
+  }
+  return value;
+}
+
 function decodeAuthorityRow(row: StoredModelProfileAuthorityRow | null, input: PersistedModelProfileAuthorityReaderOptions): ModelProfileAuthorityRow {
   if (row === null) authorityStale("persisted workflow authority is unavailable");
   const decoded: ModelProfileAuthorityRow = {
@@ -93,11 +113,15 @@ function decodeAuthorityRow(row: StoredModelProfileAuthorityRow | null, input: P
     current_revision: authorityRevision(row.current_revision, "workflow current revision"),
     ledger_revision: authorityRevision(row.ledger_revision, "ledger revision"),
     model_profile_ref: authorityInput(row.model_profile_ref, "workflow model profile"),
+    scope_expires_at: authorityTime(row.scope_expires_at, "scope expiry"),
+    grant_expires_at: authorityTime(row.grant_expires_at, "grant expiry"),
+    run_budget_expires_at_ms: row.run_budget_expires_at_ms === null || row.run_budget_expires_at_ms === undefined
+      ? null : authorityMillis(row.run_budget_expires_at_ms, "workflow run budget expiry"),
   };
   if (decoded.operation_id !== input.operation_id || decoded.investigation_id !== input.investigation_id ||
       decoded.principal_ref !== input.principal.principal_ref ||
       decoded.credential_generation !== input.principal.credential_generation ||
-      decoded.deployment_generation !== input.principal.deployment_generation ||
+      (!input.allow_compatible_deployment_generation && decoded.deployment_generation !== input.principal.deployment_generation) ||
       decoded.current_revision !== decoded.ledger_revision) {
     authorityStale("persisted workflow authority does not match the requested owner run");
   }
@@ -111,7 +135,8 @@ function sameAuthorityRow(left: ModelProfileAuthorityRow, right: ModelProfileAut
     left.policy_generation === right.policy_generation && left.policy_authority_ref === right.policy_authority_ref &&
     left.scope_snapshot_id === right.scope_snapshot_id && left.scope_snapshot_revision === right.scope_snapshot_revision &&
     left.current_revision === right.current_revision && left.ledger_revision === right.ledger_revision &&
-    left.model_profile_ref === right.model_profile_ref;
+    left.model_profile_ref === right.model_profile_ref && left.scope_expires_at === right.scope_expires_at &&
+    left.grant_expires_at === right.grant_expires_at && left.run_budget_expires_at_ms === right.run_budget_expires_at_ms;
 }
 
 async function readPersistedAuthorityRow(input: PersistedModelProfileAuthorityReaderOptions): Promise<ModelProfileAuthorityRow> {
@@ -120,9 +145,16 @@ async function readPersistedAuthorityRow(input: PersistedModelProfileAuthorityRe
     row = await input.database.prepare(
       "SELECT r.operation_id, r.investigation_id, r.state, r.principal_ref, r.credential_generation, " +
       "r.deployment_generation, r.policy_generation, r.policy_authority_ref, r.scope_snapshot_id, " +
-      "r.scope_snapshot_revision, r.current_revision, r.ledger_revision, h.model_profile_ref " +
+      "r.scope_snapshot_revision, r.current_revision, r.ledger_revision, h.model_profile_ref, " +
+      "s.expires_at AS scope_expires_at, g.expires_at AS grant_expires_at, a.budget_expires_at_ms " +
       "FROM research_workflow_current r JOIN investigation_ledger_head h " +
       "ON h.investigation_id = r.investigation_id " +
+      "JOIN scope_snapshot s ON s.snapshot_id=r.scope_snapshot_id AND s.revision=r.scope_snapshot_revision " +
+      "JOIN scope_access_grant g ON g.snapshot_id=r.scope_snapshot_id AND g.snapshot_revision=r.scope_snapshot_revision " +
+      "AND g.principal_ref=r.principal_ref AND g.credential_generation=r.credential_generation " +
+      "AND g.policy_authority_ref=r.policy_authority_ref AND g.authorization_receipt_ref=r.authorization_receipt_ref " +
+      "LEFT JOIN research_workflow_attempt a ON a.operation_id=r.operation_id AND a.stage_index=r.next_stage_index " +
+      "AND a.state='STARTED' AND a.output_json IS NULL " +
       "WHERE r.operation_id = ?1 AND r.investigation_id = ?2 AND r.principal_ref = ?3 LIMIT 1",
     ).bind(input.operation_id, input.investigation_id, input.principal.principal_ref).first<StoredModelProfileAuthorityRow>();
   } catch (cause) {
@@ -164,7 +196,8 @@ export function createPersistedModelProfileCurrentAuthorityReader(
         input.navigation.access.credential_generation !== first.credential_generation) {
       authorityStale("navigation authority does not match the persisted workflow");
     }
-    if (before.policy_authority_ref !== first.policy_authority_ref || !before.allowed_use.includes("research")) {
+    if (before.policy_authority_ref !== first.policy_authority_ref || before.expires_at !== first.grant_expires_at ||
+        !before.allowed_use.includes("research")) {
       authorityStale("navigation grant does not match the persisted research authority");
     }
     const second = await readPersistedAuthorityRow(input);
@@ -175,7 +208,8 @@ export function createPersistedModelProfileCurrentAuthorityReader(
       authorityStale("navigation authority changed during model profile read", cause);
     }
     if (!sameAuthorityRow(first, second) ||
-        after.policy_authority_ref !== second.policy_authority_ref || !after.allowed_use.includes("research") ||
+        after.policy_authority_ref !== second.policy_authority_ref || after.expires_at !== second.grant_expires_at ||
+        !after.allowed_use.includes("research") ||
         canonicalEvidenceJson(before) !== canonicalEvidenceJson(after)) {
       authorityStale("research authority changed during model profile read");
     }
@@ -187,6 +221,8 @@ export function createPersistedModelProfileCurrentAuthorityReader(
       scope_snapshot_ref: Object.freeze({ id: second.scope_snapshot_id, revision: second.scope_snapshot_revision }),
       scope_snapshot_digest: input.navigation.scope.digest,
       scope_snapshot: input.navigation.scope,
+      grant_expires_at: second.grant_expires_at,
+      ...(second.run_budget_expires_at_ms === null ? {} : { run_budget_expires_at_ms: second.run_budget_expires_at_ms }),
       policy_state: "ACTIVE" as const,
       deployment_state: "ACTIVE" as const,
       state: "ACTIVE" as const,
@@ -204,7 +240,11 @@ export function createPersistedModelProfileBindingProducer(
   input: PersistedModelProfileBindingProducerOptions,
 ) {
   const { config, authority: authorityOptions, ...producerInput } = input;
-  const authority = createPersistedModelProfileCurrentAuthorityReader(authorityOptions);
+  const authority = createPersistedModelProfileCurrentAuthorityReader({
+    ...authorityOptions,
+    allow_compatible_deployment_generation: authorityOptions.allow_compatible_deployment_generation ??
+      producerInput.run_configuration?.mode === "snapshot-v2",
+  });
   return createModelProfileBindingProducer({
     ...producerInput,
     source: createModelProfileBindingConfigSource(config),

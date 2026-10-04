@@ -9,6 +9,7 @@ export {
   createD1DynamicRouteRegistry,
   createD1ModelGatewayDeploymentRegistry,
   type D1DynamicRouteRegistryOptions,
+  type PinnedModelSelection,
 } from "./model-gateway-deployment-registry-d1.js";
 export {
   createD1DynamicRouteQualificationProofStore,
@@ -97,3 +98,5 @@ export * from "./artifact-cow-revision-runner.js";
 export * from "./artifact-cow-draft-materialization.js";
 export * from "./artifact-cow-model-revalidator.js";
 export * from "./artifact-cow-spend-admission.js";
+export * from "./research-run-configuration-store.js";
+export * from "./research-project-configuration-store.js";

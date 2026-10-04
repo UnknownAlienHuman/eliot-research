@@ -16,6 +16,11 @@ import { createResearchChangesService } from "./research-changes.js";
 import { readReadiness } from "./readiness.js";
 import { readOwnerResearchRuns } from "./research-run-list.js";
 import { handleResearchModelQualification } from "./research-model-qualification-http.js";
+import { handleResearchModelCatalog } from "./research-model-catalog-http.js";
+import { handleResearchProjectModelConfiguration,
+  handleResearchProjectModelConfigurationImport } from "./research-project-configuration-http.js";
+import { createOwnerResearchProjectConfigurationService } from "./research-project-configuration-composition.js";
+import { handleAiSearchFunctionalProbeHttp } from "./ai-search-functional-probe-http.js";
 import {
   handleMcpClientDiagnosticIssue,
   handleMcpClientDiagnosticLatest,
@@ -75,6 +80,26 @@ export async function dispatchHttpSpecialRoute(input: {
     );
   }
   switch (input.match.route.operation) {
+    case "system.ai-search.functional-probe":
+      return handleAiSearchFunctionalProbeHttp({
+        request: input.request,
+        env: input.env,
+        url: input.url,
+        context: input.context,
+        maximum_request_bytes: input.match.route.maximum_request_bytes,
+      });
+    case "research.project-model-configuration.read":
+    case "research.project-model-configuration.select":
+    case "research.project-model-configuration.import": {
+      const projectId = input.match.params.project_id ?? "";
+      const service = createOwnerResearchProjectConfigurationService(input.env, input.context, projectId);
+      if (input.match.route.operation === "research.project-model-configuration.import") {
+        return handleResearchProjectModelConfigurationImport(input.request, input.env, input.context, projectId, service);
+      }
+      return handleResearchProjectModelConfiguration(input.request, input.env, input.context, projectId, service);
+    }
+    case "system.research.models":
+      return handleResearchModelCatalog(input.request, input.env, input.context);
     case "system.computer-agent-qualifications.status":
     case "system.computer-agent-qualifications.issue":
       return handleComputerAgentQualificationOwnerHttp(input.request, input.env, input.context,

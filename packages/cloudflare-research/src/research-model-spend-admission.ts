@@ -23,6 +23,7 @@ import type {
   ResearchSynthesisSpendAdmissionReadRequest,
   ResearchSynthesisSpendAdmissionRecord,
 } from "./research-synthesis-preparation.js";
+import type { PinnedModelSelection } from "./model-gateway-deployment-registry-d1.js";
 
 export const RESEARCH_MODEL_SPEND_ADMISSION_PROTOCOL = "eliotr.research-model-spend-admission.v1" as const;
 export const RESEARCH_MODEL_SPEND_APPROVAL_PROTOCOL = "eliotr.research-model-spend-approval.v1" as const;
@@ -50,6 +51,8 @@ export interface ResearchModelSpendApproval {
 export interface ResearchModelSpendCurrentAuthority {
   readonly authority: ModelAttemptAuthority;
   readonly expected_deployment: ModelRouteDeployment;
+  readonly model_selection?: PinnedModelSelection;
+  readonly run_configuration_mode?: "snapshot-v1" | "snapshot-v2";
 }
 
 export interface ResearchModelSpendAdmissionOptions {
@@ -380,11 +383,48 @@ async function current(dependency: ResearchModelSpendAdmissionOptions["read_curr
   let value: ResearchModelSpendCurrentAuthority | null;
   try { value = await dependency(request); } catch (cause) { if (cause instanceof ModelAttemptError) throw cause; fail("MODEL_ATTEMPT_AUTHORITY_STALE", "current spend authority could not be read", true, cause); }
   if (value === null) return null;
-  return Object.freeze({ authority: authority(value.authority, "MODEL_ATTEMPT_AUTHORITY_STALE", "current spend authority"), expected_deployment: deployment(value.expected_deployment, "MODEL_ATTEMPT_AUTHORITY_STALE", "current spend deployment") });
+  const code: ErrorCode = "MODEL_ATTEMPT_AUTHORITY_STALE";
+  const validatedAuthority = authority(value.authority, code, "current spend authority");
+  const validatedDeployment = deployment(value.expected_deployment, code, "current spend deployment");
+  const mode = value.run_configuration_mode;
+  const rawSelection = value.model_selection;
+  if ((rawSelection === undefined) !== (mode === undefined)) {
+    fail(code, "current model selection and snapshot mode are incomplete", true);
+  }
+  if (rawSelection === undefined) {
+    return Object.freeze({ authority: validatedAuthority, expected_deployment: validatedDeployment });
+  }
+  if (mode !== "snapshot-v1" && mode !== "snapshot-v2") {
+    fail(code, "current model selection has an invalid snapshot mode", true);
+  }
+  const selection = plain(rawSelection, new Set([
+    "route_ref", "route_version", "candidate_ref", "candidate_sha256", "qualification_ref", "qualification_sha256",
+  ]), "current pinned model selection", code);
+  const modelSelection: PinnedModelSelection = Object.freeze({
+    route_ref: id(selection.route_ref, "current model selection route_ref", code),
+    route_version: id(selection.route_version, "current model selection route_version", code),
+    candidate_ref: id(selection.candidate_ref, "current model selection candidate_ref", code),
+    candidate_sha256: sha(selection.candidate_sha256, "current model selection candidate_sha256", code),
+    qualification_ref: id(selection.qualification_ref, "current model selection qualification_ref", code),
+    qualification_sha256: sha(selection.qualification_sha256, "current model selection qualification_sha256", code),
+  });
+  if (modelSelection.route_ref !== validatedDeployment.route_ref || modelSelection.route_version !== validatedDeployment.route_version) {
+    fail(code, "current pinned model selection differs from its deployment", true);
+  }
+  return Object.freeze({ authority: validatedAuthority, expected_deployment: validatedDeployment,
+    model_selection: modelSelection, run_configuration_mode: mode });
 }
 function assertCurrent(value: ResearchModelSpendCurrentAuthority | null, expected: { readonly authority: ModelAttemptAuthority; readonly expected_deployment: ModelRouteDeployment }, nowMs: number): void {
   if (value === null || !sameAuthority(value.authority, expected.authority) || !sameDeployment(value.expected_deployment, expected.expected_deployment)) fail("MODEL_ATTEMPT_AUTHORITY_STALE", "current spend authority differs from the admitted decision", true);
   unexpired(value.authority.expires_at, nowMs, "current spend authority");
+}
+function assertSamePinnedSelection(before: ResearchModelSpendCurrentAuthority, after: ResearchModelSpendCurrentAuthority): void {
+  if (before.run_configuration_mode !== after.run_configuration_mode ||
+      (before.model_selection === undefined) !== (after.model_selection === undefined) ||
+      (before.model_selection !== undefined && after.model_selection !== undefined &&
+        canonicalJson(before.model_selection) !== canonicalJson(after.model_selection))) {
+    fail("MODEL_ATTEMPT_AUTHORITY_STALE", "pinned model selection changed during spend authority read", true);
+  }
 }
 
 function rowBaseQuery(extraProjection = ""): string { return `SELECT ${columns("s")}${extraProjection} FROM research_model_spend_admission s `; }
@@ -441,20 +481,25 @@ export function createD1ResearchModelSpendAdmissionPort(database: D1Database, op
       const record = await decodeRow(row);
       const expectedAdmissionSha = await admissionDigest({ ...raw, role: input.role, request: input.request, stage_request_json: input.stage.raw, intent: input.operation, quote: input.cost, authority: input.owner, expected_deployment: input.expected, approval: input.decision, created_at: record.created_at });
       if (record.operation_id !== input.request.operation_id || record.workflow_operation_id !== raw.workflow_operation_id || record.stage_index !== raw.stage_index || record.role !== input.role || record.stage_request_json !== input.stage.raw || record.authorization_ref !== input.decision.authorization_ref || record.admission_sha256 !== expectedAdmissionSha || record.max_input_bytes !== raw.max_input_bytes || record.max_output_bytes !== raw.max_output_bytes || !sameAuthority(record.authority, input.owner) || !sameDeployment(record.expected_deployment, input.expected) || canonicalJson(record.intent) !== canonicalJson(input.operation) || canonicalJson(record.quote) !== canonicalJson(input.cost)) fail("MODEL_ATTEMPT_IDENTITY_CONFLICT", "spend admission write readback differs from the trusted decision");
-      const after = await current(options.read_current_authority, input.request); if (after === null) fail("MODEL_ATTEMPT_AUTHORITY_STALE", "current spend authority changed after admission", true); assertCurrent(after, record, clock(now)); return record;
+      const after = await current(options.read_current_authority, input.request); if (after === null) fail("MODEL_ATTEMPT_AUTHORITY_STALE", "current spend authority changed after admission", true); assertCurrent(after, record, clock(now)); assertSamePinnedSelection(before, after); return record;
     },
     async read(rawRequest: SpendAuthorizationReadRequest): Promise<SpendAuthorizationReadback | null> {
       const request = readRequest(rawRequest), nowMs = clock(now), before = await current(options.read_current_authority, request); if (before === null) return null;
       const row = await database.prepare(w3Query()).bind(request.operation_id, request.principal_ref, request.stage_attempt_ref, request.stage_request_sha256, request.reservation_id, request.quote_ref, request.route_ref, request.scope_snapshot_ref.id, request.scope_snapshot_ref.revision, request.workflow_authorization_receipt_ref, request.workflow_stage_request_sha256 ?? request.stage_request_sha256).first<AdmissionRow>(); if (row === null) return null;
       const record = await decodeRow(row); assertRequest(record, request); assertW3(row, nowMs); unexpired(record.expires_at, nowMs, "spend admission"); assertCurrent(before, record, nowMs);
-      const after = await current(options.read_current_authority, request); if (after === null) fail("MODEL_ATTEMPT_AUTHORITY_STALE", "current spend authority changed during spend read", true); assertCurrent(after, record, clock(now));
-      return Object.freeze({ authorization_ref: record.authorization_ref, decision_digest: record.decision_digest, operation_id: record.operation_id, principal_ref: record.principal_ref, stage_attempt_ref: record.stage_attempt_ref, stage_request_sha256: record.stage_request_sha256, reservation_id: record.reservation_id, quote_ref: record.quote_ref, route_ref: record.route_ref, scope_snapshot_ref: record.scope_snapshot_ref, workflow_authorization_receipt_ref: record.workflow_authorization_receipt_ref, policy_generation: record.policy_generation, currentness_digest: record.currentness_digest, expires_at: record.expires_at, expected_deployment: record.expected_deployment });
+      const after = await current(options.read_current_authority, request); if (after === null) fail("MODEL_ATTEMPT_AUTHORITY_STALE", "current spend authority changed during spend read", true); assertCurrent(after, record, clock(now)); assertSamePinnedSelection(before, after);
+      if (before.model_selection !== undefined && before.run_configuration_mode === undefined) {
+        fail("MODEL_ATTEMPT_AUTHORITY_STALE", "pinned model selection has no snapshot mode", true);
+      }
+      return Object.freeze({ authorization_ref: record.authorization_ref, decision_digest: record.decision_digest, operation_id: record.operation_id, principal_ref: record.principal_ref, stage_attempt_ref: record.stage_attempt_ref, stage_request_sha256: record.stage_request_sha256, reservation_id: record.reservation_id, quote_ref: record.quote_ref, route_ref: record.route_ref, scope_snapshot_ref: record.scope_snapshot_ref, workflow_authorization_receipt_ref: record.workflow_authorization_receipt_ref, policy_generation: record.policy_generation, currentness_digest: record.currentness_digest, expires_at: record.expires_at, expected_deployment: record.expected_deployment,
+        ...(before.model_selection === undefined ? {} : { model_selection: before.model_selection,
+          run_configuration_mode: before.run_configuration_mode }) });
     },
     async readPreparation(rawInput: ResearchSynthesisSpendAdmissionReadRequest): Promise<ResearchSynthesisSpendAdmissionRecord | null> {
       const input = preparationRequest(rawInput), row = await readPreparationRow(database, input); if (row === null) return null;
       const record = await decodeRow(row), request = readRequest({ operation_id: record.operation_id, principal_ref: record.principal_ref, stage_attempt_ref: record.stage_attempt_ref, stage_request_sha256: record.stage_request_sha256, reservation_id: record.reservation_id, quote_ref: record.quote_ref, route_ref: record.route_ref, scope_snapshot_ref: record.scope_snapshot_ref, workflow_authorization_receipt_ref: record.workflow_authorization_receipt_ref });
       const before = await current(options.read_current_authority, request); if (before === null) fail("MODEL_ATTEMPT_AUTHORITY_STALE", "current spend authority is unavailable", true); assertCurrent(before, record, clock(now));
-      const synthesis = synthesisRecord(record, input); const after = await current(options.read_current_authority, request); if (after === null) fail("MODEL_ATTEMPT_AUTHORITY_STALE", "current spend authority changed during preparation read", true); assertCurrent(after, record, clock(now)); return synthesis;
+      const synthesis = synthesisRecord(record, input); const after = await current(options.read_current_authority, request); if (after === null) fail("MODEL_ATTEMPT_AUTHORITY_STALE", "current spend authority changed during preparation read", true); assertCurrent(after, record, clock(now)); assertSamePinnedSelection(before, after); return synthesis;
     },
   });
 }

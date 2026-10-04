@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { resolve } from "node:path";
+import { mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+
+// The ordering fixture must not consume the operator's live Access receipts.
+const stateDirectory = await mkdtemp(join(tmpdir(), "eliotr-access-preflight-"));
 
 const result = spawnSync(
   process.execPath,
@@ -10,6 +15,7 @@ const result = spawnSync(
     encoding: "utf8",
     env: {
       ...process.env,
+      ELIOTR_STATE_DIRECTORY: stateDirectory,
       CLOUDFLARE_ACCOUNT_ID: "mock-account",
       CLOUDFLARE_API_TOKEN: "mock-token",
       CLOUDFLARE_API_BASE_URL: "http://127.0.0.1:1/client/v4",

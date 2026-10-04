@@ -1,4 +1,5 @@
 import type { ResearchBranchRole } from "@eliotr/contracts";
+import type { ModelGatewayRequestCapabilitiesV1 } from "@eliotr/cloudflare-ai";
 import {
   researchBranchRoleQuestion,
   type ResearchModelPromptCompilerDependencies,
@@ -15,6 +16,7 @@ export interface ResearchBranchRolePromptDependenciesInput {
   readonly build_manifest_input: ResearchModelPromptCompilerDependencies["build_manifest_input"];
   /** Explicitly installed by the server; no model or prompt defaults are selected here. */
   readonly trusted_parameters: TrustedModelPromptParameters;
+  readonly request_capabilities?: ModelGatewayRequestCapabilitiesV1;
   readonly request_timeout_ms: number;
 }
 
@@ -61,6 +63,7 @@ export function createResearchBranchRolePromptDependencies(
       _input: ModelCallInput,
       _deployment: ModelRouteDeployment,
     ): Promise<TrustedModelPromptParameters> => Object.freeze({ ...trustedParameters, prompt: promptText }),
+    ...(rawInput.request_capabilities === undefined ? {} : { request_capabilities: rawInput.request_capabilities }),
     request_timeout_ms: rawInput.request_timeout_ms,
   });
 }

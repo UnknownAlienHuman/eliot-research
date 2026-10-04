@@ -1,4 +1,4 @@
-import { beforeAll, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import { canonicalEvidenceJson, evidenceSha256Bytes } from "@eliotr/cloudflare-evidence";
 import { createD1ScopeProfilePort } from "@eliotr/retrieval";
 import { createArtifactSectionReviseWorkflowStore } from "@eliotr/cloudflare-workflows";
@@ -19,7 +19,9 @@ import { createD1ResearchModelPricingSnapshotStore } from "../../../packages/clo
 import { dynamicRouteJsonArtifact } from "../../../packages/cloudflare-ai/src/dynamic-route-provisioning-codec.js";
 import { retrieveWithHeldScope } from "../src/research-retrieval-composition.js";
 import { createArtifactDraftRuntime, draftInput, runtime } from "./artifact-draft-fixture.js";
+import { originalReport } from "./artifact-cow-http-fixture.js";
 import { freezeFixture, principal as freezePrincipal } from "./research-evidence-freeze-fixture.js";
+import runConfigurationMigration from "../../../infra/d1/core/migrations/0104_research_run_configuration.sql?raw";
 
 const ROUTE = "dynamic/eliotr-economy";
 const ROUTE_VERSION = "cow-w3-test-v1";
@@ -109,10 +111,40 @@ async function configureReportPolicy(): Promise<void> {
     .bind(freezePrincipal.deployment_generation, now).run();
 }
 
-async function startW2(tag: string) {
-  const input = await draftInput(tag, { scope_snapshot_id: freeze.scope.snapshot_id,
-    principal_ref: freezePrincipal.principal_ref });
-  await createArtifactDraftRuntime().prepare(input);
+async function markOriginalRunAsMigrationTimeLegacy(operationId: string): Promise<void> {
+  const row = await runtime.CORE_DB.prepare(
+    "SELECT configuration_required,configuration_ref FROM research_workflow_run WHERE operation_id=?1 LIMIT 1",
+  ).bind(operationId).first<{ readonly configuration_required: unknown; readonly configuration_ref: unknown }>();
+  if (row === null || row.configuration_required !== 1 || row.configuration_ref !== null) {
+    throw new Error("Original REPORT fixture is not a newly-required run without a snapshot");
+  }
+  const transitionStart = runConfigurationMigration.indexOf("CREATE TRIGGER research_workflow_run_transition BEFORE UPDATE ON research_workflow_run");
+  if (transitionStart < 0) throw new Error("Run configuration migration is missing its exact transition guard");
+  const transitionTrigger = runConfigurationMigration.slice(transitionStart).trim();
+  // This fixture exercises a run that existed when 0104 was applied: seed its
+  // historical marker, then restore the exact production transition trigger.
+  await runtime.CORE_DB.prepare("DROP TRIGGER research_workflow_run_transition").run();
+  await runtime.CORE_DB.prepare(
+    "UPDATE research_workflow_run SET configuration_required=0 WHERE operation_id=?1 AND configuration_ref IS NULL",
+  ).bind(operationId).run();
+  await runtime.CORE_DB.prepare(transitionTrigger).run();
+}
+
+async function startW2(tag: string, stableSettings = false,
+  reportOrigin?: Awaited<ReturnType<typeof originalReport>>) {
+  if (reportOrigin === undefined) freeze = await freezeFixture();
+  else {
+    freeze = reportOrigin.freeze;
+    await markOriginalRunAsMigrationTimeLegacy(freeze.operation_id);
+  }
+  deployment = await installTestRoute();
+  await configureReportPolicy();
+  const newDraftInput = reportOrigin === undefined
+    ? await draftInput(tag, { scope_snapshot_id: freeze.scope.snapshot_id, principal_ref: freezePrincipal.principal_ref })
+    : undefined;
+  if (newDraftInput !== undefined) await createArtifactDraftRuntime().prepare(newDraftInput);
+  const input = reportOrigin?.snapshot ?? newDraftInput;
+  if (input === undefined) throw new Error("COW test parent draft snapshot is missing");
   const context = {
     principal_ref: freezePrincipal.principal_ref,
     client_class: "owner_pwa" as const,
@@ -127,25 +159,36 @@ async function startW2(tag: string) {
     estimated_embedding_tokens: 0, quoted_neurons: 0, platform_usd: 0, workers_ai_usd: 0,
     byok_usd: 0, max_total_usd: 0.01, workflow_steps: 1, expected_sources: 1,
     expected_sections: 1, confidence: 0.5 };
-  const spend = { protocol: "eliotr.research-owner-spend-template.v1", approved: true,
-    policy_ref: "cow-w3-spend-policy", config_provenance_ref: "cow-w3-spend-policy-install",
-    principal_ref: context.principal_ref, client_class: "owner_pwa",
-    deployment_generation: freezePrincipal.deployment_generation, expires_at: freeze.scope.expires_at,
+  const spendTemplate = { approved: true, policy_ref: "cow-w3-spend-policy",
+    config_provenance_ref: "cow-w3-spend-policy-install", principal_ref: context.principal_ref,
+    client_class: "owner_pwa" as const,
     rules: ["SYNTHESIZE", "AUDIT_CLAIMS"].map((stage) => ({ stage, quote, max_input_bytes: 8192,
       max_output_bytes: 2048, deployment })) };
+  const spend = stableSettings
+    ? { ...spendTemplate, protocol: "eliotr.research-owner-spend-template.v2" }
+    : { ...spendTemplate, protocol: "eliotr.research-owner-spend-template.v1",
+      deployment_generation: freezePrincipal.deployment_generation, expires_at: freeze.scope.expires_at };
   const { content_digest: _draftDigest, ...residency } = input.manifest_residency;
   const section = input.spec.section_contracts[0];
   if (section === undefined) throw new Error("COW test draft is missing its stable summary contract");
-  const report = { schema: "eliotr.research.report-config.v1", admission_policy: {
+  const reportAdmissionTemplate = stableSettings ? {
+    protocol: "eliotr.research-owner-report-admission-template.v2", policy_ref: "cow-w3-report-policy",
+    policy_revision: 1, config_provenance_ref: "cow-w3-report-policy-install",
+    principal_ref: context.principal_ref, client_class: "owner_pwa", allowed_use: ["research"],
+    disclosure_ceiling: "owner-only", requested_output_class: "private-draft",
+    purpose: "research-report-materialization",
+  } : {
     protocol: "eliotr.research-owner-report-admission-template.v1", policy_ref: "cow-w3-report-policy",
     policy_revision: 1, config_provenance_ref: "cow-w3-report-policy-install",
     principal_ref: context.principal_ref, client_class: "owner_pwa",
     deployment_generation: freezePrincipal.deployment_generation, allowed_use: ["research"],
     disclosure_ceiling: "owner-only", requested_output_class: "private-draft",
-    purpose: "research-report-materialization", expires_at: freeze.scope.expires_at },
+    purpose: "research-report-materialization", expires_at: freeze.scope.expires_at };
+  const report = { schema: "eliotr.research.report-config.v1", admission_policy: reportAdmissionTemplate,
     artifact_policy: { kind: input.spec.kind, title: input.spec.title, audience: input.spec.audience,
       language: input.spec.language, section_contract: section,
-      statement_labels: { claim: "UNRESOLVED" }, citation_policy_ref: input.spec.citation_policy_ref,
+      statement_labels: Object.fromEntries(section.required_claim_kinds.map((kind) => [kind, "UNRESOLVED"])),
+      citation_policy_ref: input.spec.citation_policy_ref,
       verification_policy_ref: input.spec.verification_policy_ref, length_policy_ref: input.spec.length_policy_ref,
       export_formats: input.spec.export_formats, include_counterevidence: input.spec.include_counterevidence,
       include_methodology: input.spec.include_methodology, budget_ref: input.spec.budget_ref,
@@ -301,14 +344,8 @@ async function runW3(data: Awaited<ReturnType<typeof startW2>>, tag: string, fai
 }
 
 describe("owner COW W3 model admission through actual Workerd D1/R2", () => {
-  beforeAll(async () => {
-    freeze = await freezeFixture();
-    deployment = await installTestRoute();
-    await configureReportPolicy();
-  }, 60_000);
-
   it("admits, settles, and replays two distinct installed REPORT slots without another route call", async () => {
-    const data = await startW2("cow-w3-two-slots");
+    const data = await startW2("cow-w3-two-slots", false, await originalReport("observation"));
     const running = await runW3(data, "two-slots");
     const first = [];
     for (const context of running.contexts) first.push(await running.executor.executor.execute(context));
@@ -346,7 +383,7 @@ describe("owner COW W3 model admission through actual Workerd D1/R2", () => {
   }, 60_000);
 
   it("marks an invoked lost acknowledgement UNKNOWN and refuses a second route effect", async () => {
-    const data = await startW2("cow-w3-unknown");
+    const data = await startW2("cow-w3-unknown", false, await originalReport("observation"));
     const running = await runW3(data, "unknown", true);
     const context = running.contexts[0];
     if (context === undefined) throw new Error("COW test is missing its synthesis slot");
@@ -368,5 +405,11 @@ describe("owner COW W3 model admission through actual Workerd D1/R2", () => {
     expect(after?.n).toBe(before?.n);
     expect(admissionsBefore?.n).toBe(1);
     expect(admissionsAfter?.n).toBe(admissionsBefore?.n);
+  }, 60_000);
+
+  it("requires the exact original run configuration before a v2 COW REPORT can start", async () => {
+    await expect(startW2("cow-v2-missing-lineage", true)).rejects.toMatchObject({
+      code: "RESEARCH_RUN_CONFIGURATION_REQUIRED",
+    });
   }, 60_000);
 });

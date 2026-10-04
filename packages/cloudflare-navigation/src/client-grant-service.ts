@@ -98,7 +98,12 @@ export function createProjectClientGrantService(options: ClientGrantServiceOptio
             Date.parse(input.expires_at) > Date.parse(sponsorship.expires_at)) {
           grantFail("CLIENT_GRANT_SPEND_DENIED", 403, "Grant expiry exceeds its installed sponsorship approval");
         }
-        grantId(sponsorship.deployment_generation);
+        if (sponsorship.policy_protocol === "eliotr.research-owner-spend-template.v1") {
+          grantId(sponsorship.deployment_generation);
+        } else if (sponsorship.policy_protocol !== "eliotr.research-owner-spend-template.v2" ||
+                   sponsorship.deployment_generation !== null) {
+          grantFail("CLIENT_GRANT_SPEND_DENIED", 403, "Installed sponsorship version or deployment binding is invalid");
+        }
         authorityDeadline = Math.min(authorityDeadline, Date.parse(sponsorship.expires_at));
       }
       const imports = input.allowed_operations.some((op) => op === "ingest.bundle" || op === "workspace.admit" || op === "project.attach");
@@ -137,15 +142,16 @@ export function createProjectClientGrantService(options: ClientGrantServiceOptio
     try {
       await db.prepare("INSERT INTO project_client_grant (grant_id,revision,project_id,grantor_principal_ref," +
         "grantee_issuer,grantee_method,grantee_subject,state,expires_at,idempotency_key,request_sha256,record_json,record_sha256," +
-        "spend_policy_sha256,spend_deployment_generation,spend_expires_at) " +
-        "SELECT ?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?17,?18,?19 FROM project p JOIN project_owner o ON o.project_id=p.project_id " +
+        "spend_policy_protocol,spend_policy_sha256,spend_deployment_generation,spend_expires_at) " +
+        "SELECT ?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?17,?18,?19,?20 FROM project p JOIN project_owner o ON o.project_id=p.project_id " +
         "WHERE p.project_id=?3 AND o.principal_ref=?4 AND p.generation=?14 " +
         "AND (SELECT generation FROM orientation_authority_epoch WHERE singleton=1)=?15 " +
         "AND julianday(?16)>julianday('now')")
         .bind(result.grant_id, result.revision, projectId, principal, result.grantee.issuer,
           result.grantee.authentication_method, result.grantee.subject, result.state, result.expires_at,
           key, requestDigest, record, digest, generation, epoch, new Date(authorityDeadline).toISOString(),
-          sponsorship?.policy_sha256 ?? null, sponsorship?.deployment_generation ?? null, sponsorship?.expires_at ?? null).run();
+          sponsorship?.policy_protocol ?? null, sponsorship?.policy_sha256 ?? null,
+          sponsorship?.deployment_generation ?? null, sponsorship?.expires_at ?? null).run();
     } catch { /* Lost ACK and CAS conflicts are reconciled by exact immutable receipt readback below. */ }
     const settled = await readGrantReplay(db, principal, key, requestDigest);
     if (settled !== null) {

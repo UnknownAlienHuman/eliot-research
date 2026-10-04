@@ -1,10 +1,18 @@
 import { resolveModelGatewayReasoningEndpoint } from "@eliotr/cloudflare-ai";
 import type { ModelRouteDeployment } from "@eliotr/platform-cloudflare";
 import { decodeModelRouteDeployment } from "@eliotr/platform-cloudflare";
-import { dynamicRouteJsonArtifact } from "../../../packages/cloudflare-ai/src/dynamic-route-provisioning-codec.js";
-import { createD1DynamicRouteRegistry } from "../../../packages/cloudflare-research/src/model-gateway-deployment-registry-d1.js";
 import { createD1ResearchModelPricingSnapshotStore } from "../../../packages/cloudflare-research/src/research-model-pricing-store.js";
 import type { Env } from "../src/env.js";
+import {
+  parseResearchPreparedModelTransportPolicies,
+  type ResearchPreparedModelTransportSelectionV1,
+} from "../src/research-prepared-model-transport.js";
+import { resolveResearchSemanticConfig } from "../src/research-semantic-config-revision.js";
+import {
+  admissionTestEnvironment,
+  admissionTestProjectId,
+  type AdmissionRuntimeVars,
+} from "./research-admission-fixture.js";
 import {
   importAndProject,
   prepareQ1Namespace,
@@ -49,13 +57,13 @@ function deploymentKey(value: ModelRouteDeployment): string {
     value.parameters_digest, value.pricing_snapshot_ref].join("\u001f");
 }
 
-function installedDeployments(runtime: Env): {
+function configuredDeployments(vars: AdmissionRuntimeVars): {
   readonly byRoute: ReadonlyMap<string, ModelRouteDeployment>;
   readonly stageByRoute: ReadonlyMap<string, "SYNTHESIZE" | "AUDIT_CLAIMS">;
 } {
-  const profile = parseInstalledObject(runtime.ELIOTR_MODEL_PROFILE_DEFINITION_JSON, "model profile");
+  const profile = parseInstalledObject(vars.ELIOTR_MODEL_PROFILE_DEFINITION_JSON, "model profile");
   const profileDeployment = decodeModelRouteDeployment(profile.deployment);
-  const spend = parseInstalledObject(runtime.ELIOTR_MODEL_SPEND_POLICY_JSON, "spend policy");
+  const spend = parseInstalledObject(vars.ELIOTR_MODEL_SPEND_POLICY_JSON, "spend policy");
   if (!Array.isArray(spend.rules)) throw new Error("installed spend policy has no rule list");
 
   let synthesis: ModelRouteDeployment | undefined;
@@ -82,49 +90,22 @@ function installedDeployments(runtime: Env): {
   return { byRoute, stageByRoute };
 }
 
-async function stageFixtureRoutes(database: D1Database, deployments: ReadonlyMap<string, ModelRouteDeployment>): Promise<void> {
-  const registry = createD1DynamicRouteRegistry(database, { environment: "TEST" });
+async function stageFixtureRoutes(
+  database: D1Database,
+  deployments: ReadonlyMap<string, ModelRouteDeployment>,
+  transports: ReadonlyMap<string, ResearchPreparedModelTransportSelectionV1>,
+): Promise<void> {
   const pricing = createD1ResearchModelPricingSnapshotStore(database);
-  const suffix = crypto.randomUUID().replaceAll("-", "");
   for (const deployment of deployments.values()) {
+    const transport = transports.get(deployment.route_ref);
+    if (transport === undefined) throw new Error(`current-dispatch route ${deployment.route_ref} has no installed transport`);
     const routeName = deployment.route_ref.replace(/[^a-zA-Z0-9-]/gu, "-");
-    const candidate = {
-      schema: "eliotr.dynamic-route-candidate.v1" as const,
-      deployment,
-      provider_route_id: `current-dispatch-${routeName}-${suffix}`,
-      provider_route_name: `current-dispatch-${routeName}`,
-      route_definition_sha256: "1".repeat(64),
-      provider_snapshot_sha256: "2".repeat(64),
-      control_plane_receipt_ref: `current-dispatch-${suffix}`,
-      qualification_tier: "FIXTURE" as const,
-      control_plane_readback_ref: `current-dispatch-readback-${suffix}`,
-      execution_probe_ref: `current-dispatch-probe-${suffix}`,
-      qualification_expires_at: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
-    };
-    const artifact = await dynamicRouteJsonArtifact(candidate);
-    const rawStage = await registry.stageCandidate(candidate, artifact.sha256);
-    const staged = objectValue(rawStage, "dynamic route stage receipt");
-    if (typeof staged.candidate_ref !== "string" || typeof staged.readback_sha256 !== "string") {
-      throw new Error("dynamic route stage did not return a candidate readback");
-    }
-    await registry.promote({
-      route_ref: deployment.route_ref,
-      expected_active_route_version: null,
-      target_route_version: deployment.route_version,
-      candidate_ref: staged.candidate_ref,
-      candidate_sha256: staged.readback_sha256,
-    });
-    const rawActive = await registry.getActive(deployment.route_ref);
-    const active = rawActive === null || rawActive === undefined ? null : objectValue(rawActive, "active dynamic route readback");
-    if (active === null || active.route_version !== deployment.route_version || active.candidate_ref !== staged.candidate_ref) {
-      throw new Error("dynamic route promotion readback differs from the installed deployment");
-    }
     const identity = {
       pricing_snapshot_ref: deployment.pricing_snapshot_ref,
       route_ref: deployment.route_ref,
       route_version: deployment.route_version,
-      provider: "current-dispatch-controlled-provider",
-      exact_model_id: "current-dispatch-controlled-model",
+      provider: transport.provider,
+      exact_model_id: transport.model,
     };
     const effectiveAt = new Date().toISOString();
     await pricing.putImmutable({
@@ -147,6 +128,45 @@ async function stageFixtureRoutes(database: D1Database, deployments: ReadonlyMap
 function textValue(value: unknown, label: string): string {
   if (typeof value !== "string" || value.length === 0) throw new Error(`${label} is missing`);
   return value;
+}
+
+function exactAdmissionRuntimeVars(runtime: Env, semanticConfigJson: string): AdmissionRuntimeVars {
+  return Object.freeze({
+    ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON: semanticConfigJson,
+    ELIOTR_MODEL_PROFILE_DEFINITION_JSON: textValue(runtime.ELIOTR_MODEL_PROFILE_DEFINITION_JSON, "model profile"),
+    ELIOTR_MODEL_PROFILE_PROVENANCE_REF: textValue(runtime.ELIOTR_MODEL_PROFILE_PROVENANCE_REF, "model profile provenance"),
+    ELIOTR_MODEL_SPEND_POLICY_JSON: textValue(runtime.ELIOTR_MODEL_SPEND_POLICY_JSON, "model spend policy"),
+    ELIOTR_MODEL_SPEND_POLICY_PROVENANCE_REF: textValue(runtime.ELIOTR_MODEL_SPEND_POLICY_PROVENANCE_REF, "model spend provenance"),
+    ELIOTR_RESEARCH_REPORT_CONFIG_JSON: textValue(runtime.ELIOTR_RESEARCH_REPORT_CONFIG_JSON, "research report configuration"),
+    ELIOTR_RESEARCH_REPORT_POLICY_PROVENANCE_REF: textValue(runtime.ELIOTR_RESEARCH_REPORT_POLICY_PROVENANCE_REF, "research report provenance"),
+  });
+}
+
+function installedTransportByRoute(
+  runtime: Env,
+  deployments: Readonly<{
+    byRoute: ReadonlyMap<string, ModelRouteDeployment>;
+    stageByRoute: ReadonlyMap<string, "SYNTHESIZE" | "AUDIT_CLAIMS">;
+  }>,
+): ReadonlyMap<string, ResearchPreparedModelTransportSelectionV1> {
+  const policies = parseResearchPreparedModelTransportPolicies(runtime.ELIOTR_RESEARCH_MODEL_TRANSPORT_POLICIES_JSON);
+  if (policies === undefined) throw new Error("current-dispatch fixture requires the installed prepared model transport policies");
+  const transports = new Map<string, ResearchPreparedModelTransportSelectionV1>();
+  for (const [routeRef, stage] of deployments.stageByRoute) {
+    const deployment = deployments.byRoute.get(routeRef);
+    const selection = policies.model_selections.find((candidate) => candidate.stage === stage);
+    if (deployment === undefined || selection === undefined || selection.route_ref !== deployment.route_ref ||
+        selection.route_version !== deployment.route_version) {
+      throw new Error(`installed ${stage} transport selection does not match current deployment ${routeRef}`);
+    }
+    const previous = transports.get(routeRef);
+    if (previous !== undefined && (previous.provider !== selection.provider || previous.model !== selection.model ||
+        JSON.stringify(previous.transport_policy) !== JSON.stringify(selection.transport_policy))) {
+      throw new Error(`current-dispatch route ${routeRef} has conflicting stage transport selections`);
+    }
+    transports.set(routeRef, selection);
+  }
+  return transports;
 }
 
 function userPayload(requestBody: Record<string, unknown>): Record<string, unknown> {
@@ -212,6 +232,7 @@ function auditOutput(payload: Record<string, unknown>): Record<string, unknown> 
 function controlledProviderFetch(
   runtime: Env,
   stageByRoute: ReadonlyMap<string, "SYNTHESIZE" | "AUDIT_CLAIMS">,
+  transportByRoute: ReadonlyMap<string, ResearchPreparedModelTransportSelectionV1>,
 ): { readonly providerFetch: typeof fetch; readonly modelCalls: () => number } {
   const endpoint = resolveModelGatewayReasoningEndpoint(runtime.AI_GATEWAY_REASONING_URL);
   let calls = 0;
@@ -229,7 +250,8 @@ function controlledProviderFetch(
     const payload = userPayload(requestBody);
     const routeRef = textValue(payload.route_ref, "compiled model route reference");
     const stage = stageByRoute.get(routeRef);
-    if (stage === undefined) throw new Error("controlled model fixture rejected an uninstalled route");
+    const transport = transportByRoute.get(routeRef);
+    if (stage === undefined || transport === undefined) throw new Error("controlled model fixture rejected an uninstalled route");
     const content = JSON.stringify(stage === "SYNTHESIZE" ? synthesisOutput(payload) : auditOutput(payload));
     calls += 1;
     const model = textValue(requestBody.model, "dynamic model target");
@@ -244,8 +266,8 @@ function controlledProviderFetch(
       status: 200,
       headers: {
         "content-type": "application/json",
-        "cf-aig-provider": "current-dispatch-controlled-provider",
-        "cf-aig-model": "current-dispatch-controlled-model",
+        "cf-aig-provider": transport.provider,
+        "cf-aig-model": transport.model,
         "cf-aig-log-id": `current-dispatch-${calls}`,
       },
     });
@@ -254,7 +276,8 @@ function controlledProviderFetch(
 }
 
 export interface CurrentDispatchFixture {
-  readonly source_id: string;
+  readonly project_id: string;
+  readonly configured_env: Env;
   readonly query: string;
   readonly providerFetch: typeof fetch;
   readonly modelCalls: () => number;
@@ -262,11 +285,13 @@ export interface CurrentDispatchFixture {
 
 export async function prepareCurrentDispatchFixture(runtime: Q1Runtime): Promise<CurrentDispatchFixture> {
   if (runtime.ENVIRONMENT !== "development") throw new Error("current-dispatch fixture is restricted to the local development runtime");
-  const installed = installedDeployments(runtime);
+  const semantic = await resolveResearchSemanticConfig({ env: runtime, database: runtime.CORE_DB });
+  const runtimeVars = exactAdmissionRuntimeVars(runtime, semantic.config_json);
+  const installed = configuredDeployments(runtimeVars);
+  const transports = installedTransportByRoute(runtime, installed);
 
   const sourceId = await withQ1OwnerIdentity(OWNER_IDENTITY, async () => {
     const namespace = await prepareQ1Namespace(runtime, runtime.CORE_DB, runtime.SEARCH_DB, OWNER);
-    await stageFixtureRoutes(runtime.CORE_DB, installed.byRoute);
     const world: Q1Namespace = {
       ...namespace,
       db: runtime.CORE_DB,
@@ -295,9 +320,15 @@ export async function prepareCurrentDispatchFixture(runtime: Q1Runtime): Promise
     return source.source_id;
   });
 
-  const controlled = controlledProviderFetch(runtime, installed.stageByRoute);
+  await stageFixtureRoutes(runtime.CORE_DB, installed.byRoute, transports);
+  const configuredEnv = await admissionTestEnvironment(runtime, OWNER, "current-dispatch", {
+    source_ids: [sourceId],
+    runtime_vars: runtimeVars,
+  });
+  const controlled = controlledProviderFetch(configuredEnv, installed.stageByRoute, transports);
   return {
-    source_id: sourceId,
+    project_id: admissionTestProjectId("current-dispatch"),
+    configured_env: configuredEnv,
     query: "What observed reading does the source report?",
     ...controlled,
   };

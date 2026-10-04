@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "@eliotr/backup-o2": "workspace:*",
-    "@eliotr/contracts": "workspace:*"
+    "@eliotr/contracts": "workspace:*",
+    "@eliotr/cloudflare-erasure": "workspace:*"
   }
 }

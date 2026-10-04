@@ -1,7 +1,7 @@
 import { env } from "cloudflare:workers";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { handleHttp } from "../src/http.js";
-import { admissionTestEnvironment, terminateAdmissionWorkflows } from "./research-admission-fixture.js";
+import { admissionTestEnvironment, admissionTestScopeExpression, terminateAdmissionWorkflows } from "./research-admission-fixture.js";
 import {
   canonicalEvidenceJson,
   createCloudflareEvidenceResolver,
@@ -61,13 +61,14 @@ async function addReadPolicy(world: Q1Namespace): Promise<void> {
 }
 
 function request(sourceId: string, key: string): Request {
+  void sourceId;
   return new Request("https://research.example/api/v1/research/run", {
     method: "POST",
     headers: { "content-type": "application/json", "idempotency-key": key },
     body: JSON.stringify({
       query: "Reference manifest source",
       product: "RESEARCH",
-      scope_expression: { kind: "SELECTED_SOURCES", source_ids: [sourceId] },
+      scope_expression: admissionTestScopeExpression("manifest-scope"),
       literals: [], evidence_grade: "E1", budget_ref: "research-budget-v1", max_results: 8,
     }),
   });
@@ -116,7 +117,9 @@ describe("research reference manifest over real D1/R2", () => {
     };
     await importAndProject(world);
     await addReadPolicy(world);
-    const configured = await admissionTestEnvironment(runtime, principal, "manifest-scope");
+    const configured = await admissionTestEnvironment(runtime, principal, "manifest-scope", {
+      source_ids: [`source-${world.namespace}`],
+    });
     const response = await handleHttp(request(`source-${world.namespace}`, "manifest-scope-run"),
       configured, {} as ExecutionContext, { accessVerifier: verifier() });
     const payload = await body<{ readonly workflow_instance_id: string }>(response);

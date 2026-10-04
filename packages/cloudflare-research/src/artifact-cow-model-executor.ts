@@ -17,6 +17,10 @@ export interface ArtifactCowModelCallContext {
     readonly protocol: "eliotr.artifact.section.revise.v1";
     readonly operation_id: string;
     readonly report_intent_ref: { readonly id: string; readonly revision: number };
+    /** Persisted report witness carries the exact original run configuration pin for COW. */
+    readonly report_admission_witness?: {
+      readonly material?: Readonly<Record<string, unknown>>;
+    };
     readonly artifact_ref: { readonly id: string; readonly revision: number };
     readonly section_id: string;
     readonly spec_digest: string;

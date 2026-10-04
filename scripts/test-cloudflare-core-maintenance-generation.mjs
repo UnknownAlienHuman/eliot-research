@@ -46,7 +46,7 @@ assert.equal(filter(vars, "gemini-mcp"), vars,
 const configuredMcpVars = {
   ...placeholders,
   MCP_HOSTNAME: "research.example.test",
-  MCP_ACCESS_TEAM_DOMAIN: "https://team.cloudflareaccess.com",
+  MCP_ACCESS_TEAM_DOMAIN: "https://team-example.cloudflareaccess.com",
   MCP_ACCESS_AUDIENCE: "verified-mcp-audience",
   MCP_ACCESS_AUTH_PROFILE: "managed-oauth",
   MCP_ACCESS_SERVICE_TOKEN_CLIENT_ID: "verified-client.access",

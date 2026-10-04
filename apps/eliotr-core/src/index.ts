@@ -1,4 +1,4 @@
-import { createMcpResearchToolCall } from "./mcp-research-service.js";
+import { createManagedOAuthOwnerContext, createMcpResearchToolCall } from "./mcp-research-service.js";
 import type { Env } from "./env.js";
 import {
   GeminiMcpToolError,
@@ -220,12 +220,22 @@ function workspaceMcpRuntime(env: Env, request: Request): WorkspaceMcpRuntime {
     research: createMcpResearchToolCall(env, request),
     async projectCatalog(input, context) {
       const identity = context.verified_access;
-      if (!identity || identity.authentication_method !== "service_token" || !identity.issuer) {
-        throw new GeminiMcpToolError("CLIENT_GRANT_IDENTITY_INVALID", "Verified service identity required");
+      if (!identity || !identity.issuer ||
+          (identity.authentication_method !== "service_token" && identity.authentication_method !== "cloudflare_access")) {
+        throw new GeminiMcpToolError("CLIENT_GRANT_IDENTITY_INVALID", "Verified Access identity required");
       }
       const readiness = await readReadiness(env);
       if (!readiness.ready) throw new GeminiMcpToolError("SCHEMA_NOT_READY", "Required migrations are not applied");
       try {
+        if (identity.authentication_method === "cloudflare_access") {
+          if (input.project_id === undefined) {
+            throw new GeminiMcpToolError("MCP_PROJECT_SCOPE_REQUIRED", "An explicit project is required");
+          }
+          const owner = createManagedOAuthOwnerContext(env, request, context, { project_id: input.project_id });
+          const result = await readCatalog(env.CORE_DB, owner, input, env.DEPLOYMENT_GENERATION);
+          createManagedOAuthOwnerContext(env, request, context, { project_id: input.project_id });
+          return result;
+        }
         return await readCatalog(env.CORE_DB, { request, principal_ref: identity.principal_ref,
           client_class: "trusted_agent", credential_generation: identity.credential_generation,
           trace_id: context.trace_id, access: identity }, input, env.DEPLOYMENT_GENERATION);

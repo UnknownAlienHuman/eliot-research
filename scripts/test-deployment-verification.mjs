@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { readDeploymentJson, readDeploymentWorker, validateDeploymentInput,
+import { assertGeneratedOwnerTemplatesCurrent, isApprovedOwnerTemplateGenerationTransition,
+  readDeploymentJson, readDeploymentWorker, validateDeploymentInput,
   validateGeneratedDeployment, verifyDeploymentSmoke } from "./lib/deployment-verification.mjs";
 
 const now = Date.parse("2026-09-04T23:00:00.000Z");
@@ -46,6 +47,52 @@ const check = async (name, action) => {
   await action(); cases += 1; console.log(`Deployment verification: ${name}: PASS`);
 };
 const smoke = (fetchImpl, env = environment) => verifyDeploymentSmoke(env, validateDeploymentInput(env), { fetchImpl, now: () => now });
+
+await check("owner-template transition permits only observed C-to-candidate B generation changes", () => {
+  const candidate = structuredClone(config);
+  candidate.vars.DEPLOYMENT_GENERATION = "git-candidate";
+  candidate.vars.ELIOTR_MODEL_SPEND_POLICY_JSON = JSON.stringify({
+    protocol: "eliotr.research-owner-spend-template.v1",
+    deployment_generation: "git-candidate",
+    budget_ref: "owner-budget-v1",
+  });
+  candidate.vars.ELIOTR_RESEARCH_REPORT_CONFIG_JSON = JSON.stringify({
+    schema: "eliotr.research.report-config.v1",
+    admission_policy: {
+      protocol: "eliotr.research-owner-report-admission-template.v1",
+      deployment_generation: "git-candidate",
+      policy_ref: "owner-report-v1",
+    },
+  });
+  const observedSpend = JSON.stringify({
+    protocol: "eliotr.research-owner-spend-template.v1",
+    deployment_generation: "git-recorded-owner",
+    budget_ref: "owner-budget-v1",
+  });
+  const observedReport = JSON.stringify({
+    schema: "eliotr.research.report-config.v1",
+    admission_policy: {
+      protocol: "eliotr.research-owner-report-admission-template.v1",
+      deployment_generation: "git-recorded-owner",
+      policy_ref: "owner-report-v1",
+    },
+  });
+  assert.equal(assertGeneratedOwnerTemplatesCurrent(candidate), "git-candidate");
+  assert.equal(isApprovedOwnerTemplateGenerationTransition("ELIOTR_MODEL_SPEND_POLICY_JSON",
+    observedSpend, candidate.vars.ELIOTR_MODEL_SPEND_POLICY_JSON, "git-candidate"), true);
+  assert.equal(isApprovedOwnerTemplateGenerationTransition("ELIOTR_RESEARCH_REPORT_CONFIG_JSON",
+    observedReport, candidate.vars.ELIOTR_RESEARCH_REPORT_CONFIG_JSON, "git-candidate"), true);
+  const driftedSpend = JSON.parse(observedSpend);
+  driftedSpend.budget_ref = "different-budget";
+  assert.equal(isApprovedOwnerTemplateGenerationTransition("ELIOTR_MODEL_SPEND_POLICY_JSON",
+    JSON.stringify(driftedSpend), candidate.vars.ELIOTR_MODEL_SPEND_POLICY_JSON, "git-candidate"), false);
+  assert.equal(candidate.vars.DEPLOYMENT_GENERATION, "git-candidate", "candidate config stays immutable");
+  const stale = structuredClone(candidate);
+  const staleReport = JSON.parse(stale.vars.ELIOTR_RESEARCH_REPORT_CONFIG_JSON);
+  staleReport.admission_policy.deployment_generation = "git-baseline";
+  stale.vars.ELIOTR_RESEARCH_REPORT_CONFIG_JSON = JSON.stringify(staleReport);
+  assert.throws(() => assertGeneratedOwnerTemplatesCurrent(stale), /generation does not match candidate/u);
+});
 
 await check("exact generation and readiness", async () => {
   const calls = [];

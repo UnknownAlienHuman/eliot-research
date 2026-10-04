@@ -61,7 +61,7 @@ import { readOwnerNamespaceInitialization, readOwnerNamespaceRenewal } from "./s
 import { readWorkspaceCandidateRequest, readWorkspaceAdmissionId } from "./workspace-owner-http.js";
 import { readNavigationExpansionRequest } from "./navigation-expand-http.js";
 import { HttpRequestError, mapError } from "./http-errors.js";
-import { readResearchConfigurationReadiness } from "./research-configuration-readiness.js";
+import { readOwnerProjectResearchReadiness } from "./research-project-configuration-composition.js";
 import { parseWikiProposalFromResearchRunRequest, parseWikiProposalRef } from "./wiki-service.js";
 import {
   reopenOwnerArtifactDraft,
@@ -452,9 +452,14 @@ async function dispatch(
     case "system.capabilities":
       requireNoQuery(url);
       return apiResult(request, env, await application.services.owner.systemCapabilities(context));
-    case "system.research.configuration":
-      requireNoQuery(url);
-      return apiResult(request, env, await readResearchConfigurationReadiness(env, context));
+    case "system.research.configuration": {
+      for (const key of url.searchParams.keys()) {
+        if (key !== "project_id") throw new HttpRequestError("UNKNOWN_QUERY_PARAMETER", 400,
+          "Research configuration query contains an unknown parameter");
+      }
+      return apiResult(request, env, await readOwnerProjectResearchReadiness(env, context,
+        singleQueryValue(url, "project_id")));
+    }
     case "library.source.content": {
       for (const key of url.searchParams.keys()) {
         if (key !== "source_revision_ref") {

@@ -173,6 +173,8 @@ export const DURABLE_CORE_TABLE_SPECS_A: readonly TableSpec[] = [
       "initial_manifest_json": "text",
       "next_stage_index": "int",
       "state": "text",
+      "configuration_ref": "text-or-null",
+      "configuration_required": "int",
       "cancellation_receipt_ref": "text-or-null",
       "created_at": "text",
       "first_failure_json": "text-or-null",

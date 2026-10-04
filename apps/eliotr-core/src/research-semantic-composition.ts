@@ -8,7 +8,7 @@ import {
   type NavigationReadAuthority,
 } from "@eliotr/cloudflare-evidence";
 import type { AiSearchNamespaceLike } from "@eliotr/platform-cloudflare";
-import type { ModelGatewayPricingPort } from "@eliotr/cloudflare-ai";
+import type { ModelGatewayPricingPort, ModelGatewayRequestCapabilitiesV1 } from "@eliotr/cloudflare-ai";
 import type { ReferenceManifestStore } from "@eliotr/policy";
 import type { InvestigationLedgerStore } from "@eliotr/research";
 import type { RetrievalQueryAccess, ScopeProfileBinding } from "@eliotr/retrieval";
@@ -96,6 +96,8 @@ type ResearchSemanticSynthesisPromptOverrides = Omit<ResearchModelPromptCompiler
 
 export interface ResearchSemanticInstalledSynthesisPrompt {
   readonly trusted_parameters: TrustedModelPromptParameters;
+  /** Selected-model request limits are part of the immutable run configuration. */
+  readonly request_capabilities?: ModelGatewayRequestCapabilitiesV1;
   readonly request_timeout_ms: number;
   readonly manifest_service?: never;
   readonly build_manifest_input?: never;
@@ -113,6 +115,8 @@ type ResearchSemanticAuditPromptOverrides = Omit<ResearchClaimAuditPromptDepende
 
 export interface ResearchSemanticInstalledAuditPrompt {
   readonly trusted_parameters: TrustedModelPromptParameters;
+  /** Selected-model request limits are part of the immutable run configuration. */
+  readonly request_capabilities?: ModelGatewayRequestCapabilitiesV1;
   readonly request_timeout_ms: number;
   readonly manifest_service?: never;
   readonly build_manifest_input?: never;
@@ -152,6 +156,13 @@ export interface ResearchSemanticRolesModelDependencies {
    * prompt compiler dependencies from these via createResearchBranchRolePromptDependencies.
    */
   readonly prompt: (role: ResearchBranchRole) => ResearchBranchRolePromptDependenciesInput;
+  /** Snapshot runs must resolve the actual branch W2 stage's selected route. */
+  readonly gateway_for_stage?: (stage: "ANALYZE_BRANCHES" | "COUNTER_SEARCH") => ResearchModelGatewayRuntimeConfig;
+  /** Snapshot runs compile role prompts with capabilities from the same selected route tuple. */
+  readonly prompt_for_stage?: (
+    role: ResearchBranchRole,
+    stage: "ANALYZE_BRANCHES" | "COUNTER_SEARCH",
+  ) => ResearchBranchRolePromptDependenciesInput;
   readonly pricing: ModelGatewayPricingPort;
   readonly spend_authorization: SpendAuthorizationReader;
   /**
@@ -176,6 +187,22 @@ export interface ResearchSemanticCompositionDependencies {
   readonly operation_id: string;
   readonly investigation_id: string;
   readonly principal: SemanticPrincipal;
+  /** Immutable selection captured before Workflow.create; absent only for legacy-installed runs. */
+  readonly run_configuration?: Readonly<{
+    readonly mode: "legacy-installed" | "snapshot-v1" | "snapshot-v2";
+    readonly configuration_ref: string;
+    readonly configuration_sha256: string;
+    readonly model_selections?: readonly ({
+      readonly stage: string;
+      readonly route_ref: string;
+      readonly route_version: string;
+      readonly candidate_ref: string;
+      readonly candidate_sha256: string;
+      readonly qualification_ref: string;
+      readonly qualification_sha256: string;
+      readonly transport_policy: unknown;
+    })[];
+  }>;
   /** Scope profile is read from the server-owned retrieval policy. */
   readonly retrieval_profile: ScopeProfileBinding;
   /** Explicit installed model definition; no production default is allowed. */
@@ -335,6 +362,11 @@ function validateDependencies(input: ResearchSemanticCompositionDependencies): v
   requireObject(input.model.audit, "model.audit");
   requireObject(input.model.audit.prompt, "model.audit.prompt");
   validateAuditPrompt(input.model.audit.prompt);
+  if (input.run_configuration !== undefined && input.run_configuration.mode !== "legacy-installed" &&
+      (input.model.synthesis.prompt.request_capabilities === undefined ||
+       input.model.audit.prompt.request_capabilities === undefined)) {
+    configurationMissing("selected-model request capabilities are required by the immutable run configuration");
+  }
   requireObject(input.verification, "verification");
   requireObject(input.verification.config, "verification.config");
   requireObject(input.audit, "audit");
@@ -404,7 +436,8 @@ function composeSynthesisPrompt(
 ): ResearchModelPromptCompilerDependencies {
   const prompt = input.model.synthesis.prompt;
   if (prompt.trusted_parameters !== undefined) {
-    return createResearchSynthesisPromptDependencies({
+    return Object.freeze({
+      ...createResearchSynthesisPromptDependencies({
       database: input.database,
       work_bucket: input.work_bucket,
       operation_id: input.operation_id,
@@ -414,12 +447,15 @@ function composeSynthesisPrompt(
       evidence_resolver: evidenceResolver,
       trusted_parameters: prompt.trusted_parameters,
       request_timeout_ms: prompt.request_timeout_ms,
+      }),
+      ...(prompt.request_capabilities === undefined ? {} : { request_capabilities: prompt.request_capabilities }),
     });
   }
   return Object.freeze({
     manifest_service: prompt.manifest_service ?? manifestService,
     build_manifest_input: prompt.build_manifest_input,
     resolve_trusted_parameters: prompt.resolve_trusted_parameters,
+    ...(prompt.request_capabilities === undefined ? {} : { request_capabilities: prompt.request_capabilities }),
     request_timeout_ms: prompt.request_timeout_ms,
   });
 }
@@ -433,7 +469,8 @@ function composeAuditPrompt(
 ): ResearchClaimAuditPromptDependencies {
   const prompt = input.model.audit.prompt;
   if (prompt.trusted_parameters !== undefined) {
-    return createResearchClaimAuditPromptDependencies({
+    return Object.freeze({
+      ...createResearchClaimAuditPromptDependencies({
       database: input.database,
       work_bucket: input.work_bucket,
       operation_id: input.operation_id,
@@ -444,12 +481,15 @@ function composeAuditPrompt(
       manifest_store: manifestStore,
       trusted_parameters: prompt.trusted_parameters,
       request_timeout_ms: prompt.request_timeout_ms,
+      }),
+      ...(prompt.request_capabilities === undefined ? {} : { request_capabilities: prompt.request_capabilities }),
     });
   }
   return Object.freeze({
     manifest_service: prompt.manifest_service ?? manifestService,
     build_manifest_input: prompt.build_manifest_input,
     resolve_trusted_parameters: prompt.resolve_trusted_parameters,
+    ...(prompt.request_capabilities === undefined ? {} : { request_capabilities: prompt.request_capabilities }),
     request_timeout_ms: prompt.request_timeout_ms,
   });
 }
@@ -490,6 +530,7 @@ export function createResearchSemanticComposition(
       principal: input.principal,
     },
     routeAuthority: deploymentRegistry,
+    ...(input.run_configuration === undefined ? {} : { run_configuration: input.run_configuration }),
     now,
   });
   const evidenceAuthority = createD1EvidenceAuthorityPort({
@@ -650,6 +691,10 @@ export function createResearchSemanticWorkflowHandlerFactory(
 ): ResearchStageHandlerFactory {
   const semantic = createResearchSemanticComposition(input);
   const roles = input.model.roles;
+  if (roles !== undefined && input.run_configuration !== undefined && input.run_configuration.mode !== "legacy-installed" &&
+      (roles.gateway_for_stage === undefined || roles.prompt_for_stage === undefined)) {
+    throw new Error("snapshot branch roles require stage-pinned gateway and prompt configuration");
+  }
   const roleModel: ResearchBranchRoleModelExecutor | undefined = roles === undefined
     ? undefined
     : createResearchBranchRoleModelExecutor({
@@ -659,6 +704,14 @@ export function createResearchSemanticWorkflowHandlerFactory(
       prompt: (role: ResearchBranchRole) => createResearchBranchRolePromptDependencies(
         roles.prompt(role),
       ),
+      ...(roles.gateway_for_stage === undefined ? {} : {
+        gateway_for_stage: roles.gateway_for_stage,
+      }),
+      ...(roles.prompt_for_stage === undefined ? {} : {
+        prompt_for_stage: (role, stage) => createResearchBranchRolePromptDependencies(
+          roles.prompt_for_stage?.(role, stage) ?? roles.prompt(role),
+        ),
+      }),
       prepare: roles.prepare,
       spend_authorization: roles.spend_authorization,
       pricing: roles.pricing,

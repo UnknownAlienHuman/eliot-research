@@ -107,6 +107,11 @@ export interface DynamicRouteQualificationLatestPromotionInput
   readonly expected_latest: DynamicRouteQualificationLatestExpectation | null;
 }
 
+export interface DynamicRoutePinnedQualificationReadInput extends DynamicRouteQualificationCandidateIdentity {
+  readonly qualification_ref: string;
+  readonly qualification_sha256: string;
+}
+
 export interface DynamicRouteQualificationLatestPointer
   extends DynamicRouteQualificationCandidateIdentity {
   readonly qualification_ref: string;
@@ -117,6 +122,10 @@ export interface DynamicRouteQualificationLatestPointer
 export interface DynamicRouteQualificationProofStorePort {
   readLatest(
     candidate: DynamicRouteQualificationCandidateIdentity,
+  ): Promise<DynamicRouteQualificationProof | null>;
+  /** Read the exact immutable proof selected by a persisted configuration snapshot. */
+  readPinned(
+    input: DynamicRoutePinnedQualificationReadInput,
   ): Promise<DynamicRouteQualificationProof | null>;
   putImmutable(
     input: DynamicRouteQualificationProofWriteInput,
@@ -502,6 +511,24 @@ export function createD1DynamicRouteQualificationProofStore(
       }
       const stored = await readProofByRef(pointer.qualification_ref, candidate);
       if (stored.sha256 !== pointer.qualification_sha256) fail("DYNAMIC_ROUTE_QUALIFICATION_INVALID", "latest qualification digest differs from its proof");
+      return stored.proof;
+    },
+
+    async readPinned(rawInput: DynamicRoutePinnedQualificationReadInput): Promise<DynamicRouteQualificationProof | null> {
+      const identity = identityInput(rawInput, "DYNAMIC_ROUTE_QUALIFICATION_INVALID");
+      const qualificationRef = identifier(rawInput.qualification_ref, "pinned qualification reference", "DYNAMIC_ROUTE_QUALIFICATION_INVALID");
+      const qualificationSha = digest(rawInput.qualification_sha256, "pinned qualification digest", "DYNAMIC_ROUTE_QUALIFICATION_INVALID");
+      const candidate = await readCandidate(identity.candidate_ref);
+      if (candidate === null || candidate.sha256 !== identity.candidate_sha256 ||
+          candidate.row.route_ref !== identity.route_ref || candidate.row.route_version !== identity.route_version) {
+        fail("DYNAMIC_ROUTE_QUALIFICATION_INVALID", "pinned qualification candidate is missing or changed");
+      }
+      const stored = await readProofByRef(qualificationRef, candidate);
+      if (stored.sha256 !== qualificationSha || stored.proof.route_ref !== identity.route_ref ||
+          stored.proof.route_version !== identity.route_version || stored.proof.candidate_ref !== identity.candidate_ref ||
+          stored.proof.candidate_sha256 !== identity.candidate_sha256) {
+        fail("DYNAMIC_ROUTE_QUALIFICATION_INVALID", "pinned qualification proof identity or digest differs from the run configuration");
+      }
       return stored.proof;
     },
 

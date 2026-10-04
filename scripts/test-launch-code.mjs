@@ -92,7 +92,7 @@ const profileRead = async (changed = sourceMap) => readCompositionCapabilityProf
   } });
 const capabilityProfile = await profileRead();
 assert.equal(capabilityProfile.protocol, "eliotr.capabilities.v1");
-assert.equal(capabilityProfile.routes.length, 105);
+assert.equal(capabilityProfile.routes.length, 110);
 assert.ok(capabilityProfile.routes.some((route) => route.path === "/api/v1/system/capabilities"));
 const routeText = sourceMap.get(routePath);
 await assert.rejects(profileRead(new Map(sourceMap).set(routePath,
@@ -107,5 +107,7 @@ await assert.rejects(readCompositionCapabilityProfile({ root: repositoryRoot,
 await assert.rejects(assertLaunchCodeComplete(), /LIVE_DEPLOY_BLOCKED/);
 const forbidden = () => assert.fail("unfinished code must fail before any command, credential readback or remote effect");
 await assert.rejects(deployCloudflare({ confirmLive: true, environment: {}, execute: forbidden,
+  // Input sealing has its own fixtures; this case isolates the unfinished-code gate.
+  captureBuildInputs: async () => Object.freeze({ files: [] }),
   captureCommand: forbidden, fetchImpl: forbidden, save: forbidden, archive: forbidden }), /LIVE_DEPLOY_BLOCKED/);
 console.log("Launch guard: current unfinished product blocked before all release effects; no implicit live qualification.");

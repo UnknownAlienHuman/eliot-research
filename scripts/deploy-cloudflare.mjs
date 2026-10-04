@@ -3,7 +3,8 @@ import { spawnSync } from "node:child_process";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { readDeploymentWorker, validateDeploymentInput, validateGeneratedDeployment,
+import { APPROVED_RUNTIME_CONFIGURATION_VARIABLES, assertGeneratedOwnerTemplatesCurrent,
+  readDeploymentWorker, validateDeploymentInput, validateGeneratedDeployment,
   verifyDeploymentSmoke } from "./lib/deployment-verification.mjs";
 import { injectOAuthBearer, loadWranglerOAuthCredential, resolveAuthMode, scrubTokenEnv,
   stripNodeOptionsLoaderTokens, verifyWranglerOAuthAccount, WRANGLER_OAUTH_MODE, WranglerOAuthError, LOGIN_INSTRUCTION } from "./lib/cloudflare-wrangler-oauth.mjs";
@@ -14,9 +15,13 @@ import { assertMaintenanceCapabilityProfile, readActiveDeploymentIdentity, readA
   verifyDeploymentSchemaGenerations } from "./lib/deployment-maintenance.mjs";
 import { loadMaintenanceRouteUpdate, requireUnchangedMaintenanceRouteUpdate } from "./lib/deployment-route-update.mjs";
 import { captureMaintenanceAiGateways, requireSameMaintenanceAiGateways } from "./lib/deployment-ai-gateways.mjs";
+import { loadMaintenanceAiSearchBootstrap, requireUnchangedMaintenanceAiSearchBootstrap } from
+  "./lib/deployment-ai-search-bootstrap.mjs";
+import { loadMaintenanceMcpAccessTransition, maintenanceMcpAccessReceiptSummary,
+  requireUnchangedMaintenanceMcpAccessTransition } from "./lib/deployment-mcp-access-transition.mjs";
 import { loadResearchRuntimeEnvironment, RESEARCH_RUNTIME_CONFIGURATION_KEYS,
   RESEARCH_RUNTIME_SEMANTIC_TRANSPORT_KEYS, semanticConfigurationTransport } from "./lib/research-runtime-config.mjs";
-import { synchronizeResearchDeploymentAuthority } from "./lib/research-deployment-authority.mjs";
+import { readResearchDeploymentAuthority, synchronizeResearchDeploymentAuthority } from "./lib/research-deployment-authority.mjs";
 import { computeResearchBackendFingerprint } from "./lib/research-backend-fingerprint.mjs";
 import { readDeploymentMigrationPlan, requireUnchangedMigrationPlan, validateDeploymentMigrationDirectories, verifyDeploymentMigrationLedgers } from "./lib/deployment-migrations.mjs";
 import { readDeploymentAssetManifest, verifyDeploymentAssets } from "./lib/deployment-assets.mjs";
@@ -105,6 +110,18 @@ export async function deployCloudflare({ confirmLive = false, environment = proc
        maintenanceRouteUpdatePath.length === 0)) {
     throw new Error("Pinned route updates require a confirmed live maintenance deployment and an intent file");
   }
+  const maintenanceAiSearchBootstrapPath = env.ELIOTR_MAINTENANCE_AI_SEARCH_BOOTSTRAP_FILE;
+  if (maintenanceAiSearchBootstrapPath !== undefined &&
+      (purpose !== MAINTENANCE_PURPOSE || !confirmLive || typeof maintenanceAiSearchBootstrapPath !== "string" ||
+       maintenanceAiSearchBootstrapPath.length === 0)) {
+    throw new Error("AI Search binding bootstrap requires a confirmed live maintenance deployment and an intent file");
+  }
+  const maintenanceMcpAccessTransitionPath = env.ELIOTR_MAINTENANCE_MCP_ACCESS_TRANSITION_FILE;
+  if (maintenanceMcpAccessTransitionPath !== undefined &&
+      (purpose !== MAINTENANCE_PURPOSE || !confirmLive || typeof maintenanceMcpAccessTransitionPath !== "string" ||
+       maintenanceMcpAccessTransitionPath.length === 0)) {
+    throw new Error("Managed-OAuth MCP Access transition requires a confirmed live maintenance deployment and an intent file");
+  }
   const preserveGoogleTransport = env.ELIOTR_MAINTENANCE_PRESERVE_GOOGLE_TRANSPORT;
   if (preserveGoogleTransport !== undefined &&
       (purpose !== MAINTENANCE_PURPOSE || preserveGoogleTransport !== "disabled")) {
@@ -121,6 +138,9 @@ export async function deployCloudflare({ confirmLive = false, environment = proc
   if (env.ELIOTR_MAINTENANCE_PRESERVE_AI_SEARCH !== undefined &&
       (purpose !== MAINTENANCE_PURPOSE || env.ELIOTR_MAINTENANCE_PRESERVE_AI_SEARCH !== "absent")) {
     throw new Error("AI Search preservation is maintenance-only and accepts absent only");
+  }
+  if (maintenanceAiSearchBootstrapPath !== undefined && env.ELIOTR_MAINTENANCE_PRESERVE_AI_SEARCH !== undefined) {
+    throw new Error("AI Search binding bootstrap cannot be combined with absent-binding preservation");
   }
   // FIX9WC Layer 2 (defense in depth, child exec env only): strip ambient
   // module-loader tokens (--import/--loader/--experimental-loader/--require
@@ -143,6 +163,14 @@ export async function deployCloudflare({ confirmLive = false, environment = proc
   let candidateCapabilityProfile = null;
   let routeUpdate = null;
   let maintenanceAiGateways = null;
+  let maintenanceAiSearchBootstrap = null;
+  let maintenanceAiSearchBaselineConfig = null;
+  let maintenanceAiSearchBaselineReadback = null;
+  let maintenanceAiSearchCandidateConfig = null;
+  let maintenanceAiSearchCandidateBytes = null;
+  let maintenanceAiSearchCandidateDigest = null;
+  let maintenanceAiSearchApprovedCandidate = null;
+  let maintenanceMcpAccessTransition = null;
   const maintenanceAiGatewayReadbacks = {};
   let sourceBudgetState = null;
   let sourceBudgetFindings = null;
@@ -205,6 +233,7 @@ export async function deployCloudflare({ confirmLive = false, environment = proc
     }
     exec("pnpm", ["--filter", "@eliotr/core", "typecheck"]);
     exec("pnpm", ["exec", "eslint", "scripts/deploy-cloudflare.mjs", "scripts/lib/deployment-maintenance.mjs",
+      "scripts/lib/deployment-ai-search-bootstrap.mjs", "scripts/test-deployment-ai-search-bootstrap.mjs",
       "scripts/lib/deployment-route-update.mjs", "scripts/test-deployment-route-update.mjs",
       "scripts/lib/deployment-ai-gateways.mjs", "scripts/test-deployment-ai-gateways.mjs",
       "scripts/test-deployment-maintenance.mjs", "scripts/test-deployment-apply-ordering.mjs",
@@ -260,19 +289,76 @@ export async function deployCloudflare({ confirmLive = false, environment = proc
         observedRoutes: current.capabilities.routes, read });
     }
     const canonicalConfig = JSON.parse(await read(resolve(core, "wrangler.jsonc"), "utf8"));
+    let maintenanceProfileConfig = canonicalConfig;
+    if (maintenanceAiSearchBootstrapPath !== undefined || maintenanceMcpAccessTransitionPath !== undefined) {
+      const configPath = resolve(core, deployConfig);
+      maintenanceAiSearchCandidateBytes = Buffer.from(await read(configPath));
+      maintenanceAiSearchCandidateConfig = validateGeneratedDeployment(maintenanceAiSearchCandidateBytes, env, input);
+      verifyGeneratedSemanticConfiguration(maintenanceAiSearchCandidateConfig, env);
+      maintenanceAiSearchCandidateDigest = createHash("sha256").update(maintenanceAiSearchCandidateBytes).digest("hex");
+      maintenanceAiSearchApprovedCandidate = Object.freeze({
+        protocol: "eliotr.approved-runtime-candidate.v1",
+        deployment_generation: env.ELIOTR_DEPLOYMENT_GENERATION,
+        configuration_sha256: maintenanceAiSearchCandidateDigest,
+      });
+      if (maintenanceMcpAccessTransitionPath !== undefined) {
+        if (env.ELIOTR_MCP_ACCESS_ENABLED !== "1" || env.ELIOTR_MCP_ACCESS_AUTH_PROFILE !== "managed-oauth" ||
+            env.ELIOTR_MCP_HOSTNAME !== maintenanceAiSearchCandidateConfig.vars.MCP_HOSTNAME ||
+            env.ELIOTR_MCP_ACCESS_TEAM_DOMAIN !== maintenanceAiSearchCandidateConfig.vars.MCP_ACCESS_TEAM_DOMAIN ||
+            env.ELIOTR_MCP_ACCESS_AUDIENCE !== maintenanceAiSearchCandidateConfig.vars.MCP_ACCESS_AUDIENCE ||
+            env.ELIOTR_MCP_ACCESS_AUTH_PROFILE !== maintenanceAiSearchCandidateConfig.vars.MCP_ACCESS_AUTH_PROFILE ||
+            Object.keys(env).some((name) => name.startsWith("ELIOTR_MCP_ACCESS_SERVICE_TOKEN_"))) {
+          throw new Error("Managed-OAuth MCP Access provisioner environment does not match the exact candidate or contains service-token inputs");
+        }
+        maintenanceMcpAccessTransition = await loadMaintenanceMcpAccessTransition({
+          path: maintenanceMcpAccessTransitionPath, root, accountId: env.CLOUDFLARE_ACCOUNT_ID,
+          sourceHead: testedInputs.git_head, candidateGeneration: env.ELIOTR_DEPLOYMENT_GENERATION,
+          candidateConfigurationSha256: maintenanceAiSearchCandidateDigest,
+          candidateConfig: maintenanceAiSearchCandidateConfig, activeWorkerIdentity: activeWorkerBaseline, read,
+        });
+      }
+    }
+    if (maintenanceAiSearchBootstrapPath !== undefined) {
+      maintenanceAiSearchBaselineConfig = { ...maintenanceAiSearchCandidateConfig,
+        ai_search_namespaces: [], ai_search: [] };
+      const priorWorkerEnv = { ...env, ELIOTR_DEPLOYMENT_GENERATION: activeWorkerBaseline.generation };
+      maintenanceAiSearchBaselineReadback = await readWorker(priorWorkerEnv, input,
+        maintenanceAiSearchBaselineConfig, {
+          fetchImpl, observedDeploymentGeneration: activeWorkerBaseline.generation,
+          approvedRuntimeCandidate: maintenanceAiSearchApprovedCandidate,
+          approvedMcpAccessTransition: maintenanceMcpAccessTransition,
+        });
+      maintenanceAiSearchBootstrap = await loadMaintenanceAiSearchBootstrap({
+        path: maintenanceAiSearchBootstrapPath, root,
+        accountId: env.CLOUDFLARE_ACCOUNT_ID, sourceHead: testedInputs.git_head,
+        candidateGeneration: env.ELIOTR_DEPLOYMENT_GENERATION,
+        candidateConfigurationSha256: maintenanceAiSearchCandidateDigest,
+        candidateConfig: maintenanceAiSearchCandidateConfig,
+        candidateCapabilities: candidateCapabilityProfile,
+        activeWorkerIdentity: activeWorkerBaseline,
+        baselineConfigurationBaseline: maintenanceAiSearchBaselineReadback.configuration_baseline,
+        baselineConfig: maintenanceAiSearchBaselineConfig, read,
+      });
+      await requireUnchangedMaintenanceAiSearchBootstrap({ bootstrap: maintenanceAiSearchBootstrap });
+      maintenanceProfileConfig = maintenanceAiSearchCandidateConfig;
+    } else if (maintenanceMcpAccessTransition !== null) {
+      maintenanceAiSearchBaselineConfig = maintenanceAiSearchCandidateConfig;
+    }
     const transport = selectDeploymentGoogleTransport({ purpose, preserve: preserveGoogleTransport,
       canonicalTransport: readConfiguredTransport(canonicalConfig),
       observedTransport: activeWorkerBaseline.google_external_transport });
     const preserveAiSearch = env.ELIOTR_MAINTENANCE_PRESERVE_AI_SEARCH ??
-      (activeWorkerBaseline.ai_search_bound === false ? "absent" : undefined);
-    const namespaces = selectDeploymentAiSearchNamespaces({ purpose, canonicalConfig, preserve: preserveAiSearch,
-      activeWorkerIdentity: activeWorkerBaseline, candidate: candidateCapabilityProfile });
-    const maintenanceConfig = { ...canonicalConfig, ai_search_namespaces: namespaces,
-      vars: { ...canonicalConfig.vars, GOOGLE_EXTERNAL_TRANSPORT: transport } };
+      (maintenanceAiSearchBootstrap === null && activeWorkerBaseline.ai_search_bound === false ? "absent" : undefined);
+    const namespaces = selectDeploymentAiSearchNamespaces({ purpose, canonicalConfig: maintenanceProfileConfig,
+      preserve: preserveAiSearch, activeWorkerIdentity: activeWorkerBaseline,
+      candidate: candidateCapabilityProfile, aiSearchBootstrap: maintenanceAiSearchBootstrap });
+    const maintenanceConfig = { ...maintenanceProfileConfig, ai_search_namespaces: namespaces,
+      vars: { ...maintenanceProfileConfig.vars, GOOGLE_EXTERNAL_TRANSPORT: transport } };
     if (routeUpdate !== null) await requireUnchangedMaintenanceRouteUpdate({ routeUpdate });
     assertMaintenanceCapabilityProfile({ candidate: candidateCapabilityProfile,
       observed: current.capabilities, generatedConfig: maintenanceConfig, activeWorkerIdentity: activeWorkerBaseline,
-      routeUpdate, routeUpdatePhase: "before" });
+      routeUpdate, routeUpdatePhase: "before", aiSearchBootstrap: maintenanceAiSearchBootstrap,
+      aiSearchBootstrapPhase: "before" });
     if (preserveAiGateways === "existing") {
       maintenanceAiGateways = await captureAiGateways({ env, input,
         activeWorkerIdentity: activeWorkerBaseline, candidate: candidateCapabilityProfile,
@@ -288,31 +374,86 @@ export async function deployCloudflare({ confirmLive = false, environment = proc
 
   // All predictable cross-product drift must fail before the first remote mutation.
   const activeProvisioners = provisioners.filter((name) =>
-    (name !== "provision-ai-search" || env.ELIOTR_MAINTENANCE_PRESERVE_AI_SEARCH !== "absent") &&
+    (name !== "provision-ai-search" || env.ELIOTR_MAINTENANCE_PRESERVE_AI_SEARCH !== "absent" ||
+      maintenanceAiSearchBootstrap !== null) &&
     (name !== "provision-ai-gateways" || maintenanceAiGateways === null));
   for (const name of activeProvisioners) execute("node", [`scripts/${name}.mjs`, "--check-only"], root, provisionerEnv(name));
   // Preserve prior evidence but never leave an old PASS at the current receipt path after a failure.
   await archive();
   for (const name of activeProvisioners) execute("node", [`scripts/${name}.mjs`, "--verify-existing"], root, provisionerEnv(name));
   const configPath = resolve(core, deployConfig);
-  const bytes = await read(configPath);
-  const config = validateGeneratedDeployment(bytes, env, input);
+  const bytes = Buffer.from(await read(configPath));
+  if (maintenanceAiSearchCandidateBytes !== null && !bytes.equals(maintenanceAiSearchCandidateBytes)) {
+    throw new Error("Generated AI Search bootstrap candidate config changed during deployment preparation");
+  }
+  const config = maintenanceAiSearchCandidateConfig ?? validateGeneratedDeployment(bytes, env, input);
   if (maintenanceAiGateways !== null) assertMaintenanceAiGatewayTargets(maintenanceAiGateways, config);
   verifyGeneratedSemanticConfiguration(config, env);
+  assertGeneratedOwnerTemplatesCurrent(config);
   const digest = createHash("sha256").update(bytes).digest("hex");
+  if (maintenanceAiSearchCandidateDigest !== null && digest !== maintenanceAiSearchCandidateDigest) {
+    throw new Error("Generated AI Search bootstrap candidate config digest changed during deployment preparation");
+  }
   const generatedConfigPin = await pinGeneratedConfig({ root, path: configPath });
   if (generatedConfigPin.sha256 !== digest) throw new Error("Generated deployment config changed before artifact preparation");
   const migrationPlan = await readDeploymentMigrationPlan(config, { root });
   const assetManifest = await readAssetManifest(config, { root });
   const backendFingerprint = readBackendFingerprint({ root, generated_config: config });
-  const priorWorkerConfig = { ...config, vars: { ...config.vars,
-    DEPLOYMENT_GENERATION: activeWorkerBaseline.generation } };
+  const coreDatabase = config.d1_databases.find((database) => database.binding === "CORE_DB");
+  if (coreDatabase === undefined || typeof coreDatabase.database_id !== "string") {
+    throw new Error("Generated deployment is missing CORE_DB identity");
+  }
+  const authorityInput = {
+    account_id: env.CLOUDFLARE_ACCOUNT_ID,
+    database_id: coreDatabase.database_id,
+    api_token: env.CLOUDFLARE_API_TOKEN,
+    api_base_url: input.apiBase,
+    deployment_generation: env.ELIOTR_DEPLOYMENT_GENERATION,
+    backend_fingerprint: backendFingerprint,
+    fetch_impl: fetchImpl,
+    now,
+  };
+  const deploymentAuthorityBaseline = await readResearchDeploymentAuthority(authorityInput);
   const priorWorkerEnv = { ...env, ELIOTR_DEPLOYMENT_GENERATION: activeWorkerBaseline.generation };
-  const priorWorkerReadback = await readWorker(priorWorkerEnv, input, priorWorkerConfig, { fetchImpl });
+  const approvedRuntimeCandidate = Object.freeze({
+    protocol: "eliotr.approved-runtime-candidate.v1",
+    deployment_generation: env.ELIOTR_DEPLOYMENT_GENERATION,
+    configuration_sha256: digest,
+  });
+  const priorWorkerReadback = maintenanceAiSearchBootstrap === null
+    ? await readWorker(priorWorkerEnv, input, config, {
+    fetchImpl, observedDeploymentGeneration: activeWorkerBaseline.generation,
+    approvedRuntimeCandidate,
+    approvedMcpAccessTransition: maintenanceMcpAccessTransition,
+  }) : await readWorker(priorWorkerEnv, input, maintenanceAiSearchBaselineConfig, {
+    fetchImpl, observedDeploymentGeneration: activeWorkerBaseline.generation,
+    expectedConfigurationBaseline: maintenanceAiSearchBaselineReadback.configuration_baseline,
+    approvedRuntimeCandidate: maintenanceAiSearchApprovedCandidate,
+    approvedMcpAccessTransition: maintenanceMcpAccessTransition,
+  });
+  const priorWorkerConfigurationBaseline = priorWorkerReadback.configuration_baseline;
   if (priorWorkerReadback.deployment_id !== activeWorkerBaseline.deployment_id ||
-      priorWorkerReadback.version_id !== activeWorkerBaseline.version_id) {
+      priorWorkerReadback.version_id !== activeWorkerBaseline.version_id ||
+      priorWorkerConfigurationBaseline?.deployment_id !== activeWorkerBaseline.deployment_id ||
+      priorWorkerConfigurationBaseline?.version_id !== activeWorkerBaseline.version_id ||
+      priorWorkerConfigurationBaseline?.deployment_generation !== activeWorkerBaseline.generation ||
+      !/^[0-9a-f]{64}$/u.test(priorWorkerConfigurationBaseline?.configuration_sha256 ?? "")) {
     throw new Error("Worker bindings do not match the active configured resource identities");
   }
+  const approvedRuntimeTransition = Object.freeze({
+    protocol: "eliotr.approved-runtime-transition.v1",
+    baseline: Object.freeze({
+      deployment_id: priorWorkerConfigurationBaseline.deployment_id,
+      version_id: priorWorkerConfigurationBaseline.version_id,
+      deployment_generation: priorWorkerConfigurationBaseline.deployment_generation,
+      configuration_sha256: priorWorkerConfigurationBaseline.configuration_sha256,
+    }),
+    candidate: Object.freeze({
+      deployment_generation: approvedRuntimeCandidate.deployment_generation,
+      configuration_sha256: approvedRuntimeCandidate.configuration_sha256,
+    }),
+    owner_runtime_variables: APPROVED_RUNTIME_CONFIGURATION_VARIABLES,
+  });
   const requireUnchangedConfig = async () => {
     if (createHash("sha256").update(await read(configPath)).digest("hex") !== digest) {
       throw new Error("Generated deployment config changed during release");
@@ -321,6 +462,12 @@ export async function deployCloudflare({ confirmLive = false, environment = proc
   let workerBundle = null;
   const requireUnchangedInputs = async () => {
     if (routeUpdate !== null) await requireUnchangedMaintenanceRouteUpdate({ routeUpdate });
+    if (maintenanceAiSearchBootstrap !== null) {
+      await requireUnchangedMaintenanceAiSearchBootstrap({ bootstrap: maintenanceAiSearchBootstrap });
+    }
+    if (maintenanceMcpAccessTransition !== null) {
+      await requireUnchangedMaintenanceMcpAccessTransition({ transition: maintenanceMcpAccessTransition, read });
+    }
     await requireUnchangedConfig();
     await checkBuildInputs({ root, manifest: testedInputs, generatedConfigPin });
     if (workerBundle !== null) await checkBundle({ root, manifest: testedInputs, attestation: workerBundle });
@@ -350,10 +497,19 @@ export async function deployCloudflare({ confirmLive = false, environment = proc
     const currentCapabilities = purpose === MAINTENANCE_PURPOSE
       ? await readCapabilities({ input, fetchImpl: ownerFetch }) : null;
     const currentIdentity = await readActiveWorker({ env, input, fetchImpl });
-    const currentWorker = await readWorker(priorWorkerEnv, input, priorWorkerConfig, { fetchImpl });
+    const currentWorker = await readWorker(priorWorkerEnv, input,
+      maintenanceAiSearchBootstrap === null ? config : maintenanceAiSearchBaselineConfig, {
+      fetchImpl,
+      observedDeploymentGeneration: activeWorkerBaseline.generation,
+      expectedConfigurationBaseline: priorWorkerConfigurationBaseline,
+      approvedRuntimeCandidate,
+      approvedRuntimeTransition,
+      approvedMcpAccessTransition: maintenanceMcpAccessTransition,
+    });
     if (canonicalJson(currentIdentity) !== canonicalJson(activeWorkerBaseline) ||
         currentWorker.deployment_id !== priorWorkerReadback.deployment_id ||
-        currentWorker.version_id !== priorWorkerReadback.version_id) {
+        currentWorker.version_id !== priorWorkerReadback.version_id ||
+        canonicalJson(currentWorker.configuration_baseline) !== canonicalJson(priorWorkerConfigurationBaseline)) {
       throw new Error("Active Worker version or bindings changed during deployment preflight");
     }
     if (purpose === MAINTENANCE_PURPOSE) {
@@ -364,14 +520,24 @@ export async function deployCloudflare({ confirmLive = false, environment = proc
       if (routeUpdate !== null) await requireUnchangedMaintenanceRouteUpdate({ routeUpdate });
       assertMaintenanceCapabilityProfile({ candidate: candidateCapabilityProfile,
         observed: currentCapabilities.capabilities, generatedConfig: config, activeWorkerIdentity: currentIdentity,
-        routeUpdate, routeUpdatePhase: "before" });
+        routeUpdate, routeUpdatePhase: "before", aiSearchBootstrap: maintenanceAiSearchBootstrap,
+        aiSearchBootstrapPhase: "before" });
       if (maintenanceAiGateways !== null) await recordMaintenanceAiGatewayReadback({
         profile: maintenanceAiGateways, readbacks: maintenanceAiGatewayReadbacks, stage: "before_upload",
         result: await checkAiGateways({ profile: maintenanceAiGateways, env, input,
           activeWorkerIdentity: currentIdentity }),
       });
     }
+    if (maintenanceAiSearchBootstrap !== null) {
+      await requireUnchangedInputs();
+      execute("node", ["scripts/provision-ai-search.mjs", "--verify-existing"], root, provisionerEnv("provision-ai-search"));
+      await requireUnchangedInputs();
+    }
     await requireUnchangedInputs();
+    const currentAuthority = await readResearchDeploymentAuthority(authorityInput);
+    if (canonicalJson(currentAuthority) !== canonicalJson(deploymentAuthorityBaseline)) {
+      throw new Error("Research deployment authority changed during deployment preflight");
+    }
   }
   // Canonical generated vars win; Wrangler preserves secrets without --keep-vars.
   exec("pnpm", ["exec", "wrangler", "deploy", workerBundle.entrypoint,
@@ -399,7 +565,8 @@ export async function deployCloudflare({ confirmLive = false, environment = proc
     if (routeUpdate !== null) await requireUnchangedMaintenanceRouteUpdate({ routeUpdate });
     assertMaintenanceCapabilityProfile({ candidate: candidateCapabilityProfile,
       observed: candidateCapabilities.capabilities, generatedConfig: config, activeWorkerIdentity: uploadedIdentity,
-      routeUpdate, routeUpdatePhase: "after" });
+      routeUpdate, routeUpdatePhase: "after", aiSearchBootstrap: maintenanceAiSearchBootstrap,
+      aiSearchBootstrapPhase: "after" });
     requireSameMaintenanceCapabilityReadback({ baseline: maintenanceBaseline.capabilities,
       current: candidateCapabilities, routeUpdate });
     if (candidateCapabilities.generation !== env.ELIOTR_DEPLOYMENT_GENERATION) {
@@ -413,10 +580,6 @@ export async function deployCloudflare({ confirmLive = false, environment = proc
     });
   }
   await requireUnchangedInputs();
-  const coreDatabase = config.d1_databases.find((database) => database.binding === "CORE_DB");
-  if (coreDatabase === undefined || typeof coreDatabase.database_id !== "string") {
-    throw new Error("Generated deployment is missing CORE_DB identity");
-  }
   const deploymentAuthority = await synchronizeResearchDeploymentAuthority({
     account_id: env.CLOUDFLARE_ACCOUNT_ID,
     database_id: coreDatabase.database_id,
@@ -445,7 +608,8 @@ export async function deployCloudflare({ confirmLive = false, environment = proc
     if (routeUpdate !== null) await requireUnchangedMaintenanceRouteUpdate({ routeUpdate });
     assertMaintenanceCapabilityProfile({ candidate: candidateCapabilityProfile,
       observed: finalCapabilities.capabilities, generatedConfig: config, activeWorkerIdentity: postSyncIdentity,
-      routeUpdate, routeUpdatePhase: "after" });
+      routeUpdate, routeUpdatePhase: "after", aiSearchBootstrap: maintenanceAiSearchBootstrap,
+      aiSearchBootstrapPhase: "after" });
     requireSameMaintenanceCapabilityReadback({ baseline: maintenanceBaseline.capabilities,
       current: finalCapabilities, routeUpdate });
     if (finalCapabilities.generation !== env.ELIOTR_DEPLOYMENT_GENERATION) {
@@ -478,6 +642,21 @@ export async function deployCloudflare({ confirmLive = false, environment = proc
       removed_route_count: 0,
       service_principal_allowlist: "EMPTY_PRESERVED",
     } }),
+    ...(maintenanceAiSearchBootstrap === null ? {} : { maintenance_ai_search_binding_bootstrap: {
+      protocol: maintenanceAiSearchBootstrap.protocol,
+      intent_sha256: maintenanceAiSearchBootstrap.intent_sha256,
+      manifest_sha256: maintenanceAiSearchBootstrap.manifest_sha256,
+      binding: "AI_SEARCH:eliotr",
+      baseline_deployment_id: maintenanceAiSearchBootstrap.baseline.deployment_id,
+      baseline_version_id: maintenanceAiSearchBootstrap.baseline.version_id,
+      baseline_generation: maintenanceAiSearchBootstrap.baseline.generation,
+      baseline_configuration_sha256: maintenanceAiSearchBootstrap.baseline.configuration_sha256,
+      candidate_generation: maintenanceAiSearchBootstrap.candidate.generation,
+      candidate_configuration_sha256: maintenanceAiSearchBootstrap.candidate.configuration_sha256,
+      readback: "PASS",
+    } }),
+    ...(maintenanceMcpAccessTransition === null ? {} : { maintenance_mcp_access_transition:
+      maintenanceMcpAccessReceiptSummary(maintenanceMcpAccessTransition) }),
     ...(maintenanceAiGateways === null ? {} : { maintenance_ai_gateways: {
       protocol: maintenanceAiGateways.protocol,
       profile_sha256: maintenanceAiGateways.profile_sha256,
@@ -497,7 +676,7 @@ export async function deployCloudflare({ confirmLive = false, environment = proc
     },
     note: (purpose === MAINTENANCE_PURPOSE
       ? buildMaintenanceNote(fullReleaseBlockers, sourceBudgetState, sourceBudgetFindings, migrationReadback,
-        schemaGenerationReadback, routeUpdate, maintenanceAiGateways)
+        schemaGenerationReadback, routeUpdate, maintenanceAiGateways, maintenanceAiSearchBootstrap)
       : "Active version, configured resource bindings and migration names are verified. ETag and local migration hashes are not remote content proof; asset body hashes are observed only with authenticated readback and stable active-version observations. Product/T4/T6 gates remain separate. HTTP generation is verified only when authenticated smoke passes.") +
       ` Build input manifest captured before gates: ${testedInputs.sha256}; prepared Worker artifact: ${workerBundle.sha256}. ` +
       "Source membership/bytes, generated config, metafile inputs and emitted files were rechecked immediately before upload; the prepared entrypoint was deployed with --no-bundle. " +
@@ -527,7 +706,7 @@ if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.m
 }
 
 function buildMaintenanceNote(blockers, sourceBudgetState, sourceBudgetFindings, migrationReadback,
-  schemaGenerationReadback, routeUpdate, maintenanceAiGateways) {
+  schemaGenerationReadback, routeUpdate, maintenanceAiGateways, maintenanceAiSearchBootstrap) {
   const items = Array.isArray(blockers) ? blockers : [];
   const blockerText = items.length === 0 ? "No known full-release blockers were reported" :
     `Full-release blockers (${items.length}): ${items.join("; ")}`;
@@ -538,12 +717,14 @@ function buildMaintenanceNote(blockers, sourceBudgetState, sourceBudgetFindings,
     : "Authenticated readback matched the pinned baseline routes before upload and the exact candidate routes after upload; all non-route capability fields remained unchanged. ";
   const aiGatewayState = maintenanceAiGateways === null ? "" :
     `Existing AI Gateway inventory and settings were pinned by managed OAuth GET-only readback and rechecked before upload, after upload, and after authority synchronization; reasoning remained present and retrieval remained ${maintenanceAiGateways.gateways.retrieval === null ? "absent" : "present"}. No AI Gateway resource was created or edited. `;
+  const aiSearchState = maintenanceAiSearchBootstrap === null ? "" :
+    "The exact existing AI Search namespace was verified with GET-only provisioner readback before upload; only the pinned AI_SEARCH:eliotr Worker binding was added, with RETRIEVAL and ERASURE disabled. ";
   return `Worker/assets maintenance deployment only; this receipt does not qualify a full release. ${blockerText}. ` +
     `Source-maintainability budget gate: ${sourceBudgetState ?? "NOT_EXECUTED"}. ` +
     `${sourceBudgetFindings === null ? "No source-budget failure output was observed. " : `Source-budget findings: ${sourceBudgetFindings}. `}` +
     `D1 migrations were not applied; exact existing migration ledger readback: ${ledgerState}; ` +
     `required Core/Search schema generation readback: ${schemaState}. ` +
-    routeState + aiGatewayState +
+    routeState + aiGatewayState + aiSearchState +
     "ETag and local migration hashes are not remote content proof; product and workload gates remain separate.";
 }
 

@@ -6,7 +6,10 @@ import {
   modelGatewaySha256,
   ModelGatewayExecutionError,
   parseDynamicRouteQualificationProbeInput,
+  validateModelGatewayTransportPolicy,
   type DynamicRouteQualificationProbeInput,
+  type ModelGatewayRequestCapabilitiesV1,
+  type ModelGatewayTransportPolicyV1,
   type ModelGatewayExecutionObservation,
   type ModelGatewayPromptCompilerPort,
 } from "@eliotr/cloudflare-ai";
@@ -91,6 +94,8 @@ export interface ResearchModelQualificationDispatchDependencies {
   readonly work_bucket: R2Bucket;
   readonly evidence_bucket: R2Bucket;
   readonly gateway: ResearchModelQualificationNativeDependencies["gateway"];
+  /** Server-selected exact policy from the qualified candidate; omitted for legacy qualification. */
+  readonly transport_policy?: ModelGatewayTransportPolicyV1;
   readonly now: () => string;
 }
 
@@ -393,8 +398,9 @@ async function claimMatches(
   if (row.execution_probe_ref !== null) modelFailure("MODEL_GATEWAY_REQUEST_INVALID", "qualification observation claim is already completed");
 }
 
-function boundPromptCompiler(
+export function bindQualificationPromptCompiler(
   compiler: ModelGatewayPromptCompilerPort,
+  requestCapabilities?: ModelGatewayRequestCapabilitiesV1,
 ): ModelGatewayPromptCompilerPort {
   return Object.freeze({
     async compile(
@@ -406,7 +412,7 @@ function boundPromptCompiler(
           !("request_body" in raw) || !("request_body_sha256" in raw) || !("request_timeout_ms" in raw)) {
         modelFailure("MODEL_GATEWAY_PROMPT_COMPILE_FAILED", "qualification compiler returned an invalid compiled prompt");
       }
-      const parametersDigest = await modelGatewayRequestParametersSha256(raw.request_body);
+      const parametersDigest = await modelGatewayRequestParametersSha256(raw.request_body, requestCapabilities);
       if (parametersDigest !== deployment.parameters_digest) {
         modelFailure("MODEL_GATEWAY_PROMPT_COMPILE_FAILED", "qualification prompt parameters differ from the deployed generation");
       }
@@ -425,6 +431,23 @@ export function createResearchModelQualificationDispatch(
       typeof dependencies.evidence_bucket?.get !== "function" ||
       typeof dependencies.now !== "function") {
     modelFailure("MODEL_GATEWAY_REQUEST_INVALID", "qualification dispatch dependencies are invalid");
+  }
+  let transportPolicy: ModelGatewayTransportPolicyV1 | undefined;
+  let requestCapabilities: ModelGatewayRequestCapabilitiesV1 | undefined;
+  if (dependencies.transport_policy !== undefined) {
+    try {
+      transportPolicy = validateModelGatewayTransportPolicy(dependencies.transport_policy);
+    } catch (cause) {
+      modelFailure("MODEL_GATEWAY_REQUEST_INVALID", "qualification transport policy is invalid", cause);
+    }
+    if (transportPolicy.api !== "compat-chat-completions") {
+      modelFailure("MODEL_GATEWAY_REQUEST_INVALID", "qualification provider API is not supported");
+    }
+    if (dependencies.gateway.transport_policy === undefined ||
+        canonicalModelGatewayJson(dependencies.gateway.transport_policy) !== canonicalModelGatewayJson(transportPolicy)) {
+      modelFailure("MODEL_GATEWAY_REQUEST_INVALID", "qualification gateway differs from the exact selected transport policy");
+    }
+    requestCapabilities = transportPolicy.capabilities;
   }
   return Object.freeze({
     async execute(
@@ -462,13 +485,14 @@ export function createResearchModelQualificationDispatch(
         work_bucket: dependencies.work_bucket,
         probe,
         config: prompt,
+        ...(requestCapabilities === undefined ? {} : { request_capabilities: requestCapabilities }),
         now: () => clockMilliseconds(dependencies.now),
       });
       const native = createResearchModelQualificationNativeExecution({
         database: dependencies.core_database,
         work_bucket: dependencies.work_bucket,
         gateway: dependencies.gateway,
-        prompt_compiler: boundPromptCompiler(compiler),
+        prompt_compiler: bindQualificationPromptCompiler(compiler, requestCapabilities),
         now: dependencies.now,
       });
       await native.assertPricingSnapshot(probe);

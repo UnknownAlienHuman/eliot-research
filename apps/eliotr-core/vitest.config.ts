@@ -3,16 +3,33 @@ import { fileURLToPath } from "node:url";
 import { cloudflareTest, readD1Migrations } from "@cloudflare/vitest-plugin";
 import { defineConfig } from "vitest/config";
 import { loadCompiledWorkspaceModule } from "../../scripts/lib/compiled-workspace-module.mjs";
-import { admissionTestConfiguration } from "./test/research-current-dispatch-config.js";
+import {
+  admissionTestConfiguration,
+  bindAdmissionPromptDeploymentIdentities,
+  type AdmissionPromptBindingDependencies,
+} from "./test/research-current-dispatch-config.js";
 import type { ResearchOwnerRuntimeConfiguration } from "./src/research-owner-runtime-config.js";
 
 export default defineConfig(async () => {
   const compiler = await loadCompiledWorkspaceModule("apps/eliotr-core/dist/research-owner-runtime-config.js") as {
     createResearchOwnerRuntimeConfiguration: (input: ReturnType<typeof admissionTestConfiguration>) => Promise<ResearchOwnerRuntimeConfiguration>;
   };
-  const compiled = await compiler.createResearchOwnerRuntimeConfiguration(
+  const [cloudflareAi, researchStages, semanticConfig] = await Promise.all([
+    loadCompiledWorkspaceModule("packages/cloudflare-ai/dist/index.js"),
+    loadCompiledWorkspaceModule("packages/cloudflare-research-stages/dist/index.js"),
+    loadCompiledWorkspaceModule("apps/eliotr-core/dist/research-owner-semantic-config.js"),
+  ]);
+  const bindingDependencies = {
+    canonicalModelGatewayJson: cloudflareAi.canonicalModelGatewayJson,
+    modelGatewaySha256: cloudflareAi.modelGatewaySha256,
+    selectResearchOwnerPrompt: researchStages.selectResearchOwnerPrompt,
+    createResearchOwnerSemanticConfiguration: semanticConfig.createResearchOwnerSemanticConfiguration,
+  } as AdmissionPromptBindingDependencies;
+  const setup = await bindAdmissionPromptDeploymentIdentities(
     admissionTestConfiguration("test-generation", "orientation-owner", "current-dispatch-probe"),
+    bindingDependencies,
   );
+  const compiled = await compiler.createResearchOwnerRuntimeConfiguration(setup);
   const migrations = {
     CORE_MIGRATIONS: await readD1Migrations(fileURLToPath(new URL("../../infra/d1/core/migrations", import.meta.url))),
     SEARCH_MIGRATIONS: await readD1Migrations(fileURLToPath(new URL("../../infra/d1/search/migrations", import.meta.url))),

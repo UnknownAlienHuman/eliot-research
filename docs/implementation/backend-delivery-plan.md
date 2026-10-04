@@ -1,7 +1,13 @@
 # Backend delivery plan
 
-Current execution order, reconciled on 2026-10-02 against `main`
-`f62dbad1d55ab3a48f62de1c31c2196de93bcf96` (parent-reviewed main baseline).
+Current execution order, refreshed on 2026-10-03 against `main`
+`78c6595fd8cf1292b55dd64fd13898306bb40360`.
+
+The [October 3 functional integration checkpoint](product-resume-2026-10-03.md)
+records the owner configuration, immutable run capture, MCP, provisioning and
+remaining real deployment/evidence checks. Assembly is in progress; no full
+release or live Research acceptance is claimed. Only free bounded functional
+checks are authorized; cognitive, quality and load tests are deferred.
 
 The [product integration checkpoint](product-resume-2026-10-02.md) records actual local COW/publication/restore checks and remaining code separately from live approval. The active result remains S92 integration, not release acceptance.
 

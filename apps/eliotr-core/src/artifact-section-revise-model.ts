@@ -2,7 +2,8 @@ import { canonicalDigest, canonicalJson } from "@eliotr/platform-cloudflare";
 import { createCloudflareEvidenceResolver, createD1EvidenceAuthorityPort, createR2EvidenceContentPort,
   evidenceSha256Bytes, type NavigationReadAuthority } from "@eliotr/cloudflare-evidence";
 import { createArtifactCowModelRuntime, createD1ResearchModelPricingQuotePort, createResearchReferenceManifestService,
-  createResearchReferenceManifestStore, parseResearchModelProfileDefinition, decodeEvidenceFreezeStageInput,
+  createResearchReferenceManifestStore, createModelProfileDefinition, readOwnerModelProfileTemplateV2,
+  parseResearchModelProfileDefinition, decodeEvidenceFreezeStageInput,
   type ArtifactCowSectionProducerDependencies, type ReferenceManifestStorageContext, type ResearchModelSpendPolicy } from "@eliotr/cloudflare-research";
 import { WorkflowCheckpointStore, readCommittedStageLineage, readWorkflowObject, type ArtifactSectionReviseAttempt } from "@eliotr/cloudflare-workflows";
 import { parseResearchClaimAuditPolicy } from "@eliotr/cloudflare-research-stages";
@@ -12,6 +13,8 @@ import { createOwnerArtifactCowModelAdmission } from "./artifact-cow-model-admis
 import type { createOwnerArtifactCowPorts } from "./artifact-section-revise-ports.js";
 import { modelGatewayConfiguration, parseResearchSemanticConfiguration, researchSemanticPromptParameters } from "./research-semantic-server.js";
 import { resolveResearchSemanticConfig } from "./research-semantic-config-revision.js";
+import { readResearchRunConfiguration } from "./research-run-configuration.js";
+import { resolveResearchSelectedModelTransport } from "./research-selected-model-transport.js";
 import type { Env } from "./env.js";
 import { HttpRequestError } from "./http-errors.js";
 
@@ -24,9 +27,49 @@ export async function createOwnerArtifactCowModel(input: {
   readonly navigation: NavigationReadAuthority; readonly cow: Awaited<ReturnType<typeof createOwnerArtifactCowPorts>>;
 }) {
   const { env, context, attempt, navigation, cow } = input;
-  const config = parseResearchSemanticConfiguration((await resolveResearchSemanticConfig({ env, database: env.CORE_DB })).config_json);
-  const modelProfile = await parseResearchModelProfileDefinition(JSON.parse(env.ELIOTR_MODEL_PROFILE_DEFINITION_JSON ?? "null"));
-  if (modelProfile.config_provenance_ref !== env.ELIOTR_MODEL_PROFILE_PROVENANCE_REF || Date.parse(modelProfile.expires_at) <= Date.now() ||
+  const witness = attempt.request.report_admission_witness;
+  const rawPin = witness.material.run_configuration;
+  let runtimeEnv = env;
+  let runConfiguration: Awaited<ReturnType<typeof readResearchRunConfiguration>> | undefined;
+  if (rawPin !== null && rawPin !== undefined) {
+    if (typeof rawPin !== "object" || Array.isArray(rawPin)) deny("Original COW run configuration pin is malformed");
+    const pin = rawPin as Record<string, unknown>;
+    if ((pin.mode !== "snapshot-v1" && pin.mode !== "snapshot-v2") ||
+        typeof pin.operation_id !== "string" || typeof pin.investigation_id !== "string" ||
+        typeof pin.principal_ref !== "string" || pin.principal_ref !== attempt.authority.principal_ref ||
+        typeof pin.deployment_generation !== "string" || typeof pin.configuration_ref !== "string" ||
+        typeof pin.configuration_sha256 !== "string" || !Array.isArray(pin.model_selections)) {
+      deny("Original COW run configuration identity is incomplete");
+    }
+    runConfiguration = await readResearchRunConfiguration(env, { operation_id: pin.operation_id,
+      investigation_id: pin.investigation_id, principal_ref: pin.principal_ref,
+      deployment_generation: pin.deployment_generation });
+    if (runConfiguration.mode !== pin.mode || runConfiguration.configuration_ref !== pin.configuration_ref ||
+        runConfiguration.configuration_sha256 !== pin.configuration_sha256 ||
+        canonicalJson(runConfiguration.model_selections) !== canonicalJson(pin.model_selections)) {
+      deny("Original COW run configuration changed after REPORT admission");
+    }
+    runtimeEnv = runConfiguration.env;
+  }
+  const config = parseResearchSemanticConfiguration((await resolveResearchSemanticConfig({ env: runtimeEnv, database: env.CORE_DB })).config_json);
+  const profileRaw = JSON.parse(runtimeEnv.ELIOTR_MODEL_PROFILE_DEFINITION_JSON ?? "null") as unknown;
+  const profileProvenance = runtimeEnv.ELIOTR_MODEL_PROFILE_PROVENANCE_REF;
+  let modelProfile: Awaited<ReturnType<typeof parseResearchModelProfileDefinition>>;
+  if (typeof profileRaw === "object" && profileRaw !== null && !Array.isArray(profileRaw) &&
+      (profileRaw as Record<string, unknown>).schema === "eliotr.research.model-profile-definition.v2") {
+    const template = await readOwnerModelProfileTemplateV2(profileRaw, profileProvenance ?? "");
+    const authorization = await navigation.current();
+    const expiryMs = Math.min(template.expires_at === undefined ? Number.POSITIVE_INFINITY : Date.parse(template.expires_at),
+      Date.parse(navigation.scope.expires_at), Date.parse(authorization.expires_at), attempt.budget.expires_at_ms);
+    if (!Number.isFinite(expiryMs) || expiryMs <= Date.now()) deny("Current COW profile authority has expired");
+    modelProfile = await createModelProfileDefinition({ config_provenance_ref: template.config_provenance_ref,
+      model_profile_ref: template.model_profile_ref, expires_at: new Date(expiryMs).toISOString(),
+      max_context_bytes: template.max_context_bytes, deployment: template.deployment,
+      policy: { ...template.policy, expires_at: new Date(expiryMs).toISOString() } });
+  } else {
+    modelProfile = await parseResearchModelProfileDefinition(profileRaw);
+  }
+  if (modelProfile.config_provenance_ref !== profileProvenance || Date.parse(modelProfile.expires_at) <= Date.now() ||
       !config.audit.allowed_verifier_refs.includes(config.audit.verifier_ref) || !modelProfile.policy.allowed_verifier_refs.includes(config.audit.verifier_ref)) deny("Current model/verifier policy is unavailable");
   const spend = attempt.request.report_admission_witness.spend_policy as ResearchModelSpendPolicy;
   const auditRule = spend.rules.find((rule) => rule.stage === "AUDIT_CLAIMS");
@@ -58,7 +101,7 @@ export async function createOwnerArtifactCowModel(input: {
     get: async (ref) => stores.get(key(ref))?.get(ref) ?? null,
   } });
   const runtime = createArtifactCowModelRuntime({ database: env.CORE_DB, work_bucket: env.WORK_BUCKET,
-    gateway: modelGatewayConfiguration(env), signal: context.request.signal, deployment_environment: environment,
+    gateway: modelGatewayConfiguration(runtimeEnv), signal: context.request.signal, deployment_environment: environment,
     pricing: createD1ResearchModelPricingQuotePort(env.CORE_DB), prepare: admission.prepare, revalidateExisting: admission.revalidateExisting,
     prompt: { manifest_service: manifests, request_timeout_ms: Math.min(config.synthesis.request_timeout_ms, config.audit.request_timeout_ms),
       build_manifest_input: async (call, deployment) => ({ evidence_pack: call.evidence_pack, navigation, resolver,
@@ -74,7 +117,14 @@ export async function createOwnerArtifactCowModel(input: {
           prompt: selected.trusted_parameters.prompt + "\n\n" + exactContext };
       } },
   });
-  const activeVerifier = await runtime.deployments.resolve(auditRule.deployment.route_ref);
+  const selectedAudit = runConfiguration === undefined ? undefined : resolveResearchSelectedModelTransport({
+    run_configuration: runConfiguration, stage: "AUDIT_CLAIMS",
+  });
+  const activeVerifier = selectedAudit === undefined
+    ? await runtime.deployments.resolve(auditRule.deployment.route_ref)
+    : await runtime.deployments.resolvePinned(auditRule.deployment, selectedAudit.selection, {
+        allow_expired_qualification: runConfiguration?.mode === "snapshot-v2",
+      });
   if (canonicalJson(activeVerifier) !== canonicalJson(auditRule.deployment)) deny("Independent verifier deployment changed");
   const stageTen = await readCommittedStageLineage(new WorkflowCheckpointStore(env.CORE_DB), cow.historical.operation_id, "FREEZE_EVIDENCE");
   const historicalInput = await decodeEvidenceFreezeStageInput(await readWorkflowObject(env.WORK_BUCKET, stageTen.request.input_manifest, true));

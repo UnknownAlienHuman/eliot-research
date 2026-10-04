@@ -7,6 +7,7 @@ import {
   type PurgeTarget,
 } from "@eliotr/contracts";
 import {
+  assertErasureIdentifier,
   canonicalErasureJson,
   erasureFail,
   erasureSha256Utf8,
@@ -16,6 +17,7 @@ import {
 import { resetErasureAttempt } from "./authority-reset.js";
 import { assertErasureLocatorsRetained, retainErasureLocatorsStatement } from "./closure-locators.js";
 import { appendPurgeLedger } from "./ledger.js";
+import { createD1ErasureRestoreFenceStore, type SharedExecutionFence } from "./shared-execution-fence.js";
 import type {
   ErasureAuthorityPort,
 } from "./types.js";
@@ -149,6 +151,18 @@ export function createD1ErasureAuthority(
   const workerId = dependencies.worker_id ?? "eliotr-erasure-coordinator";
   const leaseMs = dependencies.lease_ms ?? 5 * 60_000;
   const clock = dependencies.now ?? Date.now;
+  assertErasureIdentifier(workerId, "erasure worker ID");
+  const sharedFenceStore = createD1ErasureRestoreFenceStore({ database, now: clock, lease_ms: leaseMs });
+  const sharedFences = new Map<string, SharedExecutionFence>();
+  const sharedFenceKey = (fence: ErasureFence): string =>
+    `${fence.erasure_id}\u0000${fence.revision}\u0000${fence.lease_generation}`;
+  const releaseSharedFence = async (fence: ErasureFence): Promise<void> => {
+    const key = sharedFenceKey(fence);
+    const shared = sharedFences.get(key);
+    if (shared === undefined) return;
+    await shared.release();
+    sharedFences.delete(key);
+  };
   const assertFence = async (fence: ErasureFence): Promise<void> => {
     const row = await database.prepare(
       "SELECT lease_owner,lease_generation,lease_until FROM erasure_execution " +
@@ -162,6 +176,9 @@ export function createD1ErasureAuthority(
       clock(),
     ).first<LeaseRow>();
     if (row === null) erasureFail("ERASURE_LEASE_LOST", "erasure execution fence is stale", true);
+    const shared = sharedFences.get(sharedFenceKey(fence));
+    if (shared === undefined) erasureFail("ERASURE_LEASE_LOST", "shared erasure/restore execution fence is absent", true);
+    await shared.assertCurrent();
   };
   return {
     async acquire(rawRequest) {
@@ -169,77 +186,105 @@ export function createD1ErasureAuthority(
       const requestJson = canonicalErasureJson(request);
       const requestSha = await erasureSha256Utf8(requestJson);
       let existing = await loadExecution(database, request);
-      if (existing === null) {
-        const now = isoFromMs(clock());
-        try {
-          await database.batch([
-            database.prepare(
-              "INSERT INTO erasure_case(erasure_id,revision,state,exact_subject_refs_json," +
-              "requested_locations_json,completed_locations_json,blocked_locations_json," +
-              "legal_basis_ref,deadline,created_at,updated_at) VALUES " +
-              "(?1,?2,'REQUESTED',?3,?4,'[]','[]',?5,?6,?7,?7)",
-            ).bind(
-              request.erasure_ref.id,
-              request.erasure_ref.revision,
-              canonicalErasureJson(request.exact_subject_refs),
-              canonicalErasureJson(request.required_locations),
-              request.legal_basis_ref,
-              request.deadline,
-              now,
-            ),
-            database.prepare(
-              "INSERT INTO erasure_execution(erasure_id,revision,request_json,request_sha256," +
-              "state,created_at,updated_at) VALUES (?1,?2,?3,?4,'REQUESTED',?5,?5)",
-            ).bind(
-              request.erasure_ref.id,
-              request.erasure_ref.revision,
-              requestJson,
-              requestSha,
-              now,
-            ),
-          ]);
-        } catch (cause) {
-          existing = await loadExecution(database, request);
-          if (existing === null) {
-            erasureFail("ERASURE_SETTLEMENT_UNCERTAIN", "erasure request write acknowledgement was lost", true, cause);
-          }
-        }
-        existing = await loadExecution(database, request);
+      if (existing !== null) {
+        exactRequest(existing, requestJson, requestSha);
+        const terminal = await decodeTerminal(existing);
+        if (terminal !== null) return { disposition: "TERMINAL", receipt: terminal };
       }
-      if (existing === null) {
-        erasureFail("ERASURE_SETTLEMENT_UNCERTAIN", "erasure request authority is absent after admission", true);
-      }
-      exactRequest(existing, requestJson, requestSha);
-      const terminal = await decodeTerminal(existing);
-      if (terminal !== null) return { disposition: "TERMINAL", receipt: terminal };
-      const nowMs = clock();
-      const leaseUntil = nowMs + leaseMs;
-      const row = await database.prepare(
-        "UPDATE erasure_execution SET lease_owner=?3,lease_generation=lease_generation+1," +
-        "lease_until=?4,state='REQUESTED',closure_digest=NULL,last_error_code=NULL,updated_at=?5 " +
-        "WHERE erasure_id=?1 AND revision=?2 " +
-        "AND state NOT IN ('COMPLETE','BLOCKED') " +
-        "AND (lease_owner IS NULL OR lease_until<=?6 OR lease_owner=?3) " +
-        "RETURNING lease_owner,lease_generation,lease_until",
-      ).bind(
-        request.erasure_ref.id,
-        request.erasure_ref.revision,
-        workerId,
-        leaseUntil,
-        isoFromMs(nowMs),
-        nowMs,
-      ).first<LeaseRow>();
-      if (row === null) {
-        erasureFail("ERASURE_LEASE_LOST", "another coordinator owns the erasure execution lease", true);
-      }
-      const decoded = validLeaseRow(row);
-      const fence = {
-        ...decoded,
+      const shared = await sharedFenceStore.acquireErasure({
         erasure_id: request.erasure_ref.id,
         revision: request.erasure_ref.revision,
-      };
-      await resetErasureAttempt(database, fence, isoFromMs(nowMs));
-      return { disposition: "ACQUIRED", fence };
+      });
+      if (shared === null) {
+        erasureFail("ERASURE_LEASE_LOST", "an unsettled restore or another erasure owns the shared execution fence", true);
+      }
+      let activeFence: ErasureFence | undefined;
+      try {
+        // Re-read after the shared gate. Another coordinator may have settled
+        // this exact request while this caller was waiting for the gate.
+        existing = await loadExecution(database, request);
+        if (existing === null) {
+          const now = isoFromMs(clock());
+          try {
+            await database.batch([
+              database.prepare(
+                "INSERT INTO erasure_case(erasure_id,revision,state,exact_subject_refs_json," +
+                "requested_locations_json,completed_locations_json,blocked_locations_json," +
+                "legal_basis_ref,deadline,created_at,updated_at) VALUES " +
+                "(?1,?2,'REQUESTED',?3,?4,'[]','[]',?5,?6,?7,?7)",
+              ).bind(
+                request.erasure_ref.id,
+                request.erasure_ref.revision,
+                canonicalErasureJson(request.exact_subject_refs),
+                canonicalErasureJson(request.required_locations),
+                request.legal_basis_ref,
+                request.deadline,
+                now,
+              ),
+              database.prepare(
+                "INSERT INTO erasure_execution(erasure_id,revision,request_json,request_sha256," +
+                "state,created_at,updated_at) VALUES (?1,?2,?3,?4,'REQUESTED',?5,?5)",
+              ).bind(
+                request.erasure_ref.id,
+                request.erasure_ref.revision,
+                requestJson,
+                requestSha,
+                now,
+              ),
+            ]);
+          } catch (cause) {
+            existing = await loadExecution(database, request);
+            if (existing === null) {
+              erasureFail("ERASURE_SETTLEMENT_UNCERTAIN", "erasure request write acknowledgement was lost", true, cause);
+            }
+          }
+          existing = await loadExecution(database, request);
+        }
+        if (existing === null) {
+          erasureFail("ERASURE_SETTLEMENT_UNCERTAIN", "erasure request authority is absent after admission", true);
+        }
+        exactRequest(existing, requestJson, requestSha);
+        const terminal = await decodeTerminal(existing);
+        if (terminal !== null) {
+          await shared.release();
+          return { disposition: "TERMINAL", receipt: terminal };
+        }
+        const nowMs = clock();
+        const leaseUntil = nowMs + leaseMs;
+        const leaseOwner = assertErasureIdentifier(`${workerId}:f${shared.lease_generation}`, "erasure lease owner");
+        const row = await database.prepare(
+          "UPDATE erasure_execution SET lease_owner=?3,lease_generation=lease_generation+1," +
+          "lease_until=?4,state='REQUESTED',closure_digest=NULL,last_error_code=NULL,updated_at=?5 " +
+          "WHERE erasure_id=?1 AND revision=?2 " +
+          "AND state NOT IN ('COMPLETE','BLOCKED') " +
+          "AND (lease_owner IS NULL OR lease_until<=?6 OR lease_owner=?3) " +
+          "RETURNING lease_owner,lease_generation,lease_until",
+        ).bind(
+          request.erasure_ref.id,
+          request.erasure_ref.revision,
+          leaseOwner,
+          leaseUntil,
+          isoFromMs(nowMs),
+          nowMs,
+        ).first<LeaseRow>();
+        if (row === null) {
+          erasureFail("ERASURE_LEASE_LOST", "another coordinator owns the erasure execution lease", true);
+        }
+        const decoded = validLeaseRow(row);
+        const fence = {
+          ...decoded,
+          erasure_id: request.erasure_ref.id,
+          revision: request.erasure_ref.revision,
+        };
+        activeFence = fence;
+        sharedFences.set(sharedFenceKey(fence), shared);
+        await resetErasureAttempt(database, fence, isoFromMs(nowMs));
+        return { disposition: "ACQUIRED", fence };
+      } catch (cause) {
+        if (activeFence !== undefined) sharedFences.delete(sharedFenceKey(activeFence));
+        await shared.release();
+        throw cause;
+      }
     },
     assertFence,
     async advance(fence, expectedState, nextState, receiptRef, payloadDigest) {
@@ -563,6 +608,7 @@ export function createD1ErasureAuthority(
       if (readback === null || canonicalErasureJson(readback) !== receiptJson) {
         erasureFail("ERASURE_SETTLEMENT_UNCERTAIN", "terminal erasure receipt readback mismatch", true);
       }
+      await releaseSharedFence(fence);
       return readback;
     },
     async fail(fence, errorCode) {
@@ -578,6 +624,7 @@ export function createD1ErasureAuthority(
         errorCode,
         isoFromMs(clock()),
       ).run();
+      await releaseSharedFence(fence);
     },
   };
 }

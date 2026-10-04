@@ -104,25 +104,44 @@ export async function readClientGrantPage(db: D1Database, projectId: string, aft
 /** Private grant columns bind explicit sponsorship to the exact installed approval.
  * They are not caller-controlled DTO fields or a second permission store. */
 export interface ClientGrantSpendBinding {
+  readonly policy_protocol: "eliotr.research-owner-spend-template.v1" | "eliotr.research-owner-spend-template.v2";
   readonly policy_sha256: string;
-  readonly deployment_generation: string;
+  readonly deployment_generation: string | null;
   readonly expires_at: string;
 }
 export async function readClientGrantSpend(db: D1Database, grant: ProjectClientGrant): Promise<ClientGrantSpendBinding | null> {
-  const row = await grantRead(() => db.prepare("SELECT spend_policy_sha256 AS policy_sha256, " +
+  const row = await grantRead(() => db.prepare("SELECT spend_policy_protocol AS policy_protocol, spend_policy_sha256 AS policy_sha256, " +
     "spend_deployment_generation AS deployment_generation, spend_expires_at AS expires_at, record_sha256 " +
     "FROM project_client_grant WHERE grant_id=?1 AND revision=?2")
-    .bind(grant.grant_id, grant.revision).first<ClientGrantSpendBinding & { record_sha256: string }>());
+    .bind(grant.grant_id, grant.revision).first<{
+      readonly policy_protocol: ClientGrantSpendBinding["policy_protocol"] | null;
+      readonly policy_sha256: string | null;
+      readonly deployment_generation: string | null;
+      readonly expires_at: string | null;
+      readonly record_sha256: string;
+    }>());
   if (!row || row.record_sha256 !== await sha256Utf8(canonicalJson(grant))) {
     grantFail("CLIENT_GRANT_STORAGE_CORRUPT", 503, "Sponsorship is not bound to the exact grant revision");
   }
-  if (row.policy_sha256 === null && row.deployment_generation === null && row.expires_at === null &&
+  if (row.policy_protocol === null && row.policy_sha256 === null && row.deployment_generation === null && row.expires_at === null &&
       grant.spend_policy_ref === undefined) return null;
   if (grant.spend_policy_ref === undefined || typeof row.policy_sha256 !== "string" ||
-      !/^[0-9a-f]{64}$/u.test(row.policy_sha256) || typeof row.deployment_generation !== "string" ||
+      !/^[0-9a-f]{64}$/u.test(row.policy_sha256) ||
       typeof row.expires_at !== "string" || !Number.isFinite(Date.parse(row.expires_at))) {
     grantFail("CLIENT_GRANT_STORAGE_CORRUPT", 503, "Stored sponsorship binding is invalid");
   }
-  return Object.freeze({ policy_sha256: row.policy_sha256, deployment_generation: grantId(row.deployment_generation),
-    expires_at: row.expires_at });
+  // NULL marker is the exact historical v1 protocol; migration 0105 does not rewrite grant receipts.
+  const protocol = row.policy_protocol ?? "eliotr.research-owner-spend-template.v1";
+  if (protocol === "eliotr.research-owner-spend-template.v1") {
+    if (typeof row.deployment_generation !== "string") {
+      grantFail("CLIENT_GRANT_STORAGE_CORRUPT", 503, "Stored v1 sponsorship deployment is invalid");
+    }
+    return Object.freeze({ policy_protocol: protocol, policy_sha256: row.policy_sha256,
+      deployment_generation: grantId(row.deployment_generation), expires_at: row.expires_at });
+  }
+  if (protocol !== "eliotr.research-owner-spend-template.v2" || row.deployment_generation !== null) {
+    grantFail("CLIENT_GRANT_STORAGE_CORRUPT", 503, "Stored v2 sponsorship binding is invalid");
+  }
+  return Object.freeze({ policy_protocol: protocol, policy_sha256: row.policy_sha256,
+    deployment_generation: null, expires_at: row.expires_at });
 }

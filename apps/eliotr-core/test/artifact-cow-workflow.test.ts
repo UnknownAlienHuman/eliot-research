@@ -12,7 +12,7 @@ async function start(tag: string) {
   const store = createArtifactSectionReviseWorkflowStore(runtime.CORE_DB);
   const input = { request: data.request,report_admission: admission,store,
     principal: { principal_ref: data.context.principal_ref,credential_generation: data.context.credential_generation,
-      deployment_generation: runtime.DEPLOYMENT_GENERATION },handler_generation: "artifact-cow-handler-test-v1" };
+      deployment_generation: data.configuredEnv.DEPLOYMENT_GENERATION },handler_generation: "artifact-cow-handler-test-v1" };
   const attempt = await startArtifactSectionReviseWorkflow(input);
   return { data,admission,store,input,attempt };
 }

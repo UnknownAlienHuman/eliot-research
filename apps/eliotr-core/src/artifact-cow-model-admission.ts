@@ -10,6 +10,7 @@ import {
 import type { ModelCallInput } from "@eliotr/research";
 import { resolveResearchOwnerSpendPolicy } from "./research-owner-spend-policy.js";
 import { createBoundResearchOwnerReportConfigSource } from "./research-owner-report-policy.js";
+import { readResearchRunConfiguration } from "./research-run-configuration.js";
 import type { Env } from "./env.js";
 
 function stale(message: string): never {
@@ -60,6 +61,32 @@ export async function createOwnerArtifactCowModelAdmission(input: OwnerArtifactC
   const routes = createD1ModelGatewayDeploymentRegistry(env.CORE_DB, { environment: input.deployment_environment ?? "PRODUCTION" });
   const promptInputs = new Map<string, { readonly call: string; readonly context: string }>();
 
+  async function originalConfiguration() {
+    const raw = witness.material.run_configuration;
+    if (raw === null) return Object.freeze({ env, mode: "legacy-installed" as const, model_selections: Object.freeze([]) });
+    if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+      stale("COW report witness has no exact original run configuration identity");
+    }
+    const pin = raw as Record<string, unknown>;
+    if ((pin.mode !== "snapshot-v1" && pin.mode !== "snapshot-v2") ||
+        typeof pin.operation_id !== "string" || typeof pin.investigation_id !== "string" ||
+        typeof pin.principal_ref !== "string" || pin.principal_ref !== authority.principal_ref ||
+        typeof pin.deployment_generation !== "string" || typeof pin.configuration_ref !== "string" ||
+        typeof pin.configuration_sha256 !== "string" || !Array.isArray(pin.model_selections)) {
+      stale("COW original run configuration identity is malformed");
+    }
+    const selected = await readResearchRunConfiguration(env, {
+      operation_id: pin.operation_id as string, investigation_id: pin.investigation_id as string,
+      principal_ref: pin.principal_ref as string, deployment_generation: pin.deployment_generation as string,
+    });
+    if (selected.mode !== pin.mode || selected.configuration_ref !== pin.configuration_ref ||
+        selected.configuration_sha256 !== pin.configuration_sha256 ||
+        canonicalJson(selected.model_selections) !== canonicalJson(pin.model_selections)) {
+      stale("COW original run snapshot differs from the REPORT witness");
+    }
+    return Object.freeze({ env: selected.env, mode: selected.mode, model_selections: selected.model_selections });
+  }
+
   async function requireCurrent(context?: ArtifactCowModelCallContext) {
     const time = now();
     if (!Number.isSafeInteger(time) || time >= Date.parse(expires) || context?.principal.signal?.aborted) stale("COW model authority expired or cancelled");
@@ -91,26 +118,44 @@ export async function createOwnerArtifactCowModelAdmission(input: OwnerArtifactC
       allowed_use: [...s.allowed_use], disclosure_ceiling: s.disclosure_ceiling, admission_expires_at: s.admission_expires_at ?? null,
     })).sort((a, b) => a.source_revision_ref.localeCompare(b.source_revision_ref));
     if (canonicalJson(bindings) !== canonicalJson(witness.source_bindings)) stale("COW source authority changed after REPORT admission");
-    const spend = resolveResearchOwnerSpendPolicy({ raw: env.ELIOTR_MODEL_SPEND_POLICY_JSON,
-      provenance: env.ELIOTR_MODEL_SPEND_POLICY_PROVENANCE_REF ?? "", access: navigation.access,
+    const pinnedConfiguration = await originalConfiguration();
+    const policyEnv = pinnedConfiguration.env;
+    const spend = resolveResearchOwnerSpendPolicy({ raw: policyEnv.ELIOTR_MODEL_SPEND_POLICY_JSON,
+      provenance: policyEnv.ELIOTR_MODEL_SPEND_POLICY_PROVENANCE_REF ?? "", access: navigation.access,
       deployment_generation: env.DEPLOYMENT_GENERATION, policy_generation: authority.policy_generation,
       policy_authority_ref: attempt.authority.policy_authority_ref, scope_expires_at: navigation.scope.expires_at,
       authorization: grant, now_ms: time }).policy;
-    const report = await createBoundResearchOwnerReportConfigSource({ raw: env.ELIOTR_RESEARCH_REPORT_CONFIG_JSON,
-      provenance_ref: env.ELIOTR_RESEARCH_REPORT_POLICY_PROVENANCE_REF ?? "", current_spend_authority: spend, now_ms: time }).read();
+    const report = await createBoundResearchOwnerReportConfigSource({ raw: policyEnv.ELIOTR_RESEARCH_REPORT_CONFIG_JSON,
+      provenance_ref: policyEnv.ELIOTR_RESEARCH_REPORT_POLICY_PROVENANCE_REF ?? "", current_spend_authority: spend, now_ms: time }).read();
     if (canonicalJson(spend) !== canonicalJson(witness.spend_policy) || canonicalJson(report) !== canonicalJson(witness.policy) ||
         await canonicalDigest(witness.material) !== witness.input_sha256 ||
         await canonicalDigest(witness.decision) !== witness.decision_sha256 ||
         canonicalJson(await navigation.current()) !== canonicalJson(grant)) stale("installed COW REPORT or spending approval changed");
-    return { spend, persisted };
+    return { spend, persisted, pinned_configuration: pinnedConfiguration };
   }
 
   async function slot(context: ArtifactCowModelCallContext) {
     const value = await requireCurrent(context);
     const rule = value.spend.rules.find((r) => r.stage === (context.call_slot === "SYNTHESIZE" ? "SYNTHESIZE" : "AUDIT_CLAIMS"));
     if (rule === undefined) stale("installed COW model slot is missing");
-    const active = await routes.resolve(rule.deployment.route_ref);
-    if (active === null || canonicalJson(decodeModelRouteDeployment(active)) !== canonicalJson(rule.deployment)) stale("COW model deployment changed");
+    const stage = context.call_slot === "SYNTHESIZE" ? "SYNTHESIZE" : "AUDIT_CLAIMS";
+    const matches = value.pinned_configuration.model_selections.filter((selection) => selection.stage === stage);
+    let resolved: unknown | null;
+    if (value.pinned_configuration.mode === "legacy-installed") {
+      resolved = await routes.resolve(rule.deployment.route_ref);
+    } else {
+      const selection = matches[0];
+      if (matches.length !== 1 || selection === undefined || selection.route_ref !== rule.deployment.route_ref ||
+          selection.route_version !== rule.deployment.route_version || typeof routes.resolvePinned !== "function") {
+        stale("COW model selection is missing or differs from the original run snapshot");
+      }
+      resolved = await routes.resolvePinned(rule.deployment, selection, {
+        allow_expired_qualification: value.pinned_configuration.mode === "snapshot-v2",
+      });
+    }
+    if (resolved === null || canonicalJson(decodeModelRouteDeployment(resolved)) !== canonicalJson(rule.deployment)) {
+      stale("COW model deployment differs from the original run snapshot");
+    }
     const identity = await digest(new TextEncoder().encode(JSON.stringify({
       protocol: context.request.protocol, operation_id: context.request.operation_id,
       attempt_ref: context.workflow_attempt.attempt_ref, request_sha256: context.workflow_attempt.request_sha256,

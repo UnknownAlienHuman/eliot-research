@@ -5,6 +5,8 @@ import {
   modelGatewaySha256,
   type DynamicRouteCompiledDesired,
   type DynamicRouteProvisioningInput,
+  type ModelGatewayTransportPolicyV1,
+  validateModelGatewayTransportPolicy,
 } from "@eliotr/cloudflare-ai";
 import {
   parseResearchOwnerOutputFormat,
@@ -35,6 +37,8 @@ export interface ResearchOwnerRoutePlanInput {
   readonly route_definition: unknown;
   readonly output_format?: ResearchOwnerOutputFormat;
   readonly reasoning_effort?: ResearchOwnerReasoningEffort;
+  /** Exact transport selected for this stage; omitted for legacy routes. */
+  readonly transport_policy?: ModelGatewayTransportPolicyV1;
 }
 
 export interface ResearchOwnerRoutePlan {
@@ -96,20 +100,34 @@ export async function createResearchOwnerRoutePlan(
     throw new Error("research owner reasoning_effort is invalid");
   }
   const prompt = selectResearchOwnerPrompt(stage, outputFormat);
+  let transportPolicy: ModelGatewayTransportPolicyV1 | undefined;
+  if (input.transport_policy !== undefined) {
+    try {
+      transportPolicy = validateModelGatewayTransportPolicy(input.transport_policy);
+    } catch (cause) {
+      throw new Error("research owner transport policy is invalid", { cause });
+    }
+  }
+  if (transportPolicy !== undefined && transportPolicy.api !== "compat-chat-completions") {
+    throw new Error("research owner selected provider API is unsupported by the model response path");
+  }
+  const requestCapabilities = transportPolicy?.capabilities;
+  const tokenField = requestCapabilities?.max_output_tokens_field ?? "max_tokens";
+  const parameters = {
+    model: routeRef,
+    messages: [],
+    [tokenField]: maxTokens,
+    ...(reasoningEffort === undefined ? {} : { reasoning_effort: reasoningEffort }),
+    ...(prompt.response_format === undefined ? {} : { response_format: prompt.response_format }),
+    stream: false,
+  };
   const routeDefinition = snapshotJson(input.route_definition, "route definition");
   if (!Array.isArray(routeDefinition) || routeDefinition.length === 0) {
     throw new Error("Cloudflare route_definition must be a non-empty element array");
   }
 
   const [parametersDigest, promptDigest, schemaDigest, routeDefinitionSha256] = await Promise.all([
-    modelGatewayRequestParametersSha256({
-      model: routeRef,
-      messages: [],
-      max_tokens: maxTokens,
-      ...(reasoningEffort === undefined ? {} : { reasoning_effort: reasoningEffort }),
-      ...(prompt.response_format === undefined ? {} : { response_format: prompt.response_format }),
-      stream: false,
-    }),
+    modelGatewayRequestParametersSha256(parameters, requestCapabilities),
     modelGatewaySha256(canonicalModelGatewayJson({
       content_kind: "eliotr.research.owner-prompt.v1",
       prompt: prompt.prompt,

@@ -19,6 +19,7 @@ import { committedFreezeSynthesisFixture } from "./research-synthesis-fixture.js
 import { principal } from "./research-evidence-freeze-fixture.js";
 import { countResidencyPuts } from "./artifact-draft-fixture.js";
 import { withQ1OwnerIdentity } from "./retrieval-q1-fixture.js";
+import runConfigurationMigration from "../../../infra/d1/core/migrations/0104_research_run_configuration.sql?raw";
 
 export const runtime = env as unknown as Env;
 
@@ -73,7 +74,7 @@ function runAfterStatement(statement: D1PreparedStatement, after: () => Promise<
 export async function originalReport(
   claimKind: "observation" | "assumption",
   canonicalLineage = false,
-  options: { readonly seedVerifiedOwnerNamespace?: boolean } = {},
+  options: { readonly seedVerifiedOwnerNamespace?: boolean; readonly seedMigrationTimeLegacy?: boolean } = {},
 ) {
   // Give unchanged current read policy a longer lifetime than the original one-hour scope.
   const prepare = runtime.CORE_DB.prepare.bind(runtime.CORE_DB);
@@ -170,6 +171,7 @@ export async function originalReport(
   const request = { ...synthesis.stage_twelve, stage: "MATERIALIZE" as const,
     investigation_ref: previous.investigation_ref, input_manifest: previous.output_manifest };
   await freeze.executor.execute(request, principal, handlers("MATERIALIZE"));
+  if (options.seedMigrationTimeLegacy === true) await markOriginalRunAsMigrationTimeLegacy(freeze.operation_id);
   const binding = await freeze.db.prepare("SELECT artifact_id,revision FROM artifact_draft_binding WHERE intent_id=(SELECT intent_id FROM research_report_admission WHERE operation_id=?1)")
     .bind(freeze.operation_id).first<{ artifact_id: string; revision: number }>();
   if (binding === null) throw new Error("Original REPORT draft binding is missing");
@@ -184,6 +186,27 @@ export async function originalReport(
     } });
   if (snapshot === null || snapshot.sections[0] === undefined) throw new Error("Original draft snapshot is missing");
   return { freeze, artifact_ref, context, snapshot, original_model_calls: synthesis.provider_calls() + (audited?.auditProviderCalls() ?? 0) };
+}
+
+async function markOriginalRunAsMigrationTimeLegacy(operationId: string): Promise<void> {
+  const row = await runtime.CORE_DB.prepare(
+    "SELECT configuration_required,configuration_ref FROM research_workflow_run WHERE operation_id=?1 LIMIT 1",
+  ).bind(operationId).first<{ readonly configuration_required: unknown; readonly configuration_ref: unknown }>();
+  if (row === null || row.configuration_required !== 1 || row.configuration_ref !== null) {
+    throw new Error("Original REPORT fixture is not a newly-required run without a snapshot");
+  }
+  const transitionStart = runConfigurationMigration.indexOf(
+    "CREATE TRIGGER research_workflow_run_transition BEFORE UPDATE ON research_workflow_run",
+  );
+  if (transitionStart < 0) throw new Error("Run configuration migration is missing its exact transition guard");
+  const transitionTrigger = runConfigurationMigration.slice(transitionStart).trim();
+  // Model a run already present when 0104 was applied, then restore its exact
+  // production transition trigger before exposing the artifact to the test.
+  await runtime.CORE_DB.prepare("DROP TRIGGER research_workflow_run_transition").run();
+  await runtime.CORE_DB.prepare(
+    "UPDATE research_workflow_run SET configuration_required=0 WHERE operation_id=?1 AND configuration_ref IS NULL",
+  ).bind(operationId).run();
+  await runtime.CORE_DB.prepare(transitionTrigger).run();
 }
 
 async function installRoute(): Promise<ModelRouteDeployment> {
@@ -220,7 +243,7 @@ async function installRoute(): Promise<ModelRouteDeployment> {
 }
 
 export async function fixture(claimKind: "observation" | "assumption" = "observation", canonicalLineage = false) {
-  const original = await originalReport(claimKind, canonicalLineage);
+  const original = await originalReport(claimKind, canonicalLineage, { seedMigrationTimeLegacy: true });
   const allOriginal = await runtime.WORK_BUCKET.list();
   const originalBytes = new Map<string, string>();
   for (const entry of allOriginal.objects) {

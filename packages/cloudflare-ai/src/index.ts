@@ -56,7 +56,10 @@ export {
   modelGatewayRequestParametersSha256,
   modelGatewaySha256,
   validateModelGatewayRequestBody,
+  validateModelGatewayTransportPolicy,
   type ModelGatewayDynamicRouteTarget,
+  type ModelGatewayRequestCapabilitiesV1,
+  type ModelGatewayTransportPolicyV1,
 } from "./model-gateway-request.js";
 export { decodeModelGatewayBody, decodeModelGatewayResponse } from "./model-gateway-response.js";
 export {

@@ -3,6 +3,7 @@ import { ArtifactSectionReviseRequestSchema } from "@eliotr/cloudflare-workflows
 import { z } from "zod";
 import { ModelAttemptError, type ModelAttemptReservationInput } from "./model-attempt-types.js";
 import type { ArtifactCowModelCallContext } from "./artifact-cow-model-executor.js";
+import type { PinnedModelSelection } from "./model-gateway-deployment-registry-d1.js";
 
 interface CurrentCowRow {
   readonly operation_id: unknown;
@@ -56,12 +57,15 @@ interface CowSpendRow {
   readonly workflow_authorization_receipt_ref: unknown;
   readonly route_ref: unknown;
   readonly expected_deployment_json: unknown;
+  readonly request_json: unknown;
   readonly approval_json: unknown;
   readonly expires_at: unknown;
 };
 
 export interface ArtifactCowModelRouteAuthority {
   resolve(route_ref: string): Promise<unknown | null>;
+  resolvePinned?(deployment: ModelRouteDeployment, selection: PinnedModelSelection,
+    options?: Readonly<{ allow_expired_qualification?: boolean }>): Promise<unknown | null>;
 }
 
 function stale(message: string, cause?: unknown): never {
@@ -153,7 +157,7 @@ export function createD1ArtifactCowModelRevalidator(input: {
     const spend = await input.database.prepare(
       "SELECT authorization_ref,operation_id,call_slot,workflow_operation_id,stage_attempt_ref,stage_request_sha256,workflow_budget_receipt_ref,"
       + "intent_id,intent_revision,reservation_id,quote_ref,principal_ref,client_class,credential_generation,deployment_generation,policy_decision_ref,"
-      + "policy_generation,currentness_digest,scope_snapshot_id,scope_snapshot_revision,workflow_authorization_receipt_ref,route_ref,expected_deployment_json,approval_json,expires_at "
+      + "policy_generation,currentness_digest,scope_snapshot_id,scope_snapshot_revision,workflow_authorization_receipt_ref,route_ref,expected_deployment_json,request_json,approval_json,expires_at "
       + "FROM artifact_section_revise_spend_admission WHERE workflow_operation_id=?1 AND stage_attempt_ref=?2 AND stage_request_sha256=?3 "
       + "AND call_slot=?4 AND operation_id=?5 AND intent_id=?6 AND intent_revision=?7 LIMIT 1",
     ).bind(context.request.operation_id, context.workflow_attempt.attempt_ref, context.workflow_attempt.request_sha256,
@@ -177,7 +181,48 @@ export function createD1ArtifactCowModelRevalidator(input: {
     const expectedDeployment = deploymentFrom(spend);
     if (expectedDeployment.route_ref !== prepared.call.route_ref || expectedDeployment.prompt_generation !== prepared.call.prompt_generation ||
         expectedDeployment.schema_generation !== prepared.call.schema_generation) stale("COW W3 spend admission pins a different model prompt");
-    const currentDeploymentRaw = await input.route_authority.resolve(prepared.call.route_ref);
+    let admissionRequest: Record<string, unknown>;
+    try {
+      admissionRequest = json(spend.request_json, "COW W3 admission request");
+    } catch (cause) { stale("COW W3 admission request is malformed", cause); }
+    const reportWitness = parsedAttempt.request.report_admission_witness;
+    if (reportWitness?.material === undefined) stale("COW original REPORT witness material is missing");
+    const runConfiguration = reportWitness.material.run_configuration;
+    if (canonicalJson(admissionRequest.run_configuration ?? null) !== canonicalJson(runConfiguration ?? null)) {
+      stale("COW W3 model pin differs from its immutable REPORT witness");
+    }
+    let currentDeploymentRaw: unknown | null;
+    if (runConfiguration === null || runConfiguration === undefined) {
+      currentDeploymentRaw = await input.route_authority.resolve(prepared.call.route_ref);
+    } else {
+      if (typeof runConfiguration !== "object" || Array.isArray(runConfiguration)) stale("COW original run pin is malformed");
+      const pin = runConfiguration as Record<string, unknown>;
+      if ((pin.mode !== "snapshot-v1" && pin.mode !== "snapshot-v2") ||
+          typeof pin.operation_id !== "string" || typeof pin.investigation_id !== "string" ||
+          typeof pin.principal_ref !== "string" || typeof pin.deployment_generation !== "string" ||
+          typeof pin.configuration_ref !== "string" || typeof pin.configuration_sha256 !== "string" ||
+          !Array.isArray(pin.model_selections)) stale("COW original run pin identity is incomplete");
+      const stage = spend.call_slot === "SYNTHESIZE" ? "SYNTHESIZE" : "AUDIT_CLAIMS";
+      const matches = pin.model_selections.filter((item): item is PinnedModelSelection & { readonly stage: string } =>
+        typeof item === "object" && item !== null && !Array.isArray(item) && (item as { stage?: unknown }).stage === stage);
+      const selection = matches[0];
+      if (matches.length !== 1 || selection === undefined || selection.route_ref !== expectedDeployment.route_ref ||
+          selection.route_version !== expectedDeployment.route_version || input.route_authority.resolvePinned === undefined) {
+        stale("COW original run has no exact pinned qualification for this model slot");
+      }
+      const row = await input.database.prepare(
+        "SELECT c.configuration_ref,c.configuration_sha256 FROM research_workflow_run r " +
+        "JOIN research_run_configuration c ON c.operation_id=r.operation_id AND c.configuration_ref=r.configuration_ref " +
+        "WHERE r.operation_id=?1 AND r.investigation_id=?2 AND r.principal_ref=?3 AND r.deployment_generation=?4 LIMIT 1",
+      ).bind(pin.operation_id, pin.investigation_id, pin.principal_ref, pin.deployment_generation)
+        .first<{ readonly configuration_ref: unknown; readonly configuration_sha256: unknown }>();
+      if (row === null || row.configuration_ref !== pin.configuration_ref || row.configuration_sha256 !== pin.configuration_sha256) {
+        stale("COW original run configuration pointer changed or disappeared");
+      }
+      currentDeploymentRaw = await input.route_authority.resolvePinned(expectedDeployment, selection, {
+        allow_expired_qualification: pin.mode === "snapshot-v2",
+      });
+    }
     if (currentDeploymentRaw === null) stale("COW model deployment is not active");
     let currentDeployment: ModelRouteDeployment;
     try { currentDeployment = decodeModelRouteDeployment(currentDeploymentRaw); }

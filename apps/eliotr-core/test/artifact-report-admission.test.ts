@@ -44,7 +44,7 @@ describe("dedicated artifact REPORT admission", () => {
     const before = await intents();
     const prepared = await prepareOwnerArtifactReportAdmission(data.configuredEnv,data.context,data.request);
     await runtime.CORE_DB.prepare("UPDATE scope_read_policy SET state='REVOKED' WHERE source_namespace_id=?1 AND principal_ref=?2")
-      .bind("ns-artifact-reader-source-report-admission-revoked",data.context.principal_ref).run();
+      .bind(data.source_namespace_id,data.context.principal_ref).run();
     await expect(prepared.commit()).rejects.toThrow();
     expect(await intents()).toBe(before);
     expect(await prepared.readback()).toBeNull();

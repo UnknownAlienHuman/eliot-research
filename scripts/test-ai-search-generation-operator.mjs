@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { createServer } from "node:http";
-import { access, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { access, chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -14,6 +14,7 @@ const desired = JSON.parse(
 const accountId = "mock-generation-account";
 const databaseId = "mock-generation-database";
 const apiToken = "mock-generation-token";
+const oauthBearer = "mock-generation-oauth-bearer";
 const stateRoot = await mkdtemp(resolve(tmpdir(), "eliotr-generation-operator-"));
 let database;
 let mode = "normal";
@@ -88,7 +89,7 @@ const server = createServer(async (req, res) => {
     if (
       req.method !== "POST" ||
       url.pathname !== queryPath ||
-      req.headers.authorization !== `Bearer ${apiToken}`
+      ![`Bearer ${apiToken}`, `Bearer ${oauthBearer}`].includes(req.headers.authorization)
     ) {
       response(res, 404, {
         success: false,
@@ -152,7 +153,7 @@ const address = server.address();
 assert(address && typeof address === "object");
 const apiBase = `http://127.0.0.1:${address.port}/client/v4`;
 
-function run(command, args = [], stateName = "default") {
+function run(command, args = [], stateName = "default", environment = {}) {
   return new Promise((resolveRun) => {
     const child = spawn(
       process.execPath,
@@ -173,6 +174,7 @@ function run(command, args = [], stateName = "default") {
           ...process.env,
           CLOUDFLARE_ACCOUNT_ID: accountId,
           CLOUDFLARE_API_TOKEN: apiToken,
+          ...environment,
         },
         stdio: ["ignore", "pipe", "pipe"],
       },
@@ -189,6 +191,36 @@ function run(command, args = [], stateName = "default") {
       resolveRun({ status, signal, stdout, stderr });
     });
   });
+}
+
+async function installFakeWranglerPnpm(directory, activeAccountId) {
+  await mkdir(directory, { recursive: true });
+  const body = process.platform === "win32"
+    ? [
+        "@echo off",
+        'if not "%1"=="exec" exit /b 21',
+        'if not "%2"=="wrangler" exit /b 22',
+        'if not "%3"=="whoami" exit /b 23',
+        'if defined CLOUDFLARE_API_TOKEN exit /b 24',
+        `echo id ${activeAccountId} ok`,
+        "exit /b 0",
+        "",
+      ].join("\r\n")
+    : [
+        "#!/bin/sh",
+        '[ "$1" = "exec" ] || exit 21',
+        '[ "$2" = "wrangler" ] || exit 22',
+        '[ "$3" = "whoami" ] || exit 23',
+        '[ -z "$CLOUDFLARE_API_TOKEN" ] || exit 24',
+        `printf '%s\\n' 'id ${activeAccountId} ok'`,
+        "exit 0",
+        "",
+      ].join("\n");
+  const executable = resolve(directory, process.platform === "win32" ? "pnpm.cmd" : "pnpm");
+  await writeFile(executable, body, "utf8");
+  if (process.platform !== "win32") await chmod(executable, 0o755);
+  const pathKey = Object.keys(process.env).find((key) => key.toUpperCase() === "PATH") ?? "PATH";
+  return { [pathKey]: `${directory}${process.platform === "win32" ? ";" : ":"}${process.env[pathKey] ?? ""}` };
 }
 
 function parsedSuccess(result, label) {
@@ -241,6 +273,42 @@ try {
   assert.equal(empty.registry_snapshot, null);
   assert.equal(requests, 1);
   assert.equal(writeAttempts, 0);
+
+  const oauthProfilePath = resolve(stateRoot, "wrangler-oauth.toml");
+  await writeFile(
+    oauthProfilePath,
+    `oauth_token = "${oauthBearer}"\nexpiration_time = "2030-01-01T00:00:00.000Z"\n`,
+    "utf8",
+  );
+  const oauthBin = resolve(stateRoot, "wrangler-oauth-bin");
+  const oauthPath = await installFakeWranglerPnpm(oauthBin, accountId);
+  const oauthEnvironment = {
+    ELIOTR_CLOUDFLARE_AUTH_MODE: "wrangler-oauth",
+    ELIOTR_WRANGLER_CONFIG_FILE: oauthProfilePath,
+    ...oauthPath,
+  };
+  const beforeOAuthStatus = requests;
+  const oauthStatus = parsedSuccess(
+    await run("status", [], "oauth-valid", oauthEnvironment),
+    "Wrangler OAuth status",
+  );
+  assert.equal(oauthStatus.registry_snapshot, null);
+  assert.equal(requests, beforeOAuthStatus + 1);
+  assert(!JSON.stringify(oauthStatus).includes(oauthBearer), "OAuth bearer leaked into receipt");
+
+  const wrongAccountBin = resolve(stateRoot, "wrangler-wrong-account-bin");
+  const wrongAccountPath = await installFakeWranglerPnpm(wrongAccountBin, "different-account");
+  const beforeOAuthMismatch = requests;
+  const oauthMismatch = parsedFailure(
+    await run("status", [], "oauth-mismatch", {
+      ...oauthEnvironment,
+      ...wrongAccountPath,
+    }),
+    "AI_SEARCH_GENERATION_OPERATOR_INPUT_INVALID",
+    "Wrangler OAuth account mismatch",
+  );
+  assert.equal(requests, beforeOAuthMismatch, "mismatched OAuth account contacted D1");
+  assert(!JSON.stringify(oauthMismatch).includes(oauthBearer), "OAuth bearer leaked into error");
 
   const beforeUnconfirmed = requests;
   parsedFailure(

@@ -11,7 +11,7 @@ export interface Env {
   readonly RESEARCH_SESSION: DurableObjectNamespace;
   readonly RESEARCH_WORKFLOW: Workflow;
   readonly AI_SEARCH: AiSearchNamespaceLike;
-  readonly AI?: WorkersAiMarkdownBinding;
+  readonly AI?: WorkersAiMarkdownBinding & Partial<Pick<Ai, "models">>;
   readonly METRICS: AnalyticsEngineDataset;
   readonly ASSETS: Fetcher;
   readonly ENVIRONMENT: "development" | "staging" | "production";
@@ -27,6 +27,8 @@ export interface Env {
   /** Installed server model definition and its provenance; no request may override either. */
   readonly ELIOTR_MODEL_PROFILE_DEFINITION_JSON?: string;
   readonly ELIOTR_MODEL_PROFILE_PROVENANCE_REF?: string;
+  /** Operator-approved transport policies used before exact model qualification. */
+  readonly ELIOTR_RESEARCH_MODEL_TRANSPORT_POLICIES_JSON?: string;
   /** Installed synthesis/audit prompts and normalization contract. */
   /** Immutable semantic config revision reference (S29); replaces the split JSON chunks. */
   readonly ELIOTR_RESEARCH_SEMANTIC_CONFIG_REF?: string;

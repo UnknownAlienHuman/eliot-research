@@ -34,11 +34,22 @@ function anchorText(anchor: ResolvedEvidence["handle"]["anchor"]): string {
   return anchor.kind;
 }
 
+export function evidenceSourceTitle(sourceTitle: string | undefined): string {
+  return sourceTitle ?? "Authorized source excerpt";
+}
+
+export function evidenceSourceRevisionText(sourceRevisionRef: string): string {
+  return `Source revision: ${sourceRevisionRef}`;
+}
+
+export const EVIDENCE_INTEGRITY_NOTE = "This confirms that the excerpt bytes match the authorized handle and SHA-256. It does not assess any report claim; review the claim verdicts in the report.";
+
 function renderVerified(detail: HTMLElement, opened: Awaited<ReturnType<typeof verifyAndOpenEvidence>>): HTMLElement {
   const evidence = opened.evidence;
-  const heading = document.createElement("h3"); heading.textContent = evidence.source_title ?? evidence.handle.source_revision_ref;
+  const heading = document.createElement("h3"); heading.textContent = evidenceSourceTitle(evidence.source_title);
+  const revision = document.createElement("p"); revision.className = "evidence-source-revision"; revision.textContent = evidenceSourceRevisionText(evidence.handle.source_revision_ref);
   const state = document.createElement("p"); state.className = "evidence-read-state";
-  state.textContent = "Source excerpt verified";
+  state.textContent = "Excerpt bytes verified";
   const source = document.createElement("pre"); source.className = "evidence-source"; source.textContent = opened.text;
   const excerpt = document.createElement("div"); excerpt.className = "reading-view evidence-excerpt";
   const original = document.createElement("details"); original.className = "evidence-provenance";
@@ -50,14 +61,14 @@ function renderVerified(detail: HTMLElement, opened: Awaited<ReturnType<typeof v
     field("Anchor", anchorText(evidence.handle.anchor)),
     field("Excerpt SHA-256", opened.excerptSha256),
     field("Verification", opened.verificationReceiptRef),
-    field("Integrity", `${evidence.handle.terminal_state} · ${evidence.instruction_taint}`),
+    field("Handle and instruction state", `${evidence.handle.terminal_state} · ${evidence.instruction_taint}`),
   );
   const note = document.createElement("p"); note.className = "evidence-note";
-  note.textContent = "Matches the selected scope and source revision.";
+  note.textContent = EVIDENCE_INTEGRITY_NOTE;
   const provenance = document.createElement("details"); provenance.className = "evidence-provenance";
   const summary = document.createElement("summary"); summary.textContent = "Revision and verification";
   provenance.append(summary, note, metadata);
-  detail.replaceChildren(heading, state, excerpt, original, provenance);
+  detail.replaceChildren(heading, revision, state, excerpt, original, provenance);
   return excerpt;
 }
 
@@ -118,7 +129,7 @@ export function mountEvidenceRail(
       .then((opened) => {
         if (current !== serial) return;
         if (expectedExcerptSha256 !== undefined && opened.excerptSha256 !== expectedExcerptSha256) throw new ApiRequestError({ status: 502, code: "EVIDENCE_RESPONSE_INVALID", message: "Opened evidence does not match the cited excerpt" });
-        const excerpt = renderVerified(detail, opened); status.textContent = "VERIFIED";
+        const excerpt = renderVerified(detail, opened); status.textContent = "EXCERPT INTEGRITY VERIFIED";
         void renderReadingMarkdown(excerpt, opened.text, controller?.signal);
         const sourceActions = document.createElement("div"); sourceActions.className = "evidence-source-actions";
         const fullSource = document.createElement("button"); fullSource.type = "button"; fullSource.className = "button button--quiet";
@@ -142,7 +153,7 @@ export function mountEvidenceRail(
               back.onclick = () => {
                 local.abort(); full.remove(); back.remove();
                 for (const child of Array.from(detail.children)) if (child instanceof HTMLElement) child.hidden = false;
-                fullSource.disabled = false; status.textContent = "VERIFIED"; fullSource.focus({ preventScroll: true });
+                fullSource.disabled = false; status.textContent = "EXCERPT INTEGRITY VERIFIED"; fullSource.focus({ preventScroll: true });
               };
               for (const child of Array.from(detail.children)) if (child instanceof HTMLElement) child.hidden = true;
               detail.append(back, full); heading.focus({ preventScroll: true });

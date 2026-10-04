@@ -3,6 +3,7 @@ import type {
   ModelRouteDeployment,
   RouteFingerprint,
 } from "@eliotr/platform-cloudflare";
+import type { ModelGatewayTransportPolicyV1 } from "./model-gateway-request.js";
 
 export type ModelCallInput = Parameters<ModelGatewayAdapter["execute"]>[0];
 export type ModelCallReceipt = Awaited<ReturnType<ModelGatewayAdapter["execute"]>>;
@@ -137,6 +138,8 @@ export type ModelGatewayTransportDependencies = ModelGatewayTokenTransport | Mod
 
 export type ModelGatewayExecutionDependencies = ModelGatewayTransportDependencies & {
   readonly reasoning_gateway_base_url: string;
+  /** Server-owned provider, billing and API capability selection; omitted for legacy callers. */
+  readonly transport_policy?: ModelGatewayTransportPolicyV1;
   readonly deployments: ModelGatewayDeploymentRegistryPort;
   readonly prompts: ModelGatewayPromptCompilerPort;
   readonly outputs: ModelGatewayOutputStorePort;

@@ -42,6 +42,10 @@ const clientDiagnosticAnnotations = {
   idempotentHint: false,
   openWorldHint: false,
 } as const;
+const managedOAuthResearchTools = new Set([
+  "eliotr_query", "eliotr_run", "eliotr_run_status", "eliotr_report", "eliotr_section",
+  "eliotr_citations", "eliotr_verify", "eliotr_open", "eliotr_source_read",
+]);
 
 export const GEMINI_MCP_TOOLS: readonly McpToolDefinition[] = [
   ...Object.values(MCP_RESEARCH_TOOLS),
@@ -126,8 +130,13 @@ export async function callGeminiMcpTool(
 ): Promise<McpToolCallResult> {
   try {
     if (isMcpResearchTool(name)) {
-      if (dependencies.mcp_auth_profile !== "service-token" || !dependencies.research ||
-          context.verified_actor?.auth_profile !== "service-token" || !context.verified_access) {
+      const profile = dependencies.mcp_auth_profile;
+      const method = profile === "managed-oauth" ? "cloudflare_access" : "service_token";
+      if ((profile !== "service-token" && profile !== "managed-oauth") || !dependencies.research ||
+          context.verified_actor?.auth_profile !== profile || !context.verified_access ||
+          context.verified_access.authentication_method !== method ||
+          (profile === "managed-oauth" && !managedOAuthResearchTools.has(name)) ||
+          (profile === "service-token" && name === "eliotr_source_read")) {
         throw new GeminiMcpToolError("MCP_RESEARCH_UNAVAILABLE", "Delegated Research is unavailable in this profile");
       }
       return { structuredContent: await dependencies.research(name, input, context) };

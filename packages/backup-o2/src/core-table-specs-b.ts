@@ -81,6 +81,13 @@ export const DURABLE_CORE_TABLE_SPECS_B: readonly TableSpec[] = [
       "qualification_sha256": "text",
       "activated_at": "text"
   }, required: false },
+  { manifest: "generations", table: "dynamic_route_qualification_revocation", order_by: "qualification_ref, qualification_sha256", columns: {
+      "qualification_ref": "text",
+      "qualification_sha256": "text",
+      "reason": "text",
+      "revoked_by": "text",
+      "revoked_at": "text"
+  }, required: false },
   { manifest: "heads", table: "wiki_publication_proposal", order_by: "proposal_id, proposal_revision", columns: {
       "proposal_id": "text",
       "proposal_revision": "int",

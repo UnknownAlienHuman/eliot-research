@@ -1,9 +1,17 @@
 import { createHash } from "node:crypto";
+import { spawnSync } from "node:child_process";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createCloudflareD1HttpDatabase } from "./lib/cloudflare-d1-http.mjs";
 import { loadCompiledWorkspaceModule } from "./lib/compiled-workspace-module.mjs";
+import {
+  loadWranglerOAuthCredential,
+  resolveAuthMode,
+  scrubTokenEnv,
+  verifyWranglerOAuthAccount,
+  WRANGLER_OAUTH_MODE,
+} from "./lib/cloudflare-wrangler-oauth.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const COMMANDS = new Set(["status", "declare", "observe", "promote"]);
@@ -71,8 +79,10 @@ Common options:
   --state-directory PATH Defaults to ELIOTR_STATE_DIRECTORY or .eliotr-state
   --timeout-ms N        D1 HTTP timeout in milliseconds
 
-CLOUDFLARE_API_TOKEN is accepted only through the environment. Mutating commands require
---confirm-live. Promotion additionally requires --confirm-generation to equal the desired generation.`;
+Authentication defaults to CLOUDFLARE_API_TOKEN from the environment. Set
+ELIOTR_CLOUDFLARE_AUTH_MODE=wrangler-oauth to use the existing Wrangler browser profile.
+Mutating commands require --confirm-live. Promotion additionally requires --confirm-generation
+to equal the desired generation.`;
 }
 
 function parseArguments(argv) {
@@ -300,12 +310,59 @@ async function databaseIdFromConfig(path) {
 
 async function resolveConnection(options) {
   const accountId = options["account-id"] ?? process.env.CLOUDFLARE_ACCOUNT_ID;
-  const apiToken = process.env.CLOUDFLARE_API_TOKEN;
   if (typeof accountId !== "string" || accountId.length < 1) {
     inputFailure("CLOUDFLARE_ACCOUNT_ID or --account-id is required");
   }
-  if (typeof apiToken !== "string" || apiToken.length < 1) {
-    inputFailure("CLOUDFLARE_API_TOKEN is required in the environment");
+  let authMode;
+  try {
+    authMode = resolveAuthMode(process.env);
+  } catch (error) {
+    inputFailure(error instanceof Error ? error.message : "Cloudflare authentication mode is invalid");
+  }
+  let apiToken;
+  if (authMode === WRANGLER_OAUTH_MODE) {
+    const oauthEnv = scrubTokenEnv({
+      ...process.env,
+      ELIOTR_CLOUDFLARE_AUTH_MODE: WRANGLER_OAUTH_MODE,
+    });
+    const whoami = spawnSync(
+      process.platform === "win32" ? "cmd.exe" : "pnpm",
+      process.platform === "win32"
+        ? ["/d", "/s", "/c", "pnpm exec wrangler whoami"]
+        : ["exec", "wrangler", "whoami"],
+      {
+        cwd: root,
+        env: oauthEnv,
+        encoding: "utf8",
+        windowsHide: true,
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
+    if (whoami.error || whoami.status !== 0) {
+      inputFailure("Wrangler browser OAuth account verification failed");
+    }
+    try {
+      await verifyWranglerOAuthAccount({
+        expectedAccountId: accountId,
+        getWhoamiOutput: async () => whoami.stdout ?? "",
+      });
+    } catch (error) {
+      inputFailure(error instanceof Error
+        ? error.message
+        : "Wrangler browser OAuth account mismatch");
+    }
+    try {
+      apiToken = (await loadWranglerOAuthCredential({ env: oauthEnv, now: Date.now() })).bearer;
+    } catch (error) {
+      inputFailure(error instanceof Error
+        ? error.message
+        : "Wrangler browser OAuth credential is unavailable");
+    }
+  } else {
+    apiToken = process.env.CLOUDFLARE_API_TOKEN;
+    if (typeof apiToken !== "string" || apiToken.length < 1) {
+      inputFailure("CLOUDFLARE_API_TOKEN is required in the environment");
+    }
   }
   const deployConfig = pathOption(
     options,

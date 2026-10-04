@@ -55,6 +55,9 @@ test("production and dry-run do not require or derive staging permission", async
   const commands = [];
   const result = await deployCloudflare({
     confirmLive: false,
+    // Source sealing has separate fixtures; isolate the staging authorization flow.
+    captureBuildInputs: async () => Object.freeze({ files: [] }),
+    checkBuildInputs: async () => true,
     environment: { ELIOTR_ENVIRONMENT: "staging" },
     execute: (command, args) => commands.push([command, args]),
     fetchImpl: () => assert.fail("dry-run must not contact a remote target"),
@@ -71,6 +74,7 @@ test("invalid staging target stops orchestrator before credential reads, command
     const calls = [];
     await assert.rejects(deployCloudflare({
       confirmLive: true,
+      captureBuildInputs: async () => Object.freeze({ files: [] }),
       environment: {
         ...environment(), ELIOTR_STAGING_TARGET_JSON: declared,
         ELIOTR_CLOUDFLARE_AUTH_MODE: "wrangler-oauth",

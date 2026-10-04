@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { handleHttp } from "../src/http.js";
-import { admissionTestEnvironment, terminateAdmissionWorkflows } from "./research-admission-fixture.js";
+import { admissionTestEnvironment, admissionTestScopeExpression, terminateAdmissionWorkflows } from "./research-admission-fixture.js";
 import { createD1ScopeProfilePort, type RetrievalQueryAccess, type ScopeProfileBinding } from "@eliotr/retrieval";
 import { OWNER_RESEARCH_SCOPE_PROFILE } from "@eliotr/cloudflare-navigation";
 import { createD1EvidenceAuthorityPort, evidenceSha256, evidenceSha256Bytes } from "@eliotr/cloudflare-evidence";
@@ -32,13 +32,14 @@ const access: RetrievalQueryAccess = {
   credential_generation: "credential-v1",
 };
 function runRequest(sourceId: string, key: string): Request {
+  void sourceId;
   return new Request("https://research.example/api/v1/research/run", {
     method: "POST",
     headers: { "content-type": "application/json", "idempotency-key": key },
     body: JSON.stringify({
       query: "Held scope research",
       product: "RESEARCH",
-      scope_expression: { kind: "SELECTED_SOURCES", source_ids: [sourceId] },
+      scope_expression: admissionTestScopeExpression("held-scope"),
       literals: [],
       evidence_grade: "E1",
       budget_ref: "research-budget-v1",
@@ -111,7 +112,9 @@ describe("held research scope retrieval over real D1", () => {
     };
     await importAndProject(projectedWorld);
     await addReadPolicy(projectedWorld, principal);
-    const configured = await admissionTestEnvironment(runtime, principal, "held-scope");
+    const configured = await admissionTestEnvironment(runtime, principal, "held-scope", {
+      source_ids: [`source-${projectedWorld.namespace}`],
+    });
     const response = await handleHttp(runRequest(`source-${projectedWorld.namespace}`, "held-scope-run"),
       configured, {} as ExecutionContext, { accessVerifier: verifier() });
     const payload = await body<{ readonly workflow_instance_id: string }>(response);

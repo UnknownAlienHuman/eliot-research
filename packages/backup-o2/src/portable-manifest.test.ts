@@ -3,6 +3,7 @@ import { TABLE_SPECS, BACKUP_MANIFEST_PROTOCOL, BACKUP_SCHEMA_INVENTORY_PROTOCOL
 import { backupSha256Hex, canonicalBackupJson } from "./shared.js";
 import { rebuildManifestLines } from "./coverage.js";
 import { BACKUP_PORTABLE_MANIFEST_NAMES, verifyPortableBackupManifests } from "./portable-manifest.js";
+import { BACKUP_R2_PAYLOAD_PROTOCOL } from "./r2-inventory.js";
 import type { BackupEpochDraft } from "./epoch.js";
 
 const HEX = "a".repeat(64);
@@ -48,7 +49,7 @@ async function fixture(): Promise<{
     "schema-inventory": schemaInventory,
     ownership: [], sources: [], revisions: [], projects: [], scopes: [], handles: [], heads: [], generations: [], retention: [],
     purge: [canonicalBackupJson({ purge_frontier: 0, purge_digest: purgeDigest })],
-    "r2-objects": [canonicalBackupJson({ object_count: 0, total_bytes: 0, fingerprint: emptyDigest })],
+    "r2-objects": [canonicalBackupJson({ object_count: 0, total_bytes: 0, fingerprint: emptyDigest, payload_protocol: BACKUP_R2_PAYLOAD_PROTOCOL })],
     rebuild: rebuildManifestLines().map((line) => canonicalBackupJson(JSON.parse(line) as unknown)).sort(),
     vector: [canonicalBackupJson({ protocol: BACKUP_MANIFEST_PROTOCOL, vector, vector_digest: vectorDigest, schema_inventory_digest: schemaInventoryDigest, cut_id: "cut-1", cut_digest: HEX })],
   };
@@ -81,6 +82,8 @@ async function fixture(): Promise<{
       etag: `etag-${part.manifest}`,
       existed_identically: false,
     }))),
+    r2_payload_protocol: BACKUP_R2_PAYLOAD_PROTOCOL,
+    payload_part_index: [],
     purge_ledger_revision: 0,
     purge_ledger_digest: purgeDigest,
     r2_object_count: 0,

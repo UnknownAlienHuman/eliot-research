@@ -18,6 +18,12 @@ import { readJsonBodyWithinBytes } from "./bounded-json.js";
 import type { Env } from "./env.js";
 import { apiResult, HttpRequestError } from "./http.js";
 import { createResearchOwnerRoutePlan } from "./research-owner-route-plan.js";
+import {
+  bindResearchPreparedModelTransportPolicy,
+  parseResearchPreparedModelTransportPolicies,
+  ResearchPreparedModelTransportError,
+  resolveResearchPreparedModelTransportPolicy,
+} from "./research-prepared-model-transport.js";
 
 const QUALIFICATION_ERROR_CODES = new Set<ModelGatewayExecutionErrorCode>([
   "MODEL_GATEWAY_DEPLOYMENT_MISSING", "MODEL_GATEWAY_PROMPT_COMPILE_FAILED",
@@ -204,14 +210,22 @@ function invalid(): never {
     "Qualification requires an exact prepared owner document request");
 }
 
+function qualificationStage(
+  probe: DynamicRouteQualificationProbeInput,
+): "SYNTHESIZE" | "AUDIT_CLAIMS" {
+  const routeRef = probe.provisioning.deployment.route_ref;
+  return routeRef === "dynamic/eliotr-balanced" ? "SYNTHESIZE"
+    : routeRef === "dynamic/eliotr-audit-verifier" ? "AUDIT_CLAIMS" : invalid();
+}
+
 /** Only the two server-owned document prompts may use this setup endpoint. */
 async function requireOwnerPrompt(
   probe: DynamicRouteQualificationProbeInput,
   prompt: ResearchQualificationPromptConfig,
+  transportPolicy: ResearchModelGatewayRuntimeConfig["transport_policy"],
 ): Promise<void> {
   const deployment = probe.provisioning.deployment;
-  const stage = deployment.route_ref === "dynamic/eliotr-balanced" ? "SYNTHESIZE"
-    : deployment.route_ref === "dynamic/eliotr-audit-verifier" ? "AUDIT_CLAIMS" : invalid();
+  const stage = qualificationStage(probe);
   for (const outputFormat of ["prompt_json", "json_schema"] as const) {
     const selected = selectResearchOwnerPrompt(stage, outputFormat);
     const trusted = {
@@ -230,6 +244,7 @@ async function requireOwnerPrompt(
       max_tokens: trusted.max_tokens,
       ...(prompt.trusted_parameters.reasoning_effort === undefined
         ? {} : { reasoning_effort: prompt.trusted_parameters.reasoning_effort }),
+      ...(transportPolicy === undefined ? {} : { transport_policy: transportPolicy }),
       route_definition: probe.route_definition,
     });
     if (canonicalModelGatewayJson(plan.deployment) === canonicalModelGatewayJson(deployment)) return;
@@ -275,7 +290,29 @@ export async function handleResearchModelQualification(
     probe = parseDynamicRouteQualificationProbeInput(body.probe);
     prompt = parseResearchQualificationPromptConfig(body.prompt);
   } catch { invalid(); }
-  await requireOwnerPrompt(probe, prompt);
+
+  try {
+    const preparedPolicies = parseResearchPreparedModelTransportPolicies(
+      env.ELIOTR_RESEARCH_MODEL_TRANSPORT_POLICIES_JSON,
+    );
+    const preparedSelection = resolveResearchPreparedModelTransportPolicy(preparedPolicies, {
+      stage: qualificationStage(probe),
+      route_ref: probe.provisioning.deployment.route_ref,
+      route_version: probe.provisioning.deployment.route_version,
+      provider: probe.expected_provider,
+      model: probe.expected_model,
+    });
+    gateway = bindResearchPreparedModelTransportPolicy(gateway, preparedSelection);
+  } catch (error) {
+    if (!(error instanceof ResearchPreparedModelTransportError)) throw error;
+    throw new HttpRequestError(
+      error.code,
+      503,
+      "Server-prepared model transport policy is invalid or does not match this exact qualification route",
+    );
+  }
+  const transportPolicy = gateway.transport_policy;
+  await requireOwnerPrompt(probe, prompt, transportPolicy);
   try {
     const service = createResearchModelQualificationDispatch({
       core_database: env.CORE_DB,
@@ -283,6 +320,7 @@ export async function handleResearchModelQualification(
       work_bucket: env.WORK_BUCKET,
       evidence_bucket: env.EVIDENCE_BUCKET,
       gateway,
+      ...(transportPolicy === undefined ? {} : { transport_policy: transportPolicy }),
       now: () => new Date().toISOString(),
     });
     const observed = await service.execute({

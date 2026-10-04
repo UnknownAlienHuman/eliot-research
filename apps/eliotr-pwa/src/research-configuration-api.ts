@@ -36,6 +36,11 @@ export interface ResearchConfigurationView {
   readonly deployment_generation: string;
 }
 
+export interface ReadResearchConfigurationOptions {
+  readonly projectId?: string;
+  readonly signal?: AbortSignal;
+}
+
 function isRecord(value: unknown): value is JsonRecord {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -236,12 +241,22 @@ function decode(value: unknown, expected: string): ResearchConfigurationView {
   };
 }
 
-/** Reads installed research configuration state for the current owner session. */
+/** Reads readiness for the selected project, or owner-installed readiness when no project is supplied. */
 export async function readResearchConfiguration(
   expectedDeploymentGeneration: string,
-  signal?: AbortSignal,
+  options: ReadResearchConfigurationOptions = {},
 ): Promise<ResearchConfigurationView> {
   const expected = expectedGeneration(expectedDeploymentGeneration);
-  const raw = await requestApi(RESEARCH_CONFIGURATION_PATH, signal === undefined ? {} : { signal });
+  let path = RESEARCH_CONFIGURATION_PATH;
+  if (options.projectId !== undefined) {
+    const projectId = options.projectId;
+    if (typeof projectId !== "string" || projectId.length === 0 || projectId.length > 256 ||
+        projectId !== projectId.trim() || !SAFE_GENERATION.test(projectId)) {
+      throw new ApiRequestError({ status: 400, code: "RESEARCH_PROJECT_ID_INVALID", message: "Project id is invalid." });
+    }
+    const query = new URLSearchParams({ project_id: projectId });
+    path = `${path}?${query.toString()}`;
+  }
+  const raw = await requestApi(path, options.signal === undefined ? {} : { signal: options.signal });
   return decode(raw, expected);
 }

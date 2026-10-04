@@ -8,6 +8,7 @@ export {
 } from "./admission-policy-install.js";
 export * from "./types.js";
 export * from "./authority.js";
+export * from "./shared-execution-fence.js";
 export * from "./authority-reset.js";
 export * from "./ledger.js";
 export * from "./inventory.js";

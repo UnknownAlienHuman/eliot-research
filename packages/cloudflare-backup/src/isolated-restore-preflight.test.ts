@@ -6,18 +6,24 @@ import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
 import type { BackupEpoch } from "@eliotr/contracts";
-import { BACKUP_MANIFEST_PROTOCOL, BACKUP_SCHEMA_INVENTORY_PROTOCOL, TABLE_SPECS, digestCoreColumnInventory, readCoreColumnInventory } from "@eliotr/backup-o2";
+import { BACKUP_MANIFEST_PROTOCOL, BACKUP_R2_PAYLOAD_PROTOCOL, BACKUP_SCHEMA_INVENTORY_PROTOCOL, TABLE_SPECS, digestCoreColumnInventory, readCoreColumnInventory } from "@eliotr/backup-o2";
 import { rebuildManifestLines } from "@eliotr/backup-o2";
 import type { BackupEpochDraft, BackupPartRef } from "@eliotr/backup-o2";
 import { destinationDescriptorDigest, destinationPolicyDigest, type BackupDestinationPolicy } from "@eliotr/backup-o2";
 import type { OffsiteCopyAdapter, OffsiteStoredPart } from "@eliotr/backup-o2";
 import { backupSha256Hex, canonicalBackupJson } from "@eliotr/backup-o2";
+import { createD1ErasureRestoreFenceStore } from "@eliotr/cloudflare-erasure";
 import { verifyIsolatedRestorePreflight, type IsolatedRestorePreflightInput } from "./isolated-restore-preflight.js";
+import { executeIsolatedBackupRestore, type RestoreErasureGate } from "./restore-executor.js";
+import { createD1RestoreErasureGate } from "./restore-erasure-gate.js";
+import { createD1BackupRestoreStore } from "./restore-store.js";
 
 const MIGRATION_DIR = fileURLToPath(new URL("../../../infra/d1/core/migrations/", import.meta.url));
 const MANIFEST_NAMES = ["schema", "schema-inventory", "ownership", "sources", "revisions", "projects", "scopes", "handles", "heads", "generations", "retention", "purge", "r2-objects", "rebuild", "vector"] as const;
 const NOW = "2026-10-01T00:00:00.000Z";
 const EXPIRY = "2030-10-01T00:00:00.000Z";
+const SHARED_FENCE_ID = "research-erasure-restore-shared-fence-v1";
+const SHARED_FENCE_KIND = "ERASURE_RESTORE_SHARED_FENCE";
 const H = (c: string): string => c.repeat(64);
 
 function d1Database(db: DatabaseSync): D1Database {
@@ -67,6 +73,31 @@ function emptyBucket(): R2Bucket {
   return { async list() { return { objects: [], truncated: false, delimitedPrefixes: [] }; } } as unknown as R2Bucket;
 }
 
+function fakeRestoreFence(database: DatabaseSync) {
+  const leaseOwner = "restore-test-owner";
+  const leaseGeneration = 1;
+  const now = Date.now();
+  const leaseUntil = now + 60_000;
+  database.prepare(
+    "INSERT INTO operation_execution_lease(operation_id,operation_kind,lease_owner,lease_generation,lease_until,attempt,state,created_at,updated_at) " +
+    "VALUES(?,?,?,?,?,1,'LEASED',?,?)",
+  ).run(SHARED_FENCE_ID, SHARED_FENCE_KIND, leaseOwner, leaseGeneration, leaseUntil, now, now);
+  return {
+    kind: "RESTORE" as const, operation_id: SHARED_FENCE_ID, lease_owner: leaseOwner, lease_generation: leaseGeneration,
+    async assertCurrent() {
+      const row = database.prepare("SELECT lease_owner,lease_generation,lease_until,state FROM operation_execution_lease WHERE operation_id=?")
+        .get(SHARED_FENCE_ID) as { lease_owner: string; lease_generation: number; lease_until: number; state: string } | undefined;
+      if (row?.lease_owner !== leaseOwner || row.lease_generation !== leaseGeneration || row.lease_until <= Date.now() || row.state !== "LEASED") {
+        throw Object.assign(new Error("shared restore fence lost"), { code: "ERASURE_LEASE_LOST" });
+      }
+    },
+    async release() {
+      database.prepare("UPDATE operation_execution_lease SET state='FAILED' WHERE operation_id=? AND lease_owner=? AND lease_generation=? AND state='LEASED'")
+        .run(SHARED_FENCE_ID, leaseOwner, leaseGeneration);
+    },
+  };
+}
+
 function makeAdapter(descriptor: { destination_id: string; failure_domain: string; supports_deletion_journal: boolean; supports_expiry: boolean; retention_locked: boolean; legal_hold_ref?: string }): OffsiteCopyAdapter & { readonly objects: Map<string, { ciphertext: Uint8Array; stored: Omit<OffsiteStoredPart, "ciphertext"> }> } {
   const objects = new Map<string, { ciphertext: Uint8Array; stored: Omit<OffsiteStoredPart, "ciphertext"> }>();
   return {
@@ -106,7 +137,7 @@ async function fixture(): Promise<{ input: IsolatedRestorePreflightInput; primar
     ...inventory.map((table) => canonicalBackupJson({ table: table.table, columns: table.columns.map((column) => column.name), column_shapes: table.columns })),
   ].sort().join("\n");
   manifests["purge"] = canonicalBackupJson({ purge_frontier: 0, purge_digest: purgeDigest });
-  manifests["r2-objects"] = canonicalBackupJson({ object_count: 0, total_bytes: 0, fingerprint: emptyR2Fingerprint });
+  manifests["r2-objects"] = canonicalBackupJson({ object_count: 0, total_bytes: 0, fingerprint: emptyR2Fingerprint, payload_protocol: BACKUP_R2_PAYLOAD_PROTOCOL });
   manifests["rebuild"] = [...rebuildManifestLines()].sort().join("\n");
   manifests["vector"] = canonicalBackupJson({ protocol: BACKUP_MANIFEST_PROTOCOL, vector, vector_digest: vectorDigest, schema_inventory_digest: inventoryDigest, cut_id: "cut-restore-test", cut_digest: H("b") });
   const manifestDigests: Record<string, string> = {};
@@ -125,6 +156,7 @@ async function fixture(): Promise<{ input: IsolatedRestorePreflightInput; primar
   const draft: BackupEpochDraft = {
     epoch_id: "epoch-restore-test", schema_generation: "schema-main-1", migration_ledger_digest: migrationDigest,
     manifest_digests: manifestDigests, group_digests: groupDigests, part_index: parts,
+    r2_payload_protocol: BACKUP_R2_PAYLOAD_PROTOCOL, payload_part_index: [],
     purge_ledger_revision: 0, purge_ledger_digest: purgeDigest, r2_object_count: 0, r2_total_bytes: 0,
     audit_sample_receipt_ref: "audit-restore-test", vector_digest: vectorDigest,
     vector_manifest_digest: manifestDigests["vector"] as string, cut_id: "cut-restore-test",
@@ -189,6 +221,84 @@ describe("isolated restore preflight", () => {
       expect(verified.traffic_ready).toBe(false);
       expect(Object.keys(verified.manifests.manifests).length).toBe(MANIFEST_NAMES.length);
       expect(f.target.prepare("SELECT COUNT(*) AS n FROM source").get()).toEqual({ n: 0 });
+    } finally { f.primary.close(); f.target.close(); }
+  });
+
+  it("acquires the D1 restore gate only after current purge, terminal-target, and epoch-obligation reconciliation", async () => {
+    const f = await fixture();
+    try {
+      const verified = await verifyIsolatedRestorePreflight(f.input);
+      const gate = createD1RestoreErasureGate();
+      const fence = await gate.acquire({
+        primary_database: f.input.primary.db,
+        draft: verified.draft,
+        current_purge: verified.current_purge,
+        manifests: verified.manifests,
+        target: verified.target,
+      });
+      expect(fence.state).toBe("ACQUIRED");
+      expect(fence.terminal_erasure_targets_verified).toBe(true);
+      expect(fence.backup_obligations_verified).toBe(true);
+      expect(fence.backup_obligations).toEqual([]);
+      await fence.assertCurrent();
+      await fence.release();
+    } finally { f.primary.close(); f.target.close(); }
+  });
+
+  it("records a real isolated data-restore receipt as unqualified and keeps traffic closed", async () => {
+    const f = await fixture();
+    try {
+      const gate: RestoreErasureGate = {
+        async acquire(request) {
+          return {
+            state: "ACQUIRED", epoch_id: request.draft.epoch_id,
+            purge_ledger_revision: request.current_purge.revision, purge_ledger_digest: request.current_purge.digest,
+            epoch_subject_scope_digest: H("6"), obligation_inventory_digest: H("7"),
+            terminal_erasure_targets_verified: true, backup_obligations_verified: true,
+            unsettled_erasure_count: 0, backup_obligations: [], shared_execution_fence: fakeRestoreFence(f.primary),
+            async assertCurrent() {}, async release() {},
+          };
+        },
+      };
+      const result = await executeIsolatedBackupRestore({
+        intent: { intent_ref: { id: "restore-op", revision: 1 }, operation_kind: "RESTORE_VERIFY", principal_ref: "owner-test",
+          idempotency_key: "restore-run-1", payload_ref: f.input.draft.epoch_id, policy_decision_ref: "restore-admission-test", created_at: NOW },
+        preflight: f.input, erasure_gate: gate, restore_store: createD1BackupRestoreStore(d1Database(f.primary)),
+      });
+      expect(result.state).toBe("RESTORED_UNQUALIFIED");
+      expect(result.traffic_ready).toBe(false);
+      expect(result.receipt.unresolved_acceptance).toContain("ERASURE_RESTORE_ACCEPTANCE");
+      expect(f.target.prepare("SELECT COUNT(*) AS n FROM source").get()).toEqual({ n: 0 });
+      expect(f.primary.prepare("SELECT state FROM backup_restore_intent").get()).toEqual({ state: "RESTORED_UNQUALIFIED" });
+    } finally { f.primary.close(); f.target.close(); }
+  });
+
+  it("refuses an epoch with a current O4 backup obligation before any target write", async () => {
+    const f = await fixture();
+    try {
+      const gate: RestoreErasureGate = {
+        async acquire(request) {
+          return {
+            state: "ACQUIRED", epoch_id: request.draft.epoch_id,
+            purge_ledger_revision: request.current_purge.revision, purge_ledger_digest: request.current_purge.digest,
+            epoch_subject_scope_digest: H("6"), obligation_inventory_digest: H("7"),
+            terminal_erasure_targets_verified: true, backup_obligations_verified: true,
+            unsettled_erasure_count: 0,
+            backup_obligations: [{ kind: "BACKUP_PURGE", erasure_id: "erase-1", erasure_revision: 1, backup_epoch_id: request.draft.epoch_id,
+              target_id: "backup-target-1", state: "ABSENT", delete_receipt_ref: "delete-receipt", absence_receipt_ref: "absence-receipt", policy_or_hold_ref: null }],
+            shared_execution_fence: fakeRestoreFence(f.primary),
+            async assertCurrent() {}, async release() {},
+          };
+        },
+      };
+      const restoreStore = createD1BackupRestoreStore(d1Database(f.primary));
+      await expect(executeIsolatedBackupRestore({
+        intent: { intent_ref: { id: "restore-op", revision: 1 }, operation_kind: "RESTORE_VERIFY", principal_ref: "owner-test",
+          idempotency_key: "restore-run-erased", payload_ref: f.input.draft.epoch_id, policy_decision_ref: "restore-admission-test", created_at: NOW },
+        preflight: f.input, erasure_gate: gate, restore_store: restoreStore,
+      })).rejects.toMatchObject({ code: "BACKUP_PURGE_BLOCKED" });
+      expect(f.target.prepare("SELECT COUNT(*) AS n FROM source").get()).toEqual({ n: 0 });
+      expect(f.primary.prepare("SELECT COUNT(*) AS n FROM backup_restore_intent").get()).toEqual({ n: 0 });
     } finally { f.primary.close(); f.target.close(); }
   });
 
@@ -333,6 +443,56 @@ describe("isolated restore preflight", () => {
       const input = { ...f.input, admission: { async assertCurrentAdmission() { throw new Error("not admitted"); } } };
       await expect(verifyIsolatedRestorePreflight(input)).rejects.toThrow("not admitted");
       expect(reads).toBe(0);
+    } finally { f.primary.close(); f.target.close(); }
+  });
+
+  it("keeps O4 blocked after the shared lease TTL while an R2 PUT may still settle", async () => {
+    const f = await fixture();
+    try {
+      let nowMs = Date.now();
+      const database = d1Database(f.primary);
+      const fences = createD1ErasureRestoreFenceStore({ database, now: () => nowMs, lease_ms: 1_000 });
+      const restoreFence = await fences.acquireRestore("restore-race-late-r2");
+      expect(restoreFence).not.toBeNull();
+      if (restoreFence === null) throw new Error("restore did not acquire the shared fence");
+
+      const request = {
+        intent: { intent_ref: { id: "restore-race", revision: 1 }, operation_kind: "RESTORE_VERIFY" as const,
+          principal_ref: "owner-test", idempotency_key: "restore-race-late-put", payload_ref: f.input.draft.epoch_id,
+          policy_decision_ref: "restore-admission-test", created_at: NOW },
+        epoch_id: f.input.draft.epoch_id, offsite_copy_ref: "copy-test",
+        target: { account_id: "isolated-account", failure_domain: "isolated-domain", environment_ref: "restore-target",
+          resources: { core_database: "target-core", evidence_bucket: "target-evidence", work_bucket: "target-work" } },
+      };
+      const restoreStore = createD1BackupRestoreStore(database);
+      const claim = await restoreStore.claim(request, nowMs);
+      if (claim.state !== "READY") throw new Error("restore intent was not admitted");
+      const attempt = await restoreStore.beginAttempt(claim, request, restoreFence, nowMs);
+
+      const lateObjects = new Set<string>();
+      let settlePut!: () => void;
+      const putInFlight = new Promise<void>((resolve) => { settlePut = resolve; })
+        .then(() => { lateObjects.add("late/evidence-object"); });
+      let putSettled = false;
+      void putInFlight.then(() => { putSettled = true; });
+
+      // Expire only the timestamp. The durable ATTEMPTING intent and exact
+      // shared fence generation remain the authority while the provider call
+      // is unresolved; O4 cannot steal the lease and purge a stale manifest.
+      nowMs += 1_001;
+      const duringPut = await fences.acquireErasure({ erasure_id: "erase-late-put", revision: 1 });
+      expect(duringPut).toBeNull();
+      expect(putSettled).toBe(false);
+
+      settlePut();
+      await putInFlight;
+      expect(putSettled).toBe(true);
+      lateObjects.delete("late/evidence-object");
+      expect(lateObjects.size).toBe(0);
+      await restoreStore.markUnknown(attempt, "BACKUP_RESTORE_UNCERTAIN", nowMs + 1);
+      const afterUnknown = await fences.acquireErasure({ erasure_id: "erase-late-put", revision: 1 });
+      expect(afterUnknown).toBeNull();
+      expect(f.primary.prepare("SELECT state FROM backup_restore_intent").get()).toEqual({ state: "UNKNOWN" });
     } finally { f.primary.close(); f.target.close(); }
   });
 });

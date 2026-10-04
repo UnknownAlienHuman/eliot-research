@@ -3,6 +3,7 @@ import { describe, expect, it, beforeEach } from "vitest";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { createHash } from "node:crypto";
 import migration0097 from "../../../infra/d1/core/migrations/0097_research_semantic_config_revision.sql?raw";
+import migration0108 from "../../../infra/d1/core/migrations/0108_research_semantic_config_revision_glob_limits.sql?raw";
 import {
   createResearchSemanticConfigRevisionStore,
   deriveResearchSemanticConfigRevisionRef,
@@ -35,6 +36,8 @@ function createD1Shim(db: DatabaseSync): D1Database {
 }
 
 const MIGRATION_SQL: string = migration0097;
+const REPAIR_MIGRATION_SQL: string = migration0108;
+const D1_GLOB_PATTERN_MAX_BYTES = 50;
 
 function configJson(extra: Record<string, unknown> = {}): string {
   return JSON.stringify({ protocol: RESEARCH_SEMANTIC_CONFIG_PROTOCOL, ...extra });
@@ -51,7 +54,56 @@ describe("research semantic config revision store", () => {
   beforeEach(() => {
     db = new DatabaseSync(":memory:");
     db.exec(MIGRATION_SQL);
+    db.exec(REPAIR_MIGRATION_SQL);
     d1 = createD1Shim(db);
+  });
+
+  it("uses D1-bounded equivalent lowercase-hex constraints", () => {
+    const schema = db.prepare(
+      "SELECT sql FROM sqlite_schema WHERE type='table' AND name='research_semantic_config_revision'",
+    ).get() as { readonly sql: string };
+    const patterns = [...schema.sql.matchAll(/(?:NOT\s+)?GLOB\s+'([^']+)'/giu)].map((match) => match[1]);
+    expect(patterns).toEqual(["*[^0-9a-f]*", "*[^0-9a-f]*"]);
+    expect(patterns.every((pattern) => new TextEncoder().encode(pattern).byteLength <= D1_GLOB_PATTERN_MAX_BYTES)).toBe(true);
+
+    const json = configJson({ marker: "constraint" });
+    const digest = sha256Hex(json);
+    const revisionRef = deriveResearchSemanticConfigRevisionRef(digest);
+    const byteLength = new TextEncoder().encode(json).byteLength;
+    const insert = db.prepare(
+      `INSERT INTO research_semantic_config_revision
+         (revision_ref,config_sha256,config_json,byte_length,protocol,created_at,created_by_principal_ref)
+       VALUES (?1,?2,?3,?4,?5,?6,?7)`,
+    );
+    const values = [json, byteLength, RESEARCH_SEMANTIC_CONFIG_PROTOCOL, "2026-10-03T00:00:00Z", "owner:test"] as const;
+    expect(() => insert.run(`scr-${"g".repeat(12)}`, digest, ...values)).toThrow();
+    expect(() => insert.run(revisionRef, `g${digest.slice(1)}`, ...values)).toThrow();
+  });
+
+  it("fails closed on a nonempty 0097 table before replacing it", () => {
+    const legacy = new DatabaseSync(":memory:");
+    legacy.exec(MIGRATION_SQL);
+    const json = configJson({ marker: "must-preserve" });
+    const digest = sha256Hex(json);
+    const revisionRef = deriveResearchSemanticConfigRevisionRef(digest);
+    legacy.prepare(
+      `INSERT INTO research_semantic_config_revision
+         (revision_ref,config_sha256,config_json,byte_length,protocol,created_at,created_by_principal_ref)
+       VALUES (?1,?2,?3,?4,?5,?6,?7)`,
+    ).run(revisionRef, digest, json, new TextEncoder().encode(json).byteLength,
+      RESEARCH_SEMANTIC_CONFIG_PROTOCOL, "2026-10-03T00:00:00Z", "owner:test");
+
+    try {
+      expect(() => legacy.exec(REPAIR_MIGRATION_SQL)).toThrow(/CHECK constraint failed/u);
+      expect(legacy.prepare(
+        "SELECT revision_ref,config_sha256,config_json FROM research_semantic_config_revision",
+      ).get()).toMatchObject({ revision_ref: revisionRef, config_sha256: digest, config_json: json });
+      expect(legacy.prepare(
+        "SELECT COUNT(*) AS n FROM sqlite_schema WHERE type='table' AND name='research_semantic_config_revision_0108'",
+      ).get()).toMatchObject({ n: 0 });
+    } finally {
+      legacy.close();
+    }
   });
 
   it("round-trips a revision with digest readback", async () => {

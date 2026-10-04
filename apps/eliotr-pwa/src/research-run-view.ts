@@ -1,5 +1,5 @@
 import { ResearchWorkflowStageSchema, type ResearchWorkflowStage, type ArtifactRevision } from "@eliotr/contracts";
-import { ApiRequestError } from "./api.js";
+import { ApiRequestError, isAuthorizationLoss } from "./api.js";
 import type { ResearchArtifactSectionCitationAuditClaim, ResearchEngineStatus, ResearchRunHistoryEntry, ResearchRunHistoryView, ResearchRunSavedDraft, ResearchRunStatusView, ResearchSourceFreshness } from "./research-run-api.js";
 
 export const RESEARCH_STAGE_LABELS: Record<ResearchWorkflowStage, string> = {
@@ -34,7 +34,8 @@ export const AUDIT_DISPOSITION_LABELS: Record<ResearchArtifactSectionCitationAud
 export function message(error: unknown): string {
   if (error instanceof ApiRequestError) {
     if (error.code === "RESEARCH_AGENT_NOT_CONFIGURED") return "Research agents are not configured on the server yet.";
-    if (error.status === 401 || error.status === 403) return "This research run is no longer available for the current session.";
+    if (isAuthorizationLoss(error)) return "Sign in again to read this research run.";
+    if (error.status === 403) return "The current access policy does not allow this research run to be read.";
     if (error.status === 409) return "The Research run belongs to another deployment or its authority changed. Refresh the workspace.";
     if (error.retryable) return "The Research service is unavailable. Refresh to try again.";
     return "The Research run could not be read. Check the query and session.";
@@ -75,7 +76,8 @@ export function idleProgressText(healthReady: boolean, configurationReady: boole
 }
 export function wikiProposalErrorText(error: unknown): string {
   if (error instanceof ApiRequestError) {
-    if (error.status === 401 || error.status === 403) return "Wiki draft creation is unavailable for the current owner session.";
+    if (isAuthorizationLoss(error)) return "Sign in again before creating a Wiki draft.";
+    if (error.status === 403) return "The current access policy does not allow this Wiki draft.";
     if (error.code === "WIKI_DEPLOYMENT_CHANGED" || error.code === "RESEARCH_RUN_DEPLOYMENT_CHANGED") return "The workspace changed while saving the Wiki draft. Refresh the workspace and try again.";
     if (error.retryable) return "Wiki draft creation is temporarily unavailable. Try again from this report.";
   }
@@ -157,10 +159,12 @@ export function historyNoteText(view: ResearchRunStatusView): string {
   return `${stage} · ${view.answer.availability === "draft" ? "Draft available" : "No draft available"}`;
 }
 export function historyStatusText(view: ResearchRunHistoryView): string {
-  if (view.configuration_state === "MISSING") return "Research configuration is missing on the server. Install it before starting a research run.";
-  if (view.runs.length === 0 && view.saved_drafts.length === 0) return "Configuration installed; run research to confirm execution. No saved runs are available yet.";
   const hasSavedDraft = view.saved_drafts.length > 0 || view.runs.some((entry) => entry.status.execution_state === "ENGINE_COMPLETED" && entry.status.answer.availability === "draft");
-  return hasSavedDraft ? "Configuration installed; a saved draft is available below." : "Configuration installed; recent runs below show actual execution.";
+  const hasSavedRuns = view.runs.length > 0;
+  if (hasSavedDraft && hasSavedRuns) return "Saved drafts and recent runs are available below.";
+  if (hasSavedDraft) return "Saved drafts are available below.";
+  if (hasSavedRuns) return "Saved runs are available below.";
+  return "No saved research runs or drafts are available yet.";
 }
 export function shouldPollEngine(status: ResearchEngineStatus | undefined): boolean {
   return status === undefined || status === "queued" || status === "running" || status === "paused" || status === "waiting" || status === "waitingForPause";
@@ -170,7 +174,8 @@ export function historyDate(value: string): string {
 }
 export function historyErrorMessage(error: unknown): string {
   if (error instanceof ApiRequestError) {
-    if (error.status === 401 || error.status === 403) return "Saved research is no longer available for this session.";
+    if (isAuthorizationLoss(error)) return "Sign in again to read saved research.";
+    if (error.status === 403) return "The current access policy does not allow this saved research to be read.";
     if (error.retryable) return "Saved research is temporarily unavailable. Refresh to try again.";
   }
   return "Saved research could not be loaded. Refresh to try again.";

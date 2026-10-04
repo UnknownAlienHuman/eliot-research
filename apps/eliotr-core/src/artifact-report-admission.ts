@@ -7,6 +7,7 @@ import type { EvidenceSourceAuthority } from "@eliotr/cloudflare-evidence";
 import { canonicalDigest, canonicalJson, prepareIntentWithOutboxMutation } from "@eliotr/platform-cloudflare";
 import {
   readReauthorizedArtifactDraft,
+  readArtifactCowHistoricalFreeze,
   type ResearchModelSpendPolicy, type ResearchReportAdmissionPolicy,
 } from "@eliotr/cloudflare-research";
 import { prepareArtifactReadReauthorization } from "./research-artifact-reauthorization-http.js";
@@ -15,6 +16,7 @@ import { createBoundResearchOwnerReportConfigSource } from "./research-owner-rep
 import { parseReviseArtifactSectionRequest, type ReviseArtifactSectionRequest } from "./artifact-product-http.js";
 import type { Env } from "./env.js";
 import { HttpRequestError } from "./http-errors.js";
+import { readResearchRunConfiguration } from "./research-run-configuration.js";
 
 const TOPIC = "research.artifact-section-revise";
 const MAX_WITNESS_BYTES = 48 * 1024;
@@ -38,6 +40,63 @@ function configured(value: string | undefined): string {
   const parsed = IdentifierSchema.safeParse(value);
   if (!parsed.success) throw new HttpRequestError("ARTIFACT_REPORT_NOT_CONFIGURED", 503, "Installed artifact REPORT policy is missing");
   return parsed.data;
+}
+
+async function originalRunConfiguration(input: {
+  readonly env: Env;
+  readonly artifact_ref: ReviseArtifactSectionRequest["artifact_ref"];
+  readonly evidence_freeze_ref: { readonly id: string; readonly revision: number };
+  readonly original_scope_snapshot_ref: { readonly id: string; readonly revision: number };
+  readonly principal_ref: string;
+}) {
+  let historical: Awaited<ReturnType<typeof readArtifactCowHistoricalFreeze>>;
+  try {
+    historical = await readArtifactCowHistoricalFreeze({ database: input.env.CORE_DB,
+      work_bucket: input.env.WORK_BUCKET, artifact_ref: input.artifact_ref,
+      expected_freeze_ref: input.evidence_freeze_ref,
+      expected_scope_snapshot_ref: input.original_scope_snapshot_ref });
+  } catch {
+    throw new HttpRequestError("RESEARCH_RUN_CONFIGURATION_REQUIRED", 409,
+      "The artifact's original REPORT or committed COW lineage cannot be resolved to one exact run snapshot");
+  }
+  const row = await input.env.CORE_DB.prepare(
+    "SELECT operation_id,investigation_id,principal_ref,deployment_generation FROM research_workflow_run WHERE operation_id=?1 LIMIT 1",
+  ).bind(historical.operation_id).first<{
+    readonly operation_id: unknown;
+    readonly investigation_id: unknown;
+    readonly principal_ref: unknown;
+    readonly deployment_generation: unknown;
+  }>();
+  if (row === null || row.operation_id !== historical.operation_id ||
+      row.investigation_id !== historical.investigation_ref.id || row.principal_ref !== input.principal_ref ||
+      typeof row.deployment_generation !== "string") {
+    throw new HttpRequestError("RESEARCH_RUN_CONFIGURATION_REQUIRED", 409,
+      "The artifact's original research run configuration cannot be resolved");
+  }
+  let configuration: Awaited<ReturnType<typeof readResearchRunConfiguration>>;
+  try {
+    configuration = await readResearchRunConfiguration(input.env, {
+      operation_id: historical.operation_id, investigation_id: historical.investigation_ref.id,
+      principal_ref: input.principal_ref, deployment_generation: row.deployment_generation,
+    });
+  } catch (cause) {
+    throw new HttpRequestError("RESEARCH_RUN_CONFIGURATION_REQUIRED", 409,
+      cause instanceof Error ? `The artifact's original research run snapshot is unavailable: ${cause.message}`
+        : "The artifact's original research run snapshot is missing or inconsistent");
+  }
+  if (configuration.mode === "legacy-installed") {
+    return Object.freeze({ env: configuration.env, pin: null as null });
+  }
+  if (configuration.configuration_ref === null || configuration.configuration_sha256 === null ||
+      configuration.model_selections.length === 0) {
+    throw new HttpRequestError("RESEARCH_RUN_CONFIGURATION_REQUIRED", 409,
+      "The artifact's original pinned model selection is incomplete");
+  }
+  return Object.freeze({ env: configuration.env,
+    pin: Object.freeze({ mode: configuration.mode, operation_id: historical.operation_id,
+      investigation_id: historical.investigation_ref.id, principal_ref: input.principal_ref,
+      deployment_generation: row.deployment_generation, configuration_ref: configuration.configuration_ref,
+      configuration_sha256: configuration.configuration_sha256, model_selections: configuration.model_selections }) });
 }
 function sourceBinding(source: EvidenceSourceAuthority) {
   return {
@@ -79,6 +138,20 @@ export async function prepareOwnerArtifactReportAdmission(
   if (request.artifact_ref.revision !== request.expected_artifact_revision) deny("Artifact revision changed");
   const current = await prepareArtifactReadReauthorization(env, context, request.artifact_ref, "report");
   await current.requireCurrent();
+  const draftRead = await readReauthorizedArtifactDraft({
+    database: env.CORE_DB, work_bucket: env.WORK_BUCKET, artifact_ref: request.artifact_ref,
+    access: context, current_navigation: current.navigation, current_authorization: current.authorization,
+    deployment_generation: env.DEPLOYMENT_GENERATION,
+  });
+  if (draftRead === null || !("sections" in draftRead.artifact) || draftRead.artifact.status !== "DRAFT" ||
+      draftRead.artifact.sections.filter((s) => s.contract_id === request.section_id).length !== 1) {
+    deny("Exact parent draft and stable section contract are unavailable");
+  }
+  const draft = draftRead.artifact;
+  const original = await originalRunConfiguration({ env, artifact_ref: request.artifact_ref,
+    evidence_freeze_ref: draft.evidence_freeze_ref, original_scope_snapshot_ref: draftRead.original_scope_snapshot_ref,
+    principal_ref: context.principal_ref });
+  const policyEnv = original.env;
   const scope = current.navigation.scope;
   const grant = current.authorization;
   const sources = await current.navigation.sources(scope.member_source_revision_refs, grant);
@@ -92,19 +165,25 @@ export async function prepareOwnerArtifactReportAdmission(
   ).bind(grant.policy_authority_ref).all<{ policy_generation: unknown }>();
   if (policies.success !== true || !Array.isArray(policies.results) || policies.results.length !== 1) deny("Current REPORT policy authority is ambiguous or unavailable");
   const policyGeneration = configured(typeof policies.results[0]?.policy_generation === "string" ? policies.results[0].policy_generation : undefined);
-  const spend = resolveResearchOwnerSpendPolicy({
-    raw: env.ELIOTR_MODEL_SPEND_POLICY_JSON,
-    provenance: configured(env.ELIOTR_MODEL_SPEND_POLICY_PROVENANCE_REF),
+  const spendResolution = resolveResearchOwnerSpendPolicy({
+    raw: policyEnv.ELIOTR_MODEL_SPEND_POLICY_JSON,
+    provenance: configured(policyEnv.ELIOTR_MODEL_SPEND_POLICY_PROVENANCE_REF),
     access: context, deployment_generation: env.DEPLOYMENT_GENERATION,
     policy_generation: policyGeneration, policy_authority_ref: grant.policy_authority_ref,
     scope_expires_at: scope.expires_at, authorization: grant,
-  }).policy;
+  });
+  const spend = spendResolution.policy;
+  if (spendResolution.mode === "template-v2" &&
+      (original.pin === null || original.pin.mode !== "snapshot-v2")) {
+    throw new HttpRequestError("RESEARCH_RUN_CONFIGURATION_REQUIRED", 409,
+      "Stable model settings require the artifact's exact original snapshot-v2 selection");
+  }
   if (spend.principal_ref !== context.principal_ref || spend.client_class !== "owner_pwa" ||
       spend.credential_generation !== context.credential_generation || spend.deployment_generation !== env.DEPLOYMENT_GENERATION ||
       spend.policy_generation !== policyGeneration || spend.policy_authority_ref !== grant.policy_authority_ref) deny("Installed model approval is bound to another authority");
   const reportSource = createBoundResearchOwnerReportConfigSource({
-    raw: env.ELIOTR_RESEARCH_REPORT_CONFIG_JSON,
-    provenance_ref: configured(env.ELIOTR_RESEARCH_REPORT_POLICY_PROVENANCE_REF),
+    raw: policyEnv.ELIOTR_RESEARCH_REPORT_CONFIG_JSON,
+    provenance_ref: configured(policyEnv.ELIOTR_RESEARCH_REPORT_POLICY_PROVENANCE_REF),
     current_spend_authority: spend,
   });
   const policy = await reportSource.read();
@@ -114,16 +193,6 @@ export async function prepareOwnerArtifactReportAdmission(
       !policy.allowed_use.includes("research") || !grant.allowed_use.includes("research") || policy.disclosure_ceiling !== grant.disclosure_ceiling) {
     deny("Installed private REPORT policy does not authorize this owner revision");
   }
-  const draftRead = await readReauthorizedArtifactDraft({
-    database: env.CORE_DB, work_bucket: env.WORK_BUCKET, artifact_ref: request.artifact_ref,
-    access: context, current_navigation: current.navigation, current_authorization: grant,
-    deployment_generation: env.DEPLOYMENT_GENERATION,
-  });
-  if (draftRead === null || !("sections" in draftRead.artifact) || draftRead.artifact.status !== "DRAFT" ||
-      draftRead.artifact.sections.filter((s) => s.contract_id === request.section_id).length !== 1) {
-    deny("Exact parent draft and stable section contract are unavailable");
-  }
-  const draft = draftRead.artifact;
   const sourceBindings = sources.map(sourceBinding).sort((a, b) => a.source_revision_ref.localeCompare(b.source_revision_ref));
   const expiryMs = Math.min(Date.parse(policy.expires_at), Date.parse(spend.expires_at), Date.parse(scope.expires_at),
     Date.parse(grant.expires_at), ...sources.flatMap((s) => s.admission_expires_at === undefined ? [] : [Date.parse(s.admission_expires_at)]));
@@ -135,6 +204,7 @@ export async function prepareOwnerArtifactReportAdmission(
     scope_snapshot_digest: scope.digest, purge_revision: scope.purge_ledger_revision,
     spec_digest: draft.spec_digest, evidence_freeze_ref: draft.evidence_freeze_ref,
     source_bindings: sourceBindings, policy, spend_policy: spend, authorization: grant,
+    run_configuration: original.pin,
     expires_at: new Date(expiryMs).toISOString(),
   });
   const inputSha = await canonicalDigest(material);

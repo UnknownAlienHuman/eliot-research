@@ -22,8 +22,13 @@ import { rejectModelGatewayHttpFailure } from "./model-gateway-http-failure.js";
 import {
   canonicalModelGatewayJson,
   modelGatewaySha256,
+  validateModelGatewayTransportPolicy,
 } from "./model-gateway-request.js";
 import { decodeModelGatewayResponse } from "./model-gateway-response.js";
+import {
+  assertModelGatewayObservedIdentity,
+  validateModelGatewayTransportSelection,
+} from "./model-gateway-transport-policy.js";
 
 const IDENTIFIER = /^[A-Za-z0-9._:@/-]{1,256}$/u;
 const SHA256 = /^[a-f0-9]{64}$/u;
@@ -410,6 +415,11 @@ async function executeObservedModelGatewayCall(
     );
   }
   const deployment = decodeRouteDeployment(rawDeployment);
+  const transportPolicy = dependencies.transport_policy === undefined
+    ? undefined
+    : validateModelGatewayTransportPolicy(dependencies.transport_policy);
+  const binding = dependencies.binding_transport;
+  validateModelGatewayTransportSelection(transportPolicy, binding !== undefined);
   try {
     prepareModelGatewayCall(input, deployment);
   } catch (cause) {
@@ -432,7 +442,6 @@ async function executeObservedModelGatewayCall(
   }
   const compiled = decodeCompiledPrompt(rawCompiled);
 
-  const binding = dependencies.binding_transport;
   let token: unknown;
   if (binding === undefined) {
     try {
@@ -451,7 +460,14 @@ async function executeObservedModelGatewayCall(
     compiled,
     dependencies.reasoning_gateway_base_url,
     token,
-  ) : await prepareModelGatewayBindingRequest(input, deployment, compiled, dependencies.reasoning_gateway_base_url);
+    transportPolicy,
+  ) : await prepareModelGatewayBindingRequest(
+      input,
+      deployment,
+      compiled,
+      dependencies.reasoning_gateway_base_url,
+      transportPolicy,
+    );
 
   let rawResponse: unknown;
   try {
@@ -484,6 +500,7 @@ async function executeObservedModelGatewayCall(
     deployment,
     input.max_output_bytes,
   );
+  assertModelGatewayObservedIdentity(transportPolicy, decoded.fingerprint.provider, decoded.fingerprint.exact_model_id);
   await persistOutput(
     dependencies,
     input,

@@ -1,5 +1,17 @@
 # Implementation gap register
 
+## Owner configuration checkpoint — 2026-10-03
+
+The current source assembly adds owner model catalog/project revisions, durable
+v2 spend/report choices, immutable run configuration, verified Managed OAuth
+document reading, managed projection metadata correction and encrypted offsite
+body/restore-control storage. These changes do not promote their containing
+slices to LIVE. Actual checks and remaining deployed functional acceptance are
+recorded in [product-resume-2026-10-03.md](product-resume-2026-10-03.md).
+The one-source shadow Search diagnostic has no generation qualification or
+promotion authority. Full S1 quality evaluation, dedicated MCP connection and
+production restore/erasure closure remain open.
+
 ## S19 code checkpoint — transient Research reconnect (2026-09-25)
 
 The PWA now separates in-tab question/scope/run intent from protected response data. Temporary

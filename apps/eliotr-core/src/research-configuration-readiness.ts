@@ -1,5 +1,6 @@
 import { decodeModelRouteDeployment, canonicalJson, type ModelRouteDeployment } from "@eliotr/platform-cloudflare";
 import {
+  createD1ModelGatewayDeploymentRegistry,
   createD1DynamicRouteQualificationProofStore,
   decodeStoredDynamicRouteCandidate,
   readResearchModelSpendPolicy,
@@ -10,6 +11,7 @@ import {
 } from "@eliotr/cloudflare-research";
 import type { AuthenticatedRequestContext } from "@eliotr/interfaces";
 import type { Env } from "./env.js";
+import type { ResearchRunModelSelection } from "./research-run-configuration.js";
 import {
   readResearchConfigurationStatus,
   type ResearchConfigurationStatus,
@@ -26,6 +28,7 @@ export type ResearchConfigurationReadinessReason =
   | "QUALIFICATION_PROOFS_CURRENT"
   | "QUALIFICATION_RENEWAL_AT_RUN"
   | "QUALIFICATION_RENEWAL_READ_TOKEN_REQUIRED"
+  | "QUALIFICATION_SELECTION_REFRESH_REQUIRED"
   | "QUALIFICATION_UNAVAILABLE";
 
 export interface ResearchConfigurationReadiness {
@@ -94,7 +97,7 @@ function installedPolicy(env: Env): InstalledSpendPolicy {
   } catch {
     failure("installed spend policy is invalid");
   }
-  return protocol === "eliotr.research-owner-spend-template.v1"
+  return protocol === "eliotr.research-owner-spend-template.v1" || protocol === "eliotr.research-owner-spend-template.v2"
     ? readResearchOwnerSpendPolicyTemplate(raw, provenance)
     : readResearchModelSpendPolicy(raw, provenance);
 }
@@ -160,7 +163,8 @@ async function readRouteProof(
 }
 
 function ownerPolicyMatches(policy: InstalledSpendPolicy, env: Env, owner: Pick<AuthenticatedRequestContext, "principal_ref" | "credential_generation">): boolean {
-  if (policy.principal_ref !== owner.principal_ref || policy.client_class !== "owner_pwa" ||
+  if (policy.principal_ref !== owner.principal_ref || policy.client_class !== "owner_pwa") return false;
+  if (policy.protocol !== "eliotr.research-owner-spend-template.v2" &&
       policy.deployment_generation !== env.DEPLOYMENT_GENERATION) return false;
   return !("credential_generation" in policy) || policy.credential_generation === owner.credential_generation;
 }
@@ -172,6 +176,10 @@ function ownerPolicyMatches(policy: InstalledSpendPolicy, env: Env, owner: Pick<
 export async function readResearchConfigurationReadiness(
   env: Env,
   owner: Pick<AuthenticatedRequestContext, "principal_ref" | "credential_generation" | "client_class">,
+  options: Readonly<{
+    readonly selected_model_selections?: readonly ResearchRunModelSelection[];
+    readonly mode?: "snapshot-v1" | "snapshot-v2";
+  }> = {},
 ): Promise<ResearchConfigurationReadiness> {
   const status = readResearchConfigurationStatus(env, owner);
   if (status.configuration !== "present") {
@@ -226,10 +234,50 @@ export async function readResearchConfigurationReadiness(
   });
   let proofs: readonly ProofCheck[];
   try {
-    proofs = await Promise.all([
-      readRouteProof(env.CORE_DB, proofStore, synthesis.deployment),
-      readRouteProof(env.CORE_DB, proofStore, audit.deployment),
-    ]);
+    if (options.selected_model_selections !== undefined) {
+      const selectedModelSelections = options.selected_model_selections;
+      const spendV2 = policy.protocol === "eliotr.research-owner-spend-template.v2";
+      const mode = options.mode ?? (spendV2 ? "snapshot-v2" : "snapshot-v1");
+      if ((spendV2 && mode !== "snapshot-v2") || (!spendV2 && mode !== "snapshot-v1")) {
+        failure("selected run snapshot mode differs from the installed owner setting version");
+      }
+      const registry = createD1ModelGatewayDeploymentRegistry(env.CORE_DB, { environment: "PRODUCTION" });
+      const pinned = async (stage: "SYNTHESIZE" | "AUDIT_CLAIMS", route: ModelRouteDeployment): Promise<ProofCheck> => {
+        const matches = selectedModelSelections.filter((selection) => selection.stage === stage);
+        if (matches.length !== 1) failure(`selected project configuration has no exact ${stage} tuple`);
+        const selection = matches[0];
+        if (selection === undefined) failure(`selected project configuration has no exact ${stage} tuple`);
+        if (selection.route_ref !== route.route_ref || selection.route_version !== route.route_version) {
+          failure(`selected project configuration ${stage} route differs from the installed spend rule`);
+        }
+        const proof = await proofStore.readPinned({ route_ref: selection.route_ref, route_version: selection.route_version,
+          candidate_ref: selection.candidate_ref, candidate_sha256: selection.candidate_sha256,
+          qualification_ref: selection.qualification_ref, qualification_sha256: selection.qualification_sha256 });
+        if (proof === null || proof.qualification.tier !== "LIVE") failure(`selected ${stage} qualification proof is unavailable`);
+        const revoked = await env.CORE_DB.prepare("SELECT 1 AS revoked FROM dynamic_route_qualification_revocation " +
+          "WHERE qualification_ref=?1 AND qualification_sha256=?2 LIMIT 1")
+          .bind(selection.qualification_ref, selection.qualification_sha256).first<{ readonly revoked: unknown }>();
+        if (revoked !== null) failure(`selected ${stage} qualification proof was explicitly revoked`);
+        const resolved = await registry.resolvePinned(route, selection, {
+          allow_expired_qualification: mode === "snapshot-v2",
+        });
+        if (resolved === null || canonicalJson(decodeModelRouteDeployment(resolved)) !== canonicalJson(route)) {
+          failure(`selected ${stage} model candidate differs from the installed route`);
+        }
+        const expiresAt = proof.qualification.expires_at;
+        return Object.freeze({
+          qualification_state: mode === "snapshot-v2" || Date.parse(expiresAt) > Date.now() + RENEWAL_WINDOW_MS
+            ? "current" : "renewal_required",
+          expires_at: expiresAt,
+        });
+      };
+      proofs = await Promise.all([pinned("SYNTHESIZE", synthesis.deployment), pinned("AUDIT_CLAIMS", audit.deployment)]);
+    } else {
+      proofs = await Promise.all([
+        readRouteProof(env.CORE_DB, proofStore, synthesis.deployment),
+        readRouteProof(env.CORE_DB, proofStore, audit.deployment),
+      ]);
+    }
   } catch {
     return baseResult(status, {
       qualification_state: "unavailable",
@@ -248,6 +296,15 @@ export async function readResearchConfigurationReadiness(
       qualification_state: "current",
       run_readiness: "ready",
       readiness_reason: "QUALIFICATION_PROOFS_CURRENT",
+      model_route: synthesis.deployment.route_ref,
+      qualification_expires_at: expiresAt,
+    });
+  }
+  if (options.selected_model_selections !== undefined) {
+    return baseResult(status, {
+      qualification_state: "renewal_required",
+      run_readiness: "blocked",
+      readiness_reason: "QUALIFICATION_SELECTION_REFRESH_REQUIRED",
       model_route: synthesis.deployment.route_ref,
       qualification_expires_at: expiresAt,
     });

@@ -2,6 +2,7 @@ import type { BackupEpochDraft, BackupPartRef } from "./epoch.js";
 import { TABLE_SPECS, BACKUP_MANIFEST_PROTOCOL, BACKUP_SCHEMA_INVENTORY_PROTOCOL, assertExportColumnCoverage, digestCoreColumnInventory, type CoreTableInventory } from "./coherent-cut.js";
 import { rebuildManifestLines } from "./coverage.js";
 import { backupSha256Hex, canonicalBackupJson, failBackup } from "./shared.js";
+import { BACKUP_R2_PAYLOAD_PROTOCOL, backupR2ObjectIdentity, type R2ObjectEntry } from "./r2-inventory.js";
 
 export const BACKUP_PORTABLE_MANIFEST_NAMES = [
   "schema", "schema-inventory", "ownership", "sources", "revisions", "projects", "scopes",
@@ -19,6 +20,7 @@ export interface VerifiedPortableBackupManifests {
   readonly source_rows: readonly { readonly table: string; readonly row: Readonly<Record<string, unknown>> }[];
   readonly purge_ledger: readonly Readonly<Record<string, unknown>>[];
   readonly r2_objects: readonly Readonly<Record<string, unknown>>[];
+  readonly payload_supported: boolean;
   readonly vector: Readonly<Record<string, unknown>>;
 }
 
@@ -269,12 +271,21 @@ export async function verifyPortableBackupManifests(input: {
 
   const r2Lines = objectLines(manifests["r2-objects"] ?? [], "r2-objects");
   const r2Summary = oneLine<Record<string, unknown>>(r2Lines, (line) => "object_count" in line, "r2-objects");
-  if (!exactKeys(r2Summary, ["object_count", "total_bytes", "fingerprint"])) invalid("backup R2 summary has unknown fields");
+  const currentPayloadSummary = r2Summary["payload_protocol"] === BACKUP_R2_PAYLOAD_PROTOCOL;
+  if ((!currentPayloadSummary && !exactKeys(r2Summary, ["object_count", "total_bytes", "fingerprint"])) ||
+      (currentPayloadSummary && !exactKeys(r2Summary, ["object_count", "total_bytes", "fingerprint", "payload_protocol"]))) {
+    invalid("backup R2 summary has unknown fields or an unsupported payload protocol");
+  }
   const r2Objects = r2Lines.filter((line) => "bucket" in line);
   if (r2Lines.length !== r2Objects.length + 1) invalid("backup R2 inventory contains unknown rows");
   let r2Bytes = 0;
+  const expectedPayloadRefs: { readonly identity: string; readonly index: number; readonly count: number; readonly sha256: string; readonly size_bytes: number }[] = [];
+  let allObjectsSupportPayload = true;
   for (const entry of r2Objects) {
-    if (!exactKeys(entry, ["bucket", "key", "size_bytes", "etag", "version", "sha256", "admitted_sha256", "metadata_digest", "http_metadata_digest"]) ||
+    const objectHasPayload = entry["payload_protocol"] === BACKUP_R2_PAYLOAD_PROTOCOL;
+    const legacyKeys = ["bucket", "key", "size_bytes", "etag", "version", "sha256", "admitted_sha256", "metadata_digest", "http_metadata_digest"];
+    const currentKeys = [...legacyKeys, "custom_metadata", "http_metadata", "payload_protocol", "payload_parts"];
+    if ((!objectHasPayload && !exactKeys(entry, legacyKeys)) || (objectHasPayload && !exactKeys(entry, currentKeys)) ||
       (entry["bucket"] !== "evidence" && entry["bucket"] !== "work") || typeof entry["key"] !== "string" ||
       !Number.isSafeInteger(entry["size_bytes"]) || (entry["size_bytes"] as number) < 0 ||
       typeof entry["etag"] !== "string" || typeof entry["version"] !== "string" || !digest(entry["sha256"]) ||
@@ -282,12 +293,63 @@ export async function verifyPortableBackupManifests(input: {
       invalid("backup R2 object inventory contains a malformed object entry");
     }
     r2Bytes += entry["size_bytes"] as number;
+    if (!objectHasPayload || !currentPayloadSummary) {
+      allObjectsSupportPayload = false;
+      continue;
+    }
+    if (!isRecord(entry["custom_metadata"]) || !isRecord(entry["http_metadata"]) || !Array.isArray(entry["payload_parts"])) invalid("backup R2 payload inventory is malformed");
+    if (Object.values(entry["custom_metadata"]).some((value) => typeof value !== "string") ||
+        Object.entries(entry["http_metadata"]).some(([key, value]) => !HTTP_METADATA_FIELDS.has(key) || typeof value !== "string" || (key === "cacheExpiry" && !isIsoDateTime(value)))) {
+      invalid("backup R2 metadata inventory is malformed");
+    }
+    if (await backupSha256Hex(canonicalBackupJson(entry["custom_metadata"])) !== entry["metadata_digest"] ||
+        await backupSha256Hex(canonicalBackupJson(entry["http_metadata"])) !== entry["http_metadata_digest"]) invalid("backup R2 metadata digests disagree with the exact metadata inventory");
+    const parts = entry["payload_parts"];
+    if (parts.length === 0) invalid("backup R2 payload has no bounded part descriptors");
+    let objectPayloadBytes = 0;
+    const identity = await backupR2ObjectIdentity(entry as unknown as R2ObjectEntry);
+    for (let index = 0; index < parts.length; index += 1) {
+      const part = parts[index];
+      if (!isRecord(part) || !exactKeys(part, ["index", "sha256", "size_bytes"]) || part["index"] !== index + 1 ||
+          !digest(part["sha256"]) || !Number.isSafeInteger(part["size_bytes"]) || (part["size_bytes"] as number) < 0 || (part["size_bytes"] as number) > 1024 * 1024) {
+        invalid("backup R2 payload part descriptor is malformed");
+      }
+      objectPayloadBytes += part["size_bytes"] as number;
+      expectedPayloadRefs.push({ identity, index: index + 1, count: parts.length, sha256: part["sha256"] as string, size_bytes: part["size_bytes"] as number });
+    }
+    if (objectPayloadBytes !== entry["size_bytes"] || (entry["size_bytes"] === 0 && (parts.length !== 1 || parts[0]?.["size_bytes"] !== 0))) invalid("backup R2 payload parts do not cover the exact object size");
   }
+  expectedPayloadRefs.sort((left, right) => left.identity < right.identity ? -1 : left.identity > right.identity ? 1 : left.index - right.index);
+  const payloadSupported = currentPayloadSummary && allObjectsSupportPayload;
   const vectorR2 = vector["r2_keys"] === r2Objects.length && vector["r2_bytes"] === r2Summary["total_bytes"] &&
     r2Bytes === r2Summary["total_bytes"] && r2Summary["object_count"] === r2Objects.length && digest(r2Summary["fingerprint"]) &&
     await backupSha256Hex(r2Objects.map(canonicalBackupJson).join("\n")) === r2Summary["fingerprint"] &&
     vector["r2_digest"] === r2Summary["fingerprint"];
   if (!vectorR2) invalid("backup R2 object inventory disagrees with its authority vector");
+
+  if (payloadSupported) {
+    if (draft.r2_payload_protocol !== BACKUP_R2_PAYLOAD_PROTOCOL || !Array.isArray(draft.payload_part_index)) {
+      failBackup("BACKUP_PAYLOAD_UNSUPPORTED", "backup epoch does not carry the durable R2 payload part index required for restore");
+    }
+    const actualPayloadRefs = draft.payload_part_index;
+    if (actualPayloadRefs.length !== expectedPayloadRefs.length) invalid("backup R2 payload part index count disagrees with the authenticated inventory");
+    const seenPayloadPositions = new Set<string>();
+    for (const [position, expected] of expectedPayloadRefs.entries()) {
+      const actual = actualPayloadRefs[position] as unknown as Record<string, unknown>;
+      const unique = `${expected.identity}\u0000${expected.index}`;
+      if (seenPayloadPositions.has(unique)) invalid("backup R2 payload part inventory contains a duplicate object position");
+      seenPayloadPositions.add(unique);
+      const expectedKey = `backup-parts/${draft.epoch_id}/r2-payload/${expected.identity}/${String(expected.index).padStart(6, "0")}-${expected.sha256}`;
+      if (!exactKeys(actual, ["object_identity_digest", "index", "count", "part_key", "sha256", "size_bytes", "etag", "existed_identically"]) ||
+          actual["object_identity_digest"] !== expected.identity || actual["index"] !== expected.index || actual["count"] !== expected.count ||
+          actual["part_key"] !== expectedKey || actual["sha256"] !== expected.sha256 || actual["size_bytes"] !== expected.size_bytes ||
+          typeof actual["etag"] !== "string" || actual["etag"].length === 0 || typeof actual["existed_identically"] !== "boolean") {
+        invalid("backup R2 payload part index diverges from the authenticated inventory");
+      }
+    }
+  } else if (currentPayloadSummary) {
+    failBackup("BACKUP_PAYLOAD_UNSUPPORTED", "backup R2 inventory mixes payload-capable and legacy object entries");
+  }
 
   const rebuildLines = objectLines(manifests["rebuild"] ?? [], "rebuild");
   const expectedRebuild = rebuildManifestLines().map((line) => JSON.parse(line) as unknown).map(canonicalBackupJson).sort();
@@ -336,6 +398,14 @@ export async function verifyPortableBackupManifests(input: {
     source_rows: sourceRows,
     purge_ledger: sortedLedger,
     r2_objects: r2Objects,
+    payload_supported: payloadSupported,
     vector,
   };
+}
+
+const HTTP_METADATA_FIELDS = new Set(["contentType", "contentLanguage", "contentDisposition", "contentEncoding", "cacheControl", "cacheExpiry"]);
+
+function isIsoDateTime(value: string): boolean {
+  const parsed = new Date(value);
+  return Number.isFinite(parsed.getTime()) && parsed.toISOString() === value;
 }

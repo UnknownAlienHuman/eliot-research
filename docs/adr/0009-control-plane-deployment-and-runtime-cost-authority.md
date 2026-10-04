@@ -41,7 +41,9 @@ must have separate operation records.
    inspection without `--confirm-live` makes no Cloudflare or Wrangler calls.
 4. The migration operation's SQL classifier accepts only its explicit bounded DDL and metadata
    forms. It rejects rebuild/copy/backfill operations, unsupported data changes, and indexes on
-   pre-existing tables. Every accepted migration must have its required schema probes, including
+   pre-existing tables. The sole empty semantic-revision constraint repair is specified separately
+   in [ADR-0013](0013-empty-semantic-revision-constraint-repair.md); it does not permit nonempty
+   table rebuilding or row copying. Every accepted migration must have its required schema probes, including
    absence or an exact reviewed initial definition for every created object and the expected final
    definition. Case-insensitive pre-effect schema inspection rejects conflicting objects before SQL
    application or ledger advancement. A current

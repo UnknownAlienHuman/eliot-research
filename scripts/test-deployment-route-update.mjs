@@ -8,7 +8,7 @@ import { assertRouteUpdateProfile, assertRouteUpdateReadback, loadMaintenanceRou
 
 const sourceHead = "a".repeat(40);
 const candidateGeneration = `git-${sourceHead.slice(0, 12)}`;
-const accountId = "0123456789abcdef0123456789abcdef";
+const accountId = "a".repeat(32);
 const hostname = "eliot-fixture.example.com";
 const activeWorkerIdentity = Object.freeze({ worker_id: "eliotr-core",
   deployment_id: "11111111-1111-4111-8111-111111111111",
@@ -118,7 +118,7 @@ try {
       try { await assert.rejects(load(wrongCandidateHash)); } finally { await clean(wrongCandidateHash); }
       await assert.rejects(load(fixture, { sourceHead: "b".repeat(40) }));
       await assert.rejects(load(fixture, { candidateGeneration: "git-bbbbbbbbbbbb" }));
-      await assert.rejects(load(fixture, { accountId: "fedcba9876543210fedcba9876543210" }));
+      await assert.rejects(load(fixture, { accountId: "b".repeat(32) }));
       await assert.rejects(load(fixture, { hostname: "other.example.com" }));
       await assert.rejects(load(fixture, { activeWorkerIdentity: { ...activeWorkerIdentity,
         version_id: "33333333-3333-4333-8333-333333333333" } }));

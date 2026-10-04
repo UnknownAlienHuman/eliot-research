@@ -54,17 +54,17 @@ function d1Database(db: DatabaseSync): D1Database {
     return { bind(...p: unknown[]) { return runBound(p as (string | number | null)[]); }, ...runBound([]) };
   } } as unknown as D1Database;
 }
-interface ShimObject { bytes: Uint8Array; etag: string; version: string; customMetadata: Record<string, string>; contentType?: string | undefined }
+interface ShimObject { bytes: Uint8Array; etag: string; version: string; customMetadata: Record<string, string>; httpMetadata: Record<string, string | Date> }
 function shimBucket(): { bucket: R2Bucket; objects: Map<string, ShimObject> } {
   const objects = new Map<string, ShimObject>(); let seq = 0;
   const streamOf = (b: Uint8Array): ReadableStream<Uint8Array> => new ReadableStream({ start(c) { c.enqueue(b.slice()); c.close(); } });
-  const metaOf = (k: string, o: ShimObject): Record<string, unknown> => ({ key: k, size: o.bytes.byteLength, etag: o.etag, version: o.version, customMetadata: { ...o.customMetadata }, httpMetadata: { contentType: o.contentType } });
+  const metaOf = (k: string, o: ShimObject): Record<string, unknown> => ({ key: k, size: o.bytes.byteLength, etag: o.etag, version: o.version, customMetadata: { ...o.customMetadata }, httpMetadata: { ...o.httpMetadata } });
   const api = {
     async head(k: string) { const o = objects.get(k); return o === undefined ? null : metaOf(k, o); },
     async get(k: string) { const o = objects.get(k); if (o === undefined) return null; const f = o.bytes.slice(); return { ...metaOf(k, o), size: o.bytes.byteLength, body: streamOf(o.bytes), bytes: async () => f.slice(), arrayBuffer: async () => { const cp = new Uint8Array(f.byteLength); cp.set(f); return cp.buffer; } }; },
     async put(k: string, v: Uint8Array | ReadableStream<Uint8Array> | string, po?: Record<string, unknown>) {
       const bytes = typeof v === "string" ? new TextEncoder().encode(v) : v instanceof Uint8Array ? v : new Uint8Array(await new Response(v as ReadableStream<Uint8Array>).arrayBuffer());
-      seq += 1; objects.set(k, { bytes: bytes.slice(), etag: `etag-${seq}`, version: `version-${seq}`, customMetadata: { ...((po?.["customMetadata"] as Record<string, string> | undefined) ?? {}) }, contentType: (po?.["httpMetadata"] as { contentType?: string } | undefined)?.contentType });
+      seq += 1; objects.set(k, { bytes: bytes.slice(), etag: `etag-${seq}`, version: `version-${seq}`, customMetadata: { ...((po?.["customMetadata"] as Record<string, string> | undefined) ?? {}) }, httpMetadata: { ...((po?.["httpMetadata"] as Record<string, string | Date> | undefined) ?? {}) } });
       return { key: k, etag: `etag-${seq}`, version: `version-${seq}` };
     },
     async delete(i: string | string[]) { for (const k of typeof i === "string" ? [i] : i) objects.delete(k); },
@@ -213,6 +213,50 @@ describe("ER-34 O2 offsite copy (policy + hardened crypto)", () => {
     expect(replayed.receipt).toEqual(c1.receipt);
     expect(replayed.epoch).toEqual(c1.epoch);
     expect(a1.puts).toBe(putsBefore);
+  });
+  it("copies bounded R2 payload chunks with exact metadata and denies a foreign epoch read", async () => {
+    const h = await setup();
+    const source = new TextEncoder().encode("payload-bound-to-this-r2-object/" + "r".repeat(1400));
+    const sourceDigest = await sha(source);
+    await (h.ports.evidence_bucket as unknown as { put(key: string, value: Uint8Array, options: unknown): Promise<unknown> }).put("evidence/exact-object", source, {
+      customMetadata: { eliotr_sha256: sourceDigest, residency: "private" },
+      httpMetadata: { contentType: "application/octet-stream", cacheControl: "private, no-store", cacheExpiry: new Date("2026-12-31T00:00:00.000Z") },
+    });
+    const draft = (await h.port.createPortableEpoch(intent("id-payload-offsite"), { now_ms: NOW })).draft;
+    expect(draft.r2_payload_protocol).toBe("eliotr.r2-payload.v1");
+    expect(draft.payload_part_index).toHaveLength(3);
+    expect(draft.payload_part_index?.map((part) => part.size_bytes)).toEqual([512, 512, 408]);
+
+    const plaintextParts = [];
+    for (const part of draft.part_index) {
+      const object = await h.ports.part_sink.open(part.part_key);
+      expect(object).not.toBeNull();
+      if (object === null) throw new Error("fixture portable part disappeared");
+      plaintextParts.push({ manifest: part.manifest, index: part.index, bytes: new Uint8Array(await new Response(object.body).arrayBuffer()) });
+    }
+    const portable = await verifyPortableBackupManifests({ draft, plaintext_parts: plaintextParts });
+    expect(portable.payload_supported).toBe(true);
+    expect(portable.r2_objects).toContainEqual(expect.objectContaining({
+      key: "evidence/exact-object", custom_metadata: { eliotr_sha256: sourceDigest, residency: "private" },
+      http_metadata: { contentType: "application/octet-stream", cacheControl: "private, no-store", cacheExpiry: "2026-12-31T00:00:00.000Z" },
+    }));
+
+    const key = await aesKey(256);
+    const adapter = createControlledOffsiteAdapter({ destination_id: "offsite-1", failure_domain: "domain-remote" });
+    await h.port.copyOffsite({ draft, intent: intent("id-payload-offsite"), encryption_key: key, key_generation: "key-gen-1", primary_failure_domain: "domain-primary", destination_policy: policy(), adapter, now_ms: Date.now() });
+    const descriptor = await adapter.describe();
+    const readAuthority = {
+      destination_id: "offsite-1", key_generation: "key-gen-1", expires_at: draft.expires_at,
+      primary_failure_domain: "domain-primary", destination_policy_digest: await destinationPolicyDigest(policy()),
+      descriptor_digest: await destinationDescriptorDigest(descriptor),
+    };
+    const restoredChunks: Uint8Array[] = [];
+    for (const part of [...(draft.payload_part_index ?? [])].sort((a, b) => a.index - b.index)) {
+      restoredChunks.push(await openOffsiteBackupPart({ draft, part, encryption_key: key, destination_policy: policy(), authority: readAuthority, adapter }));
+    }
+    expect(await sha(restoredChunks.reduce((all, chunk) => { const next = new Uint8Array(all.byteLength + chunk.byteLength); next.set(all); next.set(chunk, all.byteLength); return next; }, new Uint8Array()))).toBe(sourceDigest);
+    await expect(openOffsiteBackupPart({ draft: { ...draft, epoch_id: "epoch-foreign" }, part: draft.payload_part_index?.[0] as NonNullable<typeof draft.payload_part_index>[number], encryption_key: key, destination_policy: policy(), authority: readAuthority, adapter }))
+      .rejects.toMatchObject({ code: "BACKUP_PART_READBACK_MISMATCH" });
   });
   it("opens a copied part with the original AAD and rejects ciphertext tampering", async () => {
     const h = await setup();

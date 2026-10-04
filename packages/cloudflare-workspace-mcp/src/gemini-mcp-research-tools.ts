@@ -159,6 +159,16 @@ export const MCP_RESEARCH_TOOLS = {
     },
     annotations: annotations(true),
   },
+  eliotr_source_read: {
+    name: "eliotr_source_read",
+    description: "Read exact admitted normalized source bytes for a source revision currently attached to this project. Reads are independent of AI Search and never substitute the current head for the requested revision. Use the returned cursor to continue bounded UTF-8 pages.",
+    inputSchema: { type: "object", additionalProperties: false,
+      required: ["client_grant_id", "project_id", "source_revision_ref"],
+      properties: { ...grant, project_id: identifier, source_revision_ref: identifier,
+        page_bytes: { type: "integer", minimum: 1, maximum: 24576, default: 16384 },
+        cursor: { type: "string", maxLength: 2048 } } },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
   eliotr_cancel: {
     name: "eliotr_cancel",
     description: "Stop one known explicit-project Research run with separate cancel permission: a grantor-authored run or your own machine run under its exact originating grant revision. Regrant never transfers control of an old machine run. Uses the same HTTP cancellation command and action key. Returns CANCELLED only after durable confirmation; completed runs conflict. Never resumes/restarts or dispatches models. Native termination may remain unconfirmed after canonical cancellation. On uncertain errors keep the same run, grant and idempotency key.",

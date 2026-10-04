@@ -1,4 +1,8 @@
-import { ApiRequestError } from "./api.js";
+import { ApiRequestError, isAuthorizationLoss } from "./api.js";
+import {
+  mountResearchModelConfigurationPanel,
+  RESEARCH_MODEL_SELECTION_SAVED_EVENT,
+} from "./research-model-configuration-panel.js";
 import {
   readResearchConfiguration,
   type ResearchConfigurationState,
@@ -13,6 +17,18 @@ export type ResearchConfigurationStartState = {
   readonly qualification_state: ResearchConfigurationView["qualification_state"];
   readonly run_readiness: ResearchRunReadiness;
 };
+
+export const NO_PROJECT_RESEARCH_START_STATE: Readonly<ResearchConfigurationStartState> = Object.freeze({
+  configuration: "missing",
+  model_transport: "unavailable",
+  qualification_state: "unavailable",
+  run_readiness: "blocked",
+});
+
+export const NO_PROJECT_RESEARCH_COPY: ResearchConfigurationCopy = Object.freeze({
+  summary: "Select a project before starting new research.",
+  explanation: "Readiness is checked for the selected project. Existing runs and saved drafts remain available below.",
+});
 
 export interface ResearchConfigurationPanelOptions {
   readonly deploymentGeneration: () => string | undefined;
@@ -47,12 +63,31 @@ function expiryLabel(value: string | null): string {
   return value === null ? "Unavailable" : value;
 }
 
-function errorCopy(error: unknown): { readonly summary: string; readonly explanation: string } {
+export interface ResearchConfigurationCopy {
+  readonly summary: string;
+  readonly explanation: string;
+}
+
+export function researchConfigurationErrorCopy(error: unknown): ResearchConfigurationCopy {
   if (error instanceof ApiRequestError) {
-    if (error.status === 401 || error.status === 403) {
+    if (error.code === "API_RESPONSE_SCHEMA_MISMATCH" || error.code === "MALFORMED_JSON_RESPONSE" ||
+        error.code === "MALFORMED_API_PROBLEM" || error.code === "API_RESPONSE_TOO_LARGE" ||
+        error.code === "API_STATUS_INVALID") {
+      return {
+        summary: "The server returned an invalid configuration response.",
+        explanation: "Run readiness could not be established from this response. Check the server and PWA versions, then refresh this panel.",
+      };
+    }
+    if (isAuthorizationLoss(error)) {
       return {
         summary: "Sign in again to check research configuration.",
         explanation: "The current owner session cannot read this configuration.",
+      };
+    }
+    if (error.status === 403) {
+      return {
+        summary: "Research configuration is denied by the current access policy.",
+        explanation: "The owner session is still active, but its current policy does not allow this configuration read. Ask an administrator to review the Research read policy.",
       };
     }
     if (error.code === "SCHEMA_NOT_READY") {
@@ -67,10 +102,71 @@ function errorCopy(error: unknown): { readonly summary: string; readonly explana
         explanation: "Check the server connection, then refresh this panel.",
       };
     }
+    if (error.status >= 500) {
+      return {
+        summary: "The server could not check research configuration.",
+        explanation: "No run readiness was confirmed. Check the server configuration and bindings, then refresh this panel.",
+      };
+    }
+    if (error.retryable) {
+      return {
+        summary: "Research configuration could not be confirmed.",
+        explanation: "The workspace changed or the check was interrupted. Refresh this panel to read the current configuration.",
+      };
+    }
   }
   return {
     summary: "Research configuration could not be read.",
     explanation: "Refresh this panel after checking the server connection.",
+  };
+}
+
+export function researchConfigurationViewCopy(view: ResearchConfigurationView): ResearchConfigurationCopy {
+  if (view.configuration === "missing") {
+    return {
+      summary: "Research agents are not configured.",
+      explanation: "Research cannot start until the server has a research model configuration. Add it on the server, then refresh this panel.",
+    };
+  }
+  if (view.configuration === "invalid") {
+    return {
+      summary: "Research configuration needs attention.",
+      explanation: "The server found settings it cannot use. Correct the listed settings, then refresh this panel.",
+    };
+  }
+  if (view.model_transport === "available" && view.run_readiness === "ready") {
+    return {
+      summary: "Research is ready to start with current qualification proofs.",
+      explanation: "The server read the installed model route and current proofs. This panel does not contact the model provider.",
+    };
+  }
+  if (view.run_readiness === "lazy_renewal") {
+    return {
+      summary: "Research can start; access will renew when the run starts.",
+      explanation: "Qualification is due for renewal. The server will renew it lazily at run time; this panel does not verify a live provider connection.",
+    };
+  }
+  if (view.readiness_reason === "QUALIFICATION_RENEWAL_READ_TOKEN_REQUIRED") {
+    return {
+      summary: "Qualification proofs need renewal before research can start.",
+      explanation: "The required server Read token is missing. An administrator must install it, then refresh this panel.",
+    };
+  }
+  if (view.qualification_state === "unavailable") {
+    return {
+      summary: "Research readiness could not be established.",
+      explanation: "The server could not read current qualification proofs. Check server configuration and database availability, then refresh this panel.",
+    };
+  }
+  if (view.model_transport === "available") {
+    return {
+      summary: "Research is not ready to start.",
+      explanation: "The server reported a readiness blocker. Correct the reported configuration or qualification issue, then refresh this panel.",
+    };
+  }
+  return {
+    summary: "Research configuration is installed, but its model transport is unavailable.",
+    explanation: "Configuration alone does not confirm a live research run. Check the server and its model binding, then refresh this panel.",
   };
 }
 
@@ -82,6 +178,7 @@ export function mountResearchConfigurationPanel(
     <div class="connection-heading"><div><span class="eyebrow">Research agents</span><h2>Research configuration</h2></div><span class="connection-state connection-state--unknown" data-research-configuration-badge>NOT CHECKED</span></div>
     <p class="connection-copy" data-research-configuration-summary role="status" aria-live="polite">Research configuration has not been checked yet.</p>
     <p class="connection-note" data-research-configuration-explanation>Check the server, then refresh this panel. Installed configuration does not confirm a live research run.</p>
+    <div data-research-model-configuration-host></div>
     <dl class="connection-facts" data-research-configuration-facts hidden><dt>Configuration</dt><dd data-research-configuration-state></dd><dt>Model transport</dt><dd data-research-model-transport></dd><dt>Run readiness</dt><dd data-research-run-readiness></dd><dt>Qualification</dt><dd data-research-qualification-state></dd><dt>Model route</dt><dd data-research-model-route></dd><dt>Proof expiry</dt><dd data-research-qualification-expires></dd><dt>Checked</dt><dd data-research-configuration-checked></dd></dl>
     <details class="connection-details" data-research-configuration-details hidden><summary>Configuration details</summary><div class="health-details-content" data-research-configuration-detail-content></div></details>
     <div class="connection-actions"><button class="button button--quiet" type="button" data-research-configuration-refresh>Refresh configuration</button></div>
@@ -100,12 +197,17 @@ export function mountResearchConfigurationPanel(
   const details = element.querySelector<HTMLDetailsElement>("[data-research-configuration-details]");
   const detailContent = element.querySelector<HTMLElement>("[data-research-configuration-detail-content]");
   const refreshButton = element.querySelector<HTMLButtonElement>("[data-research-configuration-refresh]");
-  if (!badge || !summary || !explanation || !facts || !state || !transport || !runReadiness || !qualification || !modelRoute || !qualificationExpires || !checked || !details || !detailContent || !refreshButton) {
+  const modelConfigurationHost = element.querySelector<HTMLElement>("[data-research-model-configuration-host]");
+  if (!badge || !summary || !explanation || !facts || !state || !transport || !runReadiness || !qualification || !modelRoute || !qualificationExpires || !checked || !details || !detailContent || !refreshButton || !modelConfigurationHost) {
     throw new Error("Research configuration panel is incomplete");
   }
+  const modelConfigurationPanel = mountResearchModelConfigurationPanel(modelConfigurationHost, {
+    deploymentGeneration: options.deploymentGeneration,
+  });
 
   let disposed = false;
   let serial = 0;
+  let projectId: string | undefined;
   let controller: AbortController | undefined;
   let readinessTimer: number | undefined;
 
@@ -141,18 +243,26 @@ export function mountResearchConfigurationPanel(
     qualificationExpires.textContent = "";
     checked.textContent = "";
   };
-  const renderIdle = (message: string, detail: string): void => {
-    options.onStateChange?.(null);
-    badge.className = "connection-state connection-state--unknown";
-    badge.textContent = "NOT CHECKED";
+  const renderIdle = (message: string, detail: string, state: ResearchConfigurationStartState | null = null,
+    badgeText = "NOT CHECKED", badgeState = "unknown"): void => {
+    options.onStateChange?.(state);
+    badge.className = `connection-state connection-state--${badgeState}`;
+    badge.textContent = badgeText;
     summary.textContent = message;
     explanation.textContent = detail;
     clearFacts();
     clearDetails();
   };
+  const renderNoProject = (): void => renderIdle(
+    NO_PROJECT_RESEARCH_COPY.summary,
+    NO_PROJECT_RESEARCH_COPY.explanation,
+    NO_PROJECT_RESEARCH_START_STATE,
+    "PROJECT REQUIRED",
+    "blocked",
+  );
   const renderError = (error: unknown): void => {
     options.onStateChange?.(null);
-    const copy = errorCopy(error);
+    const copy = researchConfigurationErrorCopy(error);
     badge.className = "connection-state connection-state--unknown";
     badge.textContent = "UNAVAILABLE";
     summary.textContent = copy.summary;
@@ -184,31 +294,9 @@ export function mountResearchConfigurationPanel(
     qualificationExpires.textContent = expiryLabel(view.qualification_expires_at);
     checked.textContent = view.checked_at;
     facts.hidden = false;
-    if (view.configuration === "missing") {
-      summary.textContent = "Research agents are not configured.";
-      explanation.textContent = "Research cannot start until the server has a research model configuration. Add it on the server, then refresh this panel.";
-    } else if (view.configuration === "invalid") {
-      summary.textContent = "Research configuration needs attention.";
-      explanation.textContent = "The server found settings it cannot use. Correct the listed settings, then refresh this panel.";
-    } else if (view.model_transport === "available" && view.run_readiness === "ready") {
-      summary.textContent = "Research is ready to start with current qualification proofs.";
-      explanation.textContent = "The server read the installed model route and current proofs. This panel does not contact the model provider.";
-    } else if (view.run_readiness === "lazy_renewal") {
-      summary.textContent = "Research can start; access will renew when the run starts.";
-      explanation.textContent = "Qualification is due for renewal. The server will renew it lazily at run time; this panel does not verify a live provider connection.";
-    } else if (view.readiness_reason === "QUALIFICATION_RENEWAL_READ_TOKEN_REQUIRED") {
-      summary.textContent = "Research cannot start until renewal access is installed.";
-      explanation.textContent = "The current qualification proofs need renewal, but the server Read token is missing. An administrator must install it, then refresh this panel.";
-    } else if (view.qualification_state === "unavailable") {
-      summary.textContent = "Research readiness could not be established.";
-      explanation.textContent = "The server could not read current qualification proofs. Refresh after the server configuration and database are available.";
-    } else if (view.model_transport === "available") {
-      summary.textContent = "Research is not ready to start.";
-      explanation.textContent = "The server reported a readiness blocker. Refresh this panel after the owner configuration is corrected.";
-    } else {
-      summary.textContent = "Research configuration is installed, but its model transport is unavailable.";
-      explanation.textContent = "Configuration alone does not confirm a live research run. Check the server and try again later.";
-    }
+    const copy = researchConfigurationViewCopy(view);
+    summary.textContent = copy.summary;
+    explanation.textContent = copy.explanation;
     clearDetails();
     if (view.missing_fields.length > 0 || view.invalid_fields.length > 0 ||
         view.readiness_reason === "QUALIFICATION_RENEWAL_READ_TOKEN_REQUIRED") {
@@ -235,13 +323,17 @@ export function mountResearchConfigurationPanel(
     scheduleReadinessRefresh(view, view.deployment_generation);
   };
   const online = (): boolean => typeof navigator === "undefined" || navigator.onLine;
-  const refresh = (): void => {
+  const refreshReadiness = (): void => {
     if (disposed) return;
     clearReadinessTimer();
     serial += 1;
     controller?.abort();
     controller = undefined;
     refreshButton.disabled = false;
+    if (projectId === undefined) {
+      renderNoProject();
+      return;
+    }
     options.onStateChange?.(null);
     const generation = options.deploymentGeneration();
     if (!online()) {
@@ -253,6 +345,7 @@ export function mountResearchConfigurationPanel(
       return;
     }
     const mine = serial;
+    const projectAtStart = projectId;
     const local = new AbortController();
     controller = local;
     refreshButton.disabled = true;
@@ -262,13 +355,13 @@ export function mountResearchConfigurationPanel(
     explanation.textContent = "This reads installed configuration only; it does not test a live research run.";
     clearFacts();
     clearDetails();
-    void readResearchConfiguration(generation, local.signal)
+    void readResearchConfiguration(generation, { signal: local.signal, projectId: projectAtStart })
       .then((view) => {
-        if (mine !== serial || disposed || options.deploymentGeneration() !== generation) return;
+        if (mine !== serial || disposed || projectId !== projectAtStart || options.deploymentGeneration() !== generation) return;
         renderView(view);
       })
       .catch((error: unknown) => {
-        if (mine !== serial || disposed) return;
+        if (mine !== serial || disposed || projectId !== projectAtStart || options.deploymentGeneration() !== generation) return;
         renderError(error);
       })
       .finally(() => {
@@ -278,7 +371,22 @@ export function mountResearchConfigurationPanel(
         }
       });
   };
+  const refresh = (): void => {
+    modelConfigurationPanel.refresh();
+    refreshReadiness();
+  };
+  const onProjectScopeChanged = (event: Event): void => {
+    const detail = (event as CustomEvent<{ reason?: unknown; projectId?: unknown }>).detail;
+    if (detail?.reason !== "project-filter") return;
+    const nextProjectId = typeof detail.projectId === "string" && detail.projectId.length > 0
+      ? detail.projectId : undefined;
+    if (nextProjectId === projectId) return;
+    projectId = nextProjectId;
+    refreshReadiness();
+  };
+  const onModelSelectionSaved = (): void => refreshReadiness();
   const clearPrivate = (message = "Research configuration check cleared. Check the server before reading it again."): void => {
+    modelConfigurationPanel.clearPrivate(message);
     clearReadinessTimer();
     serial += 1;
     controller?.abort();
@@ -287,18 +395,27 @@ export function mountResearchConfigurationPanel(
     renderIdle(message, "Refresh after the current owner session and deployment are available.");
   };
   const onOffline = (): void => clearPrivate("Offline. Research configuration is not cached.");
-  const onOnline = (): void => renderIdle("Back online. Refresh to check research configuration.", "Installed configuration does not confirm a live research run.");
+  const onOnline = (): void => {
+    if (projectId === undefined) renderNoProject();
+    else renderIdle("Back online. Refresh to check research configuration.", "Installed configuration does not confirm a live research run.");
+  };
   const onAuthorizationCleared = (): void => clearPrivate("Sign in again before checking research configuration.");
   window.addEventListener("offline", onOffline);
   window.addEventListener("online", onOnline);
   window.addEventListener("eliotr:authorization-cleared", onAuthorizationCleared);
+  document.addEventListener("library:scope-changed", onProjectScopeChanged);
+  modelConfigurationHost.addEventListener(RESEARCH_MODEL_SELECTION_SAVED_EVENT, onModelSelectionSaved);
   refreshButton.addEventListener("click", refresh);
+  renderNoProject();
   return Object.assign(() => {
     disposed = true;
     clearPrivate();
     window.removeEventListener("offline", onOffline);
     window.removeEventListener("online", onOnline);
     window.removeEventListener("eliotr:authorization-cleared", onAuthorizationCleared);
+    document.removeEventListener("library:scope-changed", onProjectScopeChanged);
+    modelConfigurationHost.removeEventListener(RESEARCH_MODEL_SELECTION_SAVED_EVENT, onModelSelectionSaved);
     refreshButton.removeEventListener("click", refresh);
+    modelConfigurationPanel();
   }, { clearPrivate, refresh });
 }

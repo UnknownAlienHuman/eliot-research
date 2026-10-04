@@ -20,6 +20,7 @@ import { RESEARCH_WORKFLOW_STAGES } from "@eliotr/domain";
 import { governedModelAttemptFixture } from "./model-attempt-fixture.js";
 import { principal, workflowFixture } from "./research-workflow-fixture.js";
 import { expect } from "vitest";
+import runConfigurationMigration from "../../../infra/d1/core/migrations/0104_research_run_configuration.sql?raw";
 export const NOW = "2026-09-10T12:00:00.000Z";
 export const ROUTE = "dynamic/eliotr-report-section" as const;
 const ROUTE_VERSION = "stage-handler-test-v1";
@@ -41,6 +42,41 @@ export interface CommittedFreezeSynthesisFixtureOptions {
   readonly include_counterevidence?: boolean;
   /** Use the production execution-bound ORIENT lifecycle for the original scope. */
   readonly orientation_backed_scope?: boolean;
+}
+
+/** Seed the same row state that 0104 preserves for runs already present at migration time. */
+export async function markResearchRunAsPre0104Legacy(database: D1Database, operationId: string): Promise<void> {
+  const row = await database.prepare(
+    "SELECT configuration_required,configuration_ref FROM research_workflow_run WHERE operation_id=?1 LIMIT 1",
+  ).bind(operationId).first<{ readonly configuration_required: unknown; readonly configuration_ref: unknown }>();
+  if (row === null || row.configuration_required !== 1 || row.configuration_ref !== null) {
+    throw new Error("Legacy REPORT fixture is not a newly-required run without a snapshot");
+  }
+  const transitionStart = runConfigurationMigration.indexOf(
+    "CREATE TRIGGER research_workflow_run_transition BEFORE UPDATE ON research_workflow_run",
+  );
+  if (transitionStart < 0) throw new Error("Run configuration migration is missing its exact transition guard");
+  const transitionTrigger = runConfigurationMigration.slice(transitionStart).trim();
+  await database.prepare("DROP TRIGGER research_workflow_run_transition").run();
+  try {
+    await database.prepare(
+      "UPDATE research_workflow_run SET configuration_required=0 WHERE operation_id=?1 AND configuration_ref IS NULL",
+    ).bind(operationId).run();
+    const readback = await database.prepare(
+      "SELECT configuration_required,configuration_ref FROM research_workflow_run WHERE operation_id=?1 LIMIT 1",
+    ).bind(operationId).first<{ readonly configuration_required: unknown; readonly configuration_ref: unknown }>();
+    if (readback === null || readback.configuration_required !== 0 || readback.configuration_ref !== null) {
+      throw new Error("Legacy REPORT fixture marker did not read back exactly");
+    }
+  } finally {
+    await database.prepare(transitionTrigger).run();
+  }
+  const restored = await database.prepare(
+    "SELECT name FROM sqlite_master WHERE type='trigger' AND name='research_workflow_run_transition' LIMIT 1",
+  ).first<{ readonly name: string }>();
+  if (restored?.name !== "research_workflow_run_transition") {
+    throw new Error("Run configuration transition guard was not restored after legacy fixture setup");
+  }
 }
 
 function futureIso(): string {

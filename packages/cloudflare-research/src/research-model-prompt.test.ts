@@ -7,6 +7,7 @@ import type {
 import {
   modelGatewayRequestParametersSha256,
   type ModelCallInput,
+  type ModelGatewayRequestCapabilitiesV1,
 } from "@eliotr/cloudflare-ai";
 import type { ModelRouteDeployment } from "@eliotr/platform-cloudflare";
 import type { NavigationReadAuthority } from "@eliotr/cloudflare-evidence";
@@ -117,6 +118,79 @@ async function testDeployment(): Promise<ModelRouteDeployment> {
 }
 
 describe("research model prompt compiler", () => {
+  it("admits reasoning max only when the selected path declares it", async () => {
+    const deployment = await testDeployment();
+    const capabilities: ModelGatewayRequestCapabilitiesV1 = {
+      max_output_tokens_field: "max_tokens",
+      reasoning_efforts: ["max"],
+    };
+    const compiler = createResearchModelPromptCompiler({
+      manifest_service: { buildAndPersist: async () => builtManifest() },
+      build_manifest_input: async () => buildInput,
+      resolve_trusted_parameters: async () => ({
+        prompt: "Summarize the evidence.",
+        max_tokens: 32,
+        reasoning_effort: "max",
+      }),
+      request_capabilities: capabilities,
+      request_timeout_ms: 15_000,
+    });
+    const result = await compiler.compile(input, deployment) as {
+      readonly request_body: { readonly reasoning_effort?: string };
+    };
+    expect(result.request_body.reasoning_effort).toBe("max");
+
+    const legacyCompiler = createResearchModelPromptCompiler({
+      manifest_service: { buildAndPersist: async () => builtManifest() },
+      build_manifest_input: async () => buildInput,
+      resolve_trusted_parameters: async () => ({
+        prompt: "Summarize the evidence.",
+        max_tokens: 32,
+        reasoning_effort: "max",
+      }),
+      request_timeout_ms: 15_000,
+    });
+    await expect(legacyCompiler.compile(input, deployment)).rejects.toMatchObject({
+      code: "MODEL_GATEWAY_REQUEST_INVALID",
+    });
+  });
+
+  it("uses the selected max_completion_tokens wire field in the same parameter digest", async () => {
+    const capabilities: ModelGatewayRequestCapabilitiesV1 = {
+      max_output_tokens_field: "max_completion_tokens",
+      reasoning_efforts: ["max"],
+    };
+    const deployment: ModelRouteDeployment = {
+      ...deploymentTemplate,
+      parameters_digest: await modelGatewayRequestParametersSha256({
+        model: deploymentTemplate.route_ref,
+        messages: [],
+        max_completion_tokens: 32,
+        reasoning_effort: "max",
+        stream: false,
+      }, capabilities),
+    };
+    const compiler = createResearchModelPromptCompiler({
+      manifest_service: { buildAndPersist: async () => builtManifest() },
+      build_manifest_input: async () => buildInput,
+      resolve_trusted_parameters: async () => ({
+        prompt: "Summarize the evidence.",
+        max_tokens: 32,
+        reasoning_effort: "max",
+      }),
+      request_capabilities: capabilities,
+      request_timeout_ms: 15_000,
+    });
+
+    const result = await compiler.compile(input, deployment) as {
+      readonly request_body: Readonly<Record<string, unknown>>;
+    };
+    expect(result.request_body.max_completion_tokens).toBe(32);
+    expect(result.request_body).not.toHaveProperty("max_tokens");
+    expect(await modelGatewayRequestParametersSha256(result.request_body, capabilities))
+      .toBe(deployment.parameters_digest);
+  });
+
   it("keeps admitted source text in quoted user data and returns canonical bytes", async () => {
     let persisted = 0;
     const deployment = await testDeployment();

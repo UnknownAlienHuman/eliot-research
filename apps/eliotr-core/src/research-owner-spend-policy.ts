@@ -9,7 +9,7 @@ import {
 } from "@eliotr/cloudflare-research";
 
 export type ResearchOwnerSpendPolicyResolution = Readonly<{
-  readonly mode: "legacy" | "template";
+  readonly mode: "legacy" | "template-v1" | "template-v2";
   readonly policy: ResearchModelSpendPolicy;
 }>;
 
@@ -74,15 +74,18 @@ function boundTemplate(
   const generation = id(input.policy_generation, "current policy generation");
   const authority = id(input.policy_authority_ref, "current policy authority");
   if (input.access.client_class !== "owner_pwa") stale("current client is not the owner application");
+  const isV2 = template.protocol === "eliotr.research-owner-spend-template.v2";
   if (template.principal_ref !== principal || template.client_class !== input.access.client_class ||
-      template.deployment_generation !== deployment) stale("owner spend template is bound to another owner or deployment");
+      (!isV2 && template.deployment_generation !== deployment)) {
+    stale("owner spend template is bound to another owner or deployment");
+  }
   if (input.authorization.policy_authority_ref !== authority ||
       !input.authorization.allowed_use.includes("research")) stale("current scope grant does not authorize research");
   id(input.authorization.authorization_receipt_ref, "current authorization receipt");
   const now = input.now_ms ?? Date.now();
   if (!Number.isSafeInteger(now)) invalid("current clock is invalid");
   const expires = Math.min(
-    dateMs(template.expires_at, "template expiry"),
+    template.expires_at === undefined ? Number.POSITIVE_INFINITY : dateMs(template.expires_at, "template expiry"),
     dateMs(input.scope_expires_at, "scope expiry"),
     dateMs(input.authorization.expires_at, "grant expiry"),
   );
@@ -91,6 +94,7 @@ function boundTemplate(
     ...template,
     protocol: "eliotr.research-model-spend-policy.v1" as const,
     credential_generation: credential,
+    deployment_generation: deployment,
     policy_generation: generation,
     policy_authority_ref: authority,
     expires_at: new Date(expires).toISOString(),
@@ -108,11 +112,14 @@ export function resolveResearchOwnerSpendPolicy(
 ): ResearchOwnerSpendPolicyResolution {
   const decoded = parseJson(input.raw);
   if (typeof decoded === "object" && decoded !== null &&
-      (decoded as { protocol?: unknown }).protocol === "eliotr.research-owner-spend-template.v1") {
+      ((decoded as { protocol?: unknown }).protocol === "eliotr.research-owner-spend-template.v1" ||
+       (decoded as { protocol?: unknown }).protocol === "eliotr.research-owner-spend-template.v2")) {
     try {
-      return Object.freeze({ mode: "template", policy: boundTemplate(
-        readResearchOwnerSpendPolicyTemplate(input.raw, input.provenance), input,
-      ) });
+      const template = readResearchOwnerSpendPolicyTemplate(input.raw, input.provenance);
+      return Object.freeze({
+        mode: template.protocol === "eliotr.research-owner-spend-template.v2" ? "template-v2" : "template-v1",
+        policy: boundTemplate(template, input),
+      });
     } catch (cause) {
       if (cause instanceof ResearchOwnerSpendPolicyError) throw cause;
       invalid("installed owner spend template is invalid", cause);

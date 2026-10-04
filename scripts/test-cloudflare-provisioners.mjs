@@ -172,7 +172,8 @@ const server = createServer(async (req, res) => {
         return json(res, state.aiNamespace?.name === tail[2] ? success(state.aiNamespace) : notFound());
       }
       if (tail.length === 2 && method === "POST") {
-        state.aiNamespace = { id: nextId("namespace"), name: body.name, description: body.description };
+        state.aiNamespace = { id: nextId("namespace"), name: body.name, description: body.description,
+          created_at: "2026-10-03T20:14:14.000Z" };
         return json(res, success(state.aiNamespace));
       }
       if (tail.length === 5 && tail[3] === "instances" && method === "GET") {
@@ -650,6 +651,7 @@ try {
       const observe = () => { calls += 1; return { observed: true }; };
       const request = runInNewContext(`(${source.slice(start, end + 2)})`, {
         verifyExisting: true, apiBase: "https://example.invalid", headers: {},
+        prebillingMetadata: false,
         mcpTransport: viaMcp ? { request: async () => observe() } : null,
         fetch: async () => globalThis.Response.json({ success: true, result: observe() }),
       });
@@ -678,7 +680,8 @@ try {
     for (const spec of foundationDesired.r2_buckets) state.r2.set(spec.name, { name: spec.name, jurisdiction: spec.jurisdiction, storage_class: spec.storage_class });
     for (const spec of foundationDesired.queues) state.queues.set(spec.name, { queue_id: `existing-${spec.name}`, queue_name: spec.name });
     state.aiNamespace = { id: "existing-namespace", name: aiSearchDesired.namespace,
-      description: "Eliot Research private managed retrieval namespace" };
+      description: "Eliot Research private managed retrieval namespace",
+      created_at: "2026-10-03T20:14:14.000Z" };
     for (const spec of aiSearchDesired.instances) state.aiInstances.set(spec.id, structuredClone(spec.create));
     for (const spec of gatewaysDesired.gateways) state.gateways.set(spec.id, structuredClone(spec));
     for (const mcp of [false, true]) {

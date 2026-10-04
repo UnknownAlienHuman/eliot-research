@@ -2,7 +2,7 @@ import { ApiRequestError, isAuthorizationLoss } from "./api.js";
 import { createArtifactProductControls } from "./artifact-product-controls.js";
 import type { ArtifactPublicationView } from "./artifact-product-api.js";
 import { readReauthorizedResearchArtifactSection, type ResearchArtifactSectionCitationAuditClaim, type ResearchSourceFreshness } from "./research-run-api.js";
-import { readReauthorizedResearchArtifactSectionCitations } from "./research-run-reauthorization-api.js";
+import { readReauthorizedResearchArtifactSectionCitations, type ResearchArtifactSectionCitationReauthorized } from "./research-run-reauthorization-api.js";
 import { downloadResearchDraftMarkdown, type ResearchMarkdownSection } from "./research-markdown-download.js";
 import { renderReadingMarkdown } from "./reading-markdown.js";
 import { createWikiProposalFromRun } from "./wiki-proposal-create-api.js";
@@ -26,6 +26,24 @@ interface ReportHooks {
   finishAction(controller: AbortController, serial: number): void;
   openArtifact(ref: ArtifactRevision["artifact_ref"]): void;
   publicationChanged(status: ArtifactRevision["status"] | null): void;
+}
+
+export function citedExcerptSummary(count: number): string {
+  return `${count} cited ${count === 1 ? "excerpt" : "excerpts"}. This is not a count of unique documents.`;
+}
+
+export function citedExcerptActionLabel(ordinal: number): string {
+  return `Open cited excerpt ${ordinal + 1}`;
+}
+
+export function resolveClaimEvidenceCitations(
+  claim: ResearchArtifactSectionCitationAuditClaim,
+  citationByOriginalRef: ReadonlyMap<string, ResearchArtifactSectionCitationReauthorized>,
+): { readonly support: readonly (ResearchArtifactSectionCitationReauthorized | undefined)[]; readonly counterevidence: readonly (ResearchArtifactSectionCitationReauthorized | undefined)[] } {
+  return {
+    support: claim.support_handle_refs.map((ref) => citationByOriginalRef.get(citationRefKey(ref))),
+    counterevidence: claim.counterevidence_handle_refs.map((ref) => citationByOriginalRef.get(citationRefKey(ref))),
+  };
 }
 
 export function renderResearchArtifactReport(artifact: ArtifactRevision, options: ReportRenderOptions, hooks: ReportHooks): void {
@@ -233,10 +251,10 @@ export function renderResearchArtifactReport(artifact: ArtifactRevision, options
     open.onclick = () => { void readSection(); };
     sectionReaders.push(readSection);
     sectionActionDetails.append(open);
-    const sources = document.createElement("button"); sources.type = "button"; sources.className = "button button--quiet"; sources.textContent = "Open sources"; sources.dataset.openSources = String(ordinal);
+    const sources = document.createElement("button"); sources.type = "button"; sources.className = "button button--quiet"; sources.textContent = "Review cited excerpts"; sources.dataset.openSources = String(ordinal);
     sources.onclick = () => {
       if (!hooks.isCurrent(options.renderSerial) || hooks.busy()) return;
-      const local = new AbortController(); hooks.setController(local); hooks.setActionsDisabled(true); status.textContent = "Reading cited sources…";
+      const local = new AbortController(); hooks.setController(local); hooks.setActionsDisabled(true); status.textContent = "Loading cited excerpts…";
       item.querySelector(".research-citations")?.remove(); item.querySelector(".research-citation-error")?.remove();
       const read = readReauthorizedResearchArtifactSectionCitations(artifact.artifact_ref, section.section_ref, options.deploymentGeneration, local.signal, section.verification_receipt_ref);
       void read
@@ -253,15 +271,24 @@ export function renderResearchArtifactReport(artifact: ArtifactRevision, options
           const selectCitation = (citation: typeof aliases[number]): void => {
             if (!hooks.isCurrent(options.renderSerial) || hooks.busy()) return;
             element.dispatchEvent(new CustomEvent("research:evidence-selected", { bubbles: true, detail: { scopeSnapshotRef: citationScope, handleRef: citation.handle_ref, excerptSha256: citation.excerpt_sha256 } }));
-            status.textContent = "Source selected. Verify it in the Evidence rail.";
+            status.textContent = "Excerpt selected. Verify its bytes in the Evidence rail.";
           };
-          const appendClaimEvidenceButton = (container: HTMLElement, kind: "Support" | "Counterevidence", ref: ResearchArtifactSectionCitationAuditClaim["support_handle_refs"][number], ordinal: number): void => {
-            const citation = citationByRef.get(citationRefKey(ref));
-            const button = document.createElement("button"); button.type = "button"; button.className = "button button--quiet";
-            button.textContent = citation === undefined ? `${kind} evidence unavailable` : `${kind} evidence ${ordinal + 1}`;
-            if (citation === undefined) { button.disabled = true; button.dataset.reportActionUnavailable = "true"; }
-            else button.onclick = () => selectCitation(citation);
-            container.append(button);
+          const appendClaimEvidenceGroup = (container: HTMLElement, label: "Supporting" | "Counterevidence", citations: readonly (ResearchArtifactSectionCitationReauthorized | undefined)[]): void => {
+            const group = document.createElement("div"); group.className = "research-citation-evidence-group";
+            const heading = document.createElement("p"); heading.textContent = `${label} excerpts`;
+            group.append(heading);
+            if (citations.length === 0) {
+              const empty = document.createElement("p"); empty.textContent = "None recorded in this claim check.";
+              group.append(empty);
+            }
+            citations.forEach((citation, index) => {
+              const button = document.createElement("button"); button.type = "button"; button.className = "button button--quiet";
+              button.textContent = citation === undefined ? `${label} excerpt unavailable` : `Open ${label.toLowerCase()} excerpt ${index + 1}`;
+              if (citation === undefined) { button.disabled = true; button.dataset.reportActionUnavailable = "true"; }
+              else button.onclick = () => selectCitation(citation);
+              group.append(button);
+            });
+            container.append(group);
           };
           if (citations.semantic_verification === "EXECUTED") {
             const auditDetails = document.createElement("details"); auditDetails.className = "research-audit-details";
@@ -273,18 +300,19 @@ export function renderResearchArtifactReport(artifact: ArtifactRevision, options
               const verdict = document.createElement("p"); verdict.textContent = `Verdict: ${AUDIT_DISPOSITION_LABELS[claim.disposition]}`;
               claimItem.append(claimText, verdict);
               const claimActions = document.createElement("div"); claimActions.className = "research-citation-actions";
-              claim.support_handle_refs.forEach((ref, index) => appendClaimEvidenceButton(claimActions, "Support", ref, index));
-              claim.counterevidence_handle_refs.forEach((ref, index) => appendClaimEvidenceButton(claimActions, "Counterevidence", ref, index));
-              if (claimActions.childElementCount > 0) claimItem.append(claimActions);
+              const claimEvidence = resolveClaimEvidenceCitations(claim, citationByRef);
+              appendClaimEvidenceGroup(claimActions, "Supporting", claimEvidence.support);
+              appendClaimEvidenceGroup(claimActions, "Counterevidence", claimEvidence.counterevidence);
+              claimItem.append(claimActions);
               claimList.append(claimItem);
             });
             auditDetails.append(auditSummary, claimList); list.append(auditDetails);
           }
-          if (citations.cited_evidence.length === 0) { const empty = document.createElement("p"); empty.textContent = "No cited source handles are available."; list.append(empty); } else {
-            const heading = document.createElement("p"); heading.textContent = "Open a cited source in the Evidence rail:"; list.append(heading);
+          if (citations.cited_evidence.length === 0) { const empty = document.createElement("p"); empty.textContent = "No cited excerpts are available."; list.append(empty); } else {
+            const heading = document.createElement("p"); heading.textContent = citedExcerptSummary(aliases.length); list.append(heading);
             const actions = document.createElement("div"); actions.className = "research-citation-actions";
             aliases.forEach((citation, citationOrdinal) => {
-              const button = document.createElement("button"); button.type = "button"; button.className = "button button--quiet"; button.textContent = `Open source ${citationOrdinal + 1}`; button.dataset.openCitation = String(citationOrdinal); button.disabled = hooks.busy();
+              const button = document.createElement("button"); button.type = "button"; button.className = "button button--quiet"; button.textContent = citedExcerptActionLabel(citationOrdinal); button.dataset.openCitation = String(citationOrdinal); button.disabled = hooks.busy();
               button.onclick = () => selectCitation(citation);
               actions.append(button);
             });
@@ -292,7 +320,7 @@ export function renderResearchArtifactReport(artifact: ArtifactRevision, options
           }
           item.insertBefore(list, actions); status.textContent = citations.semantic_verification === "EXECUTED"
             ? "Claim check loaded. Review each verdict and its evidence."
-            : "Cited sources loaded; fresh verification is still required.";
+            : "Cited excerpts loaded; fresh integrity verification is still required.";
         })
         .catch((error: unknown) => {
           if (!hooks.isCurrent(options.renderSerial) || (error instanceof Error && error.name === "AbortError")) return;
@@ -300,7 +328,7 @@ export function renderResearchArtifactReport(artifact: ArtifactRevision, options
           if (error instanceof ApiRequestError && (isAuthorizationLoss(error) || error.status === 409 || error.status === 410)) { hooks.clearPrivate(); return; }
           if (error instanceof ApiRequestError && error.status === 403) item.querySelector(".research-citations")?.remove();
           const failure = document.createElement("p"); failure.className = "research-citation-error"; failure.textContent = message(error); item.querySelector(".research-citation-error")?.remove(); item.append(failure);
-          status.textContent = "Cited sources could not be read.";
+          status.textContent = "Cited excerpts could not be loaded.";
         })
         .finally(() => hooks.finishAction(local, options.renderSerial));
     };

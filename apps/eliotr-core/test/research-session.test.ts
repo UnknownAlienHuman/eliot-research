@@ -11,7 +11,7 @@ import {
 import { retrievalRequestDigest } from "@eliotr/retrieval";
 import { body, count, db, principal, run, runtime, seedSource, setupOrientationDatabase, verifier } from "./orientation-fixture.js";
 import { principal as workflowPrincipal, workflowFixture } from "./research-workflow-fixture.js";
-import { admissionTestEnvironment, terminateAdmissionWorkflows } from "./research-admission-fixture.js";
+import { admissionTestEnvironment, admissionTestScopeExpression, terminateAdmissionWorkflows } from "./research-admission-fixture.js";
 import { prepareHistoricalV2Workflow, prepareIndexedHistoricalV2Workflow } from "./research-session-legacy-fixture.js";
 import { handleHttp } from "../src/http.js";
 import type { Env } from "../src/env.js";
@@ -23,11 +23,14 @@ import {
 import { parseResearchRunRequest } from "../src/research-session.js";
 
 let admissionEnvironment: Env;
+let secondProjectAdmissionEnvironment: Env;
 const admittedWorkflows: string[] = [];
+const sessionProjectSourceIds = ["rs-query", "rs-query-neg", "rs-shared", "rs-second", "rs-revoked", "rs-protocol", "rs-legacy-e2"] as const;
 beforeAll(async () => {
   await setupOrientationDatabase();
-  for (const sourceId of ["rs-query", "rs-query-neg", "rs-shared", "rs-second", "rs-revoked", "rs-protocol", "rs-legacy-e2"]) await seedSource(sourceId);
-  admissionEnvironment = await admissionTestEnvironment(runtime, principal, "research-session");
+  for (const sourceId of sessionProjectSourceIds) await seedSource(sourceId);
+  admissionEnvironment = await admissionTestEnvironment(runtime, principal, "research-session", { source_ids: sessionProjectSourceIds });
+  secondProjectAdmissionEnvironment = await admissionTestEnvironment(runtime, principal, "research-session-rs-second", { source_ids: ["rs-second"] });
 });
 afterAll(async () => terminateAdmissionWorkflows(runtime, admittedWorkflows));
 
@@ -35,7 +38,7 @@ function queryBody(id: string, fields: Record<string, unknown> = {}) {
   return { query: "Source", product: "ORIENT", scope_expression: { kind: "SELECTED_SOURCES", source_ids: [id] }, literals: [], evidence_grade: "E0", budget_ref: ORIENTATION_PROFILE, max_results: 8, ...fields };
 }
 function runBody(id: string, fields: Record<string, unknown> = {}) {
-  return { query: "Source", product: "RESEARCH", scope_expression: { kind: "SELECTED_SOURCES", source_ids: [id] }, literals: [], evidence_grade: "E1", budget_ref: "research-budget-v1", max_results: 8, ...fields };
+  return { query: "Source", product: "RESEARCH", scope_expression: admissionTestScopeExpression("research-session"), literals: [], evidence_grade: "E1", budget_ref: "research-budget-v1", max_results: 8, ...fields };
 }
 function queryRequest(id: string, fields: Record<string, unknown> = {}, key = `rs-query-${id}`) {
   return new Request("https://research.example/api/v1/research/query", { method: "POST", headers: { "content-type": "application/json", "idempotency-key": key }, body: JSON.stringify(queryBody(id, fields)) });
@@ -51,11 +54,11 @@ async function workflowCounts() {
   if (attempts === null || checkpoints === null || outbox === null || events === null) throw new Error("workflow count readback is unavailable");
   return { attempts, checkpoints, outbox, events };
 }
-function runWithInstalledAdmission(request: Request, actor = verifier()) {
-  return handleHttp(request, admissionEnvironment, {} as ExecutionContext, { accessVerifier: actor });
+function runWithInstalledAdmission(request: Request, actor = verifier(), environment: Env = admissionEnvironment) {
+  return handleHttp(request, environment, {} as ExecutionContext, { accessVerifier: actor });
 }
-async function admitAndTerminate(request: Request, actor = verifier()) {
-  const response = await runWithInstalledAdmission(request, actor);
+async function admitAndTerminate(request: Request, actor = verifier(), environment: Env = admissionEnvironment) {
+  const response = await runWithInstalledAdmission(request, actor, environment);
   const payload = await body<{ investigation_ref: { id: string; revision: number }; workflow_instance_id: string }>(response);
   if (response.status === 200) {
     admittedWorkflows.push(payload.data.workflow_instance_id);
@@ -112,6 +115,29 @@ describe("research.query over real HTTP/D1", () => {
 });
 
 describe("research.run over real D1/R2 with W1 ledger and W2 checkpoints", () => {
+  it("rejects a projectless run as nonretryable before run or model effects", async () => {
+    const before = {
+      ledger: await count("investigation_ledger_head"),
+      run: await count("research_workflow_run"),
+      configuration: await count("research_run_configuration"),
+      model: await count("research_model_attempt"),
+      workflow: await workflowCounts(),
+    };
+    const response = await runWithInstalledAdmission(runRequest("rs-shared", {
+      scope_expression: { kind: "SELECTED_SOURCES", source_ids: ["rs-shared"] },
+    }, "rs-run-without-project"));
+    const payload = await body<{ readonly code?: string; readonly retryable?: boolean }>(response);
+    expect(response.status, JSON.stringify(payload)).toBe(503);
+    expect(payload).toMatchObject({ code: "RESEARCH_AGENT_NOT_CONFIGURED", retryable: false });
+    expect({
+      ledger: await count("investigation_ledger_head"),
+      run: await count("research_workflow_run"),
+      configuration: await count("research_run_configuration"),
+      model: await count("research_model_attempt"),
+      workflow: await workflowCounts(),
+    }).toEqual(before);
+  });
+
   it("admits a current semantic run with exact durable input and replays without provider work", async () => {
     expect((await runWithInstalledAdmission(runRequest("rs-shared", {}, "rs-run-first"), verifier("stranger"))).status).toBe(403);
     const modelAttemptsBefore = await count("research_model_attempt");
@@ -205,7 +231,12 @@ describe("research.run over real D1/R2 with W1 ledger and W2 checkpoints", () =>
   });
 
   it("creates an independent second source run with its own current policy authority", async () => {
-    const { response, payload } = await admitAndTerminate(runRequest("rs-second", {}, "rs-run-second"));
+    const secondProjectScope = admissionTestScopeExpression("research-session-rs-second");
+    const { response, payload } = await admitAndTerminate(
+      runRequest("rs-second", { scope_expression: secondProjectScope }, "rs-run-second"),
+      verifier(),
+      secondProjectAdmissionEnvironment,
+    );
     expect(response.status, JSON.stringify(payload)).toBe(200);
     expect(payload.data.investigation_ref.id.startsWith("research-")).toBe(true);
     const policies = await db.prepare("SELECT COUNT(*) AS n FROM investigation_current_policy WHERE state = 'ACTIVE'").first<number>("n");
@@ -214,6 +245,11 @@ describe("research.run over real D1/R2 with W1 ledger and W2 checkpoints", () =>
       .bind(payload.data.workflow_instance_id).first<{ policy_authority_ref: string }>();
     expect(scope).not.toBeNull();
     if (scope === null) throw new Error("missing second-run scope policy authority");
+    const original = await db.prepare("SELECT policy_authority_ref FROM research_workflow_run WHERE idempotency_key = ?1")
+      .bind("rs-run-first").first<{ policy_authority_ref: string }>();
+    expect(original).not.toBeNull();
+    if (original === null) throw new Error("missing original project policy authority");
+    expect(scope.policy_authority_ref).not.toBe(original.policy_authority_ref);
     const current = await db.prepare("SELECT policy_generation FROM investigation_current_policy WHERE policy_authority_ref = ?1 AND state = 'ACTIVE'")
       .bind(scope.policy_authority_ref).first<{ policy_generation: string }>();
     expect(current).not.toBeNull();
@@ -222,7 +258,11 @@ describe("research.run over real D1/R2 with W1 ledger and W2 checkpoints", () =>
       .bind(`${current.policy_generation}-duplicate`, scope.policy_authority_ref, new Date().toISOString()).run()).rejects.toThrow();
     await db.prepare("UPDATE investigation_current_policy SET state = 'RETIRED' WHERE policy_authority_ref = ?1 AND policy_generation = ?2")
       .bind(scope.policy_authority_ref, current.policy_generation).run();
-    const retiredReplay = await body(await runWithInstalledAdmission(runRequest("rs-second", {}, "rs-run-second")));
+    const retiredReplay = await body(await runWithInstalledAdmission(
+      runRequest("rs-second", { scope_expression: secondProjectScope }, "rs-run-second"),
+      verifier(),
+      secondProjectAdmissionEnvironment,
+    ));
     expect(retiredReplay.code, JSON.stringify(retiredReplay)).toBe("RESEARCH_AUTHORITY_STALE");
     expect((await db.prepare("SELECT state FROM investigation_current_policy WHERE policy_authority_ref = ?1 AND policy_generation = ?2")
       .bind(scope.policy_authority_ref, current.policy_generation).first<{ state: string }>())?.state).toBe("RETIRED");

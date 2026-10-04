@@ -18,6 +18,9 @@
     },
     {
       "path": "../contracts"
+    },
+    {
+      "path": "../cloudflare-erasure"
     }
   ]
 }

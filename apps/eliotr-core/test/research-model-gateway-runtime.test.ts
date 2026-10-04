@@ -6,6 +6,38 @@ import { createResearchModelGatewayRuntime } from "../../../packages/cloudflare-
 const ACCOUNT_ID = "a".repeat(32);
 const BASE_URL = `https://gateway.ai.cloudflare.com/v1/${ACCOUNT_ID}/eliotr-reasoning`;
 const ENDPOINT = `${BASE_URL}/compat/chat/completions`;
+const GATEWAY_LOG = {
+  id: "research-runtime-test-log",
+  provider: "workers-ai",
+  model: "@cf/zai-org/glm-5.3-flash",
+  path: ENDPOINT,
+  duration: 1,
+  status_code: 200,
+  success: true,
+  cached: false,
+  request_size: 0,
+  request_head_complete: false,
+  response_size: 0,
+  response_head_complete: false,
+  created_at: new Date(0),
+} satisfies AiGatewayLog;
+
+function gateway(url: string) {
+  return { getUrl: async () => url, getLog: async () => GATEWAY_LOG };
+}
+
+const BYOK_POLICY = {
+  version: 1 as const,
+  transport: "cloudflare-ai-gateway" as const,
+  api: "compat-chat-completions" as const,
+  provider: "workers-ai",
+  model: "@cf/zai-org/glm-5.3-flash",
+  billing: { mode: "byok" as const, alias: "glm" },
+  capabilities: {
+    max_output_tokens_field: "max_completion_tokens" as const,
+    reasoning_efforts: ["low", "max"] as const,
+  },
+};
 
 function requestInit(): RequestInit {
   return {
@@ -17,6 +49,59 @@ function requestInit(): RequestInit {
 }
 
 describe("research model gateway runtime", () => {
+  it("retains explicit HTTP billing policy and rejects native binding alias fallback", async () => {
+    let fetchCalls = 0;
+    const http = createResearchModelGatewayRuntime({
+      reasoning_gateway_base_url: BASE_URL,
+      gateway_token: "server-held-token",
+      transport_policy: BYOK_POLICY,
+      fetch: async (_url, init) => {
+        fetchCalls += 1;
+        expect(new Headers(init?.headers).get("cf-aig-byok-alias")).toBe("glm");
+        expect(new Headers(init?.headers).get("cf-aig-no-wholesale")).toBe("true");
+        return new Response("ok");
+      },
+    });
+    expect(http.transport_policy).toEqual(BYOK_POLICY);
+    await http.transport.fetch(ENDPOINT, {
+      ...requestInit(),
+      headers: {
+        "cf-aig-request-timeout": "1000",
+        "cf-aig-byok-alias": "glm",
+        "cf-aig-no-wholesale": "true",
+      },
+    });
+    expect(fetchCalls).toBe(1);
+
+    let bindingCalls = 0;
+    expect(() => createResearchModelGatewayRuntime({
+      reasoning_gateway_base_url: BASE_URL,
+      transport_policy: BYOK_POLICY,
+      ai_gateway_binding: {
+        gateway: () => gateway(BASE_URL),
+        run: async () => { bindingCalls += 1; return new Response("unexpected"); },
+      },
+    })).toThrowError(ModelGatewayExecutionError);
+    expect(bindingCalls).toBe(0);
+
+    const binding = createResearchModelGatewayRuntime({
+      reasoning_gateway_base_url: BASE_URL,
+      ai_gateway_binding: {
+        gateway: () => gateway(BASE_URL),
+        run: async () => { bindingCalls += 1; return new Response("unexpected"); },
+      },
+    });
+    await expect(binding.binding_transport.fetch(ENDPOINT, {
+      ...requestInit(),
+      headers: {
+        "cf-aig-request-timeout": "1000",
+        "cf-aig-byok-alias": "glm",
+        "cf-aig-no-wholesale": "true",
+      },
+    })).rejects.toMatchObject({ code: "MODEL_GATEWAY_REQUEST_INVALID" });
+    expect(bindingCalls).toBe(0);
+  });
+
   it("uses the account-bound Worker gateway without a token and preserves request policy", async () => {
     let invocation: { model: string; inputs: Record<string, unknown> } | undefined;
     let options: Parameters<ResearchModelGatewayBinding["run"]>[2] | undefined;

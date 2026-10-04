@@ -34,6 +34,7 @@ import {
 import { isResearchModelStage, researchStageBudgetLeaseMs } from "./research-runtime-duration.js";
 import { loadResearchExecutionAccess, requireClientResearchExecution } from "./research-client-execution.js";
 import { requireResearchDeploymentCompatibility } from "./research-deployment-compatibility.js";
+import { readResearchRunConfiguration } from "./research-run-configuration.js";
 
 export interface ResearchWorkflowRunParams {
   readonly workflow_kind?: "RESEARCH";
@@ -261,27 +262,35 @@ export class ResearchWorkflow extends WorkflowEntrypoint<Env, ResearchWorkflowPa
           failWorkflow("WORKFLOW_AUTHORITY_STALE");
         }
         if (semanticOwned && params.qualification_renewal === RESEARCH_QUALIFICATION_RENEWAL_MARKER) {
-          nativeStepPending = true;
-          await step.do("research-qualification-renewal", {
-            retries: { limit: 0, delay: 0 },
-            timeout: 600_000,
-          }, async () => {
-            try {
-              await renewResearchQualifications(this.env, {
-                operation_id: params.operation_id,
-                investigation,
-                principal,
-                navigation,
-                initial_manifest: params.initial_input_manifest,
-              });
-            } catch (error) {
-              const failure = workflowFailure(error, "PREPARATION");
-              await retainWorkflowFailure(this.env.CORE_DB, params.operation_id, principal, failure);
-              throw new WorkflowCheckpointError("WORKFLOW_PREPARATION_FAILED", failure);
-            }
-            return { protocol: "eliotr.research-qualification-renewal.v1", state: "CURRENT" as const };
+          const runConfiguration = await readResearchRunConfiguration(this.env, {
+            operation_id: params.operation_id,
+            investigation_id: params.investigation_ref.id,
+            principal_ref: principal.principal_ref,
+            deployment_generation: principal.deployment_generation,
           });
-          nativeStepPending = false;
+          if (runConfiguration.mode === "legacy-installed") {
+            nativeStepPending = true;
+            await step.do("research-qualification-renewal", {
+              retries: { limit: 0, delay: 0 },
+              timeout: 600_000,
+            }, async () => {
+              try {
+                await renewResearchQualifications(this.env, {
+                  operation_id: params.operation_id,
+                  investigation,
+                  principal,
+                  navigation,
+                  initial_manifest: params.initial_input_manifest,
+                });
+              } catch (error) {
+                const failure = workflowFailure(error, "PREPARATION");
+                await retainWorkflowFailure(this.env.CORE_DB, params.operation_id, principal, failure);
+                throw new WorkflowCheckpointError("WORKFLOW_PREPARATION_FAILED", failure);
+              }
+              return { protocol: "eliotr.research-qualification-renewal.v1", state: "CURRENT" as const };
+            });
+            nativeStepPending = false;
+          }
         }
         handlers = semanticOwned
           ? await createResearchSemanticServerHandlers({ env: this.env, operation_id: params.operation_id,

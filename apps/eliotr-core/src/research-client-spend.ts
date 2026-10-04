@@ -15,24 +15,29 @@ export async function requireProjectClientSpendSchema(env: Env): Promise<void> {
   try {
     const row = await env.CORE_DB.prepare("SELECT value FROM schema_state WHERE key='project_client_spend_generation'")
       .first<{ readonly value: string }>();
-    ready = row?.value === "project-client-spend-v1";
+    ready = row?.value === "project-client-spend-v1" || row?.value === "project-client-spend-v2";
   } catch { /* Missing migration is unavailable, never permission. */ }
-  if (!ready) throw new ClientGrantError("CLIENT_GRANT_SCHEMA_NOT_READY", 503, "Migration 0075 is required before grant mutation or recovery", true);
+  if (!ready) throw new ClientGrantError("CLIENT_GRANT_SCHEMA_NOT_READY", 503, "Project client sponsorship migrations are required before grant mutation or recovery", true);
 }
 
 /** Validate the existing installed approval. A public policy name is never itself permission. */
-async function installedSponsorship(env: Env, principal: string, policyRef: string, deployment: string) {
+async function installedSponsorship(env: Env, principal: string, policyRef: string, deployment: string, grantExpiresAt: string) {
   let policy;
   try {
     policy = readResearchOwnerSpendPolicyTemplate(env.ELIOTR_MODEL_SPEND_POLICY_JSON,
       env.ELIOTR_MODEL_SPEND_POLICY_PROVENANCE_REF ?? "");
   } catch { denied("Delegation requires an installed, explicit owner spend template"); }
+  const policyDeployment = policy.protocol === "eliotr.research-owner-spend-template.v2"
+    ? null : policy.deployment_generation;
+  const expiresAt = new Date(Math.min(Date.parse(grantExpiresAt),
+    policy.expires_at === undefined ? Number.POSITIVE_INFINITY : Date.parse(policy.expires_at))).toISOString();
   if (policy.principal_ref !== principal || policy.policy_ref !== policyRef ||
-      policy.deployment_generation !== deployment || Date.parse(policy.expires_at) <= Date.now()) {
-    denied("Installed spend approval does not match this grantor, policy, deployment and time");
+      (policyDeployment !== null && policyDeployment !== deployment) || Date.parse(expiresAt) <= Date.now()) {
+    denied("Installed spend approval does not match this grantor, policy and time");
   }
-  return Object.freeze({ policy_sha256: await sha256Utf8(canonicalJson(policy)),
-    deployment_generation: policy.deployment_generation, expires_at: policy.expires_at });
+  return Object.freeze({ policy_protocol: policy.protocol,
+    policy_sha256: await sha256Utf8(canonicalJson(policy)),
+    deployment_generation: policyDeployment, expires_at: expiresAt });
 }
 
 /** Called only by the owner grant API; the validated fingerprint is stored on that grant revision. */
@@ -44,7 +49,7 @@ export async function authorizeProjectClientSpend(
       context.access.credential_generation !== context.credential_generation ||
       !Number.isFinite(Date.parse(context.access.expires_at)) || Date.parse(context.access.expires_at) <= Date.now() ||
       input.spend_policy_ref === undefined) denied("Current owner approval is required");
-  return installedSponsorship(env, context.principal_ref, input.spend_policy_ref, env.DEPLOYMENT_GENERATION);
+  return installedSponsorship(env, context.principal_ref, input.spend_policy_ref, env.DEPLOYMENT_GENERATION, input.expires_at);
 }
 
 export interface ProjectClientRecoverySpend {
@@ -64,8 +69,12 @@ export async function prepareProjectClientRecoverySpend(
   }
   const recorded = await readClientGrantSpend(env.CORE_DB, grant);
   const installed = await installedSponsorship(env, grant.grantor_principal_ref,
-    grant.spend_policy_ref, read.status.deployment_generation);
-  if (recorded === null || canonicalJson(recorded) !== canonicalJson(installed)) {
+    grant.spend_policy_ref, read.status.deployment_generation, grant.expires_at);
+  const sponsorshipMatches = recorded !== null && recorded.policy_sha256 === installed.policy_sha256 &&
+    recorded.policy_protocol === installed.policy_protocol &&
+    recorded.deployment_generation === installed.deployment_generation &&
+    recorded.expires_at === installed.expires_at;
+  if (!sponsorshipMatches) {
     denied("Installed spend approval changed; an explicit new grant revision is required");
   }
   const requireCurrent = async () => {

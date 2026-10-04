@@ -103,6 +103,7 @@ export async function admitArtifactCowModelSpend(
     quote_ref: prepared.quote.quote_ref,
     authority: prepared.authority,
     deployment,
+    run_configuration: context.request.report_admission_witness?.material?.run_configuration ?? null,
     max_input_bytes: prepared.call.max_input_bytes,
     max_output_bytes: prepared.call.max_output_bytes,
     authorization_ref: input.authorization_ref,
@@ -137,7 +138,7 @@ export async function admitArtifactCowModelSpend(
   ).bind(...rowValues).run();
   if (result.success !== true || result.meta?.changes !== 1) fail("COW W3 spend admission insert was not confirmed");
   const stored = await database.prepare(
-    "SELECT authorization_ref,operation_id,call_slot,workflow_operation_id,stage_attempt_ref,stage_request_sha256,intent_id,intent_revision,reservation_id,quote_ref,expected_deployment_json,admission_sha256,decision_digest,expires_at " +
+    "SELECT authorization_ref,operation_id,call_slot,workflow_operation_id,stage_attempt_ref,stage_request_sha256,intent_id,intent_revision,reservation_id,quote_ref,expected_deployment_json,request_json,admission_sha256,decision_digest,expires_at " +
       "FROM artifact_section_revise_spend_admission WHERE authorization_ref=?1 LIMIT 1",
   ).bind(input.authorization_ref).first<Record<string, unknown>>();
   if (stored === null || stored.authorization_ref !== input.authorization_ref || stored.operation_id !== intent.intent_ref.id ||
@@ -146,7 +147,8 @@ export async function admitArtifactCowModelSpend(
       stored.intent_id !== intent.intent_ref.id || stored.intent_revision !== intent.intent_ref.revision ||
       stored.reservation_id !== prepared.quote.reservation_id || stored.quote_ref !== prepared.quote.quote_ref ||
       stored.admission_sha256 !== admissionSha256 || stored.decision_digest !== input.approval.decision_digest ||
-      stored.expires_at !== input.expires_at || stored.expected_deployment_json !== expectedDeploymentJson) {
+      stored.expires_at !== input.expires_at || stored.expected_deployment_json !== expectedDeploymentJson ||
+      stored.request_json !== requestJson) {
     fail("COW W3 spend admission exact readback differs from the admitted bytes");
   }
   return Object.freeze({ authorization_ref: input.authorization_ref, admission_sha256: admissionSha256,

@@ -125,7 +125,7 @@ describe("managed AI Search projection adapter", () => {
       canonical_section_id: "section-1",
       content_sha256: A,
       instruction_taint: "DATA_ONLY",
-      projection_generation: "projection-g1",
+      projection_generation: "g1",
       source_revision_ref: "revision-1",
     });
     expect(Object.keys(metadata)).toHaveLength(5);
@@ -178,6 +178,65 @@ describe("managed AI Search projection adapter", () => {
       managed_generation: "g1",
       reason_codes: ["MANAGED_INDEX_READBACK_FAILED"],
     });
+  });
+
+  it("rejects stale or foreign managed generation metadata on provider readback", async () => {
+    let key = "";
+    let size = 0;
+    let uploadedMetadata: Readonly<Record<string, string>> = {};
+    const uploadAndPoll = vi.fn(async (
+      uploadedKey: string,
+      content: string,
+      options?: { readonly metadata?: Readonly<Record<string, string>> },
+    ) => {
+      key = uploadedKey;
+      size = new TextEncoder().encode(content).byteLength;
+      uploadedMetadata = options?.metadata ?? {};
+      return {
+        id: "provider-item-1",
+        key,
+        status: "completed",
+        chunks_count: 1,
+        file_size: size,
+        metadata: uploadedMetadata,
+      };
+    });
+    const port = createManagedProjectionPort({
+      profile,
+      namespace: {
+        get() {
+          return {
+            items: {
+              uploadAndPoll,
+              get() {
+                return {
+                  async info() {
+                    return {
+                      id: "provider-item-1",
+                      key,
+                      status: "completed",
+                      chunks_count: 1,
+                      file_size: size,
+                      metadata: {
+                        ...uploadedMetadata,
+                        projection_generation: "g0",
+                      },
+                    };
+                  },
+                };
+              },
+            },
+          };
+        },
+      },
+    });
+
+    await expect(port.index(context, "projection-g1", [item])).resolves.toMatchObject({
+      state: "DEGRADED",
+      reason_codes: ["MANAGED_INDEX_READBACK_FAILED"],
+    });
+    expect(uploadedMetadata.projection_generation).toBe("g1");
+    expect(uploadAndPoll).toHaveBeenCalledOnce();
   });
 
 

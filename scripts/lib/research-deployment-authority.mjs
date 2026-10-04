@@ -136,6 +136,41 @@ async function readAuthorityState(url, token, generation, fetchImpl) {
   return Object.freeze({ active: active[0] ?? null, target });
 }
 
+function validatedAuthorityRequest({ account_id, database_id, api_token, api_base_url,
+  deployment_generation, backend_fingerprint, fetch_impl = globalThis.fetch, now = Date.now } = {}) {
+  const accountId = identifier(account_id, "account_id");
+  const databaseId = identifier(database_id, "database_id");
+  const token = apiToken(api_token);
+  const generation = identifier(deployment_generation, "deployment_generation");
+  if (typeof backend_fingerprint !== "string" || !SHA256.test(backend_fingerprint)) {
+    fail("RESEARCH_DEPLOYMENT_AUTHORITY_INPUT_INVALID", "backend_fingerprint is invalid");
+  }
+  if (typeof fetch_impl !== "function" || typeof globalThis.AbortSignal?.timeout !== "function") {
+    fail("RESEARCH_DEPLOYMENT_AUTHORITY_INPUT_INVALID", "D1 deployment authority transport is unavailable");
+  }
+  if (typeof now !== "function") fail("RESEARCH_DEPLOYMENT_AUTHORITY_INPUT_INVALID", "deployment clock is unavailable");
+  const base = apiBase(api_base_url);
+  return Object.freeze({
+    url: endpoint(base, accountId, databaseId),
+    token,
+    generation,
+    backend_fingerprint,
+    fetch_impl,
+    now,
+  });
+}
+
+/** Read current deployment authority and reject an incompatible reused generation without writing. */
+export async function readResearchDeploymentAuthority(input = {}) {
+  const request = validatedAuthorityRequest(input);
+  const observed = await readAuthorityState(request.url, request.token, request.generation, request.fetch_impl);
+  if (observed.target !== null && observed.target.backend_fingerprint !== request.backend_fingerprint) {
+    fail("RESEARCH_DEPLOYMENT_AUTHORITY_GENERATION_CONFLICT",
+      "deployment generation already records a different backend fingerprint");
+  }
+  return observed;
+}
+
 function assertCurrent(rows, expected, fingerprint, retired) {
   const active = rows.filter((row) => row.state === "ACTIVE");
   if (active.length !== 1 || active[0].deployment_generation !== expected || active[0].backend_fingerprint !== fingerprint) {
@@ -159,19 +194,9 @@ export async function synchronizeResearchDeploymentAuthority({
   fetch_impl = globalThis.fetch,
   now = Date.now,
 } = {}) {
-  const accountId = identifier(account_id, "account_id");
-  const databaseId = identifier(database_id, "database_id");
-  const token = apiToken(api_token);
-  const generation = identifier(deployment_generation, "deployment_generation");
-  if (typeof backend_fingerprint !== "string" || !SHA256.test(backend_fingerprint)) {
-    fail("RESEARCH_DEPLOYMENT_AUTHORITY_INPUT_INVALID", "backend_fingerprint is invalid");
-  }
-  if (typeof fetch_impl !== "function" || typeof globalThis.AbortSignal?.timeout !== "function") {
-    fail("RESEARCH_DEPLOYMENT_AUTHORITY_INPUT_INVALID", "D1 deployment authority transport is unavailable");
-  }
-  if (typeof now !== "function") fail("RESEARCH_DEPLOYMENT_AUTHORITY_INPUT_INVALID", "deployment clock is unavailable");
-  const base = apiBase(api_base_url);
-  const url = endpoint(base, accountId, databaseId);
+  const request = validatedAuthorityRequest({ account_id, database_id, api_token, api_base_url,
+    deployment_generation, backend_fingerprint, fetch_impl, now });
+  const { url, token, generation } = request;
   const observed = await readAuthorityState(url, token, generation, fetch_impl);
   if (observed.active?.deployment_generation === generation) {
     if (observed.active.backend_fingerprint !== backend_fingerprint) {

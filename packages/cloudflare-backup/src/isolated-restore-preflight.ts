@@ -1,5 +1,5 @@
 import { BackupEpochSchema, type BackupEpoch } from "@eliotr/contracts";
-import { BACKUP_MANIFEST_PROTOCOL, BACKUP_SCHEMA_INVENTORY_PROTOCOL, TABLE_SPECS, digestCoreColumnInventory, readCoreColumnInventory, type CoreTableInventory } from "@eliotr/backup-o2";
+import { BACKUP_MANIFEST_PROTOCOL, BACKUP_R2_PAYLOAD_PROTOCOL, BACKUP_SCHEMA_INVENTORY_PROTOCOL, TABLE_SPECS, digestCoreColumnInventory, readCoreColumnInventory, type CoreTableInventory } from "@eliotr/backup-o2";
 import type { BackupEpochDraft } from "@eliotr/backup-o2";
 import { openOffsiteBackupPart, type BackupOffsiteReadAuthority, type OffsiteCopyAdapter } from "@eliotr/backup-o2";
 import { BACKUP_PORTABLE_MANIFEST_NAMES, verifyPortableBackupManifests, type PlaintextBackupPart, type VerifiedPortableBackupManifests } from "@eliotr/backup-o2";
@@ -107,6 +107,10 @@ export interface IsolatedRestorePreflight {
   readonly manifests: VerifiedPortableBackupManifests;
   readonly schema_inventory: readonly CoreTableInventory[];
   readonly current_purge: { readonly revision: number; readonly digest: string };
+  readonly offsite_authority: {
+    readonly destination_policy: BackupDestinationPolicy;
+    readonly read_authority: BackupOffsiteReadAuthority;
+  };
   readonly payload_writes_performed: false;
   readonly traffic_ready: false;
 }
@@ -334,6 +338,7 @@ async function openVerifiedManifests(input: IsolatedRestorePreflightInput, polic
 export async function verifyIsolatedRestorePreflight(input: IsolatedRestorePreflightInput): Promise<IsolatedRestorePreflight> {
   const { draft, primary, target } = input;
   if (draft.manifest_protocol !== BACKUP_MANIFEST_PROTOCOL || draft.part_index.length === 0 || !SHA256.test(draft.vector_digest) || !SHA256.test(draft.purge_ledger_digest)) failBackup("BACKUP_VECTOR_UNVERIFIABLE", "isolated restore epoch draft is incomplete or uses an unknown protocol");
+  if (draft.r2_payload_protocol !== BACKUP_R2_PAYLOAD_PROTOCOL || !Array.isArray(draft.payload_part_index)) failBackup("BACKUP_PAYLOAD_UNSUPPORTED", "legacy backup epoch has no authenticated R2 payload index and cannot be restored");
   if (!input.encryption_key || input.encryption_key.type !== "secret" || (input.encryption_key.algorithm as { name?: unknown; length?: unknown }).name !== "AES-GCM" || (input.encryption_key.algorithm as { name?: unknown; length?: unknown }).length !== 256 || !input.encryption_key.usages.includes("decrypt")) failBackup("BACKUP_KEY_INVALID", "isolated restore key must be a decrypt-capable AES-256-GCM secret");
   assertBoundResourceIds(primary, target);
   if (primary.failure_domain === target.failure_domain || primary.db === target.db || primary.evidence_bucket === target.evidence_bucket || primary.work_bucket === target.work_bucket) {
@@ -375,6 +380,7 @@ export async function verifyIsolatedRestorePreflight(input: IsolatedRestorePrefl
   await input.admission.assertCurrentAdmission(request);
   abortIfNeeded(input.signal);
   const manifests = await openVerifiedManifests(input, policy, row);
+  if (!manifests.payload_supported) failBackup("BACKUP_PAYLOAD_UNSUPPORTED", "backup R2 inventory predates authenticated payload transport and cannot be restored");
   const inventoryLines = manifests.manifests["schema-inventory"] ?? [];
   if (inventoryLines.length !== targetInventory.length + 1) failBackup("BACKUP_VECTOR_UNVERIFIABLE", "isolated restore schema inventory has missing or extra lines");
   const inventoryRecords = inventoryLines.map((line) => {
@@ -422,6 +428,17 @@ export async function verifyIsolatedRestorePreflight(input: IsolatedRestorePrefl
     state: "PREFLIGHT_VERIFIED_NO_WRITES", draft, copy_ref: request.offsite_copy_ref,
     target: { account_id: target.account_id, failure_domain: target.failure_domain, environment_ref: target.environment_ref, resources: target.resources },
     manifests, schema_inventory: targetInventory, current_purge: purge,
+    offsite_authority: {
+      destination_policy: policy,
+      read_authority: {
+        destination_id: row.destination_id as string,
+        key_generation: row.key_generation as string,
+        expires_at: row.expires_at as string,
+        primary_failure_domain: primary.failure_domain,
+        destination_policy_digest: row.policy_digest as string,
+        descriptor_digest: row.descriptor_digest as string,
+      },
+    },
     payload_writes_performed: false, traffic_ready: false,
   };
 }

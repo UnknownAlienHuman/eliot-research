@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { readDeploymentJson } from "./deployment-verification.mjs";
 import { launchCodeBlockers, readConfiguredTransport } from "../check-launch-code.mjs";
 import { assertRouteUpdateProfile, assertRouteUpdateReadback } from "./deployment-route-update.mjs";
+import { assertMaintenanceAiSearchBootstrapProfile } from "./deployment-ai-search-bootstrap.mjs";
 
 const require = createRequire(import.meta.url);
 const ts = require("typescript");
@@ -39,7 +40,15 @@ export function selectDeploymentGoogleTransport({ purpose, canonicalTransport, p
 
 /** Preserve an absent managed-search binding only while its product slices stay disabled. */
 export function selectDeploymentAiSearchNamespaces({ purpose, canonicalConfig, preserve,
-  activeWorkerIdentity, candidate } = {}) {
+  activeWorkerIdentity, candidate, aiSearchBootstrap } = {}) {
+  if (aiSearchBootstrap !== undefined && aiSearchBootstrap !== null) {
+    if (purpose !== "MAINTENANCE" || preserve !== undefined) {
+      fail("AI Search binding bootstrap is maintenance-only and cannot be combined with absent preservation");
+    }
+    assertMaintenanceAiSearchBootstrapProfile({ bootstrap: aiSearchBootstrap, phase: "before",
+      generatedConfig: canonicalConfig, activeWorkerIdentity });
+    return canonicalConfig.ai_search_namespaces;
+  }
   if (preserve === undefined) return canonicalConfig.ai_search_namespaces;
   const namespaces = canonicalConfig?.ai_search_namespaces ?? [];
   const instances = canonicalConfig?.ai_search ?? [];
@@ -186,7 +195,7 @@ export function requireSameMaintenanceCapabilityReadback({ baseline, current, ro
 
 /** Require an unchanged, non-expanding candidate capability profile. */
 export function assertMaintenanceCapabilityProfile({ candidate, observed, generatedConfig, activeWorkerIdentity,
-  routeUpdate, routeUpdatePhase = "before" } = {}) {
+  routeUpdate, routeUpdatePhase = "before", aiSearchBootstrap, aiSearchBootstrapPhase = "before" } = {}) {
   if (!isRecord(candidate) || !isRecord(observed) || !isRecord(generatedConfig?.vars) || !isRecord(activeWorkerIdentity)) {
     fail("Maintenance capability comparison inputs are invalid");
   }
@@ -207,9 +216,14 @@ export function assertMaintenanceCapabilityProfile({ candidate, observed, genera
   }
   const configuredAiSearch = (generatedConfig.ai_search_namespaces?.length ?? 0) > 0 ||
     (generatedConfig.ai_search?.length ?? 0) > 0;
-  if (typeof activeWorkerIdentity.ai_search_bound !== "boolean" ||
-      configuredAiSearch !== activeWorkerIdentity.ai_search_bound) {
-    fail("Maintenance AI Search binding presence would change");
+  if (aiSearchBootstrap === undefined || aiSearchBootstrap === null) {
+    if (typeof activeWorkerIdentity.ai_search_bound !== "boolean" ||
+        configuredAiSearch !== activeWorkerIdentity.ai_search_bound) {
+      fail("Maintenance AI Search binding presence would change");
+    }
+  } else {
+    assertMaintenanceAiSearchBootstrapProfile({ bootstrap: aiSearchBootstrap, phase: aiSearchBootstrapPhase,
+      generatedConfig, activeWorkerIdentity });
   }
   if (!isRecord(candidate.safety_invariants) || !sameJson(candidate.safety_invariants, SAFETY) ||
       Object.entries(SAFETY).some(([key, expected]) => observed[key] !== expected)) {
@@ -251,8 +265,13 @@ export function assertMaintenanceCapabilityProfile({ candidate, observed, genera
     fail("Maintenance cannot prove unchanged federation capability configuration");
   }
   return Object.freeze({ state: "PASS", generation: observed.deployment_generation,
-    profile: routeUpdate === undefined || routeUpdate === null ? "unchanged" : "pinned-route-update",
+    profile: routeUpdate === undefined || routeUpdate === null
+      ? (aiSearchBootstrap === undefined || aiSearchBootstrap === null ? "unchanged" : "ai-search-binding-bootstrap")
+      : "pinned-route-update",
     ...(routeUpdate === undefined || routeUpdate === null ? {} : { intent_sha256: routeUpdate.intent_sha256 }),
+    ...(aiSearchBootstrap === undefined || aiSearchBootstrap === null ? {} : {
+      ai_search_binding_bootstrap: "PASS", ai_search_intent_sha256: aiSearchBootstrap.intent_sha256,
+    }),
     exact_evidence_resolution_required: true,
     transport_completion_is_research_completion: false, disabled_retrieval_erasure: "PASS" });
 }

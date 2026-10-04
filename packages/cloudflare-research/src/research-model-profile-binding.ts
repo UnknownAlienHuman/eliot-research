@@ -7,9 +7,11 @@ import {
 import { decodeModelRouteDeployment, type ModelRouteDeployment } from "@eliotr/platform-cloudflare";
 import { canonicalModelGatewayJson, modelGatewaySha256 } from "@eliotr/cloudflare-ai";
 import type { ReferenceManifestPolicyProfile } from "./research-reference-manifest.js";
+import type { PinnedModelSelection } from "./model-gateway-deployment-registry-d1.js";
 
 const SCHEMA = "eliotr.research.model-profile-binding.v1";
 const DEFINITION_SCHEMA = "eliotr.research.model-profile-definition.v1";
+export const OWNER_MODEL_PROFILE_TEMPLATE_V2_SCHEMA = "eliotr.research.model-profile-definition.v2" as const;
 const ID = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/u;
 const SHA256 = /^[a-f0-9]{64}$/u;
 const DEFINITION_KEYS = new Set([
@@ -22,11 +24,17 @@ const POLICY_KEYS = new Set([
   "stale_or_revoked_entries", "permitted_acquisition_or_expansion_routes",
   "disclosure_ceiling", "allowed_use", "expires_at",
 ]);
+const OWNER_POLICY_TEMPLATE_KEYS = new Set([...POLICY_KEYS].filter((key) => key !== "expires_at"));
+const OWNER_PROFILE_TEMPLATE_KEYS = new Set([
+  "config_provenance_ref", "definition_ref", "definition_sha256", "deployment", "expires_at",
+  "max_context_bytes", "model_profile_ref", "policy", "schema",
+]);
 const STAGE_KEYS = new Set([
   "deployment_generation", "model_profile_ref", "policy_authority_ref", "policy_generation",
   "scope_snapshot_digest", "scope_snapshot_ref",
 ]);
-const CURRENT_KEYS = new Set([...STAGE_KEYS, "deployment_state", "policy_state", "scope_snapshot", "state"]);
+const CURRENT_KEYS = new Set([...STAGE_KEYS, "deployment_state", "policy_state", "scope_snapshot", "state",
+  "grant_expires_at", "run_budget_expires_at_ms"]);
 
 export type ModelProfileBindingErrorCode =
   | "MODEL_PROFILE_BINDING_INPUT_INVALID"
@@ -80,6 +88,21 @@ export interface ModelProfileDefinition {
   readonly policy: ReferenceManifestPolicyProfile;
 }
 
+export type OwnerModelProfilePolicyTemplate = Omit<ReferenceManifestPolicyProfile, "expires_at">;
+export interface OwnerModelProfileTemplateV2 {
+  readonly schema: typeof OWNER_MODEL_PROFILE_TEMPLATE_V2_SCHEMA;
+  readonly definition_ref: VersionedRef;
+  readonly definition_sha256: string;
+  readonly config_provenance_ref: string;
+  readonly model_profile_ref: string;
+  readonly expires_at?: string;
+  readonly max_context_bytes: number;
+  readonly deployment: ModelRouteDeployment;
+  readonly policy: OwnerModelProfilePolicyTemplate;
+}
+export type OwnerModelProfileTemplateV2Input = Omit<OwnerModelProfileTemplateV2,
+  "schema" | "definition_ref" | "definition_sha256">;
+
 /** Explicit operator choices; identity fields are computed from their canonical bytes. */
 export type ModelProfileDefinitionInput = Omit<ModelProfileDefinition,
   "schema" | "definition_ref" | "definition_sha256">;
@@ -87,11 +110,109 @@ export type ModelProfileDefinitionInput = Omit<ModelProfileDefinition,
 export async function createModelProfileDefinition(input: ModelProfileDefinitionInput): Promise<ModelProfileDefinition> {
   const material = definitionMaterial({ ...input, schema: DEFINITION_SCHEMA });
   const sha256 = await modelGatewaySha256(canonicalModelGatewayJson(material));
-  return decodeDefinition({
+  return await decodeDefinition({
     ...material,
     definition_sha256: sha256,
     definition_ref: { id: `eliotr.research.model-profile-definition-${sha256}`, revision: 1 },
-  }, input.config_provenance_ref);
+  }, input.config_provenance_ref) as ModelProfileDefinition;
+}
+
+function ownerPolicyTemplate(value: unknown): OwnerModelProfilePolicyTemplate {
+  const code: ModelProfileBindingErrorCode = "MODEL_PROFILE_BINDING_CONFIG_INVALID";
+  const record = plainObject(value, OWNER_POLICY_TEMPLATE_KEYS, "owner model profile policy template", code);
+  if (typeof record.provider_and_policy_generations !== "object" || record.provider_and_policy_generations === null ||
+      Array.isArray(record.provider_and_policy_generations)) fail(code, "provider_and_policy_generations must be a plain object");
+  const generations = record.provider_and_policy_generations as Record<string, unknown>;
+  const generationPrototype = Object.getPrototypeOf(generations);
+  if (generationPrototype !== Object.prototype && generationPrototype !== null) fail(code, "provider_and_policy_generations must be a plain object");
+  return Object.freeze({
+    allowed_tool_definition_refs: stringList(record.allowed_tool_definition_refs, "allowed_tool_definition_refs", code),
+    allowed_verifier_refs: stringList(record.allowed_verifier_refs, "allowed_verifier_refs", code),
+    permitted_anchor_and_precision_ceilings: stringList(record.permitted_anchor_and_precision_ceilings, "permitted_anchor_and_precision_ceilings", code),
+    provider_and_policy_generations: Object.freeze(Object.fromEntries(Object.entries(generations).map(([key, generation]) => [
+      identifier(key, "provider/policy generation key", code), identifier(generation, "provider/policy generation", code),
+    ]))),
+    ...(record.stale_or_revoked_entries === undefined ? {} : {
+      stale_or_revoked_entries: stringList(record.stale_or_revoked_entries, "stale or revoked entries", code),
+    }),
+    permitted_acquisition_or_expansion_routes: stringList(record.permitted_acquisition_or_expansion_routes, "acquisition routes", code),
+    disclosure_ceiling: identifier(record.disclosure_ceiling, "disclosure_ceiling", code),
+    allowed_use: stringList(record.allowed_use, "allowed_use", code),
+  });
+}
+
+function ownerProfileTemplateMaterial(input: OwnerModelProfileTemplateV2Input): Record<string, unknown> {
+  return {
+    schema: OWNER_MODEL_PROFILE_TEMPLATE_V2_SCHEMA,
+    config_provenance_ref: input.config_provenance_ref,
+    model_profile_ref: input.model_profile_ref,
+    ...(input.expires_at === undefined ? {} : { expires_at: input.expires_at }),
+    max_context_bytes: input.max_context_bytes,
+    deployment: input.deployment,
+    policy: input.policy,
+  };
+}
+
+/** Compile permanent owner model/profile settings without manufacturing a TTL. */
+export async function createOwnerModelProfileTemplateV2(
+  input: OwnerModelProfileTemplateV2Input,
+): Promise<OwnerModelProfileTemplateV2> {
+  const provenance = identifier(input.config_provenance_ref, "model profile provenance", "MODEL_PROFILE_BINDING_CONFIG_INVALID");
+  const profile = identifier(input.model_profile_ref, "model profile", "MODEL_PROFILE_BINDING_CONFIG_INVALID");
+  const contextBytesValue = contextBytes(input.max_context_bytes, "max_context_bytes", "MODEL_PROFILE_BINDING_CONFIG_INVALID");
+  const deployment = decodeModelRouteDeployment(input.deployment);
+  const policy = ownerPolicyTemplate(input.policy);
+  const expires = input.expires_at === undefined ? undefined : iso(input.expires_at, "owner profile expiry", "MODEL_PROFILE_BINDING_CONFIG_INVALID");
+  const material = ownerProfileTemplateMaterial({
+    config_provenance_ref: provenance, model_profile_ref: profile,
+    ...(expires === undefined ? {} : { expires_at: expires }),
+    max_context_bytes: contextBytesValue, deployment, policy,
+  });
+  const sha256 = await modelGatewaySha256(canonicalModelGatewayJson(material));
+  return readOwnerModelProfileTemplateV2({
+    ...material,
+    definition_sha256: sha256,
+    definition_ref: { id: `eliotr.research.model-profile-definition-${sha256}`, revision: 1 },
+  }, provenance);
+}
+
+export async function readOwnerModelProfileTemplateV2(
+  raw: unknown,
+  provenanceRef: string,
+): Promise<OwnerModelProfileTemplateV2> {
+  const code: ModelProfileBindingErrorCode = "MODEL_PROFILE_BINDING_CONFIG_INVALID";
+  const value = plainObject(raw, OWNER_PROFILE_TEMPLATE_KEYS, "owner model profile template", code);
+  if (value.schema !== OWNER_MODEL_PROFILE_TEMPLATE_V2_SCHEMA || value.config_provenance_ref !== provenanceRef) {
+    fail(code, "owner model profile template schema or provenance is invalid");
+  }
+  const definitionRef = versionedRef(value.definition_ref, "definition_ref", code);
+  if (definitionRef.revision !== 1) fail(code, "owner profile template revision is unsupported");
+  const definitionSha = digest(value.definition_sha256, "definition_sha256", code);
+  const profileRef = identifier(value.model_profile_ref, "model_profile_ref", code);
+  const maxContextBytes = contextBytes(value.max_context_bytes, "max_context_bytes", code);
+  const deployment = decodeModelRouteDeployment(value.deployment);
+  const policy = ownerPolicyTemplate(value.policy);
+  const expiresAt = value.expires_at === undefined ? undefined : iso(value.expires_at, "owner profile expiry", code);
+  const material = ownerProfileTemplateMaterial({
+    config_provenance_ref: provenanceRef, model_profile_ref: profileRef,
+    ...(expiresAt === undefined ? {} : { expires_at: expiresAt }),
+    max_context_bytes: maxContextBytes, deployment, policy,
+  });
+  if (await modelGatewaySha256(canonicalModelGatewayJson(material)) !== definitionSha ||
+      definitionRef.id !== `eliotr.research.model-profile-definition-${definitionSha}`) {
+    fail(code, "owner model profile template digest or reference does not match its canonical bytes");
+  }
+  return Object.freeze({
+    schema: OWNER_MODEL_PROFILE_TEMPLATE_V2_SCHEMA,
+    definition_ref: definitionRef,
+    definition_sha256: definitionSha,
+    config_provenance_ref: provenanceRef,
+    model_profile_ref: profileRef,
+    ...(expiresAt === undefined ? {} : { expires_at: expiresAt }),
+    max_context_bytes: maxContextBytes,
+    deployment,
+    policy,
+  });
 }
 
 export interface ModelProfileBindingSource {
@@ -112,6 +233,9 @@ export interface ModelProfileStageAuthority {
 
 export interface ModelProfileCurrentAuthority extends ModelProfileStageAuthority {
   readonly scope_snapshot: ScopeSnapshot;
+  readonly grant_expires_at?: string;
+  /** Current monotone W2 attempt deadline; not a reusable or refreshable lease. */
+  readonly run_budget_expires_at_ms?: number;
   readonly policy_state: "ACTIVE";
   readonly deployment_state: "ACTIVE";
   readonly state: "ACTIVE";
@@ -120,7 +244,17 @@ export interface ModelProfileCurrentAuthority extends ModelProfileStageAuthority
 export interface ModelProfileBindingProducerInput {
   readonly source: ModelProfileBindingSource;
   readonly readCurrentAuthority: () => Promise<ModelProfileCurrentAuthority>;
-  readonly routeAuthority: { resolve(routeRef: string): Promise<unknown | null> };
+  readonly routeAuthority: {
+    resolve(routeRef: string): Promise<unknown | null>;
+    resolvePinned?(deployment: ModelRouteDeployment, selection: PinnedModelSelection,
+      options?: Readonly<{ allow_expired_qualification?: boolean }>): Promise<unknown | null>;
+  };
+  readonly run_configuration?: Readonly<{
+    readonly mode: "legacy-installed" | "snapshot-v1" | "snapshot-v2";
+    readonly configuration_ref: string;
+    readonly configuration_sha256: string;
+    readonly model_selections?: readonly (PinnedModelSelection & { readonly stage: string })[];
+  }>;
   readonly now?: () => number;
 }
 
@@ -239,7 +373,11 @@ function bindingMaterial(binding: Omit<ModelProfileBinding, "binding_ref" | "bin
   };
 }
 
-async function decodeDefinition(raw: unknown, provenanceRef: string): Promise<ModelProfileDefinition> {
+async function decodeDefinition(raw: unknown, provenanceRef: string): Promise<ModelProfileDefinition | OwnerModelProfileTemplateV2> {
+  if (typeof raw === "object" && raw !== null && !Array.isArray(raw) &&
+      (raw as Record<string, unknown>).schema === OWNER_MODEL_PROFILE_TEMPLATE_V2_SCHEMA) {
+    return readOwnerModelProfileTemplateV2(raw, provenanceRef);
+  }
   const value = plainObject(raw, DEFINITION_KEYS, "model profile definition", "MODEL_PROFILE_BINDING_CONFIG_INVALID");
   if (value.schema !== DEFINITION_SCHEMA) fail("MODEL_PROFILE_BINDING_CONFIG_INVALID", "model profile definition schema is unsupported");
   if (value.config_provenance_ref !== provenanceRef) fail("MODEL_PROFILE_BINDING_CONFIG_INVALID", "binding provenance does not match the server-owned source");
@@ -314,7 +452,61 @@ function currentAuthority(value: unknown): ModelProfileCurrentAuthority {
   }, "current model profile authority", "MODEL_PROFILE_BINDING_AUTHORITY_STALE");
   const parsed = ScopeSnapshotSchema.safeParse(record.scope_snapshot);
   if (!parsed.success) fail("MODEL_PROFILE_BINDING_AUTHORITY_STALE", "current scope snapshot is invalid");
-  return Object.freeze({ ...fields, state: "ACTIVE", policy_state: "ACTIVE", deployment_state: "ACTIVE", scope_snapshot: parsed.data });
+  const grantExpiry = record.grant_expires_at === undefined ? undefined : iso(
+    record.grant_expires_at, "current grant expiry", "MODEL_PROFILE_BINDING_AUTHORITY_STALE",
+  );
+  const runBudgetExpiry = record.run_budget_expires_at_ms === undefined ? undefined : record.run_budget_expires_at_ms;
+  if (runBudgetExpiry !== undefined && (!Number.isSafeInteger(runBudgetExpiry) || (runBudgetExpiry as number) < 1)) {
+    fail("MODEL_PROFILE_BINDING_AUTHORITY_STALE", "current workflow budget expiry is invalid");
+  }
+  return Object.freeze({ ...fields, state: "ACTIVE", policy_state: "ACTIVE", deployment_state: "ACTIVE",
+    scope_snapshot: parsed.data, ...(grantExpiry === undefined ? {} : { grant_expires_at: grantExpiry }),
+    ...(runBudgetExpiry === undefined ? {} : { run_budget_expires_at_ms: runBudgetExpiry as number }) });
+}
+
+async function normalizeOwnerProfileTemplateV2(
+  template: OwnerModelProfileTemplateV2,
+  authority: ModelProfileCurrentAuthority,
+  now: number,
+): Promise<ModelProfileDefinition> {
+  if (authority.grant_expires_at === undefined || authority.run_budget_expires_at_ms === undefined) {
+    fail("MODEL_PROFILE_BINDING_AUTHORITY_STALE", "current grant or W2 budget deadline is unavailable");
+  }
+  const expires = Math.min(
+    template.expires_at === undefined ? Number.POSITIVE_INFINITY : Date.parse(template.expires_at),
+    Date.parse(authority.scope_snapshot.expires_at),
+    Date.parse(authority.grant_expires_at),
+    authority.run_budget_expires_at_ms,
+  );
+  if (!Number.isFinite(expires) || expires <= now) fail("MODEL_PROFILE_BINDING_EXPIRED", "owner profile or current run authority has expired");
+  const expiresAt = new Date(expires).toISOString();
+  return createModelProfileDefinition({
+    config_provenance_ref: template.config_provenance_ref,
+    model_profile_ref: template.model_profile_ref,
+    expires_at: expiresAt,
+    max_context_bytes: template.max_context_bytes,
+    deployment: template.deployment,
+    policy: Object.freeze({ ...template.policy, expires_at: expiresAt }),
+  });
+}
+
+function selectionForProfile(input: ModelProfileBindingProducerInput, deployment: ModelRouteDeployment): PinnedModelSelection {
+  const runConfiguration = input.run_configuration;
+  if ((runConfiguration?.mode !== "snapshot-v1" && runConfiguration?.mode !== "snapshot-v2") ||
+      runConfiguration.model_selections === undefined) {
+    fail("MODEL_PROFILE_BINDING_AUTHORITY_STALE", "snapshot model profile requires an immutable run configuration selection");
+  }
+  if (!/^rrc-[a-f0-9]{24}$/u.test(runConfiguration.configuration_ref) || !/^[a-f0-9]{64}$/u.test(runConfiguration.configuration_sha256)) {
+    fail("MODEL_PROFILE_BINDING_AUTHORITY_STALE", "run configuration identity is invalid");
+  }
+  const matches = runConfiguration.model_selections.filter((selection) => selection.stage === "SYNTHESIZE");
+  if (matches.length !== 1) fail("MODEL_PROFILE_BINDING_AUTHORITY_STALE", "run configuration has no unique synthesis model selection");
+  const selection = matches[0];
+  if (selection === undefined) fail("MODEL_PROFILE_BINDING_AUTHORITY_STALE", "run configuration has no unique synthesis model selection");
+  if (selection.route_ref !== deployment.route_ref || selection.route_version !== deployment.route_version) {
+    fail("MODEL_PROFILE_BINDING_DEPLOYMENT_MISMATCH", "pinned synthesis selection differs from model profile deployment");
+  }
+  return selection;
 }
 
 function assertCurrent(binding: ModelProfileBinding, current: ModelProfileCurrentAuthority, now: number): void {
@@ -347,14 +539,33 @@ export function createModelProfileBindingProducer(input: ModelProfileBindingProd
       const profileRef = parsedStage.model_profile_ref;
       const raw = await input.source.read(profileRef);
       if (raw === null) fail("MODEL_PROFILE_BINDING_CONFIG_MISSING", "server-owned model profile binding is unavailable");
-      const definition = await decodeDefinition(raw, input.source.provenance_ref);
-      if (definition.model_profile_ref !== parsedStage.model_profile_ref) fail("MODEL_PROFILE_BINDING_AUTHORITY_STALE", "model profile definition differs from persisted workflow profile");
+      const decodedDefinition = await decodeDefinition(raw, input.source.provenance_ref);
+      if (decodedDefinition.model_profile_ref !== parsedStage.model_profile_ref) fail("MODEL_PROFILE_BINDING_AUTHORITY_STALE", "model profile definition differs from persisted workflow profile");
       const first = currentAuthority(await input.readCurrentAuthority());
       assertStageCurrent(parsedStage, first);
+      const v2Template = decodedDefinition.schema === OWNER_MODEL_PROFILE_TEMPLATE_V2_SCHEMA ? decodedDefinition : null;
+      if (input.run_configuration?.mode === "snapshot-v2" && v2Template === null) {
+        fail("MODEL_PROFILE_BINDING_CONFIG_INVALID", "snapshot-v2 runs require the version 2 owner model profile");
+      }
+      if (input.run_configuration?.mode !== "snapshot-v2" && v2Template !== null) {
+        fail("MODEL_PROFILE_BINDING_CONFIG_INVALID", "version 2 owner model profile requires a snapshot-v2 run");
+      }
+      const definition = v2Template === null
+        ? decodedDefinition as ModelProfileDefinition
+        : await normalizeOwnerProfileTemplateV2(v2Template, first, nowMs);
       const binding = await resolvedBinding(definition, first);
       assertCurrent(binding, first, nowMs);
       let rawDeployment: unknown | null;
-      try { rawDeployment = await input.routeAuthority.resolve(definition.deployment.route_ref); }
+      try {
+        const runMode = input.run_configuration?.mode;
+        const isSnapshot = runMode === "snapshot-v1" || runMode === "snapshot-v2";
+        rawDeployment = !isSnapshot
+          ? await input.routeAuthority.resolve(definition.deployment.route_ref)
+          : await (input.routeAuthority.resolvePinned?.(definition.deployment, selectionForProfile(input, definition.deployment), {
+              allow_expired_qualification: runMode === "snapshot-v2",
+            }) ??
+            Promise.reject(new Error("pinned model resolver is unavailable")));
+      }
       catch (cause) { fail("MODEL_PROFILE_BINDING_DEPLOYMENT_MISSING", "approved model deployment could not be read", true, cause); }
       if (rawDeployment === null) fail("MODEL_PROFILE_BINDING_DEPLOYMENT_MISSING", "approved model deployment is unavailable");
       let deployment: ModelRouteDeployment;

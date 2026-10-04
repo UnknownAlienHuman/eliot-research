@@ -91,14 +91,36 @@ function observedCapabilities(generation) {
   };
 }
 const runtimeConfigPath = resolve(resolvedTemporaryDirectory, "research-runtime.json");
+const ownerPrincipal = "fixture-owner-principal";
+function spendTemplate(protocol = "eliotr.research-owner-spend-template.v1", generation = "git-test", suffix = "v1") {
+  return {
+    protocol, approved: true, policy_ref: `fixture:owner-spend-${suffix}`,
+    config_provenance_ref: `fixture:owner-spend-config-${suffix}`, principal_ref: ownerPrincipal,
+    client_class: "owner_pwa", ...(protocol.endsWith(".v1") ? { deployment_generation: generation } : {}),
+    expires_at: "2026-12-31T00:00:00.000Z", rules: [{ stage: "SYNTHESIZE" }],
+  };
+}
+function reportTemplate(protocol = "eliotr.research-owner-report-admission-template.v1", generation = "git-test", suffix = "v1") {
+  return { schema: "eliotr.research.report-config.v1", admission_policy: {
+    protocol, ...(protocol.endsWith(".v1") ? { deployment_generation: generation } : {}),
+    config_provenance_ref: `fixture:owner-report-config-${suffix}`,
+    principal_ref: ownerPrincipal, policy_ref: `fixture:owner-report-${suffix}`,
+  }, artifact_policy: { fixture: suffix } };
+}
+function modelProfile(schema = "eliotr.research.model-profile-definition.v1", suffix = "v1") {
+  return { schema, config_provenance_ref: `fixture:model-profile-config-${suffix}`,
+    model_profile_ref: "research-model-v1" };
+}
 const runtimeConfig = { protocol: "eliotr.research-runtime.v1", vars: {
   ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON: { protocol: "eliotr.research-semantic-config.test.v1", profile: "fixture" },
-  ELIOTR_MODEL_PROFILE_DEFINITION_JSON: { protocol: "eliotr.model-profile-definition.test.v1", profiles: [] },
+  ELIOTR_MODEL_PROFILE_DEFINITION_JSON: modelProfile(),
   ELIOTR_MODEL_PROFILE_PROVENANCE_REF: "fixture:model-profile",
-  ELIOTR_MODEL_SPEND_POLICY_JSON: { protocol: "eliotr.model-spend-policy.test.v1", policies: [] },
+  ELIOTR_MODEL_SPEND_POLICY_JSON: spendTemplate(),
   ELIOTR_MODEL_SPEND_POLICY_PROVENANCE_REF: "fixture:model-spend-policy",
-  ELIOTR_RESEARCH_REPORT_CONFIG_JSON: { protocol: "eliotr.research-report-config.test.v1" },
+  ELIOTR_RESEARCH_REPORT_CONFIG_JSON: reportTemplate(),
   ELIOTR_RESEARCH_REPORT_POLICY_PROVENANCE_REF: "fixture:research-report-policy",
+  ELIOTR_WORKSPACE_OWNER_BINDINGS_JSON: { protocol: "eliotr.workspace-owner-bindings.v1", owners: [] },
+  ELIOTR_NAMESPACE_BOOTSTRAP_PROFILES_JSON: { protocol: "eliotr.namespace-bootstrap-profiles.v1", profiles: [] },
 } };
 await writeFile(runtimeConfigPath, `${JSON.stringify(runtimeConfig)}\n`, { flag: "wx", mode: 0o600 });
 
@@ -134,10 +156,14 @@ const baseEnvironment = { CLOUDFLARE_ACCOUNT_ID: "test-account", CLOUDFLARE_API_
   ELIOTR_ACCESS_TEAM_DOMAIN: "https://team-example.cloudflareaccess.com", ELIOTR_ACCESS_AUDIENCE: "test-aud",
   ELIOTR_ACCESS_SERVICE_PRINCIPALS: "", ELIOTR_ACCESS_SMOKE_COOKIE: "secret-cookie", ELIOTR_GOOGLE_EXTERNAL_TRANSPORT: "gemini-mcp" };
 const environment = await loadResearchRuntimeEnvironment({ ...baseEnvironment, ELIOTR_RESEARCH_CONFIG_FILE: runtimeConfigPath }, repositoryRoot);
-const runtimeConfigVars = Object.fromEntries(RESEARCH_RUNTIME_CONFIGURATION_KEYS
-  .filter((key) => !RESEARCH_RUNTIME_SEMANTIC_TRANSPORT_KEYS.includes(key) && typeof environment[key] === "string")
-  .map((key) => [key, environment[key]]));
-Object.assign(runtimeConfigVars, semanticConfigurationTransport(environment).vars);
+function runtimeConfigVariables(runtimeEnvironment) {
+  const variables = Object.fromEntries(RESEARCH_RUNTIME_CONFIGURATION_KEYS
+    .filter((key) => !RESEARCH_RUNTIME_SEMANTIC_TRANSPORT_KEYS.includes(key) && typeof runtimeEnvironment[key] === "string")
+    .map((key) => [key, runtimeEnvironment[key]]));
+  Object.assign(variables, semanticConfigurationTransport(runtimeEnvironment).vars);
+  return variables;
+}
+const runtimeConfigVars = runtimeConfigVariables(environment);
 // This valid fixture keeps the 18 unresolved billing counters UNKNOWN. A
 // deployment must not read or promote them into an exact admission receipt.
 const unknownUsageSnapshot = JSON.parse(admittedSnapshotJson());
@@ -160,12 +186,57 @@ Object.assign(config, {
   r2_buckets: [], queues: { producers: [] }, durable_objects: { bindings: [{ name: "RESEARCH_SESSION", class_name: "ResearchSession" }] },
   workflows: [], analytics_engine_datasets: [],
 });
+let candidateFixtureSequence = 0;
+async function candidateFixture(deploymentGeneration, templateGeneration = deploymentGeneration, ownerRuntimeVersion = "v1") {
+  candidateFixtureSequence += 1;
+  const candidateRuntimePath = resolve(resolvedTemporaryDirectory,
+    `research-runtime-${candidateFixtureSequence}-${deploymentGeneration}-${templateGeneration}.json`);
+  const candidateRuntime = structuredClone(runtimeConfig);
+  const profileSchema = ownerRuntimeVersion === "v2"
+    ? "eliotr.research.model-profile-definition.v2" : "eliotr.research.model-profile-definition.v1";
+  const spendProtocol = `eliotr.research-owner-spend-template.${ownerRuntimeVersion}`;
+  const reportProtocol = `eliotr.research-owner-report-admission-template.${ownerRuntimeVersion}`;
+  candidateRuntime.vars.ELIOTR_MODEL_PROFILE_DEFINITION_JSON = modelProfile(profileSchema, deploymentGeneration);
+  candidateRuntime.vars.ELIOTR_MODEL_PROFILE_PROVENANCE_REF = `fixture:model-profile-${deploymentGeneration}`;
+  candidateRuntime.vars.ELIOTR_MODEL_SPEND_POLICY_JSON = spendTemplate(spendProtocol,
+    templateGeneration, deploymentGeneration);
+  candidateRuntime.vars.ELIOTR_MODEL_SPEND_POLICY_PROVENANCE_REF = `fixture:model-spend-policy-${deploymentGeneration}`;
+  candidateRuntime.vars.ELIOTR_RESEARCH_REPORT_CONFIG_JSON = reportTemplate(reportProtocol,
+    templateGeneration, deploymentGeneration);
+  candidateRuntime.vars.ELIOTR_RESEARCH_REPORT_POLICY_PROVENANCE_REF = `fixture:research-report-policy-${deploymentGeneration}`;
+  await writeFile(candidateRuntimePath, `${JSON.stringify(candidateRuntime)}\n`, { flag: "wx", mode: 0o600 });
+  const candidateEnvironment = await loadResearchRuntimeEnvironment({ ...baseEnvironment,
+    ELIOTR_DEPLOYMENT_GENERATION: deploymentGeneration,
+    ELIOTR_RESEARCH_CONFIG_FILE: candidateRuntimePath }, repositoryRoot);
+  const candidateConfig = structuredClone(config);
+  candidateConfig.vars = { ...candidateConfig.vars, ...runtimeConfigVariables(candidateEnvironment),
+    DEPLOYMENT_GENERATION: deploymentGeneration };
+  const baselineRuntime = structuredClone(runtimeConfig);
+  baselineRuntime.vars.ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON = {
+    protocol: "eliotr.research-semantic-config.test.v1", profile: "observed-v1-baseline",
+  };
+  baselineRuntime.vars.ELIOTR_MODEL_PROFILE_DEFINITION_JSON = modelProfile(
+    "eliotr.research.model-profile-definition.v1", "observed-v1-baseline");
+  baselineRuntime.vars.ELIOTR_MODEL_PROFILE_PROVENANCE_REF = "fixture:model-profile-observed-v1";
+  baselineRuntime.vars.ELIOTR_MODEL_SPEND_POLICY_JSON = spendTemplate(
+    "eliotr.research-owner-spend-template.v1", "git-recorded-owner", "observed-v1-baseline");
+  baselineRuntime.vars.ELIOTR_MODEL_SPEND_POLICY_PROVENANCE_REF = "fixture:model-spend-policy-observed-v1";
+  baselineRuntime.vars.ELIOTR_RESEARCH_REPORT_CONFIG_JSON = reportTemplate(
+    "eliotr.research-owner-report-admission-template.v1", "git-recorded-owner", "observed-v1-baseline");
+  baselineRuntime.vars.ELIOTR_RESEARCH_REPORT_POLICY_PROVENANCE_REF = "fixture:research-report-policy-observed-v1";
+  const baselineRuntimePath = resolve(resolvedTemporaryDirectory, `research-runtime-${candidateFixtureSequence}-baseline.json`);
+  await writeFile(baselineRuntimePath, `${JSON.stringify(baselineRuntime)}\n`, { flag: "wx", mode: 0o600 });
+  const baselineEnvironment = await loadResearchRuntimeEnvironment({ ...baseEnvironment,
+    ELIOTR_DEPLOYMENT_GENERATION: "git-test", ELIOTR_RESEARCH_CONFIG_FILE: baselineRuntimePath }, repositoryRoot);
+  const baselineConfig = structuredClone(config);
+  baselineConfig.vars = { ...config.vars, ...runtimeConfigVariables(baselineEnvironment), DEPLOYMENT_GENERATION: "git-test" };
+  return { environment: candidateEnvironment, candidateConfig, baselineConfig };
+}
 const assetBytes = "<!doctype html><main>fixture</main>";
 const assetManifest = {"protocol":"eliotr.cloudflare-assets-manifest.v1","state":"LOCAL_ONLY","directory":"apps/eliotr-pwa/dist","files":[{"path":"index.html","bytes":35,"sha256":"a02618fd171637ef11b3b4d923cb91cf9837c902dbd7aca5bd69f8eeb465c59f"}],"excluded_routing_files":["_headers","_redirects"],"manifest_sha256":"42a56ab403ebc72972cf5e99795838d1f331afec0cd0a9aea5a8b128fb5203fd"};
 const alternateVersionId = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
 const versionId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 const migrationPlan = await readDeploymentMigrationPlan(config, { root: repositoryRoot });
-const bytes = Buffer.from(JSON.stringify(config));
 const generatedConfigPath = resolve(repositoryRoot, "apps/eliotr-core/wrangler.deploy.jsonc");
 const workerEntrypoint = resolve(repositoryRoot, "apps/eliotr-core/src/index.ts");
 const buildInputManifest = Object.freeze({ protocol: "eliotr.deployment-build-inputs.v1",
@@ -173,14 +244,20 @@ const buildInputManifest = Object.freeze({ protocol: "eliotr.deployment-build-in
 const bundleSha256 = "b".repeat(64);
 const sha256 = (value) => createHash("sha256").update(value).digest("hex");
 function harness(overrides = {}) {
+  const candidateConfig = overrides.candidateConfig ?? config;
+  const baselineConfig = overrides.baselineConfig ?? candidateConfig;
+  const candidateEnvironment = overrides.environment ?? environment;
+  const candidateBytes = Buffer.from(JSON.stringify(candidateConfig));
   const calls = [];
   const receipts = [];
   const provisionerEnvs = [];
   const deploymentRows = new Map();
-  let authorityBatches = 0;
+  let authorityWrites = 0;
+  let authorityReads = 0;
   let capabilityReads = 0;
   let fingerprintReads = 0;
   let uploadStarted = false;
+  let workerVersionReads = 0;
   let reads = 0;
   let manifestReads = 0;
   let deploymentsRead = 0;
@@ -190,12 +267,14 @@ function harness(overrides = {}) {
   let bundleAttestations = 0;
   let generatedConfigPins = 0;
   const buildEvents = [];
+  for (const row of overrides.authorityRows ?? []) deploymentRows.set(row.deployment_generation, { ...row });
   const options = { readAssetManifest: async () => { manifestReads += 1; return overrides.assetDriftAt === manifestReads ? { ...assetManifest, manifest_sha256: "0".repeat(64) } : assetManifest; },
+    readBackendFingerprint: () => "a".repeat(64),
     ...(overrides.backendDriftAt === undefined ? {} : { readBackendFingerprint: () => {
       fingerprintReads += 1;
       return fingerprintReads === overrides.backendDriftAt ? "0".repeat(64) : "a".repeat(64);
     } }),
-    confirmLive: true, verifyCode: async () => { buildEvents.push("verify-code"); }, environment, now: () => now, log: () => {},
+    confirmLive: true, verifyCode: async () => { buildEvents.push("verify-code"); }, environment: candidateEnvironment, now: () => now, log: () => {},
     captureBuildInputs: async () => { buildEvents.push("capture-build-inputs"); return buildInputManifest; },
     checkBuildInputs: async () => {
       buildInputChecks += 1;
@@ -206,7 +285,7 @@ function harness(overrides = {}) {
     pinGeneratedConfig: async () => {
       generatedConfigPins += 1;
       buildEvents.push("pin-generated-config");
-      return { path: "apps/eliotr-core/wrangler.deploy.jsonc", sha256: sha256(bytes), byte_length: bytes.byteLength,
+      return { path: "apps/eliotr-core/wrangler.deploy.jsonc", sha256: sha256(candidateBytes), byte_length: candidateBytes.byteLength,
         worker_name: "eliotr-core", worker_main: "apps/eliotr-core/src/index.ts", assets_directory: "apps/eliotr-pwa/dist" };
     },
     attestBundle: async ({ outdir, metafilePath, generatedConfigPin }) => {
@@ -214,7 +293,7 @@ function harness(overrides = {}) {
       buildEvents.push("attest-worker-bundle");
       assert.ok(resolve(outdir).startsWith(resolve(repositoryRoot, ".eliotr-state")));
       assert.ok(resolve(metafilePath).startsWith(resolve(outdir)));
-      assert.equal(generatedConfigPin.sha256, sha256(bytes));
+      assert.equal(generatedConfigPin.sha256, sha256(candidateBytes));
       return { protocol: "eliotr.deployment-worker-bundle.v1", root: repositoryRoot,
         manifest_sha256: buildInputManifest.sha256, generated_config: generatedConfigPin,
         outdir: resolve(outdir), entrypoint: workerEntrypoint, sha256: bundleSha256 };
@@ -230,7 +309,7 @@ function harness(overrides = {}) {
       if (name.startsWith("pnpm ")) buildEvents.push(`command:${name}`);
       if (name === deployCommand) uploadStarted = true;
       if (args[0]?.startsWith("scripts/provision-")) provisionerEnvs.push({ name: args[0], env: { ...env } });
-      assert.equal(env.ELIOTR_DEPLOYMENT_GENERATION, "git-test");
+      assert.equal(env.ELIOTR_DEPLOYMENT_GENERATION, candidateEnvironment.ELIOTR_DEPLOYMENT_GENERATION);
       assert.equal(resolve(cwd), resolve(fileURLToPath(new URL("../", import.meta.url)),
         args.includes("--config") ? "apps/eliotr-core" : "."));
       if (name === overrides.failCommand) throw new Error("injected command failure");
@@ -239,7 +318,7 @@ function harness(overrides = {}) {
     read: async (path, encoding) => {
       if (resolve(path) !== generatedConfigPath) return readFile(path, encoding);
       reads += 1;
-      return overrides.driftAt === reads ? Buffer.from("{}") : bytes;
+      return overrides.driftAt === reads ? Buffer.from("{}") : candidateBytes;
     },
     save: async (receipt) => { calls.push("save"); receipts.push(receipt); },
     readReleaseBlockers: async () => { buildEvents.push("read-full-release-blockers"); return ["fixture full-release blocker"]; },
@@ -259,8 +338,19 @@ function harness(overrides = {}) {
       calls.push(`${method} ${url}`);
       if (method === "POST" && String(url).includes("/d1/database/")) {
         const query = JSON.parse(init.body);
-        if (Array.isArray(query.batch)) authorityBatches += 1;
-        if (overrides.failAuthoritySync && Array.isArray(query.batch)) {
+        if (Array.isArray(query.batch)) {
+          const authorityRead = query.batch.some(({ sql }) => sql.startsWith("SELECT deployment_generation,state,created_at,backend_fingerprint"));
+          if (authorityRead && query.batch.every(({ sql }) => sql.startsWith("SELECT "))) {
+            authorityReads += 1;
+            if (overrides.authorityDriftAt === authorityReads) {
+              const active = [...deploymentRows.values()].find((row) => row.state === "ACTIVE");
+              if (active !== undefined) active.created_at = "2026-09-03T00:00:00.000Z";
+            }
+          }
+          if (query.batch.some(({ sql }) => !sql.startsWith("SELECT "))) authorityWrites += 1;
+        }
+        if (overrides.failAuthoritySync && Array.isArray(query.batch) &&
+            query.batch.some(({ sql }) => !sql.startsWith("SELECT "))) {
           return globalThis.Response.json({ success: false, errors: [{ code: 1001 }], result: [] });
         }
         if (query.sql?.startsWith("SELECT name FROM d1_migrations")) {
@@ -319,26 +409,36 @@ function harness(overrides = {}) {
         id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", created_on: new Date(now).toISOString(), strategy: "percentage",
         versions: [{ version_id: overrides.versionDrift && deploymentsRead > 1 ? alternateVersionId : versionId, percentage: overrides.partialTraffic ? 50 : 100 }],
       }] } });
-      if (String(url).endsWith("/versions/" + versionId) || String(url).endsWith("/versions/" + alternateVersionId)) return globalThis.Response.json({ success: true, result: {
+      if (String(url).endsWith("/versions/" + versionId) || String(url).endsWith("/versions/" + alternateVersionId)) {
+        workerVersionReads += 1;
+        const versionConfig = uploadStarted ? candidateConfig : baselineConfig;
+        const observedVars = structuredClone(versionConfig.vars);
+        if (!uploadStarted && overrides.baselineDriftAt === workerVersionReads) observedVars.ACCESS_AUDIENCE = "drifted-audience";
+        return globalThis.Response.json({ success: true, result: {
         id: String(url).endsWith(alternateVersionId) ? alternateVersionId : versionId, number: 9, resources: {
-          bindings: { ...Object.fromEntries(Object.entries(config.vars).map(([name, text]) => [name, { type: "plain_text", text }])),
-            ...overrides.bindingDrift, CORE_DB: { type: "d1", id: config.d1_databases[0].database_id },
-            SEARCH_DB: { type: "d1", id: config.d1_databases[1].database_id }, ASSETS: { type: "assets" },
+          bindings: { ...Object.fromEntries(Object.entries(observedVars).map(([name, value]) => [name, typeof value === "string" ? { type: "plain_text", text: value } : { type: "json", json: value }])),
+            ...overrides.bindingDrift, CORE_DB: { type: "d1", id: candidateConfig.d1_databases[0].database_id },
+            SEARCH_DB: { type: "d1", id: candidateConfig.d1_databases[1].database_id }, ASSETS: { type: "assets" },
             RESEARCH_SESSION: { type: "durable_object_namespace", class_name: "ResearchSession" } },
-          script: { etag: "fixture-etag" }, script_runtime: { compatibility_date: config.compatibility_date,
-            compatibility_flags: [], exports: { default: { type: "worker" }, ...config.exports } },
+          script: { etag: "fixture-etag" }, script_runtime: { compatibility_date: candidateConfig.compatibility_date,
+            compatibility_flags: [], exports: { default: { type: "worker" }, ...candidateConfig.exports } },
         },
       } });
+      }
+      const activeGeneration = uploadStarted ? candidateEnvironment.ELIOTR_DEPLOYMENT_GENERATION : baselineConfig.vars.DEPLOYMENT_GENERATION;
       if (String(url).endsWith("/healthz")) return globalThis.Response.json({ ready: true,
-        deployment_generation: "git-test", checked_at: new Date(now).toISOString() });
-      return globalThis.Response.json({ trace_id: "trace-test", deployment_generation: "git-test", data: {
-        protocol: "eliotr.capabilities.v1", deployment_generation: "git-test", enabled_slices: ["HEALTH", "ACCESS"],
+        deployment_generation: activeGeneration, checked_at: new Date(now).toISOString() });
+      return globalThis.Response.json({ trace_id: "trace-test", deployment_generation: activeGeneration, data: {
+        protocol: "eliotr.capabilities.v1", deployment_generation: activeGeneration, enabled_slices: ["HEALTH", "ACCESS"],
         disabled_slices: ["RESEARCH"], exact_evidence_resolution_required: true,
         transport_completion_is_research_completion: false, ingest_live_qualified: false,
       } });
     }, ...overrides.options };
   return { calls, receipts, provisionerEnvs, options, assetReads: () => assetReads,
-    authorityBatches: () => authorityBatches, capabilityReads: () => capabilityReads, fingerprintReads: () => fingerprintReads,
+    authorityReads: () => authorityReads, authorityWrites: () => authorityWrites,
+    deploymentRows: () => [...deploymentRows.values()].map((row) => ({ ...row })),
+    workerVersionReads: () => workerVersionReads,
+    capabilityReads: () => capabilityReads, fingerprintReads: () => fingerprintReads,
     buildInputChecks: () => buildInputChecks, bundleChecks: () => bundleChecks,
     bundleAttestations: () => bundleAttestations, generatedConfigPins: () => generatedConfigPins,
     buildEvents: () => [...buildEvents] };
@@ -396,6 +496,133 @@ await check("existing Worker deploy proceeds with 18 UNKNOWN counters and no mig
   const itemSchema = schema.properties.remote_http_smoke.oneOf.find((branch) => branch.properties.state.const === "PASS").properties.results.items;
   assert.deepEqual(Object.keys(receipt.remote_http_smoke.results[0]).sort(), itemSchema.required.slice().sort());
 });
+await check("generation A baseline explicitly transitions to current owner-template generation B", async () => {
+  const candidate = await candidateFixture("git-candidate");
+  assert.equal(candidate.baselineConfig.vars.DEPLOYMENT_GENERATION, "git-test");
+  assert.equal(JSON.parse(candidate.baselineConfig.vars.ELIOTR_MODEL_SPEND_POLICY_JSON).deployment_generation,
+    "git-recorded-owner");
+  assert.equal(JSON.parse(candidate.baselineConfig.vars.ELIOTR_RESEARCH_REPORT_CONFIG_JSON)
+    .admission_policy.deployment_generation, "git-recorded-owner");
+  assert.equal(JSON.parse(candidate.candidateConfig.vars.ELIOTR_MODEL_SPEND_POLICY_JSON).deployment_generation,
+    "git-candidate");
+  assert.equal(JSON.parse(candidate.candidateConfig.vars.ELIOTR_RESEARCH_REPORT_CONFIG_JSON)
+    .admission_policy.deployment_generation, "git-candidate");
+  const baselineFingerprint = "a".repeat(64);
+  const test = harness({ ...candidate,
+    authorityRows: [{ deployment_generation: "git-test", state: "ACTIVE",
+      created_at: "2026-09-01T00:00:00.000Z", backend_fingerprint: baselineFingerprint }],
+    options: { readBackendFingerprint: () => "b".repeat(64) },
+  });
+  const receipt = await deployCloudflare(test.options);
+  assert.equal(receipt.deployment_generation, "git-candidate");
+  assert.equal(test.calls.filter((call) => call === deployCommand).length, 1);
+  assert.equal(test.authorityWrites(), 1);
+  assert.deepEqual(test.deploymentRows().map(({ deployment_generation, state }) => [deployment_generation, state]).sort(), [
+    ["git-candidate", "ACTIVE"], ["git-test", "RETIRED"],
+  ]);
+  assert.deepEqual(receipt.worker.vars_readback, { state: "PASS", binding_count: Object.keys(candidate.candidateConfig.vars).length });
+  assert.equal(test.receipts.length, 1);
+});
+
+await check("approved v1 owner runtime transitions to v2 templates and profile", async () => {
+  const candidate = await candidateFixture("git-candidate-v2", "git-candidate-v2", "v2");
+  const baselineSpend = JSON.parse(candidate.baselineConfig.vars.ELIOTR_MODEL_SPEND_POLICY_JSON);
+  const candidateSpend = JSON.parse(candidate.candidateConfig.vars.ELIOTR_MODEL_SPEND_POLICY_JSON);
+  const baselineReport = JSON.parse(candidate.baselineConfig.vars.ELIOTR_RESEARCH_REPORT_CONFIG_JSON);
+  const candidateReport = JSON.parse(candidate.candidateConfig.vars.ELIOTR_RESEARCH_REPORT_CONFIG_JSON);
+  const baselineProfile = JSON.parse(candidate.baselineConfig.vars.ELIOTR_MODEL_PROFILE_DEFINITION_JSON);
+  const candidateProfile = JSON.parse(candidate.candidateConfig.vars.ELIOTR_MODEL_PROFILE_DEFINITION_JSON);
+  assert.equal(baselineSpend.protocol, "eliotr.research-owner-spend-template.v1");
+  assert.equal(baselineSpend.deployment_generation, "git-recorded-owner");
+  assert.equal(candidateSpend.protocol, "eliotr.research-owner-spend-template.v2");
+  assert.equal(Object.hasOwn(candidateSpend, "deployment_generation"), false);
+  assert.equal(baselineReport.admission_policy.protocol, "eliotr.research-owner-report-admission-template.v1");
+  assert.equal(candidateReport.admission_policy.protocol, "eliotr.research-owner-report-admission-template.v2");
+  assert.equal(baselineProfile.schema, "eliotr.research.model-profile-definition.v1");
+  assert.equal(candidateProfile.schema, "eliotr.research.model-profile-definition.v2");
+  const test = harness(candidate);
+  const receipt = await deployCloudflare(test.options);
+  assert.equal(receipt.deployment_generation, "git-candidate-v2");
+  assert.equal(test.calls.filter((call) => call === deployCommand).length, 1);
+  assert.equal(test.authorityWrites(), 1);
+  assert.equal(test.receipts.length, 1);
+});
+
+await check("owner bindings and namespace bootstrap remain outside generic runtime transitions", async () => {
+  for (const name of ["ELIOTR_WORKSPACE_OWNER_BINDINGS_JSON", "ELIOTR_NAMESPACE_BOOTSTRAP_PROFILES_JSON"]) {
+    const candidate = await candidateFixture("git-candidate");
+    const baselineConfig = structuredClone(candidate.baselineConfig);
+    const observed = JSON.parse(baselineConfig.vars[name]);
+    observed.revision = "separate-baseline-authority";
+    baselineConfig.vars[name] = JSON.stringify(observed);
+    const test = harness({ ...candidate, baselineConfig });
+    await assert.rejects(deployCloudflare(test.options), /Worker version variable readback drift/u);
+    assert.equal(test.calls.filter((call) => call === deployCommand).length, 0);
+    assert.equal(test.authorityWrites(), 0);
+    assert.equal(test.receipts.length, 0);
+  }
+});
+
+await check("unrelated Access drift is rejected against the observed baseline", async () => {
+  const candidate = await candidateFixture("git-candidate");
+  const baselineConfig = structuredClone(candidate.baselineConfig);
+  baselineConfig.vars.ACCESS_AUDIENCE = "different-access-audience";
+  const test = harness({ ...candidate, baselineConfig });
+  await assert.rejects(deployCloudflare(test.options), /Worker version variable readback drift/u);
+  assert.equal(test.calls.filter((call) => call === deployCommand).length, 0);
+  assert.equal(test.authorityWrites(), 0);
+  assert.equal(test.receipts.length, 0);
+});
+
+await check("stale owner-template generation is refused before D1 preflight or upload", async () => {
+  const candidate = await candidateFixture("git-candidate", "git-test");
+  const test = harness(candidate);
+  await assert.rejects(deployCloudflare(test.options), /Generated owner template generation does not match candidate/u);
+  assert.equal(test.authorityReads(), 0);
+  assert.equal(test.authorityWrites(), 0);
+  assert.ok(!test.calls.includes(deployCommand));
+  assert.ok(!test.calls.some((call) => call.includes("wrangler d1 migrations apply")));
+  assert.equal(test.receipts.length, 0);
+});
+
+await check("reused generation with a different backend fingerprint stops before upload or authority writes", async () => {
+  const candidate = await candidateFixture("git-candidate");
+  const test = harness({ ...candidate,
+    authorityRows: [
+      { deployment_generation: "git-test", state: "ACTIVE", created_at: "2026-09-01T00:00:00.000Z", backend_fingerprint: "a".repeat(64) },
+      { deployment_generation: "git-candidate", state: "RETIRED", created_at: "2026-09-02T00:00:00.000Z", backend_fingerprint: "a".repeat(64) },
+    ],
+    options: { readBackendFingerprint: () => "b".repeat(64) },
+  });
+  await assert.rejects(deployCloudflare(test.options), /generation already records a different backend fingerprint/u);
+  assert.equal(test.authorityReads(), 1);
+  assert.equal(test.authorityWrites(), 0);
+  assert.ok(!test.calls.includes(deployCommand));
+  assert.ok(!test.calls.some((call) => call.includes("wrangler d1 migrations apply")));
+  assert.equal(test.receipts.length, 0);
+});
+
+await check("Worker and authority baseline drift during preparation block pre-upload", async () => {
+  const workerDrift = harness({ baselineDriftAt: 4 });
+  await assert.rejects(deployCloudflare(workerDrift.options), /Worker version variable readback drift/u);
+  assert.equal(workerDrift.workerVersionReads(), 4, "the fourth version read is the immutable pre-upload config re-read");
+  assert.ok(!workerDrift.calls.includes(deployCommand));
+  assert.equal(workerDrift.authorityWrites(), 0);
+  assert.equal(workerDrift.receipts.length, 0);
+
+  const authorityDrift = harness({
+    authorityDriftAt: 2,
+    authorityRows: [{ deployment_generation: "git-test", state: "ACTIVE",
+      created_at: "2026-09-01T00:00:00.000Z", backend_fingerprint: "a".repeat(64) }],
+    options: { readBackendFingerprint: () => "a".repeat(64) },
+  });
+  await assert.rejects(deployCloudflare(authorityDrift.options), /Research deployment authority changed during deployment preflight/u);
+  assert.equal(authorityDrift.authorityReads(), 2, "the authority baseline is read again immediately before upload");
+  assert.ok(!authorityDrift.calls.includes(deployCommand));
+  assert.equal(authorityDrift.authorityWrites(), 0);
+  assert.equal(authorityDrift.receipts.length, 0);
+});
+
 await check("MCP Access child receives no injected Wrangler bearer", async () => {
   const test = harness({ options: { environment: { ...environment, ELIOTR_ACCESS_TRANSPORT: "cloudflare-mcp" } } });
   await deployCloudflare(test.options);
@@ -421,7 +648,7 @@ await check("Worker deployment failure cannot publish PASS", async () => {
   assert.equal(test.receipts.length, 0);
   assert.ok(test.calls.some((call) => call.startsWith("GET ")), "active Worker identity is checked before the failed upload");
   assert.ok(!test.calls.some((call) => call.includes("wrangler d1 migrations apply")));
-  assert.equal(test.authorityBatches(), 0);
+  assert.equal(test.authorityWrites(), 0);
 });
 await check("readback failure after upload is not successful deployment", async () => {
   const test = harness({ failReadback: true });
@@ -444,7 +671,7 @@ await check("migration ledger mismatch stops before Worker upload and authority 
     await assert.rejects(deployCloudflare(test.options), /migration plan or ledger/u);
     assert.ok(!test.calls.includes(deployCommand));
     assert.ok(test.calls.some((call) => call.startsWith("GET ")), "identity readback precedes the ledger refusal");
-    assert.equal(test.authorityBatches(), 0);
+    assert.equal(test.authorityWrites(), 0);
     assert.equal(test.receipts.length, 0);
   }
 });
@@ -453,7 +680,7 @@ await check("required schema-generation drift stops before Worker upload", async
     const test = harness({ schemaMismatch: binding });
     await assert.rejects(deployCloudflare(test.options), /schema generation/u);
     assert.ok(!test.calls.includes(deployCommand));
-    assert.equal(test.calls.filter((call) => call.startsWith("POST ")).length, binding === "CORE_DB" ? 3 : 4,
+    assert.equal(test.calls.filter((call) => call.startsWith("POST ")).length, binding === "CORE_DB" ? 4 : 5,
       "both ledgers are read and schema marker checks stop at the first mismatch");
     assert.equal(test.receipts.length, 0);
   }
@@ -464,20 +691,20 @@ await check("partial active traffic stops before upload and authority synchroniz
   assert.ok(!test.calls.includes(deployCommand));
   assert.equal(test.calls.filter((call) => call.startsWith("POST ")).length, 0,
     "partial traffic fails the active identity read before D1 or upload");
-  assert.equal(test.authorityBatches(), 0);
+  assert.equal(test.authorityWrites(), 0);
   assert.equal(test.receipts.length, 0);
 });
 
 
 await check("asset content or active-version mismatch stops at its intended stage", async () => {
   for (const [override, expectedUpload, expectedD1Reads] of [
-    [{ assetMismatch: true }, true, 4], [{ versionDrift: true }, false, 0],
+    [{ assetMismatch: true }, true, 6], [{ versionDrift: true }, false, 1],
   ]) {
     const test = harness(override);
     await assert.rejects(deployCloudflare(test.options), /asset readback|deployment changed|active configured resource identities/u);
     assert.equal(test.calls.includes(deployCommand), expectedUpload);
     assert.equal(test.calls.filter((call) => call.startsWith("POST ")).length, expectedD1Reads);
-    assert.equal(test.authorityBatches(), 0);
+    assert.equal(test.authorityWrites(), 0);
     assert.equal(test.receipts.length, 0);
   }
 });
@@ -515,7 +742,7 @@ await check("unreviewed bindings and stale runtime vars cannot sync authority or
     const test = harness({ bindingDrift });
     await assert.rejects(deployCloudflare(test.options));
     assert.ok(!test.calls.includes(deployCommand));
-    assert.equal(test.authorityBatches(), 0,
+    assert.equal(test.authorityWrites(), 0,
       "unreviewed runtime bindings fail before upload and authority synchronization");
     assert.equal(test.receipts.length, 0);
   }
@@ -628,7 +855,9 @@ await check("live maintenance can pin and preserve existing AI Gateway inventory
   };
   const fetch = test.options.fetchImpl;
   test.options.fetchImpl = (url, init) => {
-    if (init?.method === "POST" && Array.isArray(JSON.parse(init.body)?.batch)) sequence.push("authority-sync");
+    const query = JSON.parse(init?.body ?? "{}");
+    if (init?.method === "POST" && Array.isArray(query.batch) &&
+        query.batch.some(({ sql }) => !sql.startsWith("SELECT "))) sequence.push("authority-sync");
     return fetch(url, init);
   };
 
@@ -658,7 +887,7 @@ await check("live maintenance can pin and preserve existing AI Gateway inventory
   });
   assert.match(receipt.note, /does not qualify a full release/u);
   assert.match(receipt.note, /retrieval remained absent/u);
-  assert.equal(test.authorityBatches(), 2);
+  assert.equal(test.authorityWrites(), 1);
   assert.equal(test.receipts.length, 1);
 });
 
@@ -706,7 +935,7 @@ await check("gateway baseline failure and fresh readback drift fail closed aroun
       } } });
     await assert.rejects(deployCloudflare(drift.options), /Maintenance AI Gateway readback/u);
     assert.equal(drift.calls.filter((call) => call === deployCommand).length, failureReadback === 1 ? 0 : 1);
-    assert.equal(drift.authorityBatches(), 0);
+    assert.equal(drift.authorityWrites(), 0);
     assert.equal(drift.receipts.length, 0);
   }
 });
@@ -716,20 +945,20 @@ await check("capability expansion after upload is refused before deployment-auth
   await assert.rejects(deployCloudflare(test.options), /Maintenance capability enabled_slices would change or broaden/u);
   assert.equal(test.capabilityReads(), 3, "the changed third profile read is the candidate pre-CAS readback");
   assert.equal(test.calls.filter((call) => call === deployCommand).length, 1);
-  assert.equal(test.authorityBatches(), 0);
+  assert.equal(test.authorityWrites(), 0);
   assert.equal(test.receipts.length, 0);
 });
 
 await check("backend input drift at dry-run, preupload and pre-CAS boundaries cannot advance authority or receipts", async () => {
   for (const [stage, driftAt, expectedUpload, expectedD1Reads] of [
-    ["after dry-run", 2, false, 0], ["immediately preupload", 5, false, 4], ["pre-CAS after upload", 8, true, 4],
+    ["after dry-run", 2, false, 1], ["immediately preupload", 5, false, 5], ["pre-CAS after upload", 8, true, 6],
   ]) {
     const test = harness({ backendDriftAt: driftAt, options: { purpose: "MAINTENANCE" } });
     await assert.rejects(deployCloudflare(test.options), /Backend execution inputs changed during deployment/u, stage);
     assert.equal(test.fingerprintReads(), driftAt, stage);
     assert.equal(test.calls.includes(deployCommand), expectedUpload, stage);
     assert.equal(test.calls.filter((call) => call.startsWith("POST ")).length, expectedD1Reads, stage);
-    assert.equal(test.authorityBatches(), 0, stage);
+    assert.equal(test.authorityWrites(), 0, stage);
     assert.equal(test.receipts.length, 0, stage);
   }
 });
@@ -740,15 +969,15 @@ await check("source seal drift before build and prepared bundle drift before CAS
   assert.equal(sourceDrift.buildInputChecks(), 2);
   assert.equal(generatedDryRunIndex(sourceDrift.calls), -1);
   assert.equal(sourceDrift.calls.includes(deployCommand), false);
-  assert.equal(sourceDrift.authorityBatches(), 0);
+  assert.equal(sourceDrift.authorityWrites(), 0);
   assert.equal(sourceDrift.receipts.length, 0);
 
   const bundleDrift = harness({ bundleDriftAt: 7, options: { purpose: "MAINTENANCE" } });
   await assert.rejects(deployCloudflare(bundleDrift.options), /fixture prepared Worker artifact drift/u);
   assert.equal(bundleDrift.bundleChecks(), 7);
   assert.equal(bundleDrift.calls.filter((call) => call === deployCommand).length, 1);
-  assert.equal(bundleDrift.calls.filter((call) => call.startsWith("POST ")).length, 4);
-  assert.equal(bundleDrift.authorityBatches(), 0);
+  assert.equal(bundleDrift.calls.filter((call) => call.startsWith("POST ")).length, 6);
+  assert.equal(bundleDrift.authorityWrites(), 0);
   assert.equal(bundleDrift.receipts.length, 0);
 });
 

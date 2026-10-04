@@ -26,11 +26,18 @@ try {
 const runtimeConfigPath = resolve(temporaryDirectory, "research-runtime.json");
 await writeFile(runtimeConfigPath, JSON.stringify({ protocol: "eliotr.research-runtime.v1", vars: {
   ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON: { protocol: "eliotr.research-semantic-config.test.v1", profile: "orchestration-fixture" },
-  ELIOTR_MODEL_PROFILE_DEFINITION_JSON: { protocol: "eliotr.model-profile-definition.test.v1", profiles: [] },
+  ELIOTR_MODEL_PROFILE_DEFINITION_JSON: { schema: "eliotr.research.model-profile-definition.v1",
+    config_provenance_ref: "fixture:model-profile", model_profile_ref: "research-model-v1" },
   ELIOTR_MODEL_PROFILE_PROVENANCE_REF: "fixture:model-profile",
-  ELIOTR_MODEL_SPEND_POLICY_JSON: { protocol: "eliotr.model-spend-policy.test.v1", policies: [] },
+  ELIOTR_MODEL_SPEND_POLICY_JSON: { protocol: "eliotr.research-owner-spend-template.v1", approved: true,
+    policy_ref: "fixture:owner-spend", config_provenance_ref: "fixture:model-spend-policy",
+    principal_ref: "fixture-owner", client_class: "owner_pwa", deployment_generation: "git-test",
+    expires_at: "2026-12-31T00:00:00.000Z", rules: [] },
   ELIOTR_MODEL_SPEND_POLICY_PROVENANCE_REF: "fixture:model-spend-policy",
-  ELIOTR_RESEARCH_REPORT_CONFIG_JSON: { protocol: "eliotr.research-report-config.test.v1" },
+  ELIOTR_RESEARCH_REPORT_CONFIG_JSON: { schema: "eliotr.research.report-config.v1",
+    admission_policy: { protocol: "eliotr.research-owner-report-admission-template.v1", deployment_generation: "git-test",
+      config_provenance_ref: "fixture:research-report-policy", principal_ref: "fixture-owner", policy_ref: "fixture:report" },
+    artifact_policy: {} },
   ELIOTR_RESEARCH_REPORT_POLICY_PROVENANCE_REF: "fixture:research-report-policy",
 } }), { flag: "wx", mode: 0o600 });
 const now = Date.parse("2026-09-04T23:00:00.000Z");
@@ -102,7 +109,20 @@ function harness(overrides = {}) {
     attestBundle: async () => ({ protocol: "eliotr.deployment-worker-bundle.v1", sha256: "e".repeat(64),
       manifest_sha256: buildInputManifest.sha256, generated_config: generatedConfigPin, entrypoint: workerEntrypoint }),
     checkBundle: async () => true,
-    readWorker: async () => ({ deployment_id: "active-deployment", version_id: "active-version" }),
+    readWorker: async (_environment, _input, _config, readOptions = {}) => {
+      const worker = { deployment_id: "active-deployment", version_id: "active-version" };
+      if (readOptions.observedDeploymentGeneration !== undefined) {
+        worker.configuration_baseline = {
+          deployment_id: "active-deployment", version_id: "active-version",
+          deployment_generation: readOptions.observedDeploymentGeneration,
+          configuration_sha256: "c".repeat(64), configuration: { fixture: true },
+        };
+        if (readOptions.expectedConfigurationBaseline !== undefined) {
+          assert.deepEqual(worker.configuration_baseline, readOptions.expectedConfigurationBaseline);
+        }
+      }
+      return worker;
+    },
     readSchemaGenerations: async () => ({ state: "PASS", streams: [] }),
     execute(command, args, cwd, env) {
       const name = `${command} ${args.join(" ")}`; calls.push(name);
@@ -120,8 +140,15 @@ function harness(overrides = {}) {
     read: async () => { reads += 1; return overrides.driftAt === reads ? Buffer.from("{}") : bytes; },
     save: async (receipt) => { calls.push("save"); receipts.push(receipt); },
     readActiveWorker: async () => ({ deployment_id: "active-deployment", version_id: "active-version", generation: "git-test" }),
-    fetchImpl: async (url) => {
-      calls.push(`GET ${url}`);
+    fetchImpl: async (url, init = {}) => {
+      const method = init.method ?? "GET";
+      calls.push(`${method} ${url}`);
+      if (method === "POST") {
+        const query = JSON.parse(init.body);
+        return globalThis.Response.json({ success: true, result: query.batch.map(() => ({
+          success: true, results: [], meta: { changes: 0 },
+        })) });
+      }
       if (overrides.failReadback) return new globalThis.Response("login", { headers: { "content-type": "text/html" } });
       if (url.endsWith("/workers/scripts")) return globalThis.Response.json({ success: true, result: [
         { id: "eliotr-core", compatibility_date: "2026-08-28", has_assets: true,
@@ -163,6 +190,18 @@ await check("invalid smoke input fails even before local commands", async () => 
   const test = harness({ options: { environment: { ...environment, ELIOTR_SMOKE_BASE_URL: "https://wrong.example" } } });
   await assert.rejects(deployCloudflare(test.options));
   assert.deepEqual(test.calls, []);
+});
+await check("AI Search bootstrap is confirmed-maintenance-only and exclusive with absent preservation", async () => {
+  const intentPath = ".eliotr-state/maintenance-ai-search-bootstrap-fixture.json";
+  const release = harness({ options: { environment: { ...environment,
+    ELIOTR_MAINTENANCE_AI_SEARCH_BOOTSTRAP_FILE: intentPath } } });
+  await assert.rejects(deployCloudflare(release.options), /confirmed live maintenance deployment/u);
+  assert.deepEqual(release.calls, []);
+  const maintenance = harness({ options: { purpose: "MAINTENANCE", environment: { ...environment,
+    ELIOTR_MAINTENANCE_AI_SEARCH_BOOTSTRAP_FILE: intentPath,
+    ELIOTR_MAINTENANCE_PRESERVE_AI_SEARCH: "absent" } } });
+  await assert.rejects(deployCloudflare(maintenance.options), /cannot be combined with absent-binding preservation/u);
+  assert.deepEqual(maintenance.calls, []);
 });
 await check("every failed preflight precedes archive and mutation", async () => {
   for (const name of ["provision-cloudflare-core", "provision-ai-search", "provision-ai-gateways", "provision-cloudflare-access"]) {
@@ -249,7 +288,7 @@ await check("maintenance records launch blockers and budget findings", async () 
     log: (message) => logs.push(message) } });
   assert.equal(await deployCloudflare(test.options), null);
   assert.deepEqual(test.calls, ["pnpm --filter @eliotr/core typecheck",
-    "pnpm exec eslint scripts/deploy-cloudflare.mjs scripts/lib/deployment-maintenance.mjs scripts/lib/deployment-route-update.mjs scripts/test-deployment-route-update.mjs scripts/lib/deployment-ai-gateways.mjs scripts/test-deployment-ai-gateways.mjs scripts/test-deployment-maintenance.mjs scripts/test-deployment-apply-ordering.mjs scripts/test-deployment-orchestration.mjs scripts/lib/deployment-build-inputs.mjs scripts/check-launch-code.mjs",
+    "pnpm exec eslint scripts/deploy-cloudflare.mjs scripts/lib/deployment-maintenance.mjs scripts/lib/deployment-ai-search-bootstrap.mjs scripts/test-deployment-ai-search-bootstrap.mjs scripts/lib/deployment-route-update.mjs scripts/test-deployment-route-update.mjs scripts/lib/deployment-ai-gateways.mjs scripts/test-deployment-ai-gateways.mjs scripts/test-deployment-maintenance.mjs scripts/test-deployment-apply-ordering.mjs scripts/test-deployment-orchestration.mjs scripts/lib/deployment-build-inputs.mjs scripts/check-launch-code.mjs",
     "pnpm boundaries:check", "pnpm boundaries:negative", "pnpm build:pwa", "pnpm --filter @eliotr/core cf:types",
     "pnpm --filter @eliotr/core deploy:dry-run"]);
   assert.ok(logs.some((message) => message.includes("known launch blocker")));
@@ -263,7 +302,7 @@ await check("maintenance records launch blockers and budget findings", async () 
 });
 await check("maintenance compile, lint, boundary and artifact gates still block", async () => {
   const commands = ["pnpm --filter @eliotr/core typecheck",
-    "pnpm exec eslint scripts/deploy-cloudflare.mjs scripts/lib/deployment-maintenance.mjs scripts/lib/deployment-route-update.mjs scripts/test-deployment-route-update.mjs scripts/lib/deployment-ai-gateways.mjs scripts/test-deployment-ai-gateways.mjs scripts/test-deployment-maintenance.mjs scripts/test-deployment-apply-ordering.mjs scripts/test-deployment-orchestration.mjs scripts/lib/deployment-build-inputs.mjs scripts/check-launch-code.mjs",
+    "pnpm exec eslint scripts/deploy-cloudflare.mjs scripts/lib/deployment-maintenance.mjs scripts/lib/deployment-ai-search-bootstrap.mjs scripts/test-deployment-ai-search-bootstrap.mjs scripts/lib/deployment-route-update.mjs scripts/test-deployment-route-update.mjs scripts/lib/deployment-ai-gateways.mjs scripts/test-deployment-ai-gateways.mjs scripts/test-deployment-maintenance.mjs scripts/test-deployment-apply-ordering.mjs scripts/test-deployment-orchestration.mjs scripts/lib/deployment-build-inputs.mjs scripts/check-launch-code.mjs",
     "pnpm boundaries:check", "pnpm boundaries:negative", "pnpm build:pwa", "pnpm --filter @eliotr/core cf:types",
     "pnpm --filter @eliotr/core deploy:dry-run"];
   for (const command of commands) {

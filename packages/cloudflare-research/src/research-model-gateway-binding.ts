@@ -133,6 +133,9 @@ export function createResearchModelGatewayBindingFetch(
     if (headers.has("authorization") || headers.has("cf-aig-authorization")) {
       invalid("bound gateway authentication must not use a request credential");
     }
+    if (headers.has("cf-aig-byok-alias") || headers.has("cf-aig-no-wholesale")) {
+      invalid("BYOK aliases require direct AI Gateway passthrough transport");
+    }
     // getUrl binds the configured account as well as the fixed reasoning gateway.
     const actualBase = await gateway.getUrl();
     if (resolveModelGatewayReasoningEndpoint(actualBase) !== endpoint) {

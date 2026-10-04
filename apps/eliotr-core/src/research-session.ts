@@ -24,7 +24,11 @@ import type { StageReceipt, StageRequest, WorkflowExecutionPorts, WorkflowObject
 import { createD1InvestigationLedgerStore, createInvestigationLedgerService, LedgerError } from "@eliotr/research";
 import type { LedgerD1Database } from "@eliotr/research";
 import { createResearchStageHandlerFactory, SERVER_OWNED_RESEARCH_HANDLER_GENERATION, SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION, SERVER_OWNED_FREEZE_HANDLER_GENERATION, SERVER_OWNED_SEMANTIC_HANDLER_GENERATION, SERVER_OWNED_LEGACY_PROTOCOL_HANDLER_GENERATION, SERVER_OWNED_PROTOCOL_HANDLER_GENERATION, SERVER_OWNED_BRANCH_HANDLER_GENERATION, SERVER_OWNED_EXTERNAL_AGENT_HANDLER_GENERATION, isSemanticResearchHandlerGeneration, isBranchExecutionHandlerGeneration, SERVER_RETRIEVAL_SCOPE_PROFILE } from "./research-stage-handlers.js";
-import { createResearchSemanticServerHandlers, researchSemanticConfigurationInstalled } from "./research-semantic-server.js";
+import { createResearchSemanticServerHandlers } from "./research-semantic-server.js";
+import { attachResearchRunConfiguration, captureResearchRunConfiguration, readResearchRunConfiguration } from "./research-run-configuration.js";
+import type { ResolvedResearchRunConfiguration } from "./research-run-configuration.js";
+import { ResearchRunProjectSelectionFailure } from "./research-run-configuration-errors.js";
+import { createResearchProjectModelConfigurationServiceFromEnv, readSelectedResearchProjectConfiguration } from "./research-project-configuration.js";
 import { RESEARCH_QUALIFICATION_RENEWAL_MARKER } from "./research-qualification-renewal.js";
 import { isResearchQuestionText, ScopeExpressionSchema, VersionedRefSchema } from "@eliotr/contracts";
 import type { VersionedRef } from "@eliotr/contracts";
@@ -90,6 +94,51 @@ export function parseResearchRunRequest(raw: unknown): QueryRequest {
     fail("RESEARCH_PROFILE_UNSUPPORTED", "inquiry protocol is not installed", 422);
   }
   return { ...base, request_version: RESEARCH_RUN_REQUEST_V2, inquiry_protocol_ref: parsedRef.data };
+}
+function uniqueProjectScopeId(expression: QueryRequest["scope_expression"]): string {
+  const projects = new Set<string>();
+  const visit = (value: QueryRequest["scope_expression"]): void => {
+    if (value.kind === "PROJECT") projects.add(value.project_id);
+    else if (value.kind === "UNION" || value.kind === "INTERSECT" || value.kind === "EXCEPT") {
+      visit(value.left); visit(value.right);
+    }
+  };
+  visit(expression);
+  if (projects.size !== 1) fail("RESEARCH_AGENT_NOT_CONFIGURED",
+    "A selected model configuration for one owned project is required before research can run", 503);
+  const projectId = projects.values().next().value as string | undefined;
+  if (projectId === undefined) fail("RESEARCH_AGENT_NOT_CONFIGURED",
+    "A selected model configuration for one owned project is required before research can run", 503);
+  return projectId;
+}
+function mapRunConfigurationError(error: unknown): never {
+  const code = error instanceof Error && "code" in error ? String((error as { code: unknown }).code) : "";
+  if (error instanceof ResearchRunProjectSelectionFailure && error.code === "RESEARCH_AGENT_NOT_CONFIGURED" &&
+      error.status === 503 && error.cause instanceof ResearchServiceError &&
+      error.cause.code === "RESEARCH_AGENT_NOT_CONFIGURED" && error.cause.status === 503 &&
+      error.cause.retryable === false) {
+    fail("RESEARCH_AGENT_NOT_CONFIGURED",
+      "A selected model configuration for one owned project is required before research can run", 503);
+  }
+  if (code === "RESEARCH_PROJECT_MODEL_CONFIGURATION_OWNER_REQUIRED") {
+    fail("RESEARCH_OWNER_REQUIRED", "an authenticated owner session is required", 403);
+  }
+  if (code === "WORKFLOW_AUTHORITY_STALE" || code.includes("PROJECT_AUTHORITY_STALE") ||
+      code.endsWith("_AUTHORITY_CHANGED") || code.endsWith("_PROJECT_NOT_FOUND")) {
+    fail("RESEARCH_AUTHORITY_STALE", "research run configuration authority is no longer current", 409);
+  }
+  if (code === "WORKFLOW_STORAGE_UNAVAILABLE" || code.includes("STORAGE_UNAVAILABLE") ||
+      code === "RESEARCH_RUN_CONFIGURATION_UNRESOLVED") {
+    fail("RESEARCH_SETTLEMENT_UNCERTAIN", "research run configuration readback is unavailable", 503, true);
+  }
+  if (code === "WORKFLOW_CONFIGURATION_INVALID" || code === "WORKFLOW_CONFIGURATION_MISSING" ||
+      code.startsWith("RESEARCH_PROJECT_MODEL_CONFIGURATION_") || code === "RESEARCH_MODEL_CONFIGURATION_QUALIFICATION_REQUIRED") {
+    fail("RESEARCH_AGENT_NOT_CONFIGURED", "a valid saved project model configuration is required", 503);
+  }
+  if (code.startsWith("WORKFLOW_")) {
+    fail("RESEARCH_CONFLICT", "research run configuration could not be bound", 409);
+  }
+  throw error;
 }
 function idempotencyKey(context: AuthenticatedRequestContext): string { const key = context.request.headers.get("idempotency-key"); if (typeof key !== "string" || key.length < 1 || key.length > 256 || /[\u0000-\u0020\u007f]/u.test(key)) fail("RESEARCH_INPUT_INVALID", "idempotency-key header is required"); return key; }
 // IMPLEMENTED_NOT_LIVE: ER-24 research.query retrieval composition over injected RetrievalQueryPorts with frozen 64-source scope-profile versioning; RETRIEVAL slice enablement remains separate.
@@ -305,16 +354,14 @@ export function createResearchRunService(env: Env): { run(context: Authenticated
           pre.head.principal_ref !== context.principal_ref)) {
         fail("RESEARCH_CONFLICT", "idempotency identity is bound to a different request", 409);
       }
-      if (pre === null && !researchSemanticConfigurationInstalled(env)) {
-        fail("RESEARCH_AGENT_NOT_CONFIGURED", "Research agents require the installed model, prompt and report configuration", 503);
-      }
+      const admittedDeploymentGeneration = pre?.head.deployment_generation ?? env.DEPLOYMENT_GENERATION;
       const scopeRef = await prepareResearchRunScope(env, context, request, operation_id, requestDigest,
         pre === null ? undefined : { id: pre.head.scope_snapshot_id, revision: pre.head.scope_snapshot_revision }, delegated)
         .catch(mapRetrievalError);
       const snapshotRow = await db.prepare("SELECT policy_authority_ref, purge_ledger_revision FROM scope_snapshot WHERE snapshot_id = ?1 AND revision = ?2").bind(scopeRef.id, scopeRef.revision).first<{ policy_authority_ref: string; purge_ledger_revision: number }>();
       if (!snapshotRow || typeof snapshotRow.policy_authority_ref !== "string") fail("RESEARCH_AUTHORITY_STALE", "scope snapshot is unavailable", 409);
-      const priorWorkflow = pre === null ? null : await db.prepare("SELECT handler_generation FROM research_workflow_run WHERE idempotency_key = ?1")
-        .bind(key).first<{ handler_generation: string }>();
+      const priorWorkflow = pre === null ? null : await db.prepare("SELECT handler_generation,configuration_required,configuration_ref FROM research_workflow_run WHERE idempotency_key = ?1")
+        .bind(key).first<{ handler_generation: string; configuration_required: number; configuration_ref: string | null }>();
       const supportedGenerations = new Set([HANDLER_GEN, SERVER_OWNED_RESEARCH_HANDLER_GENERATION, SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION, SERVER_OWNED_FREEZE_HANDLER_GENERATION, SERVER_OWNED_SEMANTIC_HANDLER_GENERATION, SERVER_OWNED_LEGACY_PROTOCOL_HANDLER_GENERATION, SERVER_OWNED_PROTOCOL_HANDLER_GENERATION, SERVER_OWNED_BRANCH_HANDLER_GENERATION, SERVER_OWNED_EXTERNAL_AGENT_HANDLER_GENERATION]);
       const interruptedMachineAdmission = delegated !== undefined && pre?.head.revision === 1 && priorWorkflow === null;
       if (pre !== null && !interruptedMachineAdmission && (priorWorkflow === null || !supportedGenerations.has(priorWorkflow.handler_generation))) {
@@ -332,6 +379,54 @@ export function createResearchRunService(env: Env): { run(context: Authenticated
       const evidenceAuthority = createD1EvidenceAuthorityPort({ core_database: db, search_database: env.SEARCH_DB });
       const scopeAuthority = await evidenceAuthority.loadScope(scopeRef);
       if (scopeAuthority === null) fail("RESEARCH_AUTHORITY_STALE", "scope snapshot is unavailable", 409);
+      const runConfigurationActor = Object.freeze({ operation_id, investigation_id,
+        principal_ref: context.principal_ref, deployment_generation: admittedDeploymentGeneration });
+      let admissionConfiguration: ResolvedResearchRunConfiguration;
+      try {
+        if (pre === null) {
+          admissionConfiguration = await captureResearchRunConfiguration(env, {
+            ...runConfigurationActor,
+            select_project_configuration: async () => {
+              let projectId: string;
+              try { projectId = uniqueProjectScopeId(request.scope_expression); }
+              catch (error) {
+                if (error instanceof ResearchServiceError && error.code === "RESEARCH_AGENT_NOT_CONFIGURED" &&
+                    error.status === 503 && error.retryable === false) {
+                  throw new ResearchRunProjectSelectionFailure(error.code, error.status, error);
+                }
+                throw error;
+              }
+              const scopePorts = createD1ScopePorts(db, { principal_ref: context.principal_ref,
+                client_class: context.client_class, credential_generation: context.credential_generation });
+              const projectConfigurationService = createResearchProjectModelConfigurationServiceFromEnv(env,
+                async (authorityContext, authorizedProjectId) => {
+                  if (authorityContext.principal_ref !== context.principal_ref ||
+                      authorityContext.credential_generation !== context.credential_generation ||
+                      authorizedProjectId !== projectId) {
+                    fail("RESEARCH_AUTHORITY_STALE", "project configuration authority changed", 409);
+                  }
+                  await scopePorts.requireCurrentScope(scopeAuthority.snapshot).catch(mapRetrievalError);
+                  await delegated?.requireScopeCurrent(scopeAuthority.snapshot);
+                });
+              const selected = await readSelectedResearchProjectConfiguration(
+                projectConfigurationService, context, projectId);
+              if (selected === null) return null;
+              return { configuration_ref: selected.configuration_ref,
+                configuration_sha256: selected.configuration_sha256,
+                selection_revision: selected.selection_revision,
+                configuration_json: selected.configuration_json };
+            },
+          });
+        } else if (priorWorkflow?.configuration_required === 0) {
+          admissionConfiguration = await readResearchRunConfiguration(env, runConfigurationActor);
+        } else {
+          if (priorWorkflow !== null && priorWorkflow.configuration_required !== 1) {
+            fail("RESEARCH_AUTHORITY_STALE", "stored run configuration binding is malformed", 409);
+          }
+          // Retries may reuse a captured snapshot, but never resolve today's project selection.
+          admissionConfiguration = await captureResearchRunConfiguration(env, runConfigurationActor);
+        }
+      } catch (error) { mapRunConfigurationError(error); }
       const planningSources = installedProtocol === null
         ? []
         : await loadResearchPlanningSources(
@@ -371,7 +466,7 @@ export function createResearchRunService(env: Env): { run(context: Authenticated
       if ((await digest(currentPayloadBytes)) !== payloadHash || currentPayloadBytes.byteLength !== payloadBytes.byteLength) {
         fail("RESEARCH_CONFLICT", "idempotency identity is bound to different bytes", 409);
       }
-      const principal: WorkflowPrincipal = { principal_ref: context.principal_ref, credential_generation: context.credential_generation, deployment_generation: env.DEPLOYMENT_GENERATION };
+      const principal: WorkflowPrincipal = { principal_ref: context.principal_ref, credential_generation: context.credential_generation, deployment_generation: admittedDeploymentGeneration };
       const installedObligations = installedProtocol === null ? [] : compileInquiryLedgerObligations(installedProtocol);
       const policyGeneration = pre?.head.policy_generation === POLICY_GEN ? POLICY_GEN : newPolicyGeneration;
       const lane = pre === null ? installedProtocol?.lane ?? "exploratory" :
@@ -403,19 +498,19 @@ export function createResearchRunService(env: Env): { run(context: Authenticated
           task_kind: "RESEARCH_BRANCH_ANALYSIS",
         }).catch(mapComputerAgentRouteError);
       }
-      const wantHead = { investigation_id, goal: request.query, scope_snapshot_id: scopeRef.id, scope_snapshot_revision: scopeRef.revision, evidence_grade: request.evidence_grade, lane, portfolio_ref: payloadKey, principal_ref: context.principal_ref, input_digest: payloadHash, policy_generation: policyGeneration, policy_authority_ref: snapshotRow.policy_authority_ref, deployment_generation: env.DEPLOYMENT_GENERATION, idempotency_key: key };
+      const wantHead = { investigation_id, goal: request.query, scope_snapshot_id: scopeRef.id, scope_snapshot_revision: scopeRef.revision, evidence_grade: request.evidence_grade, lane, portfolio_ref: payloadKey, principal_ref: context.principal_ref, input_digest: payloadHash, policy_generation: policyGeneration, policy_authority_ref: snapshotRow.policy_authority_ref, deployment_generation: admittedDeploymentGeneration, idempotency_key: key };
       let skipCreate = false;
       if (pre !== null) {
         if (pre.head.investigation_id !== investigation_id || !logicalMatch(pre.head, wantHead)) fail("RESEARCH_CONFLICT", "idempotency identity is bound to different bytes", 409);
         skipCreate = true;
       }
-      const fences = { current: async () => { const globalRow = await (db as unknown as LedgerD1Database).prepare("SELECT COALESCE(MAX(ledger_revision), 0) AS n FROM purge_ledger").bind().first<{ n: number }>(); return { principal_ref: context.principal_ref, scope_snapshot_id: scopeRef.id, scope_snapshot_revision: scopeRef.revision, policy_generation: policyGeneration, policy_authority_ref: snapshotRow.policy_authority_ref, deployment_generation: env.DEPLOYMENT_GENERATION, purge_revision: globalRow?.n ?? 0, scope_purge_revision: snapshotRow.purge_ledger_revision ?? 0 }; } };
+      const fences = { current: async () => { const globalRow = await (db as unknown as LedgerD1Database).prepare("SELECT COALESCE(MAX(ledger_revision), 0) AS n FROM purge_ledger").bind().first<{ n: number }>(); return { principal_ref: context.principal_ref, scope_snapshot_id: scopeRef.id, scope_snapshot_revision: scopeRef.revision, policy_generation: policyGeneration, policy_authority_ref: snapshotRow.policy_authority_ref, deployment_generation: admittedDeploymentGeneration, purge_revision: globalRow?.n ?? 0, scope_purge_revision: snapshotRow.purge_ledger_revision ?? 0 }; } };
       const handles = { has: async (ref: string) => (await bucket.head(ref).catch(() => null)) !== null, digestFor: async (ref: string) => { const head = await bucket.head(ref).catch(() => null); if (head === null) return null; const raw = (head as unknown as { checksums?: { sha256?: unknown } }).checksums?.sha256; if (raw instanceof ArrayBuffer) return Array.from(new Uint8Array(raw), (b) => b.toString(16).padStart(2, "0")).join(""); return payloadHash; } };
       const ledger = createInvestigationLedgerService(store, fences, handles);
       const eventId = checkId(`evt-${hex}`, "event_id");
       if (!skipCreate) {
         try {
-          await ledger.create({ investigation_id, goal: request.query, scope_snapshot_id: scopeRef.id, scope_snapshot_revision: scopeRef.revision, evidence_grade: request.evidence_grade, lane, lane_registrations: [], obligations: installedObligations, hypotheses: planningManifest?.hypotheses.map((item) => item.hypothesis_id) ?? [], portfolio_ref: payloadKey, debt_refs: [], principal_ref: context.principal_ref, input_digest: payloadHash, policy_generation: policyGeneration, policy_authority_ref: snapshotRow.policy_authority_ref, deployment_generation: env.DEPLOYMENT_GENERATION, idempotency_key: key, model_profile_ref: MODEL_PROFILE, event_id: eventId, payload_handle_ref: payloadKey, payload_digest: payloadHash, created_at: now });
+          await ledger.create({ investigation_id, goal: request.query, scope_snapshot_id: scopeRef.id, scope_snapshot_revision: scopeRef.revision, evidence_grade: request.evidence_grade, lane, lane_registrations: [], obligations: installedObligations, hypotheses: planningManifest?.hypotheses.map((item) => item.hypothesis_id) ?? [], portfolio_ref: payloadKey, debt_refs: [], principal_ref: context.principal_ref, input_digest: payloadHash, policy_generation: policyGeneration, policy_authority_ref: snapshotRow.policy_authority_ref, deployment_generation: admittedDeploymentGeneration, idempotency_key: key, model_profile_ref: MODEL_PROFILE, event_id: eventId, payload_handle_ref: payloadKey, payload_digest: payloadHash, created_at: now });
         } catch (error) {
           if (error instanceof LedgerError && (error.code === "LEDGER_CONFLICT" || error.code === "LEDGER_STALE_HEAD")) {
             const existing = await store.readByIdempotency(key).catch(() => null);
@@ -446,6 +541,17 @@ export function createResearchRunService(env: Env): { run(context: Authenticated
         if (delegated) await requireClientResearchExecution(env, context, scopeAuthority.snapshot, operation_id, env.DEPLOYMENT_GENERATION);
         if (context.request.signal.aborted) fail("RESEARCH_CANCELLED", "Research admission was cancelled", 409);
         await new WorkflowCheckpointStore(db).ensureRun(initialStage, principal);
+        if (admissionConfiguration.mode !== "legacy-installed") {
+          await attachResearchRunConfiguration(env, runConfigurationActor, admissionConfiguration);
+        } else if (pre === null) {
+          fail("RESEARCH_AGENT_NOT_CONFIGURED", "new research runs require a saved project model configuration", 503);
+        }
+        const boundConfiguration = await readResearchRunConfiguration(env, runConfigurationActor);
+        if (boundConfiguration.mode !== admissionConfiguration.mode ||
+            boundConfiguration.configuration_ref !== admissionConfiguration.configuration_ref ||
+            boundConfiguration.configuration_sha256 !== admissionConfiguration.configuration_sha256) {
+          fail("RESEARCH_AUTHORITY_STALE", "run configuration binding changed before workflow dispatch", 409);
+        }
         const workflowParams: ResearchWorkflowRunParams = {
           operation_id,
           investigation_ref: { id: investigation_id, revision: 1 },

@@ -35,10 +35,16 @@ describe("Library wire boundary", () => {
   });
   it("escapes source/project metadata and never turns readiness refs into ready claims", () => {
     const value = envelope();
+    value.data.projects[0] = { id: "project-1", title: '<svg onload="alert(1)">Project</svg>', generation: "1" };
     value.data.sources[0] = { id: "source-1", title: '<img src=x onerror="alert(1)">', readiness_ref: "readiness:source-1:revision-1" };
     const rendered = renderLibrary(decodeLibraryPage(value));
-    expect(rendered).not.toContain("<img"); expect(rendered).toContain("&lt;img");
-    expect(rendered).toContain("Search readiness is checked when you select it");
+    expect(rendered).not.toContain("<img"); expect(rendered).not.toContain("<svg");
+    expect(rendered).toContain("&lt;img src=x onerror=&quot;alert(1)&quot;&gt;");
+    expect(rendered).toContain("&lt;svg onload=&quot;alert(1)&quot;&gt;Project&lt;/svg&gt;");
+    expect(rendered).toContain("Source details and versions");
+    expect(rendered).toContain("Versions and recorded states");
+    expect(rendered).not.toContain("readiness:source-1:revision-1");
+    expect(rendered).not.toMatch(/\bready\b/iu);
     expect(rendered).toContain('data-source="0"');
   });
   it("uses only the fixed catalog path, bounded limit, credentials and no-store", async () => {

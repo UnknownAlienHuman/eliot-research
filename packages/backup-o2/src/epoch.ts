@@ -2,10 +2,14 @@ import type { OperationIntent, OperationReceipt, OperationAttempt } from "@eliot
 import {
   backupAborted, backupAttempt, backupIsoDateTime, backupReceipt, backupSha256Hex,
   canonicalBackupJson, failBackup, resolveBackupExportLimits, assertBackupIntent,
-  hashBackupStream, type BackupExportLimits, type EvidenceObjectStore, type Sha256DigestSinkFactory,
+  bufferBackupStream, hashBackupStream, type BackupExportLimits, type EvidenceObjectStore, type Sha256DigestSinkFactory,
 } from "./shared.js";
 import { assertExhaustiveTableCoverage, listDurableTables, rebuildManifestLines } from "./coverage.js";
-import { freshBackupR2Tally, snapshotBackupR2Bucket } from "./r2-inventory.js";
+import {
+  BACKUP_R2_PAYLOAD_PROTOCOL, backupR2ObjectIdentity, freshBackupR2Tally,
+  normalizeBackupR2CustomMetadata, normalizeBackupR2HttpMetadata, snapshotBackupR2Bucket,
+  type R2ObjectEntry,
+} from "./r2-inventory.js";
 import { claimEpochReceipt, peekEpochReplay, parsePersistedEpochReplay } from "./replay-authority.js";
 import { assertO2MigrationAuthority } from "./migration-gate.js";
 import { canonicalEpochIntentDigest } from "./intent-digest.js";
@@ -61,12 +65,25 @@ export interface BackupPartRef {
   readonly sha256: string; readonly size_bytes: number; readonly etag: string;
   readonly existed_identically: boolean;
 }
+export interface BackupPayloadPartRef {
+  readonly object_identity_digest: string;
+  readonly index: number;
+  readonly count: number;
+  readonly part_key: string;
+  readonly sha256: string;
+  readonly size_bytes: number;
+  readonly etag: string;
+  readonly existed_identically: boolean;
+}
 export interface BackupEpochDraft {
   readonly epoch_id: string; readonly schema_generation: string;
   readonly migration_ledger_digest: string;
   readonly manifest_digests: Readonly<Record<string, string>>;
   readonly group_digests: Readonly<Record<string, string>>;
   readonly part_index: readonly BackupPartRef[];
+  /** Missing fields identify pre-payload legacy epochs; restore must reject those explicitly. */
+  readonly r2_payload_protocol?: typeof BACKUP_R2_PAYLOAD_PROTOCOL;
+  readonly payload_part_index?: readonly BackupPayloadPartRef[];
   readonly purge_ledger_revision: number; readonly purge_ledger_digest: string;
   readonly r2_object_count: number; readonly r2_total_bytes: number;
   readonly audit_sample_receipt_ref: string;
@@ -275,7 +292,7 @@ export function createBackupEpochPort(ports: BackupSourcePorts, overrides?: { re
     };
   }
 
-  async function snapshotR2(signal?: AbortSignal): Promise<{ readonly entries: { readonly bucket: "evidence" | "work"; readonly key: string }[]; readonly fingerprint: string; readonly total_bytes: number }> {
+  async function snapshotR2(signal?: AbortSignal): Promise<{ readonly entries: readonly R2ObjectEntry[]; readonly fingerprint: string; readonly total_bytes: number }> {
     const tally = freshBackupR2Tally();
     const evidence = await snapshotBackupR2Bucket(ports.evidence_bucket, "evidence", limits, ports.create_sha256_sink, tally, signal);
     const work = await snapshotBackupR2Bucket(ports.work_bucket, "work", limits, ports.create_sha256_sink, tally, signal);
@@ -361,7 +378,7 @@ export function createBackupEpochPort(ports: BackupSourcePorts, overrides?: { re
       record("schema-inventory", canonicalBackupJson({ table, columns, column_shapes }));
     }
     record("purge", canonicalBackupJson({ purge_frontier: vector.purge_frontier, purge_digest: vector.purge_digest }));
-    record("r2-objects", canonicalBackupJson({ object_count: r2.entries.length, total_bytes: r2.total_bytes, fingerprint: r2.fingerprint }));
+    record("r2-objects", canonicalBackupJson({ object_count: r2.entries.length, total_bytes: r2.total_bytes, fingerprint: r2.fingerprint, payload_protocol: BACKUP_R2_PAYLOAD_PROTOCOL }));
     for (const entry of r2.entries) record("r2-objects", canonicalBackupJson(entry));
     record("vector", vectorManifestLine);
     const bundles: { name: string; jsonl: string; bytes: Uint8Array<ArrayBuffer>; digest: string }[] = [];
@@ -391,6 +408,7 @@ export function createBackupEpochPort(ports: BackupSourcePorts, overrides?: { re
       return { draft, attempt: replayed.attempt, receipt: replayed.receipt, vector_digest: vectorDigest };
     }
     const partIndex: BackupPartRef[] = [];
+    const payloadPartIndex: BackupPayloadPartRef[] = [];
     let reconciled = false;
     for (const bundle of bundles) {
       const chunks: Uint8Array<ArrayBuffer>[] = [];
@@ -413,11 +431,77 @@ export function createBackupEpochPort(ports: BackupSourcePorts, overrides?: { re
         partIndex.push({ manifest: bundle.name, index: n, part_key: partKey, sha256: chunkDigest, size_bytes: chunk.byteLength, etag: receipt.etag, existed_identically: receipt.existed_identically });
       }
     }
+    // Payload bytes are copied only after the content-addressed epoch identity
+    // is known. The initial and final R2 snapshots bind the inventory, metadata
+    // and every deterministic chunk digest into the epoch vector. This second
+    // source read must match that sealed plan before any payload part can be
+    // referenced by the persisted draft.
+    for (const entry of r2.entries) {
+      if (backupAborted(signal)) failBackup("BACKUP_CANCELLED", "backup export was cancelled", true);
+      const bucket = entry.bucket === "evidence" ? ports.evidence_bucket : ports.work_bucket;
+      let body: R2ObjectBody | null;
+      try { body = await bucket.get(entry.key); }
+      catch (cause) { failBackup("BACKUP_OBJECT_UNREADABLE", "backup R2 payload read is unavailable", true, { bucket: entry.bucket }, cause); }
+      if (body === null || body.size !== entry.size_bytes || body.etag !== entry.etag ||
+          (body as unknown as { readonly version?: unknown }).version !== entry.version) {
+        failBackup("BACKUP_VECTOR_DRIFT", "backup R2 payload changed after its inventory snapshot", true, { bucket: entry.bucket });
+      }
+      const customMetadata = normalizeBackupR2CustomMetadata(body.customMetadata, entry.bucket);
+      const httpMetadata = normalizeBackupR2HttpMetadata((body as unknown as { readonly httpMetadata?: unknown }).httpMetadata, entry.bucket);
+      if (await backupSha256Hex(canonicalBackupJson(customMetadata)) !== entry.metadata_digest ||
+          await backupSha256Hex(canonicalBackupJson(httpMetadata)) !== entry.http_metadata_digest) {
+        failBackup("BACKUP_VECTOR_DRIFT", "backup R2 payload metadata changed after its inventory snapshot", true, { bucket: entry.bucket });
+      }
+      const bytes = await bufferBackupStream(body.body, limits.max_object_bytes);
+      if (bytes.byteLength !== entry.size_bytes || await backupSha256Hex(bytes) !== entry.sha256) {
+        failBackup("BACKUP_VECTOR_DRIFT", "backup R2 payload bytes changed after its inventory snapshot", true, { bucket: entry.bucket });
+      }
+      const identity = await backupR2ObjectIdentity(entry);
+      const chunks = entry.payload_parts;
+      const expectedCount = chunks.length;
+      if (expectedCount === 0) failBackup("BACKUP_VECTOR_UNVERIFIABLE", "backup R2 payload plan contains no bounded parts", false, { bucket: entry.bucket });
+      for (const chunk of chunks) {
+        const partBytes = bytes.slice((chunk.index - 1) * limits.part_bytes, Math.min(bytes.byteLength, chunk.index * limits.part_bytes));
+        if (partBytes.byteLength !== chunk.size_bytes || await backupSha256Hex(partBytes) !== chunk.sha256) {
+          failBackup("BACKUP_VECTOR_DRIFT", "backup R2 payload chunk differs from the epoch inventory plan", true, { bucket: entry.bucket });
+        }
+        const partKey = `backup-parts/${epochId}/r2-payload/${identity}/${String(chunk.index).padStart(6, "0")}-${chunk.sha256}`;
+        const stream = new ReadableStream<Uint8Array>({ start(controller) { controller.enqueue(partBytes.slice()); controller.close(); } });
+        let receipt;
+        try {
+          receipt = await ports.part_sink.putImmutable({
+            key: partKey, body: stream, expected_sha256: chunk.sha256, expected_size_bytes: chunk.size_bytes,
+            content_type: "application/octet-stream",
+            custom_metadata: {
+              backup_epoch: epochId, backup_manifest: "r2-payload", backup_part_index: String(chunk.index),
+              backup_part_count: String(expectedCount), backup_part_sha256: chunk.sha256,
+              backup_vector_digest: vectorDigest, backup_object_identity_digest: identity,
+            },
+          });
+        } catch (cause) {
+          failBackup("BACKUP_PART_WRITE_FAILED", "backup R2 payload part write failed", true, { bucket: entry.bucket }, cause);
+        }
+        if (receipt.existed_identically) reconciled = true;
+        payloadPartIndex.push({
+          object_identity_digest: identity, index: chunk.index, count: expectedCount, part_key: partKey,
+          sha256: chunk.sha256, size_bytes: chunk.size_bytes, etag: receipt.etag, existed_identically: receipt.existed_identically,
+        });
+      }
+    }
+    payloadPartIndex.sort((left, right) => left.object_identity_digest < right.object_identity_digest ? -1 :
+      left.object_identity_digest > right.object_identity_digest ? 1 : left.index - right.index);
     for (const part of partIndex) {
       const reopened = await ports.part_sink.open(part.part_key);
       if (reopened === null) failBackup("BACKUP_PART_READBACK_MISMATCH", "backup part is absent on audit readback", false, { manifest: part.manifest });
       const hash = await hashBackupStream(reopened.body, part.size_bytes, ports.create_sha256_sink);
       if (hash.sha256 !== part.sha256 || hash.size_bytes !== part.size_bytes) failBackup("BACKUP_PART_READBACK_MISMATCH", "backup part digest disagrees on audit readback", false, { manifest: part.manifest });
+    }
+    for (const part of payloadPartIndex) {
+      const reopened = await ports.part_sink.open(part.part_key);
+      if (reopened === null) failBackup("BACKUP_PART_READBACK_MISMATCH", "backup R2 payload part is absent on audit readback", false, {});
+      if (reopened.etag !== part.etag) failBackup("BACKUP_PART_READBACK_MISMATCH", "backup R2 payload part etag diverges on audit readback", false, {});
+      const hash = await hashBackupStream(reopened.body, part.size_bytes, ports.create_sha256_sink);
+      if (hash.sha256 !== part.sha256 || hash.size_bytes !== part.size_bytes) failBackup("BACKUP_PART_READBACK_MISMATCH", "backup R2 payload part digest disagrees on audit readback", false, {});
     }
     // Phase 2: re-verify D1 + R2 against the opened cut and seal it.
     const reread = await snapshotD1(signal);
@@ -441,16 +525,17 @@ export function createBackupEpochPort(ports: BackupSourcePorts, overrides?: { re
       epoch_id: epochId, schema_generation: vector.schema_generation,
       migration_ledger_digest: vector.migration_ledger_digest,
       manifest_digests: manifestDigests, group_digests: groupDigests, part_index: partIndex,
+      r2_payload_protocol: BACKUP_R2_PAYLOAD_PROTOCOL, payload_part_index: payloadPartIndex,
       purge_ledger_revision: vector.purge_frontier, purge_ledger_digest: vector.purge_digest,
       r2_object_count: r2.entries.length, r2_total_bytes: r2.total_bytes,
-      audit_sample_receipt_ref: `audit-${epochId}-v${vectorDigest.slice(0, 16)}-p${partIndex.length}`,
+      audit_sample_receipt_ref: `audit-${epochId}-v${vectorDigest.slice(0, 16)}-p${partIndex.length + payloadPartIndex.length}`,
       vector_digest: vectorDigest, vector_manifest_digest: vectorManifestDigest,
       cut_id: cut.cut_id, manifest_protocol: BACKUP_MANIFEST_PROTOCOL,
       created_at: now, expires_at: backupIsoDateTime(nowMs + retentionDays * 86_400_000),
     };
     const attempt = backupAttempt(intent, attemptNumber, "SUCCEEDED", now);
     const provisional = backupReceipt(intent, attempt.attempt_id, "SUCCEEDED",
-      [epochId], [draft.audit_sample_receipt_ref, ...partIndex.map((p) => p.etag)], reconciled,
+      [epochId], [draft.audit_sample_receipt_ref, ...partIndex.map((p) => p.etag), ...payloadPartIndex.map((p) => p.etag)], reconciled,
       reconciled ? ["RESUMED_PARTS"] : [], now);
     const claimed = await claimEpochReceipt(ports.core_db, claim,
       { intent_digest: intentDigest, receipt_json: JSON.stringify(provisional), draft_json: JSON.stringify(draft), attempt_json: JSON.stringify(attempt) }, now);

@@ -4,6 +4,7 @@ import {
   canonicalModelGatewayJson,
   parseDynamicRouteQualificationProbeInput,
   type ModelCallInput,
+  type ModelGatewayRequestCapabilitiesV1,
   type ModelGatewayPromptCompilerPort,
   type DynamicRouteQualificationProbeInput,
 } from "@eliotr/cloudflare-ai";
@@ -47,7 +48,7 @@ const PolicySchema = z.object({
 const TrustedParametersSchema = z.object({
   prompt: z.string().min(1),
   max_tokens: z.number().int().positive().safe(),
-  reasoning_effort: z.enum(["low", "medium", "high"]).optional(),
+  reasoning_effort: z.enum(["low", "medium", "high", "max"]).optional(),
   response_format: z.unknown().optional(),
   seed: z.number().int().safe().optional(),
   stop: z.union([z.string(), z.array(z.string())]).optional(),
@@ -77,6 +78,8 @@ export interface ResearchQualificationPromptCompilerInput {
   readonly work_bucket: R2Bucket;
   readonly probe: DynamicRouteQualificationProbeInput;
   readonly config: ResearchQualificationPromptConfig;
+  /** Selected-model capabilities; omitted for legacy paths. */
+  readonly request_capabilities?: ModelGatewayRequestCapabilitiesV1;
   readonly now?: () => number;
 }
 
@@ -271,6 +274,9 @@ export async function createResearchQualificationPromptCompiler(
         ...(params.top_p === undefined ? {} : { top_p: params.top_p }),
       };
     },
+    ...(input.request_capabilities === undefined
+      ? {}
+      : { request_capabilities: input.request_capabilities }),
     request_timeout_ms: config.request_timeout_ms,
   });
 

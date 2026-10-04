@@ -14,6 +14,8 @@ const desired = JSON.parse(
 );
 const target = desired.instances[0];
 assert(target && typeof target.id === "string");
+const namespaceDescription = "Eliot Research private managed retrieval namespace";
+const fixtureTimestamp = "2026-10-03T20:14:14.000Z";
 const accountId = "mock-account-ai-search-reconciliation";
 const namespaceCollectionPath =
   `/client/v4/accounts/${accountId}/ai-search/namespaces`;
@@ -52,6 +54,19 @@ async function requestJson(req) {
 
 function providerReadback(spec) {
   const readback = structuredClone(spec.create);
+  delete readback.chunk;
+  readback.created_at = fixtureTimestamp;
+  readback.modified_at = fixtureTimestamp;
+  readback.namespace = desired.namespace;
+  readback.public_endpoint_id = null;
+  readback.public_endpoint_params = null;
+  readback.sync_interval = 21600;
+  if (readback.indexing_options) readback.indexing_options.use_ocr = false;
+  if (spec.id === "private-literal-g2") {
+    readback.embedding_model = "@cf/qwen/qwen3-embedding-0.6b";
+    readback.fusion_method = "rrf";
+    readback.reranking_model = "";
+  }
   if (Array.isArray(readback.custom_metadata)) {
     readback.custom_metadata.reverse();
   }
@@ -67,9 +82,11 @@ function providerReadback(spec) {
 
 function exactNamespace() {
   return {
-    id: "namespace-1",
+    created_at: fixtureTimestamp,
     name: desired.namespace,
-    description: "Eliot Research private managed retrieval namespace",
+    description: namespaceDescription,
+    public_endpoint_id: null,
+    public_endpoint_params: null,
   };
 }
 
@@ -118,18 +135,18 @@ const server = createServer(async (req, res) => {
     if (method === "POST" && url.pathname === namespaceCollectionPath) {
       namespaceMutations += 1;
       const body = await requestJson(req);
-      assert.equal(body?.name, desired.namespace);
+      assert.deepEqual(body, { name: desired.namespace, description: namespaceDescription });
       if (namespaceMode === "fail-before-write") {
         res.destroy();
         return;
       }
-      namespaceRecord = {
-        id: "namespace-1",
-        name: namespaceMode === "readback-drift"
-          ? "foreign-namespace"
-          : body.name,
-        description: body.description,
-      };
+      namespaceRecord = exactNamespace();
+      if (namespaceMode === "readback-drift") namespaceRecord.name = "foreign-namespace";
+      if (namespaceMode === "description-drift") namespaceRecord.description = "Foreign description";
+      if (namespaceMode === "public-endpoint-drift") {
+        namespaceRecord.public_endpoint_id = "unexpected-endpoint";
+        namespaceRecord.public_endpoint_params = { enabled: true, instances_allowed: [] };
+      }
       if (namespaceMode === "lost-acknowledgement") {
         res.destroy();
         return;
@@ -168,8 +185,15 @@ const server = createServer(async (req, res) => {
         res.destroy();
         return;
       }
-      const stored = structuredClone(body);
+      const stored = providerReadback(target);
       if (instanceMode === "readback-drift") stored.cache = true;
+      if (instanceMode === "sync-interval-drift") stored.sync_interval = 900;
+      if (instanceMode === "sync-interval-source-drift") {
+        stored.type = "r2";
+        stored.source = "r2";
+        stored.source_params = { prefix: "private/" };
+        stored.token_id = "182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e";
+      }
       instances.set(stored.id, stored);
       if (instanceMode === "lost-acknowledgement") {
         res.destroy();
@@ -346,6 +370,14 @@ try {
   expectFailure(await runProvisioner(), "namespace post-create readback");
   expectMutationCounts(1, 0, "drifted namespace readback");
 
+  resetNamespace("description-drift");
+  expectFailure(await runProvisioner(), "namespace post-create readback");
+  expectMutationCounts(1, 0, "namespace description drift");
+
+  resetNamespace("public-endpoint-drift");
+  expectFailure(await runProvisioner(), "namespace post-create readback");
+  expectMutationCounts(1, 0, "namespace public endpoint drift");
+
   resetInstance("normal");
   expectPass(await runProvisioner(), "disposition", "CREATED");
   expectMutationCounts(0, 1, "acknowledged instance create");
@@ -363,9 +395,20 @@ try {
   expectFailure(await runProvisioner(), "post-create readback");
   expectMutationCounts(0, 1, "drifted instance readback");
 
+  resetInstance("sync-interval-drift");
+  expectFailure(await runProvisioner(), '"field": "sync_interval"');
+  expectMutationCounts(0, 1, "non-default sync interval readback");
+
+  resetInstance("sync-interval-source-drift");
+  const sourceIntervalDrift = await runProvisioner();
+  assert.notEqual(sourceIntervalDrift.status, 0, "source configured with the default interval unexpectedly passed");
+  assert.match(`${sourceIntervalDrift.stdout}\n${sourceIntervalDrift.stderr}`, /"field": "source_params"/u);
+  assert.match(`${sourceIntervalDrift.stdout}\n${sourceIntervalDrift.stderr}`, /"field": "sync_interval"/u);
+  expectMutationCounts(0, 1, "source configured with the documented default interval");
+
   console.log(
     "AI Search create reconciliation: PASS (namespace and instance exact " +
-      "readback required; lost ACK reconciled; unresolved effects never retried).",
+      "readback required, including the built-in sync default; lost ACK reconciled; unresolved effects never retried).",
   );
 } finally {
   await new Promise((resolveClose, rejectClose) => {

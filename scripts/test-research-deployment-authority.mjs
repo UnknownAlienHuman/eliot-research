@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import {
   ResearchDeploymentAuthorityError,
+  readResearchDeploymentAuthority,
   synchronizeResearchDeploymentAuthority,
 } from "./lib/research-deployment-authority.mjs";
 
@@ -16,6 +17,7 @@ function response(result) {
 
 function fakeD1(initial = []) {
   const rows = new Map(initial.map((row) => [row.deployment_generation, { ...row }]));
+  let writes = 0;
   const fetch_impl = async (_url, init) => {
     const value = JSON.parse(init.body);
     const result = [];
@@ -26,9 +28,11 @@ function fakeD1(initial = []) {
       if (sql.startsWith("SELECT deployment_generation,state,created_at,backend_fingerprint") && params.length === 0) {
         results = [...rows.values()].filter((row) => row.state === "ACTIVE").sort((a, b) => a.deployment_generation.localeCompare(b.deployment_generation)).slice(0, 2);
       } else if (sql.startsWith("UPDATE investigation_current_deployment SET state='RETIRED'")) {
+        writes += 1;
         const row = rows.get(params[0]);
         if (row?.state === "ACTIVE") { row.state = "RETIRED"; changes = 1; }
       } else if (sql.startsWith("INSERT INTO investigation_current_deployment")) {
+        writes += 1;
         const [generation, created_at, backend_fingerprint] = params;
         const row = rows.get(generation);
         if (row === undefined) {
@@ -49,7 +53,7 @@ function fakeD1(initial = []) {
     }
     return response(result);
   };
-  return { rows, fetch_impl };
+  return { rows, fetch_impl, writes: () => writes };
 }
 
 function input(fetch_impl, deployment_generation, backend_fingerprint = F) {
@@ -95,4 +99,21 @@ await assert.rejects(
   (error) => error instanceof ResearchDeploymentAuthorityError && error.code === "RESEARCH_DEPLOYMENT_AUTHORITY_READBACK_INVALID",
 );
 assert.equal(guarded.rows.get("active")?.state, "ACTIVE", "an incompatible target must not retire the current deployment");
+
+const preflight = fakeD1([
+  { deployment_generation: "old", state: "ACTIVE", created_at: "2026-09-01T00:00:00.000Z", backend_fingerprint: F },
+]);
+const observed = await readResearchDeploymentAuthority(input(preflight.fetch_impl, "candidate", G));
+assert.equal(observed.active?.deployment_generation, "old");
+assert.equal(observed.target, null);
+assert.equal(preflight.writes(), 0, "read-only deployment preflight must not mutate D1");
+const reused = fakeD1([
+  { deployment_generation: "candidate", state: "RETIRED", created_at: "2026-09-02T00:00:00.000Z", backend_fingerprint: F },
+]);
+await assert.rejects(
+  readResearchDeploymentAuthority(input(reused.fetch_impl, "candidate", G)),
+  (error) => error instanceof ResearchDeploymentAuthorityError && error.code === "RESEARCH_DEPLOYMENT_AUTHORITY_GENERATION_CONFLICT",
+);
+assert.equal(reused.rows.get("candidate")?.state, "RETIRED", "generation conflict is rejected by readback only");
+assert.equal(reused.writes(), 0, "fingerprint conflict must be discovered before any authority mutation");
 console.log("research deployment authority tests passed");

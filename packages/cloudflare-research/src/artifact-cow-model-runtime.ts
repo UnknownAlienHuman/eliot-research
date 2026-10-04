@@ -1,6 +1,6 @@
 import type { ModelGatewayPricingPort } from "@eliotr/cloudflare-ai";
-import { createModelGatewayFetchAdapter } from "@eliotr/cloudflare-ai";
-import { decodeModelRouteDeployment } from "@eliotr/platform-cloudflare";
+import { createModelGatewayFetchAdapter, validateModelGatewayTransportPolicy } from "@eliotr/cloudflare-ai";
+import { canonicalJson, decodeModelRouteDeployment } from "@eliotr/platform-cloudflare";
 import type { ModelRoutePort } from "@eliotr/research";
 import { createD1ModelGatewayDeploymentRegistry } from "./model-gateway-deployment-registry-d1.js";
 import { createD1ModelGatewayFingerprintStore } from "./research-model-fingerprint-store.js";
@@ -48,23 +48,112 @@ export function createArtifactCowModelRuntime(dependencies: ArtifactCowModelRunt
     environment: dependencies.deployment_environment ?? "PRODUCTION",
   });
   const fingerprints = createD1ModelGatewayFingerprintStore(dependencies.database);
-  const prompts = createResearchModelPromptCompiler(dependencies.prompt);
 
   const route: ModelRoutePort = Object.freeze({
     async execute(input: Parameters<ModelRoutePort["execute"]>[0]) {
-      const rawDeployment = await deployments.resolve(input.route_ref);
-      if (rawDeployment === null) throw new Error("COW model route is not currently active");
+      const path = input.output_object_ref.split("/");
+      if (path.length !== 4 || path[0] !== "artifact-cow" || path[1] !== "model-output" ||
+          !/^[A-Za-z0-9][A-Za-z0-9:._/@-]{0,255}$/u.test(path[2] ?? "") ||
+          !/^[A-Za-z0-9][A-Za-z0-9:._/@-]{0,255}$/u.test(path[3] ?? "")) {
+        throw new Error("COW model output reference does not identify its W3 admission");
+      }
+      const admission = await dependencies.database.prepare(
+        "SELECT call_slot,route_ref,expected_deployment_json,request_json,stage_attempt_ref FROM artifact_section_revise_spend_admission " +
+        "WHERE operation_id=?1 AND stage_attempt_ref=?2 AND route_ref=?3 LIMIT 1",
+      ).bind(`artifact-cow-operation-${path[2]}`, path[3], input.route_ref)
+        .first<{ readonly call_slot: unknown; readonly route_ref: unknown; readonly expected_deployment_json: unknown;
+          readonly request_json: unknown; readonly stage_attempt_ref: unknown }>();
+      if (admission === null || typeof admission.expected_deployment_json !== "string" ||
+          typeof admission.request_json !== "string" || admission.route_ref !== input.route_ref ||
+          admission.stage_attempt_ref !== path[3] || (admission.call_slot !== "SYNTHESIZE" && admission.call_slot !== "INDEPENDENT_VERIFY")) {
+        throw new Error("COW exact W3 deployment admission is unavailable");
+      }
+      let expected: ReturnType<typeof decodeModelRouteDeployment>;
+      let request: Record<string, unknown>;
+      try {
+        expected = decodeModelRouteDeployment(JSON.parse(admission.expected_deployment_json) as unknown);
+        const parsed: unknown = JSON.parse(admission.request_json);
+        if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed) || canonicalJson(parsed) !== admission.request_json) {
+          throw new Error("request JSON is not canonical");
+        }
+        request = parsed as Record<string, unknown>;
+      } catch (cause) { throw new Error("COW exact W3 deployment admission is malformed", { cause }); }
+      if (expected.route_ref !== input.route_ref || expected.prompt_generation !== input.prompt_generation ||
+          expected.schema_generation !== input.schema_generation || request.call_slot !== admission.call_slot) {
+        throw new Error("COW exact W3 deployment differs from the model call");
+      }
+      const runConfiguration = request.run_configuration;
+      let transportPolicy: ReturnType<typeof validateModelGatewayTransportPolicy> | undefined;
+      let rawDeployment: unknown | null;
+      if (runConfiguration === null || runConfiguration === undefined) {
+        rawDeployment = await deployments.resolve(input.route_ref);
+      } else {
+        if (typeof runConfiguration !== "object" || Array.isArray(runConfiguration)) {
+          throw new Error("COW run configuration pin is malformed");
+        }
+        const pin = runConfiguration as Record<string, unknown>;
+        if ((pin.mode !== "snapshot-v1" && pin.mode !== "snapshot-v2") || !Array.isArray(pin.model_selections)) {
+          throw new Error("COW run configuration pin is incomplete");
+        }
+        const stage = admission.call_slot === "SYNTHESIZE" ? "SYNTHESIZE" : "AUDIT_CLAIMS";
+        const selections = pin.model_selections.filter((item) => typeof item === "object" && item !== null &&
+          !Array.isArray(item) && (item as { stage?: unknown }).stage === stage) as Array<Record<string, unknown>>;
+        const selected = selections[0];
+        if (selections.length !== 1 || selected === undefined || selected.route_ref !== expected.route_ref ||
+            selected.route_version !== expected.route_version) {
+          throw new Error("COW run snapshot has no exact model selection for this slot");
+        }
+        const selection = selected;
+        transportPolicy = validateModelGatewayTransportPolicy(selection.transport_policy);
+        if (transportPolicy.api !== "compat-chat-completions") {
+          throw new Error("COW selected provider API is unsupported by the current response path");
+        }
+        const configuredPolicy = dependencies.gateway.transport_policy;
+        if (configuredPolicy !== undefined && canonicalJson(configuredPolicy) !== canonicalJson(transportPolicy)) {
+          throw new Error("COW runtime transport differs from the immutable selected model");
+        }
+        if (transportPolicy.billing.mode === "byok" &&
+            !Object.prototype.hasOwnProperty.call(dependencies.gateway, "gateway_token")) {
+          throw new Error("COW selected BYOK model has no configured HTTP gateway credential route");
+        }
+        rawDeployment = await deployments.resolvePinned(expected, selection as {
+          readonly route_ref: string; readonly route_version: string; readonly candidate_ref: string;
+          readonly candidate_sha256: string; readonly qualification_ref: string; readonly qualification_sha256: string;
+        }, { allow_expired_qualification: pin.mode === "snapshot-v2" });
+      }
+      if (rawDeployment === null) throw new Error("COW model route is not available under its admitted selection");
       const deployment = decodeModelRouteDeployment(rawDeployment);
+      if (canonicalJson(deployment) !== canonicalJson(expected)) {
+        throw new Error("COW pinned model deployment differs from its immutable W3 admission");
+      }
       if (deployment.route_ref !== input.route_ref || deployment.prompt_generation !== input.prompt_generation ||
           deployment.schema_generation !== input.schema_generation) {
         throw new Error("COW model route differs from its admitted prompt generation");
       }
+      const promptDependencies = transportPolicy === undefined ? dependencies.prompt : {
+        ...dependencies.prompt, request_capabilities: transportPolicy.capabilities,
+      };
+      const prompts = createResearchModelPromptCompiler(promptDependencies);
       const runtime = createResearchModelGatewayRuntime(dependencies.signal === undefined
-        ? dependencies.gateway
-        : { ...dependencies.gateway, signal: dependencies.signal });
+        ? { ...dependencies.gateway, ...(transportPolicy === undefined ? {} : { transport_policy: transportPolicy }) }
+        : { ...dependencies.gateway, ...(transportPolicy === undefined ? {} : { transport_policy: transportPolicy }), signal: dependencies.signal });
+      const callDeployments = Object.freeze({
+        async resolve(routeRef: string) {
+          if (routeRef !== input.route_ref) return null;
+          if (runConfiguration === null || runConfiguration === undefined) return deployments.resolve(routeRef);
+          const pin = runConfiguration as Record<string, unknown>;
+          const stage = admission.call_slot === "SYNTHESIZE" ? "SYNTHESIZE" : "AUDIT_CLAIMS";
+          const selected = (pin.model_selections as Array<Record<string, unknown>>).find((item) => item.stage === stage);
+          if (selected === undefined) return null;
+          return deployments.resolvePinned(expected, selected as {
+            readonly route_ref: string; readonly route_version: string; readonly candidate_ref: string;
+            readonly candidate_sha256: string; readonly qualification_ref: string; readonly qualification_sha256: string;
+          }, { allow_expired_qualification: pin.mode === "snapshot-v2" });
+        },
+      });
       const adapter = createModelGatewayFetchAdapter({
         reasoning_gateway_base_url: dependencies.gateway.reasoning_gateway_base_url,
-        deployments,
+        deployments: callDeployments,
         prompts,
         ...runtime,
         outputs: outputStorage.outputs,

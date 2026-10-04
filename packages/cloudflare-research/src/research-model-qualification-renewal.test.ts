@@ -11,7 +11,7 @@ import {
   type DynamicRouteQualificationProbeInput,
 } from "@eliotr/cloudflare-ai";
 import type { ApplicationModelRoute } from "@eliotr/platform-cloudflare";
-import { createD1DynamicRouteRegistry } from "./model-gateway-deployment-registry-d1.js";
+import { createD1DynamicRouteRegistry, createD1ModelGatewayDeploymentRegistry } from "./model-gateway-deployment-registry-d1.js";
 import { createD1ResearchModelQualificationObservationStore } from "./research-model-qualification-store.js";
 import {
   createResearchModelQualificationRenewal,
@@ -49,6 +49,7 @@ function testDatabase(): D1Database {
   ]) {
     db.exec(readFileSync(join(MIGRATIONS_DIR, name), "utf8"));
   }
+  db.exec("CREATE TABLE dynamic_route_qualification_revocation (qualification_ref TEXT NOT NULL, qualification_sha256 TEXT NOT NULL, reason TEXT NOT NULL, revoked_by TEXT NOT NULL, revoked_at TEXT NOT NULL, PRIMARY KEY(qualification_ref,qualification_sha256)) STRICT, WITHOUT ROWID");
   const database = {
     prepare(sql: string) {
       const statement = db.prepare(sql);
@@ -224,6 +225,25 @@ function renewalInput(candidate: FixtureCandidate, probeKey: string): ResearchMo
   };
 }
 
+async function stageNextCandidate(
+  database: D1Database,
+  routeRef: ApplicationModelRoute,
+  version: string,
+): Promise<FixtureCandidate> {
+  const probeKey = `original-${version}`;
+  const executionProbeRef = await seedObservation(database, probeKey, routeRef, version);
+  const value = candidateValue(routeRef, version, executionProbeRef);
+  const artifact = await dynamicRouteJsonArtifact(value);
+  const raw = await createD1DynamicRouteRegistry(database, { now: () => NOW, environment: "TEST" })
+    .stageCandidate(value, artifact.sha256);
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) throw new Error("invalid candidate stage receipt");
+  const receipt = raw as { candidate_ref?: unknown; readback_sha256?: unknown };
+  if (typeof receipt.candidate_ref !== "string" || typeof receipt.readback_sha256 !== "string") {
+    throw new Error("invalid candidate stage receipt");
+  }
+  return { value, candidateRef: receipt.candidate_ref, candidateSha256: receipt.readback_sha256, originalProbeKey: probeKey };
+}
+
 /**
  * Stubs the provider call. Returns evidence bound to the real seeded
  * observation for the probe's route, with a fresh control_plane_readback_ref
@@ -274,6 +294,50 @@ function renewalPort(database: D1Database, qualify: (fresh: DynamicRouteQualific
 }
 
 describe("research model qualification renewal single-flight", () => {
+  it("keeps a run on X after the active head moves to Y; v2 tolerates expiry only while the exact proof is unrevoked", async () => {
+    const database = testDatabase();
+    const route = ROUTE_A;
+    const pinnedX = await seedCandidate(database, route, "pin-x", "pin-x-original");
+    const proofObservation = await seedObservation(database, "pin-x-renewal", route, "pin-x");
+    const qualification = stubQualify({ [route]: proofObservation });
+    const proof = await renewalPort(database, qualification.qualify).renew(renewalInput(pinnedX, "pin-x-renewal"));
+    const selection = {
+      route_ref: route,
+      route_version: "pin-x",
+      candidate_ref: pinnedX.candidateRef,
+      candidate_sha256: pinnedX.candidateSha256,
+      qualification_ref: proof.qualification_ref,
+      qualification_sha256: proof.qualification_sha256,
+    };
+    const expected = pinnedX.value.deployment;
+
+    const pinnedY = await stageNextCandidate(database, route, "pin-y");
+    await createD1DynamicRouteRegistry(database, { now: () => NOW, environment: "TEST" }).promote({
+      route_ref: route,
+      expected_active_route_version: "pin-x",
+      target_route_version: "pin-y",
+      candidate_ref: pinnedY.candidateRef,
+      candidate_sha256: pinnedY.candidateSha256,
+    });
+    const current = createD1ModelGatewayDeploymentRegistry(database, { now: () => NOW, environment: "TEST" });
+    await expect(current.resolve(route)).resolves.toEqual(pinnedY.value.deployment);
+    await expect(current.resolvePinned(expected, selection)).resolves.toEqual(expected);
+
+    const afterExpiry = createD1ModelGatewayDeploymentRegistry(database, {
+      now: () => "2026-10-01T14:00:00.000Z", environment: "TEST",
+    });
+    await expect(afterExpiry.resolvePinned(expected, selection)).rejects.toMatchObject({
+      code: "DYNAMIC_ROUTE_QUALIFICATION_INVALID",
+    });
+    await expect(afterExpiry.resolvePinned(expected, selection, { allow_expired_qualification: true })).resolves.toEqual(expected);
+
+    await database.prepare("INSERT INTO dynamic_route_qualification_revocation(qualification_ref,qualification_sha256,reason,revoked_by,revoked_at) VALUES (?1,?2,?3,?4,?5)")
+      .bind(proof.qualification_ref, proof.qualification_sha256, "test revocation", "test-owner", "2026-10-01T13:30:00.000Z").run();
+    await expect(afterExpiry.resolvePinned(expected, selection, { allow_expired_qualification: true })).rejects.toMatchObject({
+      code: "DYNAMIC_ROUTE_QUALIFICATION_INVALID",
+    });
+  });
+
   it("coalesces concurrent same-identity renewals to one proof", async () => {
     const database = testDatabase();
     const candidate = await seedCandidate(database, ROUTE_A, "v1", "original-probe-key-a1");

@@ -18,8 +18,9 @@ import { prepareArtifactReadReauthorization } from "../src/research-artifact-rea
 import { applyD1Migrations, type D1Migration } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import type { Env } from "../src/env.js";
-import { committedFreezeSynthesisFixture } from "./research-synthesis-fixture.js";
+import { committedFreezeSynthesisFixture, markResearchRunAsPre0104Legacy } from "./research-synthesis-fixture.js";
 import { principal } from "./research-evidence-freeze-fixture.js";
+import { readResearchRunConfiguration } from "../src/research-run-configuration.js";
 
 const runtime = env as unknown as Env & { readonly CORE_MIGRATIONS: D1Migration[]; readonly SEARCH_MIGRATIONS: D1Migration[] };
 
@@ -68,6 +69,17 @@ async function reportAdmissionInput(
   return { database: synthesis.freeze.db, navigation: synthesis.freeze.navigation, request, principal, policy_source: policySource };
 }
 
+async function markReportFixtureAsPre0104Legacy(synthesis: Awaited<ReturnType<typeof committedFreezeSynthesisFixture>>) {
+  await markResearchRunAsPre0104Legacy(synthesis.freeze.db, synthesis.freeze.operation_id);
+  const resolved = await readResearchRunConfiguration(runtime, {
+    operation_id: synthesis.freeze.operation_id,
+    investigation_id: synthesis.freeze.investigation_id,
+    principal_ref: principal.principal_ref,
+    deployment_generation: principal.deployment_generation,
+  });
+  expect(resolved).toMatchObject({ mode: "legacy-installed", configuration_ref: null, configuration_sha256: null });
+}
+
 describe("server-owned REPORT admission and artifact commit", () => {
   beforeAll(async () => {
     await applyD1Migrations(runtime.CORE_DB, runtime.CORE_MIGRATIONS);
@@ -76,6 +88,7 @@ describe("server-owned REPORT admission and artifact commit", () => {
 
   it("admits through the native materializer, replays immutably, and fails closed", async () => {
     const revokedSynthesis = await committedFreezeSynthesisFixture();
+    await markReportFixtureAsPre0104Legacy(revokedSynthesis);
     const revoked = await advanceToMaterialize(revokedSynthesis);
     const revokedInput = await reportAdmissionInput(revokedSynthesis, revoked.request);
     await revokedSynthesis.freeze.db.prepare("UPDATE scope_access_grant SET state='REVOKED' WHERE snapshot_id=?1 AND snapshot_revision=?2 AND principal_ref=?3")
@@ -84,6 +97,7 @@ describe("server-owned REPORT admission and artifact commit", () => {
     expect((await revokedSynthesis.freeze.db.prepare("SELECT COUNT(*) AS n FROM research_report_admission").first<{ readonly n: number }>())?.n).toBe(0);
 
     const synthesis = await committedFreezeSynthesisFixture();
+    await markReportFixtureAsPre0104Legacy(synthesis);
     const { stageTwelve, request } = await advanceToMaterialize(synthesis);
     const admissionInput = await reportAdmissionInput(synthesis, request);
     const policySource = admissionInput.policy_source;

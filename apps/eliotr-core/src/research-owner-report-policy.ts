@@ -35,8 +35,10 @@ export class ResearchOwnerReportPolicyError extends Error {
 
 export const RESEARCH_OWNER_REPORT_ADMISSION_TEMPLATE_PROTOCOL =
   "eliotr.research-owner-report-admission-template.v1" as const;
+export const RESEARCH_OWNER_REPORT_ADMISSION_TEMPLATE_V2_PROTOCOL =
+  "eliotr.research-owner-report-admission-template.v2" as const;
 
-const ReportAdmissionTemplateSchema = z.object({
+const ReportAdmissionTemplateV1Schema = z.object({
   protocol: z.literal(RESEARCH_OWNER_REPORT_ADMISSION_TEMPLATE_PROTOCOL),
   policy_ref: IdentifierSchema,
   policy_revision: z.number().int().positive(),
@@ -49,6 +51,20 @@ const ReportAdmissionTemplateSchema = z.object({
   requested_output_class: z.literal("private-draft"),
   purpose: z.literal("research-report-materialization"),
   expires_at: IsoDateTimeSchema,
+}).strict();
+const ReportAdmissionTemplateV2Schema = z.object({
+  protocol: z.literal(RESEARCH_OWNER_REPORT_ADMISSION_TEMPLATE_V2_PROTOCOL),
+  policy_ref: IdentifierSchema,
+  policy_revision: z.number().int().positive(),
+  config_provenance_ref: IdentifierSchema,
+  principal_ref: IdentifierSchema,
+  client_class: z.literal("owner_pwa"),
+  allowed_use: z.array(IdentifierSchema).length(1).refine((values) => values[0] === "research"),
+  disclosure_ceiling: IdentifierSchema,
+  requested_output_class: z.literal("private-draft"),
+  purpose: z.literal("research-report-materialization"),
+  /** Optional owner-chosen sunset; the bound run remains deadline-limited. */
+  expires_at: IsoDateTimeSchema.optional(),
 }).strict();
 const ReportArtifactSchema = z.object({
   kind: ArtifactKindSchema,
@@ -69,7 +85,9 @@ const ReportArtifactSchema = z.object({
 }).strict();
 const REPORT_CONFIG_KEYS = new Set(["schema", "admission_policy", "artifact_policy"]);
 
-export type ResearchOwnerReportAdmissionTemplate = Readonly<z.infer<typeof ReportAdmissionTemplateSchema>>;
+export type ResearchOwnerReportAdmissionTemplate = Readonly<
+  z.infer<typeof ReportAdmissionTemplateV1Schema> | z.infer<typeof ReportAdmissionTemplateV2Schema>
+>;
 
 export type ResearchOwnerReportAdmissionPolicyInput =
   | ResearchReportAdmissionPolicy
@@ -140,7 +158,8 @@ function object(value: unknown, label: string): Record<string, unknown> {
 
 function hasTemplateProtocol(value: unknown): boolean {
   return typeof value === "object" && value !== null && !Array.isArray(value) &&
-    (value as Record<string, unknown>).protocol === RESEARCH_OWNER_REPORT_ADMISSION_TEMPLATE_PROTOCOL;
+    ((value as Record<string, unknown>).protocol === RESEARCH_OWNER_REPORT_ADMISSION_TEMPLATE_PROTOCOL ||
+     (value as Record<string, unknown>).protocol === RESEARCH_OWNER_REPORT_ADMISSION_TEMPLATE_V2_PROTOCOL);
 }
 
 /** Decode only the private owner template; no authority fields are inferred here. */
@@ -149,7 +168,11 @@ export function readResearchOwnerReportAdmissionTemplate(
   provenanceRef: string,
 ): ResearchOwnerReportAdmissionTemplate {
   id(provenanceRef, "report template provenance");
-  const result = ReportAdmissionTemplateSchema.safeParse(value);
+  const protocol = typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>).protocol : undefined;
+  const result = protocol === RESEARCH_OWNER_REPORT_ADMISSION_TEMPLATE_V2_PROTOCOL
+    ? ReportAdmissionTemplateV2Schema.safeParse(value)
+    : ReportAdmissionTemplateV1Schema.safeParse(value);
   if (!result.success || result.data.config_provenance_ref !== provenanceRef) {
     reportError("owner report admission template is invalid");
   }
@@ -183,13 +206,14 @@ export function bindResearchOwnerReportAdmissionTemplate(
   const sponsor = current.sponsor_principal_ref;
   const validActor = client === "owner_pwa" ? sponsor === undefined && template.principal_ref === principal
     : (client === "trusted_agent" || client === "named_api_client") && sponsor !== undefined && template.principal_ref === sponsor;
-  if (!validActor || template.deployment_generation !== deployment) {
+  const v2 = template.protocol === RESEARCH_OWNER_REPORT_ADMISSION_TEMPLATE_V2_PROTOCOL;
+  if (!validActor || (!v2 && template.deployment_generation !== deployment)) {
     throw new ResearchOwnerReportPolicyError(
       "RESEARCH_OWNER_REPORT_POLICY_AUTHORITY_STALE",
       "owner report template is bound to another owner or deployment",
     );
   }
-  const templateExpiry = Date.parse(template.expires_at);
+  const templateExpiry = template.expires_at === undefined ? Number.POSITIVE_INFINITY : Date.parse(template.expires_at);
   const authorityExpiry = Date.parse(currentExpiry);
   if (templateExpiry <= now || authorityExpiry <= now) {
     throw new ResearchOwnerReportPolicyError("RESEARCH_OWNER_REPORT_POLICY_AUTHORITY_STALE", "owner report authority has expired");

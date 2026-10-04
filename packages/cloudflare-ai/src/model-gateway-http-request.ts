@@ -10,8 +10,12 @@ import {
   type PreparedModelGatewayHttpRequest,
 } from "./model-gateway-execution-contract.js";
 import {
+  canonicalModelGatewayJson,
+  modelGatewayBodyForCapabilities,
   modelGatewaySha256,
+  validateModelGatewayTransportPolicy,
   validateModelGatewayRequestBody,
+  type ModelGatewayTransportPolicyV1,
 } from "./model-gateway-request.js";
 
 const SHA256 = /^[a-f0-9]{64}$/u;
@@ -169,7 +173,43 @@ export async function prepareModelGatewayBindingRequest(
   deployment: ModelRouteDeployment,
   compiled: CompiledModelGatewayPrompt,
   baseUrl: string,
+  rawTransportPolicy?: ModelGatewayTransportPolicyV1,
 ): Promise<PreparedModelGatewayHttpRequest> {
+  const request = await prepareModelGatewayRequest(
+    input,
+    deployment,
+    compiled,
+    baseUrl,
+    rawTransportPolicy,
+    true,
+  );
+  return request;
+}
+
+async function prepareModelGatewayRequest(
+  input: ModelCallInput,
+  deployment: ModelRouteDeployment,
+  compiled: CompiledModelGatewayPrompt,
+  baseUrl: string,
+  rawTransportPolicy: ModelGatewayTransportPolicyV1 | undefined,
+  bindingTransport: boolean,
+): Promise<PreparedModelGatewayHttpRequest> {
+  const transportPolicy = rawTransportPolicy === undefined
+    ? undefined
+    : validateModelGatewayTransportPolicy(rawTransportPolicy);
+  if (transportPolicy !== undefined &&
+      transportPolicy.api !== "compat-chat-completions") {
+    modelGatewayExecutionFailure(
+      "MODEL_GATEWAY_REQUEST_INVALID",
+      "selected provider API is unsupported by the response decoder",
+    );
+  }
+  if (bindingTransport && transportPolicy?.billing.mode === "byok") {
+    modelGatewayExecutionFailure(
+      "MODEL_GATEWAY_REQUEST_INVALID",
+      "BYOK aliases require direct AI Gateway passthrough transport",
+    );
+  }
   let policy: ModelGatewayCallPolicy;
   try {
     policy = prepareModelGatewayCall(input, deployment);
@@ -181,6 +221,12 @@ export async function prepareModelGatewayBindingRequest(
     );
   }
   validatePolicy(policy);
+  const byokHeaders = transportPolicy?.billing.mode === "byok"
+    ? {
+        "cf-aig-byok-alias": transportPolicy.billing.alias,
+        "cf-aig-no-wholesale": "true",
+      }
+    : {};
   const maximumInputBytes = safeInteger(
     input.max_input_bytes,
     "reserved input byte budget",
@@ -193,11 +239,25 @@ export async function prepareModelGatewayBindingRequest(
     1,
     MAX_REQUEST_BYTES,
   );
+  const compiledCanonical = canonicalModelGatewayJson(compiled.request_body);
+  if (await modelGatewaySha256(compiledCanonical) !== compiled.request_body_sha256) {
+    modelGatewayExecutionFailure(
+      "MODEL_GATEWAY_REQUEST_INVALID",
+      "compiled model request digest does not match canonical compiler output",
+    );
+  }
+  const requestBody = transportPolicy === undefined
+    ? compiled.request_body
+    : modelGatewayBodyForCapabilities(
+        compiled.request_body,
+        transportPolicy.capabilities,
+      );
   const validated = await validateModelGatewayRequestBody(
-    compiled.request_body,
+    requestBody,
     deployment,
     maximumInputBytes,
     maximumOutputBytes,
+    transportPolicy?.capabilities,
   );
   if (!SHA256.test(compiled.request_body_sha256)) {
     modelGatewayExecutionFailure(
@@ -206,12 +266,6 @@ export async function prepareModelGatewayBindingRequest(
     );
   }
   const bodySha256 = await modelGatewaySha256(validated.body);
-  if (bodySha256 !== compiled.request_body_sha256) {
-    modelGatewayExecutionFailure(
-      "MODEL_GATEWAY_REQUEST_INVALID",
-      "compiled model request digest does not match canonical request bytes",
-    );
-  }
   if (validated.parameters_sha256 !== deployment.parameters_digest) {
     modelGatewayExecutionFailure(
       "MODEL_GATEWAY_REQUEST_INVALID",
@@ -231,6 +285,7 @@ export async function prepareModelGatewayBindingRequest(
       Accept: "application/json",
       "Content-Type": "application/json",
       ...policy.headers,
+      ...byokHeaders,
       "cf-aig-request-timeout": String(requestTimeout),
       "cf-aig-max-attempts": "1",
     }),
@@ -247,8 +302,16 @@ export async function prepareModelGatewayHttpRequest(
   compiled: CompiledModelGatewayPrompt,
   baseUrl: string,
   rawToken: unknown,
+  transportPolicy?: ModelGatewayTransportPolicyV1,
 ): Promise<PreparedModelGatewayHttpRequest> {
-  const request = await prepareModelGatewayBindingRequest(input, deployment, compiled, baseUrl);
+  const request = await prepareModelGatewayRequest(
+    input,
+    deployment,
+    compiled,
+    baseUrl,
+    transportPolicy,
+    false,
+  );
   const token = gatewayToken(rawToken);
   return Object.freeze({ ...request, headers: Object.freeze({ ...request.headers, "cf-aig-authorization": `Bearer ${token}` }) });
 }

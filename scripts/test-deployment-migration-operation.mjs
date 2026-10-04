@@ -24,6 +24,16 @@ const migrationB = `${tableBSql};\n${indexSql};\n${triggerSql};\n` +
   "INSERT INTO schema_state(key, value, updated_at) VALUES ('fixture_generation', 'fixture-v1', '2026-10-03T00:00:00Z') " +
   "ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at;\n";
 const migrationNames = ["0001_fixture_a.sql", "0002_fixture_b.sql"];
+const semanticRepairMigrationName = "0108_research_semantic_config_revision_glob_limits.sql";
+const semanticRepairSql = await readFile(new URL("../infra/d1/core/migrations/" + semanticRepairMigrationName, import.meta.url), "utf8");
+const semanticBaselineSql = await readFile(new URL("../infra/d1/core/migrations/0097_research_semantic_config_revision.sql", import.meta.url), "utf8");
+function classifySemanticRepair(sql = semanticRepairSql, overrides = {}) {
+  return classifyDeploymentMigrationSql(sql, {
+    migrationName: semanticRepairMigrationName,
+    baselineMigrationSql: semanticBaselineSql,
+    ...overrides,
+  });
+}
 const schemaObjects = [
   { object_type: "table", name: "fixture_table_a", sql: tableASql, migration_names: [migrationNames[0]] },
   { object_type: "table", name: "fixture_table_b", sql: tableBSql, migration_names: [migrationNames[1]] },
@@ -236,6 +246,46 @@ await check("SQL allowlist ignores comments and literals, permits bounded trigge
     "PRAGMA foreign_keys=OFF;", "CREATE INDEX fixture_existing_idx ON existing_table(id);"]) {
     assert.throws(() => classifyDeploymentMigrationSql(sql));
   }
+});
+
+await check("0108 is admitted only as the exact guarded empty semantic-revision replacement", async () => {
+  const result = classifySemanticRepair();
+  assert.equal(result.classification, "schema_metadata_only");
+  assert.equal(result.statement_count, 8);
+  assert.deepEqual(result.newly_created_tables, [], "the replacement must not authorize later indexes over the repaired existing table");
+  assert.deepEqual(result.must_probe_schema_objects, [
+    { object_type: "table", name: "research_semantic_config_revision" },
+    { object_type: "trigger", name: "research_semantic_config_revision_no_update" },
+    { object_type: "trigger", name: "research_semantic_config_revision_no_delete" },
+  ]);
+  assert.throws(() => classifyDeploymentMigrationSql(semanticRepairSql),
+    /outside the reviewed schema-only allowlist/u, "the generic classifier must still reject this special SQL");
+});
+
+await check("0108 rejects a missing or weakened emptiness guard, another target, row copy, or changed baseline", async () => {
+  const weakenedGuard = semanticRepairSql.replace("CHECK (empty_confirmed = 1)", "CHECK (empty_confirmed IN (0, 1))");
+  assert.notEqual(weakenedGuard, semanticRepairSql);
+  assert.throws(() => classifySemanticRepair(weakenedGuard));
+
+  const missingAssertion = semanticRepairSql.replace(
+    "INSERT INTO __eliotr_migration_0108_research_semantic_config_revision_empty_guard (empty_confirmed)",
+    "UPDATE __eliotr_migration_0108_research_semantic_config_revision_empty_guard");
+  assert.notEqual(missingAssertion, semanticRepairSql);
+  assert.throws(() => classifySemanticRepair(missingAssertion));
+
+  const otherTarget = semanticRepairSql.replace("SELECT 1 FROM research_semantic_config_revision LIMIT 1",
+    "SELECT 1 FROM another_table LIMIT 1");
+  assert.notEqual(otherTarget, semanticRepairSql);
+  assert.throws(() => classifySemanticRepair(otherTarget));
+
+  const rowCopy = semanticRepairSql.replace("DROP TABLE research_semantic_config_revision;",
+    "INSERT INTO research_semantic_config_revision SELECT * FROM research_semantic_config_revision_0108;\nDROP TABLE research_semantic_config_revision;");
+  assert.notEqual(rowCopy, semanticRepairSql);
+  assert.throws(() => classifySemanticRepair(rowCopy));
+
+  const changedBaseline = semanticBaselineSql.replace("config_json TEXT NOT NULL", "config_json TEXT");
+  assert.notEqual(changedBaseline, semanticBaselineSql);
+  assert.throws(() => classifySemanticRepair(semanticRepairSql, { baselineMigrationSql: changedBaseline }));
 });
 
 await createFixture(async ({ root, intentFor }) => {

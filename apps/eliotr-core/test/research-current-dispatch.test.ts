@@ -35,7 +35,7 @@ describe("HTTP-created current semantic run on the native Workflow binding", () 
     // entrypoint, native steps, model settlement and D1/R2 readback are real.
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
       if (typeof input === "string" && input.startsWith("/api/v1/")) {
-        return handleHttp(new Request(new URL(input, "https://research.example"), init), runtime,
+        return handleHttp(new Request(new URL(input, "https://research.example"), init), fixture.configured_env,
           {} as ExecutionContext, { accessVerifier: verifier() });
       }
       return fixture.providerFetch(input, init);
@@ -44,7 +44,7 @@ describe("HTTP-created current semantic run on the native Workflow binding", () 
     try {
       expect(await db.prepare("SELECT COUNT(*) AS n FROM research_workflow_run").first<number>("n")).toBe(0);
       const requestBody = JSON.stringify({ query: fixture.query, product: "RESEARCH",
-        scope_expression: { kind: "SELECTED_SOURCES", source_ids: [fixture.source_id] }, literals: [],
+        scope_expression: { kind: "PROJECT", project_id: fixture.project_id }, literals: [],
         evidence_grade: "E1", budget_ref: "research-budget-v1", max_results: 8 });
       const admitted = await startResearchRun(requestBody, "current-native-dispatch-v1", runtime.DEPLOYMENT_GENERATION);
       const instances = await introspector.get();

@@ -5,7 +5,9 @@ import {
   type ModelGatewayCredentialPort,
   type ModelGatewayFetchPort,
   type ModelGatewayBindingTransport,
+  type ModelGatewayTransportPolicyV1,
   type ModelGatewayTokenTransport,
+  validateModelGatewayTransportPolicy,
 } from "@eliotr/cloudflare-ai";
 import { createResearchModelGatewayBindingFetch, type ResearchModelGatewayBinding } from "./research-model-gateway-binding.js";
 
@@ -17,6 +19,8 @@ const MAX_ERROR_BODY_BYTES = 64 * 1024;
 interface ResearchModelGatewayRuntimeOptions {
   /** The configured server-owned reasoning gateway base URL. */
   readonly reasoning_gateway_base_url: string;
+  /** Server-owned API, provider, billing and selected-model capability policy. */
+  readonly transport_policy?: ModelGatewayTransportPolicyV1;
   /** A request-context signal for one invocation; do not retain it globally. */
   readonly signal?: AbortSignal;
 }
@@ -39,8 +43,12 @@ export type ResearchModelGatewayRuntimeInput = ResearchModelGatewayHttpRuntimeIn
 export type ResearchModelGatewayRuntimeConfig = Omit<ResearchModelGatewayHttpRuntimeInput, "signal"> | Omit<ResearchModelGatewayBindingRuntimeInput, "signal">;
 export interface ResearchModelGatewayHttpRuntime extends ModelGatewayTokenTransport {
   readonly endpoint: string;
+  readonly transport_policy?: ModelGatewayTransportPolicyV1;
 }
-export interface ResearchModelGatewayBindingRuntime extends ModelGatewayBindingTransport { readonly endpoint: string; }
+export interface ResearchModelGatewayBindingRuntime extends ModelGatewayBindingTransport {
+  readonly endpoint: string;
+  readonly transport_policy?: ModelGatewayTransportPolicyV1;
+}
 export type ResearchModelGatewayRuntime = ResearchModelGatewayHttpRuntime | ResearchModelGatewayBindingRuntime;
 
 interface RequestLifecycle {
@@ -289,7 +297,17 @@ export function createResearchModelGatewayRuntime(
     requestInvalid("injected model gateway fetch must be callable");
   }
   const endpoint = resolveModelGatewayReasoningEndpoint(input.reasoning_gateway_base_url);
+  const transportPolicy = input.transport_policy === undefined
+    ? undefined
+    : validateModelGatewayTransportPolicy(input.transport_policy);
+  if (transportPolicy !== undefined &&
+      transportPolicy.api !== "compat-chat-completions") {
+    requestInvalid("selected provider API is unsupported by the response decoder");
+  }
   const binding = input.ai_gateway_binding;
+  if (binding !== undefined && transportPolicy?.billing.mode === "byok") {
+    requestInvalid("BYOK aliases require direct AI Gateway passthrough transport");
+  }
   if (binding !== undefined && (input.gateway_token !== undefined || input.fetch !== undefined)) {
     requestInvalid("Worker gateway binding cannot be combined with a token or HTTP transport");
   }
@@ -333,7 +351,16 @@ export function createResearchModelGatewayRuntime(
       }
     },
   });
-  if (binding !== undefined) return Object.freeze({ endpoint, binding_transport: transport });
+  if (binding !== undefined) return Object.freeze({
+    endpoint,
+    binding_transport: transport,
+    ...(transportPolicy === undefined ? {} : { transport_policy: transportPolicy }),
+  });
   const credentials: ModelGatewayCredentialPort = Object.freeze({ async readGatewayToken(): Promise<unknown> { return token; } });
-  return Object.freeze({ endpoint, credentials, transport });
+  return Object.freeze({
+    endpoint,
+    credentials,
+    transport,
+    ...(transportPolicy === undefined ? {} : { transport_policy: transportPolicy }),
+  });
 }

@@ -12,6 +12,16 @@ import { validateStagingTarget } from "./staging-isolation.mjs";
 
 const INTENT_PROTOCOL = "eliotr.cloudflare-d1-migration-intent.v1";
 const RECEIPT_PROTOCOL = "eliotr.cloudflare-d1-migration-receipt.v1";
+const EMPTY_SEMANTIC_REVISION_REPAIR = Object.freeze({
+  migrationName: "0108_research_semantic_config_revision_glob_limits.sql",
+  baselineName: "0097_research_semantic_config_revision.sql",
+  targetName: "research_semantic_config_revision",
+  replacementName: "research_semantic_config_revision_0108",
+  guardName: "__eliotr_migration_0108_research_semantic_config_revision_empty_guard",
+  updateTriggerName: "research_semantic_config_revision_no_update",
+  deleteTriggerName: "research_semantic_config_revision_no_delete",
+  baselineSha256: "6d5cf0043a64e9ae281daa1af9e8d59cb4037060361b0798f0a494312b75b722",
+});
 const HASH = /^[0-9a-f]{64}$/u;
 const UUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/iu;
 const ACCOUNT = /^[A-Za-z0-9_-]{1,64}$/u;
@@ -418,13 +428,136 @@ function alterAddColumnDefinition(statement) {
   return state.index === statement.length ? true : null;
 }
 
-export function classifyDeploymentMigrationSql(text, { earlierCreatedTables = [] } = {}) {
+function sameSqlTokens(left, right) {
+  return left.length === right.length && left.every((token, index) =>
+    token.type === right[index].type && token.value === right[index].value);
+}
+
+function singleSqlStatement(text) {
+  const statements = splitSqlStatements(tokens(text));
+  return statements.length === 1 ? statements[0] : null;
+}
+
+function tableColumnCheckRange(statement, columnName) {
+  const open = statement.findIndex((token) => token.type === "symbol" && token.value === "(");
+  const close = open < 0 ? -1 : matchingParenEnd(statement, open);
+  if (close < 0) return null;
+  let segmentStart = open + 1;
+  let depth = 0;
+  for (let index = open + 1; index <= close; index += 1) {
+    if (index === close || (depth === 0 && consumeAt(statement, index, ","))) {
+      const segment = statement.slice(segmentStart, index);
+      if (identifierAt(segment, 0)?.toLowerCase() === columnName.toLowerCase()) {
+        const checkIndex = segment.findIndex((token) => token.type === "word" && token.value === "CHECK");
+        if (checkIndex < 0 || !consumeAt(segment, checkIndex + 1, "(")) return null;
+        const checkEnd = matchingParenEnd(segment, checkIndex + 1);
+        if (checkEnd !== segment.length - 1) return null;
+        return { start: segmentStart + checkIndex, end: segmentStart + checkEnd + 1 };
+      }
+      segmentStart = index + 1;
+      continue;
+    }
+    if (consumeAt(statement, index, "(")) depth += 1;
+    else if (consumeAt(statement, index, ")")) depth -= 1;
+  }
+  return null;
+}
+
+function expectedRepairedSemanticRevisionTable(baselineStatement) {
+  if (createTableDefinition(baselineStatement) !== EMPTY_SEMANTIC_REVISION_REPAIR.targetName) return null;
+  const repair = EMPTY_SEMANTIC_REVISION_REPAIR;
+  const expected = [...baselineStatement];
+  expected[2] = { type: "word", value: repair.replacementName.toUpperCase(), raw: repair.replacementName };
+  const replacementChecks = [
+    { column: "revision_ref",
+      sql: "CHECK (length(revision_ref) = 16 AND substr(revision_ref, 1, 4) = 'scr-' AND substr(revision_ref, 5) NOT GLOB '*[^0-9a-f]*')" },
+    { column: "config_sha256",
+      sql: "CHECK (length(config_sha256) = 64 AND config_sha256 NOT GLOB '*[^0-9a-f]*')" },
+  ].map((entry) => ({ ...entry, range: tableColumnCheckRange(baselineStatement, entry.column),
+    tokens: tokens(entry.sql) }));
+  if (replacementChecks.some((entry) => entry.range === null)) return null;
+  for (const entry of replacementChecks.sort((left, right) => right.range.start - left.range.start)) {
+    expected.splice(entry.range.start, entry.range.end - entry.range.start, ...entry.tokens);
+  }
+  return expected;
+}
+
+function classifyEmptySemanticRevisionRepair(statements, { earlierCreatedTables, baselineMigrationSql }) {
+  const repair = EMPTY_SEMANTIC_REVISION_REPAIR;
+  if (typeof baselineMigrationSql !== "string" ||
+      sha256(Buffer.from(baselineMigrationSql, "utf8")) !== repair.baselineSha256) {
+    fail("Empty semantic revision repair requires the exact immutable 0097 source schema");
+  }
+  const baselineStatements = splitSqlStatements(tokens(baselineMigrationSql));
+  const baselineTables = baselineStatements.filter((statement) =>
+    createTableDefinition(statement) === repair.targetName);
+  const baselineTriggers = new Map(baselineStatements.map((statement) => [triggerDefinition(statement), statement])
+    .filter(([name]) => name !== null));
+  if (baselineTables.length !== 1 || baselineTriggers.size !== 2 ||
+      !baselineTriggers.has(repair.updateTriggerName) || !baselineTriggers.has(repair.deleteTriggerName)) {
+    fail("Immutable semantic revision source schema differs from the reviewed repair baseline");
+  }
+  const reservedNames = new Set([repair.targetName, repair.replacementName, repair.guardName]
+    .map((name) => name.toLowerCase()));
+  if (earlierCreatedTables.some((name) => reservedNames.has(name.toLowerCase()))) {
+    fail("Empty semantic revision repair conflicts with an earlier migration-created table");
+  }
+  const expectedStatements = [
+    "CREATE TABLE " + repair.guardName + " (empty_confirmed INTEGER NOT NULL CHECK (empty_confirmed = 1)) STRICT",
+    "INSERT INTO " + repair.guardName + " (empty_confirmed) SELECT CASE WHEN NOT EXISTS (SELECT 1 FROM " +
+      repair.targetName + " LIMIT 1) THEN 1 ELSE 0 END",
+    "DROP TABLE " + repair.guardName,
+    "DROP TABLE " + repair.targetName,
+    "ALTER TABLE " + repair.replacementName + " RENAME TO " + repair.targetName,
+  ].map(singleSqlStatement);
+  const expectedReplacementTable = expectedRepairedSemanticRevisionTable(baselineTables[0]);
+  if (statements.length !== 8 || expectedStatements.some((expected) => expected === null) ||
+      expectedReplacementTable === null ||
+      !sameSqlTokens(statements[0], expectedStatements[0]) ||
+      !sameSqlTokens(statements[1], expectedStatements[1]) ||
+      !sameSqlTokens(statements[2], expectedStatements[2]) ||
+      !sameSqlTokens(statements[4], expectedStatements[3]) ||
+      !sameSqlTokens(statements[5], expectedStatements[4]) ||
+      !sameSqlTokens(statements[3], expectedReplacementTable)) {
+    fail("Migration is outside the exact guarded empty semantic revision repair");
+  }
+  const expectedTriggerNames = [repair.updateTriggerName, repair.deleteTriggerName];
+  for (const [index, name] of expectedTriggerNames.entries()) {
+    const actual = statements[index + 6];
+    if (triggerDefinition(actual) !== name || !sameSqlTokens(actual, baselineTriggers.get(name))) {
+      fail("Semantic revision repair must preserve both immutable source triggers exactly");
+    }
+  }
+  const required = [
+    { object_type: "table", name: repair.targetName },
+    { object_type: "trigger", name: repair.updateTriggerName },
+    { object_type: "trigger", name: repair.deleteTriggerName },
+  ];
+  return Object.freeze({
+    classification: "schema_metadata_only",
+    statement_count: statements.length,
+    index_build_cost_reviewed: false,
+    newly_created_tables: Object.freeze([]),
+    required_schema_objects: Object.freeze(required.map((entry) => Object.freeze(entry))),
+    created_schema_objects: Object.freeze(required.map((entry) =>
+      Object.freeze({ ...entry, replacement: true }))),
+    must_probe_schema_objects: Object.freeze(required.map((entry) => Object.freeze(entry))),
+    metadata_markers: Object.freeze([]),
+    bounded_metadata_writes: 0,
+  });
+}
+
+export function classifyDeploymentMigrationSql(text, { earlierCreatedTables = [], migrationName = null,
+  baselineMigrationSql = null } = {}) {
   if (typeof text !== "string" || !Array.isArray(earlierCreatedTables) || earlierCreatedTables.length > 64 ||
       earlierCreatedTables.some((name) => typeof name !== "string" || !SCHEMA_NAME.test(name))) {
     fail("Invalid input to the scoped D1 migration SQL classifier");
   }
   const statements = splitSqlStatements(tokens(text));
   if (statements.length === 0) fail("Empty SQL migration is outside the supported maintenance profile");
+  if (migrationName === EMPTY_SEMANTIC_REVISION_REPAIR.migrationName) {
+    return classifyEmptySemanticRevisionRepair(statements, { earlierCreatedTables, baselineMigrationSql });
+  }
   const createdTables = new Set(earlierCreatedTables.map((name) => name.toLowerCase()));
   const newlyCreatedTables = [];
   const createdObjects = new Map();
@@ -578,8 +711,21 @@ async function readPendingSql(intent, root, localBundle, read) {
     let sql;
     try { sql = new TextDecoder("utf-8", { fatal: true }).decode(bytes); }
     catch { fail("Migration SQL is not valid UTF-8"); }
+    let baselineMigrationSql = null;
+    if (name === EMPTY_SEMANTIC_REVISION_REPAIR.migrationName) {
+      const baseline = entries.get(EMPTY_SEMANTIC_REVISION_REPAIR.baselineName);
+      if (baseline === undefined) fail("Empty semantic revision repair is missing its pinned 0097 baseline migration");
+      const baselineBytes = await read(resolve(root, "infra/d1/core/migrations",
+        EMPTY_SEMANTIC_REVISION_REPAIR.baselineName));
+      if (sha256(baselineBytes) !== baseline.sha256) {
+        fail("Immutable semantic revision source schema differs from its migration bundle pin");
+      }
+      try { baselineMigrationSql = new TextDecoder("utf-8", { fatal: true }).decode(baselineBytes); }
+      catch { fail("Immutable semantic revision source schema is not valid UTF-8"); }
+    }
     let admitted;
-    try { admitted = classifyDeploymentMigrationSql(sql, { earlierCreatedTables: createdTables }); }
+    try { admitted = classifyDeploymentMigrationSql(sql, { earlierCreatedTables: createdTables,
+      migrationName: name, baselineMigrationSql }); }
     catch (error) { fail(`Unsupported scoped migration SQL in ${name}: ${error.message}`); }
     if (admitted.classification === "schema_metadata_only") classification = admitted.classification;
     indexBuildCostReviewed ||= admitted.index_build_cost_reviewed;

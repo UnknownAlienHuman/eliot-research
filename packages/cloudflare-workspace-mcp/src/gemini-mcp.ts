@@ -254,20 +254,15 @@ export async function authenticatedContext(
     return jsonError(403, "MCP_MANAGED_OAUTH_CREDENTIAL_DENIED", trace);
   }
   const issuer = requiredAccessTeamDomain(accessTeamDomain);
-  const audience = requiredAccessAudience(accessAudience, undefined);
-  // AccessIdentity.principal_ref is the verifier's checked JWT subject for a
-  // managed identity. Hash the verified tuple before it enters any ELIOT
-  // context, so logs/receipts never carry provider PII while two identities
-  // remain distinct within the dedicated auth profile.
-  const principalRef = await sha256(JSON.stringify(stable({
-    protocol: "eliot.mcp.managed-actor.v1",
-    profile,
-    issuer,
-    audience,
-    subject: identity.principal_ref,
-  })));
+  if (identity.issuer !== issuer) {
+    return jsonError(403, "MCP_MANAGED_OAUTH_CREDENTIAL_DENIED", trace);
+  }
+  // Managed OAuth is the existing human owner identity. Preserve the exact
+  // verified subject so Core applies its normal owner/project policy and can
+  // audit the actual Access user. The dedicated audience was checked by the
+  // verifier and is not accepted from tool arguments.
   const verifiedActor: McpVerifiedActorContext = Object.freeze({
-    actor_ref: `mcp-actor-${principalRef}`,
+    actor_ref: identity.principal_ref,
     credential_generation: identity.credential_generation,
     authentication_method: identity.authentication_method,
     expires_at: identity.expires_at,
@@ -275,10 +270,11 @@ export async function authenticatedContext(
     deployment_generation: deploymentGeneration,
   });
   return Object.freeze({
-    principal_ref: `mcp-actor-${principalRef}`,
+    principal_ref: identity.principal_ref,
     trace_id: trace,
     deployment_generation: deploymentGeneration,
     verified_actor: verifiedActor,
+    verified_access: Object.freeze({ ...identity }),
   });
 }
 
@@ -288,16 +284,47 @@ function serverDependencies(
   now: () => number,
 ): GeminiMcpServerDependencies {
   const diagnosticEnabled = typeof env.mcpClientDiagnosticConsume === "function";
-  const catalogEnabled = profile === "service-token" && typeof env.projectCatalog === "function";
-  const researchEnabled = profile === "service-token" && typeof env.research === "function";
+  const catalogEnabled = typeof env.projectCatalog === "function";
+  const researchEnabled = typeof env.research === "function";
   const transport = googleTransport(env);
   const googleSyncEnabled = transport === "gemini-mcp";
+  const managedReadTools = new Set([
+    "eliotr_query", "eliotr_run", "eliotr_run_status", "eliotr_report", "eliotr_section",
+    "eliotr_citations", "eliotr_verify", "eliotr_open", "eliotr_source_read",
+  ]);
   const tools = GEMINI_MCP_TOOLS.filter((tool) =>
     (!isMcpResearchTool(tool.name) || researchEnabled) &&
+    (profile !== "service-token" || tool.name !== "eliotr_source_read") &&
+    (profile !== "managed-oauth" || tool.name === "eliotr_system_status" || tool.name === "eliotr_catalog" ||
+      managedReadTools.has(tool.name) || (googleSyncEnabled &&
+        (tool.name === "eliotr_create_google_sync_plan" || tool.name === "eliotr_validate_google_sync_receipt"))) &&
     (tool.name !== "eliotr_catalog" || catalogEnabled) &&
     (tool.name !== "eliotr_confirm_client_diagnostic" || diagnosticEnabled) &&
     ((tool.name !== "eliotr_create_google_sync_plan" && tool.name !== "eliotr_validate_google_sync_receipt") || googleSyncEnabled),
-  );
+  ).map((tool) => {
+    if (profile !== "managed-oauth") return tool;
+    if (tool.name === "eliotr_catalog") {
+      const inputSchema = { ...tool.inputSchema, required: ["project_id"] };
+      return { ...tool, inputSchema };
+    }
+    if (!isMcpResearchTool(tool.name)) return tool;
+    const properties = { ...(tool.inputSchema.properties as Record<string, unknown>) };
+    delete properties.client_grant_id;
+    if (!Object.hasOwn(properties, "project_id")) {
+      properties.project_id = { type: "string", minLength: 1, maxLength: 256,
+        pattern: "^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$" };
+    }
+    const required = [...(tool.inputSchema.required as readonly string[]).filter((key) => key !== "client_grant_id")];
+    if (!required.includes("project_id")) required.push("project_id");
+    const inputSchema: Record<string, unknown> = { ...tool.inputSchema, properties, required };
+    if (tool.name === "eliotr_query") {
+      inputSchema.$defs = { scope: {
+        type: "object", additionalProperties: false, required: ["kind", "project_id"],
+        properties: { kind: { const: "PROJECT" }, project_id: properties.project_id },
+      } };
+    }
+    return { ...tool, inputSchema };
+  });
   const hasTool = (name: string): boolean => tools.some((tool) => tool.name === name);
   const runEnabled = hasTool("eliotr_run");
   const controlEnabled = hasTool("eliotr_cancel") || hasTool("eliotr_recover");
@@ -341,8 +368,11 @@ function serverDependencies(
       };
     },
     async catalog(input: Parameters<GeminiMcpToolDependencies["catalog"]>[0], context: McpToolCallContext): Promise<unknown> {
-      if (!catalogEnabled || !env.projectCatalog || !context.verified_access || !input.project_id) {
-        throw new GeminiMcpToolError("MCP_CATALOG_SCOPE_REQUIRED", "A verified service and explicit delegated project are required");
+      if (!catalogEnabled || !env.projectCatalog || !context.verified_access || !input.project_id ||
+          context.verified_actor?.auth_profile !== profile ||
+          (profile === "managed-oauth" && context.verified_access.authentication_method !== "cloudflare_access") ||
+          (profile === "service-token" && context.verified_access.authentication_method !== "service_token")) {
+        throw new GeminiMcpToolError("MCP_CATALOG_SCOPE_REQUIRED", "A verified identity and explicit project are required");
       }
       return env.projectCatalog(input, context);
     },

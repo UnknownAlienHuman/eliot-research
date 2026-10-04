@@ -3,3 +3,6 @@ export { createS3OffsiteCopyAdapter, signSigV4S3Request, type S3OffsiteCopyAdapt
 
 /** Cloudflare D1/R2 isolated-target attestation; performs no restore writes. */
 export * from "./isolated-restore-preflight.js";
+export * from "./restore-store.js";
+export * from "./restore-executor.js";
+export * from "./restore-erasure-gate.js";

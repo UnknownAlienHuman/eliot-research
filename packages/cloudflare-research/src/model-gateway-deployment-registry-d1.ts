@@ -10,6 +10,7 @@ import {
   type DynamicRouteProvisioningErrorCode,
   type DynamicRouteRegistryPort,
 } from "@eliotr/cloudflare-ai";
+import { canonicalJson, decodeModelRouteDeployment, type ModelRouteDeployment } from "@eliotr/platform-cloudflare";
 import {
   createD1DynamicRouteQualificationProofStore,
   decodeDynamicRouteCandidate,
@@ -134,6 +135,24 @@ function decodeActiveRow(raw: unknown, label: string): ActiveRow {
 
 const candidateSelect = "candidate_ref, candidate_sha256, candidate_json, route_ref, route_version, staged_at";
 const activeSelect = "candidate_ref, candidate_sha256, promotion_ref, promoted_at, route_ref, route_version";
+
+export interface PinnedModelSelection {
+  readonly route_ref: string;
+  readonly route_version: string;
+  readonly candidate_ref: string;
+  readonly candidate_sha256: string;
+  readonly qualification_ref: string;
+  readonly qualification_sha256: string;
+}
+
+export interface D1PinnedModelGatewayDeploymentRegistry extends ModelGatewayDeploymentRegistryPort {
+  /** Resolve one immutable model/proof tuple; the mutable active route is not consulted. */
+  resolvePinned(
+    deployment: ModelRouteDeployment,
+    selection: PinnedModelSelection,
+    options?: Readonly<{ allow_expired_qualification?: boolean }>,
+  ): Promise<unknown | null>;
+}
 
 async function readCandidate(database: D1Database, candidateRef: string): Promise<StoredDynamicRouteCandidate | null> {
   const row = await database.prepare(`SELECT ${candidateSelect} FROM dynamic_route_candidate WHERE candidate_ref = ?1 LIMIT 1`).bind(candidateRef).first<StoredDynamicRouteCandidate["row"]>();
@@ -300,7 +319,7 @@ export function createD1DynamicRouteRegistry(
 export function createD1ModelGatewayDeploymentRegistry(
   database: D1Database,
   options: Pick<D1DynamicRouteRegistryOptions, "now" | "environment"> = {},
-): ModelGatewayDeploymentRegistryPort {
+): D1PinnedModelGatewayDeploymentRegistry {
   if (typeof database !== "object" || database === null || typeof database.prepare !== "function") {
     failure("DYNAMIC_ROUTE_PROMOTION_FAILED", "model gateway deployment registry database binding is invalid");
   }
@@ -327,6 +346,46 @@ export function createD1ModelGatewayDeploymentRegistry(
       const nowText = timestamp(now(), "deployment resolution clock", "DYNAMIC_ROUTE_PROMOTION_FAILED");
       if (Date.parse(qualificationExpiresAt) <= Date.parse(nowText)) failure("DYNAMIC_ROUTE_QUALIFICATION_INVALID", "active dynamic route qualification is expired");
       return Object.freeze(active.candidate.candidate.deployment);
+    },
+    async resolvePinned(rawDeployment: ModelRouteDeployment, rawSelection: PinnedModelSelection,
+      options: Readonly<{ allow_expired_qualification?: boolean }> = {}): Promise<unknown | null> {
+      let expected: ModelRouteDeployment;
+      try { expected = decodeModelRouteDeployment(rawDeployment); }
+      catch (cause) { failure("DYNAMIC_ROUTE_PROMOTION_CONFLICT", "pinned model deployment is malformed", { cause }); }
+      const routeRef = identifier(rawSelection.route_ref, "pinned route_ref", "DYNAMIC_ROUTE_PROMOTION_CONFLICT");
+      const routeVersion = identifier(rawSelection.route_version, "pinned route_version", "DYNAMIC_ROUTE_PROMOTION_CONFLICT");
+      const candidateRef = identifier(rawSelection.candidate_ref, "pinned candidate_ref", "DYNAMIC_ROUTE_PROMOTION_CONFLICT");
+      const candidateSha = digest(rawSelection.candidate_sha256, "pinned candidate digest", "DYNAMIC_ROUTE_PROMOTION_CONFLICT");
+      const qualificationRef = identifier(rawSelection.qualification_ref, "pinned qualification_ref", "DYNAMIC_ROUTE_PROMOTION_CONFLICT");
+      const qualificationSha = digest(rawSelection.qualification_sha256, "pinned qualification digest", "DYNAMIC_ROUTE_PROMOTION_CONFLICT");
+      const candidate = await readCandidate(database, candidateRef);
+      if (candidate === null || candidate.sha256 !== candidateSha || candidate.row.route_ref !== routeRef ||
+          candidate.row.route_version !== routeVersion || canonicalJson(candidate.candidate.deployment) !== canonicalJson(expected)) {
+        failure("DYNAMIC_ROUTE_PROMOTION_CONFLICT", "pinned model candidate differs from the immutable run configuration");
+      }
+      if (environment === "PRODUCTION" && candidate.candidate.qualification_tier !== "LIVE") {
+        failure("DYNAMIC_ROUTE_LIVE_GATE_REQUIRED", "pinned model candidate is not LIVE qualified");
+      }
+      const proof = await qualificationProofs.readPinned({ route_ref: routeRef, route_version: routeVersion,
+        candidate_ref: candidateRef, candidate_sha256: candidateSha,
+        qualification_ref: qualificationRef, qualification_sha256: qualificationSha });
+      if (proof === null || proof.qualification.tier !== "LIVE") {
+        failure("DYNAMIC_ROUTE_LIVE_GATE_REQUIRED", "pinned model configuration has no exact LIVE qualification proof");
+      }
+      if (options.allow_expired_qualification !== true &&
+          Date.parse(proof.qualification.expires_at) <= Date.parse(timestamp(now(), "pinned qualification check time", "DYNAMIC_ROUTE_PROMOTION_FAILED"))) {
+        failure("DYNAMIC_ROUTE_QUALIFICATION_INVALID", "pinned model qualification is expired");
+      }
+      const revocation = await database.prepare(
+        "SELECT qualification_sha256 FROM dynamic_route_qualification_revocation WHERE qualification_ref=?1 LIMIT 1",
+      ).bind(qualificationRef).first<{ readonly qualification_sha256: unknown }>();
+      if (revocation !== null) {
+        if (revocation.qualification_sha256 !== qualificationSha) {
+          failure("DYNAMIC_ROUTE_PROMOTION_CONFLICT", "pinned qualification revocation identity is inconsistent");
+        }
+        failure("DYNAMIC_ROUTE_QUALIFICATION_INVALID", "pinned model qualification was explicitly revoked");
+      }
+      return Object.freeze(candidate.candidate.deployment);
     },
   });
 }

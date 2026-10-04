@@ -14,7 +14,7 @@ function denied(message: string): never { throw new ClientGrantError("CLIENT_RUN
 interface SponsoredRun {
   readonly grant: ProjectClientGrant;
   readonly template: ResearchOwnerSpendPolicyTemplate;
-  readonly binding: { readonly policy_sha256: string; readonly deployment_generation: string; readonly expires_at: string };
+  readonly binding: NonNullable<Awaited<ReturnType<typeof readClientGrantSpend>>>;
 }
 async function sponsorship(env: Env, grantId: string, revision: number, deployment: string): Promise<SponsoredRun> {
   const grant = await readClientGrant(env.CORE_DB, grantId);
@@ -23,10 +23,14 @@ async function sponsorship(env: Env, grantId: string, revision: number, deployme
   const binding = await readClientGrantSpend(env.CORE_DB, grant);
   const template = readResearchOwnerSpendPolicyTemplate(env.ELIOTR_MODEL_SPEND_POLICY_JSON,
     env.ELIOTR_MODEL_SPEND_POLICY_PROVENANCE_REF ?? "");
+  const v2 = template.protocol === "eliotr.research-owner-spend-template.v2";
   const hash = await sha256Utf8(canonicalJson(template));
+  const expectedExpiry = new Date(Math.min(Date.parse(grant.expires_at),
+    template.expires_at === undefined ? Number.POSITIVE_INFINITY : Date.parse(template.expires_at))).toISOString();
   if (!binding || template.principal_ref !== grant.grantor_principal_ref || template.policy_ref !== grant.spend_policy_ref ||
-      template.deployment_generation !== deployment || binding.deployment_generation !== deployment ||
-      binding.policy_sha256 !== hash || binding.expires_at !== template.expires_at || Date.parse(binding.expires_at) <= Date.now()) {
+      (!v2 && (template.deployment_generation !== deployment || binding.deployment_generation !== deployment)) ||
+      (v2 && binding.deployment_generation !== null) || binding.policy_protocol !== template.protocol ||
+      binding.policy_sha256 !== hash || binding.expires_at !== expectedExpiry || Date.parse(binding.expires_at) <= Date.now()) {
     denied("The installed sponsor approval differs from the immutable grant revision");
   }
   return { grant, template, binding };

@@ -251,13 +251,14 @@ describe("Gemini MCP managed-oauth profile", () => {
           principal_ref: subject,
           credential_generation: "managed-credential-1",
           authentication_method: authenticationMethod,
+          issuer: TEAM_DOMAIN,
           expires_at: "2026-09-04T14:00:00.000Z",
         };
       },
     };
   }
 
-  it("hashes the verified actor tuple into a stable, distinct, non-PII principal", async () => {
+  it("keeps Managed OAuth planning actor-specific without echoing the verified subject", async () => {
     const args = {
       google_product: "drive",
       action: "read",
@@ -312,6 +313,48 @@ describe("Gemini MCP managed-oauth profile", () => {
     expect(JSON.stringify(await body(catalog))).toContain("MCP_CATALOG_SCOPE_REQUIRED");
   });
 
+  it("advertises only project-scoped owner Research tools for Managed OAuth", async () => {
+    const runtime: WorkspaceMcpRuntime = {
+      ...managedEnvironment(),
+      projectCatalog: async (input) => ({ projects: [{ id: input.project_id }] }),
+      research: async () => ({ ok: true }),
+    };
+    const listRequest = new Request("https://mcp.example/mcp", { method: "POST", headers: {
+      "content-type": "application/json", "mcp-protocol-version": "2025-06-18",
+    }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }) });
+    const response = await handleGeminiMcp(listRequest,
+      runtime, {} as ExecutionContext, { accessVerifier: managedVerifier("alice@example.com") });
+    const listed = await body(response);
+    const tools = (listed.result as { tools: readonly { name: string; inputSchema: Record<string, unknown> }[] }).tools;
+    const byName = new Map(tools.map((tool) => [tool.name, tool]));
+    expect([...byName.keys()]).toEqual(expect.arrayContaining([
+      "eliotr_catalog", "eliotr_source_read", "eliotr_query", "eliotr_run", "eliotr_run_status",
+      "eliotr_report", "eliotr_section", "eliotr_citations", "eliotr_verify", "eliotr_open",
+      "eliotr_create_google_sync_plan", "eliotr_validate_google_sync_receipt",
+    ]));
+    for (const denied of ["eliotr_ingest_commit", "eliotr_project_attach", "eliotr_cancel", "eliotr_recover", "eliotr_task_pull"]) {
+      expect(byName.has(denied)).toBe(false);
+    }
+    const query = byName.get("eliotr_query")?.inputSchema as { required: readonly string[]; properties: Record<string, unknown> };
+    expect(query.required).toContain("project_id");
+    expect(query.required).not.toContain("client_grant_id");
+    expect(query.properties).toHaveProperty("project_id");
+    const catalog = byName.get("eliotr_catalog")?.inputSchema as { required: readonly string[] };
+    expect(catalog.required).toContain("project_id");
+  });
+
+  it("rejects a hidden mutation even when it is called directly", async () => {
+    const runtime: WorkspaceMcpRuntime = {
+      ...managedEnvironment(),
+      projectCatalog: async () => ({ projects: [] }),
+      research: async () => ({ ok: true }),
+    };
+    const response = await handleGeminiMcp(toolRequest("eliotr_ingest_commit", {}), runtime,
+      {} as ExecutionContext, { accessVerifier: managedVerifier("alice@example.com") });
+    expect(response.status).toBe(200);
+    expect(JSON.stringify(await body(response))).toContain("MCP_RESEARCH_UNAVAILABLE");
+  });
+
   it("rejects a service-token JWT in the managed-oauth profile", async () => {
     const response = await handleGeminiMcp(request(), managedEnvironment(), {} as ExecutionContext, {
       accessVerifier: managedVerifier(CLIENT_ID, "service_token"),
@@ -343,30 +386,48 @@ describe("Gemini MCP managed-oauth profile", () => {
     expect(await body(response)).toMatchObject({ code: "MCP_CONFIGURATION_UNAVAILABLE" });
   });
 
-  it("preserves managed credential evidence without exposing the verified subject", async () => {
+  it("preserves the exact verified Managed OAuth subject for owner policy and audit", async () => {
     const result = await authenticatedContext({
       principal_ref: "alice@example.com",
       credential_generation: "managed-credential-9",
       authentication_method: "cloudflare_access",
+      issuer: TEAM_DOMAIN,
       expires_at: "2026-09-04T14:00:00.000Z",
     }, "trace-managed", "managed-oauth", "", TEAM_DOMAIN, MANAGED_AUDIENCE, "generation-9");
     if (result instanceof Response) throw new Error("managed identity was unexpectedly denied");
+    expect(result.principal_ref).toBe("alice@example.com");
     expect(result.verified_actor).toMatchObject({
+      actor_ref: "alice@example.com",
       credential_generation: "managed-credential-9",
       authentication_method: "cloudflare_access",
       expires_at: "2026-09-04T14:00:00.000Z",
       auth_profile: "managed-oauth",
       deployment_generation: "generation-9",
     });
-    expect(result.verified_actor?.actor_ref).toMatch(/^mcp-actor-[a-f0-9]{64}$/u);
-    expect(result.verified_actor?.actor_ref).not.toContain("alice@example.com");
+    expect(result.verified_access).toMatchObject({
+      principal_ref: "alice@example.com",
+      issuer: TEAM_DOMAIN,
+      authentication_method: "cloudflare_access",
+    });
     expect(result.verified_actor?.actor_ref).toBe(result.principal_ref);
+  });
+
+  it("rejects a verified user identity with the wrong issuer", async () => {
+    const result = await authenticatedContext({
+      principal_ref: "alice@example.com",
+      credential_generation: "managed-credential-9",
+      authentication_method: "cloudflare_access",
+      issuer: "https://other-example.cloudflareaccess.com",
+      expires_at: "2026-09-04T14:00:00.000Z",
+    }, "trace-managed", "managed-oauth", "", TEAM_DOMAIN, MANAGED_AUDIENCE, "generation-9");
+    expect(result).toMatchObject({ status: 403 });
   });
 
   it("rejects an incomplete verifier identity before tool dispatch", async () => {
     const result = await authenticatedContext({
       principal_ref: "alice@example.com",
       authentication_method: "cloudflare_access",
+      issuer: TEAM_DOMAIN,
     } as never, "trace-invalid", "managed-oauth", "", TEAM_DOMAIN, MANAGED_AUDIENCE, "generation-9");
     expect(result).toMatchObject({ status: 401 });
   });

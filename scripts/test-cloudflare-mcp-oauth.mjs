@@ -18,11 +18,18 @@ class FakeProcess extends EventEmitter {
     this.stderr = new EventEmitter();
     this.calls = [];
     this.killCount = 0;
+    this.rpcError = null;
     this.stdin = {
       write: (line) => {
         const message = JSON.parse(line);
         this.calls.push(message);
         if (message.id === undefined) return true;
+        if (this.rpcError?.method === message.method) {
+          process.nextTick(() => this.stdout.emit("data", `${JSON.stringify({
+            jsonrpc: "2.0", id: message.id, error: this.rpcError.error,
+          })}\n`));
+          return true;
+        }
         const result = this.#result(message);
         process.nextTick(() => this.stdout.emit("data", `${JSON.stringify({ jsonrpc: "2.0", id: message.id, result })}\n`));
         return true;
@@ -182,6 +189,58 @@ assert.throws(
   () => createCloudflareMcpTransport({ cwd: resolve("."), accountId: ACCOUNT_ID, env: { CLOUDFLARE_API_TOKEN: "redacted" } }),
   (error) => error?.code === "MCP_AUTH_UNAVAILABLE",
 );
+const rpcFailureFake = new FakeProcess();
+rpcFailureFake.rpcError = {
+  method: "mcpServer/tool/call",
+  error: {
+    code: -32042,
+    message: "private-native-error-message-must-not-leak",
+    data: { bearer: "private-native-error-data-must-not-leak" },
+  },
+};
+const rpcFailureTransport = createCloudflareMcpTransport({
+  ...transportOptions,
+  spawnProcess: () => rpcFailureFake,
+});
+let rpcFailure;
+try {
+  await rpcFailureTransport.verifyAccount();
+  assert.fail("JSON-RPC tool-call errors must fail the Access readback");
+} catch (error) {
+  rpcFailure = error;
+} finally {
+  rpcFailureTransport.close();
+}
+assert.equal(rpcFailure?.code, "MCP_PROTOCOL_ERROR");
+assert.equal(rpcFailure?.rpcMethod, "mcpServer/tool/call");
+assert.equal(rpcFailure?.rpcErrorCode, -32042);
+assert.match(rpcFailure?.message ?? "", /MCP tool call \(mcpServer\/tool\/call\).*JSON-RPC code -32042/u);
+assert.doesNotMatch(rpcFailure?.message ?? "", /private-native-error-message|private-native-error-data|bearer/iu);
+assert.equal(rpcFailureFake.killCount, 1);
+const invalidRpcCodeFake = new FakeProcess();
+invalidRpcCodeFake.rpcError = {
+  method: "thread/start",
+  error: { code: "not-numeric", message: "private-invalid-code-message", data: "private-data" },
+};
+const invalidRpcCodeTransport = createCloudflareMcpTransport({
+  ...transportOptions,
+  spawnProcess: () => invalidRpcCodeFake,
+});
+let invalidRpcCodeFailure;
+try {
+  await invalidRpcCodeTransport.verifyAccount();
+  assert.fail("malformed JSON-RPC error codes must fail the Access readback");
+} catch (error) {
+  invalidRpcCodeFailure = error;
+} finally {
+  invalidRpcCodeTransport.close();
+}
+assert.equal(invalidRpcCodeFailure?.code, "MCP_PROTOCOL_ERROR");
+assert.equal(invalidRpcCodeFailure?.rpcMethod, "thread/start");
+assert.equal(invalidRpcCodeFailure?.rpcErrorCode, null);
+assert.match(invalidRpcCodeFailure?.message ?? "", /thread start \(thread\/start\).*non-safe numeric error code/u);
+assert.doesNotMatch(invalidRpcCodeFailure?.message ?? "", /private-invalid-code-message|private-data/iu);
+assert.equal(invalidRpcCodeFake.killCount, 1);
 // Run the actual Access provisioner's preservation/dispatch source with the real
 // bounded MCP protocol transport, no token, and a raw-fetch refusal sentinel.
 const root = fileURLToPath(new URL("../", import.meta.url));

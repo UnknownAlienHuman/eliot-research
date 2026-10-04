@@ -14,13 +14,13 @@ const MAX_CONFIGURATION_BYTES = 65_536;
 const MAX_VERIFIER_REFS = 512;
 const MAX_REQUEST_TIMEOUT_MS = 300_000;
 
-export type ResearchOwnerReasoningEffort = "low" | "medium" | "high";
+export type ResearchOwnerReasoningEffort = "low" | "medium" | "high" | "max";
 
 export function parseResearchOwnerReasoningEffort(
   value: unknown,
 ): ResearchOwnerReasoningEffort | undefined {
   if (value === undefined) return undefined;
-  if (value === "low" || value === "medium" || value === "high") return value;
+  if (value === "low" || value === "medium" || value === "high" || value === "max") return value;
   throw new Error("research owner reasoning_effort is invalid");
 }
 

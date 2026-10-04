@@ -19,6 +19,11 @@ const DEFAULT_TIMEOUT_MS = 30_000;
 const MAX_LINE_BYTES = 512 * 1024;
 const MAX_ACCESS_LIST_PAGES = 100;
 const MAX_AI_GATEWAY_LIST_PAGES = 100;
+const RPC_PHASES = Object.freeze({
+  initialize: "initialization",
+  "thread/start": "thread start",
+  "mcpServer/tool/call": "MCP tool call",
+});
 
 export class CloudflareMcpOAuthError extends Error {
   constructor(code, message) {
@@ -178,9 +183,17 @@ function checkKnownRequest(accountId, method, path, body, resourceReadback) {
   fail("MCP_REQUEST_INVALID", "Cloudflare MCP request is outside the fixed Access transport");
 }
 
-function jsonRpcError(error) {
-  const message = error?.message;
-  return message === undefined ? "Cloudflare MCP protocol error" : "Cloudflare MCP protocol request failed";
+function jsonRpcError(method, error) {
+  const safeMethod = Object.hasOwn(RPC_PHASES, method) ? method : "unknown";
+  const phase = RPC_PHASES[safeMethod] ?? "unknown RPC phase";
+  const rpcErrorCode = typeof error?.code === "number" && Number.isSafeInteger(error.code)
+    ? error.code : null;
+  const codeDescription = rpcErrorCode === null ? "non-safe numeric error code" : `JSON-RPC code ${rpcErrorCode}`;
+  const failure = new CloudflareMcpOAuthError("MCP_PROTOCOL_ERROR",
+    `Cloudflare MCP app-server ${phase} (${safeMethod}) failed: ${codeDescription}`);
+  failure.rpcMethod = safeMethod;
+  failure.rpcErrorCode = rpcErrorCode;
+  return failure;
 }
 
 function configuredTransportIsSafe(transport) {
@@ -327,7 +340,7 @@ export function createCloudflareMcpTransport(options = {}) {
       if (item === undefined) continue;
       pending.delete(message.id);
       clearTimeout(item.timer);
-      if (message.error !== undefined) item.reject(new CloudflareMcpOAuthError("MCP_PROTOCOL_ERROR", jsonRpcError(message.error)));
+      if (message.error !== undefined) item.reject(jsonRpcError(item.method, message.error));
       else item.resolve(message.result);
     }
   });
@@ -349,7 +362,7 @@ export function createCloudflareMcpTransport(options = {}) {
         pending.delete(id);
         reject(new CloudflareMcpOAuthError("MCP_TIMEOUT", `Cloudflare MCP ${method} timed out`));
       }, timeoutMs);
-      pending.set(id, { resolve, reject, timer });
+      pending.set(id, { resolve, reject, timer, method });
       write({ jsonrpc: "2.0", id, method, params });
     });
   }

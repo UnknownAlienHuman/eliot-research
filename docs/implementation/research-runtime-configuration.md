@@ -9,6 +9,57 @@ Cloudflare foundation generation, and deployment readback. It keeps the
 configuration values and their provenance references together; it does not
 grant access, select a provider, or prove that a remote resource is live.
 
+## Project selection and run capture, 2026-10-03
+
+[ADR-0010](../adr/0010-project-model-revisions-and-run-authority.md) records the
+versioned owner configuration amendment and the retained execution checks.
+
+The model catalog is descriptive. `GET /api/v1/system/research-models` requires
+an owner-authorized `project_id`; seeing a model in that catalog does not qualify
+it or authorize inference. Workers AI uses its live binding catalog. An external
+provider without an installed catalog adapter is explicitly unavailable.
+
+Migration `0106` stores immutable owner/project configuration revisions and a
+compare-and-swap selected revision. The owner routes are:
+
+- `GET /api/v1/research/projects/:project_id/model-configuration`: bounded saved
+  revision history and current selection.
+- `PUT` at the same path: `{expected_revision, select_configuration_ref}` selects
+  a saved revision only after current authority and exact model proof checks.
+- `POST .../model-configuration/revisions`: imports an exact qualified bundle
+  through the same server validator. It does not call or automatically qualify a model.
+
+The bundle pins canonical semantic bytes, the seven existing runtime values,
+and each stage's route/candidate/qualification references and hashes, provider,
+model, billing mode and transport capabilities. Provider presence, a bare hash,
+or the current active route pointer cannot substitute for these identities.
+`GET /api/v1/system/research-configuration?project_id=...` checks the selected
+bundle; a missing project selection blocks new research while history remains readable.
+
+Migration `0104` captures the bundle once per operation before workflow creation.
+Retries and recovery read that immutable capture. Workflows created before this
+migration retain the explicit legacy path; newly created workflows cannot silently
+fall back to installed environment configuration when their capture is absent.
+Changing the project selection affects subsequent runs.
+
+Owner model/spend/report template v2 separates owner configuration from a build
+generation and browser session. Execution still requires current scope, grant,
+budget and revocation authority. Exact pinned v2 qualification may survive its
+original time window; v1 retains its original expiry semantics. This does not
+permit a different candidate, proof, model or revoked authority.
+
+An optional operator-installed `ELIOTR_RESEARCH_MODEL_TRANSPORT_POLICIES_JSON`
+uses `eliotr.research-model-transport-policies.v1` and exact per-stage route,
+provider/model and transport policy. It supplies authoritative capabilities
+before qualification; qualification request bodies cannot override it. Selected
+run capabilities control the final token field and supported reasoning effort.
+BYOK carries an existing Gateway alias and prevents fallback to Unified Billing.
+Unsupported native request formats fail before inference.
+
+These contracts describe the implementation checkpoint. Local checks, production
+deployment, live model/source/MCP receipts and release acceptance are separate
+results; none is implied by this document.
+
 ## Canonical file and shape
 
 The default file is:

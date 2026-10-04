@@ -2,6 +2,7 @@ import { canonicalJson, decodeModelRouteDeployment, type ModelRouteDeployment } 
 import type { ModelAttemptPreparationContext } from "./model-attempt-handler.js";
 import { validatedRequest } from "./model-attempt-store.js";
 import { ModelAttemptError, type ModelAttemptReservationInput } from "./model-attempt-types.js";
+import type { PinnedModelSelection } from "./model-gateway-deployment-registry-d1.js";
 
 const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9:._/@-]{0,255}$/u;
 const SHA256 = /^[a-f0-9]{64}$/u;
@@ -40,6 +41,9 @@ export interface SpendAuthorizationReadback {
   readonly expires_at: string;
   /** Exact route/version/parameter/pricing binding selected by trusted server authority. */
   readonly expected_deployment: ModelRouteDeployment;
+  /** Present only when this stage was admitted from an immutable run snapshot. */
+  readonly model_selection?: PinnedModelSelection;
+  readonly run_configuration_mode?: "snapshot-v1" | "snapshot-v2";
 }
 
 export interface SpendAuthorizationReader {
@@ -48,6 +52,8 @@ export interface SpendAuthorizationReader {
 
 export interface ModelRouteAuthorityReader {
   resolve(route_ref: string): Promise<unknown | null>;
+  resolvePinned?(deployment: ModelRouteDeployment, selection: PinnedModelSelection,
+    options?: Readonly<{ allow_expired_qualification?: boolean }>): Promise<unknown | null>;
 }
 
 export interface D1ResearchModelAttemptRevalidatorInput {
@@ -345,6 +351,14 @@ function verifySpendAuthorization(
   let deployment: ModelRouteDeployment;
   try { deployment = decodeModelRouteDeployment(authorization.expected_deployment); }
   catch (cause) { stale("trusted spend authorization deployment is malformed", cause); }
+  if ((authorization.model_selection === undefined) !== (authorization.run_configuration_mode === undefined)) {
+    stale("pinned model selection and run configuration mode are incomplete");
+  }
+  if (authorization.model_selection !== undefined && authorization.run_configuration_mode !== undefined &&
+      (authorization.model_selection.route_ref !== deployment.route_ref ||
+       authorization.model_selection.route_version !== deployment.route_version)) {
+    stale("pinned model selection does not match the approved deployment");
+  }
   requireEqual(deployment.route_ref, prepared.call.route_ref, "spend deployment route");
   requireEqual(deployment.prompt_generation, prepared.call.prompt_generation, "spend deployment prompt generation");
   requireEqual(deployment.schema_generation, prepared.call.schema_generation, "spend deployment schema generation");
@@ -394,12 +408,17 @@ export function createD1ResearchModelAttemptRevalidator(
     phase = "SPEND_VERIFY";
     const expectedDeployment = verifySpendAuthorization(authorization, spendRequest, prepared, nowMs);
     phase = "ROUTE_READ";
-    const currentRaw = await input.routeAuthority.resolve(prepared.call.route_ref);
-    if (currentRaw === null) stale("active model deployment is unavailable");
+    const currentRaw = authorization.model_selection === undefined
+      ? await input.routeAuthority.resolve(prepared.call.route_ref)
+      : await (input.routeAuthority.resolvePinned?.(expectedDeployment, authorization.model_selection, {
+          allow_expired_qualification: authorization.run_configuration_mode === "snapshot-v2",
+        }) ?? Promise.reject(new Error("pinned model authority resolver is unavailable")));
+    if (currentRaw === null) stale(authorization.model_selection === undefined
+      ? "active model deployment is unavailable" : "pinned model deployment is unavailable");
     let currentDeployment: ModelRouteDeployment;
     try { currentDeployment = decodeModelRouteDeployment(currentRaw); }
-    catch (cause) { stale("active model deployment is malformed", cause); }
-    if (canonicalJson(currentDeployment) !== canonicalJson(expectedDeployment)) stale("active model deployment changed during revalidation");
+    catch (cause) { stale("current model deployment is malformed", cause); }
+    if (canonicalJson(currentDeployment) !== canonicalJson(expectedDeployment)) stale("model deployment changed during revalidation");
     phase = "FINAL_READ";
     const finalWorkflow = await readWorkflow(input.database, context, prepared);
     const finalModel = await readModel(input.database, prepared);

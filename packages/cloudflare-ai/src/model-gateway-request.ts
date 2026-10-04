@@ -1,8 +1,20 @@
 import { isResearchQuestionText } from "@eliotr/contracts";
 import type { ModelRouteDeployment } from "@eliotr/platform-cloudflare";
 import { modelGatewayExecutionFailure } from "./model-gateway-execution-contract.js";
+import type { ModelGatewayRequestCapabilitiesV1 } from "./model-gateway-transport-policy.js";
+
+export {
+  validateModelGatewayRequestCapabilities,
+  validateModelGatewayTransportPolicy,
+} from "./model-gateway-transport-policy.js";
+export type {
+  ModelGatewayApi,
+  ModelGatewayRequestCapabilitiesV1,
+  ModelGatewayTransportPolicyV1,
+} from "./model-gateway-transport-policy.js";
 
 const JSON_BODY_KEYS = new Set([
+  "max_completion_tokens",
   "max_tokens",
   "messages",
   "model",
@@ -15,6 +27,7 @@ const JSON_BODY_KEYS = new Set([
   "top_p",
 ]);
 const PARAMETER_KEYS = Object.freeze([
+  "max_completion_tokens",
   "max_tokens",
   "reasoning_effort",
   "response_format",
@@ -376,11 +389,31 @@ export async function modelGatewayDynamicRouteTarget(
   });
 }
 
-function validateRequestParameters(body: Record<string, unknown>): void {
-  safeInteger(body.max_tokens, "model request max_tokens", 1, 1_000_000);
-  if (body.reasoning_effort !== undefined &&
-      body.reasoning_effort !== "low" && body.reasoning_effort !== "medium" && body.reasoning_effort !== "high") {
-    modelGatewayExecutionFailure("MODEL_GATEWAY_REQUEST_INVALID", "model request reasoning_effort is invalid");
+function validateRequestParameters(
+  body: Record<string, unknown>,
+  capabilities?: ModelGatewayRequestCapabilitiesV1,
+): void {
+  const tokenField = capabilities?.max_output_tokens_field ?? "max_tokens";
+  const otherTokenField = tokenField === "max_tokens"
+    ? "max_completion_tokens"
+    : "max_tokens";
+  if (body[otherTokenField] !== undefined) {
+    modelGatewayExecutionFailure(
+      "MODEL_GATEWAY_REQUEST_INVALID",
+      `model request must use ${tokenField} for the selected API`,
+    );
+  }
+  safeInteger(body[tokenField], `model request ${tokenField}`, 1, 1_000_000);
+  const allowedEfforts = capabilities?.reasoning_efforts ?? ["low", "medium", "high"];
+  if (
+    body.reasoning_effort !== undefined &&
+    (typeof body.reasoning_effort !== "string" ||
+      !allowedEfforts.includes(body.reasoning_effort as "low" | "medium" | "high" | "max"))
+  ) {
+    modelGatewayExecutionFailure(
+      "MODEL_GATEWAY_REQUEST_INVALID",
+      "model request reasoning_effort is unsupported by the selected model API",
+    );
   }
   if (body.stream !== false) {
     modelGatewayExecutionFailure(
@@ -414,9 +447,10 @@ function parameterProjection(
 
 export async function modelGatewayRequestParametersSha256(
   rawBody: unknown,
+  capabilities?: ModelGatewayRequestCapabilitiesV1,
 ): Promise<string> {
   const body = exactObject(rawBody, JSON_BODY_KEYS, "model request body");
-  validateRequestParameters(body);
+  validateRequestParameters(body, capabilities);
   return modelGatewaySha256(
     canonicalModelGatewayJson(parameterProjection(body)),
   );
@@ -427,6 +461,7 @@ export async function validateModelGatewayRequestBody(
   deployment: ModelRouteDeployment,
   maximumInputBytes: number,
   maximumOutputBytes: number,
+  capabilities?: ModelGatewayRequestCapabilitiesV1,
 ): Promise<{
   readonly body: string;
   readonly parameters_sha256: string;
@@ -440,17 +475,18 @@ export async function validateModelGatewayRequestBody(
     );
   }
   validateMessages(body.messages);
-  validateRequestParameters(body);
+  validateRequestParameters(body, capabilities);
+  const tokenField = capabilities?.max_output_tokens_field ?? "max_tokens";
   const maxTokens = safeInteger(
-    body.max_tokens,
-    "model request max_tokens",
+    body[tokenField],
+    `model request ${tokenField}`,
     1,
     1_000_000,
   );
   if (maxTokens > maximumOutputBytes) {
     modelGatewayExecutionFailure(
       "MODEL_GATEWAY_REQUEST_INVALID",
-      "model request max_tokens exceeds the reserved output byte ceiling",
+      `model request ${tokenField} exceeds the reserved output byte ceiling`,
     );
   }
   const canonical = canonicalModelGatewayJson(body);
@@ -467,4 +503,32 @@ export async function validateModelGatewayRequestBody(
       canonicalModelGatewayJson(parameterProjection(body)),
     ),
   });
+}
+
+/**
+ * Prompt compilers retain their historical max_tokens field. A selected API
+ * policy may project that value onto its one supported wire field; a body
+ * containing both fields is always rejected.
+ */
+export function modelGatewayBodyForCapabilities(
+  raw: unknown,
+  capabilities: ModelGatewayRequestCapabilitiesV1,
+): unknown {
+  const body = exactObject(raw, JSON_BODY_KEYS, "model request body");
+  const tokenField = capabilities.max_output_tokens_field;
+  const otherTokenField = tokenField === "max_tokens"
+    ? "max_completion_tokens"
+    : "max_tokens";
+  if (body[tokenField] !== undefined && body[otherTokenField] !== undefined) {
+    modelGatewayExecutionFailure(
+      "MODEL_GATEWAY_REQUEST_INVALID",
+      "model request cannot contain both output token fields",
+    );
+  }
+  if (body[tokenField] !== undefined || body[otherTokenField] === undefined) {
+    return raw;
+  }
+  const normalized: Record<string, unknown> = { ...body, [tokenField]: body[otherTokenField] };
+  delete normalized[otherTokenField];
+  return normalized;
 }

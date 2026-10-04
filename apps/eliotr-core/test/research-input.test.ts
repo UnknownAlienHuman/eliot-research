@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { INSTALLED_INQUIRY_PROTOCOL_REFS, RESEARCH_RUN_REQUEST_V2 } from "@eliotr/cloudflare-research";
 import { body, count, db, principal, runtime, seedSource, setupOrientationDatabase, verifier } from "./orientation-fixture.js";
-import { admissionTestEnvironment, terminateAdmissionWorkflows } from "./research-admission-fixture.js";
+import { admissionTestEnvironment, admissionTestScopeExpression, terminateAdmissionWorkflows } from "./research-admission-fixture.js";
 import { parseResearchRunRequest } from "../src/research-session.js";
 import { SERVER_OWNED_BRANCH_HANDLER_GENERATION } from "../src/research-stage-handlers.js";
 import { handleHttp } from "../src/http.js";
@@ -20,11 +20,13 @@ afterAll(async () => {
 });
 beforeAll(async () => {
   await setupOrientationDatabase();
-  configured = await admissionTestEnvironment(runtime, principal, "s24");
+  await seedSource("s24-input");
+  configured = await admissionTestEnvironment(runtime, principal, "s24", { source_ids: ["s24-input"] });
 });
 const run = (request: Request) => handleHttp(request, configured, {} as ExecutionContext, { accessVerifier: verifier() });
 function runBody(id: string, fields: Record<string, unknown> = {}) {
-  return { query: "Source", product: "RESEARCH", scope_expression: { kind: "SELECTED_SOURCES", source_ids: [id] },
+  void id;
+  return { query: "Source", product: "RESEARCH", scope_expression: admissionTestScopeExpression("s24"),
     literals: [], evidence_grade: "E1", budget_ref: "research-budget-v1", max_results: 8, ...fields };
 }
 function runRequest(id: string, fields: Record<string, unknown>, key: string) {
@@ -48,7 +50,6 @@ describe("S24 Research question parser", () => {
 
 
 describe("S24 Research end-to-end input identity", () => {
-  beforeAll(async () => { await seedSource("s24-input"); });
   it("persists a multiline question through HTTP, ledger and immutable planning input without normalization", async () => {
     const query = "  English question\r\n\t- Русский пункт 😀\n> cited text\n".repeat(180);
     const fields = { query, request_version: RESEARCH_RUN_REQUEST_V2, inquiry_protocol_ref: INSTALLED_INQUIRY_PROTOCOL_REFS.lookup, evidence_grade: "E0" };

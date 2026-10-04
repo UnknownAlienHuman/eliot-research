@@ -8,6 +8,7 @@ import { StageRequestSchema, fail as workflowFail, textDigest, type StageRequest
 import { ModelAttemptError, type ModelAttemptAuthority, type ModelCostQuote } from "./model-attempt-types.js";
 import { deriveModelAttemptIdentity, type ModelAttemptPreparationContext } from "./model-attempt-handler.js";
 import type { SpendAuthorizationReadRequest } from "./research-model-attempt-revalidator.js";
+import type { PinnedModelSelection } from "./model-gateway-deployment-registry-d1.js";
 import {
   createD1ResearchModelSpendAdmissionPort,
   RESEARCH_MODEL_SPEND_APPROVAL_PROTOCOL,
@@ -60,14 +61,29 @@ const DelegatedPolicySchema = PolicySchema.extend({
 });
 export type ResearchModelSpendPolicy = Omit<z.infer<typeof PolicySchema>, "rules"> & { readonly rules: readonly SpendRule[] }
   | Omit<z.infer<typeof DelegatedPolicySchema>, "rules"> & { readonly rules: readonly SpendRule[] };
-const OwnerSpendPolicyTemplateSchema = PolicySchema.omit({
+const OwnerSpendPolicyTemplateV1Schema = PolicySchema.omit({
   credential_generation: true,
   policy_generation: true,
   policy_authority_ref: true,
 }).extend({ protocol: z.literal("eliotr.research-owner-spend-template.v1") });
-export type ResearchOwnerSpendPolicyTemplate = Omit<z.infer<typeof OwnerSpendPolicyTemplateSchema>, "rules"> & {
+const OwnerSpendPolicyTemplateV2Schema = PolicySchema.omit({
+  credential_generation: true,
+  policy_generation: true,
+  policy_authority_ref: true,
+  deployment_generation: true,
+  expires_at: true,
+}).extend({
+  protocol: z.literal("eliotr.research-owner-spend-template.v2"),
+  /** Optional owner-chosen sunset; operational grants still bound every run. */
+  expires_at: IsoDateTimeSchema.optional(),
+});
+type SpendTemplateV1 = Omit<z.infer<typeof OwnerSpendPolicyTemplateV1Schema>, "rules"> & {
   readonly rules: readonly SpendRule[];
 };
+type SpendTemplateV2 = Omit<z.infer<typeof OwnerSpendPolicyTemplateV2Schema>, "rules"> & {
+  readonly rules: readonly SpendRule[];
+};
+export type ResearchOwnerSpendPolicyTemplate = SpendTemplateV1 | SpendTemplateV2;
 
 /** This is installed operator approval, never a public request or an inferred scope permission. */
 export function readResearchModelSpendPolicy(raw: string | undefined, provenance: string): ResearchModelSpendPolicy {
@@ -89,7 +105,12 @@ export function readResearchModelSpendPolicy(raw: string | undefined, provenance
 export function readResearchOwnerSpendPolicyTemplate(raw: string | undefined, provenance: string): ResearchOwnerSpendPolicyTemplate {
   if (!raw || new TextEncoder().encode(raw).byteLength > 65536) stale("installed owner spend template is missing or oversized");
   try {
-    const parsed = OwnerSpendPolicyTemplateSchema.parse(JSON.parse(raw));
+    const decoded: unknown = JSON.parse(raw);
+    const protocol = typeof decoded === "object" && decoded !== null && !Array.isArray(decoded)
+      ? (decoded as { protocol?: unknown }).protocol : undefined;
+    const parsed = protocol === "eliotr.research-owner-spend-template.v2"
+      ? OwnerSpendPolicyTemplateV2Schema.parse(decoded)
+      : OwnerSpendPolicyTemplateV1Schema.parse(decoded);
     if (parsed.config_provenance_ref !== provenance || !validRuleStages(parsed.rules)) {
       stale("installed owner spend template provenance or stage selection is invalid");
     }
@@ -132,7 +153,18 @@ export interface ResearchModelSpendPolicyServiceInput {
   readonly navigation: NavigationReadAuthority;
   readonly operation_id: string;
   readonly policy: ResearchModelSpendPolicy;
-  readonly deployment_registry: { resolve(route: string): Promise<unknown | null> };
+  readonly deployment_registry: {
+    resolve(route: string): Promise<unknown | null>;
+    resolvePinned?(deployment: ModelRouteDeployment, selection: PinnedModelSelection,
+      options?: Readonly<{ allow_expired_qualification?: boolean }>): Promise<unknown | null>;
+  };
+  /** Validated immutable run-configuration association supplied by the Worker snapshot reader. */
+  readonly run_configuration?: Readonly<{
+    readonly mode: "legacy-installed" | "snapshot-v1" | "snapshot-v2";
+    readonly configuration_ref: string;
+    readonly configuration_sha256: string;
+    readonly model_selections?: readonly (PinnedModelSelection & { readonly stage: string })[];
+  }>;
   readonly now?: () => number;
 }
 
@@ -166,6 +198,31 @@ export function createResearchModelSpendPolicyService(input: ResearchModelSpendP
   const now = input.now ?? Date.now;
   const policySha = modelGatewaySha256(canonicalJson(policy));
   const navigation = input.navigation;
+  const runConfiguration = input.run_configuration;
+
+  function pinnedSelection(stage: string, deployment: ModelRouteDeployment): PinnedModelSelection {
+    if ((runConfiguration?.mode !== "snapshot-v1" && runConfiguration?.mode !== "snapshot-v2") ||
+        !/^rrc-[a-f0-9]{24}$/u.test(runConfiguration.configuration_ref) ||
+        !/^[a-f0-9]{64}$/u.test(runConfiguration.configuration_sha256) ||
+        !runConfiguration.model_selections) {
+      stale("snapshot model authority requires an immutable run configuration selection");
+    }
+    const matches = runConfiguration.model_selections.filter((selection) => selection.stage === stage);
+    if (matches.length !== 1) stale("run configuration does not select one exact model qualification for this stage");
+    const selection = matches[0];
+    if (selection === undefined) stale("run configuration does not select one exact model qualification for this stage");
+    if (selection.route_ref !== deployment.route_ref || selection.route_version !== deployment.route_version) {
+      stale("selected model candidate differs from the pinned stage deployment");
+    }
+    return Object.freeze({
+      route_ref: selection.route_ref,
+      route_version: selection.route_version,
+      candidate_ref: selection.candidate_ref,
+      candidate_sha256: selection.candidate_sha256,
+      qualification_ref: selection.qualification_ref,
+      qualification_sha256: selection.qualification_sha256,
+    });
+  }
 
   async function current(attempt: string, requestSha: string) {
     const grant = await navigation.current();
@@ -200,11 +257,25 @@ export function createResearchModelSpendPolicyService(input: ResearchModelSpendP
     const request = StageRequestSchema.parse(JSON.parse(row.request_json));
     if (JSON.stringify(request) !== row.request_json || await textDigest(row.request_json) !== row.request_sha256 ||
         request.stage !== stage || request.operation_id !== input.operation_id) stale("current model stage request is invalid");
-    const deployment = decodeModelRouteDeployment(await input.deployment_registry.resolve(rule.deployment.route_ref));
+    const runMode = runConfiguration?.mode;
+    const pinned = runMode === "snapshot-v1" || runMode === "snapshot-v2";
+    const rawDeployment = pinned
+      ? await (input.deployment_registry.resolvePinned?.(rule.deployment, pinnedSelection(stage, rule.deployment), {
+          allow_expired_qualification: runMode === "snapshot-v2",
+        }) ??
+        Promise.reject(new Error("pinned model resolver is unavailable")))
+      : await input.deployment_registry.resolve(rule.deployment.route_ref);
+    const deployment = decodeModelRouteDeployment(rawDeployment);
     if (canonicalJson(deployment) !== canonicalJson(rule.deployment)) stale("installed model route is no longer the approved deployment");
     const identity = await deriveModelAttemptIdentity({ stage_request_sha256: row.request_sha256,
       principal_ref: row.principal_ref, credential_generation: row.credential_generation, deployment_generation: row.deployment_generation });
-    const decisionRef = `model-policy-${await policySha}-${row.request_sha256.slice(0,32)}`;
+    const configurationIdentity = runConfiguration === undefined ? null : {
+      configuration_ref: runConfiguration.configuration_ref,
+      configuration_sha256: runConfiguration.configuration_sha256,
+      mode: runConfiguration.mode,
+    };
+    const decisionRef = `model-policy-${await modelGatewaySha256(canonicalJson({ policy_sha256: await policySha,
+      configuration: configurationIdentity }))}-${row.request_sha256.slice(0,32)}`;
     const authority: ModelAttemptAuthority = {
       principal_ref: row.principal_ref, client_class: policy.client_class, policy_decision_ref: decisionRef,
       scope_snapshot_ref: { id: row.scope_snapshot_id, revision: row.scope_snapshot_revision },
@@ -212,11 +283,17 @@ export function createResearchModelSpendPolicyService(input: ResearchModelSpendP
       policy_generation: row.policy_generation,
       currentness_digest: await modelGatewaySha256(canonicalJson({ policy_sha256: await policySha,
         authorization_receipt_ref: row.authorization_receipt_ref, scope_digest: navigation.scope.digest,
-        purge_revision: row.purge_revision, stage_request_sha256: row.request_sha256 })),
+        purge_revision: row.purge_revision, stage_request_sha256: row.request_sha256,
+        configuration: configurationIdentity,
+        ...(pinned ? { model_selection: pinnedSelection(stage, rule.deployment) } : {}) })),
       expires_at: new Date(expires).toISOString(),
     };
     if (canonicalJson(await navigation.current()) !== canonicalJson(grant)) stale("model authorization changed while reading policy");
-    return { row, rule, request, deployment, identity, authority };
+    const selected = runMode === "snapshot-v1" || runMode === "snapshot-v2"
+      ? pinnedSelection(stage, rule.deployment) : undefined;
+    return { row, rule, request, deployment, identity, authority,
+      ...(selected === undefined ? {} : { model_selection: selected,
+        run_configuration_mode: runMode as "snapshot-v1" | "snapshot-v2" }) };
   }
 
   async function readCurrent(request: SpendAuthorizationReadRequest): Promise<ResearchModelSpendCurrentAuthority> {
@@ -225,7 +302,9 @@ export function createResearchModelSpendPolicyService(input: ResearchModelSpendP
       // sha. The role-level W3 identity intentionally differs; the role binding
       // is validated by admitBranchRole and by the port's assertRequest.
       const value = await current(request.stage_attempt_ref, request.workflow_stage_request_sha256);
-      return { authority: value.authority, expected_deployment: value.deployment };
+      return { authority: value.authority, expected_deployment: value.deployment,
+        ...(value.model_selection === undefined ? {} : { model_selection: value.model_selection,
+          run_configuration_mode: value.run_configuration_mode }) };
     }
     const value = await current(request.stage_attempt_ref, request.stage_request_sha256);
     if (request.operation_id !== value.identity.operation_id || request.principal_ref !== value.authority.principal_ref ||
@@ -233,7 +312,9 @@ export function createResearchModelSpendPolicyService(input: ResearchModelSpendP
         canonicalJson(request.scope_snapshot_ref) !== canonicalJson(value.authority.scope_snapshot_ref) ||
         request.reservation_id !== `model-reservation-${value.row.request_sha256}` ||
         request.quote_ref !== `model-quote-${value.row.request_sha256}`) stale("spend readback is outside the exact approved call");
-    return { authority: value.authority, expected_deployment: value.deployment };
+    return { authority: value.authority, expected_deployment: value.deployment,
+      ...(value.model_selection === undefined ? {} : { model_selection: value.model_selection,
+        run_configuration_mode: value.run_configuration_mode }) };
   }
 
   const admissions = createD1ResearchModelSpendAdmissionPort(input.database, { read_current_authority: readCurrent, now });

@@ -190,6 +190,9 @@ importers:
       '@eliotr/backup-o2':
         specifier: workspace:*
         version: link:../backup-o2
+      '@eliotr/cloudflare-erasure':
+        specifier: workspace:*
+        version: link:../cloudflare-erasure
       '@eliotr/contracts':
         specifier: workspace:*
         version: link:../contracts

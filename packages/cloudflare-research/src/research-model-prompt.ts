@@ -6,6 +6,7 @@ import {
   validateModelGatewayRequestBody,
   type CompiledModelGatewayPrompt,
   type ModelCallInput,
+  type ModelGatewayRequestCapabilitiesV1,
   type ModelGatewayPromptCompilerPort,
 } from "@eliotr/cloudflare-ai";
 import type { ModelRouteDeployment } from "@eliotr/platform-cloudflare";
@@ -17,7 +18,7 @@ import type {
 export interface TrustedModelPromptParameters {
   readonly prompt: string;
   readonly max_tokens: number;
-  readonly reasoning_effort?: "low" | "medium" | "high";
+  readonly reasoning_effort?: "low" | "medium" | "high" | "max";
   readonly response_format?: unknown;
   readonly seed?: number;
   readonly stop?: string | readonly string[];
@@ -35,6 +36,8 @@ export interface ResearchModelPromptCompilerDependencies {
     input: ModelCallInput,
     deployment: ModelRouteDeployment,
   ) => Promise<TrustedModelPromptParameters>;
+  /** Omitted for legacy callers; selected-model capabilities fail closed. */
+  readonly request_capabilities?: ModelGatewayRequestCapabilitiesV1;
   readonly request_timeout_ms: number;
 }
 
@@ -42,6 +45,26 @@ const SHA256 = /^[a-f0-9]{64}$/u;
 
 function fail(message: string): never {
   throw new ModelGatewayExecutionError("MODEL_GATEWAY_PROMPT_COMPILE_FAILED", message);
+}
+
+function parseRequestCapabilities(
+  value: ModelGatewayRequestCapabilitiesV1,
+): ModelGatewayRequestCapabilitiesV1 {
+  if (value === null || typeof value !== "object" || Array.isArray(value) ||
+      Object.getPrototypeOf(value) !== Object.prototype ||
+      Object.keys(value).sort().join(",") !== "max_output_tokens_field,reasoning_efforts" ||
+      (value.max_output_tokens_field !== "max_tokens" &&
+       value.max_output_tokens_field !== "max_completion_tokens") ||
+      !Array.isArray(value.reasoning_efforts) || value.reasoning_efforts.length > 4 ||
+      value.reasoning_efforts.some((effort) => effort !== "low" && effort !== "medium" &&
+        effort !== "high" && effort !== "max") ||
+      new Set(value.reasoning_efforts).size !== value.reasoning_efforts.length) {
+    fail("selected model request capabilities are invalid");
+  }
+  return Object.freeze({
+    max_output_tokens_field: value.max_output_tokens_field,
+    reasoning_efforts: Object.freeze([...value.reasoning_efforts]),
+  });
 }
 
 function refKey(ref: { readonly id: string; readonly revision: number }): string {
@@ -112,6 +135,10 @@ export function createResearchModelPromptCompiler(
       dependencies.request_timeout_ms < 1 || dependencies.request_timeout_ms > 300_000) {
     fail("trusted model request timeout is invalid");
   }
+  let requestCapabilities: ModelGatewayRequestCapabilitiesV1 | undefined;
+  if (dependencies.request_capabilities !== undefined) {
+    requestCapabilities = parseRequestCapabilities(dependencies.request_capabilities);
+  }
 
   return {
     async compile(input, deployment): Promise<CompiledModelGatewayPrompt> {
@@ -131,13 +158,14 @@ export function createResearchModelPromptCompiler(
       const prompt = await dependencies.resolve_trusted_parameters(input, deployment);
       assertTrustedParameters(prompt);
       const target = await modelGatewayDynamicRouteTarget(deployment);
+      const tokenField = requestCapabilities?.max_output_tokens_field ?? "max_tokens";
       const body = {
         model: target.model,
         messages: [
           { role: "system", content: built.compiled.system_instructions.join("\n") },
           { role: "user", content: userPayload(input, deployment, built.compiled, prompt) },
         ],
-        max_tokens: prompt.max_tokens,
+        [tokenField]: prompt.max_tokens,
         ...(prompt.reasoning_effort === undefined ? {} : { reasoning_effort: prompt.reasoning_effort }),
         stream: false,
         response_format: prompt.response_format,
@@ -151,6 +179,7 @@ export function createResearchModelPromptCompiler(
         deployment,
         input.max_input_bytes,
         input.max_output_bytes,
+        requestCapabilities,
       );
       const requestBodySha256 = await modelGatewaySha256(validated.body);
       if (!SHA256.test(requestBodySha256)) fail("compiled model request digest is invalid");
