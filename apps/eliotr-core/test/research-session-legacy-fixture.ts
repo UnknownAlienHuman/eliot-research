@@ -10,7 +10,7 @@ import {
   profile as indexedRetrievalProfile,
   runtime as indexedRetrievalRuntime,
 } from "./research-retrieve-fixture.js";
-import { SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION, SERVER_RETRIEVAL_SCOPE_PROFILE } from "../src/research-stage-handlers.js";
+import { SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION, SERVER_RETRIEVAL_SCOPE_PROFILE } from "@eliotr/cloudflare-research-runtime/research-stage-handlers.js";
 
 export interface HistoricalV2SessionFixture {
   readonly db: D1Database;

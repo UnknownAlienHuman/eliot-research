@@ -1,4 +1,4 @@
-import { CatalogInputError } from "./catalog-service.js";
+import { CatalogInputError } from "@eliotr/cloudflare-navigation";
 
 export class ResearchServiceError extends CatalogInputError {}
 

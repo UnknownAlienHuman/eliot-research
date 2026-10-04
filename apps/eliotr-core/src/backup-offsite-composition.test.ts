@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { BackupDestinationPolicy } from "@eliotr/platform-cloudflare";
-import { createInstalledBackupOffsiteR2Resolver } from "./backup-offsite-composition.js";
+import { createInstalledBackupOffsiteR2Resolver } from "@eliotr/cloudflare-backup";
 const endpoint = "https://" + "a".repeat(32) + ".r2.cloudflarestorage.com";
 const profile = { protocol: "eliotr.backup-offsite-r2-config.v1", provider_kind: "cloudflare-r2", bucket_versioning: "disabled", region: "auto", destination_id: "offsite", endpoint_identity: "offsite-endpoint", authorization_receipt_ref: "destination-approved", endpoint, bucket: "offsite-ciphertext" } as const;
 const policy: BackupDestinationPolicy = { destination_id: "offsite", endpoint_identity: "offsite-endpoint", authorization_receipt_ref: "destination-approved", failure_domain: "independent-account", supports_deletion_journal: true, supports_expiry: true, retention_locked: false, retention_policy_ref: "retention-v1", expiry_identity: "expiry-v1", policy_version: "1", owner_ref: "owner" };

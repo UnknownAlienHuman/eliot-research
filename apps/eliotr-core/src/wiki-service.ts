@@ -18,7 +18,7 @@ import {
   type WikiStorageRuntime,
   type WikiVerifiedActor,
 } from "@eliotr/cloudflare-wiki";
-import { CatalogInputError } from "./catalog-service.js";
+import { CatalogInputError } from "@eliotr/cloudflare-navigation";
 import type { AuthenticatedRequestContext } from "@eliotr/interfaces";
 import type { Env } from "./env.js";
 import {

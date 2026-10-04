@@ -1,7 +1,7 @@
 import type { canonicalModelGatewayJson, modelGatewaySha256 } from "@eliotr/cloudflare-ai";
 import type { selectResearchOwnerPrompt } from "@eliotr/cloudflare-research-stages";
-import type { createResearchOwnerSemanticConfiguration } from "../src/research-owner-semantic-config.js";
-import type { ResearchOwnerRuntimeConfigurationInput } from "../src/research-owner-runtime-config.js";
+import type { createResearchOwnerSemanticConfiguration } from "@eliotr/cloudflare-research-configuration/research-owner-semantic-config.js";
+import type { ResearchOwnerRuntimeConfigurationInput } from "@eliotr/cloudflare-research-configuration/research-owner-runtime-config.js";
 
 export interface AdmissionPromptBindingDependencies {
   readonly canonicalModelGatewayJson: typeof canonicalModelGatewayJson;

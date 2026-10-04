@@ -1,6 +1,6 @@
 import type { AuthenticatedRequestContext } from "@eliotr/interfaces";
 import { EvidenceSourcePageError, readMcpSourcePage as readCapability } from "@eliotr/cloudflare-evidence";
-import { CatalogInputError, decodeCatalogCursor, encodeCatalogCursor, validateRequestIdentifier } from "./catalog-service.js";
+import { CatalogInputError, decodeCatalogCursor, encodeCatalogCursor, validateRequestIdentifier } from "@eliotr/cloudflare-navigation";
 import { readProjectSourceContent } from "./source-content.js";
 import type { Env } from "./env.js";
 

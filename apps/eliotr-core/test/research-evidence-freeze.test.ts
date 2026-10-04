@@ -5,7 +5,7 @@ import { createWorkflowCheckpointExecutor, textDigest, WorkflowCheckpointStore, 
 import { RESEARCH_WORKFLOW_STAGES } from "@eliotr/domain";
 import { freezeFixture, principal } from "./research-evidence-freeze-fixture.js";
 import { committedFreezeSynthesisFixture } from "./research-synthesis-fixture.js";
-import { createResearchStageHandlerFactory, SERVER_OWNED_FREEZE_HANDLER_GENERATION } from "../src/research-stage-handlers.js";
+import { createResearchStageHandlerFactory, SERVER_OWNED_FREEZE_HANDLER_GENERATION } from "@eliotr/cloudflare-research-runtime/research-stage-handlers.js";
 import { createEvidenceFreezeVerificationContextReader } from "../../../packages/cloudflare-research/src/research-evidence-freeze-composition.js";
 import {
   createResearchVerificationStageHandler,

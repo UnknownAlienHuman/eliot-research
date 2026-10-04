@@ -11,7 +11,7 @@ import {
   type ResolvedResearchRunConfiguration,
   type SelectedResearchProjectConfiguration,
 } from "./research-run-configuration.js";
-import { ResearchRunProjectSelectionFailure } from "./research-run-configuration-errors.js";
+import { ResearchRunProjectSelectionFailure } from "@eliotr/cloudflare-research-runtime";
 import {
   createResearchProjectModelConfigurationServiceFromEnv,
   readSelectedResearchProjectConfiguration,

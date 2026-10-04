@@ -7,7 +7,7 @@ import { createD1EvidenceAuthorityPort, evidenceSha256, evidenceSha256Bytes } fr
 import {
   loadHeldResearchScope,
   retrieveWithHeldScope,
-} from "../src/research-retrieval-composition.js";
+} from "@eliotr/cloudflare-research-runtime/research-retrieval-composition.js";
 import {
   body,
   count,

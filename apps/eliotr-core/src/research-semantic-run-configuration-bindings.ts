@@ -6,7 +6,7 @@ import {
 import type { ResolvedResearchRunConfiguration } from "./research-run-configuration.js";
 import { readResearchRunConfiguration } from "./research-run-configuration.js";
 import type { Env } from "./env.js";
-import type { ResearchStageHandlerFactory } from "./research-stage-handlers.js";
+import type { ResearchStageHandlerFactory } from "@eliotr/cloudflare-research-runtime/research-stage-handlers.js";
 
 export { bindResearchSemanticStageModelTransports } from
   "@eliotr/cloudflare-research-runtime/research-semantic-run-configuration-bindings.js";

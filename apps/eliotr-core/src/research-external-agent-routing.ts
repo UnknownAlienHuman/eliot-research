@@ -12,7 +12,7 @@ import {
   ComputerAgentRouteError,
   requireComputerAgentRunRouteBinding,
 } from "./computer-agent-route-store.js";
-import type { ResearchStageHandlerFactory } from "./research-stage-handlers.js";
+import type { ResearchStageHandlerFactory } from "@eliotr/cloudflare-research-runtime/research-stage-handlers.js";
 
 export interface ResearchExternalAgentRoutingInput {
   readonly base: ResearchStageHandlerFactory;

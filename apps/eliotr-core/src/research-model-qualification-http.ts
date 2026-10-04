@@ -16,7 +16,7 @@ import type { AuthenticatedRequestContext } from "@eliotr/interfaces";
 import { readJsonBodyWithinBytes } from "./bounded-json.js";
 import type { Env } from "./env.js";
 import { apiResult, HttpRequestError } from "./http.js";
-import { createResearchOwnerRoutePlan } from "./research-owner-route-plan.js";
+import { createResearchOwnerRoutePlan } from "@eliotr/cloudflare-research-configuration/research-owner-route-plan.js";
 import {
   isQualificationExecutionError,
   qualificationFailureTitle,

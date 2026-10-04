@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { constants as fsConstants } from "node:fs";
+import { lstat, mkdir, open, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { APPROVED_RUNTIME_CONFIGURATION_VARIABLES, assertGeneratedOwnerTemplatesCurrent,
@@ -40,9 +41,129 @@ const provisioners = ["provision-cloudflare-access", "provision-cloudflare-core"
 const SEMANTIC_SERVER_CONFIGURATION_KEYS = RESEARCH_RUNTIME_CONFIGURATION_KEYS;
 const FULL_RELEASE_PURPOSE = "FULL_RELEASE";
 const MAINTENANCE_PURPOSE = "MAINTENANCE";
+const DEPLOYMENT_SECRET_BINDING = "ELIOTR_MODEL_PROVIDER_CONTROL_TOKEN";
+const MAX_DEPLOYMENT_SECRETS_FILE_BYTES = 16 * 1024;
+const MAX_DEPLOYMENT_SECRET_VALUE_BYTES = 8 * 1024;
+const DEPLOYMENT_SECRETS_PATH_PATTERN = /^[A-Za-z0-9._/\\: -]+$/u;
+
+function resolveDeploymentSecretsPath(value) {
+  if (typeof value !== "string" || value.length === 0 || value.trim() !== value || !isAbsolute(value)) {
+    throw new Error("Deployment secrets file path must be an absolute path");
+  }
+  const resolved = resolve(value);
+  if (!DEPLOYMENT_SECRETS_PATH_PATTERN.test(resolved)) {
+    throw new Error("Deployment secrets file path contains unsupported shell characters");
+  }
+  return resolved;
+}
+
+function secretFileIdentity(stats) {
+  return Object.freeze({ dev: stats.dev, ino: stats.ino, mode: stats.mode, size: stats.size,
+    mtimeMs: stats.mtimeMs, ctimeMs: stats.ctimeMs, birthtimeMs: stats.birthtimeMs });
+}
+
+function sameSecretFileIdentity(left, right) {
+  return left.dev === right.dev && left.ino === right.ino && left.mode === right.mode &&
+    left.size === right.size && left.mtimeMs === right.mtimeMs && left.ctimeMs === right.ctimeMs &&
+    left.birthtimeMs === right.birthtimeMs;
+}
+
+async function readBoundedSecretFile(path) {
+  let handle;
+  try {
+    const pathBefore = await lstat(path);
+    if (!pathBefore.isFile() || pathBefore.isSymbolicLink() || pathBefore.size > MAX_DEPLOYMENT_SECRETS_FILE_BYTES) {
+      throw new Error("invalid deployment secrets file");
+    }
+    handle = await open(path, fsConstants.O_RDONLY);
+    const opened = await handle.stat();
+    const identity = secretFileIdentity(pathBefore);
+    if (!opened.isFile() || !sameSecretFileIdentity(identity, secretFileIdentity(opened))) {
+      throw new Error("deployment secrets file identity changed");
+    }
+    const buffer = Buffer.alloc(MAX_DEPLOYMENT_SECRETS_FILE_BYTES + 1);
+    let offset = 0;
+    while (offset < buffer.length) {
+      const { bytesRead } = await handle.read(buffer, offset, buffer.length - offset, offset);
+      if (bytesRead === 0) break;
+      offset += bytesRead;
+    }
+    if (offset > MAX_DEPLOYMENT_SECRETS_FILE_BYTES) throw new Error("deployment secrets file is oversized");
+    const afterRead = await handle.stat();
+    const pathAfter = await lstat(path);
+    if (!pathAfter.isFile() || pathAfter.isSymbolicLink() ||
+        !sameSecretFileIdentity(identity, secretFileIdentity(afterRead)) ||
+        !sameSecretFileIdentity(identity, secretFileIdentity(pathAfter)) || afterRead.size !== offset) {
+      throw new Error("deployment secrets file changed while reading");
+    }
+    return { identity, bytes: buffer.subarray(0, offset) };
+  } catch {
+    throw new Error("Deployment secrets file could not be verified");
+  } finally {
+    if (handle !== undefined) await handle.close().catch(() => {});
+  }
+}
+
+function validateDeploymentSecretsBytes(bytes) {
+  if (bytes.byteLength === 0 || bytes.byteLength > MAX_DEPLOYMENT_SECRETS_FILE_BYTES) {
+    throw new Error("Deployment secrets file is invalid");
+  }
+  let parsed;
+  try {
+    const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    parsed = JSON.parse(text);
+  } catch {
+    throw new Error("Deployment secrets file must contain valid UTF-8 JSON");
+  }
+  if (parsed === null || Array.isArray(parsed) || typeof parsed !== "object" ||
+      Object.keys(parsed).length !== 1 || !Object.hasOwn(parsed, DEPLOYMENT_SECRET_BINDING) ||
+      typeof parsed[DEPLOYMENT_SECRET_BINDING] !== "string" ||
+      Buffer.byteLength(parsed[DEPLOYMENT_SECRET_BINDING], "utf8") === 0 ||
+      Buffer.byteLength(parsed[DEPLOYMENT_SECRET_BINDING], "utf8") > MAX_DEPLOYMENT_SECRET_VALUE_BYTES) {
+    throw new Error("Deployment secrets file must contain only the provider control-token secret");
+  }
+}
+
+async function pinDeploymentSecretsFile(path) {
+  const resolved = resolveDeploymentSecretsPath(path);
+  const snapshot = await readBoundedSecretFile(resolved);
+  validateDeploymentSecretsBytes(snapshot.bytes);
+  return Object.freeze({ path: resolved, identity: snapshot.identity, bytes: Buffer.from(snapshot.bytes) });
+}
+
+async function requireUnchangedDeploymentSecretsFile(pin) {
+  const snapshot = await readBoundedSecretFile(pin.path);
+  if (!sameSecretFileIdentity(pin.identity, snapshot.identity) || !pin.bytes.equals(snapshot.bytes)) {
+    throw new Error("Deployment secrets file changed after validation");
+  }
+}
+
+export function parseDeploymentArguments(args) {
+  const flags = new Set();
+  let secretsFilePath;
+  for (let index = 0; index < args.length; index += 1) {
+    const argument = args[index];
+    if (argument === "--secrets-file") {
+      if (secretsFilePath !== undefined || index + 1 >= args.length || args[index + 1].startsWith("--")) {
+        throw new Error("Deployment arguments are invalid");
+      }
+      secretsFilePath = resolveDeploymentSecretsPath(args[index + 1]);
+      index += 1;
+      continue;
+    }
+    if (!["--confirm-live", "--maintenance"].includes(argument) || flags.has(argument)) {
+      throw new Error("Deployment arguments are invalid");
+    }
+    flags.add(argument);
+  }
+  return { confirmLive: flags.has("--confirm-live"), purpose: flags.has("--maintenance") ? MAINTENANCE_PURPOSE : FULL_RELEASE_PURPOSE,
+    ...(secretsFilePath === undefined ? {} : { secretsFilePath }) };
+}
 
 function run(command, args, cwd, env) {
-  const result = spawnSync(command, args, { cwd, env, stdio: "inherit", shell: process.platform === "win32" });
+  const spawnArgs = process.platform === "win32" ? args.map((argument, index) =>
+    args[index - 1] === "--secrets-file" ? `"${argument}"` : argument) : args;
+  const result = spawnSync(command, spawnArgs, { cwd, env, stdio: "inherit", shell: process.platform === "win32" });
   if (result.error || result.status !== 0) throw new Error(`Deployment command failed: ${command} (exit ${result.status ?? "unknown"})`);
 }
 
@@ -85,7 +206,7 @@ async function saveReceipt(receipt) {
 }
 
 /** Effects are explicit so failure ordering can be tested without Cloudflare credentials. */
-export async function deployCloudflare({ confirmLive = false, environment = process.env,
+export async function deployCloudflare({ confirmLive = false, secretsFilePath, environment = process.env,
   execute = run, captureCommand = capture, read = readFile, archive = archiveReceipt,
   save = saveReceipt, fetchImpl = fetch, now = Date.now, log = console.log,
   verifyCode = assertLaunchCodeComplete, readWranglerFile, runWranglerWhoami,
@@ -103,6 +224,10 @@ export async function deployCloudflare({ confirmLive = false, environment = proc
   attestBundle = attestDeploymentBundle, checkBundle = requireUnchangedDeploymentBundle,
   readAssetManifest = readDeploymentAssetManifest } = {}) {
   if (![FULL_RELEASE_PURPOSE, MAINTENANCE_PURPOSE].includes(purpose)) throw new Error("Deployment purpose is invalid");
+  if (secretsFilePath !== undefined && !confirmLive) {
+    throw new Error("A deployment secrets file requires a confirmed live deployment");
+  }
+  const deploymentSecretsFile = secretsFilePath === undefined ? null : await pinDeploymentSecretsFile(secretsFilePath);
   const env = await loadResearchRuntimeEnvironment(environment, root);
   const maintenanceRouteUpdatePath = env.ELIOTR_MAINTENANCE_ROUTE_UPDATE_FILE;
   if (maintenanceRouteUpdatePath !== undefined &&
@@ -174,6 +299,7 @@ export async function deployCloudflare({ confirmLive = false, environment = proc
   const maintenanceAiGatewayReadbacks = {};
   let sourceBudgetState = null;
   let sourceBudgetFindings = null;
+  let deploymentUploadCompleted = false;
   if (confirmLive) {
     if (purpose === FULL_RELEASE_PURPOSE) await verifyCode();
     else {
@@ -461,6 +587,9 @@ export async function deployCloudflare({ confirmLive = false, environment = proc
   };
   let workerBundle = null;
   const requireUnchangedInputs = async () => {
+    if (deploymentSecretsFile !== null && !deploymentUploadCompleted) {
+      await requireUnchangedDeploymentSecretsFile(deploymentSecretsFile);
+    }
     if (routeUpdate !== null) await requireUnchangedMaintenanceRouteUpdate({ routeUpdate });
     if (maintenanceAiSearchBootstrap !== null) {
       await requireUnchangedMaintenanceAiSearchBootstrap({ bootstrap: maintenanceAiSearchBootstrap });
@@ -540,8 +669,14 @@ export async function deployCloudflare({ confirmLive = false, environment = proc
     }
   }
   // Canonical generated vars win; Wrangler preserves secrets without --keep-vars.
-  exec("pnpm", ["exec", "wrangler", "deploy", workerBundle.entrypoint,
-    "--no-bundle", "--config", deployConfig], core);
+  const deployArgs = ["exec", "wrangler", "deploy", workerBundle.entrypoint,
+    "--no-bundle", "--config", deployConfig];
+  if (deploymentSecretsFile !== null) {
+    await requireUnchangedDeploymentSecretsFile(deploymentSecretsFile);
+    deployArgs.push("--secrets-file", deploymentSecretsFile.path);
+  }
+  exec("pnpm", deployArgs, core);
+  deploymentUploadCompleted = true;
   await requireUnchangedInputs();
   const worker = await readWorker(env, input, config, { fetchImpl });
   let assetReadback = await verifyDeploymentAssets(assetManifest, input, { fetchImpl: ownerFetch });
@@ -690,15 +825,16 @@ export async function deployCloudflare({ confirmLive = false, environment = proc
 }
 
 if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
-  const args = process.argv.slice(2);
-  const allowed = new Set(["--confirm-live", "--maintenance"]);
-  if (args.some((argument) => !allowed.has(argument)) || new Set(args).size !== args.length) {
+  let parsed;
+  try {
+    parsed = parseDeploymentArguments(process.argv.slice(2));
+  } catch {
     console.error("Deployment arguments are invalid");
     process.exitCode = 2;
-  } else {
-    await deployCloudflare({ confirmLive: args.includes("--confirm-live") ||
-      process.env.ELIOTR_CONFIRM_LIVE_DEPLOY === "1",
-    purpose: args.includes("--maintenance") ? MAINTENANCE_PURPOSE : FULL_RELEASE_PURPOSE }).catch((error) => {
+  }
+  if (parsed !== undefined) {
+    parsed.confirmLive ||= process.env.ELIOTR_CONFIRM_LIVE_DEPLOY === "1";
+    await deployCloudflare(parsed).catch((error) => {
       console.error(error.message);
       process.exitCode = 1;
     });

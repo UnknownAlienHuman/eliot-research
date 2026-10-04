@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { canonicalEvidenceJson, evidenceSha256, createD1EvidenceAuthorityPort, createD1ScopeSnapshotStore, readD1ScopeSnapshot } from "@eliotr/cloudflare-evidence";
 import { scopeSnapshotDigestPayload, scopeSnapshotIdentityPayload } from "@eliotr/domain";
 import type { ScopeSnapshot } from "@eliotr/contracts";
-import { type ScopeRepository } from "../src/scope-service.js";
+import { type ScopeRepository } from "@eliotr/cloudflare-navigation";
 import { createD1ScopeService } from "@eliotr/cloudflare-navigation";
 
 const NOW = Date.parse("2026-09-04T23:00:00.000Z");

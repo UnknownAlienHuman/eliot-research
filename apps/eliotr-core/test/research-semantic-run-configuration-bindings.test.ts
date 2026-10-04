@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { ResearchModelGatewayRuntimeConfig } from "@eliotr/cloudflare-research";
 import type { WorkflowPrincipal } from "@eliotr/cloudflare-workflows";
 import type { Env } from "../src/env.js";
-import type { ResearchStageHandlerFactory } from "../src/research-stage-handlers.js";
+import type { ResearchStageHandlerFactory } from "@eliotr/cloudflare-research-runtime/research-stage-handlers.js";
 import {
   bindHandlersToRunConfiguration,
   bindResearchSemanticStageModelTransports,

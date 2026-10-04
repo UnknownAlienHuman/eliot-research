@@ -1,7 +1,7 @@
 # Backend delivery plan
 
 Current execution order, refreshed on 2026-10-04 against `main`
-`b4b7dcfee2a76c133260b474e36041dcf156c622`.
+`f1e56cc85113e1ef93fd57a4e61573db031537ac`.
 
 The [October 3 functional integration checkpoint](product-resume-2026-10-03.md)
 records the owner configuration, immutable run capture, MCP, provisioning and
@@ -38,6 +38,17 @@ Compatibility adapters retain existing callers and canonical error identity.
 Duplicate semantic-stage preparation was removed from Core so the Runtime
 assembler performs it once.
 
+The follow-up assembly removes 60 pure Core compatibility facades and redirects
+their callers, including compiled-module test/operator loaders, to the existing
+capability libraries. Google Exchange now owns strict OAuth transport parsing;
+Workspace MCP owns diagnostic consumption, tool-operation preparation and durable
+project-membership checks; Research Runtime owns the admitted Workflow application;
+Cloudflare AI composes the projection delivery handler. Core retains verified
+identity creation, actual Worker binding composition, artifact reauthorization,
+request liveness and post-operation authority checks. Stored protocols, SQL,
+error identity and execution order are preserved by source review; behavioral
+regressions remain pending after the assembled checkpoint.
+
 Configuration status now uses the canonical semantic schema, including roles
 and max-effort fields. This repairs rejection by the old duplicated validator;
 it is a behavior change. Positive, boundary-size and refusal regressions were
@@ -53,6 +64,14 @@ Raw request/response bytes and their recomputed digests remain distinct from
 corpus EvidenceHandles and residency objects. OpenRouter requests enforce zero
 maximum prices and disabled provider fallback; a zero-price quote is not a
 measured provider invoice or a permanent entitlement to a free model.
+
+The guarded deployment accepts an explicit absolute `--secrets-file` path for
+Wrangler's native secret upload in the final Worker deployment. Its bounded
+UTF-8 JSON may contain only the string `ELIOTR_MODEL_PROVIDER_CONTROL_TOKEN`;
+the file is pinned and checked again before upload. The option does not feed
+the token into generated vars, dry runs, logs or deployment receipts, and
+does not change existing deployment arguments when omitted. Actual token
+installation and provider-key readback remain pending.
 
 The new, unapplied observation tables use explicitly named canonical Base64
 TEXT columns for the bounded raw bodies. Readers decode them losslessly and
@@ -80,11 +99,16 @@ preserved; wrong column access, missing composite uniqueness, premature proof
 binding and oversized preparation/proof guards were repaired without changing
 the table columns. The ten backup column specs match the new tables.
 
-The source scan has one remaining aggregate Core failure: 10,876 physical lines
-against the 10,000-line source heuristic. Core is 549,930 raw bytes and passes the
-600-KiB raw-source limit. Every
-counted file is at most 600 lines and every other package at most 10,000 lines.
-No source-budget pass or emitted-size improvement is claimed. Publication uses
+The follow-up Core/PWA TypeScript build passed after callback/narrowing repairs.
+The source-budget scan now passes: Core is 9,997 physical lines and 507,511 raw
+bytes across 134 source files. Every counted file is at most 600 lines and every
+package at most 10,000 lines; Worker/PWA raw-source ceilings also pass. The
+follow-up dependency audit, finite boundaries, synchronized work packets and
+43-contour registry passed; no contour was promoted to LIVE_QUALIFIED. The SQL
+compiler again reports 971 recovered sites, zero failures and 121 dynamic or
+unresolved sites. Final scoped ESLint covered 110 changed source/tooling files
+with zero errors, warnings or source drift. Behavioral checks remain pending.
+No emitted-size improvement is claimed. Publication uses
 the captured file manifest and non-forced main push; no deployment or model call
 was made for this checkpoint.
 Normal functional runs and same-document functional NotebookLM checks follow
@@ -94,8 +118,8 @@ The adaptive reading panels and system/light/dark theme are published in
 `310628db`. The portable backup table catalog now belongs to Contracts; its
 contents and order are preserved, and Contracts/O2 compilation and scoped lint
 passed at that earlier relocation checkpoint. The schema-registry test is now
-split with its existing coverage preserved; the current remaining source-budget
-failure is the Core line aggregate above.
+split with its existing coverage preserved; the source-budget failure was closed
+by the capability assembly above.
 No behavioral or live acceptance was run for the relocation.
 
 The current external-model requirement is OpenRouter

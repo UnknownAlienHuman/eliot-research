@@ -11,7 +11,9 @@
     "./external-agent-result-wake": "./src/external-agent-result-wake.ts",
     "./mcp-external-agent-task": "./src/mcp-external-agent-task.ts",
     "./research-application-dispatch.js": "./src/research-application-dispatch.ts",
-    "./workspace-owner-authorization.js": "./src/workspace-owner-authorization.ts"
+    "./workspace-owner-authorization.js": "./src/workspace-owner-authorization.ts",
+    "./research-service-operations.js": "./src/research-service-operations.ts",
+    "./research-project-membership.js": "./src/research-project-membership.ts"
   },
   "types": "./src/index.ts",
   "scripts": {

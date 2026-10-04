@@ -13,7 +13,7 @@ import { RESEARCH_WORKFLOW_STAGES } from "@eliotr/domain";
 import { readWorkflowObject } from "@eliotr/cloudflare-workflows";
 import { committedFreezeSynthesisFixture } from "./research-synthesis-fixture.js";
 import { principal } from "./research-evidence-freeze-fixture.js";
-import { createResearchStageHandlerFactory, SERVER_OWNED_FREEZE_HANDLER_GENERATION } from "../src/research-stage-handlers.js";
+import { createResearchStageHandlerFactory, SERVER_OWNED_FREEZE_HANDLER_GENERATION } from "@eliotr/cloudflare-research-runtime/research-stage-handlers.js";
 
 const VERIFIER_REF = "stage14-test-verifier";
 const NORMALIZATION_CONFIG: ResearchVerificationV2Config = {

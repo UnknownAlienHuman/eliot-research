@@ -4,7 +4,7 @@ import { ORIENTATION_PROFILE, OWNER_RESEARCH_MAX_SELECTED_SOURCES, readOwnerScop
 import { createD1ScopePorts, createD1ScopeProfilePort } from "@eliotr/retrieval";
 import type { ScopeProfileBinding } from "@eliotr/retrieval";
 import { createD1EvidenceAuthorityPort, createNavigationReadAuthority } from "@eliotr/cloudflare-evidence";
-import { loadHeldResearchScope } from "./research-retrieval-composition.js";
+import { loadHeldResearchScope } from "@eliotr/cloudflare-research-runtime/research-retrieval-composition.js";
 import {
   createMonotoneStageExecutor,
   WorkflowCheckpointStore,
@@ -21,7 +21,7 @@ import {
 import type { StageReceipt, WorkflowExecutionPorts, WorkflowObject, WorkflowPrincipal } from "@eliotr/cloudflare-research";
 import { createD1InvestigationLedgerStore, LedgerError } from "@eliotr/research";
 import type { LedgerD1Database } from "@eliotr/research";
-import { createResearchStageHandlerFactory, SERVER_OWNED_RESEARCH_HANDLER_GENERATION, SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION, SERVER_OWNED_FREEZE_HANDLER_GENERATION, SERVER_OWNED_SEMANTIC_HANDLER_GENERATION, SERVER_OWNED_LEGACY_PROTOCOL_HANDLER_GENERATION, SERVER_OWNED_PROTOCOL_HANDLER_GENERATION, SERVER_OWNED_BRANCH_HANDLER_GENERATION, SERVER_OWNED_EXTERNAL_AGENT_HANDLER_GENERATION, isSemanticResearchHandlerGeneration, isBranchExecutionHandlerGeneration, SERVER_RETRIEVAL_SCOPE_PROFILE } from "./research-stage-handlers.js";
+import { createResearchStageHandlerFactory, SERVER_OWNED_RESEARCH_HANDLER_GENERATION, SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION, SERVER_OWNED_FREEZE_HANDLER_GENERATION, SERVER_OWNED_SEMANTIC_HANDLER_GENERATION, SERVER_OWNED_LEGACY_PROTOCOL_HANDLER_GENERATION, SERVER_OWNED_PROTOCOL_HANDLER_GENERATION, SERVER_OWNED_BRANCH_HANDLER_GENERATION, SERVER_OWNED_EXTERNAL_AGENT_HANDLER_GENERATION, isSemanticResearchHandlerGeneration, isBranchExecutionHandlerGeneration, SERVER_RETRIEVAL_SCOPE_PROFILE } from "@eliotr/cloudflare-research-runtime/research-stage-handlers.js";
 import { createResearchSemanticServerHandlers } from "./research-semantic-server.js";
 import { attachResearchRunConfiguration, readResearchRunConfiguration } from "./research-run-configuration.js";
 import { resolveResearchRunAdmissionConfiguration } from "./research-run-configuration-admission.js";
@@ -39,9 +39,9 @@ import {
 } from "./computer-agent-route-store.js";
 import { loadResearchPlanningSources, prepareResearchRunScope } from "./research-run-admission.js";
 import type { Env } from "./env.js";
-import { RESEARCH_OWNER_MODEL_PROFILE as MODEL_PROFILE } from "./research-owner-profile.js";
+import { RESEARCH_OWNER_MODEL_PROFILE as MODEL_PROFILE } from "@eliotr/cloudflare-research-configuration/research-owner-profile.js";
 import type { ResearchWorkflowRunParams } from "./research-workflow.js";
-import { researchStageBudgetLeaseMs } from "./research-runtime-duration.js";
+import { researchStageBudgetLeaseMs } from "@eliotr/cloudflare-research-runtime/research-runtime-duration.js";
 import { createResearchRunReadEnvironment } from "./research-run-read-authorization.js";
 import { requireResearchDeploymentCompatibility } from "./research-deployment-compatibility.js";
 import {

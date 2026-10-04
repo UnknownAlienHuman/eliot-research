@@ -1,4 +1,4 @@
-import { isSemanticResearchHandlerGeneration } from "./research-stage-handlers.js";
+import { isSemanticResearchHandlerGeneration } from "@eliotr/cloudflare-research-runtime/research-stage-handlers.js";
 import { validateModelGatewayToken } from "@eliotr/cloudflare-ai";
 import { IdentifierSchema } from "@eliotr/contracts";
 import { canonicalJson } from "@eliotr/platform-cloudflare";
@@ -12,7 +12,7 @@ import {
   type WorkflowObject,
   type WorkflowPrincipal,
 } from "@eliotr/cloudflare-workflows";
-import { ResearchOwnerSpendPolicyError } from "./research-owner-spend-policy.js";
+import { ResearchOwnerSpendPolicyError } from "@eliotr/cloudflare-research-configuration/research-owner-spend-policy.js";
 import {
   type ResearchModelGatewayBinding,
   type ResearchModelGatewayRuntimeConfig,
@@ -25,10 +25,10 @@ import {
   resolveResearchSemanticConfig,
   semanticConfigCheckpointError,
 } from "./research-semantic-config-revision.js";
-import { loadHeldResearchScope } from "./research-retrieval-composition.js";
-import { ResearchOwnerReportPolicyError } from "./research-owner-report-policy.js";
+import { loadHeldResearchScope } from "@eliotr/cloudflare-research-runtime/research-retrieval-composition.js";
+import { ResearchOwnerReportPolicyError } from "@eliotr/cloudflare-research-configuration/research-owner-report-policy.js";
 import { requireClientResearchExecution, resolveResearchExecutionSpend } from "./research-client-execution.js";
-import type { ResearchStageHandlerFactory } from "./research-stage-handlers.js";
+import type { ResearchStageHandlerFactory } from "@eliotr/cloudflare-research-runtime/research-stage-handlers.js";
 import { requireResearchDeploymentCompatibility } from "./research-deployment-compatibility.js";
 import { routeResearchComputerAgentStages } from "./research-external-agent-routing.js";
 import { createResearchSemanticNativeModelRuntime } from "./research-semantic-native-model-runtime.js";

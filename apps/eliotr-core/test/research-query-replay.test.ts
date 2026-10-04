@@ -5,7 +5,7 @@ import type { AuthenticatedRequestContext, QueryRequest, QueryResult } from "@el
 import { ORIENTATION_PROFILE } from "@eliotr/cloudflare-navigation";
 import { sha256Utf8 } from "@eliotr/platform-cloudflare";
 import { canonicalRetrievalJson } from "@eliotr/retrieval";
-import { createProjectOwnerService } from "../src/project-owner-service.js";
+import { createProjectOwnerService } from "@eliotr/cloudflare-navigation";
 import { createResearchQueryService, FAST_SEARCH_PROFILE } from "../src/research-session.js";
 import { observeDatabase } from "./orientation-fixture.js";
 import { importAndProject, prepareQ1Namespace, q1Transport, type Q1Namespace, type Q1Runtime } from "./retrieval-q1-fixture.js";

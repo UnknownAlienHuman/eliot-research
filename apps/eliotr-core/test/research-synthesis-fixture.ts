@@ -1,4 +1,4 @@
-import type { SemanticResearchHandlerGeneration } from "../src/research-stage-handlers.js";
+import type { SemanticResearchHandlerGeneration } from "@eliotr/cloudflare-research-runtime/research-stage-handlers.js";
 import { modelGatewayDynamicRouteTarget } from "@eliotr/cloudflare-ai";
 import type { AllowedReferenceManifest, SelectionIntegrityReceipt, VersionedRef } from "@eliotr/contracts";
 import { modelGatewayRequestParametersSha256 } from "@eliotr/cloudflare-ai";

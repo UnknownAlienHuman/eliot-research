@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createResearchBranchRolePromptDependencies } from "../src/research-branch-role-prompt.js";
+import { createResearchBranchRolePromptDependencies } from "@eliotr/cloudflare-research-runtime/research-branch-role-prompt.js";
 
 const MANIFEST_SERVICE = {
   buildAndPersist: async () => {

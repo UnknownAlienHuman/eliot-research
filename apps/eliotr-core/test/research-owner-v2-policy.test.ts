@@ -11,12 +11,12 @@ import {
   type ResearchOwnerModelProfileTemplateV2Input,
   type ResearchOwnerSpendPolicyTemplateV2Input,
   type ResearchOwnerRuntimeConfigurationInput,
-} from "../src/research-owner-runtime-config.js";
-import { resolveResearchOwnerSpendPolicy } from "../src/research-owner-spend-policy.js";
+} from "@eliotr/cloudflare-research-configuration/research-owner-runtime-config.js";
+import { resolveResearchOwnerSpendPolicy } from "@eliotr/cloudflare-research-configuration/research-owner-spend-policy.js";
 import {
   RESEARCH_OWNER_REPORT_ADMISSION_TEMPLATE_PROTOCOL,
   RESEARCH_OWNER_REPORT_ADMISSION_TEMPLATE_V2_PROTOCOL,
-} from "../src/research-owner-report-policy.js";
+} from "@eliotr/cloudflare-research-configuration/research-owner-report-policy.js";
 import {
   RESEARCH_PREPARED_MODEL_TRANSPORT_PROTOCOL,
   type ResearchPreparedModelTransportPoliciesV1,

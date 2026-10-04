@@ -7,7 +7,7 @@ import {
   WorkflowCheckpointStore, type StageReceipt, type StageRequest,
 } from "@eliotr/cloudflare-research";
 import { decodeProtocolScopeCheckpoint } from "@eliotr/cloudflare-research";
-import { SERVER_OWNED_RESEARCH_HANDLER_GENERATION } from "../src/research-stage-handlers.js";
+import { SERVER_OWNED_RESEARCH_HANDLER_GENERATION } from "@eliotr/cloudflare-research-runtime/research-stage-handlers.js";
 import { faultBucket, faultDatabase, principal, runtime, workflowFixture } from "./research-workflow-fixture.js";
 import type { Env } from "../src/env.js";
 

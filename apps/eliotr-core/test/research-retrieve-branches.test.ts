@@ -2,13 +2,13 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { canonicalEvidenceJson } from "@eliotr/cloudflare-evidence";
 import { readFreezeProtocolAndScopeCheckpoint } from "../../../packages/cloudflare-research/src/research-protocol-freeze.js";
 import { digest, readWorkflowObject, INSTALLED_INQUIRY_PROTOCOL_REFS } from "@eliotr/cloudflare-research";
-import { readRetrieveBranchesCheckpoint } from "../src/research-retrieve-branches.js";
+import { readRetrieveBranchesCheckpoint } from "@eliotr/cloudflare-research-runtime/research-retrieve-branches.js";
 import { AI_SEARCH_PRIMARY_NAMESPACE, AI_SEARCH_PRIMARY_PROJECTION_PROFILE,
   createAiSearchGenerationRegistryService, createD1AiSearchGenerationRegistryStore } from "@eliotr/cloudflare-ai";
 import { createD1ScopeProfilePort } from "@eliotr/retrieval";
 import type { AiSearchNamespaceLike } from "@eliotr/platform-cloudflare";
 import { createResearchStageHandlerFactory, SERVER_OWNED_SEMANTIC_HANDLER_GENERATION,
-  SERVER_OWNED_FREEZE_HANDLER_GENERATION, SERVER_OWNED_LEGACY_PROTOCOL_HANDLER_GENERATION, SERVER_OWNED_PROTOCOL_HANDLER_GENERATION } from "../src/research-stage-handlers.js";
+  SERVER_OWNED_FREEZE_HANDLER_GENERATION, SERVER_OWNED_LEGACY_PROTOCOL_HANDLER_GENERATION, SERVER_OWNED_PROTOCOL_HANDLER_GENERATION } from "@eliotr/cloudflare-research-runtime/research-stage-handlers.js";
 import { runtime, access, principal, profile, fixture, prepareRetrieveStage, rowCounts } from "./research-retrieve-fixture.js";
 
 describe("RETRIEVE_BRANCHES over the persisted protocol scope", () => {

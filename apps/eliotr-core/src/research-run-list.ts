@@ -1,6 +1,6 @@
 import type { AuthenticatedRequestContext } from "@eliotr/interfaces";
 import type { VersionedRef } from "@eliotr/contracts";
-import { CatalogInputError } from "./catalog-service.js";
+import { CatalogInputError } from "@eliotr/cloudflare-navigation";
 import type { Env } from "./env.js";
 import { createResearchRunService } from "./research-session.js";
 import { prepareArtifactReadReauthorization, reopenOwnerArtifactDraft } from "./research-artifact-reauthorization-http.js";

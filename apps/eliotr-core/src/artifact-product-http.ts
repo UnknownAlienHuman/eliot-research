@@ -7,7 +7,7 @@ import {
   type ReviseArtifactSectionRequest,
 } from "@eliotr/cloudflare-artifacts/artifact-product-input.js";
 import { readJsonBodyWithinBytes } from "./bounded-json.js";
-import { parseArtifactRef } from "./artifact-draft-http.js";
+import { parseArtifactRef } from "@eliotr/interfaces";
 import { HttpRequestError } from "./http-errors.js";
 
 export type { AcceptArtifactRequest, ReviseArtifactSectionRequest };

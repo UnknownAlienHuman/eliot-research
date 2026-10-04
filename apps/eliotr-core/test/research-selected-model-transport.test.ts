@@ -4,7 +4,7 @@ import {
   ResearchSelectedModelTransportError,
   resolveResearchSelectedModelTransport,
   type ResearchSelectedModelTransportConfiguration,
-} from "../src/research-selected-model-transport.js";
+} from "@eliotr/cloudflare-research-runtime/research-selected-model-transport.js";
 
 const policy = Object.freeze({
   version: 1,

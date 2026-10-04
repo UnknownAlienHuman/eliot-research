@@ -5,7 +5,7 @@ import { createCloudflareAccessVerifier } from "@eliotr/cloudflare-access";
 import type { ApplicationLifecycle } from "@eliotr/interfaces";
 import { handleHttp } from "../src/http.js";
 import { createSourceNamespaceOwnerService } from "../src/source-namespace-owner-service.js";
-import type { NamespaceBootstrapProfileReader } from "../src/source-namespace-bootstrap-profiles.js";
+import type { NamespaceBootstrapProfileReader } from "@eliotr/cloudflare-navigation";
 import type { Env } from "../src/env.js";
 
 interface Migration { name: string; queries: string[]; }

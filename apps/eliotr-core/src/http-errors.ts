@@ -2,7 +2,7 @@ import {
   FederationD1AuthorityError,
   FederationRuntimeAuthorityError,
 } from "@eliotr/cloudflare-federation";
-import { FederationServiceError } from "./federation-service.js";
+import { FederationServiceError } from "@eliotr/cloudflare-federation";
 import { FederationHttpError } from "./federation-http.js";
 import { NavigationError } from "@eliotr/retrieval";
 import { ClientGrantError, OrientationError, ScopeServiceError } from "@eliotr/cloudflare-navigation";
@@ -21,12 +21,12 @@ import {
   ArtifactHttpInputError,
   ArtifactReadNotFoundError,
   isArtifactReadError,
-} from "./artifact-draft-http.js";
-import { EvidenceHttpInputError } from "./evidence-http.js";
+} from "@eliotr/interfaces";
+import { EvidenceHttpInputError } from "@eliotr/cloudflare-evidence";
 import { IngestHttpInputError } from "./ingest-http.js";
 import { RawNormalizedAdmissionError } from "./raw-normalized-admission.js";
 import { WorkspaceOwnerAuthorizationError } from "./workspace-owner-authorization.js";
-import { NamespaceBootstrapProfileError } from "./source-namespace-bootstrap-profiles.js";
+import { NamespaceBootstrapProfileError } from "@eliotr/cloudflare-navigation";
 import { SourceNamespaceOwnerError } from "./source-namespace-owner-service.js";
 import { ProjectOwnerError } from "./project-owner-contract.js";
 import { ErasureAdmissionError, ErasureRuntimeError } from "@eliotr/cloudflare-erasure";

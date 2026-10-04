@@ -16,7 +16,7 @@ import { readResearchSemanticConfiguration } from "./env.js";
 import {
   ResearchRunProjectSelectionFailure,
   translateResearchProjectSelectionFailure,
-} from "./research-run-configuration-errors.js";
+} from "@eliotr/cloudflare-research-runtime";
 import type { ResearchSemanticConfigInput } from "@eliotr/cloudflare-research-configuration/research-semantic-config-revision.js";
 import { WorkflowCheckpointError } from "@eliotr/cloudflare-workflows";
 import type { ResearchRunModelSelection } from "@eliotr/cloudflare-research-configuration/research-run-configuration.js";

@@ -14,8 +14,6 @@ outside the paths below.
 - `packages/research/src/wiki.ts`
 - `packages/domain/src/publication.ts`
 
-- `apps/eliotr-core/src/wiki-publication-store.ts`
-- `apps/eliotr-core/src/wiki-publication-store-support.ts`
 - `apps/eliotr-core/test/wiki-publication-store.test.ts`
 - `apps/eliotr-core/src/wiki-service.ts`
 - `apps/eliotr-core/test/wiki-service.test.ts`

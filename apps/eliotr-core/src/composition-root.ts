@@ -5,14 +5,14 @@ import {
   createD1FederationManifestStore,
   createD1R2FederationBundleAuthority,
 } from "@eliotr/cloudflare-federation";
-import { createFederationService } from "./federation-service.js";
+import { createFederationService } from "@eliotr/cloudflare-federation";
 import { createWikiProposalReaderService, createWikiProposalService, publishWikiProposal, requireWikiIdempotencyKey } from "./wiki-service.js";
 import { proposeWikiFromResearchRun as proposeWikiFromResearchRunOperation } from "./wiki-proposal-from-research-run.js";
 import { proposeWikiFromOwnerEdit as proposeWikiFromOwnerEditOperation } from "./wiki-owner-edit-proposal.js";
 import { createResearchChangesService } from "./research-changes.js";
 import { reconcileExpiredOutboxLeases } from "./outbox-reconciler.js";
 import { createD1ScopeService, createOrientationApi, createOwnerScopeAuthority, ORIENTATION_PROFILE, OrientationError } from "@eliotr/cloudflare-navigation";
-import { createNavigationExpandService } from "./navigation-expand-service.js";
+import { createNavigationExpandService } from "@eliotr/cloudflare-navigation";
 import { ArtifactRevisionSchema, type ScopeSnapshot, type VersionedRef } from "@eliotr/contracts";
 import type {
   ApplicationLifecycle,
@@ -24,19 +24,19 @@ import type {
 } from "@eliotr/interfaces";
 import { artifactSectionResponse, ROUTES } from "@eliotr/interfaces";
 
-import { readSourceRevisions } from "./source-revisions.js";
+import { readSourceRevisions } from "@eliotr/cloudflare-navigation";
 import { readSourceContent } from "./source-content.js";
-import { readCatalog } from "./catalog-service.js";
+import { readCatalog } from "@eliotr/cloudflare-navigation";
 import { createEvidenceService } from "./evidence-service.js";
 import { createResearchQueryService, createResearchRunService } from "./research-session.js";
 import { createExhaustiveWorkflowService } from "./exhaustive-workflow-service.js";
 import { readRetrievalTrace } from "@eliotr/retrieval";
-export { CatalogInputError } from "./catalog-service.js";
+export { CatalogInputError } from "@eliotr/cloudflare-navigation";
 import type { Env } from "./env.js";
 
 import { createIngestApplication } from "./ingest-composition.js";
 import { readReadiness } from "./readiness.js";
-import { createProjectOwnerService } from "./project-owner-service.js";
+import { createProjectOwnerService } from "@eliotr/cloudflare-navigation";
 import { readGoogleExternalTransport } from "@eliotr/cloudflare-workspace-mcp";
 import { createRawCaptureService } from "@eliotr/cloudflare-raw-ingest";
 import { createRawMarkdownOwnerConverter } from "@eliotr/cloudflare-markdown";
@@ -44,15 +44,15 @@ import { createRawNormalizedAdmissionService } from "./raw-normalized-admission.
 import { readLibraryReadiness } from "./library-readiness.js";
 import { readArtifactDraft, readArtifactDraftSection, readArtifactDraftSectionCitations } from "@eliotr/cloudflare-research";
 import { reopenOwnerArtifactDraft, reopenOwnerArtifactSection, reopenOwnerArtifactSectionCitations } from "./research-artifact-reauthorization-http.js";
-import { ArtifactReadNotFoundError } from "./artifact-draft-http.js";
+import { ArtifactReadNotFoundError } from "@eliotr/interfaces";
 import { acceptOwnerArtifact, readOwnerArtifactPublication } from "./artifact-product-composition.js";
 import { createErasureOwnerService } from "./erasure-owner-service.js";
 import { readErasureOwnerStatus } from "./erasure-owner-status.js";
 import { prepareErasureForOwner } from "./erasure-owner-prepare.js";
 import { createSourceNamespaceOwnerService } from "./source-namespace-owner-service.js";
-import { parseNamespaceBootstrapProfiles } from "./source-namespace-bootstrap-profiles.js";
+import { parseNamespaceBootstrapProfiles } from "@eliotr/cloudflare-navigation";
 import { createWorkspaceCandidateAdmissionService } from "./workspace-candidate-admission.js";
-import { createD1WorkspaceMcpCandidateStore } from "./workspace-mcp-candidate-store.js";
+import { createD1WorkspaceMcpCandidateStore } from "@eliotr/cloudflare-workspace-mcp/workspace-mcp-candidate-d1-store";
 import { parseWorkspaceOwnerBindings } from "./workspace-owner-authorization.js";
 export interface CompositionRootInput {
   readonly env: Env;

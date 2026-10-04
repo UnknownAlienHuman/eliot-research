@@ -3,7 +3,7 @@ import { env } from "cloudflare:workers";
 import type { ScopeSnapshot, SourceAdmissionDecision, SourceRevision } from "@eliotr/contracts";
 import { canonicalEvidenceJson, createD1NavigationStore, evidenceSha256, type D1NavigationStoreInput } from "@eliotr/cloudflare-evidence";
 import { buildDocumentMap, buildProjectAtlas, buildSourceCard } from "@eliotr/retrieval";
-import { type ScopeRepository } from "../src/scope-service.js";
+import { type ScopeRepository } from "@eliotr/cloudflare-navigation";
 import { createD1ScopeService } from "@eliotr/cloudflare-navigation";
 
 const runtime = env as unknown as { readonly CORE_DB: D1Database; readonly CORE_MIGRATIONS: D1Migration[] };

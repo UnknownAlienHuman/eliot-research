@@ -2,7 +2,7 @@ import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import { ORIENTATION_PROFILE } from "@eliotr/cloudflare-navigation";
 import type { AuthenticatedRequestContext, QueryRequest, QueryResult } from "@eliotr/interfaces";
-import { createProjectOwnerService } from "../src/project-owner-service.js";
+import { createProjectOwnerService } from "@eliotr/cloudflare-navigation";
 import {
   createResearchQueryService,
   FAST_SEARCH_PROFILE,

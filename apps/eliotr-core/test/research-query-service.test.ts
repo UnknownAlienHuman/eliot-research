@@ -2,7 +2,7 @@ import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import { createResearchQueryService, FAST_SEARCH_PROFILE } from "../src/research-session.js";
 import { mcpFastSearchResponse } from "../src/mcp-research-service.js";
-import { createProjectOwnerService } from "../src/project-owner-service.js";
+import { createProjectOwnerService } from "@eliotr/cloudflare-navigation";
 import { importAndProject, prepareQ1Namespace, type Q1Namespace, type Q1Runtime } from "./retrieval-q1-fixture.js";
 import type { AuthenticatedRequestContext, QueryRequest } from "@eliotr/interfaces";
 

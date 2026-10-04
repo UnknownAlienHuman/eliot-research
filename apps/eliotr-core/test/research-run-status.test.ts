@@ -8,7 +8,7 @@ import { createMonotoneStageExecutor, digest, WorkflowCheckpointStore, type Stag
 import { createEvidenceFreezePostSynthesisContextReader, type ResearchArtifactReportPolicy } from "@eliotr/cloudflare-research";
 import { createResearchCoverageStageHandlerFromFreeze, createResearchCoverageMaterializeStageHandlerFromFreeze } from "@eliotr/cloudflare-research-stages";
 import { createResearchStageHandlerFactory, SERVER_OWNED_FREEZE_HANDLER_GENERATION, SERVER_OWNED_SEMANTIC_HANDLER_GENERATION,
-  SERVER_OWNED_LEGACY_PROTOCOL_HANDLER_GENERATION, SERVER_OWNED_PROTOCOL_HANDLER_GENERATION } from "../src/research-stage-handlers.js";
+  SERVER_OWNED_LEGACY_PROTOCOL_HANDLER_GENERATION, SERVER_OWNED_PROTOCOL_HANDLER_GENERATION } from "@eliotr/cloudflare-research-runtime/research-stage-handlers.js";
 import { researchClaimAuditStageFixture } from "./research-claim-audit-fixture.js";
 import { principal as freezePrincipal } from "./research-evidence-freeze-fixture.js";
 import type { AccessVerifier } from "@eliotr/cloudflare-access";

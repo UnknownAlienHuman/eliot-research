@@ -12,7 +12,7 @@ import {
 } from "@eliotr/cloudflare-research";
 import { prepareResearchReportAdmission, type ResearchReportAdmissionInput } from "../../../packages/cloudflare-research/src/research-report-admission.js";
 import { createArtifactSectionReviseWorkflowStore, digest, readWorkflowObject, WorkflowCheckpointStore } from "@eliotr/cloudflare-workflows";
-import { createResearchStageHandlerFactory, SERVER_OWNED_FREEZE_HANDLER_GENERATION } from "../src/research-stage-handlers.js";
+import { createResearchStageHandlerFactory, SERVER_OWNED_FREEZE_HANDLER_GENERATION } from "@eliotr/cloudflare-research-runtime/research-stage-handlers.js";
 import { prepareOwnerArtifactReportAdmission } from "../src/artifact-report-admission.js";
 import { prepareArtifactReadReauthorization } from "../src/research-artifact-reauthorization-http.js";
 import { applyD1Migrations, type D1Migration } from "cloudflare:test";

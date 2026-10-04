@@ -3,14 +3,12 @@ import { describe, expect, it } from "vitest";
 import {
   AI_SEARCH_PRIMARY_GENERATION,
   AI_SEARCH_PRIMARY_PROJECTION_PROFILE,
+  PROJECTION_EXECUTION_PROFILE,
+  projectionManagedGenerationIsActive,
 } from "@eliotr/cloudflare-ai";
 import { createApplication } from "../src/composition-root.js";
 import type { Env } from "../src/env.js";
 import { handleHttp } from "../src/http.js";
-import {
-  PROJECTION_EXECUTION_PROFILE,
-  projectionManagedGenerationIsActive,
-} from "../src/projection-execution-handler.js";
 import worker from "../src/index.js";
 
 interface DatabaseFixture {

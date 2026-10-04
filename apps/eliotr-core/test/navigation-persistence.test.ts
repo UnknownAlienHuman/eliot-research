@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { createD1NavigationStore, evidenceSha256Bytes, evidenceUtf8Bytes } from "@eliotr/cloudflare-evidence";
 import { canonicalNavigationJson, projectAtlasIdentity, requireResolvedEvidenceForPublication } from "@eliotr/retrieval";
 import { createD1NavigationService } from "../src/navigation-persistence.js";
-import { createNavigationService } from "../src/navigation-service.js";
+import { createNavigationService } from "@eliotr/cloudflare-navigation";
 import { access, artifacts, clearDatabase, countArtifacts, db, fixture, grant, project,
   seedHandle, TIME, wrappedDatabase } from "./navigation-fixture.js";
 

@@ -10,7 +10,7 @@ import {
 import { fail } from "@eliotr/cloudflare-research-configuration/research-project-configuration-validation.js";
 import type { Env } from "./env.js";
 import { createOwnerResearchProviderNativeModelAuthority } from "./research-provider-native-model-authority.js";
-import type { ResearchProviderKeyModelUseDbPhase } from "./research-provider-key-model-use-store.js";
+import type { ResearchProviderKeyModelUseDbPhase } from "@eliotr/cloudflare-research-configuration/research-provider-key-model-use-store.js";
 
 export {
   readSelectedResearchProjectConfiguration,

@@ -7,7 +7,7 @@ import {
   createConfiguredErasureCoordinator as createConfiguredErasureCoordinatorInLibrary,
   type ErasureCoordinator,
 } from "@eliotr/cloudflare-erasure-operations";
-import { createInstalledBackupOffsiteR2Resolver } from "./backup-offsite-composition.js";
+import { createInstalledBackupOffsiteR2Resolver } from "@eliotr/cloudflare-backup";
 import type { Env } from "./env.js";
 
 export type { ErasureCoordinator };

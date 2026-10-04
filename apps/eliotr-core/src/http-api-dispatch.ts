@@ -13,12 +13,12 @@ import {
   parseEvidenceHandleRef,
   parseEvidenceOpenRange,
   parseVerifyEvidenceRequest,
-} from "./evidence-http.js";
+} from "@eliotr/cloudflare-evidence";
 import {
   ArtifactHttpInputError,
   parseArtifactRef,
   parseArtifactSectionRef,
-} from "./artifact-draft-http.js";
+} from "@eliotr/interfaces";
 import { readAcceptArtifactRequest, readReviseArtifactSectionRequest } from "./artifact-product-http.js";
 import { reviseOwnerArtifactSection } from "./artifact-section-revise.js";
 import { readOwnerArtifactCurrentPublication } from "./artifact-product-composition.js";

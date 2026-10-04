@@ -29,7 +29,7 @@ import {
 } from "./artifact-draft-fixture.js";
 import { committedFreezeSynthesisFixture } from "./research-synthesis-fixture.js";
 import { principal as freezePrincipal } from "./research-evidence-freeze-fixture.js";
-import { createResearchStageHandlerFactory, SERVER_OWNED_FREEZE_HANDLER_GENERATION } from "../src/research-stage-handlers.js";
+import { createResearchStageHandlerFactory, SERVER_OWNED_FREEZE_HANDLER_GENERATION } from "@eliotr/cloudflare-research-runtime/research-stage-handlers.js";
 
 const freezeAccess = {
   principal_ref: freezePrincipal.principal_ref,

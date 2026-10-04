@@ -19,8 +19,8 @@ import {
   ResearchQualificationRenewalError,
   RESEARCH_QUALIFICATION_RENEWAL_MARKER,
 } from "@eliotr/cloudflare-research-configuration/research-qualification-renewal.js";
-import { retrieveWithHeldScope } from "./research-retrieval-composition.js";
-import { SERVER_RETRIEVAL_SCOPE_PROFILE } from "./research-stage-handlers.js";
+import { retrieveWithHeldScope } from "@eliotr/cloudflare-research-runtime/research-retrieval-composition.js";
+import { SERVER_RETRIEVAL_SCOPE_PROFILE } from "@eliotr/cloudflare-research-runtime/research-stage-handlers.js";
 import type { Env } from "./env.js";
 import {
   resolveResearchSemanticConfig,

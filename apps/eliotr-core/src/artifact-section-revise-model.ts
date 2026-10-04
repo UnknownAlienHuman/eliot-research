@@ -29,7 +29,7 @@ import { resolveResearchSemanticConfig } from "./research-semantic-config-revisi
 import { readResearchRunConfiguration } from "./research-run-configuration.js";
 import { createResearchProviderNativeModelAuthority } from "./research-provider-native-model-authority.js";
 import { createResearchProviderNativeModelCurrentScopeReader } from "./research-provider-native-model-current-scope.js";
-import { resolveResearchSelectedModelTransport } from "./research-selected-model-transport.js";
+import { resolveResearchSelectedModelTransport } from "@eliotr/cloudflare-research-runtime/research-selected-model-transport.js";
 import type { Env } from "./env.js";
 import { HttpRequestError } from "./http-errors.js";
 

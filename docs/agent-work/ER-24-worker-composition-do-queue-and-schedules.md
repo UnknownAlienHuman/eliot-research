@@ -13,7 +13,6 @@ fail-closed. The Worker is a composition and transport boundary, not a second do
 
 - `apps/eliotr-core/src/client-grant-http.ts`
 - `apps/eliotr-core/src/ingest-composition.ts`
-- `apps/eliotr-core/src/project-client-attachment.ts`
 - `packages/cloudflare-navigation/src/client-grant-store.ts`
 - `packages/cloudflare-navigation/src/client-grant-service.ts`
 - `packages/cloudflare-navigation/src/client-grant-authority.ts`
@@ -23,7 +22,6 @@ fail-closed. The Worker is a composition and transport boundary, not a second do
 - `apps/eliotr-core/src/index.ts`
 - `apps/eliotr-core/src/http.ts`
 - `apps/eliotr-core/src/http-errors.ts`
-- `apps/eliotr-core/src/artifact-draft-http.ts`
 - `apps/eliotr-core/src/research-query-http.ts`
 - `apps/eliotr-core/src/queue.ts`
 - `apps/eliotr-core/src/scheduled.ts`
@@ -40,20 +38,13 @@ fail-closed. The Worker is a composition and transport boundary, not a second do
 - `apps/eliotr-core/src/research-client-spend.ts`
 - `apps/eliotr-core/src/research-client-execution.ts`
 - `apps/eliotr-core/src/research-run-control-fence.ts`
-- `apps/eliotr-core/src/research-run-cancel-action.ts`
 - `apps/eliotr-core/src/research-run-list.ts`
 - `apps/eliotr-core/test/research-run-status.test.ts`
 - `apps/eliotr-core/test/research-session.test.ts`
 - `apps/eliotr-core/test/research-input.test.ts`
-- `apps/eliotr-core/src/research-stage-handlers.ts`
-- `apps/eliotr-core/src/research-retrieve-branches.ts`
-- `apps/eliotr-core/src/research-retrieval-composition.ts`
-- `apps/eliotr-core/src/research-exact-search.ts`
 - `apps/eliotr-core/test/research-exact-search.test.ts`
 - `apps/eliotr-core/test/research-query-retrieval.test.ts`
 - `apps/eliotr-core/test/research-query-replay.test.ts`
-- `apps/eliotr-core/src/research-evidence-freeze-composition.ts`
-- `apps/eliotr-core/src/research-semantic-composition.ts`
 - `apps/eliotr-core/src/exhaustive-query-service.ts`
 - `apps/eliotr-core/src/exhaustive-workflow-service.ts`
 - `apps/eliotr-core/test/research-query-jobs.test.ts`
@@ -72,12 +63,9 @@ fail-closed. The Worker is a composition and transport boundary, not a second do
 - `apps/eliotr-core/test/orientation-http.test.ts`
 - `apps/eliotr-core/test/orientation-resilience.test.ts`
 - `apps/eliotr-core/vitest.config.ts`
-- `apps/eliotr-core/src/catalog-service.ts`
 - `apps/eliotr-core/test/catalog-service.test.ts`
 - `apps/eliotr-core/test/project-owner-service.test.ts`
-- `apps/eliotr-core/src/catalog-queries.ts`
 - `apps/eliotr-core/test/catalog-http.test.ts`
-- `apps/eliotr-core/src/source-revisions.ts`
 - `apps/eliotr-core/test/source-revisions.test.ts`
 - `apps/eliotr-core/src/library-readiness.ts`
 - `apps/eliotr-core/test/library-readiness.test.ts`
@@ -107,7 +95,6 @@ fail-closed. The Worker is a composition and transport boundary, not a second do
 - `apps/eliotr-core/src/federation-http.ts`
 - `apps/eliotr-core/test/federation-runtime-http.test.ts`
 - `apps/eliotr-core/src/research-artifact-reauthorization-http.ts`
-- `apps/eliotr-core/src/source-revision-freshness.ts`
 
 ER-09 exclusively owns `apps/eliotr-core/src/research-workflow.ts`; ER-24 may compose its exported
 boundary but does not edit or reimplement that workflow authority.

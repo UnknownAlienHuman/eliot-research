@@ -9,7 +9,6 @@
     "owned_paths": [
       "packages/cloudflare-evidence/**",
       "apps/eliotr-core/src/evidence-service.ts",
-      "apps/eliotr-core/src/evidence-http.ts",
       "scripts/check-evidence-resolution.mjs"
     ],
     "mandatory_negative_case": "Forge locator preview and citation completeness, then redact the pinned revision; no unverified bytes or stale handle may reach context or output.",

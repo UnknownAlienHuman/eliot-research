@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { evidenceSha256Bytes, evidenceUtf8Bytes } from "@eliotr/cloudflare-evidence";
 import type { ResearchProjectModelConfigurationBundle } from "@eliotr/cloudflare-research";
-import { createResearchOwnerRuntimeConfiguration } from "../src/research-owner-runtime-config.js";
+import { createResearchOwnerRuntimeConfiguration } from "@eliotr/cloudflare-research-configuration/research-owner-runtime-config.js";
 import type { Env } from "../src/env.js";
 import { readResearchConfigurationStatus } from "../src/research-configuration-status.js";
 import { readResearchSemanticConfigSource } from "../src/research-semantic-config-revision.js";

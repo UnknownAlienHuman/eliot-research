@@ -149,6 +149,8 @@ const WIKI_IMPORTS = [
 const WORKSPACE_CAPABILITY_IMPORTS = [
   "@eliotr/cloudflare-workspace-mcp/workspace-owner-authorization.js",
   "@eliotr/cloudflare-workspace-mcp/research-application-dispatch.js",
+  "@eliotr/cloudflare-workspace-mcp/research-service-operations.js",
+  "@eliotr/cloudflare-workspace-mcp/research-project-membership.js",
   "@eliotr/cloudflare-workspace-mcp/workspace-mcp-candidate-d1-store",
   "@eliotr/cloudflare-workspace-mcp/workspace-candidate-admission-service",
   "@eliotr/cloudflare-workspace-mcp/external-agent-result-wake",
@@ -191,7 +193,8 @@ const RESEARCH_RUNTIME_IMPORTS = [
   "@eliotr/cloudflare-research-runtime/artifact-section-revise-model.js",
   "@eliotr/cloudflare-research-runtime/research-semantic-server.js",
   "@eliotr/cloudflare-research-runtime/research-session-application.js",
-  "@eliotr/cloudflare-research-runtime/research-session-status-application.js"
+  "@eliotr/cloudflare-research-runtime/research-session-status-application.js",
+  "@eliotr/cloudflare-research-runtime/research-workflow-application.js"
 ];
 const RESEARCH_CONFIGURATION_IMPORTS = [
   "@eliotr/cloudflare-research-configuration/research-run-configuration-admission.js",

@@ -2,7 +2,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { createWikiPublisher, type DraftRiskClass } from "@eliotr/research";
 import type { WikiPageRevision } from "@eliotr/contracts";
 import { db, principal, runtime, setupOrientationDatabase } from "./orientation-fixture.js";
-import { createD1R2WikiPublicationPort, recordWikiPublicationAuthority } from "../src/wiki-publication-store.js";
+import { createD1R2WikiPublicationPort, recordWikiPublicationAuthority } from "@eliotr/cloudflare-wiki/wiki-publication-store";
 import { publishWikiProposal } from "../src/wiki-service.js";
 import { wikiOwnerContext, wikiPublicationScope } from "./wiki-publication-authority-fixture.js";
 

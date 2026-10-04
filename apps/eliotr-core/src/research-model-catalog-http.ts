@@ -1,7 +1,7 @@
 import type { AuthenticatedRequestContext } from "@eliotr/interfaces";
 import { apiResult, HttpRequestError } from "./http.js";
-import { createResearchModelCatalogService, ResearchModelCatalogError } from "./research-model-catalog.js";
-import { createResearchProviderModelCatalogTransports } from "./research-provider-model-catalog.js";
+import { createResearchModelCatalogService, ResearchModelCatalogError } from "@eliotr/cloudflare-model-control/research-model-catalog.js";
+import { createResearchProviderModelCatalogTransports } from "@eliotr/cloudflare-model-control/research-provider-model-catalog.js";
 import type { Env } from "./env.js";
 
 /** The catalog is descriptive; this read never installs or qualifies a model. */

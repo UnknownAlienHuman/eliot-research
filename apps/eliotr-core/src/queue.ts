@@ -6,7 +6,7 @@ import {
 } from "@eliotr/platform-cloudflare";
 import type { Env } from "./env.js";
 import { createProjectionDeliveryHandler } from "@eliotr/cloudflare-projection";
-import { createProjectionExecutionDeliveryHandler } from "./projection-execution-handler.js";
+import { createProjectionExecutionDeliveryHandler } from "@eliotr/cloudflare-ai";
 
 const CONSUMER_WORKER_ID = "eliotr-queue-consumer";
 const CONSUMER_LEASE_MS = 60_000;
@@ -31,7 +31,13 @@ function metric(env: Env, result: QueueConsumptionResult | null, reason: string)
 
 function projectionHandler(env: Env): DeliveryHandler {
   const accept = createProjectionDeliveryHandler(env.CORE_DB);
-  const execute = createProjectionExecutionDeliveryHandler(env);
+  const execute = createProjectionExecutionDeliveryHandler({
+    core_database: env.CORE_DB,
+    search_database: env.SEARCH_DB,
+    evidence_bucket: env.EVIDENCE_BUCKET,
+    work_bucket: env.WORK_BUCKET,
+    ai_search: env.AI_SEARCH,
+  });
   return async (message, context) => {
     await accept(message, context);
     return execute(message, context);

@@ -8,7 +8,7 @@ import {
 import { db, runtime, verifier } from "./orientation-fixture.js";
 import { prepareCurrentDispatchFixture } from "./research-current-dispatch-fixture.js";
 import { handleHttp } from "../src/http.js";
-import { SERVER_OWNED_SEMANTIC_HANDLER_GENERATION } from "../src/research-stage-handlers.js";
+import { SERVER_OWNED_SEMANTIC_HANDLER_GENERATION } from "@eliotr/cloudflare-research-runtime/research-stage-handlers.js";
 
 let fixture: Awaited<ReturnType<typeof prepareCurrentDispatchFixture>>;
 beforeAll(async () => {

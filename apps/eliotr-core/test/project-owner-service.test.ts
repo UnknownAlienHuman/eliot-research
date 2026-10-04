@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { reset } from "cloudflare:test";
 import type { AuthenticatedRequestContext } from "@eliotr/interfaces";
 import { sha256Utf8 } from "@eliotr/platform-cloudflare";
-import { createProjectOwnerService } from "../src/project-owner-service.js";
+import { createProjectOwnerService } from "@eliotr/cloudflare-navigation";
 import { db, insert, observeDatabase, principal, runtime, seedSource, setupOrientationDatabase } from "./orientation-fixture.js";
 
 let clock: number;

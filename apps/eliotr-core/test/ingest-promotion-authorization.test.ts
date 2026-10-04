@@ -7,7 +7,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   authorizeIngestPromotion,
   stagedBundleInputFingerprint,
-} from "../src/ingest-promotion-authorization.js";
+} from "@eliotr/cloudflare-raw-ingest";
 
 const A = "a".repeat(64);
 const B = "b".repeat(64);

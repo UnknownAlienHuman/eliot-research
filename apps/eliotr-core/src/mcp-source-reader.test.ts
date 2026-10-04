@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AuthenticatedRequestContext } from "@eliotr/interfaces";
 import type { Env } from "./env.js";
-import { decodeCatalogCursor, encodeCatalogCursor } from "./catalog-service.js";
+import { decodeCatalogCursor, encodeCatalogCursor } from "@eliotr/cloudflare-navigation";
 
 const sourceRead = vi.hoisted(() => vi.fn());
 vi.mock("./source-content.js", () => ({ readProjectSourceContent: sourceRead }));

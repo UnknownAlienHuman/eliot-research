@@ -14,7 +14,6 @@ must be reopened from the pinned admitted SourceRevision under an immutable auth
 
 - `packages/cloudflare-evidence/**`
 - `apps/eliotr-core/src/evidence-service.ts`
-- `apps/eliotr-core/src/evidence-http.ts`
 - `scripts/check-evidence-resolution.mjs`
 
 ## Coordinated dependency paths

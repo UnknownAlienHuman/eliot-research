@@ -13,8 +13,8 @@ import {
   type ArtifactCowModelAdmissionRunConfiguration,
 } from "@eliotr/cloudflare-research-runtime/artifact-cow-model-admission.js";
 import type { ArtifactSectionReportAdmissionPolicyVars } from "@eliotr/cloudflare-research-runtime/artifact-report-admission.js";
-import { resolveResearchOwnerSpendPolicy } from "./research-owner-spend-policy.js";
-import { createBoundResearchOwnerReportConfigSource } from "./research-owner-report-policy.js";
+import { resolveResearchOwnerSpendPolicy } from "@eliotr/cloudflare-research-configuration/research-owner-spend-policy.js";
+import { createBoundResearchOwnerReportConfigSource } from "@eliotr/cloudflare-research-configuration/research-owner-report-policy.js";
 import { readResearchRunConfiguration } from "./research-run-configuration.js";
 import type { Env } from "./env.js";
 

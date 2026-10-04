@@ -12,8 +12,8 @@ import { installedGatewayIdentity } from "./research-provider-key-configuration-
 import type { Env } from "./env.js";
 import type { AuthenticatedRequestContext } from "@eliotr/interfaces";
 import { createResearchProviderKeyConfigurationService } from "./research-provider-key-configuration-service.js";
-import { readResearchProviderKeyModelUseNativeScope } from "./research-provider-key-model-use-current-scope.js";
-import type { ResearchProviderKeyModelUseDbPhase } from "./research-provider-key-model-use-store.js";
+import { readResearchProviderKeyModelUseNativeScope } from "@eliotr/cloudflare-research-configuration/research-provider-key-model-use-current-scope.js";
+import type { ResearchProviderKeyModelUseDbPhase } from "@eliotr/cloudflare-research-configuration/research-provider-key-model-use-store.js";
 
 export type ResearchProviderNativeModelCurrentScopeV1 = ProviderNativeModelCurrentScopeV1;
 export type ReadResearchProviderNativeModelCurrentScope = ReadProviderNativeModelCurrentScope;

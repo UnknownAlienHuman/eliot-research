@@ -1,4 +1,4 @@
-import type { SemanticResearchHandlerGeneration } from "../src/research-stage-handlers.js";
+import type { SemanticResearchHandlerGeneration } from "@eliotr/cloudflare-research-runtime/research-stage-handlers.js";
 import { modelGatewayDynamicRouteTarget } from "@eliotr/cloudflare-ai";
 import type { VersionedRef } from "@eliotr/contracts";
 import { canonicalEvidenceJson, evidenceSha256Bytes } from "@eliotr/cloudflare-evidence";
@@ -30,7 +30,7 @@ import {
   createResearchStageHandlerFactory,
   SERVER_OWNED_FREEZE_HANDLER_GENERATION,
   type ResearchStageHandlerFactory,
-} from "../src/research-stage-handlers.js";
+} from "@eliotr/cloudflare-research-runtime/research-stage-handlers.js";
 import {
   readCommittedStageLineage,
   readWorkflowObject,

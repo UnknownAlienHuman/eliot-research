@@ -82,3 +82,24 @@ export type {
   McpResearchApplicationDispatchPorts,
 } from "./research-application-dispatch.js";
 export * from "./workspace-owner-authorization.js";
+export { createWorkspaceMcpDiagnosticConsume } from "./gemini-mcp-diagnostic-consume.js";
+export type { WorkspaceMcpDiagnosticConsumeDependencies } from "./gemini-mcp-diagnostic-consume.js";
+export {
+  createMcpResearchServiceOperations,
+  mapMcpResearchServiceError,
+  mcpFastSearchResponse,
+  mcpResearchBindHeader,
+  mcpResearchInvalid,
+} from "./research-service-operations.js";
+export { createMcpResearchProjectMembership } from "./research-project-membership.js";
+export type {
+  McpResearchProjectMembership,
+  McpResearchProjectMembershipOptions,
+  McpResearchScopeAuthority,
+} from "./research-project-membership.js";
+export type {
+  McpResearchServiceOperationPorts,
+  McpResearchIngestCommand,
+  McpResearchSourceReadInput,
+  McpFastSearchResponseShape,
+} from "./research-service-operations.js";

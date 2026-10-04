@@ -3,7 +3,7 @@ import { INSTALLED_INQUIRY_PROTOCOL_REFS, RESEARCH_RUN_REQUEST_V2 } from "@eliot
 import { body, count, db, principal, runtime, seedSource, setupOrientationDatabase, verifier } from "./orientation-fixture.js";
 import { admissionTestEnvironment, admissionTestScopeExpression, terminateAdmissionWorkflows } from "./research-admission-fixture.js";
 import { parseResearchRunRequest } from "../src/research-session.js";
-import { SERVER_OWNED_BRANCH_HANDLER_GENERATION } from "../src/research-stage-handlers.js";
+import { SERVER_OWNED_BRANCH_HANDLER_GENERATION } from "@eliotr/cloudflare-research-runtime/research-stage-handlers.js";
 import { handleHttp } from "../src/http.js";
 import type { Env } from "../src/env.js";
 

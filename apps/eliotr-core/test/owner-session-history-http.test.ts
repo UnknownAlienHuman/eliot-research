@@ -4,7 +4,7 @@ import { evidenceSha256Bytes } from "@eliotr/cloudflare-evidence";
 import type { ApplicationLifecycle } from "@eliotr/interfaces";
 import { createSourceNamespaceOwnerService } from "../src/source-namespace-owner-service.js";
 import { handleHttp } from "../src/http.js";
-import type { NamespaceBootstrapProfileReader } from "../src/source-namespace-bootstrap-profiles.js";
+import type { NamespaceBootstrapProfileReader } from "@eliotr/cloudflare-navigation";
 import { readOwnerPolicyLeaseHistory } from "../../../packages/cloudflare-navigation/src/owner-policy-lease-history.js";
 import { originalReport, runtime } from "./artifact-cow-http-fixture.js";
 import { principal } from "./research-evidence-freeze-fixture.js";

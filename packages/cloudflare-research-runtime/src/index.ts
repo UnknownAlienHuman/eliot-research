@@ -128,3 +128,8 @@ export { assembleResearchSemanticServerHandlers } from "./research-semantic-serv
 export type { ResearchSemanticServerRuntimeInput } from "./research-semantic-server.js";
 export * from "./research-session-application.js";
 export * from "./research-session-status-application.js";
+export { executeResearchWorkflowApplication } from "./research-workflow-application.js";
+export type {
+  ResearchWorkflowApplicationInput,
+  ResearchWorkflowApplicationCallbacks,
+} from "./research-workflow-application.js";

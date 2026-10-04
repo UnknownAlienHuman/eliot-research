@@ -21,7 +21,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { deployCloudflare } from "./deploy-cloudflare.mjs";
+import { deployCloudflare, parseDeploymentArguments } from "./deploy-cloudflare.mjs";
 import { readCompositionCapabilityProfile } from "./check-launch-code.mjs";
 import { readDeploymentMigrationPlan } from "./lib/deployment-migrations.mjs";
 import { digestAccountId } from "./lib/cloudflare-usage-envelope.mjs";
@@ -307,7 +307,8 @@ function harness(overrides = {}) {
     execute(command, args, cwd, env) {
       const name = `${command} ${args.join(" ")}`; calls.push(name);
       if (name.startsWith("pnpm ")) buildEvents.push(`command:${name}`);
-      if (name === deployCommand) uploadStarted = true;
+      if (command === "pnpm" && args[0] === "exec" && args[1] === "wrangler" && args[2] === "deploy" &&
+          args[3] === workerEntrypoint && args.includes("--no-bundle")) uploadStarted = true;
       if (args[0]?.startsWith("scripts/provision-")) provisionerEnvs.push({ name: args[0], env: { ...env } });
       assert.equal(env.ELIOTR_DEPLOYMENT_GENERATION, candidateEnvironment.ELIOTR_DEPLOYMENT_GENERATION);
       assert.equal(resolve(cwd), resolve(fileURLToPath(new URL("../", import.meta.url)),
@@ -446,8 +447,86 @@ function harness(overrides = {}) {
 let cases = 0;
 const check = async (name, action) => { await action(); cases += 1; console.log(`Deployment apply ordering: ${name}: PASS`); };
 const deployCommand = `pnpm exec wrangler deploy ${workerEntrypoint} --no-bundle --config wrangler.deploy.jsonc`;
+const deploymentSecretName = "ELIOTR_MODEL_PROVIDER_CONTROL_TOKEN";
+const deploymentSecretValue = "fixture-control-token-value";
 const generatedDryRunPrefix = "pnpm exec wrangler deploy --dry-run --minify --config wrangler.deploy.jsonc --outdir ";
 const generatedDryRunIndex = (calls) => calls.findIndex((call) => call.startsWith(generatedDryRunPrefix));
+
+await check("secrets-file CLI parsing is explicit and rejects missing, duplicate or unsafe inputs", async () => {
+  const secretPath = join(resolvedTemporaryDirectory, "deployment-secrets.json");
+  assert.deepEqual(parseDeploymentArguments(["--confirm-live", "--maintenance", "--secrets-file", secretPath]), {
+    confirmLive: true, purpose: "MAINTENANCE", secretsFilePath: secretPath,
+  });
+  for (const args of [
+    ["--secrets-file"], ["--secrets-file", secretPath, "--secrets-file", secretPath],
+    ["--confirm-live", "--confirm-live"], ["--secrets-file", "relative-secrets.json"],
+    ["--secrets-file", "C:\\Temp\\secret%PATH%.json"], ["--unknown"],
+  ]) assert.throws(() => parseDeploymentArguments(args), /Deployment/u);
+});
+
+await check("dedicated control-token file is attached only to the final guarded Worker deploy", async () => {
+  const secretPath = join(resolvedTemporaryDirectory, "deployment-secrets.json");
+  await writeFile(secretPath, `${JSON.stringify({ [deploymentSecretName]: deploymentSecretValue })}\n`,
+    { flag: "wx", mode: 0o600 });
+  const test = harness({ options: { secretsFilePath: secretPath } });
+  const execute = test.options.execute;
+  test.options.execute = (command, args, cwd, env) => {
+    if (args.includes("--secrets-file")) {
+      assert.equal(command, "pnpm");
+      assert.deepEqual(args.slice(-2), ["--secrets-file", secretPath]);
+      assert.notEqual(env[deploymentSecretName], deploymentSecretValue);
+    }
+    return execute(command, args, cwd, env);
+  };
+  const receipt = await deployCloudflare(test.options);
+  assert.deepEqual(test.calls.filter((call) => call.includes("--secrets-file")), [
+    `${deployCommand} --secrets-file ${secretPath}`,
+  ]);
+  assert.ok(!test.calls.some((call) => call.includes("--dry-run") && call.includes("--secrets-file")));
+  assert.equal(test.calls.filter((call) => call.startsWith(`pnpm exec wrangler deploy ${workerEntrypoint}`)).length, 1);
+  assert.ok(!JSON.stringify(receipt).includes(deploymentSecretName));
+  assert.ok(!JSON.stringify(receipt).includes(deploymentSecretValue));
+  assert.ok(!JSON.stringify(receipt).includes(secretPath));
+  assert.ok(!JSON.stringify(test.calls).includes(deploymentSecretValue));
+});
+
+await check("secrets-file validation and input drift fail before Worker upload", async () => {
+  for (const [name, contents] of [
+    ["unknown binding", JSON.stringify({ ELIOTR_UNAPPROVED_SECRET: deploymentSecretValue })],
+    ["non-string value", JSON.stringify({ [deploymentSecretName]: 42 })],
+    ["oversized file", JSON.stringify({ [deploymentSecretName]: "x".repeat(16 * 1024) })],
+  ]) {
+    const secretPath = join(resolvedTemporaryDirectory, `invalid-${name.replaceAll(" ", "-")}.json`);
+    await writeFile(secretPath, contents, { flag: "wx", mode: 0o600 });
+    const invalid = harness({ options: { secretsFilePath: secretPath } });
+    await assert.rejects(deployCloudflare(invalid.options), /Deployment secrets file/u, name);
+    assert.deepEqual(invalid.calls, [], name);
+    assert.deepEqual(invalid.buildEvents(), [], name);
+  }
+
+  const unconfirmedPath = join(resolvedTemporaryDirectory, "unconfirmed-secrets.json");
+  const unconfirmed = harness({ options: { confirmLive: false, secretsFilePath: unconfirmedPath } });
+  await assert.rejects(deployCloudflare(unconfirmed.options), /requires a confirmed live deployment/u);
+  assert.deepEqual(unconfirmed.calls, []);
+  assert.deepEqual(unconfirmed.buildEvents(), []);
+
+  const driftPath = join(resolvedTemporaryDirectory, "drifting-secrets.json");
+  await writeFile(driftPath, `${JSON.stringify({ [deploymentSecretName]: deploymentSecretValue })}\n`,
+    { flag: "wx", mode: 0o600 });
+  let changed = false;
+  const drift = harness({ options: { secretsFilePath: driftPath, checkBundle: async () => {
+    if (!changed) {
+      await writeFile(driftPath, `${JSON.stringify({ [deploymentSecretName]: "changed-control-token-value" })}\n`);
+      changed = true;
+    }
+    return true;
+  } } });
+  await assert.rejects(deployCloudflare(drift.options), /Deployment secrets file changed after validation/u);
+  assert.equal(changed, true);
+  assert.ok(!drift.calls.some((call) => call.startsWith(`pnpm exec wrangler deploy ${workerEntrypoint}`)));
+  assert.equal(drift.authorityWrites(), 0);
+  assert.equal(drift.receipts.length, 0);
+});
 
 await check("existing Worker deploy proceeds with 18 UNKNOWN counters and no migration apply", async () => {
   const test = harness();

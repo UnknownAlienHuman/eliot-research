@@ -13,7 +13,7 @@ import { createD1DynamicRouteRegistry } from "../../../packages/cloudflare-resea
 import { createD1ResearchModelPricingSnapshotStore } from "../../../packages/cloudflare-research/src/research-model-pricing-store.js";
 import { dynamicRouteJsonArtifact } from "../../../packages/cloudflare-ai/src/dynamic-route-provisioning-codec.js";
 import { handleHttp } from "../src/http.js";
-import { createResearchStageHandlerFactory, SERVER_OWNED_FREEZE_HANDLER_GENERATION } from "../src/research-stage-handlers.js";
+import { createResearchStageHandlerFactory, SERVER_OWNED_FREEZE_HANDLER_GENERATION } from "@eliotr/cloudflare-research-runtime/research-stage-handlers.js";
 import type { Env } from "../src/env.js";
 import { committedFreezeSynthesisFixture } from "./research-synthesis-fixture.js";
 import { principal } from "./research-evidence-freeze-fixture.js";

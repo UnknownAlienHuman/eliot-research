@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createResearchOwnerRuntimeConfiguration } from "../src/research-owner-runtime-config.js";
+import { createResearchOwnerRuntimeConfiguration } from "@eliotr/cloudflare-research-configuration/research-owner-runtime-config.js";
 import type { Env } from "../src/env.js";
 import { readResearchConfigurationStatus } from "../src/research-configuration-status.js";
 import { readResearchSemanticConfigSource } from "../src/research-semantic-config-revision.js";

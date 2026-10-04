@@ -13,7 +13,7 @@ import {
 } from "@eliotr/cloudflare-research-stages";
 import { readWorkflowObject, WorkflowCheckpointStore, type StageRequest } from "@eliotr/cloudflare-workflows";
 import { handleHttp } from "../src/http.js";
-import { createResearchStageHandlerFactory, SERVER_OWNED_FREEZE_HANDLER_GENERATION } from "../src/research-stage-handlers.js";
+import { createResearchStageHandlerFactory, SERVER_OWNED_FREEZE_HANDLER_GENERATION } from "@eliotr/cloudflare-research-runtime/research-stage-handlers.js";
 import { runtime, governedModelAttemptFixture } from "./model-attempt-fixture.js";
 import { committedFreezeSynthesisFixture, BASE_URL } from "./research-synthesis-fixture.js";
 import { principal } from "./research-evidence-freeze-fixture.js";

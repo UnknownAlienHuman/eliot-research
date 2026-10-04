@@ -200,6 +200,7 @@ await check("generated identity, Access and D1 config", () => {
     (value) => { value.vars.ACCESS_AUDIENCE = "other"; },
     (value) => { value.vars.ENVIRONMENT = "development"; },
     (value) => { value.vars.GOOGLE_CLIENT_SECRET = "must-be-secret_text"; },
+    (value) => { value.vars.ELIOTR_MODEL_PROVIDER_CONTROL_TOKEN = "must-be-secret_text"; },
     (value) => { value.vars = null; },
     (value) => { value.keep_vars = true; },
     (value) => { value.d1_databases[1].database_id = value.d1_databases[0].database_id; },
@@ -261,6 +262,15 @@ await check("Worker inventory export/compatibility/assets fail closed", async ()
   delete withoutOptionalSecret.resources.bindings.GOOGLE_CLIENT_SECRET;
   assert.deepEqual((await read({ versionResponse: { success: true, result: withoutOptionalSecret } })).vars_readback,
     attestation.vars_readback);
+  const withProviderControlSecret = structuredClone(version);
+  withProviderControlSecret.resources.bindings.ELIOTR_MODEL_PROVIDER_CONTROL_TOKEN = {
+    type: "secret_text", text: "nonsecret-test-sentinel",
+  };
+  const providerControlSecretReadback = await read({ versionResponse: {
+    success: true, result: withProviderControlSecret,
+  } });
+  assert.deepEqual(providerControlSecretReadback, attestation);
+  assert.ok(!JSON.stringify(providerControlSecretReadback).includes("nonsecret-test-sentinel"));
   await check("optional compatibility flags normalize only omission, preserving malformed and drift rejection", async () => {
     const omitted = structuredClone(version);
     delete omitted.resources.script_runtime.compatibility_flags;
@@ -305,6 +315,9 @@ await check("Worker inventory export/compatibility/assets fail closed", async ()
     (value) => { value.resources.bindings.EXTRA_JSON = { type: "json", json: { enabled: true } }; },
     (value) => { value.resources.bindings.UNKNOWN_SECRET = { type: "secret_text" }; },
     (value) => { value.resources.bindings.GOOGLE_CLIENT_SECRET.type = "plain_text"; },
+    (value) => { value.resources.bindings.ELIOTR_MODEL_PROVIDER_CONTROL_TOKEN = {
+      type: "plain_text", text: "must-be-secret_text",
+    }; },
     (value) => { value.resources.bindings.RESEARCH_SESSION.script_name = "foreign-worker"; },
     (value) => { value.resources.bindings.RESEARCH_SESSION.environment = "preview"; },
     (value) => { value.resources.bindings.EXTRA = { type: "r2_bucket", bucket_name: "other" }; },

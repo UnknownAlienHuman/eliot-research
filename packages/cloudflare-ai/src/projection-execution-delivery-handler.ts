@@ -7,7 +7,7 @@ import {
   createAiSearchGenerationRegistryService,
   createD1AiSearchGenerationRegistryStore,
   type AiSearchGenerationRegistrySnapshot,
-} from "@eliotr/cloudflare-ai";
+} from "@eliotr/cloudflare-projection/ai-search";
 import {
   createD1ProjectionAuthority,
   createD1ProjectionSearchPort,
@@ -20,9 +20,17 @@ import {
 } from "@eliotr/cloudflare-projection";
 import {
   createD1ExecutionLeaseStore,
+  type AiSearchNamespaceLike,
   type DeliveryHandler,
 } from "@eliotr/platform-cloudflare";
-import type { Env } from "./env.js";
+
+export interface ProjectionExecutionDeliveryBindings {
+  readonly core_database: D1Database;
+  readonly search_database: D1Database;
+  readonly evidence_bucket: R2Bucket;
+  readonly work_bucket: R2Bucket;
+  readonly ai_search: AiSearchNamespaceLike;
+}
 
 export const PROJECTION_EXECUTION_PROFILE: ProjectionExecutionProfile =
   Object.freeze({
@@ -43,67 +51,50 @@ export function projectionManagedGenerationIsActive(
 ): boolean {
   if (snapshot === null) return false;
   const registry = snapshot.artifact.registry;
-  if (
-    registry.active_head_generation !==
-    AI_SEARCH_PRIMARY_GENERATION
-  ) {
+  if (registry.active_head_generation !== AI_SEARCH_PRIMARY_GENERATION) {
     return false;
   }
   const active = registry.generations.find(
-    (record) =>
-      record.generation === AI_SEARCH_PRIMARY_GENERATION,
+    (record) => record.generation === AI_SEARCH_PRIMARY_GENERATION,
   );
   if (active?.state !== "ACTIVE") {
-    throw new Error(
-      "AI Search registry active head lacks its ACTIVE generation record",
-    );
+    throw new Error("AI Search registry active head lacks its ACTIVE generation record");
   }
-  assertImmutableAiSearchProfile(
-    active.profile,
-    AI_SEARCH_PRIMARY_PROJECTION_PROFILE,
-  );
+  assertImmutableAiSearchProfile(active.profile, AI_SEARCH_PRIMARY_PROJECTION_PROFILE);
   return true;
 }
 
 function projectionExecutor(
-  env: Env,
+  bindings: ProjectionExecutionDeliveryBindings,
   profile: ProjectionExecutionProfile,
 ) {
   return createExecutor({
-    authority: createD1ProjectionAuthority({ database: env.CORE_DB }),
-    content: createR2ProjectionContentPort({
-      evidence_bucket: env.EVIDENCE_BUCKET,
-    }),
-    work: createR2ProjectionWorkPort({
-      work_bucket: env.WORK_BUCKET,
-    }),
-    search: createD1ProjectionSearchPort(env.SEARCH_DB),
+    authority: createD1ProjectionAuthority({ database: bindings.core_database }),
+    content: createR2ProjectionContentPort({ evidence_bucket: bindings.evidence_bucket }),
+    work: createR2ProjectionWorkPort({ work_bucket: bindings.work_bucket }),
+    search: createD1ProjectionSearchPort(bindings.search_database),
     managed: createManagedProjectionPort({
-      namespace:
-        env.AI_SEARCH as unknown as ProjectionAiSearchNamespace,
+      namespace: bindings.ai_search as unknown as ProjectionAiSearchNamespace,
       profile,
     }),
-    leases: createD1ExecutionLeaseStore(env.CORE_DB),
+    leases: createD1ExecutionLeaseStore(bindings.core_database),
     profile,
   });
 }
 
 // IMPLEMENTED_NOT_LIVE: ER-38 projection execution requires remote R2/D1 Search/AI Search receipts.
 export function createProjectionExecutionDeliveryHandler(
-  env: Env,
+  bindings: ProjectionExecutionDeliveryBindings,
 ): DeliveryHandler {
   const registry = createAiSearchGenerationRegistryService(
-    createD1AiSearchGenerationRegistryStore(env.SEARCH_DB),
+    createD1AiSearchGenerationRegistryStore(bindings.search_database),
   );
   return async (message) => {
-    const snapshot = await registry.read(
-      AI_SEARCH_PRIMARY_NAMESPACE,
-    );
+    const snapshot = await registry.read(AI_SEARCH_PRIMARY_NAMESPACE);
     const profile: ProjectionExecutionProfile = Object.freeze({
       ...PROJECTION_EXECUTION_PROFILE,
-      managed_generation_active:
-        projectionManagedGenerationIsActive(snapshot),
+      managed_generation_active: projectionManagedGenerationIsActive(snapshot),
     });
-    return projectionExecutor(env, profile).execute(message);
+    return projectionExecutor(bindings, profile).execute(message);
   };
 }

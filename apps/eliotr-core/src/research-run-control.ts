@@ -1,5 +1,5 @@
 import type { AuthenticatedRequestContext, ResearchRunStatus } from "@eliotr/interfaces";
-import { CatalogInputError } from "./catalog-service.js";
+import { CatalogInputError } from "@eliotr/cloudflare-navigation";
 import type { Env } from "./env.js";
 import { createResearchRunReadEnvironment } from "./research-run-read-authorization.js";
 import { createProjectClientRunReadEnvironment } from "./research-client-run-read.js";

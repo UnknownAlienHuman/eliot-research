@@ -33,7 +33,7 @@ async function main() {
       throw new Error("Document setup contains missing or unknown fields");
     }
     const { createResearchOwnerDocumentPreset } = await loadCompiledWorkspaceModule(
-      "apps/eliotr-core/dist/research-owner-document-preset.js",
+      "packages/cloudflare-research-configuration/dist/research-owner-document-preset.js",
     );
     const preset = createResearchOwnerDocumentPreset(input.document_preset);
     input = { protocol: "eliotr.research-owner-setup.v1", semantic: preset.semantic,
@@ -42,7 +42,7 @@ async function main() {
       ...(input.transport_policies === undefined ? {} : { transport_policies: input.transport_policies }) };
   }
   const { createResearchOwnerRuntimeConfiguration } = await loadCompiledWorkspaceModule(
-    "apps/eliotr-core/dist/research-owner-runtime-config.js",
+    "packages/cloudflare-research-configuration/dist/research-owner-runtime-config.js",
   );
   const compiled = await createResearchOwnerRuntimeConfiguration(input);
   let previous = { protocol: "eliotr.research-runtime.v1", vars: {} };

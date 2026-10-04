@@ -12,7 +12,7 @@ import {
 } from "./research-project-configuration.js";
 import { readResearchConfigurationReadiness } from "./research-configuration-readiness.js";
 import { createOwnerResearchProviderNativeModelAuthority } from "./research-provider-native-model-authority.js";
-import type { ResearchProviderKeyModelUseDbPhase } from "./research-provider-key-model-use-store.js";
+import type { ResearchProviderKeyModelUseDbPhase } from "@eliotr/cloudflare-research-configuration/research-provider-key-model-use-store.js";
 
 const LEGACY_SEMANTIC_CONFIGURATION_KEYS = [
   "ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON",

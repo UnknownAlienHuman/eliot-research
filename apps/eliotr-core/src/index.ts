@@ -2,19 +2,16 @@ import { createManagedOAuthOwnerContext, createMcpResearchToolCall } from "./mcp
 import type { Env } from "./env.js";
 import {
   GeminiMcpToolError,
-  createD1McpClientDiagnosticService,
+  createWorkspaceMcpDiagnosticConsume,
   handleGeminiMcp,
-  McpClientDiagnosticServiceError,
   type McpClientDiagnosticConsume,
-  type McpToolCallContext,
   type WorkspaceMcpRuntime,
 } from "@eliotr/cloudflare-workspace-mcp";
 import { handleHttp } from "./http.js";
-import { ClientGrantError, OrientationError } from "@eliotr/cloudflare-navigation";
-import { CatalogInputError, readCatalog } from "./catalog-service.js";
+import { CatalogInputError, ClientGrantError, OrientationError, readCatalog } from "@eliotr/cloudflare-navigation";
 import { handleQueue } from "./queue.js";
 import { readReadiness } from "./readiness.js";
-import { createD1WorkspaceMcpCandidateStore } from "./workspace-mcp-candidate-store.js";
+import { createD1WorkspaceMcpCandidateStore } from "@eliotr/cloudflare-workspace-mcp/workspace-mcp-candidate-d1-store";
 import { handleScheduled } from "./scheduled.js";
 import {
   ComputerAgentQualificationError,
@@ -24,137 +21,9 @@ import {
 export { ResearchSession } from "./research-session.js";
 export { ResearchWorkflow } from "./research-workflow.js";
 
-const MCP_DIAGNOSTIC_ERROR_MAP: Readonly<Record<string, {
-  readonly code: string;
-  readonly message: string;
-  readonly retryable: boolean;
-}>> = Object.freeze({
-  MCP_DIAGNOSTIC_CLOCK_INVALID: {
-    code: "MCP_DIAGNOSTIC_CLOCK_INVALID",
-    message: "Client diagnostic confirmation is temporarily unavailable",
-    retryable: true,
-  },
-  MCP_DIAGNOSTIC_CONFIG_INVALID: {
-    code: "MCP_DIAGNOSTIC_CONFIG_INVALID",
-    message: "Client diagnostic confirmation is temporarily unavailable",
-    retryable: true,
-  },
-  MCP_DIAGNOSTIC_CRYPTO_UNAVAILABLE: {
-    code: "MCP_DIAGNOSTIC_CRYPTO_UNAVAILABLE",
-    message: "Client diagnostic confirmation is temporarily unavailable",
-    retryable: true,
-  },
-  MCP_DIAGNOSTIC_D1_CORRUPT: {
-    code: "MCP_DIAGNOSTIC_D1_CORRUPT",
-    message: "Client diagnostic confirmation is temporarily unavailable",
-    retryable: true,
-  },
-  MCP_DIAGNOSTIC_D1_UNAVAILABLE: {
-    code: "MCP_DIAGNOSTIC_D1_UNAVAILABLE",
-    message: "Client diagnostic confirmation is temporarily unavailable",
-    retryable: true,
-  },
-  MCP_DIAGNOSTIC_MCP_AUTH_EXPIRED: {
-    code: "MCP_DIAGNOSTIC_MCP_AUTH_EXPIRED",
-    message: "Client diagnostic authentication has expired",
-    retryable: false,
-  },
-  MCP_DIAGNOSTIC_MCP_CONTEXT_INVALID: {
-    code: "MCP_DIAGNOSTIC_MCP_CONTEXT_INVALID",
-    message: "Authenticated client diagnostic context is invalid",
-    retryable: false,
-  },
-  MCP_DIAGNOSTIC_MCP_CONTEXT_REQUIRED: {
-    code: "MCP_DIAGNOSTIC_MCP_CONTEXT_REQUIRED",
-    message: "Authenticated client diagnostic context is required",
-    retryable: false,
-  },
-  MCP_DIAGNOSTIC_MCP_DEPLOYMENT_MISMATCH: {
-    code: "MCP_DIAGNOSTIC_MCP_DEPLOYMENT_MISMATCH",
-    message: "Client diagnostic authentication is not current",
-    retryable: false,
-  },
-  MCP_DIAGNOSTIC_MCP_PROFILE_MISMATCH: {
-    code: "MCP_DIAGNOSTIC_MCP_PROFILE_MISMATCH",
-    message: "Client diagnostic authentication is not current",
-    retryable: false,
-  },
-  MCP_DIAGNOSTIC_CHALLENGE_EXPIRED: {
-    code: "MCP_CLIENT_DIAGNOSTIC_CHALLENGE_EXPIRED",
-    message: "Client diagnostic challenge has expired",
-    retryable: false,
-  },
-  MCP_DIAGNOSTIC_CHALLENGE_NOT_FOUND: {
-    code: "MCP_CLIENT_DIAGNOSTIC_CHALLENGE_NOT_FOUND",
-    message: "Client diagnostic challenge was not found",
-    retryable: false,
-  },
-  MCP_DIAGNOSTIC_CHALLENGE_REPLAY: {
-    code: "MCP_CLIENT_DIAGNOSTIC_CHALLENGE_REPLAY",
-    message: "Client diagnostic challenge was already consumed",
-    retryable: false,
-  },
-  MCP_DIAGNOSTIC_CHALLENGE_STALE: {
-    code: "MCP_CLIENT_DIAGNOSTIC_CHALLENGE_STALE",
-    message: "Client diagnostic challenge is no longer current",
-    retryable: false,
-  },
-  MCP_DIAGNOSTIC_OWNER_INVALID: {
-    code: "MCP_DIAGNOSTIC_OWNER_INVALID",
-    message: "Client diagnostic confirmation is temporarily unavailable",
-    retryable: true,
-  },
-  MCP_DIAGNOSTIC_INPUT_INVALID: {
-    code: "INPUT_INVALID",
-    message: "Client diagnostic input is invalid",
-    retryable: false,
-  },
-  MCP_DIAGNOSTIC_SETTLEMENT_UNCERTAIN: {
-    code: "MCP_DIAGNOSTIC_SETTLEMENT_UNCERTAIN",
-    message: "Client diagnostic confirmation is temporarily unavailable",
-    retryable: true,
-  },
-  MCP_DIAGNOSTIC_TOKEN_INVALID: {
-    code: "MCP_CLIENT_DIAGNOSTIC_TOKEN_INVALID",
-    message: "Client diagnostic challenge token is invalid",
-    retryable: false,
-  },
-});
-
-function mcpDiagnosticError(error: McpClientDiagnosticServiceError): GeminiMcpToolError {
-  const mapped = MCP_DIAGNOSTIC_ERROR_MAP[error.code];
-  return mapped === undefined
-    ? new GeminiMcpToolError(
-        "MCP_CLIENT_DIAGNOSTIC_UNAVAILABLE",
-        "Client diagnostic confirmation is temporarily unavailable",
-        true,
-      )
-    : new GeminiMcpToolError(mapped.code, mapped.message, mapped.retryable);
-}
-
 function computerAgentQualificationError(error: ComputerAgentQualificationError): GeminiMcpToolError {
   return new GeminiMcpToolError(error.code,
     "Computer-agent qualification is not current for this Access actor", error.retryable);
-}
-
-function unavailableMcpDiagnosticError(): GeminiMcpToolError {
-  return new GeminiMcpToolError(
-    "MCP_CLIENT_DIAGNOSTIC_UNAVAILABLE",
-    "Client diagnostic confirmation is temporarily unavailable",
-    true,
-  );
-}
-
-function copyMcpDiagnosticContext(context: McpToolCallContext): McpToolCallContext {
-  const verifiedActor = context.verified_actor;
-  return Object.freeze({
-    principal_ref: context.principal_ref,
-    trace_id: context.trace_id,
-    deployment_generation: context.deployment_generation,
-    ...(verifiedActor === undefined
-      ? {}
-      : { verified_actor: Object.freeze({ ...verifiedActor }) }),
-  });
 }
 
 function configuredMcpClientDiagnosticConsume(env: Env): McpClientDiagnosticConsume | undefined {
@@ -162,45 +31,36 @@ function configuredMcpClientDiagnosticConsume(env: Env): McpClientDiagnosticCons
   if (profile !== "service-token" && profile !== "managed-oauth") return undefined;
   const database = env.CORE_DB;
   const deploymentGeneration = env.DEPLOYMENT_GENERATION;
-  return async (input, context) => {
-    const consumeInput = Object.freeze({
-      challenge_id: input.challenge_id,
-      challenge_token: input.challenge_token,
-    });
-    const consumeContext = copyMcpDiagnosticContext(context);
-    try {
-      const actor = context.verified_actor;
+  return createWorkspaceMcpDiagnosticConsume({
+    database,
+    auth_profile: profile,
+    deployment_generation: deploymentGeneration,
+    preflight_computer_agent_qualification: async (input, context) => {
+      if (context.verified_actor === undefined) return false;
       const access = context.verified_access;
-      const bound = actor === undefined ? false : await preflightComputerAgentQualificationChallenge({
+      return preflightComputerAgentQualificationChallenge({
         database,
-        challenge_id: consumeInput.challenge_id,
+        challenge_id: input.challenge_id,
         transport: "MCP_WRITE",
         issuer: access?.issuer,
         subject: context.principal_ref,
         deployment_generation: deploymentGeneration,
       });
-      const service = createD1McpClientDiagnosticService(database, {
-        now: Date.now,
-        auth_profile: profile,
+    },
+    require_computer_agent_qualification_current: async (input, context) => {
+      const actor = context.verified_actor;
+      if (actor === undefined) return;
+      await requireComputerAgentQualificationChallengeReady({
+        database,
+        challenge_id: input.challenge_id,
+        transport: "MCP_WRITE",
+        credential_generation: actor.credential_generation,
         deployment_generation: deploymentGeneration,
       });
-      const result = await service.consume(consumeInput, consumeContext);
-      if (bound && context.verified_actor !== undefined) {
-        await requireComputerAgentQualificationChallengeReady({
-          database,
-          challenge_id: consumeInput.challenge_id,
-          transport: "MCP_WRITE",
-          credential_generation: context.verified_actor.credential_generation,
-          deployment_generation: deploymentGeneration,
-        });
-      }
-      return result;
-    } catch (error) {
-      if (error instanceof ComputerAgentQualificationError) throw computerAgentQualificationError(error);
-      if (error instanceof McpClientDiagnosticServiceError) throw mcpDiagnosticError(error);
-      throw unavailableMcpDiagnosticError();
-    }
-  };
+    },
+    translate_computer_agent_qualification_error: (error) =>
+      error instanceof ComputerAgentQualificationError ? computerAgentQualificationError(error) : undefined,
+  });
 }
 
 function workspaceMcpRuntime(env: Env, request: Request): WorkspaceMcpRuntime {

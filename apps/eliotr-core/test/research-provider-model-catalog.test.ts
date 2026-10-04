@@ -7,8 +7,8 @@ import {
   RESEARCH_PREPARED_MODEL_TRANSPORT_PROTOCOL,
   type ResearchPreparedModelTransportSelectionV1,
 } from "../src/research-prepared-model-transport.js";
-import type { ResearchModelCatalogError } from "../src/research-model-catalog.js";
-import { createResearchProviderModelCatalogTransports } from "../src/research-provider-model-catalog.js";
+import type { ResearchModelCatalogError } from "@eliotr/cloudflare-model-control/research-model-catalog.js";
+import { createResearchProviderModelCatalogTransports } from "@eliotr/cloudflare-model-control/research-provider-model-catalog.js";
 
 const gateway = `https://gateway.ai.cloudflare.com/v1/${"a".repeat(32)}/eliotr-reasoning`;
 

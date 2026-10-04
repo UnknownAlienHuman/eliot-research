@@ -8,7 +8,7 @@ import { createFreezeProtocolAndScopeStageHandler } from "../../../packages/clou
 import { createResearchPlanningManifest, installedInquiryProtocolDefinition, compileInquiryLedgerObligations,
   createWorkflowCheckpointExecutor, digest, fail, type StageRequest, type StageReceipt,
   type WorkflowExecutionPorts, type WorkflowPrincipal } from "@eliotr/cloudflare-research";
-import { createRetrieveBranchesStageHandler, type RetrieveBranchesStageDependencies } from "../src/research-retrieve-branches.js";
+import { createRetrieveBranchesStageHandler, type RetrieveBranchesStageDependencies } from "@eliotr/cloudflare-research-runtime/research-retrieve-branches.js";
 import type { ScopeSnapshot, VersionedRef } from "@eliotr/contracts";
 import { importAndProject, prepareQ1Namespace, type Q1Namespace, type Q1Runtime } from "./retrieval-q1-fixture.js";
 

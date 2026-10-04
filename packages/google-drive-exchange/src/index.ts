@@ -20,3 +20,15 @@ export * from "./google-oauth-store.js";
 export { disconnectGoogleConnectionApplication } from "./google-disconnect-application.js";
 export type { GoogleConnectionDisconnectApplicationInput, GoogleConnectionDisconnectOutcome,
   GoogleConnectionDisconnectResult } from "./google-disconnect-application.js";
+export {
+  GOOGLE_OAUTH_ISSUER,
+  parseGoogleOAuthBeginTransportInput,
+  parseGoogleOAuthCallbackTransportInput,
+} from "./oauth-transport-input.js";
+export type {
+  GoogleOAuthTransportInputErrorCode,
+  GoogleOAuthTransportInputFailure,
+  GoogleOAuthBeginTransportInput,
+  GoogleOAuthCallbackTransportInput,
+  GoogleOAuthBoundedBodyReader,
+} from "./oauth-transport-input.js";

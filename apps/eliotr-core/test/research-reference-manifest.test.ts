@@ -28,7 +28,7 @@ import {
   type Q1Runtime,
 } from "./retrieval-q1-fixture.js";
 import { body, db, principal, runtime, setupOrientationDatabase, verifier } from "./orientation-fixture.js";
-import { loadHeldResearchScope, retrieveWithHeldScope } from "../src/research-retrieval-composition.js";
+import { loadHeldResearchScope, retrieveWithHeldScope } from "@eliotr/cloudflare-research-runtime/research-retrieval-composition.js";
 
 const q1Runtime = env as unknown as Q1Runtime;
 const access: RetrievalQueryAccess = {

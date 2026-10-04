@@ -17,7 +17,7 @@ import { createD1DynamicRouteRegistry } from "../../../packages/cloudflare-resea
 import { createD1ResearchModelPricingQuotePort } from "../../../packages/cloudflare-research/src/research-model-pricing-quote.js";
 import { createD1ResearchModelPricingSnapshotStore } from "../../../packages/cloudflare-research/src/research-model-pricing-store.js";
 import { dynamicRouteJsonArtifact } from "../../../packages/cloudflare-ai/src/dynamic-route-provisioning-codec.js";
-import { retrieveWithHeldScope } from "../src/research-retrieval-composition.js";
+import { retrieveWithHeldScope } from "@eliotr/cloudflare-research-runtime/research-retrieval-composition.js";
 import { createArtifactDraftRuntime, draftInput, runtime } from "./artifact-draft-fixture.js";
 import { originalReport } from "./artifact-cow-http-fixture.js";
 import { freezeFixture, principal as freezePrincipal } from "./research-evidence-freeze-fixture.js";

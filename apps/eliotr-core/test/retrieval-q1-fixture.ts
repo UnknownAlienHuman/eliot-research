@@ -23,6 +23,7 @@ import {
   createR2ProjectionWorkPort,
 } from "@eliotr/cloudflare-projection";
 import type { ScopeSnapshot } from "@eliotr/contracts";
+import { PROJECTION_EXECUTION_PROFILE } from "@eliotr/cloudflare-ai";
 import type { RetrievalRequest } from "@eliotr/retrieval";
 import { bundleFixture } from "../../../packages/platform-cloudflare/src/ingest-test-fixture.js";
 import { prepareBrowserBundle } from "../../../packages/pwa-source-workspace/src/bundle-input.js";
@@ -30,7 +31,6 @@ import { importBrowserBundle } from "../../../packages/pwa-source-workspace/src/
 import type { ImportTransport } from "../../../packages/pwa-source-workspace/src/bundle-import-api.js";
 import { decodeApiProblem } from "../../eliotr-pwa/src/api.js";
 import { handleHttp } from "../src/http.js";
-import { PROJECTION_EXECUTION_PROFILE } from "../src/projection-execution-handler.js";
 import type { Env } from "../src/env.js";
 
 export interface Q1Migration {

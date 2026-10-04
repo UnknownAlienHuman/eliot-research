@@ -19,7 +19,7 @@ import {
   SERVER_OWNED_RESEARCH_HANDLER_GENERATION,
   SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION,
   SERVER_OWNED_SEMANTIC_HANDLER_GENERATION,
-} from "../src/research-stage-handlers.js";
+} from "@eliotr/cloudflare-research-runtime/research-stage-handlers.js";
 import { parseResearchRunRequest } from "../src/research-session.js";
 
 let admissionEnvironment: Env;

@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { digest, type StageRequest } from "@eliotr/cloudflare-research";
 import { RESEARCH_WORKFLOW_STAGES } from "@eliotr/domain";
-import { readD1BoundedResearchWorkflowLeaseExpiry } from "../src/research-workflow-budget.js";
-import { researchStageBudgetLeaseMs } from "../src/research-runtime-duration.js";
+import { readD1BoundedResearchWorkflowLeaseExpiry } from "@eliotr/cloudflare-research-runtime";
+import { researchStageBudgetLeaseMs } from "@eliotr/cloudflare-research-runtime/research-runtime-duration.js";
 import { principal, workflowFixture } from "./research-workflow-fixture.js";
 
 const resultBytes = () => new TextEncoder().encode("bounded stage result");

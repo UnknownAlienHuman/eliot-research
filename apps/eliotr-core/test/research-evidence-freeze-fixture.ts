@@ -1,4 +1,4 @@
-import type { SemanticResearchHandlerGeneration } from "../src/research-stage-handlers.js";
+import type { SemanticResearchHandlerGeneration } from "@eliotr/cloudflare-research-runtime/research-stage-handlers.js";
 import { applyD1Migrations, reset } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import {
@@ -27,9 +27,9 @@ import {
   type WorkflowExecutionPorts,
   type WorkflowPrincipal,
 } from "@eliotr/cloudflare-research";
-import { createRetrieveBranchesStageHandler, type RetrieveBranchesStageDependencies } from "../src/research-retrieve-branches.js";
-import { createEvidenceFreezeComposition, createEvidenceFreezePredecessorReader, createEvidenceFreezeWorkflowReaders } from "../src/research-evidence-freeze-composition.js";
-import { SERVER_OWNED_FREEZE_HANDLER_GENERATION } from "../src/research-stage-handlers.js";
+import { createRetrieveBranchesStageHandler, type RetrieveBranchesStageDependencies } from "@eliotr/cloudflare-research-runtime/research-retrieve-branches.js";
+import { createEvidenceFreezeComposition, createEvidenceFreezePredecessorReader, createEvidenceFreezeWorkflowReaders } from "@eliotr/cloudflare-research-runtime/research-evidence-freeze-composition.js";
+import { SERVER_OWNED_FREEZE_HANDLER_GENERATION } from "@eliotr/cloudflare-research-runtime/research-stage-handlers.js";
 import { prepareResearchRunScope } from "../src/research-run-admission.js";
 import { modelGatewayRequestParametersSha256, modelGatewaySha256, canonicalModelGatewayJson } from "@eliotr/cloudflare-ai";
 import { importAndProject, prepareQ1Namespace, type Q1Runtime } from "./retrieval-q1-fixture.js";

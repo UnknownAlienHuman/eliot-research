@@ -8,16 +8,16 @@ import {
   bindAdmissionPromptDeploymentIdentities,
   type AdmissionPromptBindingDependencies,
 } from "./test/research-current-dispatch-config.js";
-import type { ResearchOwnerRuntimeConfiguration } from "./src/research-owner-runtime-config.js";
+import type { ResearchOwnerRuntimeConfiguration } from "@eliotr/cloudflare-research-configuration/research-owner-runtime-config.js";
 
 export default defineConfig(async () => {
-  const compiler = await loadCompiledWorkspaceModule("apps/eliotr-core/dist/research-owner-runtime-config.js") as {
+  const compiler = await loadCompiledWorkspaceModule("packages/cloudflare-research-configuration/dist/research-owner-runtime-config.js") as {
     createResearchOwnerRuntimeConfiguration: (input: ReturnType<typeof admissionTestConfiguration>) => Promise<ResearchOwnerRuntimeConfiguration>;
   };
   const [cloudflareAi, researchStages, semanticConfig] = await Promise.all([
     loadCompiledWorkspaceModule("packages/cloudflare-ai/dist/index.js"),
     loadCompiledWorkspaceModule("packages/cloudflare-research-stages/dist/index.js"),
-    loadCompiledWorkspaceModule("apps/eliotr-core/dist/research-owner-semantic-config.js"),
+    loadCompiledWorkspaceModule("packages/cloudflare-research-configuration/dist/research-owner-semantic-config.js"),
   ]);
   const bindingDependencies = {
     canonicalModelGatewayJson: cloudflareAi.canonicalModelGatewayJson,

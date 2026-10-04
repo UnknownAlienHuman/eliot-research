@@ -3,7 +3,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { WorkspaceMcpObservationV2Schema, WorkspaceMcpPlanV2Schema, WorkspaceMcpReceiptV2Schema } from "@eliotr/contracts";
 import type { WorkspaceMcpObservationV2, WorkspaceMcpPlanV2, WorkspaceMcpReceiptV2 } from "@eliotr/contracts";
 import { canonicalDigest } from "@eliotr/platform-cloudflare";
-import { createD1WorkspaceMcpCandidateStore } from "../src/workspace-mcp-candidate-store.js";
+import { createD1WorkspaceMcpCandidateStore } from "@eliotr/cloudflare-workspace-mcp/workspace-mcp-candidate-d1-store";
 import workspaceLedgerMigration from "../../../infra/d1/core/migrations/0031_workspace_mcp_candidate_ledger.sql?raw";
 
 const database = (env as unknown as { CORE_DB: D1Database }).CORE_DB;

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { modelGatewayRequestParametersSha256, type ModelGatewayTransportPolicyV1 } from "@eliotr/cloudflare-ai";
 import { selectResearchOwnerPrompt } from "@eliotr/cloudflare-research-stages";
-import { createResearchOwnerRoutePlan } from "../src/research-owner-route-plan.js";
+import { createResearchOwnerRoutePlan } from "@eliotr/cloudflare-research-configuration/research-owner-route-plan.js";
 
 const transportPolicy: ModelGatewayTransportPolicyV1 = Object.freeze({
   version: 1,

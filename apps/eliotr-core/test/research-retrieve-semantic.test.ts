@@ -4,8 +4,8 @@ import { AI_SEARCH_PRIMARY_NAMESPACE, AI_SEARCH_PRIMARY_PROJECTION_PROFILE,
 import { canonicalRetrievalJson, createD1ScopeProfilePort } from "@eliotr/retrieval";
 import { digest, readWorkflowObject, INSTALLED_INQUIRY_PROTOCOL_REFS } from "@eliotr/cloudflare-research";
 import type { AiSearchNamespaceLike } from "@eliotr/platform-cloudflare";
-import { createResearchStageHandlerFactory, SERVER_OWNED_PROTOCOL_HANDLER_GENERATION } from "../src/research-stage-handlers.js";
-import { readRetrieveBranchesCheckpoint } from "../src/research-retrieve-branches.js";
+import { createResearchStageHandlerFactory, SERVER_OWNED_PROTOCOL_HANDLER_GENERATION } from "@eliotr/cloudflare-research-runtime/research-stage-handlers.js";
+import { readRetrieveBranchesCheckpoint } from "@eliotr/cloudflare-research-runtime/research-retrieve-branches.js";
 import { runtime, access, principal, profile, fixture, prepareRetrieveStage, type Fixture } from "./research-retrieve-fixture.js";
 
 const QUERY = "How can a colony preserve warmth?";

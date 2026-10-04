@@ -12,8 +12,8 @@ import { decodeModelRouteDeployment, type ModelRouteDeployment } from "@eliotr/p
 import type { AuthenticatedRequestContext } from "@eliotr/interfaces";
 import { selectResearchOwnerPrompt } from "@eliotr/cloudflare-research-stages";
 import type { Env } from "../src/env.js";
-import { createResearchOwnerRuntimeConfiguration } from "../src/research-owner-runtime-config.js";
-import { createResearchOwnerSemanticConfiguration } from "../src/research-owner-semantic-config.js";
+import { createResearchOwnerRuntimeConfiguration } from "@eliotr/cloudflare-research-configuration/research-owner-runtime-config.js";
+import { createResearchOwnerSemanticConfiguration } from "@eliotr/cloudflare-research-configuration/research-owner-semantic-config.js";
 import { createResearchProjectModelConfigurationServiceFromEnv } from "../src/research-project-configuration.js";
 import {
   parseResearchPreparedModelTransportPolicies,

@@ -3,7 +3,7 @@ import {
   type ProviderNativeModelKeyBindingReadRequestV1,
   type ProviderNativeModelSelectionV1,
 } from "@eliotr/cloudflare-native-models";
-import { readResearchProviderKeyModelUseNativeScope } from "./research-provider-key-model-use-current-scope.js";
+import { readResearchProviderKeyModelUseNativeScope } from "@eliotr/cloudflare-research-configuration/research-provider-key-model-use-current-scope.js";
 import type {
   ResearchProviderNativeModelCurrentScopeV1,
   ReadResearchProviderNativeModelCurrentScope,
