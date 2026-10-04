@@ -346,6 +346,9 @@ function candidateIdentity(sourceHead, generation, configSha) {
 function extractMcpBaselinePins(configurationBaseline) {
   const variables = configurationBaseline?.configuration?.variables;
   if (!isRecord(variables)) fail("MCP baseline configuration omitted observed variables");
+  if (Object.keys(variables).some((name) => name.startsWith("MCP_") && !MCP_ACCESS_TRANSITION_VARIABLES.includes(name))) {
+    fail("MCP baseline contains an unsupported authority variable");
+  }
   const pins = {};
   for (const name of MCP_ACCESS_TRANSITION_VARIABLES) {
     const observed = Object.hasOwn(variables, name) ? variables[name] : null;
@@ -353,6 +356,10 @@ function extractMcpBaselinePins(configurationBaseline) {
       fail("MCP baseline contains a non-text or malformed authority variable");
     }
     pins[name] = observed === null ? null : { type: observed.type, value: observed.value };
+  }
+  if (MCP_ACCESS_TRANSITION_VARIABLES.every((name) => pins[name] === null)) return deepFreeze(pins);
+  if (MCP_ACCESS_CANDIDATE_VARIABLES.some((name) => pins[name] === null)) {
+    fail("MCP baseline must be fully absent or have a complete configured profile");
   }
   const hostname = pins.MCP_HOSTNAME?.value;
   const teamDomain = pins.MCP_ACCESS_TEAM_DOMAIN?.value;
@@ -378,6 +385,15 @@ function extractMcpBaselinePins(configurationBaseline) {
 
 function mcpVariablesSha256(configurationBaseline) {
   return sha256(Buffer.from(canonical(extractMcpBaselinePins(configurationBaseline)), "utf8"));
+}
+
+function assertMcpBaselineAuthorityContour(authority, configurationBaseline) {
+  const pins = extractMcpBaselinePins(configurationBaseline);
+  if (MCP_ACCESS_TRANSITION_VARIABLES.every((name) => pins[name] === null)) return;
+  if (pins.MCP_HOSTNAME.value !== authority.hostname || pins.MCP_ACCESS_TEAM_DOMAIN.value !== authority.team_domain ||
+      pins.MCP_ACCESS_AUDIENCE.value === authority.pwa.audience) {
+    fail("Pinned active Worker MCP profile does not match the approved hostname, team or audience contour");
+  }
 }
 
 export function createMaintenanceMcpAccessBaselineObservation({ evidence, accountId, sourceHead,
@@ -517,12 +533,7 @@ export function assertMcpAccessBaselineObservation(observation, configurationBas
       baseline.version_id !== expected.version_id || baseline.deployment_generation !== expected.generation) {
     fail("Observed MCP baseline does not match the pinned active Worker identity");
   }
-  const pins = extractMcpBaselinePins(baseline);
-  if (pins.MCP_HOSTNAME.value !== state.authority.hostname ||
-      pins.MCP_ACCESS_TEAM_DOMAIN.value !== state.authority.team_domain ||
-      pins.MCP_ACCESS_AUDIENCE.value === state.authority.pwa.audience) {
-    fail("Observed MCP baseline hostname, team or dedicated audience is invalid");
-  }
+  assertMcpBaselineAuthorityContour(state.authority, baseline);
 }
 
 export function assertMcpAccessTransitionBaseline(transition, configurationBaseline) {
@@ -539,11 +550,7 @@ export function assertMcpAccessTransitionBaseline(transition, configurationBasel
 }
 
 function assertMcpAccessBaselineObservationFromAuthority(authority, configurationBaseline) {
-  const pins = extractMcpBaselinePins(configurationBaseline);
-  if (pins.MCP_HOSTNAME.value !== authority.hostname || pins.MCP_ACCESS_TEAM_DOMAIN.value !== authority.team_domain ||
-      pins.MCP_ACCESS_AUDIENCE.value === authority.pwa.audience) {
-    fail("Pinned active Worker MCP profile does not match the approved hostname, team or audience contour");
-  }
+  assertMcpBaselineAuthorityContour(authority, configurationBaseline);
 }
 
 /** Recheck immutable local intent and the current GET-only receipt authority before upload. */

@@ -193,11 +193,11 @@ async function withEvidence(action) {
   }
 }
 
-async function readBaseline({ evidence }) {
+async function readBaseline({ evidence, version }) {
   const observation = createMaintenanceMcpAccessBaselineObservation({ evidence, accountId, sourceHead,
     candidateGeneration, candidateConfigurationSha256, candidateConfig, activeWorkerIdentity: identity });
   return readDeploymentWorker(environment, input, candidateConfig, {
-    fetchImpl: mockFetch(), observedDeploymentGeneration: identity.generation,
+    fetchImpl: mockFetch(version), observedDeploymentGeneration: identity.generation,
     approvedRuntimeCandidate: candidateRuntime, mcpAccessBaselineObservation: observation,
   });
 }
@@ -275,6 +275,59 @@ await check("ordinary Access drift and changed MCP baseline fail before upload",
       expectedConfigurationBaseline: initial.configuration_baseline, approvedRuntimeCandidate: candidateRuntime,
       approvedMcpAccessTransition: transition,
     }), /pinned baseline/u);
+  });
+});
+
+await check("all-absent MCP baseline is exact, partial or drifted state fails, and candidate readback stays strict", async () => {
+  await withEvidence(async ({ root, paths }) => {
+    const evidence = await readVerifiedMcpAccessEvidence({ root, receiptPath: paths.receipt,
+      summaryPath: paths.summary, apiReadbackSummaryPath: paths.api, accountId, publicHostname: hostname,
+      expectedConfigurationSha256: candidateConfigurationSha256, candidateConfig });
+    const absentVersion = workerVersion();
+    for (const name of ["MCP_HOSTNAME", "MCP_ACCESS_TEAM_DOMAIN", "MCP_ACCESS_AUDIENCE", "MCP_ACCESS_AUTH_PROFILE",
+      "MCP_ACCESS_SERVICE_TOKEN_CLIENT_ID", "MCP_ACCESS_SERVICE_TOKEN_CLIENT_IDS"]) {
+      delete absentVersion.resources.bindings[name];
+    }
+    const baseline = await readBaseline({ evidence, version: absentVersion });
+    assert.equal(Object.keys(baseline.configuration_baseline.configuration.variables)
+      .some((name) => name.startsWith("MCP_")), false);
+    const intent = createMaintenanceMcpAccessTransitionIntent({ evidence, accountId, sourceHead,
+      candidateGeneration, candidateConfigurationSha256, candidateConfig, activeWorkerIdentity: identity,
+      baselineConfigurationBaseline: baseline.configuration_baseline });
+    await writeFile(paths.intent, `${JSON.stringify(intent, null, 2)}\n`, { flag: "wx" });
+    const transition = await loadMaintenanceMcpAccessTransition({ path: paths.intent, root, accountId, sourceHead,
+      candidateGeneration, candidateConfigurationSha256, candidateConfig, activeWorkerIdentity: identity });
+    const unchanged = await readDeploymentWorker(environment, input, candidateConfig, {
+      fetchImpl: mockFetch(absentVersion), observedDeploymentGeneration: identity.generation,
+      expectedConfigurationBaseline: baseline.configuration_baseline, approvedRuntimeCandidate: candidateRuntime,
+      approvedMcpAccessTransition: transition,
+    });
+    assert.deepEqual(unchanged.configuration_baseline, baseline.configuration_baseline);
+
+    const oneVariableDrift = structuredClone(absentVersion);
+    oneVariableDrift.resources.bindings.MCP_HOSTNAME = { type: "plain_text", text: hostname };
+    await assert.rejects(readDeploymentWorker(environment, input, candidateConfig, {
+      fetchImpl: mockFetch(oneVariableDrift), observedDeploymentGeneration: identity.generation,
+      expectedConfigurationBaseline: baseline.configuration_baseline, approvedRuntimeCandidate: candidateRuntime,
+      approvedMcpAccessTransition: transition,
+    }), /exact pinned baseline/u);
+
+    const partialVersion = structuredClone(absentVersion);
+    partialVersion.resources.bindings.MCP_ACCESS_AUTH_PROFILE = { type: "plain_text", text: "service-token" };
+    await assert.rejects(readBaseline({ evidence, version: partialVersion }), /fully absent or have a complete configured profile/u);
+    const unknownVersion = structuredClone(absentVersion);
+    unknownVersion.resources.bindings.MCP_ACCESS_UNEXPECTED = { type: "plain_text", text: "fixture-value" };
+    await assert.rejects(readBaseline({ evidence, version: unknownVersion }), /undeclared binding or secret/u);
+
+    const candidateVersion = workerVersion({ bindings: Object.fromEntries(Object.entries(candidateConfig.vars).map(([name, value]) =>
+      [name, typeof value === "string" ? { type: "plain_text", text: value } : { type: "json", json: value }])) });
+    for (const name of ["MCP_ACCESS_SERVICE_TOKEN_CLIENT_ID", "MCP_ACCESS_SERVICE_TOKEN_CLIENT_IDS"]) {
+      delete candidateVersion.resources.bindings[name];
+    }
+    delete candidateVersion.resources.bindings.MCP_ACCESS_AUDIENCE;
+    await assert.rejects(readDeploymentWorker(environment, input, candidateConfig, {
+      fetchImpl: mockFetch(candidateVersion),
+    }), /Worker version variable readback drift/u);
   });
 });
 

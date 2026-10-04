@@ -1,6 +1,6 @@
 # Owner configuration and functional integration checkpoint — 2026-10-03
 
-Baseline: `main` / `78c6595fd8cf1292b55dd64fd13898306bb40360`.
+Baseline: published `main` source `e6da93c` (2026-10-03).
 Status: integration in progress; this document is not release acceptance.
 
 ## Product changes under integration
@@ -59,7 +59,9 @@ build. The final source SHA and necessary checks must be recorded after assembly
 | Repository boundaries and eight negative boundary fixtures | PASS |
 | Privacy large-line regression and full privacy scan | PASS |
 | Depth-100 SQL compilation | PASS for 107 Core migrations / 472 statements, including the empty-table repair |
-| `check:affected` | FAIL on source-maintainability budgets: 22 violations, including 17 present in the October 2 baseline; no full-release pass |
+| D1 migration application and reconciliation | All five intended migration applications succeeded. The earlier `UNKNOWN` receipt remains unchanged. A fresh read-only reconciliation verified all 52 expected schema objects; the migration ledger had no pending names and reported `ALREADY_APPLIED`, with zero apply attempts and zero writes |
+| Native COW/owner-loop final cases | 7/7 PASS on `e6da93c`; a unique attestation was observed |
+| `check:affected` | FAIL on source-maintainability budgets: 22 counted violations versus 18 at the October 3 integration baseline (`78c6595`), or four additional threshold crossings; no full-release pass |
 | Live Workers AI access | One direct bounded GLM-5.3-Flash response observed; not a Research run |
 | AI Search metadata | Private namespace and five exact empty Built-in instances created and read back; no READY, indexed-content or evidence claim |
 | Managed OAuth Access application | Separate owner-only `/mcp` application created and read back with a 24-hour session; existing PWA application remains at 168 hours. Worker variables and client OAuth connection are still pending |
@@ -73,9 +75,9 @@ functional run is still required. The full Core suite was not rerun.
 
 ## Remaining functional acceptance
 
-1. Publish the source checkpoint, apply
-   the separately pinned bounded D1 migration operation and perform guarded
-   candidate deployment/readback.
+1. Perform the guarded Worker candidate deployment and exact readback. D1
+   migration application and readback are recorded above; the earlier
+   `UNKNOWN` receipt remains unchanged.
 2. Use fresh current owner approval, source admission and bounded real model
    qualification. Old route approvals, expired source evidence and prior-model
    receipts cannot be relabelled for the new tuple.
@@ -87,8 +89,10 @@ functional run is still required. The full Core suite was not rerun.
    search/run/citation path. The owner-approved Access app and native Cloudflare
    operator readback are verified; the deployed Research client connection
    remains to be completed.
-5. Verify the functional owner document-to-DRAFT/reopen path on the final build,
-   then perform the responsive workspace changes and browser comparison.
+5. Complete one free, owner-scoped Worker-backed Research run through real
+   REPORT output and reopen. Verify the functional owner document-to-DRAFT/reopen
+   path on the final build, then perform the responsive workspace changes and
+   browser comparison. Quality, cognitive and load testing remain deferred.
 
 The owner permits only free bounded functional checks. Cognitive, quality and
 load testing is deferred. Full S92–S97 acceptance, disabled slices and production
