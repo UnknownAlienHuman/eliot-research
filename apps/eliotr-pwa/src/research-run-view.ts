@@ -266,7 +266,7 @@ export function createResearchRunView(element: HTMLElement, healthReady: boolean
     <button class="research-configuration-link workspace-jump" type="button" data-nav-target="#research-configuration-card" aria-controls="research-configuration-card">Check research configuration</button></details>
     <p class="workflow-status workflow-action-feedback" role="status" aria-live="polite"></p>
     <section data-run-result hidden></section>
-    <details class="workflow-recovery research-history" data-research-history><summary>Recent work</summary><div class="workflow-recovery-head"><h3 id="research-history-title">Saved runs and drafts</h3><button type="button" class="button button--quiet" data-research-history-refresh disabled>Refresh</button></div>
+    <details class="workflow-recovery research-history" data-research-history><summary>Recent work · Saved runs and drafts</summary><div class="workflow-recovery-head"><h3 id="research-history-title">Saved runs and drafts</h3><button type="button" class="button button--quiet" data-research-history-refresh disabled>Refresh</button></div>
       <p class="workflow-recovery-status" data-research-history-status>Recent research appears after the current session is ready.</p><div class="workflow-recovery-list" data-research-history-list></div><div data-research-activity-home></div></details>`;
   const form = element.querySelector<HTMLFormElement>("form");
   const badge = element.querySelector<HTMLElement>("[data-run-badge]");

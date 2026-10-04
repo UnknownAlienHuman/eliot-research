@@ -20,6 +20,7 @@
     "@eliotr/domain": "workspace:*",
     "@eliotr/interfaces": "workspace:*",
     "@eliotr/platform-cloudflare": "workspace:*",
-    "@eliotr/retrieval": "workspace:*"
+    "@eliotr/retrieval": "workspace:*",
+    "zod": "4.4.3"
   }
 }
