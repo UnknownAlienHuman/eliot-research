@@ -97,3 +97,23 @@ functional run is still required. The full Core suite was not rerun.
 The owner permits only free bounded functional checks. Cognitive, quality and
 load testing is deferred. Full S92–S97 acceptance, disabled slices and production
 restore closure remain separate outstanding criteria.
+
+## 2026-10-04 integration checkpoint
+
+- Separate post-upload reconciliation reached `AUTHORITY_SYNCED_POSTUPLOAD_RECONCILED` at 04:19 UTC; ten assets, owner health,
+  capability state and exact current D1 authority were verified. The standard asset-readback failure remains; no standard
+  deployment receipt or full deployment PASS is claimed.
+- Deterministic README import (no AI) admitted a new head; exact 12,688-byte R2 content matched the repository digest.
+  Project revision 3 preserves two entries and adds the README. Live FAST_SEARCH returned the exact 3,103-byte excerpt,
+  matching trace and `SAMPLED` scope. Exact/lexical checks are ready; semantic was not requested, currentness `NOT_VERIFIED`.
+- SDK predecessor-fingerprint CAS and reactivation target-existence gate passed an offline SQLite audit. Native CF Dynamic
+  Route SDK request-port and `--gateway-transport cloudflare-mcp` installer preserve Wrangler D1; focused checks 10/10 with
+  the MCP fixture and full TypeScript passed. No model calls were made.
+- Public Research MCP DCR callback/single-resource configuration are fixed; one conformant native registration returned
+  201, but native OAuth completion failed (provider-compatibility cause unconfirmed). MCP acceptance remains open; Report
+  was not executed.
+- The Sources / center Report / right context composition awaits final review and browser QA. Prior 35-file / 328-test results precede
+  the last bounded label/layout correction and are not final UI acceptance.
+- Only free bounded functional checks remain authorized; quality/load are deferred. Last recorded source-budget result:
+  22 findings vs 18 baseline, not rechecked here. Full-release gates and production restore remain unaccepted; no new ADR
+  authority or overall completion is claimed.

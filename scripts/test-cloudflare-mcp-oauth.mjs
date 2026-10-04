@@ -9,6 +9,7 @@ import { createCloudflareMcpTransport } from "./lib/cloudflare-mcp-oauth.mjs";
 import { readActiveDeploymentIdentity, selectDeploymentGoogleTransport } from "./lib/deployment-maintenance.mjs";
 
 const ACCOUNT_ID = "00000000000000000000000000000000";
+const DYNAMIC_ROUTE_TEST_ACCOUNT_ID = "11111111111111111111111111111111";
 const MCP_URL = "https://mcp.cloudflare.com/mcp";
 
 class FakeProcess extends EventEmitter {
@@ -63,6 +64,19 @@ class FakeProcess extends EventEmitter {
       if (Object.hasOwn(workerResults, request.path)) {
         return { content: [{ type: "text", text: JSON.stringify({ status: this.workerStatus ?? 200,
           success: true, errors: this.workerErrors ?? [], result: workerResults[request.path] }) }] };
+      }
+      const dynamicRoutePath = `/accounts/${DYNAMIC_ROUTE_TEST_ACCOUNT_ID}/ai-gateway/gateways/eliotr-reasoning/routes`;
+      if (request.method === "GET" && request.path === `${dynamicRoutePath}?page=1&per_page=100`) {
+        return { content: [{ type: "text", text: JSON.stringify({ status: 200, success: true,
+          data: { routes: [], page: 1, per_page: 50, order_by: "name", order_by_direction: "asc" } }) }] };
+      }
+      if (request.method === "POST" && request.path === dynamicRoutePath) {
+        return { content: [{ type: "text", text: JSON.stringify({ status: 201, success: true,
+          result: { id: "route-created", name: request.body.name } }) }] };
+      }
+      if (request.method === "POST" && request.path === `${dynamicRoutePath}/route-1/deployments`) {
+        return { content: [{ type: "text", text: JSON.stringify({ status: 201, success: true,
+          result: { id: "route-1", version_id: request.body.version_id } }) }] };
       }
       if (request.path === `/accounts/${ACCOUNT_ID}`) {
         return { content: [{ type: "text", text: JSON.stringify({ status: 200, success: true, result: { id: ACCOUNT_ID } }) }] };
@@ -169,6 +183,51 @@ await assert.rejects(
 );
 transport.close();
 assert.equal(fake.killCount, 1, "closing the transport must terminate its app-server child");
+const dynamicRoutePath = `/accounts/${DYNAMIC_ROUTE_TEST_ACCOUNT_ID}/ai-gateway/gateways/eliotr-reasoning/routes`;
+const dynamicReadFake = new FakeProcess();
+const dynamicRead = createCloudflareMcpTransport({ ...transportOptions,
+  accountId: DYNAMIC_ROUTE_TEST_ACCOUNT_ID, gatewayId: "eliotr-reasoning",
+  resourceReadback: "dynamic-routes", spawnProcess: () => dynamicReadFake });
+try {
+  const beforeRefusedWrite = dynamicReadFake.calls.length;
+  await assert.rejects(() => dynamicRead.request("POST", dynamicRoutePath, { name: "route", elements: [{}] }),
+    (error) => error?.code === "MCP_REQUEST_INVALID");
+  await assert.rejects(() => dynamicRead.request("GET", `${dynamicRoutePath}/../other`),
+    (error) => error?.code === "MCP_REQUEST_INVALID");
+  await assert.rejects(() => dynamicRead.request("GET", dynamicRoutePath.replace("eliotr-reasoning", "other-gateway") + "?page=1&per_page=100"),
+    (error) => error?.code === "MCP_REQUEST_INVALID");
+  await assert.rejects(() => dynamicRead.request("GET", `${dynamicRoutePath}/%2e%2e`),
+    (error) => error?.code === "MCP_REQUEST_INVALID");
+  assert.equal(dynamicReadFake.calls.length, beforeRefusedWrite, "out-of-scope reads and read-only writes must be rejected before MCP dispatch");
+  assert.deepEqual(await dynamicRead.request("GET", `${dynamicRoutePath}?page=1&per_page=100`), {
+    status: 200, success: true,
+    data: { routes: [], page: 1, per_page: 50, order_by: "name", order_by_direction: "asc" },
+  });
+} finally {
+  dynamicRead.close();
+}
+assert.equal(dynamicReadFake.killCount, 1);
+const dynamicWriteFake = new FakeProcess();
+const dynamicWrite = createCloudflareMcpTransport({ ...transportOptions,
+  accountId: DYNAMIC_ROUTE_TEST_ACCOUNT_ID, gatewayId: "eliotr-reasoning",
+  resourceReadback: "dynamic-routes", allowRouteWrites: true, spawnProcess: () => dynamicWriteFake });
+try {
+  assert.deepEqual(await dynamicWrite.request("POST", dynamicRoutePath,
+    { name: "eliotr-balanced-test", elements: [{}] }), {
+    status: 201, success: true, result: { id: "route-created", name: "eliotr-balanced-test" },
+  });
+  assert.deepEqual(await dynamicWrite.request("POST", `${dynamicRoutePath}/route-1/deployments`,
+    { version_id: "version-1" }), {
+    status: 201, success: true, result: { id: "route-1", version_id: "version-1" },
+  });
+  const beforeRefusals = dynamicWriteFake.calls.length;
+  await assert.rejects(() => dynamicWrite.request("POST", `${dynamicRoutePath}/route-1/deployments`,
+    { version_id: "version-1", unexpected: true }), (error) => error?.code === "MCP_REQUEST_INVALID");
+  assert.equal(dynamicWriteFake.calls.length, beforeRefusals, "malformed mutation must not reach MCP");
+} finally {
+  dynamicWrite.close();
+}
+assert.equal(dynamicWriteFake.killCount, 1);
 assert.deepEqual(fake.calls.map((call) => call.method), [
   "initialize",
   "initialized",

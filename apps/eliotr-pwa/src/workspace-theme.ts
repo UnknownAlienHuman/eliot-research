@@ -3,8 +3,11 @@ type ReadingTheme = "dark" | "light";
 
 /** This preference contains no source, session or research information. */
 export function mountWorkspaceTheme(root: HTMLElement): () => void {
-  let theme: ReadingTheme = "dark";
-  try { if (localStorage.getItem(THEME_KEY) === "light") theme = "light"; } catch { /* Storage is optional. */ }
+  let theme: ReadingTheme = document.documentElement.dataset.theme === "light" ? "light" : "dark";
+  try {
+    const saved = localStorage.getItem(THEME_KEY);
+    if (saved === "dark" || saved === "light") theme = saved;
+  } catch { /* Storage is optional. */ }
   const button = root.querySelector<HTMLButtonElement>("[data-theme-toggle]");
   const menu = root.querySelector<HTMLDetailsElement>(".workspace-menu");
   const apply = (): void => {

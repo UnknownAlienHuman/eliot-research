@@ -5,17 +5,30 @@ import { readLibraryPage, type LibraryPage } from "./library-api.js";
 import { readLibraryReadiness, type LibrarySelectionContext } from "./library-readiness-api.js";
 import { renderLibraryReadiness } from "./library-readiness-panel.js";
 
+function compactRevision(revision: string): string {
+  const rawRevision = /^raw-revision-([a-f\d]{12})[a-f\d]*$/iu.exec(revision);
+  if (rawRevision?.[1] !== undefined) return `${rawRevision[1]}…`;
+  return revision.length > 16 ? `…${revision.slice(-12)}` : revision;
+}
+
+function renderLibrarySource(source: LibraryPage["sources"][number], index: number): string {
+  const revision = source.readiness_ref.slice(`readiness:${source.id}:`.length);
+  const shortRevision = compactRevision(revision);
+  return `<article class="source-card library-source-card"><div class="library-source-heading"><h3><button class="library-source-title" type="button" data-source="${index}" aria-label="Read ${escapeHtml(source.title)}">${escapeHtml(source.title)}</button></h3></div>
+       <p class="library-source-meta"><span>Current version</span> <code>${escapeHtml(shortRevision)}</code><span class="library-source-freshness">Freshness not checked</span></p>
+       <details class="library-source-details"><summary>Source details and versions</summary>
+         <code>${escapeHtml(source.id)}</code>
+         <code>${escapeHtml(revision)}</code>
+         <button class="button button--quiet" type="button" data-versions="${index}">Versions and recorded states</button>
+       </details></article>`;
+}
+
 export function renderLibrary(page: LibraryPage): string {
   return `<details class="library-project-filters"><summary>Projects${page.projects.length ? ` · ${page.projects.length} on this page` : ""}</summary>
       ${page.projects.length ? page.projects.map((project, index) =>
         `<p><button type="button" class="library-project-filter" data-project="${index}">${escapeHtml(project.title)}</button></p>`).join("") : "<p>No readable projects on this page.</p>"}
     </details>
-    ${page.sources.length ? page.sources.map((source, index) =>
-      `<article class="source-card library-source-card"><div class="library-source-heading"><h3><button class="library-source-title" type="button" data-source="${index}" aria-label="Read ${escapeHtml(source.title)}">${escapeHtml(source.title)}</button></h3></div>
-       <details class="library-source-details"><summary>Source details and versions</summary>
-         <code>${escapeHtml(source.id)}</code>
-         <button class="button button--quiet" type="button" data-versions="${index}">Versions and recorded states</button>
-       </details></article>`).join("") : "<p>No readable documents on this page.</p>"}`;
+    ${page.sources.length ? page.sources.map(renderLibrarySource).join("") : "<p>No readable documents on this page.</p>"}`;
 }
 
 function libraryErrorText(error: unknown, subject: string): string {

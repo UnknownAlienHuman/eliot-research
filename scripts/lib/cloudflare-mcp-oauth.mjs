@@ -19,6 +19,8 @@ const DEFAULT_TIMEOUT_MS = 30_000;
 const MAX_LINE_BYTES = 512 * 1024;
 const MAX_ACCESS_LIST_PAGES = 100;
 const MAX_AI_GATEWAY_LIST_PAGES = 100;
+const MAX_DYNAMIC_ROUTE_LIST_PAGES = 100;
+const DYNAMIC_ROUTE_GATEWAY_ID = "eliotr-reasoning";
 const RPC_PHASES = Object.freeze({
   initialize: "initialization",
   "thread/start": "thread start",
@@ -95,6 +97,57 @@ function aiGatewayListDescriptor(path, accountSegment) {
   return number >= 2 && number <= MAX_AI_GATEWAY_LIST_PAGES ? { base, page: number } : null;
 }
 
+function dynamicRouteBase(accountSegment, gatewayId) {
+  return `/accounts/${accountSegment}/ai-gateway/gateways/${gatewayId}/routes`;
+}
+
+function dynamicRouteListDescriptor(path, accountSegment, gatewayId) {
+  const base = dynamicRouteBase(accountSegment, gatewayId);
+  const match = path.match(new RegExp(`^${base}\\?page=([1-9][0-9]{0,2})&per_page=100$`, "u"));
+  if (match === null) return null;
+  const page = Number(match[1]);
+  return page <= MAX_DYNAMIC_ROUTE_LIST_PAGES ? { base, page } : null;
+}
+
+function dynamicRouteIdFromPath(path, accountSegment, gatewayId) {
+  const base = dynamicRouteBase(accountSegment, gatewayId);
+  if (!path.startsWith(`${base}/`)) return null;
+  const segment = path.slice(base.length + 1);
+  if (segment === "" || segment.includes("/") || segment.includes("?")) return null;
+  let id;
+  try { id = decodeURIComponent(segment); } catch { return null; }
+  return id !== "." && id !== ".." && /^[A-Za-z0-9._:@/-]{1,256}$/u.test(id) &&
+    encodeURIComponent(id) === segment ? id : null;
+}
+
+function validateDynamicRouteWrite(method, path, body, accountSegment, gatewayId, allowRouteWrites) {
+  const base = dynamicRouteBase(accountSegment, gatewayId);
+  if (method !== "POST" || !allowRouteWrites || body === undefined) return false;
+  if (path === base) {
+    exactKeys(body, ["name", "elements"], "Dynamic Route create request");
+    if (typeof body.name !== "string" || !/^[a-z0-9][a-z0-9-]{0,127}$/u.test(body.name) ||
+        !Array.isArray(body.elements) || body.elements.length === 0 || body.elements.length > 256 ||
+        Buffer.byteLength(JSON.stringify(body), "utf8") > MAX_LINE_BYTES) {
+      fail("MCP_REQUEST_INVALID", "Dynamic Route create request is outside its bounded shape");
+    }
+    return true;
+  }
+  const deployment = path.startsWith(`${base}/`) && path.endsWith("/deployments")
+    ? path.slice(base.length + 1, -"/deployments".length) : "";
+  const deploymentRouteId = deployment === "" || deployment.includes("/") || deployment.includes("?")
+    ? null : (() => { try { return decodeURIComponent(deployment); } catch { return null; } })();
+  if (deploymentRouteId !== null && deploymentRouteId !== "." && deploymentRouteId !== ".." &&
+      /^[A-Za-z0-9._:@/-]{1,256}$/u.test(deploymentRouteId) &&
+      encodeURIComponent(deploymentRouteId) === deployment) {
+    exactKeys(body, ["version_id"], "Dynamic Route deployment request");
+    if (typeof body.version_id !== "string" || !/^[A-Za-z0-9._:@/-]{1,256}$/u.test(body.version_id)) {
+      fail("MCP_REQUEST_INVALID", "Dynamic Route deployment request is malformed");
+    }
+    return true;
+  }
+  return false;
+}
+
 function validateAiGatewayPage(info, listed, descriptor) {
   const keys = ["page", "per_page", "count", "total_count", "total_pages"];
   if (info === null || typeof info !== "object" || Array.isArray(info) ||
@@ -132,12 +185,22 @@ function isWorkerIdentityPath(path, accountSegment) {
     new RegExp(`^${scripts}/eliotr-core/versions/[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$`, "u").test(path);
 }
 
-function checkKnownRequest(accountId, method, path, body, resourceReadback) {
+function checkKnownRequest(accountId, method, path, body, resourceReadback, allowRouteWrites, gatewayId) {
   if (typeof method !== "string" || (method !== "GET" && method !== "POST") ||
       typeof path !== "string" || path.length > 512 || !path.startsWith("/accounts/")) {
     fail("MCP_REQUEST_INVALID", "Cloudflare MCP request is outside the fixed Access transport");
   }
   const accountSegment = encodeURIComponent(accountId);
+  if (resourceReadback === "dynamic-routes") {
+    const routeList = dynamicRouteListDescriptor(path, accountSegment, gatewayId);
+    if (gatewayId !== DYNAMIC_ROUTE_GATEWAY_ID ||
+        (method === "GET" && (body !== undefined ||
+          (routeList === null && dynamicRouteIdFromPath(path, accountSegment, gatewayId) === null))) ||
+        (method === "POST" && !validateDynamicRouteWrite(method, path, body, accountSegment, gatewayId, allowRouteWrites))) {
+      fail("MCP_REQUEST_INVALID", "Cloudflare MCP request is outside the fixed Dynamic Route scope");
+    }
+    return;
+  }
   if (resourceReadback === "ai-gateways") {
     if (method !== "GET" || aiGatewayListDescriptor(path, accountSegment) === null || body !== undefined) {
       fail("MCP_REQUEST_INVALID", "Cloudflare MCP request is outside the fixed AI Gateway readback");
@@ -237,7 +300,8 @@ function cloudflareEnvelopeFrom(value) {
   }
   let parsed;
   try { parsed = JSON.parse(text); } catch { fail("MCP_PROTOCOL_INVALID", "Cloudflare MCP execute returned non-JSON response"); }
-  if (parsed === null || typeof parsed !== "object" || typeof parsed.status !== "number" ||
+  if (parsed === null || typeof parsed !== "object" || !Number.isSafeInteger(parsed.status) ||
+      parsed.status < 100 || parsed.status > 599 ||
       typeof parsed.success !== "boolean") {
     fail("MCP_PROTOCOL_INVALID", "Cloudflare MCP response envelope is malformed");
   }
@@ -283,8 +347,16 @@ export function createCloudflareMcpTransport(options = {}) {
   const accountId = checkAccountId(options.accountId);
   const timeoutMs = checkTimeout(options.timeoutMs);
   const resourceReadback = options.resourceReadback;
-  if (resourceReadback !== undefined && resourceReadback !== "ai-gateways") {
+  const gatewayId = options.gatewayId;
+  const allowRouteWrites = options.allowRouteWrites ?? false;
+  if (resourceReadback !== undefined && resourceReadback !== "ai-gateways" && resourceReadback !== "dynamic-routes") {
     fail("MCP_RESOURCE_SCOPE_INVALID", "Cloudflare MCP resource readback scope is unsupported");
+  }
+  if (typeof allowRouteWrites !== "boolean" || (allowRouteWrites && resourceReadback !== "dynamic-routes")) {
+    fail("MCP_RESOURCE_SCOPE_INVALID", "Cloudflare MCP Dynamic Route scope options are invalid");
+  }
+  if (resourceReadback === "dynamic-routes" && gatewayId !== DYNAMIC_ROUTE_GATEWAY_ID) {
+    fail("MCP_RESOURCE_SCOPE_INVALID", "Cloudflare MCP Dynamic Route gateway scope is invalid");
   }
   const spawnProcess = options.spawnProcess ?? defaultSpawn;
   const runCli = options.runCli ?? defaultRunCli;
@@ -383,7 +455,7 @@ export function createCloudflareMcpTransport(options = {}) {
   }
 
   async function requestPage(method, path, body) {
-    checkKnownRequest(accountId, method, path, body, resourceReadback);
+    checkKnownRequest(accountId, method, path, body, resourceReadback, allowRouteWrites, gatewayId);
     const threadId = await ensureReady();
     const result = await rpc("mcpServer/tool/call", {
       threadId,
@@ -392,6 +464,7 @@ export function createCloudflareMcpTransport(options = {}) {
       arguments: { code: fixedCode(method, path, body) },
     });
     const envelope = cloudflareEnvelopeFrom(result);
+    if (resourceReadback === "dynamic-routes") return envelope;
     const workerIdentityRead = method === "GET" && isWorkerIdentityPath(path, encodeURIComponent(accountId));
     const gatewayList = method === "GET" && resourceReadback === "ai-gateways"
       ? aiGatewayListDescriptor(path, encodeURIComponent(accountId)) : null;
@@ -434,7 +507,8 @@ export function createCloudflareMcpTransport(options = {}) {
   }
 
   async function request(method, path, body) {
-    checkKnownRequest(accountId, method, path, body, resourceReadback);
+    checkKnownRequest(accountId, method, path, body, resourceReadback, allowRouteWrites, gatewayId);
+    if (resourceReadback === "dynamic-routes") return requestPage(method, path, body);
     const list = method === "GET" ? (resourceReadback === "ai-gateways"
       ? aiGatewayListDescriptor(path, encodeURIComponent(accountId))
       : accessListDescriptor(path, encodeURIComponent(accountId))) : null;
@@ -480,8 +554,8 @@ export function createCloudflareMcpTransport(options = {}) {
   }
 
   async function verifyAccount() {
-    if (resourceReadback === "ai-gateways") {
-      fail("MCP_REQUEST_INVALID", "AI Gateway readback transport verifies scope through its exact account list path");
+    if (resourceReadback === "ai-gateways" || resourceReadback === "dynamic-routes") {
+      fail("MCP_REQUEST_INVALID", "Resource-scoped transport verifies scope through its exact resource path");
     }
     const value = await request("GET", `/accounts/${encodeURIComponent(accountId)}`);
     const returned = value?.id ?? value?.account?.id;

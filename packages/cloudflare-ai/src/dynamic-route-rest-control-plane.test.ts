@@ -370,6 +370,32 @@ describe("Cloudflare Dynamic Routing REST control plane", () => {
     });
   });
 
+  it("uses the bearerless connector request port with the native data-page envelope", async () => {
+    const requestPort = {
+      request: vi.fn(async () => jsonResponse({
+        success: true,
+        data: {
+          routes: [routeListItem()], page: 1, per_page: 100,
+          order_by: "name", order_by_direction: "asc",
+        },
+      })),
+    };
+    const adapter = createCloudflareDynamicRouteRestControlPlane({
+      account_id: ACCOUNT_ID,
+      bindings: fakeBindings(),
+      request_port: requestPort,
+    });
+    await expect(adapter.list("eliotr-reasoning")).resolves.toEqual({
+      routes: [{ provider_route_id: ROUTE_ID, name: "eliotr-draft-v1-abcdef1234567890" }],
+    });
+    expect(requestPort.request).toHaveBeenCalledWith(
+      "GET",
+      `https://api.cloudflare.com/client/v4/accounts/${ACCOUNT_ID}/ai-gateway/gateways/eliotr-reasoning/routes?page=1&per_page=100`,
+      undefined,
+      "NONE",
+    );
+  });
+
   it("reads a route only through an exact immutable binding", async () => {
     const request = await createRequest();
     const bindings = fakeBindings();

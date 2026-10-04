@@ -31,6 +31,10 @@ export function mountWorkspaceChrome(root: HTMLElement): WorkspaceChromeControll
   const libraryNodes = app.querySelectorAll<HTMLElement>("#library");
   const library = libraryNodes.length === 1 ? libraryNodes[0] : null;
   const documentListHome = app.querySelector<HTMLElement>("#document-list-home");
+  const librarySidebarHome = app.querySelector<HTMLElement>("#library-sidebar-home");
+  const inspectorDefaultHint = app.querySelector<HTMLElement>("[data-inspector-default]");
+  const inspectorReportHint = app.querySelector<HTMLElement>("[data-inspector-report]");
+  const mobileLayout = window.matchMedia("(max-width: 900px)");
   const chooser = app.querySelector<HTMLButtonElement>("[data-source-chooser-toggle]");
   const chooserState = app.querySelector<HTMLElement>("[data-source-chooser-state]");
   const closeLibrary = dialog?.querySelector<HTMLButtonElement>("[data-close-library]");
@@ -54,8 +58,8 @@ export function mountWorkspaceChrome(root: HTMLElement): WorkspaceChromeControll
   const history = researchRun?.querySelector<HTMLDetailsElement>("[data-research-history]");
   const historySummary = history?.querySelector<HTMLElement>("summary");
 
-  if (!workspace || !dialog || !library || !documentListHome) {
-    throw new Error("Workspace chrome requires .workspace, a library dialog, one #library, and #document-list-home");
+  if (!workspace || !dialog || !library || !documentListHome || !librarySidebarHome || !inspectorDefaultHint || !inspectorReportHint) {
+    throw new Error("Workspace chrome requires Sources and context homes plus a library dialog and one #library");
   }
 
   const originalLibraryParent = library.parentNode;
@@ -84,7 +88,7 @@ export function mountWorkspaceChrome(root: HTMLElement): WorkspaceChromeControll
   let returnFocus: HTMLElement | null = null;
   let restoreFocusOnClose = false;
 
-  const inlineLibraryIsActive = (): boolean =>
+  const inlineLibraryIsActive = (): boolean => mobileLayout.matches &&
     (workspace.dataset.activeView ?? "sources") === "sources" && (reader == null || reader.hidden !== false);
 
   const closeDialog = (restoreFocus: boolean): void => {
@@ -99,7 +103,12 @@ export function mountWorkspaceChrome(root: HTMLElement): WorkspaceChromeControll
       if (library.parentElement !== documentListHome) documentListHome.append(library);
       return;
     }
-    if (library.parentElement !== dialog) dialog.append(library);
+    if (mobileLayout.matches) {
+      if (library.parentElement !== dialog) dialog.append(library);
+      return;
+    }
+    if (dialog.open) closeDialog(false);
+    if (library.parentElement !== librarySidebarHome) librarySidebarHome.append(library);
   };
 
   const syncReportPlacement = (): void => {
@@ -111,6 +120,9 @@ export function mountWorkspaceChrome(root: HTMLElement): WorkspaceChromeControll
       }
       if (!reportWasOpen && composer) composer.open = false;
       reportWasOpen = true;
+      const reportIsOpen = workspace.dataset.activeView === "research";
+      inspectorDefaultHint.hidden = reportIsOpen;
+      inspectorReportHint.hidden = !reportIsOpen;
       return;
     }
     if (reportWasOpen) {
@@ -119,6 +131,8 @@ export function mountWorkspaceChrome(root: HTMLElement): WorkspaceChromeControll
       }
       if (composer) composer.open = true;
     }
+    inspectorDefaultHint.hidden = false;
+    inspectorReportHint.hidden = true;
     reportWasOpen = false;
   };
 
@@ -159,7 +173,7 @@ export function mountWorkspaceChrome(root: HTMLElement): WorkspaceChromeControll
 
   const syncChooserState = (): void => {
     const inline = inlineLibraryIsActive();
-    const expanded = inline || dialog.open;
+    const expanded = !mobileLayout.matches || inline || dialog.open;
     chooser?.setAttribute("aria-expanded", String(expanded));
     if (chooserState) {
       chooserState.textContent = inline ? "List in Documents" : dialog.open ? "Hide list" : "Show list";
@@ -186,6 +200,10 @@ export function mountWorkspaceChrome(root: HTMLElement): WorkspaceChromeControll
     if (disposed) return;
     sync();
     if (inlineLibraryIsActive()) {
+      focusInlineLibrary();
+      return;
+    }
+    if (!mobileLayout.matches) {
       focusInlineLibrary();
       return;
     }
@@ -260,6 +278,8 @@ export function mountWorkspaceChrome(root: HTMLElement): WorkspaceChromeControll
   if (badge) observer.observe(badge, { childList: true, characterData: true, subtree: true });
   if (progress) observer.observe(progress, { childList: true, characterData: true, subtree: true });
   for (const feedback of feedbackNodes) observer.observe(feedback, { childList: true, characterData: true, subtree: true });
+  const onResponsiveLayoutChange = (): void => sync();
+  mobileLayout.addEventListener("change", onResponsiveLayoutChange);
 
   sync();
 
@@ -267,6 +287,7 @@ export function mountWorkspaceChrome(root: HTMLElement): WorkspaceChromeControll
     if (disposed) return;
     disposed = true;
     observer.disconnect();
+    mobileLayout.removeEventListener("change", onResponsiveLayoutChange);
     app.ownerDocument.removeEventListener("pointerdown", notePointer, true);
     app.ownerDocument.removeEventListener("keydown", noteKeyboard, true);
     if (originalInputModality === null) delete app.dataset.inputModality;

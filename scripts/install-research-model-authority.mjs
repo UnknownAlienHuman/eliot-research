@@ -15,6 +15,7 @@ import { createCloudflareD1HttpDatabase } from "./lib/cloudflare-d1-http.mjs";
 import { createResearchQualificationWorkerExecution, researchQualificationWorkerOrigin } from "./lib/research-qualification-worker.mjs";
 import { loadCompiledWorkspaceModule } from "./lib/compiled-workspace-module.mjs";
 import { GatewayBrowserOAuthError, readGatewayBrowserOAuthBearer } from "./lib/cloudflare-gateway-browser-oauth.mjs";
+import { createCloudflareMcpTransport } from "./lib/cloudflare-mcp-oauth.mjs";
 import {
   ResearchQualificationRuntimeError,
   withResearchQualificationRuntime,
@@ -25,18 +26,19 @@ const MAX_INPUT_BYTES = 1024 * 1024;
 const ACCOUNT_ID = /^[a-f0-9]{32}$/iu;
 const usage = [
   "Usage:",
-  "  node scripts/install-research-model-authority.mjs prepare --input FILE [--config FILE]",
-  "  node scripts/install-research-model-authority.mjs install --input FILE [--config FILE]",
-  "  node scripts/install-research-model-authority.mjs adopt --input PLAN.json --provider-route-id ID [--config FILE] [--gateway-oauth-client-id ID]",
-  "  node scripts/install-research-model-authority.mjs qualify --input REQUEST.json [--config FILE] [--worker-url HTTPS_ORIGIN] [--gateway-oauth-client-id ID]",
+  "  node scripts/install-research-model-authority.mjs prepare --input FILE [--config FILE] [--gateway-transport wrangler-oauth|cloudflare-mcp]",
+  "  node scripts/install-research-model-authority.mjs install --input FILE [--config FILE] [--gateway-transport wrangler-oauth|cloudflare-mcp]",
+  "  node scripts/install-research-model-authority.mjs adopt --input PLAN.json --provider-route-id ID [--config FILE] [--gateway-oauth-client-id ID] [--gateway-transport wrangler-oauth|cloudflare-mcp]",
+  "  node scripts/install-research-model-authority.mjs qualify --input REQUEST.json [--config FILE] [--worker-url HTTPS_ORIGIN] [--gateway-oauth-client-id ID] [--gateway-transport wrangler-oauth|cloudflare-mcp]",
+  "  --gateway-transport cloudflare-mcp uses the configured native Cloudflare OAuth connector for Dynamic Route control-plane calls; Wrangler OAuth remains the default and continues to authorize D1 access.",
   "",
   "prepare provisions the explicit route and pricing snapshot, without promotion.",
   "install requires the same explicit request plus independently verified LIVE qualification.",
   "adopt binds an already deployed dashboard route by live API readback; it does not call a model or approve pricing.",
   "qualify performs one observed model qualification against the prepared route; it does not install or promote.",
   "--worker-url executes qualification in the existing owner-authenticated Worker using its native bindings.",
-  "Cloudflare account and CORE_DB are read from the generated Wrangler config; auth uses Wrangler browser OAuth.",
-  "If Wrangler lacks AI Gateway Read, adopt and qualify accept a private PKCE client ID; its callback is http://127.0.0.1:8977/oauth/callback.",
+  "Cloudflare account and CORE_DB are read from the generated Wrangler config; D1 uses Wrangler browser OAuth.",
+  "If Wrangler lacks AI Gateway Read, adopt and qualify can use the native Cloudflare MCP transport or a private PKCE client ID; its callback is http://127.0.0.1:8977/oauth/callback.",
   "Use account-private visibility, Authorization Code and token authentication None (PKCE); no client secret.",
   "The optional gateway OAuth credential stays in memory; D1 still uses the existing Wrangler session.",
 ].join("\n");
@@ -71,11 +73,12 @@ function parseArguments(argv) {
   let inputPath;
   let providerRouteId;
   let gatewayOAuthClientId;
+  let gatewayTransport = "wrangler-oauth";
   let workerUrl;
   let configPath = "apps/eliotr-core/wrangler.deploy.jsonc";
   for (let index = 1; index < argv.length; index += 1) {
     const option = argv[index];
-    if (option === "--input" || option === "--config" || option === "--provider-route-id" || option === "--gateway-oauth-client-id" || option === "--worker-url") {
+    if (option === "--input" || option === "--config" || option === "--provider-route-id" || option === "--gateway-oauth-client-id" || option === "--worker-url" || option === "--gateway-transport") {
       const value = argv[index + 1];
       if (typeof value !== "string" || value.length === 0 || value.startsWith("--")) {
         throw new InstallerCliError(`${option} requires a value`);
@@ -84,7 +87,8 @@ function parseArguments(argv) {
       else if (option === "--config") configPath = value;
       else if (option === "--provider-route-id") providerRouteId = value;
       else if (option === "--worker-url") workerUrl = researchQualificationWorkerOrigin(value);
-      else gatewayOAuthClientId = value;
+      else if (option === "--gateway-oauth-client-id") gatewayOAuthClientId = value;
+      else if (option === "--gateway-transport") gatewayTransport = value;
       index += 1;
       continue;
     }
@@ -98,11 +102,18 @@ function parseArguments(argv) {
   if (gatewayOAuthClientId !== undefined && command !== "adopt" && command !== "qualify") {
     throw new InstallerCliError("--gateway-oauth-client-id is supported only for read-only route adoption or qualification");
   }
+  if (gatewayTransport !== "wrangler-oauth" && gatewayTransport !== "cloudflare-mcp") {
+    throw new InstallerCliError("--gateway-transport must be wrangler-oauth or cloudflare-mcp");
+  }
+  if (gatewayTransport === "cloudflare-mcp" && gatewayOAuthClientId !== undefined) {
+    throw new InstallerCliError("--gateway-oauth-client-id cannot be combined with --gateway-transport cloudflare-mcp");
+  }
   return Object.freeze({
     help: false,
     command,
     providerRouteId,
     gatewayOAuthClientId,
+    gatewayTransport,
     workerUrl,
     inputPath: resolve(repositoryRoot, inputPath),
     configPath: resolve(repositoryRoot, configPath),
@@ -258,45 +269,48 @@ function bindingStore(research, database) {
   return store;
 }
 
-async function execute(options) {
-  const input = await readJsonFile(options.inputPath, "installer input");
-  let cloudflareAi;
-  let research;
-  let qualification;
-  if (options.command === "qualify") {
-    [cloudflareAi, research] = await Promise.all([
-      loadCompiledWorkspaceModule("packages/cloudflare-ai/dist/index.js"),
-      loadCompiledWorkspaceModule("packages/cloudflare-research/dist/index.js"),
-    ]);
-    qualification = qualificationRequest(input, cloudflareAi, research);
-  }
-  const config = await readJsonFile(options.configPath, "Wrangler config");
-  const { accountId, databaseId } = deploymentConfig(config);
-  // Finish the optional browser handoff before taking the short-lived D1 bearer.
-  const gatewayOAuthBearer = options.gatewayOAuthClientId === undefined
-    ? undefined : await readGatewayBrowserOAuthBearer(options.gatewayOAuthClientId);
-  const bearer = await readWranglerBearer(accountId);
-  const database = createCloudflareD1HttpDatabase({
-    account_id: accountId,
-    database_id: databaseId,
-    api_token: bearer,
+function dynamicRouteMcpRequestPort(transport, accountId, gatewayId) {
+  const basePath = `/client/v4/accounts/${encodeURIComponent(accountId)}/ai-gateway/gateways/${gatewayId}/routes`;
+  return Object.freeze({
+    async request(method, rawUrl, bodyJson) {
+      let url;
+      try { url = new URL(rawUrl); } catch {
+        throw new InstallerCliError("Dynamic Route URL is invalid", "MCP_REQUEST_INVALID");
+      }
+      if (url.origin !== "https://api.cloudflare.com" || url.username !== "" || url.password !== "" ||
+          url.hash !== "" || !(url.pathname === basePath || url.pathname.startsWith(`${basePath}/`))) {
+        throw new InstallerCliError("Dynamic Route URL is outside the fixed Cloudflare gateway", "MCP_REQUEST_INVALID");
+      }
+      let body;
+      if (bodyJson !== undefined) {
+        try { body = JSON.parse(bodyJson); } catch {
+          throw new InstallerCliError("Dynamic Route request body is invalid JSON", "MCP_REQUEST_INVALID");
+        }
+      }
+      const envelope = plainObject(
+        await transport.request(method, `${url.pathname.slice("/client/v4".length)}${url.search}`, body),
+        "Cloudflare MCP response",
+      );
+      const allowed = new Set(["status", "success", "errors", "messages", "data", "result", "result_info"]);
+      if (Object.keys(envelope).some((key) => !allowed.has(key)) ||
+          !Number.isSafeInteger(envelope.status) || envelope.status < 100 || envelope.status > 599 ||
+          typeof envelope.success !== "boolean") {
+        throw new InstallerCliError("Cloudflare MCP response envelope is malformed", "MCP_PROTOCOL_INVALID");
+      }
+      const { status, ...cloudflareEnvelope } = envelope;
+      const bodyText = [204, 205, 304].includes(status) ? null : JSON.stringify(cloudflareEnvelope);
+      if (bodyText !== null && Buffer.byteLength(bodyText, "utf8") > 512 * 1024) {
+        throw new InstallerCliError("Cloudflare MCP response exceeds the control-plane bound", "MCP_PROTOCOL_INVALID");
+      }
+      return new Response(bodyText, {
+        status,
+        headers: { "content-type": "application/json" },
+      });
+    },
   });
-  if (cloudflareAi === undefined || research === undefined) {
-    [cloudflareAi, research] = await Promise.all([
-      loadCompiledWorkspaceModule("packages/cloudflare-ai/dist/index.js"),
-      loadCompiledWorkspaceModule("packages/cloudflare-research/dist/index.js"),
-    ]);
-  }
-  const bindings = bindingStore(research, database);
-  const gatewayBearer = gatewayOAuthBearer ?? bearer;
-  const controlPlane = cloudflareAi.createCloudflareDynamicRouteRestControlPlane({
-    account_id: accountId,
-    fetch: Object.freeze({
-      fetch: (url, init) => globalThis.fetch(url, init),
-    }),
-    credentials: Object.freeze({ readApiToken: async () => gatewayBearer }),
-    bindings,
-  });
+}
+
+async function dispatchAuthorityCommand(options, input, cloudflareAi, research, database, accountId, config, qualification, controlPlane) {
   if (options.command === "qualify") {
     if (options.workerUrl !== undefined) {
       const service = research.createRemoteResearchModelQualification({
@@ -357,6 +371,65 @@ async function execute(options) {
     ? await service.prepare(input)
     : await service.install(input);
   process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+}
+
+async function execute(options) {
+  const input = await readJsonFile(options.inputPath, "installer input");
+  let cloudflareAi;
+  let research;
+  let qualification;
+  if (options.command === "qualify") {
+    [cloudflareAi, research] = await Promise.all([
+      loadCompiledWorkspaceModule("packages/cloudflare-ai/dist/index.js"),
+      loadCompiledWorkspaceModule("packages/cloudflare-research/dist/index.js"),
+    ]);
+    qualification = qualificationRequest(input, cloudflareAi, research);
+  }
+  const config = await readJsonFile(options.configPath, "Wrangler config");
+  const { accountId, databaseId } = deploymentConfig(config);
+  // Finish the optional browser handoff before taking the short-lived D1 bearer.
+  const gatewayOAuthBearer = options.gatewayOAuthClientId === undefined
+    ? undefined : await readGatewayBrowserOAuthBearer(options.gatewayOAuthClientId);
+  const bearer = await readWranglerBearer(accountId);
+  const database = createCloudflareD1HttpDatabase({
+    account_id: accountId,
+    database_id: databaseId,
+    api_token: bearer,
+  });
+  if (cloudflareAi === undefined || research === undefined) {
+    [cloudflareAi, research] = await Promise.all([
+      loadCompiledWorkspaceModule("packages/cloudflare-ai/dist/index.js"),
+      loadCompiledWorkspaceModule("packages/cloudflare-research/dist/index.js"),
+    ]);
+  }
+  const bindings = bindingStore(research, database);
+  const mcpTransport = options.gatewayTransport === "cloudflare-mcp"
+    ? createCloudflareMcpTransport({
+      cwd: process.env.ELIOTR_CLOUDFLARE_MCP_CWD,
+      accountId,
+      gatewayId: "eliotr-reasoning",
+      env: process.env,
+      resourceReadback: "dynamic-routes",
+      allowRouteWrites: options.command === "prepare" || options.command === "install",
+    })
+    : undefined;
+  try {
+    const controlPlane = mcpTransport === undefined
+      ? cloudflareAi.createCloudflareDynamicRouteRestControlPlane({
+        account_id: accountId,
+        fetch: Object.freeze({ fetch: (url, init) => globalThis.fetch(url, init) }),
+        credentials: Object.freeze({ readApiToken: async () => gatewayOAuthBearer ?? bearer }),
+        bindings,
+      })
+      : cloudflareAi.createCloudflareDynamicRouteRestControlPlane({
+        account_id: accountId,
+        request_port: dynamicRouteMcpRequestPort(mcpTransport, accountId, "eliotr-reasoning"),
+        bindings,
+      });
+    await dispatchAuthorityCommand(options, input, cloudflareAi, research, database, accountId, config, qualification, controlPlane);
+  } finally {
+    mcpTransport?.close();
+  }
 }
 
 function safeError(error) {

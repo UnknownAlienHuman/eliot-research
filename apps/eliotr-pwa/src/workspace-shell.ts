@@ -13,14 +13,14 @@ export function renderWorkspaceShell(copy: WorkspaceShellCopy): string {
       <a class="brand" href="/" aria-label="Eliot Research home"><span class="brand-mark">E</span><span>Eliot Research</span></a>
       <button class="button button--quiet reading-back" type="button" data-reading-back hidden>Back</button>
       <nav class="workspace-nav" aria-label="Primary">
-        <button class="nav-item nav-item--active" type="button" data-nav-target="#library" aria-controls="sources-view" aria-current="page">Documents</button>
+        <button class="nav-item nav-item--active" type="button" data-nav-target="#library" aria-controls="sources-view" aria-current="page">Sources</button>
         <button class="nav-item" type="button" data-nav-target="#research-card" aria-controls="research-view">Research</button>
         <button class="nav-item" type="button" data-nav-target="#wiki-card" aria-controls="wiki-view">Wiki</button>
         <button class="nav-item" type="button" data-nav-target="#connections-card" aria-controls="connections-card">Connections</button>
       </nav>
       <div class="topbar-actions">
         <button class="button button--quiet source-chooser-toggle" type="button" data-source-chooser-toggle aria-controls="library" aria-expanded="false">Sources</button>
-        <details class="workspace-menu"><summary aria-label="Workspace menu">Menu</summary><div class="workspace-menu-content"><button class="button button--quiet" type="button" data-theme-toggle aria-pressed="false">Light theme</button><a href="#library">Documents</a><a href="#research-card">Research</a><a href="#wiki-card">Wiki</a><a href="#connections-card">Connections</a></div></details>
+        <details class="workspace-menu"><summary aria-label="Workspace menu">Menu</summary><div class="workspace-menu-content"><button class="button button--quiet" type="button" data-theme-toggle aria-pressed="false">Light theme</button><a href="#library">Sources</a><a href="#research-card">Research</a><a href="#wiki-card">Wiki</a><a href="#connections-card">Connections</a></div></details>
       </div>
     </header>
     <div class="health-strip" role="status" aria-live="polite">
@@ -29,12 +29,12 @@ export function renderWorkspaceShell(copy: WorkspaceShellCopy): string {
       <a class="health-help" href="#connections-card">Connection details</a>
     </div>
     <main class="workspace" aria-label="Research workspace">
-      <dialog class="panel panel--corpus library-drawer" aria-labelledby="library-drawer-title">
-        <div class="drawer-heading"><h2 id="library-drawer-title">Sources</h2><button class="button button--quiet" type="button" data-close-library autofocus>Close</button></div>
-        <div id="library"></div>
-      </dialog>
+      <aside class="panel panel--sources" aria-labelledby="sources-column-title">
+        <div class="column-heading"><h2 id="sources-column-title">Sources</h2><span>Workspace library</span></div>
+        <div id="library-sidebar-home"></div>
+      </aside>
       <section id="workspace-content" class="panel panel--investigation" aria-label="Investigation workspace" tabindex="-1">
-        <div class="content-heading"><div><h1 data-workspace-title>Documents</h1><p class="lede" data-workspace-lede>Choose a document to read, or add a source to your library.</p></div></div>
+        <div class="content-heading"><div><h1 data-workspace-title>Sources</h1><p class="lede" data-workspace-lede>Choose a document to read, or add a source to your library.</p></div></div>
         <section id="sources-view" class="workspace-view" data-workspace-view="sources" tabindex="-1" aria-label="Documents">
           <div id="document-list-home"></div>
           <div class="tool-stack">
@@ -74,6 +74,15 @@ export function renderWorkspaceShell(copy: WorkspaceShellCopy): string {
           <details class="access-boundary"><summary>Access and privacy</summary><p>Reads resolve through the owner API. Private data is never cached in the browser.</p></details>
         </section>
       </section>
+      <aside class="panel panel--inspector" aria-labelledby="inspector-column-title">
+        <div class="column-heading"><h2 id="inspector-column-title">Context inspector</h2><span>Evidence and revisions</span></div>
+        <p data-inspector-default>Open a report in Research, then select a citation to inspect its evidence and source revision.</p>
+        <p data-inspector-report hidden>A report is open in Research. Select a citation to inspect its evidence and source revision.</p>
+      </aside>
+      <dialog class="panel panel--corpus library-drawer" aria-labelledby="library-drawer-title">
+        <div class="drawer-heading"><h2 id="library-drawer-title">Sources</h2><button class="button button--quiet" type="button" data-close-library autofocus>Close</button></div>
+        <div id="library"></div>
+      </dialog>
       <dialog class="panel panel--evidence" aria-labelledby="evidence-drawer-title">
         <div class="evidence-heading"><div><h2 id="evidence-drawer-title">Source excerpt</h2><span class="rail-status" role="status" aria-live="polite">No excerpt selected</span></div><button class="button button--quiet" type="button" data-close-evidence aria-label="Close source excerpt" autofocus>Close</button></div>
         <div id="evidence-empty" class="evidence-empty"><strong>Select an excerpt</strong><p>The source text and verification details will appear here.</p></div>

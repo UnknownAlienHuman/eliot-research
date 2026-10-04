@@ -6,6 +6,14 @@ const SHA256 = /^[0-9a-f]{64}$/u;
 const MAX_RESPONSE_BYTES = 64 * 1024;
 const DEFAULT_TIMEOUT_MS = 30_000;
 const UTF8 = new TextEncoder();
+const INITIAL_ACTIVATE_SQL = "INSERT INTO investigation_current_deployment (deployment_generation,state,created_at,backend_fingerprint) VALUES (?1,'ACTIVE',?2,?3)";
+const INITIAL_REACTIVATE_SQL = "UPDATE investigation_current_deployment SET state='ACTIVE',created_at=?2 WHERE deployment_generation=?1 AND state='RETIRED' AND backend_fingerprint=?3";
+const RETIRE_ACTIVE_CAS_SQL = "UPDATE investigation_current_deployment SET state='RETIRED' WHERE deployment_generation=?1 AND state='ACTIVE' AND backend_fingerprint=?2";
+const RETIRE_FOR_REACTIVATION_CAS_SQL = "UPDATE investigation_current_deployment SET state='RETIRED' WHERE deployment_generation=?1 AND state='ACTIVE' AND backend_fingerprint=?2 AND EXISTS (SELECT 1 FROM investigation_current_deployment WHERE deployment_generation=?3 AND state='RETIRED' AND backend_fingerprint=?4)";
+const INSERT_AFTER_RETIRE_SQL = "INSERT INTO investigation_current_deployment (deployment_generation,state,created_at,backend_fingerprint) SELECT ?1,'ACTIVE',?2,?3 WHERE changes()=1";
+const REACTIVATE_AFTER_RETIRE_SQL = "UPDATE investigation_current_deployment SET state='ACTIVE',created_at=?2 WHERE deployment_generation=?1 AND state='RETIRED' AND backend_fingerprint=?3 AND changes()=1";
+const INITIAL_AUTHORITY_POSTREAD_SQL = "SELECT deployment_generation,state,created_at,backend_fingerprint FROM investigation_current_deployment WHERE state='ACTIVE' OR deployment_generation=?1";
+const ROTATED_AUTHORITY_POSTREAD_SQL = "SELECT deployment_generation,state,created_at,backend_fingerprint FROM investigation_current_deployment WHERE state='ACTIVE' OR deployment_generation IN (?1,?2)";
 
 export class ResearchDeploymentAuthorityError extends Error {
   constructor(code, message) {
@@ -214,18 +222,34 @@ export async function synchronizeResearchDeploymentAuthority({
     createdAt = new Date(timestamp).toISOString();
   } catch { fail("RESEARCH_DEPLOYMENT_AUTHORITY_INPUT_INVALID", "deployment clock is invalid"); }
   const retired = observed.active?.deployment_generation ?? null;
-  const activateSql = "INSERT INTO investigation_current_deployment (deployment_generation,state,created_at,backend_fingerprint) " +
-    "VALUES (?1,'ACTIVE',?2,?3) ON CONFLICT(deployment_generation) DO UPDATE SET state='ACTIVE',created_at=excluded.created_at " +
-    "WHERE investigation_current_deployment.state='RETIRED' " +
-    "AND investigation_current_deployment.backend_fingerprint=excluded.backend_fingerprint";
-  const statements = retired === null ? [
-    { sql: activateSql, params: [generation, createdAt, backend_fingerprint] },
-    { sql: "SELECT deployment_generation,state,created_at,backend_fingerprint FROM investigation_current_deployment WHERE state='ACTIVE' OR deployment_generation=?1", params: [generation] },
-  ] : [
-    { sql: "UPDATE investigation_current_deployment SET state='RETIRED' WHERE deployment_generation=?1 AND state='ACTIVE'", params: [retired] },
-    { sql: activateSql, params: [generation, createdAt, backend_fingerprint] },
-    { sql: "SELECT deployment_generation,state,created_at,backend_fingerprint FROM investigation_current_deployment WHERE state='ACTIVE' OR deployment_generation IN (?1,?2)", params: [retired, generation] },
-  ];
+  const predecessorFingerprint = observed.active?.backend_fingerprint ?? null;
+  if (retired !== null && !SHA256.test(predecessorFingerprint ?? "")) {
+    fail("RESEARCH_DEPLOYMENT_AUTHORITY_READBACK_INVALID",
+      "active deployment has no exact fingerprint for an atomic authority rotation");
+  }
+  if (observed.target !== null && observed.target.state !== "RETIRED") {
+    fail("RESEARCH_DEPLOYMENT_AUTHORITY_READBACK_INVALID",
+      "inactive candidate deployment is not eligible for exact generation reactivation");
+  }
+  const statements = [];
+  if (retired !== null) {
+    statements.push({
+      sql: observed.target === null ? RETIRE_ACTIVE_CAS_SQL : RETIRE_FOR_REACTIVATION_CAS_SQL,
+      params: observed.target === null ? [retired, predecessorFingerprint] :
+        [retired, predecessorFingerprint, generation, backend_fingerprint],
+    });
+  }
+  if (observed.target === null) {
+    statements.push({ sql: retired === null ? INITIAL_ACTIVATE_SQL : INSERT_AFTER_RETIRE_SQL,
+      params: [generation, createdAt, backend_fingerprint] });
+  } else {
+    statements.push({ sql: retired === null ? INITIAL_REACTIVATE_SQL : REACTIVATE_AFTER_RETIRE_SQL,
+      params: [generation, createdAt, backend_fingerprint] });
+  }
+  statements.push({
+    sql: retired === null ? INITIAL_AUTHORITY_POSTREAD_SQL : ROTATED_AUTHORITY_POSTREAD_SQL,
+    params: retired === null ? [generation] : [retired, generation],
+  });
   const results = await executeBatch(url, token, statements, fetch_impl);
   const insertIndex = retired === null ? 0 : 1;
   if (retired !== null && results[0].changes < 1) fail("RESEARCH_DEPLOYMENT_AUTHORITY_SYNC_FAILED", "D1 deployment authority CAS lost");
