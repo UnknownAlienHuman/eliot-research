@@ -1,4 +1,4 @@
-import type { TableSpec } from "./coherent-cut.js";
+import type { TableSpec } from "./backup-table-spec-types.js";
 import { DURABLE_CORE_TABLE_SPECS_A } from "./core-table-specs-a.js";
 import { DURABLE_CORE_TABLE_SPECS_B } from "./core-table-specs-b.js";
 import { DURABLE_CORE_TABLE_SPECS_C } from "./core-table-specs-c.js";

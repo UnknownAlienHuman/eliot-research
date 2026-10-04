@@ -1,7 +1,7 @@
 # Backend delivery plan
 
 Current execution order, refreshed on 2026-10-04 against `main`
-`a590c4fe796e37db25b17be10d2facd2caf206a5`.
+`310628db14006199ec0d268ddf3145c1540288a0`.
 
 The [October 3 functional integration checkpoint](product-resume-2026-10-03.md)
 records the owner configuration, immutable run capture, MCP, provisioning and
@@ -16,6 +16,18 @@ transport, durable owner/delegated policy parity, the existing AI Search evidenc
 path, useful bounded MCP reads and results, and the adaptive owner workspace.
 The observed Research failure at RECONCILE is under diagnosis. Native MCP client
 authorization remains unverified. These are open items, not completed acceptance.
+
+The adaptive reading panels and system/light/dark theme are published in
+`310628db`. The portable backup table catalog now belongs to Contracts; its
+contents and order are preserved, and Contracts/O2 compilation and scoped lint
+passed. O2 has 8,428 source lines after this relocation. Contracts retains its
+existing oversized schema-registry test; other source-budget excesses remain.
+No behavioral or live acceptance was run for the relocation.
+
+The current external-model requirement is OpenRouter
+`stealth/space-bunny-alpha`, through the native Cloudflare provider endpoint,
+with owner settings for key replacement. The supplied key remains private;
+credentials and qualification are separate states. Implementation is in progress.
 
 The [product integration checkpoint](product-resume-2026-10-02.md) records actual local COW/publication/restore checks and remaining code separately from live approval. The active result remains S92 integration, not release acceptance.
 

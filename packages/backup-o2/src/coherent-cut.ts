@@ -1,5 +1,6 @@
 import { backupSha256Hex, canonicalBackupJson, failBackup } from "./shared.js";
-import { DURABLE_CORE_TABLE_SPECS } from "./core-table-specs.js";
+import { DURABLE_CORE_TABLE_SPECS, type TableSpec } from "@eliotr/contracts";
+export type { TableSpec } from "@eliotr/contracts";
 
 // ER-34 O2 FIX2 coherent-cut protocol + complete column inventory.
 //
@@ -31,15 +32,7 @@ import { DURABLE_CORE_TABLE_SPECS } from "./core-table-specs.js";
 export const BACKUP_MANIFEST_PROTOCOL = "eliotr.backup-manifest.v1";
 export const BACKUP_SCHEMA_INVENTORY_PROTOCOL = "eliotr.backup-schema-inventory.v1";
 
-export type ColumnKind = "text" | "int" | "real" | "text-or-null" | "int-or-null" | "real-or-null";
-
-export interface TableSpec {
-  readonly manifest: string;
-  readonly table: string;
-  readonly order_by: string;
-  readonly columns: Readonly<Record<string, ColumnKind>>;
-  readonly required: boolean;
-}
+export type ColumnKind = TableSpec["columns"][string];
 
 export const TABLE_SPECS: readonly TableSpec[] = [
   { manifest: "ownership", table: "source_namespace_ownership", order_by: "source_namespace_id, ownership_record_revision", columns: { source_namespace_id: "text", ownership_record_revision: "int", owner_system_id: "text", owner_incarnation_ref: "text", source_owner_generation: "text", source_admission_policy_revision: "int", status: "text", cutover_receipt_ref: "text-or-null", created_at: "text" }, required: true },

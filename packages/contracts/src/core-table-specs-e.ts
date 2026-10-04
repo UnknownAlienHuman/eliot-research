@@ -1,4 +1,4 @@
-import type { TableSpec } from "./coherent-cut.js";
+import type { TableSpec } from "./backup-table-spec-types.js";
 
 // Canonical publication and COW authority introduced by migrations 0098/0100.
 // Preserve these histories during recovery to prevent duplicate acceptance or paid effects.

@@ -29,4 +29,6 @@ export * from "./navigation.js";
 export * from "./publication.js";
 export * from "./model.js";
 export * from "./backup.js";
+export * from "./backup-table-spec-types.js";
+export * from "./core-table-specs.js";
 export * from "./validation/cross-field.js";

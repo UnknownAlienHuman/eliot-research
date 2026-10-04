@@ -1,4 +1,4 @@
-import type { TableSpec } from "./coherent-cut.js";
+import type { TableSpec } from "./backup-table-spec-types.js";
 
 // Explicit PRAGMA-derived columns and deterministic primary-key ordering.
 export const DURABLE_CORE_TABLE_SPECS_B: readonly TableSpec[] = [
