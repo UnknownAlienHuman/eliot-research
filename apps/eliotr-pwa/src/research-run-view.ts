@@ -47,7 +47,7 @@ export function statusText(view: ResearchRunStatusView): string {
     case "ACTIVE": {
       const stage = RESEARCH_STAGE_ORDER[view.next_stage_index];
       const label = stage === undefined ? "Continuing through the research workflow" : RESEARCH_STAGE_LABELS[stage];
-      if (view.engine_status === "errored") return failureText(view.failure) ?? "The research engine stopped before finishing. No answer is available.";
+      if (view.engine_status === "errored") return failureHeadline(view.failure) ?? "The research engine stopped before finishing. No answer is available.";
       if (view.engine_status === "terminated") return "The research engine was stopped. No answer is available.";
       if (view.engine_status === "complete") return "The research engine finished. The saved run is still being finalized.";
       if (view.engine_status === "unknown") return "Research execution status is unavailable. Refresh to check again.";
@@ -133,6 +133,39 @@ export function failureText(failure: ResearchRunStatusView["failure"]): string |
   const subsequent = failure.consequence === undefined ? ""
     : ` Later failure (${failure.consequence.code}): ${failureCauseText(failure.consequence)}`;
   return `${location}${initial}${subsequent}`;
+}
+
+function failureHeadline(failure: ResearchRunStatusView["failure"]): string | undefined {
+  if (failure === undefined) return undefined;
+  const location = failure.stage === undefined
+    ? failure.phase === "PREPARATION" ? " during preparation"
+      : failure.phase === "RECOVERY" ? " during recovery"
+        : failure.phase === "STAGE" ? " during the workflow" : ""
+    : ` at ${RESEARCH_STAGE_LABELS[failure.stage]}`;
+  return `Research failed${location} (${failure.code}).`;
+}
+
+export function failureDetailFields(view: ResearchRunStatusView): readonly { readonly label: string; readonly value: string }[] {
+  if (view.execution_state !== "ACTIVE" || view.engine_status !== "errored" || view.failure === undefined) return [];
+  const failure = view.failure;
+  const fields: { label: string; value: string }[] = [{ label: "Failure code", value: failure.code }];
+  if (failure.stage !== undefined) {
+    fields.push({ label: "Failed stage", value: `${RESEARCH_STAGE_LABELS[failure.stage]} (${failure.stage})` });
+  }
+  if (failure.phase !== undefined) fields.push({ label: "Failure phase", value: failure.phase });
+  if (failure.retryable !== undefined) fields.push({ label: "Server retryable", value: String(failure.retryable) });
+  if (failure.consequence !== undefined) {
+    fields.push({ label: "Later failure code", value: failure.consequence.code });
+    if (failure.consequence.stage !== undefined) {
+      fields.push({ label: "Later failure stage", value: `${RESEARCH_STAGE_LABELS[failure.consequence.stage]} (${failure.consequence.stage})` });
+    }
+    if (failure.consequence.phase !== undefined) fields.push({ label: "Later failure phase", value: failure.consequence.phase });
+    if (failure.consequence.retryable !== undefined) fields.push({ label: "Later server retryable", value: String(failure.consequence.retryable) });
+  }
+  const diagnostic = failureText(failure);
+  if (diagnostic !== undefined) fields.push({ label: "Diagnostic", value: diagnostic });
+  fields.push({ label: "Answer", value: view.answer.availability === "unavailable" ? "Unavailable" : "Draft available" });
+  return fields;
 }
 
 export function auditStatusText(claims: readonly ResearchArtifactSectionCitationAuditClaim[]): string {
@@ -281,6 +314,7 @@ export function renderResearchHistoryList(list: HTMLElement, status: HTMLElement
 
 export function renderResearchStatusHeading(result: HTMLElement, view: ResearchRunStatusView): HTMLElement {
   result.replaceChildren();
+  const failed = view.execution_state === "ACTIVE" && view.engine_status === "errored";
   const heading = document.createElement("p"); const strong = document.createElement("strong"); strong.textContent = statusText(view); heading.append(strong);
   const identity = document.createElement("details"); identity.className = "research-technical-details";
   const summary = document.createElement("summary"); summary.textContent = "Run details";
@@ -289,8 +323,12 @@ export function renderResearchStatusHeading(result: HTMLElement, view: ResearchR
     const term = document.createElement("dt"); term.textContent = label;
     const detail = document.createElement("dd"); detail.append(codeRef(value)); fields.append(term, detail);
   }
+  for (const field of failureDetailFields(view)) {
+    const term = document.createElement("dt"); term.textContent = field.label;
+    const detail = document.createElement("dd"); detail.textContent = field.value; fields.append(term, detail);
+  }
   identity.append(summary, fields);
-  result.append(heading);
+  if (!failed) result.append(heading);
   return identity;
 }
 

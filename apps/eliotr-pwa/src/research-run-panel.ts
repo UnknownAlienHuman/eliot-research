@@ -281,6 +281,7 @@ export function mountResearchRunPanel(
       .finally(() => { if (active === serial) { controller = undefined; if (!disposed) setReportActionsDisabled(false); updateButtons(); } });
   };
   const renderStatus = (view: ResearchRunStatusView, opened?: OpenedRunArtifact, renderSerial = serial): void => {
+    const failed = view.execution_state === "ACTIVE" && view.engine_status === "errored";
     runControls?.show(view);
     lastExecutionState = view.execution_state;
     lastEngineStatus = view.engine_status;
@@ -292,12 +293,14 @@ export function mountResearchRunPanel(
     const identity = renderResearchStatusHeading(result, view);
     if (view.answer.availability === "draft" && opened !== undefined) {
       renderArtifactReport(opened.artifact, runArtifactRenderOptions(view, opened, renderSerial));
+      if (failed) result.append(identity);
     } else {
       result.append(identity);
     }
     result.hidden = false;
     setReportActionsDisabled(controller !== undefined);
-    if (status.textContent !== text) status.textContent = text;
+    if (failed) status.textContent = "";
+    else if (status.textContent !== text) status.textContent = text;
     refresh.disabled = false;
     if (view.execution_state === "ACTIVE" && shouldPollEngine(view.engine_status)) scheduleStatusRefresh(); else clearProgressTimer();
   };

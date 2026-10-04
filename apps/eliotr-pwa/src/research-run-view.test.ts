@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { ApiRequestError } from "./api.js";
 import { researchConfigurationErrorCopy, researchConfigurationViewCopy } from "./research-configuration-panel.js";
 import type { ResearchConfigurationView } from "./research-configuration-api.js";
-import { badgeText, historyErrorMessage, historyStatusText, idleBadgeText, idleProgressText, message, researchHistoryCards, statusText, wikiProposalErrorText } from "./research-run-view.js";
+import { badgeText, failureDetailFields, failureText, historyErrorMessage, historyStatusText, idleBadgeText, idleProgressText, message, researchHistoryCards, statusText, wikiProposalErrorText } from "./research-run-view.js";
 import type { ResearchRunHistoryView, ResearchRunStatusView } from "./research-run-api.js";
 
 const status: ResearchRunStatusView = {
@@ -57,6 +57,33 @@ describe("Research presentation preserves execution facts", () => {
     expect(statusText(status)).toContain("review");
     expect(statusText({ ...status, answer: { availability: "unavailable" } })).toContain("No answer");
     expect(badgeText({ ...status, execution_state: "CANCELLED" })).toBe("CANCELLED");
+  });
+  it("shows one failed-stage headline and retains all failure context in run details", () => {
+    const failed: ResearchRunStatusView = {
+      ...status,
+      execution_state: "ACTIVE",
+      engine_status: "errored",
+      next_stage_index: 8,
+      answer: { availability: "unavailable" },
+      failure: {
+        code: "WORKFLOW_STAGE_OUT_OF_ORDER",
+        stage: "ANALYZE_BRANCHES",
+        phase: "STAGE",
+        consequence: { code: "WORKFLOW_CONFLICT", stage: "ANALYZE_BRANCHES", phase: "RECOVERY" },
+      },
+    };
+    expect(statusText(failed)).toBe("Research failed at Analyzing findings (WORKFLOW_STAGE_OUT_OF_ORDER).");
+    const fields = failureDetailFields(failed);
+    expect(fields).toEqual(expect.arrayContaining([
+      { label: "Failure code", value: "WORKFLOW_STAGE_OUT_OF_ORDER" },
+      { label: "Failed stage", value: "Analyzing findings (ANALYZE_BRANCHES)" },
+      { label: "Failure phase", value: "STAGE" },
+      { label: "Later failure code", value: "WORKFLOW_CONFLICT" },
+      { label: "Later failure phase", value: "RECOVERY" },
+      { label: "Answer", value: "Unavailable" },
+    ]));
+    expect(fields.find((field) => field.label === "Diagnostic")?.value).toContain("Later failure (WORKFLOW_CONFLICT)");
+    expect(failureText(failed.failure)).toContain("At ANALYZE BRANCHES.");
   });
   it("sorts history without mutating it or collapsing different artifact revisions", () => {
     const view: ResearchRunHistoryView = historyView({
