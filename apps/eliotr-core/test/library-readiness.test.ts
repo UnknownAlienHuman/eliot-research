@@ -130,7 +130,7 @@ describe("owner active Library readiness", () => {
     )).rejects.toMatchObject({ status: 404, code: "LIBRARY_SOURCE_NOT_FOUND" });
   });
 
-  it("preserves the observed_at from an admitted raw snapshot witness", async () => {
+  it("persists and verifies the admitted raw snapshot freshness without repairing the row in the test", async () => {
     await db.prepare("UPDATE source_admission_policy SET minimum_quality_state='degraded' WHERE source_namespace_id=?1").bind(world.namespace).run();
     const sourceBytes = new TextEncoder().encode("%PDF raw readiness input");
     const sourceSha = await sha(sourceBytes);
@@ -149,11 +149,15 @@ describe("owner active Library readiness", () => {
       ...access(world.owner), applicationFactory: () => createApplication({ env: runtime, executionContext: {} as ExecutionContext }),
     });
     expect(admission.status).toBe(200);
-    expect((await admission.json() as { readonly data: { readonly state: string } }).data.state).toBe("COMMITTED");
-    // The raw admission commit records a current source row separately from the
-    // historical snapshot witness. Seed the durable recorded freshness to match
-    // this admitted observation before exercising the readiness reader.
-    await db.prepare("UPDATE source_revision SET currentness_state='observed_with_age' WHERE source_revision_ref=?1").bind(captureRow.source_revision_ref).run();
+    const admissionData = (await admission.json() as { readonly data: { readonly state: string; readonly source_view_ref: string } }).data;
+    expect(admissionData.state).toBe("COMMITTED");
+    const recordedCurrentness = await db.prepare(
+      "SELECT currentness_state,source_view_ref FROM source_revision WHERE source_revision_ref=?1 LIMIT 1",
+    ).bind(captureRow.source_revision_ref).first<{ readonly currentness_state: string; readonly source_view_ref: string }>();
+    expect(recordedCurrentness).toEqual({
+      currentness_state: "observed_with_age",
+      source_view_ref: admissionData.source_view_ref,
+    });
     const readiness = await handleHttp(
       new Request(`https://research.example/api/v1/library/readiness?source_id=${encodeURIComponent(captureRow.source_logical_id)}`),
       runtime,

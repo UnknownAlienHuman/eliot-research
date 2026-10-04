@@ -45,6 +45,7 @@ export * from "./research-model-profile-config.js";
 export * from "./research-model-pricing-store.js";
 export * from "./research-model-pricing-quote.js";
 export * from "./research-model-installation.js";
+export * from "./research-model-candidate-staging.js";
 export * from "./research-model-qualification-store.js";
 export * from "./research-model-qualification.js";
 export * from "./research-model-qualification-renewal.js";

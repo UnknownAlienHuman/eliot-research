@@ -67,6 +67,10 @@ describe("actual PWA import protocol through Worker/D1/R2", () => {
     expect(receipt?.manifest_sha256).toBe(await canonicalDigest(bundle.manifest));
     expect(receipt?.manifest_sha256).not.toBe(bundle.hashes["manifest.json"]);
     expect(await delta("source_revision")).toBe(1);
+    const currentness = await db.prepare(
+      "SELECT currentness_state,source_view_ref FROM source_revision WHERE source_revision_ref=?1 LIMIT 1",
+    ).bind(revision).first<{ readonly currentness_state: string; readonly source_view_ref: string }>();
+    expect(currentness).toEqual({ currentness_state: "current_confirmed", source_view_ref: "source-view-1" });
     expect(await delta("outbox")).toBe(1);
     expect(await delta("scope_read_policy")).toBe(0);
     expect(await importBrowserBundle(bundle, "pwa-first-import", { transport })).toEqual(receipt);

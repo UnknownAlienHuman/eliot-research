@@ -40,10 +40,24 @@ function libraryErrorText(error: unknown, subject: string): string {
   return `${subject} could not be loaded. Check the workspace and try again.`;
 }
 
-function renderLibraryError(target: HTMLElement, error: unknown, subject: string): void {
+function isRetryableCatalogConflict(error: unknown): error is ApiRequestError {
+  return error instanceof ApiRequestError && error.status === 409 && error.retryable &&
+    ["CATALOG_AUTHORITY_CHANGED", "CATALOG_CURSOR_STALE", "CATALOG_GENERATION_CHANGED"].includes(error.code);
+}
+
+function renderLibraryError(target: HTMLElement, error: unknown, subject: string, retryCatalog?: () => void): void {
   const reason = document.createElement("p"); reason.className = "library-error-reason";
   reason.textContent = libraryErrorText(error, subject);
   target.replaceChildren(reason);
+  if (retryCatalog !== undefined && isRetryableCatalogConflict(error)) {
+    const retry = document.createElement("button");
+    retry.type = "button";
+    retry.className = "button button--quiet";
+    retry.dataset.libraryRetry = "true";
+    retry.textContent = "Reload catalog from first page";
+    retry.onclick = retryCatalog;
+    target.append(retry);
+  }
   if (!(error instanceof ApiRequestError)) return;
   const details = document.createElement("details"); details.className = "library-error-details";
   const summary = document.createElement("summary"); summary.textContent = "Technical details";
@@ -158,7 +172,7 @@ export function mountLibraryPanel(element: HTMLElement, onSelectSource: (id: str
     } catch (error) {
       if (mine !== serial || disposed) return;
       clear(libraryErrorText(error, "Library"));
-      renderLibraryError(status, error, "Library");
+      renderLibraryError(status, error, "Library", () => { void load(); });
     }
   };
   const checkReadiness = async (sourceId: string, deploymentGeneration: string,

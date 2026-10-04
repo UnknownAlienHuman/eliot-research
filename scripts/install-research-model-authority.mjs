@@ -30,12 +30,14 @@ const usage = [
   "  node scripts/install-research-model-authority.mjs install --input FILE [--config FILE] [--gateway-transport wrangler-oauth|cloudflare-mcp]",
   "  node scripts/install-research-model-authority.mjs adopt --input PLAN.json --provider-route-id ID [--config FILE] [--gateway-oauth-client-id ID] [--gateway-transport wrangler-oauth|cloudflare-mcp]",
   "  node scripts/install-research-model-authority.mjs qualify --input REQUEST.json [--config FILE] [--worker-url HTTPS_ORIGIN] [--gateway-oauth-client-id ID] [--gateway-transport wrangler-oauth|cloudflare-mcp]",
+  "  node scripts/install-research-model-authority.mjs stage --input STAGE.json [--config FILE]",
   "  --gateway-transport cloudflare-mcp uses the configured native Cloudflare OAuth connector for Dynamic Route control-plane calls; Wrangler OAuth remains the default and continues to authorize D1 access.",
   "",
   "prepare provisions the explicit route and pricing snapshot, without promotion.",
   "install requires the same explicit request plus independently verified LIVE qualification.",
   "adopt binds an already deployed dashboard route by live API readback; it does not call a model or approve pricing.",
   "qualify performs one observed model qualification against the prepared route; it does not install or promote.",
+  "stage binds an existing preparation receipt and LIVE qualification to immutable candidate/proof records; it makes no model or gateway calls and does not promote.",
   "--worker-url executes qualification in the existing owner-authenticated Worker using its native bindings.",
   "Cloudflare account and CORE_DB are read from the generated Wrangler config; D1 uses Wrangler browser OAuth.",
   "If Wrangler lacks AI Gateway Read, adopt and qualify can use the native Cloudflare MCP transport or a private PKCE client ID; its callback is http://127.0.0.1:8977/oauth/callback.",
@@ -67,8 +69,8 @@ function parseArguments(argv) {
     return Object.freeze({ help: true });
   }
   const command = argv[0];
-  if (command !== "prepare" && command !== "install" && command !== "adopt" && command !== "qualify") {
-    throw new InstallerCliError("command must be prepare, install, adopt or qualify; use --help");
+  if (command !== "prepare" && command !== "install" && command !== "adopt" && command !== "qualify" && command !== "stage") {
+    throw new InstallerCliError("command must be prepare, install, adopt, qualify or stage; use --help");
   }
   let inputPath;
   let providerRouteId;
@@ -107,6 +109,12 @@ function parseArguments(argv) {
   }
   if (gatewayTransport === "cloudflare-mcp" && gatewayOAuthClientId !== undefined) {
     throw new InstallerCliError("--gateway-oauth-client-id cannot be combined with --gateway-transport cloudflare-mcp");
+  }
+  if (command === "stage" && gatewayTransport !== "wrangler-oauth") {
+    throw new InstallerCliError("stage uses D1 only and does not accept a gateway transport");
+  }
+  if (command === "stage" && gatewayOAuthClientId !== undefined) {
+    throw new InstallerCliError("stage uses D1 only and does not accept a gateway OAuth client");
   }
   return Object.freeze({
     help: false,
@@ -176,6 +184,14 @@ function qualificationRequest(input, cloudflareAi, research) {
     );
   }
   return Object.freeze({ protocol: input.protocol, probe, promptConfig });
+}
+
+export function validateCandidateStageRequest(input, _cloudflareAi, research, now = () => new Date().toISOString()) {
+  return research.decodeResearchModelCandidateStageInput(input, now());
+}
+
+export async function stageQualifiedCandidate(input, _cloudflareAi, research, database, now = () => new Date().toISOString()) {
+  return research.createResearchModelCandidateStagingService({ database, now }).stage(input);
 }
 
 function accountFromGatewayUrl(value) {
@@ -384,6 +400,12 @@ async function execute(options) {
       loadCompiledWorkspaceModule("packages/cloudflare-research/dist/index.js"),
     ]);
     qualification = qualificationRequest(input, cloudflareAi, research);
+  } else if (options.command === "stage") {
+    [cloudflareAi, research] = await Promise.all([
+      loadCompiledWorkspaceModule("packages/cloudflare-ai/dist/index.js"),
+      loadCompiledWorkspaceModule("packages/cloudflare-research/dist/index.js"),
+    ]);
+    validateCandidateStageRequest(input, cloudflareAi, research);
   }
   const config = await readJsonFile(options.configPath, "Wrangler config");
   const { accountId, databaseId } = deploymentConfig(config);
@@ -401,6 +423,11 @@ async function execute(options) {
       loadCompiledWorkspaceModule("packages/cloudflare-ai/dist/index.js"),
       loadCompiledWorkspaceModule("packages/cloudflare-research/dist/index.js"),
     ]);
+  }
+  if (options.command === "stage") {
+    const result = await stageQualifiedCandidate(input, cloudflareAi, research, database);
+    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    return;
   }
   const bindings = bindingStore(research, database);
   const mcpTransport = options.gatewayTransport === "cloudflare-mcp"
@@ -460,9 +487,11 @@ async function main() {
   await execute(options);
 }
 
-try {
-  await main();
-} catch (error) {
-  process.stderr.write(`${safeError(error)}\n`);
-  process.exitCode = 2;
+if (process.argv[1] !== undefined && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  try {
+    await main();
+  } catch (error) {
+    process.stderr.write(`${safeError(error)}\n`);
+    process.exitCode = 2;
+  }
 }
