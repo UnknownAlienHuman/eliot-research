@@ -1,18 +1,26 @@
-import type { ResearchRunConfigurationAssociation } from "@eliotr/cloudflare-research";
-import type { AuthenticatedRequestContext, QueryRequest } from "@eliotr/interfaces";
-import { captureResearchRunConfiguration, readResearchRunConfiguration } from "./research-run-configuration.js";
-import type { CaptureResearchRunConfigurationInput, ResolvedResearchRunConfiguration } from "./research-run-configuration.js";
+import {
+  resolveResearchRunConfigurationAdmission as resolveConfigurationAdmission,
+  type ResearchRunConfigurationAdmissionInputV1,
+  type ResearchRunConfigurationAdmissionDependenciesV1,
+} from "@eliotr/cloudflare-research-configuration/research-run-configuration-admission.js";
+import type { AuthenticatedRequestContext } from "@eliotr/interfaces";
+import {
+  captureResearchRunConfiguration,
+  readResearchRunConfiguration,
+  type CaptureResearchRunConfigurationInput,
+  type ResolvedResearchRunConfiguration,
+  type SelectedResearchProjectConfiguration,
+} from "./research-run-configuration.js";
 import { ResearchRunProjectSelectionFailure } from "./research-run-configuration-errors.js";
-import { createResearchProjectModelConfigurationServiceFromEnv, readSelectedResearchProjectConfiguration } from "./research-project-configuration.js";
+import {
+  createResearchProjectModelConfigurationServiceFromEnv,
+  readSelectedResearchProjectConfiguration,
+} from "./research-project-configuration.js";
 import type { Env } from "./env.js";
 import { ResearchServiceError, failResearch } from "./research-service-error.js";
 
-export interface ResearchRunConfigurationAdmissionInput {
-  readonly actor: ResearchRunConfigurationAssociation;
+export interface ResearchRunConfigurationAdmissionInput extends ResearchRunConfigurationAdmissionInputV1 {
   readonly context: AuthenticatedRequestContext;
-  readonly scope_expression: QueryRequest["scope_expression"];
-  readonly new_run: boolean;
-  readonly configuration_required?: number;
   readonly require_current_scope: () => Promise<void>;
 }
 
@@ -25,23 +33,6 @@ const defaultDependencies: ResearchRunConfigurationAdmissionDependencies = {
   capture: captureResearchRunConfiguration,
   read: readResearchRunConfiguration,
 };
-
-function uniqueProjectScopeId(expression: QueryRequest["scope_expression"]): string {
-  const projects = new Set<string>();
-  const visit = (value: QueryRequest["scope_expression"]): void => {
-    if (value.kind === "PROJECT") projects.add(value.project_id);
-    else if (value.kind === "UNION" || value.kind === "INTERSECT" || value.kind === "EXCEPT") {
-      visit(value.left); visit(value.right);
-    }
-  };
-  visit(expression);
-  if (projects.size !== 1) failResearch("RESEARCH_AGENT_NOT_CONFIGURED",
-    "A selected model configuration for one owned project is required before research can run", 503);
-  const projectId = projects.values().next().value as string | undefined;
-  if (projectId === undefined) failResearch("RESEARCH_AGENT_NOT_CONFIGURED",
-    "A selected model configuration for one owned project is required before research can run", 503);
-  return projectId;
-}
 
 function mapRunConfigurationError(error: unknown): never {
   const code = error instanceof Error && "code" in error ? String((error as { code: unknown }).code) : "";
@@ -71,17 +62,14 @@ function mapRunConfigurationError(error: unknown): never {
   throw error;
 }
 
-function selectedConfiguration(input: ResearchRunConfigurationAdmissionInput, env: Env) {
-  return async () => {
-    let projectId: string;
-    try { projectId = uniqueProjectScopeId(input.scope_expression); }
-    catch (error) {
-      if (error instanceof ResearchServiceError && error.code === "RESEARCH_AGENT_NOT_CONFIGURED" &&
-          error.status === 503 && error.retryable === false) {
-        throw new ResearchRunProjectSelectionFailure(error.code, error.status, error);
-      }
-      throw error;
-    }
+function requireSingleOwnedProject(): never {
+  const cause = new ResearchServiceError("RESEARCH_AGENT_NOT_CONFIGURED",
+    "A selected model configuration for one owned project is required before research can run", 503);
+  throw new ResearchRunProjectSelectionFailure(cause.code, cause.status, cause);
+}
+
+function projectSelectionPort(input: ResearchRunConfigurationAdmissionInput, env: Env) {
+  return async (projectId: string): Promise<SelectedResearchProjectConfiguration | null> => {
     const service = createResearchProjectModelConfigurationServiceFromEnv(env, async (actor, authorizedProjectId) => {
       if (actor.principal_ref !== input.context.principal_ref ||
           actor.credential_generation !== input.context.credential_generation || authorizedProjectId !== projectId) {
@@ -91,11 +79,14 @@ function selectedConfiguration(input: ResearchRunConfigurationAdmissionInput, en
     });
     const selected = await readSelectedResearchProjectConfiguration(service, input.context, projectId);
     if (selected === null) return null;
-    return { owner_ref: input.context.principal_ref, project_id: projectId,
+    return {
+      owner_ref: input.context.principal_ref,
+      project_id: projectId,
       configuration_ref: selected.configuration_ref,
       configuration_sha256: selected.configuration_sha256,
       selection_revision: selected.selection_revision,
-      configuration_json: selected.configuration_json };
+      configuration_json: selected.configuration_json,
+    };
   };
 }
 
@@ -104,19 +95,23 @@ export async function resolveResearchRunAdmissionConfiguration(
   input: ResearchRunConfigurationAdmissionInput,
   dependencies: ResearchRunConfigurationAdmissionDependencies = defaultDependencies,
 ): Promise<ResolvedResearchRunConfiguration> {
+  const packageInput: ResearchRunConfigurationAdmissionInputV1 = {
+    actor: input.actor,
+    scope_expression: input.scope_expression,
+    new_run: input.new_run,
+    ...(input.configuration_required === undefined ? {} : { configuration_required: input.configuration_required }),
+  };
+  const ports: ResearchRunConfigurationAdmissionDependenciesV1<ResolvedResearchRunConfiguration> = {
+    capture: (capture: CaptureResearchRunConfigurationInput) => dependencies.capture(env, capture),
+    read: (actor) => dependencies.read(env, actor),
+    select_current_project_configuration: projectSelectionPort(input, env),
+    require_single_owned_project: requireSingleOwnedProject,
+    require_valid_configuration_marker: () => failResearch("RESEARCH_AUTHORITY_STALE",
+      "stored run configuration binding is malformed", 409),
+  };
   try {
-    if (input.new_run) {
-      const capture: CaptureResearchRunConfigurationInput = {
-        ...input.actor,
-        select_project_configuration: selectedConfiguration(input, env),
-      };
-      return await dependencies.capture(env, capture);
-    }
-    if (input.configuration_required === 0) return await dependencies.read(env, input.actor);
-    if (input.configuration_required !== undefined && input.configuration_required !== 1) {
-      failResearch("RESEARCH_AUTHORITY_STALE", "stored run configuration binding is malformed", 409);
-    }
-    // Existing operation IDs reload their immutable row; they never resolve today's project selection.
-    return await dependencies.capture(env, input.actor);
-  } catch (error) { mapRunConfigurationError(error); }
+    return await resolveConfigurationAdmission(packageInput, ports);
+  } catch (error) {
+    mapRunConfigurationError(error);
+  }
 }

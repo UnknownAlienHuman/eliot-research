@@ -18,3 +18,21 @@ export * from "./research-model-gateway-runtime.js";
 export * from "./research-model-catalog.js";
 export * from "./research-provider-model-catalog.js";
 export * from "./research-prepared-model-transport-policies.js";
+export {
+  ConfiguredProviderKeyOperationReadError,
+  configuredProviderKeyReadback,
+  readConfiguredProviderKeyOperation,
+} from "./research-provider-key-configured-operation.js";
+export type { ConfiguredProviderKeyOperationReadResult } from "./research-provider-key-configured-operation.js";
+export * from "./research-provider-key-configuration-service.js";
+export {
+  isQualificationExecutionError,
+  responseInvalidReason,
+  transportFailureReason,
+  qualificationFailureTitle,
+  typedUpstreamStatus,
+} from "./research-model-qualification-http-error-classifier.js";
+export type {
+  QualificationResponseInvalidReason,
+  QualificationTransportReason,
+} from "./research-model-qualification-http-error-classifier.js";

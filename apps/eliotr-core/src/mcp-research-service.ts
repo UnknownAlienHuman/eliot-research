@@ -8,7 +8,8 @@ import { readCatalog } from "./catalog-service.js";
 import { createProjectOwnerService } from "./project-owner-service.js";
 import { inputIdentifier, normalizeUpdate } from "./project-owner-contract.js";
 import { readResponseBodyWithinBytes, RuntimeLimitError } from "@eliotr/platform-cloudflare";
-import { GeminiMcpToolError, MAX_MCP_RESPONSE_BYTES, MCP_RESEARCH_TOOLS, type McpResearchToolCall, type McpToolCallContext } from "@eliotr/cloudflare-workspace-mcp";
+import { GeminiMcpToolError, MAX_MCP_RESPONSE_BYTES, type McpResearchToolCall, type McpToolCallContext } from "@eliotr/cloudflare-workspace-mcp";
+import { createMcpResearchApplicationDispatch } from "@eliotr/cloudflare-workspace-mcp/research-application-dispatch.js";
 import { createResearchQueryService, createResearchRunService, parseResearchRunRequest, parseResearchQueryRequest } from "./research-session.js";
 import type { McpFastSearchQueryResult } from "./research-session.js";
 import { mapError as mapHttpError } from "./http-errors.js";
@@ -48,11 +49,6 @@ function bindHeader(headers: Headers, name: string, value: string): void {
   if (existing !== null && existing !== value) invalid("Tool arguments conflict with request headers");
   try { headers.set(name, value); } catch { invalid("Header-bound tool argument is invalid"); }
 }
-
-const MANAGED_OAUTH_TOOLS = new Set([
-  "eliotr_query", "eliotr_run", "eliotr_run_status", "eliotr_report", "eliotr_section",
-  "eliotr_citations", "eliotr_verify", "eliotr_open", "eliotr_source_read",
-]);
 
 export interface McpFastSearchResponse extends McpFastSearchQueryResult {
   readonly synthesis_status: "NOT_REQUESTED";
@@ -270,41 +266,24 @@ function mapError(request: Request, error: unknown): never {
 
 /** Only delegates to existing S11/S12 HTTP application services; no HTTP loopback or second engine. */
 export function createMcpResearchToolCall(env: Env, request: Request): McpResearchToolCall {
-  return async (name, input, toolContext) => {
-    try {
-      const args = record(input);
+  return createMcpResearchApplicationDispatch<AuthenticatedRequestContext>({
+    resolve_actor: async (name, args, toolContext) => {
       const managedOAuth = toolContext.verified_actor?.auth_profile === "managed-oauth";
-      if (managedOAuth && !MANAGED_OAUTH_TOOLS.has(name)) {
-        throw new GeminiMcpToolError("MCP_RESEARCH_UNAVAILABLE", "This Research operation is unavailable to Managed OAuth users");
-      }
-      if (!managedOAuth && name === "eliotr_source_read") {
-        throw new GeminiMcpToolError("MCP_RESEARCH_UNAVAILABLE", "Exact source reads are available only to the owner profile");
-      }
-      const schema = MCP_RESEARCH_TOOLS[name].inputSchema;
-      const schemaProperties = schema.properties as Record<string, unknown>;
-      const allowedProperties = new Set(Object.keys(schemaProperties));
-      const requiredProperties = (schema.required as readonly string[])
-        .filter((key) => !managedOAuth || key !== "client_grant_id");
-      if (managedOAuth) {
-        allowedProperties.delete("client_grant_id");
-        allowedProperties.add("project_id");
-        if (!requiredProperties.includes("project_id")) requiredProperties.push("project_id");
-      }
-      if (Object.keys(args).some((key) => !allowedProperties.has(key)) ||
-          requiredProperties.some((key) => !Object.hasOwn(args, key))) invalid("Tool arguments contain unknown or missing fields");
       const context = managedOAuth
         ? createManagedOAuthOwnerContext(env, request, toolContext, args)
         : serviceContext(env, request, toolContext, args);
       const projectId = managedOAuth ? inputIdentifier(args.project_id, "project_id") : undefined;
-      if (managedOAuth && name !== "eliotr_source_read") {
-        await requireOwnerProject(env, context, requiredManagedProjectId(projectId));
-      }
-      let execute: () => Promise<unknown>;
-      switch (name) {
-        case "eliotr_ingest_prepare":
-        case "eliotr_ingest_discover":
-        case "eliotr_ingest_complete_file":
-        case "eliotr_ingest_commit": {
+      return { context, managed_oauth: managedOAuth, ...(projectId === undefined ? {} : { project_id: projectId }) };
+    },
+    require_owner_project: (actor) => requireOwnerProject(
+      env, actor.context, requiredManagedProjectId(actor.project_id),
+    ),
+    operations: {
+      ingest: async (name, args, actor) => {
+        const context = actor.context;
+        let execute: () => Promise<unknown>;
+        if (name === "eliotr_ingest_prepare" || name === "eliotr_ingest_discover" ||
+            name === "eliotr_ingest_complete_file" || name === "eliotr_ingest_commit") {
           const input = record(args.request);
           const body = name === "eliotr_ingest_prepare" ? { ...input, idempotency_key: args.idempotency_key } : input;
           if (name === "eliotr_ingest_prepare" && Object.hasOwn(input, "idempotency_key")) invalid("Use the top-level idempotency key");
@@ -314,17 +293,16 @@ export function createMcpResearchToolCall(env: Env, request: Request): McpResear
             : name === "eliotr_ingest_discover" ? async () => ingest.discoverBundle(context, await discoverBundleRequest(parserRequest, 131072))
             : name === "eliotr_ingest_commit" ? async () => ingest.commitBundle(context, await commitBundleRequest(parserRequest, 131072))
             : async () => ingest.completeBundleFile(context, await completeBundleRequest(parserRequest, 131072, inputIdentifier(args.operation_id, "operation_id")));
-          break;
-        }
-        case "eliotr_ingest_status":
-        case "eliotr_ingest_recovery": {
+        } else {
           const operationId = inputIdentifier(args.operation_id, "operation_id");
           const ingest = createIngestApplication(env);
           execute = name === "eliotr_ingest_status" ? () => ingest.getBundleStatus(context, operationId)
             : () => ingest.getBundleRecovery(context, operationId);
-          break;
         }
-        case "eliotr_project_attach": {
+        return { execute };
+      },
+      project_attach: async (_name, args, actor) => {
+        const context = actor.context;
           const projectId = inputIdentifier(args.project_id, "project_id");
           const supplied = record(args.request);
           if (Object.keys(supplied).some((key) => !["title", "source_ids", "expected_revision"].includes(key))) {
@@ -332,51 +310,50 @@ export function createMcpResearchToolCall(env: Env, request: Request): McpResear
           }
           const change = normalizeUpdate(supplied);
           const key = inputIdentifier(args.idempotency_key, "idempotency_key");
-          execute = () => createProjectOwnerService({ database: env.CORE_DB, deployment_generation: env.DEPLOYMENT_GENERATION })
+        const execute = () => createProjectOwnerService({ database: env.CORE_DB, deployment_generation: env.DEPLOYMENT_GENERATION })
             .update(context, projectId, { ...change, idempotency_key: key });
-          break;
-        }
-        case "eliotr_run": {
+        return { execute };
+      },
+      run: async (_name, args, actor) => {
+        const { context, managed_oauth: managedOAuth, project_id: projectId } = actor;
           const run = parseResearchRunRequest(args.request);
           if (managedOAuth && (run.scope_expression.kind !== "PROJECT" || run.scope_expression.project_id !== projectId)) {
             throw new GeminiMcpToolError("MCP_PROJECT_SCOPE_MISMATCH", "Research run scope must match project_id");
           }
-          execute = () => createResearchRunService(env).run(context, run);
-          break;
-        }
-        case "eliotr_query": {
+        const execute = () => createResearchRunService(env).run(context, run);
+        return { execute };
+      },
+      query: async (_name, args, actor) => {
+        const { context, managed_oauth: managedOAuth, project_id: projectId } = actor;
           const query = parseResearchQueryRequest(args.request);
           if (query.product !== "FAST_SEARCH") invalid("Only model-free FAST_SEARCH is exposed through MCP");
           if (managedOAuth && (query.scope_expression.kind !== "PROJECT" || query.scope_expression.project_id !== projectId)) {
             throw new GeminiMcpToolError("MCP_PROJECT_SCOPE_MISMATCH", "Search scope must match project_id");
           }
-          execute = async () => mcpFastSearchResponse(
+        const execute = async () => mcpFastSearchResponse(
             await createResearchQueryService(env).queryForMcp(context, query),
           );
-          break;
-        }
-        case "eliotr_recover":
-        case "eliotr_cancel":
-        case "eliotr_run_status": {
+        return { execute };
+      },
+      run_control: async (name, args, actor) => {
+        const { context, managed_oauth: managedOAuth, project_id: projectId } = actor;
           const operation = args.workflow_instance_id;
           if (typeof operation !== "string" || !/^[A-Za-z0-9][A-Za-z0-9:._-]{0,127}$/u.test(operation)) {
             invalid("A valid workflow_instance_id is required");
           }
-          execute = name === "eliotr_recover" ? () => recoverResearchRun(env, context, operation, {})
+        const execute = name === "eliotr_recover" ? () => recoverResearchRun(env, context, operation, {})
             : name === "eliotr_cancel" ? () => cancelResearchRun(env, context, operation, {})
             : async () => {
               const status = await createResearchRunService(env).runStatus(context, operation);
               if (managedOAuth) await requireRunProject(env, context, operation, requiredManagedProjectId(projectId));
               return status;
             };
-          break;
-        }
-        case "eliotr_task_pull":
-        case "eliotr_task_progress":
-        case "eliotr_task_result":
-        case "eliotr_task_status": {
-          if (!isExternalAgentTaskToolName(name)) invalid("External task tool identity is invalid");
-          execute = async () => {
+        return { execute };
+      },
+      external_task: async (name, args, actor) => {
+        const context = actor.context;
+        if (!isExternalAgentTaskToolName(name)) invalid("External task tool identity is invalid");
+        const execute = async () => {
             const grant = await authorizeProjectClientGrant(env.CORE_DB, context, { operation: "run" });
             const result = await callExternalAgentTaskTool(
               env, context, grant.grant, name, args, "MCP_WRITE",
@@ -384,33 +361,38 @@ export function createMcpResearchToolCall(env: Env, request: Request): McpResear
             await grant.requireGrantCurrent();
             return result;
           };
-          break;
-        }
-        case "eliotr_report": {
+        return { execute };
+      },
+      report: async (_name, args, actor) => {
+        const { context, managed_oauth: managedOAuth, project_id: projectId } = actor;
           const artifact = ref(args.artifact_ref);
           if (managedOAuth) await requireArtifactProject(env, context, artifact, requiredManagedProjectId(projectId), "report");
-          execute = () => reopenOwnerArtifactDraft(env, context, artifact);
-          break;
-        }
-        case "eliotr_section": {
+        const execute = () => reopenOwnerArtifactDraft(env, context, artifact);
+        return { execute };
+      },
+      section: async (_name, args, actor) => {
+        const { context, managed_oauth: managedOAuth, project_id: projectId } = actor;
           const artifact = ref(args.artifact_ref); const section = ref(args.section_ref);
           if (managedOAuth) await requireArtifactProject(env, context, artifact, requiredManagedProjectId(projectId), "report");
-          execute = async () => responseBody(await reopenOwnerArtifactSection(env, context, artifact, section));
-          break;
-        }
-        case "eliotr_citations": {
+        const execute = async () => responseBody(await reopenOwnerArtifactSection(env, context, artifact, section));
+        return { execute };
+      },
+      citations: async (_name, args, actor) => {
+        const { context, managed_oauth: managedOAuth, project_id: projectId } = actor;
           const artifact = ref(args.artifact_ref); const section = ref(args.section_ref);
           if (managedOAuth) await requireArtifactProject(env, context, artifact, requiredManagedProjectId(projectId), "evidence");
-          execute = () => reopenOwnerArtifactSectionCitations(env, context, artifact, section);
-          break;
-        }
-        case "eliotr_verify": {
+        const execute = () => reopenOwnerArtifactSectionCitations(env, context, artifact, section);
+        return { execute };
+      },
+      verify: async (_name, args, actor) => {
+        const { context, managed_oauth: managedOAuth, project_id: projectId } = actor;
           const verify = { scope_snapshot_ref: ref(args.scope_snapshot_ref), handle_ref: ref(args.handle_ref) };
           if (managedOAuth) await requireEvidenceProject(env, context, verify.scope_snapshot_ref, verify.handle_ref, requiredManagedProjectId(projectId));
-          execute = () => createEvidenceService(env).verify(context, verify);
-          break;
-        }
-        case "eliotr_open": {
+        const execute = () => createEvidenceService(env).verify(context, verify);
+        return { execute };
+      },
+      open: async (_name, args, actor) => {
+        const { context, managed_oauth: managedOAuth, project_id: projectId } = actor;
           const handle = ref(args.handle_ref); const selected = range(args.range);
           if (managedOAuth) {
             const row = await env.CORE_DB.prepare(
@@ -420,10 +402,11 @@ export function createMcpResearchToolCall(env: Env, request: Request): McpResear
             if (row === null) throw new GeminiMcpToolError("MCP_PROJECT_SCOPE_MISMATCH", "The requested evidence is unavailable in this project");
             await requireProjectSnapshot(env, row.scope_snapshot_id, row.scope_snapshot_revision, requiredManagedProjectId(projectId));
           }
-          execute = async () => responseBody(await createEvidenceService(env).open(context, handle, selected));
-          break;
-        }
-        case "eliotr_source_read": {
+        const execute = async () => responseBody(await createEvidenceService(env).open(context, handle, selected));
+        return { execute };
+      },
+      source_read: async (_name, args, actor) => {
+        const { context, managed_oauth: managedOAuth, project_id: projectId } = actor;
           if (!managedOAuth) throw new GeminiMcpToolError("MCP_RESEARCH_UNAVAILABLE", "Exact source reads are available only to the owner profile");
           const sourceRevision = inputIdentifier(args.source_revision_ref, "source_revision_ref");
           const pageBytes = args.page_bytes === undefined ? undefined : args.page_bytes;
@@ -431,42 +414,48 @@ export function createMcpResearchToolCall(env: Env, request: Request): McpResear
             invalid("page_bytes must be in [1, 24576]");
           }
           if (args.cursor !== undefined && (typeof args.cursor !== "string" || args.cursor.length > 2048)) invalid("cursor is invalid");
-          execute = () => readMcpSourcePage(env, context, {
+        const execute = () => readMcpSourcePage(env, context, {
             project_id: requiredManagedProjectId(projectId), source_revision_ref: sourceRevision,
             ...(pageBytes === undefined ? {} : { page_bytes: pageBytes as number }),
             ...(args.cursor === undefined ? {} : { cursor: args.cursor as string }),
           });
-          break;
+        return { execute };
+      },
+    },
+    execute_with_currentness: async (name, args, actor, prepared, toolContext) => {
+      const { context, managed_oauth: managedOAuth, project_id: projectId } = actor;
+      const execute = prepared.execute;
+        if (isExternalAgentTaskToolName(name)) {
+          const result = await execute();
+          serviceContext(env, request, toolContext, args);
+          return result;
         }
-      }
+        if (name === "eliotr_project_attach" || name.startsWith("eliotr_ingest_")) {
+          // These services fence their own mutation/namespace authority and readback. They do not
+          // borrow the read-only wrapper's project scope or renew an originating grant.
+          const result = await execute();
+          serviceContext(env, request, toolContext, args);
+          return result;
+        }
+        if (managedOAuth) {
+          const result = await execute();
+          if (name !== "eliotr_source_read") {
+            await requireOwnerProject(env, context, requiredManagedProjectId(projectId));
+          }
+          createManagedOAuthOwnerContext(env, request, toolContext, args);
+          return result;
+        }
+        const operationKind = name === "eliotr_run" ? "run" : name === "eliotr_recover" ? "recover" : name === "eliotr_cancel" ? "cancel" : name === "eliotr_run_status" ? "status" : name === "eliotr_query" ? "query" : name === "eliotr_report" || name === "eliotr_section" ? "report" : "evidence";
+        const lease = await authorizeProjectClientGrant(env.CORE_DB, context, { operation: operationKind });
+        const result = await execute();
+        // Exact readers fence sources/purge before returning. Do not refresh a delegation after their writes.
+        await lease.requireGrantCurrent();
+        serviceContext(env, request, toolContext, args);
+        return result;
+    },
+    require_readiness: async () => {
       if (!(await readReadiness(env)).ready) throw new GeminiMcpToolError("SCHEMA_NOT_READY", "Required migrations are not applied", true);
-      if (isExternalAgentTaskToolName(name)) {
-        const result = await execute();
-        serviceContext(env, request, toolContext, args);
-        return result;
-      }
-      if (name === "eliotr_project_attach" || name.startsWith("eliotr_ingest_")) {
-        // These services fence their own mutation/namespace authority and readback. They do not
-        // borrow the read-only wrapper's project scope or renew an originating grant.
-        const result = await execute();
-        serviceContext(env, request, toolContext, args);
-        return result;
-      }
-      if (managedOAuth) {
-        const result = await execute();
-        if (name !== "eliotr_source_read") {
-          await requireOwnerProject(env, context, requiredManagedProjectId(projectId));
-        }
-        createManagedOAuthOwnerContext(env, request, toolContext, args);
-        return result;
-      }
-      const operation = name === "eliotr_run" ? "run" : name === "eliotr_recover" ? "recover" : name === "eliotr_cancel" ? "cancel" : name === "eliotr_run_status" ? "status" : name === "eliotr_query" ? "query" : name === "eliotr_report" || name === "eliotr_section" ? "report" : "evidence";
-      const lease = await authorizeProjectClientGrant(env.CORE_DB, context, { operation });
-      const result = await execute();
-      // Exact readers fence sources/purge before returning. Do not refresh a delegation after their writes.
-      await lease.requireGrantCurrent();
-      serviceContext(env, request, toolContext, args);
-      return result;
-    } catch (error) { mapError(request, error); }
-  };
+    },
+    map_error: (error) => mapError(request, error),
+  });
 }

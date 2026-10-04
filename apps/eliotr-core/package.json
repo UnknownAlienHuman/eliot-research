@@ -45,7 +45,9 @@
     "@eliotr/cloudflare-model-transport": "workspace:*",
     "@eliotr/cloudflare-research-branches": "workspace:*",
     "@eliotr/cloudflare-research-configuration": "workspace:*",
-    "@eliotr/cloudflare-backup": "workspace:*"
+    "@eliotr/cloudflare-backup": "workspace:*",
+    "@eliotr/cloudflare-http-protocol": "workspace:*",
+    "@eliotr/cloudflare-artifacts": "workspace:*"
   },
   "devDependencies": {
     "wrangler": "4.143.1",

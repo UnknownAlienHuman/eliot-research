@@ -1,10 +1,10 @@
-import { GoogleCredentialError, oauthIdentifier, tokenBinding, type GoogleTokenBinding } from "@eliotr/google-drive-exchange";
+import { disconnectGoogleConnectionApplication, GoogleCredentialError, oauthIdentifier } from "@eliotr/google-drive-exchange";
 import type { AccessIdentity, AccessVerifier } from "@eliotr/cloudflare-access";
 import type { Env } from "./env.js";
 import { apiResult, configuredAccessVerifier, HttpRequestError, problem, type HttpDependencies } from "./http.js";
 import { readStreamWithinBytes } from "@eliotr/platform-cloudflare";
 import { createGoogleOAuthAdmissionForOwner, readGoogleOAuthServerConfiguration } from "./google-oauth-service.js";
-import { createD1GoogleCredentialStore, readD1GoogleCredentialStatus, type GoogleCredentialStatus } from "./google-token-store.js";
+import { readD1GoogleCredentialStatus, type GoogleCredentialStatus } from "./google-token-store.js";
 import { readReadiness } from "./readiness.js";
 
 type OwnerContext = { readonly principal_ref: string; readonly credential_generation: string };
@@ -97,69 +97,24 @@ export async function handleGoogleConnectionDisconnect(request: Request, env: En
   const verifier = dependencies.accessVerifier ?? configuredAccessVerifier(env);
   const guard = ownerGuard({ request, identity, verifier, context }); await guard();
   const config = readGoogleOAuthServerConfiguration(env);
-  const configurationJson = JSON.stringify(config);
-  const receiptKey = { principal_id: context.principal_ref, operation_ref: input.operation_ref };
-  type DisconnectReceipt = { readonly expected_credential_generation: string; readonly expected_credential_revision: number;
-    readonly result_credential_generation: string | null; readonly result_credential_revision: number | null; readonly result_state: "REVOKED" | null };
-  const readReceipt = async (): Promise<DisconnectReceipt | null> => {
-    const row = await env.CORE_DB.prepare(`SELECT expected_credential_generation,expected_credential_revision,result_credential_generation,
-      result_credential_revision,result_state,connection_id,configuration_json FROM google_oauth_disconnect_receipt
-      WHERE principal_id=?1 AND operation_ref=?2`).bind(receiptKey.principal_id, receiptKey.operation_ref).first<Record<string, unknown>>()
-      .catch(() => { throw new GoogleCredentialError("GOOGLE_CREDENTIAL_UNAVAILABLE"); });
-    if (!row) return null;
-    if (row.connection_id !== config.connection_id || row.configuration_json !== configurationJson
-        || typeof row.expected_credential_generation !== "string" || typeof row.expected_credential_revision !== "number"
-        || !Number.isSafeInteger(row.expected_credential_revision) || row.expected_credential_revision < 1
-        || (row.result_credential_generation !== null && typeof row.result_credential_generation !== "string")
-        || (row.result_credential_revision !== null && typeof row.result_credential_revision !== "number")
-        || (row.result_state !== null && row.result_state !== "REVOKED")) throw new GoogleCredentialError("GOOGLE_CREDENTIAL_CHANGED");
-    return { expected_credential_generation: row.expected_credential_generation, expected_credential_revision: row.expected_credential_revision,
-      result_credential_generation: row.result_credential_generation as string | null,
-      result_credential_revision: row.result_credential_revision as number | null, result_state: row.result_state as "REVOKED" | null };
-  };
-  const result = (receipt: DisconnectReceipt) => ({ protocol: "eliotr.google-oauth-disconnect.v1", connection_id: config.connection_id,
-    credential_generation: receipt.result_credential_generation, credential_revision: receipt.result_credential_revision, state: receipt.result_state });
-  let receipt: DisconnectReceipt;
-  try {
-    await env.CORE_DB.prepare(`INSERT OR IGNORE INTO google_oauth_disconnect_receipt
-      (principal_id,operation_ref,connection_id,configuration_json,expected_credential_generation,expected_credential_revision,created_at)
-      VALUES(?1,?2,?3,?4,?5,?6,?7)`).bind(receiptKey.principal_id, receiptKey.operation_ref, config.connection_id, configurationJson,
-      input.expected_generation, input.expected_revision, new Date().toISOString()).run();
-    const loaded = await readReceipt();
-    if (loaded === null || loaded.expected_credential_generation !== input.expected_generation || loaded.expected_credential_revision !== input.expected_revision) {
-      throw new GoogleCredentialError("GOOGLE_CREDENTIAL_CHANGED");
+  const outcome = await disconnectGoogleConnectionApplication({
+    database: env.CORE_DB,
+    configuration: config,
+    principal_id: context.principal_ref,
+    operation_ref: input.operation_ref,
+    expected_credential_generation: input.expected_generation,
+    expected_credential_revision: input.expected_revision,
+    signal: request.signal,
+    assert_owner_current: guard,
+  });
+  if (!outcome.ok) {
+    const error = outcome.error;
+    if (outcome.phase === "receipt") {
+      return problem(request, error.code === "GOOGLE_CREDENTIAL_UNAVAILABLE" ? 503 : 409,
+        error.code, "Google connection lifecycle state changed", error.code === "GOOGLE_CREDENTIAL_UNAVAILABLE");
     }
-    receipt = loaded;
-  } catch (error) {
-    if (error instanceof GoogleCredentialError) return problem(request, error.code === "GOOGLE_CREDENTIAL_UNAVAILABLE" ? 503 : 409,
-      error.code, "Google connection lifecycle state changed", error.code === "GOOGLE_CREDENTIAL_UNAVAILABLE");
-    throw error;
+    return problem(request, error.code === "GOOGLE_OAUTH_OWNER_REVOKED" ? 401 : 409,
+      error.code, "Google connection lifecycle state changed", false);
   }
-  if (receipt.result_state !== null) { await guard(); return apiResult(request, env, result(receipt)); }
-  const binding: GoogleTokenBinding = tokenBinding({ connection_id: config.connection_id, principal_id: context.principal_ref,
-    oauth_client_id: config.oauth_client_id, google_subject: config.google_subject, google_email: config.google_email,
-    credential_generation: input.expected_generation });
-  const store = createD1GoogleCredentialStore(env.CORE_DB, binding);
-  try {
-    const current = await store.load(request.signal);
-    if (current.revision !== input.expected_revision || current.binding.credential_generation !== input.expected_generation || store.revoke === undefined) {
-      if (current.revision === input.expected_revision + 1 && current.binding.credential_generation === input.expected_generation && current.state === "REVOKED") {
-        const settled = await readReceipt();
-        if (settled?.result_state === "REVOKED") { await guard(); return apiResult(request, env, result(settled)); }
-      }
-      throw new GoogleCredentialError("GOOGLE_CREDENTIAL_CHANGED");
-    }
-    if (store.revokeWithDisconnectReceipt === undefined) throw new GoogleCredentialError("GOOGLE_CREDENTIAL_WRITE_UNCONFIRMED");
-    await store.revokeWithDisconnectReceipt(current, { principal_id: receiptKey.principal_id, operation_ref: receiptKey.operation_ref,
-      connection_id: config.connection_id, configuration_json: configurationJson,
-      expected_credential_generation: input.expected_generation, expected_credential_revision: input.expected_revision }, request.signal);
-    const settled = await readReceipt();
-    if (settled?.result_state !== "REVOKED") throw new GoogleCredentialError("GOOGLE_CREDENTIAL_WRITE_UNCONFIRMED");
-    receipt = settled;
-    await guard();
-    return apiResult(request, env, result(receipt));
-  } catch (error) {
-    if (error instanceof GoogleCredentialError) return problem(request, error.code === "GOOGLE_OAUTH_OWNER_REVOKED" ? 401 : 409, error.code, "Google connection lifecycle state changed", false);
-    throw error;
-  }
+  return apiResult(request, env, outcome.result);
 }

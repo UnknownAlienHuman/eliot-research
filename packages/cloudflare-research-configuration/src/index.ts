@@ -71,3 +71,58 @@ export type {
   ResearchOwnerSpendPolicyBindingInput,
   ResearchOwnerSpendPolicyResolution,
 } from "./research-owner-spend-policy.js";
+
+export { parseResearchRunModelSelections } from "./research-run-model-selection-codec.js";
+export type { ResearchRunModelSelection } from "./research-run-model-selection-codec.js";
+
+export * from "./research-project-configuration.js";
+export * from "./research-project-configuration-validation.js";
+export * from "./research-configuration-status.js";
+export * from "./research-configuration-readiness.js";
+export * from "./research-semantic-config-revision.js";
+export {
+  captureResearchRunConfiguration,
+  attachResearchRunConfiguration,
+  reconcileResearchRunConfigurationBinding,
+  readResearchRunConfiguration,
+} from "./research-run-configuration.js";
+export type {
+  ResearchRunConfigurationModeWithLegacy,
+  ResolvedResearchRunConfiguration,
+  CaptureResearchRunConfigurationInput,
+  ResearchRunConfigurationRuntimeSnapshot,
+  ResearchRunConfigurationRuntimePort,
+} from "./research-run-configuration.js";
+export * from "./research-semantic-configuration-schema.js";
+
+export * from "./research-provider-key-model-use-service.js";
+export * from "./research-provider-key-model-use-plan.js";
+export * from "./research-provider-key-model-use-store.js";
+export * from "./research-provider-key-model-use-progress.js";
+export * from "./research-provider-key-model-use-current-scope.js";
+export * from "./research-provider-key-model-use-executor.js";
+export * from "./research-provider-key-model-pricing.js";
+export * from "./research-provider-key-model-pricing-catalog.js";
+export {
+  ResearchProviderKeyModelPriceObservationStoreError,
+  createResearchProviderKeyModelPriceObservationRef,
+  createD1ResearchProviderKeyModelPriceObservationStore,
+} from "./research-provider-key-model-price-observation-store.js";
+export type {
+  ResearchProviderKeyModelPriceObservationIdentity,
+  ResearchProviderKeyModelPriceObservationReceipt,
+  ResearchProviderKeyModelPriceObservationWrite,
+} from "./research-provider-key-model-price-observation-store.js";
+
+export {
+  createResearchQualificationRenewal,
+  ResearchQualificationRenewalError,
+  RESEARCH_QUALIFICATION_RENEWAL_MARKER,
+} from "./research-qualification-renewal.js";
+export type {
+  ResearchQualificationRenewalMarker,
+  ResearchQualificationRenewalServiceInput,
+  ResolvedResearchQualificationSemanticConfiguration,
+  ResearchQualificationRenewalHead,
+} from "./research-qualification-renewal.js";
+export * from "./research-run-configuration-admission.js";

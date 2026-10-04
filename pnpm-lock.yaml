@@ -53,6 +53,9 @@ importers:
       '@eliotr/cloudflare-ai':
         specifier: workspace:*
         version: link:../../packages/cloudflare-ai
+      '@eliotr/cloudflare-artifacts':
+        specifier: workspace:*
+        version: link:../../packages/cloudflare-artifacts
       '@eliotr/cloudflare-backup':
         specifier: workspace:*
         version: link:../../packages/cloudflare-backup
@@ -71,6 +74,9 @@ importers:
       '@eliotr/cloudflare-federation':
         specifier: workspace:*
         version: link:../../packages/cloudflare-federation
+      '@eliotr/cloudflare-http-protocol':
+        specifier: workspace:*
+        version: link:../../packages/cloudflare-http-protocol
       '@eliotr/cloudflare-markdown':
         specifier: workspace:*
         version: link:../../packages/cloudflare-markdown
@@ -223,6 +229,9 @@ importers:
       '@eliotr/cloudflare-evidence':
         specifier: workspace:*
         version: link:../cloudflare-evidence
+      '@eliotr/cloudflare-navigation':
+        specifier: workspace:*
+        version: link:../cloudflare-navigation
       '@eliotr/cloudflare-workflows':
         specifier: workspace:*
         version: link:../cloudflare-workflows
@@ -235,6 +244,9 @@ importers:
       '@eliotr/platform-cloudflare':
         specifier: workspace:*
         version: link:../platform-cloudflare
+      zod:
+        specifier: 4.4.3
+        version: 4.4.3
 
   packages/cloudflare-backup:
     dependencies:
@@ -310,6 +322,18 @@ importers:
       '@eliotr/interfaces':
         specifier: workspace:*
         version: link:../interfaces
+
+  packages/cloudflare-http-protocol:
+    dependencies:
+      '@eliotr/cloudflare-navigation':
+        specifier: workspace:*
+        version: link:../cloudflare-navigation
+      '@eliotr/interfaces':
+        specifier: workspace:*
+        version: link:../interfaces
+      '@eliotr/platform-cloudflare':
+        specifier: workspace:*
+        version: link:../platform-cloudflare
 
   packages/cloudflare-markdown:
     dependencies:
@@ -550,15 +574,27 @@ importers:
       '@eliotr/cloudflare-model-control':
         specifier: workspace:*
         version: link:../cloudflare-model-control
+      '@eliotr/cloudflare-model-transport':
+        specifier: workspace:*
+        version: link:../cloudflare-model-transport
+      '@eliotr/cloudflare-native-models':
+        specifier: workspace:*
+        version: link:../cloudflare-native-models
       '@eliotr/cloudflare-research':
         specifier: workspace:*
         version: link:../cloudflare-research
       '@eliotr/cloudflare-research-stages':
         specifier: workspace:*
         version: link:../cloudflare-research-stages
+      '@eliotr/cloudflare-workflows':
+        specifier: workspace:*
+        version: link:../cloudflare-workflows
       '@eliotr/contracts':
         specifier: workspace:*
         version: link:../contracts
+      '@eliotr/interfaces':
+        specifier: workspace:*
+        version: link:../interfaces
       '@eliotr/platform-cloudflare':
         specifier: workspace:*
         version: link:../platform-cloudflare
@@ -571,6 +607,9 @@ importers:
       '@eliotr/cloudflare-ai':
         specifier: workspace:*
         version: link:../cloudflare-ai
+      '@eliotr/cloudflare-artifacts':
+        specifier: workspace:*
+        version: link:../cloudflare-artifacts
       '@eliotr/cloudflare-evidence':
         specifier: workspace:*
         version: link:../cloudflare-evidence
@@ -580,6 +619,9 @@ importers:
       '@eliotr/cloudflare-model-execution':
         specifier: workspace:*
         version: link:../cloudflare-model-execution
+      '@eliotr/cloudflare-native-models':
+        specifier: workspace:*
+        version: link:../cloudflare-native-models
       '@eliotr/cloudflare-navigation':
         specifier: workspace:*
         version: link:../cloudflare-navigation
@@ -592,6 +634,9 @@ importers:
       '@eliotr/cloudflare-research-branches':
         specifier: workspace:*
         version: link:../cloudflare-research-branches
+      '@eliotr/cloudflare-research-configuration':
+        specifier: workspace:*
+        version: link:../cloudflare-research-configuration
       '@eliotr/cloudflare-research-stages':
         specifier: workspace:*
         version: link:../cloudflare-research-stages
@@ -739,6 +784,9 @@ importers:
       '@eliotr/platform-cloudflare':
         specifier: workspace:*
         version: link:../platform-cloudflare
+      zod:
+        specifier: 4.4.3
+        version: 4.4.3
 
   packages/contracts:
     dependencies:

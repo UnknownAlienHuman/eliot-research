@@ -1,7 +1,7 @@
 // IMPLEMENTED_NOT_LIVE: ER-24 ResearchSession executes durable sessions over DO storage with W2 D1/R2 checkpoints; research.query/run are composed; hibernation WebSocket transport and live receipts remain separate.
 import { DurableObject } from "cloudflare:workers";
 import { ORIENTATION_PROFILE, OWNER_RESEARCH_MAX_SELECTED_SOURCES, readOwnerScopeProfile } from "@eliotr/cloudflare-navigation";
-import { createD1ScopePorts, createD1ScopeProfilePort, RetrievalQueryError } from "@eliotr/retrieval";
+import { createD1ScopePorts, createD1ScopeProfilePort } from "@eliotr/retrieval";
 import type { ScopeProfileBinding } from "@eliotr/retrieval";
 import { createD1EvidenceAuthorityPort, createNavigationReadAuthority } from "@eliotr/cloudflare-evidence";
 import { loadHeldResearchScope } from "./research-retrieval-composition.js";
@@ -12,17 +12,14 @@ import {
   WorkflowObjectSchema,
   MAX_WORKFLOW_RECEIPT_BYTES,
   WorkflowCheckpointError,
-  readResearchRunStatus as readStoredResearchRunStatus,
-  ResearchMaterializeOutputError,
   RESEARCH_RUN_REQUEST_V2,
   compileInquiryLedgerObligations,
   installedInquiryProtocolDefinition,
   createResearchPlanningManifest,
   settleW1BranchObservations,
 } from "@eliotr/cloudflare-research";
-import { readCommittedResearchRunResult } from "@eliotr/cloudflare-research-stages";
-import type { StageReceipt, StageRequest, WorkflowExecutionPorts, WorkflowObject, WorkflowPrincipal } from "@eliotr/cloudflare-research";
-import { createD1InvestigationLedgerStore, createInvestigationLedgerService, LedgerError } from "@eliotr/research";
+import type { StageReceipt, WorkflowExecutionPorts, WorkflowObject, WorkflowPrincipal } from "@eliotr/cloudflare-research";
+import { createD1InvestigationLedgerStore, LedgerError } from "@eliotr/research";
 import type { LedgerD1Database } from "@eliotr/research";
 import { createResearchStageHandlerFactory, SERVER_OWNED_RESEARCH_HANDLER_GENERATION, SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION, SERVER_OWNED_FREEZE_HANDLER_GENERATION, SERVER_OWNED_SEMANTIC_HANDLER_GENERATION, SERVER_OWNED_LEGACY_PROTOCOL_HANDLER_GENERATION, SERVER_OWNED_PROTOCOL_HANDLER_GENERATION, SERVER_OWNED_BRANCH_HANDLER_GENERATION, SERVER_OWNED_EXTERNAL_AGENT_HANDLER_GENERATION, isSemanticResearchHandlerGeneration, isBranchExecutionHandlerGeneration, SERVER_RETRIEVAL_SCOPE_PROFILE } from "./research-stage-handlers.js";
 import { createResearchSemanticServerHandlers } from "./research-semantic-server.js";
@@ -33,7 +30,6 @@ import { isResearchQuestionText, ScopeExpressionSchema, VersionedRefSchema } fro
 import type { VersionedRef } from "@eliotr/contracts";
 import { inspectScopeExpression } from "@eliotr/domain";
 import type { AuthenticatedRequestContext, QueryRequest, QueryResult, ResearchRunStatus } from "@eliotr/interfaces";
-import { readResearchEngineStatus, researchRunFailure } from "./research-run-failure.js";
 import { ResearchServiceError, failResearch as fail } from "./research-service-error.js";
 export { ResearchServiceError } from "./research-service-error.js";
 import { prepareClientResearchAdmission, requireClientResearchExecution } from "./research-client-execution.js";
@@ -46,16 +42,22 @@ import type { Env } from "./env.js";
 import { RESEARCH_OWNER_MODEL_PROFILE as MODEL_PROFILE } from "./research-owner-profile.js";
 import type { ResearchWorkflowRunParams } from "./research-workflow.js";
 import { researchStageBudgetLeaseMs } from "./research-runtime-duration.js";
-import { prepareReauthenticatedRunRead, readReauthenticatedRunAnswer } from "./research-run-read-authorization.js";
-import { prepareProjectClientRunRead, readProjectClientRunAnswer } from "./research-client-run-read.js";
+import { createResearchRunReadEnvironment } from "./research-run-read-authorization.js";
 import { requireResearchDeploymentCompatibility } from "./research-deployment-compatibility.js";
 import {
   createResearchQueryExecutor,
   mapRetrievalError,
-  requireMcpFastSearchCoverageClaim,
 } from "./research-query-execution-result.js";
 import type { McpFastSearchQueryResult, ResearchQueryEnvironment } from "./research-query-execution-result.js";
 export type { McpFastSearchQueryResult } from "./research-query-execution-result.js";
+import {
+  createResearchQueryApplication,
+  dispatchResearchSessionRunApplication,
+  persistResearchSessionRunPayload,
+  persistResearchSessionRunApplication,
+} from "@eliotr/cloudflare-research-runtime/research-session-application.js";
+import { readResearchSessionRunStatusApplication } from "@eliotr/cloudflare-research-runtime/research-session-status-application.js";
+import type { ResearchSessionWorkflowDispatchInput } from "@eliotr/cloudflare-research-runtime/research-session-application.js";
 export const RESEARCH_SESSION_PROTOCOL = "eliotr.research-session.v1";
 const RUN_BUDGET = "research-budget-v1";
 const POLICY_GEN = "research-policy-v1";
@@ -123,26 +125,21 @@ export function createResearchQueryService(env: ResearchQueryEnvironment, option
   queryForMcp(context: AuthenticatedRequestContext, request: QueryRequest): Promise<McpFastSearchQueryResult>;
 } {
   const profile = options?.scopeProfile ?? { version: RETRIEVAL_SCOPE_PROFILE_VERSION, max_sources: RETRIEVAL_SCOPE_MAX_SOURCES, max_results: RETRIEVAL_SCOPE_MAX_RESULTS };
-  if (profile.max_sources > RETRIEVAL_SCOPE_MAX_SOURCES || profile.max_results > RETRIEVAL_SCOPE_MAX_RESULTS) fail("RESEARCH_PROFILE_UNSUPPORTED", "research.query scope profile exceeds the metadata-Lens bound", 422);
-  const executeQuery = createResearchQueryExecutor({
-    env,
-    profile,
-    parseRequest: parseResearchQueryRequest,
-    idempotencyKey,
-  });
-  return {
-    async query(context, request) {
-      return (await executeQuery(context, request, false)).result;
-    },
-    async queryForMcp(context, request) {
-      const execution = await executeQuery(context, request, true);
-      if (execution.coverage_claim === undefined) {
-        fail("RESEARCH_SETTLEMENT_UNCERTAIN", "FAST_SEARCH coverage readback is unavailable", 503, true);
-      }
-      return { ...execution.result,
-        coverage_claim: requireMcpFastSearchCoverageClaim(execution.coverage_claim) };
-    },
+  const errors = {
+    fail,
+    isResearchServiceError: (error: unknown): error is ResearchServiceError => error instanceof ResearchServiceError,
   };
+  return createResearchQueryApplication({
+    profile,
+    maximum_profile: { max_sources: RETRIEVAL_SCOPE_MAX_SOURCES, max_results: RETRIEVAL_SCOPE_MAX_RESULTS },
+    execute: createResearchQueryExecutor({
+      env,
+      profile,
+      parseRequest: parseResearchQueryRequest,
+      idempotencyKey,
+    }),
+    errors,
+  });
 }
 function mapLedger(error: unknown): never { if (error instanceof ResearchServiceError) throw error; if (error instanceof LedgerError) { if (error.code === "LEDGER_INPUT_INVALID") fail("RESEARCH_INPUT_INVALID", error.message); if (error.code === "LEDGER_CONFLICT" || error.code === "LEDGER_STALE_HEAD") fail("RESEARCH_CONFLICT", error.message, 409); if (error.code === "LEDGER_PRINCIPAL_DENIED" || error.code === "LEDGER_SCOPE_FOREIGN" || error.code === "LEDGER_VERIFIER_DENIED") fail("RESEARCH_AUTHORITY_STALE", error.message, 403); if (error.code === "LEDGER_SETTLEMENT_UNCERTAIN" || error.code === "LEDGER_HANDLE_MISSING") fail("RESEARCH_SETTLEMENT_UNCERTAIN", error.message, 503, true); fail("RESEARCH_AUTHORITY_STALE", error.message, 409); } throw error; }
 function portsFor(database: D1Database, operationId: string): WorkflowExecutionPorts { const grants = new Map<string, { receipt_ref: string; expires_at_ms: number }>(); return { async authorizeResidency(request, actor): Promise<void> { if (request.operation_id !== operationId || request.input_manifest.residency.access_domain_id !== actor.principal_ref) { const error = new Error("WORKFLOW_AUTHORITY_STALE") as Error & { code: string }; error.code = request.operation_id !== operationId ? "WORKFLOW_CONFLICT" : "WORKFLOW_AUTHORITY_STALE"; throw error; } }, async checkBudget(request) { const k = `${request.operation_id}:${request.stage}`; const cached = grants.get(k); if (cached !== undefined && cached.expires_at_ms > Date.now()) return cached; const grant = { receipt_ref: `research-budget:${request.operation_id}:${request.stage}`, expires_at_ms: Date.now() + researchStageBudgetLeaseMs(request.stage) }; grants.set(k, grant); return grant; } }; }
@@ -152,95 +149,28 @@ async function scopedPolicyGeneration(policyAuthorityRef: string): Promise<strin
   if (!ID_RE.test(value)) fail("RESEARCH_AUTHORITY_STALE", "policy authority generation is invalid", 409);
   return value;
 }
-function logicalMatch(head: { investigation_id: string; goal: string; scope_snapshot_id: string; scope_snapshot_revision: number; evidence_grade: string; lane: string; portfolio_ref: string; principal_ref: string; input_digest: string; policy_generation: string; policy_authority_ref: string; deployment_generation: string; idempotency_key: string; model_profile_ref: string }, want: { investigation_id: string; goal: string; scope_snapshot_id: string; scope_snapshot_revision: number; evidence_grade: string; lane: string; portfolio_ref: string; principal_ref: string; input_digest: string; policy_generation: string; policy_authority_ref: string; deployment_generation: string; idempotency_key: string }): boolean { return head.investigation_id === want.investigation_id && head.goal === want.goal && head.scope_snapshot_id === want.scope_snapshot_id && head.scope_snapshot_revision === want.scope_snapshot_revision && head.evidence_grade === want.evidence_grade && head.lane === want.lane && head.portfolio_ref === want.portfolio_ref && head.principal_ref === want.principal_ref && head.input_digest === want.input_digest && head.policy_generation === want.policy_generation && head.policy_authority_ref === want.policy_authority_ref && head.deployment_generation === want.deployment_generation && head.idempotency_key === want.idempotency_key && head.model_profile_ref === MODEL_PROFILE; }
-function mapRunStatusFailure(error: unknown): never {
-  if (error instanceof ResearchServiceError) throw error;
-  if (error instanceof WorkflowCheckpointError) {
-    if (error.code === "WORKFLOW_AUTHORITY_STALE") fail("RESEARCH_AUTHORITY_STALE", "research run authority is no longer current", 409);
-    if (error.code === "WORKFLOW_OUTPUT_CORRUPT") fail("RESEARCH_RUN_STATUS_INVALID", "research result readback is inconsistent", 409);
-    if (error.code === "WORKFLOW_INPUT_INVALID") fail("RESEARCH_INPUT_INVALID", "research run status input is invalid", 400);
-    fail("RESEARCH_RUN_STATUS_UNAVAILABLE", "research run status readback is unavailable", 503, true);
-  }
-  if (error instanceof RetrievalQueryError) {
-    if (error.code === "RETRIEVAL_AUTHORITY_STALE" || error.code === "RETRIEVAL_SCOPE_STALE") {
-      fail("RESEARCH_AUTHORITY_STALE", "research run authority is no longer current", 409);
-    }
-    fail("RESEARCH_RUN_STATUS_UNAVAILABLE", "research run authority readback is unavailable", 503, true);
-  }
-  if (error instanceof ResearchMaterializeOutputError) {
-    if (error.code === "MATERIALIZE_OUTPUT_AUTHORITY_STALE") fail("RESEARCH_AUTHORITY_STALE", "research materialization authority is no longer current", 409);
-    if (error.code === "MATERIALIZE_OUTPUT_CORRUPT") fail("RESEARCH_RUN_STATUS_INVALID", "research materialization readback is inconsistent", 409);
-    if (error.code === "MATERIALIZE_OUTPUT_INPUT_INVALID") fail("RESEARCH_INPUT_INVALID", "research materialization reference is invalid", 400);
-    fail("RESEARCH_RUN_STATUS_UNAVAILABLE", "research materialization readback is unavailable", 503, true);
-  }
-  throw error;
-}
 async function readResearchRunStatus(env: Env, context: AuthenticatedRequestContext, workflowInstanceId: string): Promise<ResearchRunStatus> {
   const operationId = checkId(workflowInstanceId, "workflow_instance_id");
-  const principal: WorkflowPrincipal = {
-    principal_ref: context.principal_ref,
-    credential_generation: context.credential_generation,
+  const runRead = createResearchRunReadEnvironment(env);
+  return readResearchSessionRunStatusApplication({
+    database: env.CORE_DB,
+    work_bucket: env.WORK_BUCKET,
     deployment_generation: env.DEPLOYMENT_GENERATION,
-  };
-  const recheckAuthority = async () => {
-    const held = await loadHeldResearchScope({ CORE_DB: env.CORE_DB, SEARCH_DB: env.SEARCH_DB }, {
-      principal_ref: context.principal_ref, client_class: context.client_class,
-      credential_generation: context.credential_generation,
-    } as const, operationId, env.DEPLOYMENT_GENERATION).catch(mapRunStatusFailure);
-    return {
-      investigation_id: held.investigation_id,
-      scope_snapshot_id: held.scope_snapshot_ref.id,
-      scope_snapshot_revision: held.scope_snapshot_ref.revision,
-    };
-  };
-  const isOwner = context.client_class === "owner_pwa";
-  const delegated = isOwner ? null : await prepareProjectClientRunRead(env, context, operationId).catch(mapRunStatusFailure);
-  if (!isOwner && delegated === null) fail("RESEARCH_RUN_NOT_FOUND", "research run does not exist", 404);
-  const refreshed = isOwner ? await prepareReauthenticatedRunRead(env, context, operationId).catch(mapRunStatusFailure) : null;
-  const status = delegated?.status ?? refreshed?.status ?? await readStoredResearchRunStatus({
-    database: env.CORE_DB, operation_id: operationId, principal, recheck_authority: recheckAuthority,
-  }).catch(mapRunStatusFailure);
-  if (status === null) fail("RESEARCH_RUN_NOT_FOUND", "research run does not exist", 404);
-  const engine = status.state === "ACTIVE" ? await readResearchEngineStatus(env, operationId) : undefined;
-  const failure = researchRunFailure(status, engine);
-  const generation = delegated?.handler_generation ?? refreshed?.handler_generation ?? (await env.CORE_DB.prepare(
-    "SELECT handler_generation FROM research_workflow_run WHERE operation_id=?1 AND principal_ref=?2",
-  ).bind(operationId, context.principal_ref).first<{ handler_generation: string }>())?.handler_generation;
-  let answer: ResearchRunStatus["answer"] = { availability: "unavailable" };
-  if (delegated !== null) {
-    if (isSemanticResearchHandlerGeneration(generation)) {
-      answer = await readProjectClientRunAnswer(env, context, delegated, generation).catch(mapRunStatusFailure);
-    }
-    await delegated.requireCurrent().catch(mapRunStatusFailure);
-  } else if (refreshed !== null) {
-    if (isSemanticResearchHandlerGeneration(generation)) {
-      answer = await readReauthenticatedRunAnswer(env, context, refreshed, generation).catch(mapRunStatusFailure);
-    }
-    await refreshed.requireCurrent().catch(mapRunStatusFailure);
-  } else if (status.state === "ENGINE_COMPLETED" && isSemanticResearchHandlerGeneration(generation)) {
-    const completed = await readCommittedResearchRunResult({
-      database: env.CORE_DB,
-      work_bucket: env.WORK_BUCKET,
-      operation_id: operationId,
-      principal,
-      materialize_handler_generation: generation,
-      recheck_authority: recheckAuthority,
-    }).catch(mapRunStatusFailure);
-    if (completed !== null) answer = { availability: "draft", artifact_ref: completed.materialization.materialization.draft.artifact_ref };
-  }
-  return {
-    protocol: failure === undefined ? "eliotr.research-run-status.v1" : "eliotr.research-run-status.v2",
-    workflow_instance_id: status.operation_id,
-    investigation_ref: { id: status.investigation_id, revision: status.current_revision },
-    execution_state: status.state,
-    ...(engine === undefined ? {} : {
-      engine_status: engine.status,
-      ...(failure === undefined ? {} : { failure }),
-    }),
-    next_stage_index: status.next_stage_index,
-    answer,
-    ...(status.cancellation_receipt_ref === null ? {} : { cancellation_receipt_ref: status.cancellation_receipt_ref }),
-  };
+    run_read: runRead,
+    get_workflow: (operation_id) => env.RESEARCH_WORKFLOW.get(operation_id),
+    load_held_scope: async (currentContext, operation_id, deployment_generation) => {
+      const held = await loadHeldResearchScope({ CORE_DB: env.CORE_DB, SEARCH_DB: env.SEARCH_DB }, {
+        principal_ref: currentContext.principal_ref,
+        client_class: currentContext.client_class,
+        credential_generation: currentContext.credential_generation,
+      } as const, operation_id, deployment_generation);
+      return { investigation_id: held.investigation_id, scope_snapshot_ref: held.scope_snapshot_ref };
+    },
+    errors: {
+      fail,
+      is_research_service_error: (error) => error instanceof ResearchServiceError,
+    },
+  }, context, operationId);
 }
 export function createResearchRunService(env: Env): { run(context: AuthenticatedRequestContext, request: QueryRequest): Promise<{ investigation_ref: VersionedRef; workflow_instance_id: string }>; runStatus(context: AuthenticatedRequestContext, workflowInstanceId: string): Promise<ResearchRunStatus> } {
   return {
@@ -325,26 +255,15 @@ export function createResearchRunService(env: Env): { run(context: Authenticated
           definition: installedProtocol,
           sources: planningSources,
         });
-      const payloadKey = `research-payload-${hex}`;
-      const payloadBytes = new TextEncoder().encode(JSON.stringify({
-        investigation_id, operation_id, query: request.query, scope_snapshot_ref: scopeRef,
-        evidence_grade: request.evidence_grade, principal_ref: context.principal_ref,
-        ...(request.inquiry_protocol_ref === undefined ? {} : { inquiry_protocol_ref: request.inquiry_protocol_ref }),
+      const payload = await persistResearchSessionRunPayload({
+        request,
+        operation_id,
+        investigation_id,
+        payload_suffix: hex,
+        scope_ref: scopeRef,
+        principal_ref: context.principal_ref,
         ...(planningManifest === undefined ? {} : { planning_manifest: planningManifest }),
-      }));
-      if (payloadBytes.byteLength > MAX_WORKFLOW_RECEIPT_BYTES) {
-        fail("RESEARCH_INPUT_LIMIT", `research workflow input exceeds ${MAX_WORKFLOW_RECEIPT_BYTES} UTF-8 bytes; partition the requested scope or shorten the question`, 413);
-      }
-      const payloadHash = await digest(payloadBytes);
-      if ((await bucket.head(payloadKey).catch(() => null)) === null) {
-        await bucket.put(payloadKey, payloadBytes, { sha256: payloadHash });
-      }
-      const currentPayload = await bucket.get(payloadKey).catch(() => null);
-      if (currentPayload === null) fail("RESEARCH_SETTLEMENT_UNCERTAIN", "payload readback is unavailable", 503, true);
-      const currentPayloadBytes = new Uint8Array(await currentPayload.arrayBuffer());
-      if ((await digest(currentPayloadBytes)) !== payloadHash || currentPayloadBytes.byteLength !== payloadBytes.byteLength) {
-        fail("RESEARCH_CONFLICT", "idempotency identity is bound to different bytes", 409);
-      }
+      }, { work_bucket: bucket, fail });
       const principal: WorkflowPrincipal = { principal_ref: context.principal_ref, credential_generation: context.credential_generation, deployment_generation: admittedDeploymentGeneration };
       const installedObligations = installedProtocol === null ? [] : compileInquiryLedgerObligations(installedProtocol);
       const policyGeneration = pre?.head.policy_generation === POLICY_GEN ? POLICY_GEN : newPolicyGeneration;
@@ -377,38 +296,37 @@ export function createResearchRunService(env: Env): { run(context: Authenticated
           task_kind: "RESEARCH_BRANCH_ANALYSIS",
         }).catch(mapComputerAgentRouteError);
       }
-      const wantHead = { investigation_id, goal: request.query, scope_snapshot_id: scopeRef.id, scope_snapshot_revision: scopeRef.revision, evidence_grade: request.evidence_grade, lane, portfolio_ref: payloadKey, principal_ref: context.principal_ref, input_digest: payloadHash, policy_generation: policyGeneration, policy_authority_ref: snapshotRow.policy_authority_ref, deployment_generation: admittedDeploymentGeneration, idempotency_key: key };
-      let skipCreate = false;
-      if (pre !== null) {
-        if (pre.head.investigation_id !== investigation_id || !logicalMatch(pre.head, wantHead)) fail("RESEARCH_CONFLICT", "idempotency identity is bound to different bytes", 409);
-        skipCreate = true;
-      }
-      const fences = { current: async () => { const globalRow = await (db as unknown as LedgerD1Database).prepare("SELECT COALESCE(MAX(ledger_revision), 0) AS n FROM purge_ledger").bind().first<{ n: number }>(); return { principal_ref: context.principal_ref, scope_snapshot_id: scopeRef.id, scope_snapshot_revision: scopeRef.revision, policy_generation: policyGeneration, policy_authority_ref: snapshotRow.policy_authority_ref, deployment_generation: admittedDeploymentGeneration, purge_revision: globalRow?.n ?? 0, scope_purge_revision: snapshotRow.purge_ledger_revision ?? 0 }; } };
-      const handles = { has: async (ref: string) => (await bucket.head(ref).catch(() => null)) !== null, digestFor: async (ref: string) => { const head = await bucket.head(ref).catch(() => null); if (head === null) return null; const raw = (head as unknown as { checksums?: { sha256?: unknown } }).checksums?.sha256; if (raw instanceof ArrayBuffer) return Array.from(new Uint8Array(raw), (b) => b.toString(16).padStart(2, "0")).join(""); return payloadHash; } };
-      const ledger = createInvestigationLedgerService(store, fences, handles);
       const eventId = checkId(`evt-${hex}`, "event_id");
-      if (!skipCreate) {
-        try {
-          await ledger.create({ investigation_id, goal: request.query, scope_snapshot_id: scopeRef.id, scope_snapshot_revision: scopeRef.revision, evidence_grade: request.evidence_grade, lane, lane_registrations: [], obligations: installedObligations, hypotheses: planningManifest?.hypotheses.map((item) => item.hypothesis_id) ?? [], portfolio_ref: payloadKey, debt_refs: [], principal_ref: context.principal_ref, input_digest: payloadHash, policy_generation: policyGeneration, policy_authority_ref: snapshotRow.policy_authority_ref, deployment_generation: admittedDeploymentGeneration, idempotency_key: key, model_profile_ref: MODEL_PROFILE, event_id: eventId, payload_handle_ref: payloadKey, payload_digest: payloadHash, created_at: now });
-        } catch (error) {
-          if (error instanceof LedgerError && (error.code === "LEDGER_CONFLICT" || error.code === "LEDGER_STALE_HEAD")) {
-            const existing = await store.readByIdempotency(key).catch(() => null);
-            if (existing === null || existing.head.investigation_id !== investigation_id || !logicalMatch(existing.head, wantHead)) fail("RESEARCH_CONFLICT", "idempotency identity is bound to different bytes", 409);
-            skipCreate = true;
-          } else mapLedger(error);
-        }
-      }
-      void skipCreate;
-      const initialManifest: WorkflowObject = WorkflowObjectSchema.parse({ object_ref: payloadKey, sha256: payloadHash, byte_length: payloadBytes.byteLength, residency: { scope_domain_id: scopeRef.id, access_domain_id: context.principal_ref, confidentiality_domain_id: "private", encryption_key_domain_id: "key-1", retention_domain_id: "retention-1", erasure_domain_id: "erasure-1", content_digest: { algorithm: "sha256", digest: payloadHash } } });
-      const initialStage: StageRequest = {
-        protocol: "eliotr.workflow-stage.v1",
+      const runApplicationInput = {
+        request,
         operation_id,
-        investigation_ref: { id: investigation_id, revision: 1 },
-        stage: "FREEZE_PROTOCOL_AND_SCOPE",
+        investigation_id,
         idempotency_key: key,
+        event_id: eventId,
+        scope_ref: scopeRef,
+        scope_purge_revision: snapshotRow.purge_ledger_revision ?? 0,
+        policy_authority_ref: snapshotRow.policy_authority_ref,
+        policy_generation: policyGeneration,
+        deployment_generation: admittedDeploymentGeneration,
+        principal,
         handler_generation: handlerGeneration,
-        input_manifest: initialManifest,
+        include_qualification_renewal: delegated === undefined && isSemanticResearchHandlerGeneration(handlerGeneration),
+        lane,
+        model_profile_ref: MODEL_PROFILE,
+        created_at: now,
+        prior: pre,
+        ...(planningManifest === undefined ? {} : { planning_manifest: planningManifest }),
+        obligations: installedObligations,
+        payload,
       };
+      const initialManifest = await persistResearchSessionRunApplication(runApplicationInput, {
+        database: db,
+        work_bucket: bucket,
+        ledger_store: store,
+        fail,
+        is_research_service_error: (error) => error instanceof ResearchServiceError,
+        map_ledger_error: mapLedger,
+      });
       if (lane === "exploratory" && (handlerGeneration === SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION || isSemanticResearchHandlerGeneration(handlerGeneration))) {
         await createD1ScopeProfilePort(db).recordBinding(scopeAuthority.snapshot, {
           ...await readOwnerScopeProfile(db, scopeAuthority.snapshot),
@@ -416,45 +334,57 @@ export function createResearchRunService(env: Env): { run(context: Authenticated
         }).catch(mapRetrievalError);
       }
       try {
-        await delegated?.requireScopeCurrent(scopeAuthority.snapshot);
-        if (delegated) await requireClientResearchExecution(env, context, scopeAuthority.snapshot, operation_id, env.DEPLOYMENT_GENERATION);
-        if (context.request.signal.aborted) fail("RESEARCH_CANCELLED", "Research admission was cancelled", 409);
-        await new WorkflowCheckpointStore(db).ensureRun(initialStage, principal);
-        if (admissionConfiguration.mode !== "legacy-installed") {
-          await attachResearchRunConfiguration(env, runConfigurationActor, admissionConfiguration);
-        } else if (pre === null) {
-          fail("RESEARCH_AGENT_NOT_CONFIGURED", "new research runs require a saved project model configuration", 503);
-        }
-        const boundConfiguration = await readResearchRunConfiguration(env, runConfigurationActor);
-        if (boundConfiguration.mode !== admissionConfiguration.mode ||
-            boundConfiguration.configuration_ref !== admissionConfiguration.configuration_ref ||
-            boundConfiguration.configuration_sha256 !== admissionConfiguration.configuration_sha256) {
-          fail("RESEARCH_AUTHORITY_STALE", "run configuration binding changed before workflow dispatch", 409);
-        }
-        const workflowParams: ResearchWorkflowRunParams = {
-          operation_id,
-          investigation_ref: { id: investigation_id, revision: 1 },
-          idempotency_key: key,
-          handler_generation: handlerGeneration,
-          initial_input_manifest: initialManifest,
-          principal_ref: principal.principal_ref,
-          credential_generation: principal.credential_generation,
-          deployment_generation: principal.deployment_generation,
-          ...(delegated === undefined && isSemanticResearchHandlerGeneration(handlerGeneration)
-            ? { qualification_renewal: RESEARCH_QUALIFICATION_RENEWAL_MARKER }
-            : {}),
-        };
-        await delegated?.requireScopeCurrent(scopeAuthority.snapshot);
-        if (delegated) await requireClientResearchExecution(env, context, scopeAuthority.snapshot, operation_id, env.DEPLOYMENT_GENERATION);
-        let instance: WorkflowInstance;
-        try {
-          instance = await env.RESEARCH_WORKFLOW.create({ id: operation_id, params: workflowParams });
-        } catch {
-          instance = await env.RESEARCH_WORKFLOW.get(operation_id);
-        }
-        if (instance.id !== operation_id) fail("RESEARCH_SETTLEMENT_UNCERTAIN", "workflow instance readback is unavailable", 503, true);
-        const instanceStatus = await instance.status();
-        if (instanceStatus.status === "unknown") fail("RESEARCH_SETTLEMENT_UNCERTAIN", "workflow instance status is unavailable", 503, true);
+        await dispatchResearchSessionRunApplication(runApplicationInput, initialManifest, {
+          database: db,
+          fail,
+          require_delegated_scope_current: async () => {
+            await delegated?.requireScopeCurrent(scopeAuthority.snapshot);
+          },
+          require_client_execution: async () => {
+            if (delegated) await requireClientResearchExecution(env, context, scopeAuthority.snapshot,
+              operation_id, env.DEPLOYMENT_GENERATION);
+          },
+          is_cancelled: () => context.request.signal.aborted,
+          bind_and_read_configuration: async () => {
+            if (admissionConfiguration.mode !== "legacy-installed") {
+              await attachResearchRunConfiguration(env, runConfigurationActor, admissionConfiguration);
+            } else if (pre === null) {
+              fail("RESEARCH_AGENT_NOT_CONFIGURED", "new research runs require a saved project model configuration", 503);
+            }
+            const boundConfiguration = await readResearchRunConfiguration(env, runConfigurationActor);
+            if (boundConfiguration.mode !== admissionConfiguration.mode ||
+                boundConfiguration.configuration_ref !== admissionConfiguration.configuration_ref ||
+                boundConfiguration.configuration_sha256 !== admissionConfiguration.configuration_sha256) {
+              fail("RESEARCH_AUTHORITY_STALE", "run configuration binding changed before workflow dispatch", 409);
+            }
+          },
+          create_workflow_params: (dispatch: ResearchSessionWorkflowDispatchInput): ResearchWorkflowRunParams => ({
+            operation_id: dispatch.operation_id,
+            investigation_ref: dispatch.investigation_ref,
+            idempotency_key: dispatch.idempotency_key,
+            handler_generation: dispatch.handler_generation,
+            initial_input_manifest: dispatch.initial_input_manifest,
+            principal_ref: dispatch.principal_ref,
+            credential_generation: dispatch.credential_generation,
+            deployment_generation: dispatch.deployment_generation,
+            ...(dispatch.include_qualification_renewal
+              ? { qualification_renewal: RESEARCH_QUALIFICATION_RENEWAL_MARKER }
+              : {}),
+          }),
+          dispatch_workflow: async (id: string, params: ResearchWorkflowRunParams) => {
+            let instance: WorkflowInstance;
+            try {
+              instance = await env.RESEARCH_WORKFLOW.create({ id, params });
+            } catch {
+              instance = await env.RESEARCH_WORKFLOW.get(id);
+            }
+            if (instance.id !== id) fail("RESEARCH_SETTLEMENT_UNCERTAIN", "workflow instance readback is unavailable", 503, true);
+            const instanceStatus = await instance.status();
+            if (instanceStatus.status === "unknown") {
+              fail("RESEARCH_SETTLEMENT_UNCERTAIN", "workflow instance status is unavailable", 503, true);
+            }
+          },
+        });
       } catch (error) {
         if (error instanceof ResearchServiceError) throw error;
         const code = error instanceof Error && "code" in error ? String((error as { code: unknown }).code) : "WORKFLOW_EFFECT_UNCERTAIN";

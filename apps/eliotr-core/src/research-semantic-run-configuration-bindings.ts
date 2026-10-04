@@ -1,146 +1,45 @@
-import { fail, type WorkflowStartedAttemptRecovery } from "@eliotr/cloudflare-workflows";
-import type { ResearchModelGatewayRuntimeConfig, ResearchModelSpendPolicy } from "@eliotr/cloudflare-research";
-import { readResearchRunConfiguration, type ResolvedResearchRunConfiguration } from "./research-run-configuration.js";
 import {
-  bindResearchSelectedModelTransport,
-  resolveResearchSelectedModelTransport,
-  ResearchSelectedModelTransportError,
-  type ResearchSelectedModelStage,
-  type ResearchSelectedModelTransportResolution,
-} from "./research-selected-model-transport.js";
+  bindHandlersToRunConfiguration as bindRuntimeHandlersToRunConfiguration,
+  type ResearchSemanticRunActor,
+  type ResearchSemanticRunConfigurationIdentity,
+} from "@eliotr/cloudflare-research-runtime/research-semantic-run-configuration-bindings.js";
+import type { ResolvedResearchRunConfiguration } from "./research-run-configuration.js";
+import { readResearchRunConfiguration } from "./research-run-configuration.js";
 import type { Env } from "./env.js";
 import type { ResearchStageHandlerFactory } from "./research-stage-handlers.js";
 
-export interface ResearchSemanticRunActor {
-  readonly operation_id: string;
-  readonly investigation_id: string;
-  readonly principal_ref: string;
-  readonly deployment_generation: string;
-}
+export { bindResearchSemanticStageModelTransports } from
+  "@eliotr/cloudflare-research-runtime/research-semantic-run-configuration-bindings.js";
+export type {
+  ResearchSemanticRunActor,
+  ResearchSemanticRunModelConfiguration,
+  ResearchSemanticBranchStage,
+  ResearchSemanticStageModelBindings,
+} from "@eliotr/cloudflare-research-runtime/research-semantic-run-configuration-bindings.js";
 
-export type ResearchSemanticRunModelConfiguration = NonNullable<
-  Parameters<typeof resolveResearchSelectedModelTransport>[0]["run_configuration"]
->;
-export type ResearchSemanticBranchStage = Extract<ResearchSelectedModelStage, "ANALYZE_BRANCHES" | "COUNTER_SEARCH">;
-
-export interface ResearchSemanticStageModelBindings {
-  readonly synthesis_transport: ResearchSelectedModelTransportResolution | undefined;
-  readonly audit_transport: ResearchSelectedModelTransportResolution | undefined;
-  readonly synthesis_gateway: ResearchModelGatewayRuntimeConfig;
-  readonly audit_gateway: ResearchModelGatewayRuntimeConfig;
-  readonly branch_gateway_for_stage?: (stage: ResearchSemanticBranchStage) => ResearchModelGatewayRuntimeConfig;
-  readonly branch_transport_for_stage?: (stage: ResearchSemanticBranchStage) => ResearchSelectedModelTransportResolution;
-}
-
-function configurationInvalid(): never {
-  return fail("WORKFLOW_CONFIGURATION_INVALID");
-}
-
-function selectedModelTransport(input: {
-  readonly run_configuration?: ResearchSemanticRunModelConfiguration;
-  readonly stage: ResearchSelectedModelStage;
-}): ResearchSelectedModelTransportResolution | undefined {
-  try { return resolveResearchSelectedModelTransport(input); }
-  catch (error) {
-    if (error instanceof ResearchSelectedModelTransportError) configurationInvalid();
-    throw error;
-  }
-}
-
-function bindSelectedModelTransport(
-  gateway: ResearchModelGatewayRuntimeConfig,
-  selection: ResearchSelectedModelTransportResolution | undefined,
-): ResearchModelGatewayRuntimeConfig {
-  try { return bindResearchSelectedModelTransport(gateway, selection); }
-  catch (error) {
-    if (error instanceof ResearchSelectedModelTransportError) configurationInvalid();
-    throw error;
-  }
-}
-
-/** Bind separate synthesis/audit routes and stage-specific branch gateways to the immutable run snapshot. */
-export function bindResearchSemanticStageModelTransports(input: {
-  readonly gateway: ResearchModelGatewayRuntimeConfig;
-  readonly policy_rules: ResearchModelSpendPolicy["rules"];
-  readonly run_configuration?: ResearchSemanticRunModelConfiguration;
-  readonly include_branch_stages: boolean;
-}): ResearchSemanticStageModelBindings {
-  const bindStage = (stage: ResearchSelectedModelStage, required: boolean) => {
-    const rule = input.policy_rules.find((entry) => entry.stage === stage);
-    if (rule === undefined) configurationInvalid();
-    const transport = selectedModelTransport({
-      ...(input.run_configuration === undefined ? {} : { run_configuration: input.run_configuration }),
-      stage,
-    });
-    if ((required && transport === undefined) || (transport !== undefined &&
-        (transport.selection.route_ref !== rule.deployment.route_ref ||
-         transport.selection.route_version !== rule.deployment.route_version))) configurationInvalid();
-    return { transport, gateway: bindSelectedModelTransport(input.gateway, transport) };
-  };
-
-  const synthesis = bindStage("SYNTHESIZE", false);
-  const audit = bindStage("AUDIT_CLAIMS", false);
-  const branchTransports = new Map<ResearchSemanticBranchStage, ResearchSelectedModelTransportResolution>();
-  const branchGateways = new Map<ResearchSemanticBranchStage, ResearchModelGatewayRuntimeConfig>();
-  if (input.include_branch_stages && input.run_configuration !== undefined &&
-      input.run_configuration.mode !== "legacy-installed") {
-    for (const stage of ["ANALYZE_BRANCHES", "COUNTER_SEARCH"] as const) {
-      const selected = bindStage(stage, true);
-      if (selected.transport === undefined) configurationInvalid();
-      branchTransports.set(stage, selected.transport);
-      branchGateways.set(stage, selected.gateway);
-    }
-  }
-  const branchTransportForStage = branchTransports.size === 0 ? undefined : (stage: ResearchSemanticBranchStage) => {
-    const selected = branchTransports.get(stage);
-    if (selected === undefined) configurationInvalid();
-    return selected;
-  };
-  const branchGatewayForStage = branchGateways.size === 0 ? undefined : (stage: ResearchSemanticBranchStage) => {
-    const selected = branchGateways.get(stage);
-    if (selected === undefined) configurationInvalid();
-    return selected;
-  };
-  return Object.freeze({
-    synthesis_transport: synthesis.transport,
-    audit_transport: audit.transport,
-    synthesis_gateway: synthesis.gateway,
-    audit_gateway: audit.gateway,
-    ...(branchGatewayForStage === undefined ? {} : { branch_gateway_for_stage: branchGatewayForStage }),
-    ...(branchTransportForStage === undefined ? {} : { branch_transport_for_stage: branchTransportForStage }),
-  });
-}
-
-/** Revalidate the exact run snapshot and actor tuple before each handler and started-attempt recovery. */
+/** Preserve the Core API while injecting the live run-configuration reader at the composition boundary. */
 export function bindHandlersToRunConfiguration(
   env: Env,
   actor: ResearchSemanticRunActor,
   expected: ResolvedResearchRunConfiguration,
   handlers: ResearchStageHandlerFactory,
 ): ResearchStageHandlerFactory {
-  const revalidate = async () => {
-    const current = await readResearchRunConfiguration(env, actor);
-    if (current.mode !== expected.mode || current.configuration_ref !== expected.configuration_ref ||
-        current.configuration_sha256 !== expected.configuration_sha256) fail("WORKFLOW_AUTHORITY_STALE");
-  };
-  const wrapped = (stage: Parameters<ResearchStageHandlerFactory>[0]) => {
-    const handler = handlers(stage);
-    return async (call: Parameters<typeof handler>[0]) => {
-      if (call.request.operation_id !== actor.operation_id ||
-          call.request.investigation_ref.id !== actor.investigation_id ||
-          call.principal.principal_ref !== actor.principal_ref ||
-          call.principal.deployment_generation !== actor.deployment_generation) fail("WORKFLOW_AUTHORITY_STALE");
-      await revalidate();
-      return handler(call);
-    };
-  };
-  const recoverStartedAttempt = handlers.recoverStartedAttempt;
-  if (recoverStartedAttempt === undefined) return wrapped;
-  const recovery: WorkflowStartedAttemptRecovery = async (call) => {
-    if (call.request.operation_id !== actor.operation_id || call.principal_ref !== actor.principal_ref ||
-        call.deployment_generation !== actor.deployment_generation) fail("WORKFLOW_AUTHORITY_STALE");
-    await revalidate();
-    return recoverStartedAttempt(call);
-  };
-  return Object.assign(wrapped, { recoverStartedAttempt: recovery });
+  const expectedIdentity: ResearchSemanticRunConfigurationIdentity = Object.freeze({
+    mode: expected.mode,
+    configuration_ref: expected.configuration_ref,
+    configuration_sha256: expected.configuration_sha256,
+  });
+  return bindRuntimeHandlersToRunConfiguration({
+    actor,
+    expected: expectedIdentity,
+    handlers,
+    read_current: async () => {
+      const current = await readResearchRunConfiguration(env, actor);
+      return Object.freeze({
+        mode: current.mode,
+        configuration_ref: current.configuration_ref,
+        configuration_sha256: current.configuration_sha256,
+      });
+    },
+  });
 }

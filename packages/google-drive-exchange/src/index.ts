@@ -17,3 +17,6 @@ export * from "./oauth-types.js";
 export * from "./oauth-admission.js";
 export * from "./google-token-store.js";
 export * from "./google-oauth-store.js";
+export { disconnectGoogleConnectionApplication } from "./google-disconnect-application.js";
+export type { GoogleConnectionDisconnectApplicationInput, GoogleConnectionDisconnectOutcome,
+  GoogleConnectionDisconnectResult } from "./google-disconnect-application.js";

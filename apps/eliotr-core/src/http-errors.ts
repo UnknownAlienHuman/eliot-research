@@ -38,20 +38,9 @@ import {
 } from "@eliotr/cloudflare-raw-ingest";
 import { ExternalAgentTaskError } from "@eliotr/cloudflare-workflows";
 import { ArtifactPublicationError, ArtifactPublicationReadinessError } from "@eliotr/cloudflare-research";
+import { HttpRequestError } from "@eliotr/cloudflare-http-protocol/http-request-error.js";
 
-export class HttpRequestError extends Error {
-  public readonly code: string;
-  public readonly status: number;
-  public readonly retryable: boolean;
-
-  public constructor(code: string, status: number, message: string, retryable = false) {
-    super(message);
-    this.name = "HttpRequestError";
-    this.code = code;
-    this.status = status;
-    this.retryable = retryable;
-  }
-}
+export { HttpRequestError };
 
 type ProblemResponse = (
   request: Request,

@@ -9,7 +9,9 @@
     "./workspace-mcp-candidate-d1-store": "./src/workspace-mcp-candidate-d1-store.ts",
     "./workspace-candidate-admission-service": "./src/workspace-candidate-admission-service.ts",
     "./external-agent-result-wake": "./src/external-agent-result-wake.ts",
-    "./mcp-external-agent-task": "./src/mcp-external-agent-task.ts"
+    "./mcp-external-agent-task": "./src/mcp-external-agent-task.ts",
+    "./research-application-dispatch.js": "./src/research-application-dispatch.ts",
+    "./workspace-owner-authorization.js": "./src/workspace-owner-authorization.ts"
   },
   "types": "./src/index.ts",
   "scripts": {
@@ -24,6 +26,7 @@
     "@eliotr/cloudflare-computer-agent": "workspace:*",
     "@eliotr/cloudflare-raw-ingest": "workspace:*",
     "@eliotr/cloudflare-workflows": "workspace:*",
-    "@eliotr/interfaces": "workspace:*"
+    "@eliotr/interfaces": "workspace:*",
+    "zod": "4.4.3"
   }
 }

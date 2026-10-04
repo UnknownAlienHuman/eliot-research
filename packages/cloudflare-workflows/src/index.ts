@@ -15,3 +15,17 @@ export * from "./research-run-status.js";
 export * from "./research-run-control.js";
 export * from "./research-workflow-sequence.js";
 export * from "./workflow-lease.js";
+export { parseResearchWorkflowParams } from "./research-workflow-params.js";
+export type {
+  ResearchWorkflowRunParams,
+  ResearchWorkflowExhaustiveParams,
+  ResearchWorkflowParams,
+} from "./research-workflow-params.js";
+export {
+  createResearchWorkflowServerPorts,
+  executeResearchWorkflowNativeSteps,
+} from "./research-workflow-step-execution.js";
+export type {
+  ResearchWorkflowServerPortInput,
+  ResearchWorkflowNativeStepExecutionInput,
+} from "./research-workflow-step-execution.js";

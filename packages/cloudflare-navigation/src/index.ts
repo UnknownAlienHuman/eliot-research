@@ -11,6 +11,7 @@ export type {
   StructuralNavigationMaterializationResult,
 } from "./orientation-materialization.js";
 export { createOwnerScopeAuthority, splitExhaustiveSourceRefs } from "./orientation-authority.js";
+export type { OwnerScopeAuthority } from "./orientation-authority.js";
 export * from "./owner-historical-scope.js";
 export * from "./owner-scope-profile.js";
 export * from "./exhaustive-workflow-binding.js";
@@ -131,11 +132,14 @@ export type {
 } from "./navigation-expand-service.js";
 export {
   createProjectOwnerCapability,
+  createProjectOwnerService,
   ProjectOwnerError,
 } from "./project-owner-service.js";
 export type {
   ProjectOwnerCapabilityOptions,
+  ProjectOwnerServiceOptions,
   ProjectOwnerCapability,
+  ProjectOwnerService,
   ProjectOwnerActor,
   ProjectOwnerCreateInput,
   ProjectOwnerUpdateInput,
@@ -145,3 +149,6 @@ export type {
   PreparedProjectAttachment,
   ProjectAttachmentBinding,
 } from "./project-owner-service.js";
+export { prepareProjectAttachment, PROJECT_ATTACHMENT_CAS } from "./project-client-attachment.js";
+export { readSourceContentFromCatalog, readProjectSourceContentFromCatalog } from "./source-content.js";
+export type { SourceContentBindings } from "./source-content.js";

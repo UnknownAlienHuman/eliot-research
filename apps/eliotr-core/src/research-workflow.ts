@@ -1,26 +1,29 @@
-import { workflowFailure, retainWorkflowFailure } from "@eliotr/cloudflare-workflows";
 // IMPLEMENTED_NOT_LIVE: ER-09 monotone bounded Workflow executor over durable D1/R2 checkpoints; governed model/evidence handlers and live qualification remain separate.
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloudflare:workers";
 import { NonRetryableError } from "cloudflare:workflows";
-import { RESEARCH_WORKFLOW_STAGES } from "@eliotr/domain";
 import type { ResearchWorkflowStage, VersionedRef } from "@eliotr/contracts";
 import { createD1EvidenceAuthorityPort, createNavigationReadAuthority } from "@eliotr/cloudflare-evidence";
 import {
-  createWorkflowCheckpointExecutor, MAX_WORKFLOW_RECEIPT_BYTES, WorkflowObjectSchema,
-  type StageReceipt, type WorkflowExecutionPorts, type WorkflowObject, type WorkflowPrincipal,
+  createWorkflowCheckpointExecutor,
 } from "@eliotr/cloudflare-research";
 import {
-  executeResearchWorkflowSequence,
+  createResearchWorkflowServerPorts,
+  executeResearchWorkflowNativeSteps,
+  parseResearchWorkflowParams,
+  MAX_WORKFLOW_RECEIPT_BYTES,
   WorkflowCheckpointError,
-  type WorkflowStartedAttemptRecovery,
+  retainWorkflowFailure,
+  workflowFailure,
+  type ResearchWorkflowParams as PackageResearchWorkflowParams,
+  type ResearchWorkflowRunParams as PackageResearchWorkflowRunParams,
+  type WorkflowPrincipal,
 } from "@eliotr/cloudflare-workflows";
 import { createD1ScopePorts } from "@eliotr/retrieval";
 import { createD1InvestigationLedgerStore } from "@eliotr/research";
 import type { LedgerD1Database } from "@eliotr/research";
 import type { Env } from "./env.js";
 import type { ExhaustiveQueryResult } from "@eliotr/interfaces";
-import { createExhaustiveQueryService, parseExhaustiveQueryRequest } from "./exhaustive-query-service.js";
-import type { ExhaustiveWorkflowPayload } from "./exhaustive-workflow-service.js";
+import { createExhaustiveQueryService, parseExhaustiveQueryRequest, type ExhaustiveQueryRequest } from "./exhaustive-query-service.js";
 import { validateExhaustiveWorkflowPayload } from "@eliotr/cloudflare-navigation";
 import {
   createResearchStageHandlerFactory,
@@ -41,20 +44,8 @@ import { loadResearchExecutionAccess, requireClientResearchExecution } from "./r
 import { requireResearchDeploymentCompatibility } from "./research-deployment-compatibility.js";
 import { readResearchRunConfiguration } from "./research-run-configuration.js";
 
-export interface ResearchWorkflowRunParams {
-  readonly workflow_kind?: "RESEARCH";
-  readonly operation_id: string;
-  readonly investigation_ref: VersionedRef;
-  readonly idempotency_key: string;
-  readonly handler_generation: string;
-  readonly initial_input_manifest: WorkflowObject;
-  readonly principal_ref: string;
-  readonly credential_generation: string;
-  readonly deployment_generation: string;
-  readonly requested_by_principal_ref?: string;
-  readonly qualification_renewal?: ResearchQualificationRenewalMarker;
-}
-export type ResearchWorkflowParams = ResearchWorkflowRunParams | ExhaustiveWorkflowPayload;
+export type ResearchWorkflowRunParams = PackageResearchWorkflowRunParams<ResearchQualificationRenewalMarker>;
+export type ResearchWorkflowParams = PackageResearchWorkflowParams<ExhaustiveQueryRequest, ResearchQualificationRenewalMarker>;
 
 export interface ResearchWorkflowResult {
   readonly operation_id: string;
@@ -70,118 +61,12 @@ function failWorkflow(code: string): never {
   throw error;
 }
 
-function parseParams(raw: unknown): ResearchWorkflowParams {
-  if (typeof raw !== "object" || raw === null) failWorkflow("WORKFLOW_INPUT_INVALID");
-  const value = raw as Record<string, unknown>;
-  if (value.workflow_kind === "EXHAUSTIVE_QUERY") {
-    const allowed = new Set(["workflow_kind", "operation_id", "idempotency_key", "principal_ref",
-      "credential_generation", "deployment_generation", "exhaustive_request"]);
-    if (Object.keys(value).some((key) => !allowed.has(key)) || Object.keys(value).length !== allowed.size) {
-      failWorkflow("WORKFLOW_INPUT_INVALID");
-    }
-    const operation_id = value.operation_id;
-    const idempotency_key = value.idempotency_key;
-    const principal_ref = value.principal_ref;
-    const credential_generation = value.credential_generation;
-    const deployment_generation = value.deployment_generation;
-    if (typeof operation_id !== "string" || operation_id.length < 1 || operation_id.length > 128 ||
-        typeof idempotency_key !== "string" || idempotency_key.length < 1 || idempotency_key.length > 256 ||
-        typeof principal_ref !== "string" || principal_ref.length < 1 ||
-        typeof credential_generation !== "string" || credential_generation.length < 1 ||
-        typeof deployment_generation !== "string" || deployment_generation.length < 1) {
-      failWorkflow("WORKFLOW_INPUT_INVALID");
-    }
-    const exhaustive_request = parseExhaustiveQueryRequest(value.exhaustive_request);
-    return { workflow_kind: "EXHAUSTIVE_QUERY", operation_id, idempotency_key, principal_ref,
-      credential_generation, deployment_generation, exhaustive_request };
-  }
-  const operation_id = value.operation_id;
-  const investigation_ref = value.investigation_ref as VersionedRef | undefined;
-  const idempotency_key = value.idempotency_key;
-  const handler_generation = value.handler_generation;
-  const initial_input_manifest = value.initial_input_manifest;
-  const principal_ref = value.principal_ref ?? value.requested_by_principal_ref;
-  const credential_generation = value.credential_generation;
-  const deployment_generation = value.deployment_generation;
-  if (typeof operation_id !== "string" || operation_id.length < 1 || operation_id.length > 128) failWorkflow("WORKFLOW_INPUT_INVALID");
-  if (typeof investigation_ref !== "object" || investigation_ref === null ||
-      typeof (investigation_ref as VersionedRef).id !== "string" ||
-      !Number.isSafeInteger((investigation_ref as VersionedRef).revision)) failWorkflow("WORKFLOW_INPUT_INVALID");
-  if (typeof idempotency_key !== "string" || idempotency_key.length < 1 || idempotency_key.length > 256) failWorkflow("WORKFLOW_INPUT_INVALID");
-  if (typeof handler_generation !== "string" || handler_generation.length < 1) failWorkflow("WORKFLOW_INPUT_INVALID");
-  if (typeof principal_ref !== "string" || principal_ref.length < 1) failWorkflow("WORKFLOW_INPUT_INVALID");
-  if (typeof credential_generation !== "string" || credential_generation.length < 1) failWorkflow("WORKFLOW_INPUT_INVALID");
-  if (typeof deployment_generation !== "string" || deployment_generation.length < 1) failWorkflow("WORKFLOW_INPUT_INVALID");
-  const manifest = WorkflowObjectSchema.safeParse(initial_input_manifest);
-  if (!manifest.success) failWorkflow("WORKFLOW_INPUT_INVALID");
-  const requested = value.requested_by_principal_ref;
-  if (requested !== undefined && requested !== principal_ref) failWorkflow("WORKFLOW_CONFLICT");
-  const qualificationRenewal = value.qualification_renewal;
-  if (qualificationRenewal !== undefined && qualificationRenewal !== RESEARCH_QUALIFICATION_RENEWAL_MARKER) {
-    failWorkflow("WORKFLOW_INPUT_INVALID");
-  }
-  const allowed = new Set(["operation_id", "investigation_ref", "idempotency_key", "handler_generation",
-    "initial_input_manifest", "principal_ref", "credential_generation", "deployment_generation", "requested_by_principal_ref",
-    "qualification_renewal"]);
-  for (const key of Object.keys(value)) {
-    if (!allowed.has(key)) failWorkflow("WORKFLOW_INPUT_INVALID");
-  }
-  return {
-    operation_id, investigation_ref: { ...(investigation_ref as VersionedRef) },
-    idempotency_key: idempotency_key as string, handler_generation: handler_generation as string,
-    initial_input_manifest: manifest.data as WorkflowObject,
-    principal_ref: principal_ref as string, credential_generation: credential_generation as string,
-    deployment_generation: deployment_generation as string,
-    ...(value.requested_by_principal_ref === undefined ? {} : { requested_by_principal_ref: value.requested_by_principal_ref as string }),
-    ...(qualificationRenewal === undefined ? {} : { qualification_renewal: qualificationRenewal }),
-  };
-}
-
-function createServerPorts(
-  database: D1Database,
-  operationId: string,
-  recoverStartedAttempt?: WorkflowStartedAttemptRecovery,
-): WorkflowExecutionPorts {
-  const grants = new Map<string, { receipt_ref: string; expires_at_ms: number }>();
-  return {
-    async authorizeResidency(request, principal): Promise<void> {
-      if (request.operation_id !== operationId) failWorkflow("WORKFLOW_CONFLICT");
-      if (request.input_manifest.residency.access_domain_id !== principal.principal_ref) failWorkflow("WORKFLOW_AUTHORITY_STALE");
-    },
-    async checkBudget(request): Promise<{ receipt_ref: string; expires_at_ms: number }> {
-      const key = `${request.operation_id}:${request.stage}`;
-      const cached = grants.get(key);
-      if (cached !== undefined && cached.expires_at_ms > Date.now()) return cached;
-      try {
-        const row = await database.prepare(
-          "SELECT budget_receipt_ref, budget_expires_at_ms FROM research_workflow_attempt WHERE operation_id = ?1 AND stage_index = ?2",
-        ).bind(request.operation_id, RESEARCH_WORKFLOW_STAGES.indexOf(request.stage))
-          .first<{ budget_receipt_ref: string; budget_expires_at_ms: number }>();
-        if (row !== null && typeof row.budget_receipt_ref === "string" &&
-            Number.isSafeInteger(row.budget_expires_at_ms) && row.budget_expires_at_ms > Date.now()) {
-          const grant = { receipt_ref: row.budget_receipt_ref, expires_at_ms: row.budget_expires_at_ms };
-          grants.set(key, grant);
-          return grant;
-        }
-      } catch {
-        // Fall through to a fresh bounded grant; SQL guards still enforce authority.
-      }
-      const expiresAtMs = await readD1BoundedResearchWorkflowLeaseExpiry(database, request.stage);
-      if (expiresAtMs === null) failWorkflow("WORKFLOW_BUDGET_STOP");
-      const grant = {
-        receipt_ref: `w2-budget:${request.operation_id}:${request.stage}`,
-        expires_at_ms: expiresAtMs,
-      };
-      grants.set(key, grant);
-      return grant;
-    },
-    ...(recoverStartedAttempt === undefined ? {} : { recoverStartedAttempt }),
-  };
-}
-
 export class ResearchWorkflow extends WorkflowEntrypoint<Env, ResearchWorkflowParams> {
   public override async run(event: WorkflowEvent<ResearchWorkflowParams>, step: WorkflowStep): Promise<ResearchWorkflowResult | ExhaustiveQueryResult> {
-    const params = parseParams(event.payload);
+    const params = parseResearchWorkflowParams(event.payload, {
+      parse_exhaustive_request: parseExhaustiveQueryRequest,
+      qualification_renewal_marker: RESEARCH_QUALIFICATION_RENEWAL_MARKER,
+    });
     if (params.workflow_kind === "EXHAUSTIVE_QUERY") {
       if (params.deployment_generation !== this.env.DEPLOYMENT_GENERATION) {
         failWorkflow("WORKFLOW_AUTHORITY_STALE");
@@ -312,9 +197,23 @@ export class ResearchWorkflow extends WorkflowEntrypoint<Env, ResearchWorkflowPa
       } else {
         failWorkflow("WORKFLOW_AUTHORITY_STALE");
       }
-      const ports = createServerPorts(this.env.CORE_DB, params.operation_id, handlers.recoverStartedAttempt);
+      const ports = createResearchWorkflowServerPorts({
+        database: this.env.CORE_DB,
+        operation_id: params.operation_id,
+        authorize_residency: async (request, authorizedPrincipal) => {
+          if (request.input_manifest.residency.access_domain_id !== authorizedPrincipal.principal_ref) {
+            failWorkflow("WORKFLOW_AUTHORITY_STALE");
+          }
+        },
+        read_lease_expiry: readD1BoundedResearchWorkflowLeaseExpiry,
+        ...(handlers.recoverStartedAttempt === undefined
+          ? {}
+          : { recover_started_attempt: handlers.recoverStartedAttempt }),
+      });
       const executor = createWorkflowCheckpointExecutor(this.env.CORE_DB, this.env.WORK_BUCKET, ports);
-      const result: ResearchWorkflowResult = await executeResearchWorkflowSequence({
+      const result: ResearchWorkflowResult = await executeResearchWorkflowNativeSteps({
+        step,
+        database: this.env.CORE_DB,
         params: {
           operation_id: params.operation_id,
           investigation_ref: params.investigation_ref,
@@ -322,40 +221,16 @@ export class ResearchWorkflow extends WorkflowEntrypoint<Env, ResearchWorkflowPa
           handler_generation: params.handler_generation,
           initial_input_manifest: params.initial_input_manifest,
         },
-        executeStage: async (request, index) => {
-          const stage = request.stage;
-          activeStage = stage;
-          const executeStage = async (): Promise<StageReceipt> => {
-            try {
-              const outcome = await executor.execute(request, principal, handlers(stage));
-              const text = JSON.stringify(outcome);
-              if (new TextEncoder().encode(text).byteLength > MAX_WORKFLOW_RECEIPT_BYTES) failWorkflow("WORKFLOW_INPUT_INVALID");
-              if ("completion_disposition" in outcome) failWorkflow("WORKFLOW_INPUT_INVALID");
-              return outcome;
-            } catch (error) {
-              // The executor already records handler/recovery failures before step serialization.
-              const failure = workflowFailure(error, "STAGE", stage);
-              await retainWorkflowFailure(this.env.CORE_DB, params.operation_id, principal, failure);
-              if (failure.code === "WORKFLOW_OUTPUT_CORRUPT") {
-                throw new NonRetryableError(failure.code, "WorkflowCheckpointError");
-              }
-              throw error;
-            }
-          };
-          const stepName = `w2-stage-${String(index).padStart(2, "0")}-${stage}`;
-          nativeStepPending = true;
-          const receipt = isResearchModelStage(stage)
-            ? await step.do(stepName, {
-              retries: { limit: 0, delay: 0 },
-              timeout: researchStageBudgetLeaseMs(stage),
-            }, executeStage)
-            : await step.do(stepName, {
-              retries: { limit: 0, delay: 0 },
-            }, executeStage);
-          nativeStepPending = false;
-          return receipt;
+        principal,
+        execute_checkpoint: (request, runPrincipal) =>
+          executor.execute(request, runPrincipal, handlers(request.stage)),
+        stage_timeout_ms: (stage) => isResearchModelStage(stage) ? researchStageBudgetLeaseMs(stage) : undefined,
+        set_active_stage: (stage) => { activeStage = stage; },
+        set_step_pending: (pending) => { nativeStepPending = pending; },
+        invalid_receipt: () => failWorkflow("WORKFLOW_OUTPUT_CORRUPT"),
+        non_retryable_output_corrupt: (code) => {
+          throw new NonRetryableError(code, "WorkflowCheckpointError");
         },
-        invalidReceipt: () => failWorkflow("WORKFLOW_OUTPUT_CORRUPT"),
       });
       if (new TextEncoder().encode(JSON.stringify(result)).byteLength > MAX_WORKFLOW_RECEIPT_BYTES) {
         failWorkflow("WORKFLOW_INPUT_INVALID");

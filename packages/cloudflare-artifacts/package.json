@@ -11,7 +11,11 @@
     "./artifact-draft-reauthorization.js": "./src/artifact-draft-reauthorization.ts",
     "./artifact-draft-citations-reauthorization.js": "./src/artifact-draft-citations-reauthorization.ts",
     "./artifact-draft-types.js": "./src/artifact-draft-types.ts",
-    "./artifact-publication.js": "./src/artifact-publication.ts"
+    "./artifact-publication.js": "./src/artifact-publication.ts",
+    "./artifact-draft-read-service.js": "./src/artifact-draft-read-service.ts",
+    "./artifact-product-service.js": "./src/artifact-product-service.ts",
+    "./artifact-cow-section-revision-ports.js": "./src/artifact-cow-section-revision-ports.ts",
+    "./artifact-product-input.js": "./src/artifact-product-input.ts"
   },
   "types": "./src/index.ts",
   "scripts": {
@@ -20,9 +24,11 @@
   },
   "dependencies": {
     "@eliotr/cloudflare-evidence": "workspace:*",
+    "@eliotr/cloudflare-navigation": "workspace:*",
     "@eliotr/cloudflare-workflows": "workspace:*",
     "@eliotr/contracts": "workspace:*",
     "@eliotr/domain": "workspace:*",
-    "@eliotr/platform-cloudflare": "workspace:*"
+    "@eliotr/platform-cloudflare": "workspace:*",
+    "zod": "4.4.3"
   }
 }

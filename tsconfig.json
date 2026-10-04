@@ -123,6 +123,9 @@
     },
     {
       "path": "packages/cloudflare-research-configuration"
+    },
+    {
+      "path": "packages/cloudflare-http-protocol"
     }
   ]
 }

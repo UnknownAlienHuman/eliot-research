@@ -1,4 +1,11 @@
-import type { CreateProjectRequest, ProjectOwnerListResult, ProjectOwnerResult as PublicProjectOwnerResult, UpdateProjectRequest } from "@eliotr/interfaces";
+import type {
+  AuthenticatedRequestContext,
+  CreateProjectRequest,
+  ProjectOwnerListRequest,
+  ProjectOwnerListResult,
+  ProjectOwnerResult as PublicProjectOwnerResult,
+  UpdateProjectRequest,
+} from "@eliotr/interfaces";
 
 export const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/u;
 export const SHA256 = /^[a-f0-9]{64}$/u;
@@ -10,6 +17,7 @@ export const MAX_IDEMPOTENCY_BYTES = 256;
 export const MAX_RESPONSE_BYTES = 262_144;
 export const PROJECT_PROTOCOL = "eliotr.project-owner.v1" as const;
 export const PROJECT_LIST_PROTOCOL = "eliotr.project-owner-list.v1" as const;
+export const CLIENT_CLASS = "owner_pwa" as const;
 
 export type ProjectOwnerErrorCode =
   | "PROJECT_OWNER_REQUIRED"
@@ -41,10 +49,18 @@ export type ProjectOwnerUpdateInput = Omit<UpdateProjectRequest, "idempotency_ke
 /** Durable result; the public API carries the same strict versioned shape. */
 export type ProjectOwnerResult = PublicProjectOwnerResult;
 
-/** Verified by the Core adapter before any capability operation. */
+/** Minimal caller identity extracted from the Core-authenticated request context. */
 export interface ProjectOwnerActor {
   readonly principal_ref: string;
   readonly credential_generation: string;
+}
+
+/** Core supplies this already-authenticated request context; this capability does not verify Access. */
+export interface ProjectOwnerService {
+  create(context: AuthenticatedRequestContext, request: CreateProjectRequest): Promise<ProjectOwnerResult>;
+  read(context: AuthenticatedRequestContext, projectId: string): Promise<ProjectOwnerResult>;
+  list(context: AuthenticatedRequestContext, request?: ProjectOwnerListRequest): Promise<ProjectOwnerListResult>;
+  update(context: AuthenticatedRequestContext, projectId: string, request: UpdateProjectRequest): Promise<ProjectOwnerResult>;
 }
 
 /** Grant/current-scope work stays in Core; the package only consumes its prepared capability. */
@@ -65,7 +81,7 @@ export interface PreparedProjectAttachment {
   readonly guard_values: () => readonly (string | number)[];
 }
 
-/** Source admission and current-read authority remain injected from Core. */
+/** Source admission and current-read predicates supplied by the Navigation storage adapter. */
 export interface ProjectOwnerSourceAuthority {
   eligibleSourceCte(sourceJson: string, principal: string, observed: string, projectId?: string): string;
   currentMembershipsReadableGuard(): string;
@@ -131,6 +147,28 @@ export interface StoredMutation {
   readonly deployment_generation: string;
   readonly created_at: string;
   readonly result: ProjectOwnerResult;
+}
+
+export function authenticatedActorSnapshot(context: AuthenticatedRequestContext): ProjectOwnerActor {
+  if (!validIdentifier(context.principal_ref) || !validIdentifier(context.credential_generation)) {
+    fail("PROJECT_OWNER_REQUIRED", 403, "an authenticated owner session is required");
+  }
+  return Object.freeze({ principal_ref: context.principal_ref, credential_generation: context.credential_generation });
+}
+
+export function contextSnapshot(context: AuthenticatedRequestContext): ProjectOwnerActor {
+  if (context.client_class !== CLIENT_CLASS) {
+    fail("PROJECT_OWNER_REQUIRED", 403, "an authenticated owner session is required");
+  }
+  return authenticatedActorSnapshot(context);
+}
+
+export function idempotencyKey(context: AuthenticatedRequestContext, supplied: string | undefined): string {
+  const value = supplied ?? context.request.headers.get("idempotency-key") ?? undefined;
+  if (!validIdentifier(value, MAX_IDEMPOTENCY_BYTES)) {
+    fail("PROJECT_INPUT_INVALID", 400, "Idempotency-Key is required and invalid");
+  }
+  return value;
 }
 
 export function fail(code: ProjectOwnerErrorCode, status: number, message: string, retryable = false, cause?: unknown): never {

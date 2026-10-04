@@ -74,3 +74,11 @@ export {
   type McpResearchToolName,
   type McpResearchToolCall,
 } from "./gemini-mcp-research-tools.js";
+export { createMcpResearchApplicationDispatch } from "./research-application-dispatch.js";
+export type {
+  McpResearchApplicationDispatchActor,
+  McpResearchPreparedOperation,
+  McpResearchApplicationOperations,
+  McpResearchApplicationDispatchPorts,
+} from "./research-application-dispatch.js";
+export * from "./workspace-owner-authorization.js";

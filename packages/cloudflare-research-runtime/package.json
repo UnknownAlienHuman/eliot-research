@@ -18,7 +18,18 @@
     "./research-changes-cursor.js": "./src/research-changes-cursor.ts",
     "./library-readiness.js": "./src/library-readiness.ts",
     "./research-exact-search.js": "./src/research-exact-search.ts",
-    "./research-semantic-composition.js": "./src/research-semantic-composition.ts"
+    "./research-semantic-composition.js": "./src/research-semantic-composition.ts",
+    "./research-selected-model-transport.js": "./src/research-selected-model-transport.ts",
+    "./research-semantic-native-model-runtime.js": "./src/research-semantic-native-model-runtime.ts",
+    "./research-semantic-run-configuration-bindings.js": "./src/research-semantic-run-configuration-bindings.ts",
+    "./research-branch-role-server-prompt.js": "./src/research-branch-role-server-prompt.ts",
+    "./research-external-agent-routing.js": "./src/research-external-agent-routing.ts",
+    "./artifact-report-admission.js": "./src/artifact-report-admission.ts",
+    "./artifact-cow-model-admission.js": "./src/artifact-cow-model-admission.ts",
+    "./artifact-section-revise-model.js": "./src/artifact-section-revise-model.ts",
+    "./research-semantic-server.js": "./src/research-semantic-server.ts",
+    "./research-session-application.js": "./src/research-session-application.ts",
+    "./research-session-status-application.js": "./src/research-session-status-application.ts"
   },
   "types": "./src/index.ts",
   "scripts": {
@@ -27,6 +38,7 @@
   },
   "dependencies": {
     "@eliotr/cloudflare-ai": "workspace:*",
+    "@eliotr/cloudflare-artifacts": "workspace:*",
     "@eliotr/cloudflare-evidence": "workspace:*",
     "@eliotr/cloudflare-navigation": "workspace:*",
     "@eliotr/cloudflare-projection": "workspace:*",
@@ -41,7 +53,9 @@
     "@eliotr/research": "workspace:*",
     "@eliotr/retrieval": "workspace:*",
     "@eliotr/cloudflare-model-control": "workspace:*",
+    "@eliotr/cloudflare-native-models": "workspace:*",
     "@eliotr/cloudflare-model-execution": "workspace:*",
-    "@eliotr/cloudflare-research-branches": "workspace:*"
+    "@eliotr/cloudflare-research-branches": "workspace:*",
+    "@eliotr/cloudflare-research-configuration": "workspace:*"
   }
 }

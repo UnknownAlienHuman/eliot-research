@@ -110,6 +110,12 @@
     },
     {
       "path": "../../packages/cloudflare-backup"
+    },
+    {
+      "path": "../../packages/cloudflare-http-protocol"
+    },
+    {
+      "path": "../../packages/cloudflare-artifacts"
     }
   ]
 }

@@ -12,3 +12,6 @@ export { RawNormalizedAdmissionError, createRawNormalizedAdmissionService } from
 export type { RawNormalizedAdmissionActor, RawNormalizedAdmissionBundlePort, RawNormalizedAdmissionRequestPorts } from "./raw-normalized-admission-service.js";
 export { IngestHttpInputError, dispatchIngestOperation, rawNormalizedAdmissionRequest, prepareBundleRequest, discoverBundleRequest, completeBundleRequest, commitBundleRequest } from "./normalized-ingest-http.js";
 export type { NormalizedIngestOperationPort } from "./normalized-ingest-http.js";
+export * from "./ingest-promotion-authorization.js";
+export { createIngestApplicationService } from "./ingest-application-service.js";
+export type { IngestApplicationServiceDependencies, IngestProjectClientGrantLease } from "./ingest-application-service.js";

@@ -11,9 +11,13 @@
     { "path": "../cloudflare-ai" },
     { "path": "../cloudflare-evidence" },
     { "path": "../cloudflare-model-control" },
+    { "path": "../cloudflare-model-transport" },
+    { "path": "../cloudflare-native-models" },
     { "path": "../cloudflare-research" },
     { "path": "../cloudflare-research-stages" },
+    { "path": "../cloudflare-workflows" },
     { "path": "../contracts" },
+    { "path": "../interfaces" },
     { "path": "../platform-cloudflare" }
   ]
 }

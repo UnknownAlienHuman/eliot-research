@@ -6,3 +6,6 @@ export * from "./provider-native-model-proof.js";
 export * from "./provider-native-model-runtime.js";
 export * from "./provider-native-model-store.js";
 export * from "./provider-native-model-zero-price.js";
+export { createProviderNativeModelScopedAuthority } from "./provider-native-model-scoped-authority.js";
+export type { ProviderNativeModelCurrentScopeV1, ReadProviderNativeModelCurrentScope,
+  ReadProviderNativeModelConfiguredOperation, ProviderNativeModelScopedAuthorityOptions } from "./provider-native-model-scoped-authority.js";

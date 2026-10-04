@@ -1,7 +1,7 @@
 # Backend delivery plan
 
 Current execution order, refreshed on 2026-10-04 against `main`
-`760c26b4787a1e3f8a2211e83f114d2bca0bb65a`.
+`b4b7dcfee2a76c133260b474e36041dcf156c622`.
 
 The [October 3 functional integration checkpoint](product-resume-2026-10-03.md)
 records the owner configuration, immutable run capture, MCP, provisioning and
@@ -18,14 +18,30 @@ path, useful bounded MCP reads and results, and the adaptive owner workspace.
 The observed Research failure at RECONCILE is under diagnosis. Native MCP client
 authorization remains unverified. These are open items, not completed acceptance.
 
-This code checkpoint assembles native-model and capability libraries above that
-published baseline. Model Control, Model Execution, Model Transport,
+The published baseline assembles native-model and capability libraries. Model
+Control, Model Execution, Model Transport,
 Research Branches, Research Runtime, Research Configuration, Computer Agent,
 Wiki, Erasure Operations, Search Probe and browser Research Workspace now have
 explicit library boundaries. They share the existing Worker/PWA deployments;
 they are not new services. The workspace manifest/import audit and finite
 package-boundary scan passed during assembly. Those results do not establish
 its runtime behavior.
+
+The current capability assembly keeps verified Access context creation, Worker
+bindings, request liveness and HTTP response adaptation in Core. Existing
+libraries now own persisted owner/project authorization, native-model use,
+immutable run capture, session application operations, exact artifact evidence
+and source-membership reads. A small HTTP Protocol library owns strict input
+parsing and the shared request-error constructor. These libraries compile into
+the existing Worker; they create no additional deployable services.
+Compatibility adapters retain existing callers and canonical error identity.
+Duplicate semantic-stage preparation was removed from Core so the Runtime
+assembler performs it once.
+
+Configuration status now uses the canonical semantic schema, including roles
+and max-effort fields. This repairs rejection by the old duplicated validator;
+it is a behavior change. Positive, boundary-size and refusal regressions were
+added as source, but have not been executed in the assembly phase.
 
 Owner key use is composed through a durable operation/stage record
 (migration 0110), provider-native preparation, one-shot connectivity observation,
@@ -52,18 +68,21 @@ imports still need its isolated authority establishment because insertion guards
 require current owner/operation/pricing state. Those guards must not be bypassed
 or satisfied with invented owner/selection records.
 
-The integrated Core/PWA TypeScript build passed on Node 24.19.0 after the listed
-interface, import and fixture repairs. Scoped ESLint covered 442 changed files;
-its final type-only import repair passed a targeted check. The depth-100 SQL
+The integrated Core/PWA TypeScript build passed on Node 24.19.0 after interface,
+import and exact-optional repairs. Scoped ESLint covered 152 changed source and
+tooling files with zero errors, warnings or source drift. The manifest/import
+audit covered 42 packages with no cycles or errors; finite package boundaries
+passed. The depth-100 SQL
 compiler passed on SQLite 3.50.4 including 0110/0111: 110 Core migrations and
-971 recovered application SQL sites, with zero failures. Its 119 dynamic or
-unresolved sites remain separately reported. The first failed SQL output is
+971 recovered application SQL sites, with zero failures. Its 121 dynamic or
+unresolved sites remain separately reported. Initial failed check outputs are
 preserved; wrong column access, missing composite uniqueness, premature proof
 binding and oversized preparation/proof guards were repaired without changing
 the table columns. The ten backup column specs match the new tables.
 
-The source scan has two remaining aggregate Core failures: 21,425 physical lines
-and 1,148,046 raw bytes against the 10,000-line/600-KiB source heuristics. Every
+The source scan has one remaining aggregate Core failure: 10,876 physical lines
+against the 10,000-line source heuristic. Core is 549,930 raw bytes and passes the
+600-KiB raw-source limit. Every
 counted file is at most 600 lines and every other package at most 10,000 lines.
 No source-budget pass or emitted-size improvement is claimed. Publication uses
 the captured file manifest and non-forced main push; no deployment or model call
@@ -76,7 +95,7 @@ The adaptive reading panels and system/light/dark theme are published in
 contents and order are preserved, and Contracts/O2 compilation and scoped lint
 passed at that earlier relocation checkpoint. The schema-registry test is now
 split with its existing coverage preserved; the current remaining source-budget
-failures are the two Core aggregates above.
+failure is the Core line aggregate above.
 No behavioral or live acceptance was run for the relocation.
 
 The current external-model requirement is OpenRouter

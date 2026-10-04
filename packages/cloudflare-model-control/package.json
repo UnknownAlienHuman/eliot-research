@@ -25,7 +25,8 @@
     "./research-model-gateway-runtime.js": "./src/research-model-gateway-runtime.ts",
     "./research-model-catalog.js": "./src/research-model-catalog.ts",
     "./research-provider-model-catalog.js": "./src/research-provider-model-catalog.ts",
-    "./research-prepared-model-transport-policies.js": "./src/research-prepared-model-transport-policies.ts"
+    "./research-prepared-model-transport-policies.js": "./src/research-prepared-model-transport-policies.ts",
+    "./research-model-qualification-http-error-classifier.js": "./src/research-model-qualification-http-error-classifier.ts"
   },
   "types": "./src/index.ts",
   "scripts": {
