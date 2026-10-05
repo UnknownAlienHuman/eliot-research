@@ -62,6 +62,10 @@ The current owner-directed phase is **code first**:
 - Rust: run compilation and minimal Clippy for the changed crate;
 - broad unit/browser/native/mutation/live suites run after product-code assembly unless the active task explicitly requires a narrow reproduction.
 
+Use the [scoped verification guide](implementation/scoped-verification.md) for command templates. The legacy
+`pnpm check:affected` command prints a deprecation warning and runs the full repository check; it does not
+select checks based on changed files.
+
 Keep every final acceptance criterion, but mark unexecuted checks `PENDING`, never `PASS`.
 
 Reuse existing contracts, stores, Workflow stages and authority readers. A missing composition path is not permission to add another engine. Every mutation retains:
@@ -123,6 +127,10 @@ After code assembly, execute acceptance in this order:
 2. S94 staging;
 3. S93 quality, S95 native/security/restore/client conformance and S96 workload/cost on the attested build;
 4. S97 release acceptance.
+
+The explicit repository-wide verification command is `pnpm check:full` (the existing `pnpm check` command
+still runs the same complete chain). It retains the full test and Rust checks and does not replace the
+ordered release acceptance above.
 
 Compilation, a green docs check, a local emulator, a Workflow completion or provider acceptance alone does not establish production readiness or `LIVE_QUALIFIED`.
 

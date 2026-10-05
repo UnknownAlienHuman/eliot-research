@@ -88,7 +88,7 @@ below until assembly. Preserve all negative/final acceptance criteria and report
 - Every expensive or retryable operation accepts an idempotency identity and cancellation/budget
   context.
 - Tests must cover the negative case named in the packet, not only the happy path.
-- Finish by running `pnpm check:affected`; after the Cargo workspace lands, Rust changes also run the
+- Finish by running `pnpm check:full`; after the Cargo workspace lands, Rust changes also run the
   complete Cargo gate defined by `LANGUAGE_RUNTIME_CONTRACT.md`.
 - Record commands and results in the PR body.
 
