@@ -60,6 +60,16 @@ diagnostics now retain the canonical public path and expected/observed byte
 counts and hashes, without bodies or authentication data. Its focused fixture
 and scoped lint passed; there is no automatic upload retry.
 
+The #294 checkpoint records direct Core/Search receiver provenance and known
+bind arity and rejects a known-target failure even if the other schema accepts
+the query. The depth-100 compiler passed 114 Core and four Search migrations,
+532 Core statement shapes and 974 recovered application queries with zero
+failures. It reports target qualification as `INCOMPLETE`: 957 unknown receiver
+targets, 44 unknown arities and 122 unresolved sites remain. Explicit
+`D1_DEPTH_STRICT_TARGETS=1` makes those gaps fail closed; that strict run and
+native D1/workerd qualification are not claimed. Ten fixture/test-support
+sources are inventoried separately. #294 remains open.
+
 The release gates still report disabled required ERASURE and RETRIEVAL slices.
 A guarded `MAINTENANCE` deployment can update the existing Worker/PWA after
 schema and configuration checks, but does not satisfy `FULL_RELEASE` or promote

@@ -19,6 +19,11 @@ def category(error: sqlite3.Error) -> str:
     # Never print arbitrary SQL, row data, a provider response or an exception payload.
     if "expression tree is too large" in str(error).lower():
         return "EXPRESSION_DEPTH_EXCEEDED"
+    message = str(error).lower()
+    if ("incorrect number of bindings" in message
+            or re.search(r"statement uses \d+, and there are \d+ supplied", message)
+            or "did not supply a value for binding parameter" in message):
+        return "SQL_BINDING_ARITY_MISMATCH"
     return "SQL_COMPILE_FAILED"
 
 
@@ -70,9 +75,24 @@ def columns(db: sqlite3.Connection, name: str) -> list[str]:
     return [row[1] for row in db.execute(f"PRAGMA table_xinfo({quoted(name)})") if row[6] == 0]
 
 
-def explain(db: sqlite3.Connection, sql: str) -> None:
-    """Compile with inert bindings; Python's sqlite wrapper otherwise rejects ? parameters."""
+def explain(db: sqlite3.Connection, sql: str, binding_arity: int | None = None) -> None:
+    """Compile with inert bindings, optionally enforcing the source .bind() arity."""
     statement = "EXPLAIN " + sql
+    if binding_arity is not None:
+        try:
+            db.execute(statement, (None,) * binding_arity).close()
+        except sqlite3.ProgrammingError as error:
+            message = str(error)
+            # Recent Python versions require mappings for named SQLite parameters.
+            # Permit that form only when its distinct names account for the known
+            # positional D1 binding arity; otherwise preserve the arity failure.
+            if "named placeholders" in message or "named placeholder" in message:
+                names = set(re.findall(r"(?<![\w])[:@$]([A-Za-z_][A-Za-z_0-9]*)", sql))
+                if names and len(names) == binding_arity:
+                    db.execute(statement, {name: None for name in names}).close()
+                    return
+            raise
+        return
     try:
         db.execute(statement).close()
     except sqlite3.ProgrammingError as error:
@@ -160,7 +180,7 @@ def check_store(store: str, application_queries: list[dict], application_status:
         store_app_successes = 0
         for index, query in enumerate(application_queries):
             try:
-                explain(db, query["sql"])
+                explain(db, query["sql"], query["bindingArity"])
                 application_status[index].append("OK")
                 store_app_successes += 1
             except sqlite3.Error as error:
@@ -190,11 +210,38 @@ def main() -> int:
         if not isinstance(application_queries, list) or not isinstance(unresolved, list):
             print("D1_DEPTH_SETUP_FAILED: application SQL inventory is invalid.")
             return 2
-        if any(not isinstance(query, dict) or not isinstance(query.get("sql"), str) or not isinstance(query.get("location"), str) for query in application_queries):
+        def valid_arity(value: object) -> bool:
+            return value is None or (isinstance(value, int) and not isinstance(value, bool) and value >= 0)
+
+        def valid_binding(site: object) -> bool:
+            if not isinstance(site, dict):
+                return False
+            target = site.get("targetStore")
+            expected_status = "unresolved-receiver" if target == "unknown" else "resolved-direct-binding"
+            provenances = {"direct-bind", "dynamic-bind-arguments", "direct-no-bind",
+                           "indirect-or-unknown", "varies-by-invocation"}
+            return (isinstance(site.get("receiver"), str)
+                    and target in ("core", "search", "unknown")
+                    and site.get("targetStatus") == expected_status
+                    and valid_arity(site.get("bindingArity"))
+                    and site.get("bindingProvenance") in provenances)
+
+        if any(not isinstance(query, dict) or not isinstance(query.get("sql"), str)
+               or not isinstance(query.get("location"), str) or not valid_binding(query)
+               for query in application_queries):
             print("D1_DEPTH_SETUP_FAILED: recovered application SQL entry is invalid.")
             return 2
-        if any(not isinstance(site, dict) or not isinstance(site.get("location"), str) or not isinstance(site.get("reason"), str) for site in unresolved):
+        if any(not isinstance(site, dict) or not isinstance(site.get("location"), str)
+               or not isinstance(site.get("reason"), str)
+               or site.get("classification") not in {
+                   "missing-prepare-argument", "dynamic-or-unresolved-sql", "static-unrecognized-sql"
+               }
+               or not valid_binding(site) for site in unresolved):
             print("D1_DEPTH_SETUP_FAILED: unresolved application SQL entry is invalid.")
+            return 2
+        strict_target_qualification = inventory.get("strictTargetQualification")
+        if not isinstance(strict_target_qualification, bool):
+            print("D1_DEPTH_SETUP_FAILED: target qualification mode is invalid.")
             return 2
         fixture_files = inventory.get("excludedFixtureFiles")
         if not isinstance(fixture_files, list) or any(not isinstance(path, str) for path in fixture_files):
@@ -208,22 +255,56 @@ def main() -> int:
         print("D1_DEPTH_SETUP_FAILED: compiler, calibration or schema inventory unavailable.")
         return 2
     app_failures = 0
+    target_failures = 0
+    unresolved_targets = 0
+    unknown_arities = 0
     for query, statuses in zip(application_queries, application_status):
-        if "OK" not in statuses:
+        target = query["targetStore"]
+        target_status = statuses[STORES.index(target)] if target in STORES else None
+        if target == "unknown":
+            unresolved_targets += 1
+        if query["bindingArity"] is None:
+            unknown_arities += 1
+        if target_status is not None and target_status != "OK":
+            target_failures += 1
             app_failures += 1
-            failure_category = "EXPRESSION_DEPTH_EXCEEDED" if statuses and all(status == "EXPRESSION_DEPTH_EXCEEDED" for status in statuses) else "SQL_COMPILE_FAILED"
+            print(f"FAIL application object=source shape=PREPARE location={query['location']} "
+                  f"TARGET_SCHEMA_{target_status}")
+            other_store = "search" if target == "core" else "core"
+            other_status = statuses[STORES.index(other_store)]
+            if other_status == "OK":
+                print(f"D1_APP_SQL cross_schema_only location={query['location']} "
+                      f"target={target} candidate={other_store}")
+        elif target_status is None and "OK" not in statuses:
+            app_failures += 1
+            failure_category = ("EXPRESSION_DEPTH_EXCEEDED" if statuses
+                                and all(status == "EXPRESSION_DEPTH_EXCEEDED" for status in statuses)
+                                else statuses[0] if statuses and len(set(statuses)) == 1
+                                else "SQL_COMPILE_FAILED")
             print(f"FAIL application object=source shape=PREPARE location={query['location']} {failure_category}")
     if unresolved:
         print(f"D1_APP_SQL unresolved={len(unresolved)} (dynamic or non-SQL prepare sites; see bounded source list below)")
         for site in unresolved[:30]:
-            print(f"D1_APP_SQL unresolved {site['location']} {site['reason']}")
+            arity = site["bindingArity"] if site["bindingArity"] is not None else "unknown"
+            print(f"D1_APP_SQL unresolved {site['location']} class={site['classification']} "
+                  f"target={site['targetStore']} arity={arity} reason={site['reason']}")
         if len(unresolved) > 30:
             print(f"D1_APP_SQL unresolved_sites_omitted={len(unresolved) - 30}")
+    incomplete_targets = (unresolved_targets > 0 or unknown_arities > 0 or bool(unresolved)
+                          or target_failures > 0)
+    qualification = "INCOMPLETE" if incomplete_targets else "DIRECT_BINDINGS_PASS"
+    print(f"D1_APP_SQL target_qualification={qualification} unresolved_targets={unresolved_targets} "
+          f"unknown_arities={unknown_arities} unresolved_sites={len(unresolved)} target_failures={target_failures} "
+          f"mode={'strict' if strict_target_qualification else 'depth-only'}")
     print(f"D1_APP_SQL recovered={len(application_queries)} failed={app_failures} unresolved={len(unresolved)} scanned_files={inventory.get('scannedFiles', 0)}")
     print(f"D1_APP_SQL excluded_fixture_sources={len(fixture_files)}")
     for path in fixture_files[:30]:
         print(f"D1_APP_SQL excluded_fixture {path} FIXTURE_ONLY_SQL")
-    failures = sum(result[1] for result in results) + app_failures
+    qualification_failure = strict_target_qualification and incomplete_targets
+    failures = sum(result[1] for result in results) + app_failures + int(qualification_failure)
+    if qualification_failure:
+        print("FAIL D1_APP_SQL strict target qualification requires resolved targets, known bind arity, "
+              "no unresolved prepare sites and successful target-schema compilation")
     print(f"D1_DEPTH {'FAIL' if failures else 'PASS'}: failures={failures} "
           f"elapsed_seconds={time.monotonic() - started:.3f}")
     return 1 if failures else 0

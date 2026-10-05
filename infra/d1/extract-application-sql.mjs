@@ -17,7 +17,8 @@ function sourceFiles(directory, output = []) {
       if (name !== "node_modules" && name !== "dist" && name !== "test" && name !== "tests") {
         sourceFiles(path, output);
       }
-    } else if (/\.(?:ts|tsx|mts|cts)$/.test(name) && !/\.(?:test|spec)\./.test(name) && !/fixture/i.test(name)) {
+    } else if (/\.(?:ts|tsx|mts|cts)$/.test(name) && !/\.(?:test|spec)\./.test(name)
+        && !/fixture/i.test(name) && !/(?:^|[-.])test-support(?:[-.]|$)/i.test(name)) {
       output.push(path);
     }
   }
@@ -37,6 +38,69 @@ function collectPackageSources(directory) {
 
 function isSql(value) {
   return typeof value === "string" && sqlStart.test(value.trim());
+}
+
+function unwrapExpression(node) {
+  let current = node;
+  while (current && (ts.isParenthesizedExpression(current) || ts.isAsExpression(current)
+      || ts.isTypeAssertionExpression(current) || ts.isSatisfiesExpression(current))) {
+    current = current.expression;
+  }
+  return current;
+}
+
+function transparentParent(node) {
+  let current = node;
+  while (current && (ts.isParenthesizedExpression(current) || ts.isAsExpression(current)
+      || ts.isTypeAssertionExpression(current) || ts.isSatisfiesExpression(current))) {
+    current = current.parent;
+  }
+  return current;
+}
+
+function targetBinding(receiver) {
+  const expression = unwrapExpression(receiver);
+  let bindingName;
+  let base;
+  if (expression && ts.isPropertyAccessExpression(expression)) {
+    bindingName = expression.name.text;
+    base = unwrapExpression(expression.expression);
+  } else if (expression && ts.isElementAccessExpression(expression)
+      && expression.argumentExpression && ts.isStringLiteral(expression.argumentExpression)) {
+    bindingName = expression.argumentExpression.text;
+    base = unwrapExpression(expression.expression);
+  }
+  const directEnvironment = base && (
+    (ts.isIdentifier(base) && base.text === "env")
+    || (ts.isPropertyAccessExpression(base) && base.name.text === "env" && base.expression.kind === ts.SyntaxKind.ThisKeyword)
+  );
+  if (directEnvironment && bindingName === "CORE_DB") return { targetStore: "core", targetStatus: "resolved-direct-binding" };
+  if (directEnvironment && bindingName === "SEARCH_DB") return { targetStore: "search", targetStatus: "resolved-direct-binding" };
+  return { targetStore: "unknown", targetStatus: "unresolved-receiver" };
+}
+
+function bindingMetadata(prepareCall, evaluate, environment) {
+  const parent = transparentParent(prepareCall.parent);
+  if (parent && ts.isPropertyAccessExpression(parent) && parent.name.text === "bind"
+      && ts.isCallExpression(parent.parent) && parent.parent.expression === parent) {
+    let arity = 0;
+    for (const argument of parent.parent.arguments) {
+      if (!ts.isSpreadElement(argument)) {
+        arity += 1;
+        continue;
+      }
+      const spread = evaluate(argument.expression, environment);
+      if (!Array.isArray(spread)) return { bindingArity: null, bindingProvenance: "dynamic-bind-arguments" };
+      arity += spread.length;
+    }
+    return { bindingArity: arity, bindingProvenance: "direct-bind" };
+  }
+  const terminalMethods = new Set(["all", "first", "raw", "run"]);
+  if (parent && ts.isPropertyAccessExpression(parent) && terminalMethods.has(parent.name.text)
+      && ts.isCallExpression(parent.parent) && parent.parent.expression === parent) {
+    return { bindingArity: 0, bindingProvenance: "direct-no-bind" };
+  }
+  return { bindingArity: null, bindingProvenance: "indirect-or-unknown" };
 }
 
 function sourceLocation(source, node) {
@@ -273,13 +337,48 @@ export function extractSourceText(text, file = resolve(root, "<fixture>.ts")) {
     if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) && node.expression.name.text === "prepare") {
       const argument = node.arguments[0];
       const environments = invocationEnvironments(node);
-      const evaluations = environments.map((environment) => evaluate(argument, environment));
-      const values = [...new Set(evaluations.filter(isSql))];
       const location = sourceLocation(source, node);
-      if (values.length) for (const sql of values) queries.push({ location, sql });
-      if (!argument || evaluations.some((value) => !isSql(value))) {
+      const receiverNode = node.expression.expression;
+      const receiver = receiverNode.getText(source);
+      const target = targetBinding(receiverNode);
+      const variants = new Map();
+      const unresolvedVariants = [];
+      for (const environment of environments) {
+        const value = evaluate(argument, environment);
+        const binding = bindingMetadata(node, evaluate, environment);
+        if (isSql(value)) {
+          const query = {
+            location,
+            sql: value,
+            receiver,
+            targetStore: target.targetStore,
+            targetStatus: target.targetStatus,
+            bindingArity: binding.bindingArity,
+            bindingProvenance: binding.bindingProvenance,
+          };
+          variants.set(JSON.stringify(query), query);
+        } else {
+          unresolvedVariants.push({ value, ...binding });
+        }
+      }
+      queries.push(...variants.values());
+      if (!argument || unresolvedVariants.length > 0) {
+        const bindingVariants = new Map(unresolvedVariants.map((item) => [JSON.stringify(item), item]));
+        const distinctArities = [...new Set([...bindingVariants.values()].map((item) => item.bindingArity))];
+        const distinctProvenance = [...new Set([...bindingVariants.values()].map((item) => item.bindingProvenance))];
         const value = evaluate(argument);
-        unresolved.push({ location, reason: !argument ? "missing-prepare-argument" : value === undefined ? "dynamic-or-unresolved" : "non-sql-prepare-argument" });
+        unresolved.push({
+          location,
+          receiver,
+          targetStore: target.targetStore,
+          targetStatus: target.targetStatus,
+          bindingArity: distinctArities.length === 1 ? distinctArities[0] : null,
+          bindingProvenance: distinctProvenance.length === 1 ? distinctProvenance[0] : "varies-by-invocation",
+          classification: !argument ? "missing-prepare-argument"
+            : unresolvedVariants.some((item) => item.value === undefined) ? "dynamic-or-unresolved-sql"
+              : "static-unrecognized-sql",
+          reason: !argument ? "missing-prepare-argument" : value === undefined ? "dynamic-or-unresolved" : "non-sql-prepare-argument",
+        });
       }
     }
     ts.forEachChild(node, visit);
@@ -302,13 +401,14 @@ export function extractApplicationSql() {
     unresolved.push(...extracted.unresolved);
   }
   const unique = new Map();
-  for (const query of queries) unique.set(`${query.location}\0${query.sql}`, query);
+  for (const query of queries) unique.set(JSON.stringify(query), query);
   return {
     queries: [...unique.values()],
     unresolved,
     scannedFiles: files.length,
     excludedFixtureFiles: fixtureFiles(),
     reportedUnresolved: unresolved.slice(0, maxReportedDynamicSites),
+    strictTargetQualification: process.env.D1_DEPTH_STRICT_TARGETS === "1",
   };
 }
 
@@ -316,7 +416,11 @@ function fixtureFiles() {
   const result = [];
   for (const base of roots) {
     const files = base === roots[0] ? sourceFilesIncludingFixtures(base) : collectPackageSourcesIncludingFixtures(base);
-    for (const file of files) if (/fixture/i.test(file)) result.push(relative(root, file).split(sep).join("/"));
+    for (const file of files) {
+      if (/fixture/i.test(file) || /(?:^|[-.])test-support(?:[-.]|$)/i.test(file)) {
+        result.push(relative(root, file).split(sep).join("/"));
+      }
+    }
   }
   return result.sort();
 }
@@ -327,7 +431,8 @@ function sourceFilesIncludingFixtures(directory, output = []) {
     const info = statSync(path);
     if (info.isDirectory()) {
       if (name !== "node_modules" && name !== "dist" && name !== "test" && name !== "tests") sourceFilesIncludingFixtures(path, output);
-    } else if (/\.(?:ts|tsx|mts|cts)$/.test(name) && !/\.(?:test|spec)\./.test(name) && /fixture/i.test(name)) output.push(path);
+    } else if (/\.(?:ts|tsx|mts|cts)$/.test(name) && !/\.(?:test|spec)\./.test(name)
+        && (/fixture/i.test(name) || /(?:^|[-.])test-support(?:[-.]|$)/i.test(name))) output.push(path);
   }
   return output;
 }
@@ -350,7 +455,10 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     else {
       process.stdout.write(`D1_APP_SQL inventory: files=${result.scannedFiles} recovered=${result.queries.length} unresolved=${result.unresolved.length}\n`);
       process.stdout.write(`D1_APP_SQL fixture_files=${result.excludedFixtureFiles.length}\n`);
-      for (const site of result.reportedUnresolved) process.stdout.write(`D1_APP_SQL unresolved ${site.location} ${site.reason}\n`);
+      for (const site of result.reportedUnresolved) {
+        process.stdout.write(`D1_APP_SQL unresolved ${site.location} class=${site.classification} target=${site.targetStore} `
+          + `arity=${site.bindingArity === null ? "unknown" : site.bindingArity} reason=${site.reason}\n`);
+      }
       if (result.unresolved.length > result.reportedUnresolved.length) process.stdout.write(`D1_APP_SQL unresolved_sites_omitted=${result.unresolved.length - result.reportedUnresolved.length}\n`);
     }
   } catch (error) {

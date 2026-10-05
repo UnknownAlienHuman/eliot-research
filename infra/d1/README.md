@@ -8,8 +8,9 @@ inside D1 transactions.
 ## Expression-depth compiler guard
 
 Run `pnpm d1:depth` (or `node infra/d1/check-expression-depth.mjs`) before publishing SQL changes.
-It also starts `check`/`check:affected`; independent Ubuntu/Windows CI jobs run it without waiting
-for source budgets or behavioral suites. No result is ignored or converted into a successful gate.
+It also starts `check`/`check:full`; `check:affected` is a deprecated alias for the full check.
+Independent Ubuntu/Windows CI jobs run it without waiting for source budgets or behavioral suites. No
+result is ignored or converted into a successful gate.
 
 The build-time wrapper requires Python >=3.11 with SQLite >=3.45 (CI selects Python 3.13). It uses
 the pinned TypeScript AST extractor from the frozen workspace install and Python stdlib SQLite;
@@ -25,14 +26,25 @@ supported INSTEAD OF writes for writable views. Probe statements are never execu
 only the store, object/shape or migration filename and a bounded error category, not SQL or row data.
 The same gate inventories application `prepare(...)` calls in Core and package source, evaluates
 recoverable literals/registered variants without executing application code, and compiles them with
-inert placeholder bindings. Partial static/runtime sites remain in the unresolved inventory;
-shadowed names and unknown branches cannot masquerade as recovered constants. Fixture-only files
-are reported separately. A query currently passes if **either** Core or Search compiles it. This
-checks SQL shape, not which D1 binding actually receives that query; binding-aware target
-qualification and runtime-built variants remain work. Per-schema candidate rejection is diagnostic,
-while rejection by both schemas fails the gate.
+inert placeholder bindings. The extractor records a target only for direct canonical receivers
+`env.CORE_DB`, `env.SEARCH_DB`, `this.env.CORE_DB`, and `this.env.SEARCH_DB`; generic database objects,
+aliases, and other receiver shapes stay `unknown`. It records a literal `.bind(...)` argument count
+when statically recoverable, otherwise `bindingArity` stays unknown. Unresolved SQL sites include a
+stable classification, receiver target status, and bind-arity status. Shadowed names and unknown
+branches cannot masquerade as recovered constants. Fixture-only files and explicitly named
+`*-test-support.ts` sources are excluded from application SQL and reported separately.
 
-Exit 1 means a schema or recovered application-query compilation failure; exit 2 means missing tooling or an invalid compiler setup.
+Every recovered query is still compiled against both schemas for candidate diagnostics, but only its
+recorded target schema can satisfy the application check. If that target rejects the query while the
+other schema accepts it, the compiler reports `cross_schema_only` and fails. Unknown targets still get
+both candidate compiles and are reported as `target_qualification=INCOMPLETE`; unknown target or arity
+does not turn the depth-only gate into a false qualification claim. Set
+`D1_DEPTH_STRICT_TARGETS=1` when invoking the wrapper to make any unknown target, unknown bind arity,
+unresolved prepare site, or target-schema rejection fail closed. Without that option the gate remains
+useful for expression-depth/schema compilation while explicitly reporting incomplete binding coverage.
+
+Exit 1 means a schema or known-target application-query compilation failure (or incomplete target
+coverage in strict mode); exit 2 means missing tooling or an invalid compiler setup.
 
 This is the depth-100 check for #293/#294, **not full D1 emulation or behavioral acceptance**. It does
 not prove authorization, concurrency, readback, native runtime limits or every dynamically constructed
