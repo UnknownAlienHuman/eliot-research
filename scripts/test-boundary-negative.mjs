@@ -39,7 +39,15 @@ async function proveCheckoutPathsArePortable() {
   const temporary = await mkdtemp(resolve(tmpdir(), "eliotr paths "));
   const checkout = resolve(temporary, "проверка # % 日本語");
   try {
-    for (const path of ["scripts", "packages/domain/src", "packages/cloudflare-research/src", "apps/eliotr-core/src", "apps/eliotr-pwa/scripts"]) {
+    for (const path of [
+      "scripts",
+      "packages/domain/src",
+      "packages/cloudflare-research/src",
+      "packages/cloudflare-model-control/src",
+      "apps/eliotr-core/src",
+      "apps/eliotr-core/test",
+      "apps/eliotr-pwa/scripts",
+    ]) {
       await mkdir(resolve(checkout, path), { recursive: true });
     }
     for (const name of ["check-boundaries.mjs", "check-budgets.mjs"]) {
@@ -72,20 +80,32 @@ async function proveCheckoutPathsArePortable() {
       "exact authorized artifact subpaths and retrieval", temporary);
 
     const qualificationTest = resolve(checkout,
-      "packages/cloudflare-research/src/research-model-qualification-renewal.test.ts");
+      "packages/cloudflare-model-control/src/research-model-qualification-renewal.test.ts");
     const branchStagesTest = resolve(checkout,
       "packages/cloudflare-research/src/research-model-spend-admission-branch-stages.test.ts");
+    const inboxTest = resolve(checkout,
+      "apps/eliotr-core/test/agent-inbox-assets-routing.test.mjs");
     const inboxBuild = resolve(checkout, "apps/eliotr-pwa/scripts/build-agent-inbox.mjs");
     await writeFile(qualificationTest, 'import { readFileSync } from "node:fs";\nvoid readFileSync;\n');
     await writeFile(branchStagesTest, 'import { readFileSync } from "node:fs";\nvoid readFileSync;\n');
+    await writeFile(inboxTest, [
+      'import { readFile } from "node:fs/promises";',
+      'import { chromium } from "playwright-core";',
+      "void readFile; void chromium;",
+    ].join("\n"));
     await writeFile(inboxBuild, 'import { readFile } from "node:fs/promises";\nvoid readFile;\n');
     runGate(boundaries, 0, ["Package boundaries and forbidden imports: PASS"],
-      "exact host filesystem import exceptions", temporary);
+      "exact host tool import exceptions", temporary);
 
     await writeFile(qualificationTest, 'import { readFile } from "node:fs/promises";\nvoid readFile;\n');
     runGate(boundaries, 1, [
-      "packages/cloudflare-research/src/research-model-qualification-renewal.test.ts imports forbidden module node:fs/promises",
+      "packages/cloudflare-model-control/src/research-model-qualification-renewal.test.ts imports forbidden module node:fs/promises",
     ], "host filesystem exception rejects unlisted subpath", temporary);
+
+    await writeFile(fixture, 'import { chromium } from "playwright-core";\nvoid chromium;\n');
+    runGate(boundaries, 1, [
+      "packages/domain/src/fixture.ts imports forbidden module playwright-core",
+    ], "exact host Playwright exception rejects unrelated product file", temporary);
 
     await writeFile(inboxBuild, [
       'import { readFile } from "node:fs/promises";',

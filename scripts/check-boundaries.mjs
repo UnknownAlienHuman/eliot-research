@@ -23,18 +23,21 @@ const FORBIDDEN_IMPORTS = [
   "sqlite3",
 ];
 
-// These exact files execute as host-side Node tooling, never inside a Worker
-// or browser bundle. Keep filesystem exceptions file- and specifier-specific:
-// SQLite migration coverage tests read checked-in migration SQL, and the PWA
-// build script reads TypeScript/CSS sources before writing its generated asset.
-const HOST_FILESYSTEM_IMPORTS = new Map([
+// These exact files import host-side tools for Node checks/tests; they are not
+// production Worker or browser-bundle entry points. Keep exceptions exact by
+// repository path and specifier. Backup tests read checked-in migration SQL,
+// and the PWA build script reads local source files to generate its asset.
+const HOST_TOOL_IMPORTS = new Map([
   ["packages/backup-o2/src/coverage-full-chain.test.ts", new Set(["node:fs"])],
   ["packages/cloudflare-backup/src/isolated-restore-preflight.test.ts", new Set(["node:fs/promises"])],
+  ["packages/cloudflare-backup/src/restore-admission.test.ts", new Set(["node:fs/promises"])],
+  ["packages/cloudflare-backup/src/restore-native-history-ordering.test.ts", new Set(["node:fs/promises"])],
   ["packages/cloudflare-backup/src/restore-store.test.ts", new Set(["node:fs/promises"])],
   ["packages/cloudflare-model-control/src/research-model-qualification-renewal.test.ts", new Set(["node:fs"])],
   ["packages/cloudflare-research/src/research-model-spend-admission-branch-stages.test.ts", new Set(["node:fs"])],
   ["packages/cloudflare-research/src/research-project-configuration-store.test.ts", new Set(["node:fs"])],
   ["packages/cloudflare-workflows/src/research-run-configuration-store.test.ts", new Set(["node:fs"])],
+  ["apps/eliotr-core/test/agent-inbox-assets-routing.test.mjs", new Set(["node:fs/promises", "playwright-core"])],
   ["apps/eliotr-core/test/research-runtime-config-parity.test.ts", new Set(["node:fs/promises"])],
   ["apps/eliotr-pwa/scripts/build-agent-inbox.mjs", new Set(["node:fs/promises"])],
 ]);
@@ -377,8 +380,8 @@ for (const sourceRoot of SOURCE_ROOTS) {
     const normalizedPath = projectPath(file);
     const source = await readFile(file, "utf8");
     for (const specifier of importsOf(source)) {
-      const allowedHostFilesystemImport = HOST_FILESYSTEM_IMPORTS.get(normalizedPath)?.has(specifier) === true;
-      if (!allowedHostFilesystemImport &&
+      const allowedHostToolImport = HOST_TOOL_IMPORTS.get(normalizedPath)?.has(specifier) === true;
+      if (!allowedHostToolImport &&
           FORBIDDEN_IMPORTS.some((prefix) => specifier === prefix || specifier.startsWith(prefix))) {
         errors.push(`${normalizedPath} imports forbidden module ${specifier}`);
       }

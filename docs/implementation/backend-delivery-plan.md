@@ -52,6 +52,14 @@ authorize another apply. Scoped ESLint and the focused migration fixture passed
 all 24 groups after review corrections. This is local protocol evidence; fresh
 intent preparation and live migration readback remain separate.
 
+On October 5 the fresh v2 intent was applied once to the existing production
+Core D1 database. The seven-file pending suffix, 0109 through 0115, returned
+`SUCCEEDED`; the pinned schema groups (64 and four probes) and before/after
+metadata returned `PASS`. The resulting ledger has 114 applied files and no
+pending file. Time Travel recovery was captured in ignored operator evidence.
+This completed migration is not reapplied when a later deployment preflight
+fails.
+
 The inbox Assets verifier now accepts an explicit installed Chromium/Chrome
 executable path. Core compilation, scoped lint and one native Assets/Chrome 154
 run passed, including iframe refusal. Authenticated production inbox/API flows
@@ -59,6 +67,16 @@ and live edge headers remain pending for #316/#261. Deployment asset mismatch
 diagnostics now retain the canonical public path and expected/observed byte
 counts and hashes, without bodies or authentication data. Its focused fixture
 and scoped lint passed; there is no automatic upload retry.
+
+The first current-source maintenance attempt stopped before Worker upload:
+the boundary checker rejected filesystem/Playwright imports from three existing
+host-only test fixtures. Exact file/specifier exceptions now cover those
+fixtures; production deny prefixes and package dependency rules are unchanged.
+The existing negative verifier also uses the current Model Control fixture
+location and proves an unrelated product file cannot import Playwright.
+One boundary scan, the negative verifier, scoped ESLint and syntax checks passed.
+This repairs local preflight only; the next guarded deployment requires a
+fresh config pinned to the published source and its own live readback.
 
 The #294 checkpoint records direct Core/Search receiver provenance and known
 bind arity and rejects a known-target failure even if the other schema accepts
