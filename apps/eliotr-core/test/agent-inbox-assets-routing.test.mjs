@@ -1,10 +1,22 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 /* global document */
+import { isAbsolute } from "node:path";
+import { env } from "node:process";
 import { fileURLToPath, URL } from "node:url";
 import { test } from "node:test";
 import { unstable_dev } from "wrangler";
 import { chromium } from "playwright-core";
+
+async function getBrowserLaunchOptions() {
+  const executablePath = env.ELIOTR_TEST_CHROMIUM_EXECUTABLE_PATH;
+  if (executablePath === undefined) return { headless: true };
+
+  assert.ok(isAbsolute(executablePath), "ELIOTR_TEST_CHROMIUM_EXECUTABLE_PATH must be absolute");
+  const executable = await stat(executablePath).catch(() => null);
+  assert.ok(executable?.isFile(), "ELIOTR_TEST_CHROMIUM_EXECUTABLE_PATH must point to an existing file");
+  return { headless: true, executablePath };
+}
 
 // Run after the existing PWA build. Use the application's actual Wrangler
 // config, Worker entry point and generated assets, including the outer router.
@@ -44,7 +56,7 @@ test("inbox headers survive native Assets routing and browser framing is refused
   const api = await worker.fetch("/api/v1/system/session");
   assert.equal(api.status, 401);
 
-  const browser = await chromium.launch({ headless: true });
+  const browser = await chromium.launch(await getBrowserLaunchOptions());
   t.after(() => browser.close());
   const page = await browser.newPage();
   const origin = `http://${worker.address}:${worker.port}`;

@@ -209,7 +209,11 @@ async function readAssets(routes, origin, cookie, fetchImpl, signal) {
       throw new Error("Deployment asset readback failed: network or stream error");
     }
     if (actual.bytes !== file.bytes || actual.sha256 !== file.sha256) {
-      throw new Error("Deployment asset readback failed: content mismatch");
+      throw new Error(
+        `Deployment asset readback failed: content mismatch for ${pathname}; ` +
+        `expected byte_length=${file.bytes} sha256=${file.sha256}; ` +
+        `observed byte_length=${actual.bytes} sha256=${actual.sha256}`,
+      );
     }
     results.push({ path: file.path, status: 200, bytes: actual.bytes, sha256: actual.sha256 });
   }

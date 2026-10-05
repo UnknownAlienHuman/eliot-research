@@ -4,7 +4,9 @@ import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { classifyDeploymentMigrationSql, runDeploymentMigrationOperation,
-  validateDeploymentMigrationIntent } from "./lib/deployment-migration-operation.mjs";
+  createDeploymentMigrationSchemaProbeGroups, validateDeploymentMigrationIntent } from "./lib/deployment-migration-operation.mjs";
+import { deploymentMigrationSchemaProbeGroupSha256, flattenDeploymentMigrationSchemaProbes,
+  validateGroupedSchemaProbeObservations } from "./lib/deployment-migration-schema-probes.mjs";
 import { readDeploymentMigrationEntries } from "./lib/deployment-migrations.mjs";
 
 const sha256 = (value) => createHash("sha256").update(value).digest("hex");
@@ -135,10 +137,13 @@ async function createFixture(action, { ifNotExists = false } = {}) {
 
 function cloudflareHarness({ root, intent, applied = [], failure = null, mismatch = null, preflightMismatch = null,
   preflightNameVariant = false, preflightTypeOverride = null,
-  ledgerOverride = null, databaseVersion = "production", bookmark = "fixture-bookmark", cancel = () => {} } = {}) {
+  ledgerOverride = null, databaseVersion = "production", bookmark = "fixture-bookmark", cancel = () => {},
+  additionalSchemaObjects = [] } = {}) {
+  const fixtureSchemaObjects = [...schemaObjects, ...additionalSchemaObjects];
   const calls = [];
   const receipts = new Map();
   const apiCalls = [];
+  let schemaFailureName = null;
   let appliedNames = [...applied];
   const environment = { CLOUDFLARE_ACCOUNT_ID: accountId, CLOUDFLARE_API_TOKEN: "fixture-token", ELIOTR_ENVIRONMENT: "production" };
   const read = async (path, encoding) => {
@@ -172,13 +177,14 @@ function cloudflareHarness({ root, intent, applied = [], failure = null, mismatc
     if (query.sql.startsWith("SELECT name FROM d1_migrations")) {
       rows = ledgerOverride === null ? appliedNames.map((name) => ({ name })) : ledgerOverride.map((name) => ({ name }));
     } else if (query.sql === "SELECT type, name, sql FROM sqlite_master WHERE type = ? AND name = ? LIMIT 2") {
-      const object = schemaObjects.find((entry) => entry.object_type === query.params[0] && entry.name === query.params[1]);
+      if (schemaFailureName === query.params[1]) throw new Error("fixture schema read unavailable");
+      const object = fixtureSchemaObjects.find((entry) => entry.object_type === query.params[0] && entry.name === query.params[1]);
       if (object === undefined) throw new Error("Unexpected schema probe in migration fixture");
       rows = [{ type: object.object_type, name: object.name,
         sql: mismatch === `schema:${object.name}` ? `${object.sql} ` : object.sql }];
     } else if (query.sql === "SELECT type, name, sql FROM sqlite_master WHERE name = ? COLLATE NOCASE LIMIT 2") {
-      const probe = intent.schema_probes.find((entry) => entry.name === query.params[0]);
-      const object = schemaObjects.find((entry) => entry.name === query.params[0]);
+      const probe = flattenDeploymentMigrationSchemaProbes(intent).find((entry) => entry.name === query.params[0]);
+      const object = fixtureSchemaObjects.find((entry) => entry.name === query.params[0]);
       if (probe === undefined || object === undefined) throw new Error("Unexpected schema precondition in migration fixture");
       const shouldConflict = preflightMismatch === object.name;
       if (probe.before_sql_sha256 === null && !shouldConflict) rows = [];
@@ -227,7 +233,25 @@ function cloudflareHarness({ root, intent, applied = [], failure = null, mismatc
     environment: options.environment ?? environment, confirmLive: options.confirmLive ?? true,
     execute, capture, fetchImpl, read, statFile, saveReceipt, now: () => Date.parse("2026-10-03T00:00:00.000Z"), log: () => {},
     signal: options.signal });
-  return { calls, receipts, apiCalls, run, setApplied: (names) => { appliedNames = [...names]; }, getApplied: () => [...appliedNames] };
+  return { calls, receipts, apiCalls, run, setApplied: (names) => { appliedNames = [...names]; },
+    setSchemaFailure: (name) => { schemaFailureName = name; }, getApplied: () => [...appliedNames] };
+}
+
+function expandedV2Intent(intent, additionalProbeCount) {
+  const additionalSchemaObjects = Array.from({ length: additionalProbeCount }, (_, index) => {
+    const name = `fixture_existing_${String(index).padStart(3, "0")}`;
+    const sql = `CREATE TABLE ${name} (id INTEGER PRIMARY KEY) STRICT`;
+    return { object_type: "table", name, sql, before_sql: sql, migration_names: [intent.migration_names[0]] };
+  });
+  const probes = [...flattenDeploymentMigrationSchemaProbes(intent), ...additionalSchemaObjects.map((object) => ({
+    object_type: object.object_type, name: object.name,
+    before_sql_sha256: sha256(Buffer.from(object.before_sql, "utf8")),
+    create_sql_sha256: sha256(Buffer.from(object.sql, "utf8")), migration_names: object.migration_names,
+  }))];
+  const base = { ...intent };
+  delete base.schema_probes;
+  return { intent: { ...base, protocol: "eliotr.cloudflare-d1-migration-intent.v2",
+    schema_probe_groups: createDeploymentMigrationSchemaProbeGroups(probes) }, additionalSchemaObjects };
 }
 
 await check("actual Core candidate classifier inventory is explicitly 21 supported and 16 named for separate review", async () => {
@@ -367,6 +391,89 @@ await check("0113 rejects cap/hash, predecessor, baseline, or migration-identity
 await createFixture(async ({ root, intentFor }) => {
   const intent = intentFor();
   validateDeploymentMigrationIntent(intent);
+  await check("v2 reads more than 64 probes in fixed groups and keeps interrupted readback as a non-retryable prefix", async () => {
+    const { intent: groupedIntent, additionalSchemaObjects } = expandedV2Intent(intent, 65);
+    validateDeploymentMigrationIntent(groupedIntent);
+    const test = cloudflareHarness({ root, intent: groupedIntent, additionalSchemaObjects });
+    const completed = await test.run();
+    assert.equal(completed.protocol, "eliotr.cloudflare-d1-migration-receipt.v2");
+    assert.equal(completed.overall_state, "PASS");
+    assert.deepEqual(completed.observations[0].schema_probe_groups.map((group) => group.observations.length), [64, 7]);
+    assert.deepEqual(completed.observations[1].schema_probe_groups.map((group) => group.observations.length), [64, 7]);
+    const after = completed.observations[1];
+    const validateGroupedObservation = (observation) => validateGroupedSchemaProbeObservations({
+      groups: groupedIntent.schema_probe_groups, observedGroups: observation.schema_probe_groups, kind: observation.kind,
+      schemaState: observation.schema_state, metadataMarkers: observation.metadata_markers,
+      expectedMetadataMarkers: [{ key: "fixture_generation", value: "fixture-v1" }],
+    });
+    assert.equal(validateGroupedObservation(after), true);
+    const forgedHash = structuredClone(after);
+    forgedHash.schema_probe_groups[0].observations[0].observed_sql_sha256 = sha256("forged PASS hash");
+    assert.equal(validateGroupedObservation(forgedHash), false);
+    const forgedMarker = structuredClone(after);
+    forgedMarker.metadata_markers[0].observed_value = "forged PASS marker";
+    assert.equal(validateGroupedObservation(forgedMarker), false);
+    const gap = structuredClone(after);
+    gap.schema_state = "UNAVAILABLE";
+    gap.schema_probe_groups[0].observations.pop();
+    gap.metadata_markers = [];
+    assert.equal(validateGroupedObservation(gap), false);
+    const prematureMarker = structuredClone(after);
+    prematureMarker.schema_state = "UNAVAILABLE";
+    prematureMarker.schema_probe_groups[1].observations.pop();
+    assert.equal(validateGroupedObservation(prematureMarker), false);
+    const applyCount = test.calls.filter((call) => call.includes("wrangler d1 migrations apply")).length;
+    test.setSchemaFailure("fixture_existing_000");
+    await assert.rejects(test.run(), /Existing intent was not re-applied/u);
+    const reconciled = JSON.parse([...test.receipts.values()].at(-1));
+    const partial = reconciled.observations.at(-1);
+    assert.equal(reconciled.overall_state, "UNKNOWN");
+    assert.equal(partial.schema_state, "UNAVAILABLE");
+    assert.deepEqual(partial.schema_probe_groups.map((group) => group.observations.length), [2, 0]);
+    assert.deepEqual(partial.schema_probe_groups[0].observations.map((probe) => probe.state), ["PASS", "UNAVAILABLE"]);
+    assert.equal(test.calls.filter((call) => call.includes("wrangler d1 migrations apply")).length, applyCount);
+  });
+  await check("v2 requires every classifier-derived object and rejects a wrong observed schema hash", async () => {
+    const { intent: groupedIntent, additionalSchemaObjects } = expandedV2Intent(intent, 65);
+    const withoutRequired = { ...groupedIntent, schema_probe_groups: createDeploymentMigrationSchemaProbeGroups(
+      flattenDeploymentMigrationSchemaProbes(groupedIntent).filter((probe) => probe.name !== "fixture_table_b")) };
+    validateDeploymentMigrationIntent(withoutRequired);
+    const plan = cloudflareHarness({ root, intent: groupedIntent, additionalSchemaObjects });
+    await assert.rejects(plan.run(withoutRequired, { confirmLive: false }), /Missing exact schema contract probe/u);
+    assert.equal(plan.apiCalls.length, 0);
+    assert.equal(plan.calls.length, 0);
+
+    const probes = flattenDeploymentMigrationSchemaProbes(groupedIntent).map((probe) => probe.name === "fixture_existing_000"
+      ? { ...probe, create_sql_sha256: sha256("reviewed wrong schema hash") } : probe);
+    const wrongHashIntent = { ...groupedIntent, schema_probe_groups: createDeploymentMigrationSchemaProbeGroups(probes) };
+    validateDeploymentMigrationIntent(wrongHashIntent);
+    const test = cloudflareHarness({ root, intent: wrongHashIntent, additionalSchemaObjects });
+    await assert.rejects(test.run(), /did not reach complete ledger and schema readback/u);
+    const saved = JSON.parse([...test.receipts.values()].at(-1));
+    const after = saved.observations.at(-1);
+    assert.equal(saved.overall_state, "UNKNOWN");
+    assert.equal(after.schema_state, "MISMATCH");
+    assert.equal(after.schema_probe_groups.flatMap((group) => group.observations).at(-1).state, "MISMATCH");
+    const applyCount = test.calls.filter((call) => call.includes("wrangler d1 migrations apply")).length;
+    await assert.rejects(test.run(), /Existing intent was not re-applied/u);
+    assert.equal(test.calls.filter((call) => call.includes("wrangler d1 migrations apply")).length, applyCount);
+  });
+  await check("v2 enforces duplicate-free 64-probe group boundaries and the 256-probe ceiling", async () => {
+    const { intent: groupedIntent } = expandedV2Intent(intent, 65);
+    const duplicatedGroups = structuredClone(groupedIntent.schema_probe_groups);
+    duplicatedGroups[1].probes[0] = structuredClone(duplicatedGroups[0].probes.at(-1));
+    duplicatedGroups.forEach((group) => { group.group_sha256 = deploymentMigrationSchemaProbeGroupSha256(group.probes); });
+    assert.throws(() => validateDeploymentMigrationIntent({ ...groupedIntent, schema_probe_groups: duplicatedGroups }),
+      /Invalid or unsupported versioned/u);
+
+    const shortFirstGroup = structuredClone(groupedIntent.schema_probe_groups);
+    const moved = shortFirstGroup[0].probes.pop();
+    shortFirstGroup[1].probes.unshift(moved);
+    shortFirstGroup.forEach((group) => { group.group_sha256 = deploymentMigrationSchemaProbeGroupSha256(group.probes); });
+    assert.throws(() => validateDeploymentMigrationIntent({ ...groupedIntent, schema_probe_groups: shortFirstGroup }),
+      /Invalid or unsupported versioned/u);
+    assert.throws(() => expandedV2Intent(intent, 251), /between 1 and 256/u);
+  });
   await check("precondition hashes are mandatory and full-suffix replacements may start from absence", async () => {
     const missingBefore = structuredClone(intent);
     delete missingBefore.schema_probes[0].before_sql_sha256;

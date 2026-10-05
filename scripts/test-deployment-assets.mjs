@@ -70,12 +70,21 @@ try {
     headers: { "Content-Type": "text/html" } }), "unexpected HTTP response", "private fallback HTML");
   await assertReadbackFails(manifest, async () => new globalThis.Response("<html>SPA fallback</html>", { status: 200,
     headers: { "Content-Type": "text/html" } }), "network or stream error");
+  const mismatchFile = manifest.files[0];
+  const mismatchPath = routeFor(mismatchFile.path);
+  const wrong = Buffer.from(expected.get(mismatchPath));
+  wrong[0] ^= 0xff;
+  const wrongSha256 = createHash("sha256").update(wrong).digest("hex");
+  assert.equal(mismatchPath, "/assets/app.js");
   await assertReadbackFails(manifest, async (url) => {
-    const expectedBytes = expected.get(url.pathname);
-    const wrong = Buffer.from(expectedBytes);
-    wrong[0] ^= 0xff;
+    assert.equal(url.pathname, mismatchPath);
     return new globalThis.Response(wrong, { status: 200 });
-  }, "content mismatch");
+  }, "content mismatch", undefined, (error) => {
+    assert.equal(error.message,
+      `Deployment asset readback failed: content mismatch for ${mismatchPath}; ` +
+      `expected byte_length=${mismatchFile.bytes} sha256=${mismatchFile.sha256}; ` +
+      `observed byte_length=${wrong.byteLength} sha256=${wrongSha256}`);
+  });
   await assertReadbackFails(manifest, async (url) => new globalThis.Response(
     Buffer.alloc(expected.get(url.pathname).byteLength + 1, 1), { status: 200 }), "network or stream error");
 
@@ -119,7 +128,7 @@ try {
   await rm(root, { recursive: true, force: true });
 }
 
-async function assertReadbackFails(manifest, responseFactory, message, secret) {
+async function assertReadbackFails(manifest, responseFactory, message, secret, verifyError) {
   let requestsMade = 0;
   await assert.rejects(verifyDeploymentAssets(manifest, {
     origin: "https://staging.example", cookie: "secret-cookie",
@@ -132,6 +141,7 @@ async function assertReadbackFails(manifest, responseFactory, message, secret) {
     assert.match(error.message, new RegExp(message));
     assert.equal(error.message.includes("secret-cookie"), false);
     if (secret) assert.equal(error.message.includes(secret), false);
+    verifyError?.(error);
     return true;
   });
   assert.equal(requestsMade, 1);

@@ -426,6 +426,17 @@ entire ordered pending migration suffix, per-file SQL hashes, bundle digest, ris
 probes, and maximum migration count, SQL bytes, deadline, and runtime. The operation validates the
 local plan without network or Wrangler when `--confirm-live` is absent:
 
+Intent v1 retains its original flat `schema_probes` array of 1–64 objects and
+its existing receipt format. Intent v2 uses `schema_probe_groups`: 1–4 nonempty
+groups of at most 64 objects, for at most 256 probes. Groups are numbered from
+one and pin their canonical probe bytes with `group_sha256`. The objects are
+ordered by type and case-insensitive name; all groups except the last contain
+64 probes. Duplicate identities, changed order, wrong group hashes and omitted
+SQL-derived required objects fail closed. Grouping covers the entire pending
+suffix in one operation; it does not authorize applying only its first portion.
+V2 receipts retain each group identity and aligned observation prefix. Missing
+or partial readback cannot become a successful schema proof or automatic retry.
+
 ```bash
 node scripts/migrate-cloudflare-d1.mjs --plan ./reviewed-core-migration-intent.json
 ```

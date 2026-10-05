@@ -44,6 +44,20 @@ pnpm exec vitest run <exact-test-path>
 Broad behavioral, browser, native, mutation, and live acceptance stays pending until product-code assembly
 unless the task explicitly calls for a narrow reproduction.
 
+The existing inbox outer-Assets verifier uses the built PWA output and starts
+Wrangler/workerd before checking real response headers and browser framing:
+
+```sh
+pnpm --filter @eliotr/core exec node --test test/agent-inbox-assets-routing.test.mjs
+```
+
+Use an existing PWA build, or run `pnpm build:pwa` when its source has changed.
+Playwright uses its default browser discovery unless
+`ELIOTR_TEST_CHROMIUM_EXECUTABLE_PATH` names an absolute existing Chromium/Chrome
+executable. The override selects the installed executable without installing a
+browser. This local verifier does not establish authenticated production flows
+or live edge readback.
+
 ## Full repository and release checks
 
 After assembly, run the explicit full repository chain:

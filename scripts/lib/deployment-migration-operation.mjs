@@ -9,9 +9,14 @@ import { readDeploymentMigrationEntries, inspectDeploymentMigrationLedger,
   validateDeploymentMigrationDirectories } from "./deployment-migrations.mjs";
 import { readDeploymentJson } from "./deployment-verification.mjs";
 import { validateStagingTarget } from "./staging-isolation.mjs";
+import { createDeploymentMigrationSchemaProbeGroups, flattenDeploymentMigrationSchemaProbes,
+  groupDeploymentMigrationSchemaProbeObservations, validateDeploymentMigrationSchemaProbeGroups,
+  validateGroupedSchemaProbeObservations } from "./deployment-migration-schema-probes.mjs";
 
-const INTENT_PROTOCOL = "eliotr.cloudflare-d1-migration-intent.v1";
-const RECEIPT_PROTOCOL = "eliotr.cloudflare-d1-migration-receipt.v1";
+const INTENT_PROTOCOL_V1 = "eliotr.cloudflare-d1-migration-intent.v1";
+const INTENT_PROTOCOL_V2 = "eliotr.cloudflare-d1-migration-intent.v2";
+const RECEIPT_PROTOCOL_V1 = "eliotr.cloudflare-d1-migration-receipt.v1";
+const RECEIPT_PROTOCOL_V2 = "eliotr.cloudflare-d1-migration-receipt.v2";
 const EMPTY_SEMANTIC_REVISION_REPAIR = Object.freeze({
   migrationName: "0108_research_semantic_config_revision_glob_limits.sql",
   baselineName: "0097_research_semantic_config_revision.sql",
@@ -121,10 +126,13 @@ function validateSchemaProbes(probes, migrationNames) {
 }
 
 export function validateDeploymentMigrationIntent(intent) {
+  const version1 = intent?.protocol === INTENT_PROTOCOL_V1;
+  const version2 = intent?.protocol === INTENT_PROTOCOL_V2;
+  const schemaProbeKey = version1 ? "schema_probes" : "schema_probe_groups";
   const keys = ["protocol", "intent_id", "account_id", "generated_config_sha256", "database",
     "migration_names", "migration_hashes", "local_migration_bundle_sha256", "risk_review",
-    "schema_probes", "max_migrations", "max_sql_bytes", "deadline_at", "max_runtime_ms"];
-  if (!exactKeys(intent, keys) || intent.protocol !== INTENT_PROTOCOL || !UUID.test(intent.intent_id ?? "") ||
+    schemaProbeKey, "max_migrations", "max_sql_bytes", "deadline_at", "max_runtime_ms"];
+  if ((!version1 && !version2) || !exactKeys(intent, keys) || !UUID.test(intent.intent_id ?? "") ||
       !ACCOUNT.test(intent.account_id ?? "") || !HASH.test(intent.generated_config_sha256 ?? "") ||
       !HASH.test(intent.local_migration_bundle_sha256 ?? "") ||
       !exactKeys(intent.database, ["binding", "database_name", "database_id"]) ||
@@ -142,7 +150,8 @@ export function validateDeploymentMigrationIntent(intent) {
       intent.risk_review.summary.length > 512 || /[\u0000-\u0008\u000b\u000c\u000e-\u001f]/u.test(intent.risk_review.summary) ||
       intent.risk_review.reviewed_bundle_sha256 !== sha256(JSON.stringify(intent.migration_hashes)) ||
       typeof intent.risk_review.index_build_cost_reviewed !== "boolean" ||
-      !validateSchemaProbes(intent.schema_probes, intent.migration_names) ||
+      !(version1 ? validateSchemaProbes(intent.schema_probes, intent.migration_names) :
+        validateDeploymentMigrationSchemaProbeGroups(intent.schema_probe_groups, intent.migration_names)) ||
       !Number.isSafeInteger(intent.max_migrations) || intent.max_migrations !== intent.migration_names.length ||
       !Number.isSafeInteger(intent.max_sql_bytes) || intent.max_sql_bytes < 1 || intent.max_sql_bytes > MAX_APPROVED_SQL_BYTES ||
       !isoDate(intent.deadline_at) || !Number.isSafeInteger(intent.max_runtime_ms) ||
@@ -152,6 +161,8 @@ export function validateDeploymentMigrationIntent(intent) {
   }
   return intent;
 }
+
+export { createDeploymentMigrationSchemaProbeGroups };
 
 function tokens(sql) {
   const result = [];
@@ -790,6 +801,7 @@ export function classifyDeploymentMigrationSql(text, { earlierCreatedTables = []
 }
 
 async function readPendingSql(intent, root, localBundle, read) {
+  const schemaProbes = flattenDeploymentMigrationSchemaProbes(intent);
   const entries = new Map(localBundle.migration_entries.map((entry) => [entry.name, entry]));
   const pending = [];
   let totalBytes = 0;
@@ -871,18 +883,18 @@ async function readPendingSql(intent, root, localBundle, read) {
   }
   for (const migration of requiredObjectsByMigration) {
     for (const object of migration.required_schema_objects) {
-      const probe = intent.schema_probes.find((entry) => entry.object_type === object.object_type &&
+      const probe = schemaProbes.find((entry) => entry.object_type === object.object_type &&
         entry.name.toLowerCase() === object.name.toLowerCase() && entry.migration_names.includes(migration.name));
       if (probe === undefined) fail(`Missing exact schema contract probe for ${migration.name} ${object.object_type}:${object.name}`);
     }
     for (const object of migration.must_probe_schema_objects) {
-      const probe = intent.schema_probes.find((entry) => entry.object_type === object.object_type &&
+      const probe = schemaProbes.find((entry) => entry.object_type === object.object_type &&
         entry.name === object.name && entry.migration_names.includes(migration.name));
       if (probe === undefined) fail(`Missing replacement schema probe for ${migration.name} ${object.object_type}:${object.name}`);
     }
   }
   if (createdTables.length > 64) fail("Approved migration set creates more tables than the bounded preflight supports");
-  for (const probe of intent.schema_probes) {
+  for (const probe of schemaProbes) {
     const created = firstCreatedObjects.get(`${probe.object_type}:${probe.name.toLowerCase()}`);
     if (created !== undefined && !created.replacement && probe.before_sql_sha256 !== null) {
       fail("A newly created schema object requires an absence precondition");
@@ -1024,7 +1036,7 @@ function validMetadataMarkerObservation(value) {
     ["PASS", "MISMATCH", "UNAVAILABLE"].includes(value.state);
 }
 
-function validObservation(value) {
+function validObservationV1(value) {
   return exactKeys(value, ["kind", "observed_at", "ledger_state", "applied_names", "pending_names", "schema_state", "schema_probes", "metadata_markers"]) &&
     ["BEFORE_APPLY", "AFTER_APPLY", "RETRY_RECONCILIATION"].includes(value.kind) && isoDate(value.observed_at) &&
     ["EXISTING", "UNAVAILABLE"].includes(value.ledger_state) && validMigrationNames(value.applied_names, { allowEmpty: true }) &&
@@ -1034,10 +1046,22 @@ function validObservation(value) {
     Array.isArray(value.metadata_markers) && value.metadata_markers.length <= 64 && value.metadata_markers.every(validMetadataMarkerObservation);
 }
 
-function validateSavedReceipt(receipt, intent, intentSha256) {
+function validObservationV2(value, intent, expectedMetadataMarkers) {
+  return exactKeys(value, ["kind", "observed_at", "ledger_state", "applied_names", "pending_names", "schema_state", "schema_probe_groups", "metadata_markers"]) &&
+    ["BEFORE_APPLY", "AFTER_APPLY", "RETRY_RECONCILIATION"].includes(value.kind) && isoDate(value.observed_at) &&
+    ["EXISTING", "UNAVAILABLE"].includes(value.ledger_state) && validMigrationNames(value.applied_names, { allowEmpty: true }) &&
+    validMigrationNames(value.pending_names, { allowEmpty: true }) && ["NOT_RUN", "PASS", "MISMATCH", "UNAVAILABLE"].includes(value.schema_state) &&
+    Array.isArray(value.metadata_markers) && value.metadata_markers.length <= 64 && value.metadata_markers.every(validMetadataMarkerObservation) &&
+    validateGroupedSchemaProbeObservations({ groups: intent.schema_probe_groups, observedGroups: value.schema_probe_groups,
+      kind: value.kind, schemaState: value.schema_state, metadataMarkers: value.metadata_markers, expectedMetadataMarkers });
+}
+
+function validateSavedReceipt(receipt, intent, intentSha256, expectedMetadataMarkers) {
+  const version1 = intent.protocol === INTENT_PROTOCOL_V1;
+  const receiptProtocol = version1 ? RECEIPT_PROTOCOL_V1 : RECEIPT_PROTOCOL_V2;
   const keys = ["protocol", "intent_id", "intent_sha256", "target", "generated_config_sha256",
     "local_migration_bundle_sha256", "risk_review", "time_travel", "attempt_history", "observations", "overall_state"];
-  if (!exactKeys(receipt, keys) || receipt.protocol !== RECEIPT_PROTOCOL || receipt.intent_id !== intent.intent_id ||
+  if (!exactKeys(receipt, keys) || receipt.protocol !== receiptProtocol || receipt.intent_id !== intent.intent_id ||
       receipt.intent_sha256 !== intentSha256 || !exactKeys(receipt.target, ["account_id", "binding", "database_name", "database_id"]) ||
       receipt.target.account_id !== intent.account_id || receipt.target.binding !== intent.database.binding ||
       receipt.target.database_name !== intent.database.database_name || receipt.target.database_id !== intent.database.database_id ||
@@ -1051,7 +1075,8 @@ function validateSavedReceipt(receipt, intent, intentSha256) {
         isoDate(receipt.time_travel.captured_at) && receipt.time_travel.restore_performed === false)) ||
       !Array.isArray(receipt.attempt_history) || receipt.attempt_history.length > MAX_RECEIPT_HISTORY ||
       !Array.isArray(receipt.observations) || receipt.observations.length > MAX_RECEIPT_HISTORY * 2 ||
-      !receipt.observations.every(validObservation) ||
+      !receipt.observations.every((observation) => version1 ? validObservationV1(observation) :
+        validObservationV2(observation, intent, expectedMetadataMarkers)) ||
       !["ATTEMPT_STARTED", "PASS", "FAILED", "PARTIAL", "UNKNOWN", "ALREADY_APPLIED", "RECONCILIATION_REQUIRED"].includes(receipt.overall_state)) {
     fail("Existing migration receipt does not match the exact canonical intent");
   }
@@ -1131,11 +1156,12 @@ async function readAccountAndDatabase(env, input, intent, { fetchImpl, timeoutMs
 }
 
 async function readSchemaProbes(env, input, intent, { fetchImpl, signal, timeoutMs, now = Date.now, metadataMarkers = [] }) {
+  const schemaProbes = flattenDeploymentMigrationSchemaProbes(intent);
   const observations = [];
   const markers = [];
   const cutoff = now() + timeoutMs;
   const outcome = (state) => ({ state, observations, metadata_markers: markers });
-  for (const probe of intent.schema_probes) {
+  for (const probe of schemaProbes) {
     if (signal?.aborted) return outcome("UNAVAILABLE");
     const remaining = Math.floor(cutoff - now());
     if (remaining < 1) return outcome("UNAVAILABLE");
@@ -1219,10 +1245,11 @@ async function readSchemaProbes(env, input, intent, { fetchImpl, signal, timeout
 }
 
 async function readSchemaPreconditions(env, input, intent, { fetchImpl, signal, timeoutMs, now = Date.now }) {
+  const schemaProbes = flattenDeploymentMigrationSchemaProbes(intent);
   const cutoff = now() + timeoutMs;
   const observations = [];
   const outcome = (state) => ({ state, observations, metadata_markers: [] });
-  for (const probe of intent.schema_probes) {
+  for (const probe of schemaProbes) {
     if (signal?.aborted) return outcome("UNAVAILABLE");
     const remaining = Math.floor(cutoff - now());
     if (remaining < 1) return outcome("UNAVAILABLE");
@@ -1265,17 +1292,26 @@ async function readSchemaPreconditions(env, input, intent, { fetchImpl, signal, 
   return outcome("PASS");
 }
 
-function makeObservation(kind, observedAt, ledger, schema = { state: "NOT_RUN", observations: [], metadata_markers: [] }) {
-  return { kind, observed_at: observedAt, ledger_state: ledger?.ledger_state ?? "UNAVAILABLE",
+function receiptProtocolForIntent(intent) {
+  return intent.protocol === INTENT_PROTOCOL_V1 ? RECEIPT_PROTOCOL_V1 : RECEIPT_PROTOCOL_V2;
+}
+
+function makeObservation(intent, kind, observedAt, ledger, schema = { state: "NOT_RUN", observations: [], metadata_markers: [] }) {
+  const common = { kind, observed_at: observedAt, ledger_state: ledger?.ledger_state ?? "UNAVAILABLE",
     applied_names: ledger?.applied_names ? [...ledger.applied_names] : [],
     pending_names: ledger?.pending_names ? [...ledger.pending_names] : [],
-    schema_state: schema.state, schema_probes: schema.observations,
+    schema_state: schema.state };
+  if (intent.protocol === INTENT_PROTOCOL_V1) {
+    return { ...common, schema_probes: schema.observations, metadata_markers: schema.metadata_markers ?? [] };
+  }
+  return { ...common,
+    schema_probe_groups: groupDeploymentMigrationSchemaProbeObservations(intent.schema_probe_groups, schema.observations),
     metadata_markers: schema.metadata_markers ?? [] };
 }
 
 function createReceipt(intent, intentSha256, timeTravel, before, now) {
   const startedAt = new Date(now()).toISOString();
-  return { protocol: RECEIPT_PROTOCOL, intent_id: intent.intent_id, intent_sha256: intentSha256,
+  return { protocol: receiptProtocolForIntent(intent), intent_id: intent.intent_id, intent_sha256: intentSha256,
     target: { account_id: intent.account_id, binding: intent.database.binding,
       database_name: intent.database.database_name, database_id: intent.database.database_id },
     generated_config_sha256: intent.generated_config_sha256,
@@ -1285,7 +1321,7 @@ function createReceipt(intent, intentSha256, timeTravel, before, now) {
     time_travel: timeTravel,
     attempt_history: [{ attempt_number: 1, started_at: startedAt, finished_at: null,
       command_outcome: "RUNNING", before_applied_names: [...before.applied_names], before_pending_names: [...before.pending_names] }],
-    observations: [makeObservation("BEFORE_APPLY", startedAt, before)], overall_state: "ATTEMPT_STARTED" };
+    observations: [makeObservation(intent, "BEFORE_APPLY", startedAt, before)], overall_state: "ATTEMPT_STARTED" };
 }
 
 async function persistObservedReceipt(receipt, path, save, { createOnly = false } = {}) {
@@ -1301,7 +1337,7 @@ async function markAttemptNotStarted(receipt, path, save, now) {
   await persistObservedReceipt(receipt, path, save);
 }
 
-async function parseExistingReceipt(read, statFile, path, intent, intentSha256) {
+async function parseExistingReceipt(read, statFile, path, intent, intentSha256, expectedMetadataMarkers) {
   let text;
   try {
     const fileStat = await statFile(path);
@@ -1312,7 +1348,7 @@ async function parseExistingReceipt(read, statFile, path, intent, intentSha256) 
   let receipt;
   try { receipt = JSON.parse(String(text)); }
   catch { fail("Existing D1 migration receipt is invalid JSON"); }
-  return validateSavedReceipt(receipt, intent, intentSha256);
+  return validateSavedReceipt(receipt, intent, intentSha256, expectedMetadataMarkers);
 }
 
 function appendObservation(receipt, observation, overallState) {
@@ -1345,7 +1381,7 @@ export async function runDeploymentMigrationOperation({ intent, root = ROOT, env
 
   const path = receiptPath(root, intent.intent_id);
   const intentSha256 = sha256(canonicalJson(intent));
-  const existingReceipt = await parseExistingReceipt(read, statFile, path, intent, intentSha256);
+  const existingReceipt = await parseExistingReceipt(read, statFile, path, intent, intentSha256, local.sql.metadataMarkers);
   requireNotCancelled(signal);
   const env = { ...environment };
   if (env.CLOUDFLARE_ACCOUNT_ID !== intent.account_id) fail("Cloudflare account environment does not match approved intent");
@@ -1396,7 +1432,7 @@ export async function runDeploymentMigrationOperation({ intent, root = ROOT, env
         metadataMarkers: local.sql.metadataMarkers })
       : { state: "NOT_RUN", observations: [], metadata_markers: [] };
     const finalState = state === "ALREADY_APPLIED" && schema.state !== "PASS" ? "UNKNOWN" : state;
-    appendObservation(existingReceipt, makeObservation("RETRY_RECONCILIATION", new Date(now()).toISOString(), before, schema), finalState);
+    appendObservation(existingReceipt, makeObservation(intent, "RETRY_RECONCILIATION", new Date(now()).toISOString(), before, schema), finalState);
     await persistObservedReceipt(existingReceipt, path, saveReceipt);
     if (finalState !== "ALREADY_APPLIED") fail("Existing intent was not re-applied; reconciliation requires a new explicitly approved intent");
     log(JSON.stringify(existingReceipt, null, 2));
@@ -1408,14 +1444,14 @@ export async function runDeploymentMigrationOperation({ intent, root = ROOT, env
       const schema = await readSchemaProbes(env, input, intent, { fetchImpl, signal,
         timeoutMs: Math.min(30_000, deadline()), now, metadataMarkers: local.sql.metadataMarkers });
       if (schema.state !== "PASS") fail("D1 ledger contains approved migration names but schema contract probes did not pass");
-      const receipt = { protocol: RECEIPT_PROTOCOL, intent_id: intent.intent_id, intent_sha256: intentSha256,
+      const receipt = { protocol: receiptProtocolForIntent(intent), intent_id: intent.intent_id, intent_sha256: intentSha256,
         target: { account_id: intent.account_id, binding: intent.database.binding,
           database_name: intent.database.database_name, database_id: intent.database.database_id },
         generated_config_sha256: intent.generated_config_sha256,
         local_migration_bundle_sha256: intent.local_migration_bundle_sha256,
         risk_review: { classification: intent.risk_review.classification,
           reviewed_bundle_sha256: intent.risk_review.reviewed_bundle_sha256 }, time_travel: null,
-        attempt_history: [], observations: [makeObservation("RETRY_RECONCILIATION", new Date(now()).toISOString(), before, schema)],
+        attempt_history: [], observations: [makeObservation(intent, "RETRY_RECONCILIATION", new Date(now()).toISOString(), before, schema)],
         overall_state: "ALREADY_APPLIED" };
       await persistObservedReceipt(receipt, path, saveReceipt, { createOnly: true });
       log(JSON.stringify(receipt, null, 2));
@@ -1463,7 +1499,7 @@ export async function runDeploymentMigrationOperation({ intent, root = ROOT, env
     const preconditions = await readSchemaPreconditions(env, input, intent, {
       fetchImpl, signal, timeoutMs: Math.min(30_000, deadline()), now,
     });
-    receipt.observations[receipt.observations.length - 1] = makeObservation("BEFORE_APPLY", new Date(now()).toISOString(), before, preconditions);
+    receipt.observations[receipt.observations.length - 1] = makeObservation(intent, "BEFORE_APPLY", new Date(now()).toISOString(), before, preconditions);
     await persistObservedReceipt(receipt, path, saveReceipt);
     if (preconditions.state !== "PASS") fail("Exact schema object preconditions failed before migration apply");
     check();
@@ -1504,7 +1540,7 @@ export async function runDeploymentMigrationOperation({ intent, root = ROOT, env
   } catch {
     after = null;
   }
-  receipt.observations.push(makeObservation("AFTER_APPLY", new Date(now()).toISOString(), after, schema));
+  receipt.observations.push(makeObservation(intent, "AFTER_APPLY", new Date(now()).toISOString(), after, schema));
   if (receipt.observations.length > MAX_RECEIPT_HISTORY * 2) fail("Migration receipt reconciliation history is full");
 
   if (commandOutcome === "SUCCEEDED" && after !== null && after.pending_names.length === 0 &&

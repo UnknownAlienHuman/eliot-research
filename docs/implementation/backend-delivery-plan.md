@@ -1,14 +1,15 @@
 # Backend delivery plan
 
 Current execution order, refreshed on 2026-10-05 against `main`
-`444a32ae62e42bd8dc90d71a54b02538ba8ef5d7`.
+`d44585262a55908aa1db543693cd61421150fc63` before the backend checkpoints below.
 
 The [October 3 functional integration checkpoint](product-resume-2026-10-03.md)
 records the owner configuration, immutable run capture, MCP, provisioning and
 remaining real deployment/evidence checks. Assembly is in progress; no full
 release or live Research acceptance is claimed. The owner-directed phase is full
-product-code assembly before release and acceptance. Provider calls must remain
-free. Functional and same-document acceptance follow the assembled release;
+product-code assembly before release and acceptance. The owner now permits
+bounded functional calls to built-in Cloudflare models while the Ling quota
+recovers. Functional and same-document acceptance follow the assembled release;
 cognitive and quality evaluations are deferred by the owner. Compilation and an
 existing provider receipt do not establish that acceptance.
 
@@ -19,6 +20,50 @@ The historical Research failure at RECONCILE retains no underlying exception and
 remains unresolved. The current local native Workflow completes all 18 stages;
 the named local checks below do not establish deployed execution. Native MCP
 client authorization remains unverified.
+
+## Active backend goal, October 5
+
+The owner resumed production delivery with backend priority. The active goal is
+to finish the remaining backup/erasure fencing and restore obligations, Research
+failure/model/MCP integration, and D1 target qualification; publish reviewed
+checkpoints to `main`; apply the exact pending D1 suffix through the bounded
+migration operation; and deploy the current Worker/PWA with live readback.
+Issue closure requires its actual acceptance criteria. Planning PRs whose
+implementation is already on `main` do not establish live qualification.
+
+#318 is closed by `d4458526`: `check:full` names the existing full verification
+chain, and the legacy `check:affected` alias prints a deprecation warning before
+running it. The scoped-verification guide identifies focused checks without
+claiming automatic affected-file selection.
+
+One direct Workers AI smoke returned HTTP 200, exact model
+`@cf/zai-org/glm-5.3`, expected text, and usage of 25 input / 8 output tokens.
+That establishes current provider access only. It does not qualify installed
+Research prompts, project configuration or a deployed Research run. The Ling
+smoke received HTTP 429; no retry or provider fallback was performed. Cloudflare
+[documents GLM 5.3 as a paid model](https://developers.cloudflare.com/workers-ai/models/glm-5.3/);
+the owner-approved calls use existing access without changing the account plan.
+
+The bounded D1 operation now supports versioned groups when complete schema
+coverage exceeds v1's 64-probe limit. V1's flat contract is preserved. V2 pins
+canonical groups and validates contiguous receipt prefixes, exact PASS hashes
+and metadata values; partial, interrupted or mismatched observations do not
+authorize another apply. Scoped ESLint and the focused migration fixture passed
+all 24 groups after review corrections. This is local protocol evidence; fresh
+intent preparation and live migration readback remain separate.
+
+The inbox Assets verifier now accepts an explicit installed Chromium/Chrome
+executable path. Core compilation, scoped lint and one native Assets/Chrome 154
+run passed, including iframe refusal. Authenticated production inbox/API flows
+and live edge headers remain pending for #316/#261. Deployment asset mismatch
+diagnostics now retain the canonical public path and expected/observed byte
+counts and hashes, without bodies or authentication data. Its focused fixture
+and scoped lint passed; there is no automatic upload retry.
+
+The release gates still report disabled required ERASURE and RETRIEVAL slices.
+A guarded `MAINTENANCE` deployment can update the existing Worker/PWA after
+schema and configuration checks, but does not satisfy `FULL_RELEASE` or promote
+the 43 implementation contours to `LIVE_QUALIFIED`.
 
 ## October 5 local functional and release checkpoint
 
@@ -56,8 +101,10 @@ read after authentication. The reviewed token is limited to that account,
 Secrets Store Read/Edit and AI Gateway Read, with a 90-day expiry; it grants no
 billing, Workers Edit or token administration. See the [official CLI command-discovery guide](https://developers.cloudflare.com/cf/get-started/resources/)
 and [account-token provisioning announcement](https://developers.cloudflare.com/changelog/post/2026-10-01-account-api-token-provisioning/).
-The owner deferred browser recovery and requested local work; live key
-installation, migration/deployment, native MCP and NotebookLM checks stay open.
+At that earlier checkpoint the owner deferred browser recovery and requested
+local work. The active goal above resumes migration/deployment and built-in
+model verification. BYOK key installation, native MCP and NotebookLM checks
+still require their own evidence.
 
 The published baseline assembles native-model and capability libraries. Model
 Control, Model Execution, Model Transport,
