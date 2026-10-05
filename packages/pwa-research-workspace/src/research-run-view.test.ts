@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { ApiRequestError } from "@eliotr/pwa-http-client";
 import { researchConfigurationErrorCopy, researchConfigurationViewCopy } from "./research-configuration-panel.js";
 import type { ResearchConfigurationView } from "./research-configuration-api.js";
-import { badgeText, failureDetailFields, failureText, historyErrorMessage, historyStatusText, idleBadgeText, idleProgressText, message, researchHistoryCards, statusText, wikiProposalErrorText } from "./research-run-view.js";
+import { hasCompletedDraft, badgeText, failureDetailFields, failureText, historyErrorMessage, historyStatusText, idleBadgeText, idleProgressText, message, researchHistoryCards, statusText, wikiProposalErrorText } from "./research-run-view.js";
 import type { ResearchRunHistoryView, ResearchRunStatusView } from "./research-run-api.js";
 
 const status: ResearchRunStatusView = {
@@ -202,5 +202,14 @@ describe("Research presentation preserves execution facts", () => {
     expect(historyErrorMessage(apiError(403, "RESEARCH_READ_DENIED"))).toContain("access policy");
     expect(message(apiError(403, "RESEARCH_READ_DENIED"))).toContain("access policy");
     expect(wikiProposalErrorText(apiError(403, "WIKI_POLICY_DENIED"))).toContain("access policy");
+  });
+});
+
+describe("report-ready presentation marker", () => {
+  it("marks only a completed draft, never errors, cancellation or missing answers", () => {
+    expect(hasCompletedDraft(status)).toBe(true);
+    expect(hasCompletedDraft({ ...status, execution_state: "ACTIVE", engine_status: "errored" })).toBe(false);
+    expect(hasCompletedDraft({ ...status, execution_state: "CANCELLED" })).toBe(false);
+    expect(hasCompletedDraft({ ...status, answer: { availability: "unavailable" } })).toBe(false);
   });
 });

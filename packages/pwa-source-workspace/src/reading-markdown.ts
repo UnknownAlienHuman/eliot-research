@@ -219,12 +219,23 @@ function renderNode(value: unknown, depth: number, spend: () => boolean): Node |
       const tag = value.type === "paragraph" ? "p" : value.type === "blockquote" ? "blockquote" : "li";
       return appendChildren(document.createElement(tag), value.children, depth, spend);
     }
-    case "table":
+    case "table": {
+      if (!onlyKeys(value, ["type", "children"]) || !Array.isArray(value.children)) return null;
+      const table = appendChildren(document.createElement("table"), value.children, depth, spend);
+      if (table === null) return null;
+      const scrollRegion = document.createElement("div");
+      scrollRegion.className = "reading-table-scroll";
+      scrollRegion.tabIndex = 0;
+      scrollRegion.setAttribute("role", "region");
+      scrollRegion.setAttribute("aria-label", "Scrollable Markdown table");
+      scrollRegion.appendChild(table);
+      return scrollRegion;
+    }
     case "tableHead":
     case "tableBody":
     case "tableRow": {
       if (!onlyKeys(value, ["type", "children"]) || !Array.isArray(value.children)) return null;
-      const tag = value.type === "table" ? "table" : value.type === "tableHead" ? "thead" : value.type === "tableBody" ? "tbody" : "tr";
+      const tag = value.type === "tableHead" ? "thead" : value.type === "tableBody" ? "tbody" : "tr";
       return appendChildren(document.createElement(tag), value.children, depth, spend);
     }
     case "tableCell": {

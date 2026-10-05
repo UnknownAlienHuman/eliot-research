@@ -134,8 +134,7 @@ export function mountOrientationPanel(element: HTMLElement): (() => void) & { se
   element.innerHTML = `<h2 class="visually-hidden">Document reader</h2>
     <p class="orientation-status" role="status" aria-live="polite">Choose a source from the Library to read its admitted text.</p>
     <section class="document-reader" data-document-reader hidden aria-labelledby="document-reader-title">
-      <div class="document-reader-heading"><h2 id="document-reader-title" tabindex="-1">Document</h2><details class="document-reader-menu"><summary>Document actions</summary><span data-document-reader-size></span><div class="document-reader-actions"><button class="button button--quiet" type="button" data-close-document>Back to documents</button><button class="button button--quiet" type="button" data-download-document hidden>Download original</button></div></details></div>
-      <p data-document-reader-status role="status" aria-live="polite"></p>
+      <div class="panel-heading document-reader-heading"><h2 class="document-reader-title" id="document-reader-title" tabindex="-1">Document</h2><p class="document-reader-status" data-document-reader-status role="status" aria-live="polite"></p><details class="document-reader-menu"><summary>Document actions</summary><div class="document-reader-menu-content"><span data-document-reader-size></span><div class="document-reader-actions"><button class="button button--quiet" type="button" data-close-document>Back to documents</button><button class="button button--quiet" type="button" data-download-document hidden>Download original</button></div></div></details></div>
       <div class="reading-view" data-document-formatted></div>
       <details class="document-original"><summary>Original text</summary><pre class="document-reader-body" data-document-reader-body tabindex="0"></pre></details>
     </section>
@@ -195,7 +194,7 @@ export function mountOrientationPanel(element: HTMLElement): (() => void) & { se
     formattingController?.abort(); formattingController = undefined;
     const button = lastReadButton; lastReadButton = undefined; if (button) button.disabled = false;
     if (downloadUrl !== undefined) { URL.revokeObjectURL(downloadUrl); downloadUrl = undefined; }
-    documentReader.hidden = true; documentTitle.textContent = "Document"; documentSize.textContent = "";
+    documentReader.hidden = true; documentTitle.textContent = "Document"; documentTitle.removeAttribute("aria-label"); documentTitle.removeAttribute("title"); documentSize.textContent = "";
     documentStatus.textContent = message; documentBody.textContent = ""; documentFormatted.replaceChildren(); downloadDocument.hidden = true;
   };
   const stop = () => {
@@ -212,7 +211,7 @@ export function mountOrientationPanel(element: HTMLElement): (() => void) & { se
     clearReader();
     const local = new AbortController(); readerController = local; const mine = readerSerial;
     lastReadButton = button; button.disabled = true; documentReader.hidden = false;
-    documentTitle.textContent = card.title; documentStatus.textContent = "Reading admitted document…";
+    documentTitle.textContent = card.title; documentTitle.setAttribute("aria-label", card.title); documentTitle.title = card.title; documentStatus.textContent = "Reading admitted document…";
     void readAdmittedDocument(card.source_revision_ref, view.generation, local.signal)
       .then((document) => {
         if (mine !== readerSerial || local.signal.aborted || disposed) return;

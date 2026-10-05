@@ -49,6 +49,10 @@ export function resolveClaimEvidenceCitations(
 export function renderResearchArtifactReport(artifact: ArtifactRevision, options: ReportRenderOptions, hooks: ReportHooks): void {
   const { element, result, status } = hooks;
   const { reportHead, technical } = createResearchReportHeader(artifact, options);
+  reportHead.classList.add("research-report-header");
+  const report = document.createElement("article"); report.className = "research-report";
+  const reportTools = document.createElement("div"); reportTools.className = "research-report-tools";
+  const reportContent = document.createElement("div"); reportContent.className = "research-report-content";
   const reportActions = document.createElement("div"); reportActions.className = "research-report-actions";
   const reportActionsDetails = document.createElement("details"); reportActionsDetails.className = "research-report-actions-details";
   const reportActionsSummary = document.createElement("summary"); reportActionsSummary.textContent = "Report actions";
@@ -195,8 +199,11 @@ export function renderResearchArtifactReport(artifact: ArtifactRevision, options
     },
   }, options.publication);
   const freshnessNotice = options.sourceFreshness === undefined ? undefined : renderResearchSourceFreshnessNotice(options.sourceFreshness);
-  result.append(reportHead, ...(freshnessNotice === undefined ? [] : [freshnessNotice]), technical);
+  if (freshnessNotice !== undefined) reportTools.append(freshnessNotice);
+  reportTools.append(technical);
+  reportHead.append(reportActionsDetails);
   const sections = document.createElement("ul"); sections.className = "research-report-sections";
+  reportContent.append(sections);
   const sectionReaders: (() => Promise<void>)[] = [];
   artifact.sections.forEach((section, ordinal) => {
     const item = document.createElement("li"); item.className = "research-report-section";
@@ -335,7 +342,8 @@ export function renderResearchArtifactReport(artifact: ArtifactRevision, options
     const actions = document.createElement("div"); actions.className = "research-report-actions"; actions.append(sources);
     item.append(sectionHeading, sectionTechnical, actions, sectionActionDetails); sections.append(item);
   });
-  result.append(sections, reportActionsDetails);
+  report.append(reportHead, reportTools, reportContent);
+  result.append(report);
   // Existing reauthorization and byte-integrity checks precede each derived view.
   // A changed render, authority loss, or an owner action stops this bounded read.
   window.setTimeout(() => { void (async () => {

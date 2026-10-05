@@ -5,20 +5,12 @@ import { readLibraryPage, type LibraryPage } from "./library-api.js";
 import { readLibraryReadiness, type LibrarySelectionContext } from "./library-readiness-api.js";
 import { renderLibraryReadiness } from "./library-readiness-panel.js";
 
-function compactRevision(revision: string): string {
-  const rawRevision = /^raw-revision-([a-f\d]{12})[a-f\d]*$/iu.exec(revision);
-  if (rawRevision?.[1] !== undefined) return `${rawRevision[1]}…`;
-  return revision.length > 16 ? `…${revision.slice(-12)}` : revision;
-}
-
 function renderLibrarySource(source: LibraryPage["sources"][number], index: number): string {
   const revision = source.readiness_ref.slice(`readiness:${source.id}:`.length);
-  const shortRevision = compactRevision(revision);
-  return `<article class="source-card library-source-card"><div class="library-source-heading"><h3><button class="library-source-title" type="button" data-source="${index}" aria-label="Read ${escapeHtml(source.title)}">${escapeHtml(source.title)}</button></h3></div>
-       <p class="library-source-meta"><span>Current version</span> <code>${escapeHtml(shortRevision)}</code><span class="library-source-freshness">Freshness not checked</span></p>
+  return `<article class="source-card library-source-card"><div class="library-source-heading"><h3><button class="library-source-title" type="button" data-source="${index}" aria-label="Read ${escapeHtml(source.title)}"><span class="library-source-title-text">${escapeHtml(source.title)}</span></button></h3></div>
+       <p class="library-source-meta"><span class="library-source-freshness">Freshness not checked</span></p>
        <details class="library-source-details"><summary>Source details and versions</summary>
-         <code>${escapeHtml(source.id)}</code>
-         <code>${escapeHtml(revision)}</code>
+         <dl class="library-source-identifiers"><dt>Source ID</dt><dd><code>${escapeHtml(source.id)}</code></dd><dt>Revision</dt><dd><code>${escapeHtml(revision)}</code></dd></dl>
          <button class="button button--quiet" type="button" data-versions="${index}">Versions and recorded states</button>
        </details></article>`;
 }

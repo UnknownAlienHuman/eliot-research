@@ -312,10 +312,15 @@ export function renderResearchHistoryList(list: HTMLElement, status: HTMLElement
   researchHistoryCards(view).forEach((card) => list.append(render(card)));
 }
 
+export function hasCompletedDraft(view: ResearchRunStatusView): boolean {
+  return view.execution_state === "ENGINE_COMPLETED" && view.answer.availability === "draft";
+}
+
 export function renderResearchStatusHeading(result: HTMLElement, view: ResearchRunStatusView): HTMLElement {
   result.replaceChildren();
   const failed = view.execution_state === "ACTIVE" && view.engine_status === "errored";
   const heading = document.createElement("p"); const strong = document.createElement("strong"); strong.textContent = statusText(view); heading.append(strong);
+  heading.dataset.reportReady = String(hasCompletedDraft(view));
   const identity = document.createElement("details"); identity.className = "research-technical-details";
   const summary = document.createElement("summary"); summary.textContent = "Run details";
   const fields = document.createElement("dl"); fields.className = "research-technical-fields";

@@ -20,7 +20,7 @@ export function renderWorkspaceShell(copy: WorkspaceShellCopy): string {
       </nav>
       <div class="topbar-actions">
         <button class="button button--quiet source-chooser-toggle" type="button" data-source-chooser-toggle aria-controls="library" aria-expanded="false"><span data-source-chooser-label>Sources</span></button>
-        <details class="workspace-menu"><summary aria-label="Workspace menu">Menu</summary><div class="workspace-menu-content"><label class="theme-choice">Appearance<select data-theme-select aria-label="Color theme"><option value="system">System</option><option value="dark">Dark</option><option value="light">Light</option></select></label><a href="#library">Sources</a><a href="#research-card">Research</a><a href="#wiki-card">Wiki</a><a href="#connections-card">Connections</a></div></details>
+        <details class="workspace-menu"><summary aria-label="Workspace menu">Menu</summary><div class="workspace-menu-content"><div data-research-tools-home></div><label class="theme-choice">Appearance<select data-theme-select aria-label="Color theme"><option value="system">System</option><option value="dark">Dark</option><option value="light">Light</option></select></label><a href="#library">Sources</a><a href="#research-card">Research</a><a href="#wiki-card">Wiki</a><a href="#connections-card">Connections</a></div></details>
       </div>
     </header>
     <div class="health-strip" role="status" aria-live="polite">
@@ -30,11 +30,11 @@ export function renderWorkspaceShell(copy: WorkspaceShellCopy): string {
     </div>
     <main class="workspace" aria-label="Research workspace">
       <aside class="panel panel--sources" aria-labelledby="sources-column-title">
-        <div class="column-heading"><h2 id="sources-column-title">Sources</h2><span>Workspace library</span><button class="button button--quiet pane-toggle" type="button" data-sources-pane-toggle aria-controls="library-sidebar-home" aria-expanded="true" aria-label="Hide Sources panel" title="Hide Sources panel"><span data-pane-toggle-label>Hide</span></button></div>
+        <div class="panel-heading column-heading"><h2 id="sources-column-title">Sources</h2><button class="button button--quiet pane-toggle" type="button" data-sources-pane-toggle aria-controls="library-sidebar-home" aria-expanded="true" aria-label="Hide Sources panel" title="Hide Sources panel"><span data-pane-toggle-label>Hide</span></button></div>
         <div id="library-sidebar-home"></div>
       </aside>
       <section id="workspace-content" class="panel panel--investigation" aria-label="Investigation workspace" tabindex="-1">
-        <div class="content-heading"><div><h1 data-workspace-title>Sources</h1><p class="lede" data-workspace-lede>Choose a document to read, or add a source to your library.</p></div></div>
+        <div class="panel-heading content-heading"><div><h1 data-workspace-title>Sources</h1><p class="lede" data-workspace-lede>Choose a document to read, or add a source to your library.</p></div></div>
         <section id="sources-view" class="workspace-view" data-workspace-view="sources" tabindex="-1" aria-label="Documents">
           <div id="document-list-home"></div>
           <div class="tool-stack">
@@ -76,7 +76,7 @@ export function renderWorkspaceShell(copy: WorkspaceShellCopy): string {
         </section>
       </section>
       <aside class="panel panel--inspector" aria-labelledby="inspector-column-title">
-        <div class="column-heading"><h2 id="inspector-column-title">Context inspector</h2><span>Evidence and revisions</span><button class="button button--quiet pane-toggle" type="button" data-inspector-pane-toggle aria-controls="inspector-column-content" aria-expanded="true" aria-label="Hide context panel" title="Hide context panel"><span data-pane-toggle-label>Hide</span></button></div>
+        <div class="panel-heading column-heading"><h2 id="inspector-column-title">Context</h2><button class="button button--quiet pane-toggle" type="button" data-inspector-pane-toggle aria-controls="inspector-column-content" aria-expanded="true" aria-label="Hide context panel" title="Hide context panel"><span data-pane-toggle-label>Hide</span></button></div>
         <div id="inspector-column-content" data-inspector-body>
           <p data-inspector-default>Open a report in Research, then select a citation to inspect its evidence and source revision.</p>
           <p data-inspector-report hidden>A report is open in Research. Select a citation to inspect its evidence and source revision.</p>

@@ -65,12 +65,15 @@ export function mountWorkspaceChrome(root: HTMLElement): WorkspaceChromeControll
   const readerStatus = reader?.querySelector<HTMLElement>("[data-document-reader-status]");
   const closeDocument = reader?.querySelector<HTMLButtonElement>("[data-close-document]");
   const researchRun = app.querySelector<HTMLElement>("#research-run");
+  const researchToolsHome = app.querySelector<HTMLElement>("[data-research-tools-home]");
   const searchTools = app.querySelector<HTMLElement>("#research-tools");
   const activity = app.querySelector<HTMLElement>("#research-changes-card");
   researchRun?.querySelector("[data-research-search-home]")?.append(...(searchTools ? [searchTools] : []));
   researchRun?.querySelector("[data-research-activity-home]")?.append(...(activity ? [activity] : []));
   const composer = researchRun?.querySelector<HTMLDetailsElement>(".research-composer");
   const toolsMenu = researchRun?.querySelector<HTMLDetailsElement>(".research-actions-menu");
+  const originalToolsMenuParent = toolsMenu?.parentNode ?? null;
+  const originalToolsMenuNext = toolsMenu?.nextSibling ?? null;
   const result = researchRun?.querySelector<HTMLElement>("[data-run-result]");
   const badge = researchRun?.querySelector<HTMLElement>("[data-run-badge]");
   const progress = researchRun?.querySelector<HTMLElement>("[data-run-progress]");
@@ -83,6 +86,8 @@ export function mountWorkspaceChrome(root: HTMLElement): WorkspaceChromeControll
   if (!workspace || !dialog || !library || !sourcesPanel || !inspectorPanel || !sourcesPaneToggle || !inspectorPaneToggle || !documentListHome || !librarySidebarHome || !inspectorDefaultHint || !inspectorReportHint) {
     throw new Error("Workspace chrome requires Sources and context homes plus a library dialog and one #library");
   }
+  if (toolsMenu && !researchToolsHome) throw new Error("Workspace chrome requires a Workspace Menu home for Research tools");
+  if (toolsMenu && researchToolsHome) researchToolsHome.append(toolsMenu);
 
   const originalLibraryParent = library.parentNode;
   const originalLibraryNext = library.nextSibling;
@@ -220,6 +225,7 @@ export function mountWorkspaceChrome(root: HTMLElement): WorkspaceChromeControll
         quietReaderStatusHidden = undefined;
       }
     }
+
   };
 
   const syncChooserState = (): void => {
@@ -372,6 +378,7 @@ export function mountWorkspaceChrome(root: HTMLElement): WorkspaceChromeControll
     readingBack?.removeEventListener("click", handleReadingBack);
     toolsMenu?.removeEventListener("keydown", closeToolsWithEscape);
     if (dialog.open) dialog.close();
+    if (toolsMenu) restorePosition(toolsMenu, originalToolsMenuParent, originalToolsMenuNext);
     restorePosition(library, originalLibraryParent, originalLibraryNext);
     if (result) restorePosition(result, originalResultParent, originalResultNext);
     if (composer) composer.open = originalComposerOpen;

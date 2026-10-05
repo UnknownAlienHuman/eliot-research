@@ -1,7 +1,7 @@
 # Backend delivery plan
 
 Current execution order, refreshed on 2026-10-05 against `main`
-`075f32d778bac75ddd021bc83bdd5504aef1becd`.
+`444a32ae62e42bd8dc90d71a54b02538ba8ef5d7`.
 
 The [October 3 functional integration checkpoint](product-resume-2026-10-03.md)
 records the owner configuration, immutable run capture, MCP, provisioning and
@@ -453,7 +453,54 @@ Keep these states separate:
 
 The current phase is product code first: compilation, scoped lint, the depth-100 SQL compiler when relevant, and minimal Clippy for Rust changes. Broad behavioral/browser/native/mutation/live suites follow assembly. Deferred checks remain mandatory and must not be labelled `PASS`.
 
-## Current active checkpoint — S92 local integration
+## Current active checkpoints — October 5 implementation sprint
+
+[Issue #301](https://github.com/UnknownAlienHuman/eliot-research/issues/301)
+tracks the current bounded implementation queue and preserved S92 residual
+acceptance. Fifteen superseded planning PRs were closed after their complete
+criteria were transferred by reference; their closure is not feature acceptance.
+Original S01–S99 criteria remain in #292 and the immutable referenced passports.
+
+Two implementation lanes and the owner-workspace pass run on disjoint files:
+
+| Owner lane | Current task | Completion boundary |
+|---|---|---|
+| Access and delivery | #316 inbox Assets routing; #317 JWKS deadline; #256 scheduled/outbox and Queue fault isolation | Published `d46bc194`; narrow local tests and affected compilation passed, native/live acceptance remains pending |
+| Backup and erasure | #255/#257/#258; first separate primary-parts inventory, then producer fencing and composed purge | Inventory `54c9aae` plus streaming/byte-budget correction `444a32ae` published; producer fencing, deletion composition and restore acceptance remain open |
+| Owner workspace | #267 typography, tonal themes and Markdown reading | Typography `cedf14ca` published; follow-up aligns panel headers, groups tools and compacts source/readiness metadata. Table and layout browser checks are local-only; live and overall owner acceptance remain pending |
+
+The workspace checkpoint preserves explicit Markdown hard breaks while rendering
+ordinary source soft wraps as spaces. It changes no original evidence bytes.
+System/light/dark theme behavior remains available. No deployment, remote
+migration, provider execution or live qualification follows from these checks.
+
+Next dependency order: finish residual #316/#256 acceptance (#317 is complete), then #255/#257/#258, then #209
+and the remaining S92 model/MCP path. Follow with #268, #318, #222 and #294.
+#319 is a separate operator configuration review. Refresh each task before
+editing; the historical queues below do not override this order.
+
+Combined source integration preserves both backend checkpoints. The source-only
+Core heuristic currently reports 10,003 lines against 10,000; this is an explicit
+remaining maintainability check, not a measured Worker size or runtime failure.
+Do not hide it by removing tests, compressing formatting or raising the limit.
+
+### Manual inbox routing verifier
+
+To reproduce the published reliability checkpoint's native local
+Assets and framing check with an installed Chromium for `playwright-core`:
+
+```bash
+pnpm build:pwa
+pnpm --filter @eliotr/core exec node --test test/agent-inbox-assets-routing.test.mjs
+```
+
+For a nondefault browser install, set `PLAYWRIGHT_BROWSERS_PATH` to that local
+installation. Use writable task-local Wrangler configuration/log directories
+where the environment requires them. The verifier starts its own local test
+session. This is a manual check, not part of the Core Vitest glob or automatic
+CI, and does not qualify deployed Cloudflare edge behavior.
+
+## S92 local integration — delivered scenarios and residual acceptance
 
 92.1 is delivered (`8db894c6`): six browser-harness scenarios in
 `tests/integration/browser/s92-intake.mjs` — owner identity (RS256),
@@ -609,9 +656,11 @@ Remote application and exact-build native/live acceptance remain separate.
 
 Also reuse the already delivered project/client grants, machine HTTP/MCP readers and controls, owner historical reads, long-run authority, append-only project attachment, normalized bundle ingestion, runtime failure diagnostics and reconnect intent. Their exact lineages remain in #202–#205, #209, #211, #223–#225, #290 and #291. Open planning cards do not mean those systems are wholly absent.
 
-## Queue after S92
+## Broader dependency map after the active sprint
 
-Finish the active checkpoint before switching. Then resume this dependency order:
+The October 5 queue above takes precedence. This map preserves the broader
+product scope; inspect current implementation and task residuals before selecting
+a checkpoint:
 
 | Order | Tasks | Next product result |
 |---|---|---|
