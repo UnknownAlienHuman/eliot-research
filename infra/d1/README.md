@@ -8,7 +8,7 @@ inside D1 transactions.
 ## Expression-depth compiler guard
 
 Run `pnpm d1:depth` (or `node infra/d1/check-expression-depth.mjs`) before publishing SQL changes.
-It also starts `check`/`check:full`; `check:affected` is a deprecated alias for the full check.
+It also starts `check:full`; `check:affected` is a deprecated alias for the full check.
 Independent Ubuntu/Windows CI jobs run it without waiting for source budgets or behavioral suites. No
 result is ignored or converted into a successful gate.
 
@@ -26,9 +26,14 @@ supported INSTEAD OF writes for writable views. Probe statements are never execu
 only the store, object/shape or migration filename and a bounded error category, not SQL or row data.
 The same gate inventories application `prepare(...)` calls in Core and package source, evaluates
 recoverable literals/registered variants without executing application code, and compiles them with
-inert placeholder bindings. The extractor records a target only for direct canonical receivers
-`env.CORE_DB`, `env.SEARCH_DB`, `this.env.CORE_DB`, and `this.env.SEARCH_DB`; generic database objects,
-aliases, and other receiver shapes stay `unknown`. It records a literal `.bind(...)` argument count
+inert placeholder bindings. The extractor records a target for direct canonical receivers
+`env.CORE_DB`, `env.SEARCH_DB`, `this.env.CORE_DB`, and `this.env.SEARCH_DB`, and for visible,
+earlier same-function `const` aliases and alias chains rooted at `env.CORE_DB` or `env.SEARCH_DB`
+through that function's `env` parameter. Alias resolution rejects mutated or shadowed bindings;
+aliases from `this.env`, constructor fields, parameters, imports, `let`, destructuring,
+conditional/factory expressions, and cross-function or call-site forwarding remain `unknown`.
+Recovered aliases carry the
+`resolved-local-const-alias` target status. The extractor records a literal `.bind(...)` argument count
 when statically recoverable, otherwise `bindingArity` stays unknown. Unresolved SQL sites include a
 stable classification, receiver target status, and bind-arity status. Shadowed names and unknown
 branches cannot masquerade as recovered constants. Fixture-only files and explicitly named

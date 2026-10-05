@@ -58,7 +58,7 @@ function transparentParent(node) {
   return current;
 }
 
-function targetBinding(receiver) {
+function canonicalBindingParts(receiver) {
   const expression = unwrapExpression(receiver);
   let bindingName;
   let base;
@@ -74,8 +74,13 @@ function targetBinding(receiver) {
     (ts.isIdentifier(base) && base.text === "env")
     || (ts.isPropertyAccessExpression(base) && base.name.text === "env" && base.expression.kind === ts.SyntaxKind.ThisKeyword)
   );
-  if (directEnvironment && bindingName === "CORE_DB") return { targetStore: "core", targetStatus: "resolved-direct-binding" };
-  if (directEnvironment && bindingName === "SEARCH_DB") return { targetStore: "search", targetStatus: "resolved-direct-binding" };
+  return directEnvironment ? { base, bindingName } : undefined;
+}
+
+function targetBinding(receiver) {
+  const parts = canonicalBindingParts(receiver);
+  if (parts?.bindingName === "CORE_DB") return { targetStore: "core", targetStatus: "resolved-direct-binding" };
+  if (parts?.bindingName === "SEARCH_DB") return { targetStore: "search", targetStatus: "resolved-direct-binding" };
   return { targetStore: "unknown", targetStatus: "unresolved-receiver" };
 }
 
@@ -283,6 +288,188 @@ export function extractSourceText(text, file = resolve(root, "<fixture>.ts")) {
     return owner;
   }
 
+  function resolveLocalTarget(receiver, call) {
+    const owner = nearestFunction(call);
+    if (!owner || !owner.body) return targetBinding(receiver);
+
+    const direct = targetBinding(receiver);
+    if (direct.targetStore !== "unknown") return direct;
+
+    const declarations = [];
+    function lexicalScope(node) {
+      let current = node.parent;
+      while (current && current !== owner) {
+        if (ts.isBlock(current) || ts.isCaseBlock(current) || ts.isCatchClause(current)
+            || ts.isForStatement(current) || ts.isForInStatement(current) || ts.isForOfStatement(current)) {
+          return current;
+        }
+        current = current.parent;
+      }
+      return owner;
+    }
+
+    function addPatternNames(pattern, declaration, kind, scope) {
+      if (ts.isIdentifier(pattern)) {
+        declarations.push({ name: pattern.text, declaration, kind, scope });
+        return;
+      }
+      if (ts.isObjectBindingPattern(pattern) || ts.isArrayBindingPattern(pattern)) {
+        for (const element of pattern.elements) {
+          if (ts.isBindingElement(element)) addPatternNames(element.name, declaration, "destructuring", scope);
+        }
+      }
+    }
+
+    function visitDeclarations(node) {
+      if (node !== owner.body && ts.isFunctionLike(node)) {
+        if (ts.isFunctionDeclaration(node) && node.name) {
+          declarations.push({ name: node.name.text, declaration: node, kind: "function", scope: lexicalScope(node) });
+        }
+        return;
+      }
+      if (ts.isVariableDeclaration(node)) {
+        const declarationList = node.parent;
+        if (ts.isCatchClause(declarationList)) {
+          addPatternNames(node.name, node, "catch", declarationList);
+          ts.forEachChild(node, visitDeclarations);
+          return;
+        }
+        const flags = ts.getCombinedNodeFlags(declarationList);
+        const scope = (flags & ts.NodeFlags.BlockScoped) !== 0 ? lexicalScope(node) : owner;
+        const kind = (flags & ts.NodeFlags.Const) !== 0 ? "const"
+          : (flags & ts.NodeFlags.Let) !== 0 ? "let" : "var";
+        addPatternNames(node.name, node, kind, scope);
+      } else if (ts.isClassDeclaration(node) && node.name) {
+        declarations.push({ name: node.name.text, declaration: node, kind: "class", scope: lexicalScope(node) });
+      } else if (ts.isEnumDeclaration(node)) {
+        declarations.push({ name: node.name.text, declaration: node, kind: "enum", scope: lexicalScope(node) });
+      }
+      ts.forEachChild(node, visitDeclarations);
+    }
+
+    for (const parameter of owner.parameters) {
+      addPatternNames(parameter.name, parameter, "parameter", owner);
+    }
+    visitDeclarations(owner.body);
+
+    function scopeChain(node) {
+      const scopes = [];
+      let current = node.parent;
+      while (current && current !== owner) {
+        if (ts.isBlock(current) || ts.isCaseBlock(current) || ts.isCatchClause(current)
+            || ts.isForStatement(current) || ts.isForInStatement(current) || ts.isForOfStatement(current)) {
+          scopes.push(current);
+        }
+        if (ts.isWithStatement(current)) return undefined;
+        current = current.parent;
+      }
+      if (current !== owner) return undefined;
+      scopes.push(owner);
+      return scopes;
+    }
+
+    function bindingAt(identifier) {
+      const scopes = scopeChain(identifier);
+      if (!scopes) return undefined;
+      for (const scope of scopes) {
+        const matches = declarations.filter((item) => item.scope === scope && item.name === identifier.text);
+        if (matches.length > 1) return { ambiguous: true };
+        if (matches.length === 1) return matches[0];
+      }
+      return undefined;
+    }
+
+    function isEnvObject(identifier, wanted, resolving = new Set()) {
+      const binding = bindingAt(identifier);
+      if (binding?.declaration === wanted) return true;
+      if (!binding || binding.ambiguous || binding.kind !== "const" || !ts.isVariableDeclaration(binding.declaration)
+          || !binding.declaration.initializer || !isEarlier(binding, identifier) || resolving.has(binding.declaration)) return false;
+      const initializer = unwrapExpression(binding.declaration.initializer);
+      if (!initializer || !ts.isIdentifier(initializer) || hasWrites(binding.declaration)) return false;
+      resolving.add(binding.declaration);
+      const result = isEnvObject(initializer, wanted, resolving);
+      resolving.delete(binding.declaration);
+      return result;
+    }
+
+    function lhsWritesDeclaration(left, wanted) {
+      const expression = unwrapExpression(left);
+      if (!expression) return false;
+      if (ts.isIdentifier(expression)) return bindingAt(expression)?.declaration === wanted.declaration;
+      if (ts.isArrayLiteralExpression(expression) || ts.isObjectLiteralExpression(expression)) {
+        return expression.elements?.some((element) => lhsWritesDeclaration(element, wanted))
+          || expression.properties?.some((property) => ts.isShorthandPropertyAssignment(property)
+            ? bindingAt(property.name)?.declaration === wanted.declaration
+            : ts.isPropertyAssignment(property) && lhsWritesDeclaration(property.initializer, wanted))
+          || false;
+      }
+      if (ts.isSpreadElement(expression) || ts.isSpreadAssignment(expression)) {
+        return lhsWritesDeclaration(expression.expression, wanted);
+      }
+      if (ts.isPropertyAccessExpression(expression) || ts.isElementAccessExpression(expression)) {
+        const base = unwrapExpression(expression.expression);
+        const property = ts.isPropertyAccessExpression(expression) ? expression.name.text
+          : expression.argumentExpression && ts.isStringLiteral(expression.argumentExpression) ? expression.argumentExpression.text : undefined;
+        return (property === "CORE_DB" || property === "SEARCH_DB") && ts.isIdentifier(base)
+          && wanted.kind === "parameter" && wanted.name === "env" && isEnvObject(base, wanted.declaration);
+      }
+      return false;
+    }
+
+    function hasWrites(wantedDeclaration) {
+      const wanted = declarations.find((binding) => binding.declaration === wantedDeclaration);
+      if (!wanted) return true;
+      let written = false;
+      function visitWrites(node) {
+        if (node !== owner.body && ts.isFunctionLike(node)
+            && !(wanted.kind === "parameter" && wanted.name === "env")) return;
+        if (ts.isBinaryExpression(node) && node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment
+            && node.operatorToken.kind <= ts.SyntaxKind.LastAssignment
+            && lhsWritesDeclaration(node.left, wanted)) written = true;
+        if ((ts.isForInStatement(node) || ts.isForOfStatement(node))
+            && lhsWritesDeclaration(node.initializer, wanted)) written = true;
+        if ((ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node))
+            && (node.operator === ts.SyntaxKind.PlusPlusToken || node.operator === ts.SyntaxKind.MinusMinusToken)
+            && lhsWritesDeclaration(node.operand, wanted)) written = true;
+        if (ts.isDeleteExpression(node) && lhsWritesDeclaration(node.expression, wanted)) written = true;
+        ts.forEachChild(node, visitWrites);
+      }
+      visitWrites(owner.body);
+      return written;
+    }
+
+    function isEarlier(binding, reference) {
+      return binding.declaration.end < reference.getStart(source);
+    }
+
+    function resolveAlias(expressionNode, reference, resolving = new Set()) {
+      const expression = unwrapExpression(expressionNode);
+      const parts = canonicalBindingParts(expression);
+      if (parts?.bindingName === "CORE_DB" || parts?.bindingName === "SEARCH_DB") {
+        if (!ts.isIdentifier(parts.base)) return undefined;
+        const baseBinding = bindingAt(parts.base);
+        if (!baseBinding || baseBinding.ambiguous || baseBinding.kind !== "parameter" || baseBinding.name !== "env"
+            || hasWrites(baseBinding.declaration)) return undefined;
+        const resolved = targetBinding(expression);
+        return resolved.targetStore === "unknown"
+          ? undefined
+          : { ...resolved, targetStatus: "resolved-local-const-alias" };
+      }
+      if (!expression || !ts.isIdentifier(expression)) return undefined;
+
+      const binding = bindingAt(expression);
+      if (!binding || binding.ambiguous || binding.kind !== "const" || !ts.isVariableDeclaration(binding.declaration)
+          || !binding.declaration.initializer || !isEarlier(binding, reference) || resolving.has(binding.declaration)
+          || hasWrites(binding.declaration)) return undefined;
+      resolving.add(binding.declaration);
+      const result = resolveAlias(binding.declaration.initializer, binding.declaration, resolving);
+      resolving.delete(binding.declaration);
+      return result;
+    }
+
+    return resolveAlias(receiver, call) ?? targetBinding(receiver);
+  }
+
   function shadowedNames(owner, initialValues = new Map()) {
     const environment = new Map();
     if (!owner) return environment;
@@ -340,7 +527,7 @@ export function extractSourceText(text, file = resolve(root, "<fixture>.ts")) {
       const location = sourceLocation(source, node);
       const receiverNode = node.expression.expression;
       const receiver = receiverNode.getText(source);
-      const target = targetBinding(receiverNode);
+      const target = resolveLocalTarget(receiverNode, node);
       const variants = new Map();
       const unresolvedVariants = [];
       for (const environment of environments) {
