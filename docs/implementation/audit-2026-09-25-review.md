@@ -95,6 +95,20 @@ attested build, then S97. Managed OAuth and unselected transport profiles are no
 Hostname retirement is an explicit operator decision, not authorization for account changes or a git
 history rewrite. Exposed hostname/model metadata is not evidence of leaked credentials or Access bypass.
 
+## PR303 reconciliation, October 5
+
+The useful public-description changes from PR303 were reconciled against
+current `main`, with operator-specific model/route descriptions kept outside
+public documentation. The original September 25 audit remains historical:
+its branch-local checks, percentages, issue counts and queue recommendations
+are not current-main measurements. Current configuration semantics, safety
+disclaimers, implementation-index rows and manual-only CI facts are retained.
+The stale branch is not merged wholesale or deleted, and its original audit
+remains available at the reviewed immutable head named above. This prose
+checkpoint changes no authentication, runtime, model selection or account
+configuration. Scoped privacy/index verification is recorded separately at
+publication; no full-program or live acceptance follows from these redactions.
+
 ## Tracker actions and remaining scope
 
 Kept #293–#302 rather than duplicating Claude's ten issues. Added #304 for incomplete CI selection and

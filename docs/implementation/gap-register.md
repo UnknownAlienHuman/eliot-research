@@ -98,8 +98,8 @@ at `2026-09-14 09:59:54` UTC (`39ffd48`). The owner browser admitted a replaceme
 retained both LIVE revisions and two project memberships, and rejected a stale second form.
 D1 recorded SOURCE_UPDATED sequence 5, revision 2. Historical report reopening requires
 the follow-up correction described in the stop checkpoint; this is not whole-project acceptance.
-The selected model is Cloudflare `@cf/zai-org/glm-5.3-flash`; both installed routes use
-`owner-cloudflare-glm53-v6`. Run credentials are installed. Automatic qualification renewal is
+The selected model is an owner-chosen Workers AI model; exact identifiers remain in
+operator configuration. Both installed routes use version `v6`. Run credentials are installed. Automatic qualification renewal is
 implemented, but its live Worker path still requires the missing `ELIOTR_MODEL_GATEWAY_READ_TOKEN`.
 Fresh v6 synthesis and audit proofs were promoted on September 14 with a seven-day lifetime through
 September 21, 03:10 UTC; the deployed PWA showed READY TO RUN with Start research enabled.

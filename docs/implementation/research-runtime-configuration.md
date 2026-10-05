@@ -300,22 +300,22 @@ one-shot dispatch claim (migration `0055`) before invoking its configured model 
 Neither an ambiguous HTTP response nor a repeated dispatch authorizes another call.
 The endpoint returns execution observations; it does not install an ACTIVE profile.
 
-On 2026-09-13 the owner selected OpenRouter `thinkingmachines/inkling:free` and
-installed its BYOK key under alias `default` in `eliotr-reasoning`. The synthesis
-and audit routes for `owner-inkling-free-v1` were created and their active versions
-read back through Cloudflare MCP. This provider requires `prompt_json`: its
-[official model page](https://openrouter.ai/thinkingmachines/inkling:free) lists
-no `response_format` support. The same page says prompts and outputs are logged
-for model improvement and prohibits confidential or personal data on this free
-endpoint. Initial qualification uses the public project README. Published routes
+On 2026-09-13 the owner selected a free external endpoint and installed its BYOK
+key under the operator's selected alias. The synthesis and audit routes were
+created and their active versions read back through Cloudflare MCP. The selected
+endpoint required `prompt_json`; its then-current model page listed no
+`response_format` support and described prompt/output logging for model improvement
+and a prohibition on confidential or personal data. Exact provider, model, route
+and alias values remain in operator configuration. Initial qualification uses
+the public project README. Published routes
 are configuration evidence, not proof of a completed model response or report.
 
-The current owner-authorized fallback is Cloudflare `@cf/zai-org/glm-5.3-flash` for
-document work; the owner rejected `gpt-oss-120b` for this integration.
-Both `owner-cloudflare-glm53-v2` routes and their published token pricing have been
+The recorded owner-authorized route for document work is a Workers AI text model.
+Exact model identifiers, route names and pricing snapshots remain in operator
+configuration. Its synthesis and audit routes and published token pricing were
 prepared with explicit `reasoning_effort: "low"`. The parameter is included in the
-deployment digest; omission preserves provider defaults. GLM defaults to maximum
-reasoning, so short document work needs an explicit effort setting.
+deployment digest; omission preserves provider defaults. The selected model's
+default reasoning effort motivated an explicit setting for short document work.
 A native Worker request on 2026-09-13 returned HTTP 200 with 1,240 output tokens in
 26.584 seconds. Application qualification remains incomplete until response
 provenance and immutable output persistence succeed; HTTP 200 alone does not

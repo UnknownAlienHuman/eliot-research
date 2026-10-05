@@ -22,6 +22,8 @@ from the tables below, so an unlisted file is a bug, not an omission you may ign
 | [implementation-status.md](implementation-status.md) | What the four states mean and why a compiling port is not an implemented feature. |
 | [implementation-status.json](implementation-status.json) | The machine-readable registry. `pnpm check:implementation-status` validates it. |
 | [backend-delivery-plan.md](backend-delivery-plan.md) | Single ordered code queue, delivered checkpoint references, and separate assembled-product acceptance. |
+| [product-resume-2026-10-02.md](product-resume-2026-10-02.md) | Dated product integration checkpoint with preserved decisions and pending acceptance. |
+| [product-resume-2026-10-03.md](product-resume-2026-10-03.md) | Owner configuration, immutable Research capture and functional integration checkpoint. |
 | [audit-2026-09-25-review.md](audit-2026-09-25-review.md) | Independent review of audit PR303: reproduced SQL/lint/CI findings, corrections, issue mapping and verification limits. |
 | [gap-register.md](gap-register.md) | Prioritized list of what is genuinely missing, with the closure evidence each gap requires. |
 | [2026-09-10 saved work](checkpoints/2026-09-10/README.md) | Inactive snapshots of unfinished local work, push verification and cleanup inventory. |
@@ -47,6 +49,7 @@ from the tables below, so an unlisted file is a bug, not an omission you may ign
 | Document | Purpose |
 |---|---|
 | [branch-discipline.md](branch-discipline.md) | Main-only implementation and exact-head, integration-proven branch cleanup. |
+| [scoped-verification.md](scoped-verification.md) | Focused verification commands and the distinction between scoped checks and the full chain. |
 | [toolchain.md](toolchain.md) | Pinned bootstrap tools. Leaf agents must not upgrade these; toolchain changes are ER-00. |
 | [launch-prs/README.md](launch-prs/README.md) | Theme map and the checkpoint dependency graph. |
 | [launch-prs/agent-start.md](launch-prs/agent-start.md) | How to select a checkpoint and the claim block to post before editing. |

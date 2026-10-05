@@ -7,7 +7,7 @@
 **Private owner workspace is deployed** (owner-only URL, not published).
 The live owner path imports and reads TXT, Markdown, PDF and DOCX documents, saves projects,
 supports exact and lexical search, and runs a full scan of the selected scope. Owner research
-executes the 18-stage workflow with Cloudflare `@cf/zai-org/glm-5.3-flash`, saves a DRAFT,
+executes the 18-stage workflow through an owner-qualified model route, saves a DRAFT,
 reopens it from Research history, and verifies its citations against current owner evidence.
 The recorded two-document project run produced four `SUPPORTED` claim assessments while
 retaining incomplete scope coverage. Research drafts can also be saved as Wiki proposals,

@@ -582,7 +582,7 @@ describe("owner OpenRouter model-key check and use", () => {
     expect(modelRequests).toHaveLength(4);
     for (const [index, request] of modelRequests.entries()) {
       expect(request.url).toBe(`${TEST_ENV.AI_GATEWAY_REASONING_URL}/openrouter/chat/completions`);
-      expect(request.headers.get("cf-aig-authorization")).toBe("Bearer local-test-gateway-token");
+      expect(request.headers.get("cf-aig-authorization")).toBe("Bearer local-test-gateway-token"); // privacy-allowlist: synthetic token fixture
       expect(request.headers.get("cf-aig-byok-alias")).toBe(index < 2 ? savedKey.receipt.alias : replacementKeyReceipt.receipt.alias);
       expect(JSON.parse(request.body)).toMatchObject({
         model: MODEL_ID,

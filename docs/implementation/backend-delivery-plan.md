@@ -36,8 +36,8 @@ chain, and the legacy `check:affected` alias prints a deprecation warning before
 running it. The scoped-verification guide identifies focused checks without
 claiming automatic affected-file selection.
 
-One direct Workers AI smoke returned HTTP 200, exact model
-`@cf/zai-org/glm-5.3`, expected text, and usage of 25 input / 8 output tokens.
+One direct Workers AI smoke returned HTTP 200 for the exact selected built-in
+model, expected text, and usage of 25 input / 8 output tokens.
 That establishes current provider access only. It does not qualify installed
 Research prompts, project configuration or a deployed Research run. The Ling
 smoke received HTTP 429; no retry or provider fallback was performed. Cloudflare
@@ -77,6 +77,14 @@ location and proves an unrelated product file cannot import Playwright.
 One boundary scan, the negative verifier, scoped ESLint and syntax checks passed.
 This repairs local preflight only; the next guarded deployment requires a
 fresh config pinned to the published source and its own live readback.
+
+After publication at `5b0516be`, a GET-only MCP Access timeout stopped another
+attempt before upload; direct plugin readback succeeded. The next guarded
+attempt passed compilation, scoped deployment lint, PWA build and Wrangler dry
+run, then stopped on the maintenance HTTP-route-surface guard. No current
+Worker upload is claimed. An independent route/source audit must resolve that
+guard before another attempt. The generated Core `cf:types` declarations are
+now ignored and the observed generated file was preserved in private state.
 
 The #294 checkpoint records direct Core/Search receiver provenance and known
 bind arity and rejects a known-target failure even if the other schema accepts

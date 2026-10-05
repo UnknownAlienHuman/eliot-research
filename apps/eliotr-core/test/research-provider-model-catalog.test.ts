@@ -66,7 +66,7 @@ describe("official AI Gateway provider model catalog transports", () => {
       expect(init?.method).toBe("GET");
       expect(init?.redirect).toBe("error");
       const headers = new Headers(init?.headers);
-      expect(headers.get("cf-aig-authorization")).toBe("Bearer server-held-test-token");
+      expect(headers.get("cf-aig-authorization")).toBe("Bearer server-held-test-token"); // privacy-allowlist: synthetic token fixture
       expect(headers.get("cf-aig-no-wholesale")).toBe("true");
       expect(headers.get("cf-aig-byok-alias")).toBeNull();
       expect(headers.get("authorization")).toBeNull();
@@ -108,7 +108,7 @@ describe("official AI Gateway provider model catalog transports", () => {
       expect(url.searchParams.get("limit")).toBe("100");
       const headers = new Headers(init?.headers);
       expect(headers.get("anthropic-version")).toBe("2023-06-01");
-      expect(headers.get("cf-aig-authorization")).toBe("Bearer server-held-test-token");
+      expect(headers.get("cf-aig-authorization")).toBe("Bearer server-held-test-token"); // privacy-allowlist: synthetic token fixture
       expect(headers.get("cf-aig-no-wholesale")).toBe("true");
       expect(headers.get("cf-aig-byok-alias")).toBe("research");
       expect(headers.get("x-api-key")).toBeNull();
@@ -179,7 +179,7 @@ describe("official AI Gateway provider model catalog transports", () => {
       expect(init?.method).toBe("GET");
       expect(init?.redirect).toBe("error");
       const headers = new Headers(init?.headers);
-      expect(headers.get("cf-aig-authorization")).toBe("Bearer server-held-test-token");
+      expect(headers.get("cf-aig-authorization")).toBe("Bearer server-held-test-token"); // privacy-allowlist: synthetic token fixture
       expect(headers.get("cf-aig-no-wholesale")).toBe("true");
       expect(headers.get("cf-aig-byok-alias")).toBe("research");
       expect(headers.get("authorization")).toBeNull();
