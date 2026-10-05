@@ -35,3 +35,4 @@ export * from "./backup.js";
 export * from "./backup-table-spec-types.js";
 export * from "./core-table-specs.js";
 export * from "./validation/cross-field.js";
+export { DELIVERY_MESSAGE_PROTOCOL, type OutboxLease, type DeliveryMessage, type QueueSendReceipt, type OutboxClaimRequest, type InboxLease, type DeliveryHandlerContext } from "./delivery.js";

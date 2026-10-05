@@ -17,9 +17,7 @@ export interface MetricsPort {
   write(point: MetricPoint): void;
 }
 
-export interface RawMetricsSink {
-  write(point: MetricPoint): void;
-}
+export type RawMetricsSink = MetricsPort;
 
 export type MetricAdmissionReason =
   | "ADMITTED"
@@ -90,20 +88,7 @@ const JWT_SHAPE = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/;
 const SAFE_DIMENSION = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const MAX_HEALTH_DIMENSIONS = 256;
 
-interface MutableMetricPoint {
-  operation_kind: string;
-  query_product?: string;
-  project_id_hash?: string;
-  route_generation?: string;
-  embedding_generation?: string;
-  index_generation?: string;
-  workflow_stage?: string;
-  result_disposition?: string;
-  error_class?: string;
-  duration_ms?: number;
-  cost_usd?: number;
-  count?: number;
-}
+type MutableMetricPoint = { -readonly [Key in keyof MetricPoint]: MetricPoint[Key] };
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;

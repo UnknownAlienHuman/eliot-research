@@ -17,6 +17,8 @@
     "run_worker_first": [
       "/healthz",
       "/mcp",
+      "/agent-inbox",
+      "/agent-inbox/*",
       "/api/*",
       "/federation/*",
       "/oauth/*"

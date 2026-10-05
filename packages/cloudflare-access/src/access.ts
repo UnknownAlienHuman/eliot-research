@@ -1,4 +1,4 @@
-import { readResponseBodyWithinBytes, utf8ByteLength } from "@eliotr/platform-cloudflare";
+import { utf8ByteLength } from "@eliotr/platform-cloudflare";
 
 export interface AccessIdentity {
   readonly principal_ref: string;
@@ -40,6 +40,8 @@ export interface CloudflareAccessVerifierConfig {
   readonly max_jwks_keys?: number;
   readonly jwks_cache_ttl_seconds?: number;
   readonly unknown_kid_refresh_cooldown_seconds?: number;
+  readonly jwks_fetch_timeout_ms?: number;
+  readonly jwks_failure_cooldown_seconds?: number;
 }
 export interface CloudflareAccessVerifierDependencies {
   readonly fetch?: typeof fetch;
@@ -56,6 +58,8 @@ interface Config {
   readonly maxKeys: number;
   readonly cacheTtlMs: number;
   readonly unknownKidCooldownMs: number;
+  readonly jwksFetchTimeoutMs: number;
+  readonly jwksFailureCooldownMs: number;
 }
 interface JwtPayload {
   readonly iss: string;
@@ -85,6 +89,8 @@ const DEFAULTS = {
   maxKeys: 16,
   cacheTtl: 300,
   unknownKidCooldown: 30,
+  jwksFetchTimeoutMs: 5_000,
+  jwksFailureCooldown: 5,
 } as const;
 function fail(code: AccessVerificationErrorCode, message: string, retryable = false, cause?: unknown): never {
   throw new AccessVerificationError(code, message, retryable, cause);
@@ -158,6 +164,10 @@ function config(input: CloudflareAccessVerifierConfig): Config {
       "jwks_cache_ttl_seconds", 1, 3600) * 1000,
     unknownKidCooldownMs: integer(input.unknown_kid_refresh_cooldown_seconds ??
       DEFAULTS.unknownKidCooldown, "unknown_kid_refresh_cooldown_seconds", 1, 300) * 1000,
+    jwksFetchTimeoutMs: integer(input.jwks_fetch_timeout_ms ?? DEFAULTS.jwksFetchTimeoutMs,
+      "jwks_fetch_timeout_ms", 1, 30_000),
+    jwksFailureCooldownMs: integer(input.jwks_failure_cooldown_seconds ?? DEFAULTS.jwksFailureCooldown,
+      "jwks_failure_cooldown_seconds", 1, 300) * 1000,
   };
 }
 function base64Url(value: string, label: string): Uint8Array {
@@ -290,6 +300,121 @@ function validateClaims(payload: JwtPayload, expected: Config, nowMs: number): v
     fail("ACCESS_JWT_MALFORMED", "Access JWT time ordering is invalid");
   }
 }
+
+function abortError(signal: AbortSignal): Error {
+  return signal.reason instanceof Error ? signal.reason : new Error("Access JWKS request was aborted");
+}
+
+function awaitWithSignal<T>(
+  operation: PromiseLike<T>,
+  signal: AbortSignal,
+  onLateValue?: (value: T) => void,
+): Promise<T> {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const cleanup = (): void => signal.removeEventListener("abort", onAbort);
+    const onAbort = (): void => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(abortError(signal));
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+    if (signal.aborted) onAbort();
+    Promise.resolve(operation).then(
+      (value) => {
+        if (settled) {
+          try { onLateValue?.(value); }
+          catch { /* A late-result cleanup must not change the deadline outcome. */ }
+          return;
+        }
+        settled = true;
+        cleanup();
+        resolve(value);
+      },
+      (error: unknown) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        reject(error);
+      },
+    );
+  });
+}
+
+function cancelResponseBodyQuietly(response: Response): void {
+  try {
+    void response.body?.cancel().catch(() => undefined);
+  } catch {
+    // Cleanup is best effort; preserve the verification failure.
+  }
+}
+
+async function readJwksBodyWithinBytes(
+  response: Response,
+  maxBytes: number,
+  maxChunks: number,
+  signal: AbortSignal,
+): Promise<Uint8Array> {
+  const rawLength = response.headers.get("content-length");
+  if (rawLength !== null) {
+    if (!/^(0|[1-9][0-9]*)$/u.test(rawLength)) {
+      cancelResponseBodyQuietly(response);
+      fail("ACCESS_JWKS_INVALID", "Access JWKS has an invalid Content-Length", true);
+    }
+    const length = Number(rawLength);
+    if (!Number.isSafeInteger(length) || length > maxBytes) {
+      cancelResponseBodyQuietly(response);
+      fail("ACCESS_JWKS_INVALID", "Access JWKS exceeds runtime envelope", true);
+    }
+  }
+  const stream = response.body;
+  if (stream === null) return new Uint8Array();
+  const reader = stream.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  let count = 0;
+  try {
+    while (true) {
+      const result = await awaitWithSignal(reader.read(), signal);
+      if (result.done) break;
+      const chunk = result.value;
+      if (!(chunk instanceof Uint8Array)) {
+        fail("ACCESS_JWKS_INVALID", "Access JWKS yielded a non-byte chunk", true);
+      }
+      count += 1;
+      if (count > maxChunks) fail("ACCESS_JWKS_INVALID", "Access JWKS exceeded its chunk-count limit", true);
+      total += chunk.byteLength;
+      if (!Number.isSafeInteger(total) || total > maxBytes) {
+        fail("ACCESS_JWKS_INVALID", "Access JWKS exceeds runtime envelope", true);
+      }
+      chunks.push(chunk.slice());
+    }
+  } catch (error) {
+    try {
+      const cancellation = reader.cancel(error);
+      void cancellation.catch(() => undefined);
+      void Promise.resolve().then(() => {
+        try { reader.releaseLock(); }
+        catch { /* A cancelled read can still be settling at this point. */ }
+      });
+    }
+    catch { /* Cancellation is best effort; retain the bounded-read failure. */ }
+    throw error;
+  } finally {
+    try { reader.releaseLock(); }
+    catch { /* An abort may still be settling the underlying stream read. */ }
+  }
+
+  const body = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    body.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return body;
+}
+
 export function createCloudflareAccessVerifier(
   input: CloudflareAccessVerifierConfig,
   dependencies: CloudflareAccessVerifierDependencies = {},
@@ -300,39 +425,54 @@ export function createCloudflareAccessVerifier(
   const clock = dependencies.now ?? Date.now;
   const certsUrl = `${expected.issuer}/cdn-cgi/access/certs`;
   let cache: KeyCache | undefined;
-  let inFlight: Promise<KeyCache> | undefined;
+  let inFlight: { readonly token: object; readonly promise: Promise<KeyCache> } | undefined;
   let lastRefresh = Number.NEGATIVE_INFINITY;
+  let failureCooldownUntil = Number.NEGATIVE_INFINITY;
   const now = (): number => {
     const value = clock();
     if (!Number.isFinite(value) || value < 0) fail("ACCESS_CONFIG_INVALID", "clock returned invalid time");
     return value;
   };
-  const load = async (): Promise<KeyCache> => {
+  const clearRefreshFlight = (token: object): void => {
+    const active = inFlight as { readonly token: object; readonly promise: Promise<KeyCache> } | undefined;
+    if (active?.token === token) inFlight = undefined;
+  };
+  const load = async (signal: AbortSignal): Promise<KeyCache> => {
     let response: Response;
     try {
-      response = await fetchFn(certsUrl, { method: "GET", headers: { accept: "application/json" }, redirect: "manual" });
+      response = await awaitWithSignal(fetchFn(certsUrl, {
+        method: "GET",
+        headers: { accept: "application/json" },
+        redirect: "manual",
+        signal,
+      }), signal, cancelResponseBodyQuietly);
     } catch (error) {
       warnJwksFailure("network", error);
       fail("ACCESS_JWKS_UNAVAILABLE", "Access JWKS request failed", true, error);
     }
     if (response.status >= 300 && response.status < 400) {
       warnJwksFailure("redirect", undefined, response.status);
+      cancelResponseBodyQuietly(response);
       fail("ACCESS_JWKS_UNAVAILABLE", "Access JWKS redirect rejected", true);
     }
     if (!response.ok) {
       warnJwksFailure("status", undefined, response.status);
+      cancelResponseBodyQuietly(response);
       fail("ACCESS_JWKS_UNAVAILABLE", "Access JWKS returned non-success status", true);
     }
     const media = response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase();
     if (media !== undefined && media !== "application/json") {
+      cancelResponseBodyQuietly(response);
       fail("ACCESS_JWKS_INVALID", "Access JWKS returned non-JSON content", true);
     }
     let body: Uint8Array;
     try {
-      body = await readResponseBodyWithinBytes(response, {
-        label: "access_jwks", max_bytes: expected.maxJwks, max_chunks: 256,
-      });
-    } catch (error) { fail("ACCESS_JWKS_INVALID", "Access JWKS exceeds runtime envelope", true, error); }
+      body = await readJwksBodyWithinBytes(response, expected.maxJwks, 256, signal);
+    } catch (error) {
+      if (signal.aborted) throw error;
+      if (error instanceof AccessVerificationError) throw error;
+      fail("ACCESS_JWKS_INVALID", "Access JWKS exceeds runtime envelope", true, error);
+    }
     let document: unknown;
     try { document = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(body)); }
     catch (error) { fail("ACCESS_JWKS_INVALID", "Access JWKS is not UTF-8 JSON", true, error); }
@@ -340,21 +480,45 @@ export function createCloudflareAccessVerifier(
     for (const jwk of jwks(document, expected.maxKeys)) {
       let key: CryptoKey;
       try {
-        key = await subtle.importKey("jwk", jwk,
-          { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" }, false, ["verify"]);
+        key = await awaitWithSignal(subtle.importKey("jwk", jwk,
+          { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" }, false, ["verify"]), signal);
       } catch (error) { fail("ACCESS_JWKS_INVALID", "Access JWKS key import failed", true, error); }
       keys.set(jwk.kid, key);
     }
     return { keys, expiresAt: now() + expected.cacheTtlMs };
   };
-  const refresh = async (): Promise<KeyCache> => {
-    if (inFlight !== undefined) return inFlight;
-    inFlight = load();
-    try {
-      cache = await inFlight;
-      lastRefresh = now();
-      return cache;
-    } finally { inFlight = undefined; }
+  const refresh = (): Promise<KeyCache> => {
+    if (inFlight !== undefined) return inFlight.promise;
+    const startedAt = now();
+    if (failureCooldownUntil > startedAt) {
+      fail("ACCESS_JWKS_UNAVAILABLE", "Access JWKS refresh is cooling down after a failure", true);
+    }
+    const controller = new AbortController();
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, expected.jwksFetchTimeoutMs);
+    const token = {};
+    const attempt = (async () => {
+      try {
+        cache = await load(controller.signal);
+        lastRefresh = now();
+        failureCooldownUntil = Number.NEGATIVE_INFINITY;
+        return cache;
+      } catch (error) {
+        failureCooldownUntil = now() + expected.jwksFailureCooldownMs;
+        if (timedOut) {
+          fail("ACCESS_JWKS_UNAVAILABLE", "Access JWKS request exceeded its deadline", true, error);
+        }
+        throw error;
+      } finally {
+        clearTimeout(timer);
+        clearRefreshFlight(token);
+      }
+    })();
+    inFlight = { token, promise: attempt };
+    return attempt;
   };
   const keyFor = async (kid: string): Promise<CryptoKey> => {
     const current = now();

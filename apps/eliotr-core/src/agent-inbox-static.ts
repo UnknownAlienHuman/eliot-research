@@ -1,6 +1,7 @@
 import type { Env } from "./env.js";
 
-const AGENT_INBOX_PREFIX = "/agent-inbox/";
+const AGENT_INBOX_PATH = "/agent-inbox";
+const AGENT_INBOX_PREFIX = `${AGENT_INBOX_PATH}/`;
 const AGENT_INBOX_CSP = [
   "default-src 'none'",
   "connect-src 'self'",
@@ -28,7 +29,7 @@ export async function fetchStaticAsset(
   url: URL,
 ): Promise<Response> {
   const response = await env.ASSETS.fetch(request);
-  if (!url.pathname.startsWith(AGENT_INBOX_PREFIX)) return response;
+  if (url.pathname !== AGENT_INBOX_PATH && !url.pathname.startsWith(AGENT_INBOX_PREFIX)) return response;
 
   const headers = new Headers(response.headers);
   headers.set("Cache-Control", "no-store, max-age=0");
