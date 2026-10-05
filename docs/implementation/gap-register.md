@@ -17,10 +17,21 @@ read-only verifier and atomic permission/revocation/lease check in the primary
 coordinator D1. Its target profile remains separately pinned; no live permission
 or production restore caller is installed. Offsite expiry/purge replay now
 includes the complete manifest-plus-payload part set and rejects incomplete,
-extra or unverified committed checkpoints before provider effects. Primary
-WORK_BUCKET backup-parts cleanup and pre-claim orphan tracking remain missing;
+extra or unverified committed checkpoints before provider effects. Primary local
+backup-part cleanup and pre-claim orphan tracking remain missing; the production
+`part_sink` bucket binding is not established, and offsite absence does not prove
+absence in that local store;
 later-purge sanitation, restored read re-admission and full O3/O4 acceptance
 remain open. Source components do not promote a contour to LIVE.
+
+On October 5 at published source `075f32d7`, one existing native local Workflow
+case completed all 18 stages and read the DRAFT report, cited handle, history and
+unchanged replay with two synthetic model responses. The populated Native
+migration/refusal case also passed. PWA/Worker dry-run assembly and local gzip
+size limits passed. This does not qualify live models, browser/MCP operation,
+the historical RECONCILE failure cause or full S92; launch-code still blocks on
+disabled ERASURE and RETRIEVAL. See the [delivery plan](backend-delivery-plan.md)
+for the exact checks and remaining acceptance.
 
 ## S19 code checkpoint — transient Research reconnect (2026-09-25)
 
@@ -129,7 +140,7 @@ the DRAFT is accepted. Invalid model audit observations are discarded as a whole
 | P1 | Owner REPORT admission, semantic audit, saved DRAFT bytes and claim-to-citation readback have bounded live evidence. Wiki proposals can be created from research, manually reviewed, published, edited through a separate revision and reopened with preserved history; accepted artifact publication and dependency invalidation remain open. Artifact-draft, research-completed and Wiki-publication change producers are atomic in migrations `0060`–`0062`, while source admitted/updated/erasure producers and the remaining feed scope remain open. | ER-11, ER-12, ER-21, ER-24 | Retain the actual report/audit/citation and owner Wiki publication/edit receipts in `live-document-project-acceptance-2026-09-14.md`. Manual Wiki publication admits server-owned review with currentness checked in the head-CAS transaction; complete accepted report semantics and the update/purge/change lifecycle. |
 | P1 (unselected profile) | The separate server-owned `drive-exchange` profile remains incomplete: bounded Sheet/changes REST, contribution guards, encrypted D1 credential refresh/rotation, internal first-connection OAuth admission and owner-only OAuth begin/callback HTTP/PWA exist. Provisioning, Docs/export/publication and runtime composition remain missing. Durable leased cursor polling with ID/hash dedup and frozen-envelope tamper audit exists (`reconciler.test.ts`, 10 real-D1 cases). This legacy path is not a prerequisite for the selected `gemini-mcp` Workspace profile and must not trigger Google Cloud or custom OAuth setup | ER-18, ER-19, ER-20, ER-24, ER-26 | retain the unfinished Drive Exchange work for explicit future profile selection; the active Spark/Antigravity candidate-admission and readback requirements are tracked separately above; `drive-rest.md`, `drive-credentials.md`, `drive-oauth-admission.md`, `canonical-alignment.md` |
 | P2 | Local preparation, signed Access browser bridge and explicit read-policy setup are implemented; live owner login is not yet qualified | ER-00, ER-26 | real owner/IdP session and current namespace-policy receipt, no auth bypass; `local-launch.md` |
-| P2 | O2 export, isolated restore primitives and a current-permission installer/verifier are implemented as source; Native/key history stays archived without activating authority. Offsite expiry/purge includes the full payload part set. Production O3 composition, primary WORK_BUCKET backup-parts cleanup, pre-claim orphans, later-purge sanitation, historical read re-admission and readiness remain open; the O2 restore port stays closed. | ER-34 | October 5 compilation, 21-file scoped lint, depth-100 SQL and source budgets passed. The first bounded runtime run was 67 PASS / 2 fixture FAIL; six selected repaired/issuer cases and seven synthetic plan-only cases then passed. Earlier Native history checks are recorded separately in the delivery plan. Complete purge-before-exposure and handle/query acceptance remain required |
+| P2 | O2 export, isolated restore primitives and a current-permission installer/verifier are implemented as source; Native/key history stays archived without activating authority. Offsite expiry/purge includes the full payload part set. Production O3 composition, primary local backup-part store binding/cleanup, pre-claim orphans, later-purge sanitation, historical read re-admission and readiness remain open; the O2 restore port stays closed. | ER-34 | October 5 compilation, 21-file scoped lint, depth-100 SQL and source budgets passed. The first bounded runtime run was 67 PASS / 2 fixture FAIL; six selected repaired/issuer cases and seven synthetic plan-only cases then passed. Earlier Native history checks are recorded separately in the delivery plan. Complete purge-before-exposure and handle/query acceptance remain required |
 | P2 | PWA has authorized Library-to-Lens, operation recovery, revision history, active readiness and FAST_SEARCH with persisted trace and selected-head checks; project editing, remaining failure UI and the full setup-to-search browser/storage loop remain incomplete (#98) | ER-25 | retain focused Library/readiness/retrieval checks and the controlled-HTTP desktop/mobile selection-to-excerpt proof; complete actual Worker/D1/R2/Queue owner-loop and deployed session/reconnect receipts with degraded dependencies |
 | P2 | T2/T3 deterministic corpus is expanded with adjudicated RU/EN/code/table cases and collapsing-extractor negatives; live generation promotion and workload qualification remain open | ER-23, ER-31, ER-32 | GC-009..GC-012 adjudicated RU/EN/code/table cases, LF SHA-256 pins, promotion thresholds, collapsing/malformed/empty/oversized negatives; live T2/T3 quality and T6 receipts NOT_EXECUTED |
 | P2 | T6 workload profile has not been measured | ER-35 | 5/20/50 readers, D1 contention, index throughput, cost and p95 receipts |

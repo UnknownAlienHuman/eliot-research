@@ -14,10 +14,18 @@ shared erasure lease; isolated target writes retain a separate pinned profile.
 The five migration-0115 authority tables are excluded from portable backups.
 Offsite expiry and purge replay now require the complete manifest-plus-payload
 inventory and exact VERIFIED checkpoints. These changes do not compose a
-production restore caller or qualify O3/O4. Primary WORK_BUCKET backup-parts
-cleanup, pre-claim orphan tracking, later-purge sanitation and restored read
+production restore caller or qualify O3/O4. Primary local backup-part store
+binding/cleanup, pre-claim orphan tracking, later-purge sanitation and restored read
 re-admission remain open. See the [delivery plan](backend-delivery-plan.md) for
 the actual local checks and the [gap register](gap-register.md) for acceptance.
+
+The October 5 functional checkpoint at published source `075f32d7` passed one
+actual local 18-stage Workflow/report/citation/history/replay case, the populated
+Native migration/refusal case and PWA/Worker dry-run assembly with local gzip
+sizes within project ceilings. Provider responses were synthetic; no development
+key was used. The registry still reports 43 IMPLEMENTED_NOT_LIVE and zero
+LIVE_QUALIFIED contours. Launch-code remains blocked by disabled ERASURE and
+RETRIEVAL; deployed provider, browser/MCP and full S92 acceptance stay open.
 
 ## Read the current state
 

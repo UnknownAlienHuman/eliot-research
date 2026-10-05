@@ -1,7 +1,7 @@
 # Backend delivery plan
 
 Current execution order, refreshed on 2026-10-05 against `main`
-`c184e636dd4a5c6b755c7e8843f6d5f4e6c69ed8`.
+`075f32d778bac75ddd021bc83bdd5504aef1becd`.
 
 The [October 3 functional integration checkpoint](product-resume-2026-10-03.md)
 records the owner configuration, immutable run capture, MCP, provisioning and
@@ -15,8 +15,49 @@ existing provider receipt do not establish that acceptance.
 The current assembly covers catalog-based model configuration and native BYOK
 transport, durable owner/delegated policy parity, the existing AI Search evidence
 path, useful bounded MCP reads and results, and the adaptive owner workspace.
-The observed Research failure at RECONCILE is under diagnosis. Native MCP client
-authorization remains unverified. These are open items, not completed acceptance.
+The historical Research failure at RECONCILE retains no underlying exception and
+remains unresolved. The current local native Workflow completes all 18 stages;
+the named local checks below do not establish deployed execution. Native MCP
+client authorization remains unverified.
+
+## October 5 local functional and release checkpoint
+
+The following checks ran against the clean published source at `075f32d7`, using
+Node 24.19.0 and Vitest 4.1.11. SHA-256 values for 1,723 repository
+source/configuration/SQL/lock inputs matched before and after execution. No
+development key or real model provider was used.
+
+| Existing command or verifier | Observed result and boundary |
+|---|---|
+| Core `research-provider-key-model-use-failure-contract.test.ts` | 1 PASS / 1: populated Native migration children and nine dependent triggers retained; orphan rejection and unpriced BLOCKED-stage guards verified against local D1. |
+| Core `research-current-dispatch.test.ts`, project `research-current-dispatch-native` | 1 PASS / 1: actual local Workflow completed all 18 checkpoints; run status, DRAFT report, a SUPPORTED claim/cited handle, history and unchanged replay read back. Exactly two synthetic model responses were used; replay made no additional model call. |
+| `pnpm cf:dry-run` | PASS: Astro 7.2.8 built both static pages; Wrangler 4.143.1 bundled the Worker and exited without upload. Worker gzip size was 903.84 KiB, below the 4 MiB project ceiling. |
+| Local emitted PWA JavaScript measurement | All five emitted JavaScript assets sum to 225,678 bytes using per-file gzip level 9, below 600 KiB. This conservative initial-JS upper bound includes the separate inbox, lazy Markdown worker and service worker; it is not measured browser transfer or startup performance. |
+| `node scripts/check-implementation-status.mjs` | PASS: 43 IMPLEMENTED_NOT_LIVE contours, zero LIVE_QUALIFIED. |
+| `node scripts/check-launch-code.mjs` | BLOCKED / exit 1: required ERASURE and RETRIEVAL slices remain disabled. |
+
+The Workflow replay emitted Miniflare's `instance.already_exists` diagnostic;
+the application caught the duplicate creation, read the same instance and
+reconciled its completed state. The verifier asserted one instance and unchanged
+durable results. The cited-handle check does not assert every returned source
+revision field. The local bundle used the top-level development profile with
+`local-unset` generation and Access/MCP placeholders. Vite reported a chunk over
+500 kB; the measured gzip budget passed. Production configuration, startup/heap,
+browser behavior, real provider execution and the historical RECONCILE cause
+remain unqualified. Previously passed source compilation, lint, SQL and budget
+checks were not repeated.
+
+Cloudflare control-token preparation now has a documented OAuth route through
+the separate beta `cf` CLI. Local-only discovery with `cf@1.0.0-beta.12` verified
+the `cf accounts tokens create` schema without authentication or token creation.
+The existing account still needs API Token Provisioning (or Super Administrator)
+and OAuth scope `account_api_tokens:create`. Exact permission-group IDs must be
+read after authentication. The reviewed token is limited to that account,
+Secrets Store Read/Edit and AI Gateway Read, with a 90-day expiry; it grants no
+billing, Workers Edit or token administration. See the [official CLI command-discovery guide](https://developers.cloudflare.com/cf/get-started/resources/)
+and [account-token provisioning announcement](https://developers.cloudflare.com/changelog/post/2026-10-01-account-api-token-provisioning/).
+The owner deferred browser recovery and requested local work; live key
+installation, migration/deployment, native MCP and NotebookLM checks stay open.
 
 The published baseline assembles native-model and capability libraries. Model
 Control, Model Execution, Model Transport,
@@ -127,9 +168,12 @@ manifest-plus-payload part set. Every committed copy must have the exact
 ref/digest/size checkpoint set, all VERIFIED, before adapter resolution or
 deletion. Current paired payload metadata is accepted by exact source-to-epoch
 scope discovery; legacy epochs keep their original shape. This closes the
-offsite payload inventory omission. Primary WORK_BUCKET backup-parts deletion,
-pre-claim orphan tracking, full later-purge sanitation and restored read
-re-admission remain open; ERASURE and the O2 restore port remain disabled.
+offsite payload inventory omission. Primary local backup-part deletion and
+pre-claim orphan tracking remain open. The `part_sink` is separate from the
+source `work_bucket`, and its production bucket binding is not established;
+offsite absence cannot prove absence in that local store. Full later-purge
+sanitation and restored read re-admission also remain open; ERASURE and the O2
+restore port remain disabled.
 
 For this cut, TypeScript compilation, scoped ESLint over 21 source/tooling files
 (zero errors, warnings or hash drift), and canonical source budgets passed on
