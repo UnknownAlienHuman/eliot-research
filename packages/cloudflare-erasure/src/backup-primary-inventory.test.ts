@@ -20,12 +20,12 @@ interface ListedPart {
 
 function hash(index: number): string { return index.toString(16).padStart(2, "0").repeat(32); }
 
-function makeArchive(epoch: string, payload = true) {
-  const manifestParts = MANIFESTS.map((manifest, index) => {
+function makeArchive(epoch: string, payload = true, partsPerManifest = 1, etagChars = 0) {
+  const manifestParts = MANIFESTS.flatMap((manifest, index) => Array.from({ length: partsPerManifest }, (_, offset) => {
     const sha256 = hash(index + 1);
-    return { manifest, index: 1, part_key: `backup-parts/${epoch}/${manifest}/000001-${sha256}`,
-      sha256, size_bytes: 1, etag: `manifest-etag-${index + 1}`, existed_identically: false };
-  });
+    return { manifest, index: offset + 1, part_key: `backup-parts/${epoch}/${manifest}/${String(offset + 1).padStart(6, "0")}-${sha256}`,
+      sha256, size_bytes: 1, etag: `manifest-etag-${index + 1}`.padEnd(etagChars, "e"), existed_identically: false };
+  }));
   const payloadPart = { object_identity_digest: IDENTITY, index: 1, count: 1,
     part_key: `backup-parts/${epoch}/r2-payload/${IDENTITY}/000001-${SHA}`,
     sha256: SHA, size_bytes: 3, etag: "payload-etag-1", existed_identically: false };
@@ -60,7 +60,7 @@ function makeArchive(epoch: string, payload = true) {
     async read_draft_json() { return JSON.stringify(draft); },
     async read_plaintext_part() { return null; },
   };
-  return { archive, listed };
+  return { archive, listed, draft };
 }
 
 function bucketForPage(readPage: (request: unknown, index: number) => unknown) {
@@ -130,7 +130,12 @@ describe("primary backup part inventory", () => {
 
   it("blocks pre-claim bytes even when no committed epoch is listed", async () => {
     const orphan = makeArchive("epoch-without-receipt").listed[0] as ListedPart;
-    await expectBlocked(bucketFor([orphan]).bucket, []);
+    const bucket = scriptedBucket([
+      { objects: [orphan], truncated: true, cursor: "never-read" }, { objects: [], truncated: false },
+    ]);
+    await expectBlocked(bucket.bucket, []);
+    expect(bucket.list).toHaveBeenCalledTimes(1);
+    expect(bucket.remove).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -161,14 +166,22 @@ describe("primary backup part inventory", () => {
     await expectBlocked(bucketFor(mutate(archive.listed)).bucket, [archive.archive]);
   });
 
-  it("rejects duplicate keys, prefix escape, malformed pages, and invalid cursors", async () => {
+  it("rejects a repeated key across pages before fetching the remaining prefix", async () => {
     const archive = makeArchive("epoch-pages");
     const valid = archive.listed;
-    await expectBlocked(scriptedBucket([
+    const bucket = scriptedBucket([
       { objects: valid.slice(0, 1), truncated: true, cursor: "cursor-1" },
-      { objects: [valid[0], ...valid.slice(1)], truncated: false },
-    ]).bucket, [archive.archive]);
+      { objects: [valid[0]], truncated: true, cursor: "never-read" },
+      { objects: valid.slice(1), truncated: false },
+    ]);
+    await expectBlocked(bucket.bucket, [archive.archive]);
+    expect(bucket.list).toHaveBeenCalledTimes(2);
+    expect(bucket.remove).not.toHaveBeenCalled();
+  });
 
+  it("rejects prefix escape, malformed pages, and invalid cursors", async () => {
+    const archive = makeArchive("epoch-pages");
+    const valid = archive.listed;
     const escaped = withFirstPart(valid, { key: "other-bucket/object" });
     await expectBlocked(bucketFor(escaped).bucket, [archive.archive], "ERASURE_IDENTITY_CONFLICT");
     for (const page of [
@@ -194,10 +207,44 @@ describe("primary backup part inventory", () => {
       })), truncated: end < 100_001, ...(end < 100_001 ? { cursor: `cursor-${end}` } : {}) };
     });
     await expectBlocked(overflow.bucket, []);
-    expect(overflow.list).toHaveBeenCalledTimes(101);
+    expect(overflow.list).toHaveBeenCalledTimes(1);
 
     const pages = bucketForPage((_request, page) => ({ objects: [], truncated: true, cursor: `cursor-${page}` }));
     await expectBlocked(pages.bucket, []);
     expect(pages.list).toHaveBeenCalledTimes(1024);
+  });
+
+  it("refuses aggregate draft bytes before parsing or listing the next archive", async () => {
+    const archives = Array.from({ length: 6 }, (_, index) => {
+      const epoch = makeArchive(`epoch-draft-budget-${index}`, false);
+      return { ...epoch.archive, read_draft_json: vi.fn(async () =>
+        JSON.stringify(epoch.draft).replace("{", `{${" ".repeat(900_000)}`)) };
+    });
+    const bucket = bucketFor([]);
+    await expect(assertPrimaryBackupPartInventory(bucket.bucket, archives)).rejects.toMatchObject({
+      code: "ERASURE_CLOSURE_INCOMPLETE", message: "primary backup drafts exceed their aggregate byte budget",
+    });
+    expect(archives[5]?.read_draft_json).not.toHaveBeenCalled();
+    expect(bucket.list).not.toHaveBeenCalled();
+  });
+
+  it("refuses accumulated expected pin bytes before listing", async () => {
+    const archives = Array.from({ length: 20 }, (_, index) =>
+      makeArchive(`epoch-pin-budget-${index}-${"e".repeat(220)}`, false, 25).archive);
+    const bucket = bucketFor([]);
+    await expect(assertPrimaryBackupPartInventory(bucket.bucket, archives)).rejects.toMatchObject({
+      code: "ERASURE_CLOSURE_INCOMPLETE", message: "persisted primary backup part inventory exceeds its byte budget",
+    });
+    expect(bucket.list).not.toHaveBeenCalled();
+  });
+
+  it("refuses a matching page over its byte budget before requesting another page", async () => {
+    const epoch = makeArchive(`epoch-page-budget-${"e".repeat(224)}`, false, 70, 256);
+    const bucket = bucketFor(epoch.listed);
+    await expect(assertPrimaryBackupPartInventory(bucket.bucket, [epoch.archive])).rejects.toMatchObject({
+      code: "ERASURE_CLOSURE_INCOMPLETE", message: "primary backup part page exceeds its byte budget",
+    });
+    expect(bucket.list).toHaveBeenCalledTimes(1);
+    expect(bucket.remove).not.toHaveBeenCalled();
   });
 });
