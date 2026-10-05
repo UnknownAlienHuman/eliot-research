@@ -249,6 +249,10 @@ function readInline(tokens: readonly ParserToken[], budget: NodeBudget, depth: n
         appendInline({ type: "code", text: token.content }, target(), budget);
         break;
       case "softbreak":
+        // Source line wrapping is not a forced break in the reading view.
+        // Explicit Markdown hard breaks and the authoritative original remain intact.
+        appendInline({ type: "text", text: " " }, target(), budget);
+        break;
       case "hardbreak":
         spend(budget);
         target().push({ type: "break" });

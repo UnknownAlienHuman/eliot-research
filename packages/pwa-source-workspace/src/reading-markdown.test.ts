@@ -55,6 +55,22 @@ describe("actual Markdown worker output", () => {
       });
     }
   });
+  it("reflows soft-wrapped prose while retaining explicit hard breaks", () => {
+    expect(parse("Readable prose\ncontinues naturally.\nКириллица тоже.")).toEqual({
+      type: "reading-markdown-result", ok: true, nodes: [{ type: "paragraph", children: [
+        { type: "text", text: "Readable prose" }, { type: "text", text: " " },
+        { type: "text", text: "continues naturally." }, { type: "text", text: " " },
+        { type: "text", text: "Кириллица тоже." },
+      ] }],
+    });
+    for (const source of ["First line  \nSecond line", "First line\\\nSecond line"]) {
+      expect(parse(source)).toEqual({
+        type: "reading-markdown-result", ok: true, nodes: [{ type: "paragraph", children: [
+          { type: "text", text: "First line" }, { type: "break" }, { type: "text", text: "Second line" },
+        ] }],
+      });
+    }
+  });
 });
 
 describe("reading Markdown safety boundaries", () => {
