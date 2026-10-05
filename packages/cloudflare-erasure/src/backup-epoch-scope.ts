@@ -99,7 +99,7 @@ async function digestBytes(bytes: Uint8Array): Promise<string> {
   return [...new Uint8Array(hash)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-function parseDraft(value: unknown, epochId: string): BackupEpochScopeDraft {
+export function parseBackupEpochScopeDraft(value: unknown, epochId: string): BackupEpochScopeDraft {
   const json = assertErasureText(value, "persisted backup epoch draft", 1_048_576);
   let decoded: unknown;
   try { decoded = JSON.parse(json) as unknown; }
@@ -422,7 +422,7 @@ export async function scopeBackupEpochsForSubjects(input: {
     let draftJson: unknown;
     try { draftJson = await archive.read_draft_json(); }
     catch (cause) { erasureFail("ERASURE_SETTLEMENT_UNCERTAIN", "persisted backup epoch receipt readback is unavailable", true, cause); }
-    const draft = parseDraft(draftJson, epochId);
+    const draft = parseBackupEpochScopeDraft(draftJson, epochId);
     let totalBytes = 0;
     const plaintext_parts: { manifest: string; index: number; bytes: Uint8Array }[] = [];
     for (const part of draft.part_index) {

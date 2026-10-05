@@ -22,6 +22,8 @@ export interface CloudflareErasureDependencies {
   readonly search_database: D1Database;
   readonly evidence_bucket: R2Bucket;
   readonly work_bucket: R2Bucket;
+  /** Primary O2 parts have a separate storage identity from source Work. */
+  readonly backup_parts_bucket?: R2Bucket;
   readonly managed_search?: ManagedSearchErasureNamespace;
   readonly backup?: BackupErasurePort;
   readonly worker_id?: string;
@@ -66,6 +68,7 @@ export function createConfiguredErasureBackend(
       core_database: dependencies.core_database,
       search_database: dependencies.search_database,
       work_bucket: dependencies.work_bucket,
+      ...(dependencies.backup_parts_bucket === undefined ? {} : { backup_parts_bucket: dependencies.backup_parts_bucket }),
     }),
     locations: createErasureLocationRegistry({
       CanonicalPayload: core,

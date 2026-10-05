@@ -7,6 +7,7 @@ import {
 } from "@eliotr/backup-o2";
 import { assertErasureIdentifier, erasureFail } from "./canonical.js";
 import type { BackupEpochScopeArchive, BackupEpochScopeDraft, BackupEpochScopePart } from "./backup-epoch-scope.js";
+import { assertPrimaryBackupPartInventory } from "./backup-primary-inventory.js";
 
 const INVENTORY_ROW_LIMIT = 10_000;
 const INVENTORY_FETCH_LIMIT = INVENTORY_ROW_LIMIT + 1;
@@ -212,6 +213,8 @@ async function readPart(
   } catch (cause) {
     if (cause instanceof Error && "code" in cause) throw cause;
     erasureFail("ERASURE_SETTLEMENT_UNCERTAIN", "local backup part readback failed", true, cause);
+  } finally {
+    reader.releaseLock();
   }
   if (offset !== part.size_bytes) erasureFail("ERASURE_CLOSURE_INCOMPLETE", "local backup part body is shorter than its persisted size");
   return output;
@@ -225,7 +228,7 @@ export interface D1BackupEpochScopeInventory {
 /** Reads exact local O2 parts and canonical epoch linkage; no caller refs grant archive authority. */
 export async function readD1BackupEpochScopeInventory(
   database: D1Database,
-  workBucket: R2Bucket,
+  backupPartsBucket: R2Bucket,
 ): Promise<D1BackupEpochScopeInventory> {
   try {
     await assertO2MigrationAuthority(database);
@@ -293,8 +296,9 @@ export async function readD1BackupEpochScopeInventory(
         }
         return receipt.draft_json;
       },
-      read_plaintext_part: (part, draft: BackupEpochScopeDraft) => readPart(workBucket, epochId, draft.vector_digest, part),
+      read_plaintext_part: (part, draft: BackupEpochScopeDraft) => readPart(backupPartsBucket, epochId, draft.vector_digest, part),
     };
   });
+  await assertPrimaryBackupPartInventory(backupPartsBucket, archives);
   return { archives, copy_authority_epoch_ids: copyAuthorityEpochIds };
 }

@@ -255,6 +255,42 @@ function erasureRequest(subject: string): ErasureRequest {
 }
 
 describe("D1 backup epoch inventory producer integration", () => {
+  it("reads O2 parts from the explicit primary bucket without reading source Work", async () => {
+    const epoch = await produceEpoch("source-A", "revision-A1", HASH_A, HASH_B, "separate-parts");
+    try {
+      epoch.db.prepare("INSERT INTO backup_epoch (backup_epoch_id,core_export_ref,search_projection_manifest_ref,evidence_manifest_ref,work_manifest_ref,offsite_copy_ref,purge_ledger_revision,verification_state,created_at,verified_at) VALUES (?1,'core','search','evidence','work','offsite',0,'VERIFIED',?2,?2)")
+        .run(epoch.id, CREATED_AT);
+      let sourceWorkReads = 0;
+      const sourceWork = {
+        async get() { sourceWorkReads += 1; throw new Error("source Work is not the primary part store"); },
+        async list() { sourceWorkReads += 1; throw new Error("source Work is not the primary part store"); },
+      } as unknown as R2Bucket;
+      const database = d1Database(epoch.db);
+      const inventory = createD1ErasureInventory({
+        core_database: database, search_database: database,
+        work_bucket: sourceWork, backup_parts_bucket: epoch.part_bucket,
+      });
+      const closure = await inventory.enumerate(erasureRequest("source-revision:revision-A1"));
+      expect(closure.targets).toHaveLength(1);
+      expect(closure.targets[0]).toMatchObject({ location: "BackupRestorePath", canonical_ref: `backup:${epoch.id}` });
+      expect(sourceWorkReads).toBe(0);
+    } finally { epoch.db.close(); }
+  }, 30_000);
+
+  it("refuses source Work as an implicit primary backup-part binding", async () => {
+    const epoch = await produceEpoch("source-A", "revision-A1", HASH_A, HASH_B, "missing-part-binding");
+    try {
+      epoch.db.prepare("INSERT INTO backup_epoch (backup_epoch_id,core_export_ref,search_projection_manifest_ref,evidence_manifest_ref,work_manifest_ref,offsite_copy_ref,purge_ledger_revision,verification_state,created_at,verified_at) VALUES (?1,'core','search','evidence','work','offsite',0,'VERIFIED',?2,?2)")
+        .run(epoch.id, CREATED_AT);
+      const database = d1Database(epoch.db);
+      const inventory = createD1ErasureInventory({
+        core_database: database, search_database: database, work_bucket: epoch.part_bucket,
+      });
+      await expect(inventory.enumerate(erasureRequest("source-revision:revision-A1")))
+        .rejects.toMatchObject({ code: "ERASURE_CLOSURE_INCOMPLETE", message: "source-scoped local backup archive authority is unavailable" });
+    } finally { epoch.db.close(); }
+  }, 30_000);
+
   it("uses O2-produced persisted manifests to distinguish source and revision roots", async () => {
     const a1 = await produceEpoch("source-A", "revision-A1", HASH_A, HASH_B, "epoch-a1");
     const a2 = await produceEpoch("source-A", "revision-A2", HASH_C, HASH_D, "epoch-a2");
@@ -288,6 +324,7 @@ describe("D1 backup epoch inventory producer integration", () => {
       core_database: database,
       search_database: database,
       work_bucket: memoryBucket().bucket,
+      backup_parts_bucket: epoch.part_bucket,
     });
     await expect(inventory.enumerate(erasureRequest("source-revision:revision-A1")))
       .rejects.toMatchObject({ code: "ERASURE_CLOSURE_INCOMPLETE" });
@@ -308,6 +345,7 @@ describe("D1 backup epoch inventory producer integration", () => {
       core_database: database,
       search_database: database,
       work_bucket: memoryBucket().bucket,
+      backup_parts_bucket: epoch.part_bucket,
     });
     await expect(inventory.enumerate(erasureRequest("source-revision:revision-A1")))
       .rejects.toMatchObject({ code: "ERASURE_CLOSURE_INCOMPLETE" });

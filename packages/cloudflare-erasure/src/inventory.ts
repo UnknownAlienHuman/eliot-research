@@ -96,6 +96,8 @@ export interface D1ErasureInventoryDependencies {
   readonly core_database: D1Database;
   readonly search_database: D1Database;
   readonly work_bucket?: R2Bucket;
+  /** The O2 part_sink bucket; never infer it from source Work storage. */
+  readonly backup_parts_bucket?: R2Bucket;
 }
 
 export function createD1ErasureInventory(
@@ -209,12 +211,12 @@ export function createD1ErasureInventory(
         }
       }
       if (request.required_locations.includes("BackupRestorePath")) {
-        if (dependencies.work_bucket === undefined || backupSelections.length === 0) {
+        if (dependencies.backup_parts_bucket === undefined || backupSelections.length === 0) {
           erasureFail("ERASURE_CLOSURE_INCOMPLETE", "source-scoped local backup archive authority is unavailable");
         }
         const backupInventory = await readD1BackupEpochScopeInventory(
           dependencies.core_database,
-          dependencies.work_bucket,
+          dependencies.backup_parts_bucket,
         );
         const scopedEpochIds = await scopeBackupEpochsForSubjects({
           subjects: backupSelections.map(({ subject }) => subject),
