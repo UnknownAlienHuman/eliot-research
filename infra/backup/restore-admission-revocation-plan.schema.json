@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://eliotr.invalid/schemas/backup-restore-admission-revocation-plan.v1.json",
+  "title": "Eliot Research current restore admission revocation plan",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["protocol", "operation_ref", "account_id", "database_id", "authority_kind", "authority_ref", "authority_revision", "revocation_ref", "revoked_at", "reason_sha256"],
+  "properties": {
+    "protocol": { "const": "eliotr.backup-restore-admission-revocation-plan.v1" },
+    "operation_ref": { "$ref": "#/$defs/id" },
+    "account_id": { "description": "Primary coordinator Cloudflare account that stores the authority being revoked.", "$ref": "#/$defs/cfId" },
+    "database_id": { "description": "Primary coordinator Core D1 database containing the authority row; target-profile account and resources may differ.", "$ref": "#/$defs/cfId" },
+    "authority_kind": { "enum": ["permission", "target_profile"] },
+    "authority_ref": { "$ref": "#/$defs/id" },
+    "authority_revision": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+    "revocation_ref": { "$ref": "#/$defs/id" },
+    "revoked_at": { "$ref": "#/$defs/timestamp" },
+    "reason_sha256": { "$ref": "#/$defs/sha256" }
+  },
+  "$defs": {
+    "id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$" },
+    "cfId": { "type": "string", "pattern": "^[A-Za-z0-9_-]{1,128}$" },
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "timestamp": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$", "format": "date-time" }
+  }
+}

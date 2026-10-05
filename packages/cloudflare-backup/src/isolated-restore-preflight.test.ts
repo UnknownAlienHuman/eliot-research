@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
-import type { BackupEpoch } from "@eliotr/contracts";
+import type { BackupEpoch, OperationIntent } from "@eliotr/contracts";
 import { BACKUP_MANIFEST_PROTOCOL, BACKUP_R2_PAYLOAD_PROTOCOL, BACKUP_SCHEMA_INVENTORY_PROTOCOL, TABLE_SPECS, digestCoreColumnInventory, readCoreColumnInventory } from "@eliotr/backup-o2";
 import { rebuildManifestLines } from "@eliotr/backup-o2";
 import type { BackupEpochDraft, BackupPartRef } from "@eliotr/backup-o2";
@@ -25,6 +25,8 @@ import {
 } from "./restore-native-history.js";
 import { createD1RestoreErasureGate } from "./restore-erasure-gate.js";
 import { createD1BackupRestoreStore } from "./restore-store.js";
+import { makeTestRestoreAdmissionBinding } from "./restore-admission-test-support.js";
+import type { RestoreAdmissionRequest } from "./restore-admission.js";
 
 const MIGRATION_DIR = fileURLToPath(new URL("../../../infra/d1/core/migrations/", import.meta.url));
 const MANIFEST_NAMES = ["schema", "schema-inventory", "ownership", "sources", "revisions", "projects", "scopes", "handles", "heads", "generations", "retention", "purge", "r2-objects", "rebuild", "vector"] as const;
@@ -33,6 +35,11 @@ const EXPIRY = "2030-10-01T00:00:00.000Z";
 const SHARED_FENCE_ID = "research-erasure-restore-shared-fence-v1";
 const SHARED_FENCE_KIND = "ERASURE_RESTORE_SHARED_FENCE";
 const H = (c: string): string => c.repeat(64);
+
+function fixtureIntent(key = "restore-run-1", epochId = "epoch-fixture"): OperationIntent {
+  return { intent_ref: { id: "restore-op", revision: 1 }, operation_kind: "RESTORE_VERIFY", principal_ref: "owner-test",
+    idempotency_key: key, payload_ref: epochId, policy_decision_ref: "restore-admission-test", created_at: NOW };
+}
 
 function d1Database(db: DatabaseSync): D1Database {
   return { prepare(sql: string) {
@@ -124,7 +131,7 @@ function fixtureColumnValue(kind: string, column: string): unknown {
   throw new Error(`unclassified fixture column kind ${kind}`);
 }
 
-async function fixture(options: { readonly includeNativeHistory?: boolean } = {}): Promise<{ input: IsolatedRestorePreflightInput; primary: DatabaseSync; target: DatabaseSync; adapter: ReturnType<typeof makeAdapter> }> {
+async function fixture(options: { readonly includeNativeHistory?: boolean; readonly seedAdmission?: boolean; readonly targetAccountId?: string } = {}): Promise<{ input: IsolatedRestorePreflightInput; primary: DatabaseSync; target: DatabaseSync; adapter: ReturnType<typeof makeAdapter> }> {
   const primary = await migratedDatabase();
   const target = await migratedDatabase();
   const primaryDb = d1Database(primary);
@@ -231,12 +238,24 @@ async function fixture(options: { readonly includeNativeHistory?: boolean } = {}
     .run(policy.destination_id, "principal-test", "decision-test", JSON.stringify(policy), policyDigest, policy.authorization_receipt_ref, NOW);
   primary.prepare("INSERT INTO backup_offsite_copy_receipt(copy_id,epoch_id,destination_id,key_generation,policy_digest,intent_digest,receipt_json,epoch_json,attempt_json,readback_digest,expires_at,failure_domain,descriptor_digest,authority_authorized_at,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
     .run("copy-test", draft.epoch_id, policy.destination_id, keyGeneration, policyDigest, H("2"), JSON.stringify(receipt), JSON.stringify(offsiteEpoch), JSON.stringify(attempt), H("3"), EXPIRY, policy.failure_domain, descriptorDigest, NOW, NOW);
+  const targetIdentity = { account_id: options.targetAccountId ?? "isolated-account", failure_domain: "isolated-domain",
+    environment_ref: "restore-target", deployment_ref: "restore-deployment", configuration_sha256: H("8"),
+    resources: { core_database: "target-core", evidence_bucket: "target-evidence", work_bucket: "target-work" } };
+  const targetProfile = { protocol: "eliotr.backup-restore-target-profile.v1", profile_ref: "restore-target-profile-test", revision: 1, ...targetIdentity, created_at: NOW };
+  const profileSha = await backupSha256Hex(canonicalBackupJson(targetProfile));
   const input: IsolatedRestorePreflightInput = {
     draft,
     primary: { account_id: "primary-account", failure_domain: "primary-domain", resources: { core_database: "primary-core", evidence_bucket: "primary-evidence", work_bucket: "primary-work" }, db: primaryDb, evidence_bucket: emptyBucket(), work_bucket: emptyBucket() },
-    target: { account_id: "isolated-account", failure_domain: "isolated-domain", environment_ref: "restore-target", resources: { core_database: "target-core", evidence_bucket: "target-evidence", work_bucket: "target-work" }, db: targetDb, evidence_bucket: emptyBucket(), work_bucket: emptyBucket() },
+    target: { ...targetIdentity, db: targetDb, evidence_bucket: emptyBucket(), work_bucket: emptyBucket() },
     offsite: adapter, encryption_key: key,
-    admission: { async assertCurrentAdmission(request) { if (request.target_environment_ref !== "restore-target" || request.target_resources.core_database !== "target-core" || request.epoch_id !== draft.epoch_id) throw new Error("unbound restore admission request"); } },
+    admission_context: {
+      actor: { principal_ref: "owner-test", credential_generation: "access-generation-1", client_class: "owner_pwa", authentication_method: "cloudflare_access", issuer: "https://access.example.test", verified_at: NOW, expires_at: EXPIRY },
+      intent: fixtureIntent("restore-preflight-test", draft.epoch_id), permission_ref: "restore-permission-test", permission_revision: 1, target_profile: { profile_ref: targetProfile.profile_ref, revision: targetProfile.revision, profile_sha256: profileSha },
+    },
+    admission: { async assertCurrentAdmission(request) {
+      if (canonicalBackupJson(request.target) !== canonicalBackupJson(targetIdentity) || request.epoch_id !== draft.epoch_id) throw new Error("unbound restore admission request");
+      return makeTestRestoreAdmissionBinding(primary, request, { created_at: NOW, persist: options.seedAdmission === true });
+    } },
   };
   return { input, primary, target, adapter };
 }
@@ -287,9 +306,11 @@ describe("isolated restore preflight", () => {
   });
 
   it("records a real isolated data-restore receipt as unqualified and keeps traffic closed", async () => {
-    const f = await fixture({ includeNativeHistory: true });
+    const f = await fixture({ includeNativeHistory: true, seedAdmission: true });
     try {
-      const verified = await verifyIsolatedRestorePreflight(f.input);
+      const intent = fixtureIntent("restore-run-1", f.input.draft.epoch_id);
+      const preflight = { ...f.input, admission_context: { ...f.input.admission_context, intent } };
+      const verified = await verifyIsolatedRestorePreflight(preflight);
       const archiveSource = nativeHistoryArchiveSourceContext(verified.draft, verified.manifests, verified.copy_ref);
       const gate: RestoreErasureGate = {
         async acquire(request) {
@@ -304,9 +325,7 @@ describe("isolated restore preflight", () => {
         },
       };
       const result = await executeIsolatedBackupRestore({
-        intent: { intent_ref: { id: "restore-op", revision: 1 }, operation_kind: "RESTORE_VERIFY", principal_ref: "owner-test",
-          idempotency_key: "restore-run-1", payload_ref: f.input.draft.epoch_id, policy_decision_ref: "restore-admission-test", created_at: NOW },
-        preflight: f.input, erasure_gate: gate, restore_store: createD1BackupRestoreStore(d1Database(f.primary)),
+        intent, preflight, erasure_gate: gate, restore_store: createD1BackupRestoreStore(d1Database(f.primary)),
       });
       expect(result.state).toBe("RESTORED_UNQUALIFIED");
       expect(result.traffic_ready).toBe(false);
@@ -377,10 +396,10 @@ describe("isolated restore preflight", () => {
         },
       };
       const restoreStore = createD1BackupRestoreStore(d1Database(f.primary));
+      const intent = fixtureIntent("restore-run-erased", f.input.draft.epoch_id);
+      const preflight = { ...f.input, admission_context: { ...f.input.admission_context, intent } };
       await expect(executeIsolatedBackupRestore({
-        intent: { intent_ref: { id: "restore-op", revision: 1 }, operation_kind: "RESTORE_VERIFY", principal_ref: "owner-test",
-          idempotency_key: "restore-run-erased", payload_ref: f.input.draft.epoch_id, policy_decision_ref: "restore-admission-test", created_at: NOW },
-        preflight: f.input, erasure_gate: gate, restore_store: restoreStore,
+        intent, preflight, erasure_gate: gate, restore_store: restoreStore,
       })).rejects.toMatchObject({ code: "BACKUP_PURGE_BLOCKED" });
       expect(f.target.prepare("SELECT COUNT(*) AS n FROM source").get()).toEqual({ n: 0 });
       expect(f.primary.prepare("SELECT COUNT(*) AS n FROM backup_restore_intent").get()).toEqual({ n: 0 });
@@ -396,10 +415,9 @@ describe("isolated restore preflight", () => {
   });
 
   it("permits a separately identified staging target in the same account", async () => {
-    const f = await fixture();
+    const f = await fixture({ targetAccountId: "primary-account" });
     try {
-      const input = { ...f.input, target: { ...f.input.target, account_id: f.input.primary.account_id } };
-      const result = await verifyIsolatedRestorePreflight(input);
+      const result = await verifyIsolatedRestorePreflight(f.input);
       expect(result.state).toBe("PREFLIGHT_VERIFIED_NO_WRITES");
     } finally { f.primary.close(); f.target.close(); }
   });
@@ -512,7 +530,11 @@ describe("isolated restore preflight", () => {
     const f = await fixture();
     try {
       let checks = 0;
-      const input = { ...f.input, admission: { async assertCurrentAdmission() { checks += 1; if (checks > 1) throw new Error("restore admission revoked"); } } };
+      const input = { ...f.input, admission: { async assertCurrentAdmission(request: RestoreAdmissionRequest) {
+        checks += 1;
+        if (checks > 1) throw new Error("restore admission revoked");
+        return makeTestRestoreAdmissionBinding(f.primary, request, { created_at: NOW });
+      } } };
       await expect(verifyIsolatedRestorePreflight(input)).rejects.toThrow("restore admission revoked");
       expect(checks).toBe(2);
       expect(f.target.prepare("SELECT COUNT(*) AS n FROM source").get()).toEqual({ n: 0 });
@@ -532,7 +554,7 @@ describe("isolated restore preflight", () => {
   });
 
   it("keeps O4 blocked after the shared lease TTL while an R2 PUT may still settle", async () => {
-    const f = await fixture();
+    const f = await fixture({ seedAdmission: true });
     try {
       let nowMs = Date.now();
       const database = d1Database(f.primary);
@@ -541,14 +563,9 @@ describe("isolated restore preflight", () => {
       expect(restoreFence).not.toBeNull();
       if (restoreFence === null) throw new Error("restore did not acquire the shared fence");
 
-      const request = {
-        intent: { intent_ref: { id: "restore-race", revision: 1 }, operation_kind: "RESTORE_VERIFY" as const,
-          principal_ref: "owner-test", idempotency_key: "restore-race-late-put", payload_ref: f.input.draft.epoch_id,
-          policy_decision_ref: "restore-admission-test", created_at: NOW },
-        epoch_id: f.input.draft.epoch_id, offsite_copy_ref: "copy-test",
-        target: { account_id: "isolated-account", failure_domain: "isolated-domain", environment_ref: "restore-target",
-          resources: { core_database: "target-core", evidence_bucket: "target-evidence", work_bucket: "target-work" } },
-      };
+      const verified = await verifyIsolatedRestorePreflight(f.input);
+      const request = { intent: f.input.admission_context.intent, epoch_id: f.input.draft.epoch_id,
+        offsite_copy_ref: verified.copy_ref, target: verified.target, admission: verified.admission_binding };
       const restoreStore = createD1BackupRestoreStore(database);
       const claim = await restoreStore.claim(request, nowMs);
       if (claim.state !== "READY") throw new Error("restore intent was not admitted");

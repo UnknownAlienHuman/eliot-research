@@ -5,6 +5,7 @@ import type { BackupDestinationPolicy } from "./destination-policy.js";
 import { destinationDescriptorDigest, destinationPolicyDigest } from "./destination-policy.js";
 import type { OffsiteCopyAdapter } from "./offsite.js";
 import { expireOffsiteCopy, type ExpiryReceipt } from "./expiry.js";
+import { readBackupEpochOffsitePartRefs } from "./epoch-part-inventory.js";
 import { readBlockingHoldAuthority } from "./hold-authority.js";
 import { readEpochDraftById } from "./replay-authority.js";
 import { assertBackupErasureReplayAuthority, parseOffsiteCopyReplayIntent, type BackupOffsiteCopyReplayAuthority } from "./o4-authority.js";
@@ -188,6 +189,68 @@ async function assertNoUnboundParts(database: D1Database, epochId: string, autho
   }
   if (rows.length > MAX_EPOCH_COPIES || rows.some((row) => !authorities.some((authority) => authority.copy_id === row.copy_id))) {
     failBackup("BACKUP_PURGE_BLOCKED", "offsite epoch has partial or legacy bytes without O4 authority; refusing incomplete purge closure");
+  }
+  const persistedEpoch = await readEpochDraftById(database, epochId);
+  if (persistedEpoch === null) failBackup("BACKUP_VECTOR_UNVERIFIABLE", "backup epoch is unknown to D1 replay authority");
+  let draft: BackupEpochDraft;
+  try { draft = JSON.parse(persistedEpoch.draft_json) as BackupEpochDraft; }
+  catch (cause) { failBackup("BACKUP_VECTOR_UNVERIFIABLE", "persisted backup epoch draft is corrupt", false, {}, cause); }
+  const expectedParts = readBackupEpochOffsitePartRefs(draft, epochId);
+  if (expectedParts.length > MAX_COPY_PARTS) failBackup("BACKUP_BOUND_EXCEEDED", "offsite epoch has too many parts for O4 replay");
+  const expectedCheckpoints = new Map<string, { readonly content_digest: string; readonly size_bytes: number }>();
+  let partOffset = 0;
+  for (const part of draft.part_index) {
+    const validated = expectedParts[partOffset++];
+    if (validated === undefined) failBackup("BACKUP_VECTOR_UNVERIFIABLE", "validated offsite manifest part inventory is incomplete");
+    expectedCheckpoints.set(validated.offsite_ref, { content_digest: part.sha256, size_bytes: part.size_bytes });
+  }
+  for (const part of draft.payload_part_index ?? []) {
+    const validated = expectedParts[partOffset++];
+    if (validated === undefined) failBackup("BACKUP_VECTOR_UNVERIFIABLE", "validated offsite payload part inventory is incomplete");
+    expectedCheckpoints.set(validated.offsite_ref, { content_digest: part.sha256, size_bytes: part.size_bytes });
+  }
+  if (expectedCheckpoints.size !== expectedParts.length) failBackup("BACKUP_VECTOR_UNVERIFIABLE", "validated offsite checkpoint inventory is incomplete");
+  for (const authority of authorities) {
+    if (authority.state !== "COMMITTED") continue;
+    let checkpoints: D1Result<{
+      readonly part_ref: unknown;
+      readonly content_digest: unknown;
+      readonly size_bytes: unknown;
+      readonly state: unknown;
+    }>;
+    try {
+      checkpoints = await database.prepare(
+        `SELECT part_ref,content_digest,size_bytes,state FROM backup_offsite_copy_part WHERE copy_id=?1 ORDER BY part_ref LIMIT ${MAX_COPY_PARTS + 1}`,
+      ).bind(authority.copy_id).all<{ readonly part_ref: unknown; readonly content_digest: unknown; readonly size_bytes: unknown; readonly state: unknown }>();
+    } catch (cause) {
+      failBackup("BACKUP_TABLE_MISSING", "committed offsite copy checkpoint inventory is unavailable", true, {}, cause);
+    }
+    if (checkpoints.success !== true || !Array.isArray(checkpoints.results)) {
+      failBackup("BACKUP_TABLE_MISSING", "committed offsite copy checkpoint query returned an incomplete inventory", true);
+    }
+    const checkpointRows = [...checkpoints.results];
+    if (checkpointRows.length > MAX_COPY_PARTS) failBackup("BACKUP_BOUND_EXCEEDED", "committed offsite copy has too many part checkpoints");
+    const actualRefs = new Set<string>();
+    let allVerified = true;
+    for (const checkpoint of checkpointRows) {
+      if (typeof checkpoint !== "object" || checkpoint === null || Array.isArray(checkpoint) ||
+        typeof checkpoint.part_ref !== "string" || checkpoint.part_ref.length === 0 ||
+        typeof checkpoint.content_digest !== "string" || !/^[a-f0-9]{64}$/u.test(checkpoint.content_digest) ||
+        typeof checkpoint.size_bytes !== "number" || !Number.isSafeInteger(checkpoint.size_bytes) || checkpoint.size_bytes < 0 ||
+        (checkpoint.state !== "STORED" && checkpoint.state !== "VERIFIED")) {
+        failBackup("BACKUP_VECTOR_UNVERIFIABLE", "committed offsite copy checkpoint inventory is malformed", false, { copy: authority.copy_id });
+      }
+      const expected = expectedCheckpoints.get(checkpoint.part_ref);
+      if (expected === undefined || checkpoint.content_digest !== expected.content_digest || checkpoint.size_bytes !== expected.size_bytes) {
+        failBackup("BACKUP_PURGE_BLOCKED", "committed offsite copy checkpoint does not match its exact O2 part digest and size", false, { copy: authority.copy_id });
+      }
+      if (actualRefs.has(checkpoint.part_ref)) failBackup("BACKUP_VECTOR_UNVERIFIABLE", "committed offsite copy has duplicate part checkpoints", false, { copy: authority.copy_id });
+      actualRefs.add(checkpoint.part_ref);
+      if (checkpoint.state !== "VERIFIED") allVerified = false;
+    }
+    if (actualRefs.size !== expectedCheckpoints.size || [...expectedCheckpoints.keys()].some((partRef) => !actualRefs.has(partRef)) || !allVerified) {
+      failBackup("BACKUP_PURGE_BLOCKED", "committed offsite copy checkpoints do not exactly verify the complete persisted O2 part vector", false, { copy: authority.copy_id });
+    }
   }
 }
 
@@ -426,7 +489,8 @@ async function processCopy(input: {
   let draft: BackupEpochDraft;
   try { draft = JSON.parse(persistedEpoch.draft_json) as BackupEpochDraft; }
   catch (cause) { failBackup("BACKUP_VECTOR_UNVERIFIABLE", "persisted backup epoch draft is corrupt", false, {}, cause); }
-  if (draft.epoch_id !== epochId || draft.part_index.length > MAX_COPY_PARTS) {
+  const partRefs = readBackupEpochOffsitePartRefs(draft, epochId);
+  if (draft.epoch_id !== epochId || partRefs.length > MAX_COPY_PARTS) {
     failBackup("BACKUP_VECTOR_UNVERIFIABLE", "persisted backup epoch part inventory is invalid");
   }
   const expiry = { expiry_intent_key: expiryKey, epoch_id: epochId, reason: `erasure:${erasureRef}` };
@@ -442,7 +506,7 @@ async function processCopy(input: {
       adapter: fenceOffsiteEffects(adapter, dependencies, context.fence, expectedState),
       now_ms: nowMs,
     });
-    if (result.state !== "DELETED" || result.absent_parts !== draft.part_index.length || result.journal_refs.length !== draft.part_index.length) {
+    if (result.state !== "DELETED" || result.absent_parts !== partRefs.length || result.journal_refs.length !== partRefs.length) {
       if (prior.state === "PENDING") await settleObligation(dependencies.core_db, prior, "BLOCKED", "BACKUP_EXPIRY_ABSENCE_UNPROVEN", null, now, context.fence, expectedState, (dependencies.now ?? Date.now)());
       return { absent: false, receipt_ref: `backup-blocked:${expiryKey}` };
     }

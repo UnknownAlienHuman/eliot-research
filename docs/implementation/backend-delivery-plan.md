@@ -1,7 +1,7 @@
 # Backend delivery plan
 
 Current execution order, refreshed on 2026-10-05 against `main`
-`9496aa78d72af1d2d347976077263ded45b67d31`.
+`c184e636dd4a5c6b755c7e8843f6d5f4e6c69ed8`.
 
 The [October 3 functional integration checkpoint](product-resume-2026-10-03.md)
 records the owner configuration, immutable run capture, MCP, provisioning and
@@ -97,12 +97,54 @@ PUT. The final Native emptiness readback follows all R2 writes. V2 receipts
 bind the full intent reference, exact copy and target environment; they cannot
 borrow a different request's identity. Initial fixture type errors and repaired
 results are preserved separately. These checks do not establish deployed or full O3
-acceptance. O3 still requires a real current operator admission/controller,
-later-purge reconciliation, restored historical read re-admission and final
-acceptance are still required. Current keys, use operations and selections need
+acceptance. O3 still requires production composition of current actor and controller
+authority, later-purge reconciliation, restored historical read re-admission and
+final acceptance. Current keys, use operations and selections need
 fresh admission. No insertion guard is bypassed or supplied invented authority;
 the receipt remains RESTORED_UNQUALIFIED with traffic_ready false, and the O2
 restore port stays closed.
+
+The October 5 restore-admission source checkpoint adds a standalone operator
+installer and a read-only current-permission verifier. Migration 0115 stores
+the exact target profile, permission, revocations and request binding in the
+primary coordinator D1, alongside restore lifecycle and shared erasure leases.
+The isolated target retains its separate account/resources/deployment pins.
+Operator provenance binds the OAuth-verified primary account; actor, full intent
+revision, authenticated copy, target configuration and purge/migration frontier
+are independently bound. Preflight rechecks current permission around remote
+reads, and the attempt transition checks permission, revocation and lease in
+one D1 statement. The five current-authority tables are `NOT_A_BACKUP`; their
+presence is tied to 0115 through the existing export presence checks.
+The installer pins the canonical Cloudflare API host, requires a fresh
+same-process usage capability, preserves immutable rows with exact readback,
+and reconciles uncertain writes without retrying them. Local plan inspection
+does not install authority. The copied optional RESTORE_VERIFY budget reference
+is context for future execution, not an execution reservation. No live
+permission, migration, restore or production Core caller is established here.
+
+The same checkpoint makes offsite expiry and purge replay account for the full
+manifest-plus-payload part set. Every committed copy must have the exact
+ref/digest/size checkpoint set, all VERIFIED, before adapter resolution or
+deletion. Current paired payload metadata is accepted by exact source-to-epoch
+scope discovery; legacy epochs keep their original shape. This closes the
+offsite payload inventory omission. Primary WORK_BUCKET backup-parts deletion,
+pre-claim orphan tracking, full later-purge sanitation and restored read
+re-admission remain open; ERASURE and the O2 restore port remain disabled.
+
+For this cut, TypeScript compilation, scoped ESLint over 21 source/tooling files
+(zero errors, warnings or hash drift), and canonical source budgets passed on
+Node 24.19.0. The unchanged SQL cut passed the installed depth-100 compiler on
+SQLite 3.50.4: 114 Core migrations, 127 tables, 23 views and 532 migration
+statements; 977 recovered application SQL sites were checked and 122 dynamic
+or unresolved sites remain reported. The first bounded runtime invocation
+passed 67 of 69 cases; two fixture failures incorrectly reseeded immutable
+permission refs with changed requests. After repairing those fixtures and the
+cross-account issuer invariant, six selected cases passed, including a
+coherently hashed target-account issuer refusal. The other 22 cases in that
+selected invocation were skipped. Seven synthetic local plan-only scenarios
+passed, including primary/target placement and unsafe-integer refusal; no
+live authority was issued. Independent frozen-source review passed. These
+receipts establish the named local checks, not deployed O3/O4 acceptance.
 
 The integrated Core/PWA TypeScript build passed on Node 24.19.0 after interface,
 import and exact-optional repairs. Scoped ESLint covered 152 changed source and
@@ -297,6 +339,17 @@ credential or provider key has been installed for this packet. The documented
 native OpenRouter path and response decoder are implemented; a real request has
 not verified them.
 
+Cloudflare's [October 1 account-token provisioning update](https://developers.cloudflare.com/changelog/post/2026-10-01-account-api-token-provisioning/)
+supports CLI OAuth token creation when the member has API Token Provisioning
+authority and the grant includes `account_api_tokens:create`; created permissions
+are bounded by both member authority and OAuth scopes. On October 5 at 08:49 UTC,
+Wrangler 4.143.1 returned an authenticated OAuth session containing the exact
+existing account and `secrets_store:write`, but no `account_api_tokens:create`.
+That scope is also absent from this installed Wrangler's supported scope map.
+The member's provisioning role is unverified. This session does not establish
+the ability to mint the dedicated management token; no new consent or token
+creation was attempted.
+
 The owner check/select action now creates separate provider-native candidates
 and connectivity proofs and uses their immutable resolver through project CAS,
 readiness, run capture, per-stage spend admission, model execution and COW.
@@ -305,6 +358,17 @@ for run/COW resolution. Native profile and audit reads use these exact saved
 pins; stage-specific zero-price quote ports accompany them. Marker-omitted
 Dynamic Route selections retain their existing path. The old Dynamic Route
 qualifier continues to reject native transport policies before effects.
+
+On October 5, the existing local two-key Bunny scenario passed against the
+current source cut: qualification/import/selection, old and new alias pins,
+immutable run capture and replay without another external effect. The run used
+local D1 persistence and supplied provider/pricing/management responses, not
+the development key or a real Cloudflare/OpenRouter request. SHA-256 values for
+1,723 repository source/configuration/SQL/lock inputs matched before and after
+the run; this is not compiler or installed-dependency attestation. One case
+passed and two were skipped. Earlier failed and timed-out receipts remain
+historical diagnostics and are not final passes. Live key installation,
+qualification and deployed Research execution remain open.
 Snapshot-v2 may retain the initial immutable price/proof past calendar expiry;
 current key/revocation checks and physical zero-price/no-fallback enforcement
 remain required on execution. Real operation, replay and refusal acceptance is

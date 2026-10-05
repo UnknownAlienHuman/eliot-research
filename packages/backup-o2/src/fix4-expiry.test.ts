@@ -107,7 +107,7 @@ function seedRows(db: DatabaseSync): void {
     INSERT INTO purge_ledger (erasure_id,non_revealing_subject_digest,disposition,receipt_ref,created_at) VALUES ('erasure-1','${HEX("4")}','COMPLETE','receipt-1','${T}');`);
 }
 type Harness = Awaited<ReturnType<typeof setup>>;
-async function setup(): Promise<{ db: DatabaseSync; coreDb: D1Database; port: ReturnType<typeof createBackupPort> }> {
+async function setup(): Promise<{ db: DatabaseSync; coreDb: D1Database; port: ReturnType<typeof createBackupPort>; work_bucket: R2Bucket }> {
   const db = new DatabaseSync(":memory:");
   for (const m of [m0001, m0002, m0003, m0004, m0005, m0006, m0007, m0008, m0009, m0010, m0011, m0012, m0013, m0018, m0019, m0099]) db.exec(m);
   for (const [i, n] of APPLIED.entries()) db.prepare("INSERT INTO d1_migrations (name, applied_at) VALUES (?1,?2)").run(n, `${T.slice(0, 10)}T00:00:${String(i).padStart(2, "0")}.000Z`);
@@ -117,7 +117,7 @@ async function setup(): Promise<{ db: DatabaseSync; coreDb: D1Database; port: Re
   const ports: BackupSourcePorts = { core_db: coreDb, evidence_bucket: evidence.bucket, work_bucket: work.bucket, part_sink: testPartSink(parts.bucket), create_sha256_sink: sink };
   const port = createBackupPort(ports, { limits: { r2_list_page_size: 50, part_bytes: 512 } });
   await authorizeBackupDestination(coreDb, { destination_id: "offsite-1", principal_ref: "tester", policy_decision_ref: "policy-1", policy: policy(), authorization_receipt_ref: "auth-1" });
-  return { db, coreDb, port };
+  return { db, coreDb, port, work_bucket: work.bucket };
 }
 function counting(inner: OffsiteCopyAdapter): OffsiteCopyAdapter & { deletes: number; describes: number } {
   let deletes = 0; let describes = 0;
@@ -364,8 +364,11 @@ describe("ER-34 O4 durable purge replay", () => {
 
   it("writes intent before real O2 deletes, honors the live fence, and reads all parts absent before success", async () => {
     const h = await setup();
+    await h.work_bucket.put("o4-payload", new Uint8Array([1, 3, 5]));
     const adapter = createControlledOffsiteAdapter({ destination_id: "offsite-1", failure_domain: "domain-remote" });
     const draft = await copied(h, "o4-purge", adapter);
+    const payloadParts = draft.payload_part_index ?? [];
+    expect(payloadParts).toHaveLength(1);
     const lease = seedErasure(h, draft.epoch_id, "erase-o4");
     const port = createBackupPurgeReplayPort({ core_db: h.coreDb, resolve_adapter: async () => adapter, now: () => lease.now });
 
@@ -377,13 +380,18 @@ describe("ER-34 O4 durable purge replay", () => {
 
     const deleted = await port.purge(draft.epoch_id, "erase-o4:1", { target_id: lease.target_id, fence: lease.fence });
     expect(deleted.receipt_ref).toMatch(/^backup-erasure-replay-[a-f0-9]{48}$/u);
-    expect(adapter.journal).toHaveLength(draft.part_index.length);
+    const allParts = draft.part_index.length + payloadParts.length;
+    expect(adapter.journal).toHaveLength(allParts);
     expect(h.db.prepare("SELECT count(*) AS n FROM backup_erasure_replay_obligation WHERE state='DELETED' AND receipt_json IS NOT NULL").get())
       .toEqual({ n: 1 });
     const terminalReceipt = JSON.parse((h.db.prepare("SELECT receipt_json FROM backup_erasure_replay_obligation WHERE state='DELETED'").get() as { receipt_json: string }).receipt_json) as ExpiryReceipt;
-    expect(terminalReceipt.journal_refs).toHaveLength(draft.part_index.length);
+    expect(terminalReceipt.journal_refs).toHaveLength(allParts);
     for (const part of draft.part_index) {
       const ref = `offsite/${draft.epoch_id}/${part.manifest}/${String(part.index).padStart(6, "0")}-${part.sha256}`;
+      await expect(adapter.get(ref)).resolves.toBeNull();
+    }
+    for (const part of payloadParts) {
+      const ref = `offsite/${draft.epoch_id}/r2-payload/${part.object_identity_digest}/${String(part.index).padStart(6, "0")}-${part.sha256}`;
       await expect(adapter.get(ref)).resolves.toBeNull();
     }
 
@@ -391,6 +399,67 @@ describe("ER-34 O4 durable purge replay", () => {
     const verified = await port.verifyAbsent(draft.epoch_id, "erase-o4:1", { target_id: lease.target_id, fence: lease.fence });
     expect(verified.absent).toBe(true);
     expect(verified.receipt_ref).toBe(deleted.receipt_ref);
+  });
+
+  it("blocks a committed copy with an extra part checkpoint before provider resolution or purge effects", async () => {
+    const h = await setup();
+    const adapter = createControlledOffsiteAdapter({ destination_id: "offsite-1", failure_domain: "domain-remote" });
+    const draft = await copied(h, "o4-extra-checkpoint", adapter);
+    const copy = h.db.prepare("SELECT copy_id FROM backup_offsite_copy_receipt WHERE epoch_id=?1").get(draft.epoch_id) as { copy_id: string } | undefined;
+    if (copy === undefined) throw new Error("offsite copy receipt was not committed");
+    expect(h.db.prepare("SELECT state FROM backup_offsite_copy_replay_authority WHERE copy_id=?1").get(copy.copy_id)).toEqual({ state: "COMMITTED" });
+    h.db.prepare(
+      "INSERT INTO backup_offsite_copy_part(copy_id,part_ref,content_digest,size_bytes,nonce_hex,state,updated_at) VALUES (?1,?2,?3,0,?4,'VERIFIED',?5)",
+    ).run(copy.copy_id, `offsite/${draft.epoch_id}/unexpected/000001-${HEX("f")}`, HEX("f"), HEX("e").slice(0, 24), T);
+    const lease = seedErasure(h, draft.epoch_id, "erase-o4-extra-checkpoint");
+    let adapterResolutions = 0;
+    const port = createBackupPurgeReplayPort({
+      core_db: h.coreDb,
+      resolve_adapter: async () => { adapterResolutions += 1; return adapter; },
+      now: () => lease.now,
+    });
+
+    await expect(port.purge(draft.epoch_id, "erase-o4-extra-checkpoint:1", { target_id: lease.target_id, fence: lease.fence }))
+      .rejects.toMatchObject({ code: "BACKUP_PURGE_BLOCKED" });
+    expect(adapterResolutions).toBe(0);
+    expect(adapter.journal).toHaveLength(0);
+    expect(h.db.prepare("SELECT count(*) AS n FROM backup_erasure_replay_obligation").get()).toEqual({ n: 0 });
+  });
+
+  it("refuses terminal absence when a committed part checkpoint is not VERIFIED", async () => {
+    const h = await setup();
+    const inner = createControlledOffsiteAdapter({ destination_id: "offsite-1", failure_domain: "domain-remote" });
+    let reads = 0;
+    const adapter: OffsiteCopyAdapter = {
+      ...inner,
+      async get(partRef) { reads += 1; return inner.get(partRef); },
+    };
+    const draft = await copied(h, "o4-unverified-checkpoint", adapter);
+    const lease = seedErasure(h, draft.epoch_id, "erase-o4-unverified-checkpoint");
+    let adapterResolutions = 0;
+    const port = createBackupPurgeReplayPort({
+      core_db: h.coreDb,
+      resolve_adapter: async () => { adapterResolutions += 1; return adapter; },
+      now: () => lease.now,
+    });
+    await port.purge(draft.epoch_id, "erase-o4-unverified-checkpoint:1", { target_id: lease.target_id, fence: lease.fence });
+    const copy = h.db.prepare("SELECT copy_id FROM backup_offsite_copy_receipt WHERE epoch_id=?1").get(draft.epoch_id) as { copy_id: string } | undefined;
+    if (copy === undefined) throw new Error("offsite copy receipt was not committed");
+    const checkpoint = h.db.prepare("SELECT part_ref FROM backup_offsite_copy_part WHERE copy_id=?1 ORDER BY part_ref LIMIT 1").get(copy.copy_id) as { part_ref: string } | undefined;
+    if (checkpoint === undefined) throw new Error("committed copy has no checkpoint to downgrade");
+    h.db.prepare("UPDATE backup_offsite_copy_part SET state='STORED' WHERE copy_id=?1 AND part_ref=?2").run(copy.copy_id, checkpoint.part_ref);
+    h.db.prepare("UPDATE erasure_execution SET state='VERIFY_ABSENCE_OR_BLOCK' WHERE erasure_id='erase-o4-unverified-checkpoint' AND revision=1").run();
+    const readsBefore = reads;
+    const resolutionsBefore = adapterResolutions;
+    const journalBefore = inner.journal.length;
+
+    await expect(port.verifyAbsent(draft.epoch_id, "erase-o4-unverified-checkpoint:1", { target_id: lease.target_id, fence: lease.fence }))
+      .rejects.toMatchObject({ code: "BACKUP_PURGE_BLOCKED" });
+    expect(reads).toBe(readsBefore);
+    expect(adapterResolutions).toBe(resolutionsBefore);
+    expect(inner.journal).toHaveLength(journalBefore);
+    expect(h.db.prepare("SELECT state FROM backup_erasure_replay_obligation WHERE erasure_id='erase-o4-unverified-checkpoint'").get())
+      .toEqual({ state: "DELETED" });
   });
 
   it("persists an explicit blocker without deleting when no installed provider adapter resolves", async () => {

@@ -1,6 +1,7 @@
 import type { OperationIntent } from "@eliotr/contracts";
 import { assertBackupIdentifier, assertBackupIntent, backupAborted, failBackup, canonicalBackupJson } from "./shared.js";
 import type { BackupEpochDraft } from "./epoch.js";
+import { readBackupEpochOffsitePartRefs } from "./epoch-part-inventory.js";
 import type { OffsiteCopyAdapter } from "./offsite.js";
 import { destinationDescriptorDigest, reconcileDestinationDescriptor, type BackupDestinationPolicy } from "./destination-policy.js";
 import { requireDestinationAuthority } from "./destination-authority.js";
@@ -94,14 +95,14 @@ function parseExpiryRow(row: ExpiryRow, expiryKey: string): ExpiryReceipt {
     failBackup("BACKUP_VECTOR_UNVERIFIABLE", "backup expiry receipt is corrupt", false, {}, cause);
   }
   if (row.state !== "DELETED" && row.state !== "BLOCKED") failBackup("BACKUP_VECTOR_UNVERIFIABLE", "backup expiry receipt carries an unknown state", false, {});
+  if (!Number.isSafeInteger(row.absent_parts) || row.absent_parts < 0 ||
+    (row.state === "DELETED" && journalRefs.some((ref) => ref.length === 0))) {
+    failBackup("BACKUP_VECTOR_UNVERIFIABLE", "backup expiry receipt has malformed part counts or journal refs", false, {});
+  }
   return {
     expiry_intent_key: expiryKey, epoch_id: row.epoch_id, destination_id: row.destination_id,
     journal_refs: journalRefs, state: row.state, absent_parts: row.absent_parts, created_at: row.created_at,
   };
-}
-
-function partRefFor(epochId: string, manifest: string, index: number, sha256: string): string {
-  return `offsite/${epochId}/${manifest}/${String(index).padStart(6, "0")}-${sha256}`;
 }
 
 interface CopyAuthorityRow {
@@ -164,6 +165,7 @@ export async function expireOffsiteCopy(input: {
   } catch (cause) {
     failBackup("BACKUP_VECTOR_UNVERIFIABLE", "D1-persisted epoch draft is corrupt", false, {}, cause);
   }
+  const partRefs = readBackupEpochOffsitePartRefs(persistedDraft, epochId);
   // D1-authoritative expiry: copy receipts bound to this epoch and destination,
   // never caller draft bytes or caller timestamps. At least one receipt must
   // reproduce the live controller policy generation and the live descriptor
@@ -212,15 +214,17 @@ export async function expireOffsiteCopy(input: {
     }
     const persisted = parseExpiryRow(existing, expiryKey);
     if (persisted.state === "DELETED") {
+      if (persisted.absent_parts !== partRefs.length || persisted.journal_refs.length !== partRefs.length) {
+        failBackup("BACKUP_VECTOR_UNVERIFIABLE", "terminal expiry receipt count does not match the complete persisted O2 part vector", false, {});
+      }
       // Terminal replay re-proves absence of EVERY remote part. A reappeared
       // part is resurrection, never DELETED while present. A blocking hold
       // gates deletion, never history: once absence and binding verify, the
       // historical receipt stands.
-      for (const part of persistedDraft.part_index) {
-        const ref = partRefFor(epochId, part.manifest, part.index, part.sha256);
+      for (const part of partRefs) {
         let remote: { readonly ciphertext: Uint8Array } | null;
         try {
-          remote = await input.adapter.get(ref);
+          remote = await input.adapter.get(part.offsite_ref);
         } catch (cause) {
           failBackup("BACKUP_OBJECT_UNREADABLE", "offsite absence re-proof is unavailable on replay", true, {}, cause);
         }
@@ -277,23 +281,25 @@ export async function expireOffsiteCopy(input: {
     throw Object.assign(new Error("offsite expiry blocked by retention lock, legal hold, or controller hold; nothing deleted"), { code: "BACKUP_EXPIRY_BLOCKED" });
   }
   const journalRefs: string[] = [];
-  for (const part of persistedDraft.part_index) {
+  for (const part of partRefs) {
     if (backupAborted(input.signal)) failBackup("BACKUP_CANCELLED", "backup expiry was cancelled", true);
-    const partRef = partRefFor(epochId, part.manifest, part.index, part.sha256);
     let journalRef: string;
     try {
-      journalRef = (await input.adapter.delete(partRef, `expiry:${expiryKey}`)).journal_ref;
+      journalRef = (await input.adapter.delete(part.offsite_ref, `expiry:${expiryKey}`)).journal_ref;
     } catch (cause) {
       if (typeof cause === "object" && cause !== null && "code" in cause && cause.code === "BACKUP_OFFSITE_UNCERTAIN") throw cause;
       failBackup("BACKUP_OBJECT_UNREADABLE", "offsite expiry delete attempt failed", true, {}, cause);
     }
+    if (typeof journalRef !== "string" || journalRef.length === 0) {
+      failBackup("BACKUP_OFFSITE_UNCERTAIN", "offsite expiry returned no exact deletion journal receipt", true);
+    }
     journalRefs.push(journalRef);
-    const after = await input.adapter.get(partRef);
+    const after = await input.adapter.get(part.offsite_ref);
     if (after !== null) failBackup("BACKUP_EXPIRY_ABSENCE_UNPROVEN", "offsite part remains after expiry delete; absence unproven", true, {});
   }
   const receipt: ExpiryReceipt = {
     expiry_intent_key: expiryKey, epoch_id: epochId, destination_id: authority.destination_id,
-    journal_refs: journalRefs, state: "DELETED", absent_parts: persistedDraft.part_index.length, created_at: now,
+    journal_refs: journalRefs, state: "DELETED", absent_parts: partRefs.length, created_at: now,
   };
   try {
     await input.core_db.prepare(

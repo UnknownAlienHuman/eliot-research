@@ -118,7 +118,8 @@ function abortIfNeeded(signal?: AbortSignal): void {
 }
 
 function restoreBinding(intent: OperationIntent, preflight: IsolatedRestorePreflight): BackupRestoreIntentBinding {
-  return { intent, epoch_id: preflight.draft.epoch_id, offsite_copy_ref: preflight.copy_ref, target: preflight.target };
+  return { intent, epoch_id: preflight.draft.epoch_id, offsite_copy_ref: preflight.copy_ref,
+    target: preflight.target, admission: preflight.admission_binding };
 }
 
 function assertFence(fence: RestoreErasureFence, preflight: IsolatedRestorePreflight): void {
@@ -433,6 +434,9 @@ async function restoreR2Objects(input: {
  */
 export async function executeIsolatedBackupRestore(input: ExecuteIsolatedRestoreInput): Promise<IsolatedRestoreExecutionResult> {
   if (input.intent.operation_kind !== "RESTORE_VERIFY") failBackup("BACKUP_INPUT_INVALID", "isolated restore requires a RESTORE_VERIFY intent");
+  if (canonicalBackupJson(input.preflight.admission_context.intent) !== canonicalBackupJson(input.intent)) {
+    failBackup("BACKUP_INPUT_INVALID", "restore preflight must use the exact caller intent revision passed to the executor");
+  }
   const preflightInput = { ...input.preflight, ...(input.signal === undefined ? {} : { signal: input.signal }) };
   const initial = await verifyIsolatedRestorePreflight(preflightInput);
   const migrationNames = initial.manifests.vector["migration_names"];
@@ -460,6 +464,7 @@ export async function executeIsolatedBackupRestore(input: ExecuteIsolatedRestore
     if (latest.copy_ref !== initial.copy_ref || latest.draft.epoch_id !== initial.draft.epoch_id ||
         canonicalBackupJson(latest.draft) !== canonicalBackupJson(initial.draft) ||
         canonicalBackupJson(latest.target) !== canonicalBackupJson(initial.target) ||
+        canonicalBackupJson(latest.admission_binding) !== canonicalBackupJson(initial.admission_binding) ||
         latest.current_purge.revision !== initial.current_purge.revision || latest.current_purge.digest !== initial.current_purge.digest ||
         canonicalBackupJson(latest.manifests.source_rows) !== canonicalBackupJson(initial.manifests.source_rows) ||
         canonicalBackupJson(latest.manifests.r2_objects) !== canonicalBackupJson(initial.manifests.r2_objects)) {

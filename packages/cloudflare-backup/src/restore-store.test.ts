@@ -8,10 +8,11 @@ import type { OperationIntent } from "@eliotr/contracts";
 import { backupSha256Hex, canonicalBackupJson } from "@eliotr/backup-o2";
 import { digestNativeHistoryArchive, digestNativeHistoryRestoreReadback, validateNativeHistoryArchiveSummary } from "./restore-native-history.js";
 import type { NativeHistoryArchiveSourceContext } from "./restore-native-history.js";
-import { createD1BackupRestoreStore, type BackupRestoreIntentBinding } from "./restore-store.js";
+import { computeBackupRestoreIdentity, createD1BackupRestoreStore, type BackupRestoreIntentBinding } from "./restore-store.js";
 
 const MIGRATION = fileURLToPath(new URL("../../../infra/d1/core/migrations/0107_research_backup_restore.sql", import.meta.url));
 const LEASE_MIGRATION = fileURLToPath(new URL("../../../infra/d1/core/migrations/0002_execution_coordination.sql", import.meta.url));
+const ADMISSION_MIGRATION = fileURLToPath(new URL("../../../infra/d1/core/migrations/0115_backup_restore_current_admission.sql", import.meta.url));
 const LEASE_ID = "research-erasure-restore-shared-fence-v1";
 const LEASE_KIND = "ERASURE_RESTORE_SHARED_FENCE";
 const NOW = Date.parse("2026-10-03T12:00:00.000Z");
@@ -43,18 +44,65 @@ function intent(key = "restore-idempotency-1"): OperationIntent {
   };
 }
 
-function binding(target: BackupRestoreIntentBinding["target"] = {
+async function binding(target: BackupRestoreIntentBinding["target"] = {
   account_id: "isolated-account", failure_domain: "isolated-domain", environment_ref: "isolated-env",
+  deployment_ref: "restore-deployment", configuration_sha256: "8".repeat(64),
   resources: { core_database: "isolated-core", evidence_bucket: "isolated-evidence", work_bucket: "isolated-work" },
-}): BackupRestoreIntentBinding {
-  return { intent: intent(), epoch_id: "epoch-1", offsite_copy_ref: "copy-1", target };
+}): Promise<BackupRestoreIntentBinding> {
+  const base = { intent: intent(), epoch_id: "epoch-1", offsite_copy_ref: "copy-1", target };
+  const identity = await computeBackupRestoreIdentity(base);
+  return { ...base, admission: {
+    restore_id: identity.restore_id, permission_ref: "restore-permission-1", permission_revision: 1,
+    permission_sha256: "a".repeat(64), restore_intent_digest: identity.intent_digest,
+    intent_sha256: "b".repeat(64), actor_sha256: "c".repeat(64), actor_expires_at: "2030-10-03T12:00:00.000Z",
+    copy_authority_sha256: "d".repeat(64), primary_binding_sha256: "e".repeat(64), request_sha256: "f".repeat(64),
+    profile_ref: "restore-target-profile-1", profile_revision: 1, profile_sha256: "9".repeat(64),
+    valid_from: "2026-10-03T12:00:00.000Z", expires_at: "2030-10-03T12:00:00.000Z", binding_sha256: "7".repeat(64),
+  } };
 }
 
 async function setup(): Promise<{ readonly database: DatabaseSync; readonly store: ReturnType<typeof createD1BackupRestoreStore> }> {
   const database = new DatabaseSync(":memory:");
   database.exec(await readFile(LEASE_MIGRATION, "utf8"));
   database.exec(await readFile(MIGRATION, "utf8"));
+  database.exec(await readFile(ADMISSION_MIGRATION, "utf8"));
   return { database, store: createD1BackupRestoreStore(d1(database)) };
+}
+
+function seedRestoreAdmission(h: Awaited<ReturnType<typeof setup>>, request: BackupRestoreIntentBinding): void {
+  const profile = {
+    protocol: "eliotr.backup-restore-target-profile.v1", profile_ref: request.admission.profile_ref,
+    revision: request.admission.profile_revision, account_id: request.target.account_id,
+    failure_domain: request.target.failure_domain, environment_ref: request.target.environment_ref,
+    deployment_ref: request.target.deployment_ref, configuration_sha256: request.target.configuration_sha256,
+    resources: request.target.resources, created_at: "2026-10-03T12:00:00.000Z",
+  };
+  const json = canonicalBackupJson;
+  h.database.prepare("INSERT OR IGNORE INTO backup_restore_target_profile(profile_ref,revision,profile_json,profile_sha256,account_id,failure_domain,environment_ref,deployment_ref,configuration_sha256,resources_json,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)")
+    .run(request.admission.profile_ref, request.admission.profile_revision, json(profile), request.admission.profile_sha256,
+      request.target.account_id, request.target.failure_domain, request.target.environment_ref, request.target.deployment_ref,
+      request.target.configuration_sha256, json(request.target.resources), profile.created_at);
+  h.database.prepare("INSERT OR IGNORE INTO backup_restore_permission(permission_ref,revision,permission_json,permission_sha256,restore_id,restore_intent_digest,intent_sha256,actor_sha256,request_sha256,actor_expires_at,epoch_id,offsite_copy_ref,copy_authority_sha256,primary_binding_sha256,profile_ref,profile_revision,profile_sha256,migration_ledger_digest,purge_ledger_revision,purge_ledger_digest,valid_from,expires_at,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+    .run(request.admission.permission_ref, request.admission.permission_revision, "{}", request.admission.permission_sha256,
+      request.admission.restore_id, request.admission.restore_intent_digest, request.admission.intent_sha256,
+      request.admission.actor_sha256, request.admission.request_sha256, request.admission.actor_expires_at,
+      request.epoch_id, request.offsite_copy_ref, request.admission.copy_authority_sha256, request.admission.primary_binding_sha256,
+      request.admission.profile_ref, request.admission.profile_revision, request.admission.profile_sha256,
+      "6".repeat(64), 0, "5".repeat(64), request.admission.valid_from, request.admission.expires_at, profile.created_at);
+  const bindingJson = json({ protocol: "eliotr.backup-restore-admission-binding.v1", ...request.admission, created_at: profile.created_at });
+  h.database.prepare("INSERT OR IGNORE INTO backup_restore_admission_binding(restore_id,permission_ref,permission_revision,permission_sha256,restore_intent_digest,intent_sha256,actor_sha256,actor_expires_at,copy_authority_sha256,primary_binding_sha256,request_sha256,profile_ref,profile_revision,profile_sha256,valid_from,expires_at,binding_json,binding_sha256,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+    .run(request.admission.restore_id, request.admission.permission_ref, request.admission.permission_revision,
+      request.admission.permission_sha256, request.admission.restore_intent_digest, request.admission.intent_sha256,
+      request.admission.actor_sha256, request.admission.actor_expires_at, request.admission.copy_authority_sha256,
+      request.admission.primary_binding_sha256, request.admission.request_sha256, request.admission.profile_ref,
+      request.admission.profile_revision, request.admission.profile_sha256, request.admission.valid_from,
+      request.admission.expires_at, bindingJson, request.admission.binding_sha256, profile.created_at);
+}
+
+async function claimRestore(h: Awaited<ReturnType<typeof setup>>, request: BackupRestoreIntentBinding, nowMs = NOW,
+  archiveSource?: NativeHistoryArchiveSourceContext, options: { readonly seedAdmission?: boolean } = {}) {
+  if (options.seedAdmission !== false) seedRestoreAdmission(h, request);
+  return h.store.claim(request, nowMs, archiveSource);
 }
 
 async function emptyArchiveBinding(request: BackupRestoreIntentBinding): Promise<{
@@ -99,8 +147,8 @@ describe("ER-34 durable isolated-restore authority", () => {
   it("replays only the exact unqualified receipt after attempt and readback settle", async () => {
     const h = await setup();
     try {
-      const request = binding();
-      const claim = await h.store.claim(request, NOW);
+      const request = await binding();
+      const claim = await claimRestore(h, request, NOW);
       expect(claim.state).toBe("READY");
       if (claim.state !== "READY") throw new Error("new restore was not admitted");
       const attempt = await h.store.beginAttempt(claim, request, restoreFence(h.database), NOW);
@@ -122,7 +170,7 @@ describe("ER-34 durable isolated-restore authority", () => {
       expect(receipt.state).toBe("RESTORED_UNQUALIFIED");
       expect(receipt.traffic_ready).toBe(false);
       expect(receipt.unresolved_acceptance).toContain("ERASURE_RESTORE_ACCEPTANCE");
-      const replay = await h.store.claim(request, NOW + 2000, context);
+      const replay = await claimRestore(h, request, NOW + 2000, context);
       expect(replay).toMatchObject({ state: "REPLAY", receipt });
       expect(h.database.prepare("SELECT COUNT(*) AS n FROM backup_restore_attempt").get()).toEqual({ n: 1 });
     } finally { h.database.close(); }
@@ -131,8 +179,8 @@ describe("ER-34 durable isolated-restore authority", () => {
   it("replays an existing canonical v1 receipt without rewriting its stored bytes", async () => {
     const h = await setup();
     try {
-      const request = binding();
-      const claim = await h.store.claim(request, NOW);
+      const request = await binding();
+      const claim = await claimRestore(h, request, NOW);
       if (claim.state !== "READY") throw new Error("new restore was not admitted");
       const attemptId = "restore-attempt-legacy-v1";
       const startedAt = "2026-10-03T12:00:00.000Z";
@@ -155,7 +203,7 @@ describe("ER-34 durable isolated-restore authority", () => {
       const legacyDigest = await backupSha256Hex(legacyBytes);
       h.database.prepare("INSERT INTO backup_restore_receipt(restore_id,attempt_number,receipt_json,receipt_digest,created_at) VALUES(?,1,?,?,?)")
         .run(claim.restore_id, legacyBytes, legacyDigest, endedAt);
-      const replay = await h.store.claim(request, NOW + 2000);
+      const replay = await claimRestore(h, request, NOW + 2000);
       expect(replay).toMatchObject({ state: "REPLAY", receipt: legacy });
       expect(h.database.prepare("SELECT receipt_json FROM backup_restore_receipt WHERE restore_id=?").get(claim.restore_id)).toEqual({ receipt_json: legacyBytes });
       if (replay.state !== "REPLAY") throw new Error("legacy receipt was not replayed");
@@ -174,8 +222,8 @@ describe("ER-34 durable isolated-restore authority", () => {
     for (const alter of alterations) {
       const h = await setup();
       try {
-        const request = binding();
-        const claim = await h.store.claim(request, NOW);
+        const request = await binding();
+        const claim = await claimRestore(h, request, NOW);
         if (claim.state !== "READY") throw new Error("new restore was not admitted");
         const attempt = await h.store.beginAttempt(claim, request, restoreFence(h.database), NOW);
         const { context, archive } = await emptyArchiveBinding(request);
@@ -194,7 +242,7 @@ describe("ER-34 durable isolated-restore authority", () => {
         const forgedDigest = await backupSha256Hex(forgedBytes);
         h.database.prepare("UPDATE backup_restore_receipt SET receipt_json=?,receipt_digest=? WHERE restore_id=?")
           .run(forgedBytes, forgedDigest, claim.restore_id);
-        await expect(h.store.claim(request, NOW + 2000, context)).rejects.toMatchObject({ code: "BACKUP_RESTORE_UNCERTAIN" });
+        await expect(claimRestore(h, request, NOW + 2000, context)).rejects.toMatchObject({ code: "BACKUP_RESTORE_UNCERTAIN" });
       } finally { h.database.close(); }
     }
   });
@@ -202,32 +250,53 @@ describe("ER-34 durable isolated-restore authority", () => {
   it("rejects same-key foreign target authority and never starts a second writer", async () => {
     const h = await setup();
     try {
-      const request = binding();
-      const claim = await h.store.claim(request, NOW);
+      const request = await binding();
+      const claim = await claimRestore(h, request, NOW);
       if (claim.state !== "READY") throw new Error("new restore was not admitted");
-      await expect(h.store.claim(binding({
+      await expect(claimRestore(h, await binding({
         account_id: "foreign-account", failure_domain: "foreign-domain", environment_ref: "foreign-env",
+        deployment_ref: "foreign-deployment", configuration_sha256: "0".repeat(64),
         resources: { core_database: "foreign-core", evidence_bucket: "foreign-evidence", work_bucket: "foreign-work" },
-      }), NOW + 1)).rejects.toMatchObject({ code: "BACKUP_INTENT_CONFLICT" });
+      }), NOW + 1, undefined, { seedAdmission: false })).rejects.toMatchObject({ code: "BACKUP_INTENT_CONFLICT" });
       const fence = restoreFence(h.database);
       const attempt = await h.store.beginAttempt(claim, request, fence, NOW + 2);
       await expect(h.store.beginAttempt(claim, request, fence, NOW + 3)).rejects.toMatchObject({ code: "BACKUP_PURGE_BLOCKED" });
       await h.store.markUnknown(attempt, "BACKUP_PART_READBACK_MISMATCH", NOW + 4);
-      await expect(h.store.claim(request, NOW + 5)).rejects.toMatchObject({ code: "BACKUP_RESTORE_UNCERTAIN" });
+      await expect(claimRestore(h, request, NOW + 5)).rejects.toMatchObject({ code: "BACKUP_RESTORE_UNCERTAIN" });
       expect(h.database.prepare("SELECT state FROM backup_restore_intent").get()).toEqual({ state: "UNKNOWN" });
       expect(h.database.prepare("SELECT state FROM backup_restore_attempt").get()).toEqual({ state: "UNKNOWN" });
+    } finally { h.database.close(); }
+  });
+
+  it("lets a permission revocation win between read preflight and the atomic attempt transition", async () => {
+    const h = await setup();
+    try {
+      const request = await binding();
+      const claim = await claimRestore(h, request, NOW);
+      if (claim.state !== "READY") throw new Error("restore intent was not admitted");
+      const fence = {
+        ...restoreFence(h.database),
+        async assertCurrent() {
+          h.database.prepare("INSERT INTO backup_restore_permission_revocation(revocation_ref,permission_ref,permission_revision,revoked_at,reason_sha256,revocation_json,revocation_sha256) VALUES(?,?,?,?,?,?,?)")
+            .run("restore-revocation-race", request.admission.permission_ref, request.admission.permission_revision,
+              "2026-10-03T12:00:00.000Z", "4".repeat(64), "{}", "5".repeat(64));
+        },
+      };
+      await expect(h.store.beginAttempt(claim, request, fence, NOW + 1)).rejects.toMatchObject({ code: "BACKUP_RESTORE_NOT_IMPLEMENTED" });
+      expect(h.database.prepare("SELECT state FROM backup_restore_intent").get()).toEqual({ state: "ADMITTED" });
+      expect(h.database.prepare("SELECT COUNT(*) AS n FROM backup_restore_attempt").get()).toEqual({ n: 0 });
     } finally { h.database.close(); }
   });
 
   it("settles a known pre-write failure as terminal instead of making the intent retryable", async () => {
     const h = await setup();
     try {
-      const request = binding();
-      const claim = await h.store.claim(request, NOW);
+      const request = await binding();
+      const claim = await claimRestore(h, request, NOW);
       if (claim.state !== "READY") throw new Error("new restore was not admitted");
       const attempt = await h.store.beginAttempt(claim, request, restoreFence(h.database), NOW + 1);
       await h.store.markFailed(attempt, "BACKUP_INPUT_INVALID", NOW + 2);
-      await expect(h.store.claim(request, NOW + 3)).rejects.toMatchObject({ code: "BACKUP_RESTORE_FAILED" });
+      await expect(claimRestore(h, request, NOW + 3)).rejects.toMatchObject({ code: "BACKUP_RESTORE_FAILED" });
       expect(h.database.prepare("SELECT state FROM backup_restore_attempt").get()).toEqual({ state: "FAILED" });
     } finally { h.database.close(); }
   });

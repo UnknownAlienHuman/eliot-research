@@ -18,6 +18,7 @@ import { rebuildManifestLines } from "@eliotr/backup-o2";
 import type { IsolatedRestorePreflightInput } from "./isolated-restore-preflight.js";
 import { executeIsolatedBackupRestore, type RestoreErasureGate } from "./restore-executor.js";
 import { createD1BackupRestoreStore } from "./restore-store.js";
+import { makeTestRestoreAdmissionBinding } from "./restore-admission-test-support.js";
 
 const MIGRATION_DIR = fileURLToPath(new URL("../../../infra/d1/core/migrations/", import.meta.url));
 const MANIFEST_NAMES = ["schema", "schema-inventory", "ownership", "sources", "revisions", "projects", "scopes", "handles", "heads", "generations", "retention", "purge", "r2-objects", "rebuild", "vector"] as const;
@@ -258,12 +259,32 @@ async function fixture(): Promise<{
   primary.prepare("INSERT INTO backup_offsite_copy_receipt(copy_id,epoch_id,destination_id,key_generation,policy_digest,intent_digest,receipt_json,epoch_json,attempt_json,readback_digest,expires_at,failure_domain,descriptor_digest,authority_authorized_at,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
     .run("copy-ordering", epochId, policy.destination_id, keyGeneration, policyDigest, H("2"), JSON.stringify(receipt), JSON.stringify(offsiteEpoch), JSON.stringify(attempt), H("3"), EXPIRY, policy.failure_domain, descriptorDigest, Date.now(), Date.now());
   const targetR2 = workTargetBucket(contamination);
+  const intent: OperationIntent = {
+    intent_ref: { id: "restore-ordering", revision: 1 }, operation_kind: "RESTORE_VERIFY", principal_ref: "owner-ordering",
+    idempotency_key: "restore-r2-contamination", payload_ref: epochId,
+    policy_decision_ref: "restore-admission-ordering", created_at: NOW,
+  };
+  const targetIdentity = { account_id: "isolated-account", failure_domain: "isolated-domain", environment_ref: "restore-target",
+    deployment_ref: "restore-deployment", configuration_sha256: H("8"),
+    resources: { core_database: "target-core", evidence_bucket: "target-evidence", work_bucket: "target-work" } };
+  const profile = { protocol: "eliotr.backup-restore-target-profile.v1", profile_ref: "restore-target-ordering",
+    revision: 1, ...targetIdentity, created_at: NOW };
+  const profileSha = await backupSha256Hex(canonicalBackupJson(profile));
   const input: IsolatedRestorePreflightInput = {
     draft,
     primary: { account_id: "primary-account", failure_domain: "primary-domain", resources: { core_database: "primary-core", evidence_bucket: "primary-evidence", work_bucket: "primary-work" }, db: primaryDb, evidence_bucket: emptyBucket(), work_bucket: emptyBucket() },
-    target: { account_id: "isolated-account", failure_domain: "isolated-domain", environment_ref: "restore-target", resources: { core_database: "target-core", evidence_bucket: "target-evidence", work_bucket: "target-work" }, db: targetDb, evidence_bucket: emptyBucket(), work_bucket: targetR2.bucket },
+    target: { ...targetIdentity, db: targetDb, evidence_bucket: emptyBucket(), work_bucket: targetR2.bucket },
     offsite: adapter, encryption_key: key,
-    admission: { async assertCurrentAdmission(request) { if (request.target_environment_ref !== "restore-target" || request.target_resources.core_database !== "target-core" || request.epoch_id !== epochId) throw new Error("unbound restore admission request"); } },
+    admission_context: {
+      actor: { principal_ref: "owner-ordering", credential_generation: "access-generation-ordering", client_class: "owner_pwa",
+        authentication_method: "cloudflare_access", issuer: "https://access.example.test", verified_at: NOW, expires_at: EXPIRY },
+      intent, permission_ref: "restore-permission-ordering", permission_revision: 1,
+      target_profile: { profile_ref: profile.profile_ref, revision: profile.revision, profile_sha256: profileSha },
+    },
+    admission: { async assertCurrentAdmission(request) {
+      if (canonicalBackupJson(request.target) !== canonicalBackupJson(targetIdentity) || request.epoch_id !== epochId) throw new Error("unbound restore admission request");
+      return makeTestRestoreAdmissionBinding(primary, request, { created_at: NOW, persist: true });
+    } },
   };
   return { input, primary, target, contamination, targetObjects: targetR2.objects };
 }
@@ -295,11 +316,7 @@ describe("native-history restore final ordering", () => {
           };
         },
       };
-      const intent: OperationIntent = {
-        intent_ref: { id: "restore-ordering", revision: 1 }, operation_kind: "RESTORE_VERIFY", principal_ref: "owner-ordering",
-        idempotency_key: "restore-r2-contamination", payload_ref: f.input.draft.epoch_id,
-        policy_decision_ref: "restore-admission-ordering", created_at: NOW,
-      };
+      const intent = f.input.admission_context.intent;
       await expect(executeIsolatedBackupRestore({
         intent, preflight: f.input, erasure_gate: gate, restore_store: createD1BackupRestoreStore(d1Database(f.primary)),
       })).rejects.toMatchObject({ code: "BACKUP_RESTORE_UNCERTAIN" });

@@ -7,6 +7,18 @@ The architecture defines the target product. The machine-readable
 These sources answer different questions. A compiling port, completed Workflow or passing local test
 cannot establish production readiness.
 
+The October 5 restore-admission checkpoint supplies an operator installer and
+read-only permission verifier as source components. Current authority lives in
+the primary coordinator D1 and competes atomically with revocation and the
+shared erasure lease; isolated target writes retain a separate pinned profile.
+The five migration-0115 authority tables are excluded from portable backups.
+Offsite expiry and purge replay now require the complete manifest-plus-payload
+inventory and exact VERIFIED checkpoints. These changes do not compose a
+production restore caller or qualify O3/O4. Primary WORK_BUCKET backup-parts
+cleanup, pre-claim orphan tracking, later-purge sanitation and restored read
+re-admission remain open. See the [delivery plan](backend-delivery-plan.md) for
+the actual local checks and the [gap register](gap-register.md) for acceptance.
+
 ## Read the current state
 
 Run these commands in the repository root:

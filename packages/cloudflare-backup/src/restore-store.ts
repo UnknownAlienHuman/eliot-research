@@ -6,6 +6,7 @@ import {
   validateNativeHistoryArchiveSummary,
 } from "./restore-native-history.js";
 import type { NativeHistoryArchiveSourceContext, NativeHistoryArchiveSummary } from "./restore-native-history.js";
+import { assertCurrentRestoreAdmissionBinding, type RestoreAdmissionBinding } from "./restore-admission.js";
 
 const SHA256 = /^[a-f0-9]{64}$/u;
 
@@ -13,6 +14,8 @@ export interface BackupRestoreTargetBinding {
   readonly account_id: string;
   readonly failure_domain: string;
   readonly environment_ref: string;
+  readonly deployment_ref: string;
+  readonly configuration_sha256: string;
   readonly resources: {
     readonly core_database: string;
     readonly evidence_bucket: string;
@@ -20,11 +23,15 @@ export interface BackupRestoreTargetBinding {
   };
 }
 
-export interface BackupRestoreIntentBinding {
+export interface BackupRestoreBaseIntentBinding {
   readonly intent: OperationIntent;
   readonly epoch_id: string;
   readonly offsite_copy_ref: string;
   readonly target: BackupRestoreTargetBinding;
+}
+
+export interface BackupRestoreIntentBinding extends BackupRestoreBaseIntentBinding {
+  readonly admission: RestoreAdmissionBinding;
 }
 
 export interface BackupRestoreAttempt {
@@ -110,20 +117,31 @@ function timestamp(nowMs: number): string {
   return new Date(nowMs).toISOString();
 }
 
-function validateBinding(binding: BackupRestoreIntentBinding): BackupRestoreIntentBinding {
+function validateBaseBinding(binding: BackupRestoreBaseIntentBinding): BackupRestoreBaseIntentBinding {
   const intent = OperationIntentSchema.safeParse(binding.intent);
   if (!intent.success || intent.data.operation_kind !== "RESTORE_VERIFY") failBackup("BACKUP_INPUT_INVALID", "backup restore requires a valid RESTORE_VERIFY intent");
   const safe = (value: unknown): value is string => typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/u.test(value);
   if (!safe(binding.epoch_id) || !safe(binding.offsite_copy_ref) ||
       !safe(binding.target.account_id) || !safe(binding.target.failure_domain) || !safe(binding.target.environment_ref) ||
+      !safe(binding.target.deployment_ref) || !SHA256.test(binding.target.configuration_sha256) ||
       !safe(binding.target.resources.core_database) || !safe(binding.target.resources.evidence_bucket) || !safe(binding.target.resources.work_bucket)) {
     failBackup("BACKUP_INPUT_INVALID", "backup restore intent contains an invalid epoch, copy, or target binding");
   }
   return { ...binding, intent: intent.data };
 }
 
-async function identity(binding: BackupRestoreIntentBinding): Promise<{ readonly restore_id: string; readonly intent_digest: string; readonly target_binding_json: string }> {
-  const normalized = validateBinding(binding);
+function validateBinding(binding: BackupRestoreIntentBinding): BackupRestoreIntentBinding {
+  const normalized = validateBaseBinding(binding);
+  if (typeof binding.admission !== "object" || binding.admission === null) {
+    failBackup("BACKUP_RESTORE_NOT_IMPLEMENTED", "backup restore intent lacks a persisted current admission binding", false);
+  }
+  return { ...binding, intent: normalized.intent };
+}
+
+export async function computeBackupRestoreIdentity(binding: BackupRestoreBaseIntentBinding): Promise<{
+  readonly restore_id: string; readonly intent_digest: string; readonly target_binding_json: string;
+}> {
+  const normalized = validateBaseBinding(binding);
   const targetBinding = canonicalBackupJson({
     account_id: normalized.target.account_id,
     failure_domain: normalized.target.failure_domain,
@@ -138,6 +156,10 @@ async function identity(binding: BackupRestoreIntentBinding): Promise<{ readonly
   }));
   const restoreKey = await backupSha256Hex(`${normalized.intent.principal_ref}\u0000${normalized.intent.idempotency_key}`);
   return { restore_id: `restore-${restoreKey.slice(0, 48)}`, intent_digest: requestDigest, target_binding_json: targetBinding };
+}
+
+async function identity(binding: BackupRestoreIntentBinding): Promise<{ readonly restore_id: string; readonly intent_digest: string; readonly target_binding_json: string }> {
+  return computeBackupRestoreIdentity(binding);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -231,6 +253,20 @@ export function createD1BackupRestoreStore(database: D1Database): BackupRestoreS
       const binding = validateBinding(bindingInput);
       const id = await identity(binding);
       const now = timestamp(nowMs);
+      const existing = await readIntent(database, binding.intent.principal_ref, binding.intent.idempotency_key);
+      if (existing !== null) assertIntentMatches(existing, binding, id);
+      await assertCurrentRestoreAdmissionBinding(database, binding.admission, nowMs);
+      if (existing?.state === "RESTORED_UNQUALIFIED") {
+        const receipt = await readReceipt(database, id.restore_id, archiveSource, binding);
+        if (receipt === null || receipt.restore_id !== id.restore_id || receipt.intent_ref.id !== binding.intent.intent_ref.id || receipt.epoch_id !== binding.epoch_id) {
+          failBackup("BACKUP_RESTORE_UNCERTAIN", "completed backup restore has no exact persisted receipt", true);
+        }
+        return { state: "REPLAY", restore_id: id.restore_id, intent_digest: id.intent_digest, receipt };
+      }
+      if (existing !== null && existing.state !== "ADMITTED") {
+        if (existing.state === "BLOCKED") failBackup("BACKUP_RESTORE_FAILED", "backup restore intent is terminally failed or blocked", false);
+        failBackup("BACKUP_RESTORE_UNCERTAIN", "backup restore is already running or has an unknown prior outcome", true);
+      }
       try {
         await database.prepare(
           "INSERT INTO backup_restore_intent(restore_id,principal_ref,idempotency_key,intent_id,intent_revision," +
@@ -243,6 +279,7 @@ export function createD1BackupRestoreStore(database: D1Database): BackupRestoreS
       const row = await readIntent(database, binding.intent.principal_ref, binding.intent.idempotency_key);
       if (row === null) failBackup("BACKUP_RESTORE_UNCERTAIN", "backup restore intent did not read back", true);
       assertIntentMatches(row, binding, id);
+      await assertCurrentRestoreAdmissionBinding(database, binding.admission, nowMs);
       if (row.state === "RESTORED_UNQUALIFIED") {
         const receipt = await readReceipt(database, id.restore_id, archiveSource, binding);
         if (receipt === null || receipt.restore_id !== id.restore_id || receipt.intent_ref.id !== binding.intent.intent_ref.id || receipt.epoch_id !== binding.epoch_id) {
@@ -266,19 +303,46 @@ export function createD1BackupRestoreStore(database: D1Database): BackupRestoreS
           !Number.isSafeInteger(fence.lease_generation) || fence.lease_generation < 1) {
         failBackup("BACKUP_PURGE_BLOCKED", "backup restore attempt lacks an exact shared O4 exclusion lease");
       }
+      await assertCurrentRestoreAdmissionBinding(database, binding.admission, nowMs);
       await fence.assertCurrent();
       const now = timestamp(nowMs);
       let transition: { readonly restore_id: unknown } | null;
       try {
         transition = await database.prepare(
           "UPDATE backup_restore_intent SET state='ATTEMPTING',updated_at=?3 WHERE restore_id=?1 AND intent_digest=?2 AND state='ADMITTED' " +
+          "AND EXISTS (SELECT 1 FROM backup_restore_admission_binding b " +
+          "JOIN backup_restore_permission p ON p.permission_ref=b.permission_ref AND p.revision=b.permission_revision " +
+          "JOIN backup_restore_target_profile t ON t.profile_ref=b.profile_ref AND t.revision=b.profile_revision AND t.profile_sha256=b.profile_sha256 " +
+          "WHERE b.restore_id=?1 AND b.permission_ref=?8 AND b.permission_revision=?9 AND b.permission_sha256=?10 " +
+          "AND b.restore_intent_digest=?2 AND b.binding_sha256=?11 AND b.intent_sha256=?12 AND b.actor_sha256=?13 " +
+          "AND b.actor_expires_at=?14 AND b.copy_authority_sha256=?15 AND b.primary_binding_sha256=?16 AND b.request_sha256=?17 " +
+          "AND b.profile_ref=?18 AND b.profile_revision=?19 AND b.profile_sha256=?20 AND b.valid_from=?21 AND b.expires_at=?22 " +
+          "AND p.permission_sha256=b.permission_sha256 AND p.restore_id=b.restore_id AND p.restore_intent_digest=b.restore_intent_digest " +
+          "AND p.intent_sha256=b.intent_sha256 AND p.actor_sha256=b.actor_sha256 AND p.actor_expires_at=b.actor_expires_at " +
+          "AND p.copy_authority_sha256=b.copy_authority_sha256 AND p.primary_binding_sha256=b.primary_binding_sha256 " +
+          "AND p.request_sha256=b.request_sha256 AND p.profile_ref=b.profile_ref AND p.profile_revision=b.profile_revision " +
+          "AND p.profile_sha256=b.profile_sha256 AND p.valid_from=b.valid_from AND p.expires_at=b.expires_at " +
+          "AND p.valid_from<=?23 AND p.expires_at>?23 AND b.actor_expires_at>?23 " +
+          "AND NOT EXISTS (SELECT 1 FROM backup_restore_permission_revocation r WHERE r.permission_ref=p.permission_ref AND r.permission_revision=p.revision) " +
+          "AND NOT EXISTS (SELECT 1 FROM backup_restore_target_profile_revocation r WHERE r.profile_ref=t.profile_ref AND r.profile_revision=t.revision)) " +
           "AND EXISTS (SELECT 1 FROM operation_execution_lease WHERE operation_id=?4 " +
           "AND operation_kind='ERASURE_RESTORE_SHARED_FENCE' AND lease_owner=?5 AND lease_generation=?6 " +
           "AND state='LEASED' AND lease_until>?7) RETURNING restore_id",
-        ).bind(id.restore_id, id.intent_digest, now, fence.operation_id, fence.lease_owner, fence.lease_generation, nowMs)
+        ).bind(id.restore_id, id.intent_digest, now, fence.operation_id, fence.lease_owner, fence.lease_generation, nowMs,
+          binding.admission.permission_ref, binding.admission.permission_revision, binding.admission.permission_sha256,
+          binding.admission.binding_sha256, binding.admission.intent_sha256, binding.admission.actor_sha256,
+          binding.admission.actor_expires_at, binding.admission.copy_authority_sha256, binding.admission.primary_binding_sha256,
+          binding.admission.request_sha256, binding.admission.profile_ref, binding.admission.profile_revision,
+          binding.admission.profile_sha256, binding.admission.valid_from, binding.admission.expires_at, new Date(nowMs).toISOString())
           .first<{ readonly restore_id: unknown }>();
       } catch (cause) { failBackup("BACKUP_RESTORE_UNCERTAIN", "backup restore attempt claim is unavailable", true, {}, cause); }
-      if (transition?.restore_id !== id.restore_id) failBackup("BACKUP_PURGE_BLOCKED", "shared O4 exclusion was lost before the restore attempt could become durable", true);
+      if (transition?.restore_id !== id.restore_id) {
+        // A concurrent revoke/expiry between the read preflight and this CAS
+        // must win. Recheck the persisted grant only to distinguish that case
+        // from loss of the shared O4 lease; the UPDATE itself is authoritative.
+        await assertCurrentRestoreAdmissionBinding(database, binding.admission, nowMs);
+        failBackup("BACKUP_PURGE_BLOCKED", "shared O4 exclusion was lost before the restore attempt could become durable", true);
+      }
       const attemptIdDigest = await backupSha256Hex(`${id.restore_id}\u0000attempt\u00001`);
       const attemptId = `restore-attempt-${attemptIdDigest.slice(0, 40)}`;
       const attemptJson = canonicalBackupJson({

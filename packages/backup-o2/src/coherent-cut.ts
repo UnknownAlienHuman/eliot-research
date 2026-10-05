@@ -68,6 +68,11 @@ const AUTHORITY_TABLE_INTRODUCTIONS: Readonly<Record<string, string>> = {
   provider_native_model_candidate: "0111_provider_native_model_authority.sql",
   provider_native_model_qualification_proof: "0111_provider_native_model_authority.sql",
   provider_native_model_qualification_revocation: "0111_provider_native_model_authority.sql",
+  backup_restore_target_profile: "0115_backup_restore_current_admission.sql",
+  backup_restore_target_profile_revocation: "0115_backup_restore_current_admission.sql",
+  backup_restore_permission: "0115_backup_restore_current_admission.sql",
+  backup_restore_permission_revocation: "0115_backup_restore_current_admission.sql",
+  backup_restore_admission_binding: "0115_backup_restore_current_admission.sql",
 };
 
 const AUTHORITY_MIGRATION_CHAIN = [

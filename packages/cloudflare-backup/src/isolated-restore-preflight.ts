@@ -1,4 +1,4 @@
-import { BackupEpochSchema, type BackupEpoch } from "@eliotr/contracts";
+import { BackupEpochSchema, type BackupEpoch, type OperationIntent } from "@eliotr/contracts";
 import { BACKUP_MANIFEST_PROTOCOL, BACKUP_R2_PAYLOAD_PROTOCOL, BACKUP_SCHEMA_INVENTORY_PROTOCOL, assertCoreTableMigrationPresence, coreTableSpecsForMigrationNames, digestCoreColumnInventory, listDurableTables, readCoreColumnInventory, type CoreTableInventory, type TableSpec } from "@eliotr/backup-o2";
 import type { BackupEpochDraft } from "@eliotr/backup-o2";
 import { openOffsiteBackupPart, type BackupOffsiteReadAuthority, type OffsiteCopyAdapter } from "@eliotr/backup-o2";
@@ -6,6 +6,8 @@ import { BACKUP_PORTABLE_MANIFEST_NAMES, verifyPortableBackupManifests, type Pla
 import { destinationDescriptorDigest, destinationPolicyDigest, type BackupDestinationPolicy } from "@eliotr/backup-o2";
 import { readBlockingHoldAuthority } from "@eliotr/backup-o2";
 import { backupAborted, backupSha256Hex, canonicalBackupJson, failBackup } from "@eliotr/backup-o2";
+import { computeBackupRestoreIdentity } from "./restore-store.js";
+import type { RestoreAdmissionActor, RestoreAdmissionBinding, RestoreAdmissionRequest, RestoreAdmissionVerifier, RestoreTargetProfileRef } from "./restore-admission.js";
 
 const SHA256 = /^[a-f0-9]{64}$/u;
 const MANIFESTS = BACKUP_PORTABLE_MANIFEST_NAMES;
@@ -33,6 +35,7 @@ function checkedDatabase(database: D1Database): D1Database {
 function assertBoundResourceIds(primary: IsolatedRestorePrimaryIdentity, target: IsolatedRestoreTargetIdentity): void {
   const valid = (value: unknown): value is string => typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/u.test(value);
   for (const value of [primary.account_id, primary.failure_domain, target.account_id, target.failure_domain, target.environment_ref,
+    target.deployment_ref,
     primary.resources.core_database, primary.resources.evidence_bucket, primary.resources.work_bucket,
     target.resources.core_database, target.resources.evidence_bucket, target.resources.work_bucket]) {
     if (!valid(value)) failBackup("BACKUP_INPUT_INVALID", "isolated restore resource identity is malformed");
@@ -42,12 +45,15 @@ function assertBoundResourceIds(primary: IsolatedRestorePrimaryIdentity, target:
       primary.resources.work_bucket === target.resources.work_bucket) {
     failBackup("BACKUP_RESTORE_NOT_IMPLEMENTED", "isolated restore target resource IDs must differ from primary resource IDs", false, {});
   }
+  if (!SHA256.test(target.configuration_sha256)) failBackup("BACKUP_INPUT_INVALID", "isolated restore target configuration digest is malformed");
 }
 
 export interface IsolatedRestoreTargetIdentity {
   readonly account_id: string;
   readonly failure_domain: string;
   readonly environment_ref: string;
+  readonly deployment_ref: string;
+  readonly configuration_sha256: string;
   readonly resources: {
     readonly core_database: string;
     readonly evidence_bucket: string;
@@ -65,28 +71,13 @@ export interface IsolatedRestorePrimaryIdentity {
   };
 }
 
-export interface RestoreAdmissionRequest {
-  readonly epoch_id: string;
-  readonly offsite_copy_ref: string;
-  readonly target_account_id: string;
-  readonly target_failure_domain: string;
-  readonly target_environment_ref: string;
-  readonly primary_account_id: string;
-  readonly primary_failure_domain: string;
-  readonly primary_resources: IsolatedRestorePrimaryIdentity["resources"];
-  readonly target_resources: IsolatedRestoreTargetIdentity["resources"];
-  readonly migration_ledger_digest: string;
-  readonly purge_ledger_revision: number;
-  readonly purge_ledger_digest: string;
-}
-
-/**
- * The composition root must bind this check to a current controller-owned
- * restore admission. An epoch or its copy receipt never grants permission to
- * restore into a target.
- */
-export interface RestoreAdmissionVerifier {
-  assertCurrentAdmission(request: RestoreAdmissionRequest): Promise<void>;
+export interface RestoreAdmissionContext {
+  /** Built from AuthenticatedRequestContext + verified AccessIdentity by the server composition root. */
+  readonly actor: RestoreAdmissionActor;
+  readonly intent: OperationIntent;
+  readonly permission_ref: string;
+  readonly permission_revision: number;
+  readonly target_profile: RestoreTargetProfileRef;
 }
 
 export interface IsolatedRestorePreflightInput {
@@ -95,6 +86,7 @@ export interface IsolatedRestorePreflightInput {
   readonly target: IsolatedRestoreTargetIdentity & { readonly db: D1Database; readonly evidence_bucket: R2Bucket; readonly work_bucket: R2Bucket };
   readonly offsite: OffsiteCopyAdapter;
   readonly encryption_key: CryptoKey;
+  readonly admission_context: RestoreAdmissionContext;
   readonly admission: RestoreAdmissionVerifier;
   readonly signal?: AbortSignal;
 }
@@ -107,6 +99,7 @@ export interface IsolatedRestorePreflight {
   readonly manifests: VerifiedPortableBackupManifests;
   readonly schema_inventory: readonly CoreTableInventory[];
   readonly current_purge: { readonly revision: number; readonly digest: string };
+  readonly admission_binding: RestoreAdmissionBinding;
   readonly offsite_authority: {
     readonly destination_policy: BackupDestinationPolicy;
     readonly read_authority: BackupOffsiteReadAuthority;
@@ -252,7 +245,9 @@ async function assertEmptyBucket(bucket: R2Bucket, signal?: AbortSignal): Promis
   }
 }
 
-async function assertCurrentCopyAuthority(db: D1Database, draft: BackupEpochDraft, adapter: OffsiteCopyAdapter): Promise<{ readonly policy: BackupDestinationPolicy; readonly row: CopyAuthorityRow }> {
+async function assertCurrentCopyAuthority(db: D1Database, draft: BackupEpochDraft, adapter: OffsiteCopyAdapter): Promise<{
+  readonly policy: BackupDestinationPolicy; readonly row: CopyAuthorityRow; readonly copy_authority_sha256: string;
+}> {
   let epochAuthority: { readonly manifest_digest: unknown; readonly draft_json: unknown } | null;
   try { epochAuthority = await db.prepare("SELECT manifest_digest,draft_json FROM backup_epoch_receipt WHERE epoch_id=?1 ORDER BY created_at LIMIT 1").bind(draft.epoch_id).first<{ readonly manifest_digest: unknown; readonly draft_json: unknown }>(); }
   catch (cause) { failBackup("BACKUP_TABLE_MISSING", "isolated restore persisted epoch draft is unavailable", true, {}, cause); }
@@ -288,8 +283,16 @@ async function assertCurrentCopyAuthority(db: D1Database, draft: BackupEpochDraf
   const policy = parseJson<BackupDestinationPolicy>(grant.policy_json, "destination policy");
   if (await destinationPolicyDigest(policy) !== row.policy_digest || policy.destination_id !== row.destination_id || policy.failure_domain !== row.failure_domain) failBackup("BACKUP_DESTINATION_POLICY_MISMATCH", "isolated restore current destination policy does not bind its copy receipt");
   const descriptor = await adapter.describe();
-  if (descriptor.destination_id !== row.destination_id || descriptor.failure_domain !== row.failure_domain || await destinationDescriptorDigest(descriptor) !== row.descriptor_digest) failBackup("BACKUP_DESTINATION_POLICY_MISMATCH", "isolated restore offsite descriptor diverges from its persisted copy authority");
-  return { policy, row };
+  const descriptorDigest = await destinationDescriptorDigest(descriptor);
+  if (descriptor.destination_id !== row.destination_id || descriptor.failure_domain !== row.failure_domain || descriptorDigest !== row.descriptor_digest) failBackup("BACKUP_DESTINATION_POLICY_MISMATCH", "isolated restore offsite descriptor diverges from its persisted copy authority");
+  const copyAuthorityDigest = await backupSha256Hex(canonicalBackupJson({
+    protocol: "eliotr.backup-copy-current-authority.v1",
+    epoch_manifest_digest: epochAuthority.manifest_digest,
+    copy_receipt: row,
+    destination_authority: { policy_json: grant.policy_json, policy_digest: grant.policy_digest, state: grant.state, authorized_at: grant.authorized_at },
+    descriptor_sha256: descriptorDigest,
+  }));
+  return { policy, row, copy_authority_sha256: copyAuthorityDigest };
 }
 
 async function openVerifiedManifests(input: IsolatedRestorePreflightInput, policy: BackupDestinationPolicy, row: CopyAuthorityRow): Promise<VerifiedPortableBackupManifests> {
@@ -358,21 +361,34 @@ export async function verifyIsolatedRestorePreflight(input: IsolatedRestorePrefl
   await Promise.all([assertEmptyBucket(target.evidence_bucket, input.signal), assertEmptyBucket(target.work_bucket, input.signal)]);
   const [targetGeneration, targetMigrations] = await Promise.all([schemaGeneration(targetDb), migrationDigest(targetDb)]);
   if (targetGeneration !== draft.schema_generation || targetMigrations !== draft.migration_ledger_digest) failBackup("BACKUP_VECTOR_UNVERIFIABLE", "isolated restore target schema generation or migration ledger does not exactly match the epoch");
-  const request: RestoreAdmissionRequest = {
+  const offsiteCopyRef = (BackupEpochSchema.parse(parseJson<BackupEpoch>(row.epoch_json, "offsite copy epoch"))).offsite_copy_ref;
+  const restoreIdentity = await computeBackupRestoreIdentity({
+    intent: input.admission_context.intent,
     epoch_id: draft.epoch_id,
-    offsite_copy_ref: (BackupEpochSchema.parse(parseJson<BackupEpoch>(row.epoch_json, "offsite copy epoch"))).offsite_copy_ref,
-    target_account_id: target.account_id,
-    target_failure_domain: target.failure_domain,
-    target_environment_ref: target.environment_ref,
-    primary_account_id: primary.account_id,
-    primary_failure_domain: primary.failure_domain,
-    primary_resources: primary.resources,
-    target_resources: target.resources,
+    offsite_copy_ref: offsiteCopyRef,
+    target: { account_id: target.account_id, failure_domain: target.failure_domain, environment_ref: target.environment_ref,
+      deployment_ref: target.deployment_ref, configuration_sha256: target.configuration_sha256, resources: target.resources },
+  });
+  const request: RestoreAdmissionRequest = {
+    protocol: "eliotr.backup-restore-admission-request.v1",
+    permission_ref: input.admission_context.permission_ref,
+    permission_revision: input.admission_context.permission_revision,
+    actor: input.admission_context.actor,
+    intent: input.admission_context.intent,
+    restore_id: restoreIdentity.restore_id,
+    restore_intent_digest: restoreIdentity.intent_digest,
+    epoch_id: draft.epoch_id,
+    offsite_copy_ref: offsiteCopyRef,
+    copy_authority_sha256: copyAuthority.copy_authority_sha256,
+    primary: { account_id: primary.account_id, failure_domain: primary.failure_domain, resources: primary.resources },
+    target: { account_id: target.account_id, failure_domain: target.failure_domain, environment_ref: target.environment_ref,
+      deployment_ref: target.deployment_ref, configuration_sha256: target.configuration_sha256, resources: target.resources },
+    target_profile: input.admission_context.target_profile,
     migration_ledger_digest: draft.migration_ledger_digest,
-    purge_ledger_revision: draft.purge_ledger_revision,
-    purge_ledger_digest: draft.purge_ledger_digest,
+    purge_ledger_revision: purge.revision,
+    purge_ledger_digest: purge.digest,
   };
-  await input.admission.assertCurrentAdmission(request);
+  const admissionBinding = await input.admission.assertCurrentAdmission(request);
   abortIfNeeded(input.signal);
   const manifests = await openVerifiedManifests(input, policy, row);
   if (!manifests.payload_supported) failBackup("BACKUP_PAYLOAD_UNSUPPORTED", "backup R2 inventory predates authenticated payload transport and cannot be restored");
@@ -422,8 +438,9 @@ export async function verifyIsolatedRestorePreflight(input: IsolatedRestorePrefl
   if (finalPurge.blocked_count > 0) failBackup("BACKUP_PURGE_BLOCKED", "isolated restore cannot proceed while the current purge ledger includes blocked erasures", false, {});
   await assertNoUnsettledErasure(primaryDb);
   if (finalHold !== null) failBackup("BACKUP_PURGE_BLOCKED", "isolated restore became blocked by a current erasure hold", false, {});
-  if (finalCopy.row.policy_digest !== row.policy_digest || finalCopy.row.authority_authorized_at !== row.authority_authorized_at || finalCopy.row.descriptor_digest !== row.descriptor_digest) failBackup("BACKUP_DESTINATION_POLICY_MISMATCH", "offsite restore authority changed while manifests were being verified");
-  await input.admission.assertCurrentAdmission(request);
+  if (finalCopy.row.policy_digest !== row.policy_digest || finalCopy.row.authority_authorized_at !== row.authority_authorized_at || finalCopy.row.descriptor_digest !== row.descriptor_digest || finalCopy.copy_authority_sha256 !== copyAuthority.copy_authority_sha256) failBackup("BACKUP_DESTINATION_POLICY_MISMATCH", "offsite restore authority changed while manifests were being verified");
+  const finalAdmissionBinding = await input.admission.assertCurrentAdmission(request);
+  if (canonicalBackupJson(finalAdmissionBinding) !== canonicalBackupJson(admissionBinding)) failBackup("BACKUP_VECTOR_DRIFT", "restore admission binding changed while manifests were being verified", true);
   await assertCleanTarget(targetDb);
   await Promise.all([assertEmptyBucket(target.evidence_bucket, input.signal), assertEmptyBucket(target.work_bucket, input.signal)]);
   const [finalGeneration, finalMigrations, finalTableNames, finalInventory] = await Promise.all([
@@ -437,8 +454,9 @@ export async function verifyIsolatedRestorePreflight(input: IsolatedRestorePrefl
   catch { failBackup("BACKUP_VECTOR_DRIFT", "isolated restore target table set changed while manifests were being verified", true); }
   return {
     state: "PREFLIGHT_VERIFIED_NO_WRITES", draft, copy_ref: request.offsite_copy_ref,
-    target: { account_id: target.account_id, failure_domain: target.failure_domain, environment_ref: target.environment_ref, resources: target.resources },
-    manifests, schema_inventory: targetInventory, current_purge: purge,
+    target: { account_id: target.account_id, failure_domain: target.failure_domain, environment_ref: target.environment_ref,
+      deployment_ref: target.deployment_ref, configuration_sha256: target.configuration_sha256, resources: target.resources },
+    manifests, schema_inventory: targetInventory, current_purge: purge, admission_binding: admissionBinding,
     offsite_authority: {
       destination_policy: policy,
       read_authority: {

@@ -128,13 +128,20 @@ async function copyFixture(h: Awaited<ReturnType<typeof setup>>, key: string, ad
 describe("ER-34 O2 expiry lifecycle (not O4)", () => {
   it("deletes with journal, proves absence, replays persisted bytes and refuses resurrection", async () => {
     const h = await setup();
+    await h.ports.work_bucket.put("expiry-payload", new Uint8Array([1, 2, 3]));
     const adapter = createControlledOffsiteAdapter({ destination_id: "offsite-1", failure_domain: "domain-remote" });
     const draft = await copyFixture(h, "id-exp", adapter);
     const receipt = await expireOffsiteCopy({ core_db: h.ports.core_db, draft, intent: intent("id-exp"), expiry: { expiry_intent_key: "expiry-1", epoch_id: draft.epoch_id, reason: "retention-expired" }, destination_policy: policy(), primary_failure_domain: "domain-primary", adapter, now_ms: Date.now() });
     expect(receipt.state).toBe("DELETED");
-    expect(receipt.journal_refs.length).toBe(draft.part_index.length);
+    const payloadParts = draft.payload_part_index ?? [];
+    expect(payloadParts).toHaveLength(1);
+    expect(receipt.journal_refs.length).toBe(draft.part_index.length + payloadParts.length);
     for (const part of draft.part_index) {
       const ref = `offsite/${draft.epoch_id}/${part.manifest}/${String(part.index).padStart(6, "0")}-${part.sha256}`;
+      expect(await adapter.get(ref)).toBeNull();
+    }
+    for (const part of payloadParts) {
+      const ref = `offsite/${draft.epoch_id}/r2-payload/${part.object_identity_digest}/${String(part.index).padStart(6, "0")}-${part.sha256}`;
       expect(await adapter.get(ref)).toBeNull();
     }
     const replayed = await expireOffsiteCopy({ core_db: h.ports.core_db, draft, intent: intent("id-exp"), expiry: { expiry_intent_key: "expiry-1", epoch_id: draft.epoch_id, reason: "retention-expired" }, destination_policy: policy(), primary_failure_domain: "domain-primary", adapter, now_ms: Date.now() });
@@ -144,13 +151,55 @@ describe("ER-34 O2 expiry lifecycle (not O4)", () => {
   });
   it("re-proves absence on terminal replay: a re-put part refuses resurrection instead of staying DELETED", async () => {
     const h = await setup();
+    await h.ports.work_bucket.put("expiry-replay-payload", new Uint8Array([4, 5, 6]));
     const adapter = plainAdapter();
     const draft = await copyFixture(h, "id-exp-reput", adapter);
     const receipt = await expireOffsiteCopy({ core_db: h.ports.core_db, draft, intent: intent("id-exp-reput"), expiry: { expiry_intent_key: "expiry-reput", epoch_id: draft.epoch_id, reason: "retention-expired" }, destination_policy: policy(), primary_failure_domain: "domain-primary", adapter, now_ms: Date.now() });
     expect(receipt.state).toBe("DELETED");
-    const ref = `offsite/${draft.epoch_id}/${draft.part_index[0]?.manifest}/${String(draft.part_index[0]?.index).padStart(6, "0")}-${draft.part_index[0]?.sha256}`;
+    const payloadPart = draft.payload_part_index?.[0];
+    expect(payloadPart).toBeDefined();
+    const ref = `offsite/${draft.epoch_id}/r2-payload/${payloadPart?.object_identity_digest}/${String(payloadPart?.index).padStart(6, "0")}-${payloadPart?.sha256}`;
     await adapter.put(ref, new Uint8Array([1, 2, 3]), { content_digest: HEX("9"), size_bytes: 3, key_generation: "key-gen-1", epoch_id: draft.epoch_id, expires_at: draft.expires_at });
     await expect(expireOffsiteCopy({ core_db: h.ports.core_db, draft, intent: intent("id-exp-reput"), expiry: { expiry_intent_key: "expiry-reput", epoch_id: draft.epoch_id, reason: "retention-expired" }, destination_policy: policy(), primary_failure_domain: "domain-primary", adapter, now_ms: Date.now() })).rejects.toMatchObject({ code: "BACKUP_RESURRECTION_REFUSED" });
+  });
+
+  it.each(["duplicate payload part", "unpaired payload protocol"] as const)("rejects %s before any remote deletion", async (mode) => {
+    const h = await setup();
+    const suffix = mode === "duplicate payload part" ? "duplicate" : "unpaired";
+    const intentKey = `id-exp-malformed-${suffix}`;
+    await h.ports.work_bucket.put(`expiry-malformed-${suffix}`, new Uint8Array([7, 8, 9]));
+    const base = plainAdapter();
+    let deletes = 0;
+    const adapter: OffsiteCopyAdapter = {
+      ...base,
+      async delete(ref, reason) { deletes += 1; return base.delete(ref, reason); },
+    };
+    const draft = await copyFixture(h, intentKey, adapter);
+    const payload = draft.payload_part_index ?? [];
+    expect(payload).toHaveLength(1);
+    let malformed: BackupEpochDraft;
+    if (mode === "duplicate payload part") {
+      const first = payload[0];
+      if (first === undefined) throw new Error("payload fixture did not contain its expected part");
+      malformed = { ...draft, payload_part_index: [...payload, first] };
+    } else {
+      const unpaired: Record<string, unknown> = { ...draft };
+      delete unpaired["r2_payload_protocol"];
+      malformed = unpaired as unknown as BackupEpochDraft;
+    }
+    h.db.prepare("UPDATE backup_epoch_receipt SET draft_json=?1 WHERE epoch_id=?2").run(JSON.stringify(malformed), draft.epoch_id);
+    await expect(expireOffsiteCopy({
+      core_db: h.ports.core_db,
+      draft: malformed,
+      intent: intent(intentKey),
+      expiry: { expiry_intent_key: `expiry-malformed-${suffix}`, epoch_id: draft.epoch_id, reason: "retention-expired" },
+      destination_policy: policy(),
+      primary_failure_domain: "domain-primary",
+      adapter,
+      now_ms: Date.now(),
+    })).rejects.toMatchObject({ code: "BACKUP_VECTOR_UNVERIFIABLE" });
+    expect(deletes).toBe(0);
+    expect(h.db.prepare("SELECT count(*) AS n FROM backup_offsite_expiry").get()).toEqual({ n: 0 });
   });
   it("blocks expiry under legal hold, retention lock, or a controller backup-path hold, and stays auditable", async () => {
     const h = await setup();

@@ -215,6 +215,14 @@ const NOT_A_BACKUP_TABLES: ReadonlySet<string> = new Set([
   "backup_restore_intent",
   "backup_restore_attempt",
   "backup_restore_receipt",
+  // Restore target profiles, per-restore permissions, revocations and the
+  // immutable request binding are target-local current authority. Exporting
+  // any of these would let a recovered epoch revive an old grant.
+  "backup_restore_target_profile",
+  "backup_restore_target_profile_revocation",
+  "backup_restore_permission",
+  "backup_restore_permission_revocation",
+  "backup_restore_admission_binding",
   // Installation-local policies, credentials and current grants must be
   // re-admitted at the restored controller, never copied as transferable.
   "investigation_current_policy",

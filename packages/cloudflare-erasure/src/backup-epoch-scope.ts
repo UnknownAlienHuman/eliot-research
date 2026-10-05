@@ -1,4 +1,5 @@
 import { assertErasureIdentifier, assertErasureSha256, assertErasureText, erasureFail } from "./canonical.js";
+import { BACKUP_R2_PAYLOAD_PROTOCOL } from "@eliotr/backup-o2";
 
 const PROTOCOL = "eliotr.backup-manifest.v1";
 const MANIFESTS = [
@@ -21,6 +22,17 @@ export interface BackupEpochScopePart {
   readonly existed_identically: boolean;
 }
 
+export interface BackupEpochScopePayloadPart {
+  readonly object_identity_digest: string;
+  readonly index: number;
+  readonly count: number;
+  readonly part_key: string;
+  readonly sha256: string;
+  readonly size_bytes: number;
+  readonly etag: string;
+  readonly existed_identically: boolean;
+}
+
 export interface BackupEpochScopeDraft {
   readonly epoch_id: string;
   readonly schema_generation: string;
@@ -29,6 +41,8 @@ export interface BackupEpochScopeDraft {
   readonly group_digests: Readonly<Record<string, string>>;
   readonly manifest_protocol: string;
   readonly part_index: readonly BackupEpochScopePart[];
+  readonly r2_payload_protocol?: typeof BACKUP_R2_PAYLOAD_PROTOCOL;
+  readonly payload_part_index?: readonly BackupEpochScopePayloadPart[];
   readonly purge_ledger_revision: number;
   readonly purge_ledger_digest: string;
   readonly r2_object_count: number;
@@ -90,13 +104,19 @@ function parseDraft(value: unknown, epochId: string): BackupEpochScopeDraft {
   let decoded: unknown;
   try { decoded = JSON.parse(json) as unknown; }
   catch (cause) { erasureFail("ERASURE_CLOSURE_INCOMPLETE", "backup epoch draft JSON is malformed", false, cause); }
-  const fields = [
+  const legacyFields = [
     "epoch_id", "schema_generation", "migration_ledger_digest", "manifest_digests", "group_digests", "part_index",
     "purge_ledger_revision", "purge_ledger_digest", "r2_object_count", "r2_total_bytes", "audit_sample_receipt_ref",
     "vector_digest", "vector_manifest_digest", "cut_id", "manifest_protocol", "created_at", "expires_at",
-  ];
-  if (!isRecord(decoded) || !exactKeys(decoded, fields) || decoded.epoch_id !== epochId || decoded.manifest_protocol !== PROTOCOL) {
+  ] as const;
+  const payloadFields = ["r2_payload_protocol", "payload_part_index"] as const;
+  if (!isRecord(decoded) || decoded.epoch_id !== epochId || decoded.manifest_protocol !== PROTOCOL) {
     erasureFail("ERASURE_CLOSURE_INCOMPLETE", "backup epoch draft is unbound or uses an unknown manifest protocol");
+  }
+  const hasPayloadProtocol = Object.prototype.hasOwnProperty.call(decoded, "r2_payload_protocol");
+  const hasPayloadIndex = Object.prototype.hasOwnProperty.call(decoded, "payload_part_index");
+  if (hasPayloadProtocol !== hasPayloadIndex || !exactKeys(decoded, hasPayloadProtocol ? [...legacyFields, ...payloadFields] : legacyFields)) {
+    erasureFail("ERASURE_CLOSURE_INCOMPLETE", "backup epoch draft has unknown or incomplete payload protocol fields");
   }
   const schemaGeneration = assertErasureIdentifier(decoded.schema_generation, "backup schema generation");
   const migrationDigest = assertErasureSha256(decoded.migration_ledger_digest, "backup migration digest");
@@ -178,6 +198,65 @@ function parseDraft(value: unknown, epochId: string): BackupEpochScopeDraft {
       erasureFail("ERASURE_CLOSURE_INCOMPLETE", `backup ${manifest} part sequence is incomplete`);
     }
   }
+  let payloadParts: BackupEpochScopePayloadPart[] = [];
+  if (hasPayloadProtocol) {
+    if (decoded.r2_payload_protocol !== BACKUP_R2_PAYLOAD_PROTOCOL || !Array.isArray(decoded.payload_part_index) ||
+      decoded.payload_part_index.length > MAX_PARTS - parts.length) {
+      erasureFail("ERASURE_CLOSURE_INCOMPLETE", "backup epoch payload protocol or part index is unsupported or over its bound");
+    }
+    payloadParts = [];
+    const identities = new Set<string>();
+    let previousIdentity = "";
+    let previousIndex = 0;
+    let previousCount = 0;
+    let payloadBytes = 0;
+    for (const raw of decoded.payload_part_index) {
+      if (!isRecord(raw) || !exactKeys(raw, ["object_identity_digest", "index", "count", "part_key", "sha256", "size_bytes", "etag", "existed_identically"])) {
+        erasureFail("ERASURE_CLOSURE_INCOMPLETE", "backup epoch payload part entry is malformed");
+      }
+      const identity = assertErasureSha256(raw.object_identity_digest, "backup payload object identity digest");
+      const index = raw.index;
+      const count = raw.count;
+      if (!Number.isSafeInteger(index) || (index as number) < 1 || !Number.isSafeInteger(count) || (count as number) < 1 ||
+        (index as number) > (count as number) || (count as number) > MAX_PARTS ||
+        !Number.isSafeInteger(raw.size_bytes) || (raw.size_bytes as number) < 0 || typeof raw.existed_identically !== "boolean") {
+        erasureFail("ERASURE_CLOSURE_INCOMPLETE", "backup epoch payload part entry has malformed identity or bounds");
+      }
+      const sha256 = assertErasureSha256(raw.sha256, "backup payload part digest");
+      const partKey = assertErasureText(raw.part_key, "backup payload part key", 1024);
+      const expectedIndex = index as number;
+      const expectedCount = count as number;
+      if (identity < previousIdentity || (identity === previousIdentity && expectedIndex !== previousIndex + 1) ||
+        (identity !== previousIdentity && expectedIndex !== 1) || (identity === previousIdentity && expectedCount !== previousCount) ||
+        (previousIdentity !== "" && identity !== previousIdentity && previousIndex !== previousCount)) {
+        erasureFail("ERASURE_CLOSURE_INCOMPLETE", "backup epoch payload part index is duplicate, unordered, or incomplete");
+      }
+      if (partKey !== `backup-parts/${epochId}/r2-payload/${identity}/${String(expectedIndex).padStart(6, "0")}-${sha256}`) {
+        erasureFail("ERASURE_CLOSURE_INCOMPLETE", "backup payload part key does not match its exact epoch identity and index");
+      }
+      const size = raw.size_bytes as number;
+      payloadBytes += size;
+      if (!Number.isSafeInteger(payloadBytes)) erasureFail("ERASURE_CLOSURE_INCOMPLETE", "backup payload byte total exceeds its safe bound");
+      if (identity !== previousIdentity) identities.add(identity);
+      payloadParts.push({
+        object_identity_digest: identity,
+        index: expectedIndex,
+        count: expectedCount,
+        part_key: partKey,
+        sha256,
+        size_bytes: size,
+        etag: assertErasureText(raw.etag, "backup payload part etag", 256),
+        existed_identically: raw.existed_identically,
+      });
+      previousIdentity = identity;
+      previousIndex = expectedIndex;
+      previousCount = expectedCount;
+    }
+    if ((previousIdentity !== "" && previousIndex !== previousCount) ||
+      identities.size !== decoded.r2_object_count || payloadBytes !== decoded.r2_total_bytes) {
+      erasureFail("ERASURE_CLOSURE_INCOMPLETE", "backup epoch payload inventory does not match its object and byte totals");
+    }
+  }
   return {
     epoch_id: epochId,
     schema_generation: schemaGeneration,
@@ -185,6 +264,7 @@ function parseDraft(value: unknown, epochId: string): BackupEpochScopeDraft {
     manifest_digests: manifestDigests,
     group_digests: groupDigests,
     part_index: parts,
+    ...(hasPayloadProtocol ? { r2_payload_protocol: BACKUP_R2_PAYLOAD_PROTOCOL, payload_part_index: payloadParts } : {}),
     purge_ledger_revision: decoded.purge_ledger_revision as number,
     purge_ledger_digest: purgeDigest,
     r2_object_count: decoded.r2_object_count as number,

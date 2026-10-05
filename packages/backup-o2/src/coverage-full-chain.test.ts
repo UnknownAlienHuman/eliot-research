@@ -74,6 +74,10 @@ describe("ER-34 O2 full Core migration coverage", () => {
     assertExportColumnCoverage(inventory, TABLE_SPECS);
     expect(classifyDurableTable("scope_access_grant")).toBe("NOT_A_BACKUP");
     expect(classifyDurableTable("project_client_grant")).toBe("NOT_A_BACKUP");
+    for (const table of ["backup_restore_target_profile", "backup_restore_target_profile_revocation",
+      "backup_restore_permission", "backup_restore_permission_revocation", "backup_restore_admission_binding"]) {
+      expect(classifyDurableTable(table)).toBe("NOT_A_BACKUP");
+    }
     expect(classifyDurableTable("historical_scope_access_grant")).toBe("CANONICAL_EXPORTED");
     expect(classifyDurableTable("historical_project_client_grant")).toBe("CANONICAL_EXPORTED");
     for (const table of [
@@ -144,6 +148,13 @@ describe("ER-34 O2 full Core migration coverage", () => {
     expect(() => assertCoreTableMigrationPresence(
       [], ["0109_research_provider_key_configuration.sql"],
     )).toThrowError(expect.objectContaining({ code: "BACKUP_COVERAGE_GAP" }));
+    const restoreAuthority = [
+      "backup_restore_target_profile", "backup_restore_target_profile_revocation", "backup_restore_permission",
+      "backup_restore_permission_revocation", "backup_restore_admission_binding",
+    ];
+    expect(() => assertCoreTableMigrationPresence(restoreAuthority, ["0115_backup_restore_current_admission.sql"])).not.toThrow();
+    expect(() => assertCoreTableMigrationPresence(restoreAuthority.slice(1), ["0115_backup_restore_current_admission.sql"]))
+      .toThrowError(expect.objectContaining({ code: "BACKUP_COVERAGE_GAP" }));
   });
 
   it("fails closed when table or PRAGMA inventory queries return failed or malformed D1 results", async () => {
