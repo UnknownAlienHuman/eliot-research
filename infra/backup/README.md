@@ -43,6 +43,17 @@ payload exposure, remove or quarantine purged influence, restore remaining R2 ob
 projections and run LIVE/REDACTED handle acceptance cases. No readiness receipt is issued before this
 sequence completes. O3 isolated restore remains closed pending the real restore/admission sequence.
 
+Provider-key configuration operations, model-use operations and price observations, and native-model
+preparation/qualification history are retained in the authenticated encrypted source epoch but are
+archive-only during isolated restore. The v2 restore receipt records the exact applicable table set,
+source row counts and canonical row digests, binds them to the source migration ledger and the
+authenticated `heads`/`generations` manifest pins, and records a fenced zero-row readback for each
+corresponding target table. It does not copy those rows into the target or recreate current owner,
+credential, selection, pricing, qualification, or proof authority. Fresh target-local admissions must
+establish those authorities through their normal guarded workflows. The row digests describe canonical
+decoded source rows; the manifest and group digests separately bind the authenticated source bytes.
+Legacy v1 receipts remain readable byte-for-byte and do not gain the v2 archive claim.
+
 The local O4 primitive persists the full original copy request before the first offsite write and
 binds each erasure obligation to its exact epoch/copy, current execution lease, destination grant,
 hold and expiry journal. The Worker now resolves an optional installed transport through the existing

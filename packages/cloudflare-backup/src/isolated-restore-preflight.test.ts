@@ -15,6 +15,14 @@ import { backupSha256Hex, canonicalBackupJson } from "@eliotr/backup-o2";
 import { createD1ErasureRestoreFenceStore } from "@eliotr/cloudflare-erasure";
 import { verifyIsolatedRestorePreflight, type IsolatedRestorePreflightInput } from "./isolated-restore-preflight.js";
 import { executeIsolatedBackupRestore, type RestoreErasureGate } from "./restore-executor.js";
+import {
+  buildNativeHistoryArchive,
+  digestNativeHistoryArchive,
+  expectedNativeHistoryTables,
+  NATIVE_HISTORY_TABLES,
+  nativeHistoryArchiveSourceContext,
+  validateNativeHistoryArchiveSummary,
+} from "./restore-native-history.js";
 import { createD1RestoreErasureGate } from "./restore-erasure-gate.js";
 import { createD1BackupRestoreStore } from "./restore-store.js";
 
@@ -109,7 +117,14 @@ function makeAdapter(descriptor: { destination_id: string; failure_domain: strin
   };
 }
 
-async function fixture(): Promise<{ input: IsolatedRestorePreflightInput; primary: DatabaseSync; target: DatabaseSync; adapter: ReturnType<typeof makeAdapter> }> {
+function fixtureColumnValue(kind: string, column: string): unknown {
+  if (kind === "text") return column.endsWith("_json") ? "{}" : "fixture";
+  if (kind === "text-or-null" || kind === "int-or-null" || kind === "real-or-null") return null;
+  if (kind === "int" || kind === "real") return 1;
+  throw new Error(`unclassified fixture column kind ${kind}`);
+}
+
+async function fixture(options: { readonly includeNativeHistory?: boolean } = {}): Promise<{ input: IsolatedRestorePreflightInput; primary: DatabaseSync; target: DatabaseSync; adapter: ReturnType<typeof makeAdapter> }> {
   const primary = await migratedDatabase();
   const target = await migratedDatabase();
   const primaryDb = d1Database(primary);
@@ -117,11 +132,24 @@ async function fixture(): Promise<{ input: IsolatedRestorePreflightInput; primar
   const inventory = await readCoreColumnInventory(primaryDb, TABLE_SPECS.map((spec) => spec.table));
   const inventoryDigest = await digestCoreColumnInventory(inventory);
   const names = (await readdir(MIGRATION_DIR)).filter((name) => /^\d{4}_.*\.sql$/u.test(name)).sort();
+  const migrations = new Set(names);
+  const nativeRows = options.includeNativeHistory === true ? NATIVE_HISTORY_TABLES.flatMap((policy) => {
+    if (!migrations.has(policy.introduced_by)) return [];
+    const spec = TABLE_SPECS.find((entry) => entry.table === policy.table);
+    if (spec === undefined) throw new Error(`unmapped native-history table ${policy.table}`);
+    const row = Object.fromEntries(Object.entries(spec.columns).map(([column, kind]) => [column, fixtureColumnValue(kind, column)]));
+    return [{ table: policy.table, manifest: policy.manifest, row }];
+  }) : [];
+  const rowsForTable = (table: string) => nativeRows.filter((entry) => entry.table === table).map((entry) => entry.row);
   const migrationDigest = await backupSha256Hex(`migration-ledger\n${names.join("\n")}`);
   const purgeDigest = await backupSha256Hex("");
   const tables = Object.fromEntries(await Promise.all(TABLE_SPECS.map(async (spec) => {
     const schema = inventory.find((entry) => entry.table === spec.table);
-    return [spec.table, { count: 0, digest: await backupSha256Hex(schema === undefined || schema.columns.length === 0 ? `${spec.table}:TABLE_ABSENT` : `${spec.table}:EMPTY`) }];
+    const rows = rowsForTable(spec.table);
+    const digest = rows.length === 0
+      ? await backupSha256Hex(schema === undefined || schema.columns.length === 0 ? `${spec.table}:TABLE_ABSENT` : `${spec.table}:EMPTY`)
+      : await backupSha256Hex(`\n${await backupSha256Hex(rows.map(canonicalBackupJson).sort().join("\n"))}`);
+    return [spec.table, { count: rows.length, digest }];
   })));
   const emptyR2Fingerprint = await backupSha256Hex("");
   const vector = {
@@ -136,6 +164,8 @@ async function fixture(): Promise<{ input: IsolatedRestorePreflightInput; primar
     canonicalBackupJson({ protocol: BACKUP_MANIFEST_PROTOCOL, inventory_protocol: BACKUP_SCHEMA_INVENTORY_PROTOCOL, schema_inventory_digest: inventoryDigest, cut_id: "cut-restore-test" }),
     ...inventory.map((table) => canonicalBackupJson({ table: table.table, columns: table.columns.map((column) => column.name), column_shapes: table.columns })),
   ].sort().join("\n");
+  manifests["heads"] = nativeRows.filter((entry) => entry.manifest === "heads").map((entry) => canonicalBackupJson({ table: entry.table, row: entry.row })).sort().join("\n");
+  manifests["generations"] = nativeRows.filter((entry) => entry.manifest === "generations").map((entry) => canonicalBackupJson({ table: entry.table, row: entry.row })).sort().join("\n");
   manifests["purge"] = canonicalBackupJson({ purge_frontier: 0, purge_digest: purgeDigest });
   manifests["r2-objects"] = canonicalBackupJson({ object_count: 0, total_bytes: 0, fingerprint: emptyR2Fingerprint, payload_protocol: BACKUP_R2_PAYLOAD_PROTOCOL });
   manifests["rebuild"] = [...rebuildManifestLines()].sort().join("\n");
@@ -212,6 +242,17 @@ async function fixture(): Promise<{ input: IsolatedRestorePreflightInput; primar
 }
 
 describe("isolated restore preflight", () => {
+  it("derives exact archive cutoffs from the authenticated 0109-0111 migration prefix", () => {
+    const config = "0109_research_provider_key_configuration.sql";
+    const modelUse = "0110_research_provider_key_model_use.sql";
+    const nativeAuthority = "0111_provider_native_model_authority.sql";
+    expect(expectedNativeHistoryTables([])).toHaveLength(0);
+    expect(expectedNativeHistoryTables([config])).toHaveLength(1);
+    expect(expectedNativeHistoryTables([config, modelUse])).toHaveLength(4);
+    expect(expectedNativeHistoryTables([config, modelUse, nativeAuthority])).toHaveLength(10);
+    expect(() => expectedNativeHistoryTables([modelUse])).toThrow();
+  });
+
   it("verifies persisted D1 authority, current isolation/schema, and every encrypted manifest without writes", async () => {
     const f = await fixture();
     try {
@@ -246,8 +287,10 @@ describe("isolated restore preflight", () => {
   });
 
   it("records a real isolated data-restore receipt as unqualified and keeps traffic closed", async () => {
-    const f = await fixture();
+    const f = await fixture({ includeNativeHistory: true });
     try {
+      const verified = await verifyIsolatedRestorePreflight(f.input);
+      const archiveSource = nativeHistoryArchiveSourceContext(verified.draft, verified.manifests, verified.copy_ref);
       const gate: RestoreErasureGate = {
         async acquire(request) {
           return {
@@ -268,8 +311,50 @@ describe("isolated restore preflight", () => {
       expect(result.state).toBe("RESTORED_UNQUALIFIED");
       expect(result.traffic_ready).toBe(false);
       expect(result.receipt.unresolved_acceptance).toContain("ERASURE_RESTORE_ACCEPTANCE");
+      expect(result.receipt.protocol).toBe("eliotr.backup-restore.v2");
+      if (result.receipt.protocol !== "eliotr.backup-restore.v2") throw new Error("new restore did not write a v2 archive receipt");
+      const archive = result.receipt.native_history_archive;
+      const expectedArchiveTables = NATIVE_HISTORY_TABLES.filter((entry) => archiveSource.source.migration_names.includes(entry.introduced_by));
+      expect(archive.tables.map((entry) => entry.table)).toEqual(expectedArchiveTables.map((entry) => entry.table));
+      expect(archive.tables.every((entry) => entry.source_row_count === 1 && entry.target_row_count === 0)).toBe(true);
+      expect(result.receipt.restored_core_row_count).toBe(0);
+      for (const entry of archive.tables) {
+        expect(f.target.prepare(`SELECT COUNT(*) AS n FROM "${entry.table}"`).get()).toEqual({ n: 0 });
+      }
       expect(f.target.prepare("SELECT COUNT(*) AS n FROM source").get()).toEqual({ n: 0 });
       expect(f.primary.prepare("SELECT state FROM backup_restore_intent").get()).toEqual({ state: "RESTORED_UNQUALIFIED" });
+    } finally { f.primary.close(); f.target.close(); }
+  });
+
+  it("rejects forged native-history subsets and archive count or digest drift against the verified epoch", async () => {
+    const f = await fixture({ includeNativeHistory: true });
+    try {
+      const verified = await verifyIsolatedRestorePreflight(f.input);
+      const context = nativeHistoryArchiveSourceContext(verified.draft, verified.manifests, verified.copy_ref);
+      const archive = await buildNativeHistoryArchive({ draft: verified.draft, manifests: verified.manifests, offsite_copy_ref: verified.copy_ref,
+        target: f.input.target.db, async assertCurrentFence() {} });
+      const nonemptyTarget = { prepare() { return { async all() { return { success: true, results: [{ present: 1 }], meta: {} }; } }; } } as unknown as D1Database;
+      await expect(buildNativeHistoryArchive({ draft: verified.draft, manifests: verified.manifests, offsite_copy_ref: verified.copy_ref,
+        target: nonemptyTarget, async assertCurrentFence() {} })).rejects.toMatchObject({ code: "BACKUP_RESTORE_UNCERTAIN" });
+      const reseal = async (value: typeof archive) => ({
+        ...value,
+        archive_digest: await digestNativeHistoryArchive({ protocol: value.protocol, disposition: value.disposition, source: value.source, tables: value.tables,
+          source_row_count: value.source_row_count, source_rows_sha256: value.source_rows_sha256, target_readback_digest: value.target_readback_digest }),
+      });
+      const firstArchiveTable = archive.tables[0];
+      if (firstArchiveTable === undefined) throw new Error("native-history fixture must contain an archive table");
+      const cases = [
+        { ...archive, tables: archive.tables.slice(1) },
+        { ...archive, tables: [firstArchiveTable, ...archive.tables.slice(0, -1)] },
+        { ...archive, tables: archive.tables.map((entry, index) => index === 0 ? { ...entry, table: "unknown-native-history" } : entry) },
+        { ...archive, tables: archive.tables.map((entry, index) => index === 0 ? { ...entry, source_row_count: entry.source_row_count + 1 } : entry) },
+        { ...archive, tables: archive.tables.map((entry, index) => index === 0 ? { ...entry, source_rows_sha256: H("f") } : entry) },
+        { ...archive, source: { ...archive.source, manifest_groups: { ...archive.source.manifest_groups, heads: { ...archive.source.manifest_groups.heads, group_sha256: H("f") } } } },
+      ];
+      for (const candidate of cases) {
+        await expect(validateNativeHistoryArchiveSummary(await reseal(candidate), context)).rejects.toMatchObject({ code: "BACKUP_VECTOR_UNVERIFIABLE" });
+      }
+      await expect(validateNativeHistoryArchiveSummary({ ...archive, archive_digest: H("0") }, context)).rejects.toMatchObject({ code: "BACKUP_VECTOR_UNVERIFIABLE" });
     } finally { f.primary.close(); f.target.close(); }
   });
 

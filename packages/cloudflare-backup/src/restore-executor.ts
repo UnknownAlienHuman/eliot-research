@@ -12,6 +12,13 @@ import { verifyIsolatedRestorePreflight } from "./isolated-restore-preflight.js"
 import type { BackupRestoreIntentBinding } from "./restore-store.js";
 import type { BackupRestoreStore, BackupRestoreReceipt } from "./restore-store.js";
 import type { SharedExecutionFence } from "@eliotr/cloudflare-erasure";
+import {
+  buildNativeHistoryArchive,
+  digestNativeHistoryRestoreReadback,
+  expectedNativeHistoryTables,
+  NATIVE_HISTORY_TABLES,
+  nativeHistoryArchiveSourceContext,
+} from "./restore-native-history.js";
 
 const LIMITS = { max_rows: 100_000, max_object_bytes: 64 * 1024 * 1024, max_total_bytes: 1024 * 1024 * 1024, rows_per_batch: 40 } as const;
 const SHA256 = /^[a-f0-9]{64}$/u;
@@ -174,7 +181,7 @@ function valueMatches(kind: string, value: unknown): boolean {
   return false;
 }
 
-function planCoreRestore(preflight: IsolatedRestorePreflight): readonly CoreRestoreTable[] {
+function planCoreRestore(preflight: IsolatedRestorePreflight, archiveTables: ReadonlySet<string>): readonly CoreRestoreTable[] {
   const sourceRows = preflight.manifests.source_rows;
   if (sourceRows.length > LIMITS.max_rows) failBackup("BACKUP_BOUND_EXCEEDED", "isolated restore Core row count exceeds its bound");
   const present = new Set(preflight.schema_inventory.map((entry) => entry.table));
@@ -192,6 +199,10 @@ function planCoreRestore(preflight: IsolatedRestorePreflight): readonly CoreRest
         failBackup("BACKUP_VECTOR_UNVERIFIABLE", "restore row columns or value kinds differ from the exact Core table schema", false, { table: spec.table });
       }
     }
+    if (rows.length > 0 && NATIVE_HISTORY_TABLES.some((entry) => entry.table === spec.table) && !archiveTables.has(spec.table)) {
+      failBackup("BACKUP_VECTOR_UNVERIFIABLE", "native-history rows are present before their introducing migration", false, { table: spec.table });
+    }
+    if (archiveTables.has(spec.table)) continue;
     if (rows.length > 0) plan.push({ table: spec.table, rows, columns, order_by: spec.order_by });
   }
 
@@ -424,7 +435,12 @@ export async function executeIsolatedBackupRestore(input: ExecuteIsolatedRestore
   if (input.intent.operation_kind !== "RESTORE_VERIFY") failBackup("BACKUP_INPUT_INVALID", "isolated restore requires a RESTORE_VERIFY intent");
   const preflightInput = { ...input.preflight, ...(input.signal === undefined ? {} : { signal: input.signal }) };
   const initial = await verifyIsolatedRestorePreflight(preflightInput);
-  const corePlan = planCoreRestore(initial);
+  const migrationNames = initial.manifests.vector["migration_names"];
+  if (!Array.isArray(migrationNames) || migrationNames.some((name) => typeof name !== "string")) {
+    failBackup("BACKUP_VECTOR_UNVERIFIABLE", "verified restore migration names are malformed");
+  }
+  const archiveTables = new Set(expectedNativeHistoryTables(migrationNames as string[]).map((entry) => entry.table));
+  const corePlan = planCoreRestore(initial, archiveTables);
   const r2Entries = validateR2Entries(initial.manifests);
   const fence = await input.erasure_gate.acquire({
     primary_database: input.preflight.primary.db, draft: initial.draft, current_purge: initial.current_purge,
@@ -434,13 +450,15 @@ export async function executeIsolatedBackupRestore(input: ExecuteIsolatedRestore
     assertFence(fence, initial);
     await fence.assertCurrent();
     const binding = restoreBinding(input.intent, initial);
-    const claim = await input.restore_store.claim(binding);
+    const archiveSource = nativeHistoryArchiveSourceContext(initial.draft, initial.manifests, initial.copy_ref);
+    const claim = await input.restore_store.claim(binding, undefined, archiveSource);
     if (claim.state === "REPLAY") return { state: "RESTORED_UNQUALIFIED", receipt: claim.receipt, traffic_ready: false };
 
     // Current copy, admission, target isolation, schemas and manifests are
     // rechecked after the O4 exclusion has been acquired and before writes.
     const latest = await verifyIsolatedRestorePreflight(preflightInput);
     if (latest.copy_ref !== initial.copy_ref || latest.draft.epoch_id !== initial.draft.epoch_id ||
+        canonicalBackupJson(latest.draft) !== canonicalBackupJson(initial.draft) ||
         canonicalBackupJson(latest.target) !== canonicalBackupJson(initial.target) ||
         latest.current_purge.revision !== initial.current_purge.revision || latest.current_purge.digest !== initial.current_purge.digest ||
         canonicalBackupJson(latest.manifests.source_rows) !== canonicalBackupJson(initial.manifests.source_rows) ||
@@ -457,7 +475,14 @@ export async function executeIsolatedBackupRestore(input: ExecuteIsolatedRestore
       const r2 = await restoreR2Objects({ preflightInput, verified: initial, entries: r2Entries, fence, markWriteStarted,
         ...(input.signal === undefined ? {} : { signal: input.signal }) });
       await fence.assertCurrent();
-      const readbackDigest = await backupSha256Hex(canonicalBackupJson({
+      const nativeHistoryArchive = await buildNativeHistoryArchive({
+        draft: latest.draft,
+        manifests: latest.manifests,
+        offsite_copy_ref: latest.copy_ref,
+        target: input.preflight.target.db,
+        assertCurrentFence: () => fence.assertCurrent(),
+      });
+      const baseReadbackDigest = await backupSha256Hex(canonicalBackupJson({
         epoch_id: initial.draft.epoch_id, offsite_copy_ref: initial.copy_ref,
         purge_revision: initial.current_purge.revision, purge_digest: initial.current_purge.digest,
         core_row_count: core.count, core_digest: core.digest,
@@ -465,12 +490,16 @@ export async function executeIsolatedBackupRestore(input: ExecuteIsolatedRestore
         epoch_subject_scope_digest: fence.epoch_subject_scope_digest,
         obligation_inventory_digest: fence.obligation_inventory_digest,
       }));
+      const readbackDigest = await digestNativeHistoryRestoreReadback(baseReadbackDigest, nativeHistoryArchive.target_readback_digest);
       const receipt = await input.restore_store.complete(attempt, binding, {
         applied_purge_ledger_revision: initial.current_purge.revision,
         applied_purge_ledger_digest: initial.current_purge.digest,
         restored_core_row_count: core.count, restored_r2_object_count: r2.count,
         restored_r2_byte_count: r2.bytes, readback_digest: readbackDigest,
-      });
+        base_readback_digest: baseReadbackDigest,
+        target_readback_digest: nativeHistoryArchive.target_readback_digest,
+        native_history_archive: nativeHistoryArchive,
+      }, undefined, nativeHistoryArchiveSourceContext(latest.draft, latest.manifests, latest.copy_ref));
       return { state: "RESTORED_UNQUALIFIED", receipt, traffic_ready: false };
     } catch (cause) {
       const errorCode = cause !== null && typeof cause === "object" && "code" in cause

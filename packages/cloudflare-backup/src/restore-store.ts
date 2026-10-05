@@ -1,6 +1,11 @@
 import { OperationIntentSchema, type OperationIntent } from "@eliotr/contracts";
 import { backupSha256Hex, canonicalBackupJson, failBackup } from "@eliotr/backup-o2";
 import type { SharedExecutionFence } from "@eliotr/cloudflare-erasure";
+import {
+  digestNativeHistoryRestoreReadback,
+  validateNativeHistoryArchiveSummary,
+} from "./restore-native-history.js";
+import type { NativeHistoryArchiveSourceContext, NativeHistoryArchiveSummary } from "./restore-native-history.js";
 
 const SHA256 = /^[a-f0-9]{64}$/u;
 
@@ -30,8 +35,7 @@ export interface BackupRestoreAttempt {
   readonly started_at: string;
 }
 
-export interface BackupRestoreReceipt {
-  readonly protocol: "eliotr.backup-restore.v1";
+interface BackupRestoreReceiptBase {
   readonly restore_id: string;
   readonly receipt_id: string;
   readonly attempt_id: string;
@@ -57,18 +61,33 @@ export interface BackupRestoreReceipt {
   readonly issued_at: string;
 }
 
+export interface BackupRestoreReceiptV1 extends BackupRestoreReceiptBase {
+  readonly protocol: "eliotr.backup-restore.v1";
+}
+
+export interface BackupRestoreReceiptV2 extends BackupRestoreReceiptBase {
+  readonly protocol: "eliotr.backup-restore.v2";
+  readonly base_readback_digest: string;
+  readonly target_readback_digest: string;
+  readonly native_history_archive: NativeHistoryArchiveSummary;
+}
+
+export type BackupRestoreReceipt = BackupRestoreReceiptV1 | BackupRestoreReceiptV2;
+
+type BackupRestoreReceiptResult = Omit<BackupRestoreReceiptV2,
+  "protocol" | "restore_id" | "receipt_id" | "attempt_id" | "intent_ref" | "epoch_id" | "offsite_copy_ref" | "target_environment_ref" | "state" | "traffic_ready" | "unresolved_acceptance" | "issued_at">;
+
 export type BackupRestoreClaim =
   | { readonly state: "READY"; readonly restore_id: string; readonly intent_digest: string }
   | { readonly state: "REPLAY"; readonly restore_id: string; readonly intent_digest: string; readonly receipt: BackupRestoreReceipt };
 
 export interface BackupRestoreStore {
-  claim(binding: BackupRestoreIntentBinding, now_ms?: number): Promise<BackupRestoreClaim>;
+  claim(binding: BackupRestoreIntentBinding, now_ms?: number, archive_source?: NativeHistoryArchiveSourceContext): Promise<BackupRestoreClaim>;
   beginAttempt(claim: Extract<BackupRestoreClaim, { readonly state: "READY" }>, binding: BackupRestoreIntentBinding, fence: SharedExecutionFence, now_ms?: number): Promise<BackupRestoreAttempt>;
   markFailed(attempt: BackupRestoreAttempt, error_code: string, now_ms?: number): Promise<void>;
   markUnknown(attempt: BackupRestoreAttempt, error_code: string, now_ms?: number): Promise<void>;
-  complete(attempt: BackupRestoreAttempt, binding: BackupRestoreIntentBinding, result: Omit<BackupRestoreReceipt,
-    "protocol" | "restore_id" | "receipt_id" | "attempt_id" | "intent_ref" | "epoch_id" | "offsite_copy_ref" | "target_environment_ref" | "state" | "traffic_ready" | "unresolved_acceptance" | "issued_at">,
-    now_ms?: number): Promise<BackupRestoreReceipt>;
+  complete(attempt: BackupRestoreAttempt, binding: BackupRestoreIntentBinding, result: BackupRestoreReceiptResult,
+    now_ms?: number, archive_source?: NativeHistoryArchiveSourceContext): Promise<BackupRestoreReceipt>;
 }
 
 interface IntentRow {
@@ -121,23 +140,73 @@ async function identity(binding: BackupRestoreIntentBinding): Promise<{ readonly
   return { restore_id: `restore-${restoreKey.slice(0, 48)}`, intent_digest: requestDigest, target_binding_json: targetBinding };
 }
 
-function parseReceipt(value: unknown): BackupRestoreReceipt {
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function exactKeys(value: Record<string, unknown>, expected: readonly string[]): boolean {
+  const actual = Object.keys(value).sort();
+  const wanted = [...expected].sort();
+  return actual.length === wanted.length && actual.every((key, index) => key === wanted[index]);
+}
+
+const EXPECTED_ACCEPTANCE = ["HANDLE_LIVE_REDACTED_ACCEPTANCE", "EXACT_RESTORE_ACCEPTANCE", "HIGH_RECALL_RESTORE_ACCEPTANCE", "ERASURE_RESTORE_ACCEPTANCE", "PROJECTION_REBUILD_ACCEPTANCE"] as const;
+const RECEIPT_IDENTITY_KEYS = ["restore_id", "receipt_id", "attempt_id", "intent_ref", "epoch_id", "offsite_copy_ref", "target_environment_ref", "issued_at"] as const;
+
+async function parseReceipt(value: unknown, archiveSource?: NativeHistoryArchiveSourceContext, expectedBinding?: BackupRestoreIntentBinding): Promise<BackupRestoreReceipt> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) failBackup("BACKUP_RESTORE_UNCERTAIN", "persisted backup restore receipt is malformed");
-  const receipt = value as BackupRestoreReceipt;
-  const expectedAcceptance = ["HANDLE_LIVE_REDACTED_ACCEPTANCE", "EXACT_RESTORE_ACCEPTANCE", "HIGH_RECALL_RESTORE_ACCEPTANCE", "ERASURE_RESTORE_ACCEPTANCE", "PROJECTION_REBUILD_ACCEPTANCE"];
-  if (receipt.protocol !== "eliotr.backup-restore.v1" || receipt.state !== "RESTORED_UNQUALIFIED" || receipt.traffic_ready !== false ||
-      !Array.isArray(receipt.unresolved_acceptance) || receipt.unresolved_acceptance.length !== 5 ||
-      canonicalBackupJson(receipt.unresolved_acceptance) !== canonicalBackupJson(expectedAcceptance) ||
-      !SHA256.test(receipt.applied_purge_ledger_digest) || !SHA256.test(receipt.readback_digest) ||
-      !Number.isSafeInteger(receipt.applied_purge_ledger_revision) || receipt.applied_purge_ledger_revision < 0 ||
-      !Number.isSafeInteger(receipt.restored_core_row_count) || receipt.restored_core_row_count < 0 ||
-      !Number.isSafeInteger(receipt.restored_r2_object_count) || receipt.restored_r2_object_count < 0 ||
-      !Number.isSafeInteger(receipt.restored_r2_byte_count) || receipt.restored_r2_byte_count < 0) {
-    failBackup("BACKUP_RESTORE_UNCERTAIN", "persisted backup restore receipt carries invalid or qualified status");
+  const receipt = value as Record<string, unknown>;
+  const commonValid = receipt["state"] === "RESTORED_UNQUALIFIED" && receipt["traffic_ready"] === false &&
+      Array.isArray(receipt["unresolved_acceptance"]) && receipt["unresolved_acceptance"].length === EXPECTED_ACCEPTANCE.length &&
+      canonicalBackupJson(receipt["unresolved_acceptance"]) === canonicalBackupJson(EXPECTED_ACCEPTANCE) &&
+      SHA256.test(String(receipt["applied_purge_ledger_digest"] ?? "")) && SHA256.test(String(receipt["readback_digest"] ?? "")) &&
+      Number.isSafeInteger(receipt["applied_purge_ledger_revision"]) && (receipt["applied_purge_ledger_revision"] as number) >= 0 &&
+      Number.isSafeInteger(receipt["restored_core_row_count"]) && (receipt["restored_core_row_count"] as number) >= 0 &&
+      Number.isSafeInteger(receipt["restored_r2_object_count"]) && (receipt["restored_r2_object_count"] as number) >= 0 &&
+      Number.isSafeInteger(receipt["restored_r2_byte_count"]) && (receipt["restored_r2_byte_count"] as number) >= 0;
+  if (!commonValid) failBackup("BACKUP_RESTORE_UNCERTAIN", "persisted backup restore receipt carries invalid or qualified status");
+  if (receipt["protocol"] === "eliotr.backup-restore.v1") {
+    const legacy = value as BackupRestoreReceiptV1;
+    if (!SHA256.test(legacy.applied_purge_ledger_digest) || !SHA256.test(legacy.readback_digest)) {
+      failBackup("BACKUP_RESTORE_UNCERTAIN", "legacy backup restore receipt digest is malformed");
+    }
+    return legacy;
   }
+  const v2Keys = ["protocol", ...RECEIPT_IDENTITY_KEYS, "applied_purge_ledger_revision", "applied_purge_ledger_digest", "restored_core_row_count", "restored_r2_object_count", "restored_r2_byte_count", "readback_digest", "base_readback_digest", "target_readback_digest", "native_history_archive", "state", "traffic_ready", "unresolved_acceptance"];
+  const intentRef = receipt["intent_ref"];
+  if (receipt["protocol"] !== "eliotr.backup-restore.v2" || !exactKeys(receipt, v2Keys) ||
+      ["restore_id", "receipt_id", "attempt_id", "epoch_id", "offsite_copy_ref", "target_environment_ref", "issued_at"].some((key) => typeof receipt[key] !== "string" || (receipt[key] as string).length === 0) ||
+      !isRecord(intentRef) || !exactKeys(intentRef, ["id", "revision"]) || typeof intentRef["id"] !== "string" || intentRef["id"].length === 0 || !Number.isSafeInteger(intentRef["revision"]) ||
+      !SHA256.test(String(receipt["base_readback_digest"] ?? "")) || !SHA256.test(String(receipt["target_readback_digest"] ?? ""))) {
+    failBackup("BACKUP_RESTORE_UNCERTAIN", "persisted v2 backup restore receipt is malformed or contains unknown fields");
+  }
+  if (archiveSource === undefined) failBackup("BACKUP_RESTORE_UNCERTAIN", "v2 restore replay requires the current authenticated source epoch context", true);
+  const archive = await validateNativeHistoryArchiveSummary(receipt["native_history_archive"], archiveSource);
+  const v2 = value as BackupRestoreReceiptV2;
+  if (archive.source.epoch_id !== v2.epoch_id || archive.source.offsite_copy_ref !== v2.offsite_copy_ref ||
+      archive.target_readback_digest !== v2.target_readback_digest ||
+      (expectedBinding !== undefined && (canonicalBackupJson(v2.intent_ref) !== canonicalBackupJson(expectedBinding.intent.intent_ref) ||
+        v2.offsite_copy_ref !== expectedBinding.offsite_copy_ref || v2.target_environment_ref !== expectedBinding.target.environment_ref)) ||
+      await digestNativeHistoryRestoreReadback(v2.base_readback_digest, v2.target_readback_digest) !== v2.readback_digest) {
+    failBackup("BACKUP_RESTORE_UNCERTAIN", "v2 restore receipt readback does not bind its authenticated archive, intent, and target");
+  }
+  return v2;
+}
+
+async function readReceipt(db: D1Database, restoreId: string, archiveSource?: NativeHistoryArchiveSourceContext, expectedBinding?: BackupRestoreIntentBinding): Promise<BackupRestoreReceipt | null> {
+  let row: ReceiptRow | null;
+  try { row = await db.prepare("SELECT receipt_json,receipt_digest FROM backup_restore_receipt WHERE restore_id=?1 LIMIT 2").bind(restoreId).first<ReceiptRow>(); }
+  catch (cause) { failBackup("BACKUP_TABLE_MISSING", "backup restore receipt authority is unavailable", true, {}, cause); }
+  if (row === null) return null;
+  if (typeof row.receipt_json !== "string" || typeof row.receipt_digest !== "string" || !SHA256.test(row.receipt_digest)) failBackup("BACKUP_RESTORE_UNCERTAIN", "backup restore receipt readback is malformed");
+  let parsed: unknown;
+  try { parsed = JSON.parse(row.receipt_json) as unknown; } catch (cause) { failBackup("BACKUP_RESTORE_UNCERTAIN", "backup restore receipt JSON is malformed", false, {}, cause); }
+  const receipt = await parseReceipt(parsed, archiveSource, expectedBinding);
+  if (await backupSha256Hex(canonicalBackupJson(receipt)) !== row.receipt_digest || canonicalBackupJson(receipt) !== row.receipt_json) failBackup("BACKUP_RESTORE_UNCERTAIN", "backup restore receipt digest or canonical bytes disagree on readback");
   return receipt;
 }
 
+// v1 bytes remain readable as historical records; new completion writes are v2-only.
 async function readIntent(db: D1Database, principal: string, key: string): Promise<IntentRow | null> {
   try {
     return await db.prepare(
@@ -155,22 +224,10 @@ function assertIntentMatches(row: IntentRow, binding: BackupRestoreIntentBinding
   }
 }
 
-async function readReceipt(db: D1Database, restoreId: string): Promise<BackupRestoreReceipt | null> {
-  let row: ReceiptRow | null;
-  try { row = await db.prepare("SELECT receipt_json,receipt_digest FROM backup_restore_receipt WHERE restore_id=?1 LIMIT 2").bind(restoreId).first<ReceiptRow>(); }
-  catch (cause) { failBackup("BACKUP_TABLE_MISSING", "backup restore receipt authority is unavailable", true, {}, cause); }
-  if (row === null) return null;
-  if (typeof row.receipt_json !== "string" || typeof row.receipt_digest !== "string" || !SHA256.test(row.receipt_digest)) failBackup("BACKUP_RESTORE_UNCERTAIN", "backup restore receipt readback is malformed");
-  let parsed: unknown;
-  try { parsed = JSON.parse(row.receipt_json) as unknown; } catch (cause) { failBackup("BACKUP_RESTORE_UNCERTAIN", "backup restore receipt JSON is malformed", false, {}, cause); }
-  const receipt = parseReceipt(parsed);
-  if (await backupSha256Hex(canonicalBackupJson(receipt)) !== row.receipt_digest || canonicalBackupJson(receipt) !== row.receipt_json) failBackup("BACKUP_RESTORE_UNCERTAIN", "backup restore receipt digest or canonical bytes disagree on readback");
-  return receipt;
-}
 
 export function createD1BackupRestoreStore(database: D1Database): BackupRestoreStore {
   return {
-    async claim(bindingInput, nowMs = Date.now()) {
+    async claim(bindingInput, nowMs = Date.now(), archiveSource) {
       const binding = validateBinding(bindingInput);
       const id = await identity(binding);
       const now = timestamp(nowMs);
@@ -187,7 +244,7 @@ export function createD1BackupRestoreStore(database: D1Database): BackupRestoreS
       if (row === null) failBackup("BACKUP_RESTORE_UNCERTAIN", "backup restore intent did not read back", true);
       assertIntentMatches(row, binding, id);
       if (row.state === "RESTORED_UNQUALIFIED") {
-        const receipt = await readReceipt(database, id.restore_id);
+        const receipt = await readReceipt(database, id.restore_id, archiveSource, binding);
         if (receipt === null || receipt.restore_id !== id.restore_id || receipt.intent_ref.id !== binding.intent.intent_ref.id || receipt.epoch_id !== binding.epoch_id) {
           failBackup("BACKUP_RESTORE_UNCERTAIN", "completed backup restore has no exact persisted receipt", true);
         }
@@ -289,20 +346,28 @@ export function createD1BackupRestoreStore(database: D1Database): BackupRestoreS
       if (receipt !== null) failBackup("BACKUP_RESTORE_UNCERTAIN", "restore was marked unknown after a receipt had already committed", true);
     },
 
-    async complete(attempt, bindingInput, result, nowMs = Date.now()) {
+    async complete(attempt, bindingInput, result, nowMs = Date.now(), archiveSource) {
       const binding = validateBinding(bindingInput);
       const id = await identity(binding);
       if (attempt.restore_id !== id.restore_id || attempt.intent_digest !== id.intent_digest) failBackup("BACKUP_INTENT_CONFLICT", "restore receipt attempt does not match its intent binding");
       if (!SHA256.test(result.applied_purge_ledger_digest) || !SHA256.test(result.readback_digest) ||
+          !SHA256.test(result.base_readback_digest) || !SHA256.test(result.target_readback_digest) ||
           !Number.isSafeInteger(result.applied_purge_ledger_revision) || result.applied_purge_ledger_revision < 0 ||
           !Number.isSafeInteger(result.restored_core_row_count) || result.restored_core_row_count < 0 ||
           !Number.isSafeInteger(result.restored_r2_object_count) || result.restored_r2_object_count < 0 ||
           !Number.isSafeInteger(result.restored_r2_byte_count) || result.restored_r2_byte_count < 0) {
         failBackup("BACKUP_INPUT_INVALID", "backup restore readback result is malformed");
       }
+      if (archiveSource === undefined) failBackup("BACKUP_INPUT_INVALID", "new restore completion requires authenticated native-history source context");
+      const archive = await validateNativeHistoryArchiveSummary(result.native_history_archive, archiveSource);
+      if (archive.source.epoch_id !== binding.epoch_id || archive.source.offsite_copy_ref !== binding.offsite_copy_ref ||
+          archive.target_readback_digest !== result.target_readback_digest ||
+          await digestNativeHistoryRestoreReadback(result.base_readback_digest, result.target_readback_digest) !== result.readback_digest) {
+        failBackup("BACKUP_INPUT_INVALID", "backup restore completion does not match its authenticated archive readback");
+      }
       const now = timestamp(nowMs);
-      const receipt = parseReceipt({
-        protocol: "eliotr.backup-restore.v1", restore_id: id.restore_id,
+      const receipt = await parseReceipt({
+        protocol: "eliotr.backup-restore.v2", restore_id: id.restore_id,
         receipt_id: `restore-receipt-${attempt.attempt_id.slice("restore-attempt-".length)}`,
         attempt_id: attempt.attempt_id, intent_ref: binding.intent.intent_ref,
         epoch_id: binding.epoch_id, offsite_copy_ref: binding.offsite_copy_ref,
@@ -312,10 +377,14 @@ export function createD1BackupRestoreStore(database: D1Database): BackupRestoreS
         restored_core_row_count: result.restored_core_row_count,
         restored_r2_object_count: result.restored_r2_object_count,
         restored_r2_byte_count: result.restored_r2_byte_count,
-        readback_digest: result.readback_digest, state: "RESTORED_UNQUALIFIED", traffic_ready: false,
+        readback_digest: result.readback_digest,
+        base_readback_digest: result.base_readback_digest,
+        target_readback_digest: result.target_readback_digest,
+        native_history_archive: archive,
+        state: "RESTORED_UNQUALIFIED", traffic_ready: false,
         unresolved_acceptance: ["HANDLE_LIVE_REDACTED_ACCEPTANCE", "EXACT_RESTORE_ACCEPTANCE", "HIGH_RECALL_RESTORE_ACCEPTANCE", "ERASURE_RESTORE_ACCEPTANCE", "PROJECTION_REBUILD_ACCEPTANCE"],
         issued_at: now,
-      });
+      }, archiveSource, binding);
       const receiptJson = canonicalBackupJson(receipt);
       const receiptDigest = await backupSha256Hex(receiptJson);
       try {
@@ -324,7 +393,7 @@ export function createD1BackupRestoreStore(database: D1Database): BackupRestoreS
           "VALUES(?1,?2,?3,?4,?5) ON CONFLICT(restore_id) DO NOTHING",
         ).bind(id.restore_id, attempt.attempt_number, receiptJson, receiptDigest, now).run();
       } catch (cause) { failBackup("BACKUP_RESTORE_UNCERTAIN", "backup restore receipt commit is unknown", true, {}, cause); }
-      const stored = await readReceipt(database, id.restore_id);
+      const stored = await readReceipt(database, id.restore_id, archiveSource, binding);
       if (stored === null || canonicalBackupJson(stored) !== receiptJson) failBackup("BACKUP_INTENT_CONFLICT", "backup restore receipt identity already contains divergent bytes");
       const attemptJson = canonicalBackupJson({
         protocol: "eliotr.backup-restore-attempt.v1", restore_id: id.restore_id, attempt_number: attempt.attempt_number,

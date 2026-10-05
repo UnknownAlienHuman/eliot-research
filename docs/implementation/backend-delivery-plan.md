@@ -1,7 +1,7 @@
 # Backend delivery plan
 
 Current execution order, refreshed on 2026-10-05 against `main`
-`24e6e88545fbbea86e8d3f3bb051d65b5e736f36`.
+`9496aa78d72af1d2d347976077263ded45b67d31`.
 
 The [October 3 functional integration checkpoint](product-resume-2026-10-03.md)
 records the owner configuration, immutable run capture, MCP, provisioning and
@@ -82,10 +82,27 @@ complete 0109-0111 operation/preparation/attempt/observation/candidate/proof/
 revocation chain, including uncertain attempts and revoked proofs.
 Only those ten tables receive an explicit introduction-migration map, so verified
 older v1 epochs can retain their original table/vector shape while newer cuts
-must include their full chain. This does not complete O3 restore: historical
-imports still need its isolated authority establishment because insertion guards
-require current owner/operation/pricing state. Those guards must not be bypassed
-or satisfied with invented owner/selection records.
+must include their full chain. The isolated restore source now preserves these
+ten tables as authenticated history in the original encrypted epoch rather than
+inserting them into current Native/key authority. The complete source rows are
+validated before the split; their actual heads/generations group pins, canonical
+row digests and zero-row target readback are bound into new v2 restore receipts.
+Existing stored v1 receipts remain readable without rewriting their bytes.
+The Cloudflare backup TypeScript build, scoped ESLint over six changed source
+files and source-budget scan passed on Node 24.19.0. An initial 22 bounded
+local cases passed with Vitest 4.1.11; after independent review, seven selected
+cases passed, covering successful restore, legacy replay, coherently resealed
+v2 binding refusal and simulated D1 contamination during an authenticated R2
+PUT. The final Native emptiness readback follows all R2 writes. V2 receipts
+bind the full intent reference, exact copy and target environment; they cannot
+borrow a different request's identity. Initial fixture type errors and repaired
+results are preserved separately. These checks do not establish deployed or full O3
+acceptance. O3 still requires a real current operator admission/controller,
+later-purge reconciliation, restored historical read re-admission and final
+acceptance are still required. Current keys, use operations and selections need
+fresh admission. No insertion guard is bypassed or supplied invented authority;
+the receipt remains RESTORED_UNQUALIFIED with traffic_ready false, and the O2
+restore port stays closed.
 
 The integrated Core/PWA TypeScript build passed on Node 24.19.0 after interface,
 import and exact-optional repairs. Scoped ESLint covered 152 changed source and

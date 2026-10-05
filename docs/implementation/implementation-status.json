@@ -377,7 +377,8 @@
         "apps/eliotr-core/test/erasure-coordinator.test.ts exact completion and absence-negative cases",
         "packages/cloudflare-erasure location-adapter and authority tests",
         "remote R2, D1, AI Search and offsite backup absence receipts NOT EXECUTED",
-        "2026-10-03 source checkpoint: offsite encrypted bodies/readback and target-bound restore control records (migration0107) are implemented locally. Production isolated target/admission, restore qualification and erasure/restore closure remain pending; no absence or restoration claim."
+        "2026-10-03 source checkpoint: offsite encrypted bodies/readback and target-bound restore control records (migration0107) are implemented locally. Production isolated target/admission, restore qualification and erasure/restore closure remain pending; no absence or restoration claim.",
+        "2026-10-05 Native-history restore source checkpoint: the ten 0109-0111 key/use/qualification tables remain in the authenticated encrypted epoch and are not materialized as current authority. New v2 receipts bind the actual source groups, validated row digests, full intent reference, exact copy/target environment and final post-R2 empty target readback; stored v1 receipts remain unchanged. TypeScript build, scoped ESLint over six changed source files and source budgets passed on Node24.19.0. Vitest4.1.11 passed 22 initial local cases and seven selected post-review cases, including coherently resealed v2 binding refusal and explicitly simulated D1 readback contamination during authenticated R2 PUT; no physical Native insertion is claimed by that negative. Initial fixture type errors and repaired results are preserved. RESTORED_UNQUALIFIED and the closed O2 port remain; current restore admission, later-purge reconciliation, historical read re-admission and S95/live qualification are not completed."
       ]
     },
     {
