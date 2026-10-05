@@ -8,6 +8,52 @@
 -- only for this migration; D1 checks the restored references at commit.
 PRAGMA defer_foreign_keys = ON;
 
+-- Bound this one-time table rebuild independently of application-level plans.
+CREATE TABLE research_provider_key_model_use_stage_capacity_guard_0113 (
+  valid INTEGER NOT NULL CHECK (valid = 1)
+) STRICT;
+INSERT INTO research_provider_key_model_use_stage_capacity_guard_0113 (valid)
+SELECT CASE WHEN COUNT(*) <= 64 THEN 1 ELSE 0 END
+FROM (SELECT 1 FROM research_provider_key_model_use_stage_operation LIMIT 65);
+INSERT INTO research_provider_key_model_use_stage_capacity_guard_0113 (valid)
+SELECT CASE WHEN COALESCE(SUM(
+  COALESCE(length(CAST(owner_id AS BLOB)),0) +
+  COALESCE(length(CAST(project_id AS BLOB)),0) +
+  COALESCE(length(CAST(operation_id AS BLOB)),0) +
+  COALESCE(length(CAST(sequence_number AS BLOB)),0) +
+  COALESCE(length(CAST(stage AS BLOB)),0) +
+  COALESCE(length(CAST(route_ref AS BLOB)),0) +
+  COALESCE(length(CAST(route_version AS BLOB)),0) +
+  COALESCE(length(CAST(prompt_sha256 AS BLOB)),0) +
+  COALESCE(length(CAST(schema_sha256 AS BLOB)),0) +
+  COALESCE(length(CAST(parameters_sha256 AS BLOB)),0) +
+  COALESCE(length(CAST(probe_prompt_sha256 AS BLOB)),0) +
+  COALESCE(length(CAST(probe_schema_sha256 AS BLOB)),0) +
+  COALESCE(length(CAST(probe_parameters_sha256 AS BLOB)),0) +
+  COALESCE(length(CAST(pricing_snapshot_ref AS BLOB)),0) +
+  COALESCE(length(CAST(pricing_snapshot_sha256 AS BLOB)),0) +
+  COALESCE(length(CAST(preparation_ref AS BLOB)),0) +
+  COALESCE(length(CAST(preparation_sha256 AS BLOB)),0) +
+  COALESCE(length(CAST(candidate_ref AS BLOB)),0) +
+  COALESCE(length(CAST(candidate_sha256 AS BLOB)),0) +
+  COALESCE(length(CAST(qualification_ref AS BLOB)),0) +
+  COALESCE(length(CAST(qualification_sha256 AS BLOB)),0) +
+  COALESCE(length(CAST(state AS BLOB)),0) +
+  COALESCE(length(CAST(failure_code AS BLOB)),0) +
+  COALESCE(length(CAST(created_at AS BLOB)),0) +
+  COALESCE(length(CAST(updated_at AS BLOB)),0)
+),0) <= 1048576 THEN 1 ELSE 0 END
+FROM (
+  SELECT owner_id,project_id,operation_id,sequence_number,stage,route_ref,route_version,
+    prompt_sha256,schema_sha256,parameters_sha256,probe_prompt_sha256,probe_schema_sha256,
+    probe_parameters_sha256,pricing_snapshot_ref,pricing_snapshot_sha256,preparation_ref,
+    preparation_sha256,candidate_ref,candidate_sha256,qualification_ref,qualification_sha256,
+    state,failure_code,created_at,updated_at
+  FROM research_provider_key_model_use_stage_operation
+  LIMIT 65
+);
+DROP TABLE research_provider_key_model_use_stage_capacity_guard_0113;
+
 CREATE TABLE research_provider_key_model_use_stage_operation_0113_copy (
   owner_id TEXT NOT NULL CHECK (length(owner_id) BETWEEN 1 AND 256),
   project_id TEXT NOT NULL CHECK (length(project_id) BETWEEN 1 AND 256),
@@ -64,7 +110,7 @@ CREATE TABLE research_provider_key_model_use_stage_operation_0113_copy (
 ) STRICT;
 
 INSERT INTO research_provider_key_model_use_stage_operation_0113_copy
-SELECT * FROM research_provider_key_model_use_stage_operation;
+SELECT * FROM research_provider_key_model_use_stage_operation LIMIT 65;
 
 CREATE TABLE research_provider_key_model_use_stage_operation_0113_copy_guard (
   valid INTEGER NOT NULL CHECK (valid = 1)

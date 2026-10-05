@@ -1,7 +1,7 @@
 # Backend delivery plan
 
 Current execution order, refreshed on 2026-10-05 against `main`
-`691c067134d1e1928229ac201aafb14e55e6297b`.
+`24e6e88545fbbea86e8d3f3bb051d65b5e736f36`.
 
 The [October 3 functional integration checkpoint](product-resume-2026-10-03.md)
 records the owner configuration, immutable run capture, MCP, provisioning and
@@ -146,10 +146,27 @@ complete database with `pragma_foreign_key_check` through a strict transaction
 guard before turning deferred checking off. A genuine orphan fails that guard
 and rolls back; valid populated Native children and all nine dependent triggers
 survive. The same-engine microprobe and those actual-D1 assertions passed. The
-scoped deploy classifier still refuses 0113's table copy, deferred foreign keys
-and rename under its existing schema-only profile. Live migration admission
-requires a narrowly reviewed data-preserving rebuild and its cost review; no
+scoped deploy classifier now admits only the exact capped 0113 SQL bytes with
+the immutable 0110-0112 source pins, as `data_preserving_bounded_copy_rebuild`.
+Generic table copies, deferred-key changes and rebuilds remain refused. All 21
+migration-operation groups passed, including hash/cap/identity drift refusals,
+ordered-suffix checks and exact schema readback. Independent source review
+confirmed that the migration-specific table-drop check does not broaden the
+generic grammar. Live migration cost review and admission remain separate; no
 live migration intent or apply is claimed.
+
+The unapplied 0113 rebuild now also has strict checks before copying: at most 64
+source rows and at most 1 MiB of serialized column payload. Both scans and the
+copy read at most 65 rows; a failing guard rolls the transaction back before the
+copy. These are bounds for this one-time migration, not application/model
+limits or a physical SQLite page-size claim. Independent source review matched
+all 25 columns and found the previous constraints, copy-equality checks and nine
+trigger bodies unchanged. The exact guard program passed isolated local-D1
+boundary diagnostics for 64 rows, a rejected 65th row and a rejected UTF-8 byte
+overflow. The full populated Native migration/refusal scenario then passed again
+in 3.6 seconds. The depth-100 compiler still reports 113 Core migrations and zero
+failures. The exact migration classifier is verified locally; its live operator
+risk review remains pending.
 
 Native preparation expiry is now bounded by the approved pricing expiry, so a
 later preparation timestamp cannot outlive the owner operation's price fence.
@@ -207,6 +224,27 @@ downloaded on October 5; its authoritative SHA-256 and the downloaded bytes matc
 the working README (12,688 bytes). This establishes a shared-document baseline,
 not a completed NotebookLM comparison or acceptance of the new release.
 Cognitive and quality evaluation remain deferred.
+
+Read-only Cloudflare observations on October 5 confirmed the same account and
+Core D1 database, a current Time Travel bookmark, and a 16,695,296-byte database.
+The live migration ledger ends at 0108; the model-use/Native schema is absent.
+This is not an observed row count for tables yet to be created. The Worker has
+`ELIOTR_MODEL_GATEWAY_TOKEN` but no provider-control secret. A subscription read
+was refused, so no current billing entitlement or monthly D1 usage is inferred
+from these observations. Wrangler's cached access token had expired; official
+`whoami` refreshed it and verified the expected account. Several operator entry
+points now verify the refreshed profile before loading it. Bearer-backed
+provisioners also reread the strict profile after usage admission, before their
+API headers, because that gate can refresh the profile again. Deployment keeps
+its local gates before the late account check and then validates the real
+credential. The pure loader still refuses missing or expired credentials.
+The OAuth boundary suite passed all 18 groups; the mocked provisioning suite
+passed eight, deployment-input verification 14, and apply-ordering verification
+31. These checks use injected local transports and establish no live effect.
+The OAuth fixture now uses the actual public deployment API and stops at the
+first authenticated Worker read. Usage evaluation and capability assertions
+remain in the separate real preflight path. No repeated user login is required
+by the successful CLI refresh.
 
 Browser verification is currently blocked by the computer-use tool runtime.
 After the successful original-file download, the kernel failed to initialize

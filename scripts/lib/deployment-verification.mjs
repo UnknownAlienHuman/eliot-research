@@ -5,6 +5,7 @@ import { assertMcpAccessBaselineObservation, assertMcpAccessTransitionBaseline,
   isMaintenanceMcpAccessBaselineObservation, isMaintenanceMcpAccessTransition,
   isMcpAccessTransitionVariable } from "./deployment-mcp-access-transition.mjs";
 import { RESEARCH_RUNTIME_CONFIGURATION_KEYS, RESEARCH_RUNTIME_SEMANTIC_TRANSPORT_KEYS } from "./research-runtime-config.mjs";
+import { resolveAuthMode, WRANGLER_OAUTH_MODE } from "./cloudflare-wrangler-oauth.mjs";
 
 const MAX_SMOKE_BYTES = 64 * 1024;
 const MAX_API_BYTES = 1024 * 1024;
@@ -58,11 +59,27 @@ function boundedString(value, maximum = 256) {
     !/[\u0000-\u0020\u007f]/u.test(value);
 }
 
-export function validateDeploymentInput(env) {
-  for (const key of ["CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_API_TOKEN", "ELIOTR_OWNER_EMAILS"]) {
+/**
+ * `options.authMode` is supplied only by deployment orchestration that still
+ * has local gates to run before its late Wrangler OAuth identity check. In
+ * that explicit OAuth mode this validates deployment configuration without
+ * claiming a credential has been loaded or verified; the caller must rerun
+ * the default validation after it injects the refreshed bearer.
+ */
+export function validateDeploymentInput(env, options = {}) {
+  const authMode = options.authMode === undefined
+    ? null
+    : resolveAuthMode({ ELIOTR_CLOUDFLARE_AUTH_MODE: options.authMode });
+  const oauthCredentialPending = authMode === WRANGLER_OAUTH_MODE;
+  for (const key of ["CLOUDFLARE_ACCOUNT_ID", "ELIOTR_OWNER_EMAILS"]) {
     if (typeof env[key] !== "string" || !env[key].trim()) fail(`Missing ${key}`);
   }
-  if (!boundedString(env.CLOUDFLARE_API_TOKEN, 4096)) fail("Invalid Cloudflare API token");
+  if (!oauthCredentialPending) {
+    if (typeof env.CLOUDFLARE_API_TOKEN !== "string" || !env.CLOUDFLARE_API_TOKEN.trim()) {
+      fail("Missing CLOUDFLARE_API_TOKEN");
+    }
+    if (!boundedString(env.CLOUDFLARE_API_TOKEN, 4096)) fail("Invalid Cloudflare API token");
+  }
   const googleExternalTransport = env.ELIOTR_GOOGLE_EXTERNAL_TRANSPORT ?? null;
   if (googleExternalTransport !== null && !GOOGLE_EXTERNAL_TRANSPORTS.has(googleExternalTransport)) {
     fail("Invalid Google external transport profile");

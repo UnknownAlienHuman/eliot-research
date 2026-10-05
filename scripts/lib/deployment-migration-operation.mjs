@@ -22,6 +22,40 @@ const EMPTY_SEMANTIC_REVISION_REPAIR = Object.freeze({
   deleteTriggerName: "research_semantic_config_revision_no_delete",
   baselineSha256: "6d5cf0043a64e9ae281daa1af9e8d59cb4037060361b0798f0a494312b75b722",
 });
+const BOUNDED_STAGE_OPERATION_COPY_REBUILD = Object.freeze({
+  migrationName: "0113_research_provider_key_model_use_failure_alignment.sql",
+  migrationSha256: "308df2409b85ff48fce06e25b98564f02852a1a3cd2db1c6746a6b8492a9492b",
+  baselineName: "0110_research_provider_key_model_use.sql",
+  predecessorPins: Object.freeze([
+    Object.freeze({ name: "0110_research_provider_key_model_use.sql",
+      sha256: "cf906b6059822fb87fb2ed7d1551be55d0cbfa11adaf78e95617365fe0d3a12c" }),
+    Object.freeze({ name: "0111_provider_native_model_authority.sql",
+      sha256: "47829bbd0403b04ae74933e67f26e266d3c57b34086a5cf67ce843e393f8d207" }),
+    Object.freeze({ name: "0112_workflow_failure_shape_alignment.sql",
+      sha256: "fc3288924de8bb82078da27f23cd155c3b01aed24e4011ac8f53bfa5365dcf74" }),
+  ]),
+  targetName: "research_provider_key_model_use_stage_operation",
+  replacementName: "research_provider_key_model_use_stage_operation_0113_copy",
+  parentTableName: "research_provider_key_model_use_operation",
+  childTableNames: Object.freeze([
+    "research_provider_key_model_price_observation",
+    "provider_native_model_preparation",
+  ]),
+  triggerNames: Object.freeze([
+    "research_provider_key_model_price_observation_owner_insert",
+    "provider_native_model_preparation_guard",
+    "provider_native_model_qualification_attempt_guard",
+    "provider_native_model_observation_guard",
+    "provider_native_model_candidate_guard",
+    "provider_native_model_qualification_proof_guard",
+    "provider_native_model_qualification_complete_guard",
+    "research_provider_key_model_use_stage_transition",
+    "research_provider_key_model_use_stage_no_delete",
+  ]),
+  maximumRows: 64,
+  maximumScannedRows: 65,
+  maximumFieldPayloadBytes: 1_048_576,
+});
 const HASH = /^[0-9a-f]{64}$/u;
 const UUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/iu;
 const ACCOUNT = /^[A-Za-z0-9_-]{1,64}$/u;
@@ -102,7 +136,8 @@ export function validateDeploymentMigrationIntent(intent) {
       !intent.migration_hashes.every((entry, index) => exactKeys(entry, ["name", "sha256"]) &&
         entry.name === intent.migration_names[index] && HASH.test(entry.sha256 ?? "")) ||
       !exactKeys(intent.risk_review, ["classification", "summary", "reviewed_bundle_sha256", "index_build_cost_reviewed"]) ||
-      !["additive_schema_only", "schema_metadata_only"].includes(intent.risk_review.classification) ||
+      !["additive_schema_only", "schema_metadata_only", "data_preserving_bounded_copy_rebuild"]
+        .includes(intent.risk_review.classification) ||
       typeof intent.risk_review.summary !== "string" || intent.risk_review.summary.trim().length < 16 ||
       intent.risk_review.summary.length > 512 || /[\u0000-\u0008\u000b\u000c\u000e-\u001f]/u.test(intent.risk_review.summary) ||
       intent.risk_review.reviewed_bundle_sha256 !== sha256(JSON.stringify(intent.migration_hashes)) ||
@@ -547,8 +582,72 @@ function classifyEmptySemanticRevisionRepair(statements, { earlierCreatedTables,
   });
 }
 
+function classifyBoundedStageOperationCopyRebuild(text, statements, { baselineMigrationSql, predecessorMigrationHashes }) {
+  const repair = BOUNDED_STAGE_OPERATION_COPY_REBUILD;
+  if (sha256(Buffer.from(text, "utf8")) !== repair.migrationSha256) {
+    fail("Stage-operation rebuild requires its exact bounded-copy SQL bytes");
+  }
+  if (typeof baselineMigrationSql !== "string" ||
+      sha256(Buffer.from(baselineMigrationSql, "utf8")) !== repair.predecessorPins[0].sha256) {
+    fail("Stage-operation rebuild requires the exact immutable 0110 source schema");
+  }
+  if (!Array.isArray(predecessorMigrationHashes) ||
+      predecessorMigrationHashes.length !== repair.predecessorPins.length ||
+      !predecessorMigrationHashes.every((entry, index) => exactKeys(entry, ["name", "sha256"]) &&
+        entry.name === repair.predecessorPins[index].name && entry.sha256 === repair.predecessorPins[index].sha256)) {
+    fail("Stage-operation rebuild requires exact 0110-0112 predecessor migration pins");
+  }
+
+  const baselineTables = splitSqlStatements(tokens(baselineMigrationSql)).filter((statement) =>
+    createTableDefinition(statement) === repair.targetName);
+  const createdTriggers = statements.map(triggerDefinition).filter((name) => name !== null);
+  const droppedTriggers = statements.map(parseDrop).filter((entry) => entry?.object_type === "trigger").map((entry) => entry.name);
+  const expectedTriggerSet = new Set(repair.triggerNames.map((name) => name.toLowerCase()));
+  const observedCreatedTriggerSet = new Set(createdTriggers.map((name) => name.toLowerCase()));
+  const observedDroppedTriggerSet = new Set(droppedTriggers.map((name) => name.toLowerCase()));
+  const createdTables = statements.map(createTableDefinition).filter((name) => name !== null);
+  const droppedTargetTableCount = statements.filter((statement) => statement.length === 3 &&
+    wordAt(statement, 0, "DROP") && wordAt(statement, 1, "TABLE") &&
+    identifierAt(statement, 2)?.toLowerCase() === repair.targetName.toLowerCase()).length;
+  if (baselineTables.length !== 1 || createdTables.filter((name) =>
+      name.toLowerCase() === repair.replacementName.toLowerCase()).length !== 1 || droppedTargetTableCount !== 1 ||
+      createdTriggers.length !== expectedTriggerSet.size || droppedTriggers.length !== expectedTriggerSet.size ||
+      observedCreatedTriggerSet.size !== expectedTriggerSet.size || observedDroppedTriggerSet.size !== expectedTriggerSet.size ||
+      [...expectedTriggerSet].some((name) => !observedCreatedTriggerSet.has(name) || !observedDroppedTriggerSet.has(name))) {
+    fail("Stage-operation rebuild differs from the exact bounded table and nine-trigger replacement");
+  }
+
+  const replacements = [
+    { object_type: "table", name: repair.targetName },
+    ...repair.triggerNames.map((name) => ({ object_type: "trigger", name })),
+  ];
+  const required = [
+    ...replacements,
+    { object_type: "table", name: repair.parentTableName },
+    ...repair.childTableNames.map((name) => ({ object_type: "table", name })),
+  ];
+  return Object.freeze({
+    classification: "data_preserving_bounded_copy_rebuild",
+    statement_count: statements.length,
+    index_build_cost_reviewed: false,
+    newly_created_tables: Object.freeze([]),
+    required_schema_objects: Object.freeze(required.map((entry) => Object.freeze(entry))),
+    created_schema_objects: Object.freeze(replacements.map((entry) =>
+      Object.freeze({ ...entry, replacement: true }))),
+    must_probe_schema_objects: Object.freeze(replacements.map((entry) => Object.freeze(entry))),
+    metadata_markers: Object.freeze([]),
+    bounded_metadata_writes: 0,
+    bounded_copy: Object.freeze({
+      table: repair.targetName,
+      maximum_rows: repair.maximumRows,
+      maximum_scanned_rows: repair.maximumScannedRows,
+      maximum_field_payload_bytes: repair.maximumFieldPayloadBytes,
+    }),
+  });
+}
+
 export function classifyDeploymentMigrationSql(text, { earlierCreatedTables = [], migrationName = null,
-  baselineMigrationSql = null } = {}) {
+  baselineMigrationSql = null, predecessorMigrationHashes = null } = {}) {
   if (typeof text !== "string" || !Array.isArray(earlierCreatedTables) || earlierCreatedTables.length > 64 ||
       earlierCreatedTables.some((name) => typeof name !== "string" || !SCHEMA_NAME.test(name))) {
     fail("Invalid input to the scoped D1 migration SQL classifier");
@@ -557,6 +656,9 @@ export function classifyDeploymentMigrationSql(text, { earlierCreatedTables = []
   if (statements.length === 0) fail("Empty SQL migration is outside the supported maintenance profile");
   if (migrationName === EMPTY_SEMANTIC_REVISION_REPAIR.migrationName) {
     return classifyEmptySemanticRevisionRepair(statements, { earlierCreatedTables, baselineMigrationSql });
+  }
+  if (migrationName === BOUNDED_STAGE_OPERATION_COPY_REBUILD.migrationName) {
+    return classifyBoundedStageOperationCopyRebuild(text, statements, { baselineMigrationSql, predecessorMigrationHashes });
   }
   const createdTables = new Set(earlierCreatedTables.map((name) => name.toLowerCase()));
   const newlyCreatedTables = [];
@@ -712,6 +814,7 @@ async function readPendingSql(intent, root, localBundle, read) {
     try { sql = new TextDecoder("utf-8", { fatal: true }).decode(bytes); }
     catch { fail("Migration SQL is not valid UTF-8"); }
     let baselineMigrationSql = null;
+    let predecessorMigrationHashes = null;
     if (name === EMPTY_SEMANTIC_REVISION_REPAIR.migrationName) {
       const baseline = entries.get(EMPTY_SEMANTIC_REVISION_REPAIR.baselineName);
       if (baseline === undefined) fail("Empty semantic revision repair is missing its pinned 0097 baseline migration");
@@ -722,12 +825,34 @@ async function readPendingSql(intent, root, localBundle, read) {
       }
       try { baselineMigrationSql = new TextDecoder("utf-8", { fatal: true }).decode(baselineBytes); }
       catch { fail("Immutable semantic revision source schema is not valid UTF-8"); }
+    } else if (name === BOUNDED_STAGE_OPERATION_COPY_REBUILD.migrationName) {
+      predecessorMigrationHashes = [];
+      for (const pin of BOUNDED_STAGE_OPERATION_COPY_REBUILD.predecessorPins) {
+        const predecessor = entries.get(pin.name);
+        if (predecessor === undefined || predecessor.sha256 !== pin.sha256) {
+          fail("Stage-operation rebuild is missing an exact 0110-0112 predecessor migration pin");
+        }
+        const predecessorBytes = await read(resolve(root, "infra/d1/core/migrations", pin.name));
+        if (sha256(predecessorBytes) !== pin.sha256) {
+          fail("Stage-operation rebuild predecessor source differs from its reviewed immutable pin");
+        }
+        predecessorMigrationHashes.push({ name: pin.name, sha256: pin.sha256 });
+        if (pin.name === BOUNDED_STAGE_OPERATION_COPY_REBUILD.baselineName) {
+          try { baselineMigrationSql = new TextDecoder("utf-8", { fatal: true }).decode(predecessorBytes); }
+          catch { fail("Stage-operation rebuild baseline source schema is not valid UTF-8"); }
+        }
+      }
     }
     let admitted;
     try { admitted = classifyDeploymentMigrationSql(sql, { earlierCreatedTables: createdTables,
-      migrationName: name, baselineMigrationSql }); }
+      migrationName: name, baselineMigrationSql, predecessorMigrationHashes }); }
     catch (error) { fail(`Unsupported scoped migration SQL in ${name}: ${error.message}`); }
-    if (admitted.classification === "schema_metadata_only") classification = admitted.classification;
+    if (admitted.classification === "data_preserving_bounded_copy_rebuild") {
+      classification = admitted.classification;
+    } else if (classification !== "data_preserving_bounded_copy_rebuild" &&
+        admitted.classification === "schema_metadata_only") {
+      classification = admitted.classification;
+    }
     indexBuildCostReviewed ||= admitted.index_build_cost_reviewed;
     createdTables.push(...admitted.newly_created_tables);
     for (const object of admitted.created_schema_objects) {
@@ -1231,17 +1356,8 @@ export async function runDeploymentMigrationOperation({ intent, root = ROOT, env
   }
   env.ELIOTR_ENVIRONMENT = configuredEnvironment;
   validateStagingTarget(env);
-  let oauth = null;
-  if (resolveAuthMode(env) === WRANGLER_OAUTH_MODE) {
-    oauth = await loadWranglerOAuthCredential({ env: { ...process.env, ...env }, readFile: readWranglerFile, now: now() });
-    env.CLOUDFLARE_API_TOKEN = injectOAuthBearer(env, oauth.bearer).CLOUDFLARE_API_TOKEN;
-  }
-  if (typeof env.CLOUDFLARE_API_TOKEN !== "string" || env.CLOUDFLARE_API_TOKEN.length < 1 ||
-      env.CLOUDFLARE_API_TOKEN.length > 4096 || /[\r\n]/u.test(env.CLOUDFLARE_API_TOKEN)) {
-    fail("Cloudflare credentials are unavailable for the approved migration operation");
-  }
+  const usesWranglerOAuth = resolveAuthMode(env) === WRANGLER_OAUTH_MODE;
   const input = { accountId: intent.account_id, apiBase: boundedApiBase(env.CLOUDFLARE_API_BASE_URL) };
-  const childEnv = cleanChildEnvironment(env);
   const run = execute ?? ((command, args, cwd, childEnvironment, options) => runChild(command, args, cwd, childEnvironment, options));
   const captureCommand = capture ?? (async (command, args, cwd, childEnvironment, options) => {
     const result = await runChild(command, args, cwd, childEnvironment, { ...options, captureOutput: true });
@@ -1250,12 +1366,20 @@ export async function runDeploymentMigrationOperation({ intent, root = ROOT, env
   const deadline = () => remainingMs(intent, startedAt, now);
   const check = () => { requireNotCancelled(signal); return deadline(); };
 
-  if (oauth) {
+  if (usesWranglerOAuth) {
     check();
-    const whoami = await captureCommand("pnpm", ["exec", "wrangler", "whoami"], root, scrubTokenEnv(childEnv),
+    const whoami = await captureCommand("pnpm", ["exec", "wrangler", "whoami"], root,
+      scrubTokenEnv(cleanChildEnvironment(env)),
       { signal, timeoutMs: deadline(), maxOutputBytes: 128 * 1024 });
     await verifyWranglerOAuthAccount({ expectedAccountId: intent.account_id, getWhoamiOutput: async () => whoami });
+    const oauth = await loadWranglerOAuthCredential({ env: { ...process.env, ...env }, readFile: readWranglerFile, now: now() });
+    env.CLOUDFLARE_API_TOKEN = injectOAuthBearer(env, oauth.bearer).CLOUDFLARE_API_TOKEN;
   }
+  if (typeof env.CLOUDFLARE_API_TOKEN !== "string" || env.CLOUDFLARE_API_TOKEN.length < 1 ||
+      env.CLOUDFLARE_API_TOKEN.length > 4096 || /[\r\n]/u.test(env.CLOUDFLARE_API_TOKEN)) {
+    fail("Cloudflare credentials are unavailable for the approved migration operation");
+  }
+  const childEnv = cleanChildEnvironment(env);
 
   check();
   const identity = await readAccountAndDatabase(env, input, intent, { fetchImpl,

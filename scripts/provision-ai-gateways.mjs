@@ -40,13 +40,6 @@ if (authMode === WRANGLER_OAUTH_MODE) {
     process.exit(2);
   }
   try {
-    const credential = await loadWranglerOAuthCredential({ env: process.env, now: Date.now() });
-    token = credential.bearer;
-  } catch (error) {
-    console.error(error?.message ?? String(error));
-    process.exit(2);
-  }
-  try {
     // Official-profile account pin before the first Cloudflare GET. Always
     // spawns the official `wrangler whoami` with a token-scrubbed env. No
     // ambient test seam is honored here.
@@ -58,6 +51,15 @@ if (authMode === WRANGLER_OAUTH_MODE) {
       process.exit(2);
     }
     await verifyWranglerOAuthAccount({ expectedAccountId: accountId, getWhoamiOutput: async () => result.stdout ?? "" });
+  } catch (error) {
+    console.error(error?.message ?? String(error));
+    process.exit(2);
+  }
+  // `wrangler whoami` may refresh the official OAuth profile. Read its bearer
+  // only after the token-scrubbed account check has completed.
+  try {
+    const credential = await loadWranglerOAuthCredential({ env: process.env, now: Date.now() });
+    token = credential.bearer;
   } catch (error) {
     console.error(error?.message ?? String(error));
     process.exit(2);
@@ -83,6 +85,16 @@ if (!checkOnly && !verifyExisting) {
   if (usageGate.decision === "BLOCKED" || (!checkOnly && !admittedWithCapability)) {
     console.error(`Cloudflare usage preflight ${usageGate.decision} denies AI Gateway provisioning before any mutation. ${usageGate.evaluation.reasons.join("; ")}${usageGate.decision === "ADMITTED" ? " Missing same-process admission capability: ADMITTED alone never authorizes mutations." : ""}`);
     process.exit(2);
+  }
+  if (authMode === WRANGLER_OAUTH_MODE) {
+    // The gate repeats whoami and may refresh the profile after the initial
+    // token read. Reload the strict local profile before bearer-backed calls.
+    try {
+      token = (await loadWranglerOAuthCredential({ env: process.env, now: Date.now() })).bearer;
+    } catch (error) {
+      console.error(error?.message ?? String(error));
+      process.exit(2);
+    }
   }
 }
 const desired = JSON.parse(await readFile(new URL("../infra/cloudflare/ai-gateways.json", import.meta.url), "utf8"));

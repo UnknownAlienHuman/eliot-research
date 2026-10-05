@@ -219,14 +219,8 @@ export async function runUsagePreflight(options = {}) {
   let oauthWhoamiOutput = null;
   if (authMode === WRANGLER_OAUTH_MODE) {
     const readFileImpl = readFile ?? (await import("node:fs/promises")).readFile;
-    try {
-      const credential = await loadWranglerOAuthCredential({ env, readFile: readFileImpl, now: nowMs });
-      oauthBearer = credential.bearer;
-    } catch (error) {
-      if (error instanceof UsageCollectionError) throw error;
-      throw new UsageCollectionError(error?.code ?? "OAUTH_UNAVAILABLE", error?.message ?? "OAuth credential unavailable");
-    }
-    // No ambient whoami seam: explicit injection or the official spawn below.
+    // Verify the official profile before reading its bearer: `wrangler whoami`
+    // can refresh the cached OAuth credentials as a normal CLI operation.
     if (typeof getWhoamiOutput === "function") {
       oauthWhoamiOutput = await getWhoamiOutput();
     } else {
@@ -244,6 +238,13 @@ export async function runUsagePreflight(options = {}) {
     } catch (error) {
       if (error instanceof UsageCollectionError) throw error;
       throw new UsageCollectionError(error?.code ?? "OAUTH_ACCOUNT_MISMATCH", error?.message ?? "account verification failed");
+    }
+    try {
+      const credential = await loadWranglerOAuthCredential({ env, readFile: readFileImpl, now: nowMs });
+      oauthBearer = credential.bearer;
+    } catch (error) {
+      if (error instanceof UsageCollectionError) throw error;
+      throw new UsageCollectionError(error?.code ?? "OAUTH_UNAVAILABLE", error?.message ?? "OAuth credential unavailable");
     }
   }
 

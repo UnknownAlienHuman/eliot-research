@@ -114,6 +114,16 @@ await check("no credentials means no request, never PASS", async () => {
   const result = await smoke(() => assert.fail("no request allowed"), { ...environment, ELIOTR_ACCESS_SMOKE_COOKIE: undefined });
   assert.equal(result.state, "NOT_EXECUTED");
 });
+await check("OAuth-pending deployment validation is explicit and does not claim a credential", () => {
+  const pendingEnvironment = { ...environment, CLOUDFLARE_API_TOKEN: "" };
+  const pending = validateDeploymentInput(pendingEnvironment, { authMode: "wrangler-oauth" });
+  assert.equal(pending.apiBase, "https://api.cloudflare.com/client/v4");
+  assert.equal(Object.hasOwn(pending, "CLOUDFLARE_API_TOKEN"), false);
+  assert.throws(() => validateDeploymentInput(pendingEnvironment), /Missing CLOUDFLARE_API_TOKEN/u);
+  assert.throws(() => validateDeploymentInput(pendingEnvironment, { authMode: "api-token" }), /Missing CLOUDFLARE_API_TOKEN/u);
+  assert.throws(() => validateDeploymentInput(pendingEnvironment, { authMode: "wrangler-oauth-unknown" }),
+    /Unknown ELIOTR_CLOUDFLARE_AUTH_MODE/u);
+});
 await check("reject credential destination and header injection before requests", () => {
   for (const value of ["http://research.example.com", "https://other.example.com", "https://research.example.com:444",
     "https://research.example.com/path", "https://research.example.com/?x=1", "https://research.example.com/#x",

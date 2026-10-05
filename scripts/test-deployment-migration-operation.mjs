@@ -27,10 +27,29 @@ const migrationNames = ["0001_fixture_a.sql", "0002_fixture_b.sql"];
 const semanticRepairMigrationName = "0108_research_semantic_config_revision_glob_limits.sql";
 const semanticRepairSql = await readFile(new URL("../infra/d1/core/migrations/" + semanticRepairMigrationName, import.meta.url), "utf8");
 const semanticBaselineSql = await readFile(new URL("../infra/d1/core/migrations/0097_research_semantic_config_revision.sql", import.meta.url), "utf8");
+const stageOperationRebuildMigrationName = "0113_research_provider_key_model_use_failure_alignment.sql";
+const stageOperationRebuildSql = await readFile(new URL("../infra/d1/core/migrations/" + stageOperationRebuildMigrationName, import.meta.url), "utf8");
+const stageOperationRebuildBaselineSql = await readFile(new URL("../infra/d1/core/migrations/0110_research_provider_key_model_use.sql", import.meta.url), "utf8");
+const stageOperationRebuildPredecessorPins = [
+  { name: "0110_research_provider_key_model_use.sql",
+    sha256: "cf906b6059822fb87fb2ed7d1551be55d0cbfa11adaf78e95617365fe0d3a12c" },
+  { name: "0111_provider_native_model_authority.sql",
+    sha256: "47829bbd0403b04ae74933e67f26e266d3c57b34086a5cf67ce843e393f8d207" },
+  { name: "0112_workflow_failure_shape_alignment.sql",
+    sha256: "fc3288924de8bb82078da27f23cd155c3b01aed24e4011ac8f53bfa5365dcf74" },
+];
 function classifySemanticRepair(sql = semanticRepairSql, overrides = {}) {
   return classifyDeploymentMigrationSql(sql, {
     migrationName: semanticRepairMigrationName,
     baselineMigrationSql: semanticBaselineSql,
+    ...overrides,
+  });
+}
+function classifyStageOperationRebuild(sql = stageOperationRebuildSql, overrides = {}) {
+  return classifyDeploymentMigrationSql(sql, {
+    migrationName: stageOperationRebuildMigrationName,
+    baselineMigrationSql: stageOperationRebuildBaselineSql,
+    predecessorMigrationHashes: stageOperationRebuildPredecessorPins,
     ...overrides,
   });
 }
@@ -286,6 +305,63 @@ await check("0108 rejects a missing or weakened emptiness guard, another target,
   const changedBaseline = semanticBaselineSql.replace("config_json TEXT NOT NULL", "config_json TEXT");
   assert.notEqual(changedBaseline, semanticBaselineSql);
   assert.throws(() => classifySemanticRepair(semanticRepairSql, { baselineMigrationSql: changedBaseline }));
+});
+
+await check("0113 admits only the exact capped data-preserving rebuild and probes its nine triggers plus FK tables", async () => {
+  assert.equal(sha256(Buffer.from(stageOperationRebuildSql, "utf8")),
+    "308df2409b85ff48fce06e25b98564f02852a1a3cd2db1c6746a6b8492a9492b");
+  const result = classifyStageOperationRebuild();
+  const triggerNames = [
+    "research_provider_key_model_price_observation_owner_insert",
+    "provider_native_model_preparation_guard",
+    "provider_native_model_qualification_attempt_guard",
+    "provider_native_model_observation_guard",
+    "provider_native_model_candidate_guard",
+    "provider_native_model_qualification_proof_guard",
+    "provider_native_model_qualification_complete_guard",
+    "research_provider_key_model_use_stage_transition",
+    "research_provider_key_model_use_stage_no_delete",
+  ];
+  const replacements = [
+    { object_type: "table", name: "research_provider_key_model_use_stage_operation" },
+    ...triggerNames.map((name) => ({ object_type: "trigger", name })),
+  ];
+  assert.equal(result.classification, "data_preserving_bounded_copy_rebuild");
+  assert.equal(result.index_build_cost_reviewed, false);
+  assert.deepEqual(result.newly_created_tables, []);
+  assert.deepEqual(result.bounded_copy, {
+    table: "research_provider_key_model_use_stage_operation",
+    maximum_rows: 64,
+    maximum_scanned_rows: 65,
+    maximum_field_payload_bytes: 1_048_576,
+  });
+  assert.deepEqual(result.required_schema_objects, [
+    ...replacements,
+    { object_type: "table", name: "research_provider_key_model_use_operation" },
+    { object_type: "table", name: "research_provider_key_model_price_observation" },
+    { object_type: "table", name: "provider_native_model_preparation" },
+  ]);
+  assert.deepEqual(result.must_probe_schema_objects, replacements);
+  assert.deepEqual(result.created_schema_objects, replacements.map((entry) => ({ ...entry, replacement: true })));
+});
+
+await check("0113 rejects cap/hash, predecessor, baseline, or migration-identity drift and stays outside generic DML", async () => {
+  assert.throws(() => classifyDeploymentMigrationSql(stageOperationRebuildSql));
+  assert.throws(() => classifyStageOperationRebuild(stageOperationRebuildSql.replace("COUNT(*) <= 64", "COUNT(*) <= 65")),
+    /exact bounded-copy SQL bytes/u);
+  assert.throws(() => classifyStageOperationRebuild(stageOperationRebuildSql.replace("<= 1048576 THEN", "<= 1048577 THEN")),
+    /exact bounded-copy SQL bytes/u);
+  assert.throws(() => classifyStageOperationRebuild(stageOperationRebuildSql, {
+    migrationName: "0114_provider_native_model_proof_attempt_alignment.sql",
+  }));
+  assert.throws(() => classifyStageOperationRebuild(stageOperationRebuildSql, {
+    baselineMigrationSql: `${stageOperationRebuildBaselineSql}\n`,
+  }), /immutable 0110 source schema/u);
+  const changedPredecessors = stageOperationRebuildPredecessorPins.map((pin, index) =>
+    index === 1 ? { ...pin, sha256: sha256(Buffer.from("changed predecessor")) } : pin);
+  assert.throws(() => classifyStageOperationRebuild(stageOperationRebuildSql, {
+    predecessorMigrationHashes: changedPredecessors,
+  }), /exact 0110-0112 predecessor migration pins/u);
 });
 
 await createFixture(async ({ root, intentFor }) => {

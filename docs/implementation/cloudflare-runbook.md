@@ -249,11 +249,27 @@ next run instead of silently overwriting it (Reconciliation). The exact binding 
 hostname, team origin, AUD, owner set) is read back from live state and compared against the
 local ignored profile before any mutation; drift fails closed.
 
-Step 0 — browser login (human, one time per OAuth expiry; cannot be automated):
+Step 0 — OAuth refresh and account verification (read-only first):
+
+```bash
+pnpm exec wrangler whoami
+```
+
+The scripts run `whoami` with token variables scrubbed, verify the exact expected account, and only
+then load the OAuth credential. `whoami` refreshes a refreshable session, so OAuth expiry alone does
+not require a human login. If the session is absent or cannot be refreshed, complete the official
+human login and verify the account again:
 
 ```bash
 pnpm exec wrangler login
-pnpm exec wrangler whoami   # must show the account in the local ignored profile
+pnpm exec wrangler whoami
+```
+
+When the local callback listener cannot start, use Wrangler's device flow instead:
+
+```bash
+pnpm exec wrangler login --device --browser=false
+pnpm exec wrangler whoami
 ```
 
 If `whoami` shows any other account, log in with the correct account and retry. Never paste an
@@ -438,9 +454,21 @@ The SQL classifier fails closed outside its documented bounded grammar: `PRAGMA 
 literal-keyed `schema_state` generation updates, `CREATE TABLE`, `ALTER TABLE ... ADD COLUMN`,
 `CREATE VIEW`, `CREATE TRIGGER`, named trigger/view replacement, and `CREATE INDEX` only on a table created earlier
 within the same approved operation. It rejects table rebuild/copy migrations, data backfills,
-unsupported or unbounded DML, and index builds on pre-existing tables. The current candidate support
-matrix below is derived from local files relative to the last known Core ledger `0066`; it does not
-assert that any candidate is currently pending remotely. Read the live ledger in a new exact intent.
+unsupported or unbounded DML, and index builds on pre-existing tables. The existing 0108 semantic
+revision repair is a separate empty-only metadata-repair case: its pinned guard rejects any table
+with rows before replacement and it copies no data. The sole bounded data-copy exception is
+`0113_research_provider_key_model_use_failure_alignment.sql`, which may be classified as
+`data_preserving_bounded_copy_rebuild` only when its UTF-8 bytes match SHA-256
+`308df2409b85ff48fce06e25b98564f02852a1a3cd2db1c6746a6b8492a9492b`, and the 0110, 0111, and 0112
+source hashes match their frozen predecessor pins. That SQL guards the rebuilt table at no more than
+64 rows (with a 65-row overflow scan) and at no more than 1 MiB total serialized field payload, then
+checks the copied rows for equality, restores the nine named triggers, and runs a global foreign-key
+check before disabling deferred foreign keys. It probes the rebuilt table, all nine triggers, its
+parent, and both child tables. This bounded copy classification does not claim metadata-only work,
+reviewed index cost, or a broader data-migration allowance. Neither special case permits any other
+rebuild, copy, backfill, or generic DML. The current candidate support matrix below is derived from
+local files relative to the last known Core ledger `0066`; it does not assert that any candidate is
+currently pending remotely. Read the live ledger in a new exact intent.
 
 | Candidate Core migration after `0066` | Offline bounded-operation support | Review note |
 |---|---|---|

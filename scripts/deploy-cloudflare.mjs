@@ -310,13 +310,9 @@ export async function deployCloudflare({ confirmLive = false, secretsFilePath, e
     // A staging label does not isolate fixed-name resources. Reject a missing,
     // mismatched or protected target before credential load or any command.
     stagingTarget = validateStagingTarget(env);
-    // Local-only credential load (profile file + clock). No remote effect yet,
-    // so launch:code and the local gates below still precede every remote call.
-    if (resolveAuthMode(env) === WRANGLER_OAUTH_MODE) {
-      // OS credential locations come from the host; profile knobs come from the deployment env.
-      oauth = await loadWranglerOAuthCredential({ env: { ...process.env, ...env }, readFile: readWranglerFile ?? read, now: now() });
-      env.CLOUDFLARE_API_TOKEN = injectOAuthBearer(env, oauth.bearer).CLOUDFLARE_API_TOKEN;
-    }
+    // Defer loading the local bearer until after the late scrubbed whoami
+    // check, which may refresh Wrangler's cached profile.
+    oauth = resolveAuthMode(env) === WRANGLER_OAUTH_MODE;
     if (!env.ELIOTR_DEPLOYMENT_GENERATION) {
       const revision = captureCommand("git", ["rev-parse", "--short=12", "HEAD"], root, env);
       if (!revision) throw new Error("Set ELIOTR_DEPLOYMENT_GENERATION when Git revision is unavailable");
@@ -325,7 +321,7 @@ export async function deployCloudflare({ confirmLive = false, secretsFilePath, e
     const canonicalConfig = JSON.parse(await read(resolve(core, "wrangler.jsonc"), "utf8"));
     validateDeploymentMigrationDirectories(canonicalConfig, { root });
     env.ELIOTR_GOOGLE_EXTERNAL_TRANSPORT = preserveGoogleTransport ?? readConfiguredTransport(canonicalConfig);
-    input = validateDeploymentInput(env);
+    input = validateDeploymentInput(env, { authMode: resolveAuthMode(env) });
     if (input.ownerHttpTransport === "cloudflared") {
       ownerFetch = createCloudflaredOwnerFetch({ origin: input.origin, environment: env,
         binary: env.ELIOTR_CLOUDFLARED_BINARY ?? "cloudflared" });
@@ -395,6 +391,13 @@ export async function deployCloudflare({ confirmLive = false, secretsFilePath, e
       return result.stdout ?? "";
     });
     await verifyWranglerOAuthAccount({ expectedAccountId: env.CLOUDFLARE_ACCOUNT_ID, getWhoamiOutput });
+    // whoami is allowed to refresh the official cached profile. Only now read
+    // and inject its bearer, then validate the actual authenticated input.
+    const credential = await loadWranglerOAuthCredential({
+      env: { ...process.env, ...env }, readFile: readWranglerFile ?? read, now: now(),
+    });
+    env.CLOUDFLARE_API_TOKEN = injectOAuthBearer(env, credential.bearer).CLOUDFLARE_API_TOKEN;
+    input = validateDeploymentInput(env);
   }
 
   const activeWorkerBaseline = await readActiveWorker({ env, input, fetchImpl });
