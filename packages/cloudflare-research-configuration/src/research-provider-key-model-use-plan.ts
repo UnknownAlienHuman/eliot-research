@@ -145,19 +145,32 @@ function fixedTransportPolicy(
   stage: ResearchProviderKeyModelUseStage,
   base: ModelRouteDeployment,
   key: ConfiguredResearchProviderKeyOperation,
+  selectedConfiguration: SelectedResearchProjectConfiguration | null,
 ): ModelGatewayTransportPolicyV1 {
-  let policies;
-  try { policies = parseResearchPreparedModelTransportPolicies(raw); }
-  catch (cause) { return fail("The installed exact Bunny transport policy is invalid", cause); }
-  const selected = policies?.model_selections.find((entry) => entry.stage === stage &&
-    entry.route_ref === base.route_ref && entry.route_version === base.route_version &&
-    entry.provider === "openrouter" && entry.model === MODEL_ID);
-  if (selected === undefined) fail(`${stage} has no server-installed exact OpenRouter Bunny policy for its current route`);
+  let sourcePolicy: unknown;
+  const nativeSelection = selectedConfiguration?.configuration.model_selections.find((entry) =>
+    entry.stage === stage && entry.candidate_kind === "provider-native-v1");
+  if (nativeSelection !== undefined) {
+    if (nativeSelection.route_ref !== base.route_ref || nativeSelection.route_version !== base.route_version) {
+      fail(`${stage} selected Native transport does not match its current route`);
+    }
+    sourcePolicy = nativeSelection.transport_policy;
+  } else {
+    let policies;
+    try { policies = parseResearchPreparedModelTransportPolicies(raw); }
+    catch (cause) { return fail("The installed exact Bunny transport policy is invalid", cause); }
+    const installed = policies?.model_selections.find((entry) => entry.stage === stage &&
+      entry.route_ref === base.route_ref && entry.route_version === base.route_version &&
+      entry.provider === "openrouter" && entry.model === MODEL_ID);
+    if (installed === undefined) fail(`${stage} has no server-installed exact OpenRouter Bunny policy for its current route`);
+    sourcePolicy = installed.transport_policy;
+  }
   let source: ModelGatewayTransportPolicyV1;
-  try { source = validateModelGatewayTransportPolicy(selected.transport_policy); }
+  try { source = validateModelGatewayTransportPolicy(sourcePolicy); }
   catch (cause) { return fail(`${stage} OpenRouter policy is invalid`, cause); }
   if (source.api !== "openrouter-chat-completions" || source.provider !== "openrouter" ||
       source.model !== MODEL_ID || source.billing.mode !== "byok" ||
+      source.billing.free_only !== true ||
       source.capabilities.max_output_tokens_field !== "max_tokens" ||
       source.capabilities.response_format_normalization !== "json-schema-to-json-object" ||
       source.billing.alias === "default" || key.alias === "default") {
@@ -333,11 +346,6 @@ export async function createResearchProviderKeyModelUseBasis(input: {
       spend.rules.length < 2 || spend.rules.length > 4) {
     fail("The trusted spend policy is not bound to this owner or its bounded stage set");
   }
-  let preparedPolicies;
-  try { preparedPolicies = parseResearchPreparedModelTransportPolicies(input.runtime_policy.ELIOTR_RESEARCH_MODEL_TRANSPORT_POLICIES_JSON); }
-  catch (cause) { return fail("Exact server-prepared OpenRouter Bunny transport is unavailable", cause); }
-  if (preparedPolicies === undefined) fail("Exact server-prepared OpenRouter Bunny transport is not installed");
-
   const sortedRules = [...spend.rules].sort((left, right) => STAGE_ORDER.indexOf(left.stage as ResearchProviderKeyModelUseStage) -
     STAGE_ORDER.indexOf(right.stage as ResearchProviderKeyModelUseStage));
   if (!sortedRules.some((rule) => rule.stage === "SYNTHESIZE") || !sortedRules.some((rule) => rule.stage === "AUDIT_CLAIMS") ||
@@ -351,7 +359,7 @@ export async function createResearchProviderKeyModelUseBasis(input: {
     try { baseDeployment = decodeModelRouteDeployment(rule.deployment); }
     catch (cause) { return fail(`${stage} owner spend deployment is invalid`, cause); }
     const exactPolicy = fixedTransportPolicy(input.runtime_policy.ELIOTR_RESEARCH_MODEL_TRANSPORT_POLICIES_JSON,
-      stage, baseDeployment, input.key);
+      stage, baseDeployment, input.key, input.selected);
     stages.push(await buildStagePlan({
       stage,
       sequence_number: index,

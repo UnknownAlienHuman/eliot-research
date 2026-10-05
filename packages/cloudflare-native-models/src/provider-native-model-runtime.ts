@@ -298,16 +298,17 @@ export function createD1ProviderNativeModelAuthority(
         assertPreparedCurrent(existing.preparation, current.milliseconds);
         return receipt(existing);
       }
-      const expiresAt = new Date(current.milliseconds + prepTtl).toISOString();
+      const preparationExpiry = Math.min(current.milliseconds + prepTtl, Date.parse(pricing.expires_at));
+      if (!Number.isFinite(preparationExpiry) || preparationExpiry <= current.milliseconds) {
+        providerNativeModelFailure("PROVIDER_NATIVE_MODEL_AUTHORITY_STALE", "native preparation cannot outlive its approved pricing snapshot");
+      }
+      const expiresAt = new Date(preparationExpiry).toISOString();
       const created = await createProviderNativeModelPreparation({
         input,
         key_binding: keyBinding,
         prepared_at: current.value,
         preparation_expires_at: expiresAt,
       });
-      if (Date.parse(pricing.expires_at) < Date.parse(expiresAt)) {
-        providerNativeModelFailure("PROVIDER_NATIVE_MODEL_AUTHORITY_STALE", "native preparation would outlive its approved pricing snapshot");
-      }
       await store.putPreparation({
         preparation_ref: created.preparation_ref,
         preparation_sha256: created.preparation_sha256,

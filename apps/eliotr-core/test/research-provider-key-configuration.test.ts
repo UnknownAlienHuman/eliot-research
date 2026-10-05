@@ -1,5 +1,6 @@
-import { env } from "cloudflare:test";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { applyD1Migrations } from "cloudflare:test";
+import { env } from "cloudflare:workers";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { OpenRouterProviderKeyRestError } from "@eliotr/cloudflare-ai";
 import { RESEARCH_PROVIDER_KEY_CONFIGURATION_PROTOCOL } from "@eliotr/contracts";
 import type { AuthenticatedRequestContext } from "@eliotr/interfaces";
@@ -9,7 +10,14 @@ import { createResearchProviderKeyConfigurationService } from "../src/research-p
 
 const ACCOUNT_ID = "a".repeat(32);
 const GATEWAY_ID = "eliotr-reasoning";
-const TEST_ENV = env as unknown as Env;
+const runtime = env as unknown as Env & {
+  readonly CORE_MIGRATIONS: Parameters<typeof applyD1Migrations>[1];
+};
+const TEST_ENV = runtime;
+
+beforeAll(async () => {
+  await applyD1Migrations(runtime.CORE_DB, runtime.CORE_MIGRATIONS);
+});
 
 function context(principal: string, options: { readonly serviceToken?: boolean } = {}): AuthenticatedRequestContext {
   const credentialGeneration = `credential-${crypto.randomUUID()}`;
@@ -141,6 +149,56 @@ describe("owner OpenRouter provider-key configuration", () => {
     await expect(read(`${url}?unexpected=1`)).rejects.toMatchObject({
       code: "RESEARCH_PROVIDER_KEY_CONFIGURATION_INPUT_INVALID", status: 400,
     });
+  });
+
+  it("saves a replacement as a new operation and preserves safe replay readback", async () => {
+    const owner = `provider-key-replacement-${crypto.randomUUID()}`;
+    const project = await insertOwnerProject(env.CORE_DB, owner);
+    const firstOperation = crypto.randomUUID();
+    const replacementOperation = crypto.randomUUID();
+    const firstKey = "sk-or-v1-fixture-original-key-1234567890";
+    const replacementKey = "sk-or-v1-fixture-replacement-key-1234567890";
+    const { port, calls } = createPort();
+    const service = createResearchProviderKeyConfigurationService({ database: env.CORE_DB, managementPort: port });
+
+    const first = await service.create(context(owner), project, requestBody(firstOperation, firstKey));
+    const replacement = await service.create(context(owner), project, requestBody(replacementOperation, replacementKey));
+    const replay = await service.create(context(owner), project, requestBody(replacementOperation, replacementKey));
+
+    expect(first.replayed).toBe(false);
+    expect(replacement.replayed).toBe(false);
+    expect(replay.replayed).toBe(true);
+    expect(replacement.receipt.alias).not.toBe(first.receipt.alias);
+    expect(replacement.receipt.provider_config_id).not.toBe(first.receipt.provider_config_id);
+    expect(calls).toHaveBeenCalledTimes(2);
+    expect(calls.mock.calls.map(([input]) => input.secret)).toEqual([firstKey, replacementKey]);
+
+    const configurations = await service.read(context(owner), project);
+    expect(configurations.configurations).toHaveLength(2);
+    expect(configurations.configurations).toEqual(expect.arrayContaining([
+      expect.objectContaining({ operation_id: firstOperation, alias: first.receipt.alias,
+        provider_config_id: first.receipt.provider_config_id, status: "configured_not_qualified" }),
+      expect.objectContaining({ operation_id: replacementOperation, alias: replacement.receipt.alias,
+        provider_config_id: replacement.receipt.provider_config_id, status: "configured_not_qualified" }),
+    ]));
+    const configured = await service.readConfiguredOperation(context(owner), project, replacementOperation);
+    expect(configured).toMatchObject({ operation_id: replacementOperation, alias: replacement.receipt.alias,
+      provider_config_id: replacement.receipt.provider_config_id, status: "configured_not_qualified" });
+    expect(configured).not.toHaveProperty("secret_id");
+
+    await expect(service.create(context(owner), project,
+      requestBody(replacementOperation, `${replacementKey}-changed`))).rejects.toMatchObject({
+      code: "RESEARCH_PROVIDER_KEY_CONFIGURATION_OPERATION_CONFLICT", status: 409,
+    });
+    expect(calls).toHaveBeenCalledTimes(2);
+    const stored = await env.CORE_DB.prepare(
+      "SELECT operation_id,alias,provider_config_id,state FROM research_provider_key_configuration_operation " +
+      "WHERE project_id=?1 ORDER BY operation_id",
+    ).bind(project).all<{ operation_id: string; alias: string; provider_config_id: string | null; state: string }>();
+    expect(stored.results).toHaveLength(2);
+    expect(stored.results?.every((row) => row.state === "CONFIGURED")).toBe(true);
+    expect(JSON.stringify({ first, replacement, replay, configurations, configured, stored })).not.toContain(firstKey);
+    expect(JSON.stringify({ first, replacement, replay, configurations, configured, stored })).not.toContain(replacementKey);
   });
 
   it("fails closed for service-token principals and when server management authority is absent", async () => {

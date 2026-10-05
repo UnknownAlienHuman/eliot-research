@@ -18,6 +18,7 @@ import {
   modelGatewaySha256,
   validateModelGatewayTransportPolicy,
   validateModelGatewayRequestBody,
+  validateModelGatewayProviderNativeRequestBody,
   type ModelGatewayTransportPolicyV1,
 } from "./model-gateway-request.js";
 import {
@@ -454,12 +455,11 @@ export async function prepareNativeQualificationHttpRequest(
       "native qualification compiled prompt digest differs from its canonical body",
     );
   }
-  const validated = await validateModelGatewayRequestBody(
+  const validated = await validateModelGatewayProviderNativeRequestBody(
     compiled.request_body,
-    deployment,
     maximumInputBytes,
     maximumOutputBytes,
-    transportPolicy.capabilities,
+    transportPolicy,
   );
   const internalBody = JSON.parse(validated.body) as unknown;
   const parametersSha256 = await modelGatewayRequestParametersSha256(

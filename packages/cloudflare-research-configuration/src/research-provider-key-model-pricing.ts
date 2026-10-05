@@ -29,14 +29,21 @@ const PRICING_BASIS = "EXACT_TOKEN_RATES_V1" as const;
 const ROUTE_KEYS = new Set(["stage", "route_ref", "route_version", "provider", "exact_model_id"]);
 const STAGES = new Set(["ANALYZE_BRANCHES", "COUNTER_SEARCH", "SYNTHESIZE", "AUDIT_CLAIMS"]);
 const CONTEXT_KEYS = new Set(["operation", "route"]);
-const OPERATION_KEYS = new Set([
+function exactPropertyNames<T>() {
+  return <const Keys extends readonly (keyof T)[]>(
+    keys: Keys & (Exclude<keyof T, Keys[number]> extends never ? unknown : never),
+  ): Keys => keys;
+}
+const OPERATION_KEYS = new Set<string>(exactPropertyNames<ResearchProviderKeyModelUseRow>()([
   "owner_id", "project_id", "provider_id", "operation_id", "key_operation_id", "account_id", "gateway_id",
   "alias", "provider_config_id", "configuration_metadata_sha256", "request_sha256", "owner_credential_generation",
+  "configuration_basis_json",
   "project_generation", "deployment_generation", "deadline_at", "expected_selection_revision",
   "source_configuration_ref", "source_configuration_sha256", "planned_stage_set_sha256", "plan_sha256",
   "state", "phase", "active_stage", "target_configuration_ref", "target_configuration_sha256",
+  "target_configuration_json",
   "selected_configuration_ref", "selection_revision", "failure_code", "created_at", "updated_at",
-]);
+] as const));
 const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9:._/@-]{0,255}$/u;
 const OPERATION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const SHA256 = /^[a-f0-9]{64}$/u;

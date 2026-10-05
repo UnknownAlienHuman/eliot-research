@@ -315,7 +315,7 @@ export function decodeResearchProviderKeyModelUseStageRow(raw: unknown): Researc
   if ((pricingRef === null) !== (pricingSha === null) || (preparationRef === null) !== (preparationSha === null) ||
       (candidateRef === null) !== (candidateSha === null) || (qualificationRef === null) !== (qualificationSha === null) ||
       (candidateRef === null) !== (qualificationRef === null) ||
-      (state !== "PENDING" && pricingRef === null) ||
+      (state !== "PENDING" && state !== "BLOCKED" && pricingRef === null) ||
       ((state === "PREPARED" || state === "QUALIFYING" || state === "QUALIFIED" || state === "UNCERTAIN") && preparationRef === null) ||
       (state === "QUALIFIED" && (candidateRef === null || qualificationRef === null)) ||
       ((state === "BLOCKED" || state === "UNCERTAIN") !== (row.failure_code !== null))) {

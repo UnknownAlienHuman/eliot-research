@@ -157,7 +157,7 @@ export function researchModelConfigurationIsSelectable(revision: ResearchModelCo
 }
 
 export function researchModelConfigurationQualificationLabel(revision: ResearchModelConfigurationRevision): string {
-  return revision.qualification_state === "qualified" ? "Eligible for selection" : "Not eligible for selection";
+  return revision.qualification_state === "qualified" ? "Eligible for selection" : "Not selectable: qualification required";
 }
 
 export function researchModelConfigurationMatchesCatalog(

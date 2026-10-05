@@ -19,7 +19,7 @@ export async function loadCompiledWorkspaceModule(relativePath) {
   if (!registered) {
     registerHooks({
       resolve(specifier, context, nextResolve) {
-        const workspace = /^@eliotr\/([a-z0-9-]+)(?:\/([a-z0-9-]+\.js))?$/u.exec(specifier);
+        const workspace = /^@eliotr\/([a-z0-9-]+)(?:\/([a-z0-9-]+(?:\.js)?))?$/u.exec(specifier);
         if (!workspace) return nextResolve(specifier, context);
         const packageRoot = resolve(root, "packages", workspace[1]);
         if (!exportsByPackage.has(packageRoot)) {

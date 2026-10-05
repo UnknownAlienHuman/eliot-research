@@ -296,7 +296,6 @@ export async function decodeStoredProviderNativeModelObservation(
     request_body_sha256: storedRequestSha,
     response_body_sha256: storedResponseSha,
     response_body_byte_length: storedResponseLength,
-    ...probeFields
   } = execution;
   if (typeof storedRequestSha !== "string" || !SHA256.test(storedRequestSha)) {
     providerNativeModelFailure("PROVIDER_NATIVE_MODEL_STORAGE_UNCERTAIN", "stored native request body digest is malformed");
@@ -306,11 +305,28 @@ export async function decodeStoredProviderNativeModelObservation(
       storedResponseLength < 1 || storedResponseLength > PROVIDER_NATIVE_MODEL_MAX_PROBE_RESPONSE_BYTES) {
     providerNativeModelFailure("PROVIDER_NATIVE_MODEL_STORAGE_UNCERTAIN", "stored native response body metadata is malformed");
   }
+  const probeExecution = {
+    protocol: execution.protocol,
+    qualification_purpose: execution.qualification_purpose,
+    api: execution.api,
+    provider: execution.provider,
+    exact_model_id: execution.exact_model_id,
+    route_fingerprint: execution.route_fingerprint,
+    gateway_log_id: execution.gateway_log_id,
+    request_body_bytes: requestBodyBytes,
+    response_body_bytes: responseBodyBytes,
+    response_model: execution.response_model,
+    input_tokens: execution.input_tokens,
+    output_tokens: execution.output_tokens,
+    billed_usd: execution.billed_usd,
+    pricing_quote_ref: execution.pricing_quote_ref,
+    ...(execution.successful_step === undefined ? {} : { successful_step: execution.successful_step }),
+  };
   const rebuilt = await createProviderNativeModelObservation({
     preparation,
     preparation_ref: identifier(value.preparation_ref, "stored preparation reference"),
     preparation_sha256: digest(value.preparation_sha256, "stored preparation digest"),
-    execution: { ...probeFields, request_body_bytes: requestBodyBytes, response_body_bytes: responseBodyBytes },
+    execution: probeExecution,
     verified_at: value.verified_at as string,
     expires_at: value.expires_at as string,
   });

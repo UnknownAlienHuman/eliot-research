@@ -1,7 +1,7 @@
 # Backend delivery plan
 
-Current execution order, refreshed on 2026-10-04 against `main`
-`f1e56cc85113e1ef93fd57a4e61573db031537ac`.
+Current execution order, refreshed on 2026-10-05 against `main`
+`691c067134d1e1928229ac201aafb14e55e6297b`.
 
 The [October 3 functional integration checkpoint](product-resume-2026-10-03.md)
 records the owner configuration, immutable run capture, MCP, provisioning and
@@ -111,8 +111,109 @@ with zero errors, warnings or source drift. Behavioral checks remain pending.
 No emitted-size improvement is claimed. Publication uses
 the captured file manifest and non-forced main push; no deployment or model call
 was made for this checkpoint.
-Normal functional runs and same-document functional NotebookLM checks follow
-code assembly. Cognitive and quality evaluation remain deferred.
+The first bounded functional pass covered 66 PWA cases, 13 provider/transport
+cases and 44 deployment-verification/ordering groups. Core initially reported
+126 passing cases, three failures and one TODO. The two transport failures were
+invalid legacy fixtures; corrected tests preserve strict native endpoint and
+credential-route refusal. The failure-retention regression exposed a real D1
+contract mismatch: migration 0083's shape triggers did not admit 31 newer
+canonical error codes. Forward migration 0112 aligns the three allowlists with
+all 72 runtime codes without changing their other guards or historical 0083.
+Its depth-100 SQL compilation and actual-D1 round-trip/refusal regression passed,
+as did the original typed-diagnosis retention regression. The SQL compiler now
+includes 111 Core migrations, with 971 recovered sites, zero failures and 121
+dynamic/unresolved sites.
+
+The isolated key fixture now applies its own migrations. Six key-configuration
+cases passed, including replacement under a new operation with a distinct
+immutable alias, preservation of the old binding, exact replay and changed-key
+conflict. Two project-membership cases passed, including exact scope id/revision
+and owner/project/authority refusals. The module loader now resolves the declared
+extensionless projection export to compiled JavaScript; this fixes the first
+Core test startup failure. The model selector retains its qualification-required
+reason. Compilation and source budgets passed after these repairs. The positive
+model-use test also exposed a deterministic pricing-authority mismatch: its
+strict operation-key set omitted two fields returned by the canonical store.
+The complete canonical row is now accepted, while unknown keys remain refused;
+that focused regression passed. The resulting pre-price refusal could not be
+persisted because the stage table required a pricing receipt even for BLOCKED.
+Forward migration 0113 changes only that price-presence constraint, retaining
+the strict table, row-copy checks and nine dependent triggers. The compiler now
+includes 112 Core migrations with the same zero-failure application SQL result.
+The populated-migration regression exposed SQLite's deferred foreign-key counter
+after the checked parent-table copy/drop/rename. Migration 0113 now checks the
+complete database with `pragma_foreign_key_check` through a strict transaction
+guard before turning deferred checking off. A genuine orphan fails that guard
+and rolls back; valid populated Native children and all nine dependent triggers
+survive. The same-engine microprobe and those actual-D1 assertions passed. The
+scoped deploy classifier still refuses 0113's table copy, deferred foreign keys
+and rename under its existing schema-only profile. Live migration admission
+requires a narrowly reviewed data-preserving rebuild and its cost review; no
+live migration intent or apply is claimed.
+
+Native preparation expiry is now bounded by the approved pricing expiry, so a
+later preparation timestamp cannot outlive the owner operation's price fence.
+The blank-project fixture compiles a complete V2 profile/spend/report baseline,
+matching the prepared server configuration. Its next bounded run reached native
+qualification but exposed a pre-dispatch validator mismatch: the exact
+OpenRouter model was checked against a generated Dynamic Route model name.
+The transport repair separates exact native-model validation from the unchanged
+Dynamic Route target check, sharing strict body and parameter validation. A
+private qualification mode admits the fixed single user message; Research
+requests retain their leading-system and message-count guards. Stored observation
+hydration now projects the original execution fields explicitly and recomputes
+the probe, request and response digests before comparing canonical stored
+metadata. The next actual-D1 run persisted an OBSERVED attempt, then exposed an
+impossible proof guard: it required candidate references on that OBSERVED
+attempt although the attempt constraint keeps those references null until
+completion. Forward migration 0114 aligns only that proof-attempt join with the
+existing operation/preparation/observation lineage; all remaining proof guards
+and the final completion update stay in place. Independent complete-trigger
+comparison found no other material delta. With all current migrations on an
+empty local D1, all three model-use cases passed: authorized/refused reads, blank
+project qualification/import/selection, immutable snapshot capture and replay
+without another model effect. The final depth-100 compiler includes 113 Core
+migrations with zero failures. No real Cloudflare credential, model response or
+selected native run is established by these local fakes.
+
+The populated regression then resumed its durable OBSERVED stage without a
+second call for that stage, completed both proofs, and refused a duplicate proof.
+A fresh operation after Native selection exposed a second key-use defect: the
+new route version was sought only in the original installed policy list. The
+builder now takes an exact stage/route policy from the authority-validated saved
+Native selection and rebinds only its immutable BYOK alias. Non-Native and blank
+configurations retain the installed-policy lookup. Independent source review
+found the exact Bunny/free-only policy, current semantic and owner/key authority
+checks preserved. The bounded test reached replacement selection revision 2,
+preserved the old run pins, and captured the new alias for a later run. Its replay
+assertion compares the durable data rather than trace metadata. The decoder now
+allows missing pricing only for PENDING and BLOCKED, exactly matching migration
+0113; independent SQL/source parity review passed. The populated migration,
+genuine-orphan rollback, resumed observations, duplicate-proof refusal and
+unpriced BLOCKED scenario passed on actual local D1. The two-key positive case
+also passed, including replay counts and exact zero-price/no-fallback request
+bodies. That case has a local 15-second timeout for its two complete operations;
+the former five-second default was shorter than its observed runtime. The two
+read-authorization cases passed in the preceding bounded run. No broad suite
+was repeated. The final source TypeScript build passed; scoped lint covered 17
+changed source/tooling files with zero errors, warnings or source drift.
+
+The PWA and Worker builds passed. All built PWA JavaScript totals 225,678 gzip
+bytes, a conservative superset below the 600 KiB initial-JavaScript ceiling;
+the latest local Worker dry run reports 901.79 KiB gzip. These are build observations,
+not production startup/CPU measurements. Live functional runs and same-document
+NotebookLM checks remain pending. The existing live README version was read and
+downloaded on October 5; its authoritative SHA-256 and the downloaded bytes match
+the working README (12,688 bytes). This establishes a shared-document baseline,
+not a completed NotebookLM comparison or acceptance of the new release.
+Cognitive and quality evaluation remain deferred.
+
+Browser verification is currently blocked by the computer-use tool runtime.
+After the successful original-file download, the kernel failed to initialize
+with a missing-path error while writing its assets. Three documented approaches,
+including a session reset, did not restore it. The named plugin/runtime and
+temporary directories exist; the missing internal path remains unknown. No
+NotebookLM upload or subsequent browser result is claimed from this state.
 
 The adaptive reading panels and system/light/dark theme are published in
 `310628db`. The portable backup table catalog now belongs to Contracts; its

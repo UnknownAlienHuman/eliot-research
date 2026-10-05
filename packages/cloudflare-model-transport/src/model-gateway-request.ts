@@ -3,8 +3,10 @@ import type { ModelRouteDeployment } from "@eliotr/platform-cloudflare";
 import { modelGatewayExecutionFailure } from "./model-gateway-execution-contract.js";
 import {
   normalizeModelGatewayReasoningEffort,
+  validateModelGatewayTransportPolicy as validateTransportPolicy,
   type ModelGatewayApi,
   type ModelGatewayRequestCapabilitiesV1,
+  type ModelGatewayTransportPolicyV1,
 } from "./model-gateway-transport-policy.js";
 import { modelGatewayProviderNativeParameterProjection } from "./model-gateway-provider-native-request.js";
 
@@ -52,11 +54,7 @@ const MAX_JSON_DEPTH = 32;
 const MAX_JSON_MEMBERS = 4096;
 const MAX_STRING_BYTES = 192 * 1024;
 
-function exactObject(
-  value: unknown,
-  allowedKeys: ReadonlySet<string>,
-  label: string,
-): Record<string, unknown> {
+function exactObject(value: unknown, allowedKeys: ReadonlySet<string>, label: string): Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     modelGatewayExecutionFailure(
       "MODEL_GATEWAY_REQUEST_INVALID",
@@ -86,11 +84,7 @@ function utf8Bytes(value: string): number {
   return new TextEncoder().encode(value).byteLength;
 }
 
-function boundedText(
-  value: unknown,
-  label: string,
-  maximum = MAX_STRING_BYTES,
-): string {
+function boundedText(value: unknown, label: string, maximum = MAX_STRING_BYTES): string {
   if (
     !isResearchQuestionText(value) ||
     utf8Bytes(value) > maximum
@@ -103,12 +97,7 @@ function boundedText(
   return value;
 }
 
-function safeInteger(
-  value: unknown,
-  label: string,
-  minimum: number,
-  maximum: number,
-): number {
+function safeInteger(value: unknown, label: string, minimum: number, maximum: number): number {
   if (
     typeof value !== "number" ||
     !Number.isSafeInteger(value) ||
@@ -153,11 +142,18 @@ function temperature(value: unknown): number {
   return value;
 }
 
-function validateMessages(raw: unknown): void {
-  if (!Array.isArray(raw) || raw.length < 2 || raw.length > MAX_MESSAGES) {
+type ModelGatewayMessageMode = "research" | "native-qualification";
+
+function validateMessages(raw: unknown, mode: ModelGatewayMessageMode = "research"): void {
+  const nativeQualification = mode === "native-qualification";
+  if (!Array.isArray(raw) || (nativeQualification
+    ? raw.length !== 1
+    : raw.length < 2 || raw.length > MAX_MESSAGES)) {
     modelGatewayExecutionFailure(
       "MODEL_GATEWAY_REQUEST_INVALID",
-      `model request messages must contain 2-${MAX_MESSAGES} entries`,
+      nativeQualification
+        ? "native qualification request must contain exactly one message"
+        : `model request messages must contain 2-${MAX_MESSAGES} entries`,
     );
   }
   let userMessages = 0;
@@ -167,17 +163,18 @@ function validateMessages(raw: unknown): void {
       MESSAGE_KEYS,
       `model request messages[${index}]`,
     );
-    if (
-      message.role !== "system" &&
-      message.role !== "user" &&
-      message.role !== "assistant"
-    ) {
+    const roleValid = nativeQualification
+      ? message.role === "user"
+      : message.role === "system" || message.role === "user" || message.role === "assistant";
+    if (!roleValid) {
       modelGatewayExecutionFailure(
         "MODEL_GATEWAY_REQUEST_INVALID",
-        `model request messages[${index}].role is unsupported`,
+        nativeQualification
+          ? "native qualification message must use the user role"
+          : `model request messages[${index}].role is unsupported`,
       );
     }
-    if (index === 0 && message.role !== "system") {
+    if (!nativeQualification && index === 0 && message.role !== "system") {
       modelGatewayExecutionFailure(
         "MODEL_GATEWAY_REQUEST_INVALID",
         "model request must begin with trusted system instructions",
@@ -211,16 +208,9 @@ function validateStop(raw: unknown): void {
   );
 }
 
-interface JsonValidationState {
-  members: number;
-  readonly ancestors: WeakSet<object>;
-}
+interface JsonValidationState { members: number; readonly ancestors: WeakSet<object> }
 
-function validateJsonTree(
-  value: unknown,
-  depth: number,
-  state: JsonValidationState,
-): void {
+function validateJsonTree(value: unknown, depth: number, state: JsonValidationState): void {
   if (depth > MAX_JSON_DEPTH) {
     modelGatewayExecutionFailure(
       "MODEL_GATEWAY_REQUEST_INVALID",
@@ -472,28 +462,25 @@ function parameterProjection(
   return Object.freeze(projection);
 }
 
-export async function validateModelGatewayRequestBody(
-  raw: unknown,
-  deployment: ModelRouteDeployment,
-  maximumInputBytes: number,
-  maximumOutputBytes: number,
-  capabilities?: ModelGatewayRequestCapabilitiesV1,
-): Promise<{
-  readonly body: string;
-  readonly parameters_sha256: string;
-}> {
+type ValidatedModelGatewayRequestBody = Readonly<{ body: string; parameters_sha256: string }>;
+
+async function validateModelGatewayRequestBodyForExactModel(
+  raw: unknown, expectedModel: string,
+  maximumInputBytes: number, maximumOutputBytes: number,
+  capabilities: ModelGatewayRequestCapabilitiesV1 | undefined, mismatchMessage: string,
+  messageMode: ModelGatewayMessageMode = "research",
+): Promise<ValidatedModelGatewayRequestBody> {
   const normalizedRaw = capabilities === undefined
     ? raw
     : modelGatewayBodyForCapabilities(raw, capabilities);
   const body = exactObject(normalizedRaw, JSON_BODY_KEYS, "model request body");
-  const target = await modelGatewayDynamicRouteTarget(deployment);
-  if (body.model !== target.model) {
+  if (body.model !== expectedModel) {
     modelGatewayExecutionFailure(
       "MODEL_GATEWAY_REQUEST_INVALID",
-      "model request must address the deployed dynamic route",
+      mismatchMessage,
     );
   }
-  validateMessages(body.messages);
+  validateMessages(body.messages, messageMode);
   validateRequestParameters(body, capabilities);
   const tokenField = capabilities?.max_output_tokens_field ?? "max_tokens";
   const maxTokens = safeInteger(
@@ -522,6 +509,46 @@ export async function validateModelGatewayRequestBody(
       canonicalModelGatewayJson(parameterProjection(body)),
     ),
   });
+}
+
+export async function validateModelGatewayRequestBody(
+  raw: unknown, deployment: ModelRouteDeployment,
+  maximumInputBytes: number, maximumOutputBytes: number,
+  capabilities?: ModelGatewayRequestCapabilitiesV1,
+): Promise<ValidatedModelGatewayRequestBody> {
+  const target = await modelGatewayDynamicRouteTarget(deployment);
+  return validateModelGatewayRequestBodyForExactModel(
+    raw,
+    target.model,
+    maximumInputBytes,
+    maximumOutputBytes,
+    capabilities,
+    "model request must address the deployed dynamic route",
+  );
+}
+
+/** Validate a provider-native request against its exact OpenRouter model policy. */
+export async function validateModelGatewayProviderNativeRequestBody(
+  raw: unknown, maximumInputBytes: number,
+  maximumOutputBytes: number, rawPolicy: ModelGatewayTransportPolicyV1,
+): Promise<ValidatedModelGatewayRequestBody> {
+  const policy = validateTransportPolicy(rawPolicy);
+  if (policy.api !== "openrouter-chat-completions" || policy.provider !== "openrouter" ||
+      policy.billing.mode !== "byok" || policy.billing.free_only !== true) {
+    modelGatewayExecutionFailure(
+      "MODEL_GATEWAY_REQUEST_INVALID",
+      "provider-native request validation requires free-only OpenRouter BYOK transport",
+    );
+  }
+  return validateModelGatewayRequestBodyForExactModel(
+    raw,
+    policy.model,
+    maximumInputBytes,
+    maximumOutputBytes,
+    policy.capabilities,
+    "provider-native request model differs from its exact OpenRouter policy",
+    "native-qualification",
+  );
 }
 
 /**

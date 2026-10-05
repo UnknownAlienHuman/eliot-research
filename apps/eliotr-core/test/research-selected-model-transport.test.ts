@@ -67,7 +67,7 @@ describe("resolveResearchSelectedModelTransport", () => {
     })).toThrow("snapshot has no selected model for AUDIT_CLAIMS");
   });
 
-  it("rejects malformed policy, duplicate stage rows, and unsupported selected APIs", () => {
+  it("rejects malformed policy, duplicate stages, and invalid provider/API combinations", () => {
     expect(() => resolveResearchSelectedModelTransport({
       run_configuration: snapshot({ model_selections: [selection, selection] }),
       stage: "SYNTHESIZE",
@@ -79,20 +79,32 @@ describe("resolveResearchSelectedModelTransport", () => {
       stage: "SYNTHESIZE",
     })).toThrow("snapshot selected transport policy is invalid");
 
-    const unsupportedApi = { ...selection, transport_policy: { ...policy, api: "openai-responses" } };
+    const mismatchedApi = { ...selection, transport_policy: { ...policy, api: "openai-responses" } };
     expect(() => resolveResearchSelectedModelTransport({
-      run_configuration: snapshot({ model_selections: [unsupportedApi] }),
+      run_configuration: snapshot({ model_selections: [mismatchedApi] }),
       stage: "SYNTHESIZE",
-    })).toThrow("selected provider API is not supported");
+    })).toThrow("snapshot selected transport policy is invalid");
   });
 });
 
 describe("bindResearchSelectedModelTransport", () => {
-  it("requires the existing HTTP gateway credential route for a named BYOK alias", () => {
+  it("requires HTTP gateway credentials for a provider-native BYOK selection", () => {
+    const nativePolicy = {
+      ...policy,
+      api: "openrouter-chat-completions",
+      provider: "openrouter",
+      model: "stealth/space-bunny-alpha",
+      billing: {
+        mode: "byok",
+        alias: `eliotr-${"c".repeat(48)}`,
+        free_only: true,
+      },
+    };
     const selected = resolveResearchSelectedModelTransport({
       run_configuration: snapshot({ model_selections: [{
         ...selection,
-        transport_policy: { ...policy, billing: { mode: "byok", alias: "owner-zai" } },
+        candidate_kind: "provider-native-v1",
+        transport_policy: nativePolicy,
       }] }),
       stage: "SYNTHESIZE",
     });
