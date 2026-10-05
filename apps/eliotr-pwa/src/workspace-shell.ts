@@ -41,7 +41,7 @@ export function renderWorkspaceShell(copy: WorkspaceShellCopy): string {
             <section class="tool-card reader-card" id="corpus-lens-card"><div id="corpus-lens"></div></section>
             <details class="tool-card tool-card--import" id="source-import-card"><summary>Add documents</summary><div id="source-namespace"></div><div class="tool-divider"></div><div id="raw-upload"></div><div class="tool-divider"></div><div id="bundle-import"></div></details>
             <details class="tool-card" id="projects-card"><summary>Organize projects</summary><div id="projects"></div></details>
-            <details class="tool-card"><summary>Delete selected document</summary><div id="erasure"></div></details>
+            <details class="tool-card" id="source-erasure-card"><summary>Delete selected document</summary><div id="erasure"></div></details>
           </div>
         </section>
         <section id="research-view" class="workspace-view" data-workspace-view="research" tabindex="-1" aria-label="Research" hidden>

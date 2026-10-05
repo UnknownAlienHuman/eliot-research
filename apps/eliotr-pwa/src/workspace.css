@@ -175,7 +175,8 @@ html #app { display: block; height: auto; min-height: 100dvh; }
 #app .document-reader-menu-content .document-reader-actions .button { width: 100%; text-align: left; }
 #app .document-reader-actions { display: flex; flex-wrap: wrap; gap: .5rem; }
 #app [data-document-reader-status] { color: var(--muted); }
-#app :is(.document-original, .document-source-context, .research-section-original) { max-width: 74ch; margin: 1.5rem auto; }
+#app :is(.document-original, .document-source-context, .research-section-original) { max-width: 74ch; margin: 1rem auto; font-size: var(--reading-size); }
+#app :is(.document-original, .document-source-context, .research-section-original) > summary { font-size: var(--control-size); }
 #app .document-reader-body, #app .research-section-body { font: var(--reading-size)/var(--reading-leading) var(--sans); margin: 0; padding: 1rem 0; }
 #app .reading-view { max-width: 74ch; margin: 0 auto; font: var(--reading-size)/var(--reading-leading) var(--sans); color: var(--ink); overflow-wrap: anywhere; }
 #app .reading-view[data-reading-format="plain"] { white-space: pre-wrap; }
@@ -199,6 +200,7 @@ html #app { display: block; height: auto; min-height: 100dvh; }
 #app .reading-view hr { border: 0; border-top: 1px solid var(--line); margin: 2rem 0; }
 #app[data-reading="document"] .content-heading, #app[data-reading="report"] .content-heading { display: none; }
 #app[data-reading="document"] .orientation-status { display: none; }
+#app[data-reading="document"] :is(#source-import-card, #projects-card, #source-erasure-card, .orientation-advanced-selection, .orientation-technical-details) { display: none; }
 #app .orientation-source-heading { display: flex; align-items: start; justify-content: space-between; gap: 1rem; }
 #app .orientation-source-card { padding: 1rem 0; }
 #app .orientation-quality-status, #app .source-details, #app .orientation-technical-details { color: var(--muted); font-size: var(--meta-size); line-height: var(--meta-leading); }
