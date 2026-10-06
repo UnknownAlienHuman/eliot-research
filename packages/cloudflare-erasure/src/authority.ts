@@ -138,6 +138,16 @@ function blockerMatches(target: PurgeTarget, row: HoldRow): boolean {
   const canonical = row.canonical_ref === null || row.canonical_ref === target.canonical_ref;
   return subject && location && canonical;
 }
+function assertStoredTargetIdentity(row: Record<string, unknown>, target: PurgeTarget): void {
+  const actual = [row.target_id, row.target_kind, row.exact_subject_ref, row.location, row.canonical_ref,
+    row.provider_ref === null ? undefined : row.provider_ref, row.identity_digest, row.shared_live_reference_count,
+    row.retention_or_hold_ref === null ? undefined : row.retention_or_hold_ref,
+    row.next_review_at === null ? undefined : row.next_review_at];
+  const expected = [target.target_id, target.target_kind, target.exact_subject_ref, target.location, target.canonical_ref,
+    target.provider_ref, target.identity_digest, target.shared_live_reference_count,
+    target.retention_or_hold_ref, target.next_review_at];
+  if (actual.some((value, index) => value !== expected[index])) erasureFail("ERASURE_IDENTITY_CONFLICT", "stored erasure target differs from the execution closure");
+}
 export interface D1ErasureAuthorityDependencies {
   readonly core_database: D1Database;
   readonly worker_id?: string;
@@ -347,11 +357,36 @@ export function createD1ErasureAuthority(
     },
     async blockersFor(request, fence, closure) {
       await fenceLifecycle.assertCurrent(fence);
-      const rows = await database.prepare(
-        "SELECT hold_ref,exact_subject_ref,location,canonical_ref,policy_or_hold_ref,next_review_at " +
-        "FROM erasure_hold WHERE state='ACTIVE' ORDER BY hold_ref LIMIT 10000",
-      ).all<HoldRow>();
-      if ((rows as { readonly success?: boolean }).success === false) erasureFail("ERASURE_SETTLEMENT_UNCERTAIN", "erasure hold query failed", true);
+      if (closure.erasure_ref.id !== fence.erasure_id || closure.erasure_ref.revision !== fence.revision) erasureFail("ERASURE_IDENTITY_CONFLICT", "erasure hold check is not bound to the current erasure");
+      const onlyTarget = closure.targets.length === 1 ? closure.targets[0] : undefined;
+      if (onlyTarget !== undefined) {
+        let stored: Record<string, unknown> | null;
+        try {
+          stored = await database.prepare(
+            "SELECT target_id,target_kind,exact_subject_ref,location,canonical_ref,provider_ref,identity_digest," +
+            "shared_live_reference_count,retention_or_hold_ref,next_review_at FROM erasure_target WHERE erasure_id=?1 " +
+            "AND erasure_revision=?2 AND target_id=?3 LIMIT 1",
+          ).bind(fence.erasure_id, fence.revision, onlyTarget.target_id).first<Record<string, unknown>>();
+        } catch (cause) {
+          erasureFail("ERASURE_SETTLEMENT_UNCERTAIN", "erasure target readback is unavailable", true, cause);
+        }
+        if (stored === null || (stored as { readonly success?: unknown }).success === false) erasureFail("ERASURE_SETTLEMENT_UNCERTAIN", "erasure target readback failed", true);
+        assertStoredTargetIdentity(stored, onlyTarget);
+      }
+      let rows: { readonly success?: boolean; readonly results?: readonly HoldRow[] };
+      try {
+        rows = onlyTarget === undefined
+          ? await database.prepare("SELECT hold_ref,exact_subject_ref,location,canonical_ref,policy_or_hold_ref,next_review_at FROM erasure_hold WHERE state='ACTIVE' ORDER BY hold_ref LIMIT 10001").all<HoldRow>()
+          : await database.prepare(
+            "SELECT hold_ref,exact_subject_ref,location,canonical_ref,policy_or_hold_ref,next_review_at FROM erasure_hold " +
+            "WHERE state='ACTIVE' AND (exact_subject_ref IS NULL OR exact_subject_ref=?1) AND (location IS NULL OR location=?2) " +
+            "AND (canonical_ref IS NULL OR canonical_ref=?3) ORDER BY hold_ref LIMIT 10001",
+          ).bind(onlyTarget.exact_subject_ref, onlyTarget.location, onlyTarget.canonical_ref).all<HoldRow>();
+      } catch (cause) {
+        erasureFail("ERASURE_SETTLEMENT_UNCERTAIN", "erasure hold query is unavailable", true, cause);
+      }
+      if (rows.success !== true || !Array.isArray(rows.results)) erasureFail("ERASURE_SETTLEMENT_UNCERTAIN", "erasure hold query failed", true);
+      if (rows.results.length > 10_000) erasureFail("ERASURE_CLOSURE_INCOMPLETE", "active erasure holds exceed the bounded query");
       const blockers: ErasureBlocker[] = [];
       for (const target of closure.targets) {
         if (target.shared_live_reference_count > 0) {

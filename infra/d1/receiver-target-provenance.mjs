@@ -540,6 +540,7 @@ export function createErasureReceiverTargetOverrides(files, root, suppliedProgra
     evaluate, evaluateSymbol: evaluateIdentifierSymbol,
     escapedSymbols, escapedProperties,
     detachedProjectionCalls,
+    isNonEscapingArgument: (node, index) => modelQualificationPolicy?.isNonEscapingArgument(node, index) ?? false,
   });
 
   changed = true;

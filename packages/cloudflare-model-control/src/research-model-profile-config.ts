@@ -146,7 +146,8 @@ async function readPersistedAuthorityRow(input: PersistedModelProfileAuthorityRe
       "SELECT r.operation_id, r.investigation_id, r.state, r.principal_ref, r.credential_generation, " +
       "r.deployment_generation, r.policy_generation, r.policy_authority_ref, r.scope_snapshot_id, " +
       "r.scope_snapshot_revision, r.current_revision, r.ledger_revision, h.model_profile_ref, " +
-      "s.expires_at AS scope_expires_at, g.expires_at AS grant_expires_at, a.budget_expires_at_ms " +
+      "s.expires_at AS scope_expires_at, g.expires_at AS grant_expires_at, " +
+      "a.budget_expires_at_ms AS run_budget_expires_at_ms " +
       "FROM research_workflow_current r JOIN investigation_ledger_head h " +
       "ON h.investigation_id = r.investigation_id " +
       "JOIN scope_snapshot s ON s.snapshot_id=r.scope_snapshot_id AND s.revision=r.scope_snapshot_revision " +

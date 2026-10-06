@@ -100,6 +100,19 @@ export function createErasureCoordinator(backend: ErasureBackend): ErasureCoordi
             await backend.recordBlockedTarget(request, fence, target, blocker);
             continue;
           }
+          if (target.target_kind === "OBJECT") {
+            const currentBlocker = await backend.recheckTargetRetentionAndHolds(
+              request,
+              fence,
+              closure,
+              target,
+            );
+            if (currentBlocker !== undefined) {
+              addBlocker(blockers, currentBlocker);
+              await backend.recordBlockedTarget(request, fence, target, currentBlocker);
+              continue;
+            }
+          }
           const receipt = await backend.purge(request, fence, target);
           purgeReceipts.set(target.target_id, receipt);
           if (receipt.disposition === "BLOCKED") {

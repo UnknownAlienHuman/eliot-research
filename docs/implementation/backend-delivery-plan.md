@@ -1,35 +1,53 @@
 # Backend delivery plan
 
-Current execution order, refreshed on 2026-10-05 against `main`
-`d44585262a55908aa1db543693cd61421150fc63` before the backend checkpoints below.
+Current execution order, refreshed on 2026-10-06 against `main`
+`dd91306a6f7aced0168d2406add9ef49fde1ba5a`.
 
 The [October 3 functional integration checkpoint](product-resume-2026-10-03.md)
-records the owner configuration, immutable run capture, MCP, provisioning and
-remaining real deployment/evidence checks. Assembly is in progress; no full
-release or live Research acceptance is claimed. The owner-directed phase is full
-product-code assembly before release and acceptance. The owner now permits
-bounded functional calls to built-in Cloudflare models while the Ling quota
-recovers. Functional and same-document acceptance follow the assembled release;
-cognitive and quality evaluations are deferred by the owner. Compilation and an
-existing provider receipt do not establish that acceptance.
+records earlier owner configuration, immutable run capture, MCP, and provisioning
+evidence. A Worker release is now live; its generation and the latest Research
+outcome are recorded below. Full Research acceptance is not established.
+Cognitive and quality evaluations remain deferred by the owner. Compilation and
+a model response do not establish that acceptance.
 
-The current assembly covers catalog-based model configuration and native BYOK
+The assembled source covers catalog-based model configuration and native BYOK
 transport, durable owner/delegated policy parity, the existing AI Search evidence
-path, useful bounded MCP reads and results, and the adaptive owner workspace.
-The historical Research failure at RECONCILE retains no underlying exception and
-remains unresolved. The current local native Workflow completes all 18 stages;
+path, bounded MCP reads and results, and the adaptive owner workspace.
+The latest real README Research run committed ten stages and then failed at
+RECONCILE with `MODEL_PROFILE_BINDING_AUTHORITY_STALE`; it did not complete the
+18-stage workflow. The local native Workflow still completes all 18 stages, but
 the named local checks below do not establish deployed execution. Native MCP
 client authorization remains unverified.
 
-## Active backend goal, October 5
+## Active backend goal, October 6
 
-The owner resumed production delivery with backend priority. The active goal is
-to finish the remaining backup/erasure fencing and restore obligations, Research
-failure/model/MCP integration, and D1 target qualification; publish reviewed
-checkpoints to `main`; apply the exact pending D1 suffix through the bounded
-migration operation; and deploy the current Worker/PWA with live readback.
-Issue closure requires its actual acceptance criteria. Planning PRs whose
-implementation is already on `main` do not establish live qualification.
+The active objective is Research reliability and #294 source-derived D1 target
+and dynamic-query qualification, followed by separately verified erasure
+acceptance. Keep production erasure disabled until its full acceptance evidence
+exists. Cognitive and quality evaluations remain deferred; broad test suites do
+not substitute for the bounded acceptance checks.
+
+**No backups.** The owner canceled all new backup, export, offsite, and restore
+work, including proposed migration 0121. Existing backup code, storage, bindings,
+and receipts are historical disabled baseline only; they are not active release
+or acceptance obligations. Do not extend or resume that work.
+
+At this checkpoint, `main` is `dd91306a6f7aced0168d2406add9ef49fde1ba5a`;
+the live Worker is generation `git-dd91306a6f7a`, version 71 at 100% traffic,
+with 120 applied migrations excluding 0121. Both built-in GLM 5.3 qualification
+calls (SYNTHESIZE and AUDIT) returned LIVE; the saved selected project is at
+configuration revision 1 with readiness `ready`. The real README Research run
+above failed after ten committed stages. A source audit found the profile
+authority query selects `budget_expires_at_ms` while its decoder expects
+`run_budget_expires_at_ms`. The candidate alias correction, #255 hold repair,
+and #294 D1 context proof remain under review; they are not published, deployed,
+or live-verified. These results
+do not establish full Research or erasure acceptance.
+
+The dated checkpoints below are retained as historical evidence and are
+superseded wherever they conflict with this active objective.
+
+## Historical backend checkpoints, October 5 and earlier (superseded)
 
 Two later backend checkpoints are now published: `a2a4c875` preserves bounded
 typed native Workflow diagnosis after unavailable D1 retention and rejects
@@ -52,7 +70,7 @@ Focused integrity/build-input/apply-ordering fixtures and an independent source
 review passed. Wrangler type generation now writes to ignored tooling state,
 preserving product-source membership and the existing budget limits.
 
-### October 6 UTC status addendum
+### Historical October 6 UTC checkpoint evidence
 
 The foundation checkpoint is published to `main` and `origin` at `a765fd6d`.
 The COW path derives TEST for development and PRODUCTION otherwise, then passes
@@ -86,14 +104,13 @@ The live Worker remains generation `git-7962930b6eab` with 11 bindings; release
 is pending the SQL repair. No Issue #301 completion or full backup/restore/
 erasure proof is claimed.
 
-The native Cloudflare API created the separate `eliotr-backup-parts` primary
-bucket once, after an exact empty filtered inventory, and verified its default
-jurisdiction and Standard class. Its actual API evidence and strict creation
-receipt are preserved in ignored operator state. Runtime binding, migration
-0116–0119 application, current writer qualification, and primary purge recovery
-are still being assembled. An independently qualified offsite destination is
-required for full backup/restore/erasure acceptance; no destination or credential
-has been invented from the new primary bucket.
+Historical storage baseline: the native Cloudflare API created the separate
+`eliotr-backup-parts` primary bucket once, after an exact empty filtered
+inventory, and verified its default jurisdiction and Standard class. Its API
+evidence and creation receipt remain in ignored operator state. The runtime
+binding, migration, writer, and purge details below describe that earlier
+checkpoint only. New backup/export/offsite/restore work is canceled; do not
+extend this baseline or treat it as active acceptance work.
 
 The physical primary-storage adapters now belong to
 `cloudflare-erasure-operations`; Generic erasure receives typed inventory,
@@ -172,12 +189,11 @@ source review passed. All original failing files now have passing targeted
 results. This is assembled bounded verification, not a repeated clean full-suite
 run or deployed Research acceptance.
 
-A current source caller audit found that the qualified primary adapter, O2
-export/copy APIs and canonical PENDING publisher still have no production
-mutation caller. The new owner inventory route is read-only. A server-authorized
-backup runner must connect those APIs with persisted destination policy and
-server-held encryption-key authority before live backup acceptance; binding
-installation alone does not implement that runner.
+A historical source caller audit found that the qualified primary adapter, O2
+export/copy APIs and canonical PENDING publisher had no production mutation
+caller; the owner inventory route was read-only. The proposed server-authorized
+backup runner and live backup acceptance are canceled and outside the active
+objective.
 
 #318 is closed by `d4458526`: `check:full` names the existing full verification
 chain, and the legacy `check:affected` alias prints a deprecation warning before
@@ -250,16 +266,11 @@ intent was used. The complete version/configuration/resource identities remain
 in private operator evidence. This is Worker/PWA maintenance delivery, with the
 full-release and product acceptance limits below still binding.
 
-The next backend checkpoint closes the producer/erasure race: claim before
-capture, exact owned write admission before any backup-part PUT, and durable
-quiescence before deletion. Current primary inventory is only a snapshot; the
-existing purge adapter handles offsite copies and cannot establish local
-backup-part absence. Primary deletion and terminal closure must require both
-primary and offsite evidence. Unknown claims, unreconciled legacy cuts and
-unproven retirement/drain of old producer versions remain blockers. The current
-Worker binding readback has no primary backup-part bucket binding; no name,
-alias or live deletion authority is inferred. ERASURE remains disabled while
-these source and production-composition obligations are completed.
+The earlier producer/erasure design proposed claim-before-capture, owned write
+admission before backup-part PUT, and offsite evidence for deletion. These
+backup-part, export, and offsite requirements are historical and canceled under
+the current objective. Erasure remains disabled pending its own full acceptance;
+this historical backup design does not authorize new backup or restore work.
 
 The #294 checkpoint records direct Core/Search receiver provenance and known
 bind arity and rejects a known-target failure even if the other schema accepts
@@ -925,7 +936,7 @@ a checkpoint:
 | A | S29/#221 and S34/#226 delivered checkpoints; verified residuals in S10-S15, S31-S33, S98-S99 | Reuse the workspace-candidate admission gate (`37ba91eb`, `5e7ed589`), immutable semantic revision (`ccf500e8`, `d774d66a`, `2a5d6458`) and renewal replay/single-flight (`5e1552d0`). Finish verified selected-profile configuration/qualification and machine-path gaps without reimplementing those delivered mechanisms. |
 | B | S21–S23 and remaining S38–S46 | Complete truthful procedure reporting, protocol execution, observations, freeze/debt/supersession, verifiers and product handlers on the shared Research engine. |
 | C | S47–S61 | Complete source/navigation/index boundaries, requested coverage, artifacts/publication, Workspace candidate admission/readback and federation. Prioritize dependency-ready S50–S52 and S58/S59. |
-| D | S62–S72 | Complete erasure closure, outbox/DLQ/reconciliation, backup/isolated restore, rollback, Steward and durable events. |
+| D | S62–S72 | Historical roadmap: erasure closure, outbox/DLQ/reconciliation, rollback, Steward and durable events. Backup/isolated-restore work is canceled under the current objective. |
 | E | S20/#212, S73–S77, #298/#305 | Complete human Library/Connections/artifact flows and Windows layout/session-aware browser fixtures after product assembly. |
 | F | S78–S89, #106/#176 | Complete deterministic Rust families, versioned Wasm promotion and removal of superseded TypeScript authority family by family. |
 | G | S18/#210, S30/#222, S90/#282, S91/#283 | Reconcile composition, implementation states, emitted artifacts/runtime budgets and D1 mutation boundaries. |
@@ -956,7 +967,7 @@ implement their stated requirements. A/B labels in an old handoff are not an ADR
 |---|---|---|
 | [S94 / #286](https://github.com/UnknownAlienHuman/eliot-research/pull/286) | `scripts/deploy-cloudflare.mjs`, `scripts/lib/deployment-verification.mjs`, `infra/cloudflare/resources.json`, production-readiness Phase 7 and the shared [staging checklist](launch-prs/cloudflare-handoff.md) | Local negative/ordering preparation can proceed. `readDeploymentWorker` is only inventory/export readback; it does not independently attest the actual version, every binding, both schema ledgers, assets and Wasm. Complete that existing reader/receipt path before claiming S94. Actual apply requires isolated approved target and permission. |
 | [S93 / #285](https://github.com/UnknownAlienHuman/eliot-research/pull/285) | Existing Golden corpus/runner and production-readiness Phase 9, architecture 19.2-19.5/19.8 | Prepare independent tuning/holdout labels locally. Actual per-product T2/T3 quality results require the attested model/prompt/index/config/corpus generations and approved data/budget. A controlled model response is not quality acceptance. |
-| [S95 / #287](https://github.com/UnknownAlienHuman/eliot-research/pull/287) | `tests/integration/d1-write-readback-runner.ts`, T5-A/B/C/D runners, `gate-state.ts`, production-readiness Phases 8/10-12 | Probe source is delivered, not native qualification. Compose/run all applicable T4/T5 storage, security, erasure/restore/rollback and selected independent-client checks against S94; preserve denied/replay/unknown-effect results. Unselected Google clients add no gate. |
+| [S95 / #287](https://github.com/UnknownAlienHuman/eliot-research/pull/287) | `tests/integration/d1-write-readback-runner.ts`, T5-A/B/C/D runners, `gate-state.ts`, production-readiness Phases 8/10-12 | Historical staging roadmap: probe source is delivered, not native qualification. Applicable storage, security, erasure/rollback and selected independent-client checks remain bounded acceptance concerns; backup/restore work is canceled under the current objective. Preserve denied/replay/unknown-effect results. Unselected Google clients add no gate. |
 | [S96 / #288](https://github.com/UnknownAlienHuman/eliot-research/pull/288) | `tests/integration/t6-representative-load-runner.ts`, model spend observation/settlement, production-readiness Phase 13 | Run 5/20/50 readers, five sessions, ten queued jobs and two long Workflows; measure per-operation latency/errors/resources and actual usage/cost. Approved maximum spend, duration and stop rules precede live load; local simulation or estimates do not qualify it. |
 | [S97 / #289](https://github.com/UnknownAlienHuman/eliot-research/pull/289) | Existing release checklist/receipt and production-readiness Phase 14 | Reconcile mandatory selected-profile Slices 0-6, production-critical Rust and S92-S96 evidence, then observe canaries and obtain explicit production approval. No universal correctness claim or merge/deploy permission follows from task closure. |
 

@@ -17,6 +17,7 @@ export function propagateEscapedTargetBindings({
   escapedSymbols,
   escapedProperties,
   detachedProjectionCalls,
+  isNonEscapingArgument = () => false,
 }) {
   const targetMask = targetBits.core | targetBits.search;
   const callByNode = new Map(calls.map((call) => [call.node, call]));
@@ -145,7 +146,9 @@ export function propagateEscapedTargetBindings({
           const call = callByNode.get(node);
           if (!call || !allowedCaller(call)) {
             const followCallArguments = ownerKey === workerKey;
-            for (const argument of node.arguments) {
+            for (let index = 0; index < node.arguments.length; index += 1) {
+              if (isNonEscapingArgument(node, index, call)) continue;
+              const argument = node.arguments[index];
               const actual = ts.isSpreadElement(argument) ? argument.expression : argument;
               if (expressionContainsTarget(actual, true, followCallArguments)) {
                 markEscaped(actual, new Set(), followCallArguments);

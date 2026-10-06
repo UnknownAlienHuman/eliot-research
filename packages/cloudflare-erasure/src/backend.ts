@@ -31,6 +31,19 @@ function requireObjectTarget(target: PurgeTarget): void {
   if (target.target_kind !== "OBJECT") erasureFail("ERASURE_CLOSURE_INCOMPLETE", "location-empty proof requires authoritative revalidation");
 }
 
+function exactTargetIdentity(left: PurgeTarget, right: PurgeTarget): boolean {
+  return left.target_id === right.target_id &&
+    left.target_kind === right.target_kind &&
+    left.exact_subject_ref === right.exact_subject_ref &&
+    left.location === right.location &&
+    left.canonical_ref === right.canonical_ref &&
+    left.provider_ref === right.provider_ref &&
+    left.identity_digest === right.identity_digest &&
+    left.shared_live_reference_count === right.shared_live_reference_count &&
+    left.retention_or_hold_ref === right.retention_or_hold_ref &&
+    left.next_review_at === right.next_review_at;
+}
+
 async function sourceRevisionRefs(
   database: D1Database,
   request: ErasureRequest,
@@ -249,6 +262,27 @@ export function createCloudflareErasureBackend(
         await erasureDigest(blockers),
       );
       return blockers;
+    },
+
+    async recheckTargetRetentionAndHolds(request, fence, closure, target) {
+      requireObjectTarget(target);
+      if (
+        closure.erasure_ref.id !== request.erasure_ref.id ||
+        closure.erasure_ref.revision !== request.erasure_ref.revision
+      ) {
+        erasureFail("ERASURE_CLOSURE_INCOMPLETE", "current hold recheck is not bound to the erasure request");
+      }
+      const closureTarget = closure.targets.find((candidate) => exactTargetIdentity(candidate, target));
+      if (closureTarget === undefined) {
+        erasureFail("ERASURE_IDENTITY_CONFLICT", "current hold recheck target differs from the persisted closure");
+      }
+      await dependencies.authority.assertFence(fence);
+      const blockers = await dependencies.authority.blockersFor(request, fence, {
+        ...closure,
+        targets: [closureTarget],
+      });
+      await dependencies.authority.assertFence(fence);
+      return blockers[0];
     },
 
     recordBlockedTarget(_request, fence, target, blocker) {

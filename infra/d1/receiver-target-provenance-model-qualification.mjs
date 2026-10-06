@@ -1,5 +1,6 @@
 import { basename, resolve } from "node:path";
 import ts from "typescript";
+import { createModelQualificationHttpContextProof } from "./receiver-target-provenance-model-http-context.mjs";
 import { normalized, propertyName, typeIdentity, unwrap } from "./receiver-target-provenance-values.mjs";
 
 /** Resolve the one model-qualification route that persists failure-summary SQL. */
@@ -224,6 +225,11 @@ export function createModelQualificationTargetPolicy({
   }
   if (opaqueCalls.size !== 2) return undefined;
 
+  const httpContextProof = createModelQualificationHttpContextProof({
+    root, program, checker, calls, functionKey,
+  });
+  if (!httpContextProof) return undefined;
+
   const dispatchPath = normalized(paths.dispatch);
   const summaryPath = normalized(paths.summary);
   const exactEdges = new Set([
@@ -251,6 +257,7 @@ export function createModelQualificationTargetPolicy({
   return {
     allowsCall,
     isOpaqueD1Handoff: (call) => opaqueCalls.has(call.node),
+    isNonEscapingArgument: httpContextProof.isNonEscapingArgument,
     restrictNested: (parent) => key(parent) === factoryKey,
     isApprovedNested: (parent, nested) => key(parent) === factoryKey && nested === execute,
     isTargetSqlSource: (path) => normalized(path) === summaryPath,
