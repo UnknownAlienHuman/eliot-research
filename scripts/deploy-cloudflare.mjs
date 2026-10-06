@@ -18,6 +18,9 @@ import { loadMaintenanceRouteUpdate, requireUnchangedMaintenanceRouteUpdate } fr
 import { captureMaintenanceAiGateways, requireSameMaintenanceAiGateways } from "./lib/deployment-ai-gateways.mjs";
 import { loadMaintenanceAiSearchBootstrap, requireUnchangedMaintenanceAiSearchBootstrap } from
   "./lib/deployment-ai-search-bootstrap.mjs";
+import { assertMaintenancePrimaryBindingBootstrapProfile, loadMaintenancePrimaryBindingBootstrap,
+  requireUnchangedMaintenancePrimaryBindingBootstrap, withoutPrimaryBindingAdditions } from
+  "./lib/deployment-primary-binding-bootstrap.mjs";
 import { loadMaintenanceMcpAccessTransition, maintenanceMcpAccessReceiptSummary,
   requireUnchangedMaintenanceMcpAccessTransition } from "./lib/deployment-mcp-access-transition.mjs";
 import { loadResearchRuntimeEnvironment, RESEARCH_RUNTIME_CONFIGURATION_KEYS,
@@ -241,6 +244,12 @@ export async function deployCloudflare({ confirmLive = false, secretsFilePath, e
        maintenanceAiSearchBootstrapPath.length === 0)) {
     throw new Error("AI Search binding bootstrap requires a confirmed live maintenance deployment and an intent file");
   }
+  const maintenancePrimaryBindingBootstrapPath = env.ELIOTR_MAINTENANCE_PRIMARY_BINDING_BOOTSTRAP_FILE;
+  if (maintenancePrimaryBindingBootstrapPath !== undefined &&
+      (purpose !== MAINTENANCE_PURPOSE || !confirmLive || typeof maintenancePrimaryBindingBootstrapPath !== "string" ||
+       maintenancePrimaryBindingBootstrapPath.length === 0)) {
+    throw new Error("Primary binding bootstrap requires a confirmed live maintenance deployment and an intent file");
+  }
   const maintenanceMcpAccessTransitionPath = env.ELIOTR_MAINTENANCE_MCP_ACCESS_TRANSITION_FILE;
   if (maintenanceMcpAccessTransitionPath !== undefined &&
       (purpose !== MAINTENANCE_PURPOSE || !confirmLive || typeof maintenanceMcpAccessTransitionPath !== "string" ||
@@ -266,6 +275,12 @@ export async function deployCloudflare({ confirmLive = false, secretsFilePath, e
   }
   if (maintenanceAiSearchBootstrapPath !== undefined && env.ELIOTR_MAINTENANCE_PRESERVE_AI_SEARCH !== undefined) {
     throw new Error("AI Search binding bootstrap cannot be combined with absent-binding preservation");
+  }
+  if (maintenancePrimaryBindingBootstrapPath !== undefined && maintenanceAiSearchBootstrapPath !== undefined) {
+    throw new Error("Primary binding bootstrap cannot be combined with AI Search binding bootstrap");
+  }
+  if (maintenancePrimaryBindingBootstrapPath !== undefined && env.ELIOTR_MAINTENANCE_PRESERVE_AI_SEARCH !== undefined) {
+    throw new Error("Primary binding bootstrap cannot be combined with AI Search preservation");
   }
   // FIX9WC Layer 2 (defense in depth, child exec env only): strip ambient
   // module-loader tokens (--import/--loader/--experimental-loader/--require
@@ -295,6 +310,9 @@ export async function deployCloudflare({ confirmLive = false, secretsFilePath, e
   let maintenanceAiSearchCandidateBytes = null;
   let maintenanceAiSearchCandidateDigest = null;
   let maintenanceAiSearchApprovedCandidate = null;
+  let maintenancePrimaryBindingBootstrap = null;
+  let maintenancePrimaryBaselineConfig = null;
+  let maintenancePrimaryBaselineReadback = null;
   let maintenanceMcpAccessTransition = null;
   const maintenanceAiGatewayReadbacks = {};
   let sourceBudgetState = null;
@@ -419,7 +437,8 @@ export async function deployCloudflare({ confirmLive = false, secretsFilePath, e
     }
     const canonicalConfig = JSON.parse(await read(resolve(core, "wrangler.jsonc"), "utf8"));
     let maintenanceProfileConfig = canonicalConfig;
-    if (maintenanceAiSearchBootstrapPath !== undefined || maintenanceMcpAccessTransitionPath !== undefined) {
+    if (maintenanceAiSearchBootstrapPath !== undefined || maintenancePrimaryBindingBootstrapPath !== undefined ||
+        maintenanceMcpAccessTransitionPath !== undefined) {
       const configPath = resolve(core, deployConfig);
       maintenanceAiSearchCandidateBytes = Buffer.from(await read(configPath));
       maintenanceAiSearchCandidateConfig = validateGeneratedDeployment(maintenanceAiSearchCandidateBytes, env, input);
@@ -470,7 +489,35 @@ export async function deployCloudflare({ confirmLive = false, secretsFilePath, e
       });
       await requireUnchangedMaintenanceAiSearchBootstrap({ bootstrap: maintenanceAiSearchBootstrap });
       maintenanceProfileConfig = maintenanceAiSearchCandidateConfig;
-    } else if (maintenanceMcpAccessTransition !== null) {
+    }
+    if (maintenancePrimaryBindingBootstrapPath !== undefined) {
+      maintenancePrimaryBaselineConfig = withoutPrimaryBindingAdditions(maintenanceAiSearchCandidateConfig);
+      const priorWorkerEnv = { ...env, ELIOTR_DEPLOYMENT_GENERATION: activeWorkerBaseline.generation };
+      maintenancePrimaryBaselineReadback = await readWorker(priorWorkerEnv, input,
+        maintenancePrimaryBaselineConfig, {
+          fetchImpl, observedDeploymentGeneration: activeWorkerBaseline.generation,
+          approvedRuntimeCandidate: maintenanceAiSearchApprovedCandidate,
+          approvedMcpAccessTransition: maintenanceMcpAccessTransition,
+        });
+      maintenancePrimaryBindingBootstrap = await loadMaintenancePrimaryBindingBootstrap({
+        path: maintenancePrimaryBindingBootstrapPath, root,
+        accountId: env.CLOUDFLARE_ACCOUNT_ID, sourceHead: testedInputs.git_head,
+        candidateGeneration: env.ELIOTR_DEPLOYMENT_GENERATION,
+        candidateConfigurationSha256: maintenanceAiSearchCandidateDigest,
+        candidateConfig: maintenanceAiSearchCandidateConfig,
+        candidateCapabilities: candidateCapabilityProfile,
+        activeWorkerIdentity: activeWorkerBaseline,
+        baselineConfigurationBaseline: maintenancePrimaryBaselineReadback.configuration_baseline,
+        baselineConfig: maintenancePrimaryBaselineConfig, read,
+      });
+      assertMaintenancePrimaryBindingBootstrapProfile({ bootstrap: maintenancePrimaryBindingBootstrap,
+        phase: "before", generatedConfig: maintenanceAiSearchCandidateConfig,
+        activeWorkerIdentity: activeWorkerBaseline, workerReadback: maintenancePrimaryBaselineReadback });
+      await requireUnchangedMaintenancePrimaryBindingBootstrap({ bootstrap: maintenancePrimaryBindingBootstrap });
+      maintenanceProfileConfig = maintenanceAiSearchCandidateConfig;
+    }
+    if (maintenanceMcpAccessTransition !== null && maintenanceAiSearchBootstrap === null &&
+        maintenancePrimaryBindingBootstrap === null) {
       maintenanceAiSearchBaselineConfig = maintenanceAiSearchCandidateConfig;
     }
     const transport = selectDeploymentGoogleTransport({ purpose, preserve: preserveGoogleTransport,
@@ -513,7 +560,7 @@ export async function deployCloudflare({ confirmLive = false, secretsFilePath, e
   const configPath = resolve(core, deployConfig);
   const bytes = Buffer.from(await read(configPath));
   if (maintenanceAiSearchCandidateBytes !== null && !bytes.equals(maintenanceAiSearchCandidateBytes)) {
-    throw new Error("Generated AI Search bootstrap candidate config changed during deployment preparation");
+    throw new Error("Generated maintenance bootstrap candidate config changed during deployment preparation");
   }
   const config = maintenanceAiSearchCandidateConfig ?? validateGeneratedDeployment(bytes, env, input);
   if (maintenanceAiGateways !== null) assertMaintenanceAiGatewayTargets(maintenanceAiGateways, config);
@@ -521,7 +568,7 @@ export async function deployCloudflare({ confirmLive = false, secretsFilePath, e
   assertGeneratedOwnerTemplatesCurrent(config);
   const digest = createHash("sha256").update(bytes).digest("hex");
   if (maintenanceAiSearchCandidateDigest !== null && digest !== maintenanceAiSearchCandidateDigest) {
-    throw new Error("Generated AI Search bootstrap candidate config digest changed during deployment preparation");
+    throw new Error("Generated maintenance bootstrap candidate config digest changed during deployment preparation");
   }
   const generatedConfigPin = await pinGeneratedConfig({ root, path: configPath });
   if (generatedConfigPin.sha256 !== digest) throw new Error("Generated deployment config changed before artifact preparation");
@@ -549,14 +596,21 @@ export async function deployCloudflare({ confirmLive = false, secretsFilePath, e
     deployment_generation: env.ELIOTR_DEPLOYMENT_GENERATION,
     configuration_sha256: digest,
   });
-  const priorWorkerReadback = maintenanceAiSearchBootstrap === null
+  const maintenanceBindingBootstrap = maintenanceAiSearchBootstrap ?? maintenancePrimaryBindingBootstrap;
+  const maintenanceBindingBaselineConfig = maintenanceAiSearchBootstrap !== null
+    ? maintenanceAiSearchBaselineConfig : maintenancePrimaryBindingBootstrap !== null
+      ? maintenancePrimaryBaselineConfig : null;
+  const maintenanceBindingBaselineReadback = maintenanceAiSearchBootstrap !== null
+    ? maintenanceAiSearchBaselineReadback : maintenancePrimaryBindingBootstrap !== null
+      ? maintenancePrimaryBaselineReadback : null;
+  const priorWorkerReadback = maintenanceBindingBootstrap === null
     ? await readWorker(priorWorkerEnv, input, config, {
     fetchImpl, observedDeploymentGeneration: activeWorkerBaseline.generation,
     approvedRuntimeCandidate,
     approvedMcpAccessTransition: maintenanceMcpAccessTransition,
-  }) : await readWorker(priorWorkerEnv, input, maintenanceAiSearchBaselineConfig, {
+  }) : await readWorker(priorWorkerEnv, input, maintenanceBindingBaselineConfig, {
     fetchImpl, observedDeploymentGeneration: activeWorkerBaseline.generation,
-    expectedConfigurationBaseline: maintenanceAiSearchBaselineReadback.configuration_baseline,
+    expectedConfigurationBaseline: maintenanceBindingBaselineReadback.configuration_baseline,
     approvedRuntimeCandidate: maintenanceAiSearchApprovedCandidate,
     approvedMcpAccessTransition: maintenanceMcpAccessTransition,
   });
@@ -597,6 +651,9 @@ export async function deployCloudflare({ confirmLive = false, secretsFilePath, e
     if (maintenanceAiSearchBootstrap !== null) {
       await requireUnchangedMaintenanceAiSearchBootstrap({ bootstrap: maintenanceAiSearchBootstrap });
     }
+    if (maintenancePrimaryBindingBootstrap !== null) {
+      await requireUnchangedMaintenancePrimaryBindingBootstrap({ bootstrap: maintenancePrimaryBindingBootstrap });
+    }
     if (maintenanceMcpAccessTransition !== null) {
       await requireUnchangedMaintenanceMcpAccessTransition({ transition: maintenanceMcpAccessTransition, read });
     }
@@ -630,7 +687,7 @@ export async function deployCloudflare({ confirmLive = false, secretsFilePath, e
       ? await readCapabilities({ input, fetchImpl: ownerFetch }) : null;
     const currentIdentity = await readActiveWorker({ env, input, fetchImpl });
     const currentWorker = await readWorker(priorWorkerEnv, input,
-      maintenanceAiSearchBootstrap === null ? config : maintenanceAiSearchBaselineConfig, {
+      maintenanceBindingBootstrap === null ? config : maintenanceBindingBaselineConfig, {
       fetchImpl,
       observedDeploymentGeneration: activeWorkerBaseline.generation,
       expectedConfigurationBaseline: priorWorkerConfigurationBaseline,
@@ -643,6 +700,11 @@ export async function deployCloudflare({ confirmLive = false, secretsFilePath, e
         currentWorker.version_id !== priorWorkerReadback.version_id ||
         canonicalJson(currentWorker.configuration_baseline) !== canonicalJson(priorWorkerConfigurationBaseline)) {
       throw new Error("Active Worker version or bindings changed during deployment preflight");
+    }
+    if (maintenancePrimaryBindingBootstrap !== null) {
+      assertMaintenancePrimaryBindingBootstrapProfile({ bootstrap: maintenancePrimaryBindingBootstrap,
+        phase: "before", generatedConfig: config, activeWorkerIdentity: currentIdentity,
+        workerReadback: currentWorker });
     }
     if (purpose === MAINTENANCE_PURPOSE) {
       if (currentCapabilities.generation !== maintenanceBaseline.capabilities.generation ||
@@ -698,6 +760,11 @@ export async function deployCloudflare({ confirmLive = false, secretsFilePath, e
       uploadedIdentity.deployment_id !== worker.deployment_id || uploadedIdentity.version_id !== worker.version_id) {
     throw new Error("Uploaded Worker identity does not match the candidate deployment before authority synchronization");
   }
+  if (maintenancePrimaryBindingBootstrap !== null) {
+    assertMaintenancePrimaryBindingBootstrapProfile({ bootstrap: maintenancePrimaryBindingBootstrap,
+      phase: "after", generatedConfig: config, activeWorkerIdentity: uploadedIdentity,
+      workerReadback: worker });
+  }
   if (purpose === MAINTENANCE_PURPOSE) {
     const candidateCapabilities = await readCapabilities({ input, fetchImpl: ownerFetch });
     if (routeUpdate !== null) await requireUnchangedMaintenanceRouteUpdate({ routeUpdate });
@@ -734,6 +801,11 @@ export async function deployCloudflare({ confirmLive = false, secretsFilePath, e
       postSyncIdentity.deployment_id !== worker.deployment_id || postSyncIdentity.version_id !== worker.version_id ||
       postSyncWorker.deployment_id !== worker.deployment_id || postSyncWorker.version_id !== worker.version_id) {
     throw new Error("Active Worker deployment changed after authority synchronization");
+  }
+  if (maintenancePrimaryBindingBootstrap !== null) {
+    assertMaintenancePrimaryBindingBootstrapProfile({ bootstrap: maintenancePrimaryBindingBootstrap,
+      phase: "after", generatedConfig: config, activeWorkerIdentity: postSyncIdentity,
+      workerReadback: postSyncWorker });
   }
   if (maintenanceAiGateways !== null) await recordMaintenanceAiGatewayReadback({
     profile: maintenanceAiGateways, readbacks: maintenanceAiGatewayReadbacks,
@@ -793,6 +865,22 @@ export async function deployCloudflare({ confirmLive = false, secretsFilePath, e
       candidate_configuration_sha256: maintenanceAiSearchBootstrap.candidate.configuration_sha256,
       readback: "PASS",
     } }),
+    ...(maintenancePrimaryBindingBootstrap === null ? {} : { maintenance_primary_binding_bootstrap: {
+      protocol: maintenancePrimaryBindingBootstrap.protocol,
+      intent_sha256: maintenancePrimaryBindingBootstrap.intent_sha256,
+      bucket_receipt_sha256: maintenancePrimaryBindingBootstrap.bucket_receipt.sha256,
+      binding: "BACKUP_PARTS_BUCKET",
+      version_metadata: "VERSION_METADATA",
+      preexisting_bucket: false,
+      bucket_creation_readback: "PASS",
+      baseline_deployment_id: maintenancePrimaryBindingBootstrap.baseline.deployment_id,
+      baseline_version_id: maintenancePrimaryBindingBootstrap.baseline.version_id,
+      baseline_generation: maintenancePrimaryBindingBootstrap.baseline.generation,
+      baseline_configuration_sha256: maintenancePrimaryBindingBootstrap.baseline.configuration_sha256,
+      candidate_generation: maintenancePrimaryBindingBootstrap.candidate.generation,
+      candidate_configuration_sha256: maintenancePrimaryBindingBootstrap.candidate.configuration_sha256,
+      readback: "PASS",
+    } }),
     ...(maintenanceMcpAccessTransition === null ? {} : { maintenance_mcp_access_transition:
       maintenanceMcpAccessReceiptSummary(maintenanceMcpAccessTransition) }),
     ...(maintenanceAiGateways === null ? {} : { maintenance_ai_gateways: {
@@ -814,7 +902,8 @@ export async function deployCloudflare({ confirmLive = false, secretsFilePath, e
     },
     note: (purpose === MAINTENANCE_PURPOSE
       ? buildMaintenanceNote(fullReleaseBlockers, sourceBudgetState, sourceBudgetFindings, migrationReadback,
-        schemaGenerationReadback, routeUpdate, maintenanceAiGateways, maintenanceAiSearchBootstrap)
+        schemaGenerationReadback, routeUpdate, maintenanceAiGateways, maintenanceAiSearchBootstrap,
+        maintenancePrimaryBindingBootstrap)
       : "Active version, configured resource bindings and migration names are verified. ETag and local migration hashes are not remote content proof; asset body hashes are observed only with authenticated readback and stable active-version observations. Product/T4/T6 gates remain separate. HTTP generation is verified only when authenticated smoke passes.") +
       ` Build input manifest captured before gates: ${testedInputs.sha256}; prepared Worker artifact: ${workerBundle.sha256}. ` +
       "Source membership/bytes, generated config, metafile inputs and emitted files were rechecked immediately before upload; the prepared entrypoint was deployed with --no-bundle. " +
@@ -845,7 +934,8 @@ if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.m
 }
 
 function buildMaintenanceNote(blockers, sourceBudgetState, sourceBudgetFindings, migrationReadback,
-  schemaGenerationReadback, routeUpdate, maintenanceAiGateways, maintenanceAiSearchBootstrap) {
+  schemaGenerationReadback, routeUpdate, maintenanceAiGateways, maintenanceAiSearchBootstrap,
+  maintenancePrimaryBindingBootstrap) {
   const items = Array.isArray(blockers) ? blockers : [];
   const blockerText = items.length === 0 ? "No known full-release blockers were reported" :
     `Full-release blockers (${items.length}): ${items.join("; ")}`;
@@ -858,12 +948,14 @@ function buildMaintenanceNote(blockers, sourceBudgetState, sourceBudgetFindings,
     `Existing AI Gateway inventory and settings were pinned by managed OAuth GET-only readback and rechecked before upload, after upload, and after authority synchronization; reasoning remained present and retrieval remained ${maintenanceAiGateways.gateways.retrieval === null ? "absent" : "present"}. No AI Gateway resource was created or edited. `;
   const aiSearchState = maintenanceAiSearchBootstrap === null ? "" :
     "The exact existing AI Search namespace was verified with GET-only provisioner readback before upload; only the pinned AI_SEARCH:eliotr Worker binding was added, with RETRIEVAL and ERASURE disabled. ";
+  const primaryBindingState = maintenancePrimaryBindingBootstrap === null ? "" :
+    "The fresh primary backup bucket creation receipt and exact VERSION_METADATA/BACKUP_PARTS_BUCKET Worker readback were pinned before upload and after synchronization; existing bindings remained preserved and RETRIEVAL/ERASURE stayed disabled. ";
   return `Worker/assets maintenance deployment only; this receipt does not qualify a full release. ${blockerText}. ` +
     `Source-maintainability budget gate: ${sourceBudgetState ?? "NOT_EXECUTED"}. ` +
     `${sourceBudgetFindings === null ? "No source-budget failure output was observed. " : `Source-budget findings: ${sourceBudgetFindings}. `}` +
     `D1 migrations were not applied; exact existing migration ledger readback: ${ledgerState}; ` +
     `required Core/Search schema generation readback: ${schemaState}. ` +
-    routeState + aiGatewayState + aiSearchState +
+    routeState + aiGatewayState + aiSearchState + primaryBindingState +
     "ETag and local migration hashes are not remote content proof; product and workload gates remain separate.";
 }
 

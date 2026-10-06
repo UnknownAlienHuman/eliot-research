@@ -139,6 +139,7 @@ export function validateGeneratedDeployment(bytes, env, input) {
       fail("Invalid generated D1 identity");
     }
   }
+  if (config.version_metadata !== undefined) validateVersionMetadataConfig(config.version_metadata);
   return config;
 }
 
@@ -697,6 +698,10 @@ function expectedDeploymentBindings(config) {
   }
   if (config.ai?.binding !== undefined) add(config.ai.binding, "ai");
   if (config.assets?.binding !== undefined) add(config.assets.binding, "assets");
+  if (config.version_metadata !== undefined) {
+    const metadata = validateVersionMetadataConfig(config.version_metadata);
+    add(metadata.binding, "version_metadata");
+  }
   for (const item of config.ai_search_namespaces ?? []) {
     add(item?.binding, "ai_search_namespace", { namespace: item?.namespace });
   }
@@ -707,6 +712,14 @@ function expectedDeploymentBindings(config) {
   if (!isObject(wasmModules)) fail("Invalid generated Wasm module bindings");
   for (const name of Object.keys(wasmModules)) add(name, "wasm_module");
   return expected;
+}
+
+function validateVersionMetadataConfig(value) {
+  exactKeys(value, ["binding"], "Invalid generated version metadata configuration");
+  if (!/^[A-Z][A-Z0-9_]{0,127}$/u.test(value.binding ?? "")) {
+    fail("Invalid generated version metadata binding");
+  }
+  return value;
 }
 
 function normalizeDeploymentBindings(bindings) {
