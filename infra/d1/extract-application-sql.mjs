@@ -3,6 +3,7 @@ import { relative, resolve, sep } from "node:path";
 import { fileURLToPath, URL } from "node:url";
 import process from "node:process";
 import ts from "typescript";
+import { createErasureReceiverTargetOverrides } from "./receiver-target-provenance.mjs";
 
 const root = resolve(fileURLToPath(new URL("../../", import.meta.url)));
 const roots = [resolve(root, "apps/eliotr-core/src"), resolve(root, "packages")];
@@ -275,7 +276,7 @@ function staticEvaluator(source) {
   return (node, environment = new Map()) => evaluate(node, environment);
 }
 
-export function extractSourceText(text, file = resolve(root, "<fixture>.ts")) {
+export function extractSourceText(text, file = resolve(root, "<fixture>.ts"), targetOverrides) {
   const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
   if (source.parseDiagnostics.length) throw new Error("SOURCE_PARSE_FAILED");
   const evaluate = staticEvaluator(source);
@@ -527,7 +528,7 @@ export function extractSourceText(text, file = resolve(root, "<fixture>.ts")) {
       const location = sourceLocation(source, node);
       const receiverNode = node.expression.expression;
       const receiver = receiverNode.getText(source);
-      const target = resolveLocalTarget(receiverNode, node);
+      const target = targetOverrides?.get(node.getStart(source)) ?? resolveLocalTarget(receiverNode, node);
       const variants = new Map();
       const unresolvedVariants = [];
       for (const environment of environments) {
@@ -574,16 +575,18 @@ export function extractSourceText(text, file = resolve(root, "<fixture>.ts")) {
   return { queries, unresolved };
 }
 
-function extractSource(file) {
-  return extractSourceText(readFileSync(file, "utf8"), file);
+function extractSource(file, targetOverrides) {
+  return extractSourceText(readFileSync(file, "utf8"), file, targetOverrides);
 }
 
 export function extractApplicationSql() {
   const files = [...sourceFiles(roots[0]), ...collectPackageSources(roots[1])].sort();
+  const targetOverrides = createErasureReceiverTargetOverrides(files, root);
   const queries = [];
   const unresolved = [];
   for (const file of files) {
-    const extracted = extractSource(file);
+    const overrides = targetOverrides.get(resolve(file).replaceAll("\\", "/").toLowerCase());
+    const extracted = extractSource(file, overrides);
     queries.push(...extracted.queries);
     unresolved.push(...extracted.unresolved);
   }

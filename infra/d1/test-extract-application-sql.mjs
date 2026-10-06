@@ -1,8 +1,11 @@
 import process from "node:process";
 import assert from "node:assert/strict";
+import ts from "typescript";
+import { resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath, URL } from "node:url";
 import { extractSourceText } from "./extract-application-sql.mjs";
+import { createErasureReceiverTargetOverrides } from "./receiver-target-provenance.mjs";
 
 const fixture = extractSourceText(`
 const shared = "SELECT * FROM source";
@@ -217,6 +220,100 @@ for (const sql of [
   assert.equal(targetBySql.get(sql).targetStore, "unknown", sql);
 }
 assert.equal(targetBySql.get("SELECT 1 FROM outer_after_catch").targetStore, "core");
+
+const projectRoot = resolve(fileURLToPath(new URL("../../", import.meta.url)));
+const typedD1Fixture = ({
+  swapped = false,
+  conflictingCaller = false,
+  facadeSwapped = false,
+  facadeMutation = false,
+  facadeEscaped = false,
+} = {}) => {
+  const paths = {
+    env: resolve(projectRoot, "apps/eliotr-core/src/env.ts"),
+    worker: resolve(projectRoot, "apps/eliotr-core/src/index.ts"),
+    http: resolve(projectRoot, "apps/eliotr-core/src/http.ts"),
+    composition: resolve(projectRoot, "apps/eliotr-core/src/composition-root.ts"),
+    ownerService: resolve(projectRoot, "apps/eliotr-core/src/erasure-owner-service.ts"),
+    appRuntime: resolve(projectRoot, "apps/eliotr-core/src/erasure-runtime.ts"),
+    operations: resolve(projectRoot, "packages/cloudflare-erasure-operations/src/erasure-runtime.ts"),
+    factory: resolve(projectRoot, "packages/cloudflare-erasure/src/factory.ts"),
+    core: resolve(projectRoot, "packages/cloudflare-erasure/src/core-location.ts"),
+    search: resolve(projectRoot, "packages/cloudflare-erasure/src/search-location.ts"),
+  };
+  const d1TypeImport = "import type { D1Database } from '../../../apps/eliotr-core/src/env.js';";
+  const coreArgument = swapped ? "dependencies.search_database" : "dependencies.core_database";
+  const searchArgument = swapped ? "dependencies.core_database" : "dependencies.search_database";
+  const facade = facadeSwapped
+    ? "const configuredEnv: Env = { ...env, CORE_DB: env.SEARCH_DB, SEARCH_DB: env.CORE_DB };"
+    : facadeMutation
+      ? "const configuredEnv: Env = env; configuredEnv.CORE_DB = configuredEnv.SEARCH_DB;"
+      : facadeEscaped
+        ? "const configuredEnv: Env = env; unknownSink(configuredEnv);"
+        : "const configuredEnv: Env = env;";
+  const sources = new Map([
+    [paths.env, `export interface D1Database { prepare(sql: string): { first(): unknown } }\nexport interface Env { readonly CORE_DB: D1Database; readonly SEARCH_DB: D1Database }\nexport interface ExportedHandler<E> { fetch(request: unknown, env: E, executionContext: unknown): unknown }`],
+    [paths.worker, `import type { Env, ExportedHandler } from './env.js';\nimport { handleHttp } from './http.js';\nexport default { fetch(request: unknown, env: Env, executionContext: unknown): unknown { return handleHttp(request, env, executionContext); } } satisfies ExportedHandler<Env>;`],
+    [paths.http, `import type { Env } from './env.js';\nimport { createApplication } from './composition-root.js';\ninterface HttpDependencies { readonly applicationFactory?: typeof createApplication }\nexport function handleHttp(request: unknown, env: Env, executionContext: unknown, dependencies: HttpDependencies = {}): unknown { const factory = dependencies.applicationFactory ?? createApplication; return factory({ env, executionContext }); }`],
+    [paths.composition, `import type { Env } from './env.js';\nimport { createErasureOwnerService } from './erasure-owner-service.js';\nfunction unknownSink(value: unknown): void { void value; }\nfunction ownerApi(env: Env): unknown { ${facade} return { erase: () => createErasureOwnerService({ env: configuredEnv }) }; }\nexport function createApplication(input: { readonly env: Env; readonly executionContext: unknown }): unknown { return ownerApi(input.env); }`],
+    [paths.ownerService, `import type { Env } from './env.js';\nimport { createConfiguredErasureCoordinator } from './erasure-runtime.js';\nexport function createErasureOwnerService(input: { readonly env: Env }): unknown { return createConfiguredErasureCoordinator(input.env); }`],
+    [paths.appRuntime, `import type { Env } from './env.js';\nimport { createConfiguredErasureCoordinator as inLibrary } from '../../../packages/cloudflare-erasure-operations/src/erasure-runtime.js';\nexport function createConfiguredErasureCoordinator(env: Env): unknown { return inLibrary({ core_database: env.CORE_DB, search_database: env.SEARCH_DB }); }`],
+    [paths.operations, `${d1TypeImport}\nimport { createConfiguredErasureBackend } from '../../cloudflare-erasure/src/factory.js';\nexport interface ErasureConfiguredCoordinatorDependencies { readonly core_database: D1Database; readonly search_database: D1Database }\nexport function createConfiguredErasureCoordinator(dependencies: ErasureConfiguredCoordinatorDependencies): unknown { const configuredDependencies = { ...dependencies }; return createConfiguredErasureBackend(configuredDependencies); }`],
+    [paths.factory, `${d1TypeImport}\nimport { createD1CoreErasureLocationPort } from './core-location.js';\nimport { createD1SearchErasureLocationPort } from './search-location.js';\nexport function createConfiguredErasureBackend(dependencies: { readonly core_database: D1Database; readonly search_database: D1Database }): unknown { createD1CoreErasureLocationPort({ database: ${coreArgument} }); createD1SearchErasureLocationPort({ database: ${searchArgument} }); return {}; }${conflictingCaller ? `\nexport function outsideCapability(database: D1Database): void { createD1CoreErasureLocationPort({ database }); }` : ""}`],
+    [paths.core, `${d1TypeImport}\nexport function createD1CoreErasureLocationPort(dependencies: { readonly database: D1Database }): void { const database = dependencies.database; database.prepare('SELECT 1 FROM core_fixture').first(); }`],
+    [paths.search, `${d1TypeImport}\nexport function createD1SearchErasureLocationPort(dependencies: { readonly database: D1Database }): void { const database = dependencies.database; database.prepare('SELECT 1 FROM search_fixture').first(); }`],
+  ]);
+  const options = {
+    target: ts.ScriptTarget.ES2024,
+    module: ts.ModuleKind.ESNext,
+    moduleResolution: ts.ModuleResolutionKind.Bundler,
+    strict: true,
+    noEmit: true,
+    skipLibCheck: true,
+  };
+  const host = ts.createCompilerHost(options);
+  const virtual = new Map([...sources].map(([path, text]) => [path.replaceAll("\\", "/").toLowerCase(), text]));
+  const originalFileExists = host.fileExists.bind(host);
+  const originalReadFile = host.readFile.bind(host);
+  const originalGetSourceFile = host.getSourceFile.bind(host);
+  host.fileExists = (path) => virtual.has(resolve(path).replaceAll("\\", "/").toLowerCase()) || originalFileExists(path);
+  host.readFile = (path) => virtual.get(resolve(path).replaceAll("\\", "/").toLowerCase()) ?? originalReadFile(path);
+  host.getSourceFile = (path, languageVersion, onError, shouldCreateNewSourceFile) => {
+    const text = virtual.get(resolve(path).replaceAll("\\", "/").toLowerCase());
+    return text === undefined ? originalGetSourceFile(path, languageVersion, onError, shouldCreateNewSourceFile)
+      : ts.createSourceFile(path, text, languageVersion, true);
+  };
+  const files = [...sources.keys()];
+  const program = ts.createProgram(files, options, host);
+  const overrides = createErasureReceiverTargetOverrides(files, projectRoot, program);
+  const coreQueries = extractSourceText(sources.get(paths.core), paths.core, overrides.get(paths.core.replaceAll("\\", "/").toLowerCase())).queries;
+  const searchQueries = extractSourceText(sources.get(paths.search), paths.search, overrides.get(paths.search.replaceAll("\\", "/").toLowerCase())).queries;
+  return {
+    core: coreQueries.find((query) => query.sql === "SELECT 1 FROM core_fixture"),
+    search: searchQueries.find((query) => query.sql === "SELECT 1 FROM search_fixture"),
+  };
+};
+
+const typedTargets = typedD1Fixture();
+assert.equal(typedTargets.core.targetStore, "core");
+assert.equal(typedTargets.core.targetStatus, "resolved-local-const-alias");
+assert.equal(typedTargets.search.targetStore, "search");
+assert.equal(typedTargets.search.targetStatus, "resolved-local-const-alias");
+const swappedTargets = typedD1Fixture({ swapped: true });
+assert.equal(swappedTargets.core.targetStore, "search", "a Core factory receiving Search retains Search provenance");
+assert.equal(swappedTargets.search.targetStore, "core", "a Search factory receiving Core retains Core provenance");
+const conflictingTargets = typedD1Fixture({ conflictingCaller: true });
+assert.equal(conflictingTargets.core.targetStore, "unknown", "an out-of-capability caller makes the shared Core receiver unknown");
+assert.equal(conflictingTargets.search.targetStore, "search");
+const facadeTargets = typedD1Fixture({ facadeSwapped: true });
+assert.equal(facadeTargets.core.targetStore, "search", "an Env-typed swapped facade keeps actual Search provenance");
+assert.equal(facadeTargets.search.targetStore, "core", "an Env-typed swapped facade keeps actual Core provenance");
+const mutatedFacadeTargets = typedD1Fixture({ facadeMutation: true });
+assert.equal(mutatedFacadeTargets.core.targetStore, "unknown", "mutating an Env alias invalidates that binding");
+assert.equal(mutatedFacadeTargets.search.targetStore, "unknown", "a moved store handle is escaped through the mutated facade");
+const escapedFacadeTargets = typedD1Fixture({ facadeEscaped: true });
+assert.equal(escapedFacadeTargets.core.targetStore, "unknown", "an Env passed to an unqualified sink is escaped");
+assert.equal(escapedFacadeTargets.search.targetStore, "unknown");
 
 function validateCompilerEntries(entries) {
   const checker = fileURLToPath(new URL("./check-expression-depth.py", import.meta.url));

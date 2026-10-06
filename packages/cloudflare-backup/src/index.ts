@@ -10,6 +10,7 @@ export * from "./restore-erasure-gate.js";
 export { BackupR2ConfigurationError, readInstalledBackupR2Profile, requireInstalledBackupR2Authority, readInstalledBackupR2Credentials, createInstalledBackupOffsiteR2Resolver } from "./installed-offsite-configuration.js";
 export type { BackupR2Environment, InstalledBackupR2Profile, InstalledBackupAdapterAuthority } from "./installed-offsite-configuration.js";
 export * from "./primary-writer-qualification.js";
+export * from "./primary-writer-admission.js";
 export * from "./primary-writer-runtime.js";
 export * from "./primary-writer-inventory.js";
 export * from "./backup-epoch-manifest-publisher.js";

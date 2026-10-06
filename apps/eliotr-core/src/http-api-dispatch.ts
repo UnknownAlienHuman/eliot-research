@@ -34,6 +34,7 @@ import { readWorkspaceCandidateRequest, readWorkspaceAdmissionId } from "./works
 import { readNavigationExpansionRequest } from "./navigation-expand-http.js";
 import { HttpRequestError } from "./http-errors.js";
 import { readPrimaryWriterInventory } from "./backup-primary-composition.js";
+import { issuePrimaryWriterBootstrapAdmissionRoute } from "@eliotr/cloudflare-backup";
 import { readOwnerProjectResearchReadiness } from "./research-project-configuration-composition.js";
 import { parseWikiProposalFromResearchRunRequest, parseWikiProposalRef } from "./wiki-service.js";
 import {
@@ -99,6 +100,17 @@ export async function dispatchHttpApiRoute(
       if (env.BACKUP_PARTS_BUCKET === undefined) throw new HttpRequestError("BACKUP_PRIMARY_UNAVAILABLE", 503,
         "Primary backup storage is not configured");
       return apiResult(request, env, await readPrimaryWriterInventory({ ...env, BACKUP_PARTS_BUCKET: env.BACKUP_PARTS_BUCKET }));
+    }
+    case "system.backup-primary.bootstrap-admission": {
+      requireNoQuery(url);
+      await requireEmptyRequestBody(request, "Primary writer bootstrap admission does not accept a request body");
+      const outcome = await issuePrimaryWriterBootstrapAdmissionRoute({
+        request, url, database: env.CORE_DB, actor: context, deployment_generation: env.DEPLOYMENT_GENERATION,
+        ...(env.VERSION_METADATA === undefined ? {} : { version_id: env.VERSION_METADATA.id }),
+        ...(env.BACKUP_PARTS_BUCKET === undefined ? {} : { bucket: env.BACKUP_PARTS_BUCKET }),
+      });
+      if (!outcome.ok) throw new HttpRequestError(outcome.code, outcome.status, outcome.title, outcome.retryable);
+      return apiResult(request, env, outcome.data);
     }
     case "system.research.configuration": {
       for (const key of url.searchParams.keys()) {

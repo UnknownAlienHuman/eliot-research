@@ -20,6 +20,9 @@ const PLAN_PROTOCOL = "eliotr.backup-primary-writer-qualification-plan.v1";
 const DEPLOYMENT_PROOF_PROTOCOL = "eliotr.backup-primary-writer-deployment-proof.v1";
 const READ_PROTOCOL = "eliotr.backup-primary-writer-read.v1";
 const OPERATION_PROTOCOL = "eliotr.backup-primary-writer-operation.v1";
+const ADMISSION_PROTOCOL = "eliotr.backup-primary-writer-admission.v1";
+const ADMISSION_BODY_KEYS = ["protocol", "admission_ref", "purpose", "principal_ref", "client_class", "credential_generation", "issuer", "authentication_method", "access_expires_at", "deployment_generation", "version_id", "bucket_binding_ref"];
+const OPERATION_KEYS = ["operation_ref", "qualification_ref", "qualification_revision", "intent", "intent_sha256", "attempt", "attempt_sha256", "receipt", "receipt_sha256", "readback_receipt_ref", "readback_sha256", "state", "created_at", "updated_at"];
 const SHA256 = /^[a-f0-9]{64}$/u;
 const ID = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/u;
 const EVIDENCE_DIRECTORY = /^\.eliotr-state\/deployment-build-evidence-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u;
@@ -106,16 +109,55 @@ async function readPlan(path) {
   id(plan.bucket_binding_ref, "bucket_binding_ref"); id(plan.bucket_name, "bucket_name");
   const qualification = object(plan.qualification, "qualification");
   const operation = object(plan.operation, "operation");
+  exactKeys(operation, OPERATION_KEYS, "operation");
   const shared = await loadCompiledWorkspaceModule("packages/cloudflare-backup/dist/primary-writer-qualification.js");
   const parsedQualification = await shared.parsePrimaryWriterQualification({ ...qualification, authority_sha256: sha256(canonical(qualification)) });
   if (canonical(parsedQualification) !== canonical(qualification)) fail("qualification is not the canonical shared primary-writer authority");
-  await shared.parsePrimaryWriterOperation(primaryOperationRow(operation));
+  const parsedOperation = await shared.parsePrimaryWriterOperation(primaryOperationRow(operation));
+  if (canonical(parsedOperation) !== canonical(operation)) fail("operation is not the canonical shared primary-writer envelope");
   if (qualification.protocol !== "eliotr.backup-primary-writer-qualification.v1" || qualification.mode !== "ISOLATED_NEW_BUCKET" || qualification.erasure_mode !== "NO_ACTIVE_ERASURE") fail("only an isolated NO_ACTIVE_ERASURE bootstrap can be installed");
   if (qualification.cloudflare?.account_id !== plan.account_id || qualification.cloudflare?.worker_name !== plan.worker_name || qualification.cloudflare?.bucket_binding_ref !== plan.bucket_binding_ref || qualification.cloudflare?.bucket_name !== plan.bucket_name) fail("qualification Cloudflare identity differs from plan");
   for (const [key, value] of Object.entries(qualification.cloudflare ?? {})) if (["source_sha256", "configuration_sha256", "compiled_artifact_sha256"].includes(key)) digest(value, `qualification.cloudflare.${key}`);
   digest(qualification.evidence_digest, "qualification.evidence_digest");
   if (operation.operation_ref !== plan.operation_ref || operation.intent?.operation_kind !== "BACKUP") fail("operation is not a BACKUP operation");
   return { plan, plan_sha256: sha256(canonical(plan)) };
+}
+
+async function readBootstrapAdmission(database, plan, proof) {
+  const q = plan.qualification;
+  const operation = plan.operation;
+  const admissionRows = await database.prepare("SELECT admission_ref,protocol,purpose,admission_json,admission_sha256,principal_ref,client_class,credential_generation,issuer,authentication_method,access_expires_at,deployment_generation,version_id,bucket_binding_ref,created_at FROM backup_primary_writer_admission WHERE admission_ref=?1 AND admission_sha256=?2 LIMIT 2").bind(q.owner_admission_ref, q.owner_admission_sha256).all();
+  if (!Array.isArray(admissionRows?.results) || admissionRows.results.length !== 1) fail("bootstrap admission must resolve to exactly one persisted grant");
+  const row = admissionRows.results[0];
+  if (row.protocol !== ADMISSION_PROTOCOL || typeof row.admission_json !== "string") fail("bootstrap admission row is malformed");
+  digest(row.admission_sha256, "bootstrap admission admission_sha256");
+  let raw;
+  try { raw = object(JSON.parse(row.admission_json), "bootstrap admission body"); } catch (cause) { fail("bootstrap admission body is malformed JSON", cause); }
+  exactKeys(raw, ADMISSION_BODY_KEYS, "bootstrap admission body");
+  const shared = await loadCompiledWorkspaceModule("packages/cloudflare-backup/dist/primary-writer-admission.js");
+  if (typeof shared.parsePrimaryWriterBootstrapAdmission !== "function") fail("compiled bootstrap admission parser is unavailable");
+  const admission = await shared.parsePrimaryWriterBootstrapAdmission({ ...raw, admission_sha256: row.admission_sha256 });
+  if (canonical(admission) !== row.admission_json || sha256(row.admission_json) !== row.admission_sha256) fail("bootstrap admission canonical bytes or digest diverge");
+  if (row.admission_ref !== admission.admission_ref || row.protocol !== admission.protocol || row.purpose !== admission.purpose ||
+      row.principal_ref !== admission.principal_ref || row.client_class !== admission.client_class || row.credential_generation !== admission.credential_generation ||
+      row.issuer !== admission.issuer || row.authentication_method !== admission.authentication_method || row.access_expires_at !== admission.access_expires_at ||
+      row.deployment_generation !== admission.deployment_generation || row.version_id !== admission.version_id || row.bucket_binding_ref !== admission.bucket_binding_ref) {
+    fail("bootstrap admission flattened columns diverge from its canonical body");
+  }
+  if (admission.admission_ref !== q.owner_admission_ref || row.admission_sha256 !== q.owner_admission_sha256 || admission.purpose !== "BOOTSTRAP" ||
+      admission.client_class !== "owner_pwa" || admission.authentication_method !== "cloudflare_access" || admission.principal_ref !== operation.intent.principal_ref) {
+    fail("bootstrap admission purpose or owner identity does not match the reviewed operation");
+  }
+  const deploymentProof = object(proof.deployment_proof, "actual deployment proof");
+  if (admission.deployment_generation !== deploymentProof.controller_generation || admission.deployment_generation !== q.cloudflare.controller_generation ||
+      admission.version_id !== deploymentProof.version_id || admission.version_id !== q.cloudflare.version_id ||
+      admission.bucket_binding_ref !== proof.bucket_binding_ref || admission.bucket_binding_ref !== q.cloudflare.bucket_binding_ref ||
+      admission.bucket_binding_ref !== "BACKUP_PARTS_BUCKET") fail("bootstrap admission does not match the actual deployment and binding proof");
+  const liveRows = await database.prepare("SELECT admission_ref FROM backup_primary_writer_admission WHERE admission_ref=?1 AND admission_sha256=?2 AND julianday(access_expires_at) > julianday(strftime('%Y-%m-%dT%H:%M:%fZ','now')) LIMIT 2").bind(q.owner_admission_ref, q.owner_admission_sha256).all();
+  if (!Array.isArray(liveRows?.results) || liveRows.results.length !== 1) fail("bootstrap admission is expired by the D1 clock");
+  const revocationRows = await database.prepare("SELECT admission_ref,admission_sha256 FROM backup_primary_writer_admission_revocation WHERE admission_ref=?1 AND admission_sha256=?2 LIMIT 2").bind(q.owner_admission_ref, q.owner_admission_sha256).all();
+  if (!Array.isArray(revocationRows?.results) || revocationRows.results.length !== 0) fail("bootstrap admission is revoked");
+  return admission;
 }
 
 async function readDiscoveryContext(path) {
@@ -361,6 +403,7 @@ export async function apply(plan, planSha, proof, database) {
     const priorCurrent = await database.prepare("SELECT slot,qualification_ref,qualification_revision,qualification_sha256,controller_generation,state FROM backup_primary_writer_current LIMIT 2").first();
     const priorOperation = await database.prepare("SELECT operation_ref,state FROM backup_primary_writer_operation LIMIT 2").first();
     if (priorQualification !== null || priorCurrent !== null || priorOperation !== null) fail("existing qualification, current pointer, or operation requires read-only --reconcile; apply will not replay a prior UNKNOWN attempt");
+    await readBootstrapAdmission(database, plan, proof);
     await database.prepare("INSERT OR IGNORE INTO backup_primary_writer_qualification(qualification_ref,revision,protocol,mode,authority_json,authority_sha256,owner_admission_ref,owner_admission_sha256,erasure_mode,producer_claim_count,producer_claim_digest,export_cut_count,export_cut_digest,primary_prefix_count,primary_prefix_digest,account_id,worker_name,deployment_id,version_id,version_etag,controller_generation,source_sha256,configuration_sha256,compiled_artifact_sha256,bucket_binding_ref,bucket_name,reserved_prefix,bootstrap_zero_d1_ref,bootstrap_zero_d1_json,bootstrap_zero_d1_sha256,reserved_prefix_readback_ref,reserved_prefix_readback_sha256,evidence_digest,created_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23,?24,?25,?26,?27,?28,?29,?30,?31,?32,?33,?34)").bind(q.qualification_ref,q.revision,q.protocol,q.mode,authorityJson,authoritySha,q.owner_admission_ref,q.owner_admission_sha256,q.erasure_mode,q.producer_claim_count,q.producer_claim_digest,q.export_cut_count,q.export_cut_digest,q.primary_prefix_count,q.primary_prefix_digest,q.cloudflare.account_id,q.cloudflare.worker_name,proof.deployment_id,proof.version_id,proof.version_etag,q.cloudflare.controller_generation,q.cloudflare.source_sha256,q.cloudflare.configuration_sha256,q.cloudflare.compiled_artifact_sha256,q.cloudflare.bucket_binding_ref,q.cloudflare.bucket_name,q.cloudflare.reserved_prefix,q.bootstrap_zero_d1_ref,canonical(q.bootstrap_zero_d1),sha256(canonical(q.bootstrap_zero_d1)),q.reserved_prefix_readback_ref,q.reserved_prefix_readback_sha256,q.evidence_digest,now).run();
     await database.prepare("INSERT OR IGNORE INTO backup_primary_writer_current(slot,qualification_ref,qualification_revision,qualification_sha256,controller_generation,state,updated_at) VALUES('primary',?1,?2,?3,?4,'ACTIVE',?5)").bind(q.qualification_ref,q.revision,authoritySha,q.cloudflare.controller_generation,now).run();
     const qualificationBeforeCommit = await database.prepare("SELECT qualification_ref,revision,authority_json,authority_sha256,account_id,worker_name,deployment_id,version_id,version_etag,controller_generation,source_sha256,configuration_sha256,compiled_artifact_sha256,bucket_binding_ref,bucket_name,reserved_prefix,evidence_digest FROM backup_primary_writer_qualification WHERE qualification_ref=?1 AND revision=?2 LIMIT 2").bind(q.qualification_ref, q.revision).first();
@@ -370,7 +413,7 @@ export async function apply(plan, planSha, proof, database) {
     delete attemptWithoutError.error_code;
     const committedAttempt = { ...attemptWithoutError, state: "SUCCEEDED", ended_at: now };
     const committedReceipt = { ...operation.receipt, outcome: "SUCCEEDED", output_refs: [...new Set([...operation.receipt.output_refs, q.qualification_ref])], readback_receipt_refs: [...new Set([...operation.receipt.readback_receipt_refs, operation.readback_receipt_ref])], reconciliation_required: false, reason_codes: [] };
-    const committedOperation = { ...operation, attempt: committedAttempt, attempt_sha256: sha256(canonical(committedAttempt)), receipt: committedReceipt, receipt_sha256: sha256(canonical(committedReceipt)), state: "COMMITTED", updated_at: now };
+    const committedOperation = { ...operation, attempt: committedAttempt, attempt_sha256: sha256(canonical(committedAttempt)), receipt: committedReceipt, receipt_sha256: sha256(canonical(committedReceipt)), state: "COMMITTED", created_at: now, updated_at: now };
     const committedOperationJson = canonical({ protocol: OPERATION_PROTOCOL, operation: committedOperation });
     const shared = await loadCompiledWorkspaceModule("packages/cloudflare-backup/dist/primary-writer-qualification.js");
     await shared.parsePrimaryWriterOperation(primaryOperationRow(committedOperation, committedOperationJson));
@@ -388,7 +431,12 @@ export async function apply(plan, planSha, proof, database) {
 
 async function persistedOperation(row, shared) {
   const value = object(row, "persisted primary operation");
-  return shared.parsePrimaryWriterOperation(value);
+  const parsed = await shared.parsePrimaryWriterOperation(value);
+  let outer;
+  try { outer = object(JSON.parse(String(value.operation_json)), "persisted primary operation envelope"); } catch (cause) { fail("persisted primary operation envelope is malformed JSON", cause); }
+  exactKeys(outer, ["protocol", "operation"], "persisted primary operation envelope");
+  if (outer.protocol !== OPERATION_PROTOCOL || canonical(outer.operation) !== canonical(parsed)) fail("persisted primary operation envelope diverges from typed operation");
+  return parsed;
 }
 
 export async function reconcile(plan, operationRef, database) {
