@@ -298,6 +298,23 @@ function harness(overrides = {}) {
         manifest_sha256: buildInputManifest.sha256, generated_config: generatedConfigPin,
         outdir: resolve(outdir), entrypoint: workerEntrypoint, sha256: bundleSha256 };
     },
+    persistBuildEvidence: async ({ manifest, bundle, generatedConfigPin }) => {
+      buildEvents.push("persist-build-evidence");
+      assert.equal(manifest, buildInputManifest);
+      assert.equal(bundle.sha256, bundleSha256);
+      return {
+        protocol: "eliotr.deployment-build-evidence.v1",
+        scope: "BOUNDED_LOCAL_INTEGRITY",
+        source_head: "a".repeat(40),
+        persisted_directory: ".eliotr-state/deployment-build-evidence-12345678-1234-4234-8234-123456789abc",
+        input_manifest: { path: ".eliotr-state/deployment-build-evidence-12345678-1234-4234-8234-123456789abc/deployment-build-inputs.json",
+          file_sha256: "c".repeat(64), manifest_sha256: manifest.sha256 },
+        bundle_attestation: { path: ".eliotr-state/deployment-build-evidence-12345678-1234-4234-8234-123456789abc/deployment-worker-bundle.json",
+          file_sha256: "d".repeat(64), attestation_sha256: bundle.sha256 },
+        entrypoint: { path: "apps/eliotr-core/src/index.ts", raw_sha256: "e".repeat(64), byte_length: 1 },
+        generated_config: { path: generatedConfigPin.path, sha256: generatedConfigPin.sha256, byte_length: generatedConfigPin.byte_length },
+      };
+    },
     checkBundle: async () => {
       bundleChecks += 1;
       buildEvents.push(`check-worker-bundle-${bundleChecks}`);
@@ -562,6 +579,9 @@ await check("existing Worker deploy proceeds with 18 UNKNOWN counters and no mig
   assert.equal(receipt.assets.readback.state, "PASS");
   assert.equal(receipt.assets.readback.active_version_unchanged, "PASS");
   assert.equal(receipt.assets.readback.version_id, receipt.worker.version_id);
+  assert.equal(receipt.build_evidence.scope, "BOUNDED_LOCAL_INTEGRITY");
+  assert.equal(receipt.build_evidence.input_manifest.manifest_sha256, buildInputManifest.sha256);
+  assert.equal(receipt.build_evidence.bundle_attestation.attestation_sha256, bundleSha256);
   assert.ok(Object.values(receipt.live_conformance).every((state) => state === "NOT_EXECUTED"));
   assert.equal(test.receipts.length, 1);
   assert.ok(!JSON.stringify(receipt).includes("secret-"));

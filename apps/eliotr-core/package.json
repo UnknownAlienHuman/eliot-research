@@ -8,7 +8,7 @@
     "typecheck": "tsc -b --pretty false",
     "test": "vitest run",
     "dev": "node ../../scripts/local-runtime.mjs --dev",
-    "cf:types": "wrangler types --env-interface CloudflareEnv src/worker-configuration.d.ts",
+    "cf:types": "node ../../scripts/generate-cloudflare-types.mjs",
     "deploy:dry-run": "wrangler deploy --dry-run --minify --outdir dist",
     "deploy": "node ../../scripts/deploy-cloudflare.mjs --confirm-live"
   },

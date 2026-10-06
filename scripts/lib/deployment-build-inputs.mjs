@@ -38,6 +38,8 @@ const REQUIRED_DEPLOYMENT_SCRIPTS = Object.freeze([
   "scripts/check-budgets.mjs",
   "scripts/check-launch-code.mjs",
   "scripts/deploy-cloudflare.mjs",
+  "scripts/generate-cloudflare-types.mjs",
+  "scripts/lib/deployment-build-evidence.mjs",
   "scripts/provision-ai-gateways.mjs",
   "scripts/provision-ai-search.mjs",
   "scripts/provision-cloudflare-access.mjs",

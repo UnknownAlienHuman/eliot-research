@@ -32,6 +32,7 @@ import { readDeploymentAssetManifest, verifyDeploymentAssets } from "./lib/deplo
 import { captureDeploymentBuildInputs, requireUnchangedDeploymentBuildInputs,
   pinGeneratedDeploymentConfig, attestDeploymentBundle,
   requireUnchangedDeploymentBundle } from "./lib/deployment-build-inputs.mjs";
+import { persistDeploymentBuildEvidence } from "./lib/deployment-build-evidence.mjs";
 import { validateStagingTarget } from "./lib/staging-isolation.mjs";
 import { createCloudflaredOwnerFetch } from "./lib/cloudflare-owner-http.mjs";
 
@@ -225,6 +226,7 @@ export async function deployCloudflare({ confirmLive = false, secretsFilePath, e
   checkBuildInputs = requireUnchangedDeploymentBuildInputs,
   pinGeneratedConfig = pinGeneratedDeploymentConfig,
   attestBundle = attestDeploymentBundle, checkBundle = requireUnchangedDeploymentBundle,
+  persistBuildEvidence = persistDeploymentBuildEvidence,
   readAssetManifest = readDeploymentAssetManifest } = {}) {
   if (![FULL_RELEASE_PURPOSE, MAINTENANCE_PURPOSE].includes(purpose)) throw new Error("Deployment purpose is invalid");
   if (secretsFilePath !== undefined && !confirmLive) {
@@ -827,6 +829,9 @@ export async function deployCloudflare({ confirmLive = false, secretsFilePath, e
     }
   }
   await requireUnchangedInputs();
+  if (workerBundle === null) throw new Error("Deployment build evidence requires a prepared Worker bundle");
+  const buildEvidence = await persistBuildEvidence({ root, manifest: testedInputs,
+    bundle: workerBundle, generatedConfigPin });
   const receipt = {
     protocol: "eliotr.cloudflare-deployment-receipt.v1",
     deployment_generation: env.ELIOTR_DEPLOYMENT_GENERATION,
@@ -836,6 +841,7 @@ export async function deployCloudflare({ confirmLive = false, secretsFilePath, e
     d1_migrations: migrationReadback,
     assets: { manifest: assetManifest, readback: assetReadback },
     generated_config_sha256: digest,
+    build_evidence: buildEvidence,
     backend_fingerprint: backendFingerprint,
     remote_http_smoke: remoteHttpSmoke,
     deployment_authority_sync: deploymentAuthority,

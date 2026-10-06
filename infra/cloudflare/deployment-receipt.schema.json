@@ -314,6 +314,69 @@
       }
     },
     "generated_config_sha256": { "$ref": "#/$defs/sha256" },
+    "build_evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "protocol",
+        "scope",
+        "source_head",
+        "persisted_directory",
+        "input_manifest",
+        "bundle_attestation",
+        "entrypoint",
+        "generated_config"
+      ],
+      "properties": {
+        "protocol": { "const": "eliotr.deployment-build-evidence.v1" },
+        "scope": { "const": "BOUNDED_LOCAL_INTEGRITY" },
+        "source_head": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "persisted_directory": {
+          "type": "string",
+          "pattern": "^\\.eliotr-state/deployment-build-evidence-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "input_manifest": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["path", "file_sha256", "manifest_sha256"],
+          "properties": {
+            "path": { "type": "string", "pattern": "^\\.eliotr-state/deployment-build-evidence-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/deployment-build-inputs\\.json$" },
+            "file_sha256": { "$ref": "#/$defs/sha256" },
+            "manifest_sha256": { "$ref": "#/$defs/sha256" }
+          }
+        },
+        "bundle_attestation": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["path", "file_sha256", "attestation_sha256"],
+          "properties": {
+            "path": { "type": "string", "pattern": "^\\.eliotr-state/deployment-build-evidence-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/deployment-worker-bundle\\.json$" },
+            "file_sha256": { "$ref": "#/$defs/sha256" },
+            "attestation_sha256": { "$ref": "#/$defs/sha256" }
+          }
+        },
+        "entrypoint": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["path", "raw_sha256", "byte_length"],
+          "properties": {
+            "path": { "type": "string", "minLength": 1, "maxLength": 4096 },
+            "raw_sha256": { "$ref": "#/$defs/sha256" },
+            "byte_length": { "type": "integer", "minimum": 0, "maximum": 33554432 }
+          }
+        },
+        "generated_config": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["path", "sha256", "byte_length"],
+          "properties": {
+            "path": { "const": "apps/eliotr-core/wrangler.deploy.jsonc" },
+            "sha256": { "$ref": "#/$defs/sha256" },
+            "byte_length": { "type": "integer", "minimum": 0, "maximum": 16777216 }
+          }
+        }
+      }
+    },
     "remote_http_smoke": {
       "oneOf": [
         {
