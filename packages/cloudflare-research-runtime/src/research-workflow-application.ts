@@ -7,6 +7,7 @@ import {
   createResearchWorkflowServerPorts,
   executeResearchWorkflowNativeSteps,
   MAX_WORKFLOW_RECEIPT_BYTES,
+  parseWorkflowCheckpointErrorMessage,
   retainWorkflowFailure,
   WorkflowCheckpointError,
   workflowFailure,
@@ -82,6 +83,12 @@ function failWorkflow(code: string): never {
   const error = new Error(code) as Error & { code: string };
   error.code = code;
   throw error;
+}
+
+/** Accepts bounded diagnostics only from a native checkpoint error at a pending native step boundary. */
+export function readNativeStepWorkflowFailure(error: unknown, nativeStepPending: boolean) {
+  return nativeStepPending && error instanceof Error && error.name === "WorkflowCheckpointError"
+    ? parseWorkflowCheckpointErrorMessage(error.message) : null;
 }
 
 /** Executes an already-admitted run; Core supplies only its Worker-bound authorities and semantic/config callbacks. */
@@ -232,14 +239,20 @@ export async function executeResearchWorkflowApplication<QualificationRenewalMar
     }
     return result;
   } catch (error) {
-    const failure = workflowFailure(error, activeStage === undefined ? "PREPARATION" : "STAGE", activeStage);
-    // step.do may reconstruct Error and discard custom fields; its callback already recorded the exact cause.
-    if (!nativeStepPending) await retainWorkflowFailure(environment.CORE_DB, params.operation_id, principal, failure);
+    const nativeFailureMessage = readNativeStepWorkflowFailure(error, nativeStepPending);
+    const failure = nativeStepPending
+      ? nativeFailureMessage?.failure
+      : workflowFailure(error, activeStage === undefined ? "PREPARATION" : "STAGE", activeStage);
+    // Rehydrate only the local bounded marker; a markerless native rejection has unknown phase and stage.
+    if (!nativeStepPending && failure !== undefined) {
+      await retainWorkflowFailure(environment.CORE_DB, params.operation_id, principal, failure);
+    }
     if (callbacks.is_native_non_retryable_output_corrupt(error)) throw error;
     if (error instanceof WorkflowCheckpointError && error.code === "WORKFLOW_OUTPUT_CORRUPT") {
       callbacks.throw_native_non_retryable_output_corrupt(error.code);
     }
-    throw new WorkflowCheckpointError(error instanceof WorkflowCheckpointError ? error.code :
-      activeStage === undefined ? "WORKFLOW_PREPARATION_FAILED" : "WORKFLOW_EFFECT_UNCERTAIN", failure);
+    const outerCode = nativeFailureMessage?.outer_code ?? (error instanceof WorkflowCheckpointError ? error.code :
+      activeStage === undefined ? "WORKFLOW_PREPARATION_FAILED" : "WORKFLOW_EFFECT_UNCERTAIN");
+    throw new WorkflowCheckpointError(outerCode, failure);
   }
 }
