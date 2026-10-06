@@ -30,6 +30,7 @@ const FORBIDDEN_IMPORTS = [
 const HOST_TOOL_IMPORTS = new Map([
   ["packages/backup-o2/src/coverage-full-chain.test.ts", new Set(["node:fs"])],
   ["packages/cloudflare-backup/src/backup-epoch-manifest-publisher.test.ts", new Set(["node:fs/promises"])],
+  ["packages/cloudflare-backup/src/primary-writer-admission.test.ts", new Set(["node:fs/promises"])],
   ["packages/cloudflare-backup/src/isolated-restore-preflight.test.ts", new Set(["node:fs/promises"])],
   ["packages/cloudflare-backup/src/restore-admission.test.ts", new Set(["node:fs/promises"])],
   ["packages/cloudflare-backup/src/restore-native-history-ordering.test.ts", new Set(["node:fs/promises"])],
