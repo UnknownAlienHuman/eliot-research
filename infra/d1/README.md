@@ -65,19 +65,28 @@ candidate-schema outcomes, counts, and allowlisted unresolved classifications. I
 receiver expressions, and row data. The setting does not launch another compiler or change the
 default output when unset. It does not change the strict gate: an incomplete strict run still exits 1.
 
-## October 6, 2026 reviewed analyzer candidate
+## October 6, 2026 reviewed source-cardinality checkpoint
 
-For the reviewed seven-file analyzer candidate based on `main`
-`74e7c064252cc4d5b33106e5387be37379e87650` (published SHA recorded in #294), the calibrated SQLite
-3.50.4 depth-100 run scanned 120 Core migrations, 147 tables, 24 views, four Search migrations, 613
-schema shapes, and 1,028 application queries. Candidate compilation had zero compile failures and zero
-target-schema failures. The three model-summary query sites resolve to `CORE_DB` with binding arities
-1, 1, and 9; each compiles in Core and does not compile in Search.
+The reviewed four-file source-cardinality checkpoint is based on `main`
+`3d564187221b60f5e1950ba8f3ad6664aa6164a0` (published SHA recorded in #294). Its single calibrated
+SQLite 3.50.4 depth-100 invocation scanned 120 Core migrations, 147 tables, 24 views, four Search
+migrations, 613 schema shapes, and 1,049 application query variants across 1,020 files. Candidate
+compilation had zero compile failures and zero target-schema failures. All 20 previously proven
+target classifications are unchanged, including the three Core model-summary arities 1, 1, and 9.
 
-The strict report remains `INCOMPLETE` and exits 1: 1,008 targets are unknown (previously 1,011), 79
-binding arities are unknown, and 130 sites remain unresolved. The route-proof correction and successful
-candidate compilation do not establish complete target provenance. This checkpoint does not qualify
-production D1 or every dynamic application query; #294 remains open.
+SQL values and bind arities now use the same lexical invocation context. Fixed array shapes, stable
+aliases, literal slice bounds, supported fixed fresh returns, and resolved rest-argument calls can
+establish arity without counting SQL placeholders. Mutation, escape, unknown callers or values,
+shadowed helpers, unsupported control flow and nonliteral slice bounds remain unknown. Nineteen
+previously unknown query arities are resolved across 14 source locations. Broader caller enumeration
+also exposes additional variants and unknown fallbacks; this is not a claim that every spread is known.
+
+The current strict report remains `INCOMPLETE`, exit 1: 1,029 targets are unknown, 85 binding arities
+are unknown, and 144 prepare occurrences remain unresolved. The earlier route-proof checkpoint
+`ed97d9655b22f9a9844815c7f5cd57f5a6f25fdd` reported 1,028 variants, 1,008 unknown targets, 79 unknown
+arities and 130 unresolved occurrences; those counts are historical. Successful candidate compilation
+does not establish complete target provenance or production D1 qualification. Backup/restore source
+is inventoried without performing or developing canceled backup/restore operations. #294 remains open.
 
 This is the depth-100 check for #293/#294, **not full D1 emulation or behavioral acceptance**. It does
 not prove authorization, concurrency, readback, native runtime limits or every dynamically constructed

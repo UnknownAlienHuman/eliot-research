@@ -59,33 +59,43 @@ These results do not establish full Research or erasure acceptance.
 
 ### October 6 source-derived D1 and local native checkpoint
 
-The frozen depth-100 strict run on this reviewed seven-file analyzer candidate
-used SQLite 3.50.4, passed its limit calibration, and scanned 120 Core migrations,
-147 tables, 24 views, four Search migrations,
-613 schema shapes, and 1,028 application queries. It reported zero SQL compile
-failures and zero target-schema failures. The TypeScript route proof performs
+The current frozen depth-100 strict run on the reviewed four-file source-cardinality
+checkpoint, based on `main` `3d564187221b60f5e1950ba8f3ad6664aa6164a0`, used SQLite 3.50.4,
+passed its limit calibration, and scanned 120 Core migrations, 147 tables, 24 views,
+four Search migrations, 613 schema shapes, and 1,049 application query variants.
+It reported zero SQL compile failures and zero target-schema failures. All 20 previously
+proven target classifications are retained. The TypeScript route proof performs
 two provenance passes over one `ts.Program`, using symbol-keyed exact call edges
 to select the model-qualification route and carry that selection through the
 route match/fallthrough path. The three model-summary queries now resolve to
 `CORE_DB` with binding arities 1, 1, and 9; they compile against Core and are not
 accepted by Search.
 
-Strict target qualification still exits 1 as `INCOMPLETE`: 1,008 targets remain
-unknown (down from 1,011), 79 binding arities are unknown, and 130 SQL sites
-remain unresolved. The opt-in `D1_DEPTH_CLASSIFICATION_DETAILS=1` report adds
+SQL values and bind arity share an exact lexical caller context. Supported fixed array,
+alias, literal-slice, fresh-return and rest-argument shapes resolve 19 previously unknown
+query arities across 14 source locations. Mutation, escape, unknown callers, shadowed
+values and unsupported paths retain unknown results; additional caller variants are
+accounted for rather than dropped.
+
+Strict target qualification still exits 1 as `INCOMPLETE`: 1,029 targets remain
+unknown, 85 binding arities are unknown, and 144 prepare occurrences remain unresolved.
+The earlier `ed97d9655b22f9a9844815c7f5cd57f5a6f25fdd` route-proof checkpoint reported
+1,028 variants, 1,008 unknown targets, 79 unknown arities and 130 unresolved occurrences;
+those are historical counts. The opt-in `D1_DEPTH_CLASSIFICATION_DETAILS=1` report adds
 sanitized inventory and compile metadata to that same compiler invocation; it
 does not expose SQL or receiver expressions, change the default output, or turn
 unknown coverage into a pass. The complete current criteria and boundaries are
 in the [D1 schema ownership guide](../../infra/d1/README.md). #294 remains open.
 
-One exact `core-default` local workerd/D1 run on the reviewed candidate passed
+The retained exact `core-default` local workerd/D1 run on the earlier route-proof candidate passed
 64 test cases across four fixtures: 0084 authority, D1 ledger, Research
 Workflow, and Workflow recovery. The run used no remote bindings and its four
 test-source pins match this candidate. It covers bounded local authorization,
 replay, concurrency, and
 lost-ack behavior; it is not production D1 qualification or deployed Research
 acceptance. No runtime source changed in the analyzer/native-test checkpoint,
-and the live Worker remains the separate `git-ec575a955fd3` release above.
+and the last recorded live Worker is the separate `git-ec575a955fd3` release above;
+the resumed #294 analyzer work has not verified or changed that deployment.
 
 The dated checkpoints below are retained as historical evidence and are
 superseded wherever they conflict with this active objective.
@@ -786,7 +796,7 @@ implementation checkpoints are not substitutes for the remaining acceptance.
 |---|---|---|
 | #209 Research failure preservation (Draft PR) | The old RECONCILE failure is corrected in the live release; after 11 of 18 stages had committed, the latest run failed while executing FREEZE_EVIDENCE. | Preserve and expose the actual bounded first/latest cause through the native Workflow/status path, reconcile uncertain effects without blind replay, and complete the required end-to-end failure and 18-stage evidence. |
 | #255 erasure holds (Draft PR) | The persisted-target hold recheck is in the current release. | Complete producer/deletion fencing and the remaining race, managed-location, outage/hold, and live closure criteria. Keep erasure disabled until full acceptance; no backup/restore work. |
-| #294 D1 target binding (Open issue) | The current strict aggregate recovers 1,028 queries with zero SQL compile and target-schema failures, but reports 1,008 unknown targets, 79 unknown arities, and 130 unresolved prepare sites; result remains `INCOMPLETE`. | Prove exact dynamic-query target/column/trigger coverage and required native D1 positive, negative, replay, and concurrency cases on the exact build. |
+| #294 D1 target binding (Open issue) | The current strict aggregate recovers 1,049 query variants with zero SQL compile and target-schema failures, but reports 1,029 unknown targets, 85 unknown arities, and 144 unresolved prepare occurrences; result remains `INCOMPLETE`. Nineteen earlier unknown query arities are resolved across 14 source locations. | Prove exact dynamic-query target/column/trigger coverage and required native D1 positive, negative, replay, and concurrency cases on the exact build. |
 | #301 delivery queue (Open issue) | Queue tracker is still open; its public body contains stale backup work. | Refresh the bounded queue against this plan, preserve S92 residual acceptance, and do not treat tracker or narrow PR closure as product acceptance. |
 | #319 operator privacy (Open issue) | Query-redaction configuration readback is recorded privately. | Verify a nonsecret synthetic query marker is absent from invocation logs while useful correlation remains, and verify ordinary PWA cookie attributes separately from MCP behavior. |
 | #256, #267, #268, #222 (Draft PRs) | Remain open. | Preserve their own bounded acceptance; they do not supersede the active Research, #255, and #294 gates. |
@@ -1000,7 +1010,7 @@ remain open issues. #316, #317, and #318 are closed narrow checkpoints; #256,
 #267, #268, and #222 remain Draft/open PRs. Do not infer feature acceptance from
 these statuses or close the open items based only on the current release.
 
-- #294 (open) - the October 6 reviewed seven-file analyzer candidate, based on `main` `74e7c064252cc4d5b33106e5387be37379e87650` with its published SHA recorded in this issue, scanned 120 Core and four Search migrations, 147 tables, 24 views, 613 schema shapes, and 1,028 application queries with zero compile or target-schema failures. Strict coverage remains `INCOMPLETE`: 1,008 unknown targets, 79 unknown arities, and 130 unresolved sites; the strict invocation exited 1. The exact four-file local workerd/D1 run passed 64/64 with remote bindings disabled. Production D1 qualification and complete source-derived target/query coverage remain open acceptance. Historical 96-migration and 711-shape inventories are not current measurements.
+- #294 (open) - the October 6 reviewed four-file source-cardinality checkpoint, based on `main` `3d564187221b60f5e1950ba8f3ad6664aa6164a0` with its published SHA recorded in this issue, scanned 120 Core and four Search migrations, 147 tables, 24 views, 613 schema shapes, and 1,049 query variants with zero compile or target-schema failures. Strict coverage remains `INCOMPLETE`: 1,029 unknown targets, 85 unknown arities, and 144 unresolved prepare occurrences; strict exited 1. Nineteen earlier unknown query arities are resolved across 14 source locations. The retained four-file local workerd/D1 run passed 64/64 with remote bindings disabled; runtime source is unchanged. Production D1 qualification and complete source-derived target/query coverage remain open acceptance. Earlier 1,028-query route-proof, 96-migration and 711-shape inventories are historical measurements.
 - #301 (open) - retain original task/passport criteria and reconcile selected residuals against exact main. The active queue above excludes canceled backup/export/offsite/restore work, including migration 0121; it does not migrate all tasks or close every legacy obligation.
 - #293/#295/#296/#297/#300/#304/#305 (closed) - retain delivered source and the distinct pending exact-build native, fault/replay, root/browser and CI evidence; do not recreate their repairs.
 - #298 (closed 2026-10-01) - stable scrollbar gutter delivered in `4c897429`; viewport assertions remain unchanged. Closure is not a retained same-SHA Windows/Ubuntu browser result.
