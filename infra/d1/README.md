@@ -88,6 +88,17 @@ arities and 130 unresolved occurrences; those counts are historical. Successful 
 does not establish complete target provenance or production D1 qualification. Backup/restore source
 is inventoried without performing or developing canceled backup/restore operations. #294 remains open.
 
+The additional source-bound local workerd/D1 delivery checkpoint passed 15/15 tests across three
+files: four new delivery-replay cases, six existing Q1 cases, and five outbox-reconciler cases.
+It verifies accepted-send ACK loss and retry, committed `SENT` with lost settlement ACK, concurrent
+and expired inbox leases, stale-generation rejection, corrected handler retry and altered-payload
+rejection. D1 state and receipts are read back through production stores; captured transport models
+the local send/ACK boundary. This does not qualify physical Cloudflare Queue, DLQ or production D1.
+Scoped lint passed and the new test has no TypeScript diagnostics, but the Core test-project typecheck
+fails with 59 diagnostics in six other files; those diagnostics were not compared with a baseline run.
+Compilation of the full test project remains unaccepted. Runtime and migration source remain unchanged; the earlier
+64/64 authority/ledger/Workflow/recovery receipt is retained separately.
+
 This is the depth-100 check for #293/#294, **not full D1 emulation or behavioral acceptance**. It does
 not prove authorization, concurrency, readback, native runtime limits or every dynamically constructed
 application query. The real-workerd jobs and S91/S92 acceptance remain required. Migration 0084

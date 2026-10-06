@@ -97,6 +97,17 @@ acceptance. No runtime source changed in the analyzer/native-test checkpoint,
 and the last recorded live Worker is the separate `git-ec575a955fd3` release above;
 the resumed #294 analyzer work has not verified or changed that deployment.
 
+An additional exact-source local workerd/D1 delivery run passed 15/15 tests: four new
+`queue-delivery-replay` cases, six Q1 cases and five outbox-reconciler cases. It covers accepted
+send ACK loss and idempotent retry, committed `SENT` followed by lost settlement ACK,
+competing/expired inbox leases and stale-generation fencing, corrected handler retry,
+duplicate completion and altered-payload rejection with D1 readback. Source pins remained
+unchanged during the single run. Captured transport is local simulation; physical Cloudflare
+Queue/DLQ and production D1 qualification remain outside this evidence. Scoped lint passed;
+the new test has no TypeScript diagnostics, but the Core test-project typecheck failed with
+59 diagnostics in six other files, whose baseline status was not executed. This is not an
+overall compilation pass. Runtime and migrations remain unchanged.
+
 The dated checkpoints below are retained as historical evidence and are
 superseded wherever they conflict with this active objective.
 
