@@ -6,6 +6,13 @@ recorded in #294. Broader implementation, release and cleanup are stopped.
 The last recorded deployed runtime is the separate Worker checkpoint
 `git-ec575a955fd3`; this local checkpoint has not reverified that deployment.
 
+**Owner stop, October 6:** implementation is paused at published source checkpoint
+`557c081098e6459e89c4d78051cbef290a44ac9e`. All subagents are stopped or completed.
+#294 remains open for one unfinished original coverage item: a production prepared
+UPDATE OF query against its actual target schema and trigger. Its public claim is
+handed off without implementation or another test run. Resume only on a new owner
+instruction; no broader work, deployment, cleanup or backup work is active.
+
 The [October 3 functional integration checkpoint](product-resume-2026-10-03.md)
 records earlier owner configuration, immutable run capture, MCP, and provisioning
 evidence. The earlier recorded Worker release and Research outcome are retained
@@ -24,9 +31,9 @@ Workflow still completes all 18 stages, but the named local checks below do not
 establish deployed execution. Native MCP client authorization remains
 unverified.
 
-## Active backend goal, October 6
+## Paused backend goal, October 6
 
-The owner resumed only #294: retain reproducible application SQL and UPDATE OF
+Before the stop, the owner resumed only #294: retain reproducible application SQL and UPDATE OF
 coverage, explicit extraction boundaries, and source-bound native D1 acceptance
 evidence; publish the result to main and stop when that issue's original criteria
 are met. Research repair, separate erasure acceptance, the broader queue, release

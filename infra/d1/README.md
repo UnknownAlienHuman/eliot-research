@@ -67,6 +67,11 @@ default output when unset. It does not change the strict gate: an incomplete str
 
 ## October 6, 2026 assembled classification and native checkpoint
 
+The owner stopped implementation after publishing source checkpoint
+`557c081098e6459e89c4d78051cbef290a44ac9e`. #294 remains open for the production
+prepared UPDATE OF source/target/trigger case; that extension is not implemented
+or tested. The results below are saved evidence, not an instruction to resume work.
+
 The assembled checkpoint is based on `main` `65fcf3363c55ef738bbb15a55845a601b8369561`;
 its published SHA is recorded in #294. Prepare-declaration classification and target provenance
 share the existing TypeScript `Program`. Canonical Workers D1 declarations are resolved through the
