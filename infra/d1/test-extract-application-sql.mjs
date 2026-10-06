@@ -1,5 +1,7 @@
 import process from "node:process";
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { fileURLToPath, URL } from "node:url";
 import { extractSourceText } from "./extract-application-sql.mjs";
 
 const fixture = extractSourceText(`
@@ -215,5 +217,63 @@ for (const sql of [
   assert.equal(targetBySql.get(sql).targetStore, "unknown", sql);
 }
 assert.equal(targetBySql.get("SELECT 1 FROM outer_after_catch").targetStore, "core");
+
+function validateCompilerEntries(entries) {
+  const checker = fileURLToPath(new URL("./check-expression-depth.py", import.meta.url));
+  const python = [
+    "import json, runpy, sys",
+    "validate = runpy.run_path(sys.argv[1])['valid_application_sql_entry']",
+    "entries = json.load(sys.stdin)",
+    "print(json.dumps([validate(item['entry'], unresolved=item['unresolved']) for item in entries]))",
+  ].join("\n");
+  const candidates = process.platform === "win32"
+    ? [["python", []], ["py", ["-3"]], ["python3", []]]
+    : [["python3", []], ["python", []]];
+  for (const [command, prefix] of candidates) {
+    const result = spawnSync(command, [...prefix, "-c", python, checker], {
+      input: JSON.stringify(entries), encoding: "utf8", shell: false, timeout: 10_000, windowsHide: true,
+    });
+    if (result.error?.code === "ENOENT") continue;
+    assert.equal(result.error, undefined, "Python manifest validator must start");
+    assert.equal(result.status, 0, result.stderr);
+    return JSON.parse(result.stdout);
+  }
+  assert.fail("Python >=3.11 is required to validate the D1 inventory contract");
+}
+
+const directCore = targetBySql.get("SELECT 1 FROM direct_core");
+const directSearch = targetBySql.get("SELECT 1 FROM direct_search");
+const aliasCore = targetBySql.get("SELECT 1 FROM core_alias");
+const aliasSearch = targetBySql.get("SELECT 1 FROM search_alias");
+const unresolvedTarget = {
+  ...directCore,
+  location: "fixture.ts:200",
+  receiver: "database",
+  targetStore: "unknown",
+  targetStatus: "unresolved-receiver",
+};
+const unresolvedSql = {
+  ...aliasCore,
+  location: "fixture.ts:201",
+  bindingArity: null,
+  bindingProvenance: "indirect-or-unknown",
+  classification: "dynamic-or-unresolved-sql",
+  reason: "dynamic-or-unresolved",
+};
+const invalidBindings = [
+  { ...directCore, targetStatus: "unresolved-receiver" },
+  { ...aliasCore, targetStore: "unknown", targetStatus: "resolved-local-const-alias" },
+  { ...aliasSearch, targetStatus: "resolved-callsite-alias" },
+  { ...directCore, bindingProvenance: "guessed-core" },
+];
+assert.deepEqual(validateCompilerEntries([
+  { entry: directCore, unresolved: false },
+  { entry: directSearch, unresolved: false },
+  { entry: aliasCore, unresolved: false },
+  { entry: aliasSearch, unresolved: false },
+  { entry: unresolvedTarget, unresolved: false },
+  { entry: unresolvedSql, unresolved: true },
+  ...invalidBindings.map((entry) => ({ entry, unresolved: false })),
+]), [true, true, true, true, true, true, false, false, false, false]);
 
 process.stdout.write("D1_APP_SQL extractor fixtures PASS\n");

@@ -9,6 +9,11 @@ import time
 ROOT = Path(__file__).resolve().parents[2]
 DEPTH = 100
 STORES = ("core", "search")
+BINDING_PROVENANCES = frozenset({"direct-bind", "dynamic-bind-arguments", "direct-no-bind",
+                                "indirect-or-unknown", "varies-by-invocation"})
+DIRECT_TARGET_STATUS = "resolved-direct-binding"
+LOCAL_ALIAS_TARGET_STATUS = "resolved-local-const-alias"
+UNKNOWN_TARGET_STATUS = "unresolved-receiver"
 
 
 def quoted(name: str) -> str:
@@ -25,6 +30,40 @@ def category(error: sqlite3.Error) -> str:
             or "did not supply a value for binding parameter" in message):
         return "SQL_BINDING_ARITY_MISMATCH"
     return "SQL_COMPILE_FAILED"
+
+
+def valid_arity(value: object) -> bool:
+    return value is None or (isinstance(value, int) and not isinstance(value, bool) and value >= 0)
+
+
+def valid_binding(site: object) -> bool:
+    if not isinstance(site, dict):
+        return False
+    target = site.get("targetStore")
+    target_status = site.get("targetStatus")
+    if target in STORES:
+        if target_status not in (DIRECT_TARGET_STATUS, LOCAL_ALIAS_TARGET_STATUS):
+            return False
+    elif target == "unknown":
+        if target_status != UNKNOWN_TARGET_STATUS:
+            return False
+    else:
+        return False
+    provenance = site.get("bindingProvenance")
+    return (isinstance(site.get("receiver"), str)
+            and valid_arity(site.get("bindingArity"))
+            and isinstance(provenance, str) and provenance in BINDING_PROVENANCES)
+
+
+def valid_application_sql_entry(site: object, unresolved: bool = False) -> bool:
+    if not isinstance(site, dict) or not isinstance(site.get("location"), str) or not valid_binding(site):
+        return False
+    if not unresolved:
+        return isinstance(site.get("sql"), str)
+    classification = site.get("classification")
+    return (isinstance(site.get("reason"), str)
+            and isinstance(classification, str)
+            and classification in {"missing-prepare-argument", "dynamic-or-unresolved-sql", "static-unrecognized-sql"})
 
 
 def connection(depth: int = DEPTH) -> sqlite3.Connection:
@@ -210,33 +249,10 @@ def main() -> int:
         if not isinstance(application_queries, list) or not isinstance(unresolved, list):
             print("D1_DEPTH_SETUP_FAILED: application SQL inventory is invalid.")
             return 2
-        def valid_arity(value: object) -> bool:
-            return value is None or (isinstance(value, int) and not isinstance(value, bool) and value >= 0)
-
-        def valid_binding(site: object) -> bool:
-            if not isinstance(site, dict):
-                return False
-            target = site.get("targetStore")
-            expected_status = "unresolved-receiver" if target == "unknown" else "resolved-direct-binding"
-            provenances = {"direct-bind", "dynamic-bind-arguments", "direct-no-bind",
-                           "indirect-or-unknown", "varies-by-invocation"}
-            return (isinstance(site.get("receiver"), str)
-                    and target in ("core", "search", "unknown")
-                    and site.get("targetStatus") == expected_status
-                    and valid_arity(site.get("bindingArity"))
-                    and site.get("bindingProvenance") in provenances)
-
-        if any(not isinstance(query, dict) or not isinstance(query.get("sql"), str)
-               or not isinstance(query.get("location"), str) or not valid_binding(query)
-               for query in application_queries):
+        if any(not valid_application_sql_entry(query) for query in application_queries):
             print("D1_DEPTH_SETUP_FAILED: recovered application SQL entry is invalid.")
             return 2
-        if any(not isinstance(site, dict) or not isinstance(site.get("location"), str)
-               or not isinstance(site.get("reason"), str)
-               or site.get("classification") not in {
-                   "missing-prepare-argument", "dynamic-or-unresolved-sql", "static-unrecognized-sql"
-               }
-               or not valid_binding(site) for site in unresolved):
+        if any(not valid_application_sql_entry(site, unresolved=True) for site in unresolved):
             print("D1_DEPTH_SETUP_FAILED: unresolved application SQL entry is invalid.")
             return 2
         strict_target_qualification = inventory.get("strictTargetQualification")
@@ -292,7 +308,8 @@ def main() -> int:
             print(f"D1_APP_SQL unresolved_sites_omitted={len(unresolved) - 30}")
     incomplete_targets = (unresolved_targets > 0 or unknown_arities > 0 or bool(unresolved)
                           or target_failures > 0)
-    qualification = "INCOMPLETE" if incomplete_targets else "DIRECT_BINDINGS_PASS"
+    qualification = ("INCOMPLETE" if incomplete_targets else "DIRECT_BINDINGS_PASS"
+                     if strict_target_qualification else "NOT_REQUESTED")
     print(f"D1_APP_SQL target_qualification={qualification} unresolved_targets={unresolved_targets} "
           f"unknown_arities={unknown_arities} unresolved_sites={len(unresolved)} target_failures={target_failures} "
           f"mode={'strict' if strict_target_qualification else 'depth-only'}")

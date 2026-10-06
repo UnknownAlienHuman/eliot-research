@@ -60,6 +60,7 @@
     "test:library-browser": "node scripts/test-library-browser.mjs",
     "test:owner-e2e": "node --test tests/integration/browser/library.spec.ts tests/integration/browser/raw-file-browser.test.mjs",
     "d1:depth": "node infra/d1/check-expression-depth.mjs",
+    "d1:qualify-targets": "node infra/d1/check-expression-depth.mjs --strict-targets",
     "test:root": "vitest run --config vitest.config.ts --passWithNoTests=false --reporter=verbose",
     "test:root:list": "vitest list --config vitest.config.ts --filesOnly",
     "test:worker": "pnpm --filter @eliotr/core test && pnpm test:artifacts-worker",
