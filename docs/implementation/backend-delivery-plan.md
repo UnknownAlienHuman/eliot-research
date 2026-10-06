@@ -1,7 +1,7 @@
 # Backend delivery plan
 
 Current execution order, refreshed on 2026-10-06 against `main`
-`dd91306a6f7aced0168d2406add9ef49fde1ba5a`.
+`ec575a955fd3892e92ab5690386f1a1fa57b5460`.
 
 The [October 3 functional integration checkpoint](product-resume-2026-10-03.md)
 records earlier owner configuration, immutable run capture, MCP, and provisioning
@@ -12,12 +12,14 @@ a model response do not establish that acceptance.
 
 The assembled source covers catalog-based model configuration and native BYOK
 transport, durable owner/delegated policy parity, the existing AI Search evidence
-path, bounded MCP reads and results, and the adaptive owner workspace.
-The latest real README Research run committed ten stages and then failed at
-RECONCILE with `MODEL_PROFILE_BINDING_AUTHORITY_STALE`; it did not complete the
-18-stage workflow. The local native Workflow still completes all 18 stages, but
-the named local checks below do not establish deployed execution. Native MCP
-client authorization remains unverified.
+path, bounded MCP reads and results, and the adaptive owner workspace. The
+current live README Research run passed the previously failing RECONCILE stage,
+then stopped while executing FREEZE_EVIDENCE after 11 of 18 stages had
+committed, returning `WORKFLOW_EFFECT_UNCERTAIN`; it did not complete the
+workflow. The local native
+Workflow still completes all 18 stages, but the named local checks below do not
+establish deployed execution. Native MCP client authorization remains
+unverified.
 
 ## Active backend goal, October 6
 
@@ -32,17 +34,24 @@ work, including proposed migration 0121. Existing backup code, storage, bindings
 and receipts are historical disabled baseline only; they are not active release
 or acceptance obligations. Do not extend or resume that work.
 
-At this checkpoint, `main` is `dd91306a6f7aced0168d2406add9ef49fde1ba5a`;
-the live Worker is generation `git-dd91306a6f7a`, version 71 at 100% traffic,
-with 120 applied migrations excluding 0121. Both built-in GLM 5.3 qualification
-calls (SYNTHESIZE and AUDIT) returned LIVE; the saved selected project is at
-configuration revision 1 with readiness `ready`. The real README Research run
-above failed after ten committed stages. A source audit found the profile
-authority query selects `budget_expires_at_ms` while its decoder expects
-`run_budget_expires_at_ms`. The candidate alias correction, #255 hold repair,
-and #294 D1 context proof remain under review; they are not published, deployed,
-or live-verified. These results
-do not establish full Research or erasure acceptance.
+At this checkpoint, `main` is `ec575a955fd3892e92ab5690386f1a1fa57b5460`;
+the live Worker is generation `git-ec575a955fd3`, version 72 at 100% traffic.
+Native deployment readback confirms the release and current bindings. Both
+built-in GLM 5.3 qualification calls (SYNTHESIZE and AUDIT) returned LIVE; the
+saved selected project is at configuration revision 1 with readiness `ready`.
+The latest real README Research run passed RECONCILE, then failed while executing
+FREEZE_EVIDENCE after 11 of 18 stages had committed, with nonretryable
+`WORKFLOW_EFFECT_UNCERTAIN` (`phase=STAGE`, no answer available). The native
+transition remains STARTED with no output; the same-window exact-identity
+citation-receipt query returned zero rows, while the recorded stage-10 R2
+digest matches. Because the citation resolver identity omits `created_at`, the
+zero-row observation does not establish whether citation materialization
+happened before the failure, reused an earlier identical receipt, or was never
+reached. The inner failure cause is unconfirmed and the run must not be replayed. The alias
+correction is live and passed the formerly failing RECONCILE stage; the #255
+hold recheck is present in the current release, but its broader erasure
+acceptance remains open. #294's exact D1 target-binding proof is still pending.
+These results do not establish full Research or erasure acceptance.
 
 The dated checkpoints below are retained as historical evidence and are
 superseded wherever they conflict with this active objective.
@@ -310,9 +319,11 @@ durable results. The cited-handle check does not assert every returned source
 revision field. The local bundle used the top-level development profile with
 `local-unset` generation and Access/MCP placeholders. Vite reported a chunk over
 500 kB; the measured gzip budget passed. Production configuration, startup/heap,
-browser behavior, real provider execution and the historical RECONCILE cause
-remain unqualified. Previously passed source compilation, lint, SQL and budget
-checks were not repeated.
+browser behavior and real provider execution remain unqualified at this earlier
+checkpoint. At that time the RECONCILE cause was still unknown; the active
+section above records the later alias correction and the separate unresolved
+FREEZE_EVIDENCE failure. Previously passed source compilation, lint, SQL and
+budget checks were not repeated.
 
 Cloudflare control-token preparation now has a documented OAuth route through
 the separate beta `cf` CLI. Local-only discovery with `cf@1.0.0-beta.12` verified
@@ -705,11 +716,18 @@ for all 158 changed source files. The package-boundary scan also passed after
 removing destination self-imports and distinguishing generated PWA type output
 from source. Acceptance suites, release builds, native client
 authorization, live model calls and the same-document NotebookLM comparison
-remain pending. The historical RECONCILE failure cause remains unresolved.
+remain pending. At this October 5 checkpoint the RECONCILE failure cause
+remained unresolved; the later alias correction and separate FREEZE_EVIDENCE
+failure are recorded above as current evidence.
 
 The [product integration checkpoint](product-resume-2026-10-02.md) records actual local COW/publication/restore checks and remaining code separately from live approval. The active result remains S92 integration, not release acceptance.
 
-This is the volatile handoff and queue. Refresh `origin/main` and the active task before editing. [PR #292](https://github.com/UnknownAlienHuman/eliot-research/pull/292) preserves the original S01–S99 passports and negative acceptance criteria; it is not a second queue.
+This is the volatile handoff and queue. Refresh `origin/main` and the active
+task before editing. [PR #292](https://github.com/UnknownAlienHuman/eliot-research/pull/292)
+was closed unmerged on 2026-10-06 as a superseded planning index. Its original
+S01–S99 passports and negative acceptance criteria remain available at the
+pinned branch head and through the immutable referenced links; closure is
+administrative and does not waive those requirements. It is not a second queue.
 
 ## Completion boundaries
 
@@ -722,36 +740,35 @@ Keep these states separate:
 
 The current phase is product code first: compilation, scoped lint, the depth-100 SQL compiler when relevant, and minimal Clippy for Rust changes. Broad behavioral/browser/native/mutation/live suites follow assembly. Deferred checks remain mandatory and must not be labelled `PASS`.
 
-## Current active checkpoints — October 5 implementation sprint
+## Current active checkpoints — October 6
 
 [Issue #301](https://github.com/UnknownAlienHuman/eliot-research/issues/301)
-tracks the current bounded implementation queue and preserved S92 residual
-acceptance. Fifteen superseded planning PRs were closed after their complete
-criteria were transferred by reference; their closure is not feature acceptance.
-Original S01–S99 criteria remain in #292 and the immutable referenced passports.
+tracks the bounded implementation queue and preserved S92 residual acceptance.
+Original S01–S99 criteria remain in closed, unmerged #292 and the immutable
+referenced passports; that closure did not waive acceptance criteria.
+The queue is narrowed to the user's current no-backups objective: do not resume
+backup, export, offsite, restore, or migration-0121 work. Historical closures and
+implementation checkpoints are not substitutes for the remaining acceptance.
 
-Two implementation lanes and the owner-workspace pass run on disjoint files:
-
-| Owner lane | Current task | Completion boundary |
+| Item | Current state | Remaining boundary |
 |---|---|---|
-| Access and delivery | #316 inbox Assets routing; #317 JWKS deadline; #256 scheduled/outbox and Queue fault isolation | Published `d46bc194`; narrow local tests and affected compilation passed, native/live acceptance remains pending |
-| Backup and erasure | #255/#257/#258; first separate primary-parts inventory, then producer fencing and composed purge | Inventory `54c9aae` plus streaming/byte-budget correction `444a32ae` published; producer fencing, deletion composition and restore acceptance remain open |
-| Owner workspace | #267 typography, tonal themes and Markdown reading | Typography `cedf14ca` published; follow-up aligns panel headers, groups tools and compacts source/readiness metadata. Table and layout browser checks are local-only; live and overall owner acceptance remain pending |
+| #209 Research failure preservation (Draft PR) | The old RECONCILE failure is corrected in the live release; after 11 of 18 stages had committed, the latest run failed while executing FREEZE_EVIDENCE. | Preserve and expose the actual bounded first/latest cause through the native Workflow/status path, reconcile uncertain effects without blind replay, and complete the required end-to-end failure and 18-stage evidence. |
+| #255 erasure holds (Draft PR) | The persisted-target hold recheck is in the current release. | Complete producer/deletion fencing and the remaining race, managed-location, outage/hold, and live closure criteria. Keep erasure disabled until full acceptance; no backup/restore work. |
+| #294 D1 target binding (Open issue) | The current strict aggregate recovers 1,028 queries with zero SQL compile and target-schema failures, but reports 1,011 unknown targets, 79 unknown arities, and 130 unresolved prepare sites; result remains `INCOMPLETE`. | Prove exact dynamic-query target/column/trigger coverage and required native D1 positive, negative, replay, and concurrency cases on the exact build. |
+| #301 delivery queue (Open issue) | Queue tracker is still open; its public body contains stale backup work. | Refresh the bounded queue against this plan, preserve S92 residual acceptance, and do not treat tracker or narrow PR closure as product acceptance. |
+| #319 operator privacy (Open issue) | Query-redaction configuration readback is recorded privately. | Verify a nonsecret synthetic query marker is absent from invocation logs while useful correlation remains, and verify ordinary PWA cookie attributes separately from MCP behavior. |
+| #256, #267, #268, #222 (Draft PRs) | Remain open. | Preserve their own bounded acceptance; they do not supersede the active Research, #255, and #294 gates. |
 
-The workspace checkpoint preserves explicit Markdown hard breaks while rendering
-ordinary source soft wraps as spaces. It changes no original evidence bytes.
-System/light/dark theme behavior remains available. No deployment, remote
-migration, provider execution or live qualification follows from these checks.
+Issues #316, #317, and #318 are closed on GitHub. Their narrow closure does not
+establish broader browser, deployment, owner-workspace, or Research acceptance.
+No public status change was made as part of this documentation refresh.
 
-Next dependency order: finish residual #316/#256 acceptance (#317 is complete), then #255/#257/#258, then #209
-and the remaining S92 model/MCP path. Follow with #268, #318, #222 and #294.
-#319 is a separate operator configuration review. Refresh each task before
-editing; the historical queues below do not override this order.
-
-Combined source integration preserves both backend checkpoints. The source-only
-Core heuristic currently reports 10,003 lines against 10,000; this is an explicit
-remaining maintainability check, not a measured Worker size or runtime failure.
-Do not hide it by removing tests, compressing formatting or raising the limit.
+An earlier combined-source review recorded 10,003 Core source lines against a
+10,000-line heuristic limit. This is a historical maintainability measurement,
+not a current exact-main source count, measured Worker size, or runtime failure;
+remeasure the current source before treating it as active. Do not hide an
+over-limit result by removing tests, compressing formatting, or raising the
+limit.
 
 ### Manual inbox routing verifier
 
@@ -945,12 +962,14 @@ After code assembly: verify the delivered root-suite fixes (`168a29f6`, `df139b4
 
 ## Cross-cutting records - current state versus historical evidence
 
-These are not permission to interrupt the active checkpoint unless they block its code:
+These are not permission to interrupt the active checkpoint unless they block its code.
+As of 2026-10-06, #209 and #255 remain Draft/open PRs, and #294, #301, and #319
+remain open issues. #316, #317, and #318 are closed narrow checkpoints; #256,
+#267, #268, and #222 remain Draft/open PRs. Do not infer feature acceptance from
+these statuses or close the open items based only on the current release.
 
-Only #294 and #301 are open at the baseline above; refresh `gh issue list --state open`.
-
-- #294 (open) - one calibrated depth-100 compiler is installed. The refreshed local run compiles 96 Core migration files, 22 views and 399 generic forms with zero failures, plus four Search migrations. This is not exhaustive application/dynamic-query or native authorization proof. The previously recorded 711-shape/64-unresolved-site inventory is historical, not a current census. Reproducible source-derived application and UPDATE-OF-sensitive coverage remains required.
-- #301 (open) - retain original task/passport criteria and reconcile selected residuals against exact main. This handoff corrects known stale claims; it does not migrate all tasks or close every legacy obligation.
+- #294 (open) - one calibrated depth-100 compiler is installed. An earlier local run compiled 96 Core migration files, 22 views and 399 generic forms with zero failures, plus four Search migrations. This historical result is not exhaustive application/dynamic-query or native authorization proof. The previously recorded 711-shape/64-unresolved-site inventory is historical, not a current census. Reproducible source-derived application and UPDATE-OF-sensitive coverage remains required.
+- #301 (open) - retain original task/passport criteria and reconcile selected residuals against exact main. The active queue above excludes canceled backup/export/offsite/restore work, including migration 0121; it does not migrate all tasks or close every legacy obligation.
 - #293/#295/#296/#297/#300/#304/#305 (closed) - retain delivered source and the distinct pending exact-build native, fault/replay, root/browser and CI evidence; do not recreate their repairs.
 - #298 (closed 2026-10-01) - stable scrollbar gutter delivered in `4c897429`; viewport assertions remain unchanged. Closure is not a retained same-SHA Windows/Ubuntu browser result.
 - #106 (closed 2026-10-01) - original canonical survivors were already zero historically; vector parser kill-test source is now delivered. #176 remains the Rust acceptance/debt passport: zero unexplained load-bearing survivors and zero timeouts, with fresh complete mutation and Miri results where required. Do not reopen an old caught-ratio threshold choice.
