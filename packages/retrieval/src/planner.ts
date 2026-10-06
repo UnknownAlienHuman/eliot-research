@@ -53,14 +53,10 @@ export const DIRECT_LANES: readonly RetrievalLane[] = ["IDENT", "EXACT", "LEX"];
 export const MANAGED_SEMANTIC_LANES: readonly RetrievalLane[] = ["SEM"];
 
 export function directLanesPrecedeSemantic(plan: QueryPlan): boolean {
-  const planned = new Set<RetrievalLane>(plan.lanes);
-  const directPlanned = DIRECT_LANES.some((lane) => planned.has(lane));
-  if (!directPlanned) return true;
-  const position = new Map<RetrievalLane, number>(plan.lanes.map((lane, index) => [lane, index]));
-  const firstDirect = Math.min(
-    ...DIRECT_LANES.filter((lane) => planned.has(lane)).map((lane) => position.get(lane) as number),
-  );
-  return MANAGED_SEMANTIC_LANES.filter((lane) => planned.has(lane)).every(
-    (lane) => (position.get(lane) as number) > firstDirect,
-  );
+  let semanticSeen = false;
+  for (const lane of plan.lanes) {
+    if (MANAGED_SEMANTIC_LANES.includes(lane)) semanticSeen = true;
+    else if (semanticSeen && DIRECT_LANES.includes(lane)) return false;
+  }
+  return true;
 }
