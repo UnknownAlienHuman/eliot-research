@@ -51,6 +51,34 @@ useful for expression-depth/schema compilation while explicitly reporting incomp
 Exit 1 means a schema or known-target application-query compilation failure (or incomplete target
 coverage in strict mode); exit 2 means missing tooling or an invalid compiler setup.
 
+## TypeScript route proof and optional classification details
+
+The model-qualification HTTP route is selected through two provenance passes over one TypeScript
+`Program`. The route-table entry and exact call edges are matched by checker symbol identity, then the
+selected route is followed through the route-matching and fallthrough structure. A same-spelled but
+unrelated route or an ambiguous path does not qualify a query target; unsupported or unresolved cases
+remain unknown.
+
+Set `D1_DEPTH_CLASSIFICATION_DETAILS=1` to emit one sanitized JSON classification record from the same
+inventory and compiler invocation. The record contains source locations, target and binding metadata,
+candidate-schema outcomes, counts, and allowlisted unresolved classifications. It omits SQL text,
+receiver expressions, and row data. The setting does not launch another compiler or change the
+default output when unset. It does not change the strict gate: an incomplete strict run still exits 1.
+
+## October 6, 2026 reviewed analyzer candidate
+
+For the reviewed seven-file analyzer candidate based on `main`
+`74e7c064252cc4d5b33106e5387be37379e87650` (published SHA recorded in #294), the calibrated SQLite
+3.50.4 depth-100 run scanned 120 Core migrations, 147 tables, 24 views, four Search migrations, 613
+schema shapes, and 1,028 application queries. Candidate compilation had zero compile failures and zero
+target-schema failures. The three model-summary query sites resolve to `CORE_DB` with binding arities
+1, 1, and 9; each compiles in Core and does not compile in Search.
+
+The strict report remains `INCOMPLETE` and exits 1: 1,008 targets are unknown (previously 1,011), 79
+binding arities are unknown, and 130 sites remain unresolved. The route-proof correction and successful
+candidate compilation do not establish complete target provenance. This checkpoint does not qualify
+production D1 or every dynamic application query; #294 remains open.
+
 This is the depth-100 check for #293/#294, **not full D1 emulation or behavioral acceptance**. It does
 not prove authorization, concurrency, readback, native runtime limits or every dynamically constructed
 application query. The real-workerd jobs and S91/S92 acceptance remain required. Migration 0084

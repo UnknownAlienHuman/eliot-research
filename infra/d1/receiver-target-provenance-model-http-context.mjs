@@ -359,7 +359,31 @@ export function createModelQualificationHttpContextProof({
     && isStringLiteral(clause.expression, MODEL_OPERATION));
   if (targetCases.length !== 1) return undefined;
   const targetCase = targetCases[0];
-  for (const clause of operationExpression.caseBlock.clauses) {
+  const routeClauses = operationExpression.caseBlock.clauses;
+  const targetIndex = routeClauses.indexOf(targetCase);
+  function abruptForRoute(statement) {
+    if (ts.isReturnStatement(statement) || ts.isThrowStatement(statement)) return true;
+    if (ts.isBreakStatement(statement)) {
+      if (statement.label) return false;
+      let current = statement.parent;
+      while (current) {
+        if (current === operationExpression) return true;
+        if (ts.isIterationStatement(current, true) || ts.isSwitchStatement(current)) return false;
+        current = current.parent;
+      }
+      return false;
+    }
+    if (ts.isBlock(statement)) return statement.statements.length > 0
+      && abruptForRoute(statement.statements.at(-1));
+    return ts.isIfStatement(statement) && Boolean(statement.elseStatement)
+      && abruptForRoute(statement.thenStatement) && abruptForRoute(statement.elseStatement);
+  }
+  for (let index = 0; index < targetIndex;) {
+    while (index < targetIndex && routeClauses[index].statements.length === 0) index += 1;
+    if (index === targetIndex || !abruptForRoute(routeClauses[index].statements.at(-1))) return undefined;
+    index += 1;
+  }
+  for (const clause of routeClauses) {
     if (ts.isCaseClause(clause) && !ts.isStringLiteral(parens(clause.expression))) return undefined;
   }
   const targetReturns = targetCase.statements.filter(ts.isReturnStatement);
@@ -447,6 +471,7 @@ export function createModelQualificationHttpContextProof({
     return indexes;
   }
 
+  skip(responseCall.node, 1);
   const safeCalls = new Set([accessCall.node, responseCall.node]);
   const inactiveHttpNodes = new Set([readReadinessCall.node, staticCall.node]);
   const prefixGuardSet = new Set(prefixGuards);
@@ -458,11 +483,24 @@ export function createModelQualificationHttpContextProof({
     if (callNode === factoryCall || apiCalls.some((call) => call.node === callNode)) return "fallback";
     return undefined;
   }
+  function capturesHttpEnvironment(node) {
+    let captured = false;
+    function inspect(candidate) {
+      if (captured) return;
+      if (ts.isIdentifier(candidate) && identifierValue(candidate) === httpEnvSymbol) captured = true;
+      ts.forEachChild(candidate, inspect);
+    }
+    inspect(node);
+    return captured;
+  }
   function collectHttpEnvironmentUses() {
     let valid = true;
     function visit(node) {
       if (node !== http.body && (ts.isFunctionDeclaration(node) || ts.isMethodDeclaration(node)
-          || ts.isArrowFunction(node) || ts.isFunctionExpression(node))) return;
+          || ts.isArrowFunction(node) || ts.isFunctionExpression(node))) {
+        if (capturesHttpEnvironment(node)) valid = false;
+        return;
+      }
       if (ts.isIdentifier(node) && identifierValue(node) === httpEnvSymbol) {
         let current = node;
         let callNode;

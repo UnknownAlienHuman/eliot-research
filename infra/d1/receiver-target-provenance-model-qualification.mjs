@@ -232,16 +232,16 @@ export function createModelQualificationTargetPolicy({
 
   const dispatchPath = normalized(paths.dispatch);
   const summaryPath = normalized(paths.summary);
-  const exactEdges = new Set([
-    `${httpKey}->${routeKey}`,
-    `${routeKey}->${handlerKey}`,
-    `${handlerKey}->${factoryKey}`,
-    `${factoryKey}->${executeKey}`,
+  const exactEdges = new Map([
+    [httpKey, new Set([routeKey])],
+    [routeKey, new Set([handlerKey])],
+    [handlerKey, new Set([factoryKey])],
+    [factoryKey, new Set([executeKey])],
   ]);
   function allowsCall(parent, child) {
     const parentKey = key(parent);
     const childKey = key(child);
-    if (exactEdges.has(`${parentKey}->${childKey}`)) return true;
+    if (exactEdges.get(parentKey)?.has(childKey)) return true;
     const parentPath = functionSource(parent);
     const childPath = functionSource(child);
     if (parentPath === dispatchPath && childPath === dispatchPath) return true;

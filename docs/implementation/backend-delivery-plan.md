@@ -1,7 +1,9 @@
 # Backend delivery plan
 
-Current execution order, refreshed on 2026-10-06 against `main`
-`ec575a955fd3892e92ab5690386f1a1fa57b5460`.
+Current execution order, refreshed on 2026-10-06 for the reviewed seven-file
+analyzer candidate based on `main` `74e7c064252cc4d5b33106e5387be37379e87650`;
+its published SHA is recorded in #294. The deployed runtime remains at its
+separate Worker checkpoint, `git-ec575a955fd3`.
 
 The [October 3 functional integration checkpoint](product-resume-2026-10-03.md)
 records earlier owner configuration, immutable run capture, MCP, and provisioning
@@ -34,11 +36,13 @@ work, including proposed migration 0121. Existing backup code, storage, bindings
 and receipts are historical disabled baseline only; they are not active release
 or acceptance obligations. Do not extend or resume that work.
 
-At this checkpoint, `main` is `ec575a955fd3892e92ab5690386f1a1fa57b5460`;
-the live Worker is generation `git-ec575a955fd3`, version 72 at 100% traffic.
-Native deployment readback confirms the release and current bindings. Both
-built-in GLM 5.3 qualification calls (SYNTHESIZE and AUDIT) returned LIVE; the
-saved selected project is at configuration revision 1 with readiness `ready`.
+The measured seven-file analyzer candidate is based on `main`
+`74e7c064252cc4d5b33106e5387be37379e87650`; its published SHA is recorded in
+#294. The live Worker remains at generation `git-ec575a955fd3`, version 72 at
+100% traffic. Native deployment readback confirms that deployed release and its
+current bindings. The two previously completed built-in GLM 5.3 qualification
+calls (SYNTHESIZE and AUDIT) returned LIVE; the saved selected project is at
+configuration revision 1 with readiness `ready`.
 The latest real README Research run passed RECONCILE, then failed while executing
 FREEZE_EVIDENCE after 11 of 18 stages had committed, with nonretryable
 `WORKFLOW_EFFECT_UNCERTAIN` (`phase=STAGE`, no answer available). The native
@@ -52,6 +56,36 @@ correction is live and passed the formerly failing RECONCILE stage; the #255
 hold recheck is present in the current release, but its broader erasure
 acceptance remains open. #294's exact D1 target-binding proof is still pending.
 These results do not establish full Research or erasure acceptance.
+
+### October 6 source-derived D1 and local native checkpoint
+
+The frozen depth-100 strict run on this reviewed seven-file analyzer candidate
+used SQLite 3.50.4, passed its limit calibration, and scanned 120 Core migrations,
+147 tables, 24 views, four Search migrations,
+613 schema shapes, and 1,028 application queries. It reported zero SQL compile
+failures and zero target-schema failures. The TypeScript route proof performs
+two provenance passes over one `ts.Program`, using symbol-keyed exact call edges
+to select the model-qualification route and carry that selection through the
+route match/fallthrough path. The three model-summary queries now resolve to
+`CORE_DB` with binding arities 1, 1, and 9; they compile against Core and are not
+accepted by Search.
+
+Strict target qualification still exits 1 as `INCOMPLETE`: 1,008 targets remain
+unknown (down from 1,011), 79 binding arities are unknown, and 130 SQL sites
+remain unresolved. The opt-in `D1_DEPTH_CLASSIFICATION_DETAILS=1` report adds
+sanitized inventory and compile metadata to that same compiler invocation; it
+does not expose SQL or receiver expressions, change the default output, or turn
+unknown coverage into a pass. The complete current criteria and boundaries are
+in the [D1 schema ownership guide](../../infra/d1/README.md). #294 remains open.
+
+One exact `core-default` local workerd/D1 run on the reviewed candidate passed
+64 test cases across four fixtures: 0084 authority, D1 ledger, Research
+Workflow, and Workflow recovery. The run used no remote bindings and its four
+test-source pins match this candidate. It covers bounded local authorization,
+replay, concurrency, and
+lost-ack behavior; it is not production D1 qualification or deployed Research
+acceptance. No runtime source changed in the analyzer/native-test checkpoint,
+and the live Worker remains the separate `git-ec575a955fd3` release above.
 
 The dated checkpoints below are retained as historical evidence and are
 superseded wherever they conflict with this active objective.
@@ -281,15 +315,13 @@ backup-part, export, and offsite requirements are historical and canceled under
 the current objective. Erasure remains disabled pending its own full acceptance;
 this historical backup design does not authorize new backup or restore work.
 
-The #294 checkpoint records direct Core/Search receiver provenance and known
-bind arity and rejects a known-target failure even if the other schema accepts
-the query. The depth-100 compiler passed 114 Core and four Search migrations,
-532 Core statement shapes and 974 recovered application queries with zero
-failures. It reports target qualification as `INCOMPLETE`: 957 unknown receiver
-targets, 44 unknown arities and 122 unresolved sites remain. Explicit
-`D1_DEPTH_STRICT_TARGETS=1` makes those gaps fail closed; that strict run and
-native D1/workerd qualification are not claimed. Ten fixture/test-support
-sources are inventoried separately. #294 remains open.
+Historical #294 checkpoint (superseded by the October 6 source checkpoint
+above): the depth-100 compiler passed 114 Core and four Search migrations, 532
+Core statement shapes, and 974 recovered application queries with zero
+failures. It reported 957 unknown receiver targets, 44 unknown arities, and 122
+unresolved sites. That earlier strict run and native D1/workerd qualification
+were not claimed. Ten fixture/test-support sources were inventoried
+separately.
 
 The release gates still report disabled required ERASURE and RETRIEVAL slices.
 A guarded `MAINTENANCE` deployment can update the existing Worker/PWA after
@@ -968,7 +1000,7 @@ remain open issues. #316, #317, and #318 are closed narrow checkpoints; #256,
 #267, #268, and #222 remain Draft/open PRs. Do not infer feature acceptance from
 these statuses or close the open items based only on the current release.
 
-- #294 (open) - one calibrated depth-100 compiler is installed. An earlier local run compiled 96 Core migration files, 22 views and 399 generic forms with zero failures, plus four Search migrations. This historical result is not exhaustive application/dynamic-query or native authorization proof. The previously recorded 711-shape/64-unresolved-site inventory is historical, not a current census. Reproducible source-derived application and UPDATE-OF-sensitive coverage remains required.
+- #294 (open) - the October 6 reviewed seven-file analyzer candidate, based on `main` `74e7c064252cc4d5b33106e5387be37379e87650` with its published SHA recorded in this issue, scanned 120 Core and four Search migrations, 147 tables, 24 views, 613 schema shapes, and 1,028 application queries with zero compile or target-schema failures. Strict coverage remains `INCOMPLETE`: 1,008 unknown targets, 79 unknown arities, and 130 unresolved sites; the strict invocation exited 1. The exact four-file local workerd/D1 run passed 64/64 with remote bindings disabled. Production D1 qualification and complete source-derived target/query coverage remain open acceptance. Historical 96-migration and 711-shape inventories are not current measurements.
 - #301 (open) - retain original task/passport criteria and reconcile selected residuals against exact main. The active queue above excludes canceled backup/export/offsite/restore work, including migration 0121; it does not migrate all tasks or close every legacy obligation.
 - #293/#295/#296/#297/#300/#304/#305 (closed) - retain delivered source and the distinct pending exact-build native, fault/replay, root/browser and CI evidence; do not recreate their repairs.
 - #298 (closed 2026-10-01) - stable scrollbar gutter delivered in `4c897429`; viewport assertions remain unchanged. Closure is not a retained same-SHA Windows/Ubuntu browser result.

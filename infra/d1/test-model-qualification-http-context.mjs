@@ -42,11 +42,21 @@ const model = ({
   unsafeAccess = false,
   unsafeResponse = false,
   agentContainsTarget = false,
+  nestedEnvCapture = false,
+  routeFallthrough = false,
+  fallbackEnvSink = false,
+  predecessorEnvFallthrough = false,
+  predecessorEnvBreak = false,
+  predecessorConditionalBreak = false,
 } = {}) => {
   const core = swapped ? "env.SEARCH_DB" : "env.CORE_DB";
   const search = swapped ? "env.CORE_DB" : "env.SEARCH_DB";
   const httpEnv = routeAlias ? "routeEnv" : "env";
   const modelRoute = "system.research.model-qualification";
+  const predecessorCase = predecessorEnvFallthrough
+    ? 'case "system.before": mutateOtherSpecial(input.env);'
+    : predecessorEnvBreak ? 'case "system.before": mutateOtherSpecial(input.env); break;'
+      : predecessorConditionalBreak ? 'case "system.before": if (input.identity !== null) break; mutateOtherSpecial(input.env);' : "";
   const sources = new Map([
     [paths.env, `export interface D1PreparedStatement { bind(...values: unknown[]): D1PreparedStatement; first<T = unknown>(): Promise<T | null>; run(): Promise<void> }
 export interface D1Database { prepare(sql: string): D1PreparedStatement }
@@ -56,7 +66,8 @@ export interface ExportedHandler<E> { fetch(request: Request, env: E, executionC
 export default { fetch(request: Request, env: Env, context: unknown): unknown { return handleHttp(request, env, context); } } satisfies ExportedHandler<Env>;`],
     [paths.composition, `import type { Env } from "./env.js"; import { createErasureOwnerService } from "./erasure-owner-service.js";
 function ownerApi(env: Env): unknown { return { erase: () => createErasureOwnerService({ env }) }; }
-export function createApplication(input: { readonly env: Env; readonly executionContext: unknown }): unknown { return ownerApi(input.env); }`],
+function semanticApi(env: Env): void { void env; }
+export function createApplication(input: { readonly env: Env; readonly executionContext: unknown }): unknown { ${fallbackEnvSink ? "semanticApi(input.env);" : ""} return ownerApi(input.env); }`],
     [paths.ownerService, `import type { Env } from "./env.js"; import { createConfiguredErasureCoordinator } from "./erasure-runtime.js";
 export function createErasureOwnerService(input: { readonly env: Env }): unknown { return createConfiguredErasureCoordinator(input.env); }`],
     [paths.appRuntime, `import type { Env } from "./env.js"; import { createConfiguredErasureCoordinator as inLibrary } from "../../../packages/cloudflare-erasure-operations/src/erasure-runtime.js";
@@ -86,6 +97,7 @@ function resolveRoute(request: Request, pathname: string): { readonly match?: Ro
   if (match !== undefined) return { match, allowedMethods: [] }; return { allowedMethods: [] };
 }
 export async function handleHttp(request: Request, env: Env, executionContext: unknown, dependencies: { readonly applicationFactory?: typeof createApplication } = {}): Promise<Response> {
+  ${nestedEnvCapture ? "const capture = () => env.CORE_DB;" : ""}
   ${routeMutation ? "env.CORE_DB = env.SEARCH_DB;" : ""} ${routeAlias ? "const routeEnv: Env = env;" : ""}
   const url = new URL(request.url); const resolved = resolveRoute(request, url.pathname);
   if (resolved.match === undefined) { if (resolved.allowedMethods.length > 0) return new Response(); if (isApiPath(url.pathname)) return new Response(); return fetchStaticAsset(request, env, url); }
@@ -104,11 +116,14 @@ interface RouteDefinition { readonly operation: string; readonly maximum_request
 interface Input { readonly request: Request; readonly env: Env; readonly url: URL; readonly match: RouteMatch; readonly context: unknown; readonly identity: unknown; readonly dependencies: unknown }
 function requireDriveExchangeTransport(env: Env): void { void env.CORE_DB; } function handleAgentTaskHttp(request: Request, env: Env): Response { void request; void env.SEARCH_DB; return new Response(); }
 function handleOtherSpecial(env: Env): Response { void env.CORE_DB; return new Response(); }
+${predecessorEnvFallthrough || predecessorEnvBreak || predecessorConditionalBreak
+    ? 'function mutateOtherSpecial(env: Env): Response { const key: keyof Env = "CORE_DB"; env[key] = env.SEARCH_DB; return new Response(); }' : ""}
 export async function dispatchHttpSpecialRoute(input: Input): Promise<Response | null> {
   if (input.match.route.operation.startsWith("google.oauth.") || input.match.route.operation.startsWith("google.connection.")) requireDriveExchangeTransport(input.env);
   if (isAgentTaskHttpOperation(input.match.route.operation)) return handleAgentTaskHttp(input.request, input.env);
   switch (input.match.route.${computedOperation ? '["operation"]' : "operation"}) {
-    case "${modelRoute}": return handleResearchModelQualification(input.request, input.env);
+    ${predecessorCase}
+    case "${modelRoute}": ${routeFallthrough ? "handleResearchModelQualification(input.request, input.env);" : "return handleResearchModelQualification(input.request, input.env);"}
     case "system.other": return handleOtherSpecial(input.env);
     default: return null;
   }
@@ -183,6 +198,17 @@ export async function recordResearchModelQualificationFailureSummary(database: D
   const files = [...sources.keys()];
   const program = ts.createProgram(files, options, host);
   const overrides = createErasureReceiverTargetOverrides(files, root, program);
+  if (!swapped && !conflict && !mutation && !alias && !routeAlias && !routeMutation && !computedOperation
+      && !publicRoute && !alteredGuard && !routeTableCast && !routeTableUnknownCast && !unsafeAccess
+      && !unsafeResponse && !agentContainsTarget && !nestedEnvCapture && !routeFallthrough && !fallbackEnvSink
+      && !predecessorEnvFallthrough && !predecessorEnvBreak && !predecessorConditionalBreak) {
+    const core = extractSourceText(sources.get(paths.coreLocation), paths.coreLocation,
+      overrides.get(paths.coreLocation.replaceAll("\\", "/").toLowerCase())).queries;
+    const search = extractSourceText(sources.get(paths.searchLocation), paths.searchLocation,
+      overrides.get(paths.searchLocation.replaceAll("\\", "/").toLowerCase())).queries;
+    assert.deepEqual(core.map((query) => query.targetStore), ["core"], "generic fallback still binds CORE erasure SQL");
+    assert.deepEqual(search.map((query) => query.targetStore), ["search"], "generic fallback still binds SEARCH erasure SQL");
+  }
   const summaryPath = paths.modelSummary.replaceAll("\\", "/").toLowerCase();
   return extractSourceText(sources.get(paths.modelSummary), paths.modelSummary, overrides.get(summaryPath)).queries;
 };
@@ -197,6 +223,10 @@ assert.deepEqual(positive.map((query) => query.sql), sql, "the synthetic owner P
 assert.deepEqual(positive.map((query) => query.targetStore), ["core", "core", "core"], JSON.stringify(positive.map(({ targetStore, targetStatus, receiver }) => ({ targetStore, targetStatus, receiver }))));
 assert.deepEqual(positive.map((query) => query.targetStatus), Array(3).fill("resolved-local-const-alias"));
 assert.deepEqual(model({ swapped: true }).map((query) => query.targetStore), ["search", "search", "search"]);
+assert.deepEqual(model({ fallbackEnvSink: true }).map((query) => query.targetStore), ["core", "core", "core"],
+  "the reachable fallback application cannot poison the selected model route");
+assert.deepEqual(model({ predecessorEnvBreak: true }).map((query) => query.targetStore), ["core", "core", "core"],
+  "a preceding mutating Env route separated by this switch's break cannot poison the selected model route");
 for (const [name, options] of [
   ["conflicting caller", { conflict: true }], ["handler alias", { alias: true }], ["handler mutation", { mutation: true }],
   ["route Env alias", { routeAlias: true }], ["route Env mutation", { routeMutation: true }],
@@ -204,6 +234,9 @@ for (const [name, options] of [
   ["changed non-null guard", { alteredGuard: true }], ["escaping access consumer", { unsafeAccess: true }],
   ["non-const route cast", { routeTableCast: true }], ["unknown route cast", { routeTableUnknownCast: true }],
   ["escaping response consumer", { unsafeResponse: true }], ["agent predicate overlap", { agentContainsTarget: true }],
+  ["nested Env capture", { nestedEnvCapture: true }], ["model case fallthrough", { routeFallthrough: true }],
+  ["predecessor Env fallthrough", { predecessorEnvFallthrough: true }],
+  ["predecessor conditional break", { predecessorConditionalBreak: true }],
 ]) {
   const rejected = model(options);
   assert.equal(rejected.length, 3, `${name} keeps all three SQL sites visible`);

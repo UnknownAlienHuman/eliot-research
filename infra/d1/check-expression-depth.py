@@ -1,6 +1,7 @@
 """Compile repository D1 schema and recovered application SQL; never execute probe writes."""
 from pathlib import Path
 import json
+import os
 import re
 import sqlite3
 import sys
@@ -14,6 +15,7 @@ BINDING_PROVENANCES = frozenset({"direct-bind", "dynamic-bind-arguments", "direc
 DIRECT_TARGET_STATUS = "resolved-direct-binding"
 LOCAL_ALIAS_TARGET_STATUS = "resolved-local-const-alias"
 UNKNOWN_TARGET_STATUS = "unresolved-receiver"
+DETAIL_REASONS = frozenset({"missing-prepare-argument", "dynamic-or-unresolved", "non-sql-prepare-argument"})
 
 
 def quoted(name: str) -> str:
@@ -234,6 +236,91 @@ def check_store(store: str, application_queries: list[dict], application_status:
         db.close()
 
 
+def classification_detail_record(inventory: dict, application_status: list[list[str]]) -> dict:
+    """Project validated inventory fields without SQL or receiver expressions."""
+    queries = inventory["queries"]
+    unresolved = inventory["unresolved"]
+    recovered_rows = []
+    unresolved_rows = []
+    unknown_targets = 0
+    unknown_arities = 0
+    target_failures = 0
+    compile_failures = 0
+
+    for index, query in enumerate(queries):
+        target = query["targetStore"]
+        statuses = application_status[index]
+        candidate_compiles = {store: statuses[STORES.index(store)] == "OK" for store in STORES}
+        target_compile = candidate_compiles[target] if target in STORES else None
+        if target == "unknown":
+            unknown_targets += 1
+            if not any(candidate_compiles.values()):
+                compile_failures += 1
+        elif target_compile is not True:
+            target_failures += 1
+            compile_failures += 1
+        if query["bindingArity"] is None:
+            unknown_arities += 1
+
+        recovered_rows.append({
+            "sourceLocation": query["location"],
+            "targetStore": target,
+            "targetStatus": query["targetStatus"],
+            "bindingArity": query["bindingArity"],
+            "bindingProvenance": query["bindingProvenance"],
+            "candidateSchemaCompiled": candidate_compiles,
+            "targetSchemaCompiled": target_compile,
+        })
+
+    for site in unresolved:
+        unresolved_rows.append({
+            "sourceLocation": site["location"],
+            "targetStore": site["targetStore"],
+            "targetStatus": site["targetStatus"],
+            "bindingArity": site["bindingArity"],
+            "bindingProvenance": site["bindingProvenance"],
+            "classification": site["classification"],
+            "reason": site["reason"] if site["reason"] in DETAIL_REASONS else "unrecognized-reason",
+        })
+
+    unresolved_unknown_targets = sum(site["targetStore"] == "unknown" for site in unresolved)
+    unresolved_unknown_arities = sum(site["bindingArity"] is None for site in unresolved)
+    incomplete = bool(unknown_targets or unknown_arities or unresolved or target_failures)
+    strict = inventory["strictTargetQualification"]
+    qualification = "INCOMPLETE" if incomplete else "DIRECT_BINDINGS_PASS" if strict else "NOT_REQUESTED"
+    return {
+        "recordType": "D1_DEPTH_CLASSIFICATION_DETAILS",
+        "schemaVersion": 1,
+        "scannedFiles": inventory.get("scannedFiles", 0),
+        "strictTargetQualification": strict,
+        "targetQualification": qualification,
+        "strictQualificationPass": strict and not incomplete,
+        "counts": {
+            "recoveredQueries": len(queries),
+            "unresolvedSites": len(unresolved),
+            "recoveredUnknownTargets": unknown_targets,
+            "recoveredUnknownArities": unknown_arities,
+            "unresolvedUnknownTargets": unresolved_unknown_targets,
+            "unresolvedUnknownArities": unresolved_unknown_arities,
+            "targetSchemaFailures": target_failures,
+            "applicationCompileFailures": compile_failures,
+            "excludedFixtureSources": len(inventory["excludedFixtureFiles"]),
+        },
+        "recovered": recovered_rows,
+        "unresolved": unresolved_rows,
+    }
+
+
+def emit_classification_details(inventory: dict, application_status: list[list[str]], output=None) -> bool:
+    """Emit one opt-in JSON record; default compiler output remains unchanged."""
+    if os.environ.get("D1_DEPTH_CLASSIFICATION_DETAILS") != "1":
+        return False
+    destination = output if output is not None else sys.stdout
+    record = classification_detail_record(inventory, application_status)
+    destination.write(json.dumps(record, separators=(",", ":"), sort_keys=True) + "\n")
+    return True
+
+
 def main() -> int:
     if sys.version_info < (3, 11) or sqlite3.sqlite_version_info < (3, 45, 0):
         print("D1_DEPTH_SETUP_FAILED: require Python >=3.11 and SQLite >=3.45.")
@@ -324,6 +411,7 @@ def main() -> int:
               "no unresolved prepare sites and successful target-schema compilation")
     print(f"D1_DEPTH {'FAIL' if failures else 'PASS'}: failures={failures} "
           f"elapsed_seconds={time.monotonic() - started:.3f}")
+    emit_classification_details(inventory, application_status)
     return 1 if failures else 0
 
 

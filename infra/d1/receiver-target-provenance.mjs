@@ -2,6 +2,7 @@ import { resolve } from "node:path";
 import ts from "typescript";
 import { propagateEscapedTargetBindings } from "./receiver-target-escape-analysis.mjs";
 import { createModelQualificationTargetPolicy } from "./receiver-target-provenance-model-qualification.mjs";
+import { mergeModelQualificationPass } from "./receiver-target-provenance-pass.mjs";
 import { findDetachedProjectionCalls } from "./receiver-target-provenance-projection.mjs";
 import {
   canonicalDeclaration,
@@ -28,7 +29,7 @@ import {
  * one model-qualification failure-summary route. Call edges are TypeChecker-
  * resolved; direct callers join parameter facts and unsupported edges stay unknown.
  */
-export function createErasureReceiverTargetOverrides(files, root, suppliedProgram) {
+export function createErasureReceiverTargetOverrides(files, root, suppliedProgram, pass = "combined") {
   const envPath = resolve(root, "apps/eliotr-core/src/env.ts");
   const workerPath = resolve(root, "apps/eliotr-core/src/index.ts");
   const httpPath = resolve(root, "apps/eliotr-core/src/http.ts");
@@ -40,6 +41,8 @@ export function createErasureReceiverTargetOverrides(files, root, suppliedProgra
   const erasureSourceRoot = resolve(root, "packages/cloudflare-erasure/src");
   const rootNames = [...new Set(files.map((file) => resolve(file)))];
   const program = suppliedProgram ?? ts.createProgram(rootNames, compilerOptions(root));
+  if (pass === "combined") return mergeModelQualificationPass((selected) =>
+    createErasureReceiverTargetOverrides(files, root, program, selected));
   const checker = program.getTypeChecker();
   const envSource = program.getSourceFile(envPath);
   const envDeclaration = envSource?.statements.find((statement) => ts.isInterfaceDeclaration(statement)
@@ -132,6 +135,7 @@ export function createErasureReceiverTargetOverrides(files, root, suppliedProgra
   const modelQualificationPolicy = createModelQualificationTargetPolicy({
     root, program, checker, calls, functionKey, canonicalDeclaration,
   });
+  if (pass === "model" && !modelQualificationPolicy) return new Map();
 
   const workerEnvParameter = workerFetch.parameters[1];
   const httpCallers = callRecordsByCallee.get(httpKey) ?? [];
@@ -189,9 +193,13 @@ export function createErasureReceiverTargetOverrides(files, root, suppliedProgra
     return sourceUnder(functionFile(declaration), erasureSourceRoot);
   }
   function allowedEdge(parent, child) {
-    if (modelQualificationPolicy?.allowsCall(parent, child)) return true;
     const parentKey = functionKey(checker, parent);
     const childKey = functionKey(checker, child);
+    if (pass === "model") {
+      if (parentKey === workerKey) return childKey === httpKey;
+      return modelQualificationPolicy?.allowsCall(parent, child) ?? false;
+    }
+    if (modelQualificationPolicy?.allowsCall(parent, child)) return true;
     if (parentKey === workerKey) return childKey === httpKey;
     if (parentKey === httpKey) return defaultApplicationFactoryIsProven && childKey === applicationKey;
     if (parentKey === applicationKey) return childKey === ownerApiKey;
@@ -566,8 +574,8 @@ export function createErasureReceiverTargetOverrides(files, root, suppliedProgra
   const overrides = new Map();
   for (const source of program.getSourceFiles()) {
     if (!rootFileSet.has(normalized(source.fileName))) continue;
-    if (!sourceUnder(source.fileName, erasureSourceRoot)
-        && !modelQualificationPolicy?.isTargetSqlSource(source.fileName)) continue;
+    if (pass === "model" ? !modelQualificationPolicy.isTargetSqlSource(source.fileName)
+      : !sourceUnder(source.fileName, erasureSourceRoot)) continue;
     function visit(node) {
       if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)
           && node.expression.name.text === "prepare" && isReachableSqlOwner(node)) {
