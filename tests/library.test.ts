@@ -1,11 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { decodeLibraryPage, readLibraryPage, LIBRARY_PAGE_SIZE } from "../apps/eliotr-pwa/src/library-api.js";
-import { renderLibrary } from "../apps/eliotr-pwa/src/library-panel.js";
+import { decodeLibraryPage, readLibraryPage, LIBRARY_PAGE_SIZE } from "../packages/pwa-source-workspace/src/library-api.js";
+import { renderLibrary } from "../packages/pwa-source-workspace/src/library-panel.js";
 import { isOwnerSessionUnexpired, readOwnerSession, type OwnerSession } from "../apps/eliotr-pwa/src/owner-session-api.js";
 import {
   createOwnerNamespaceResumeCoordinator,
   type SourceNamespaceSummary,
-} from "../apps/eliotr-pwa/src/source-namespace-api.js";
+} from "../packages/pwa-source-workspace/src/source-namespace-api.js";
 const envelope = () => ({ deployment_generation: "deploy-1", trace_id: "trace-1", data: {
   projects: [{ id: "project-1", title: "Project 1", generation: "1" }],
   sources: [{ id: "source-1", title: "Source 1", readiness_ref: "readiness:source-1:revision-1" }],
@@ -173,9 +173,9 @@ describe("verified owner namespace resume lifecycle", () => {
     const session = await readOwnerSession("deploy-1");
     let currentSession: OwnerSession | undefined = session;
     const coordinator = createOwnerNamespaceResumeCoordinator({
-      readCatalog: (generation, signal) => import("../apps/eliotr-pwa/src/source-namespace-api.js").then(({ readSourceNamespaces }) => readSourceNamespaces(generation, signal)),
+      readCatalog: (generation, signal) => import("../packages/pwa-source-workspace/src/source-namespace-api.js").then(({ readSourceNamespaces }) => readSourceNamespaces(generation, signal)),
       renewNamespace: async (...args) => {
-        const { renewSourceNamespace } = await import("../apps/eliotr-pwa/src/source-namespace-api.js");
+        const { renewSourceNamespace } = await import("../packages/pwa-source-workspace/src/source-namespace-api.js");
         return renewSourceNamespace(...args);
       },
       isCurrent: (binding) => currentSession === binding.session && binding.deploymentGeneration === "deploy-1" && isOwnerSessionUnexpired(binding.session),
@@ -232,9 +232,9 @@ describe("verified owner namespace resume lifecycle", () => {
     const session1 = await readOwnerSession("deploy-1");
     activeSession = session1;
     const coordinator = createOwnerNamespaceResumeCoordinator({
-      readCatalog: (generation, signal) => import("../apps/eliotr-pwa/src/source-namespace-api.js").then(({ readSourceNamespaces }) => readSourceNamespaces(generation, signal)),
+      readCatalog: (generation, signal) => import("../packages/pwa-source-workspace/src/source-namespace-api.js").then(({ readSourceNamespaces }) => readSourceNamespaces(generation, signal)),
       renewNamespace: async (...args) => {
-        const { renewSourceNamespace } = await import("../apps/eliotr-pwa/src/source-namespace-api.js");
+        const { renewSourceNamespace } = await import("../packages/pwa-source-workspace/src/source-namespace-api.js");
         return renewSourceNamespace(...args);
       },
       isCurrent: (binding) => activeSession === binding.session && deployment === binding.deploymentGeneration && isOwnerSessionUnexpired(binding.session),
@@ -275,9 +275,9 @@ describe("verified owner namespace resume lifecycle", () => {
     });
     const session = await readOwnerSession("deploy-1");
     const coordinator = createOwnerNamespaceResumeCoordinator({
-      readCatalog: (generation, signal) => import("../apps/eliotr-pwa/src/source-namespace-api.js").then(({ readSourceNamespaces }) => readSourceNamespaces(generation, signal)),
+      readCatalog: (generation, signal) => import("../packages/pwa-source-workspace/src/source-namespace-api.js").then(({ readSourceNamespaces }) => readSourceNamespaces(generation, signal)),
       renewNamespace: async (...args) => {
-        const { renewSourceNamespace } = await import("../apps/eliotr-pwa/src/source-namespace-api.js");
+        const { renewSourceNamespace } = await import("../packages/pwa-source-workspace/src/source-namespace-api.js");
         return renewSourceNamespace(...args);
       },
       isCurrent: (binding) => binding.session === session && binding.deploymentGeneration === "deploy-1",
@@ -311,9 +311,9 @@ describe("verified owner namespace resume lifecycle", () => {
     });
     const session = await readOwnerSession("deploy-1");
     const coordinator = createOwnerNamespaceResumeCoordinator({
-      readCatalog: (generation, signal) => import("../apps/eliotr-pwa/src/source-namespace-api.js").then(({ readSourceNamespaces }) => readSourceNamespaces(generation, signal)),
+      readCatalog: (generation, signal) => import("../packages/pwa-source-workspace/src/source-namespace-api.js").then(({ readSourceNamespaces }) => readSourceNamespaces(generation, signal)),
       renewNamespace: async (...args) => {
-        const { renewSourceNamespace } = await import("../apps/eliotr-pwa/src/source-namespace-api.js");
+        const { renewSourceNamespace } = await import("../packages/pwa-source-workspace/src/source-namespace-api.js");
         return renewSourceNamespace(...args);
       },
       isCurrent: (binding) => binding.session === session && binding.deploymentGeneration === "deploy-1",

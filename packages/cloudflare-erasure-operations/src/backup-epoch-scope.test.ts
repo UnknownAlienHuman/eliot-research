@@ -1,12 +1,11 @@
 import { describe, expect, it } from "vitest";
-import {
-  scopeBackupEpochsForSubject,
-  scopeBackupEpochsForSubjects,
-  type BackupEpochScopeArchive,
-  type BackupEpochScopeDraft,
-  type BackupEpochScopeSubject,
-  type VerifiedBackupSourceRows,
-} from "./backup-epoch-scope.js";
+import { scopeBackupEpochsForSubject, scopeBackupEpochsForSubjects } from "./backup-epoch-scope.js";
+import type {
+  BackupEpochScopeArchive,
+  BackupEpochScopeDraft,
+  BackupEpochScopeSubject,
+  VerifiedBackupSourceRows,
+} from "@eliotr/cloudflare-erasure";
 
 const MANIFESTS = [
   "schema", "schema-inventory", "ownership", "sources", "revisions", "projects", "scopes",

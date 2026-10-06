@@ -23,3 +23,6 @@ export * from "./registry.js";
 export * from "./backend.js";
 export * from "./factory.js";
 export * from "./namespace-admission-policy-builder.js";
+export * from "./backup-producer-quiescence-contract.js";
+export * from "./backup-primary-contract.js";
+export * from "./backup-primary-handoff.js";

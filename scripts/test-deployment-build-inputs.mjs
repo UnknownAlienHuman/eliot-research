@@ -16,7 +16,7 @@ const FIXTURE_ROOT = path.resolve(os.tmpdir());
 const FIXTURE_PREFIX = "eliotr-build-inputs-";
 const SCRIPT_ENTRYPOINTS = [
   "scripts/check-boundaries.mjs", "scripts/check-budgets.mjs", "scripts/check-launch-code.mjs",
-  "scripts/deploy-cloudflare.mjs", "scripts/provision-ai-gateways.mjs", "scripts/provision-ai-search.mjs",
+  "scripts/deploy-cloudflare.mjs", "scripts/generate-cloudflare-types.mjs", "scripts/provision-ai-gateways.mjs", "scripts/provision-ai-search.mjs",
   "scripts/lib/deployment-build-evidence.mjs",
   "scripts/provision-cloudflare-access.mjs", "scripts/provision-cloudflare-core.mjs",
   "scripts/test-boundary-negative.mjs",

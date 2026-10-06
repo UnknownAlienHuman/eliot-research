@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { decodeLibraryReadiness, readLibraryReadiness } from "../apps/eliotr-pwa/src/library-readiness-api.js";
-import { renderLibraryReadiness } from "../apps/eliotr-pwa/src/library-readiness-panel.js";
+import { decodeLibraryReadiness, readLibraryReadiness } from "../packages/pwa-source-workspace/src/library-readiness-api.js";
+import { renderLibraryReadiness } from "../packages/pwa-source-workspace/src/library-readiness-panel.js";
 
 const revision = "revision-1";
 const envelope = () => ({
@@ -43,8 +43,8 @@ describe("active Library readiness boundary", () => {
     value.data.currentness = { verification: "NOT_VERIFIED", recorded_freshness: "observed_with_age", reason_codes: ["CURRENTNESS_SNAPSHOT_WITNESS_UNAVAILABLE"] };
     const decoded = decodeLibraryReadiness(value, "source-1", "deploy-1", revision);
     const rendered = renderLibraryReadiness(decoded);
-    expect(rendered).toContain("Freshness not verified");
-    expect(rendered).toContain("Recorded freshness observed_with_age");
+    expect(rendered).toContain("Currentness evidence unavailable · saved record: last observation has aged");
+    expect(rendered).toContain("<dt>Recorded freshness</dt><dd>observed_with_age</dd>");
     expect(rendered).not.toContain("Current source verified");
   });
 

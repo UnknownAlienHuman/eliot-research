@@ -53,6 +53,19 @@ export const TABLE_SPECS: readonly TableSpec[] = [
   { manifest: "generations", table: "exchange_generation", order_by: "generation_id", columns: { generation_id: "text", connection_id: "text", folder_id: "text", spreadsheet_id: "text", sheet_ids_json: "text", protocol_version: "text", state: "text", created_at: "text", retired_at: "text-or-null" }, required: false },
   { manifest: "generations", table: "projection_generation", order_by: "source_revision_ref, projection_generation", columns: { source_revision_ref: "text", projection_generation: "text", job_id: "text", source_owner_generation: "text", content_sha256: "text", object_residency_key_digest: "text", projector_profile: "text", state: "text", item_count: "int-or-null", item_set_digest: "text-or-null", work_manifest_ref: "text-or-null", work_manifest_sha256: "text-or-null", d1_search_receipt_ref: "text-or-null", d1_search_readback_digest: "text-or-null", semantic_instance_id: "text-or-null", semantic_generation: "text-or-null", semantic_receipt_ref: "text-or-null", semantic_readback_digest: "text-or-null", reason_codes_json: "text", created_at: "text", updated_at: "text" }, required: false },
   { manifest: "retention", table: "backup_epoch", order_by: "backup_epoch_id", columns: { backup_epoch_id: "text", core_export_ref: "text", search_projection_manifest_ref: "text", evidence_manifest_ref: "text", work_manifest_ref: "text", offsite_copy_ref: "text", purge_ledger_revision: "int", verification_state: "text", created_at: "text", verified_at: "text-or-null" }, required: false },
+  { manifest: "retention", table: "backup_epoch_manifest_binding", order_by: "backup_epoch_id, role", columns: {
+      backup_epoch_id: "text", role: "text", binding_ref: "text", descriptor_sha256: "text", descriptor_json: "text",
+      source_draft_sha256: "text", offsite_copy_id: "text", offsite_readback_digest: "text", created_at: "text",
+  }, required: false },
+  { manifest: "retention", table: "backup_epoch_verification_receipt", order_by: "backup_epoch_id, receipt_ref", columns: {
+      receipt_ref: "text", receipt_sha256: "text", backup_epoch_id: "text", outcome: "text", receipt_json: "text",
+      binding_set_sha256: "text", core_export_ref: "text", search_projection_manifest_ref: "text", evidence_manifest_ref: "text",
+      work_manifest_ref: "text", source_draft_sha256: "text", offsite_copy_id: "text", offsite_copy_ref: "text",
+      offsite_readback_digest: "text", destination_id: "text", key_generation: "text", policy_digest: "text",
+      purge_ledger_revision: "int", purge_ledger_digest: "text", primary_inventory_object_count: "int",
+      primary_inventory_digest: "text", producer_claim_count: "int", producer_claims_digest: "text",
+      canonical_epoch_count: "int", canonical_epochs_digest: "text", created_at: "text",
+  }, required: false },
   { manifest: "retention", table: "erasure_hold", order_by: "hold_ref", columns: { hold_ref: "text", exact_subject_ref: "text-or-null", location: "text-or-null", canonical_ref: "text-or-null", policy_or_hold_ref: "text", next_review_at: "text", state: "text", created_at: "text", released_at: "text-or-null" }, required: false },
   ...DURABLE_CORE_TABLE_SPECS,
 ];
@@ -73,31 +86,69 @@ const AUTHORITY_TABLE_INTRODUCTIONS: Readonly<Record<string, string>> = {
   backup_restore_permission: "0115_backup_restore_current_admission.sql",
   backup_restore_permission_revocation: "0115_backup_restore_current_admission.sql",
   backup_restore_admission_binding: "0115_backup_restore_current_admission.sql",
+  backup_epoch_producer_claim: "0116_backup_epoch_producer_fence.sql",
+  backup_erasure_primary_closure: "0117_backup_erasure_primary_closure.sql",
+  backup_erasure_primary_claim_pin: "0117_backup_erasure_primary_closure.sql",
+  backup_erasure_primary_cut_pin: "0117_backup_erasure_primary_closure.sql",
+  backup_erasure_primary_target_pin: "0117_backup_erasure_primary_closure.sql",
+  backup_erasure_primary_part_pin: "0117_backup_erasure_primary_closure.sql",
+  backup_erasure_primary_delete_item: "0117_backup_erasure_primary_closure.sql",
+  backup_erasure_primary_handoff: "0117_backup_erasure_primary_closure.sql",
+  backup_primary_writer_qualification: "0118_backup_primary_writer_qualification.sql",
+  backup_primary_writer_operation: "0118_backup_primary_writer_qualification.sql",
+  backup_primary_writer_current: "0118_backup_primary_writer_qualification.sql",
+  backup_epoch_manifest_binding: "0119_backup_epoch_manifest_bindings.sql",
+  backup_epoch_verification_receipt: "0119_backup_epoch_manifest_bindings.sql",
 };
 
-const AUTHORITY_MIGRATION_CHAIN = [
-  "0109_research_provider_key_configuration.sql",
-  "0110_research_provider_key_model_use.sql",
-  "0111_provider_native_model_authority.sql",
+const AUTHORITY_COLUMN_INTRODUCTIONS: Readonly<Record<string, Readonly<Record<string, string>>>> = {
+  erasure_terminal_guard: {
+    lease_owner: "0117_backup_erasure_primary_closure.sql",
+    lease_generation: "0117_backup_erasure_primary_closure.sql",
+    lease_until: "0117_backup_erasure_primary_closure.sql",
+  },
+  backup_purge_obligation: {
+    primary_delete_intent_ref: "0117_backup_erasure_primary_closure.sql",
+    primary_delete_intent_digest: "0117_backup_erasure_primary_closure.sql",
+    primary_delete_receipt_ref: "0117_backup_erasure_primary_closure.sql",
+    primary_absence_receipt_ref: "0117_backup_erasure_primary_closure.sql",
+    offsite_delete_receipt_ref: "0117_backup_erasure_primary_closure.sql",
+    offsite_absence_receipt_ref: "0117_backup_erasure_primary_closure.sql",
+  },
+};
+
+const AUTHORITY_MIGRATION_CHAINS = [
+  ["0109_research_provider_key_configuration.sql", "0110_research_provider_key_model_use.sql", "0111_provider_native_model_authority.sql"],
+  ["0116_backup_epoch_producer_fence.sql", "0117_backup_erasure_primary_closure.sql", "0118_backup_primary_writer_qualification.sql", "0119_backup_epoch_manifest_bindings.sql"],
 ] as const;
 
 /**
- * Select the additive 0109–0111 table specs that belong to a persisted Core
- * migration ledger. All pre-existing table specs stay required by the
- * portable inventory; only these three known schema additions are conditional.
+ * Select migration-bound tables and columns from the persisted Core ledger.
+ * The inventory check then verifies that every selected schema field exists.
  */
 export function coreTableSpecsForMigrationNames(migrationNames: readonly string[]): readonly TableSpec[] {
   const names = new Set(migrationNames);
-  for (let index = 1; index < AUTHORITY_MIGRATION_CHAIN.length; index += 1) {
-    const migration = AUTHORITY_MIGRATION_CHAIN[index];
-    const predecessor = AUTHORITY_MIGRATION_CHAIN[index - 1];
-    if (migration !== undefined && predecessor !== undefined && names.has(migration) && !names.has(predecessor)) {
-      failBackup("BACKUP_COVERAGE_GAP", `backup migration ledger contains ${migration} without its provider-authority predecessor ${predecessor}`, false);
+  for (const chain of AUTHORITY_MIGRATION_CHAINS) {
+    for (let index = 1; index < chain.length; index += 1) {
+      const migration = chain[index];
+      const predecessor = chain[index - 1];
+      if (migration !== undefined && predecessor !== undefined && names.has(migration) && !names.has(predecessor)) {
+        failBackup("BACKUP_COVERAGE_GAP", `backup migration ledger contains ${migration} without its authority predecessor ${predecessor}`, false);
+      }
     }
   }
   return TABLE_SPECS.filter((spec) => {
     const migration = AUTHORITY_TABLE_INTRODUCTIONS[spec.table];
     return migration === undefined || names.has(migration);
+  }).map((spec) => {
+    const introductions = AUTHORITY_COLUMN_INTRODUCTIONS[spec.table];
+    if (introductions === undefined) return spec;
+    const columns: Record<string, ColumnKind> = {};
+    for (const [column, kind] of Object.entries(spec.columns)) {
+      const migration = introductions[column];
+      if (migration === undefined || names.has(migration)) columns[column] = kind;
+    }
+    return { ...spec, columns };
   });
 }
 
@@ -181,6 +232,12 @@ export function assertExportColumnCoverage(inventory: readonly CoreTableInventor
         failBackup("BACKUP_COVERAGE_GAP", `backup table ${entry.table} column ${column.name} changes affinity; refusing selective export`, false, { table: entry.table, column: column.name });
       }
     }
+    const observedColumns = new Set(entry.columns.map((column) => column.name));
+    for (const column of Object.keys(spec.columns)) {
+      if (!observedColumns.has(column)) {
+        failBackup("BACKUP_COVERAGE_GAP", `backup table ${entry.table} is missing declared export column ${column}`, false, { table: entry.table, column });
+      }
+    }
   }
 }
 
@@ -217,34 +274,62 @@ export async function canonicalCutDigest(inputs: CutInputs): Promise<string> {
 export interface OpenCut {
   readonly cut_id: string;
   readonly cut_digest: string;
+  readonly state: "OPEN" | "ACCEPTED" | "REJECTED";
+  /** True only when this invocation received the INSERT ... RETURNING row. */
+  readonly inserted: boolean;
 }
 
 export async function openExportCut(database: D1Database, inputs: CutInputs, now: string): Promise<OpenCut> {
   const cutDigest = await canonicalCutDigest(inputs);
   const cutId = `cut-${cutDigest.slice(0, 32)}`;
+  let inserted: readonly { readonly cut_id: unknown; readonly cut_digest: unknown; readonly state: unknown }[] | undefined;
   try {
-    await database.prepare(
-      "INSERT INTO backup_export_cut (cut_id, cut_digest, state, created_at) VALUES (?1, ?2, 'OPEN', ?3)",
-    ).bind(cutId, cutDigest, now).run();
+    const result = await database.prepare(`INSERT INTO backup_export_cut (cut_id, cut_digest, state, created_at)
+      VALUES (?1, ?2, 'OPEN', ?3) ON CONFLICT(cut_id) DO NOTHING
+      RETURNING cut_id,cut_digest,state`).bind(cutId, cutDigest, now)
+      .all<{ readonly cut_id: unknown; readonly cut_digest: unknown; readonly state: unknown }>();
+    if (result.success === true && Array.isArray(result.results)) inserted = result.results;
   } catch {
-    // Same content re-freezes to the same cut; keep the controller-owned row.
-    const existing = await database.prepare(
-      "SELECT cut_digest FROM backup_export_cut WHERE cut_id = ?1",
-    ).bind(cutId).first<{ readonly cut_digest: unknown }>();
-    if (existing === null || existing.cut_digest !== cutDigest) {
-      failBackup("BACKUP_VECTOR_DRIFT", "backup coherent cut collides with divergent state", true, { cut: cutId });
-    }
+    // An uncertain insert is never treated as a fresh cut. The caller must
+    // stop before its first PUT even if readback finds the expected content.
   }
-  return { cut_id: cutId, cut_digest: cutDigest };
+  if (inserted?.length === 1 && inserted[0]?.cut_id === cutId && inserted[0]?.cut_digest === cutDigest && inserted[0]?.state === "OPEN") {
+    return { cut_id: cutId, cut_digest: cutDigest, state: "OPEN", inserted: true };
+  }
+  if (inserted !== undefined && inserted.length !== 0) {
+    failBackup("BACKUP_TABLE_MISSING", "backup coherent cut insert readback is malformed", true, { cut: cutId });
+  }
+  let existing: { readonly cut_digest: unknown; readonly state: unknown } | null;
+  try {
+    existing = await database.prepare("SELECT cut_digest,state FROM backup_export_cut WHERE cut_id=?1")
+      .bind(cutId).first<{ readonly cut_digest: unknown; readonly state: unknown }>();
+  } catch (cause) {
+    failBackup("BACKUP_TABLE_MISSING", "backup coherent cut readback is unavailable", true, { cut: cutId }, cause);
+  }
+  if (existing === null || typeof existing.cut_digest !== "string" ||
+      (existing.state !== "OPEN" && existing.state !== "ACCEPTED" && existing.state !== "REJECTED")) {
+    failBackup("BACKUP_TABLE_MISSING", "backup coherent cut row is absent or malformed after insert", true, { cut: cutId });
+  }
+  return { cut_id: cutId, cut_digest: existing.cut_digest, state: existing.state, inserted: false };
 }
 
 export async function sealExportCut(database: D1Database, cut: OpenCut, recomputed: CutInputs, now: string): Promise<void> {
+  if (!cut.inserted || cut.state !== "OPEN") {
+    failBackup("BACKUP_INTENT_CONFLICT", "backup coherent cut was not opened by this producer attempt", true, { cut: cut.cut_id });
+  }
   const digest = await canonicalCutDigest(recomputed);
   const state = digest === cut.cut_digest ? "ACCEPTED" : "REJECTED";
+  let result: D1Result<{ readonly cut_id: unknown; readonly state: unknown }>;
   try {
-    await database.prepare("UPDATE backup_export_cut SET state = ?1 WHERE cut_id = ?2").bind(state, cut.cut_id).run();
+    result = await database.prepare(`UPDATE backup_export_cut SET state=?1
+      WHERE cut_id=?2 AND cut_digest=?3 AND state='OPEN' RETURNING cut_id,state`)
+      .bind(state, cut.cut_id, cut.cut_digest).all<{ readonly cut_id: unknown; readonly state: unknown }>();
   } catch (cause) {
     failBackup("BACKUP_TABLE_MISSING", "backup coherent cut seal is unavailable", true, { cut: cut.cut_id }, cause);
+  }
+  if (result.success !== true || !Array.isArray(result.results) || result.results.length !== 1 ||
+      result.results[0]?.cut_id !== cut.cut_id || result.results[0]?.state !== state) {
+    failBackup("BACKUP_INTENT_CONFLICT", "backup coherent cut seal lost its exact OPEN owner state", true, { cut: cut.cut_id });
   }
   if (digest !== cut.cut_digest) {
     failBackup("BACKUP_VECTOR_DRIFT", "backup authority drifted between freeze and seal; epoch withheld as stale", true, { cut: cut.cut_id });

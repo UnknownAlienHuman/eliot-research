@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { VersionedRef } from "@eliotr/contracts";
-import { acceptArtifact, readArtifactPublication, reviseArtifactSection } from "../../eliotr-pwa/src/artifact-product-api.js";
+import { acceptArtifact, readArtifactPublication, reviseArtifactSection } from "../../../packages/pwa-research-workspace/src/artifact-product-api.js";
 import { readReauthorizedResearchArtifact } from "../../eliotr-pwa/src/research-run-api.js";
 import { readReauthorizedResearchArtifactSectionCitations } from "../../eliotr-pwa/src/research-run-reauthorization-api.js";
 import { handleHttp } from "../src/http.js";

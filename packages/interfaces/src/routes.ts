@@ -13,6 +13,7 @@ export const ROUTES: readonly RouteDefinition[] = [
   { method: "GET", path: "/healthz", operation: "system.health.public", auth: "public", maximum_request_bytes: 0, response_mode: "json" },
   { method: "GET", path: "/api/v1/system/health", operation: "system.health", auth: "owner_or_service", maximum_request_bytes: 0, response_mode: "json" },
   { method: "GET", path: "/api/v1/system/capabilities", operation: "system.capabilities", auth: "owner_or_service", maximum_request_bytes: 0, response_mode: "json" },
+  { method: "GET", path: "/api/v1/system/backup-primary/inventory", operation: "system.backup-primary.inventory", auth: "owner", maximum_request_bytes: 0, response_mode: "json" },
   { method: "POST", path: "/api/v1/system/mcp-diagnostics", operation: "system.mcp-diagnostic.issue", auth: "owner", maximum_request_bytes: 1024, response_mode: "json" },
   { method: "GET", path: "/api/v1/system/mcp-diagnostics", operation: "system.mcp-diagnostic.latest", auth: "owner", maximum_request_bytes: 0, response_mode: "json" },
   { method: "GET", path: "/api/v1/library/content", operation: "library.source.content", auth: "owner", maximum_request_bytes: 0, response_mode: "stream" },

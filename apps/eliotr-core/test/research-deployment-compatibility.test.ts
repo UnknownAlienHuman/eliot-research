@@ -1,8 +1,12 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { reset } from "cloudflare:test";
 import { RESEARCH_WORKFLOW_STAGES } from "@eliotr/domain";
-import { readWorkflowObject, WorkflowCheckpointStore, type StageReceipt,
-  type WorkflowCheckpointError } from "@eliotr/cloudflare-research";
+import {
+  readWorkflowObject,
+  WorkflowCheckpointError,
+  WorkflowCheckpointStore,
+  type StageReceipt,
+} from "@eliotr/cloudflare-research";
 import { ResearchWorkflow } from "../src/research-workflow.js";
 import type { Env } from "../src/env.js";
 import { principal, workflowFixture } from "./research-workflow-fixture.js";
@@ -104,7 +108,6 @@ async function expectRetainedFailure(
 
 describe("S05 real entrypoint continuation across identical backend deployments", () => {
   let fixture: Awaited<ReturnType<typeof workflowFixture>>;
-  const interrupted = new Error("controlled interruption between committed stages");
   let stepCalls: number;
 
   beforeEach(async () => {
@@ -137,7 +140,13 @@ describe("S05 real entrypoint continuation across identical backend deployments"
         const match = /^w2-stage-(\d{2})-/u.exec(name);
         expect(match).not.toBeNull();
         const index = Number(match?.[1]);
-        if (index === stopBefore) throw interrupted;
+        if (index === stopBefore) {
+          const stage = RESEARCH_WORKFLOW_STAGES[index];
+          if (stage === undefined) throw new Error("interruption is outside the workflow");
+          throw new WorkflowCheckpointError("WORKFLOW_EFFECT_UNCERTAIN", {
+            code: "WORKFLOW_EFFECT_UNCERTAIN", phase: "STAGE", stage, retryable: false,
+          });
+        }
         stepCalls += 1;
         expect(options).toMatchObject({ retries: { limit: 0, delay: 0 } });
         await beforeStep?.(index);

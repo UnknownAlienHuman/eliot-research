@@ -33,6 +33,7 @@ import { readOwnerNamespaceInitialization, readOwnerNamespaceRenewal } from "./s
 import { readWorkspaceCandidateRequest, readWorkspaceAdmissionId } from "./workspace-owner-http.js";
 import { readNavigationExpansionRequest } from "./navigation-expand-http.js";
 import { HttpRequestError } from "./http-errors.js";
+import { readPrimaryWriterInventory } from "./backup-primary-composition.js";
 import { readOwnerProjectResearchReadiness } from "./research-project-configuration-composition.js";
 import { parseWikiProposalFromResearchRunRequest, parseWikiProposalRef } from "./wiki-service.js";
 import {
@@ -92,6 +93,13 @@ export async function dispatchHttpApiRoute(
     case "system.capabilities":
       requireNoQuery(url);
       return apiResult(request, env, await application.services.owner.systemCapabilities(context));
+    case "system.backup-primary.inventory": {
+      requireNoQuery(url);
+      await requireEmptyRequestBody(request, "Primary backup inventory does not accept a request body");
+      if (env.BACKUP_PARTS_BUCKET === undefined) throw new HttpRequestError("BACKUP_PRIMARY_UNAVAILABLE", 503,
+        "Primary backup storage is not configured");
+      return apiResult(request, env, await readPrimaryWriterInventory({ ...env, BACKUP_PARTS_BUCKET: env.BACKUP_PARTS_BUCKET }));
+    }
     case "system.research.configuration": {
       for (const key of url.searchParams.keys()) {
         if (key !== "project_id") throw new HttpRequestError("UNKNOWN_QUERY_PARAMETER", 400,

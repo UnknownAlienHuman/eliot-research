@@ -3,7 +3,7 @@ import type { AuthenticatedRequestContext } from "@eliotr/interfaces";
 import type { WikiPageRevision } from "@eliotr/contracts";
 import { count, db, principal, runtime, setupOrientationDatabase } from "./orientation-fixture.js";
 import { createWikiProposalService, publishWikiProposal } from "../src/wiki-service.js";
-import { recordWikiPublicationAuthority } from "@eliotr/cloudflare-wiki/wiki-publication-store";
+import { recordWikiPublicationAuthority } from "@eliotr/cloudflare-wiki/wiki-publication-store-support";
 import { wikiPublicationScope } from "./wiki-publication-authority-fixture.js";
 
 beforeAll(async () => { await setupOrientationDatabase(); });

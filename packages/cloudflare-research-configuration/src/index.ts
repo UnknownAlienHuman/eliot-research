@@ -94,6 +94,8 @@ export type {
   ResearchRunConfigurationRuntimePort,
 } from "./research-run-configuration.js";
 export * from "./research-semantic-configuration-schema.js";
+export { readResearchSemanticConfiguration } from "./installed-semantic-configuration.js";
+export type { InstalledSemanticConfigurationEnvironment } from "./installed-semantic-configuration.js";
 
 export * from "./research-provider-key-model-use-service.js";
 export * from "./research-provider-key-model-use-plan.js";

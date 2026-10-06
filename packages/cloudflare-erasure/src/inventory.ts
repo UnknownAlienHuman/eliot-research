@@ -1,9 +1,11 @@
 import type {
+  ErasureFence,
   PurgeLocation,
   ErasureDependencyClosure,
   PurgeTarget,
 } from "@eliotr/contracts";
 import {
+  canonicalErasureJson,
   erasureDigest,
   erasureFail,
   erasureSha256Utf8,
@@ -14,13 +16,24 @@ import {
 import type {
   ErasureInventoryPort,
   SourceRevisionInventoryRow,
+  BackupErasurePort,
+  BackupPrimaryWriterQualificationReceipt,
+  BackupPrimaryWriterQualificationVerifier,
 } from "./types.js";
-import { verifyPortableBackupManifests, type BackupEpochDraft } from "@eliotr/backup-o2";
-import { readD1BackupEpochScopeInventory } from "./backup-epoch-reader.js";
 import {
-  scopeBackupEpochsForSubjects,
-  type BackupEpochScopeSubject,
-} from "./backup-epoch-scope.js";
+  backupPrimaryQualificationInput,
+  type BackupEpochScopeInventory,
+  type BackupEpochScopePort,
+  type BackupExportCutInventory,
+  type BackupPrimaryInventoryPort,
+  type BackupPrimaryReplaySnapshot,
+} from "./backup-primary-contract.js";
+import type {
+  BackupProducerQuiescencePort,
+  BackupProducerQuiescenceSnapshot,
+} from "./backup-producer-quiescence-contract.js";
+import { sealBackupPrimaryHandoff } from "./backup-primary-handoff.js";
+import { resolveBackupTargets, type BackupInventorySelection } from "./backup-recovery.js";
 import { enumerateRawIngestDependencies } from "./raw-ingest-inventory.js";
 import { createEmptyLocationProofTarget } from "./empty-location-proof.js";
 import { makeD1SearchEmptyProofFields } from "./empty-location-proof-authority.js";
@@ -96,19 +109,60 @@ export interface D1ErasureInventoryDependencies {
   readonly core_database: D1Database;
   readonly search_database: D1Database;
   readonly work_bucket?: R2Bucket;
-  /** The O2 part_sink bucket; never infer it from source Work storage. */
-  readonly backup_parts_bucket?: R2Bucket;
+  readonly backup_offsite?: BackupErasurePort;
+  readonly backup_primary_qualification?: BackupPrimaryWriterQualificationVerifier;
+  readonly backup_primary_inventory?: BackupPrimaryInventoryPort;
+  readonly backup_epoch_scope?: BackupEpochScopePort;
+  readonly backup_producer_quiescence?: BackupProducerQuiescencePort;
+  readonly now?: () => number;
 }
 
 export function createD1ErasureInventory(
   dependencies: D1ErasureInventoryDependencies,
 ): ErasureInventoryPort {
   return {
-    async enumerate(rawRequest): Promise<ErasureDependencyClosure> {
+    async enumerate(rawRequest, fence?: ErasureFence): Promise<ErasureDependencyClosure> {
       const request = validateErasureRequest(rawRequest);
       const requestDigest = await erasureDigest(request);
+      const requiresBackup = request.required_locations.includes("BackupRestorePath");
+      let backupProducer: BackupProducerQuiescenceSnapshot | undefined;
+      let backupCuts: BackupExportCutInventory | undefined;
+      let backupInventory: BackupEpochScopeInventory | undefined;
+      let backupReplay: BackupPrimaryReplaySnapshot | null = null;
+      if (requiresBackup) {
+        const primaryInventory = dependencies.backup_primary_inventory;
+        const producerQuiescence = dependencies.backup_producer_quiescence;
+        const epochScope = dependencies.backup_epoch_scope;
+        if (fence === undefined || fence.erasure_id !== request.erasure_ref.id ||
+            fence.revision !== request.erasure_ref.revision) {
+          erasureFail("ERASURE_LEASE_LOST", "backup producer closure requires the exact acquired erasure fence", true);
+        }
+        if (primaryInventory === undefined || epochScope === undefined ||
+            producerQuiescence === undefined) {
+          erasureFail("ERASURE_CLOSURE_INCOMPLETE", "source-scoped local backup archive authority is unavailable");
+        }
+        if (dependencies.backup_primary_qualification === undefined) {
+          erasureFail("ERASURE_CLOSURE_INCOMPLETE", "persisted primary writer qualification is unavailable");
+        }
+        if (dependencies.backup_offsite === undefined) {
+          erasureFail("ERASURE_CLOSURE_INCOMPLETE", "offsite backup erasure receipt adapter is unavailable");
+        }
+        try {
+          backupProducer = await producerQuiescence.assertQuiescent({
+            erasure_id: fence.erasure_id,
+            revision: fence.revision,
+          });
+        } catch (cause) {
+          erasureFail("ERASURE_CLOSURE_INCOMPLETE", "backup producer set is not authoritatively quiescent", false, cause);
+        }
+        backupCuts = await primaryInventory.readExportCutInventory();
+        backupReplay = await primaryInventory.loadReplay({
+          fence,
+          now_ms: (dependencies.now ?? Date.now)(),
+        });
+      }
       const revisions: { readonly subject: string; readonly row: SourceRevisionInventoryRow }[] = [];
-      const backupSelections: { readonly exact_subject_ref: string; readonly subject: BackupEpochScopeSubject }[] = [];
+      const backupSelections: BackupInventorySelection[] = [];
       const directTargets: PurgeTarget[] = [];
 
       for (const exactSubjectRef of request.exact_subject_refs) {
@@ -210,51 +264,23 @@ export function createD1ErasureInventory(
           }
         }
       }
-      if (request.required_locations.includes("BackupRestorePath")) {
-        if (dependencies.backup_parts_bucket === undefined || backupSelections.length === 0) {
+      if (requiresBackup) {
+        const primaryInventory = dependencies.backup_primary_inventory;
+        const epochScope = dependencies.backup_epoch_scope;
+        if (primaryInventory === undefined || epochScope === undefined) {
           erasureFail("ERASURE_CLOSURE_INCOMPLETE", "source-scoped local backup archive authority is unavailable");
         }
-        const backupInventory = await readD1BackupEpochScopeInventory(
-          dependencies.core_database,
-          dependencies.backup_parts_bucket,
-        );
-        const scopedEpochIds = await scopeBackupEpochsForSubjects({
-          subjects: backupSelections.map(({ subject }) => subject),
-          archives: backupInventory.archives,
-          copy_authority_epoch_ids: backupInventory.copy_authority_epoch_ids,
-          verify_manifests: async ({ draft, plaintext_parts }) => {
-            const verified = await verifyPortableBackupManifests({
-              draft: draft as BackupEpochDraft,
-              plaintext_parts,
-            });
-            return { source_rows: verified.source_rows };
-          },
+        const resolved = await resolveBackupTargets({
+          primary_inventory: primaryInventory,
+          epoch_scope: epochScope,
+          backup_replay: backupReplay,
+          backup_selections: backupSelections,
+          current_target_count: generated.length,
+          create_target: (subject, location, canonical_ref) => target(subject, location, canonical_ref),
         });
-        const subjectsByEpoch = new Map<string, string[]>();
-        for (const [index, epochIds] of scopedEpochIds.entries()) {
-          const exactSubjectRef = backupSelections[index]?.exact_subject_ref;
-          if (exactSubjectRef === undefined) {
-            erasureFail("ERASURE_CLOSURE_INCOMPLETE", "backup scope result lost its exact erasure subject");
-          }
-          for (const epochId of epochIds) {
-            const refs = subjectsByEpoch.get(epochId) ?? [];
-            refs.push(exactSubjectRef);
-            subjectsByEpoch.set(epochId, refs);
-          }
-        }
-        if (subjectsByEpoch.size === 0) {
-          erasureFail("ERASURE_CLOSURE_INCOMPLETE", "no verified backup epoch contains the selected source roots");
-        }
-        for (const [epochId, subjectRefs] of [...subjectsByEpoch.entries()].sort(([left], [right]) => left.localeCompare(right))) {
-          ensureClosureCapacity(generated.length, 1, "source-scoped backup erasure targets");
-          const representativeSubject = [...new Set(subjectRefs)].sort()[0];
-          if (representativeSubject === undefined) {
-            erasureFail("ERASURE_CLOSURE_INCOMPLETE", "backup epoch target has no exact selected subject");
-          }
-          generated.push(await target(representativeSubject, "BackupRestorePath", `backup:${epochId}`));
-        }
+        backupInventory = resolved.inventory;
+        generated.push(...resolved.targets);
       }
-
       for (const { subject, row } of revisions) {
         const raw = rawByRevision.get(row.source_revision_ref) ?? null;
         const rawPending = raw?.pending ?? {};
@@ -442,12 +468,85 @@ export function createD1ErasureInventory(
         retention_or_hold_ref: item.retention_or_hold_ref ?? null,
         next_review_at: item.next_review_at ?? null,
       })));
-      return {
+      const closure: ErasureDependencyClosure = {
         erasure_ref: request.erasure_ref,
         request_digest: requestDigest,
         closure_digest: closureDigest,
         targets,
       };
+      if (requiresBackup) {
+        const primaryInventory = dependencies.backup_primary_inventory;
+        const producerQuiescence = dependencies.backup_producer_quiescence;
+        const qualificationVerifier = dependencies.backup_primary_qualification;
+        if (fence === undefined || backupProducer === undefined || backupCuts === undefined ||
+            backupInventory === undefined || primaryInventory === undefined || producerQuiescence === undefined ||
+            qualificationVerifier === undefined) {
+          erasureFail("ERASURE_CLOSURE_INCOMPLETE", "backup primary closure lost a required authority input");
+        }
+        let currentProducer: BackupProducerQuiescenceSnapshot;
+        try {
+          currentProducer = await producerQuiescence.assertQuiescent({
+            erasure_id: fence.erasure_id,
+            revision: fence.revision,
+          });
+        } catch (cause) {
+          erasureFail("ERASURE_CLOSURE_INCOMPLETE", "backup producer snapshot changed before closure sealing", false, cause);
+        }
+        const currentCuts = await primaryInventory.readExportCutInventory();
+        if (currentProducer.claims_digest !== backupProducer.claims_digest ||
+            currentProducer.canonical_epochs_digest !== backupProducer.canonical_epochs_digest ||
+            currentCuts.inventory_digest !== backupCuts.inventory_digest) {
+          erasureFail("ERASURE_CLOSURE_INCOMPLETE", "backup producer or cut inventory changed during closure enumeration");
+        }
+        const backupTargets = targets.filter((item) => item.location === "BackupRestorePath");
+        const qualificationInput = backupPrimaryQualificationInput(
+          fence,
+          requestDigest,
+          currentProducer,
+          currentCuts,
+          backupInventory.primary_parts,
+        );
+        let qualification: BackupPrimaryWriterQualificationReceipt;
+        try {
+          qualification = await qualificationVerifier.assertCurrentQualification(qualificationInput);
+        } catch (cause) {
+          erasureFail("ERASURE_CLOSURE_INCOMPLETE", "current primary writer qualification is unavailable", false, cause);
+        }
+        if (backupReplay !== null) {
+          const previousTargets = [...backupReplay.targets.values()]
+            .sort((left, right) => left.target_id.localeCompare(right.target_id));
+          const currentBackupTargets = backupTargets.slice()
+            .sort((left, right) => left.target_id.localeCompare(right.target_id));
+          if (closureDigest !== backupReplay.header.erasure_closure_digest ||
+              canonicalErasureJson(currentBackupTargets) !== canonicalErasureJson(previousTargets) ||
+              currentProducer.claims_digest !== backupReplay.header.producer_claims_digest ||
+              currentProducer.canonical_epoch_count !== backupReplay.header.canonical_epoch_count ||
+              currentProducer.canonical_epochs_digest !== backupReplay.header.canonical_epochs_digest ||
+              currentCuts.inventory_digest !== backupReplay.header.export_cut_inventory_digest) {
+            erasureFail("ERASURE_IDENTITY_CONFLICT", "recovered current closure diverges from its immutable original plan and producer pins");
+          }
+          await sealBackupPrimaryHandoff(
+            dependencies.core_database,
+            fence,
+            backupInventory.primary_parts,
+            qualification,
+          );
+        } else {
+          await primaryInventory.sealClosure({
+            now: dependencies.now ?? Date.now,
+            request,
+            fence,
+            request_sha256: requestDigest,
+            closure_digest: closureDigest,
+            producer: currentProducer,
+            cuts: currentCuts,
+            qualification,
+            primary_parts: backupInventory.primary_parts,
+            targets: backupTargets,
+          });
+        }
+      }
+      return closure;
     },
   };
 }

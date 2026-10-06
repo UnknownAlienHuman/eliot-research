@@ -1,86 +1,26 @@
-import { assertErasureIdentifier, assertErasureSha256, assertErasureText, erasureFail } from "./canonical.js";
+import { assertErasureIdentifier, assertErasureSha256, assertErasureText, erasureFail } from "@eliotr/cloudflare-erasure";
 import { BACKUP_R2_PAYLOAD_PROTOCOL } from "@eliotr/backup-o2";
-
 const PROTOCOL = "eliotr.backup-manifest.v1";
 const MANIFESTS = [
   "schema", "schema-inventory", "ownership", "sources", "revisions", "projects", "scopes",
   "handles", "heads", "generations", "retention", "purge", "r2-objects", "rebuild", "vector",
-] as const;
+  ] as const;
 const MAX_EPOCHS = 10_000;
 const MAX_PARTS = 100_000;
 const MAX_PART_BYTES = 8 * 1024 * 1024;
 const MAX_TOTAL_BYTES = 8 * 1024 * 1024;
 const MAX_SCOPED_TARGETS = 100_000;
 
-export interface BackupEpochScopePart {
-  readonly manifest: string;
-  readonly index: number;
-  readonly part_key: string;
-  readonly sha256: string;
-  readonly size_bytes: number;
-  readonly etag: string;
-  readonly existed_identically: boolean;
-}
-
-export interface BackupEpochScopePayloadPart {
-  readonly object_identity_digest: string;
-  readonly index: number;
-  readonly count: number;
-  readonly part_key: string;
-  readonly sha256: string;
-  readonly size_bytes: number;
-  readonly etag: string;
-  readonly existed_identically: boolean;
-}
-
-export interface BackupEpochScopeDraft {
-  readonly epoch_id: string;
-  readonly schema_generation: string;
-  readonly migration_ledger_digest: string;
-  readonly manifest_digests: Readonly<Record<string, string>>;
-  readonly group_digests: Readonly<Record<string, string>>;
-  readonly manifest_protocol: string;
-  readonly part_index: readonly BackupEpochScopePart[];
-  readonly r2_payload_protocol?: typeof BACKUP_R2_PAYLOAD_PROTOCOL;
-  readonly payload_part_index?: readonly BackupEpochScopePayloadPart[];
-  readonly purge_ledger_revision: number;
-  readonly purge_ledger_digest: string;
-  readonly r2_object_count: number;
-  readonly r2_total_bytes: number;
-  readonly audit_sample_receipt_ref: string;
-  readonly vector_digest: string;
-  readonly vector_manifest_digest: string;
-  readonly cut_id: string;
-  readonly created_at: string;
-  readonly expires_at: string;
-}
-
-export interface VerifiedBackupSourceRows {
-  readonly source_rows: readonly { readonly table: string; readonly row: Readonly<Record<string, unknown>> }[];
-}
-
-export interface BackupEpochScopeArchive {
-  readonly epoch_id: unknown;
-  readonly verification_state: unknown;
-  /** Reads the exact D1-persisted backup_epoch_receipt.draft_json on demand. */
-  readonly read_draft_json: () => Promise<unknown>;
-  /** Resolve every part through an authorized complete local or O2 offsite read path. */
-  readonly read_plaintext_part: (part: BackupEpochScopePart, draft: BackupEpochScopeDraft) => Promise<Uint8Array | null>;
-}
-
-export interface BackupEpochScopeSubject {
-  readonly kind: "source" | "source-revision";
-  readonly source_id: string;
-  readonly source_owner_generation: string;
-  readonly source_revision_ref?: string;
-  readonly content_sha256?: string;
-  readonly object_residency_key_digest?: string;
-}
-
-export type VerifyBackupEpochManifests = (input: {
-  readonly draft: BackupEpochScopeDraft;
-  readonly plaintext_parts: readonly { readonly manifest: string; readonly index: number; readonly bytes: Uint8Array }[];
-}) => Promise<VerifiedBackupSourceRows>;
+import type {
+  BackupEpochScopeArchive,
+  BackupEpochScopeDraft,
+  BackupEpochScopePart,
+  BackupEpochScopePayloadPart,
+  BackupEpochScopePort,
+  BackupEpochScopeSubject,
+  VerifyBackupEpochManifests,
+  VerifiedBackupSourceRows,
+} from "@eliotr/cloudflare-erasure";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -463,4 +403,8 @@ export async function scopeBackupEpochsForSubject(input: {
     verify_manifests: input.verify_manifests,
   });
   return affected;
+}
+
+export function createBackupEpochScopePort(): BackupEpochScopePort {
+  return { scopeBackupEpochsForSubjects };
 }

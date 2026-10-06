@@ -4,20 +4,24 @@ import {
   canonicalBackupJson, failBackup, resolveBackupExportLimits, assertBackupIntent,
   bufferBackupStream, hashBackupStream, type BackupExportLimits, type EvidenceObjectStore, type Sha256DigestSinkFactory,
 } from "./shared.js";
-import { assertExhaustiveTableCoverage, listDurableTables, rebuildManifestLines } from "./coverage.js";
+import { assertExhaustiveTableCoverage, listDurableTables } from "./coverage.js";
 import {
   BACKUP_R2_PAYLOAD_PROTOCOL, backupR2ObjectIdentity, freshBackupR2Tally,
   normalizeBackupR2CustomMetadata, normalizeBackupR2HttpMetadata, snapshotBackupR2Bucket,
   type R2ObjectEntry,
 } from "./r2-inventory.js";
-import { claimEpochReceipt, peekEpochReplay, parsePersistedEpochReplay } from "./replay-authority.js";
-import { assertO2MigrationAuthority } from "./migration-gate.js";
-import { canonicalEpochIntentDigest } from "./intent-digest.js";
+import { claimEpochReceipt, peekEpochReplay } from "./replay-authority.js";
+import { replayPersistedEpoch } from "./epoch-replay-result.js";
+import {
+  abandonBackupEpochProducerWithoutWrites, admitBackupEpochProducer, assertBackupEpochProducerWriteOwner,
+  commitBackupEpochProducer, markBackupEpochProducerUnknown, pinBackupEpochProducerForWrites,
+  type BackupEpochProducerOwner, type BackupEpochProducerPins,
+} from "./epoch-producer-fence.js";
+import { planBackupEpoch, cutInputsFor } from "./epoch-plan.js";
 import {
   BACKUP_MANIFEST_PROTOCOL, assertExportColumnCoverage, assertCoreTableMigrationPresence,
-  coreTableSpecsForMigrationNames,
-  BACKUP_SCHEMA_INVENTORY_PROTOCOL, digestCoreColumnInventory, openExportCut, readCoreColumnInventory, sealExportCut,
-  type CoreTableInventory, type CutInputs, type OpenCut, type TableSpec,
+  coreTableSpecsForMigrationNames, digestCoreColumnInventory, openExportCut, readCoreColumnInventory, sealExportCut,
+  type CoreTableInventory, type OpenCut, type TableSpec,
 } from "./coherent-cut.js";
 
 // ER-34 O2 FIX2 portable epoch. IMPLEMENTED_NOT_LIVE. Coherent-cut: phase-1
@@ -99,8 +103,6 @@ export interface BackupEpochResult {
 export interface BackupEpochPort {
   createPortableEpoch(intent: OperationIntent, context?: BackupExportContext): Promise<BackupEpochResult>;
 }
-
-const MANIFEST_NAMES = ["schema", "schema-inventory", "ownership", "sources", "revisions", "projects", "scopes", "handles", "heads", "generations", "retention", "purge", "r2-objects", "rebuild", "vector"];
 
 async function backupTableExists(database: D1Database, table: string): Promise<boolean> {
   try {
@@ -233,14 +235,7 @@ async function readPurgeLedger(database: D1Database, maxRows: number, signal?: A
   return { rows, frontier, digest: await backupSha256Hex(rows.map((row) => canonicalBackupJson(row.row)).join("\n")) };
 }
 
-async function buildManifest(name: string, lines: readonly string[], maxBytes: number): Promise<{ name: string; jsonl: string; bytes: Uint8Array<ArrayBuffer>; digest: string }> {
-  const jsonl = lines.join("\n");
-  const bytes = new TextEncoder().encode(jsonl);
-  if (bytes.byteLength > maxBytes) failBackup("BACKUP_BOUND_EXCEEDED", `backup manifest ${name} exceeds its byte bound`, false, { manifest: name, limit: String(maxBytes) });
-  return { name, jsonl, bytes, digest: await backupSha256Hex(bytes) };
-}
-
-interface D1Snapshot {
+export interface D1Snapshot {
   readonly table_specs: readonly TableSpec[];
   readonly vector_tables: Record<string, { count: number; digest: string }>;
   readonly rows: readonly SnapshotRow[];
@@ -313,18 +308,6 @@ export function createBackupEpochPort(ports: BackupSourcePorts, overrides?: { re
     };
   }
 
-  function cutInputsFor(snap: D1Snapshot, r2Generation: string): CutInputs {
-    return {
-      schema_generation: snap.schema_generation,
-      migration_ledger_digest: snap.migration_ledger_digest,
-      table_digests: snap.vector_tables,
-      purge_frontier: snap.purge_frontier,
-      purge_digest: snap.purge_digest,
-      r2_generation: r2Generation,
-      schema_inventory_digest: snap.inventory_digest,
-    };
-  }
-
   async function createPortableEpoch(intentInput: OperationIntent, context: BackupExportContext = {}): Promise<BackupEpochResult> {
     const intent = assertBackupIntent(intentInput);
     const attemptNumber = context.attempt_number ?? 1;
@@ -335,83 +318,80 @@ export function createBackupEpochPort(ports: BackupSourcePorts, overrides?: { re
     if (!Number.isSafeInteger(retentionDays) || retentionDays < 1 || retentionDays > 3650) failBackup("BACKUP_INPUT_INVALID", "backup retention window is out of range");
     const signal = context.signal;
     if (backupAborted(signal)) failBackup("BACKUP_CANCELLED", "backup export was cancelled", true);
-    await assertO2MigrationAuthority(ports.core_db);
-    // Phase 1: freeze D1 + R2 into one cut and open the controller-owned token.
-    const frozen = await snapshotD1(signal);
-    const r2 = await snapshotR2(signal);
-    const cut: OpenCut = await openExportCut(ports.core_db, cutInputsFor(frozen, r2.fingerprint), now);
-    const vector: AuthorityVector = {
-      schema_generation: frozen.schema_generation, migration_names: frozen.migration_names,
-      migration_ledger_digest: frozen.migration_ledger_digest, tables: frozen.vector_tables,
-      purge_frontier: frozen.purge_frontier, purge_digest: frozen.purge_digest,
-      r2_keys: r2.entries.length, r2_bytes: r2.total_bytes, r2_digest: r2.fingerprint,
+    const admission = await admitBackupEpochProducer(ports.core_db, intent, now);
+    let frozen: D1Snapshot;
+    let r2: Awaited<ReturnType<typeof snapshotR2>>;
+    let plan: Awaited<ReturnType<typeof planBackupEpoch>>;
+    try {
+      // Durable CAPTURING admission precedes every source or R2 snapshot.
+      frozen = await snapshotD1(signal);
+      r2 = await snapshotR2(signal);
+      const absentHeadTables: string[] = [];
+      for (const table of ["publication", "federation_reference_manifest", "navigation_artifact"] as const) {
+        if (!await backupTableExists(ports.core_db, table)) absentHeadTables.push(table);
+      }
+      plan = await planBackupEpoch({
+        frozen, r2, intent, absentHeadTables, max_manifest_bytes: limits.max_manifest_bytes,
+      });
+    } catch (cause) {
+      if (admission.mode === "OWNED_CAPTURE") {
+        await abandonBackupEpochProducerWithoutWrites(ports.core_db, admission.owner, now).catch(() => undefined);
+      }
+      throw cause;
+    }
+    const { vector, vector_digest: vectorDigest, bundles, manifest_digests: manifestDigests,
+      vector_manifest_digest: vectorManifestDigest, group_digests: groupDigests,
+      manifest_digest: manifestDigest, epoch_id: epochId, intent_digest: intentDigest } = plan;
+    const claim = {
+      idempotency_key: intent.idempotency_key,
+      intent_id: intent.intent_ref.id,
+      intent_digest: intentDigest,
+      vector_digest: vectorDigest,
+      manifest_digest: manifestDigest,
+      epoch_id: epochId,
     };
-    const vectorDigest = await backupSha256Hex(canonicalBackupJson(vector));
-    const vectorManifestLine = canonicalBackupJson({ protocol: BACKUP_MANIFEST_PROTOCOL, vector, vector_digest: vectorDigest, schema_inventory_digest: frozen.inventory_digest, cut_id: cut.cut_id, cut_digest: cut.cut_digest });
-    const byManifest = new Map<string, string[]>();
-    const record = (manifest: string, line: string): void => {
-      const lines = byManifest.get(manifest);
-      if (lines === undefined) byManifest.set(manifest, [line]);
-      else lines.push(line);
-    };
-    const specManifest = new Map<string, string>();
-    for (const spec of frozen.table_specs) specManifest.set(spec.table, spec.manifest);
-    for (const row of frozen.rows) {
-      // Purge rows are emitted once below from the dedicated stable ledger
-      // read; avoid duplicating them in their regular table manifest.
-      if (row.table === "purge_ledger") continue;
-      record(specManifest.get(row.table) ?? "sources", canonicalBackupJson({ table: row.table, row: row.row }));
-    }
-    for (const row of frozen.purge_rows) record("purge", canonicalBackupJson({ table: row.table, row: row.row }));
-    for (const table of ["publication", "federation_reference_manifest", "navigation_artifact"] as const) {
-      if (!await backupTableExists(ports.core_db, table)) record("heads", canonicalBackupJson({ table, status: "TABLE_ABSENT" }));
-    }
-    const heads = new Map<string, number>();
-    for (const row of frozen.rows) {
-      if (row.table !== "investigation") continue;
-      const id = row.row["investigation_id"]; const rev = row.row["revision"];
-      if (typeof id !== "string" || typeof rev !== "number") continue;
-      if (rev > (heads.get(id) ?? 0)) heads.set(id, rev);
-    }
-    for (const [id, head] of [...heads.entries()].sort()) record("heads", canonicalBackupJson({ kind: "investigation", id, head_revision: head }));
-    for (const line of rebuildManifestLines()) record("rebuild", line);
-    record("schema", canonicalBackupJson({ manifest_protocol: BACKUP_MANIFEST_PROTOCOL, schema_generation: vector.schema_generation, migration_ledger_digest: vector.migration_ledger_digest, migration_ledger: "PRESENT", migration_count: vector.migration_names.length }));
-    record("schema-inventory", canonicalBackupJson({ protocol: BACKUP_MANIFEST_PROTOCOL, inventory_protocol: BACKUP_SCHEMA_INVENTORY_PROTOCOL, schema_inventory_digest: frozen.inventory_digest, cut_id: cut.cut_id }));
-    for (const table of specManifest.keys()) {
-      const inventory = frozen.column_inventory.find((entry) => entry.table === table);
-      const columns = inventory?.columns.map((column) => column.name) ?? [];
-      const column_shapes = inventory?.columns ?? [];
-      record("schema-inventory", canonicalBackupJson({ table, columns, column_shapes }));
-    }
-    record("purge", canonicalBackupJson({ purge_frontier: vector.purge_frontier, purge_digest: vector.purge_digest }));
-    record("r2-objects", canonicalBackupJson({ object_count: r2.entries.length, total_bytes: r2.total_bytes, fingerprint: r2.fingerprint, payload_protocol: BACKUP_R2_PAYLOAD_PROTOCOL }));
-    for (const entry of r2.entries) record("r2-objects", canonicalBackupJson(entry));
-    record("vector", vectorManifestLine);
-    const bundles: { name: string; jsonl: string; bytes: Uint8Array<ArrayBuffer>; digest: string }[] = [];
-    for (const name of MANIFEST_NAMES) bundles.push(await buildManifest(name, (byManifest.get(name) ?? []).sort(), limits.max_manifest_bytes));
-    const manifestDigests: Record<string, string> = {};
-    for (const bundle of bundles) manifestDigests[bundle.name] = bundle.digest;
-    const vectorManifestDigest = manifestDigests["vector"] ?? "";
-    const group = async (members: readonly string[]): Promise<string> => backupSha256Hex(members.map((m) => `${m}:${manifestDigests[m] ?? "ABSENT"}`).sort().join("\n"));
-    const groupDigests: Record<string, string> = { core: await group(["schema", "schema-inventory", "ownership", "sources", "revisions", "projects", "scopes", "handles", "retention", "purge", "vector"]), heads: await group(["heads"]), generations: await group(["generations"]), r2: await group(["r2-objects"]) };
-    const manifestDigest = await backupSha256Hex(Object.entries(manifestDigests).sort().map(([n, d]) => `${n}:${d}`).join("\n"));
-    const epochId = `epoch-${(await backupSha256Hex(`backup-epoch\u0000${intent.intent_ref.id}\u0000${vectorDigest}\u0000${manifestDigest}`)).slice(0, 48)}`;
-    const intentDigest = await canonicalEpochIntentDigest(intent, { vector_digest: vectorDigest, manifest_digest: manifestDigest, epoch_id: epochId });
-    const claim = { idempotency_key: intent.idempotency_key, intent_id: intent.intent_ref.id, intent_digest: intentDigest, vector_digest: vectorDigest, manifest_digest: manifestDigest, epoch_id: epochId };
     // Replay pre-check BEFORE any part write: exact replay returns persisted
     // bytes with zero side effects; divergence conflicts with zero side effects.
     const peeked = await peekEpochReplay(ports.core_db, claim);
-    if (peeked.state === "CONFLICT") failBackup("BACKUP_INTENT_CONFLICT", "backup intent reuses an identity with divergent content", false, { intent_id: intent.intent_ref.id });
+    if (peeked.state === "CONFLICT") {
+      if (admission.mode === "OWNED_CAPTURE") await abandonBackupEpochProducerWithoutWrites(ports.core_db, admission.owner, now);
+      failBackup("BACKUP_INTENT_CONFLICT", "backup intent reuses an identity with divergent content", false, { intent_id: intent.intent_ref.id });
+    }
     if (peeked.state === "REPLAY") {
-      const replayed = parsePersistedEpochReplay(peeked.persisted, intent.idempotency_key);
-      let draft: BackupEpochDraft;
-      try {
-        draft = JSON.parse(peeked.persisted.draft_json) as BackupEpochDraft;
-      } catch (cause) {
-        failBackup("BACKUP_VECTOR_UNVERIFIABLE", "backup persisted draft is corrupt", false, {}, cause);
+      if (admission.mode === "OWNED_CAPTURE") await abandonBackupEpochProducerWithoutWrites(ports.core_db, admission.owner, now);
+      return replayPersistedEpoch(peeked.persisted, intent.idempotency_key, intent.intent_ref.id, epochId, vectorDigest);
+    }
+    if (admission.mode !== "OWNED_CAPTURE") {
+      failBackup("BACKUP_INTENT_CONFLICT", "read-only backup replay authority has no exact persisted receipt", true);
+    }
+    const owner: BackupEpochProducerOwner = admission.owner;
+    const pins: BackupEpochProducerPins = {
+      epoch_id: epochId,
+      part_prefix: `backup-parts/${epochId}/`,
+      cut_id: plan.cut.cut_id,
+      cut_digest: plan.cut.cut_digest,
+      vector_digest: vectorDigest,
+      manifest_digest: manifestDigest,
+      intent_digest: intentDigest,
+    };
+    const pinResult = await pinBackupEpochProducerForWrites(ports.core_db, owner, pins, now);
+    if (pinResult === "RECEIPT_PRESENT") {
+      const latePeek = await peekEpochReplay(ports.core_db, claim);
+      if (latePeek.state === "CONFLICT") {
+        failBackup("BACKUP_INTENT_CONFLICT", "backup intent reuses an identity with divergent content", false, { intent_id: intent.intent_ref.id });
       }
-      if (draft.epoch_id !== epochId) failBackup("BACKUP_INTENT_CONFLICT", "backup replay resolves to a divergent epoch", false, { intent_id: intent.intent_ref.id });
-      return { draft, attempt: replayed.attempt, receipt: replayed.receipt, vector_digest: vectorDigest };
+      if (latePeek.state === "REPLAY") {
+        return replayPersistedEpoch(latePeek.persisted, intent.idempotency_key, intent.intent_ref.id, epochId, vectorDigest);
+      }
+      failBackup("BACKUP_TABLE_MISSING", "backup receipt appeared during producer admission but no exact replay is readable", true);
+    }
+    try {
+    const cut: OpenCut = await openExportCut(ports.core_db, plan.cut_inputs, now);
+    if (!cut.inserted || cut.state !== "OPEN") {
+      failBackup("BACKUP_INTENT_CONFLICT", "backup producer cannot adopt a pre-existing coherent cut", true, { cut: cut.cut_id });
+    }
+    if (cut.cut_id !== pins.cut_id || cut.cut_digest !== pins.cut_digest) {
+      failBackup("BACKUP_VECTOR_DRIFT", "backup cut differs from the owner-pinned candidate", true);
     }
     const partIndex: BackupPartRef[] = [];
     const payloadPartIndex: BackupPayloadPartRef[] = [];
@@ -428,6 +408,7 @@ export function createBackupEpochPort(ports: BackupSourcePorts, overrides?: { re
         const partKey = `backup-parts/${epochId}/${bundle.name}/${String(n).padStart(6, "0")}-${chunkDigest}`;
         const stream = new ReadableStream<Uint8Array>({ start(c) { c.enqueue(chunk.slice()); c.close(); } });
         let receipt;
+        await assertBackupEpochProducerWriteOwner(ports.core_db, owner, pins);
         try {
           receipt = await ports.part_sink.putImmutable({ key: partKey, body: stream, expected_sha256: chunkDigest, expected_size_bytes: chunk.byteLength, content_type: "application/jsonl", custom_metadata: { backup_epoch: epochId, backup_manifest: bundle.name, backup_part_index: String(n), backup_part_sha256: chunkDigest, backup_vector_digest: vectorDigest } });
         } catch (cause) {
@@ -474,6 +455,7 @@ export function createBackupEpochPort(ports: BackupSourcePorts, overrides?: { re
         const partKey = `backup-parts/${epochId}/r2-payload/${identity}/${String(chunk.index).padStart(6, "0")}-${chunk.sha256}`;
         const stream = new ReadableStream<Uint8Array>({ start(controller) { controller.enqueue(partBytes.slice()); controller.close(); } });
         let receipt;
+        await assertBackupEpochProducerWriteOwner(ports.core_db, owner, pins);
         try {
           receipt = await ports.part_sink.putImmutable({
             key: partKey, body: stream, expected_sha256: chunk.sha256, expected_size_bytes: chunk.size_bytes,
@@ -545,21 +527,28 @@ export function createBackupEpochPort(ports: BackupSourcePorts, overrides?: { re
       reconciled ? ["RESUMED_PARTS"] : [], now);
     const claimed = await claimEpochReceipt(ports.core_db, claim,
       { intent_digest: intentDigest, receipt_json: JSON.stringify(provisional), draft_json: JSON.stringify(draft), attempt_json: JSON.stringify(attempt) }, now);
+    const persisted = claimed.persisted;
+    if (persisted.intent_digest !== intentDigest) {
+      failBackup("BACKUP_INTENT_CONFLICT", "persisted backup receipt intent differs from its producer pins", true);
+    }
+    await commitBackupEpochProducer(ports.core_db, owner, pins, {
+      intent_id: intent.intent_ref.id,
+      intent_digest: persisted.intent_digest,
+      receipt_json: persisted.receipt_json,
+      draft_json: persisted.draft_json,
+      attempt_json: persisted.attempt_json,
+    }, now);
     if (claimed.replayed) {
       // Lost race with an identical claim: the winner's persisted bytes are
       // authority. Anything divergent already failed the pre-check, so a
       // divergent race here is a conflict, never a synthesized receipt.
-      const winner = parsePersistedEpochReplay(claimed.persisted, intent.idempotency_key);
-      let winnerDraft: BackupEpochDraft;
-      try {
-        winnerDraft = JSON.parse(claimed.persisted.draft_json) as BackupEpochDraft;
-      } catch (cause) {
-        failBackup("BACKUP_VECTOR_UNVERIFIABLE", "backup persisted draft is corrupt", false, {}, cause);
-      }
-      if (winnerDraft.epoch_id !== epochId) failBackup("BACKUP_INTENT_CONFLICT", "backup replay resolves to a divergent epoch", false, { intent_id: intent.intent_ref.id });
-      return { draft: winnerDraft, attempt: winner.attempt, receipt: winner.receipt, vector_digest: vectorDigest };
+      return replayPersistedEpoch(claimed.persisted, intent.idempotency_key, intent.intent_ref.id, epochId, vectorDigest);
     }
     return { draft, attempt, receipt: provisional, vector_digest: vectorDigest };
+    } catch (cause) {
+      await markBackupEpochProducerUnknown(ports.core_db, owner, pins, now);
+      throw cause;
+    }
   }
 
   return { createPortableEpoch };

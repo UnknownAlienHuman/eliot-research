@@ -32,6 +32,7 @@ const semanticBaselineSql = await readFile(new URL("../infra/d1/core/migrations/
 const stageOperationRebuildMigrationName = "0113_research_provider_key_model_use_failure_alignment.sql";
 const stageOperationRebuildSql = await readFile(new URL("../infra/d1/core/migrations/" + stageOperationRebuildMigrationName, import.meta.url), "utf8");
 const stageOperationRebuildBaselineSql = await readFile(new URL("../infra/d1/core/migrations/0110_research_provider_key_model_use.sql", import.meta.url), "utf8");
+const backupErasurePrimaryClosureSql = await readFile(new URL("../infra/d1/core/migrations/0117_backup_erasure_primary_closure.sql", import.meta.url), "utf8");
 const stageOperationRebuildPredecessorPins = [
   { name: "0110_research_provider_key_model_use.sql",
     sha256: "cf906b6059822fb87fb2ed7d1551be55d0cbfa11adaf78e95617365fe0d3a12c" },
@@ -287,6 +288,25 @@ await check("SQL allowlist ignores comments and literals, permits bounded trigge
   for (const sql of ["CREATE TABLE rebuilt AS SELECT * FROM existing;",
     "INSERT INTO target SELECT * FROM source;", "UPDATE schema_state SET value='x', updated_at='2026-10-03T00:00:00Z' WHERE key='generation' OR 1=1;",
     "PRAGMA foreign_keys=OFF;", "CREATE INDEX fixture_existing_idx ON existing_table(id);"]) {
+    assert.throws(() => classifyDeploymentMigrationSql(sql));
+  }
+});
+
+await check("0117 admits only nullable bounded ADD COLUMN CHECK predicates", async () => {
+  const result = classifyDeploymentMigrationSql(backupErasurePrimaryClosureSql);
+  assert.equal(result.classification, "schema_metadata_only");
+  assert.equal(result.newly_created_tables.length, 7);
+  assert.equal(result.created_schema_objects.length, 36);
+  assert.equal(result.required_schema_objects.length, 38);
+  assert.deepEqual(result.must_probe_schema_objects, []);
+
+  for (const sql of [
+    "ALTER TABLE target ADD COLUMN counter INTEGER NOT NULL CHECK (counter IS NULL OR counter > 0);",
+    "ALTER TABLE target ADD COLUMN counter INTEGER CHECK (counter IS NULL OR counter > 0) DEFAULT 0;",
+    "ALTER TABLE target ADD COLUMN counter INTEGER CHECK (counter IS NULL OR counter > (SELECT 0));",
+    "ALTER TABLE target ADD COLUMN counter INTEGER CHECK (counter IS NULL OR other_column > 0);",
+    "ALTER TABLE target ADD COLUMN counter INTEGER CHECK (counter IS NULL OR counter > 0); DELETE FROM target;",
+  ]) {
     assert.throws(() => classifyDeploymentMigrationSql(sql));
   }
 });

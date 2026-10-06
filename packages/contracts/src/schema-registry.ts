@@ -24,6 +24,8 @@ import * as publication from "./publication.js";
 import * as registryContracts from "./registry-contracts.js";
 import * as research from "./research.js";
 import * as researchBranch from "./research-branch.js";
+import * as researchProviderKey from "./research-provider-key.js";
+import * as researchProviderKeyModelUse from "./research-provider-key-model-use.js";
 import * as residency from "./residency.js";
 import * as retrieval from "./retrieval.js";
 import * as scope from "./scope.js";
@@ -42,7 +44,7 @@ import {
   type ContractStructuralStrictness,
 } from "./registry-contracts.js";
 
-export const CONTRACT_SCHEMA_REGISTRY_GENERATION = 7 as const;
+export const CONTRACT_SCHEMA_REGISTRY_GENERATION = 8 as const;
 
 export type ContractJsonPrimitive = string | number | boolean | null;
 export type ContractJsonValue =
@@ -92,6 +94,8 @@ const SCHEMA_MODULES: readonly SchemaModule[] = [
   { family: "registry", exports: registryContracts },
   { family: "research", exports: research },
   { family: "research", exports: researchBranch },
+  { family: "research", exports: researchProviderKey },
+  { family: "research", exports: researchProviderKeyModelUse },
   { family: "residency", exports: residency },
   { family: "retrieval", exports: retrieval },
   { family: "scope", exports: scope },

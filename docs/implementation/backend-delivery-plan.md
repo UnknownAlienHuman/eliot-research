@@ -31,6 +31,119 @@ migration operation; and deploy the current Worker/PWA with live readback.
 Issue closure requires its actual acceptance criteria. Planning PRs whose
 implementation is already on `main` do not establish live qualification.
 
+Two later backend checkpoints are now published: `a2a4c875` preserves bounded
+typed native Workflow diagnosis after unavailable D1 retention and rejects
+generic provider-message spoofing; `36b386e7` guards the exact primary R2 and
+version-metadata binding bootstrap. The Research fixture passed nine cases,
+affected package compilation and scoped lint passed, and independent reviewers
+accepted the bounded source changes. These commits have not yet been deployed;
+the live generation remains `git-7962930b6eab`.
+
+`f546f929` now validates the extractor's supported local D1 aliases, rejects
+incompatible target metadata and guessed provenance, and exposes explicit
+`d1:qualify-targets`. Its focused positive/negative fixture and independent
+static review passed. Depth-only output does not claim target qualification;
+#294 remains open for unresolved targets, SQL sites and native qualification.
+
+`eea1eaa7` now persists the actual in-process build manifest and prepared Worker
+bundle after successful deployment readback, with structured private references
+in the receipt. The scope is bounded local integrity, not compiler attestation.
+Focused integrity/build-input/apply-ordering fixtures and an independent source
+review passed. Wrangler type generation now writes to ignored tooling state,
+preserving product-source membership and the existing budget limits.
+
+The native Cloudflare API created the separate `eliotr-backup-parts` primary
+bucket once, after an exact empty filtered inventory, and verified its default
+jurisdiction and Standard class. Its actual API evidence and strict creation
+receipt are preserved in ignored operator state. Runtime binding, migration
+0116–0119 application, current writer qualification, and primary purge recovery
+are still being assembled. An independently qualified offsite destination is
+required for full backup/restore/erasure acceptance; no destination or credential
+has been invented from the new primary bucket.
+
+The physical primary-storage adapters now belong to
+`cloudflare-erasure-operations`; Generic erasure receives typed inventory,
+scope and quiescence ports. O2 no longer exports its weaker quiescence helper.
+The recovery path distinguishes permission to accept an absent key from actual
+absence, recomputes historical delete intents, and retains every present sealed
+pin when an UNKNOWN delete is retried under a higher lease generation.
+The aggregate behavioral run found a further reconstruction defect: the sealed
+closure reused the qualification digest as the original operation digest. The
+pending 0117 schema now persists both digests independently, pins the operation
+digest against mutation, and reconstructs the exact historical receipt. A
+focused SQLite/R2 recovery run passed both lost-ACK cases, and a fresh
+independent source review accepted the corrected digest/guard/readback path.
+The fixture first rejects immediate reacquisition of the live shared fence,
+then advances its injected clock past the persisted lease expiry; it does not
+rewrite a database lease. Inventory and terminal fixtures passed nine cases.
+Historical VERIFIED authority, the writer qualifier and the offsite adapter are
+explicit fixture boundaries, not native verification or offsite acceptance.
+The cross-D1/R2 lease-expiry interval remains a storage boundary.
+
+The PENDING epoch publisher now checks the exact 0119 ledger/schema identity,
+persisted producer and offsite receipt digests, and matching intent IDs and
+revisions. Its focused five-case fixture and independent source review passed.
+It has no VERIFIED promotion API. The primary-writer operator now validates the
+exact R2 binding, shared typed qualification/operation payloads, rejects any
+prior qualification/operation/current row, and conditionally commits against
+the exact installed state. Its read-only discovery emits actual deployment,
+binding and inventory evidence. The real SQLite regression fixture passes
+stale-row, race, replay and binding negatives. Independent source review
+accepted the prior-row, conditional-commit and read-only reconciliation gates.
+A remaining outer-versus-inner discovery-mode check in the ignored assembler
+is being corrected; no real admission/policy issuer or live qualification
+installation is claimed.
+
+The four pending migrations require 67 schema probes (v2 groups of 64 and three).
+The existing classifier now admits only the bounded nullable scalar CHECK
+predicates used by 0117. Focused classification and independent review passed;
+a fresh live schema clone, exact intent and once-only apply remain required.
+The actual Wrangler type-generation command succeeded with output in ignored
+tooling state. Its old generated declaration was archived with matching bytes
+and removed from product source; source budget ceilings are unchanged.
+
+The lockfile now selects patched `source-map-js` 1.2.2 and `smol-toml` 1.9.0
+within all existing semver ranges. Pinned pnpm 11.23.0 accepted the frozen lock,
+and the installed dependency graph resolves both versions.
+
+The aggregate checks were executed once. Full ESLint, TypeScript, the Rust
+chain, local-owner checks, Artifact Worker tests and implementation-status
+checks passed. The 195-file root run reported 173 passing files and 22 failing
+files; the 132-file native Core run reported 118 passing files, 13 failing files
+and one skipped file. The remaining suffixes were executed separately after
+obsolete projection, erasure, launch and build-input fixtures stopped the
+aggregate command. The full suites are not being repeated.
+
+The focused corrections cover moved Library/Artifact/Wiki APIs, the twelve
+already implemented provider-key schemas missing from the contract registry,
+known Workflow failure envelopes, native model policy fixtures, and canonical
+backup migration fixtures. The contract registry is now generation 8 with 217
+active schemas; all 241 previous compatibility entries remain, with twelve
+INITIAL entries added. The root import group passed five of six files; its only
+remaining readiness wording assertion then passed all four cases in a single
+file check. The canonical O2 fixtures passed eight of ten files; correcting the
+two remaining nonce/grant fixtures produced a separate 15-case pass while
+preserving the production uniqueness and owner-grant guards. Their shared
+fixture applies the actual 118-migration chain through 0119 via raw SQL glob.
+
+The native failed-file subset passed eleven of twelve files (131 tests). Its
+remaining COW failures, together with the original three COW HTTP failures,
+were traced to `DYNAMIC_ROUTE_LIVE_GATE_REQUIRED`: the Core model adapter
+passed TEST to the runtime but let admission default to PRODUCTION. It now
+derives the same environment once and passes it to both gates, with TEST only
+for development. Production LIVE qualification remains mandatory. Both COW
+HTTP files then passed all seven cases; compilation, lint, budget and independent
+source review passed. All original failing files now have passing targeted
+results. This is assembled bounded verification, not a repeated clean full-suite
+run or deployed Research acceptance.
+
+A current source caller audit found that the qualified primary adapter, O2
+export/copy APIs and canonical PENDING publisher still have no production
+mutation caller. The new owner inventory route is read-only. A server-authorized
+backup runner must connect those APIs with persisted destination policy and
+server-held encryption-key authority before live backup acceptance; binding
+installation alone does not implement that runner.
+
 #318 is closed by `d4458526`: `check:full` names the existing full verification
 chain, and the legacy `check:affected` alias prints a deprecation warning before
 running it. The scoped-verification guide identifies focused checks without
@@ -62,8 +175,13 @@ fails.
 
 The inbox Assets verifier now accepts an explicit installed Chromium/Chrome
 executable path. Core compilation, scoped lint and one native Assets/Chrome 154
-run passed, including iframe refusal. Authenticated production inbox/API flows
-and live edge headers remain pending for #316/#261. Deployment asset mismatch
+run passed, including iframe refusal. The separate October 5 edge readback now
+confirms the five inbox route/header cases, exact HTML/JS/CSS and unrelated
+asset hashes, and actual browser iframe refusal. Production missing-path Assets
+handling returns the configured root PWA fallback (200), unlike the local
+workerd redirect; both retain the inbox security headers. #316 is closed for
+this routing boundary. Full machine-client qualification/job execution in
+#261 remains pending. Deployment asset mismatch
 diagnostics now retain the canonical public path and expected/observed byte
 counts and hashes, without bodies or authentication data. Its focused fixture
 and scoped lint passed; there is no automatic upload retry.
@@ -81,10 +199,32 @@ fresh config pinned to the published source and its own live readback.
 After publication at `5b0516be`, a GET-only MCP Access timeout stopped another
 attempt before upload; direct plugin readback succeeded. The next guarded
 attempt passed compilation, scoped deployment lint, PWA build and Wrangler dry
-run, then stopped on the maintenance HTTP-route-surface guard. No current
-Worker upload is claimed. An independent route/source audit must resolve that
-guard before another attempt. The generated Core `cf:types` declarations are
+run, then stopped on the maintenance HTTP-route-surface guard. Those attempts
+made no Worker upload. An independent route/source audit was required before
+another attempt. The generated Core `cf:types` declarations are
 now ignored and the observed generated file was preserved in private state.
+
+The route audit found four owner-authenticated additions, with no removals or
+changes to existing routes. A fresh route-only intent pinned the 110-route live
+baseline and the 114-route candidate. The standard guarded maintenance command
+then deployed published `main` `7962930b` on October 5. The new version receives
+100% of traffic; authenticated health/capability readback, all 11 static asset
+body hashes, active-version stability and deployment-authority synchronization
+passed. No migration was reapplied, and no AI Search or MCP bootstrap/transition
+intent was used. The complete version/configuration/resource identities remain
+in private operator evidence. This is Worker/PWA maintenance delivery, with the
+full-release and product acceptance limits below still binding.
+
+The next backend checkpoint closes the producer/erasure race: claim before
+capture, exact owned write admission before any backup-part PUT, and durable
+quiescence before deletion. Current primary inventory is only a snapshot; the
+existing purge adapter handles offsite copies and cannot establish local
+backup-part absence. Primary deletion and terminal closure must require both
+primary and offsite evidence. Unknown claims, unreconciled legacy cuts and
+unproven retirement/drain of old producer versions remain blockers. The current
+Worker binding readback has no primary backup-part bucket binding; no name,
+alias or live deletion authority is inferred. ERASURE remains disabled while
+these source and production-composition obligations are completed.
 
 The #294 checkpoint records direct Core/Search receiver provenance and known
 bind arity and rejects a known-target failure even if the other schema accepts

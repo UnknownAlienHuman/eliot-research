@@ -8,20 +8,22 @@ import {
   type ErasureCoordinator,
 } from "@eliotr/cloudflare-erasure-operations";
 import { createInstalledBackupOffsiteR2Resolver } from "@eliotr/cloudflare-backup";
+import { createPrimaryWriterVerifier } from "./backup-primary-composition.js";
 import type { Env } from "./env.js";
 
 export type { ErasureCoordinator };
 
 /** Core adapts Worker bindings and the application-owned backup resolver to erasure operations. */
-export function createConfiguredErasureCoordinator(env: Env & {
-  readonly BACKUP_PARTS_BUCKET?: R2Bucket;
-}): ErasureCoordinator {
+export function createConfiguredErasureCoordinator(env: Env): ErasureCoordinator {
   return createConfiguredErasureCoordinatorInLibrary({
     core_database: env.CORE_DB,
     search_database: env.SEARCH_DB,
     evidence_bucket: env.EVIDENCE_BUCKET,
     work_bucket: env.WORK_BUCKET,
     ...(env.BACKUP_PARTS_BUCKET === undefined ? {} : { backup_parts_bucket: env.BACKUP_PARTS_BUCKET }),
+    ...(env.BACKUP_PARTS_BUCKET === undefined || env.VERSION_METADATA === undefined ? {} : {
+      backup_primary_qualification: createPrimaryWriterVerifier({ ...env, BACKUP_PARTS_BUCKET: env.BACKUP_PARTS_BUCKET }),
+    }),
     managed_search: createAiSearchErasureNamespace(
       env.AI_SEARCH as unknown as AiSearchErasureNamespaceBinding,
     ),

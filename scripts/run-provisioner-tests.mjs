@@ -21,6 +21,7 @@ await import("./test-deployment-ai-search-bootstrap.mjs");
 await import("./test-deployment-mcp-access-transition.mjs");
 await import("./test-deployment-migration-operation.mjs");
 await import("./test-deployment-build-inputs.mjs");
+await import("./test-primary-writer-qualification-operator.mjs");
 await import("./test-cloudflare-provisioners.mjs");
 await import("./test-ai-search-provisioning-readback.mjs");
 await import("./test-ai-search-provisioning-reconciliation.mjs");

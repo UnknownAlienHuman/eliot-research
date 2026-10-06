@@ -12,6 +12,8 @@ import * as computerAgentDispatch from "./computer-agent-dispatch.js";
 import * as computerAgentQualification from "./computer-agent-qualification.js";
 import * as computerAgentRoute from "./computer-agent-route.js";
 import * as researchBranch from "./research-branch.js";
+import * as researchProviderKey from "./research-provider-key.js";
+import * as researchProviderKeyModelUse from "./research-provider-key-model-use.js";
 import * as publicContracts from "./index.js";
 import {
   CompletionDispositionSchema,
@@ -97,6 +99,8 @@ describe("ER-01 public contract registry", () => {
       ["computer-agent", computerAgentQualification],
       ["computer-agent", computerAgentRoute],
       ["research", researchBranch],
+      ["research", researchProviderKey],
+      ["research", researchProviderKeyModelUse],
     ] as const;
     for (const [family, schemaModule] of additiveSchemaFamilies) {
       for (const [exportName, candidate] of Object.entries(schemaModule)) {

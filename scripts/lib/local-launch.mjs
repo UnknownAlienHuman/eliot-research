@@ -31,7 +31,10 @@ export function localEnvironment(environment = process.env) {
 export function localConfig(canonical, root = ROOT) {
   if (canonical.name !== "eliotr-core" || canonical.main !== "src/index.ts" ||
       !canonical.assets || !Array.isArray(canonical.d1_databases) ||
-      canonical.d1_databases.length !== 2 || canonical.r2_buckets?.length !== 2) {
+      canonical.d1_databases.length !== 2 || canonical.r2_buckets?.length !== 3 ||
+      ["EVIDENCE_BUCKET", "WORK_BUCKET", "BACKUP_PARTS_BUCKET"].some((binding) =>
+        canonical.r2_buckets.filter((bucket) => bucket?.binding === binding).length !== 1) ||
+      canonical.version_metadata?.binding !== "VERSION_METADATA") {
     throw new Error("Unsupported canonical Worker configuration; local profile must be reviewed");
   }
   const core = resolve(root, "apps/eliotr-core");
@@ -49,6 +52,7 @@ export function localConfig(canonical, root = ROOT) {
     compatibility_date: canonical.compatibility_date,
     ...(canonical.compatibility_flags ? { compatibility_flags: canonical.compatibility_flags } : {}),
     workers_dev: false, preview_urls: false, minify: true,
+    version_metadata: { binding: "VERSION_METADATA" },
     assets: { ...canonical.assets, directory: resolve(core, canonical.assets.directory) },
     vars: { ENVIRONMENT: "development", DEPLOYMENT_GENERATION: "local-development",
       ACCESS_TEAM_DOMAIN: "https://replace-me.cloudflareaccess.com", ACCESS_AUDIENCE: "replace-me",

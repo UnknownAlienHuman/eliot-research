@@ -11,7 +11,16 @@ import {
   type Sha256DigestSink,
 } from "@eliotr/backup-o2";
 import { describe, expect, it } from "vitest";
-import { createD1ErasureInventory } from "./inventory.js";
+import {
+  createD1ErasureAuthority,
+  createD1ErasureInventory,
+  createCloudflareErasureBackend,
+  type BackupErasurePort,
+  type BackupPrimaryWriterQualificationVerifier,
+} from "@eliotr/cloudflare-erasure";
+import { createBackupEpochScopePort } from "./backup-epoch-scope.js";
+import { createD1BackupPrimaryInventoryPort } from "./backup-primary-adapter.js";
+import { createD1BackupProducerQuiescencePort } from "./backup-producer-quiescence.js";
 
 const CREATED_AT = "2026-09-06T00:00:00.000Z";
 const NOW = Date.parse(CREATED_AT);
@@ -58,7 +67,7 @@ function digestSink(): Sha256DigestSink {
 }
 
 function d1Database(db: DatabaseSync): D1Database {
-  return {
+  const database = {
     prepare(sql: string) {
       const statement = db.prepare(sql);
       const bind = (values: unknown[]) => ({
@@ -77,7 +86,28 @@ function d1Database(db: DatabaseSync): D1Database {
       });
       return { bind: (...values: unknown[]) => bind(values), ...bind([]) };
     },
+    async batch(statements: D1PreparedStatement[]): Promise<D1Result[]> {
+      db.exec("BEGIN IMMEDIATE");
+      try {
+        const results: D1Result[] = [];
+        for (const statement of statements) results.push(await statement.run());
+        db.exec("COMMIT");
+        return results;
+      } catch (cause) {
+        db.exec("ROLLBACK");
+        throw cause;
+      }
+    },
   } as unknown as D1Database;
+  return database;
+}
+
+function physicalInventoryDependencies(database: D1Database, bucket: R2Bucket) {
+  return {
+    backup_primary_inventory: createD1BackupPrimaryInventoryPort({ database, bucket }),
+    backup_epoch_scope: createBackupEpochScopePort(),
+    backup_producer_quiescence: createD1BackupProducerQuiescencePort(database),
+  };
 }
 
 interface StoredObject {
@@ -178,9 +208,13 @@ function partSink(bucket: R2Bucket): EvidenceObjectStore {
   };
 }
 
-function openCore(): DatabaseSync {
+const MANIFEST_BINDINGS_MIGRATION = "0119_backup_epoch_manifest_bindings.sql";
+
+function openCore(options: { readonly applyManifestBindings?: boolean } = {}): DatabaseSync {
   const db = new DatabaseSync(":memory:");
-  const migrations = Object.entries(CORE_MIGRATIONS).sort(([left], [right]) => left.localeCompare(right));
+  const migrations = Object.entries(CORE_MIGRATIONS)
+    .filter(([path]) => options.applyManifestBindings !== false || !path.endsWith(MANIFEST_BINDINGS_MIGRATION))
+    .sort(([left], [right]) => left.localeCompare(right));
   for (const [, migration] of migrations) db.exec(migration);
   for (const [index, [path]] of migrations.entries()) {
     const name = path.split("/").at(-1)?.replace(/\.sql$/u, "");
@@ -189,6 +223,18 @@ function openCore(): DatabaseSync {
       .run(`${name}.sql`, `2026-09-06T00:00:${String(index).padStart(2, "0")}.000Z`);
   }
   return db;
+}
+
+function applyManifestBindingsMigration(db: DatabaseSync): void {
+  const migration = Object.entries(CORE_MIGRATIONS)
+    .find(([path]) => path.endsWith(MANIFEST_BINDINGS_MIGRATION));
+  if (migration === undefined) throw new Error("0119 migration source is unavailable");
+  const [path, sql] = migration;
+  db.exec(sql);
+  const name = path.split("/").at(-1);
+  if (name === undefined) throw new Error("tracked Core migration path is malformed");
+  db.prepare("INSERT INTO d1_migrations(name,applied_at) VALUES(?1,?2)")
+    .run(name, new Date().toISOString());
 }
 
 function addSource(db: DatabaseSync, sourceId: string, revisionRef: string, content: string, residency: string): void {
@@ -207,8 +253,15 @@ interface ProducedEpoch {
   readonly part_bucket: R2Bucket;
 }
 
-async function produceEpoch(sourceId: string, revisionRef: string, content: string, residency: string, intentKey: string): Promise<ProducedEpoch> {
-  const db = openCore();
+async function produceEpoch(
+  sourceId: string,
+  revisionRef: string,
+  content: string,
+  residency: string,
+  intentKey: string,
+  options: { readonly applyManifestBindings?: boolean } = {},
+): Promise<ProducedEpoch> {
+  const db = openCore(options);
   addSource(db, sourceId, revisionRef, content, residency);
   const evidence = memoryBucket();
   const work = memoryBucket();
@@ -231,6 +284,92 @@ async function produceEpoch(sourceId: string, revisionRef: string, content: stri
   return { db, id: result.draft.epoch_id, draft: result.draft, part_bucket: parts.bucket };
 }
 
+function historicalBackupEpoch(epoch: ProducedEpoch, state: "PENDING" | "VERIFIED"): void {
+  const manifests = epoch.draft.manifest_digests;
+  const refs = [manifests["schema-inventory"], manifests["rebuild"], manifests["r2-objects"], manifests["r2-objects"]];
+  if (refs.some((value) => typeof value !== "string" || !/^[a-f0-9]{64}$/u.test(value))) {
+    throw new Error("O2 draft lacks exact content digests for the historical canonical row");
+  }
+  // This row is seeded before 0119 to model an existing database state. It
+  // does not exercise or bypass the post-migration canonical publisher.
+  epoch.db.prepare(
+    "INSERT INTO backup_epoch (backup_epoch_id,core_export_ref,search_projection_manifest_ref," +
+      "evidence_manifest_ref,work_manifest_ref,offsite_copy_ref,purge_ledger_revision," +
+      "verification_state,created_at,verified_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
+  ).run(
+    epoch.id,
+    `sha256:${refs[0]}`,
+    `sha256:${refs[1]}`,
+    `sha256:${refs[2]}`,
+    `sha256:${refs[3]}`,
+    `legacy-o4-copy:${epoch.id}`,
+    epoch.draft.purge_ledger_revision,
+    state,
+    epoch.draft.created_at,
+    state === "VERIFIED" ? epoch.draft.created_at : null,
+  );
+}
+
+async function acquireQuarantinedFence(database: D1Database, request: ErasureRequest) {
+  const authority = createD1ErasureAuthority({
+    core_database: database,
+    worker_id: "backup-epoch-inventory-test",
+    lease_ms: 10 * 60_000,
+    now: Date.now,
+  });
+  const acquired = await authority.acquire(request);
+  expect(acquired.disposition).toBe("ACQUIRED");
+  if (acquired.disposition !== "ACQUIRED") throw new Error("inventory fixture did not acquire its live erasure fence");
+  const backend = createCloudflareErasureBackend({
+    core_database: database,
+    authority,
+    inventory: { async enumerate() { throw new Error("quarantine fixture does not enumerate through the backend"); } },
+    locations: { forLocation() { return null; } },
+    invalidation: { async invalidate() { return []; } },
+    now: Date.now,
+  });
+  await backend.quarantineAndRevoke(request, acquired.fence);
+  return acquired.fence;
+}
+
+function testOffsiteErasurePort(): BackupErasurePort {
+  return {
+    async purge(epochRef) { return { receipt_ref: `test-offsite-delete:${epochRef}` }; },
+    async verifyAbsent(epochRef) { return { absent: true, receipt_ref: `test-offsite-absence:${epochRef}` }; },
+  };
+}
+
+function testWriterQualificationVerifier(): BackupPrimaryWriterQualificationVerifier {
+  return {
+    async assertCurrentQualification(input) {
+      // Typed double at the external owner/runtime boundary. Producer, D1,
+      // inventory and R2 pins remain generated and read by the real paths.
+      return {
+        protocol: "eliotr.backup-primary-writer-qualification.v1",
+        mode: "ISOLATED_NEW_BUCKET",
+        operation_receipt_ref: "test-primary-writer-operation",
+        operation_receipt_digest: HASH_A,
+        admission_binding_ref: "test-owner-admission",
+        admission_binding_digest: HASH_B,
+        cloudflare_account_ref: "test-cloudflare-account",
+        primary_bucket_binding_ref: "BACKUP_PARTS_BUCKET",
+        worker_version_ref: "test-worker-version",
+        controller_generation: "test-controller-generation",
+        controller_fingerprint: HASH_C,
+        source_sha256: HASH_A,
+        configuration_sha256: HASH_B,
+        artifact_sha256: HASH_C,
+        bootstrap_zero_state_receipt_ref: "test-bootstrap-zero-state",
+        bootstrap_zero_state_digest: HASH_D,
+        producer_claims_digest: input.producer_claims_digest,
+        export_cut_inventory_digest: input.export_cut_inventory_digest,
+        primary_prefix_inventory_digest: input.primary_prefix_inventory_digest,
+        evidence_digest: HASH_D,
+      };
+    },
+  };
+}
+
 async function verifyProducedEpoch(epoch: ProducedEpoch) {
   const plaintext_parts = [];
   for (const part of epoch.draft.part_index) {
@@ -242,6 +381,7 @@ async function verifyProducedEpoch(epoch: ProducedEpoch) {
 }
 
 function erasureRequest(subject: string): ErasureRequest {
+  const now = Date.now();
   return {
     protocol: "erc.privacy.erasure.v1",
     erasure_ref: { id: "erase-backup-test", revision: 1 },
@@ -249,28 +389,32 @@ function erasureRequest(subject: string): ErasureRequest {
     exact_subject_refs: [subject],
     required_locations: ["BackupRestorePath"],
     legal_basis_ref: "delete-request",
-    admitted_at: CREATED_AT,
-    deadline: "2026-09-13T00:00:00.000Z",
+    admitted_at: new Date(now - 1_000).toISOString(),
+    deadline: new Date(now + 7 * 24 * 60 * 60_000).toISOString(),
   };
 }
 
 describe("D1 backup epoch inventory producer integration", () => {
   it("reads O2 parts from the explicit primary bucket without reading source Work", async () => {
-    const epoch = await produceEpoch("source-A", "revision-A1", HASH_A, HASH_B, "separate-parts");
+    const epoch = await produceEpoch("source-A", "revision-A1", HASH_A, HASH_B, "separate-parts", { applyManifestBindings: false });
     try {
-      epoch.db.prepare("INSERT INTO backup_epoch (backup_epoch_id,core_export_ref,search_projection_manifest_ref,evidence_manifest_ref,work_manifest_ref,offsite_copy_ref,purge_ledger_revision,verification_state,created_at,verified_at) VALUES (?1,'core','search','evidence','work','offsite',0,'VERIFIED',?2,?2)")
-        .run(epoch.id, CREATED_AT);
+      historicalBackupEpoch(epoch, "VERIFIED");
+      applyManifestBindingsMigration(epoch.db);
       let sourceWorkReads = 0;
       const sourceWork = {
         async get() { sourceWorkReads += 1; throw new Error("source Work is not the primary part store"); },
         async list() { sourceWorkReads += 1; throw new Error("source Work is not the primary part store"); },
       } as unknown as R2Bucket;
       const database = d1Database(epoch.db);
+      const request = erasureRequest("source-revision:revision-A1");
+      const fence = await acquireQuarantinedFence(database, request);
       const inventory = createD1ErasureInventory({
-        core_database: database, search_database: database,
-        work_bucket: sourceWork, backup_parts_bucket: epoch.part_bucket,
+        core_database: database, search_database: database, work_bucket: sourceWork,
+        backup_offsite: testOffsiteErasurePort(),
+        backup_primary_qualification: testWriterQualificationVerifier(),
+        ...physicalInventoryDependencies(database, epoch.part_bucket),
       });
-      const closure = await inventory.enumerate(erasureRequest("source-revision:revision-A1"));
+      const closure = await inventory.enumerate(request, fence);
       expect(closure.targets).toHaveLength(1);
       expect(closure.targets[0]).toMatchObject({ location: "BackupRestorePath", canonical_ref: `backup:${epoch.id}` });
       expect(sourceWorkReads).toBe(0);
@@ -278,15 +422,17 @@ describe("D1 backup epoch inventory producer integration", () => {
   }, 30_000);
 
   it("refuses source Work as an implicit primary backup-part binding", async () => {
-    const epoch = await produceEpoch("source-A", "revision-A1", HASH_A, HASH_B, "missing-part-binding");
+    const epoch = await produceEpoch("source-A", "revision-A1", HASH_A, HASH_B, "missing-part-binding", { applyManifestBindings: false });
     try {
-      epoch.db.prepare("INSERT INTO backup_epoch (backup_epoch_id,core_export_ref,search_projection_manifest_ref,evidence_manifest_ref,work_manifest_ref,offsite_copy_ref,purge_ledger_revision,verification_state,created_at,verified_at) VALUES (?1,'core','search','evidence','work','offsite',0,'VERIFIED',?2,?2)")
-        .run(epoch.id, CREATED_AT);
+      historicalBackupEpoch(epoch, "VERIFIED");
+      applyManifestBindingsMigration(epoch.db);
       const database = d1Database(epoch.db);
+      const request = erasureRequest("source-revision:revision-A1");
+      const fence = await acquireQuarantinedFence(database, request);
       const inventory = createD1ErasureInventory({
         core_database: database, search_database: database, work_bucket: epoch.part_bucket,
       });
-      await expect(inventory.enumerate(erasureRequest("source-revision:revision-A1")))
+      await expect(inventory.enumerate(request, fence))
         .rejects.toMatchObject({ code: "ERASURE_CLOSURE_INCOMPLETE", message: "source-scoped local backup archive authority is unavailable" });
     } finally { epoch.db.close(); }
   }, 30_000);
@@ -318,36 +464,47 @@ describe("D1 backup epoch inventory producer integration", () => {
   }, 30_000);
 
   it("blocks the actual inventory producer when an O2 receipt lacks its canonical backup_epoch link", async () => {
-    const epoch = await produceEpoch("source-A", "revision-A1", HASH_A, HASH_B, "missing-link");
+    const epoch = await produceEpoch("source-A", "revision-A1", HASH_A, HASH_B, "missing-link", { applyManifestBindings: false });
     const database = d1Database(epoch.db);
+    const request = erasureRequest("source-revision:revision-A1");
+    const fence = await acquireQuarantinedFence(database, request);
     const inventory = createD1ErasureInventory({
       core_database: database,
       search_database: database,
       work_bucket: memoryBucket().bucket,
-      backup_parts_bucket: epoch.part_bucket,
+      backup_offsite: testOffsiteErasurePort(),
+      backup_primary_qualification: testWriterQualificationVerifier(),
+      ...physicalInventoryDependencies(database, epoch.part_bucket),
     });
-    await expect(inventory.enumerate(erasureRequest("source-revision:revision-A1")))
+    await expect(inventory.enumerate(request, fence))
       .rejects.toMatchObject({ code: "ERASURE_CLOSURE_INCOMPLETE" });
 
+    // The wrong-epoch row is also explicit pre-0119 state. It cannot satisfy
+    // the O2 receipt's missing canonical link after 0119 is applied.
     epoch.db.prepare("INSERT INTO backup_epoch (backup_epoch_id,core_export_ref,search_projection_manifest_ref,evidence_manifest_ref,work_manifest_ref,offsite_copy_ref,purge_ledger_revision,verification_state,created_at,verified_at) VALUES (?1,'core','search','evidence','work','offsite',0,'PENDING',?2,NULL)")
       .run("different-epoch", CREATED_AT);
-    await expect(inventory.enumerate(erasureRequest("source-revision:revision-A1")))
+    applyManifestBindingsMigration(epoch.db);
+    await expect(inventory.enumerate(request, fence))
       .rejects.toMatchObject({ code: "ERASURE_CLOSURE_INCOMPLETE" });
     epoch.db.close();
   }, 30_000);
 
   it("does not promote a matching canonical PENDING row to verified authority", async () => {
-    const epoch = await produceEpoch("source-A", "revision-A1", HASH_A, HASH_B, "pending-link");
-    epoch.db.prepare("INSERT INTO backup_epoch (backup_epoch_id,core_export_ref,search_projection_manifest_ref,evidence_manifest_ref,work_manifest_ref,offsite_copy_ref,purge_ledger_revision,verification_state,created_at,verified_at) VALUES (?1,'core','search','evidence','work','offsite',0,'PENDING',?2,NULL)")
-      .run(epoch.id, CREATED_AT);
+    const epoch = await produceEpoch("source-A", "revision-A1", HASH_A, HASH_B, "pending-link", { applyManifestBindings: false });
+    historicalBackupEpoch(epoch, "PENDING");
+    applyManifestBindingsMigration(epoch.db);
     const database = d1Database(epoch.db);
+    const request = erasureRequest("source-revision:revision-A1");
+    const fence = await acquireQuarantinedFence(database, request);
     const inventory = createD1ErasureInventory({
       core_database: database,
       search_database: database,
       work_bucket: memoryBucket().bucket,
-      backup_parts_bucket: epoch.part_bucket,
+      backup_offsite: testOffsiteErasurePort(),
+      backup_primary_qualification: testWriterQualificationVerifier(),
+      ...physicalInventoryDependencies(database, epoch.part_bucket),
     });
-    await expect(inventory.enumerate(erasureRequest("source-revision:revision-A1")))
+    await expect(inventory.enumerate(request, fence))
       .rejects.toMatchObject({ code: "ERASURE_CLOSURE_INCOMPLETE" });
     epoch.db.close();
   }, 30_000);

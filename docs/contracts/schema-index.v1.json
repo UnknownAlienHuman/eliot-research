@@ -1681,6 +1681,126 @@
       "structural_strictness": "CLOSED_OBJECT"
     },
     {
+      "export_name": "ResearchProviderKeyConfigurationCreateReceiptSchema",
+      "family": "research",
+      "json_schema_sha256": "49246330983d19d98bb918675389c9a1ce895edfb7552978bac2d8ccd1afde85",
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:research:research-provider-key-configuration-create-receipt:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "ResearchProviderKeyConfigurationCreateRequestSchema",
+      "family": "research",
+      "json_schema_sha256": "fcc51f1604e4111a5c26310ac4f85ce423a674b167a740129927f6938c81aaea",
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:research:research-provider-key-configuration-create-request:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "ResearchProviderKeyConfigurationEntrySchema",
+      "family": "research",
+      "json_schema_sha256": "e5678e347d8ce779c27f0de52feb9c1815e43285eef5033838b38ee77e104351",
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:research:research-provider-key-configuration-entry:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "ResearchProviderKeyConfigurationFailureCodeSchema",
+      "family": "research",
+      "json_schema_sha256": "49baf8dcb708b249059cfb33492c5009e9e39a6ebf633f2979df37ad24718828",
+      "kind": "ENUM",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:research:research-provider-key-configuration-failure-code:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "NON_OBJECT"
+    },
+    {
+      "export_name": "ResearchProviderKeyConfigurationListSchema",
+      "family": "research",
+      "json_schema_sha256": "18110c0676b7128edd2327f424d8719d7569eeba18925813ef7df300789fe50c",
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:research:research-provider-key-configuration-list:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "ResearchProviderKeyConfigurationReadQuerySchema",
+      "family": "research",
+      "json_schema_sha256": "2e1b102c03cdc706bf17bfba71cfeef5e8f5b5324bc2f8f3279ad61dcb6cb953",
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:research:research-provider-key-configuration-read-query:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "ResearchProviderKeyConfigurationStatusSchema",
+      "family": "research",
+      "json_schema_sha256": "721f9f17b707d371a56646cd5d7adf24a4afe2d0222a22be5daffb1f827c5359",
+      "kind": "ENUM",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:research:research-provider-key-configuration-status:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "NON_OBJECT"
+    },
+    {
+      "export_name": "ResearchProviderKeyModelUseFailureCodeSchema",
+      "family": "research",
+      "json_schema_sha256": "08310a33521da45bd7d5e834e9f57f7565cdb10b24dbeda449f902a5b4ff2760",
+      "kind": "ENUM",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:research:research-provider-key-model-use-failure-code:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "NON_OBJECT"
+    },
+    {
+      "export_name": "ResearchProviderKeyModelUsePhaseSchema",
+      "family": "research",
+      "json_schema_sha256": "a5abff5b46f59f401017de8d9c1dc523988204cba6b38c9810b604730673bdcf",
+      "kind": "ENUM",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:research:research-provider-key-model-use-phase:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "NON_OBJECT"
+    },
+    {
+      "export_name": "ResearchProviderKeyModelUseReceiptSchema",
+      "family": "research",
+      "json_schema_sha256": "000791d5eeb3713ceaa1f8e12af37b7d4dc801209ca47fbed7578bb055c1cdb5",
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:research:research-provider-key-model-use-receipt:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "ResearchProviderKeyModelUseRequestSchema",
+      "family": "research",
+      "json_schema_sha256": "e448ef60de9fcf8959b50f62cba7bc9aaa4eb9aa599018d8e458a168ad4b1477",
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:research:research-provider-key-model-use-request:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "ResearchProviderKeyModelUseStateSchema",
+      "family": "research",
+      "json_schema_sha256": "081fb3de41f528a0c0eb8d87b40bb2721206d818b9ca655f5065096b9473cf92",
+      "kind": "ENUM",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:research:research-provider-key-model-use-state:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "NON_OBJECT"
+    },
+    {
       "export_name": "ResearchReadExtractCheckpointSchema",
       "family": "research",
       "json_schema_sha256": "900ae7a44a93aeb30f641ccea387a41280cd0781ecc0703e30bba72c3440091e",
@@ -2053,6 +2173,6 @@
   ],
   "json_schema_dialect": "https://json-schema.org/draft/2020-12/schema",
   "protocol": "eliotr.contract-schema-index.v1",
-  "registry_generation": 7,
-  "schema_count": 205
+  "registry_generation": 8,
+  "schema_count": 217
 }

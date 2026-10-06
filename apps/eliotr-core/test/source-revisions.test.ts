@@ -4,7 +4,7 @@ import type { SourceAdmissionDecision } from "@eliotr/contracts";
 import type { AuthenticatedRequestContext, SourceRevisionsResult } from "@eliotr/interfaces";
 import { handleHttp } from "../src/http.js";
 import { readSourceRevisions } from "@eliotr/cloudflare-navigation";
-import { decodeSourceRevisions } from "../../eliotr-pwa/src/source-revisions-api.js";
+import { decodeSourceRevisions } from "../../../packages/pwa-source-workspace/src/source-revisions-api.js";
 import { db, insert, observeDatabase, principal, runtime, seedSource, setupOrientationDatabase, verifier } from "./orientation-fixture.js";
 
 beforeAll(setupOrientationDatabase);

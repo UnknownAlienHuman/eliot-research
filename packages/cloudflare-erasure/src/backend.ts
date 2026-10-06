@@ -8,6 +8,7 @@ import type {
   PurgeTarget,
 } from "@eliotr/contracts";
 import {
+  ErasureRuntimeError,
   erasureDigest,
   erasureFail,
   isoFromMs,
@@ -130,6 +131,13 @@ function failureReasonCode(cause: unknown, fallback: string): string {
   return fallback;
 }
 
+function rethrowRetryableSettlementUncertainty(cause: unknown): void {
+  if (cause instanceof ErasureRuntimeError &&
+      cause.code === "ERASURE_SETTLEMENT_UNCERTAIN" && cause.retryable) {
+    throw cause;
+  }
+}
+
 export interface CloudflareErasureBackendDependencies {
   readonly core_database: D1Database;
   readonly authority: ErasureAuthorityPort;
@@ -205,7 +213,7 @@ export function createCloudflareErasureBackend(
 
     async enumerateDependencyClosure(request, fence): Promise<ErasureDependencyClosure> {
       await dependencies.authority.assertFence(fence);
-      const closure = await dependencies.inventory.enumerate(request);
+      const closure = await dependencies.inventory.enumerate(request, fence);
       if (
         closure.erasure_ref.id !== request.erasure_ref.id ||
         closure.erasure_ref.revision !== request.erasure_ref.revision ||
@@ -278,6 +286,7 @@ export function createCloudflareErasureBackend(
         await dependencies.authority.recordPurge(fence, receipt);
         return receipt;
       } catch (cause) {
+        rethrowRetryableSettlementUncertainty(cause);
         const receipt: PurgeAttemptReceipt = {
           target_id: target.target_id,
           disposition: "BLOCKED",
@@ -326,6 +335,7 @@ export function createCloudflareErasureBackend(
         await dependencies.authority.recordAbsence(fence, receipt);
         return receipt;
       } catch (cause) {
+        rethrowRetryableSettlementUncertainty(cause);
         const reasonCode = failureReasonCode(cause, "ABSENCE_READBACK_FAILED");
         const receipt = {
           target_id: target.target_id,

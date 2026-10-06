@@ -60,7 +60,7 @@ describe("FREEZE_EVIDENCE over committed exploratory W2 stages", () => {
       .rejects.toMatchObject({ code: "EVIDENCE_AUTHORIZATION_DENIED" });
     await expect(f.executor.execute(stage11, principal, f.composition.freeze))
       .rejects.toMatchObject({ code: "WORKFLOW_EFFECT_UNCERTAIN", failure: {
-        code: "WORKFLOW_EFFECT_UNCERTAIN", phase: "STAGE", stage: "FREEZE_EVIDENCE", retryable: false,
+        code: "EVIDENCE_AUTHORIZATION_DENIED", phase: "STAGE", stage: "FREEZE_EVIDENCE", retryable: false,
       } });
     const after = await f.db.prepare("SELECT COUNT(*) AS n FROM research_reference_manifest WHERE state='COMMITTED'").first<{ n: number }>();
     expect(after?.n).toBe(before?.n);

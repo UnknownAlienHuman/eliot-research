@@ -2,7 +2,8 @@
 /// <reference types="vite/client" />
 import { describe, expect, it } from "vitest";
 import { DatabaseSync } from "node:sqlite";
-import type { OperationIntent } from "@eliotr/contracts";
+import { ProjectClientGrantSchema, type OperationIntent } from "@eliotr/contracts";
+import { applyCanonicalCoreMigrations, recordCanonicalCoreMigrationLedger } from "./core-migration-fixture.js";
 import { BackupError } from "./shared.js";
 import { createBackupPort } from "./index.js";
 import { createControlledOffsiteAdapter, openOffsiteBackupPart } from "./offsite.js";
@@ -11,28 +12,10 @@ import { destinationDescriptorDigest, destinationPolicyDigest, type BackupDestin
 import { verifyPortableBackupManifests } from "./portable-manifest.js";
 import type { BackupSourcePorts } from "./epoch.js";
 import type { Sha256DigestSink, EvidenceObjectStore } from "./shared.js";
-import m0001 from "../../../infra/d1/core/migrations/0001_initial.sql?raw";
-import m0002 from "../../../infra/d1/core/migrations/0002_execution_coordination.sql?raw";
-import m0003 from "../../../infra/d1/core/migrations/0003_delivery_inbox_payload_digest.sql?raw";
-import m0004 from "../../../infra/d1/core/migrations/0004_outbox_delivery_fence.sql?raw";
-import m0005 from "../../../infra/d1/core/migrations/0005_ingest_admission.sql?raw";
-import m0006 from "../../../infra/d1/core/migrations/0006_projection_execution.sql?raw";
-import m0007 from "../../../infra/d1/core/migrations/0007_evidence_resolution.sql?raw";
-import m0008 from "../../../infra/d1/core/migrations/0008_erasure_closure.sql?raw";
-import m0009 from "../../../infra/d1/core/migrations/0009_federation_authority.sql?raw";
-import m0010 from "../../../infra/d1/core/migrations/0010_navigation_artifacts.sql?raw";
-import m0011 from "../../../infra/d1/core/migrations/0011_owner_orientation.sql?raw";
-import m0012 from "../../../infra/d1/core/migrations/0012_google_credentials.sql?raw";
-import m0013 from "../../../infra/d1/core/migrations/0013_google_oauth_intents.sql?raw";
-import m0018 from "../../../infra/d1/core/migrations/0018_backup_o2_replay_authority.sql?raw";
-import m0019 from "../../../infra/d1/core/migrations/0019_backup_o2_replay_authority_fix.sql?raw";
-import m0099 from "../../../infra/d1/core/migrations/0099_backup_erasure_replay.sql?raw";
-import m0101 from "../../../infra/d1/core/migrations/0101_backup_historical_grant_provenance.sql?raw";
 
 const T = "2026-09-06T00:00:00.000Z";
 const HEX = (c: string): string => c.repeat(64);
 const NOW = Date.parse(T);
-const APPLIED = ["0001_initial.sql", "0002_execution_coordination.sql", "0003_delivery_inbox_payload_digest.sql", "0004_outbox_delivery_fence.sql", "0005_ingest_admission.sql", "0006_projection_execution.sql", "0007_evidence_resolution.sql", "0008_erasure_closure.sql", "0009_federation_authority.sql", "0010_navigation_artifacts.sql", "0011_owner_orientation.sql", "0012_google_credentials.sql", "0013_google_oauth_intents.sql", "0018_backup_o2_replay_authority.sql", "0019_backup_o2_replay_authority_fix.sql", "0099_backup_erasure_replay.sql", "0101_backup_historical_grant_provenance.sql"];
 async function sha(b: Uint8Array): Promise<string> {
   const c = new Uint8Array(b.byteLength); c.set(b);
   return [...new Uint8Array(await crypto.subtle.digest("SHA-256", c.buffer))].map((v) => v.toString(16).padStart(2, "0")).join("");
@@ -99,26 +82,8 @@ function testPartSink(bucket: R2Bucket): EvidenceObjectStore {
 }
 function openCore(): DatabaseSync {
   const db = new DatabaseSync(":memory:");
-  for (const m of [m0001, m0002, m0003, m0004, m0005, m0006, m0007, m0008, m0009, m0010, m0011, m0012, m0013, m0018, m0019, m0099]) db.exec(m);
-  // This focused O2 fixture omits the full project-client migration chain;
-  // provide its source table shape for the 0101 provenance triggers.
-  db.exec(`CREATE TABLE project_client_grant (
-    grant_id TEXT NOT NULL, revision INTEGER NOT NULL, project_id TEXT NOT NULL,
-    grantor_principal_ref TEXT NOT NULL, grantee_issuer TEXT NOT NULL,
-    grantee_method TEXT NOT NULL, grantee_subject TEXT NOT NULL, state TEXT NOT NULL,
-    expires_at TEXT NOT NULL, idempotency_key TEXT NOT NULL, request_sha256 TEXT NOT NULL,
-    record_json TEXT NOT NULL, record_sha256 TEXT NOT NULL, PRIMARY KEY(grant_id,revision)
-  ) STRICT`);
-  db.exec(`ALTER TABLE scope_access_grant ADD COLUMN project_client_grant_id TEXT;
-    ALTER TABLE scope_access_grant ADD COLUMN project_client_grant_revision INTEGER;
-    ALTER TABLE scope_access_grant ADD COLUMN project_client_operation TEXT;
-    ALTER TABLE scope_access_grant ADD COLUMN project_client_project_generation INTEGER;
-    ALTER TABLE scope_access_grant ADD COLUMN project_client_run_operation_id TEXT;
-    ALTER TABLE scope_access_grant ADD COLUMN project_client_artifact_id TEXT;
-    ALTER TABLE scope_access_grant ADD COLUMN project_client_artifact_revision INTEGER;
-    ALTER TABLE scope_access_grant ADD COLUMN project_client_authority_epoch INTEGER`);
-  db.exec(m0101);
-  for (const [i, n] of APPLIED.entries()) db.prepare("INSERT INTO d1_migrations (name, applied_at) VALUES (?1,?2)").run(n, `${T.slice(0, 10)}T00:00:${String(i).padStart(2, "0")}.000Z`);
+  applyCanonicalCoreMigrations(db);
+  recordCanonicalCoreMigrationLedger(db, T);
   return db;
 }
 function seedCore(db: DatabaseSync): void {
@@ -167,11 +132,36 @@ describe("ER-34 O2 offsite copy (policy + hardened crypto)", () => {
         { archive_revision: 3, state: "REVOKED", event_kind: "DELETE" },
       ]);
     expect(db.prepare("SELECT COUNT(*) AS n FROM scope_access_grant").get()).toEqual({ n: 0 });
+    db.prepare("INSERT INTO project(project_id,title,default_disclosure,retention_policy_ref,default_source_policy_ref,default_model_profile_ref,default_depth_profile_ref,created_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8)")
+      .run("project-1", "Project 1", "private", "project-default-retention-project-1", "project-default-source-project-1",
+        "project-default-model-project-1", "project-default-depth-project-1", T);
+    db.prepare("INSERT INTO project_owner(project_id,principal_ref,deployment_generation,created_at,updated_at) VALUES (?1,?2,?3,?4,?5)")
+      .run("project-1", "grantor-1", "fixture-deployment-1", T, T);
+    const recordJson = JSON.stringify(ProjectClientGrantSchema.parse({
+      protocol: "eliotr.project-client-grant.v1",
+      grant_id: "client-grant-1",
+      project_id: "project-1",
+      grantor_principal_ref: "grantor-1",
+      revision: 1,
+      state: "ACTIVE",
+      grantee: {
+        issuer: "https://test.cloudflareaccess.com",
+        authentication_method: "service_token",
+        subject: "fixture-agent.access",
+      },
+      allowed_operations: ["catalog"],
+      ingest_namespace_ids: [],
+      expires_at: "2027-01-01T00:00:00.000Z",
+      created_at: T,
+      updated_at: T,
+    }));
+    const recordSha = await sha(new TextEncoder().encode(recordJson));
     db.prepare(`INSERT INTO project_client_grant(
       grant_id,revision,project_id,grantor_principal_ref,grantee_issuer,grantee_method,grantee_subject,
       state,expires_at,idempotency_key,request_sha256,record_json,record_sha256
-    ) VALUES ('client-grant-1',1,'project-1','grantor-1','issuer-1','service_token','agent-1','ACTIVE',
-      '2027-01-01T00:00:00.000Z','idempotency-1','${HEX("a")}', '{"allowed_operations":["run"]}','${HEX("b")}')`).run();
+    ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)`)
+      .run("client-grant-1", 1, "project-1", "grantor-1", "https://test.cloudflareaccess.com", "service_token",
+        "fixture-agent.access", "ACTIVE", "2027-01-01T00:00:00.000Z", "idempotency-1", HEX("a"), recordJson, recordSha);
     expect(db.prepare("SELECT grant_id,grantor_principal_ref,state,event_kind FROM historical_project_client_grant").all())
       .toEqual([{ grant_id: "client-grant-1", grantor_principal_ref: "grantor-1", state: "ACTIVE", event_kind: "INSERT" }]);
   });

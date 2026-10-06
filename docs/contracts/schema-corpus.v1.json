@@ -1,8 +1,8 @@
 {
   "json_schema_dialect": "https://json-schema.org/draft/2020-12/schema",
   "protocol": "eliotr.contract-schema-corpus.v1",
-  "registry_generation": 7,
-  "schema_count": 205,
+  "registry_generation": 8,
+  "schema_count": 217,
   "schemas": [
     {
       "export_name": "AllowedReferenceManifestSchema",
@@ -17995,6 +17995,791 @@
       "schema_id": "urn:eliotr:contracts:research:research-debt:v1:g1",
       "schema_version": 1,
       "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "ResearchProviderKeyConfigurationCreateReceiptSchema",
+      "family": "research",
+      "json_schema": {
+        "$id": "urn:eliotr:contracts:research:research-provider-key-configuration-create-receipt:v1:g1",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "alias": {
+            "maxLength": 63,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+            "type": "string"
+          },
+          "operation_id": {
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+            "type": "string"
+          },
+          "project_id": {
+            "maxLength": 256,
+            "minLength": 1,
+            "type": "string"
+          },
+          "protocol": {
+            "const": "eliotr.research-provider-key-configuration.v1",
+            "type": "string"
+          },
+          "provider_config_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9._:-]+$",
+            "type": "string"
+          },
+          "provider_id": {
+            "const": "openrouter",
+            "type": "string"
+          },
+          "status": {
+            "const": "configured_not_qualified",
+            "type": "string"
+          }
+        },
+        "required": [
+          "protocol",
+          "project_id",
+          "provider_id",
+          "operation_id",
+          "alias",
+          "provider_config_id",
+          "status",
+          "created_at"
+        ],
+        "title": "ResearchProviderKeyConfigurationCreateReceipt",
+        "type": "object",
+        "x-eliotr-family": "research",
+        "x-eliotr-schema-generation": 1,
+        "x-eliotr-schema-version": 1,
+        "x-eliotr-semantic-authority": "zod-runtime"
+      },
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:research:research-provider-key-configuration-create-receipt:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "ResearchProviderKeyConfigurationCreateRequestSchema",
+      "family": "research",
+      "json_schema": {
+        "$id": "urn:eliotr:contracts:research:research-provider-key-configuration-create-request:v1:g1",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "operation_id": {
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+            "type": "string"
+          },
+          "protocol": {
+            "const": "eliotr.research-provider-key-configuration.v1",
+            "type": "string"
+          },
+          "provider_id": {
+            "const": "openrouter",
+            "type": "string"
+          },
+          "provider_key": {
+            "maxLength": 4096,
+            "minLength": 16,
+            "pattern": "^[\\x21-\\x7e]+$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "protocol",
+          "operation_id",
+          "provider_id",
+          "provider_key"
+        ],
+        "title": "ResearchProviderKeyConfigurationCreateRequest",
+        "type": "object",
+        "x-eliotr-family": "research",
+        "x-eliotr-schema-generation": 1,
+        "x-eliotr-schema-version": 1,
+        "x-eliotr-semantic-authority": "zod-runtime"
+      },
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:research:research-provider-key-configuration-create-request:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "ResearchProviderKeyConfigurationEntrySchema",
+      "family": "research",
+      "json_schema": {
+        "$defs": {
+          "__schema0": {
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+            "type": "string"
+          },
+          "__schema1": {
+            "const": "openrouter",
+            "type": "string"
+          },
+          "__schema2": {
+            "maxLength": 63,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+            "type": "string"
+          },
+          "__schema3": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 1,
+                "pattern": "^[A-Za-z0-9._:-]+$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "__schema4": {
+            "enum": [
+              "pending",
+              "configured_not_qualified",
+              "outcome_unknown",
+              "not_configured"
+            ],
+            "type": "string"
+          },
+          "__schema5": {
+            "anyOf": [
+              {
+                "enum": [
+                  "OPENROUTER_PROVIDER_KEY_CREDENTIAL_INVALID",
+                  "OPENROUTER_PROVIDER_KEY_PREFLIGHT_FAILED",
+                  "OPENROUTER_PROVIDER_KEY_ALIAS_CONFLICT",
+                  "OPENROUTER_PROVIDER_KEY_INPUT_INVALID"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "__schema6": {
+            "anyOf": [
+              {
+                "maximum": 599,
+                "minimum": 100,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "__schema7": {
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+            "type": "string"
+          }
+        },
+        "$id": "urn:eliotr:contracts:research:research-provider-key-configuration-entry:v1:g1",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "alias": {
+            "$ref": "#/$defs/__schema2"
+          },
+          "created_at": {
+            "$ref": "#/$defs/__schema7"
+          },
+          "failure_code": {
+            "$ref": "#/$defs/__schema5"
+          },
+          "operation_id": {
+            "$ref": "#/$defs/__schema0"
+          },
+          "provider_config_id": {
+            "$ref": "#/$defs/__schema3"
+          },
+          "provider_http_status": {
+            "$ref": "#/$defs/__schema6"
+          },
+          "provider_id": {
+            "$ref": "#/$defs/__schema1"
+          },
+          "status": {
+            "$ref": "#/$defs/__schema4"
+          },
+          "updated_at": {
+            "$ref": "#/$defs/__schema7"
+          }
+        },
+        "required": [
+          "operation_id",
+          "provider_id",
+          "alias",
+          "provider_config_id",
+          "status",
+          "failure_code",
+          "provider_http_status",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "ResearchProviderKeyConfigurationEntry",
+        "type": "object",
+        "x-eliotr-family": "research",
+        "x-eliotr-schema-generation": 1,
+        "x-eliotr-schema-version": 1,
+        "x-eliotr-semantic-authority": "zod-runtime"
+      },
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:research:research-provider-key-configuration-entry:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "ResearchProviderKeyConfigurationFailureCodeSchema",
+      "family": "research",
+      "json_schema": {
+        "$id": "urn:eliotr:contracts:research:research-provider-key-configuration-failure-code:v1:g1",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "enum": [
+          "OPENROUTER_PROVIDER_KEY_CREDENTIAL_INVALID",
+          "OPENROUTER_PROVIDER_KEY_PREFLIGHT_FAILED",
+          "OPENROUTER_PROVIDER_KEY_ALIAS_CONFLICT",
+          "OPENROUTER_PROVIDER_KEY_INPUT_INVALID"
+        ],
+        "title": "ResearchProviderKeyConfigurationFailureCode",
+        "type": "string",
+        "x-eliotr-family": "research",
+        "x-eliotr-schema-generation": 1,
+        "x-eliotr-schema-version": 1,
+        "x-eliotr-semantic-authority": "zod-runtime"
+      },
+      "kind": "ENUM",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:research:research-provider-key-configuration-failure-code:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "NON_OBJECT"
+    },
+    {
+      "export_name": "ResearchProviderKeyConfigurationListSchema",
+      "family": "research",
+      "json_schema": {
+        "$defs": {
+          "__schema0": {
+            "additionalProperties": false,
+            "properties": {
+              "alias": {
+                "$ref": "#/$defs/__schema3"
+              },
+              "created_at": {
+                "$ref": "#/$defs/__schema8"
+              },
+              "failure_code": {
+                "$ref": "#/$defs/__schema6"
+              },
+              "operation_id": {
+                "$ref": "#/$defs/__schema1"
+              },
+              "provider_config_id": {
+                "$ref": "#/$defs/__schema4"
+              },
+              "provider_http_status": {
+                "$ref": "#/$defs/__schema7"
+              },
+              "provider_id": {
+                "$ref": "#/$defs/__schema2"
+              },
+              "status": {
+                "$ref": "#/$defs/__schema5"
+              },
+              "updated_at": {
+                "$ref": "#/$defs/__schema8"
+              }
+            },
+            "required": [
+              "operation_id",
+              "provider_id",
+              "alias",
+              "provider_config_id",
+              "status",
+              "failure_code",
+              "provider_http_status",
+              "created_at",
+              "updated_at"
+            ],
+            "type": "object"
+          },
+          "__schema1": {
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+            "type": "string"
+          },
+          "__schema2": {
+            "const": "openrouter",
+            "type": "string"
+          },
+          "__schema3": {
+            "maxLength": 63,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+            "type": "string"
+          },
+          "__schema4": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 1,
+                "pattern": "^[A-Za-z0-9._:-]+$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "__schema5": {
+            "enum": [
+              "pending",
+              "configured_not_qualified",
+              "outcome_unknown",
+              "not_configured"
+            ],
+            "type": "string"
+          },
+          "__schema6": {
+            "anyOf": [
+              {
+                "enum": [
+                  "OPENROUTER_PROVIDER_KEY_CREDENTIAL_INVALID",
+                  "OPENROUTER_PROVIDER_KEY_PREFLIGHT_FAILED",
+                  "OPENROUTER_PROVIDER_KEY_ALIAS_CONFLICT",
+                  "OPENROUTER_PROVIDER_KEY_INPUT_INVALID"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "__schema7": {
+            "anyOf": [
+              {
+                "maximum": 599,
+                "minimum": 100,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "__schema8": {
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+            "type": "string"
+          }
+        },
+        "$id": "urn:eliotr:contracts:research:research-provider-key-configuration-list:v1:g1",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "configurations": {
+            "items": {
+              "$ref": "#/$defs/__schema0"
+            },
+            "maxItems": 50,
+            "type": "array"
+          },
+          "project_id": {
+            "maxLength": 256,
+            "minLength": 1,
+            "type": "string"
+          },
+          "protocol": {
+            "const": "eliotr.research-provider-key-configuration.v1",
+            "type": "string"
+          },
+          "provider_id": {
+            "const": "openrouter",
+            "type": "string"
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "protocol",
+          "project_id",
+          "provider_id",
+          "configurations",
+          "truncated"
+        ],
+        "title": "ResearchProviderKeyConfigurationList",
+        "type": "object",
+        "x-eliotr-family": "research",
+        "x-eliotr-schema-generation": 1,
+        "x-eliotr-schema-version": 1,
+        "x-eliotr-semantic-authority": "zod-runtime"
+      },
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:research:research-provider-key-configuration-list:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "ResearchProviderKeyConfigurationReadQuerySchema",
+      "family": "research",
+      "json_schema": {
+        "$id": "urn:eliotr:contracts:research:research-provider-key-configuration-read-query:v1:g1",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "operation_id": {
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+            "type": "string"
+          }
+        },
+        "title": "ResearchProviderKeyConfigurationReadQuery",
+        "type": "object",
+        "x-eliotr-family": "research",
+        "x-eliotr-schema-generation": 1,
+        "x-eliotr-schema-version": 1,
+        "x-eliotr-semantic-authority": "zod-runtime"
+      },
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:research:research-provider-key-configuration-read-query:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "ResearchProviderKeyConfigurationStatusSchema",
+      "family": "research",
+      "json_schema": {
+        "$id": "urn:eliotr:contracts:research:research-provider-key-configuration-status:v1:g1",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "enum": [
+          "pending",
+          "configured_not_qualified",
+          "outcome_unknown",
+          "not_configured"
+        ],
+        "title": "ResearchProviderKeyConfigurationStatus",
+        "type": "string",
+        "x-eliotr-family": "research",
+        "x-eliotr-schema-generation": 1,
+        "x-eliotr-schema-version": 1,
+        "x-eliotr-semantic-authority": "zod-runtime"
+      },
+      "kind": "ENUM",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:research:research-provider-key-configuration-status:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "NON_OBJECT"
+    },
+    {
+      "export_name": "ResearchProviderKeyModelUseFailureCodeSchema",
+      "family": "research",
+      "json_schema": {
+        "$id": "urn:eliotr:contracts:research:research-provider-key-model-use-failure-code:v1:g1",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "enum": [
+          "NO_SELECTED_CONFIGURATION",
+          "FREE_PRICE_NOT_PROVEN",
+          "FREE_PRICE_NOT_ZERO",
+          "SERVER_POLICY_UNAVAILABLE",
+          "PREPARATION_REJECTED",
+          "QUALIFICATION_NO_EFFECT",
+          "QUALIFICATION_OUTCOME_UNCERTAIN",
+          "NATIVE_RECEIPT_INVALID",
+          "SELECTION_CAS_CONFLICT",
+          "AUTHORITY_CHANGED",
+          "STORAGE_UNAVAILABLE"
+        ],
+        "title": "ResearchProviderKeyModelUseFailureCode",
+        "type": "string",
+        "x-eliotr-family": "research",
+        "x-eliotr-schema-generation": 1,
+        "x-eliotr-schema-version": 1,
+        "x-eliotr-semantic-authority": "zod-runtime"
+      },
+      "kind": "ENUM",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:research:research-provider-key-model-use-failure-code:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "NON_OBJECT"
+    },
+    {
+      "export_name": "ResearchProviderKeyModelUsePhaseSchema",
+      "family": "research",
+      "json_schema": {
+        "$id": "urn:eliotr:contracts:research:research-provider-key-model-use-phase:v1:g1",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "enum": [
+          "intent",
+          "native_prepare",
+          "free_price_check",
+          "native_qualify",
+          "configuration_import",
+          "selection_readback",
+          "complete"
+        ],
+        "title": "ResearchProviderKeyModelUsePhase",
+        "type": "string",
+        "x-eliotr-family": "research",
+        "x-eliotr-schema-generation": 1,
+        "x-eliotr-schema-version": 1,
+        "x-eliotr-semantic-authority": "zod-runtime"
+      },
+      "kind": "ENUM",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:research:research-provider-key-model-use-phase:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "NON_OBJECT"
+    },
+    {
+      "export_name": "ResearchProviderKeyModelUseReceiptSchema",
+      "family": "research",
+      "json_schema": {
+        "$defs": {
+          "__schema0": {
+            "const": "eliotr.research.provider-key-model-use.v1",
+            "type": "string"
+          },
+          "__schema1": {
+            "maxLength": 256,
+            "minLength": 1,
+            "type": "string"
+          },
+          "__schema2": {
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+            "type": "string"
+          },
+          "__schema3": {
+            "enum": [
+              "accepted",
+              "preparing",
+              "qualifying",
+              "importing",
+              "selected",
+              "blocked",
+              "uncertain",
+              "conflict"
+            ],
+            "type": "string"
+          },
+          "__schema4": {
+            "enum": [
+              "intent",
+              "native_prepare",
+              "free_price_check",
+              "native_qualify",
+              "configuration_import",
+              "selection_readback",
+              "complete"
+            ],
+            "type": "string"
+          },
+          "__schema5": {
+            "anyOf": [
+              {
+                "pattern": "^rpmc-[a-f0-9]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "__schema6": {
+            "anyOf": [
+              {
+                "maximum": 999999,
+                "minimum": 1,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "__schema7": {
+            "anyOf": [
+              {
+                "enum": [
+                  "NO_SELECTED_CONFIGURATION",
+                  "FREE_PRICE_NOT_PROVEN",
+                  "FREE_PRICE_NOT_ZERO",
+                  "SERVER_POLICY_UNAVAILABLE",
+                  "PREPARATION_REJECTED",
+                  "QUALIFICATION_NO_EFFECT",
+                  "QUALIFICATION_OUTCOME_UNCERTAIN",
+                  "NATIVE_RECEIPT_INVALID",
+                  "SELECTION_CAS_CONFLICT",
+                  "AUTHORITY_CHANGED",
+                  "STORAGE_UNAVAILABLE"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "__schema8": {
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+            "type": "string"
+          }
+        },
+        "$id": "urn:eliotr:contracts:research:research-provider-key-model-use-receipt:v1:g1",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "created_at": {
+            "$ref": "#/$defs/__schema8"
+          },
+          "failure_code": {
+            "$ref": "#/$defs/__schema7"
+          },
+          "key_operation_id": {
+            "$ref": "#/$defs/__schema2"
+          },
+          "operation_id": {
+            "$ref": "#/$defs/__schema2"
+          },
+          "phase": {
+            "$ref": "#/$defs/__schema4"
+          },
+          "project_id": {
+            "$ref": "#/$defs/__schema1"
+          },
+          "protocol": {
+            "$ref": "#/$defs/__schema0"
+          },
+          "selected_configuration_ref": {
+            "$ref": "#/$defs/__schema5"
+          },
+          "selection_revision": {
+            "$ref": "#/$defs/__schema6"
+          },
+          "state": {
+            "$ref": "#/$defs/__schema3"
+          },
+          "updated_at": {
+            "$ref": "#/$defs/__schema8"
+          }
+        },
+        "required": [
+          "protocol",
+          "project_id",
+          "operation_id",
+          "key_operation_id",
+          "state",
+          "phase",
+          "selected_configuration_ref",
+          "selection_revision",
+          "failure_code",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "ResearchProviderKeyModelUseReceipt",
+        "type": "object",
+        "x-eliotr-family": "research",
+        "x-eliotr-schema-generation": 1,
+        "x-eliotr-schema-version": 1,
+        "x-eliotr-semantic-authority": "zod-runtime"
+      },
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:research:research-provider-key-model-use-receipt:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "ResearchProviderKeyModelUseRequestSchema",
+      "family": "research",
+      "json_schema": {
+        "$id": "urn:eliotr:contracts:research:research-provider-key-model-use-request:v1:g1",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "expected_selection_revision": {
+            "anyOf": [
+              {
+                "maximum": 999999,
+                "minimum": 1,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "operation_id": {
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+            "type": "string"
+          },
+          "protocol": {
+            "const": "eliotr.research.provider-key-model-use.v1",
+            "type": "string"
+          }
+        },
+        "required": [
+          "protocol",
+          "operation_id",
+          "expected_selection_revision"
+        ],
+        "title": "ResearchProviderKeyModelUseRequest",
+        "type": "object",
+        "x-eliotr-family": "research",
+        "x-eliotr-schema-generation": 1,
+        "x-eliotr-schema-version": 1,
+        "x-eliotr-semantic-authority": "zod-runtime"
+      },
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:research:research-provider-key-model-use-request:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "ResearchProviderKeyModelUseStateSchema",
+      "family": "research",
+      "json_schema": {
+        "$id": "urn:eliotr:contracts:research:research-provider-key-model-use-state:v1:g1",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "enum": [
+          "accepted",
+          "preparing",
+          "qualifying",
+          "importing",
+          "selected",
+          "blocked",
+          "uncertain",
+          "conflict"
+        ],
+        "title": "ResearchProviderKeyModelUseState",
+        "type": "string",
+        "x-eliotr-family": "research",
+        "x-eliotr-schema-generation": 1,
+        "x-eliotr-schema-version": 1,
+        "x-eliotr-semantic-authority": "zod-runtime"
+      },
+      "kind": "ENUM",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:research:research-provider-key-model-use-state:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "NON_OBJECT"
     },
     {
       "export_name": "ResearchReadExtractCheckpointSchema",

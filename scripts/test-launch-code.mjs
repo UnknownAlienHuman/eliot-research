@@ -92,8 +92,22 @@ const profileRead = async (changed = sourceMap) => readCompositionCapabilityProf
   } });
 const capabilityProfile = await profileRead();
 assert.equal(capabilityProfile.protocol, "eliotr.capabilities.v1");
-assert.equal(capabilityProfile.routes.length, 110);
+assert.equal(capabilityProfile.routes.length, 115);
 assert.ok(capabilityProfile.routes.some((route) => route.path === "/api/v1/system/capabilities"));
+for (const expected of [
+  { method: "GET", path: "/api/v1/projects/:project_id/model-provider-key", operation: "project.provider-key-configuration.read",
+    auth: "owner", maximum_request_bytes: 0, response_mode: "json" },
+  { method: "POST", path: "/api/v1/projects/:project_id/model-provider-key", operation: "project.provider-key-configuration.create",
+    auth: "owner", maximum_request_bytes: 8192, response_mode: "json" },
+  { method: "POST", path: "/api/v1/projects/:project_id/model-provider-key/:key_operation_id/check-and-use",
+    operation: "project.provider-key-model-use.start", auth: "owner", maximum_request_bytes: 2048, response_mode: "json" },
+  { method: "GET", path: "/api/v1/projects/:project_id/model-provider-key/model-use/:operation_id",
+    operation: "project.provider-key-model-use.read", auth: "owner", maximum_request_bytes: 0, response_mode: "json" },
+  { method: "GET", path: "/api/v1/system/backup-primary/inventory", operation: "system.backup-primary.inventory",
+    auth: "owner", maximum_request_bytes: 0, response_mode: "json" },
+]) {
+  assert.deepEqual(capabilityProfile.routes.find((route) => route.method === expected.method && route.path === expected.path), expected);
+}
 const routeText = sourceMap.get(routePath);
 await assert.rejects(profileRead(new Map(sourceMap).set(routePath,
   routeText.replace("{ RESEARCH_REQUEST_MAX_BYTES }", "{ RESEARCH_REQUEST_MAX_BYTES as REQUEST_BYTES }"))), /may not be aliased/u);

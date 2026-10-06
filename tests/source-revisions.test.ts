@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { decodeSourceRevisions, readSourceRevisionsPage } from "../apps/eliotr-pwa/src/source-revisions-api.js";
+import { decodeSourceRevisions, readSourceRevisionsPage } from "../packages/pwa-source-workspace/src/source-revisions-api.js";
+import { renderSourceRevisions } from "../packages/pwa-source-workspace/src/source-revisions-panel.js";
 import { requestApi } from "../apps/eliotr-pwa/src/api.js";
-import { renderSourceRevisions } from "../apps/eliotr-pwa/src/source-revisions-panel.js";
 const envelope = () => ({ deployment_generation: "deploy-1", trace_id: "trace-1", data: {
   protocol: "eliotr.source-revisions.v1", source_id: "source-1", head_revision_ref: "revision-2", readiness_basis: "RECORDED_ONLY",
   observed_at: "2026-09-05T12:00:00.000Z", revisions: [{ source_revision_ref: "revision-2", content_sha256: "a".repeat(64),

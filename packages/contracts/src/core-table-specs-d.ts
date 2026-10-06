@@ -65,7 +65,10 @@ export const DURABLE_CORE_TABLE_SPECS_D: readonly TableSpec[] = [
       "receipt_sha256": "text",
       "purge_ledger_revision": "int",
       "verified": "int",
-      "created_at": "text"
+      "created_at": "text",
+      "lease_owner": "text-or-null",
+      "lease_generation": "int-or-null",
+      "lease_until": "int-or-null"
   }, required: false },
   { manifest: "purge", table: "backup_purge_obligation", order_by: "erasure_id, erasure_revision, backup_epoch_id", columns: {
       "erasure_id": "text",
@@ -77,7 +80,13 @@ export const DURABLE_CORE_TABLE_SPECS_D: readonly TableSpec[] = [
       "next_review_at": "text-or-null",
       "delete_receipt_ref": "text-or-null",
       "absence_receipt_ref": "text-or-null",
-      "updated_at": "text"
+      "updated_at": "text",
+      "primary_delete_intent_ref": "text-or-null",
+      "primary_delete_intent_digest": "text-or-null",
+      "primary_delete_receipt_ref": "text-or-null",
+      "primary_absence_receipt_ref": "text-or-null",
+      "offsite_delete_receipt_ref": "text-or-null",
+      "offsite_absence_receipt_ref": "text-or-null"
   }, required: false },
   { manifest: "purge", table: "erasure_admission_request", order_by: "erasure_id, erasure_revision", columns: {
       "erasure_id": "text",

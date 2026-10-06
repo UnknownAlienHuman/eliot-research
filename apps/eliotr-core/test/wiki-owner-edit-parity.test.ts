@@ -5,8 +5,7 @@ import type { AuthenticatedRequestContext } from "@eliotr/interfaces";
 import { canonicalEvidenceJson, loadScopeAuthority } from "@eliotr/cloudflare-evidence";
 import { db, principal, runtime, seedSource, setupOrientationDatabase, successful, request, observeDatabase } from "./orientation-fixture.js";
 import { createWikiProposalService, createWikiProposalReaderService, publishWikiProposal } from "../src/wiki-service.js";
-import { recordWikiPublicationAuthority } from "@eliotr/cloudflare-wiki/wiki-publication-store";
-import { textDigest, validRef, pageJson, loadProposalRow } from "@eliotr/cloudflare-wiki/wiki-publication-store-support";
+import { recordWikiPublicationAuthority, textDigest, validRef, pageJson, loadProposalRow } from "@eliotr/cloudflare-wiki/wiki-publication-store-support";
 import { parseInput, parseMetadata, proposeWikiFromOwnerEdit } from "../src/wiki-owner-edit-proposal.js";
 import { readOwnerEditReviewProof } from "../src/wiki-owner-edit-review-proof.js";
 

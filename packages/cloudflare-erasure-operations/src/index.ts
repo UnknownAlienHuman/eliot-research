@@ -3,3 +3,7 @@ export * from "./erasure-coordinator.js";
 export * from "./erasure-owner-service.js";
 export * from "./erasure-owner-prepare.js";
 export * from "./erasure-owner-status.js";
+export * from "./backup-producer-quiescence.js";
+export * from "./backup-epoch-scope.js";
+export * from "./backup-primary-adapter.js";
+export * from "./backup-primary-purge.js";

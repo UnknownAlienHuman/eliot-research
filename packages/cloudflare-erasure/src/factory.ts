@@ -1,7 +1,7 @@
 import type { ErasureBackend } from "@eliotr/contracts";
 import { erasureFail } from "./canonical.js";
 import { createD1ErasureAuthority } from "./authority.js";
-import { createBackupErasureLocationPort } from "./backup-location.js";
+import { composeBackupErasurePort, createBackupErasureLocationPort } from "./backup-location.js";
 import { createCloudflareErasureBackend } from "./backend.js";
 import { createD1CoreErasureLocationPort } from "./core-location.js";
 import { createD1ErasureInventory } from "./inventory.js";
@@ -14,18 +14,29 @@ import { validateD1SearchEmptyProof } from "./empty-location-proof-authority.js"
 import { validateR2WorkEmptyProof } from "./empty-location-proof-r2.js";
 import type {
   BackupErasurePort,
+  BackupPrimaryErasurePort,
   ManagedSearchErasureNamespace,
+  BackupPrimaryWriterQualificationVerifier,
 } from "./types.js";
+import type {
+  BackupEpochScopePort,
+  BackupPrimaryInventoryPort,
+} from "./backup-primary-contract.js";
+import type { BackupProducerQuiescencePort } from "./backup-producer-quiescence-contract.js";
 
 export interface CloudflareErasureDependencies {
   readonly core_database: D1Database;
   readonly search_database: D1Database;
   readonly evidence_bucket: R2Bucket;
   readonly work_bucket: R2Bucket;
-  /** Primary O2 parts have a separate storage identity from source Work. */
-  readonly backup_parts_bucket?: R2Bucket;
   readonly managed_search?: ManagedSearchErasureNamespace;
+  /** Existing offsite erasure adapter; it is never sufficient without the primary bucket adapter. */
   readonly backup?: BackupErasurePort;
+  readonly backup_primary?: BackupPrimaryErasurePort;
+  readonly backup_primary_inventory?: BackupPrimaryInventoryPort;
+  readonly backup_epoch_scope?: BackupEpochScopePort;
+  readonly backup_producer_quiescence?: BackupProducerQuiescencePort;
+  readonly backup_primary_qualification?: BackupPrimaryWriterQualificationVerifier;
   readonly worker_id?: string;
   readonly lease_ms?: number;
   readonly now?: () => number;
@@ -49,11 +60,11 @@ export function createConfiguredErasureBackend(
   const provider = dependencies.managed_search === undefined
     ? undefined
     : createManagedSearchErasureLocationPort(dependencies.managed_search);
-  const backup = dependencies.backup === undefined
+  const backup = dependencies.backup === undefined || dependencies.backup_primary === undefined
     ? undefined
     : createBackupErasureLocationPort({
         database: dependencies.core_database,
-        port: dependencies.backup,
+        port: composeBackupErasurePort(dependencies.backup_primary, dependencies.backup),
         ...(dependencies.now === undefined ? {} : { now: dependencies.now }),
       });
   return createCloudflareErasureBackend({
@@ -68,7 +79,16 @@ export function createConfiguredErasureBackend(
       core_database: dependencies.core_database,
       search_database: dependencies.search_database,
       work_bucket: dependencies.work_bucket,
-      ...(dependencies.backup_parts_bucket === undefined ? {} : { backup_parts_bucket: dependencies.backup_parts_bucket }),
+      ...(dependencies.backup === undefined ? {} : { backup_offsite: dependencies.backup }),
+      ...(dependencies.backup_primary_qualification === undefined
+        ? {} : { backup_primary_qualification: dependencies.backup_primary_qualification }),
+      ...(dependencies.backup_primary_inventory === undefined
+        ? {} : { backup_primary_inventory: dependencies.backup_primary_inventory }),
+      ...(dependencies.backup_epoch_scope === undefined
+        ? {} : { backup_epoch_scope: dependencies.backup_epoch_scope }),
+      ...(dependencies.backup_producer_quiescence === undefined
+        ? {} : { backup_producer_quiescence: dependencies.backup_producer_quiescence }),
+      ...(dependencies.now === undefined ? {} : { now: dependencies.now }),
     }),
     locations: createErasureLocationRegistry({
       CanonicalPayload: core,

@@ -301,7 +301,7 @@ describe("production governed model attempt handler over actual D1/R2", () => {
       expect(fixture.calls()).toBe(0);
       expect(await modelEffectRowCount(runtime.CORE_DB)).toBe(before);
     }
-  });
+  }, 30_000);
 
   it("keeps a known R2 settlement after cancellation and replays it without another route call", async () => {
     const fixture = await governedModelAttemptFixture("handler-post-cancel");

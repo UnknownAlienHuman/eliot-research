@@ -42,6 +42,25 @@ export interface ArtifactSectionReportAdmissionPolicyVars {
   readonly ELIOTR_RESEARCH_REPORT_POLICY_PROVENANCE_REF?: string;
 }
 
+export function selectArtifactSectionReportAdmissionPolicyVars(
+  vars: ArtifactSectionReportAdmissionPolicyVars,
+): ArtifactSectionReportAdmissionPolicyVars {
+  return Object.freeze({
+    ...(vars.ELIOTR_MODEL_SPEND_POLICY_JSON === undefined ? {} : {
+      ELIOTR_MODEL_SPEND_POLICY_JSON: vars.ELIOTR_MODEL_SPEND_POLICY_JSON,
+    }),
+    ...(vars.ELIOTR_MODEL_SPEND_POLICY_PROVENANCE_REF === undefined ? {} : {
+      ELIOTR_MODEL_SPEND_POLICY_PROVENANCE_REF: vars.ELIOTR_MODEL_SPEND_POLICY_PROVENANCE_REF,
+    }),
+    ...(vars.ELIOTR_RESEARCH_REPORT_CONFIG_JSON === undefined ? {} : {
+      ELIOTR_RESEARCH_REPORT_CONFIG_JSON: vars.ELIOTR_RESEARCH_REPORT_CONFIG_JSON,
+    }),
+    ...(vars.ELIOTR_RESEARCH_REPORT_POLICY_PROVENANCE_REF === undefined ? {} : {
+      ELIOTR_RESEARCH_REPORT_POLICY_PROVENANCE_REF: vars.ELIOTR_RESEARCH_REPORT_POLICY_PROVENANCE_REF,
+    }),
+  });
+}
+
 export interface ArtifactSectionReportAdmissionDraft {
   readonly spec_digest: string;
   readonly evidence_freeze_ref: VersionedRef;

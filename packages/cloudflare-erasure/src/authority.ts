@@ -15,9 +15,11 @@ import {
   validateErasureRequest,
 } from "./canonical.js";
 import { resetErasureAttempt } from "./authority-reset.js";
+import { previousBackupPrimaryExecution } from "./backup-primary-handoff.js";
 import { assertErasureLocatorsRetained, retainErasureLocatorsStatement } from "./closure-locators.js";
 import { appendPurgeLedger } from "./ledger.js";
 import { createD1ErasureAuthorityFenceLifecycle } from "./authority-fence-lifecycle.js";
+import { persistTerminalErasure } from "./authority-terminal.js";
 import type { ErasureAuthorityPort } from "./types.js";
 interface ExecutionRow {
   readonly request_json: unknown;
@@ -217,6 +219,7 @@ export function createD1ErasureAuthority(
           await shared.release();
           return { disposition: "TERMINAL", receipt: terminal };
         }
+        const previousExecution = await previousBackupPrimaryExecution(database, existing, request, requestSha);
         const nowMs = clock();
         const leaseUntil = nowMs + leaseMs;
         const leaseOwner = assertErasureIdentifier(`${workerId}:f${shared.lease_generation}`, "erasure lease owner");
@@ -246,7 +249,7 @@ export function createD1ErasureAuthority(
         };
         activeFence = fence;
         fenceLifecycle.remember(fence, shared);
-        await resetErasureAttempt(database, fence, isoFromMs(nowMs));
+        await resetErasureAttempt(database, fence, isoFromMs(nowMs), previousExecution);
         return { disposition: "ACQUIRED", fence };
       } catch (cause) {
         if (activeFence !== undefined) fenceLifecycle.forget(activeFence);
@@ -514,60 +517,21 @@ export function createD1ErasureAuthority(
       const receiptSha = await erasureSha256Utf8(receiptJson);
       const now = isoFromMs(clock());
       const expectedNonAbsent = state === "COMPLETE" ? 0 : -1;
-      await database.batch([
-        database.prepare(
-          "UPDATE erasure_case SET state=?3,completed_locations_json=?4,blocked_locations_json=?5," +
-          "updated_at=?6 WHERE erasure_id=?1 AND revision=?2",
-        ).bind(
-          fence.erasure_id,
-          fence.revision,
-          state,
-          canonicalErasureJson(completedLocations),
-          canonicalErasureJson(blockedLocations),
-          now,
-        ),
-        database.prepare(
-          "UPDATE erasure_execution SET state=?5,terminal_receipt_json=?6," +
-          "terminal_receipt_sha256=?7,purge_ledger_revision=?8,lease_owner=NULL,lease_until=NULL," +
-          "updated_at=?9 WHERE erasure_id=?1 AND revision=?2 AND lease_owner=?3 " +
-          "AND lease_generation=?4",
-        ).bind(
-          fence.erasure_id,
-          fence.revision,
-          fence.lease_owner,
-          fence.lease_generation,
-          state,
-          receiptJson,
-          receiptSha,
-          ledger.ledger_revision,
-          now,
-        ),
-        database.prepare(
-          "INSERT INTO erasure_terminal_guard(erasure_id,erasure_revision,closure_digest," +
-          "requested_locations_json,completed_locations_json,blocked_locations_json," +
-          "terminal_state,receipt_sha256,purge_ledger_revision,verified,created_at) " +
-          "SELECT ?1,?2,?3,?4,?5,?6,?7,?8,?9,CASE WHEN " +
-          "EXISTS (SELECT 1 FROM purge_ledger p WHERE p.ledger_revision=?9 AND p.erasure_id=?1 " +
-          "AND p.receipt_ref=?10 AND p.disposition=?7) " +
-          "AND EXISTS (SELECT 1 FROM erasure_stage_receipt s WHERE s.erasure_id=?1 " +
-          "AND s.erasure_revision=?2 AND s.stage='INVALIDATE_DEPENDENTS') " +
-          "AND (?11<0 OR (SELECT COUNT(*) FROM erasure_target t WHERE t.erasure_id=?1 " +
-          "AND t.erasure_revision=?2 AND t.state<>'ABSENT')=?11) THEN 1 ELSE 0 END,?12",
-        ).bind(
-          fence.erasure_id,
-          fence.revision,
-          closure.closure_digest,
-          canonicalErasureJson(requestedLocations),
-          canonicalErasureJson(completedLocations),
-          canonicalErasureJson(blockedLocations),
-          state,
-          receiptSha,
-          ledger.ledger_revision,
-          ledger.ledger_entry_ref,
-          expectedNonAbsent,
-          now,
-        ),
-      ]);
+      await persistTerminalErasure(database, {
+        fence,
+        closure_digest: closure.closure_digest,
+        terminal_state: state,
+        requested_locations_json: canonicalErasureJson(requestedLocations),
+        completed_locations_json: canonicalErasureJson(completedLocations),
+        blocked_locations_json: canonicalErasureJson(blockedLocations),
+        receipt_json: receiptJson,
+        receipt_sha256: receiptSha,
+        ledger_entry_ref: ledger.ledger_entry_ref,
+        ledger_revision: ledger.ledger_revision,
+        expected_non_absent_targets: expectedNonAbsent,
+        now,
+        now_ms: clock(),
+      });
       const terminal = await loadExecution(database, request);
       if (terminal === null) {
         erasureFail("ERASURE_SETTLEMENT_UNCERTAIN", "terminal erasure execution disappeared", true);

@@ -13,6 +13,7 @@
     "typecheck": "tsc -b --pretty false"
   },
   "dependencies": {
+    "@eliotr/backup-o2": "workspace:*",
     "@eliotr/cloudflare-erasure": "workspace:*",
     "@eliotr/contracts": "workspace:*",
     "@eliotr/interfaces": "workspace:*"

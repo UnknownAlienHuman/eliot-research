@@ -1,5 +1,6 @@
-import { assertErasureIdentifier, erasureFail, utf8ErasureLength } from "./canonical.js";
-import { parseBackupEpochScopeDraft, type BackupEpochScopeArchive } from "./backup-epoch-scope.js";
+import { assertErasureIdentifier, erasureDigest, erasureFail, utf8ErasureLength } from "@eliotr/cloudflare-erasure";
+import { parseBackupEpochScopeDraft } from "./backup-epoch-scope.js";
+import type { BackupEpochScopeArchive, BackupPrimaryObjectPin, BackupPrimaryPartInventorySnapshot } from "@eliotr/cloudflare-erasure";
 
 const PREFIX = "backup-parts/";
 const PAGE_SIZE = 1000;
@@ -13,10 +14,18 @@ const STORE_METADATA = ["eliotr_sha256", "eliotr_size_bytes", "eliotr_immutable"
 
 interface PartPins {
   readonly key: string;
+  readonly epoch_id: string;
+  readonly manifest: string;
+  readonly part_index: number;
+  readonly part_sha256: string;
+  readonly payload_identity_digest?: string;
+  readonly payload_part_count?: number;
   readonly size: number;
   readonly etag: string;
   readonly metadata: Readonly<Record<string, string>>;
 }
+
+type ListedPart = Pick<PartPins, "key" | "size" | "etag" | "metadata">;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -30,7 +39,7 @@ function textBytes(value: string): number {
   return Math.max(value.length * 2, utf8ErasureLength(value));
 }
 
-function partBytes(part: PartPins): number {
+function partBytes(part: ListedPart): number {
   return 64 + textBytes(part.key) + textBytes(part.etag) + Object.entries(part.metadata)
     .reduce((bytes, [name, value]) => bytes + 16 + textBytes(name) + textBytes(value), 0);
 }
@@ -56,6 +65,14 @@ async function expectedParts(archives: readonly BackupEpochScopeArchive[]): Prom
     if (expected.size >= MAX_PARTS) incomplete("persisted primary backup part inventory exceeds its bound");
     const pins: PartPins = {
       key,
+      epoch_id: epoch,
+      manifest,
+      part_index: part.index,
+      part_sha256: part.sha256,
+      ...(payload === undefined ? {} : {
+        payload_identity_digest: payload.identity,
+        payload_part_count: payload.count,
+      }),
       size: part.size_bytes,
       etag: part.etag,
       metadata: {
@@ -107,7 +124,7 @@ async function expectedParts(archives: readonly BackupEpochScopeArchive[]): Prom
   return expected;
 }
 
-function parseListedPart(value: unknown): PartPins {
+function parseListedPart(value: unknown): ListedPart {
   if (!isRecord(value)) incomplete("primary backup prefix inventory contains a malformed object");
   const key = value.key;
   if (typeof key !== "string" || !key.startsWith(PREFIX)) {
@@ -131,8 +148,16 @@ function parseListedPart(value: unknown): PartPins {
   return { key, size: value.size, etag: value.etag, metadata: value.customMetadata as Readonly<Record<string, string>> };
 }
 
-async function compareListedParts(bucket: R2Bucket, expected: Map<string, PartPins>): Promise<void> {
+async function compareListedParts(
+  bucket: R2Bucket,
+  expected: Map<string, PartPins>,
+  allowedMissingKeys: ReadonlySet<string>,
+): Promise<{ readonly objects: readonly BackupPrimaryObjectPin[]; readonly missing_keys: readonly string[] }> {
+  for (const key of allowedMissingKeys) {
+    if (!expected.has(key)) incomplete("persisted primary delete obligation names a key outside the immutable draft inventory");
+  }
   const cursors = new Set<string>();
+  const objects: BackupPrimaryObjectPin[] = [];
   let cursor: string | undefined;
   let listedParts = 0;
   for (let page = 0; page < MAX_PAGES; page += 1) {
@@ -161,12 +186,32 @@ async function compareListedParts(bucket: R2Bucket, expected: Map<string, PartPi
       const wanted = expected.get(part.key);
       if (wanted === undefined) incomplete("primary backup store contains untracked, repeated, or pre-claim bytes");
       assertExactPart(wanted, part);
+      objects.push({
+        key: wanted.key,
+        epoch_id: wanted.epoch_id,
+        manifest: wanted.manifest,
+        part_index: wanted.part_index,
+        part_sha256: wanted.part_sha256,
+        ...(wanted.payload_identity_digest === undefined ? {} : {
+          payload_identity_digest: wanted.payload_identity_digest,
+          payload_part_count: wanted.payload_part_count,
+        }),
+        size_bytes: part.size,
+        etag: part.etag,
+        custom_metadata: { ...part.metadata },
+      });
       expected.delete(part.key);
     }
     if (!value.truncated) {
       if (value.cursor !== undefined) incomplete("primary backup part terminal page contains a continuation cursor");
-      if (expected.size !== 0) incomplete("persisted primary backup part is absent from the part store");
-      return;
+      const missing = [...expected.keys()].sort((left, right) => left.localeCompare(right));
+      if (missing.some((key) => !allowedMissingKeys.has(key))) {
+        incomplete("persisted primary backup part is absent without its exact durable delete obligation");
+      }
+      return {
+        objects: objects.sort((left, right) => left.key.localeCompare(right.key)),
+        missing_keys: missing,
+      };
     }
     const next = value.cursor;
     if (typeof next !== "string") {
@@ -181,7 +226,7 @@ async function compareListedParts(bucket: R2Bucket, expected: Map<string, PartPi
   incomplete("primary backup part inventory exceeded its page ceiling");
 }
 
-function assertExactPart(wanted: PartPins, found: PartPins): void {
+function assertExactPart(wanted: PartPins, found: ListedPart): void {
   // Exact keys reject partial store metadata as well as unknown extra fields.
   const metadata = !STORE_METADATA.some((name) => Object.hasOwn(found.metadata, name)) ? wanted.metadata : {
     ...wanted.metadata,
@@ -198,10 +243,24 @@ function assertExactPart(wanted: PartPins, found: PartPins): void {
 }
 
 /** Snapshot audit only; producer fencing is required before deletion. */
+export async function readPrimaryBackupPartInventory(
+  bucket: R2Bucket,
+  archives: readonly BackupEpochScopeArchive[],
+  options: { readonly allowed_missing_keys?: ReadonlySet<string> } = {},
+): Promise<BackupPrimaryPartInventorySnapshot> {
+  const expected = await expectedParts(archives);
+  const compared = await compareListedParts(bucket, expected, options.allowed_missing_keys ?? new Set());
+  return {
+    object_count: compared.objects.length,
+    inventory_digest: await erasureDigest(compared.objects),
+    objects: compared.objects,
+    missing_keys: compared.missing_keys,
+  };
+}
+
 export async function assertPrimaryBackupPartInventory(
   bucket: R2Bucket,
   archives: readonly BackupEpochScopeArchive[],
 ): Promise<void> {
-  const expected = await expectedParts(archives);
-  await compareListedParts(bucket, expected);
+  await readPrimaryBackupPartInventory(bucket, archives);
 }

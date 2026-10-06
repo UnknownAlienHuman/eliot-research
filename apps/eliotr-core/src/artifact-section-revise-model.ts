@@ -19,7 +19,7 @@ import {
   ArtifactSectionReviseModelApplicationError,
   type ArtifactSectionReviseModelAdmissionPort,
 } from "@eliotr/cloudflare-research-runtime/artifact-section-revise-model.js";
-import type { ArtifactSectionReportAdmissionPolicyVars } from "@eliotr/cloudflare-research-runtime/artifact-report-admission.js";
+import { selectArtifactSectionReportAdmissionPolicyVars } from "@eliotr/cloudflare-research-runtime/artifact-report-admission.js";
 import { WorkflowCheckpointStore, readCommittedStageLineage, readWorkflowObject, type ArtifactSectionReviseAttempt } from "@eliotr/cloudflare-workflows";
 import type { AuthenticatedRequestContext } from "@eliotr/interfaces";
 import { createOwnerArtifactCowModelAdmission } from "./artifact-cow-model-admission.js";
@@ -35,23 +35,6 @@ import { HttpRequestError } from "./http-errors.js";
 
 function deny(message: string): never {
   throw new HttpRequestError("ARTIFACT_SECTION_REVISE_STALE", 409, message);
-}
-
-function policyVars(env: Env): ArtifactSectionReportAdmissionPolicyVars {
-  return Object.freeze({
-    ...(env.ELIOTR_MODEL_SPEND_POLICY_JSON === undefined ? {} : {
-      ELIOTR_MODEL_SPEND_POLICY_JSON: env.ELIOTR_MODEL_SPEND_POLICY_JSON,
-    }),
-    ...(env.ELIOTR_MODEL_SPEND_POLICY_PROVENANCE_REF === undefined ? {} : {
-      ELIOTR_MODEL_SPEND_POLICY_PROVENANCE_REF: env.ELIOTR_MODEL_SPEND_POLICY_PROVENANCE_REF,
-    }),
-    ...(env.ELIOTR_RESEARCH_REPORT_CONFIG_JSON === undefined ? {} : {
-      ELIOTR_RESEARCH_REPORT_CONFIG_JSON: env.ELIOTR_RESEARCH_REPORT_CONFIG_JSON,
-    }),
-    ...(env.ELIOTR_RESEARCH_REPORT_POLICY_PROVENANCE_REF === undefined ? {} : {
-      ELIOTR_RESEARCH_REPORT_POLICY_PROVENANCE_REF: env.ELIOTR_RESEARCH_REPORT_POLICY_PROVENANCE_REF,
-    }),
-  });
 }
 
 /** Core adapter for exact run pin resolution, authenticated storage, and deployment ports. */
@@ -113,8 +96,10 @@ export async function createOwnerArtifactCowModel(input: {
 
   const semantic = await resolveResearchSemanticConfig({ env: runtimeEnv, database: env.CORE_DB });
   const spendPolicy = attempt.request.report_admission_witness.spend_policy as ResearchModelSpendPolicy;
+  const deploymentEnvironment = env.ENVIRONMENT === "development" ? "TEST" : "PRODUCTION";
   const admission = await createOwnerArtifactCowModelAdmission({ env, attempt, navigation,
     evidence_pack: cow.fresh_pack,
+    deployment_environment: deploymentEnvironment,
     ...(resolveNativeModelSelection === undefined ? {} : { resolve_native_model_selection: resolveNativeModelSelection }),
   });
   const selectedAudit = runConfiguration === undefined ? null : resolveResearchSelectedModelTransport({
@@ -141,7 +126,7 @@ export async function createOwnerArtifactCowModel(input: {
         model_selections: runConfiguration.model_selections,
         project_owner_ref: runConfiguration.project_owner_ref,
         project_id: runConfiguration.project_id,
-        policy_vars: policyVars(runtimeEnv),
+        policy_vars: selectArtifactSectionReportAdmissionPolicyVars(runtimeEnv),
       }),
       audit_selection: selectedAudit ?? null,
       semantic_config_json: semantic.config_json,
@@ -153,7 +138,7 @@ export async function createOwnerArtifactCowModel(input: {
       }),
       spend_policy: spendPolicy,
       gateway: modelGatewayConfiguration(runtimeEnv),
-      deployment_environment: env.ENVIRONMENT === "development" ? "TEST" : "PRODUCTION",
+      deployment_environment: deploymentEnvironment,
       evidence_authority: resolver,
       evidence_content: createR2EvidenceContentPort({ evidence_bucket: env.EVIDENCE_BUCKET }),
       pricing: createD1ResearchModelPricingQuotePort(env.CORE_DB),

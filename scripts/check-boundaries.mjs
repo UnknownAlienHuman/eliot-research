@@ -29,6 +29,7 @@ const FORBIDDEN_IMPORTS = [
 // and the PWA build script reads local source files to generate its asset.
 const HOST_TOOL_IMPORTS = new Map([
   ["packages/backup-o2/src/coverage-full-chain.test.ts", new Set(["node:fs"])],
+  ["packages/cloudflare-backup/src/backup-epoch-manifest-publisher.test.ts", new Set(["node:fs/promises"])],
   ["packages/cloudflare-backup/src/isolated-restore-preflight.test.ts", new Set(["node:fs/promises"])],
   ["packages/cloudflare-backup/src/restore-admission.test.ts", new Set(["node:fs/promises"])],
   ["packages/cloudflare-backup/src/restore-native-history-ordering.test.ts", new Set(["node:fs/promises"])],
@@ -248,7 +249,7 @@ const PACKAGE_RULES = new Map([
   ])],
   ["packages/cloudflare-search-probe", new Set(["@eliotr/cloudflare-ai","@eliotr/cloudflare-evidence","@eliotr/contracts","@eliotr/platform-cloudflare","@eliotr/retrieval","zod"])],
   ["packages/cloudflare-model-transport", new Set(["@eliotr/contracts", "@eliotr/platform-cloudflare"])],
-  ["packages/cloudflare-erasure-operations", new Set(["@eliotr/cloudflare-erasure", "@eliotr/contracts", "@eliotr/interfaces"])],
+  ["packages/cloudflare-erasure-operations", new Set(["@eliotr/backup-o2", "@eliotr/cloudflare-erasure", "@eliotr/contracts", "@eliotr/interfaces"])],
   ["packages/cloudflare-computer-agent", new Set(["@eliotr/cloudflare-navigation", "@eliotr/contracts", "@eliotr/interfaces", "@eliotr/platform-cloudflare"])],
   ["packages/cloudflare-wiki", new Set(["@eliotr/cloudflare-evidence", "@eliotr/cloudflare-navigation", "@eliotr/cloudflare-research", "@eliotr/cloudflare-research-stages", "@eliotr/contracts", "@eliotr/interfaces", "@eliotr/research", "@eliotr/retrieval"])],
   ["packages/cloudflare-native-models", new Set(["@eliotr/cloudflare-ai", "@eliotr/cloudflare-model-control", "@eliotr/contracts", "@eliotr/platform-cloudflare"])],

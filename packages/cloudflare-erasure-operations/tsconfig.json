@@ -12,6 +12,7 @@
     "src/**/*.ts"
   ],
   "references": [
+    { "path": "../backup-o2" },
     { "path": "../cloudflare-erasure" },
     { "path": "../contracts" },
     { "path": "../interfaces" }

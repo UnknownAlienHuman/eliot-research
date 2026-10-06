@@ -9,11 +9,12 @@ import {
   assertErasureIdentifier,
   canonicalErasureJson,
   erasureSha256Utf8,
+  stableErasureId,
   erasureFail,
   isoFromMs,
   validateErasureRequest,
 } from "./canonical.js";
-import type { BackupErasurePort, ErasureLocationPort } from "./types.js";
+import type { BackupCompositeErasurePort, BackupErasurePort, BackupPrimaryErasurePort, ErasureLocationPort } from "./types.js";
 
 function epoch(target: PurgeTarget): string {
   if (target.location !== "BackupRestorePath") {
@@ -31,7 +32,7 @@ function epoch(target: PurgeTarget): string {
 
 export interface BackupErasureLocationDependencies {
   readonly database: D1Database;
-  readonly port: BackupErasurePort;
+  readonly port: BackupCompositeErasurePort;
   readonly now?: () => number;
 }
 
@@ -40,6 +41,12 @@ interface BackupPurgeObligationRow {
   readonly state: "PENDING" | "BLOCKED" | "ABSENT";
   readonly delete_receipt_ref: string | null;
   readonly absence_receipt_ref: string | null;
+  readonly primary_delete_intent_ref: string | null;
+  readonly primary_delete_intent_digest: string | null;
+  readonly primary_delete_receipt_ref: string | null;
+  readonly primary_absence_receipt_ref: string | null;
+  readonly offsite_delete_receipt_ref: string | null;
+  readonly offsite_absence_receipt_ref: string | null;
 }
 
 interface ErasureExecutionFenceRow {
@@ -58,7 +65,9 @@ async function readObligation(
 ): Promise<BackupPurgeObligationRow | null> {
   try {
     const row = await database.prepare(
-      "SELECT target_id,state,delete_receipt_ref,absence_receipt_ref " +
+      "SELECT target_id,state,delete_receipt_ref,absence_receipt_ref,primary_delete_intent_ref," +
+      "primary_delete_intent_digest,primary_delete_receipt_ref,primary_absence_receipt_ref," +
+      "offsite_delete_receipt_ref,offsite_absence_receipt_ref " +
       "FROM backup_purge_obligation WHERE erasure_id=?1 AND erasure_revision=?2 AND backup_epoch_id=?3",
     ).bind(fence.erasure_id, fence.revision, epochRef).first<BackupPurgeObligationRow>();
     if (row !== null && row.state !== "PENDING" && row.state !== "BLOCKED" && row.state !== "ABSENT") {
@@ -114,7 +123,14 @@ function requireObligationTarget(
   if (
     typeof row.target_id !== "string" || row.target_id.length === 0 ||
     (row.delete_receipt_ref !== null && (typeof row.delete_receipt_ref !== "string" || row.delete_receipt_ref.length === 0)) ||
-    (row.absence_receipt_ref !== null && (typeof row.absence_receipt_ref !== "string" || row.absence_receipt_ref.length === 0))
+    (row.absence_receipt_ref !== null && (typeof row.absence_receipt_ref !== "string" || row.absence_receipt_ref.length === 0)) ||
+    (row.primary_delete_intent_ref !== null && (typeof row.primary_delete_intent_ref !== "string" || row.primary_delete_intent_ref.length === 0)) ||
+    (row.primary_delete_intent_digest !== null && (typeof row.primary_delete_intent_digest !== "string" || !/^[a-f0-9]{64}$/u.test(row.primary_delete_intent_digest))) ||
+    (row.primary_delete_receipt_ref !== null && (typeof row.primary_delete_receipt_ref !== "string" || row.primary_delete_receipt_ref.length === 0)) ||
+    (row.primary_absence_receipt_ref !== null && (typeof row.primary_absence_receipt_ref !== "string" || row.primary_absence_receipt_ref.length === 0)) ||
+    (row.offsite_delete_receipt_ref !== null && (typeof row.offsite_delete_receipt_ref !== "string" || row.offsite_delete_receipt_ref.length === 0)) ||
+    (row.offsite_absence_receipt_ref !== null && (typeof row.offsite_absence_receipt_ref !== "string" || row.offsite_absence_receipt_ref.length === 0)) ||
+    ((row.primary_delete_intent_ref === null) !== (row.primary_delete_intent_digest === null))
   ) {
     erasureFail("ERASURE_CLOSURE_INCOMPLETE", "backup purge obligation has malformed persisted receipt state");
   }
@@ -163,6 +179,12 @@ export function createBackupErasureLocationPort(
       // A persisted delete receipt is sufficient for the coordinator to
       // proceed to its independent absence stage; never repeat that effect.
       if (existing.delete_receipt_ref !== null) {
+        if (
+          existing.primary_delete_intent_ref === null || existing.primary_delete_intent_digest === null ||
+          existing.primary_delete_receipt_ref === null || existing.offsite_delete_receipt_ref === null
+        ) {
+          erasureFail("ERASURE_CLOSURE_INCOMPLETE", "persisted backup delete receipt lacks primary and offsite authority");
+        }
         return {
           target_id: target.target_id,
           disposition: "DELETE_ACCEPTED",
@@ -170,31 +192,50 @@ export function createBackupErasureLocationPort(
         };
       }
       await assertLiveFence(dependencies.database, request, fence, "PURGE_EACH_LOCATION", clock());
-      let receipt: { readonly receipt_ref: string };
+      let receipt: Awaited<ReturnType<BackupCompositeErasurePort["purge"]>>;
       try { receipt = await dependencies.port.purge(epochRef, erasureRef, { target_id: target.target_id, fence }); }
       catch (cause) {
         erasureFail("ERASURE_SETTLEMENT_UNCERTAIN", "backup delete settlement is unknown", true, cause);
       }
+      if (
+        typeof receipt.receipt_ref !== "string" || receipt.receipt_ref.length === 0 ||
+        typeof receipt.primary_delete_intent_ref !== "string" || receipt.primary_delete_intent_ref.length === 0 ||
+        !/^[a-f0-9]{64}$/u.test(receipt.primary_delete_intent_digest) ||
+        typeof receipt.primary_delete_receipt_ref !== "string" || receipt.primary_delete_receipt_ref.length === 0 ||
+        typeof receipt.offsite_delete_receipt_ref !== "string" || receipt.offsite_delete_receipt_ref.length === 0
+      ) erasureFail("ERASURE_CLOSURE_INCOMPLETE", "backup delete result lacks exact primary or offsite receipts");
       // Provider success does not let a superseded lease publish its receipt.
       // If ownership changed during the irreversible call, leave the durable
       // obligation PENDING and report the effect as uncertain for the new owner
       // to reconcile from provider readback.
       await assertLiveFence(dependencies.database, request, fence, "PURGE_EACH_LOCATION", clock());
+      const intentReadback = await readObligation(dependencies.database, fence, epochRef);
+      requireObligationTarget(intentReadback, target);
+      if (
+        intentReadback.primary_delete_intent_ref !== receipt.primary_delete_intent_ref ||
+        intentReadback.primary_delete_intent_digest !== receipt.primary_delete_intent_digest
+      ) erasureFail("ERASURE_SETTLEMENT_UNCERTAIN", "primary delete intent was not durably read back before receipt settlement", true);
       let receiptWrite: D1Result;
       try {
         receiptWrite = await dependencies.database.prepare(
-          "UPDATE backup_purge_obligation SET delete_receipt_ref=?5,updated_at=?6 " +
+          "UPDATE backup_purge_obligation SET delete_receipt_ref=?5,primary_delete_receipt_ref=?6," +
+          "offsite_delete_receipt_ref=?7,updated_at=?8 " +
           "WHERE erasure_id=?1 AND erasure_revision=?2 AND backup_epoch_id=?3 AND target_id=?4 " +
-          "AND delete_receipt_ref IS NULL AND EXISTS (SELECT 1 FROM erasure_execution " +
-          "WHERE erasure_id=?7 AND revision=?8 AND lease_owner=?9 AND lease_generation=?10 " +
-          "AND lease_until>?11 AND state='PURGE_EACH_LOCATION')",
+          "AND delete_receipt_ref IS NULL AND primary_delete_intent_ref=?9 " +
+          "AND primary_delete_intent_digest=?10 AND EXISTS (SELECT 1 FROM erasure_execution " +
+          "WHERE erasure_id=?11 AND revision=?12 AND lease_owner=?13 AND lease_generation=?14 " +
+          "AND lease_until>?15 AND state='PURGE_EACH_LOCATION')",
         ).bind(
           fence.erasure_id,
           fence.revision,
           epochRef,
           target.target_id,
           receipt.receipt_ref,
+          receipt.primary_delete_receipt_ref,
+          receipt.offsite_delete_receipt_ref,
           isoFromMs(clock()),
+          receipt.primary_delete_intent_ref,
+          receipt.primary_delete_intent_digest,
           fence.erasure_id,
           fence.revision,
           fence.lease_owner,
@@ -225,24 +266,34 @@ export function createBackupErasureLocationPort(
       const erasureRef = `${request.erasure_ref.id}:${request.erasure_ref.revision}`;
       const obligation = await readObligation(dependencies.database, fence, epochRef);
       requireObligationTarget(obligation, target);
-      if (obligation.delete_receipt_ref === null || obligation.delete_receipt_ref !== purgeReceipt.receipt_ref) {
+      if (
+        obligation.delete_receipt_ref === null || obligation.delete_receipt_ref !== purgeReceipt.receipt_ref ||
+        obligation.primary_delete_receipt_ref === null || obligation.offsite_delete_receipt_ref === null
+      ) {
         erasureFail("ERASURE_CLOSURE_INCOMPLETE", "backup absence check is not bound to the persisted delete receipt");
       }
       await assertLiveFence(dependencies.database, request, fence, "VERIFY_ABSENCE_OR_BLOCK", clock());
-      let result: { readonly absent: boolean; readonly receipt_ref: string };
+      let result: Awaited<ReturnType<BackupCompositeErasurePort["verifyAbsent"]>>;
       try { result = await dependencies.port.verifyAbsent(epochRef, erasureRef, { target_id: target.target_id, fence }); }
       catch (cause) {
         erasureFail("ERASURE_SETTLEMENT_UNCERTAIN", "backup absence readback failed", true, cause);
       }
       await assertLiveFence(dependencies.database, request, fence, "VERIFY_ABSENCE_OR_BLOCK", clock());
+      if (
+        typeof result.receipt_ref !== "string" || result.receipt_ref.length === 0 ||
+        typeof result.primary_absence_receipt_ref !== "string" || result.primary_absence_receipt_ref.length === 0 ||
+        typeof result.offsite_absence_receipt_ref !== "string" || result.offsite_absence_receipt_ref.length === 0
+      ) erasureFail("ERASURE_CLOSURE_INCOMPLETE", "backup absence result lacks exact primary or offsite receipts");
       let write: D1Result;
       try {
         write = await dependencies.database.prepare(
-        "UPDATE backup_purge_obligation SET state=?5,absence_receipt_ref=?6,updated_at=?7 " +
+        "UPDATE backup_purge_obligation SET state=?5,absence_receipt_ref=?6," +
+        "primary_absence_receipt_ref=?7,offsite_absence_receipt_ref=?8,updated_at=?9 " +
         "WHERE erasure_id=?1 AND erasure_revision=?2 AND backup_epoch_id=?3 AND target_id=?4 " +
-        "AND delete_receipt_ref=?8 AND EXISTS (SELECT 1 FROM erasure_execution " +
-        "WHERE erasure_id=?9 AND revision=?10 AND lease_owner=?11 AND lease_generation=?12 " +
-        "AND lease_until>?13 AND state='VERIFY_ABSENCE_OR_BLOCK')",
+        "AND delete_receipt_ref=?10 AND primary_delete_receipt_ref IS NOT NULL " +
+        "AND offsite_delete_receipt_ref IS NOT NULL AND EXISTS (SELECT 1 FROM erasure_execution " +
+        "WHERE erasure_id=?11 AND revision=?12 AND lease_owner=?13 AND lease_generation=?14 " +
+        "AND lease_until>?15 AND state='VERIFY_ABSENCE_OR_BLOCK')",
         ).bind(
         fence.erasure_id,
         fence.revision,
@@ -250,6 +301,8 @@ export function createBackupErasureLocationPort(
         target.target_id,
         result.absent ? "ABSENT" : "BLOCKED",
         result.receipt_ref,
+        result.primary_absence_receipt_ref,
+        result.offsite_absence_receipt_ref,
           isoFromMs(clock()),
           purgeReceipt.receipt_ref,
           fence.erasure_id,
@@ -269,7 +322,9 @@ export function createBackupErasureLocationPort(
       if (
         persisted.state !== (result.absent ? "ABSENT" : "BLOCKED") ||
         persisted.absence_receipt_ref !== result.receipt_ref ||
-        persisted.delete_receipt_ref !== purgeReceipt.receipt_ref
+        persisted.delete_receipt_ref !== purgeReceipt.receipt_ref ||
+        persisted.primary_absence_receipt_ref !== result.primary_absence_receipt_ref ||
+        persisted.offsite_absence_receipt_ref !== result.offsite_absence_receipt_ref
       ) {
         erasureFail("ERASURE_SETTLEMENT_UNCERTAIN", "backup absence receipt failed exact readback", true);
       }
@@ -278,6 +333,37 @@ export function createBackupErasureLocationPort(
         absent: result.absent,
         receipt_ref: result.receipt_ref,
         ...(result.absent ? {} : { reason_code: "BACKUP_COPY_REMAINS" }),
+      };
+    },
+  };
+}
+
+export function composeBackupErasurePort(
+  primary: BackupPrimaryErasurePort,
+  offsite: BackupErasurePort,
+): BackupCompositeErasurePort {
+  return {
+    async purge(epochRef, erasureRef, context) {
+      const primaryReceipt = await primary.purge(epochRef, erasureRef, context);
+      const offsiteReceipt = await offsite.purge(epochRef, erasureRef, context);
+      return {
+        receipt_ref: await stableErasureId("backup-composite-delete", context.target_id,
+          primaryReceipt.receipt_ref, offsiteReceipt.receipt_ref),
+        primary_delete_intent_ref: primaryReceipt.intent_ref,
+        primary_delete_intent_digest: primaryReceipt.intent_digest,
+        primary_delete_receipt_ref: primaryReceipt.receipt_ref,
+        offsite_delete_receipt_ref: offsiteReceipt.receipt_ref,
+      };
+    },
+    async verifyAbsent(epochRef, erasureRef, context) {
+      const primaryResult = await primary.verifyAbsent(epochRef, erasureRef, context);
+      const offsiteResult = await offsite.verifyAbsent(epochRef, erasureRef, context);
+      return {
+        absent: primaryResult.absent && offsiteResult.absent,
+        receipt_ref: await stableErasureId("backup-composite-absence", context.target_id,
+          primaryResult.receipt_ref, offsiteResult.receipt_ref),
+        primary_absence_receipt_ref: primaryResult.receipt_ref,
+        offsite_absence_receipt_ref: offsiteResult.receipt_ref,
       };
     },
   };

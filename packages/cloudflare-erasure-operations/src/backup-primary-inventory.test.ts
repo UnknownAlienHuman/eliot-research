@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { BACKUP_R2_PAYLOAD_PROTOCOL } from "@eliotr/backup-o2";
-import type { BackupEpochScopeArchive } from "./backup-epoch-scope.js";
+import type { BackupEpochScopeArchive } from "@eliotr/cloudflare-erasure";
 import { assertPrimaryBackupPartInventory } from "./backup-primary-inventory.js";
 
 const MANIFESTS = [

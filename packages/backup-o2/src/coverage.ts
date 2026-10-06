@@ -29,6 +29,8 @@ export const CANONICAL_EXPORTED_TABLES: ReadonlySet<string> = new Set([
   "exchange_generation",
   "projection_generation",
   "backup_epoch",
+  "backup_epoch_manifest_binding",
+  "backup_epoch_verification_receipt",
   "erasure_hold",
   "purge_ledger",
   // Durable Core state named by architecture §16.1. Full explicit column
@@ -197,6 +199,23 @@ const NOT_A_BACKUP_TABLES: ReadonlySet<string> = new Set([
   "sqlite_sequence",
   "sqlite_master",
   "backup_epoch_receipt",
+  // Writer fencing is controller-only idempotency authority. Including it in
+  // its own source vector would make admission mutate the vector it snapshots.
+  "backup_epoch_producer_claim",
+  // These rows are live erasure execution authority. Restoring them as source
+  // data could revive a deletion plan or transfer its current lease fence.
+  "backup_erasure_primary_closure",
+  "backup_erasure_primary_claim_pin",
+  "backup_erasure_primary_cut_pin",
+  "backup_erasure_primary_target_pin",
+  "backup_erasure_primary_part_pin",
+  "backup_erasure_primary_delete_item",
+  "backup_erasure_primary_handoff",
+  // Qualification and operation rows govern the active writer controller;
+  // restoring them cannot grant current write or retirement authority.
+  "backup_primary_writer_qualification",
+  "backup_primary_writer_operation",
+  "backup_primary_writer_current",
   "backup_offsite_expiry",
   "backup_destination_authority",
   "backup_offsite_copy_part",

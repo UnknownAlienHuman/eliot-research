@@ -5,9 +5,9 @@ import {
   parseOffsiteCopyReplayIntent,
   type BackupOffsiteCopyReplayAuthority,
 } from "@eliotr/backup-o2";
-import { assertErasureIdentifier, erasureFail } from "./canonical.js";
-import type { BackupEpochScopeArchive, BackupEpochScopeDraft, BackupEpochScopePart } from "./backup-epoch-scope.js";
-import { assertPrimaryBackupPartInventory } from "./backup-primary-inventory.js";
+import { assertErasureIdentifier, erasureFail } from "@eliotr/cloudflare-erasure";
+import type { BackupEpochScopeArchive, BackupEpochScopeDraft, BackupEpochScopePart, BackupEpochScopeInventory } from "@eliotr/cloudflare-erasure";
+import { readPrimaryBackupPartInventory } from "./backup-primary-inventory.js";
 
 const INVENTORY_ROW_LIMIT = 10_000;
 const INVENTORY_FETCH_LIMIT = INVENTORY_ROW_LIMIT + 1;
@@ -220,16 +220,12 @@ async function readPart(
   return output;
 }
 
-export interface D1BackupEpochScopeInventory {
-  readonly archives: readonly BackupEpochScopeArchive[];
-  readonly copy_authority_epoch_ids: readonly string[];
-}
-
 /** Reads exact local O2 parts and canonical epoch linkage; no caller refs grant archive authority. */
 export async function readD1BackupEpochScopeInventory(
   database: D1Database,
   backupPartsBucket: R2Bucket,
-): Promise<D1BackupEpochScopeInventory> {
+  options: { readonly allowed_missing_keys?: ReadonlySet<string> } = {},
+): Promise<BackupEpochScopeInventory> {
   try {
     await assertO2MigrationAuthority(database);
   } catch (cause) {
@@ -299,6 +295,8 @@ export async function readD1BackupEpochScopeInventory(
       read_plaintext_part: (part, draft: BackupEpochScopeDraft) => readPart(backupPartsBucket, epochId, draft.vector_digest, part),
     };
   });
-  await assertPrimaryBackupPartInventory(backupPartsBucket, archives);
-  return { archives, copy_authority_epoch_ids: copyAuthorityEpochIds };
+  const primaryParts = await readPrimaryBackupPartInventory(backupPartsBucket, archives, {
+    ...(options.allowed_missing_keys === undefined ? {} : { allowed_missing_keys: options.allowed_missing_keys }),
+  });
+  return { archives, copy_authority_epoch_ids: copyAuthorityEpochIds, primary_parts: primaryParts };
 }

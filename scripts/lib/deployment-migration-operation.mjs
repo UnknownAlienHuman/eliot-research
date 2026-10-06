@@ -443,14 +443,64 @@ function createIndexDefinition(statement) {
   return close > index + 1 && (noPredicate || partialPredicate) ? { name, table } : null;
 }
 
+function consumeNonnegativeInteger(statement, state) {
+  let value = "";
+  while (statement[state.index]?.type === "symbol" && /^\d$/u.test(statement[state.index].value)) {
+    value += statement[state.index++].value;
+  }
+  return value.length > 0 && Number.isSafeInteger(Number(value));
+}
+
+function supportedNullableColumnCheck(expression, columnName) {
+  const state = { index: 0 };
+  const name = columnName.toLowerCase();
+  if (!consumeIdentifier(expression, state, name) || !consumeWord(expression, state, "IS") ||
+      !consumeWord(expression, state, "NULL") || !consumeWord(expression, state, "OR")) return false;
+
+  const grouped = consumeSymbol(expression, state, "(");
+  if (consumeWord(expression, state, "LENGTH")) {
+    if (!consumeSymbol(expression, state, "(") || !consumeIdentifier(expression, state, name) ||
+        !consumeSymbol(expression, state, ")") || !consumeSymbol(expression, state, "=") ||
+        !consumeNonnegativeInteger(expression, state) || !consumeWord(expression, state, "AND") ||
+        !consumeIdentifier(expression, state, name) || !consumeWord(expression, state, "NOT") ||
+        !consumeWord(expression, state, "GLOB")) return false;
+    const pattern = expression[state.index];
+    if (pattern?.type !== "literal" || pattern.value !== "*[^0-9a-f]*") return false;
+    state.index += 1;
+  } else if (!consumeIdentifier(expression, state, name) || !consumeSymbol(expression, state, ">") ||
+      !consumeNonnegativeInteger(expression, state)) {
+    return false;
+  }
+
+  return (!grouped || consumeSymbol(expression, state, ")")) && state.index === expression.length;
+}
+
+function nullableColumnCheckDefinition(statement, state, columnName) {
+  if (!consumeWord(statement, state, "CHECK") || !consumeSymbol(statement, state, "(")) return false;
+  const open = state.index - 1;
+  const close = matchingParenEnd(statement, open);
+  if (close !== statement.length - 1) return false;
+  const expression = statement.slice(open + 1, close);
+  if (expression.some((token) => (token.type === "symbol" && token.value === ";") ||
+      (token.type === "literal" && token.value.includes(";")))) return false;
+  if (!supportedNullableColumnCheck(expression, columnName)) return false;
+  state.index = statement.length;
+  return true;
+}
+
 function alterAddColumnDefinition(statement) {
   const state = { index: 0 };
   if (!consumeWord(statement, state, "ALTER") || !consumeWord(statement, state, "TABLE") ||
       !consumeIdentifier(statement, state) || !consumeWord(statement, state, "ADD")) return null;
   consumeWord(statement, state, "COLUMN");
-  if (!consumeIdentifier(statement, state)) return null;
+  const columnName = consumeIdentifier(statement, state);
+  if (columnName === false) return null;
   const types = new Set(["TEXT", "INTEGER", "INT", "REAL", "BLOB", "NUMERIC", "BOOLEAN", "JSON", "DATE", "DATETIME", "DECIMAL"]);
-  if (statement[state.index]?.type === "word" && types.has(statement[state.index].value)) state.index += 1;
+  let hasType = false;
+  if (statement[state.index]?.type === "word" && types.has(statement[state.index].value)) {
+    state.index += 1;
+    hasType = true;
+  }
   let notNull = false;
   let defaultValue = false;
   while (state.index < statement.length) {
@@ -469,6 +519,8 @@ function alterAddColumnDefinition(statement) {
         if (number.length === 0 || !/^-?(?:0|[1-9]\d*)(?:\.\d+)?$/u.test(number.join(""))) return null;
       }
       defaultValue = true;
+    } else if (wordAt(statement, state.index, "CHECK")) {
+      if (!hasType || notNull || defaultValue || !nullableColumnCheckDefinition(statement, state, columnName)) return null;
     } else return null;
   }
   return state.index === statement.length ? true : null;

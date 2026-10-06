@@ -17,9 +17,9 @@ function databaseFixture(): { readonly database: D1Database; readonly calls: Cal
           return {
             async first<T>() {
               // Locator retention check expects { missing: 0 }; the final
-              // execution fence read expects { state, closure_digest }.
+              // execution fence read expects { state, closure_digest, lease_until }.
               if (sql.includes("erasure_dependency_registry")) return { missing: 0 } as T;
-              return { state: "REQUESTED", closure_digest: null } as T;
+              return { state: "REQUESTED", closure_digest: null, lease_until: 20_000 } as T;
             },
             async run<T>() {
               return { success: true, results: [] } as unknown as D1Result<T>;

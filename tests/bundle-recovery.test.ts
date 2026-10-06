@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { prepareBrowserBundle } from "../apps/eliotr-pwa/src/bundle-input.js";
-import { discoverBrowserBundleImport, recoverBrowserBundleImport } from "../apps/eliotr-pwa/src/bundle-import.js";
-import { type ImportTransport } from "../apps/eliotr-pwa/src/bundle-import-api.js";
+import { prepareBrowserBundle } from "../packages/pwa-source-workspace/src/bundle-input.js";
+import { discoverBrowserBundleImport, recoverBrowserBundleImport } from "../packages/pwa-source-workspace/src/bundle-import.js";
+import { type ImportTransport } from "../packages/pwa-source-workspace/src/bundle-import-api.js";
 import { bundleFixture } from "../packages/platform-cloudflare/src/ingest-test-fixture.js";
 import { canonicalDigest } from "../packages/platform-cloudflare/src/d1-ingest-validation.js";
 
