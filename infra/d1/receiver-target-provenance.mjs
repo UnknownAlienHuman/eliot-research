@@ -4,6 +4,7 @@ import { propagateEscapedTargetBindings } from "./receiver-target-escape-analysi
 import { createModelQualificationTargetPolicy } from "./receiver-target-provenance-model-qualification.mjs";
 import { mergeModelQualificationPass } from "./receiver-target-provenance-pass.mjs";
 import { findDetachedProjectionCalls } from "./receiver-target-provenance-projection.mjs";
+import { createGeneralReceiverTargetOverrides } from "./receiver-target-general.mjs";
 import {
   canonicalDeclaration,
   compilerOptions,
@@ -43,6 +44,7 @@ export function createErasureReceiverTargetOverrides(files, root, suppliedProgra
   const program = suppliedProgram ?? ts.createProgram(rootNames, compilerOptions(root));
   if (pass === "combined") return mergeModelQualificationPass((selected) =>
     createErasureReceiverTargetOverrides(files, root, program, selected));
+  if (pass === "general") return createGeneralReceiverTargetOverrides({ files, root, program, checker: program.getTypeChecker() });
   const checker = program.getTypeChecker();
   const envSource = program.getSourceFile(envPath);
   const envDeclaration = envSource?.statements.find((statement) => ts.isInterfaceDeclaration(statement)
