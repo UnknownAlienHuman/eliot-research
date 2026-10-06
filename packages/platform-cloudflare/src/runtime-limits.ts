@@ -124,9 +124,11 @@ export interface BoundedStreamReadOptions {
   readonly max_chunks?: number;
 }
 
-async function cancelQuietly(reader: ReadableStreamDefaultReader<Uint8Array>): Promise<void> {
+function cancelQuietly(target: Pick<ReadableStream<Uint8Array>, "cancel">): void {
   try {
-    await reader.cancel();
+    // Source cleanup is asynchronous and may never settle. Start it, but do not
+    // make a known rejection wait for it or leak its rejected promise.
+    void target.cancel().catch(() => undefined);
   } catch {
     // Cancellation is best effort; retain the original bounded-read failure.
   }
@@ -151,7 +153,6 @@ export async function readStreamWithinBytes(
       if (result.done) break;
       const chunk = result.value;
       if (!(chunk instanceof Uint8Array)) {
-        await cancelQuietly(reader);
         throw new RuntimeLimitError(
           "STREAM_CHUNK_INVALID",
           options.label,
@@ -160,7 +161,6 @@ export async function readStreamWithinBytes(
       }
       count += 1;
       if (count > maxChunks) {
-        await cancelQuietly(reader);
         throw new RuntimeLimitError(
           "STREAM_CHUNK_LIMIT_EXCEEDED",
           options.label,
@@ -171,7 +171,6 @@ export async function readStreamWithinBytes(
       }
       total += chunk.byteLength;
       if (!Number.isSafeInteger(total) || total > options.max_bytes) {
-        await cancelQuietly(reader);
         throw new RuntimeLimitError(
           "LIMIT_EXCEEDED",
           options.label,
@@ -182,6 +181,9 @@ export async function readStreamWithinBytes(
       }
       chunks.push(chunk.slice());
     }
+  } catch (error) {
+    cancelQuietly(reader);
+    throw error;
   } finally {
     reader.releaseLock();
   }
@@ -221,9 +223,16 @@ async function readBodyWithinBytes(
   headers: Headers,
   options: BoundedStreamReadOptions,
 ): Promise<Uint8Array> {
-  const contentLength = parseContentLength(headers, options.label);
-  if (contentLength !== undefined) {
-    assertWithinBytes(options.label, contentLength, options.max_bytes);
+  try {
+    const contentLength = parseContentLength(headers, options.label);
+    if (contentLength !== undefined) {
+      assertWithinBytes(options.label, contentLength, options.max_bytes);
+    }
+  } catch (error) {
+    // Header rejection happens before acquiring a reader. Release the unused
+    // HTTP body without buffering it or waiting for its source cleanup.
+    if (body !== null) cancelQuietly(body);
+    throw error;
   }
   return readStreamWithinBytes(body, options);
 }
