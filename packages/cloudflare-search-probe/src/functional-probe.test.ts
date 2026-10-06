@@ -148,6 +148,7 @@ describe("AI Search functional shadow probe", () => {
     expect(result.functional_ref).not.toContain("golden");
     expect(f.search).toHaveBeenCalledTimes(1);
     expect(f.search).toHaveBeenCalledWith({ query: QUERY, ai_search_options: { retrieval: {
+      filters: { source_revision_ref: { $in: [REVISION] }, projection_generation: AI_SEARCH_PRIMARY_GENERATION },
       retrieval_type: "vector", match_threshold: 0, max_num_results: 1, context_expansion: 0, boost_by: [], metadata_only: false,
     } } });
     expect(f.dependencies.ai_search.get).toHaveBeenCalledWith(AI_SEARCH_PRIMARY_INSTANCE_ID);
@@ -178,6 +179,19 @@ describe("AI Search functional shadow probe", () => {
     releaseSearch(SEARCH_RESULT);
     expect((await first).outcome).toBe("SUCCEEDED");
     expect(f.search).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects an unrepresentable filter before writing a claim or calling Search", async () => {
+    const f = await fixture();
+    const revision = "r".repeat(65);
+    await expect(f.service.probe(input({
+      source_revision_ref: revision,
+      scope_snapshot: { ...SCOPE, member_source_revision_refs: [revision],
+        source_owner_generations: { [revision]: "owner-generation-1" } },
+    }))).rejects.toMatchObject({ code: "AI_SEARCH_FUNCTIONAL_PROBE_INPUT_INVALID" });
+    expect(f.store.objects.size).toBe(0);
+    expect(f.dependencies.ai_search.get).not.toHaveBeenCalled();
+    expect(f.search).not.toHaveBeenCalled();
   });
 
   it("rejects a wider or mismatched scope before writing a claim or calling Search", async () => {

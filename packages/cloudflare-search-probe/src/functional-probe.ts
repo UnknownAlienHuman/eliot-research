@@ -9,7 +9,7 @@ import {
   type AiSearchGenerationRegistryService,
   type AiSearchGenerationRegistrySnapshot,
 } from "@eliotr/cloudflare-ai";
-import { decodeAiSearchSearchResult, type AiSearchInstanceLike, type AiSearchNamespaceLike, type EvidenceObjectStore } from "@eliotr/platform-cloudflare";
+import { createAiSearchScopeFilter, decodeAiSearchSearchResult, type AiSearchScopeFilter, type AiSearchInstanceLike, type AiSearchNamespaceLike, type EvidenceObjectStore } from "@eliotr/platform-cloudflare";
 import type { EvidenceAccessContext } from "@eliotr/cloudflare-evidence";
 import type { RetrievalRequest } from "@eliotr/retrieval";
 import { z } from "zod";
@@ -66,7 +66,9 @@ export class AiSearchFunctionalProbeError extends Error {
   }
 }
 
-interface ValidatedInput extends Omit<AiSearchFunctionalProbeInput, "query"> { readonly query: string; readonly query_sha256: string; }
+interface ValidatedInput extends Omit<AiSearchFunctionalProbeInput, "query"> {
+  readonly query: string; readonly query_sha256: string; readonly filters: AiSearchScopeFilter;
+}
 interface RegistryPin { readonly snapshot: AiSearchGenerationRegistrySnapshot; readonly revision: number; readonly artifact_sha256: string; }
 
 function fail(code: AiSearchFunctionalProbeErrorCode, message: string, cause?: unknown): never { throw new AiSearchFunctionalProbeError(code, message, cause); }
@@ -121,7 +123,14 @@ function validateInput(input: AiSearchFunctionalProbeInput, nowMs: number): Vali
   if (nowMs >= PREBILLING_CUTOFF_MS) {
     fail("AI_SEARCH_FUNCTIONAL_PROBE_PREBILLING_CLOSED", "the unreviewed prebilling functional query window has closed");
   }
+  let filters: AiSearchScopeFilter;
+  try {
+    filters = createAiSearchScopeFilter(scope.data.member_source_revision_refs, AI_SEARCH_PRIMARY_GENERATION);
+  } catch (cause) {
+    fail("AI_SEARCH_FUNCTIONAL_PROBE_INPUT_INVALID", "frozen scope cannot fit an exact AI Search filter", cause);
+  }
   return Object.freeze({
+    filters,
     access: access.data,
     project_id: input.project_id,
     source_id: input.source_id,
@@ -213,11 +222,12 @@ function requestDigestPayload(input: ValidatedInput, pin: RegistryPin): Readonly
   });
 }
 
-function nativeRequest(query: string): Readonly<Record<string, unknown>> {
+function nativeRequest(input: ValidatedInput): Readonly<Record<string, unknown>> {
   return Object.freeze({
-    query,
+    query: input.query,
     ai_search_options: Object.freeze({
       retrieval: Object.freeze({
+        filters: input.filters,
         retrieval_type: "vector",
         match_threshold: 0,
         max_num_results: 1,
@@ -418,7 +428,7 @@ export function createAiSearchFunctionalProbe(
           deadline_ms: validated.deadline_ms,
         };
         const rawResult = await withDeadline(
-          Promise.resolve().then(() => instance.search(nativeRequest(validated.query))),
+          Promise.resolve().then(() => instance.search(nativeRequest(validated))),
           validated.signal,
           validated.deadline_ms,
           now,

@@ -104,6 +104,8 @@ describe("S09 managed semantic stage at the real evidence boundary", () => {
     const ai = binding(async (input) => {
       calls++;
       expect(input).toEqual({ query: QUERY, ai_search_options: { retrieval: {
+        filters: { source_revision_ref: { $in: [...value.f.scope.member_source_revision_refs].sort() },
+          projection_generation: value.tail.projection_generation },
         retrieval_type: "vector", match_threshold: 0, max_num_results: profile.max_results,
         context_expansion: 2, boost_by: [], metadata_only: false,
       } } });
