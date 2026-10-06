@@ -24,10 +24,26 @@ export type ModelGatewayExecutionErrorCode =
   | "MODEL_GATEWAY_FINGERPRINT_PERSIST_FAILED"
   | "MODEL_GATEWAY_PRICING_FAILED";
 
+/** A bounded diagnostic for rejected model-gateway responses; never provider text. */
+export type ModelGatewaySafeResponseReason =
+  | "FINGERPRINT_INVALID"
+  | "LOG_READBACK_UNAVAILABLE"
+  | "LOG_CORRELATION_INVALID"
+  | "LOG_ID_MISSING"
+  | "LOG_ID_INVALID"
+  | "CONTENT_TYPE_INVALID"
+  | "BODY_TOO_LARGE"
+  | "BODY_JSON_INVALID"
+  | "BODY_SHAPE_INVALID"
+  | "MODEL_ID_INVALID"
+  | "CACHE_INVALID"
+  | "UNCLASSIFIED";
+
 export class ModelGatewayExecutionError extends Error {
   public readonly code: ModelGatewayExecutionErrorCode;
   public readonly retryable: boolean;
   public readonly http_status?: number;
+  public readonly safe_response_reason?: ModelGatewaySafeResponseReason;
 
   public constructor(
     code: ModelGatewayExecutionErrorCode,
@@ -35,6 +51,7 @@ export class ModelGatewayExecutionError extends Error {
     options: {
       readonly retryable?: boolean;
       readonly http_status?: number;
+      readonly safe_response_reason?: ModelGatewaySafeResponseReason;
       readonly cause?: unknown;
     } = {},
   ) {
@@ -48,6 +65,9 @@ export class ModelGatewayExecutionError extends Error {
     if (options.http_status !== undefined) {
       this.http_status = options.http_status;
     }
+    if (options.safe_response_reason !== undefined) {
+      this.safe_response_reason = options.safe_response_reason;
+    }
   }
 }
 
@@ -57,6 +77,7 @@ export function modelGatewayExecutionFailure(
   options: {
     readonly retryable?: boolean;
     readonly http_status?: number;
+    readonly safe_response_reason?: ModelGatewaySafeResponseReason;
     readonly cause?: unknown;
   } = {},
 ): never {

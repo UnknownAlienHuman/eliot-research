@@ -3,6 +3,7 @@ import {
   ModelGatewayExecutionError,
   modelGatewayExecutionFailure,
   type DecodedModelGatewayResponse,
+  type ModelGatewaySafeResponseReason,
   type ModelGatewayUsageObservation,
 } from "./model-gateway-execution-contract.js";
 import type { ModelGatewayApi, ModelGatewayTransportPolicyV1 } from "./model-gateway-transport-policy.js";
@@ -30,8 +31,13 @@ const IDENTIFIER = /^[A-Za-z0-9._:@/-]{1,256}$/u;
 const MAX_JSON_DEPTH = 16;
 const MAX_JSON_MEMBERS = 2048;
 
-function invalid(message: string): never {
-  modelGatewayExecutionFailure("MODEL_GATEWAY_RESPONSE_INVALID", message);
+function invalid(
+  message: string,
+  safeResponseReason: ModelGatewaySafeResponseReason = "BODY_SHAPE_INVALID",
+): never {
+  modelGatewayExecutionFailure("MODEL_GATEWAY_RESPONSE_INVALID", message, {
+    safe_response_reason: safeResponseReason,
+  });
 }
 
 function exactObject(value: unknown, allowed: ReadonlySet<string>, label: string): Record<string, unknown> {
@@ -83,10 +89,14 @@ function legacyBoundedString(value: unknown, label: string, maximumBytes = 256 *
   return value;
 }
 
-function identifier(value: unknown, label: string): string {
+function identifier(
+  value: unknown,
+  label: string,
+  safeResponseReason: ModelGatewaySafeResponseReason = "BODY_SHAPE_INVALID",
+): string {
   if (typeof value !== "string" || value.length < 1 || value.trim().length < 1 ||
       new TextEncoder().encode(value).byteLength > 256 || /[\u0000-\u001f\u007f]/u.test(value) ||
-      !IDENTIFIER.test(value)) invalid(`${label} is not a bounded identifier`);
+      !IDENTIFIER.test(value)) invalid(`${label} is not a bounded identifier`, safeResponseReason);
   const result = value;
   return result;
 }
@@ -122,7 +132,7 @@ function decodeChatBody(body: Record<string, unknown>, bodyBytes: Uint8Array): O
   tokenCount(body.created, "chat response created");
   legacyOptionalString(body.service_tier, "chat response service_tier");
   legacyOptionalString(body.system_fingerprint, "chat response system_fingerprint");
-  const responseModel = identifier(body.model, "chat response model");
+  const responseModel = identifier(body.model, "chat response model", "MODEL_ID_INVALID");
   if (!Array.isArray(body.choices) || body.choices.length !== 1) invalid("chat response must contain exactly one choice");
   const choice = exactObject(body.choices[0], CHAT_CHOICE_KEYS, "chat response choice");
   if (choice.index !== 0) invalid("chat response choice index must be zero");
@@ -157,7 +167,7 @@ function decodeResponsesBody(body: Record<string, unknown>, bodyBytes: Uint8Arra
   if (body.object !== "response" || body.status !== "completed" || (body.error !== null && body.error !== undefined)) invalid("OpenAI Responses result is not a completed successful response");
   identifier(body.id, "OpenAI Responses id");
   tokenCount(body.created_at, "OpenAI Responses created_at");
-  const responseModel = identifier(body.model, "OpenAI Responses model");
+  const responseModel = identifier(body.model, "OpenAI Responses model", "MODEL_ID_INVALID");
   if (body.incomplete_details !== null && body.incomplete_details !== undefined) modelGatewayExecutionFailure("MODEL_GATEWAY_OUTPUT_TRUNCATED", "OpenAI Responses output is incomplete");
   if (!Array.isArray(body.output) || body.output.length < 1 || body.output.length > 3) invalid("OpenAI Responses output is invalid");
   let messageCount = 0;
@@ -194,7 +204,7 @@ function decodeResponsesBody(body: Record<string, unknown>, bodyBytes: Uint8Arra
 
 function decodeAnthropicBody(body: Record<string, unknown>, bodyBytes: Uint8Array): Omit<DecodedModelGatewayResponse, "fingerprint" | "log_id"> {
   if (body.type !== "message" || body.role !== "assistant") invalid("Anthropic response is not an assistant message");
-  const responseModel = identifier(body.model, "Anthropic response model");
+  const responseModel = identifier(body.model, "Anthropic response model", "MODEL_ID_INVALID");
   identifier(body.id, "Anthropic response id");
   if (body.stop_reason === "max_tokens") modelGatewayExecutionFailure("MODEL_GATEWAY_OUTPUT_TRUNCATED", "Anthropic response reached max_tokens");
   if (body.stop_reason === "refusal") modelGatewayExecutionFailure("MODEL_GATEWAY_POLICY_REJECTED", "Anthropic response contains a refusal");
@@ -238,7 +248,7 @@ export async function decodeModelGatewayProviderBody(
 ): Promise<Omit<DecodedModelGatewayResponse, "fingerprint" | "log_id" | "cache_status" | "successful_step">> {
   let raw: unknown;
   try { raw = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bodyBytes)) as unknown; }
-  catch (cause) { modelGatewayExecutionFailure("MODEL_GATEWAY_RESPONSE_INVALID", "provider response is not valid UTF-8 JSON", { cause }); }
+  catch (cause) { modelGatewayExecutionFailure("MODEL_GATEWAY_RESPONSE_INVALID", "provider response is not valid UTF-8 JSON", { cause, safe_response_reason: "BODY_JSON_INVALID" }); }
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) invalid("provider response must be a plain object");
   const record = raw as Record<string, unknown>;
   let decoded: Omit<DecodedModelGatewayResponse, "fingerprint" | "log_id">;
@@ -258,36 +268,41 @@ export async function decodeModelGatewayProviderBody(
   return Object.freeze({ ...decoded, body_sha256: await modelGatewaySha256(bodyBytes) });
 }
 
-function header(headers: Headers, name: string, required: boolean): string | undefined {
+function header(
+  headers: Headers,
+  name: string,
+  required: boolean,
+  invalidReason: ModelGatewaySafeResponseReason = "BODY_SHAPE_INVALID",
+): string | undefined {
   const value = headers.get(name);
   if (value === null) {
-    if (required) invalid(`AI Gateway response is missing ${name}`);
+    if (required) invalid(`AI Gateway response is missing ${name}`, name === "cf-aig-log-id" ? "LOG_ID_MISSING" : "BODY_SHAPE_INVALID");
     return undefined;
   }
-  if (value.length < 1 || value.length > 8192 || value !== value.trim() || /[\u0000-\u001f\u007f]/u.test(value)) invalid(`AI Gateway response header ${name} is invalid`);
+  if (value.length < 1 || value.length > 8192 || value !== value.trim() || /[\u0000-\u001f\u007f]/u.test(value)) invalid(`AI Gateway response header ${name} is invalid`, invalidReason);
   return value;
 }
 
 function assertResponseHeaders(response: Response, policy: ModelGatewayTransportPolicyV1): { logId: string; cacheStatus?: "MISS"; successfulStep?: string } {
   const contentType = response.headers.get("content-type");
-  if (contentType === null || !/^application\/json(?:\s*;|$)/iu.test(contentType)) invalid("provider response must be application/json");
+  if (contentType === null || !/^application\/json(?:\s*;|$)/iu.test(contentType)) invalid("provider response must be application/json", "CONTENT_TYPE_INVALID");
   const dlp = header(response.headers, "cf-aig-dlp", false);
   if (dlp !== undefined) {
     let value: unknown;
-    try { value = JSON.parse(dlp) as unknown; } catch (cause) { modelGatewayExecutionFailure("MODEL_GATEWAY_RESPONSE_INVALID", "AI Gateway DLP header is invalid JSON", { cause }); }
+    try { value = JSON.parse(dlp) as unknown; } catch (cause) { modelGatewayExecutionFailure("MODEL_GATEWAY_RESPONSE_INVALID", "AI Gateway DLP header is invalid JSON", { cause, safe_response_reason: "BODY_JSON_INVALID" }); }
     const result = exactObject(value, new Set(["action", "findings"]), "AI Gateway DLP header");
     if ((result.action !== "FLAG" && result.action !== "BLOCK") || !Array.isArray(result.findings) || result.findings.length === 0 || result.findings.length > 64) invalid("AI Gateway DLP observation is invalid");
     boundedJson(result.findings);
     modelGatewayExecutionFailure("MODEL_GATEWAY_POLICY_REJECTED", `AI Gateway returned a DLP ${result.action} observation`);
   }
-  const logId = identifier(header(response.headers, "cf-aig-log-id", true), "AI Gateway log identifier");
+  const logId = identifier(header(response.headers, "cf-aig-log-id", true, "LOG_ID_INVALID"), "AI Gateway log identifier", "LOG_ID_INVALID");
   for (const [name, expected] of [["cf-aig-provider", policy.provider], ["cf-aig-model", policy.model]] as const) {
-    const observed = header(response.headers, name, false);
-    if (observed !== undefined && observed !== expected) invalid(`AI Gateway ${name} differs from the selected transport policy`);
+    const observed = header(response.headers, name, false, "MODEL_ID_INVALID");
+    if (observed !== undefined && observed !== expected) invalid(`AI Gateway ${name} differs from the selected transport policy`, "MODEL_ID_INVALID");
   }
-  const rawCache = header(response.headers, "cf-aig-cache-status", false);
-  if (rawCache !== undefined && rawCache.toUpperCase() !== "MISS" && rawCache.toUpperCase() !== "HIT") invalid("AI Gateway cache status is unsupported");
-  if (rawCache?.toUpperCase() === "HIT") invalid("AI Gateway returned a cache hit despite explicit cache bypass");
+  const rawCache = header(response.headers, "cf-aig-cache-status", false, "CACHE_INVALID");
+  if (rawCache !== undefined && rawCache.toUpperCase() !== "MISS" && rawCache.toUpperCase() !== "HIT") invalid("AI Gateway cache status is unsupported", "CACHE_INVALID");
+  if (rawCache?.toUpperCase() === "HIT") invalid("AI Gateway returned a cache hit despite explicit cache bypass", "CACHE_INVALID");
   const successfulStep = header(response.headers, "cf-aig-step", false);
   return { logId, ...(rawCache === undefined ? {} : { cacheStatus: "MISS" as const }), ...(successfulStep === undefined ? {} : { successfulStep }) };
 }
@@ -295,7 +310,8 @@ function assertResponseHeaders(response: Response, policy: ModelGatewayTransport
 async function readResponseBody(response: Response, maximumBytes: number): Promise<Uint8Array> {
   if (!Number.isSafeInteger(maximumBytes) || maximumBytes < 1 || maximumBytes > 256 * 1024) invalid("reserved output byte budget is invalid");
   const rawLength = response.headers.get("content-length");
-  if (rawLength !== null && (!/^(0|[1-9][0-9]*)$/u.test(rawLength) || !Number.isSafeInteger(Number(rawLength)) || Number(rawLength) > maximumBytes)) invalid("provider response exceeds its byte budget");
+  if (rawLength !== null && (!/^(0|[1-9][0-9]*)$/u.test(rawLength) || !Number.isSafeInteger(Number(rawLength)))) invalid("provider content-length is invalid");
+  if (rawLength !== null && Number(rawLength) > maximumBytes) invalid("provider response exceeds its byte budget", "BODY_TOO_LARGE");
   if (response.body === null) invalid("provider response body is missing");
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];
@@ -305,12 +321,12 @@ async function readResponseBody(response: Response, maximumBytes: number): Promi
       const next = await reader.read();
       if (next.done) break;
       length += next.value.byteLength;
-      if (length > maximumBytes) { await reader.cancel("response byte budget exceeded"); invalid("provider response exceeds its byte budget"); }
+      if (length > maximumBytes) { await reader.cancel("response byte budget exceeded"); invalid("provider response exceeds its byte budget", "BODY_TOO_LARGE"); }
       chunks.push(next.value);
     }
   } catch (cause) {
     if (cause instanceof ModelGatewayExecutionError) throw cause;
-    modelGatewayExecutionFailure("MODEL_GATEWAY_RESPONSE_INVALID", "provider response body could not be read", { cause });
+    modelGatewayExecutionFailure("MODEL_GATEWAY_RESPONSE_INVALID", "provider response body could not be read", { cause, safe_response_reason: "BODY_SHAPE_INVALID" });
   }
   if (length === 0) invalid("provider response body is empty");
   const bytes = new Uint8Array(length);
@@ -329,7 +345,7 @@ export async function decodeModelGatewayProviderNativeResponse(
   const headerState = assertResponseHeaders(response, policy);
   const bodyBytes = await readResponseBody(response, maximumBytes);
   const decoded = await decodeModelGatewayProviderBody(bodyBytes, policy.api);
-  if (decoded.response_model !== policy.model) invalid("provider response model differs from the selected exact model");
+  if (decoded.response_model !== policy.model) invalid("provider response model differs from the selected exact model", "MODEL_ID_INVALID");
   const fingerprint: RouteFingerprint = Object.freeze({ ...deployment, provider: policy.provider, exact_model_id: policy.model });
   return Object.freeze({
     ...decoded,

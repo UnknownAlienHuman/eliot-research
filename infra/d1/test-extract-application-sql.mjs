@@ -228,6 +228,7 @@ const typedD1Fixture = ({
   facadeSwapped = false,
   facadeMutation = false,
   facadeEscaped = false,
+  mcpProjection = "none",
 } = {}) => {
   const paths = {
     env: resolve(projectRoot, "apps/eliotr-core/src/env.ts"),
@@ -240,6 +241,7 @@ const typedD1Fixture = ({
     factory: resolve(projectRoot, "packages/cloudflare-erasure/src/factory.ts"),
     core: resolve(projectRoot, "packages/cloudflare-erasure/src/core-location.ts"),
     search: resolve(projectRoot, "packages/cloudflare-erasure/src/search-location.ts"),
+    projection: resolve(projectRoot, "packages/cloudflare-workspace-mcp/src/workspace-mcp-env.ts"),
   };
   const d1TypeImport = "import type { D1Database } from '../../../apps/eliotr-core/src/env.js';";
   const coreArgument = swapped ? "dependencies.search_database" : "dependencies.core_database";
@@ -251,9 +253,21 @@ const typedD1Fixture = ({
       : facadeEscaped
         ? "const configuredEnv: Env = env; unknownSink(configuredEnv);"
         : "const configuredEnv: Env = env;";
+  const projectionFactory = mcpProjection === "spread"
+    ? "return { ...source };"
+    : mcpProjection === "swapped"
+      ? "return { CORE_DB: source.SEARCH_DB, SEARCH_DB: source.CORE_DB };"
+      : mcpProjection === "call"
+        ? "return { CORE_DB: identity(source.CORE_DB), SEARCH_DB: source.SEARCH_DB };"
+        : "return { CORE_DB: source.CORE_DB, SEARCH_DB: source.SEARCH_DB };";
+  const projectionActual = mcpProjection === "alias" ? "envAlias"
+    : mcpProjection === "cast" ? "env as Env" : "env";
+  const projectionPrelude = mcpProjection === "alias" ? "const envAlias = env;" : "";
+  const projectionCall = mcpProjection === "none" ? "" :
+    `if (request === "mcp") { const mcpEnv = projectWorkspaceMcpEnvironment(${projectionActual}); workspaceMcpRuntime(mcpEnv); }`;
   const sources = new Map([
     [paths.env, `export interface D1Database { prepare(sql: string): { first(): unknown } }\nexport interface Env { readonly CORE_DB: D1Database; readonly SEARCH_DB: D1Database }\nexport interface ExportedHandler<E> { fetch(request: unknown, env: E, executionContext: unknown): unknown }`],
-    [paths.worker, `import type { Env, ExportedHandler } from './env.js';\nimport { handleHttp } from './http.js';\nexport default { fetch(request: unknown, env: Env, executionContext: unknown): unknown { return handleHttp(request, env, executionContext); } } satisfies ExportedHandler<Env>;`],
+    [paths.worker, `import type { Env, ExportedHandler } from './env.js';\nimport { handleHttp } from './http.js';\nimport { projectWorkspaceMcpEnvironment, type WorkspaceMcpEnvironmentProjection } from '../../../packages/cloudflare-workspace-mcp/src/workspace-mcp-env.js';\nfunction workspaceMcpRuntime(view: WorkspaceMcpEnvironmentProjection): unknown { view.CORE_DB = view.SEARCH_DB; return view; }\nexport default { fetch(request: unknown, env: Env, executionContext: unknown): unknown { ${projectionPrelude} ${projectionCall} return handleHttp(request, env, executionContext); } } satisfies ExportedHandler<Env>;`],
     [paths.http, `import type { Env } from './env.js';\nimport { createApplication } from './composition-root.js';\ninterface HttpDependencies { readonly applicationFactory?: typeof createApplication }\nexport function handleHttp(request: unknown, env: Env, executionContext: unknown, dependencies: HttpDependencies = {}): unknown { const factory = dependencies.applicationFactory ?? createApplication; return factory({ env, executionContext }); }`],
     [paths.composition, `import type { Env } from './env.js';\nimport { createErasureOwnerService } from './erasure-owner-service.js';\nfunction unknownSink(value: unknown): void { void value; }\nfunction ownerApi(env: Env): unknown { ${facade} return { erase: () => createErasureOwnerService({ env: configuredEnv }) }; }\nexport function createApplication(input: { readonly env: Env; readonly executionContext: unknown }): unknown { return ownerApi(input.env); }`],
     [paths.ownerService, `import type { Env } from './env.js';\nimport { createConfiguredErasureCoordinator } from './erasure-runtime.js';\nexport function createErasureOwnerService(input: { readonly env: Env }): unknown { return createConfiguredErasureCoordinator(input.env); }`],
@@ -262,6 +276,7 @@ const typedD1Fixture = ({
     [paths.factory, `${d1TypeImport}\nimport { createD1CoreErasureLocationPort } from './core-location.js';\nimport { createD1SearchErasureLocationPort } from './search-location.js';\nexport function createConfiguredErasureBackend(dependencies: { readonly core_database: D1Database; readonly search_database: D1Database }): unknown { createD1CoreErasureLocationPort({ database: ${coreArgument} }); createD1SearchErasureLocationPort({ database: ${searchArgument} }); return {}; }${conflictingCaller ? `\nexport function outsideCapability(database: D1Database): void { createD1CoreErasureLocationPort({ database }); }` : ""}`],
     [paths.core, `${d1TypeImport}\nexport function createD1CoreErasureLocationPort(dependencies: { readonly database: D1Database }): void { const database = dependencies.database; database.prepare('SELECT 1 FROM core_fixture').first(); }`],
     [paths.search, `${d1TypeImport}\nexport function createD1SearchErasureLocationPort(dependencies: { readonly database: D1Database }): void { const database = dependencies.database; database.prepare('SELECT 1 FROM search_fixture').first(); }`],
+    [paths.projection, `import type { Env, D1Database } from '../../../apps/eliotr-core/src/env.js';\nexport interface WorkspaceMcpEnvironmentProjection { CORE_DB: D1Database; SEARCH_DB: D1Database }\nfunction identity<T>(value: T): T { return value; }\nexport function projectWorkspaceMcpEnvironment(source: Env): WorkspaceMcpEnvironmentProjection { ${projectionFactory} }`],
   ]);
   const options = {
     target: ts.ScriptTarget.ES2024,
@@ -314,6 +329,16 @@ assert.equal(mutatedFacadeTargets.search.targetStore, "unknown", "a moved store 
 const escapedFacadeTargets = typedD1Fixture({ facadeEscaped: true });
 assert.equal(escapedFacadeTargets.core.targetStore, "unknown", "an Env passed to an unqualified sink is escaped");
 assert.equal(escapedFacadeTargets.search.targetStore, "unknown");
+const detachedMcpProjectionTargets = typedD1Fixture({ mcpProjection: "valid" });
+assert.equal(detachedMcpProjectionTargets.core.targetStore, "core",
+  "a verified detached MCP view mutation does not poison the original HTTP Core binding");
+assert.equal(detachedMcpProjectionTargets.search.targetStore, "search",
+  "a verified detached MCP view mutation does not poison the original HTTP Search binding");
+for (const mcpProjection of ["spread", "swapped", "call", "alias", "cast"]) {
+  const unresolvedProjectionTargets = typedD1Fixture({ mcpProjection });
+  assert.equal(unresolvedProjectionTargets.core.targetStore, "unknown", `${mcpProjection} MCP projection is unresolved`);
+  assert.equal(unresolvedProjectionTargets.search.targetStore, "unknown", `${mcpProjection} MCP projection is unresolved`);
+}
 
 function validateCompilerEntries(entries) {
   const checker = fileURLToPath(new URL("./check-expression-depth.py", import.meta.url));

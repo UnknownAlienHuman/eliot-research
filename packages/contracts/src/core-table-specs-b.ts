@@ -207,6 +207,18 @@ export const DURABLE_CORE_TABLE_SPECS_B: readonly TableSpec[] = [
       "started_at": "text",
       "completed_at": "text-or-null"
   }, required: false },
+  { manifest: "generations", table: "model_route_qualification_failure_summary", order_by: "probe_idempotency_key", columns: {
+      "probe_idempotency_key": "text",
+      "probe_input_sha256": "text",
+      "claim_ref": "text",
+      "phase": "text",
+      "failure_code": "text",
+      "safe_response_reason": "text-or-null",
+      "transport_failure_reason": "text-or-null",
+      "observed_http_status": "int-or-null",
+      "summary_sha256": "text",
+      "observed_at": "text"
+  }, required: false },
   { manifest: "projects", table: "project_mutation_guard", order_by: "principal_ref, idempotency_key", columns: {
       "principal_ref": "text",
       "idempotency_key": "text",

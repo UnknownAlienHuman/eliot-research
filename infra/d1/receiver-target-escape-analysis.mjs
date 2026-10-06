@@ -9,12 +9,14 @@ export function propagateEscapedTargetBindings({
   calls,
   checker,
   functionKey,
+  workerKey,
   allowedCaller,
   parameterSymbol,
   evaluate,
   evaluateSymbol,
   escapedSymbols,
   escapedProperties,
+  detachedProjectionCalls,
 }) {
   const targetMask = targetBits.core | targetBits.search;
   const callByNode = new Map(calls.map((call) => [call.node, call]));
@@ -25,19 +27,19 @@ export function propagateEscapedTargetBindings({
       || [...value.objects.values()].some(containsTarget);
   }
 
-  function expressionContainsTarget(node, includeClosureValues = true) {
+  function expressionContainsTarget(node, includeClosureValues = true, followCallArguments = false) {
     const expression = unwrap(node);
     if (!expression) return false;
     if (containsTarget(evaluate(expression, new Set()))) return true;
     if (ts.isArrayLiteralExpression(expression)) {
-      return expression.elements.some((element) => expressionContainsTarget(element, includeClosureValues));
+      return expression.elements.some((element) => expressionContainsTarget(element, includeClosureValues, followCallArguments));
     }
     if (ts.isObjectLiteralExpression(expression)) {
       return expression.properties.some((property) => ts.isSpreadAssignment(property)
-        ? expressionContainsTarget(property.expression, includeClosureValues)
+        ? expressionContainsTarget(property.expression, includeClosureValues, followCallArguments)
         : ts.isPropertyAssignment(property)
           ? (includeClosureValues || trackedFields.has(propertyName(property.name)))
-            && expressionContainsTarget(property.initializer, includeClosureValues)
+            && expressionContainsTarget(property.initializer, includeClosureValues, followCallArguments)
           : ts.isShorthandPropertyAssignment(property)
             && (includeClosureValues || trackedFields.has(property.name.text))
             && containsTarget(evaluateSymbol(checker.getShorthandAssignmentValueSymbol(property), new Set())));
@@ -53,8 +55,15 @@ export function propagateEscapedTargetBindings({
       return found;
     }
     if (ts.isConditionalExpression(expression)) {
-      return expressionContainsTarget(expression.whenTrue, includeClosureValues)
-        || expressionContainsTarget(expression.whenFalse, includeClosureValues);
+      return expressionContainsTarget(expression.whenTrue, includeClosureValues, followCallArguments)
+        || expressionContainsTarget(expression.whenFalse, includeClosureValues, followCallArguments);
+    }
+    if (ts.isCallExpression(expression) || ts.isNewExpression(expression)) {
+      if (detachedProjectionCalls.has(expression)) return false;
+      if (!followCallArguments) return false;
+      return (expression.arguments ?? []).some((argument) =>
+        expressionContainsTarget(ts.isSpreadElement(argument) ? argument.expression : argument,
+          includeClosureValues, followCallArguments));
     }
     return false;
   }
@@ -70,7 +79,7 @@ export function propagateEscapedTargetBindings({
     resolving.delete(symbol);
   }
 
-  function markEscaped(node, resolving = new Set()) {
+  function markEscaped(node, resolving = new Set(), followCallArguments = false) {
     const expression = unwrap(node);
     if (!expression) return;
     if (ts.isIdentifier(expression)) {
@@ -88,8 +97,8 @@ export function propagateEscapedTargetBindings({
     }
     if (ts.isObjectLiteralExpression(expression)) {
       for (const property of expression.properties) {
-        if (ts.isSpreadAssignment(property)) markEscaped(property.expression, resolving);
-        else if (ts.isPropertyAssignment(property)) markEscaped(property.initializer, resolving);
+        if (ts.isSpreadAssignment(property)) markEscaped(property.expression, resolving, followCallArguments);
+        else if (ts.isPropertyAssignment(property)) markEscaped(property.initializer, resolving, followCallArguments);
         else if (ts.isShorthandPropertyAssignment(property)) {
           markEscapedSymbol(checker.getShorthandAssignmentValueSymbol(property), resolving);
         }
@@ -98,13 +107,21 @@ export function propagateEscapedTargetBindings({
     }
     if (ts.isArrayLiteralExpression(expression)) {
       for (const element of expression.elements) {
-        markEscaped(ts.isSpreadElement(element) ? element.expression : element, resolving);
+        markEscaped(ts.isSpreadElement(element) ? element.expression : element, resolving, followCallArguments);
       }
       return;
     }
     if (ts.isConditionalExpression(expression)) {
-      markEscaped(expression.whenTrue, resolving);
-      markEscaped(expression.whenFalse, resolving);
+      markEscaped(expression.whenTrue, resolving, followCallArguments);
+      markEscaped(expression.whenFalse, resolving, followCallArguments);
+      return;
+    }
+    if (ts.isCallExpression(expression) || ts.isNewExpression(expression)) {
+      if (detachedProjectionCalls.has(expression)) return;
+      if (!followCallArguments) return;
+      for (const argument of expression.arguments ?? []) {
+        markEscaped(ts.isSpreadElement(argument) ? argument.expression : argument, resolving, followCallArguments);
+      }
       return;
     }
     if (ts.isArrowFunction(expression) || ts.isFunctionExpression(expression)) {
@@ -124,12 +141,14 @@ export function propagateEscapedTargetBindings({
       const ownerKey = owner && functionKey(checker, owner);
       if (ownerKey && reachable.has(ownerKey)) {
         if (ts.isCallExpression(node)) {
+          if (detachedProjectionCalls.has(node)) return;
           const call = callByNode.get(node);
           if (!call || !allowedCaller(call)) {
+            const followCallArguments = ownerKey === workerKey;
             for (const argument of node.arguments) {
               const actual = ts.isSpreadElement(argument) ? argument.expression : argument;
-              if (expressionContainsTarget(actual)) {
-                markEscaped(actual);
+              if (expressionContainsTarget(actual, true, followCallArguments)) {
+                markEscaped(actual, new Set(), followCallArguments);
               }
             }
           }

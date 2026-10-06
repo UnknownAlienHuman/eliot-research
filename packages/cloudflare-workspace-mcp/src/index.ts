@@ -92,6 +92,11 @@ export {
   mcpResearchInvalid,
 } from "./research-service-operations.js";
 export { createMcpResearchProjectMembership } from "./research-project-membership.js";
+export {
+  projectWorkspaceMcpEnvironment,
+  type WorkspaceMcpEnvironmentProjection,
+  type WorkspaceMcpEnvironmentSource,
+} from "./workspace-mcp-env.js";
 export type {
   McpResearchProjectMembership,
   McpResearchProjectMembershipOptions,

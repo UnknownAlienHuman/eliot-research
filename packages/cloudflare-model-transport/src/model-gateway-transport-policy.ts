@@ -326,6 +326,7 @@ export function assertModelGatewayObservedIdentity(
     modelGatewayExecutionFailure(
       "MODEL_GATEWAY_RESPONSE_INVALID",
       "observed provider or model differs from the selected transport policy",
+      { safe_response_reason: "MODEL_ID_INVALID" },
     );
   }
 }

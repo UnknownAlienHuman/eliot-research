@@ -1,6 +1,7 @@
 import { resolve } from "node:path";
 import ts from "typescript";
 import { propagateEscapedTargetBindings } from "./receiver-target-escape-analysis.mjs";
+import { findDetachedProjectionCalls } from "./receiver-target-provenance-projection.mjs";
 import {
   canonicalDeclaration,
   compilerOptions,
@@ -207,6 +208,14 @@ export function createErasureReceiverTargetOverrides(files, root, suppliedProgra
   }
 
   if (!workerEnvParameter || typeIdentity(checker, workerEnvParameter) !== envSymbol) return new Map();
+  const detachedProjectionCalls = findDetachedProjectionCalls({
+    checker,
+    rootFileSet,
+    workerFetch,
+    workerEnvParameter,
+    envType,
+    envPropertySymbols,
+  });
 
   const reachable = new Map();
   const queue = [workerFetch];
@@ -521,9 +530,10 @@ export function createErasureReceiverTargetOverrides(files, root, suppliedProgra
   }
 
   propagateEscapedTargetBindings({
-    program, rootFileSet, reachable, calls, checker, functionKey, allowedCaller, parameterSymbol,
+    program, rootFileSet, reachable, calls, checker, functionKey, workerKey, allowedCaller, parameterSymbol,
     evaluate, evaluateSymbol: evaluateIdentifierSymbol,
     escapedSymbols, escapedProperties,
+    detachedProjectionCalls,
   });
 
   changed = true;

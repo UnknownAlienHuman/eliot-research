@@ -99,6 +99,7 @@ const AUTHORITY_TABLE_INTRODUCTIONS: Readonly<Record<string, string>> = {
   backup_primary_writer_current: "0118_backup_primary_writer_qualification.sql",
   backup_epoch_manifest_binding: "0119_backup_epoch_manifest_bindings.sql",
   backup_epoch_verification_receipt: "0119_backup_epoch_manifest_bindings.sql",
+  model_route_qualification_failure_summary: "0122_model_qualification_failure_summary.sql",
 };
 
 const AUTHORITY_COLUMN_INTRODUCTIONS: Readonly<Record<string, Readonly<Record<string, string>>>> = {
@@ -119,6 +120,7 @@ const AUTHORITY_COLUMN_INTRODUCTIONS: Readonly<Record<string, Readonly<Record<st
 
 const AUTHORITY_MIGRATION_CHAINS = [
   ["0109_research_provider_key_configuration.sql", "0110_research_provider_key_model_use.sql", "0111_provider_native_model_authority.sql"],
+  ["0055_model_route_qualification_dispatch.sql", "0122_model_qualification_failure_summary.sql"],
   ["0116_backup_epoch_producer_fence.sql", "0117_backup_erasure_primary_closure.sql", "0118_backup_primary_writer_qualification.sql", "0119_backup_epoch_manifest_bindings.sql"],
 ] as const;
 

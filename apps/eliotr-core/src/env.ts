@@ -21,7 +21,7 @@ export interface Env extends InstalledSemanticConfigurationEnvironment {
   readonly RESEARCH_SESSION: DurableObjectNamespace;
   readonly RESEARCH_WORKFLOW: Workflow;
   readonly AI_SEARCH: AiSearchNamespaceLike;
-  readonly AI?: WorkersAiMarkdownBinding & Partial<Pick<Ai, "models">>;
+  readonly AI?: (WorkersAiMarkdownBinding & Partial<Pick<Ai, "models">>) | undefined;
   readonly METRICS: AnalyticsEngineDataset;
   readonly ASSETS: Fetcher;
   readonly ENVIRONMENT: "development" | "staging" | "production";
@@ -31,40 +31,40 @@ export interface Env extends InstalledSemanticConfigurationEnvironment {
   readonly AI_GATEWAY_REASONING_URL: string;
   readonly AI_GATEWAY_RETRIEVAL_URL: string;
   /** Optional server-held Cloudflare AI Gateway credential; never exposed to callers. */
-  readonly ELIOTR_MODEL_GATEWAY_TOKEN?: string;
+  readonly ELIOTR_MODEL_GATEWAY_TOKEN?: string | undefined;
   /** Dedicated read-only Dynamic Route control-plane credential; never used for model calls. */
   readonly ELIOTR_MODEL_GATEWAY_READ_TOKEN?: string;
   /** Dedicated server-only Cloudflare API credential for provider-key management; never caller supplied or used for model calls. */
   readonly ELIOTR_MODEL_PROVIDER_CONTROL_TOKEN?: string;
   /** Installed server model definition and its provenance; no request may override either. */
-  readonly ELIOTR_MODEL_PROFILE_DEFINITION_JSON?: string;
-  readonly ELIOTR_MODEL_PROFILE_PROVENANCE_REF?: string;
+  readonly ELIOTR_MODEL_PROFILE_DEFINITION_JSON?: string | undefined;
+  readonly ELIOTR_MODEL_PROFILE_PROVENANCE_REF?: string | undefined;
   /** Operator-approved transport policies used before exact model qualification. */
   readonly ELIOTR_RESEARCH_MODEL_TRANSPORT_POLICIES_JSON?: string;
   /** Explicit approved model spend policy; no browser field selects it. */
-  readonly ELIOTR_MODEL_SPEND_POLICY_JSON?: string;
-  readonly ELIOTR_MODEL_SPEND_POLICY_PROVENANCE_REF?: string;
-  readonly ELIOTR_RESEARCH_REPORT_CONFIG_JSON?: string;
+  readonly ELIOTR_MODEL_SPEND_POLICY_JSON?: string | undefined;
+  readonly ELIOTR_MODEL_SPEND_POLICY_PROVENANCE_REF?: string | undefined;
+  readonly ELIOTR_RESEARCH_REPORT_CONFIG_JSON?: string | undefined;
   /** Explicit owner-bound policy authorizing private report materialization. */
   readonly ELIOTR_RESEARCH_REPORT_POLICY_JSON?: string;
-  readonly ELIOTR_RESEARCH_REPORT_POLICY_PROVENANCE_REF?: string;
+  readonly ELIOTR_RESEARCH_REPORT_POLICY_PROVENANCE_REF?: string | undefined;
   /** Installed owner-to-MCP import delegation, scoped to exact principals and namespace. */
   readonly ELIOTR_WORKSPACE_OWNER_BINDINGS_JSON?: string;
   readonly ELIOTR_NAMESPACE_BOOTSTRAP_PROFILES_JSON?: string;
   readonly ACCESS_TEAM_DOMAIN?: string;
-  readonly ACCESS_AUDIENCE?: string;
+  readonly ACCESS_AUDIENCE?: string | undefined;
   readonly ACCESS_SERVICE_PRINCIPALS?: string;
   /** Development-only loopback JWKS endpoint for the real signed local harness. */
   readonly ACCESS_TEST_JWKS_URL?: string;
-  readonly MCP_HOSTNAME?: string;
-  readonly MCP_ACCESS_TEAM_DOMAIN?: string;
-  readonly MCP_ACCESS_AUDIENCE?: string;
+  readonly MCP_HOSTNAME?: string | undefined;
+  readonly MCP_ACCESS_TEAM_DOMAIN?: string | undefined;
+  readonly MCP_ACCESS_AUDIENCE?: string | undefined;
   /** Dedicated MCP authentication profile; omitted means the legacy service-token profile. */
-  readonly MCP_ACCESS_AUTH_PROFILE?: "service-token" | "managed-oauth";
-  readonly MCP_ACCESS_SERVICE_TOKEN_CLIENT_ID?: string;
+  readonly MCP_ACCESS_AUTH_PROFILE?: "service-token" | "managed-oauth" | undefined;
+  readonly MCP_ACCESS_SERVICE_TOKEN_CLIENT_ID?: string | undefined;
   /** Additional independent MCP clients; array binding or JSON-encoded array, no secrets. */
-  readonly MCP_ACCESS_SERVICE_TOKEN_CLIENT_IDS?: readonly string[] | string;
-  readonly GOOGLE_EXTERNAL_TRANSPORT?: "disabled" | "gemini-mcp" | "drive-exchange";
+  readonly MCP_ACCESS_SERVICE_TOKEN_CLIENT_IDS?: readonly string[] | string | undefined;
+  readonly GOOGLE_EXTERNAL_TRANSPORT?: "disabled" | "gemini-mcp" | "drive-exchange" | undefined;
   readonly GOOGLE_CLIENT_ID?: string;
   readonly GOOGLE_CLIENT_SECRET?: string;
   readonly GOOGLE_TOKEN_ENCRYPTION_KEY?: string;

@@ -6,9 +6,9 @@ export const OWNER_E2E_CERTS_PATH = "/cdn-cgi/access/certs";
 
 type OwnerE2EEnvironment = Readonly<{
   ENVIRONMENT: string;
-  ACCESS_TEAM_DOMAIN?: string;
-  ACCESS_AUDIENCE?: string;
-  ACCESS_TEST_JWKS_URL?: string;
+  ACCESS_TEAM_DOMAIN?: string | undefined;
+  ACCESS_AUDIENCE?: string | undefined;
+  ACCESS_TEST_JWKS_URL?: string | undefined;
 }>;
 
 function failConfig(message: string): never {

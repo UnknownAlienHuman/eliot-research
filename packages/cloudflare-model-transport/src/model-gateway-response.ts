@@ -101,6 +101,7 @@ export async function readBoundedBody(
       modelGatewayExecutionFailure(
         "MODEL_GATEWAY_RESPONSE_INVALID",
         "AI Gateway content-length is invalid",
+        { safe_response_reason: "BODY_SHAPE_INVALID" },
       );
     }
     const declaredLength = Number(rawLength);
@@ -108,6 +109,7 @@ export async function readBoundedBody(
       modelGatewayExecutionFailure(
         "MODEL_GATEWAY_RESPONSE_INVALID",
         "AI Gateway response exceeds its byte budget",
+        { safe_response_reason: "BODY_TOO_LARGE" },
       );
     }
   }
@@ -116,6 +118,7 @@ export async function readBoundedBody(
       modelGatewayExecutionFailure(
         "MODEL_GATEWAY_RESPONSE_INVALID",
         "AI Gateway response body is missing",
+        { safe_response_reason: "BODY_SHAPE_INVALID" },
       );
     }
     return new Uint8Array();
@@ -133,6 +136,7 @@ export async function readBoundedBody(
         modelGatewayExecutionFailure(
           "MODEL_GATEWAY_RESPONSE_INVALID",
           "AI Gateway response exceeds its byte budget",
+          { safe_response_reason: "BODY_TOO_LARGE" },
         );
       }
       chunks.push(next.value);
@@ -142,13 +146,14 @@ export async function readBoundedBody(
     modelGatewayExecutionFailure(
       "MODEL_GATEWAY_RESPONSE_INVALID",
       "AI Gateway response body could not be read",
-      { cause },
+      { cause, safe_response_reason: "BODY_SHAPE_INVALID" },
     );
   }
   if (requireNonEmpty && length < 1) {
     modelGatewayExecutionFailure(
       "MODEL_GATEWAY_RESPONSE_INVALID",
       "AI Gateway response body is empty",
+        { safe_response_reason: "BODY_SHAPE_INVALID" },
     );
   }
   const output = new Uint8Array(length);
@@ -251,7 +256,7 @@ export function decodeDlpAction(headers: Headers): "FLAG" | "BLOCK" | undefined 
     modelGatewayExecutionFailure(
       "MODEL_GATEWAY_RESPONSE_INVALID",
       "AI Gateway DLP header is not valid JSON",
-      { cause },
+      { cause, safe_response_reason: "BODY_JSON_INVALID" },
     );
   }
   const value = exactObject(decoded, DLP_KEYS, "AI Gateway DLP header");
@@ -305,6 +310,7 @@ export async function decodeModelGatewayResponse(
     modelGatewayExecutionFailure(
       "MODEL_GATEWAY_RESPONSE_INVALID",
       "AI Gateway response must be application/json",
+      { safe_response_reason: "CONTENT_TYPE_INVALID" },
     );
   }
   const dlpAction = decodeDlpAction(response.headers);
@@ -320,6 +326,7 @@ export async function decodeModelGatewayResponse(
     modelGatewayExecutionFailure(
       "MODEL_GATEWAY_RESPONSE_INVALID",
       "AI Gateway log identifier is invalid",
+      { safe_response_reason: "LOG_ID_INVALID" },
     );
   }
   const rawCacheStatus = header(response.headers, "cf-aig-cache-status", false);
@@ -330,12 +337,14 @@ export async function decodeModelGatewayResponse(
       modelGatewayExecutionFailure(
         "MODEL_GATEWAY_RESPONSE_INVALID",
         "AI Gateway cache status is unsupported",
+        { safe_response_reason: "CACHE_INVALID" },
       );
     }
     if (normalized === "HIT") {
       modelGatewayExecutionFailure(
         "MODEL_GATEWAY_RESPONSE_INVALID",
         "AI Gateway returned a cache hit despite explicit cache bypass",
+        { safe_response_reason: "CACHE_INVALID" },
       );
     }
     cacheStatus = "MISS";

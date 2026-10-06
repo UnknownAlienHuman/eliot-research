@@ -1,6 +1,7 @@
 import {
   ModelGatewayExecutionError,
   type ModelGatewayExecutionErrorCode,
+  type ModelGatewaySafeResponseReason,
 } from "@eliotr/cloudflare-ai";
 
 const QUALIFICATION_ERROR_CODES = new Set<ModelGatewayExecutionErrorCode>([
@@ -13,19 +14,14 @@ const QUALIFICATION_ERROR_CODES = new Set<ModelGatewayExecutionErrorCode>([
   "MODEL_GATEWAY_FINGERPRINT_PERSIST_FAILED", "MODEL_GATEWAY_PRICING_FAILED",
 ]);
 
-export type QualificationResponseInvalidReason =
-  | "FINGERPRINT_INVALID"
-  | "LOG_READBACK_UNAVAILABLE"
-  | "LOG_CORRELATION_INVALID"
-  | "LOG_ID_MISSING"
-  | "LOG_ID_INVALID"
-  | "CONTENT_TYPE_INVALID"
-  | "BODY_TOO_LARGE"
-  | "BODY_JSON_INVALID"
-  | "BODY_SHAPE_INVALID"
-  | "MODEL_ID_INVALID"
-  | "CACHE_INVALID"
-  | "UNCLASSIFIED";
+export type QualificationResponseInvalidReason = ModelGatewaySafeResponseReason;
+
+const SAFE_RESPONSE_REASONS = new Set<QualificationResponseInvalidReason>([
+  "FINGERPRINT_INVALID", "LOG_READBACK_UNAVAILABLE", "LOG_CORRELATION_INVALID",
+  "LOG_ID_MISSING", "LOG_ID_INVALID", "CONTENT_TYPE_INVALID", "BODY_TOO_LARGE",
+  "BODY_JSON_INVALID", "BODY_SHAPE_INVALID", "MODEL_ID_INVALID", "CACHE_INVALID",
+  "UNCLASSIFIED",
+]);
 
 const RESPONSE_SHAPE_INVALID_MESSAGES = new Set([
   "AI Gateway content-length is invalid",
@@ -77,6 +73,10 @@ const RESPONSE_SHAPE_INVALID_MESSAGES = new Set([
 export function responseInvalidReason(error: unknown): QualificationResponseInvalidReason | undefined {
   if (!(error instanceof ModelGatewayExecutionError) || error.code !== "MODEL_GATEWAY_RESPONSE_INVALID") {
     return undefined;
+  }
+  const typedReason = (error as ModelGatewayExecutionError & { readonly safe_response_reason?: unknown }).safe_response_reason;
+  if (typeof typedReason === "string" && SAFE_RESPONSE_REASONS.has(typedReason as QualificationResponseInvalidReason)) {
+    return typedReason as QualificationResponseInvalidReason;
   }
   switch (error.message) {
     case "AI Gateway response does not contain a valid dynamic-route fingerprint":

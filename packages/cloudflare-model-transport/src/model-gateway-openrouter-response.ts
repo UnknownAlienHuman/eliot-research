@@ -1,6 +1,7 @@
 import {
   modelGatewayExecutionFailure,
   type DecodedModelGatewayResponse,
+  type ModelGatewaySafeResponseReason,
   type ModelGatewayUsageObservation,
 } from "./model-gateway-execution-contract.js";
 
@@ -16,8 +17,13 @@ const MAX_BODY_BYTES = 256 * 1024;
 const MAX_JSON_DEPTH = 16;
 const MAX_JSON_MEMBERS = 2048;
 
-function invalid(message: string): never {
-  modelGatewayExecutionFailure("MODEL_GATEWAY_RESPONSE_INVALID", message);
+function invalid(
+  message: string,
+  safeResponseReason: ModelGatewaySafeResponseReason = "BODY_SHAPE_INVALID",
+): never {
+  modelGatewayExecutionFailure("MODEL_GATEWAY_RESPONSE_INVALID", message, {
+    safe_response_reason: safeResponseReason,
+  });
 }
 
 function exactObject(value: unknown, keys: ReadonlySet<string>, label: string): Record<string, unknown> {
@@ -30,10 +36,15 @@ function exactObject(value: unknown, keys: ReadonlySet<string>, label: string): 
   return record;
 }
 
-function string(value: unknown, label: string, maximumBytes = 8192): string {
+function string(
+  value: unknown,
+  label: string,
+  maximumBytes = 8192,
+  safeResponseReason: ModelGatewaySafeResponseReason = "BODY_SHAPE_INVALID",
+): string {
   if (typeof value !== "string" || value.length === 0 || value.trim().length === 0 ||
       new TextEncoder().encode(value).byteLength > maximumBytes || /[\u0000-\u001f\u007f]/u.test(value)) {
-    invalid(`${label} is invalid`);
+    invalid(`${label} is invalid`, safeResponseReason);
   }
   return value;
 }
@@ -115,14 +126,15 @@ export function decodeModelGatewayOpenRouterBody(
   raw: unknown,
   bodyBytes: Uint8Array,
 ): Omit<DecodedModelGatewayResponse, "fingerprint" | "log_id"> {
-  if (bodyBytes.byteLength < 1 || bodyBytes.byteLength > MAX_BODY_BYTES) invalid("OpenRouter response body exceeds its byte bound");
+  if (bodyBytes.byteLength < 1) invalid("OpenRouter response body is empty");
+  if (bodyBytes.byteLength > MAX_BODY_BYTES) invalid("OpenRouter response body exceeds its byte bound", "BODY_TOO_LARGE");
   const body = exactObject(raw, ROOT_KEYS, "OpenRouter Chat response");
   if (body.object !== "chat.completion") invalid("OpenRouter response is not a non-streaming Chat completion");
   const id = string(body.id, "OpenRouter response id");
   if (!IDENTIFIER.test(id)) invalid("OpenRouter response id is not a bounded identifier");
   if (typeof body.created !== "number" || !Number.isSafeInteger(body.created) || body.created < 0) invalid("OpenRouter created is invalid");
-  const responseModel = string(body.model, "OpenRouter response model");
-  if (!IDENTIFIER.test(responseModel)) invalid("OpenRouter response model is not a bounded identifier");
+  const responseModel = string(body.model, "OpenRouter response model", 8192, "MODEL_ID_INVALID");
+  if (!IDENTIFIER.test(responseModel)) invalid("OpenRouter response model is not a bounded identifier", "MODEL_ID_INVALID");
   if (body.system_fingerprint !== undefined) string(body.system_fingerprint, "OpenRouter system fingerprint");
   if (!Array.isArray(body.choices) || body.choices.length !== 1) invalid("OpenRouter response must contain exactly one choice");
   const choice = exactObject(body.choices[0], CHOICE_KEYS, "OpenRouter response choice");

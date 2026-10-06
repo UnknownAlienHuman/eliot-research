@@ -79,6 +79,7 @@ export const CANONICAL_EXPORTED_TABLES: ReadonlySet<string> = new Set([
   "raw_ingest_erasure_member",
   "model_route_qualification_probe",
   "model_route_qualification_dispatch",
+  "model_route_qualification_failure_summary",
   "project_mutation_guard",
   "project_mutation_receipt",
   "research_report_admission",

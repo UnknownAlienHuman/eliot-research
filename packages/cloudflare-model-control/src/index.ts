@@ -9,6 +9,7 @@ export * from "./research-model-qualification-store.js";
 export * from "./research-model-qualification.js";
 export * from "./research-model-qualification-renewal.js";
 export * from "./research-model-qualification-dispatch.js";
+export * from "./research-model-qualification-failure-summary.js";
 export * from "./research-qualification-prompt.js";
 export * from "./research-qualification-manifest-store.js";
 export * from "./research-model-prompt.js";

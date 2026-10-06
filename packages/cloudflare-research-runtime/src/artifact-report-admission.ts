@@ -36,10 +36,10 @@ export interface ArtifactSectionReportAdmissionRunPin {
 }
 
 export interface ArtifactSectionReportAdmissionPolicyVars {
-  readonly ELIOTR_MODEL_SPEND_POLICY_JSON?: string;
-  readonly ELIOTR_MODEL_SPEND_POLICY_PROVENANCE_REF?: string;
-  readonly ELIOTR_RESEARCH_REPORT_CONFIG_JSON?: string;
-  readonly ELIOTR_RESEARCH_REPORT_POLICY_PROVENANCE_REF?: string;
+  readonly ELIOTR_MODEL_SPEND_POLICY_JSON?: string | undefined;
+  readonly ELIOTR_MODEL_SPEND_POLICY_PROVENANCE_REF?: string | undefined;
+  readonly ELIOTR_RESEARCH_REPORT_CONFIG_JSON?: string | undefined;
+  readonly ELIOTR_RESEARCH_REPORT_POLICY_PROVENANCE_REF?: string | undefined;
 }
 
 export function selectArtifactSectionReportAdmissionPolicyVars(

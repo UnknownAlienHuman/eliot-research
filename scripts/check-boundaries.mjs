@@ -36,6 +36,7 @@ const HOST_TOOL_IMPORTS = new Map([
   ["packages/cloudflare-backup/src/restore-native-history-ordering.test.ts", new Set(["node:fs/promises"])],
   ["packages/cloudflare-backup/src/restore-store.test.ts", new Set(["node:fs/promises"])],
   ["packages/cloudflare-model-control/src/research-model-qualification-renewal.test.ts", new Set(["node:fs"])],
+  ["packages/cloudflare-model-control/src/research-model-qualification-failure-summary.test.ts", new Set(["node:fs/promises"])],
   ["packages/cloudflare-research/src/research-model-spend-admission-branch-stages.test.ts", new Set(["node:fs"])],
   ["packages/cloudflare-research/src/research-project-configuration-store.test.ts", new Set(["node:fs"])],
   ["packages/cloudflare-workflows/src/research-run-configuration-store.test.ts", new Set(["node:fs"])],

@@ -4,7 +4,9 @@ import {
   GeminiMcpToolError,
   createWorkspaceMcpDiagnosticConsume,
   handleGeminiMcp,
+  projectWorkspaceMcpEnvironment,
   type McpClientDiagnosticConsume,
+  type WorkspaceMcpEnvironmentProjection,
   type WorkspaceMcpRuntime,
 } from "@eliotr/cloudflare-workspace-mcp";
 import { handleHttp } from "./http.js";
@@ -63,7 +65,7 @@ function configuredMcpClientDiagnosticConsume(env: Env): McpClientDiagnosticCons
   });
 }
 
-function workspaceMcpRuntime(env: Env, request: Request): WorkspaceMcpRuntime {
+function workspaceMcpRuntime(env: WorkspaceMcpEnvironmentProjection<Env["AI"]>, request: Request): WorkspaceMcpRuntime {
   const mcpClientDiagnosticConsume = configuredMcpClientDiagnosticConsume(env);
   return {
     DEPLOYMENT_GENERATION: env.DEPLOYMENT_GENERATION,
@@ -114,7 +116,8 @@ function workspaceMcpRuntime(env: Env, request: Request): WorkspaceMcpRuntime {
 export default {
   fetch(request: Request, env: Env, executionContext: ExecutionContext): Promise<Response> {
     if (new URL(request.url).pathname === "/mcp") {
-      return handleGeminiMcp(request, workspaceMcpRuntime(env, request), executionContext);
+      const mcpEnv = projectWorkspaceMcpEnvironment(env);
+      return handleGeminiMcp(request, workspaceMcpRuntime(mcpEnv, request), executionContext);
     }
     return handleHttp(request, env, executionContext);
   },

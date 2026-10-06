@@ -12,6 +12,7 @@ export {
   type ModelGatewayDeploymentRegistryPort,
   type ModelGatewayExecutionDependencies,
   type ModelGatewayExecutionErrorCode,
+  type ModelGatewaySafeResponseReason,
   type ModelGatewayExecutionObservation,
   type ModelGatewayFetchPort,
   type ModelGatewayFingerprintStorePort,

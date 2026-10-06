@@ -29,6 +29,10 @@ import {
   createResearchModelQualificationNativeExecution,
   type ResearchModelQualificationNativeDependencies,
 } from "./research-model-qualification.js";
+import {
+  readResearchModelQualificationFailureSummary,
+  recordResearchModelQualificationFailureSummary,
+} from "./research-model-qualification-failure-summary.js";
 
 const IDENTIFIER = /^[A-Za-z0-9._:@/-]{1,256}$/u;
 const SHA256 = /^[a-f0-9]{64}$/u;
@@ -314,6 +318,7 @@ async function decodeObservation(
 }
 
 async function existingDispatchResult(
+  database: D1Database,
   row: DispatchRow,
   input: ResearchModelQualificationDispatchInput,
 ): Promise<ModelGatewayExecutionObservation | null> {
@@ -321,6 +326,31 @@ async function existingDispatchResult(
   if (row.state === "STARTED") {
     if (row.observation_sha256 !== null || row.observation_json !== null || row.completed_at !== null) {
       modelFailure("MODEL_GATEWAY_OUTPUT_PERSIST_FAILED", "qualification dispatch has an incomplete STARTED record");
+    }
+    let failure: Awaited<ReturnType<typeof readResearchModelQualificationFailureSummary>>;
+    try {
+      failure = await readResearchModelQualificationFailureSummary(database, {
+        probe_idempotency_key: input.probe.probe_idempotency_key,
+        probe_input_sha256: input.probe_input_sha256,
+        claim_ref: input.claim_ref,
+      });
+    } catch (cause) {
+      modelFailure("MODEL_GATEWAY_OUTPUT_PERSIST_FAILED", "qualification failure summary readback is invalid", cause);
+    }
+    if (failure !== null) {
+      const safeResponseReason = failure.failure_code === "MODEL_GATEWAY_RESPONSE_INVALID"
+        ? failure.safe_response_reason
+        : null;
+      const options = {
+        retryable: false,
+        ...(failure.observed_http_status === null ? {} : { http_status: failure.observed_http_status }),
+        ...(safeResponseReason === null ? {} : { safe_response_reason: safeResponseReason }),
+      };
+      throw new ModelGatewayExecutionError(
+        failure.failure_code,
+        "qualification model execution previously failed; persisted failure summary is authoritative",
+        options as ConstructorParameters<typeof ModelGatewayExecutionError>[2],
+      );
     }
     return null;
   }
@@ -350,7 +380,7 @@ async function claimDispatch(
   }
   const row = await readDispatch(database, input.probe.probe_idempotency_key);
   if (row === null) modelFailure("MODEL_GATEWAY_TRANSPORT_FAILED", "qualification dispatch claim is uncertain", writeError);
-  const existing = await existingDispatchResult(row, input);
+  const existing = await existingDispatchResult(database, row, input);
   if (existing !== null) return existing;
   if (writeError !== undefined || result?.success !== true || result.meta?.changes !== 1) {
     modelFailure("MODEL_GATEWAY_TRANSPORT_FAILED", "qualification dispatch claim is already STARTED; provider retry is forbidden", writeError);
@@ -378,7 +408,7 @@ async function completeDispatch(
   }
   const row = await readDispatch(database, input.probe.probe_idempotency_key);
   if (row === null) modelFailure("MODEL_GATEWAY_TRANSPORT_FAILED", "qualification dispatch completion is uncertain", writeError);
-  const persisted = await existingDispatchResult(row, input);
+  const persisted = await existingDispatchResult(database, row, input);
   if (persisted !== null) {
     if (canonicalModelGatewayJson(persisted) !== json) modelFailure("MODEL_GATEWAY_OUTPUT_PERSIST_FAILED", "qualification dispatch completion conflicts with the executed observation");
     return persisted;
@@ -508,8 +538,20 @@ export function createResearchModelQualificationDispatch(
       try {
         observed = await executeObservedModelGatewayCall(native.createExecution(probe), probe.model_call);
       } catch (cause) {
-        if (cause instanceof ModelGatewayExecutionError) throw cause;
-        modelFailure("MODEL_GATEWAY_TRANSPORT_FAILED", "qualification model execution failed; provider retry is forbidden", cause);
+        const failure = cause instanceof ModelGatewayExecutionError
+          ? cause
+          : new ModelGatewayExecutionError("MODEL_GATEWAY_TRANSPORT_FAILED", "qualification model execution failed; provider retry is forbidden", { cause, retryable: false });
+        try {
+          await recordResearchModelQualificationFailureSummary(dependencies.core_database, {
+            probe_idempotency_key: input.probe.probe_idempotency_key,
+            probe_input_sha256: input.probe_input_sha256,
+            claim_ref: input.claim_ref,
+            error: failure,
+          });
+        } catch (summaryCause) {
+          modelFailure("MODEL_GATEWAY_OUTPUT_PERSIST_FAILED", "qualification failure summary persistence is uncertain; provider retry is forbidden", summaryCause);
+        }
+        throw failure;
       }
       return completeDispatch(dependencies.core_database, input, observed, dependencies.now);
     },

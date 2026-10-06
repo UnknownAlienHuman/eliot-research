@@ -23,6 +23,7 @@ await import("./test-deployment-migration-operation.mjs");
 await import("./test-backup-trigger-parser-compatibility.mjs");
 await import("./test-deployment-build-inputs.mjs");
 await import("./test-primary-writer-qualification-operator.mjs");
+await import("./test-model-qualification-failure-summary-migration.mjs");
 await import("./test-cloudflare-provisioners.mjs");
 await import("./test-ai-search-provisioning-readback.mjs");
 await import("./test-ai-search-provisioning-reconciliation.mjs");

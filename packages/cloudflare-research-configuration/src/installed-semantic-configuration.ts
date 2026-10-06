@@ -1,14 +1,14 @@
 /** Worker environment fields owned by the installed semantic configuration capability. */
 export interface InstalledSemanticConfigurationEnvironment {
   /** Immutable semantic config revision reference (S29); replaces the split JSON chunks. */
-  readonly ELIOTR_RESEARCH_SEMANTIC_CONFIG_REF?: string;
+  readonly ELIOTR_RESEARCH_SEMANTIC_CONFIG_REF?: string | undefined;
   /** Expected SHA-256 of the canonical semantic config bytes for the revision above. */
-  readonly ELIOTR_RESEARCH_SEMANTIC_CONFIG_SHA256?: string;
+  readonly ELIOTR_RESEARCH_SEMANTIC_CONFIG_SHA256?: string | undefined;
   /** Research semantic configuration as one JSON value (legacy; migration window). */
-  readonly ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON?: string;
+  readonly ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON?: string | undefined;
   /** Wrangler-safe chunks for the installed semantic configuration; provide both or neither. */
-  readonly ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON_0?: string;
-  readonly ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON_1?: string;
+  readonly ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON_0?: string | undefined;
+  readonly ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON_1?: string | undefined;
 }
 
 type SemanticConfigurationJsonEnvironment = Pick<InstalledSemanticConfigurationEnvironment,
