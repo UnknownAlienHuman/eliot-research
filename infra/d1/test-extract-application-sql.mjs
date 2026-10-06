@@ -229,6 +229,11 @@ const typedD1Fixture = ({
   facadeMutation = false,
   facadeEscaped = false,
   mcpProjection = "none",
+  modelQualification = false,
+  modelSwapped = false,
+  modelConflictingCaller = false,
+  modelEnvMutation = false,
+  modelEnvAlias = false,
 } = {}) => {
   const paths = {
     env: resolve(projectRoot, "apps/eliotr-core/src/env.ts"),
@@ -242,6 +247,12 @@ const typedD1Fixture = ({
     core: resolve(projectRoot, "packages/cloudflare-erasure/src/core-location.ts"),
     search: resolve(projectRoot, "packages/cloudflare-erasure/src/search-location.ts"),
     projection: resolve(projectRoot, "packages/cloudflare-workspace-mcp/src/workspace-mcp-env.ts"),
+    routes: resolve(projectRoot, "apps/eliotr-core/src/http-special-routes.ts"),
+    modelHandler: resolve(projectRoot, "apps/eliotr-core/src/research-model-qualification-http.ts"),
+    modelDispatch: resolve(projectRoot, "packages/cloudflare-model-control/src/research-model-qualification-dispatch.ts"),
+    modelSummary: resolve(projectRoot, "packages/cloudflare-model-control/src/research-model-qualification-failure-summary.ts"),
+    modelPrompt: resolve(projectRoot, "packages/cloudflare-model-control/src/research-qualification-prompt.ts"),
+    modelNative: resolve(projectRoot, "packages/cloudflare-model-control/src/research-model-qualification.ts"),
   };
   const d1TypeImport = "import type { D1Database } from '../../../apps/eliotr-core/src/env.js';";
   const coreArgument = swapped ? "dependencies.search_database" : "dependencies.core_database";
@@ -265,10 +276,33 @@ const typedD1Fixture = ({
   const projectionPrelude = mcpProjection === "alias" ? "const envAlias = env;" : "";
   const projectionCall = mcpProjection === "none" ? "" :
     `if (request === "mcp") { const mcpEnv = projectWorkspaceMcpEnvironment(${projectionActual}); workspaceMcpRuntime(mcpEnv); }`;
+  const modelEnabled = modelQualification || modelSwapped || modelConflictingCaller || modelEnvMutation || modelEnvAlias;
+  const modelRouteCall = modelEnabled
+    ? "dispatchHttpSpecialRoute({ request, env, match: { route_id: 'system.research.model-qualification' } });"
+    : "";
+  const modelHttpImport = modelEnabled ? "import { dispatchHttpSpecialRoute } from './http-special-routes.js';\n" : "";
+  const modelDependencies = modelSwapped
+    ? "core_database: env.SEARCH_DB, search_database: env.CORE_DB"
+    : modelEnvAlias
+      ? "core_database: envAlias.CORE_DB, search_database: envAlias.SEARCH_DB"
+      : "core_database: env.CORE_DB, search_database: env.SEARCH_DB";
+  const modelMutation = modelEnvMutation ? "env.CORE_DB = env.SEARCH_DB;" : "";
+  const modelAlias = modelEnvAlias ? "const envAlias: Env = env;" : "";
+  const modelConflict = modelConflictingCaller
+    ? "export function conflictingModelCaller(env: Env): void { createResearchModelQualificationDispatch({ core_database: env.SEARCH_DB, search_database: env.CORE_DB }); }"
+    : "";
+  const modelSources = modelEnabled ? [
+    [paths.routes, `import type { Env } from './env.js';\nimport { handleResearchModelQualification } from './research-model-qualification-http.js';\nexport async function dispatchHttpSpecialRoute(input: { readonly request: unknown; readonly env: Env; readonly match: { readonly route_id: string } }): Promise<unknown> { switch (input.match.route_id) { case 'system.research.model-qualification': return handleResearchModelQualification(input.request, input.env); default: return null; } }`],
+    [paths.modelHandler, `import type { Env } from './env.js';\nimport { createResearchModelQualificationDispatch } from '../../../packages/cloudflare-model-control/src/research-model-qualification-dispatch.js';\nexport function handleResearchModelQualification(request: unknown, env: Env): unknown { ${modelMutation} ${modelAlias} const service = createResearchModelQualificationDispatch({ ${modelDependencies} }); return service.execute(); }`],
+    [paths.modelDispatch, `${d1TypeImport}\nimport { createResearchQualificationPromptCompiler } from './research-qualification-prompt.js';\nimport { createResearchModelQualificationNativeExecution } from './research-model-qualification.js';\nimport { readResearchModelQualificationFailureSummary, recordResearchModelQualificationFailureSummary } from './research-model-qualification-failure-summary.js';\ninterface Dependencies { readonly core_database: D1Database; readonly search_database: D1Database }\nasync function existingDispatchResult(database: D1Database): Promise<void> { readResearchModelQualificationFailureSummary(database); }\nasync function claimDispatch(database: D1Database): Promise<void> { database.prepare('SELECT 1 FROM model_dispatch').first(); await existingDispatchResult(database); }\nasync function claimMatches(database: D1Database): Promise<void> { database.prepare('SELECT 1 FROM model_probe').first(); }\nasync function completeDispatch(database: D1Database): Promise<void> { database.prepare('UPDATE model_dispatch SET state=?1').bind('COMPLETED').run(); await existingDispatchResult(database); }\nexport function createResearchModelQualificationDispatch(dependencies: Dependencies): { execute(): Promise<void> } { return Object.freeze({ async execute(): Promise<void> { await claimMatches(dependencies.core_database); createResearchQualificationPromptCompiler({ core_database: dependencies.core_database, search_database: dependencies.search_database }); createResearchModelQualificationNativeExecution({ database: dependencies.core_database }); await claimDispatch(dependencies.core_database); try { throw new Error('fixture'); } catch { await recordResearchModelQualificationFailureSummary(dependencies.core_database); } await completeDispatch(dependencies.core_database); } }); }\n${modelConflict}`],
+    [paths.modelSummary, `${d1TypeImport}\nexport function readResearchModelQualificationFailureSummary(database: D1Database): void { database.prepare('SELECT 1 FROM model_failure_summary').bind(1).first(); database.prepare('SELECT 1 FROM model_dispatch_identity').bind(1).first(); }\nexport async function recordResearchModelQualificationFailureSummary(database: D1Database): Promise<void> { database.prepare('INSERT INTO model_failure_summary VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)').bind(1,2,3,4,5,6,7,8,9).run(); readResearchModelQualificationFailureSummary(database); }`],
+    [paths.modelPrompt, `${d1TypeImport}\nexport function createResearchQualificationPromptCompiler(input: { readonly core_database: D1Database; readonly search_database: D1Database }): void { void input; }`],
+    [paths.modelNative, `${d1TypeImport}\nexport function createResearchModelQualificationNativeExecution(input: { readonly database: D1Database }): void { void input; }`],
+  ] : [];
   const sources = new Map([
-    [paths.env, `export interface D1Database { prepare(sql: string): { first(): unknown } }\nexport interface Env { readonly CORE_DB: D1Database; readonly SEARCH_DB: D1Database }\nexport interface ExportedHandler<E> { fetch(request: unknown, env: E, executionContext: unknown): unknown }`],
+    [paths.env, `export interface D1PreparedStatement { bind(...values: unknown[]): D1PreparedStatement; first(): unknown; run(): unknown }\nexport interface D1Database { prepare(sql: string): D1PreparedStatement }\nexport interface Env { readonly CORE_DB: D1Database; readonly SEARCH_DB: D1Database }\nexport interface ExportedHandler<E> { fetch(request: unknown, env: E, executionContext: unknown): unknown }`],
     [paths.worker, `import type { Env, ExportedHandler } from './env.js';\nimport { handleHttp } from './http.js';\nimport { projectWorkspaceMcpEnvironment, type WorkspaceMcpEnvironmentProjection } from '../../../packages/cloudflare-workspace-mcp/src/workspace-mcp-env.js';\nfunction workspaceMcpRuntime(view: WorkspaceMcpEnvironmentProjection): unknown { view.CORE_DB = view.SEARCH_DB; return view; }\nexport default { fetch(request: unknown, env: Env, executionContext: unknown): unknown { ${projectionPrelude} ${projectionCall} return handleHttp(request, env, executionContext); } } satisfies ExportedHandler<Env>;`],
-    [paths.http, `import type { Env } from './env.js';\nimport { createApplication } from './composition-root.js';\ninterface HttpDependencies { readonly applicationFactory?: typeof createApplication }\nexport function handleHttp(request: unknown, env: Env, executionContext: unknown, dependencies: HttpDependencies = {}): unknown { const factory = dependencies.applicationFactory ?? createApplication; return factory({ env, executionContext }); }`],
+    [paths.http, `import type { Env } from './env.js';\nimport { createApplication } from './composition-root.js';\n${modelHttpImport}interface HttpDependencies { readonly applicationFactory?: typeof createApplication }\nexport function handleHttp(request: unknown, env: Env, executionContext: unknown, dependencies: HttpDependencies = {}): unknown { ${modelRouteCall} const factory = dependencies.applicationFactory ?? createApplication; return factory({ env, executionContext }); }`],
     [paths.composition, `import type { Env } from './env.js';\nimport { createErasureOwnerService } from './erasure-owner-service.js';\nfunction unknownSink(value: unknown): void { void value; }\nfunction ownerApi(env: Env): unknown { ${facade} return { erase: () => createErasureOwnerService({ env: configuredEnv }) }; }\nexport function createApplication(input: { readonly env: Env; readonly executionContext: unknown }): unknown { return ownerApi(input.env); }`],
     [paths.ownerService, `import type { Env } from './env.js';\nimport { createConfiguredErasureCoordinator } from './erasure-runtime.js';\nexport function createErasureOwnerService(input: { readonly env: Env }): unknown { return createConfiguredErasureCoordinator(input.env); }`],
     [paths.appRuntime, `import type { Env } from './env.js';\nimport { createConfiguredErasureCoordinator as inLibrary } from '../../../packages/cloudflare-erasure-operations/src/erasure-runtime.js';\nexport function createConfiguredErasureCoordinator(env: Env): unknown { return inLibrary({ core_database: env.CORE_DB, search_database: env.SEARCH_DB }); }`],
@@ -277,6 +311,7 @@ const typedD1Fixture = ({
     [paths.core, `${d1TypeImport}\nexport function createD1CoreErasureLocationPort(dependencies: { readonly database: D1Database }): void { const database = dependencies.database; database.prepare('SELECT 1 FROM core_fixture').first(); }`],
     [paths.search, `${d1TypeImport}\nexport function createD1SearchErasureLocationPort(dependencies: { readonly database: D1Database }): void { const database = dependencies.database; database.prepare('SELECT 1 FROM search_fixture').first(); }`],
     [paths.projection, `import type { Env, D1Database } from '../../../apps/eliotr-core/src/env.js';\nexport interface WorkspaceMcpEnvironmentProjection { CORE_DB: D1Database; SEARCH_DB: D1Database }\nfunction identity<T>(value: T): T { return value; }\nexport function projectWorkspaceMcpEnvironment(source: Env): WorkspaceMcpEnvironmentProjection { ${projectionFactory} }`],
+    ...modelSources,
   ]);
   const options = {
     target: ts.ScriptTarget.ES2024,
@@ -303,9 +338,14 @@ const typedD1Fixture = ({
   const overrides = createErasureReceiverTargetOverrides(files, projectRoot, program);
   const coreQueries = extractSourceText(sources.get(paths.core), paths.core, overrides.get(paths.core.replaceAll("\\", "/").toLowerCase())).queries;
   const searchQueries = extractSourceText(sources.get(paths.search), paths.search, overrides.get(paths.search.replaceAll("\\", "/").toLowerCase())).queries;
+  const modelQueries = modelEnabled
+    ? extractSourceText(sources.get(paths.modelSummary), paths.modelSummary,
+      overrides.get(paths.modelSummary.replaceAll("\\", "/").toLowerCase())).queries
+    : [];
   return {
     core: coreQueries.find((query) => query.sql === "SELECT 1 FROM core_fixture"),
     search: searchQueries.find((query) => query.sql === "SELECT 1 FROM search_fixture"),
+    model: modelQueries,
   };
 };
 
@@ -339,6 +379,23 @@ for (const mcpProjection of ["spread", "swapped", "call", "alias", "cast"]) {
   assert.equal(unresolvedProjectionTargets.core.targetStore, "unknown", `${mcpProjection} MCP projection is unresolved`);
   assert.equal(unresolvedProjectionTargets.search.targetStore, "unknown", `${mcpProjection} MCP projection is unresolved`);
 }
+
+const modelQualificationTargets = typedD1Fixture({ modelQualification: true });
+assert.equal(modelQualificationTargets.model.length, 3, "all three model failure-summary prepare sites are covered");
+assert.deepEqual(modelQualificationTargets.model.map((query) => query.targetStore), ["core", "core", "core"]);
+const modelQualificationSwappedTargets = typedD1Fixture({ modelSwapped: true });
+assert.deepEqual(modelQualificationSwappedTargets.model.map((query) => query.targetStore), ["search", "search", "search"],
+  "the summary receiver follows the actual Env property value when Core/Search fields are swapped");
+const modelQualificationConflictingTargets = typedD1Fixture({ modelConflictingCaller: true });
+assert.equal(modelQualificationConflictingTargets.model.length, 3);
+assert.deepEqual(modelQualificationConflictingTargets.model.map((query) => query.targetStore), ["unknown", "unknown", "unknown"],
+  "an out-of-route caller prevents model summary qualification");
+const modelQualificationMutatedTargets = typedD1Fixture({ modelEnvMutation: true });
+assert.deepEqual(modelQualificationMutatedTargets.model.map((query) => query.targetStore), ["unknown", "unknown", "unknown"],
+  "mutating the source Env invalidates the model summary binding");
+const modelQualificationAliasTargets = typedD1Fixture({ modelEnvAlias: true });
+assert.deepEqual(modelQualificationAliasTargets.model.map((query) => query.targetStore), ["unknown", "unknown", "unknown"],
+  "an Env alias does not become a trusted model summary receiver");
 
 function validateCompilerEntries(entries) {
   const checker = fileURLToPath(new URL("./check-expression-depth.py", import.meta.url));

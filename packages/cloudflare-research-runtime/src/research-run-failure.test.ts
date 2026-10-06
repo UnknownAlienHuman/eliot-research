@@ -11,8 +11,136 @@ import {
 } from "@eliotr/cloudflare-workflows";
 import { readNativeStepWorkflowFailure } from "./research-workflow-application.js";
 import { readResearchEngineStatus, researchRunFailure } from "./research-run-failure.js";
+import {
+  createResearchSemanticComposition,
+  type ResearchSemanticCompositionDependencies,
+} from "./research-semantic-composition.js";
+
+function semanticCompositionInput(): ResearchSemanticCompositionDependencies {
+  const stage = () => ({
+    gateway: { reasoning_gateway_base_url: "https://gateway.example.invalid", gateway_token: "test-token" },
+    prompt: { trusted_parameters: {} },
+    spend_authorization: { read: async () => ({}) },
+    prepare: async () => ({}),
+  });
+  return {
+    database: {} as D1Database,
+    search_database: {} as D1Database,
+    work_bucket: {} as R2Bucket,
+    evidence_bucket: {} as R2Bucket,
+    navigation: {
+      scope: { snapshot_id: "scope-test" },
+      access: { principal_ref: "principal-test", credential_generation: "credential-test" },
+      current: async () => undefined,
+      sources: async () => [],
+    } as never,
+    ledger: { read: async () => null },
+    operation_id: "operation-test",
+    investigation_id: "investigation-test",
+    principal: {
+      principal_ref: "principal-test",
+      credential_generation: "credential-test",
+      deployment_generation: "deployment-test",
+    },
+    retrieval_profile: {} as never,
+    model_profile: { raw: "{}", provenance_ref: "profile-test" },
+    semantic_config: { revision_ref: null, config_sha256: "a".repeat(64) },
+    deployment_environment: "TEST",
+    recheck_authority: async () => ({
+      investigation_id: "investigation-test", scope_snapshot_id: "scope-test", scope_snapshot_revision: 1,
+    }),
+    manifest: {
+      residency_template: { scope_domain_id: "scope-test", access_domain_id: "principal-test" } as never,
+      max_context_bytes: 1024,
+    },
+    model: { synthesis: stage(), audit: stage() },
+    verification: { config: {} as never },
+    audit: {
+      normalization: {} as never,
+      verifier: {
+        authority: { qualified: true, current: true } as never,
+        read_current: async () => ({} as never),
+      },
+      policy: {} as never,
+    },
+  } as unknown as ResearchSemanticCompositionDependencies;
+}
+
+function compositionFailure(input: ResearchSemanticCompositionDependencies): Error & { readonly code: string } {
+  try {
+    createResearchSemanticComposition(input);
+  } catch (error) {
+    if (error instanceof Error && "code" in error && typeof error.code === "string") return error as Error & { code: string };
+    throw error;
+  }
+  throw new Error("semantic composition unexpectedly accepted invalid preparation dependencies");
+}
 
 describe("native research workflow failure fallback", () => {
+  it("keeps missing configuration and stale qualification distinct through preparation status", async () => {
+    const missingCapabilities = {
+      ...semanticCompositionInput(),
+      run_configuration: {
+        mode: "snapshot-v1" as const,
+        configuration_ref: "run-config-test",
+        configuration_sha256: "b".repeat(64),
+      },
+    } as ResearchSemanticCompositionDependencies;
+    const missing = compositionFailure(missingCapabilities);
+    expect(missing.code).toBe("WORKFLOW_CONFIGURATION_MISSING");
+
+    const missingFailure = workflowFailure(missing, "PREPARATION");
+    expect(missingFailure).toEqual({
+      code: "WORKFLOW_CONFIGURATION_MISSING", phase: "PREPARATION", retryable: false,
+    });
+    const wrapped = new WorkflowCheckpointError("WORKFLOW_CONFIGURATION_MISSING", missingFailure);
+    const engine = await readResearchEngineStatus({
+      get_workflow: async (operationId) => ({
+        id: operationId,
+        status: async () => ({
+          status: "errored",
+          error: { name: wrapped.name, message: `${wrapped.name}: ${wrapped.message}` },
+        }),
+      } as never),
+    }, "operation-semantic-preparation-missing-config");
+    const run = {
+      state: "ACTIVE", first_failure: missingFailure, latest_failure: missingFailure,
+    } as unknown as WorkflowRunStatus;
+    expect(engine.failure_code).toBe("WORKFLOW_CONFIGURATION_MISSING");
+    expect(engine.failure).toEqual(missingFailure);
+    expect(researchRunFailure(run, engine)).toEqual(missingFailure);
+
+    const invalidDeployment = {
+      ...semanticCompositionInput(), deployment_environment: "STAGING",
+    } as unknown as ResearchSemanticCompositionDependencies;
+    expect(compositionFailure(invalidDeployment).code).toBe("WORKFLOW_CONFIGURATION_INVALID");
+
+    const valid = semanticCompositionInput();
+    const unqualifiedVerifier = {
+      ...valid,
+      audit: {
+        ...valid.audit,
+        verifier: {
+          ...valid.audit.verifier,
+          authority: { ...valid.audit.verifier.authority, qualified: false },
+        },
+      },
+    } as ResearchSemanticCompositionDependencies;
+    expect(compositionFailure(unqualifiedVerifier).code).toBe("WORKFLOW_QUALIFICATION_STALE");
+
+    const noncurrentVerifier = {
+      ...valid,
+      audit: {
+        ...valid.audit,
+        verifier: {
+          ...valid.audit.verifier,
+          authority: { ...valid.audit.verifier.authority, current: false },
+        },
+      },
+    } as ResearchSemanticCompositionDependencies;
+    expect(compositionFailure(noncurrentVerifier).code).toBe("WORKFLOW_QUALIFICATION_STALE");
+  });
+
   it("preserves a safe RECONCILE diagnosis when D1 retention is unavailable", async () => {
     const failure: WorkflowFailure = {
       code: "MODEL_GATEWAY_UPSTREAM_REJECTED",

@@ -17,6 +17,7 @@ import {
   decodeModelGatewayProviderBody,
   decodeModelGatewayProviderNativeResponse,
 } from "./model-gateway-provider-native-response.js";
+import { decodeSelectedModelGatewayResponse } from "./model-gateway-response.js";
 import type { ModelRouteDeployment } from "@eliotr/platform-cloudflare";
 
 const ACCOUNT_ID = "a".repeat(32);
@@ -224,6 +225,35 @@ describe("model gateway transport policy", () => {
     expect(request.parameters_sha256).toBe(deployment.parameters_digest);
   });
 
+  it("decodes selected compatibility responses as strict ChatCompletion", async () => {
+    const { deployment } = await fixture();
+    const response = (value: unknown) => new Response(JSON.stringify(value), { status: 200, headers: {
+      "content-type": "application/json", "cf-aig-provider": "workers-ai",
+      "cf-aig-model": LEGACY_POLICY.model, "cf-aig-log-id": "compat-log-1",
+    } });
+    const body = { id: "compat-1", object: "chat.completion", created: 1, model: LEGACY_POLICY.model,
+      service_tier: "default", choices: [{ index: 0, finish_reason: "stop", message: {
+        role: "assistant", content: "{\"answer\":\"ok\"}", reasoning_content: "private reasoning",
+      } }], usage: { prompt_tokens: 2, completion_tokens: 3, total_tokens: 5, neurons: 0.25 } };
+    for (const policy of [undefined, LEGACY_POLICY]) {
+      const decoded = await decodeSelectedModelGatewayResponse(response(body), deployment, 4096, policy);
+      expect(decoded.assistant_content).toBe("{\"answer\":\"ok\"}");
+      expect(decoded.fingerprint).toMatchObject({ provider: "workers-ai", exact_model_id: LEGACY_POLICY.model });
+      expect(decoded.log_id).toBe("compat-log-1");
+      expect(decoded.usage).toEqual({ input_tokens: 2, output_tokens: 3, total_tokens: 5 });
+    }
+    const costBody = { ...body, service_tier: undefined, usage: { ...body.usage, neurons: undefined, cost: 0, is_byok: true,
+      cost_details: { upstream_inference_prompt_cost: 0, upstream_inference_completions_cost: 0,
+        upstream_inference_cost: 0, server_tool_cost: 0 }, server_tool_use: { web_search_requests: 0 } } };
+    await expect(decodeSelectedModelGatewayResponse(response(costBody), deployment, 4096))
+      .rejects.toMatchObject({ code: "MODEL_GATEWAY_RESPONSE_INVALID" });
+    const choice = body.choices[0];
+    if (choice === undefined) throw new Error("compatibility fixture must contain one choice");
+    const toolBody = { ...body, choices: [{ ...choice, message: { ...choice.message, tool_calls: [] } }] };
+    await expect(decodeSelectedModelGatewayResponse(response(toolBody), deployment, 4096, LEGACY_POLICY))
+      .rejects.toMatchObject({ code: "MODEL_GATEWAY_RESPONSE_INVALID" });
+  });
+
   it("decodes OpenRouter Chat output with its response-scoped provider, model, usage, and log id", async () => {
     const { deployment } = await fixture(OPENROUTER_POLICY);
     const body = JSON.stringify({
@@ -249,7 +279,7 @@ describe("model gateway transport policy", () => {
         "cf-aig-log-id": "openrouter-log-1",
       },
     });
-    const decoded = await decodeModelGatewayProviderNativeResponse(
+    const decoded = await decodeSelectedModelGatewayResponse(
       response,
       deployment,
       4096,

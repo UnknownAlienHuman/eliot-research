@@ -12,7 +12,7 @@ import {
   decodeModelGatewayProviderBody as decodeModelGatewayBody,
   decodeModelGatewayProviderNativeResponse,
 } from "./model-gateway-provider-native-response.js";
-import type { ModelGatewayTransportPolicyV1 } from "./model-gateway-transport-policy.js";
+import type { ModelGatewayApi, ModelGatewayTransportPolicyV1 } from "./model-gateway-transport-policy.js";
 
 export { decodeModelGatewayProviderBody as decodeModelGatewayBody } from "./model-gateway-provider-native-response.js";
 
@@ -298,6 +298,7 @@ export async function decodeModelGatewayResponse(
   response: Response,
   deployment: ModelRouteDeployment,
   maximumBytes: number,
+  expectedApi?: ModelGatewayApi,
 ): Promise<DecodedModelGatewayResponse> {
   if (!Number.isSafeInteger(maximumBytes) || maximumBytes < 1 || maximumBytes > 256 * 1024) {
     modelGatewayExecutionFailure(
@@ -351,7 +352,7 @@ export async function decodeModelGatewayResponse(
   }
   const successfulStep = header(response.headers, "cf-aig-step", false);
   const bodyBytes = await readBoundedBody(response, maximumBytes, true);
-  const decodedBody = await decodeModelGatewayBody(bodyBytes);
+  const decodedBody = await decodeModelGatewayBody(bodyBytes, expectedApi);
   return Object.freeze({
     ...decodedBody,
     fingerprint,
@@ -367,7 +368,13 @@ export async function decodeSelectedModelGatewayResponse(
   maximumBytes: number,
   transportPolicy?: ModelGatewayTransportPolicyV1,
 ): Promise<DecodedModelGatewayResponse> {
-  return transportPolicy !== undefined && transportPolicy.api !== "compat-chat-completions"
-    ? decodeModelGatewayProviderNativeResponse(response, deployment, maximumBytes, transportPolicy)
-    : decodeModelGatewayResponse(response, deployment, maximumBytes);
+  if (transportPolicy !== undefined && transportPolicy.api !== "compat-chat-completions") {
+    return decodeModelGatewayProviderNativeResponse(response, deployment, maximumBytes, transportPolicy);
+  }
+  return decodeModelGatewayResponse(
+    response,
+    deployment,
+    maximumBytes,
+    transportPolicy?.api ?? "compat-chat-completions",
+  );
 }
