@@ -222,6 +222,7 @@ function splitSqlStatements(sqlTokens) {
   const firstWords = [];
   let trigger = false;
   let triggerBody = false;
+  let triggerParenDepth = 0;
   const triggerBlocks = [];
   const finish = () => {
     if (statement.length > 0) statements.push(statement);
@@ -229,6 +230,7 @@ function splitSqlStatements(sqlTokens) {
     firstWords.length = 0;
     trigger = false;
     triggerBody = false;
+    triggerParenDepth = 0;
     triggerBlocks.length = 0;
   };
   for (const token of sqlTokens) {
@@ -239,11 +241,20 @@ function splitSqlStatements(sqlTokens) {
     statement.push(token);
     if (token.type === "word" && firstWords.length < 2) firstWords.push(token.value);
     if (firstWords[0] === "CREATE" && firstWords[1] === "TRIGGER") trigger = true;
+    if (triggerBody && token.type === "symbol") {
+      if (token.value === "(") triggerParenDepth += 1;
+      else if (token.value === ")" && triggerParenDepth > 0) triggerParenDepth -= 1;
+    }
     if (trigger && token.type === "word") {
       if (!triggerBody && token.value === "BEGIN") {
         triggerBody = true;
         triggerBlocks.push("BEGIN");
-      } else if (triggerBody && token.value === "CASE") triggerBlocks.push("CASE");
+      } else if (triggerBody && token.value === "CASE") {
+        if (triggerParenDepth === 0) {
+          fail("Unparenthesized CASE expressions are incompatible with native D1 trigger parsing");
+        }
+        triggerBlocks.push("CASE");
+      }
       else if (triggerBody && token.value === "END" && triggerBlocks.length > 0) triggerBlocks.pop();
     }
   }

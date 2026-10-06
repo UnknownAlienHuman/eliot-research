@@ -281,6 +281,18 @@ await check("actual Core candidate classifier inventory is explicitly 21 support
 await check("SQL allowlist ignores comments and literals, permits bounded triggers, rejects rebuilds/backfills/risky indexes", async () => {
   assert.equal(classifyDeploymentMigrationSql("-- UPDATE source SET v=1\nCREATE TABLE \"safe_table\" (note TEXT DEFAULT 'DROP TABLE');").newly_created_tables[0], "safe_table");
   assert.equal(classifyDeploymentMigrationSql(triggerSql).required_schema_objects[0].object_type, "trigger");
+  const plainTriggerCase = "CREATE TRIGGER plain_case AFTER INSERT ON fixture_table BEGIN SELECT CASE WHEN NEW.id = 1 THEN RAISE(ABORT, 'blocked') END; END;";
+  assert.throws(() => classifyDeploymentMigrationSql(plainTriggerCase), /Unparenthesized CASE expressions.*native D1/iu);
+  for (const triggerCase of [
+    "CREATE TRIGGER parenthesized_case AFTER INSERT ON fixture_table BEGIN SELECT (CASE WHEN NEW.id = 1 THEN RAISE(ABORT, 'blocked') END); END;",
+    "CREATE TRIGGER nested_parenthesized_case AFTER INSERT ON fixture_table BEGIN SELECT ((CASE WHEN NEW.id = 1 THEN RAISE(ABORT, 'blocked') END)); END;",
+    "CREATE TRIGGER raise_where AFTER INSERT ON fixture_table BEGIN SELECT RAISE(ABORT, 'blocked') WHERE NEW.id = 1; END;",
+    "CREATE TRIGGER quoted_case AFTER INSERT ON fixture_table BEGIN SELECT 'CASE END;'; -- CASE END;\n/* CASE END; */ SELECT 1; END;",
+  ]) {
+    assert.equal(classifyDeploymentMigrationSql(triggerCase).required_schema_objects[0].object_type, "trigger");
+  }
+  assert.equal(classifyDeploymentMigrationSql("CREATE VIEW ordinary_case_view AS SELECT CASE WHEN 1 THEN 1 ELSE 0 END AS value;")
+    .created_schema_objects[0].object_type, "view");
   assert.deepEqual(classifyDeploymentMigrationSql(`DROP VIEW IF EXISTS fixture_view; ${viewSql};`)
     .must_probe_schema_objects[0], { object_type: "view", name: "fixture_view" });
   assert.equal(classifyDeploymentMigrationSql("CREATE TABLE created_here(id INTEGER) STRICT; CREATE INDEX created_here_idx ON created_here(id);")

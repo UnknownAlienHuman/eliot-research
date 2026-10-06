@@ -7,9 +7,9 @@ import {
 
 export const BACKUP_EPOCH_MANIFEST_MIGRATION = "0119_backup_epoch_manifest_bindings.sql";
 // SHA-256 of the tracked 0119 migration with CRLF normalized to LF.
-export const BACKUP_EPOCH_MANIFEST_MIGRATION_SHA256 = "9497a9d31187b2901258bfe4a1cd6823357eb1269483ac8fd160d130d2e3177c";
+export const BACKUP_EPOCH_MANIFEST_MIGRATION_SHA256 = "d64c375e10015fc03974bbf2271a1d2cfd23f06e13975474c206b8b234cd6ff7";
 // SHA-256 of the exact normalized 0119-created DDL read back from sqlite_master.
-export const BACKUP_EPOCH_MANIFEST_SCHEMA_SHA256 = "f53ec05bbac33edc8640869d31d45fac14e353faf0a91dcfa0fcbebacc04170c";
+export const BACKUP_EPOCH_MANIFEST_SCHEMA_SHA256 = "4423309fc3a9f81b32c8d541d82a60e4f7e08f1b471de0d381f898b30ec1c23d";
 
 const BINDING_TABLE = "backup_epoch_manifest_binding";
 const VERIFICATION_TABLE = "backup_epoch_verification_receipt";

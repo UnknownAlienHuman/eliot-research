@@ -2,6 +2,7 @@
 -- separately verified owner/controller retirement qualification. O4 receipts
 -- remain independently required; this migration never makes provider absence
 -- or a caller-supplied flag stand in for local primary R2 evidence.
+-- D1 native parser compatibility: parenthesize trigger CASE guards (workers-sdk#4727).
 PRAGMA foreign_keys = ON;
 
 ALTER TABLE backup_purge_obligation ADD COLUMN primary_delete_intent_ref TEXT;
@@ -211,20 +212,20 @@ CREATE INDEX backup_erasure_primary_delete_state_idx
 CREATE TRIGGER backup_erasure_primary_closure_insert_guard
 BEFORE INSERT ON backup_erasure_primary_closure
 BEGIN
-  SELECT CASE WHEN NOT EXISTS (
+  SELECT (CASE WHEN NOT EXISTS (
     SELECT 1 FROM erasure_case c JOIN erasure_execution e
       ON e.erasure_id=c.erasure_id AND e.revision=c.revision
     WHERE c.erasure_id=NEW.erasure_id AND c.revision=NEW.erasure_revision
       AND c.state=e.state AND e.state IN ('QUARANTINE_AND_REVOKE','ENUMERATE_DEPENDENCY_CLOSURE')
       AND e.request_sha256=NEW.request_sha256 AND e.lease_owner=NEW.lease_owner
       AND e.lease_generation=NEW.lease_generation AND e.lease_until=NEW.lease_until
-  ) THEN RAISE(ABORT, 'backup primary closure requires the exact live erasure fence') END;
+  ) THEN RAISE(ABORT, 'backup primary closure requires the exact live erasure fence') END);
 END;
 
 CREATE TRIGGER backup_erasure_primary_closure_transition_guard
 BEFORE UPDATE ON backup_erasure_primary_closure
 BEGIN
-  SELECT CASE WHEN
+  SELECT (CASE WHEN
     NEW.erasure_id IS NOT OLD.erasure_id OR NEW.erasure_revision IS NOT OLD.erasure_revision OR
     NEW.lease_generation IS NOT OLD.lease_generation OR NEW.lease_owner IS NOT OLD.lease_owner OR
     NEW.lease_until IS NOT OLD.lease_until OR NEW.request_sha256 IS NOT OLD.request_sha256 OR
@@ -245,10 +246,10 @@ BEGIN
     NEW.primary_prefix_inventory_digest IS NOT OLD.primary_prefix_inventory_digest OR NEW.target_count IS NOT OLD.target_count OR
     NEW.target_digest IS NOT OLD.target_digest OR NEW.target_part_count IS NOT OLD.target_part_count OR
     NEW.target_part_digest IS NOT OLD.target_part_digest OR NEW.plan_digest IS NOT OLD.plan_digest OR NEW.created_at IS NOT OLD.created_at
-    THEN RAISE(ABORT, 'backup primary closure pins are immutable') END;
-  SELECT CASE WHEN NOT (OLD.state='BUILDING' AND NEW.state='SEALED')
-    THEN RAISE(ABORT, 'backup primary closure may only seal once') END;
-  SELECT CASE WHEN NOT EXISTS (
+    THEN RAISE(ABORT, 'backup primary closure pins are immutable') END);
+  SELECT (CASE WHEN NOT (OLD.state='BUILDING' AND NEW.state='SEALED')
+    THEN RAISE(ABORT, 'backup primary closure may only seal once') END);
+  SELECT (CASE WHEN NOT EXISTS (
     SELECT 1 FROM erasure_case c JOIN erasure_execution e
       ON e.erasure_id=c.erasure_id AND e.revision=c.revision
     WHERE c.erasure_id=OLD.erasure_id AND c.revision=OLD.erasure_revision
@@ -256,8 +257,8 @@ BEGIN
       AND e.request_sha256=OLD.request_sha256 AND e.lease_owner=OLD.lease_owner
       AND e.lease_generation=OLD.lease_generation AND e.lease_until=OLD.lease_until
       AND e.lease_until > CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER)
-  ) THEN RAISE(ABORT, 'backup primary closure must seal under its live erasure fence') END;
-  SELECT CASE WHEN
+  ) THEN RAISE(ABORT, 'backup primary closure must seal under its live erasure fence') END);
+  SELECT (CASE WHEN
     (SELECT COUNT(*) FROM backup_erasure_primary_claim_pin p WHERE p.erasure_id=OLD.erasure_id AND p.erasure_revision=OLD.erasure_revision AND p.lease_generation=OLD.lease_generation) <> OLD.producer_claim_count OR
     (SELECT COUNT(*) FROM backup_erasure_primary_claim_pin p WHERE p.erasure_id=OLD.erasure_id AND p.erasure_revision=OLD.erasure_revision AND p.lease_generation=OLD.lease_generation AND p.state='COMMITTED') <> OLD.canonical_epoch_count OR
     (SELECT COUNT(*) FROM backup_erasure_primary_cut_pin p WHERE p.erasure_id=OLD.erasure_id AND p.erasure_revision=OLD.erasure_revision AND p.lease_generation=OLD.lease_generation) <> OLD.export_cut_count OR
@@ -265,7 +266,7 @@ BEGIN
     (SELECT COUNT(*) FROM backup_erasure_primary_target_pin p WHERE p.erasure_id=OLD.erasure_id AND p.erasure_revision=OLD.erasure_revision AND p.lease_generation=OLD.lease_generation) <> OLD.target_count OR
     (SELECT COUNT(*) FROM backup_erasure_primary_part_pin p WHERE p.erasure_id=OLD.erasure_id AND p.erasure_revision=OLD.erasure_revision AND p.lease_generation=OLD.lease_generation AND p.is_target_part=1) <> OLD.target_part_count OR
     (SELECT COUNT(*) FROM backup_erasure_primary_delete_item p WHERE p.erasure_id=OLD.erasure_id AND p.erasure_revision=OLD.erasure_revision AND p.lease_generation=OLD.lease_generation) <> OLD.target_part_count
-    THEN RAISE(ABORT, 'backup primary closure child pins are incomplete') END;
+    THEN RAISE(ABORT, 'backup primary closure child pins are incomplete') END);
 END;
 
 CREATE TRIGGER backup_erasure_primary_closure_delete_guard
@@ -317,7 +318,7 @@ CREATE TABLE backup_erasure_primary_handoff (
 CREATE TRIGGER backup_erasure_primary_handoff_insert_guard
 BEFORE INSERT ON backup_erasure_primary_handoff
 BEGIN
-  SELECT CASE WHEN NOT EXISTS (
+  SELECT (CASE WHEN NOT EXISTS (
     SELECT 1 FROM erasure_case c JOIN erasure_execution e
       ON e.erasure_id=c.erasure_id AND e.revision=c.revision
     WHERE c.erasure_id=NEW.erasure_id AND c.revision=NEW.erasure_revision
@@ -325,8 +326,8 @@ BEGIN
       AND e.request_sha256=NEW.request_sha256 AND e.lease_owner=NEW.current_lease_owner
       AND e.lease_generation=NEW.current_lease_generation AND e.lease_until=NEW.current_lease_until
       AND e.lease_until > CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER)
-  ) THEN RAISE(ABORT, 'backup plan handoff requires the exact current erasure fence') END;
-  SELECT CASE WHEN NOT EXISTS (
+  ) THEN RAISE(ABORT, 'backup plan handoff requires the exact current erasure fence') END);
+  SELECT (CASE WHEN NOT EXISTS (
     SELECT 1 FROM backup_erasure_primary_closure p WHERE p.erasure_id=NEW.erasure_id
       AND p.erasure_revision=NEW.erasure_revision AND p.lease_generation=NEW.plan_lease_generation
       AND p.state='SEALED' AND p.request_sha256=NEW.request_sha256
@@ -336,8 +337,8 @@ BEGIN
       AND p.primary_prefix_inventory_digest=NEW.original_primary_prefix_inventory_digest
       AND p.qualification_receipt_ref=NEW.original_qualification_receipt_ref
       AND p.qualification_receipt_digest=NEW.original_qualification_receipt_digest
-  ) THEN RAISE(ABORT, 'backup plan handoff must pin the exact historical sealed closure') END;
-  SELECT CASE WHEN NOT (
+  ) THEN RAISE(ABORT, 'backup plan handoff must pin the exact historical sealed closure') END);
+  SELECT (CASE WHEN NOT (
     EXISTS (SELECT 1 FROM backup_purge_obligation o
       JOIN backup_erasure_primary_target_pin t ON t.erasure_id=o.erasure_id
         AND t.erasure_revision=o.erasure_revision AND t.target_id=o.target_id
@@ -348,13 +349,13 @@ BEGIN
       WHERE d.erasure_id=NEW.erasure_id AND d.erasure_revision=NEW.erasure_revision
         AND d.lease_generation=NEW.plan_lease_generation AND d.state<>'PINNED'
         AND d.delete_intent_ref IS NOT NULL AND d.delete_intent_digest IS NOT NULL)
-  ) THEN RAISE(ABORT, 'backup plan handoff requires a durable exact delete intent') END;
+  ) THEN RAISE(ABORT, 'backup plan handoff requires a durable exact delete intent') END);
 END;
 
 CREATE TRIGGER backup_erasure_primary_handoff_transition_guard
 BEFORE UPDATE ON backup_erasure_primary_handoff
 BEGIN
-  SELECT CASE WHEN
+  SELECT (CASE WHEN
     NEW.erasure_id IS NOT OLD.erasure_id OR NEW.erasure_revision IS NOT OLD.erasure_revision OR
     NEW.current_lease_generation IS NOT OLD.current_lease_generation OR NEW.current_lease_owner IS NOT OLD.current_lease_owner OR
     NEW.current_lease_until IS NOT OLD.current_lease_until OR NEW.plan_lease_generation IS NOT OLD.plan_lease_generation OR
@@ -370,14 +371,14 @@ BEGIN
     OLD.current_qualification_json IS NOT NULL OR OLD.current_qualification_digest IS NOT NULL OR OLD.handoff_digest IS NOT NULL OR
     NEW.current_primary_prefix_object_count IS NULL OR NEW.current_primary_prefix_inventory_digest IS NULL OR
     NEW.current_qualification_json IS NULL OR NEW.current_qualification_digest IS NULL OR NEW.handoff_digest IS NULL
-    THEN RAISE(ABORT, 'backup plan handoff may only seal its current qualification once') END;
-  SELECT CASE WHEN NOT EXISTS (
+    THEN RAISE(ABORT, 'backup plan handoff may only seal its current qualification once') END);
+  SELECT (CASE WHEN NOT EXISTS (
     SELECT 1 FROM erasure_execution e WHERE e.erasure_id=NEW.erasure_id AND e.revision=NEW.erasure_revision
       AND e.state='QUARANTINE_AND_REVOKE' AND e.request_sha256=NEW.request_sha256
       AND e.lease_owner=NEW.current_lease_owner AND e.lease_generation=NEW.current_lease_generation
       AND e.lease_until=NEW.current_lease_until
       AND e.lease_until > CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER)
-  ) THEN RAISE(ABORT, 'backup plan handoff qualification requires the live current erasure fence') END;
+  ) THEN RAISE(ABORT, 'backup plan handoff qualification requires the live current erasure fence') END);
 END;
 
 CREATE TRIGGER backup_erasure_primary_handoff_delete_guard
@@ -485,7 +486,7 @@ BEGIN SELECT RAISE(ABORT, 'backup delete items require a building closure'); END
 CREATE TRIGGER backup_erasure_primary_delete_item_transition_guard
 BEFORE UPDATE ON backup_erasure_primary_delete_item
 BEGIN
-  SELECT CASE WHEN
+  SELECT (CASE WHEN
     NEW.erasure_id IS NOT OLD.erasure_id OR NEW.erasure_revision IS NOT OLD.erasure_revision OR
     NEW.lease_generation IS NOT OLD.lease_generation OR NEW.target_id IS NOT OLD.target_id OR
     NEW.part_key IS NOT OLD.part_key OR NEW.updated_at < OLD.updated_at OR
@@ -493,18 +494,18 @@ BEGIN
     NEW.delete_intent_digest IS NOT OLD.delete_intent_digest AND OLD.delete_intent_digest IS NOT NULL OR
     NEW.delete_receipt_ref IS NOT OLD.delete_receipt_ref AND OLD.delete_receipt_ref IS NOT NULL OR
     NEW.absence_receipt_ref IS NOT OLD.absence_receipt_ref AND OLD.absence_receipt_ref IS NOT NULL
-    THEN RAISE(ABORT, 'backup primary delete identity is immutable') END;
-  SELECT CASE WHEN NOT (
+    THEN RAISE(ABORT, 'backup primary delete identity is immutable') END);
+  SELECT (CASE WHEN NOT (
     (OLD.state='PINNED' AND NEW.state='DELETE_INTENT') OR
     (OLD.state='DELETE_INTENT' AND NEW.state IN ('UNKNOWN','DELETED')) OR
     (OLD.state='UNKNOWN' AND NEW.state IN ('DELETE_INTENT','DELETED')) OR
     (OLD.state='DELETED' AND NEW.state='ABSENT')
-  ) THEN RAISE(ABORT, 'invalid backup primary delete transition') END;
-  SELECT CASE WHEN NOT EXISTS (
+  ) THEN RAISE(ABORT, 'invalid backup primary delete transition') END);
+  SELECT (CASE WHEN NOT EXISTS (
     SELECT 1 FROM backup_erasure_primary_active_plan a WHERE a.erasure_id=OLD.erasure_id
       AND a.erasure_revision=OLD.erasure_revision AND a.plan_lease_generation=OLD.lease_generation
       AND a.execution_state IN ('PURGE_EACH_LOCATION','VERIFY_ABSENCE_OR_BLOCK')
-  ) THEN RAISE(ABORT, 'backup primary delete transition requires the exact live plan handoff') END;
+  ) THEN RAISE(ABORT, 'backup primary delete transition requires the exact live plan handoff') END);
 END;
 CREATE TRIGGER backup_erasure_primary_delete_item_delete_guard
 BEFORE DELETE ON backup_erasure_primary_delete_item
@@ -513,17 +514,17 @@ BEGIN SELECT RAISE(ABORT, 'backup primary delete obligations are immutable'); EN
 CREATE TRIGGER backup_purge_primary_receipt_guard
 BEFORE UPDATE ON backup_purge_obligation
 BEGIN
-  SELECT CASE WHEN
+  SELECT (CASE WHEN
     (NEW.primary_delete_intent_ref IS NULL) <> (NEW.primary_delete_intent_digest IS NULL)
-    THEN RAISE(ABORT, 'backup primary intent reference and digest must be paired') END;
-  SELECT CASE WHEN
+    THEN RAISE(ABORT, 'backup primary intent reference and digest must be paired') END);
+  SELECT (CASE WHEN
     NEW.primary_delete_intent_ref IS NOT OLD.primary_delete_intent_ref AND OLD.primary_delete_intent_ref IS NOT NULL OR
     NEW.primary_delete_intent_digest IS NOT OLD.primary_delete_intent_digest AND OLD.primary_delete_intent_digest IS NOT NULL OR
     NEW.primary_delete_receipt_ref IS NOT OLD.primary_delete_receipt_ref AND OLD.primary_delete_receipt_ref IS NOT NULL OR
     NEW.primary_absence_receipt_ref IS NOT OLD.primary_absence_receipt_ref AND OLD.primary_absence_receipt_ref IS NOT NULL OR
     NEW.offsite_delete_receipt_ref IS NOT OLD.offsite_delete_receipt_ref AND OLD.offsite_delete_receipt_ref IS NOT NULL OR
     NEW.offsite_absence_receipt_ref IS NOT OLD.offsite_absence_receipt_ref AND OLD.offsite_absence_receipt_ref IS NOT NULL
-    THEN RAISE(ABORT, 'backup purge component receipts are immutable') END;
+    THEN RAISE(ABORT, 'backup purge component receipts are immutable') END);
 END;
 
 CREATE TRIGGER backup_purge_primary_obligation_delete_guard
@@ -540,7 +541,7 @@ END;
 CREATE TRIGGER erasure_terminal_guard_exact_fence_insert_guard
 BEFORE INSERT ON erasure_terminal_guard
 BEGIN
-  SELECT CASE WHEN NEW.lease_owner IS NULL OR NEW.lease_generation IS NULL OR NEW.lease_until IS NULL OR
+  SELECT (CASE WHEN NEW.lease_owner IS NULL OR NEW.lease_generation IS NULL OR NEW.lease_until IS NULL OR
     NOT EXISTS (
       SELECT 1 FROM erasure_execution e WHERE e.erasure_id=NEW.erasure_id
         AND e.revision=NEW.erasure_revision AND e.state='INVALIDATE_DEPENDENTS'
@@ -548,7 +549,7 @@ BEGIN
         AND e.lease_generation=NEW.lease_generation AND e.lease_until=NEW.lease_until
         AND e.lease_until > CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER)
     )
-  THEN RAISE(ABORT, 'terminal guard requires the exact unexpired invalidation fence') END;
+  THEN RAISE(ABORT, 'terminal guard requires the exact unexpired invalidation fence') END);
 END;
 
 CREATE TRIGGER erasure_execution_backup_primary_complete_guard
@@ -558,7 +559,7 @@ WHEN NEW.state='COMPLETE' AND EXISTS (
     AND t.location='BackupRestorePath'
 )
 BEGIN
-  SELECT CASE WHEN NOT EXISTS (
+  SELECT (CASE WHEN NOT EXISTS (
     SELECT 1 FROM backup_erasure_primary_active_plan a JOIN backup_erasure_primary_closure c
       ON c.erasure_id=a.erasure_id AND c.erasure_revision=a.erasure_revision
       AND c.lease_generation=a.plan_lease_generation
@@ -566,15 +567,15 @@ BEGIN
       AND a.current_lease_generation=OLD.lease_generation AND a.current_lease_owner=OLD.lease_owner
       AND a.current_lease_until=OLD.lease_until AND a.execution_state='INVALIDATE_DEPENDENTS'
       AND c.request_sha256=NEW.request_sha256 AND c.erasure_closure_digest=NEW.closure_digest AND c.state='SEALED'
-  ) THEN RAISE(ABORT, 'backup completion requires a sealed primary closure under the current lease') END;
-  SELECT CASE WHEN NOT EXISTS (
+  ) THEN RAISE(ABORT, 'backup completion requires a sealed primary closure under the current lease') END);
+  SELECT (CASE WHEN NOT EXISTS (
     SELECT 1 FROM erasure_terminal_guard g WHERE g.erasure_id=NEW.erasure_id
       AND g.erasure_revision=NEW.revision AND g.closure_digest=NEW.closure_digest
       AND g.receipt_sha256=NEW.terminal_receipt_sha256 AND g.terminal_state='COMPLETE'
       AND g.lease_owner=OLD.lease_owner AND g.lease_generation=OLD.lease_generation
       AND g.lease_until=OLD.lease_until
-  ) THEN RAISE(ABORT, 'backup completion requires a terminal guard bound to the current lease') END;
-  SELECT CASE WHEN EXISTS (
+  ) THEN RAISE(ABORT, 'backup completion requires a terminal guard bound to the current lease') END);
+  SELECT (CASE WHEN EXISTS (
     SELECT 1 FROM erasure_target t
     LEFT JOIN backup_erasure_primary_active_plan a ON a.erasure_id=t.erasure_id
       AND a.erasure_revision=t.erasure_revision AND a.current_lease_generation=NEW.lease_generation
@@ -588,21 +589,21 @@ BEGIN
         OR o.primary_delete_intent_ref IS NULL OR o.primary_delete_intent_digest IS NULL
         OR o.primary_delete_receipt_ref IS NULL OR o.primary_absence_receipt_ref IS NULL
         OR o.offsite_delete_receipt_ref IS NULL OR o.offsite_absence_receipt_ref IS NULL)
-  ) THEN RAISE(ABORT, 'backup completion requires exact primary and offsite absence receipts') END;
-  SELECT CASE WHEN EXISTS (
+  ) THEN RAISE(ABORT, 'backup completion requires exact primary and offsite absence receipts') END);
+  SELECT (CASE WHEN EXISTS (
     SELECT 1 FROM backup_erasure_primary_delete_item d WHERE d.erasure_id=NEW.erasure_id
       AND d.erasure_revision=NEW.revision AND d.lease_generation=(SELECT a.plan_lease_generation
         FROM backup_erasure_primary_active_plan a WHERE a.erasure_id=NEW.erasure_id
           AND a.erasure_revision=NEW.revision AND a.current_lease_generation=NEW.lease_generation LIMIT 1)
       AND d.state<>'ABSENT'
-  ) THEN RAISE(ABORT, 'backup completion requires absence for every pinned primary part') END;
-  SELECT CASE WHEN (SELECT COUNT(*) FROM backup_erasure_primary_target_pin p
+  ) THEN RAISE(ABORT, 'backup completion requires absence for every pinned primary part') END);
+  SELECT (CASE WHEN (SELECT COUNT(*) FROM backup_erasure_primary_target_pin p
       WHERE p.erasure_id=NEW.erasure_id AND p.erasure_revision=NEW.revision AND p.lease_generation=(
         SELECT a.plan_lease_generation FROM backup_erasure_primary_active_plan a WHERE a.erasure_id=NEW.erasure_id
           AND a.erasure_revision=NEW.revision AND a.current_lease_generation=NEW.lease_generation LIMIT 1))
     <> (SELECT COUNT(*) FROM erasure_target t WHERE t.erasure_id=NEW.erasure_id
       AND t.erasure_revision=NEW.revision AND t.location='BackupRestorePath')
-    THEN RAISE(ABORT, 'backup completion requires exact target coverage') END;
+    THEN RAISE(ABORT, 'backup completion requires exact target coverage') END);
 END;
 
 CREATE TRIGGER erasure_terminal_guard_backup_primary_insert_guard
@@ -612,7 +613,7 @@ WHEN NEW.terminal_state='COMPLETE' AND EXISTS (
     AND t.location='BackupRestorePath'
 )
 BEGIN
-  SELECT CASE WHEN NOT EXISTS (
+  SELECT (CASE WHEN NOT EXISTS (
     SELECT 1 FROM backup_erasure_primary_active_plan a JOIN backup_erasure_primary_closure c
       ON c.erasure_id=a.erasure_id AND c.erasure_revision=a.erasure_revision
       AND c.lease_generation=a.plan_lease_generation
@@ -621,8 +622,8 @@ BEGIN
       AND c.state='SEALED' AND c.erasure_closure_digest=NEW.closure_digest
       AND NEW.closure_digest=a.erasure_closure_digest AND NEW.lease_owner=a.current_lease_owner
       AND NEW.lease_generation=a.current_lease_generation AND NEW.lease_until=a.current_lease_until
-  ) THEN RAISE(ABORT, 'backup terminal guard requires the sealed current primary closure and lease') END;
-  SELECT CASE WHEN EXISTS (
+  ) THEN RAISE(ABORT, 'backup terminal guard requires the sealed current primary closure and lease') END);
+  SELECT (CASE WHEN EXISTS (
     SELECT 1 FROM erasure_target t
     LEFT JOIN backup_purge_obligation o ON o.erasure_id=t.erasure_id
       AND o.erasure_revision=t.erasure_revision AND o.target_id=t.target_id
@@ -635,19 +636,19 @@ BEGIN
         OR o.primary_absence_receipt_ref IS NULL OR o.offsite_delete_receipt_ref IS NULL
         OR o.offsite_absence_receipt_ref IS NULL OR p.target_id IS NULL OR p.identity_digest<>t.identity_digest
         OR t.canonical_ref<>'backup:'||p.backup_epoch_id)
-  ) THEN RAISE(ABORT, 'backup terminal guard requires component absence receipts') END;
-  SELECT CASE WHEN EXISTS (
+  ) THEN RAISE(ABORT, 'backup terminal guard requires component absence receipts') END);
+  SELECT (CASE WHEN EXISTS (
     SELECT 1 FROM backup_erasure_primary_delete_item d WHERE d.erasure_id=NEW.erasure_id
       AND d.erasure_revision=NEW.erasure_revision AND d.lease_generation=(SELECT a.plan_lease_generation
         FROM backup_erasure_primary_active_plan a WHERE a.erasure_id=NEW.erasure_id
           AND a.erasure_revision=NEW.erasure_revision AND a.current_lease_generation=NEW.lease_generation LIMIT 1)
       AND d.state<>'ABSENT'
-  ) THEN RAISE(ABORT, 'backup terminal guard requires absence for every pinned primary part') END;
-  SELECT CASE WHEN (SELECT COUNT(*) FROM backup_erasure_primary_target_pin p
+  ) THEN RAISE(ABORT, 'backup terminal guard requires absence for every pinned primary part') END);
+  SELECT (CASE WHEN (SELECT COUNT(*) FROM backup_erasure_primary_target_pin p
       WHERE p.erasure_id=NEW.erasure_id AND p.erasure_revision=NEW.erasure_revision AND p.lease_generation=(
         SELECT a.plan_lease_generation FROM backup_erasure_primary_active_plan a WHERE a.erasure_id=NEW.erasure_id
           AND a.erasure_revision=NEW.erasure_revision AND a.current_lease_generation=NEW.lease_generation LIMIT 1))
     <> (SELECT COUNT(*) FROM erasure_target t WHERE t.erasure_id=NEW.erasure_id
       AND t.erasure_revision=NEW.erasure_revision AND t.location='BackupRestorePath')
-    THEN RAISE(ABORT, 'backup terminal guard requires exact target coverage') END;
+    THEN RAISE(ABORT, 'backup terminal guard requires exact target coverage') END);
 END;

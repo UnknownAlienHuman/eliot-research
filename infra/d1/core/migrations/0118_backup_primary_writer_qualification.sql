@@ -1,5 +1,6 @@
 -- ER-34 isolated primary-writer qualification. Authority is installed only by
 -- the reviewed native operator; Worker/runtime code has SELECT-only access.
+-- D1 native parser compatibility: parenthesize trigger CASE guards (workers-sdk#4727).
 PRAGMA foreign_keys = ON;
 
 CREATE TABLE backup_primary_writer_qualification (
@@ -121,10 +122,10 @@ BEGIN SELECT RAISE(ABORT, 'backup primary current authority cannot be deleted');
 CREATE TRIGGER backup_primary_writer_current_transition_guard
 BEFORE UPDATE ON backup_primary_writer_current
 BEGIN
-  SELECT CASE WHEN NEW.slot IS NOT OLD.slot OR NEW.qualification_ref IS NOT OLD.qualification_ref OR
+  SELECT (CASE WHEN NEW.slot IS NOT OLD.slot OR NEW.qualification_ref IS NOT OLD.qualification_ref OR
     NEW.qualification_revision IS NOT OLD.qualification_revision OR NEW.qualification_sha256 IS NOT OLD.qualification_sha256 OR
     NEW.controller_generation IS NOT OLD.controller_generation OR NOT (
       (OLD.state = 'ACTIVE' AND NEW.state = 'DRAINING') OR
       (OLD.state = 'DRAINING' AND NEW.state = 'RETIRED')
-    ) THEN RAISE(ABORT, 'invalid backup primary authority transition') END;
+    ) THEN RAISE(ABORT, 'invalid backup primary authority transition') END);
 END;

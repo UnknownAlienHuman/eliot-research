@@ -6,9 +6,9 @@ import { assertO2MigrationAuthority, canonicalizeSchemaSql } from "./migration-g
 export const BACKUP_PRODUCER_FENCE_MIGRATION = "0116_backup_epoch_producer_fence.sql";
 // Digests bind the exact normalized migration and the producer/erasure DDL
 // read back from SQLite; fixtures verify these values against the tracked SQL.
-export const BACKUP_PRODUCER_FENCE_MIGRATION_SHA256 = "f5ca9a65411158aef794b934a0ea89f9c01453a06bdf2591b9b0427e6cacd9bc";
-export const BACKUP_PRODUCER_FENCE_SCHEMA_SHA256 = "6bd894a59b88fc2b7ab5728c39dbda83cdc3564ac7affd1d28868ffb5c02b618";
-export const BACKUP_PRODUCER_ERASURE_SCHEMA_SHA256 = "4b8d7fb3391f32a0403636876532735de148d77e1107d75647e7a4dcc1c00527";
+export const BACKUP_PRODUCER_FENCE_MIGRATION_SHA256 = "c31dddfdf65c9ad67205dac33e397d24d2de18fee5ab81ec5fbde2eca446046f";
+export const BACKUP_PRODUCER_FENCE_SCHEMA_SHA256 = "fc7e814453b25356b91113f6f1554d0cb6d0fde13aeef20f24771f004583cb6c";
+export const BACKUP_PRODUCER_ERASURE_SCHEMA_SHA256 = "64f9b23f9ac9d2aacf45598b3835ea3fc72063fb00448be189e6028d64a3218b";
 
 const PRODUCER_TABLE = "backup_epoch_producer_claim";
 const REQUIRED_LEDGER = [

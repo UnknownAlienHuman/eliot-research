@@ -2,6 +2,7 @@
 -- source capture, then pins its exact immutable output plan before the first
 -- backup-parts write. Uncertain WRITING attempts remain blocking for operator
 -- reconciliation; this migration intentionally defines no lease or reaper.
+-- D1 native parser compatibility: parenthesize trigger CASE guards (workers-sdk#4727).
 PRAGMA foreign_keys = ON;
 
 CREATE TABLE backup_epoch_producer_claim (
@@ -89,29 +90,29 @@ END;
 CREATE TRIGGER backup_epoch_producer_claim_transition_guard
 BEFORE UPDATE ON backup_epoch_producer_claim
 BEGIN
-  SELECT CASE WHEN
+  SELECT (CASE WHEN
     NEW.idempotency_key IS NOT OLD.idempotency_key OR
     NEW.base_intent_digest IS NOT OLD.base_intent_digest OR
     NEW.attempt_nonce IS NOT OLD.attempt_nonce OR
     NEW.created_at IS NOT OLD.created_at
-    THEN RAISE(ABORT, 'backup producer claim identity is immutable') END;
+    THEN RAISE(ABORT, 'backup producer claim identity is immutable') END);
 
-  SELECT CASE WHEN NOT (
+  SELECT (CASE WHEN NOT (
     (OLD.state = 'CAPTURING' AND NEW.state IN ('WRITING','ABANDONED_NO_WRITES')) OR
     (OLD.state = 'WRITING' AND NEW.state IN ('UNKNOWN','COMMITTED'))
-  ) THEN RAISE(ABORT, 'invalid backup producer claim transition') END;
+  ) THEN RAISE(ABORT, 'invalid backup producer claim transition') END);
 
-  SELECT CASE WHEN OLD.state = 'CAPTURING' AND NEW.state = 'WRITING' AND (
+  SELECT (CASE WHEN OLD.state = 'CAPTURING' AND NEW.state = 'WRITING' AND (
     EXISTS (SELECT 1 FROM erasure_case WHERE state <> 'COMPLETE') OR
     EXISTS (SELECT 1 FROM erasure_execution WHERE state <> 'COMPLETE')
-  ) THEN RAISE(ABORT, 'backup producer write blocked by active erasure') END;
+  ) THEN RAISE(ABORT, 'backup producer write blocked by active erasure') END);
 
-  SELECT CASE WHEN OLD.state = 'WRITING' AND (
+  SELECT (CASE WHEN OLD.state = 'WRITING' AND (
     NEW.epoch_id IS NOT OLD.epoch_id OR NEW.part_prefix IS NOT OLD.part_prefix OR
     NEW.cut_id IS NOT OLD.cut_id OR NEW.cut_digest IS NOT OLD.cut_digest OR
     NEW.vector_digest IS NOT OLD.vector_digest OR NEW.manifest_digest IS NOT OLD.manifest_digest OR
     NEW.intent_digest IS NOT OLD.intent_digest
-  ) THEN RAISE(ABORT, 'backup producer pins are immutable after WRITING') END;
+  ) THEN RAISE(ABORT, 'backup producer pins are immutable after WRITING') END);
 END;
 
 CREATE TRIGGER backup_epoch_producer_claim_insert_state_guard

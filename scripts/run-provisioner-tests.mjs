@@ -20,6 +20,7 @@ await import("./test-deployment-maintenance.mjs");
 await import("./test-deployment-ai-search-bootstrap.mjs");
 await import("./test-deployment-mcp-access-transition.mjs");
 await import("./test-deployment-migration-operation.mjs");
+await import("./test-backup-trigger-parser-compatibility.mjs");
 await import("./test-deployment-build-inputs.mjs");
 await import("./test-primary-writer-qualification-operator.mjs");
 await import("./test-cloudflare-provisioners.mjs");

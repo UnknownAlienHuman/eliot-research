@@ -1,6 +1,7 @@
 -- Canonical, content-addressed references for the portable backup epoch.
 -- PENDING is publication only; this migration contains no writer that can
 -- claim restore verification or authorize erasure closure.
+-- D1 native parser compatibility: parenthesize trigger CASE guards (workers-sdk#4727).
 PRAGMA foreign_keys = ON;
 
 CREATE TABLE backup_epoch_manifest_binding (
@@ -206,7 +207,7 @@ END;
 CREATE TRIGGER backup_epoch_manifest_identity_guard
 BEFORE UPDATE ON backup_epoch
 BEGIN
-  SELECT CASE WHEN
+  SELECT (CASE WHEN
     NEW.backup_epoch_id IS NOT OLD.backup_epoch_id OR
     NEW.core_export_ref IS NOT OLD.core_export_ref OR
     NEW.search_projection_manifest_ref IS NOT OLD.search_projection_manifest_ref OR
@@ -215,14 +216,14 @@ BEGIN
     NEW.offsite_copy_ref IS NOT OLD.offsite_copy_ref OR
     NEW.purge_ledger_revision IS NOT OLD.purge_ledger_revision OR
     NEW.created_at IS NOT OLD.created_at
-    THEN RAISE(ABORT, 'canonical backup epoch identity is immutable') END;
+    THEN RAISE(ABORT, 'canonical backup epoch identity is immutable') END);
 
-  SELECT CASE WHEN NOT (
+  SELECT (CASE WHEN NOT (
     (OLD.verification_state = 'PENDING' AND NEW.verification_state IN ('VERIFIED','FAILED')) OR
     (OLD.verification_state = NEW.verification_state AND OLD.verified_at IS NEW.verified_at)
-  ) THEN RAISE(ABORT, 'invalid canonical backup epoch verification transition') END;
+  ) THEN RAISE(ABORT, 'invalid canonical backup epoch verification transition') END);
 
-  SELECT CASE WHEN OLD.verification_state = 'PENDING' AND NEW.verification_state IN ('VERIFIED','FAILED') AND NOT EXISTS (
+  SELECT (CASE WHEN OLD.verification_state = 'PENDING' AND NEW.verification_state IN ('VERIFIED','FAILED') AND NOT EXISTS (
     SELECT 1 FROM backup_epoch_verification_receipt AS r
     WHERE r.backup_epoch_id = OLD.backup_epoch_id
       AND r.outcome = NEW.verification_state
@@ -234,7 +235,7 @@ BEGIN
       AND r.purge_ledger_revision = OLD.purge_ledger_revision
       AND r.created_at = CASE WHEN NEW.verification_state = 'VERIFIED' THEN NEW.verified_at ELSE r.created_at END
       AND (NEW.verification_state <> 'FAILED' OR NEW.verified_at IS NULL)
-  ) THEN RAISE(ABORT, 'canonical backup epoch transition requires its exact immutable verification receipt') END;
+  ) THEN RAISE(ABORT, 'canonical backup epoch transition requires its exact immutable verification receipt') END);
 END;
 
 CREATE TRIGGER backup_epoch_immutable_delete

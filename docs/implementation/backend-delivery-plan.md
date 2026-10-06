@@ -52,6 +52,40 @@ Focused integrity/build-input/apply-ordering fixtures and an independent source
 review passed. Wrangler type generation now writes to ignored tooling state,
 preserving product-source membership and the existing budget limits.
 
+### October 6 UTC status addendum
+
+The foundation checkpoint is published to `main` and `origin` at `a765fd6d`.
+The COW path derives TEST for development and PRODUCTION otherwise, then passes
+the same value to admission and runtime. Two focused native files reported
+seven PASS cases. The frozen
+four-key policy projection moved to the Research Runtime owner to retain the
+Core budget. Full assembly ran once; its failed subsets were corrected, and no
+rerun is claimed.
+
+The root-native read-only EXPLAIN probe confirmed the SQL boundary: Wrangler
+4.143.1's local parser and whole-SQL Node/SQLite checks pass, while the plain
+trigger `CASE` fails with `SQLITE_ERROR` code 7500. The parenthesized `CASE`
+returns HTTP 200 and 15 EXPLAIN instruction rows, with `rows_written=0` and
+`changed_db=false`; all three probe objects remain absent. This is a
+server-parser boundary, not a Wrangler client
+splitter claim; [upstream issue #4727](https://github.com/cloudflare/workers-sdk/issues/4727)
+is an older matching report.
+
+The pending 0116–0119 source repair wraps 33 CASE guard expressions in
+parentheses across 12 triggers, preserving every predicate and message byte.
+The inverse regression reproduces the original migration hashes. Five source
+pins now match the actual SQLite inventories of six producer, five erasure and
+twelve manifest objects. SQLite compilation accepted 118 Core migrations
+containing 601 statements with zero failures. Four focused files report
+15 PASS cases; package
+compilation, lint and budgets pass. The corrected native intent has not been
+executed. Ledger 114 remains; the first receipt is `UNKNOWN` and has no frozen
+retry.
+
+The live Worker remains generation `git-7962930b6eab` with 11 bindings; release
+is pending the SQL repair. No Issue #301 completion or full backup/restore/
+erasure proof is claimed.
+
 The native Cloudflare API created the separate `eliotr-backup-parts` primary
 bucket once, after an exact empty filtered inventory, and verified its default
 jurisdiction and Standard class. Its actual API evidence and strict creation
@@ -90,9 +124,10 @@ the exact installed state. Its read-only discovery emits actual deployment,
 binding and inventory evidence. The real SQLite regression fixture passes
 stale-row, race, replay and binding negatives. Independent source review
 accepted the prior-row, conditional-commit and read-only reconciliation gates.
-A remaining outer-versus-inner discovery-mode check in the ignored assembler
-is being corrected; no real admission/policy issuer or live qualification
-installation is claimed.
+The outer-versus-inner discovery-mode check in the ignored assembler is fixed;
+its scoped `node --check` and offline fixture passed. No real admission/policy
+issuer, installed qualification service, offsite destination or full release is
+claimed.
 
 The four pending migrations require 67 schema probes (v2 groups of 64 and three).
 The existing classifier now admits only the bounded nullable scalar CHECK
