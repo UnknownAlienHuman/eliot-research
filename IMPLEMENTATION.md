@@ -1,44 +1,66 @@
 # Implementation entry point
 
-The repository is under active implementation and is not production-ready. The architecture remains
-authoritative for product intent; the language/runtime contract owns responsibility boundaries; the
-readiness plan owns the ordered path to a production declaration; and the files below are authoritative
-for day-to-day agent work.
+The repository is under active implementation and is not production-ready.
 
-1. Read [`docs/implementation/backend-delivery-plan.md`](docs/implementation/backend-delivery-plan.md)
-   for the current ordered queue; use [#292](https://github.com/UnknownAlienHuman/eliot-research/pull/292)
-   for the original S01–S99 contracts. The production-readiness plan owns final release criteria.
-2. Inspect [`docs/implementation/implementation-status.json`](docs/implementation/implementation-status.json)
-   and [`docs/implementation/gap-register.md`](docs/implementation/gap-register.md).
-3. Claim one packet from [`docs/agent-work/`](docs/agent-work/README.md).
-4. Read its owned paths, input contracts, acceptance cases, and named architecture sections only.
-5. Read the language owner for the capability in
-   [`LANGUAGE_RUNTIME_CONTRACT.md`](docs/architecture/LANGUAGE_RUNTIME_CONTRACT.md).
-6. Implement behind existing ports. Do not redesign cross-package contracts inside a leaf packet.
-7. Follow [`branch-discipline.md`](docs/implementation/branch-discipline.md): one checkpoint on main,
-   no task branches/worktrees, numeric branch quota or age-based deletion. Preserve concurrent work.
-8. During the owner-directed code phase, compile and run scoped lint (minimal Clippy for Rust);
-   SQL changes require the D1-limit compiler check from #294. Broad suites wait until assembly.
-   Then run `pnpm check:affected` and the required Cargo/native/browser gates; never report deferred checks as passed.
-9. Record deterministic, live, recovery and workload evidence separately. No omitted live gate becomes
-   `PASS` by implication.
+Start with:
 
-Primary maps:
+1. [`docs/START-HERE.md`](docs/START-HERE.md) — the repository router and authority order.
+2. [`docs/implementation/backend-entrypoints.md`](docs/implementation/backend-entrypoints.md) — the
+   current backend wave, one-worktree-per-manager protocol, integrator path and review checklist.
+3. The assigned PR/passport, owning ER packet and only the architecture sections named by that packet.
 
-- [`docs/implementation/production-readiness-plan.md`](docs/implementation/production-readiness-plan.md)
-- [`docs/architecture/ELIOT_RESEARCH.md`](docs/architecture/ELIOT_RESEARCH.md)
-- [`docs/architecture/LANGUAGE_RUNTIME_CONTRACT.md`](docs/architecture/LANGUAGE_RUNTIME_CONTRACT.md)
-- [`docs/implementation/branch-discipline.md`](docs/implementation/branch-discipline.md)
-- [`docs/implementation/toolchain.md`](docs/implementation/toolchain.md)
-- [`docs/implementation/dependency-map.md`](docs/implementation/dependency-map.md)
-- [`docs/implementation/contract-index.md`](docs/implementation/contract-index.md)
-- [`docs/implementation/runtime-contract.md`](docs/implementation/runtime-contract.md)
-- [`docs/implementation/slice-gates.md`](docs/implementation/slice-gates.md)
-- [`docs/implementation/cloudflare-runbook.md`](docs/implementation/cloudflare-runbook.md)
-- [`docs/implementation/release-checklist.md`](docs/implementation/release-checklist.md)
-- [`docs/implementation/security-checklist.md`](docs/implementation/security-checklist.md)
-- [`docs/agent-work/manifest.json`](docs/agent-work/manifest.json)
+Do **not** use `docs/implementation/backend-delivery-plan.md` as the current queue. It records the paused
+October 6 checkpoint and remains historical evidence.
 
-The system starts and remains fail-closed. A type-compatible placeholder is not an implemented feature;
-a local fixture is not a live platform receipt; Workflow or transport completion is not research
-completion. A production declaration requires every mandatory condition in the readiness plan.
+## Current execution model
+
+- one worktree per manager;
+- one bounded checkpoint per manager at a time;
+- one named integrator serializes shared contracts, composition, migrations, manifests, barrels,
+  lockfiles, generated bindings and CI;
+- no force-push over concurrent work;
+- code first during assembly: compile and scoped lint, plus minimal Clippy for Rust;
+- broad tests/native/live acceptance after assembled product code, unless the active PR requires a
+  narrow reproduction;
+- every unexecuted gate is `PENDING`, never implied `PASS`.
+
+## Essential authorities
+
+- [Current backend entry points](docs/implementation/backend-entrypoints.md)
+- [Final PR disposition matrix](.github/audits/2026-10-08/FINAL-PR-DISPOSITION-MATRIX.md)
+- [Cloudflare/Eliot ownership](.github/audits/2026-10-08/CLOUDFLARE-NATIVE-OWNERSHIP.md)
+- [Backend audit completion marker](.github/audits/2026-10-08/BACKEND-AUDIT-PREPARATION-COMPLETE.md)
+- [Implementation status](docs/implementation/implementation-status.json)
+- [Gap register](docs/implementation/gap-register.md)
+- [Work-packet ownership](docs/agent-work/README.md)
+- [Product architecture](docs/architecture/ELIOT_RESEARCH.md)
+- [Language/runtime ownership](docs/architecture/LANGUAGE_RUNTIME_CONTRACT.md)
+- [Branch/worktree discipline](docs/implementation/branch-discipline.md)
+- [Scoped verification](docs/implementation/scoped-verification.md)
+- [Production readiness](docs/implementation/production-readiness-plan.md)
+
+## Completion standard
+
+A checkpoint is not complete because a DTO exists, a package compiles, a provider returned 200, a
+Workflow reached a terminal state or a wrapper was added.
+
+The implementation must identify:
+
+```text
+migrated callers
+removed duplicate functions/branches/engines
+legacy codec compatibility
+net production LOC/bundle delta
+D1/R2/provider-call delta
+negative/replay/lost-ACK/bound evidence
+remaining compiler/test/native/live gates
+```
+
+Every mutation retains:
+
+```text
+Intent → Attempt → Receipt → Readback → Reconciliation
+```
+
+A production declaration still requires the complete ordered acceptance in the production-readiness
+plan. Backend audit preparation is complete; implementation and release acceptance are not.
