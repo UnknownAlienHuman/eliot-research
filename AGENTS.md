@@ -1,9 +1,9 @@
 # Eliot Research implementation rules
 
-**New here? Read [`docs/START-HERE.md`](docs/START-HERE.md) first.** It is the single entry point:
-read order, how to orient by running commands instead of trusting prose, how to claim work, the
-verification gates and the branch discipline. This file states the boundaries; that one states the
-procedure.
+**New here? Read [`docs/START-HERE.md`](docs/START-HERE.md) first.** It is the single repository entry
+point. Backend managers then use
+[`docs/implementation/backend-entrypoints.md`](docs/implementation/backend-entrypoints.md) for the
+current wave, one-worktree-per-manager protocol, integration order and review checklist.
 
 This repository is governed by:
 
@@ -13,12 +13,12 @@ This repository is governed by:
   external-agent and platform-evolution amendments;
 - `docs/implementation/branch-discipline.md` for branch/worktree lifecycle.
 
-Agents should not reread the whole architecture for normal work. Start from the work packet in
-`docs/agent-work/`, then read only the contracts and neighboring modules named by that packet.
+Agents should not reread the whole architecture for normal work. Start from the active PR/passport and
+owning work packet, then read only the contracts and neighboring modules named by that packet.
 
 ## Non-negotiable boundaries
 
-1. One deployable Worker (`apps/eliotr-core`) + static PWA assets; packages are libraries, not services.
+1. One deployable Worker (`apps/eliotr-core`) + static owner assets; packages are libraries, not services.
 2. D1 Core/R2 Evidence/Work canonical; D1 Search/AI Search rebuildable projections.
 3. Index results are locators; evidence only after `EvidenceHandle` resolution against exact admitted source
    revision, scope snapshot, owner generation, purge state, coordinate map, byte length, excerpt digest.
@@ -39,7 +39,7 @@ Agents should not reread the whole architecture for normal work. Start from the 
 
 1. TypeScript currently owns the Cloudflare control plane: Worker routing, Access, D1/R2/Queues,
    Workflows, Durable Objects, AI Search, Workers AI/AI Gateway, Analytics Engine, MCP transport,
-   Google orchestration, PWA, Wrangler, and provisioning. ADR-0007 permits incremental Rust platform
+   Google orchestration, owner web, Wrangler, and provisioning. ADR-0007 permits incremental Rust platform
    adapters, including a Rust-authored backend; preserve behavior and record each ownership cutover.
 2. Rust owns pure deterministic domain authority: canonicalization, stable IDs, state machines, scope,
    policy/residency invariants, qualification, evidence/coverage dispositions, and algorithmic cores.
@@ -63,34 +63,43 @@ administration; no blanket QA-only/staging-only restriction applies. Reuse exist
 evidence and attempt semantics. See [ADR-0007](docs/adr/0007-external-agents-and-cloudflare-evolution.md)
 for current adapter gaps and the [short runbook](docs/implementation/muse-operator-runbook.md).
 
-## Swarm edit protocol
+## Manager and swarm protocol
 
-The owner's current code-delivery phase is defined in [backend-delivery-plan.md](docs/implementation/backend-delivery-plan.md).
-Its compilation/scoped-lint-first procedure overrides routine test-first/full-suite-per-push defaults
-below until assembly. Preserve all negative/final acceptance criteria and report unexecuted checks as pending.
+The current backend execution phase is defined by
+[backend-entrypoints.md](docs/implementation/backend-entrypoints.md). The older
+`backend-delivery-plan.md` is a paused October 6 checkpoint and historical evidence, not the current queue.
 
-- Claim exactly one work packet. Edit only its `owned_paths`.
-- Owner-directed implementation is on `main` only, without additional worktrees or task branches.
-- One agent holds one checkpoint; finish or explicitly hand it off before taking another.
-- Publish tested commits without rewriting history; preserve concurrent main changes.
-- Branch count, age, and a closed PR never authorize deletion. Automated cleanup requires the exact
-  head already in main, no open PR, no protection, and an expected-head conditional deletion.
-- Do not edit another agent's barrel file, package manifest, migration, or shared fixture unless the
-  packet grants ownership.
+- One manager owns one worktree and one bounded checkpoint at a time.
+- Subagents do not create extra worktrees. They work inside the manager-owned tree under disjoint exact
+  paths or remain read-only.
+- One named integrator serializes shared contracts, composition roots, public routes, migrations,
+  manifests, barrels, package/Cargo manifests, lockfiles, generated bindings and CI.
+- Claim exact paths, base SHA, dependencies and build gates in the active PR before editing.
+- Finish or explicitly hand off before taking another checkpoint.
+- Never force-push over concurrent work. Reconcile a refreshed expected head and preserve history.
+- Branch count, age and PR closure never authorize deletion. Automated cleanup requires the exact head
+  already in main, no open PR, no protection and an expected-head conditional deletion.
+- Do not edit another manager's shared file, package manifest, migration or fixture without the named
+  integrator handoff.
 - Add implementation behind existing interfaces; do not rename public fields or enums.
 - Source-maintainability heuristics: at most 600 physical lines/file and 10,000 lines/package for
-  `.ts/.tsx/.js/.mjs` under `src`, including colocated tests. Raw Worker/PWA source-byte ceilings are
+  `.ts/.tsx/.js/.mjs` under `src`, including colocated tests. Raw Worker/web source-byte ceilings are
   600 KiB/2 MiB. `scripts/check-budgets.mjs` defines the counted paths and exclusions. Split by
   capability, not arbitrary line count; never remove tests or move files merely to game the count.
   These are not emitted-artifact or platform limits. S90 separately measures the release targets
-  (compressed Worker <= 4 MiB; initial PWA JavaScript <= 600 KiB gzip) and runtime resources.
+  (compressed Worker <= 4 MiB; initial owner-web JavaScript <= 600 KiB gzip) and runtime resources.
 - Every mutation implements Intent → Attempt → Receipt → Readback → Reconciliation.
 - Every expensive or retryable operation accepts an idempotency identity and cancellation/budget
   context.
 - Tests must cover the negative case named in the packet, not only the happy path.
-- Finish by running `pnpm check:full`; after the Cargo workspace lands, Rust changes also run the
-  complete Cargo gate defined by `LANGUAGE_RUNTIME_CONTRACT.md`.
-- Record commands and results in the PR body.
+
+The owner's current phase is code first. During assembly run TypeScript compilation and scoped lint;
+Rust changes also get compilation and minimal Clippy; SQL changes run the installed D1 depth/target
+compiler. Execute narrow reproductions required by the active PR. Broad unit/browser/native/mutation/live
+suites run after assembled product code. Report unexecuted checks as `PENDING`.
+
+Final repository acceptance still runs `pnpm check:full`; after the Cargo workspace lands, Rust changes
+also run the complete Cargo gate defined by `LANGUAGE_RUNTIME_CONTRACT.md`.
 
 ## Dependency direction
 
@@ -110,8 +119,8 @@ platform-cloudflare  → application ports
 google-drive-exchange → contracts/domain/policy
 interfaces            → application services
 apps/eliotr-core       → composition root and Cloudflare control plane only
-apps/eliotr-pwa        → contracts + browser feature libs + HTTPS API only
-browser feature libs  → contracts + pwa-http-client; Research UI → Source UI
+owner web              → contracts + browser feature libs + HTTPS API only
+browser feature libs  → contracts + owner-api-client; Research UI → Source UI
 
 Rust pure crates       → no Cloudflare/runtime dependency
 eliotr-kernel-wasm     → Rust pure crates only
@@ -121,14 +130,13 @@ TypeScript Worker      → versioned Wasm ABI + Cloudflare bindings
 The automated boundary check is authoritative for allowed package imports.
 
 [ADR-0015](docs/adr/0015-browser-capability-libraries.md) permits the finite browser-only
-libraries `pwa-http-client`, `pwa-source-workspace`, `pwa-research-workspace`, and
-`pwa-knowledge-workspace`. The static PWA composes them; they receive no Worker bindings,
-provider credentials, backend authority, or additional deployment. The isolated agent inbox
-retains its standalone build and session rules.
+libraries and the replacement owner-web architecture defined by the current UI owner. Static assets
+receive no Worker bindings, provider credentials, backend authority or additional deployment. The
+isolated agent inbox retains its standalone build and session rules.
 
 ## Implementation-state gate
 
-Before claiming packet, inspect `docs/implementation/implementation-status.json` and
+Before claiming a checkpoint, inspect `docs/implementation/implementation-status.json` and
 `docs/implementation/gap-register.md`. A compiling port or final-shaped DTO is not an implemented feature.
-Remove fail-closed sentinel only with its negative acceptance case + required live receipt; update status
-registry same commit.
+Remove a fail-closed sentinel only with its negative acceptance case and required live receipt; update the
+status registry in the same accepted change.
