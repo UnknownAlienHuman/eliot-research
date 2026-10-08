@@ -82,6 +82,28 @@ describe("Golden Corpus gates", () => {
     }])).toThrow("GOLDEN_PROMOTION_BLOCKED");
   });
 
+  it("blocks adversarial producer PASS when hard evidence still fails", () => {
+    const base = {
+      case_id: "case-1",
+      passed: true,
+      observed_atoms: ["decision"],
+      observed_unknowns: [] as readonly string[],
+      resolved_handle_refs: [],
+      coverage_kind: "complete_scope",
+      diagnostics_ref: "adversarial-producer",
+    };
+    expect(() => assertGoldenPromotionGate([{
+      ...base,
+      observed_forbidden_collapses: [],
+      failures: ["MISSING_HANDLE:case-1:required@1"],
+    }])).toThrow("GOLDEN_PROMOTION_BLOCKED:case-1");
+    expect(() => assertGoldenPromotionGate([{
+      ...base,
+      observed_forbidden_collapses: ["recommendation-to-decision"],
+      failures: [],
+    }])).toThrow("GOLDEN_PROMOTION_BLOCKED:case-1");
+  });
+
   it("fails a deliberately collapsing extractor on recommendation-vs-decision and hypothesis-vs-observation", () => {
     const collapsed = runCollapsingExtractor([recommendationCase, hypothesisCase]);
     expect(collapsed).toHaveLength(2);
@@ -174,6 +196,58 @@ describe("Golden Corpus gates", () => {
       unknowns: ["   "],
     });
     expect(malformed.failures).toContain("MALFORMED_UNKNOWN:GC-001-recommendation-vs-decision:0");
+  });
+
+  it("bounds malformed and oversized observed unknown containers without throwing", () => {
+    const faithful = {
+      atoms: ["D-001 is a decision", "R-001 is a recommendation"],
+      forbidden: [] as readonly string[],
+      handles: [
+        { id: "handle-gc001-decision", revision: 1 },
+        { id: "handle-gc001-recommendation", revision: 1 },
+      ],
+      coverage: "complete_scope",
+    };
+    const malformedRaw = [
+      { ...faithful },
+      { ...faithful, unknowns: "not-an-array" },
+      { ...faithful, unknowns: { value: "not-an-array" } },
+    ];
+    for (const raw of malformedRaw) {
+      const observed = raw as unknown as Parameters<typeof adjudicateGoldenCase>[1];
+      const verdict = adjudicateGoldenCase(recommendationCase, observed);
+      expect(verdict.failures).toContain(
+        "MALFORMED_UNKNOWN_CONTAINER:GC-001-recommendation-vs-decision",
+      );
+      const results = evaluateGoldenRun(
+        [recommendationCase],
+        new Map([[recommendationCase.case_id, observed]]),
+      );
+      expect(results[0]).toMatchObject({
+        passed: false,
+        observed_unknowns: [],
+      });
+      expect(results[0]?.failures).toContain(
+        "MALFORMED_UNKNOWN_CONTAINER:GC-001-recommendation-vs-decision",
+      );
+    }
+
+    const oversized = {
+      ...faithful,
+      unknowns: Array.from({ length: 33 }, (_, index) => `unknown-${String(index)}`),
+    } as unknown as Parameters<typeof adjudicateGoldenCase>[1];
+    const oversizedVerdict = adjudicateGoldenCase(recommendationCase, oversized);
+    expect(oversizedVerdict.failures).toContain(
+      "OVERSIZED_UNKNOWN_CONTAINER:GC-001-recommendation-vs-decision:33",
+    );
+    const oversizedResults = evaluateGoldenRun(
+      [recommendationCase],
+      new Map([[recommendationCase.case_id, oversized]]),
+    );
+    expect(oversizedResults[0]).toMatchObject({
+      passed: false,
+      observed_unknowns: [],
+    });
   });
 
   it("rejects malformed, empty, and oversized cases", () => {
