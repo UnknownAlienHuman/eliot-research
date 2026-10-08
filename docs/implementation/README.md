@@ -19,9 +19,10 @@ from the tables below, so an unlisted file is a bug, not an omission you may ign
 
 | Document | Purpose |
 |---|---|
+| [backend-entrypoints.md](backend-entrypoints.md) | **Current backend execution router:** role-based entry points, dependency-ready wave, manager worktrees and integration/review gates. |
 | [implementation-status.md](implementation-status.md) | What the four states mean and why a compiling port is not an implemented feature. |
 | [implementation-status.json](implementation-status.json) | The machine-readable registry. `pnpm check:implementation-status` validates it. |
-| [backend-delivery-plan.md](backend-delivery-plan.md) | Single ordered code queue, delivered checkpoint references, and separate assembled-product acceptance. |
+| [backend-delivery-plan.md](backend-delivery-plan.md) | Historical October 6 paused source checkpoint and retained evidence; **not** the current implementation queue. |
 | [product-resume-2026-10-02.md](product-resume-2026-10-02.md) | Dated product integration checkpoint with preserved decisions and pending acceptance. |
 | [product-resume-2026-10-03.md](product-resume-2026-10-03.md) | Owner configuration, immutable Research capture and functional integration checkpoint. |
 | [audit-2026-09-25-review.md](audit-2026-09-25-review.md) | Independent review of audit PR303: reproduced SQL/lint/CI findings, corrections, issue mapping and verification limits. |
@@ -48,12 +49,12 @@ from the tables below, so an unlisted file is a bug, not an omission you may ign
 
 | Document | Purpose |
 |---|---|
-| [branch-discipline.md](branch-discipline.md) | Main-only implementation and exact-head, integration-proven branch cleanup. |
+| [branch-discipline.md](branch-discipline.md) | One worktree per manager, serialized shared integration and exact-head branch cleanup. |
 | [scoped-verification.md](scoped-verification.md) | Focused verification commands and the distinction between scoped checks and the full chain. |
 | [toolchain.md](toolchain.md) | Pinned bootstrap tools. Leaf agents must not upgrade these; toolchain changes are ER-00. |
 | [launch-prs/README.md](launch-prs/README.md) | Theme map and the checkpoint dependency graph. |
-| [launch-prs/agent-start.md](launch-prs/agent-start.md) | How to select a checkpoint and the claim block to post before editing. |
-| [launch-prs/execution-contract.md](launch-prs/execution-contract.md) | Mandatory reading, claim procedure, implementation order, required tests and commands. |
+| [launch-prs/agent-start.md](launch-prs/agent-start.md) | How a manager starts one checkpoint and records ownership before editing. |
+| [launch-prs/execution-contract.md](launch-prs/execution-contract.md) | Mandatory reading, ownership procedure, implementation order, required gates and evidence. |
 | [launch-prs/cloudflare-handoff.md](launch-prs/cloudflare-handoff.md) | Execution contract for account work; currently blocked by unfinished application code. |
 | [launch-prs/01-library.md](launch-prs/01-library.md) | Launch 01 plan — source ingest and owner Library. |
 | [launch-prs/09-rust.md](launch-prs/09-rust.md) | Launch 09 plan — Rust family parity, Wasm promotion, TS-authority removal. |
