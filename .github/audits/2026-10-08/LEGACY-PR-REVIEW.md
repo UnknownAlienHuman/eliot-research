@@ -1,60 +1,59 @@
-# Проверка старых PR и продолжение серии исправлений
+# Проверка старых PR: текущие задания и конкретные доноры
 
 Дата 2026-10-08. Проверенный source baseline: `3e6c25660c1ae515760e19d5f9e6b8a735795c4c`.
+Это продолжение REPAIR-SERIES.md, не второй execution plan и не поставка runtime. Доработаны шесть существующих draft-заданий. Отдельно просмотрены closed/unmerged #243/#245; их статус не доказывает ни отсутствие реализации, ни её готовность.
 
-Это дополнение к REPAIR-SERIES.md, не новый глобальный план и не runtime delivery. Глубоко уточнены четыре старых задания; у трёх других проверены metadata/state, без заявления о полной функциональной приёмке. Новый PR не создан: использованы существующие #231/#244/#268/#282 и индекс #327. Новые обсуждения/comments отсутствуют.
+## 1. Текущая карта
 
-## 1. Что действительно проверено/изменено
-
-| PR | Наблюдение | Действие |
+| PR | Конкретный результат задания | Что не делать |
 |---|---|---|
-| #231 S39 | Открытый документационный draft; первичный websearch donor имеет permissive decoding и abort-only-wait semantics | Сохранён новый паспорт и уточнён body: native call, bounded parse, честные unknowns, existing capture/admission |
-| #244 S52 | Открытый draft; первоначально mergeable=false; Items API уже реализован и подключён | Новый паспорт; planning branch согласована с main non-forced merge-commit; original S52 сохранён |
-| #268 S76 | Открытый draft; первоначально mergeable=false; source-line hard gate конфликтует с mechanical formatting | Новый паспорт; planning branch согласована с main без переписывания истории; связь с #282 A/B |
-| #282 S90 | Открытый документационный draft; есть source checker, нет его emitted measurements | Новый паспорт: использовать native Wrangler build metrics; отдельно initial PWA graph и runtime |
-| #267 S75 | Открыт, draft, mergeable=false на чтении | Только status/body review. Конфликт НЕ исправлен, runtime/PWA completeness не проверена. Не объявлять готовым к merge |
-| #243 S51 | Закрыт, merged=false | Не переоткрыт. Closed planning PR сам по себе не доказывает ни отсутствие кода, ни completion |
-| #245 S53 | Закрыт, merged=false | Не переоткрыт. Existing artifact-product/COW exports и composition найдены; новый report engine не назначается |
+| #231 S39/R07 | Native websearch → existing capture/conversion/admission; bounded decoder, truthful provider facts и unknown effects | Второй crawler/SDK или автоматическая повторная оплата после abort |
+| #244 S52 | Existing Items adapter: metadata/name preflight, per-item resume/readback, promotion | Новый индексатор; upsert как бесплатный exactly-once |
+| #282 S90 | Native emitted Worker/PWA metrics, source counters advisory | Оценивать deployment size по исходникам или сумме gzip файлов |
+| #268 S76 | После S90 A/B — pinned formatter и механический diff с неизменными literals/SQL | Смешивать formatting и authority/retry fixes |
+| #267 S75 | Existing report reader: bounded on-demand loading, view lifecycle, точные citations/export, честное regenerate/edit различие | Переписывать готовые read/accept/COW; постоянный permission cache |
+| #291 S99 | Сохранить существующий полный scope; исправить observed-work trace и отдельно проверить managed capacity | Повторный freezer; заменить все 64 на 4096; silent truncation |
+| #243 S51 | Closed/unmerged; статус просмотрен, не переоткрывался | Выводить полную готовность exhaustive из closed |
+| #245 S53 | Closed/unmerged; COW/product implementation найден, не переоткрывался | Писать второй report engine |
 
-Область review — эти семь старых PR, а не все открытые PR репозитория. Actual diff #244/#268 прочитан: исходный delta — Markdown-задание. После согласования product files берутся из main; поверх остаются только original task и новый passport. Это не merge runtime исправления.
+У #267 на свежем чтении mergeable=true; прежнее наблюдение false было моментальным состоянием GitHub, не текущим blocker. В этом проходе его конфликт не разрешался и branch history не переписывалась. Предыдущие non-forced согласования #244/#268 относятся к прошлому checkpoint.
 
-## 2. Полные задания с pinned links
+## 2. Паспорта — что читать, какие функции менять и чем принимать
 
-- [S39/R07: native websearch boundary](https://github.com/UnknownAlienHuman/eliot-research/blob/c961638a7ef1ba0be4b49b4dccfa27d70c7f8227/.github/audits/2026-10-08/S39-websearch-native-boundary.md), PR #231.
-- [S52: existing Items adapter + exact resume](https://github.com/UnknownAlienHuman/eliot-research/blob/0018b1aee9c317f4b36ba2fae78797cd43818780/.github/audits/2026-10-08/S52-items-reconciliation.md), PR #244.
-- [S76: mechanical formatting](https://github.com/UnknownAlienHuman/eliot-research/blob/f1cecf2a8df532e93c8573cb657d750d6a1585f5/.github/audits/2026-10-08/S76-mechanical-formatting.md), PR #268.
-- [S90: emitted artifact gate](https://github.com/UnknownAlienHuman/eliot-research/blob/dc8cf19d26f0e4216c874c51b8663f8c5db57768/.github/audits/2026-10-08/S90-artifact-budget-gates.md), PR #282.
+- [S39/R07 native websearch](https://github.com/UnknownAlienHuman/eliot-research/blob/c961638a7ef1ba0be4b49b4dccfa27d70c7f8227/.github/audits/2026-10-08/S39-websearch-native-boundary.md).
+- [S52 Items reconciliation](https://github.com/UnknownAlienHuman/eliot-research/blob/0018b1aee9c317f4b36ba2fae78797cd43818780/.github/audits/2026-10-08/S52-items-reconciliation.md).
+- [S90 emitted budgets](https://github.com/UnknownAlienHuman/eliot-research/blob/dc8cf19d26f0e4216c874c51b8663f8c5db57768/.github/audits/2026-10-08/S90-artifact-budget-gates.md).
+- [S76 mechanical formatting](https://github.com/UnknownAlienHuman/eliot-research/blob/f1cecf2a8df532e93c8573cb657d750d6a1585f5/.github/audits/2026-10-08/S76-mechanical-formatting.md).
+- [S75 report lifecycle](https://github.com/UnknownAlienHuman/eliot-research/blob/c498e3cac61ddd4505cf4297c7ee6acd28c2392d/.github/audits/2026-10-08/S75-report-view-lifecycle.md).
+- [S99 scope/accounting/capacity](https://github.com/UnknownAlienHuman/eliot-research/blob/71e282abf6eb4aa08155a0c802bc9ace7bab4ee8/.github/audits/2026-10-08/S99-scope-accounting-and-capacity.md).
 
-Каждый паспорт: что читать; точные существующие CODE paths/functions; новые paths явно NEW; последовательность; DOCS amendments; donor с кодом; сохранённые инварианты; проверяемый результат; pending acceptance. Архивные критерии не удалены.
+Каждый паспорт сохраняет первоначальные S-критерии, даёт CODE/DOCS paths, existing vs proposed functions, donor links, compatibility и negative acceptance. Старые паспорта остаются в ветках; новое описание не выдаёт их за исправленный runtime. [Предыдущая редакция review](https://github.com/UnknownAlienHuman/eliot-research/blob/8ebece59ac933e40f23b3f7c8a9557d7a02b2efd/.github/audits/2026-10-08/LEGACY-PR-REVIEW.md) сохраняет подробности первого прохода.
 
-## 3. Существенные исправления предыдущего аудита
+## 3. Новое по #267 и #291
 
-**Items API не отсутствует.** v11 §148 противоречит `packages/cloudflare-projection/src/managed-index.ts` и `packages/cloudflare-ai/src/projection-execution-delivery-handler.ts`: `createManagedProjectionPort` реально вызывает uploadAndPoll и get(id).info. Править existing adapter, не создавать ещё один.
+**Report preview.** `renderResearchArtifactReport` заранее последовательно читает первые 32 секции; это не viewport loading и не общий предел отчёта. Каждый read входит в общий busy/action controller. Требуется view-local demand loading; manual open за пределами preview остаётся. Экспорт по-прежнему проверяет все секции, а не только загруженные на экран. [Код](https://github.com/UnknownAlienHuman/eliot-research/blob/3e6c25660c1ae515760e19d5f9e6b8a735795c4c/packages/pwa-research-workspace/src/research-run-report.ts).
 
-**Нельзя копировать native wrapper без анализа.** `agents/websearch/source.ts` валидирует request и держит provider на стороне host, что полезно. Но unbounded response.text, silent item drop и fabricated query/requestId/latency defaults не подходят Eliot. Abort уже dispatched binding не означает no charge/no effect. Эти границы теперь входят в #231.
+**Revise != свободный редактор.** `reviseArtifactSection` посылает protocol/expected revision, без текста инструкции. `mutationKey` привязан к artifact/section; его нельзя заменять random key на retry. Wiki `mountWikiEditForm` уже создаёт отдельный DRAFT. [API](https://github.com/UnknownAlienHuman/eliot-research/blob/3e6c25660c1ae515760e19d5f9e6b8a735795c4c/packages/pwa-research-workspace/src/artifact-product-api.ts), [server decoder](https://github.com/UnknownAlienHuman/eliot-research/blob/3e6c25660c1ae515760e19d5f9e6b8a735795c4c/packages/cloudflare-artifacts/src/artifact-product-input.ts). Свободный report editing не считать выполненным по смене кнопки.
 
-**Типы и docs сверять отдельно.** Public Items table не перечисляет exact-key параметр list, но прочитанный `AiSearchListItemsParams.key` в workerd его содержит. В установленном SDK это нужно проверить, а не объявлять ни гарантированную поддержку, ни полное отсутствие. `items.get(id)` возвращает handle; `info()` выполняется отдельно. Source key и provider item ID не взаимозаменяемы.
+**Scope уже полный.** `createOrientationApi` сохраняет whole execution snapshot до 4096 metadata; `.slice(0,64)` касается preview. `loadResearchPlanningSources` проходит весь исходный набор через bounded batches. Не переписывать freezer. [Profile](https://github.com/UnknownAlienHuman/eliot-research/blob/3e6c25660c1ae515760e19d5f9e6b8a735795c4c/packages/cloudflare-navigation/src/owner-scope-profile.ts), [admission/planning](https://github.com/UnknownAlienHuman/eliot-research/blob/3e6c25660c1ae515760e19d5f9e6b8a735795c4c/packages/cloudflare-research-runtime/src/research-run-admission.ts).
 
-**Hybrid correction сохраняется из R02.** В текущем path vector-only выбор не доказывает уже существующий double-provider-fusion. Двойной голос — риск наивного переключения на hybrid с сохранением независимых копий того же списка.
+**Trace преувеличивает candidates.** В ORIENT SOURCECARD count равен full snapshot, хотя `orient` отбирает bounded candidateSources. Для 299 members/16 output/no Atlas это 299 в trace против 64 выбранных. Считать work у фактического producer и передавать private immutable stats; не копировать алгоритм в caller. Сохранить denominator, full omitted count и truncated sample. [Caller](https://github.com/UnknownAlienHuman/eliot-research/blob/3e6c25660c1ae515760e19d5f9e6b8a735795c4c/packages/cloudflare-navigation/src/orientation-service.ts), [selection](https://github.com/UnknownAlienHuman/eliot-research/blob/3e6c25660c1ae515760e19d5f9e6b8a735795c4c/packages/cloudflare-navigation/src/navigation-service.ts#L336-L453).
 
-## 4. Краткая карта доноров
+**Scope cap != retrieval acceptance.** Сохранённые 4096 refs не доказывают представимость filter #320 или качество #242. Ни UI preview, ни arbitrary truncation не решают large managed scope. Исходные 65/299/tail/history acceptance сохраняются отдельно от metadata freeze.
 
-| Донор / код | Использовать | Не переносить |
+## 4. Доноры: конкретно что брать
+
+| Код | Брать | Не брать |
 |---|---|---|
-| [Cloudflare AiSearchItems / AiSearchItem](https://github.com/cloudflare/workerd/blob/cb61e82b35bf4cac7fc69821743337b8ca498bd5/types/defines/ai-search.d.ts) | upload/status/info/download/exact-key lookup; правильные native shapes | Upsert как exactly-once; metadata как доказательство content bytes; permissive authority |
-| [Cloudflare createAIWebSearch / abortable / readResponse](https://github.com/cloudflare/agents/blob/000d076d535b8bf53ac66b2c86c4c83c5a95d8c7/packages/agents/src/websearch/source.ts) | Один transport и host-selected provider | Unbounded body; silent drops/default facts; retryable как разрешение повторной оплаты |
-| [CocoIndex entry_fingerprint / register_all_fn_logic](https://github.com/cocoindex-io/cocoindex/blob/57d92ec865c1fd2becd135559ef2d954c4721ffd/rust/sdk/cocoindex/src/logic.rs) | Связь validity с code/profile generation | Универсальный memo engine, новый registry или дублирование имеющихся Eliot identities |
-| [Cloudflare getSize / printBundleSize](https://github.com/cloudflare/workers-sdk/blob/aaa6a880682fcc33a02366d7b193474f05e36717/packages/deploy-helpers/src/deploy/helpers/bundle-reporter.ts) | Native emitted module manifest и gzip всего entry+modules | Сумма gzip отдельных files; source bytes как deployment metric; private helper dependency в Worker |
-| [Prettier CLI](https://prettier.io/docs/cli#--debug-check) / [embedded-language policy](https://prettier.io/docs/options#embedded-language-formatting) | Готовый parser/printer и отдельные debug/check/write шаги | Новый formatter, background agent, rewrite canonical fixtures, семантические fixes в mechanical diff |
+| [TanStack Query.fetch/cancel/destroy](https://github.com/TanStack/query/blob/aab352876a01f76fd0e00b0b500a85907ec7c8b4/packages/query-core/src/query.ts#L683-L865) | In-flight Promise reuse по identity, consumed AbortSignal и lifecycle | React/runtime целиком, retries мутаций, восстановление private stale data |
+| [IntersectionObserver](https://developer.mozilla.org/en-US/docs/Web/API/IntersectionObserver) | Один observe/unobserve/disconnect на report view | Полный virtualizer или измерение visibility как evidence authority |
+| [Eliot mountWikiEditForm](https://github.com/UnknownAlienHuman/eliot-research/blob/3e6c25660c1ae515760e19d5f9e6b8a735795c4c/apps/eliotr-pwa/src/wiki-edit-form.ts) | Новый DRAFT + exact readback + отдельная publication | Transient attempt key как гарантию replay после reload |
+| [Eliot scope/planning readers](https://github.com/UnknownAlienHuman/eliot-research/blob/3e6c25660c1ae515760e19d5f9e6b8a735795c4c/packages/cloudflare-research-runtime/src/research-run-admission.ts) | Exact requested-set reconciliation и bounded json_each batches | Тысячи SQL placeholders, wholesale body buffering, новый scope service |
 
-## 5. Порядок без новых искусственных blockers
+Существующие Cloudflare Items/Web Search/getSize, CocoIndex fingerprints и Prettier решения подробно закреплены в соответствующих паспортах. [D1 limits](https://developers.cloudflare.com/d1/platform/limits/) ограничивают bind parameters и work, но `json_each(?1)` уже использует один JSON bind, не один bind на source. [TanStack cancellation](https://tanstack.com/query/latest/docs/framework/react/guides/query-cancellation) по умолчанию может сохранить неиспользованный result и вернуть прежнее состояние; не копировать это после Eliot authority loss. Upstream source read не является deploy/CI/benchmark qualification донора для Eliot.
 
-R00–R05 остаются ремонтом текущего research path. #244 adapter/readback можно готовить независимо от R03/R04; его shared provider types интегрировать последовательно с R01/R02. #231 discovery/capture можно разрабатывать отдельно, финальная цепочка использует admitted source + #244 + #242. #282 A/B → #268; full T6 не блокирует formatting. Ни G3, ни NotebookProject v2, ни graph DB, ни K2/Basin не требуются для этих исправлений.
+## 5. Порядок, доказательства и неизменённые границы
 
-Общие package manifests/config/lock меняет один integrator. Formatter не проходит по файлам одновременно с semantic patches. Source comments и hosted PR descriptions не являются authority release. Изменять main/deploy/paid resources этим планом не предписано.
+R00–R05 остаются первым ремонтом research path. #267 A/B независимы от managed rewrite и AIChatAgent; shared UI lifecycle меняет один integrator. #291 использует существующий scope, а #242/#320 владеют managed query/profile. #282 A/B → #268 остаётся прежней зависимостью. Не добавлять G3, GraphRAG, NotebookProject v2, K2/Basin или Rust rewrite как обязательный blocker этих исправлений.
 
-## 6. Проверки и неизменённые границы
-
-В этом проходе выполнено чтение кода/PR metadata и двух original patches, документации и donor source; сохранены паспорта и PR bodies; exact branch updates сделаны без force. Compilation/Vitest/workerd/provider benchmarking не запускались — product code не менялся. Нет заявлений о production-исправлении, стоимости или превосходстве доноров на нашем corpus.
-
-После реализации: scoped compilation/ESLint; SQL depth-100 и minimal Clippy только для соответствующих изменений. Behavioral/native/quality gates остаются после assembly и помечены PENDING. Не запускать historical uncertain run и не возобновлять отменённый backup.
+Проверены source paths, точные функции и donor source, сохранены два новых паспорта и обновлены PR bodies. Product code, SQL, main и production не менялись; tests/compiler/browser/native/cost не запускались. Будущая code-first проверка: scoped compilation/ESLint; SQL depth-100 и minimal Clippy только для соответствующих изменений. Остальная приёмка после assembly, PENDING. Не создавались issues/discussions/comments, force pushes, deployment, paid calls или backup. Клиентская отмена ожидания не объявляется rollback.
