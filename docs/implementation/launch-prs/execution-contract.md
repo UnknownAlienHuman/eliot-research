@@ -1,135 +1,168 @@
 # Agent execution and acceptance contract
 
-Applies to the nine owner-requested launch themes. Reviewed against executable baseline
-`f94bd7a2a8e94df7d5365f120927708d7a287b43`, ELIOT_RESEARCH **29.1** and LANGUAGE_RUNTIME_CONTRACT
-**1.0**. This is an implementation assignment, not a change to either canonical contract and not a
-claim that an unchecked feature exists. Use current main plus the theme plan; old PR comments are
-historical when contradicted by these reviewed tasks.
+This contract applies to manager-owned implementation checkpoints. It is not a new product contract,
+not a deployment authorization and not evidence that an unchecked feature exists.
 
-## 1. Mandatory reading and authority
+Start from [`docs/START-HERE.md`](../../START-HERE.md), then
+[`backend-entrypoints.md`](../backend-entrypoints.md), the active PR/passport and the owning ER packet.
 
-Read `AGENTS.md`, the theme's named ER packet, its explicit canonical sections, adjacent public schemas,
-`docs/implementation/{runtime-contract,failure-model,security-checklist}.md`, current
-`implementation-status.json` and `gap-register.md`. Canonical files:
+## 1. Authority and reading boundary
 
-- `docs/architecture/ELIOT_RESEARCH.md`: product, state ownership, precision, privacy and T0–T6.
-- `docs/architecture/LANGUAGE_RUNTIME_CONTRACT.md`: TS control plane, pure Rust authority, SQL,
-  versioned ABI, test/budget gates and M5 shadow / M6 promotion / M7 removal.
-- Accepted `docs/adr/` decisions qualify those contracts; a task cannot silently supersede them.
+Read only what the checkpoint needs:
 
-ADR-0006 scopes the legacy Google Cloud/custom OAuth requirements in ELIOT_RESEARCH §12 to the
-explicit `drive-exchange` profile. A selected `gemini-mcp` Workspace profile uses Gemini Spark Connected
-Apps or Google Antigravity and has its own pending
-authenticated candidate-admission and exact readback gate; this qualification is not yet a live
-Google integration claim and does not require Cloud project setup.
+- current `origin/main` code and installed schemas;
+- active PR/passport and accepted predecessor SHAs;
+- owning ER packet, `owned_paths` and `read_only_paths`;
+- named sections of `ELIOT_RESEARCH.md` and `LANGUAGE_RUNTIME_CONTRACT.md`;
+- applicable ADRs;
+- `runtime-contract.md`, `failure-model.md`, `security-checklist.md`;
+- current `implementation-status.json` and `gap-register.md`.
 
-Checkpoints below are subdivisions of existing packets, NOT new state owners. `Files` means the named
-owner's edit scope; another owner still controls shared changes. Register a new source/test file in the
-owning packet document and manifest together before use. Proposed paths/commands in a task are explicitly
-work to create, not an assertion they already run. Do not copy contract SQL sketches over current migrations.
+Old PR comments, launch waves and dated audits are historical when they conflict with the current router
+or active PR.
 
-## 2. Claim, branch and integration procedure
+A checkpoint is a subdivision of an existing owner. It may not create a new state owner, private schema,
+parallel engine or hidden compatibility exception.
 
-Post in the existing theme PR: checkpoint ID, current main SHA, exact files, ER owner, predecessors'
-accepted SHAs and intended tests. Read other active claims. One agent holds one checkpoint at a time.
-The owner requires direct-main implementation without extra worktrees or task branches. Read existing
-theme heads as specifications; do not merge their stale trees. Preserve concurrent main commits and
-verify the exact resulting tree. Branch count and age are not cleanup authority; see branch-discipline.md.
+## 2. Manager, worktree and shared integration
 
-One integrator serializes `composition-root.ts`, HTTP/routes/Env, barrels, package/Cargo manifests,
-lockfiles, CI, generated bindings, schema registry and migration numbers. ER-13 allocates additive
-migrations against current main; ER-00 owns toolchain/locks; ER-21/24 own public DTO/route/runtime
-composition; ER-25 owns all PWA work; ER-27 owns `tests/integration/**`. An unclaimed shared edit is not
-permission. Finish or explicitly hand off the current checkpoint before taking another.
+- One manager owns one worktree and one bounded checkpoint at a time.
+- Subagents do not create additional worktrees; they edit disjoint exact paths inside the manager tree or
+  remain read-only.
+- One named integrator serializes shared contracts, composition roots, public routes, migrations,
+  manifests, barrels, package/Cargo manifests, lockfiles, generated bindings and CI.
+- The manager records exact base SHA, branch/worktree, ownership, dependencies and gates in the active PR.
+- No force-push over concurrent work. A moved expected head requires refresh and reconciliation.
+- Historical theme branches are specifications/evidence, not trees to merge wholesale.
+- Finish or explicitly hand off before taking another checkpoint.
 
-The first three independent assignments are Q1 (#90), G1 (#95), K1 (#97), scoped as in agent-start.md.
-The Library browser-harness task L1 can replace one of these, not add a conflicting fourth UI worker.
+Follow [`branch-discipline.md`](../branch-discipline.md).
 
-## 3. Implement each checkpoint this way
+## 3. Implementation sequence
 
-1. Reproduce the missing behavior with a failing test at the stated real boundary. Inspect existing
-   ports/adapters and reuse implemented code; a source sentinel is not permission to write a parallel stack.
-2. Implement the narrow state transition or adapter, then its caller. Mutations use
-   Intent -> Attempt -> Receipt -> Readback -> Reconciliation. Canonical mutation/outbox commit together;
-   no HTTP, model, R2 or crypto effect inside D1 transactions. A lost ACK is UNKNOWN, not permission for
-   a replacement identity or blind paid retry. Recheck current authority after external work.
-3. Add negative tests and inspect persisted rows/objects, not just a mock invocation count. Show exact
-   duplicate behavior, stale CAS, purge/revocation, expiry and cancellation at the expensive boundary.
-4. Wire the tested path into the existing Worker/API/PWA in its integration checkpoint. Dead helpers,
-   disabled buttons, interface-only ports and success fixtures do not complete a user loop.
-5. Update registry/gaps and the theme checklist in the same implementation change. New deterministic
-   semantics require versioned differential fixtures and the target Rust crate from language §5.2.
-   Never rename public enums/fields or introduce a tenth CompletionDisposition without normative review.
-
-Minimum bound tests: maximum valid and maximum+1; zero/negative where disallowed; malformed UTF-8/JSON,
-unknown load-bearing keys, forged identifiers, foreign owner/scope/generation, partial response, timeout,
-restart, lost write response and concurrent replay. Bound reads before allocation and use immutable
-handles/cursors for larger content. Existing narrower component limits win over global ceilings.
-
-## 4. Commands and test environment
-
-From the repository root, use pinned tools in `docs/implementation/toolchain.md`:
+1. Confirm the concrete current-main defect or missing composition path. Do not infer it from old prose.
+2. Reuse existing contracts, stores, authority readers and platform primitives.
+3. Implement the narrow behavior and its actual caller. A helper with no production caller is not the result.
+4. Preserve:
 
 ```text
-pnpm install --frozen-lockfile
-pnpm check:affected
-pnpm exec tsc -p apps/eliotr-core/test/tsconfig.json --pretty false
-pnpm build:pwa
-pnpm cf:types
-pnpm cf:dry-run
-pnpm test:local-launch
-pnpm test:local-owner
-pnpm local:smoke
+Intent → Attempt → Receipt → Readback → Reconciliation
 ```
 
-`check:affected` currently runs the full repository/Rust chain; it is not an incremental shortcut.
-While iterating use `pnpm exec vitest run <exact-root-test-path>` or
-`pnpm --filter @eliotr/core exec vitest run <exact-Worker-test-path>`; finish with the full commands above.
-Federation storage additionally runs `pnpm --filter @eliotr/cloudflare-federation test`.
-Rust tasks run `pnpm rust:check`, plus applicable pinned fuzz/property/Miri/mutation/pre-release gates.
-Do not substitute a system compiler or upgrade a dependency to hide a failure.
+5. Never perform model, HTTP, R2 or crypto effects inside a D1 transaction.
+6. Recheck current authority after external I/O and before canonical settlement.
+7. Unknown effect or lost acknowledgement is `UNKNOWN`; retryability alone never authorizes a replacement
+   identity or repeated paid effect.
+8. Remove or retire the replaced duplicate path. A wrapper over two live implementations is not completion.
+9. Keep persisted bytes/public fields compatible unless the checkpoint owns an explicit versioned migration.
+10. Update status/gap/checkpoint documentation only when the implementation identity actually changed.
 
-`pnpm test:library-browser` EXISTS and uses the built PWA with controlled HTTP. It is useful but does not
-satisfy the complete real-storage Playwright loop. PR98's new L1 (legacy L6 label) provides the pinned
-dev-only Playwright harness as `pnpm test:owner-e2e` through ER-00/25/27. Other UI checkpoints add
-their tests to that one harness, not another browser framework. Local signed identity fixtures may
-replace only the external issuer; production auth remains enabled. D1/R2/runtime, crypto, transactions
-and application routing in end-to-end acceptance are real local components.
+Minimum negative dimensions where applicable:
 
-Exact-head CI must pass verify, rust, windows-tooling, local-launch Ubuntu and Windows, and the added
-browser jobs where applicable. After shared merges, test combined main again. An inherited failure must
-be reproduced/pinned and fixed or explicitly block acceptance; do not report a timed-out run as PASS.
+```text
+maximum valid / maximum+1
+zero or negative values
+overlong or malformed UTF-8/JSON
+unknown load-bearing fields
+forged/foreign owner, scope, generation or handle
+partial response and timeout
+restart and lost acknowledgement
+concurrent same-key replay
+revocation, purge, expiry and cancellation
+```
 
-## 5. What a good result is
+Bound reads before allocation. Large data uses immutable locators/handles/cursors; never whole-corpus load.
 
-A checkpoint passes only when its stated user/state behavior executes, its negative tests reject the
-specified corruption WITHOUT unauthorized effects, and restart/replay produce the same durable identity.
-Attach: before/after test, command/exit/result, exact code SHA, input digest, expected/actual state,
-remaining items and migration/generation impact. No source text, private paths, credentials or token-bearing
-URLs in public comments. Where external responses are recorded/faked, label them controlled and name the
-real components exercised. A count of tests is not a correctness claim by itself.
+## 4. Code-first build phase
 
-Code-complete means every LOCAL checkbox for the theme passes; it may remain IMPLEMENTED_NOT_LIVE.
-Never close a whole theme for a helper-only checkpoint. An explicitly authorized checkpoint merge retains
-its unchecked follow-up. LIVE_QUALIFIED requires the exact retained live receipts; none are fabricated by
-this task rewrite. A completed implementation PR and a production release are different decisions.
+During product assembly:
 
-## 6. First deployment versus production
+- TypeScript: repository-pinned compilation and scoped ESLint;
+- Rust: compilation and minimal Clippy for the changed crate;
+- SQL: installed D1 depth/target compiler when SQL changes;
+- narrow reproduction required by the active PR;
+- `git diff --check` before handoff.
 
-No remote Cloudflare/Google mutation is authorized by these assignments. Implement probe runners,
-config validators and failure tests locally. The canonical T4/T6 live observations necessarily come
-AFTER the first complete staging deploy; absence of those receipts is not a circular precondition for
-that first trial. Missing mandatory CODE, product integration, tested local loops or critical Rust
-promotion IS a precondition failure.
+Broad unit/browser/native/mutation/live suites run after the product code is assembled unless the active
+PR explicitly requires a focused test to establish the defect or boundary now.
 
-O6/O7 in #96 own the one staging entry procedure; `cloudflare-handoff.md` has the per-theme live matrix.
-Run `pnpm launch:code` at staging entry; it intentionally fails today and must not be removed. It is a
-negative gate, not an exhaustive completeness proof. Its passing result cannot replace the nine theme
-checklists, source registry review and Rust promotion records.
+Every unexecuted check is written as `PENDING`, never `PASS`.
 
-After all local gates pass: obtain explicit operator target/identity/jurisdiction and budget approval,
-prove isolated resources, perform read-only `pnpm cf:preflight:remote`, then use ONLY
-`node scripts/deploy-cloudflare.mjs --confirm-live` with explicit staging environment and generation.
-A staging label alone does not isolate fixed-name resources. No raw Wrangler bypass. Full version,
-binding, schema, asset and Wasm readback plus T4/T5/T6 and recovery/cost evidence qualify production.
-Targets from canonical §§1.4/15.7–15.8/19 are repository targets, not claims about current vendor quotas.
+Useful command patterns are in [`scoped-verification.md`](../scoped-verification.md). Final repository
+acceptance still uses `pnpm check:full` and the complete Cargo/native/browser gates applicable to the
+assembled tree.
+
+## 5. Required handoff evidence
+
+A manager handoff must state:
+
+```text
+exact commit SHA and base SHA
+changed paths
+migrated callers
+removed/retired duplicate functions, branches or engines
+legacy codec/persisted-identity impact
+net production LOC and bundle delta
+D1/R2/provider-call delta
+commands and exit codes
+negative/replay/lost-ACK/bound evidence
+remaining PENDING checks
+shared integrator/downstream owner
+```
+
+Test counts alone are not correctness evidence. A controlled fixture must name which real components it
+exercised and which external/native effects remain unexecuted.
+
+## 6. Integrator acceptance
+
+The integrator:
+
+1. refreshes current main and manager head;
+2. compares exact files and diff;
+3. rejects stale planning-tree contamination and ownership overlap;
+4. verifies predecessor identities;
+5. runs required scoped build gates and named reproduction;
+6. confirms duplicate removal, not wrapper-only coexistence;
+7. publishes without rewriting history;
+8. reads the resulting ref and changed-file list back;
+9. records the accepted SHA and releases downstream dependencies.
+
+A partial checkpoint does not close a full theme. `IMPLEMENTED_NOT_LIVE` remains valid until the named
+native/live receipts exist.
+
+## 7. Cloudflare-first boundary
+
+Use Cloudflare for commodity platform behavior:
+
+```text
+AI Search retrieval/filter/rerank
+Web Search/Markdown/Browser transport
+Workflow retry/delay/wait
+Queue redelivery/DLQ
+AIChatAgent/WebSocket resume and presentation history
+D1/R2/DO storage primitives
+Workers Traces and AI Gateway platform controls
+```
+
+Eliot owns exact semantic authority: SourceRevision/EvidenceHandle, scope/owner/residency/purge,
+coverage/omission/absence, branch/hypothesis identity, claim/citation audit, debt/dispositions/reopen,
+versioned artifacts/publication and unknown external-effect settlement.
+
+Do not add Temporal/LangGraph/Dify/RAGFlow runtime, custom vector/graph database, custom WebSocket resume
+protocol, second generic DLQ or second indexer to the deterministic core.
+
+## 8. Deployment and account effects
+
+Implementation checkpoints do not authorize remote Cloudflare/Google mutation, paid calls, backup,
+historical uncertain-run replay or production release.
+
+After local code assembly, follow the ordered production-readiness plan:
+
+1. exact local integration and D1 authority;
+2. attested staging build/bindings/schema/assets;
+3. native/security/restore/client conformance and Golden quality;
+4. workload/latency/cost;
+5. final release acceptance.
+
+A successful deploy command, provider response, Workflow terminal state or local emulator result cannot
+substitute for the retained readbacks required by that plan.
