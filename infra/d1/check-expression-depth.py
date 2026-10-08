@@ -16,6 +16,13 @@ DIRECT_TARGET_STATUS = "resolved-direct-binding"
 LOCAL_ALIAS_TARGET_STATUS = "resolved-local-const-alias"
 UNKNOWN_TARGET_STATUS = "unresolved-receiver"
 DETAIL_REASONS = frozenset({"missing-prepare-argument", "dynamic-or-unresolved", "non-sql-prepare-argument"})
+DETAIL_PREPARE_DECLARATION_KINDS = frozenset({
+    "workers-d1-database",
+    "workers-d1-session",
+    "resolved-non-canonical",
+    "unresolved",
+    "unknown-no-shared-program",
+})
 
 
 def quoted(name: str) -> str:
@@ -66,6 +73,15 @@ def valid_application_sql_entry(site: object, unresolved: bool = False) -> bool:
     return (isinstance(site.get("reason"), str)
             and isinstance(classification, str)
             and classification in {"missing-prepare-argument", "dynamic-or-unresolved-sql", "static-unrecognized-sql"})
+
+
+def detail_prepare_declaration_kind(site: object) -> str:
+    """Project only the closed declaration-kind vocabulary into diagnostics."""
+    if not isinstance(site, dict) or "prepareDeclarationKind" not in site:
+        return "unknown-no-shared-program"
+    value = site["prepareDeclarationKind"]
+    return (value if isinstance(value, str) and value in DETAIL_PREPARE_DECLARATION_KINDS
+            else "unrecognized-declaration-kind")
 
 
 def connection(depth: int = DEPTH) -> sqlite3.Connection:
@@ -266,6 +282,7 @@ def classification_detail_record(inventory: dict, application_status: list[list[
             "sourceLocation": query["location"],
             "targetStore": target,
             "targetStatus": query["targetStatus"],
+            "prepareDeclarationKind": detail_prepare_declaration_kind(query),
             "bindingArity": query["bindingArity"],
             "bindingProvenance": query["bindingProvenance"],
             "candidateSchemaCompiled": candidate_compiles,
@@ -277,6 +294,7 @@ def classification_detail_record(inventory: dict, application_status: list[list[
             "sourceLocation": site["location"],
             "targetStore": site["targetStore"],
             "targetStatus": site["targetStatus"],
+            "prepareDeclarationKind": detail_prepare_declaration_kind(site),
             "bindingArity": site["bindingArity"],
             "bindingProvenance": site["bindingProvenance"],
             "classification": site["classification"],

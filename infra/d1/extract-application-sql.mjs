@@ -4,6 +4,11 @@ import { fileURLToPath, URL } from "node:url";
 import process from "node:process";
 import ts from "typescript";
 import { createErasureReceiverTargetOverrides } from "./receiver-target-provenance.mjs";
+import { compilerOptions } from "./receiver-target-provenance-values.mjs";
+import { createCanonicalPrepareDeclarationAuthority } from "./receiver-target-general-roots.mjs";
+import { createPrepareDeclarationMetadata, prepareDeclarationKindAt } from "./prepare-declaration-provenance.mjs";
+import { createSourceLexicalBindings, resolveLocalTarget } from "./source-lexical-bindings.mjs";
+import { createSqlBindingCardinality } from "./sql-binding-cardinality.mjs";
 
 const root = resolve(fileURLToPath(new URL("../../", import.meta.url)));
 const roots = [resolve(root, "apps/eliotr-core/src"), resolve(root, "packages")];
@@ -50,15 +55,6 @@ function unwrapExpression(node) {
   return current;
 }
 
-function transparentParent(node) {
-  let current = node;
-  while (current && (ts.isParenthesizedExpression(current) || ts.isAsExpression(current)
-      || ts.isTypeAssertionExpression(current) || ts.isSatisfiesExpression(current))) {
-    current = current.parent;
-  }
-  return current;
-}
-
 function canonicalBindingParts(receiver) {
   const expression = unwrapExpression(receiver);
   let bindingName;
@@ -85,30 +81,6 @@ function targetBinding(receiver) {
   return { targetStore: "unknown", targetStatus: "unresolved-receiver" };
 }
 
-function bindingMetadata(prepareCall, evaluate, environment) {
-  const parent = transparentParent(prepareCall.parent);
-  if (parent && ts.isPropertyAccessExpression(parent) && parent.name.text === "bind"
-      && ts.isCallExpression(parent.parent) && parent.parent.expression === parent) {
-    let arity = 0;
-    for (const argument of parent.parent.arguments) {
-      if (!ts.isSpreadElement(argument)) {
-        arity += 1;
-        continue;
-      }
-      const spread = evaluate(argument.expression, environment);
-      if (!Array.isArray(spread)) return { bindingArity: null, bindingProvenance: "dynamic-bind-arguments" };
-      arity += spread.length;
-    }
-    return { bindingArity: arity, bindingProvenance: "direct-bind" };
-  }
-  const terminalMethods = new Set(["all", "first", "raw", "run"]);
-  if (parent && ts.isPropertyAccessExpression(parent) && terminalMethods.has(parent.name.text)
-      && ts.isCallExpression(parent.parent) && parent.parent.expression === parent) {
-    return { bindingArity: 0, bindingProvenance: "direct-no-bind" };
-  }
-  return { bindingArity: null, bindingProvenance: "indirect-or-unknown" };
-}
-
 function sourceLocation(source, node) {
   const { line } = source.getLineAndCharacterOfPosition(node.getStart(source));
   return `${relative(root, source.fileName).split(sep).join("/")}:${line + 1}`;
@@ -117,6 +89,7 @@ function sourceLocation(source, node) {
 function staticEvaluator(source) {
   const declarations = new Map();
   const functions = new Map();
+  const globalBindings = new Map();
   const resolving = new Set();
 
   for (const statement of source.statements) {
@@ -124,6 +97,7 @@ function staticEvaluator(source) {
       for (const declaration of statement.declarationList.declarations) {
         if (ts.isIdentifier(declaration.name) && declaration.initializer) {
           declarations.set(declaration.name.text, declaration.initializer);
+          globalBindings.set(declaration.name.text, declaration);
           if (ts.isArrowFunction(declaration.initializer) || ts.isFunctionExpression(declaration.initializer)) {
             functions.set(declaration.name.text, declaration.initializer);
           }
@@ -131,6 +105,7 @@ function staticEvaluator(source) {
       }
     } else if (ts.isFunctionDeclaration(statement) && statement.name) {
       functions.set(statement.name.text, statement);
+      globalBindings.set(statement.name.text, statement);
     }
   }
 
@@ -148,21 +123,37 @@ function staticEvaluator(source) {
     if (!ts.isBlock(body)) return evaluate(body, environment, depth + 1);
     const localDeclarations = [];
     function collectLocals(node) {
-      if (node !== body && ts.isFunctionLike(node)) return;
-      if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name)) localDeclarations.push(node);
+      if (node !== body && ts.isFunctionLike(node)) {
+        if (ts.isFunctionDeclaration(node) && node.name) {
+          localDeclarations.push({ name: node.name.text, declaration: node, kind: "function" });
+        }
+        return;
+      }
+      if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name)) {
+        const statement = node.parent?.parent;
+        localDeclarations.push({
+          name: node.name.text,
+          declaration: node,
+          kind: statement?.parent === body ? "variable" : "other",
+        });
+      } else if ((ts.isClassDeclaration(node) || ts.isEnumDeclaration(node)) && node.name) {
+        localDeclarations.push({ name: node.name.text, declaration: node, kind: "other" });
+      }
       ts.forEachChild(node, collectLocals);
     }
     collectLocals(body);
     const duplicateNames = new Set();
     for (const declaration of localDeclarations) {
-      const name = declaration.name.text;
+      const name = declaration.name;
       if (environment.has(name)) duplicateNames.add(name);
       environment.set(name, undefined);
     }
     for (const declaration of localDeclarations) {
-      const name = declaration.name.text;
-      if (duplicateNames.has(name) || (ts.getCombinedNodeFlags(declaration) & ts.NodeFlags.Const) === 0 || !declaration.initializer) continue;
-      environment.set(name, evaluate(declaration.initializer, environment, depth + 1));
+      const name = declaration.name;
+      if (declaration.kind !== "variable" || duplicateNames.has(name)
+          || (ts.getCombinedNodeFlags(declaration.declaration) & ts.NodeFlags.Const) === 0
+          || !declaration.declaration.initializer) continue;
+      environment.set(name, evaluate(declaration.declaration.initializer, environment, depth + 1));
     }
 
     function statement(node) {
@@ -266,6 +257,7 @@ function staticEvaluator(source) {
         if (Array.isArray(array)) return array.join(args[0] ?? ",");
       }
       if (ts.isIdentifier(node.expression)) {
+        if (environment.has(node.expression.text)) return undefined;
         const declaration = functions.get(node.expression.text);
         if (declaration) return evaluateFunction(declaration, args, depth + 1);
       }
@@ -273,267 +265,118 @@ function staticEvaluator(source) {
     return undefined;
   }
 
-  return (node, environment = new Map()) => evaluate(node, environment);
+  const evaluateSource = (node, environment = new Map()) => evaluate(node, environment);
+  evaluateSource.globalBindings = globalBindings;
+  return evaluateSource;
 }
 
-export function extractSourceText(text, file = resolve(root, "<fixture>.ts"), targetOverrides) {
+export function extractSourceText(text, file = resolve(root, "<fixture>.ts"), targetOverrides, prepareDeclarationMetadata) {
   const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
   if (source.parseDiagnostics.length) throw new Error("SOURCE_PARSE_FAILED");
-  const evaluate = staticEvaluator(source);
+  const evaluateRaw = staticEvaluator(source);
   const queries = [];
   const unresolved = [];
 
-  function nearestFunction(node) {
-    let owner = node.parent;
-    while (owner && !ts.isFunctionLike(owner)) owner = owner.parent;
-    return owner;
+  const lexical = createSourceLexicalBindings(source, ts);
+  const environmentBindings = new WeakMap();
+  function isPropertyName(identifier) {
+    const parent = identifier.parent;
+    return (ts.isPropertyAccessExpression(parent) && parent.name === identifier)
+      || (ts.isPropertyAssignment(parent) && parent.name === identifier)
+      || (ts.isMethodDeclaration(parent) && parent.name === identifier)
+      || (ts.isPropertyDeclaration(parent) && parent.name === identifier)
+      || (ts.isPropertySignature(parent) && parent.name === identifier)
+      || (ts.isEnumMember(parent) && parent.name === identifier);
   }
-
-  function resolveLocalTarget(receiver, call) {
-    const owner = nearestFunction(call);
-    if (!owner || !owner.body) return targetBinding(receiver);
-
-    const direct = targetBinding(receiver);
-    if (direct.targetStore !== "unknown") return direct;
-
-    const declarations = [];
-    function lexicalScope(node) {
-      let current = node.parent;
-      while (current && current !== owner) {
-        if (ts.isBlock(current) || ts.isCaseBlock(current) || ts.isCatchClause(current)
-            || ts.isForStatement(current) || ts.isForInStatement(current) || ts.isForOfStatement(current)) {
-          return current;
-        }
-        current = current.parent;
-      }
-      return owner;
-    }
-
-    function addPatternNames(pattern, declaration, kind, scope) {
-      if (ts.isIdentifier(pattern)) {
-        declarations.push({ name: pattern.text, declaration, kind, scope });
-        return;
-      }
-      if (ts.isObjectBindingPattern(pattern) || ts.isArrayBindingPattern(pattern)) {
-        for (const element of pattern.elements) {
-          if (ts.isBindingElement(element)) addPatternNames(element.name, declaration, "destructuring", scope);
-        }
-      }
-    }
-
-    function visitDeclarations(node) {
-      if (node !== owner.body && ts.isFunctionLike(node)) {
-        if (ts.isFunctionDeclaration(node) && node.name) {
-          declarations.push({ name: node.name.text, declaration: node, kind: "function", scope: lexicalScope(node) });
-        }
-        return;
-      }
-      if (ts.isVariableDeclaration(node)) {
-        const declarationList = node.parent;
-        if (ts.isCatchClause(declarationList)) {
-          addPatternNames(node.name, node, "catch", declarationList);
-          ts.forEachChild(node, visitDeclarations);
+  function isCallCallee(identifier) {
+    let expression = identifier;
+    while (ts.isParenthesizedExpression(expression.parent) || ts.isAsExpression(expression.parent)
+        || ts.isTypeAssertionExpression(expression.parent) || ts.isSatisfiesExpression(expression.parent)) expression = expression.parent;
+    return ts.isCallExpression(expression.parent) && expression.parent.expression === expression;
+  }
+  function evaluate(node, environment = new Map()) {
+    if (!node) return undefined;
+    const bindings = environmentBindings.get(environment);
+    let safe = true;
+    function checkBindings(current) {
+      if (ts.isIdentifier(current) && !isPropertyName(current)) {
+        const binding = lexical.bindingAt(current);
+        if (!binding || binding.ambiguous) {
+          safe = false;
           return;
         }
-        const flags = ts.getCombinedNodeFlags(declarationList);
-        const scope = (flags & ts.NodeFlags.BlockScoped) !== 0 ? lexicalScope(node) : owner;
-        const kind = (flags & ts.NodeFlags.Const) !== 0 ? "const"
-          : (flags & ts.NodeFlags.Let) !== 0 ? "let" : "var";
-        addPatternNames(node.name, node, kind, scope);
-      } else if (ts.isClassDeclaration(node) && node.name) {
-        declarations.push({ name: node.name.text, declaration: node, kind: "class", scope: lexicalScope(node) });
-      } else if (ts.isEnumDeclaration(node)) {
-        declarations.push({ name: node.name.text, declaration: node, kind: "enum", scope: lexicalScope(node) });
+        const globalBinding = evaluateRaw.globalBindings.get(current.text);
+        if (isCallCallee(current)) {
+          if (binding.scope !== source || globalBinding !== binding.declaration
+              || (environment.has(current.text) && bindings?.get(current.text) !== binding.declaration)) safe = false;
+        } else if (binding.scope === source) {
+          if (environment.has(current.text) && bindings?.get(current.text) !== binding.declaration) safe = false;
+          if (globalBinding && globalBinding !== binding.declaration) safe = false;
+        } else if (!environment.has(current.text) || bindings?.get(current.text) !== binding.declaration) safe = false;
       }
-      ts.forEachChild(node, visitDeclarations);
+      ts.forEachChild(current, checkBindings);
     }
-
-    for (const parameter of owner.parameters) {
-      addPatternNames(parameter.name, parameter, "parameter", owner);
-    }
-    visitDeclarations(owner.body);
-
-    function scopeChain(node) {
-      const scopes = [];
-      let current = node.parent;
-      while (current && current !== owner) {
-        if (ts.isBlock(current) || ts.isCaseBlock(current) || ts.isCatchClause(current)
-            || ts.isForStatement(current) || ts.isForInStatement(current) || ts.isForOfStatement(current)) {
-          scopes.push(current);
-        }
-        if (ts.isWithStatement(current)) return undefined;
-        current = current.parent;
-      }
-      if (current !== owner) return undefined;
-      scopes.push(owner);
-      return scopes;
-    }
-
-    function bindingAt(identifier) {
-      const scopes = scopeChain(identifier);
-      if (!scopes) return undefined;
-      for (const scope of scopes) {
-        const matches = declarations.filter((item) => item.scope === scope && item.name === identifier.text);
-        if (matches.length > 1) return { ambiguous: true };
-        if (matches.length === 1) return matches[0];
-      }
-      return undefined;
-    }
-
-    function isEnvObject(identifier, wanted, resolving = new Set()) {
-      const binding = bindingAt(identifier);
-      if (binding?.declaration === wanted) return true;
-      if (!binding || binding.ambiguous || binding.kind !== "const" || !ts.isVariableDeclaration(binding.declaration)
-          || !binding.declaration.initializer || !isEarlier(binding, identifier) || resolving.has(binding.declaration)) return false;
-      const initializer = unwrapExpression(binding.declaration.initializer);
-      if (!initializer || !ts.isIdentifier(initializer) || hasWrites(binding.declaration)) return false;
-      resolving.add(binding.declaration);
-      const result = isEnvObject(initializer, wanted, resolving);
-      resolving.delete(binding.declaration);
-      return result;
-    }
-
-    function lhsWritesDeclaration(left, wanted) {
-      const expression = unwrapExpression(left);
-      if (!expression) return false;
-      if (ts.isIdentifier(expression)) return bindingAt(expression)?.declaration === wanted.declaration;
-      if (ts.isArrayLiteralExpression(expression) || ts.isObjectLiteralExpression(expression)) {
-        return expression.elements?.some((element) => lhsWritesDeclaration(element, wanted))
-          || expression.properties?.some((property) => ts.isShorthandPropertyAssignment(property)
-            ? bindingAt(property.name)?.declaration === wanted.declaration
-            : ts.isPropertyAssignment(property) && lhsWritesDeclaration(property.initializer, wanted))
-          || false;
-      }
-      if (ts.isSpreadElement(expression) || ts.isSpreadAssignment(expression)) {
-        return lhsWritesDeclaration(expression.expression, wanted);
-      }
-      if (ts.isPropertyAccessExpression(expression) || ts.isElementAccessExpression(expression)) {
-        const base = unwrapExpression(expression.expression);
-        const property = ts.isPropertyAccessExpression(expression) ? expression.name.text
-          : expression.argumentExpression && ts.isStringLiteral(expression.argumentExpression) ? expression.argumentExpression.text : undefined;
-        return (property === "CORE_DB" || property === "SEARCH_DB") && ts.isIdentifier(base)
-          && wanted.kind === "parameter" && wanted.name === "env" && isEnvObject(base, wanted.declaration);
-      }
-      return false;
-    }
-
-    function hasWrites(wantedDeclaration) {
-      const wanted = declarations.find((binding) => binding.declaration === wantedDeclaration);
-      if (!wanted) return true;
-      let written = false;
-      function visitWrites(node) {
-        if (node !== owner.body && ts.isFunctionLike(node)
-            && !(wanted.kind === "parameter" && wanted.name === "env")) return;
-        if (ts.isBinaryExpression(node) && node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment
-            && node.operatorToken.kind <= ts.SyntaxKind.LastAssignment
-            && lhsWritesDeclaration(node.left, wanted)) written = true;
-        if ((ts.isForInStatement(node) || ts.isForOfStatement(node))
-            && lhsWritesDeclaration(node.initializer, wanted)) written = true;
-        if ((ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node))
-            && (node.operator === ts.SyntaxKind.PlusPlusToken || node.operator === ts.SyntaxKind.MinusMinusToken)
-            && lhsWritesDeclaration(node.operand, wanted)) written = true;
-        if (ts.isDeleteExpression(node) && lhsWritesDeclaration(node.expression, wanted)) written = true;
-        ts.forEachChild(node, visitWrites);
-      }
-      visitWrites(owner.body);
-      return written;
-    }
-
-    function isEarlier(binding, reference) {
-      return binding.declaration.end < reference.getStart(source);
-    }
-
-    function resolveAlias(expressionNode, reference, resolving = new Set()) {
-      const expression = unwrapExpression(expressionNode);
-      const parts = canonicalBindingParts(expression);
-      if (parts?.bindingName === "CORE_DB" || parts?.bindingName === "SEARCH_DB") {
-        if (!ts.isIdentifier(parts.base)) return undefined;
-        const baseBinding = bindingAt(parts.base);
-        if (!baseBinding || baseBinding.ambiguous || baseBinding.kind !== "parameter" || baseBinding.name !== "env"
-            || hasWrites(baseBinding.declaration)) return undefined;
-        const resolved = targetBinding(expression);
-        return resolved.targetStore === "unknown"
-          ? undefined
-          : { ...resolved, targetStatus: "resolved-local-const-alias" };
-      }
-      if (!expression || !ts.isIdentifier(expression)) return undefined;
-
-      const binding = bindingAt(expression);
-      if (!binding || binding.ambiguous || binding.kind !== "const" || !ts.isVariableDeclaration(binding.declaration)
-          || !binding.declaration.initializer || !isEarlier(binding, reference) || resolving.has(binding.declaration)
-          || hasWrites(binding.declaration)) return undefined;
-      resolving.add(binding.declaration);
-      const result = resolveAlias(binding.declaration.initializer, binding.declaration, resolving);
-      resolving.delete(binding.declaration);
-      return result;
-    }
-
-    return resolveAlias(receiver, call) ?? targetBinding(receiver);
+    checkBindings(node);
+    return safe ? evaluateRaw(node, environment) : undefined;
   }
-
-  function shadowedNames(owner, initialValues = new Map()) {
-    const environment = new Map();
+  const resolveLocalTargetForCall = (receiver, call) => resolveLocalTarget(receiver, call, {
+    source, ts, lexical, targetBinding, canonicalBindingParts, unwrapExpression,
+  });
+  function shadowedNames(owner, initialValues = new Map(), inheritedEnvironment = new Map()) {
+    const environment = new Map(inheritedEnvironment);
+    const bindings = new Map(environmentBindings.get(inheritedEnvironment) ?? []);
+    environmentBindings.set(environment, bindings);
     if (!owner) return environment;
-    for (const parameter of owner.parameters) if (ts.isIdentifier(parameter.name)) environment.set(parameter.name.text, undefined);
-    for (const [name, value] of initialValues) environment.set(name, value);
-    const localDeclarations = [];
-    function visit(node) {
-      if (node !== owner.body && ts.isFunctionLike(node)) return;
-      if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name)) localDeclarations.push(node);
-      ts.forEachChild(node, visit);
-    }
-    if (owner.body) visit(owner.body);
+    const declarations = lexical.declarationsFor(owner);
     const duplicateNames = new Set();
-    for (const declaration of localDeclarations) {
-      const name = declaration.name.text;
-      if (environment.has(name)) duplicateNames.add(name);
+    const declaredNames = new Set();
+    for (const declaration of declarations) {
+      const name = declaration.name;
+      if (declaredNames.has(name)) duplicateNames.add(name);
+      declaredNames.add(name);
       environment.set(name, undefined);
+      bindings.set(name, duplicateNames.has(name) ? undefined : declaration.declaration);
     }
-    for (const declaration of localDeclarations) {
-      const name = declaration.name.text;
-      if (duplicateNames.has(name) || (ts.getCombinedNodeFlags(declaration) & ts.NodeFlags.Const) === 0 || !declaration.initializer) continue;
-      environment.set(name, evaluate(declaration.initializer, environment));
+    for (const [name, value] of initialValues) {
+      const parameters = declarations.filter((declaration) => declaration.name === name && declaration.kind === "parameter");
+      if (parameters.length === 1 && !duplicateNames.has(name)) environment.set(name, value);
+      else {
+        environment.set(name, undefined);
+        bindings.set(name, undefined);
+      }
+    }
+    for (const declaration of declarations) {
+      const name = declaration.name;
+      if (duplicateNames.has(name) || declaration.kind !== "const" || !ts.isVariableDeclaration(declaration.declaration)
+          || !declaration.declaration.initializer) continue;
+      environment.set(name, evaluate(declaration.declaration.initializer, environment));
     }
     return environment;
   }
 
-  function invocationEnvironments(call) {
-    const owner = nearestFunction(call);
-    if (!owner) return [new Map()];
-    const functionName = owner.name && ts.isIdentifier(owner.name) ? owner.name.text
-      : ts.isVariableDeclaration(owner.parent) && ts.isIdentifier(owner.parent.name) ? owner.parent.name.text : undefined;
-    if (!functionName) return [shadowedNames(owner)];
-    const environments = [];
-    function findInvocations(node) {
-      if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === functionName && node !== owner) {
-        const callerEnvironment = shadowedNames(nearestFunction(node));
-        const parameterValues = new Map();
-        owner.parameters.forEach((parameter, index) => {
-          if (!ts.isIdentifier(parameter.name)) return;
-          const value = node.arguments[index] ? evaluate(node.arguments[index], callerEnvironment) : parameter.initializer ? evaluate(parameter.initializer, parameterValues) : undefined;
-          parameterValues.set(parameter.name.text, value);
-        });
-        environments.push(shadowedNames(owner, parameterValues));
-      }
-      ts.forEachChild(node, findInvocations);
-    }
-    findInvocations(source);
-    return environments.length ? environments : [shadowedNames(owner)];
-  }
+  const cardinality = createSqlBindingCardinality({
+    source,
+    ts,
+    lexical,
+    evaluate,
+    environmentFor: shadowedNames,
+  });
 
   function visit(node) {
     if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) && node.expression.name.text === "prepare") {
       const argument = node.arguments[0];
-      const environments = invocationEnvironments(node);
+      const contexts = cardinality.contextsForPrepare(node);
       const location = sourceLocation(source, node);
       const receiverNode = node.expression.expression;
       const receiver = receiverNode.getText(source);
-      const target = targetOverrides?.get(node.getStart(source)) ?? resolveLocalTarget(receiverNode, node);
+      const prepareDeclarationKind = prepareDeclarationKindAt(prepareDeclarationMetadata, source.fileName, node.getStart(source));
+      const target = targetOverrides?.get(node.getStart(source)) ?? resolveLocalTargetForCall(receiverNode, node);
       const variants = new Map();
       const unresolvedVariants = [];
-      for (const environment of environments) {
+      for (const context of contexts) {
+        const { environment } = context;
         const value = evaluate(argument, environment);
-        const binding = bindingMetadata(node, evaluate, environment);
+        const binding = cardinality.bindingMetadata(node, context);
         if (isSql(value)) {
           const query = {
             location,
@@ -541,12 +384,13 @@ export function extractSourceText(text, file = resolve(root, "<fixture>.ts"), ta
             receiver,
             targetStore: target.targetStore,
             targetStatus: target.targetStatus,
+            prepareDeclarationKind,
             bindingArity: binding.bindingArity,
             bindingProvenance: binding.bindingProvenance,
           };
           variants.set(JSON.stringify(query), query);
         } else {
-          unresolvedVariants.push({ value, ...binding });
+          unresolvedVariants.push({ value, ...binding, prepareDeclarationKind });
         }
       }
       queries.push(...variants.values());
@@ -560,6 +404,7 @@ export function extractSourceText(text, file = resolve(root, "<fixture>.ts"), ta
           receiver,
           targetStore: target.targetStore,
           targetStatus: target.targetStatus,
+          prepareDeclarationKind,
           bindingArity: distinctArities.length === 1 ? distinctArities[0] : null,
           bindingProvenance: distinctProvenance.length === 1 ? distinctProvenance[0] : "varies-by-invocation",
           classification: !argument ? "missing-prepare-argument"
@@ -575,18 +420,28 @@ export function extractSourceText(text, file = resolve(root, "<fixture>.ts"), ta
   return { queries, unresolved };
 }
 
-function extractSource(file, targetOverrides) {
-  return extractSourceText(readFileSync(file, "utf8"), file, targetOverrides);
+function extractSource(file, targetOverrides, prepareDeclarationMetadata) {
+  return extractSourceText(readFileSync(file, "utf8"), file, targetOverrides, prepareDeclarationMetadata);
 }
 
 export function extractApplicationSql() {
   const files = [...sourceFiles(roots[0]), ...collectPackageSources(roots[1])].sort();
-  const targetOverrides = createErasureReceiverTargetOverrides(files, root);
+  const program = ts.createProgram([...new Set(files.map((file) => resolve(file)))], compilerOptions(root));
+  const checker = program.getTypeChecker();
+  const canonicalAuthority = createCanonicalPrepareDeclarationAuthority({ program, checker, root });
+  const analyzedSources = files.map((file) => program.getSourceFile(resolve(file))).filter(Boolean);
+  const prepareDeclarationMetadata = createPrepareDeclarationMetadata({
+    program,
+    checker,
+    sourceFiles: analyzedSources,
+    canonicalAuthority,
+  });
+  const targetOverrides = createErasureReceiverTargetOverrides(files, root, program);
   const queries = [];
   const unresolved = [];
   for (const file of files) {
     const overrides = targetOverrides.get(resolve(file).replaceAll("\\", "/").toLowerCase());
-    const extracted = extractSource(file, overrides);
+    const extracted = extractSource(file, overrides, prepareDeclarationMetadata);
     queries.push(...extracted.queries);
     unresolved.push(...extracted.unresolved);
   }

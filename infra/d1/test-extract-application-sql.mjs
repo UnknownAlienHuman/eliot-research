@@ -5,6 +5,7 @@ import { resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath, URL } from "node:url";
 import { extractSourceText } from "./extract-application-sql.mjs";
+import { prepareDeclarationMetadataKey, PREPARE_DECLARATION_KIND } from "./prepare-declaration-provenance.mjs";
 import { createErasureReceiverTargetOverrides } from "./receiver-target-provenance.mjs";
 
 const fixture = extractSourceText(`
@@ -30,6 +31,27 @@ assert.deepEqual(fixture.queries.map((query) => query.sql), [
 ]);
 assert.equal(fixture.unresolved.length, 1);
 assert.equal(fixture.unresolved[0].reason, "dynamic-or-unresolved");
+assert.ok(fixture.queries.every((query) => query.prepareDeclarationKind === PREPARE_DECLARATION_KIND.noSharedProgram));
+assert.equal(fixture.unresolved[0].prepareDeclarationKind, PREPARE_DECLARATION_KIND.noSharedProgram);
+
+const metadataPath = "C:/fixture/prepare-declaration-metadata.ts";
+const metadataSource = `
+const db = { prepare: (sql: string) => ({ bind: (...values: unknown[]) => ({ first: () => values }) }) };
+db.prepare("SELECT 1 FROM metadata_query").bind(runtimeValue).first();
+db.prepare(runtimeSql);
+`;
+const metadata = new Map([
+  [prepareDeclarationMetadataKey(metadataPath, metadataSource.indexOf("db.prepare")), PREPARE_DECLARATION_KIND.database],
+  [prepareDeclarationMetadataKey(metadataPath, metadataSource.indexOf("db.prepare", metadataSource.indexOf("db.prepare") + 1)), PREPARE_DECLARATION_KIND.session],
+]);
+const metadataFixture = extractSourceText(metadataSource, metadataPath, undefined, metadata);
+assert.equal(metadataFixture.queries[0].prepareDeclarationKind, PREPARE_DECLARATION_KIND.database);
+assert.equal(metadataFixture.queries[0].targetStore, "unknown",
+  "canonical declaration metadata does not promote an unknown runtime database target");
+assert.equal(metadataFixture.queries[0].bindingArity, 1,
+  "declaration metadata does not change the existing bind-arity result");
+assert.equal(metadataFixture.unresolved[0].prepareDeclarationKind, PREPARE_DECLARATION_KIND.session);
+assert.equal(metadataFixture.unresolved[0].targetStore, "unknown");
 
 const changed = extractSourceText(`
 const db = { prepare: (sql: string) => sql };

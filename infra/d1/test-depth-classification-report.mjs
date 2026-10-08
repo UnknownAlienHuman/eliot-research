@@ -9,6 +9,9 @@ const recovered = Array.from({ length: 37 }, (_, index) => ({
   location: index < 3
     ? `packages/research/model-resolved-site-${index}.ts:${index + 1}`
     : `packages/d1-fixture/recovered-${index}.ts:${index + 1}`,
+  ...(index === 0 ? { prepareDeclarationKind: "workers-d1-database" }
+    : index === 1 ? { prepareDeclarationKind: "resolved-non-canonical" }
+      : index === 2 ? { prepareDeclarationKind: secretMarker } : {}),
   sql: `SELECT '${secretMarker}'`,
   receiver: `db.${secretMarker}`,
   targetStore: index % 2 === 0 ? "core" : "search",
@@ -18,6 +21,9 @@ const recovered = Array.from({ length: 37 }, (_, index) => ({
 }));
 const unresolved = Array.from({ length: 43 }, (_, index) => ({
   location: `packages/d1-fixture/unresolved-${index}.ts:${index + 1}`,
+  ...(index === 0 ? { prepareDeclarationKind: "workers-d1-session" }
+    : index === 2 ? { prepareDeclarationKind: secretMarker }
+      : index === 3 ? { prepareDeclarationKind: { kind: secretMarker } } : {}),
   receiver: `db.${secretMarker}`,
   targetStore: index % 2 === 0 ? "unknown" : "core",
   targetStatus: index % 2 === 0 ? "unresolved-receiver" : "resolved-direct-binding",
@@ -108,6 +114,14 @@ assert.equal(record.unresolved[0].reason, "missing-prepare-argument");
 assert.equal(record.unresolved[1].reason, "dynamic-or-unresolved");
 assert.equal(record.unresolved[2].reason, "non-sql-prepare-argument");
 assert.equal(record.unresolved[42].reason, "unrecognized-reason");
+assert.equal(record.recovered[0].prepareDeclarationKind, "workers-d1-database");
+assert.equal(record.recovered[1].prepareDeclarationKind, "resolved-non-canonical");
+assert.equal(record.recovered[2].prepareDeclarationKind, "unrecognized-declaration-kind");
+assert.equal(record.recovered[3].prepareDeclarationKind, "unknown-no-shared-program");
+assert.equal(record.unresolved[0].prepareDeclarationKind, "workers-d1-session");
+assert.equal(record.unresolved[1].prepareDeclarationKind, "unknown-no-shared-program");
+assert.equal(record.unresolved[2].prepareDeclarationKind, "unrecognized-declaration-kind");
+assert.equal(record.unresolved[3].prepareDeclarationKind, "unrecognized-declaration-kind");
 assert.equal(JSON.stringify(record).includes(secretMarker), false);
 
 const forbiddenKeys = new Set(["sql", "receiver"]);
