@@ -4,6 +4,9 @@ import { fileURLToPath, URL } from "node:url";
 import process from "node:process";
 import ts from "typescript";
 import { createErasureReceiverTargetOverrides } from "./receiver-target-provenance.mjs";
+import { compilerOptions } from "./receiver-target-provenance-values.mjs";
+import { createCanonicalPrepareDeclarationAuthority } from "./receiver-target-general-roots.mjs";
+import { createPrepareDeclarationMetadata, prepareDeclarationKindAt } from "./prepare-declaration-provenance.mjs";
 import { createSourceLexicalBindings, resolveLocalTarget } from "./source-lexical-bindings.mjs";
 import { createSqlBindingCardinality } from "./sql-binding-cardinality.mjs";
 
@@ -267,7 +270,7 @@ function staticEvaluator(source) {
   return evaluateSource;
 }
 
-export function extractSourceText(text, file = resolve(root, "<fixture>.ts"), targetOverrides) {
+export function extractSourceText(text, file = resolve(root, "<fixture>.ts"), targetOverrides, prepareDeclarationMetadata) {
   const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
   if (source.parseDiagnostics.length) throw new Error("SOURCE_PARSE_FAILED");
   const evaluateRaw = staticEvaluator(source);
@@ -366,6 +369,7 @@ export function extractSourceText(text, file = resolve(root, "<fixture>.ts"), ta
       const location = sourceLocation(source, node);
       const receiverNode = node.expression.expression;
       const receiver = receiverNode.getText(source);
+      const prepareDeclarationKind = prepareDeclarationKindAt(prepareDeclarationMetadata, source.fileName, node.getStart(source));
       const target = targetOverrides?.get(node.getStart(source)) ?? resolveLocalTargetForCall(receiverNode, node);
       const variants = new Map();
       const unresolvedVariants = [];
@@ -380,12 +384,13 @@ export function extractSourceText(text, file = resolve(root, "<fixture>.ts"), ta
             receiver,
             targetStore: target.targetStore,
             targetStatus: target.targetStatus,
+            prepareDeclarationKind,
             bindingArity: binding.bindingArity,
             bindingProvenance: binding.bindingProvenance,
           };
           variants.set(JSON.stringify(query), query);
         } else {
-          unresolvedVariants.push({ value, ...binding });
+          unresolvedVariants.push({ value, ...binding, prepareDeclarationKind });
         }
       }
       queries.push(...variants.values());
@@ -399,6 +404,7 @@ export function extractSourceText(text, file = resolve(root, "<fixture>.ts"), ta
           receiver,
           targetStore: target.targetStore,
           targetStatus: target.targetStatus,
+          prepareDeclarationKind,
           bindingArity: distinctArities.length === 1 ? distinctArities[0] : null,
           bindingProvenance: distinctProvenance.length === 1 ? distinctProvenance[0] : "varies-by-invocation",
           classification: !argument ? "missing-prepare-argument"
@@ -414,18 +420,28 @@ export function extractSourceText(text, file = resolve(root, "<fixture>.ts"), ta
   return { queries, unresolved };
 }
 
-function extractSource(file, targetOverrides) {
-  return extractSourceText(readFileSync(file, "utf8"), file, targetOverrides);
+function extractSource(file, targetOverrides, prepareDeclarationMetadata) {
+  return extractSourceText(readFileSync(file, "utf8"), file, targetOverrides, prepareDeclarationMetadata);
 }
 
 export function extractApplicationSql() {
   const files = [...sourceFiles(roots[0]), ...collectPackageSources(roots[1])].sort();
-  const targetOverrides = createErasureReceiverTargetOverrides(files, root);
+  const program = ts.createProgram([...new Set(files.map((file) => resolve(file)))], compilerOptions(root));
+  const checker = program.getTypeChecker();
+  const canonicalAuthority = createCanonicalPrepareDeclarationAuthority({ program, checker, root });
+  const analyzedSources = files.map((file) => program.getSourceFile(resolve(file))).filter(Boolean);
+  const prepareDeclarationMetadata = createPrepareDeclarationMetadata({
+    program,
+    checker,
+    sourceFiles: analyzedSources,
+    canonicalAuthority,
+  });
+  const targetOverrides = createErasureReceiverTargetOverrides(files, root, program);
   const queries = [];
   const unresolved = [];
   for (const file of files) {
     const overrides = targetOverrides.get(resolve(file).replaceAll("\\", "/").toLowerCase());
-    const extracted = extractSource(file, overrides);
+    const extracted = extractSource(file, overrides, prepareDeclarationMetadata);
     queries.push(...extracted.queries);
     unresolved.push(...extracted.unresolved);
   }
