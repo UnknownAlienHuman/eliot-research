@@ -61,3 +61,12 @@ Produce:
 The PR must state contract/generation impact, migration/backfill impact, exact commands, negative-case
 result, live receipts (or `NOT EXECUTED`), and any follow-up packet. Do not mark this packet complete
 with placeholders, TODO authority paths, mocked live gates, or a stronger disposition than observed.
+
+## S08 historical replay rejection
+
+The result store verifies persisted bytes before classifying a strictly recognized missing
+original scope expression as `RETRIEVAL_IDEMPOTENCY_CONFLICT`. That rejection-only shape never
+admits a legacy result, creates a replacement scope or rewrites its digest. Malformed/noncanonical
+records and digest mismatches remain uncertain. Existing strict trace linkage and current
+scope/grant checks are retained. The package matrix covers legacy rejection versus corruption;
+ER-24 owns the actual HTTP/D1/R2 replay matrix in `research-query-replay.test.ts`.

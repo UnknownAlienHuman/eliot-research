@@ -1,12 +1,9 @@
 import {
-  ArtifactRevisionSchema,
-  ArtifactSpecSchema,
-  ObjectResidencyKeySchema,
   OperationIntentSchema,
+  ObjectResidencyKeySchema,
   ScopeSnapshotSchema,
   VersionedRefSchema,
   type ArtifactRevision,
-  type ArtifactSpec,
   type ObjectResidencyKey,
   type OperationIntent,
   type ScopeSnapshot,
@@ -19,224 +16,52 @@ import {
   type ArtifactDraftSectionCitationsRead,
 } from "./artifact-draft-citations-reader.js";
 export type { ArtifactDraftSectionCitationsRead } from "./artifact-draft-citations-reader.js";
+import { createNavigationReadAuthority, loadScopeAuthority, type EvidenceAccessContext, type NavigationReadAuthority, type ScopeAuthorization } from "@eliotr/cloudflare-evidence";
+import { canonicalDigest, canonicalEvidenceObjectKey, canonicalJson, createR2EvidenceObjectStore } from "@eliotr/platform-cloudflare";
+import { hasDelegatedArtifactReadAuthority, hasOwnerArtifactReadAuthority } from "./artifact-draft-read-authority.js";
+import type { ArtifactDraftReferencedObjectInput, ArtifactDraftSectionInput } from "./artifact-draft-types.js";
 import {
-  createNavigationReadAuthority,
-  loadScopeAuthority,
-  type D1NavigationStoreInput,
-  type EvidenceAccessContext,
-  type EvidenceSourceAuthority,
-  type NavigationReadAuthority,
-  type ScopeAuthorization,
-} from "@eliotr/cloudflare-evidence";
+  ArtifactDraftReadError,
+  failArtifactDraftRead as fail,
+  type ArtifactDraftReadInput,
+  type ArtifactDraftSectionReadInput,
+  type ArtifactDraftReauthorizationCoreInput,
+  type ArtifactDraftReauthorizationSectionReadInput,
+  type ArtifactDraftSectionRead,
+  type ArtifactDraftCowSnapshot,
+  type ArtifactDraftReauthorizedCoreRead,
+} from "./artifact-draft-reader-contracts.js";
+export { ArtifactDraftReadError } from "./artifact-draft-reader-contracts.js";
+export type {
+  ArtifactDraftReadErrorCode,
+  ArtifactDraftReadInput,
+  ArtifactDraftSectionReadInput,
+  ArtifactDraftReauthorizationContext,
+  ArtifactDraftReauthorizationCoreInput,
+  ArtifactDraftReauthorizationSectionReadInput,
+  ArtifactDraftSectionRead,
+  ArtifactDraftCowSnapshot,
+  ArtifactDraftReauthorizedCoreRead,
+} from "./artifact-draft-reader-contracts.js";
 import {
-  RUNTIME_LIMITS,
-  bufferBounded,
-  canonicalDigest,
-  canonicalEvidenceObjectKey,
-  canonicalJson,
-  createR2EvidenceObjectStore,
-  objectResidencyKeyDigest,
-  type EvidenceObjectStore,
-  type ImmutableObjectReceipt,
-} from "@eliotr/platform-cloudflare";
-
-const MANIFEST_PREFIX = "artifact-draft/manifest";
-const SECTION_PREFIX = "artifact-draft/section";
-const REFERENCE_PREFIX = "artifact-draft/reference";
-const SHA256 = /^[a-f0-9]{64}$/u;
-
-export type ArtifactDraftReadErrorCode =
-  | "ARTIFACT_DRAFT_READ_INVALID"
-  | "ARTIFACT_DRAFT_READ_DENIED"
-  | "ARTIFACT_DRAFT_READ_STALE"
-  | "ARTIFACT_DRAFT_READ_INTEGRITY"
-  | "ARTIFACT_DRAFT_READ_UNAVAILABLE";
-
-export class ArtifactDraftReadError extends Error {
-  public readonly code: ArtifactDraftReadErrorCode;
-  public readonly status: 400 | 403 | 404 | 409 | 410 | 503;
-  public readonly retryable: boolean;
-
-  public constructor(
-    code: ArtifactDraftReadErrorCode,
-    status: 400 | 403 | 404 | 409 | 410 | 503,
-    message: string,
-    retryable = false,
-  ) {
-    super(message);
-    this.name = "ArtifactDraftReadError";
-    this.code = code;
-    this.status = status;
-    this.retryable = retryable;
-  }
-}
-
-export interface ArtifactDraftReadInput {
-  readonly database: D1Database;
-  readonly work_bucket: R2Bucket;
-  readonly artifact_ref: VersionedRef;
-  readonly access: EvidenceAccessContext;
-  readonly require_current: D1NavigationStoreInput["require_current"];
-  readonly now?: () => number;
-}
-
-export interface ArtifactDraftSectionReadInput extends ArtifactDraftReadInput {
-  readonly section_ref: VersionedRef;
-}
-
-/**
- * Internal dual-scope authorization context.  The artifact binding remains
- * attached to its original scope; this navigation authority is only the
- * caller's freshly validated read authorization.
- */
-export interface ArtifactDraftReauthorizationContext {
-  readonly navigation: NavigationReadAuthority;
-  readonly authorization: ScopeAuthorization;
-}
-
-export interface ArtifactDraftReauthorizationCoreInput {
-  readonly database: D1Database;
-  readonly work_bucket: R2Bucket;
-  readonly access: EvidenceAccessContext;
-  readonly reauthorization: ArtifactDraftReauthorizationContext;
-  readonly now?: () => number;
-}
-
-export interface ArtifactDraftReauthorizationSectionReadInput extends ArtifactDraftReauthorizationCoreInput {
-  readonly section_ref: VersionedRef;
-}
-
-export interface ArtifactDraftSectionRead {
-  readonly artifact_ref: VersionedRef;
-  readonly section_ref: VersionedRef;
-  readonly body_object_ref: string;
-  readonly section_ordinal: number;
-  readonly body_sha256: string;
-  readonly size_bytes: number;
-  readonly body: Uint8Array;
-}
-
-export interface ArtifactDraftReauthorizedCoreRead<T> {
-  readonly value: T;
-  readonly original_scope_snapshot_ref: VersionedRef;
-}
-
-interface ArtifactRow {
-  readonly artifact_id: unknown;
-  readonly revision: unknown;
-  readonly kind: unknown;
-  readonly spec_digest: unknown;
-  readonly evidence_freeze_id: unknown;
-  readonly evidence_freeze_revision: unknown;
-  readonly manifest_r2_key: unknown;
-  readonly dependency_manifest_ref: unknown;
-  readonly status: unknown;
-  readonly created_at: unknown;
-}
-
-interface BindingRow {
-  readonly artifact_id: unknown;
-  readonly revision: unknown;
-  readonly intent_id: unknown;
-  readonly intent_revision: unknown;
-  readonly expected_head_revision: unknown;
-  readonly principal_ref: unknown;
-  readonly spec_ref_id: unknown;
-  readonly spec_ref_revision: unknown;
-  readonly scope_snapshot_id: unknown;
-  readonly scope_snapshot_revision: unknown;
-  readonly manifest_r2_key: unknown;
-  readonly manifest_sha256: unknown;
-  readonly manifest_size_bytes: unknown;
-  readonly created_at: unknown;
-}
-
-interface ReservationRow {
-  readonly intent_id: unknown;
-  readonly intent_revision: unknown;
-  readonly artifact_id: unknown;
-  readonly artifact_revision: unknown;
-  readonly request_sha256: unknown;
-  readonly spec_digest: unknown;
-  readonly manifest_r2_key: unknown;
-  readonly expected_head_revision: unknown;
-  readonly spec_ref_id: unknown;
-  readonly spec_ref_revision: unknown;
-  readonly scope_snapshot_id: unknown;
-  readonly scope_snapshot_revision: unknown;
-  readonly intent_json: unknown;
-  readonly principal_ref: unknown;
-  readonly idempotency_key: unknown;
-  readonly payload_ref: unknown;
-  readonly topic: unknown;
-  readonly planned_objects_json: unknown;
-  readonly state: unknown;
-  readonly created_at: unknown;
-  readonly updated_at: unknown;
-}
-
-interface AuthorityRow {
-  readonly intent_id: unknown;
-  readonly revision: unknown;
-  readonly operation_kind: unknown;
-  readonly principal_ref: unknown;
-  readonly idempotency_key: unknown;
-  readonly payload_ref: unknown;
-  readonly policy_decision_ref: unknown;
-  readonly budget_reservation_ref: unknown;
-  readonly cancellation_ref: unknown;
-  readonly created_at: unknown;
-  readonly outbox_id: unknown;
-  readonly topic: unknown;
-  readonly payload_sha256: unknown;
-}
-
-interface HeadRow {
-  readonly artifact_id: unknown;
-  readonly head_revision: unknown;
-  readonly manifest_r2_key: unknown;
-  readonly intent_id: unknown;
-  readonly intent_revision: unknown;
-  readonly updated_at: unknown;
-}
-
-interface ObjectRow {
-  readonly artifact_id: unknown;
-  readonly revision: unknown;
-  readonly object_kind: unknown;
-  readonly object_ref: unknown;
-  readonly section_ordinal: unknown;
-  readonly receipt_json: unknown;
-  readonly residency_key_json: unknown;
-  readonly residency_key_digest: unknown;
-  readonly created_at: unknown;
-}
-
-type DraftObjectKind = "MANIFEST" | "SECTION_BODY" | "DEPENDENCY_MANIFEST" | "EVIDENCE_LEDGER" | "VERIFICATION_RECEIPT" | "EXPORT";
-
-interface ExpectedObject {
-  readonly object_ref: string;
-  readonly object_kind: DraftObjectKind;
-  readonly section_ordinal: number | null;
-  readonly sha256?: string;
-  readonly prefix: string;
-  readonly content_type: string;
-}
-
-interface StoredObject {
-  readonly row: ObjectRow;
-  readonly receipt: ImmutableObjectReceipt;
-  readonly residency: ObjectResidencyKey;
-  readonly sha256: string;
-  readonly size_bytes: number;
-  readonly physical_key: string;
-  readonly bytes?: Uint8Array;
-}
-
-function fail(code: ArtifactDraftReadErrorCode, status: 400 | 403 | 404 | 409 | 410 | 503, message: string, retryable = false): never {
-  throw new ArtifactDraftReadError(code, status, message, retryable);
-}
-
+  addExpected,
+  parseCanonical,
+  parseManifest,
+  parseReceipt,
+  readStoredObject,
+  MANIFEST_PREFIX,
+  SECTION_PREFIX,
+  REFERENCE_PREFIX,
+  type ArtifactRow,
+  type BindingRow,
+  type ReservationRow,
+  type AuthorityRow,
+  type HeadRow,
+  type ObjectRow,
+  type ExpectedObject,
+  type StoredObject,
+} from "./artifact-draft-reader-objects.js";
+import { sameScopeForReauthorization, reauthorizedSourceFingerprint, reauthorizedAccessMatches } from "./artifact-draft-reader-reauthorization.js";
 function text(value: unknown, label: string): string {
   if (typeof value !== "string" || value.length === 0 || value.length > 256) fail("ARTIFACT_DRAFT_READ_INTEGRITY", 409, `${label} is invalid`);
   return value;
@@ -252,143 +77,16 @@ function optionalPositive(value: unknown, label: string): number | null {
   return positive(value, label);
 }
 
-function parseJson(value: unknown, label: string): unknown {
-  if (typeof value !== "string") fail("ARTIFACT_DRAFT_READ_INTEGRITY", 409, `${label} is invalid`);
-  try { return JSON.parse(value); }
-  catch { fail("ARTIFACT_DRAFT_READ_INTEGRITY", 409, `${label} is invalid`); }
-}
-
-function parseCanonical(value: unknown, label: string): unknown {
-  const parsed = parseJson(value, label);
-  if (canonicalJson(parsed) !== value) fail("ARTIFACT_DRAFT_READ_INTEGRITY", 409, `${label} is not canonical`);
-  return parsed;
-}
-
-function parseReceipt(value: unknown): ImmutableObjectReceipt {
-  const parsed = parseCanonical(value, "draft object receipt");
-  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) fail("ARTIFACT_DRAFT_READ_INTEGRITY", 409, "draft object receipt is invalid");
-  const receipt = parsed as Record<string, unknown>;
-  const keys = ["key", "expected_sha256", "readback_sha256", "size_bytes", "etag", "existed_identically"];
-  if (Object.keys(receipt).some((key) => !keys.includes(key)) ||
-      typeof receipt.key !== "string" || typeof receipt.expected_sha256 !== "string" || !SHA256.test(receipt.expected_sha256) ||
-      typeof receipt.readback_sha256 !== "string" || !SHA256.test(receipt.readback_sha256) ||
-      !Number.isSafeInteger(receipt.size_bytes) || (receipt.size_bytes as number) < 0 ||
-      typeof receipt.etag !== "string" || typeof receipt.existed_identically !== "boolean") {
-    fail("ARTIFACT_DRAFT_READ_INTEGRITY", 409, "draft object receipt is invalid");
-  }
-  return receipt as unknown as ImmutableObjectReceipt;
-}
-
-function mapAuthorityFailure(error: unknown): never {
+export function mapAuthorityFailure(error: unknown): never {
+  if (error instanceof ArtifactDraftReadError) throw error;
   const code = typeof error === "object" && error !== null && "code" in error ? (error as { readonly code?: unknown }).code : undefined;
-  if (code === "EVIDENCE_AUTHORIZATION_DENIED" || code === "NAVIGATION_SCOPE_MISMATCH") fail("ARTIFACT_DRAFT_READ_DENIED", 403, "draft read authorization denied");
+  if (code === "EVIDENCE_AUTHORIZATION_DENIED" || code === "EVIDENCE_SOURCE_NOT_LIVE" || code === "NAVIGATION_SCOPE_MISMATCH" ||
+      code === "ORIENTATION_SOURCE_DENIED" || code === "ORIENTATION_SOURCE_NOT_ADMITTED") {
+    fail("ARTIFACT_DRAFT_READ_DENIED", 403, "draft read authorization denied");
+  }
   if (code === "EVIDENCE_SCOPE_EXPIRED" || code === "EVIDENCE_SCOPE_INVALIDATED" || code === "SCOPE_SNAPSHOT_STALE" || code === "NAVIGATION_SCOPE_NOT_CURRENT") fail("ARTIFACT_DRAFT_READ_STALE", 410, "draft read scope is stale");
   if (code === "EVIDENCE_INPUT_INVALID" || code === "SCOPE_SNAPSHOT_READBACK_MISMATCH") fail("ARTIFACT_DRAFT_READ_INTEGRITY", 409, "draft read authority is inconsistent");
   fail("ARTIFACT_DRAFT_READ_UNAVAILABLE", 503, "draft read authority is unavailable", true);
-}
-
-async function digestBytes(bytes: Uint8Array): Promise<string> {
-  const owned = new ArrayBuffer(bytes.byteLength);
-  new Uint8Array(owned).set(bytes);
-  const digest = await crypto.subtle.digest("SHA-256", owned);
-  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
-}
-
-async function readStoredObject(
-  store: EvidenceObjectStore,
-  row: ObjectRow,
-  expected: ExpectedObject,
-  retainBytes = false,
-): Promise<StoredObject> {
-  if (row.object_kind !== expected.object_kind || row.object_ref !== expected.object_ref || row.section_ordinal !== expected.section_ordinal) {
-    fail("ARTIFACT_DRAFT_READ_INTEGRITY", 409, "draft object mapping is inconsistent");
-  }
-  const receipt = parseReceipt(row.receipt_json);
-  let residency: ObjectResidencyKey;
-  try { residency = ObjectResidencyKeySchema.parse(parseCanonical(row.residency_key_json, "draft residency")); }
-  catch { fail("ARTIFACT_DRAFT_READ_INTEGRITY", 409, "draft residency is invalid"); }
-  const sha256 = receipt.expected_sha256;
-  if (receipt.readback_sha256 !== sha256 || residency.content_digest.digest !== sha256 ||
-      row.residency_key_digest !== await objectResidencyKeyDigest(residency)) {
-    fail("ARTIFACT_DRAFT_READ_INTEGRITY", 409, "draft object integrity is inconsistent");
-  }
-  if (expected.sha256 !== undefined && expected.sha256 !== sha256) fail("ARTIFACT_DRAFT_READ_INTEGRITY", 409, "draft declared digest is inconsistent");
-  const physicalKey = await canonicalEvidenceObjectKey(residency, expected.prefix, sha256);
-  if (receipt.key !== physicalKey) fail("ARTIFACT_DRAFT_READ_INTEGRITY", 409, "draft object key is inconsistent");
-  let stored: R2ObjectBody | null;
-  try { stored = await store.open(physicalKey); }
-  catch { fail("ARTIFACT_DRAFT_READ_UNAVAILABLE", 503, "draft object read is unavailable", true); }
-  if (stored === null) fail("ARTIFACT_DRAFT_READ_INTEGRITY", 409, "draft object is missing");
-  const metadata = stored.customMetadata ?? {};
-  if (stored.etag !== receipt.etag || stored.size !== receipt.size_bytes ||
-      stored.httpMetadata?.contentType !== expected.content_type || Object.keys(metadata).length !== 3 ||
-      metadata.eliotr_sha256 !== sha256 || metadata.eliotr_size_bytes !== String(receipt.size_bytes) || metadata.eliotr_immutable !== "true") {
-    fail("ARTIFACT_DRAFT_READ_INTEGRITY", 409, "draft object metadata is inconsistent");
-  }
-  let actual: Uint8Array;
-  try { actual = await bufferBounded(stored.body, RUNTIME_LIMITS.buffered_r2_bytes); }
-  catch { fail("ARTIFACT_DRAFT_READ_INTEGRITY", 409, "draft object body is unreadable"); }
-  if (actual.byteLength !== receipt.size_bytes || await digestBytes(actual) !== sha256) {
-    fail("ARTIFACT_DRAFT_READ_INTEGRITY", 409, "draft object bytes are inconsistent");
-  }
-  return {
-    row, receipt, residency, sha256, size_bytes: actual.byteLength, physical_key: physicalKey,
-    ...(retainBytes ? { bytes: actual } : {}),
-  };
-}
-
-function addExpected(map: Map<string, ExpectedObject>, expected: ExpectedObject): void {
-  if (map.has(expected.object_ref)) fail("ARTIFACT_DRAFT_READ_INTEGRITY", 409, "draft object references are duplicated");
-  map.set(expected.object_ref, expected);
-}
-
-function parseManifest(bytes: Uint8Array): { readonly spec: ArtifactSpec; readonly revision: ArtifactRevision } {
-  let manifestText: string;
-  try { manifestText = new TextDecoder("utf-8", { fatal: true }).decode(bytes); }
-  catch { fail("ARTIFACT_DRAFT_READ_INTEGRITY", 409, "draft manifest encoding is invalid"); }
-  const raw = parseCanonical(manifestText, "draft manifest");
-  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) fail("ARTIFACT_DRAFT_READ_INTEGRITY", 409, "draft manifest is invalid");
-  try {
-    const value = raw as { readonly spec?: unknown; readonly revision?: unknown };
-    const spec = ArtifactSpecSchema.parse(value.spec);
-    const revision = ArtifactRevisionSchema.parse(value.revision);
-    return { spec, revision };
-  } catch { fail("ARTIFACT_DRAFT_READ_INTEGRITY", 409, "draft manifest contract is invalid"); }
-}
-
-function sameScopeForReauthorization(original: ScopeSnapshot, fresh: ScopeSnapshot): boolean {
-  return canonicalJson(original.resolved_scope_expression) === canonicalJson(fresh.resolved_scope_expression) &&
-    canonicalJson([...original.member_source_revision_refs].sort()) === canonicalJson([...fresh.member_source_revision_refs].sort()) &&
-    canonicalJson(original.source_owner_generations) === canonicalJson(fresh.source_owner_generations) &&
-    canonicalJson(original.participant_generations) === canonicalJson(fresh.participant_generations) &&
-    original.disclosure_closure_digest === fresh.disclosure_closure_digest &&
-    fresh.purge_ledger_revision >= original.purge_ledger_revision;
-}
-
-function reauthorizedSourceFingerprint(
-  sources: readonly EvidenceSourceAuthority[],
-  refs: readonly string[],
-  scope: ScopeSnapshot,
-  grant: ScopeAuthorization,
-): string {
-  if (sources.length !== refs.length) fail("ARTIFACT_DRAFT_READ_STALE", 410, "draft source authorization is incomplete");
-  const expectedRefs = [...refs].sort();
-  const actualRefs = sources.map((source) => source.source_revision_ref).sort();
-  if (canonicalJson(expectedRefs) !== canonicalJson(actualRefs)) fail("ARTIFACT_DRAFT_READ_STALE", 410, "draft source authorization changed");
-  if (!grant.allowed_use.includes("research")) fail("ARTIFACT_DRAFT_READ_DENIED", 403, "draft read authorization denied");
-  for (const source of sources) {
-    if (source.purge_state !== "LIVE" || scope.source_owner_generations[source.source_revision_ref] !== source.source_owner_generation ||
-        source.disclosure_ceiling !== grant.disclosure_ceiling || source.allowed_use.some((use) => !grant.allowed_use.includes(use)) ||
-        !source.allowed_use.includes("research")) {
-      fail("ARTIFACT_DRAFT_READ_STALE", 410, "draft source authorization is stale");
-    }
-  }
-  return canonicalJson([...sources].sort((left, right) => left.source_revision_ref < right.source_revision_ref ? -1 : 1));
-}
-
-function reauthorizedAccessMatches(left: EvidenceAccessContext, right: EvidenceAccessContext): boolean {
-  return left.principal_ref === right.principal_ref && left.client_class === right.client_class &&
-    left.credential_generation === right.credential_generation;
 }
 
 export async function readArtifactDraftInternal(input: ArtifactDraftReadInput, artifactRef: VersionedRef): Promise<ArtifactRevision | null>;
@@ -401,6 +99,20 @@ export async function readArtifactDraftInternal(
   citations = false,
 ): Promise<ArtifactRevision | ArtifactDraftSectionRead | ArtifactDraftSectionCitationsRead | null> {
   return readArtifactDraftCore(input, artifactRef, sectionRef, citations) as Promise<ArtifactRevision | ArtifactDraftSectionRead | ArtifactDraftSectionCitationsRead | null>;
+}
+
+export async function readArtifactDraftCowSnapshotInternal(
+  input: ArtifactDraftReadInput,
+  artifactRef: VersionedRef,
+): Promise<ArtifactDraftCowSnapshot | null> {
+  return readArtifactDraftCore(input, artifactRef, undefined, false, true) as Promise<ArtifactDraftCowSnapshot | null>;
+}
+
+export async function readArtifactDraftCowSnapshotReauthorizedInternal(
+  input: ArtifactDraftReauthorizationCoreInput,
+  artifactRef: VersionedRef,
+): Promise<ArtifactDraftReauthorizedCoreRead<ArtifactDraftCowSnapshot> | null> {
+  return readArtifactDraftCore(input, artifactRef, undefined, false, true) as Promise<ArtifactDraftReauthorizedCoreRead<ArtifactDraftCowSnapshot> | null>;
 }
 
 export async function readArtifactDraftReauthorizedInternal(
@@ -430,15 +142,17 @@ type ArtifactDraftCoreInput =
   | ArtifactDraftReauthorizationCoreInput
   | ArtifactDraftReauthorizationSectionReadInput;
 
-type ArtifactDraftCoreValue = ArtifactRevision | ArtifactDraftSectionRead | ArtifactDraftSectionCitationsRead;
+type ArtifactDraftCoreValue = ArtifactRevision | ArtifactDraftSectionRead | ArtifactDraftSectionCitationsRead | ArtifactDraftCowSnapshot;
 
 async function readArtifactDraftCore(
   input: ArtifactDraftCoreInput,
   artifactRef: VersionedRef,
   sectionRef?: VersionedRef,
   citations = false,
+  includeCowObjects = false,
 ): Promise<ArtifactDraftCoreValue | ArtifactDraftReauthorizedCoreRead<ArtifactDraftCoreValue> | null> {
   const reauthorization = "reauthorization" in input ? input.reauthorization : undefined;
+  const workflowOperation = "workflow_operation_id" in input ? input.workflow_operation_id : undefined;
   const access: EvidenceAccessContext = reauthorization === undefined
     ? input.access
     : JSON.parse(canonicalJson(input.access)) as EvidenceAccessContext;
@@ -464,7 +178,7 @@ async function readArtifactDraftCore(
     "SELECT artifact_id, revision, intent_id, intent_revision, expected_head_revision, principal_ref, spec_ref_id, spec_ref_revision, scope_snapshot_id, scope_snapshot_revision, manifest_r2_key, manifest_sha256, manifest_size_bytes, created_at FROM artifact_draft_binding WHERE artifact_id=?1 AND revision=?2 LIMIT 1",
   ).bind(artifactRef.id, artifactRef.revision).first<BindingRow>();
   if (binding === null) fail("ARTIFACT_DRAFT_READ_INTEGRITY", 409, "draft binding is missing");
-  if (binding.principal_ref !== access.principal_ref) fail("ARTIFACT_DRAFT_READ_DENIED", 403, "draft read authorization denied");
+  if (reauthorization === undefined && access.client_class === "owner_pwa" && binding.principal_ref !== access.principal_ref) fail("ARTIFACT_DRAFT_READ_DENIED", 403, "draft read authorization denied");
   let scopeRef: VersionedRef;
   try { scopeRef = VersionedRefSchema.parse({ id: binding.scope_snapshot_id, revision: binding.scope_snapshot_revision }); }
   catch { fail("ARTIFACT_DRAFT_READ_INTEGRITY", 409, "draft scope reference is invalid"); }
@@ -473,7 +187,8 @@ async function readArtifactDraftCore(
   catch (error) { return mapAuthorityFailure(error); }
   if (scope === null) fail("ARTIFACT_DRAFT_READ_STALE", 410, "draft read scope is unavailable");
   if (scope.invalidated_at !== null &&
-      (reauthorization === undefined || scope.invalidation_reason !== "SCOPE_INPUT_CHANGED")) {
+      (reauthorization === undefined || (scope.invalidation_reason !== "SCOPE_INPUT_CHANGED" &&
+        !(access.client_class === "owner_pwa" && scope.invalidation_reason === "CLIENT_DELEGATION_STALE")))) {
     fail("ARTIFACT_DRAFT_READ_STALE", 410, "draft read scope was invalidated");
   }
   const storedScope = scope.snapshot;
@@ -482,24 +197,61 @@ async function readArtifactDraftCore(
   let authority: NavigationReadAuthority;
   let initialSourceFingerprint: string | undefined;
   try {
-    if (access.client_class !== "owner_pwa") fail("ARTIFACT_DRAFT_READ_DENIED", 403, "draft read authorization denied");
+    if (access.client_class !== "owner_pwa" && ((reauthorization === undefined && workflowOperation === undefined) ||
+        (access.client_class !== "trusted_agent" && access.client_class !== "named_api_client"))) {
+      fail("ARTIFACT_DRAFT_READ_DENIED", 403, "draft read authorization denied");
+    }
     if (reauthorization === undefined) {
       if (!("require_current" in input)) fail("ARTIFACT_DRAFT_READ_INTEGRITY", 409, "draft read currentness input is missing");
-      authority = createNavigationReadAuthority({
+      const directNavigation = createNavigationReadAuthority({
         database,
         scope_snapshot: storedScope,
         access,
         require_current: input.require_current,
         ...(input.now === undefined ? {} : { now: input.now }),
       });
+      authority = { ...directNavigation, current: async () => {
+        const grant = await directNavigation.current();
+        if (access.client_class !== "owner_pwa" && !await hasDelegatedArtifactReadAuthority({
+          database, access, artifact_ref: artifactRef, original_scope_ref: scopeRef, authorization_scope_ref: scopeRef,
+          authorization: grant, original_principal_ref: text(binding.principal_ref, "draft author"), citations,
+          ...(workflowOperation === undefined ? {} : { workflow_operation_id: workflowOperation }),
+        })) fail("ARTIFACT_DRAFT_READ_DENIED", 403, "draft execution readback is denied");
+        return grant;
+      } };
       await authority.current();
     } else {
       if (reauthorizationAccess === undefined || !reauthorizedAccessMatches(access, reauthorizationAccess) ||
-          reauthorizationAccess.client_class !== "owner_pwa" || freshReauthorizationScope === undefined ||
+          freshReauthorizationScope === undefined ||
           expectedAuthorizationJson === undefined) {
         fail("ARTIFACT_DRAFT_READ_DENIED", 403, "draft read authorization denied");
       }
-      if (!sameScopeForReauthorization(storedScope, freshReauthorizationScope)) {
+      let sameScope = sameScopeForReauthorization(storedScope, freshReauthorizationScope);
+      if (!sameScope && access.client_class === "owner_pwa" && binding.principal_ref === access.principal_ref) {
+        // This is a durable lease witness, never a caller-supplied permission flag.
+        // The navigation authority independently reconstructs the original policy
+        // hashes and rechecks current sources before any stored bytes are read.
+        const lease = await database.prepare(
+          "SELECT 1 AS proven FROM scope_read_policy_snapshot_baseline b JOIN scope_snapshot s " +
+          "ON s.snapshot_id=b.snapshot_id AND s.revision=b.snapshot_revision " +
+          "WHERE b.snapshot_id=?1 AND b.snapshot_revision=?2 AND b.pre_migration_semantic=0 " +
+          "AND EXISTS(SELECT 1 FROM scope_access_grant g WHERE g.snapshot_id=s.snapshot_id " +
+          "AND g.snapshot_revision=s.revision AND g.principal_ref=?3 AND g.client_class='owner_pwa' " +
+          "AND g.project_client_grant_id IS NULL AND g.state='ACTIVE' AND g.policy_authority_ref=s.policy_authority_ref " +
+          "AND g.credential_generation=s.client_fence_ref) " +
+          "AND EXISTS(SELECT 1 FROM scope_read_policy_history_event e JOIN scope_read_policy_lease_refresh_receipt r " +
+          "ON r.receipt_sequence=e.receipt_sequence AND r.refresh_id=e.refresh_id AND r.state='APPLIED' " +
+          "WHERE e.principal_ref=?3 AND e.client_class='owner_pwa' AND e.event_kind='LEASE_REFRESH' " +
+          "AND e.history_event_sequence>b.history_event_sequence_floor AND r.receipt_sequence>b.receipt_sequence_floor) " +
+          "AND NOT EXISTS(SELECT 1 FROM scope_read_policy_identity i WHERE i.principal_ref=?3 " +
+          "AND i.client_class='owner_pwa' AND i.birth_sequence<=b.history_event_sequence_floor " +
+          "AND i.semantic_sequence>b.history_event_sequence_floor) " +
+          "AND NOT EXISTS(SELECT 1 FROM scope_read_policy_lease_refresh_receipt r WHERE r.principal_ref=?3 " +
+          "AND r.client_class='owner_pwa' AND r.state='PREPARED') LIMIT 1",
+        ).bind(scopeRef.id, scopeRef.revision, access.principal_ref).first<{ proven: number }>();
+        sameScope = lease?.proven === 1 && sameScopeForReauthorization(storedScope, freshReauthorizationScope, true);
+      }
+      if (!sameScope) {
         fail("ARTIFACT_DRAFT_READ_STALE", 410, "fresh draft scope does not cover the saved source set");
       }
       const currentGrant = await reauthorization.navigation.current();
@@ -512,7 +264,23 @@ async function readArtifactDraftCore(
         freshReauthorizationScope,
         currentGrant,
       );
-      authority = reauthorization.navigation;
+      const navigation = reauthorization.navigation;
+      const authorizationScopeRef = { id: freshReauthorizationScope.snapshot_id, revision: freshReauthorizationScope.revision };
+      const originalPrincipal = text(binding.principal_ref, "draft author");
+      const requireArtifactOrigin = async (grant: ScopeAuthorization) => {
+        const permitted = access.client_class === "owner_pwa" ? hasOwnerArtifactReadAuthority : hasDelegatedArtifactReadAuthority;
+        if (!await permitted({
+          database, access, artifact_ref: artifactRef, original_scope_ref: scopeRef,
+          authorization_scope_ref: authorizationScopeRef, authorization: grant,
+          original_principal_ref: originalPrincipal, citations,
+        })) fail("ARTIFACT_DRAFT_READ_DENIED", 403, "draft read authorization denied");
+      };
+      await requireArtifactOrigin(currentGrant);
+      authority = { ...navigation, current: async () => {
+        const grant = await navigation.current();
+        await requireArtifactOrigin(grant);
+        return grant;
+      } };
     }
   } catch (error) {
     if (error instanceof ArtifactDraftReadError) throw error;
@@ -594,6 +362,7 @@ async function readArtifactDraftCore(
     fail("ARTIFACT_DRAFT_READ_INTEGRITY", 409, "draft manifest binding is inconsistent");
   }
   const store = createR2EvidenceObjectStore(input.work_bucket);
+  if (reauthorization !== undefined || access.client_class !== "owner_pwa") await authority.current();
   const manifestObject = await readStoredObject(store, manifestRow, {
     object_ref: "manifest", object_kind: "MANIFEST", section_ordinal: null, prefix: MANIFEST_PREFIX, content_type: "application/json",
   }, true);
@@ -648,11 +417,12 @@ async function readArtifactDraftCore(
     if (row.artifact_id !== artifactRef.id || row.revision !== artifactRef.revision || row.created_at !== artifact.created_at) {
       fail("ARTIFACT_DRAFT_READ_INTEGRITY", 409, "draft object identity is inconsistent");
     }
+    if (reauthorization !== undefined || access.client_class !== "owner_pwa") await authority.current();
     storedByRef.set(expectedObject.object_ref, await readStoredObject(
       store,
       row,
       expectedObject,
-      selectedSectionValue !== undefined && expectedObject.object_kind === "SECTION_BODY" &&
+      includeCowObjects || selectedSectionValue !== undefined && expectedObject.object_kind === "SECTION_BODY" &&
         expectedObject.object_ref === selectedSectionValue.body_object_ref && expectedObject.section_ordinal === selectedSectionOrdinal ||
         citations && selectedSectionValue !== undefined &&
           (expectedObject.object_ref === selectedSectionValue.verification_receipt_ref || expectedObject.object_ref === parsedManifest.revision.dependency_manifest_ref),
@@ -761,6 +531,45 @@ async function readArtifactDraftCore(
       body_sha256: selectedSectionValue.body_sha256,
       size_bytes: body.bytes.byteLength,
       body: new Uint8Array(ownedBody),
+    });
+  }
+  if (includeCowObjects) {
+    const sections: ArtifactDraftSectionInput[] = parsedManifest.revision.sections.map((section, ordinal) => {
+      const body = storedByRef.get(section.body_object_ref);
+      if (body?.bytes === undefined || body.row.section_ordinal !== ordinal || body.sha256 !== section.body_sha256) {
+        fail("ARTIFACT_DRAFT_READ_INTEGRITY", 409, "COW section body is unavailable or inconsistent");
+      }
+      return {
+        section,
+        bytes: new Uint8Array(body.bytes),
+        residency: ObjectResidencyKeySchema.parse(body.residency),
+      };
+    });
+    const referenceRefs = new Map<string, ExpectedObject["object_kind"]>();
+    referenceRefs.set(parsedManifest.revision.dependency_manifest_ref, "DEPENDENCY_MANIFEST");
+    for (const section of parsedManifest.revision.sections) {
+      referenceRefs.set(section.evidence_ledger_ref, "EVIDENCE_LEDGER");
+      referenceRefs.set(section.verification_receipt_ref, "VERIFICATION_RECEIPT");
+    }
+    for (const ref of Object.values(parsedManifest.revision.deterministic_export_refs)) referenceRefs.set(ref, "EXPORT");
+    const referenced_objects: ArtifactDraftReferencedObjectInput[] = [...referenceRefs].map(([ref, kind]) => {
+      const stored = storedByRef.get(ref);
+      if (stored?.bytes === undefined || stored.row.object_kind !== kind) {
+        fail("ARTIFACT_DRAFT_READ_INTEGRITY", 409, "COW referenced object is unavailable or inconsistent");
+      }
+      return {
+        object_ref: ref,
+        object_kind: kind as ArtifactDraftReferencedObjectInput["object_kind"],
+        bytes: new Uint8Array(stored.bytes),
+        residency: ObjectResidencyKeySchema.parse(stored.residency),
+      };
+    });
+    return wrapResult({
+      spec: parsedManifest.spec,
+      revision: parsedManifest.revision,
+      sections,
+      referenced_objects,
+      manifest_residency: ObjectResidencyKeySchema.parse(manifestObject.residency),
     });
   }
   return wrapResult(parsedManifest.revision);

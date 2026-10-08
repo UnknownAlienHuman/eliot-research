@@ -45,7 +45,7 @@ interface DraftManifestRow {
   readonly manifest_size_bytes: unknown;
 }
 
-function identifier(value: unknown, label: string): string {
+function identifier(value: unknown, _label: string): string {
   if (typeof value !== "string" || !IDENTIFIER.test(value)) fail("WORKFLOW_OUTPUT_CORRUPT");
   return value;
 }
@@ -102,7 +102,7 @@ async function readReservation(
       "SELECT intent_id,intent_revision,artifact_id,artifact_revision,request_sha256,principal_ref,idempotency_key,payload_ref,state " +
       "FROM artifact_draft_reservation WHERE intent_id=?1 AND intent_revision=1 LIMIT 1",
     ).bind(intentId).first<DraftReservationRow>();
-  } catch (error) {
+  } catch {
     fail("WORKFLOW_EFFECT_UNCERTAIN");
   }
   if (row === null) return null;
@@ -127,7 +127,7 @@ async function readManifest(
       "SELECT artifact_id,revision,manifest_r2_key,manifest_sha256,manifest_size_bytes " +
       "FROM artifact_draft_binding WHERE artifact_id=?1 AND revision=?2 LIMIT 1",
     ).bind(artifactId, artifactRevision).first<DraftManifestRow>();
-  } catch (error) {
+  } catch {
     fail("WORKFLOW_EFFECT_UNCERTAIN");
   }
   if (row === null) return null;
@@ -200,9 +200,10 @@ export function createResearchMaterializeRecovery(
         artifact_ref: Object.freeze({ ...artifactRef.data }),
         access: {
           principal_ref: principal.principal_ref,
-          client_class: "owner_pwa",
+          client_class: navigation.access.client_class,
           credential_generation: principal.credential_generation,
         },
+        ...(navigation.access.client_class === "owner_pwa" ? {} : { workflow_operation_id: input.request.operation_id }),
         require_current: async (scope) => {
           await navigation.current(scope);
           return scope;

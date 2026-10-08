@@ -3,14 +3,15 @@ const title = "Eliot Research";
 const description = "A private, evidence-led research workspace.";
 ---
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="system">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="theme-color" content="#0B101B" />
+    <meta name="theme-color" content="#17191b" />
     <meta name="description" content={description} />
     <link rel="manifest" href="/manifest.webmanifest" />
     <title>{title}</title>
+    <script is:inline src="/theme-prepaint.js"></script>
   </head>
   <body>
     <div id="app"></div>

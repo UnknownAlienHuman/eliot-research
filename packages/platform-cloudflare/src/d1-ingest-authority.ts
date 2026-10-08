@@ -23,11 +23,14 @@ import {
   ingestInputFingerprint,
   normalizePrepareInput,
   stableIngestId,
-  type ExistingSourceRow,
   type IngestOperationRow,
 } from "./d1-ingest-validation.js";
 import { commitAdmittedBundle } from "./d1-ingest-commit.js";
 import { activeOwner, policySnapshot, ensureOwnerAndPolicy, requireCurrentIngestPolicy } from "./d1-ingest-policy.js";
+
+import { existingSource, rawCaptureExpectedHead, ensureExistingSource } from "./d1-ingest-source-head.js";
+import { ingestClientFence, requireIngestClientOperation } from "./d1-ingest-client.js";
+import type { IngestClientAuthorization } from "./d1-ingest-types.js";
 
 const OPERATION_SELECT =
   "SELECT operation_id, principal_ref, origin_authentication_receipt_ref, idempotency_key, " +
@@ -37,9 +40,10 @@ const OPERATION_SELECT =
   "policy_revision, policy_snapshot_json, policy_snapshot_sha256, candidate_id, " +
   "staging_session_ref, qualification_report_ref, decision_receipt_ref, " +
   "promotion_receipt_ref, state, bundle_receipt_json, bundle_receipt_sha256, " +
-  "created_at, updated_at, expires_at FROM bundle_ingest_operation ";
+  "created_at, updated_at, expires_at, client_origin_json FROM bundle_ingest_operation ";
 const DEFAULT_TTL_MS = 24 * 60 * 60 * 1000;
 export interface D1IngestAdmissionDependencies {
+  readonly client?: IngestClientAuthorization;
   readonly now?: () => number;
   readonly operation_ttl_ms?: number;
 }
@@ -62,91 +66,6 @@ async function readByIdempotency(
   return readOperation(database, "WHERE principal_ref = ?1 AND idempotency_key = ?2", principalRef, idempotencyKey);
 }
 
-async function existingSource(
-  database: D1Database,
-  sourceId: string,
-): Promise<ExistingSourceRow | null> {
-  return database.prepare(
-    "SELECT source_id, source_namespace_id, source_owner_system_id, " +
-    "source_owner_generation, ownership_mode, head_rev FROM source WHERE source_id = ?1 LIMIT 1",
-  ).bind(sourceId).first<ExistingSourceRow>();
-}
-
-interface RawCaptureHeadBindingRow {
-  readonly state: unknown;
-  readonly principal_ref: unknown;
-  readonly owner_system_id: unknown;
-  readonly source_namespace_id: unknown;
-  readonly source_owner_generation: unknown;
-  readonly source_revision_ref: unknown;
-  readonly source_logical_id: unknown;
-  readonly target_source_id: unknown;
-  readonly expected_head_revision_ref: unknown;
-}
-
-async function rawCaptureExpectedHead(
-  database: D1Database,
-  input: Awaited<ReturnType<typeof normalizePrepareInput>>,
-  source: ExistingSourceRow | null,
-  requireCurrentHead = true,
-): Promise<string | null> {
-  let result: D1Result<RawCaptureHeadBindingRow>;
-  try {
-    result = await database.prepare(
-      "SELECT state,principal_ref,owner_system_id,source_namespace_id,source_owner_generation," +
-      "source_revision_ref,source_logical_id,target_source_id,expected_head_revision_ref " +
-      "FROM raw_file_capture WHERE source_revision_ref=?1 LIMIT 2",
-    ).bind(input.manifest.origin.source_revision_ref).all<RawCaptureHeadBindingRow>();
-  } catch (cause) {
-    authorityFail("INGEST_SETTLEMENT_UNCERTAIN", "raw capture source-head binding read failed", true, cause);
-  }
-  const rows = result.results ?? [];
-  if (rows.length === 0) return null;
-  if (rows.length !== 1) authorityFail("INGEST_AUTHORITY_CONFLICT", "source revision is bound to multiple raw captures");
-  const row = rows[0];
-  if (row === undefined || row.state !== "CAPTURED") {
-    authorityFail("INGEST_AUTHORITY_CONFLICT", "raw capture source-head binding is not settled");
-  }
-  if (row.principal_ref !== input.principal_ref || row.owner_system_id !== input.manifest.origin.owner_system_id ||
-      row.source_namespace_id !== input.manifest.origin.source_namespace_id ||
-      row.source_owner_generation !== input.manifest.origin.source_owner_generation ||
-      row.source_revision_ref !== input.manifest.origin.source_revision_ref ||
-      row.source_logical_id !== input.manifest.source.logical_id) {
-    authorityFail("INGEST_AUTHORITY_CONFLICT", "raw capture binding does not match the normalized source");
-  }
-  const target = row.target_source_id;
-  const expected = row.expected_head_revision_ref;
-  if (target === null && expected === null) return null;
-  if (typeof target !== "string" || typeof expected !== "string") {
-    authorityFail("INGEST_AUTHORITY_CONFLICT", "raw capture source-head binding is incomplete");
-  }
-  if (target !== input.manifest.source.logical_id || source === null || source.source_id !== target ||
-      (requireCurrentHead && source.head_rev !== expected)) {
-    authorityFail("INGEST_AUTHORITY_CONFLICT", "raw capture expected source head is stale");
-  }
-  return authorityIdentifier(expected, "expected raw source head");
-}
-
-function ensureExistingSource(
-  row: ExistingSourceRow | null,
-  input: Awaited<ReturnType<typeof normalizePrepareInput>>,
-): string | null {
-  if (row === null) return null;
-  const manifest = input.manifest;
-  if (
-    row.source_id !== manifest.source.logical_id ||
-    row.source_namespace_id !== manifest.origin.source_namespace_id ||
-    row.source_owner_system_id !== manifest.origin.owner_system_id ||
-    row.source_owner_generation !== manifest.origin.source_owner_generation ||
-    row.ownership_mode !== manifest.origin.ownership_mode
-  ) {
-    authorityFail("INGEST_AUTHORITY_CONFLICT", "source identity is already bound to another lineage");
-  }
-  if (row.head_rev !== null && typeof row.head_rev !== "string") {
-    authorityFail("INGEST_AUTHORITY_CONFLICT", "source head authority is malformed");
-  }
-  return row.head_rev as string | null;
-}
 function exactReplay(existing: PreparedIngestOperation, fingerprint: string): PreparedIngestOperation {
   if (existing.input_fingerprint !== fingerprint) {
     authorityFail("INGEST_AUTHORITY_CONFLICT", "principal idempotency identity is already bound to different ingest input");
@@ -174,15 +93,30 @@ export function createD1IngestAdmissionAuthority(
     authorityFail("INGEST_AUTHORITY_INPUT_INVALID", "operation_ttl_ms is outside its allowed range");
   }
 
+  const client = dependencies.client;
+  const fence = (id: string) => ingestClientFence(database, id, client);
+  const requireMutation = async (operation: PreparedIngestOperation) => {
+    await requireIngestClientOperation(database, operation, client);
+    await requireCurrentIngestPolicy(database, operation, clock);
+  };
   const authorizedRead = async (clause: string, identity: string, principalRef: string) => {
     const operation = await readOperation(database, clause, identity, authorityIdentifier(principalRef, "principal_ref"));
-    if (operation !== null) await requireCurrentIngestPolicy(database, operation, clock);
+    if (operation !== null) {
+      await requireIngestClientOperation(database, operation, client);
+      await requireCurrentIngestPolicy(database, operation, clock);
+    }
     return operation;
   };
 
   const authority: IngestAdmissionAuthority = {
     async prepare(rawInput: PrepareIngestAuthorityInput) {
+      await client?.requireCurrent();
       const input = await normalizePrepareInput(rawInput);
+      const origin = client?.origin;
+      if (origin && (origin.grant.grantee.subject !== input.principal_ref ||
+          !origin.grant.ingest_namespace_ids.includes(input.manifest.origin.source_namespace_id))) {
+        authorityFail("INGEST_POLICY_DENIED", "The signed client does not have this namespace delegation");
+      }
       const owner = await activeOwner(database, input.manifest.origin.source_namespace_id);
       if (typeof owner.source_admission_policy_revision !== "number") {
         authorityFail("INGEST_AUTHORITY_INPUT_INVALID", "owner policy revision is malformed");
@@ -192,20 +126,23 @@ export function createD1IngestAdmissionAuthority(
         input.manifest.origin.source_namespace_id,
         owner.source_admission_policy_revision,
       );
-      ensureOwnerAndPolicy(input, owner, policy);
+      ensureOwnerAndPolicy(input, owner, policy, origin?.grant.grantor_principal_ref);
       const existing = await existingSource(database, input.manifest.source.logical_id);
       const currentHead = ensureExistingSource(existing, input);
       const boundHead = await rawCaptureExpectedHead(database, input, existing, false);
       const manifestSha = await canonicalDigest(input.manifest);
       const residencyDigest = await objectResidencyKeyDigest(input.residency_key);
       const policySha = await canonicalDigest(policy);
-      const fingerprintFor = (head: string | null) => ingestInputFingerprint({
+      const prior = await readByIdempotency(database, input.principal_ref, input.idempotency_key);
+      if (prior !== null) await requireMutation(prior);
+      const fingerprintFor = (head: string | null, recorded = prior) => ingestInputFingerprint({
         ...input,
+        ...(origin ? { client_origin: origin,
+          origin_authentication_receipt_ref: recorded?.origin_authentication_receipt_ref ?? input.origin_authentication_receipt_ref } : {}),
         residency_key_digest: residencyDigest,
         expected_head_revision_ref: head,
         policy_snapshot_sha256: policySha,
       });
-      const prior = await readByIdempotency(database, input.principal_ref, input.idempotency_key);
       if (prior !== null) {
         if (boundHead !== null && prior.expected_head_revision_ref !== boundHead) {
           authorityFail("INGEST_AUTHORITY_CONFLICT", "raw capture head binding differs from the durable ingest operation");
@@ -224,7 +161,9 @@ export function createD1IngestAdmissionAuthority(
         authorityFail("INGEST_AUTHORITY_INPUT_INVALID", "ingest authority clock is invalid");
       }
       const createdAt = new Date(createdEpoch).toISOString();
-      const expiresAt = new Date(createdEpoch + ttl).toISOString();
+      const expiresAt = new Date(Math.min(createdEpoch + ttl, origin ? Date.parse(origin.grant.expires_at) : Infinity)).toISOString();
+      if (Date.parse(expiresAt) <= createdEpoch) authorityFail("INGEST_POLICY_DENIED", "The import delegation has expired");
+      await client?.requireCurrent();
       const manifestJson = canonicalJson(input.manifest);
       const fileHashesJson = canonicalJson(input.file_hashes);
       const residencyJson = canonicalJson(input.residency_key);
@@ -238,8 +177,8 @@ export function createD1IngestAdmissionAuthority(
             "source_namespace_id, owner_system_id, source_owner_generation, source_revision_ref, " +
             "source_id, expected_head_revision_ref, residency_key_json, residency_key_digest, " +
             "policy_revision, policy_snapshot_json, policy_snapshot_sha256, candidate_id, state, " +
-            "created_at, updated_at, expires_at) VALUES (" +
-            "?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,'PREPARING',?22,?22,?23)",
+            "created_at, updated_at, expires_at, client_origin_json) VALUES (" +
+            "?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,'PREPARING',?22,?22,?23,?24)",
           ).bind(
             operationId,
             input.principal_ref,
@@ -264,7 +203,9 @@ export function createD1IngestAdmissionAuthority(
             candidateId,
             createdAt,
             expiresAt,
+            origin ? canonicalJson(origin) : null,
           ),
+          ...fence(operationId),
           database.prepare(
             "INSERT INTO source_acquisition_candidate(" +
             "candidate_id, revision, operation_id, observed_locator_identifier_or_upload_ref, " +
@@ -289,18 +230,23 @@ export function createD1IngestAdmissionAuthority(
             createdAt,
             expiresAt,
           ),
+          ...fence(operationId),
         ]);
-        if ((results[0]?.meta?.changes ?? 0) !== 1 || (results[1]?.meta?.changes ?? 0) !== 1) {
+        if ((results[0]?.meta?.changes ?? 0) !== 1 || (results[client ? 2 : 1]?.meta?.changes ?? 0) !== 1) {
           authorityFail("INGEST_SETTLEMENT_UNCERTAIN", "ingest prepare batch did not create exact authority", true);
         }
       } catch (cause) {
         const raced = await readByIdempotency(database, input.principal_ref, input.idempotency_key);
-        if (raced !== null) return { disposition: "EXISTING", operation: exactReplay(raced, await fingerprintFor(raced.expected_head_revision_ref)) };
+        if (raced !== null) {
+          await requireMutation(raced);
+          return { disposition: "EXISTING", operation: exactReplay(raced, await fingerprintFor(raced.expected_head_revision_ref, raced)) };
+        }
         if (cause instanceof IngestAuthorityError) throw cause;
         authorityFail("INGEST_SETTLEMENT_UNCERTAIN", "ingest prepare authority failed", true, cause);
       }
       const readback = await readOperation(database, "WHERE operation_id = ?1", operationId);
       if (readback === null) authorityFail("INGEST_SETTLEMENT_UNCERTAIN", "ingest prepare readback is missing", true);
+      await requireMutation(readback);
       return { disposition: "CREATED", operation: exactReplay(readback, fingerprint) };
     },
 
@@ -309,6 +255,7 @@ export function createD1IngestAdmissionAuthority(
       const session = authorityIdentifier(stagingSessionRef, "staging session ref");
       const existing = await authority.load(id);
       if (existing === null) authorityFail("INGEST_AUTHORITY_MISSING", "ingest operation does not exist");
+      await requireMutation(existing);
       if (existing.bundle_receipt !== null) return existing;
       if (existing.staging_session_ref !== null && existing.staging_session_ref !== session) {
         authorityFail("INGEST_AUTHORITY_CONFLICT", "ingest operation is bound to another staging session");
@@ -316,6 +263,7 @@ export function createD1IngestAdmissionAuthority(
       const updatedAt = new Date(clock()).toISOString();
       try {
         await database.batch([
+          ...fence(id),
           database.prepare(
             "UPDATE bundle_ingest_operation SET staging_session_ref = COALESCE(staging_session_ref, ?2), " +
             "state = CASE WHEN state = 'PREPARING' THEN 'UPLOAD_REQUIRED' ELSE state END, updated_at = ?3 " +
@@ -328,6 +276,7 @@ export function createD1IngestAdmissionAuthority(
             "WHERE operation_id = ?1 AND (staging_object_ref IS NULL OR staging_object_ref = ?2) " +
             "AND state IN ('OBSERVED','RESOLVING')",
           ).bind(id, session),
+          ...fence(id),
         ]);
       } catch (cause) {
         authorityFail("INGEST_SETTLEMENT_UNCERTAIN", "staging-session binding failed", true, cause);
@@ -336,6 +285,7 @@ export function createD1IngestAdmissionAuthority(
       if (readback === null || readback.staging_session_ref !== session) {
         authorityFail("INGEST_SETTLEMENT_UNCERTAIN", "staging-session binding readback mismatch", true);
       }
+      await requireMutation(readback);
       return readback;
     },
 
@@ -378,6 +328,7 @@ export function createD1IngestAdmissionAuthority(
     async recordQualificationDecision(input: RecordQualificationDecisionInput) {
       const operation = await authority.load(input.operation_id);
       if (operation === null) authorityFail("INGEST_AUTHORITY_MISSING", "ingest operation does not exist");
+      await requireMutation(operation);
       if (operation.staging_session_ref !== input.staging_session_ref) {
         authorityFail("INGEST_AUTHORITY_CONFLICT", "qualification is bound to another staging session");
       }
@@ -417,6 +368,7 @@ export function createD1IngestAdmissionAuthority(
       const updatedAt = new Date(clock()).toISOString();
       try {
         await database.batch([
+          ...fence(operation.operation_id),
           database.prepare(
             "INSERT INTO qualification_report(report_id, revision, operation_id, source_revision_ref, " +
             "parser_profile_generation, checks_json, overall, exact_precision_ceiling, warnings_json, " +
@@ -483,6 +435,7 @@ export function createD1IngestAdmissionAuthority(
             updatedAt,
             input.staging_session_ref,
           ),
+          ...fence(operation.operation_id),
         ]);
       } catch (cause) {
         authorityFail("INGEST_SETTLEMENT_UNCERTAIN", "qualification/decision authority failed", true, cause);
@@ -496,6 +449,7 @@ export function createD1IngestAdmissionAuthority(
       ) {
         authorityFail("INGEST_SETTLEMENT_UNCERTAIN", "qualification/decision readback mismatch", true);
       }
+      await requireMutation(readback);
       return readback;
     },
 
@@ -512,6 +466,7 @@ export function createD1IngestAdmissionAuthority(
       if (operation === null || operation.decision_receipt_ref === null) {
         authorityFail("INGEST_AUTHORITY_MISSING", "admission decision authority is missing");
       }
+      await requireMutation(operation);
       if (operation.bundle_receipt !== null) {
         if (canonicalJson(operation.bundle_receipt) !== canonicalJson(receipt)) {
           authorityFail("INGEST_AUTHORITY_CONFLICT", "terminal receipt already differs");
@@ -531,11 +486,11 @@ export function createD1IngestAdmissionAuthority(
       const receiptSha = await canonicalDigest(receipt);
       const updatedAt = new Date(clock()).toISOString();
       try {
-        await database.prepare(
+        await database.batch([...fence(operation.operation_id), database.prepare(
           "UPDATE bundle_ingest_operation SET bundle_receipt_json = ?2, bundle_receipt_sha256 = ?3, " +
           "updated_at = ?4 WHERE operation_id = ?1 AND bundle_receipt_json IS NULL " +
           "AND state = ?5 AND decision_receipt_ref IS NOT NULL",
-        ).bind(operation.operation_id, receiptJson, receiptSha, updatedAt, receipt.decision).run();
+        ).bind(operation.operation_id, receiptJson, receiptSha, updatedAt, receipt.decision), ...fence(operation.operation_id)]);
       } catch (cause) {
         authorityFail("INGEST_SETTLEMENT_UNCERTAIN", "terminal non-admitted receipt write failed", true, cause);
       }
@@ -546,6 +501,7 @@ export function createD1IngestAdmissionAuthority(
       if (canonicalJson(readback.bundle_receipt) !== receiptJson) {
         authorityFail("INGEST_AUTHORITY_CONFLICT", "terminal non-admitted receipt readback differs");
       }
+      await requireMutation(readback);
       return readback.bundle_receipt;
     },
 
@@ -554,7 +510,7 @@ export function createD1IngestAdmissionAuthority(
         ? input.session_id
         : await operationIdForSession(database, input.session_id));
       if (operation === null) return false;
-      await requireCurrentIngestPolicy(database, operation, clock);
+      await requireMutation(operation);
       return operation.state === "AUTHORIZED" &&
         operation.staging_session_ref === input.session_id &&
         operation.input_fingerprint === input.input_fingerprint &&
@@ -568,7 +524,12 @@ export function createD1IngestAdmissionAuthority(
     },
 
     async commitAdmitted(input) {
-      return commitAdmittedBundle(database, input, authority.load, clock);
+      const operation = await authority.load(input.operation_id);
+      if (operation === null) authorityFail("INGEST_AUTHORITY_MISSING", "Ingest operation is missing");
+      await requireMutation(operation);
+      const result = await commitAdmittedBundle(database, input, authority.load, clock, fence);
+      await requireMutation(operation);
+      return result;
     },
   };
   return authority;

@@ -16,8 +16,8 @@ lockfiles plus all repository gates.
 | typescript-eslint | `8.68.0` | Flat-config TypeScript lint integration. |
 | ESLint | `10.9.1` | Repository lint engine. |
 | @eslint/js | `10.0.1` | Published flat JavaScript config package. |
-| Wrangler | `4.127.1` | Worker build, generated binding types, dry-run, migrations and deploy. |
-| @cloudflare/vitest-plugin | `1.1.0` | Workers runtime integration tests. Do not restore the retired pool package. |
+| Wrangler | `4.143.1` | Worker build, generated binding types, dry-run, migrations and deploy. |
+| @cloudflare/vitest-plugin | `1.3.2` | Workers runtime integration tests. Do not restore the retired pool package. |
 | @cloudflare/workers-types | `5.20260827.1` | Compile-time Worker API declarations. Generated binding types remain authoritative for `Env`. |
 | Vite | `8.2.2` | PWA build. |
 | Vitest | `4.1.11` | Node and browser-independent unit harness. |

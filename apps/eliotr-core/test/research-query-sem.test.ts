@@ -291,14 +291,20 @@ describe("research.query SEM lane over the managed-search surface", () => {
       { CORE_DB: db, SEARCH_DB: searchDb, EVIDENCE_BUCKET: runtime.EVIDENCE_BUCKET, AI_SEARCH: namespace },
     );
     const result = await service.query(contextFor(owner, "rq-sem-drift"), queryFor(world, SEM_QUERY));
-    expect(result.evidence_pack.resolved_evidence).toEqual([]);
+    // The stale SEM lane is discarded; independently pinned LEX context remains usable.
+    expect(result.evidence_pack.resolved_evidence).toHaveLength(1);
+    expect(result.evidence_pack.resolved_evidence[0]).toMatchObject({
+      exact_excerpt: "# Evidence\n\nPinned content.\n", handle: { source_revision_ref: world.revision },
+    });
     const driftRow = await db
       .prepare("SELECT coverage_claim FROM retrieval_query_result WHERE principal_ref = ?1 AND idempotency_key = ?2")
       .bind(owner, "rq-sem-drift")
       .first<{ readonly coverage_claim: string }>();
-    expect(driftRow?.coverage_claim).toBe("NONE");
+    expect(driftRow?.coverage_claim).toBe("SAMPLED");
     const trace = await traceOf(result.trace_ref);
     expect(trace.lanes_used).not.toContain("SEM");
+    expect(trace.candidates_by_lane.SEM).toBe(0);
+    expect(trace.candidates_by_lane.LEX).toBe(1);
     expect(trace.lanes_skipped).toContainEqual({ lane: "SEM", reason: "SEARCH_INCOMPLETE" });
   });
 
@@ -318,14 +324,19 @@ describe("research.query SEM lane over the managed-search surface", () => {
       { CORE_DB: db, SEARCH_DB: searchDb, EVIDENCE_BUCKET: runtime.EVIDENCE_BUCKET, AI_SEARCH: namespace },
     );
     const result = await service.query(contextFor(owner, "rq-sem-unpromoted"), queryFor(world, "absent"));
-    expect(result.evidence_pack.resolved_evidence).toEqual([]);
+    expect(result.evidence_pack.resolved_evidence).toHaveLength(1);
+    expect(result.evidence_pack.resolved_evidence[0]).toMatchObject({
+      exact_excerpt: "# Evidence\n\nPinned content.\n", handle: { source_revision_ref: world.revision },
+    });
     const unpromotedRow = await db
       .prepare("SELECT coverage_claim FROM retrieval_query_result WHERE principal_ref = ?1 AND idempotency_key = ?2")
       .bind(owner, "rq-sem-unpromoted")
       .first<{ readonly coverage_claim: string }>();
-    expect(unpromotedRow?.coverage_claim).toBe("NONE");
+    expect(unpromotedRow?.coverage_claim).toBe("SAMPLED");
     const trace = await traceOf(result.trace_ref);
     expect(trace.lanes_used).not.toContain("SEM");
+    expect(trace.candidates_by_lane.SEM).toBe(0);
+    expect(trace.candidates_by_lane.LEX).toBe(1);
     expect(trace.lanes_skipped).toContainEqual({ lane: "SEM", reason: "LANE_UNAVAILABLE" });
   });
 });

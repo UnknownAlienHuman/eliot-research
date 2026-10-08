@@ -19,6 +19,7 @@ import {
 } from "./cloudflare-usage-envelope.mjs";
 import {
   UsageCollectionError,
+  safeProviderFailure,
 } from "./cloudflare-usage-providers.mjs";
 import {
   getRegistryEntry,
@@ -164,7 +165,7 @@ export function blankAccountSnapshot({ expectedAccountId, now = Date.now(), sour
 // any gap (error, malformed, wrong account/window, partial pagination,
 // conflicting full-account sources) keeps that metric unknown fail-closed.
 export async function collectAccountUsage(options = {}) {
-  const { bearer, expectedAccountId, now = Date.now(), providers = [], whoamiOutput, source = USAGE_SOURCE_LIVE } = options;
+  const { bearer, expectedAccountId, now = Date.now(), providers = [], whoamiOutput, source = USAGE_SOURCE_LIVE, signal } = options;
   if (typeof bearer !== "string" || bearer.length < 1) {
     collectionFail("COLLECTION_UNAVAILABLE", "Wrangler browser OAuth bearer is required; API-token fallback is refused.");
   }
@@ -253,7 +254,7 @@ export async function collectAccountUsage(options = {}) {
     seenProviders[seenProviders.length] = provider;
     try {
       // Bearer crosses only this memory call; providers must not persist it.
-      const reported = await provider.collect({ accountId: expectedAccountId, bearer, now });
+      const reported = await provider.collect({ accountId: expectedAccountId, bearer, now, signal });
       const values = reported?.values ?? {};
       const coverage = reported?.coverage ?? null;
       const provenance = reported?.provenance ?? null;
@@ -317,19 +318,23 @@ export async function collectAccountUsage(options = {}) {
         providerResults[providerResults.length] = { group, ok: false, keys: [] };
         continue;
       }
-      // Analytics is diagnostic metadata only: observed samples are recorded
-      // by key, never admitted, and never gap other channels.
+      // Diagnostics expose only known, finite nonnegative numeric samples;
+      // they never enter canonical counters or gap an authoritative channel.
       if (analytics) {
         const valueKeys = Object.keys(values);
         const sampleKeys = [];
+        const diagnosticValues = {};
         for (let i = 0; i < valueKeys.length; i += 1) {
           const key = valueKeys[i];
-          if (requiredHas(key) && typeof values[key] === "number") sampleKeys[sampleKeys.length] = key;
+          if (requiredHas(key) && typeof values[key] === "number" && isReportableValue(values[key])) {
+            sampleKeys[sampleKeys.length] = key;
+            diagnosticValues[key] = values[key];
+          }
         }
         if (sampleKeys.length > 0) {
           providerErrors[providerErrors.length] = `${group} analytics samples are diagnostic-only, never billing authority`;
         }
-        providerResults[providerResults.length] = { group, ok: true, keys: [], analytics: true, sample_keys: sampleKeys };
+        providerResults[providerResults.length] = { group, ok: true, keys: [], analytics: true, sample_keys: sampleKeys, diagnostic_values: diagnosticValues };
         for (let i = 0; i < sampleKeys.length; i += 1) {
           const key = sampleKeys[i];
           if (!gaps[key] && totals[key] === null) {
@@ -482,8 +487,9 @@ export async function collectAccountUsage(options = {}) {
         providerResults[providerResults.length] = { group, ok: true, keys };
       }
     } catch (error) {
-      providerResults[providerResults.length] = { group, ok: false, keys: [] };
-      const message = `${group} failed: ${error?.code ?? error?.message ?? "unknown"}`;
+      const failure = safeProviderFailure(error);
+      providerResults[providerResults.length] = { group, ok: false, keys: [], failure };
+      const message = `${group} failed: ${failure.code}`;
       providerErrors[providerErrors.length] = message;
       // A failed provider gaps only metrics it declared; undeclared failures
       // never poison unrelated counters.
@@ -502,7 +508,10 @@ export async function collectAccountUsage(options = {}) {
   }
   const registryLimitations = {};
   for (let i = 0; i < required.length; i += 1) {
-    registryLimitations[required[i]] = getRegistryLimitation(required[i]);
+    const key = required[i];
+    const limitation = getRegistryLimitation(key);
+    registryLimitations[key] = limitation;
+    if (metrics[key] === UNKNOWN && trust[key].gap === null && limitation !== "") trust[key].gap = limitation;
   }
   return {
     protocol: "eliotr.cloudflare-usage-snapshot.v1",

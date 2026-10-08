@@ -18,7 +18,6 @@ transport completion, managed-index acceptance, projection readiness, or Evidenc
 - `packages/cloudflare-projection/src/d1-search-authority.ts`
 - `packages/cloudflare-projection/src/d1-search-read.test.ts`
 - `packages/cloudflare-projection/src/d1-search-sqlite-fixture.ts`
-- `apps/eliotr-core/src/projection-execution-handler.ts`
 - `scripts/check-projection-execution.mjs`
 
 ## Coordinated paths owned by dependencies

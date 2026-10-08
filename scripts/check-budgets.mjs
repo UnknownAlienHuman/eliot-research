@@ -4,6 +4,8 @@ import { fileURLToPath } from "node:url";
 
 const ROOT = fileURLToPath(new URL("../", import.meta.url));
 const PACKAGE_ROOTS = ["packages", "apps"];
+// Source-maintainability heuristics, not emitted-artifact or platform/runtime limits.
+// Colocated tests under src are included; moving a file cannot establish a smaller deployed bundle.
 const MAX_FILE_LINES = 600;
 const MAX_PACKAGE_SOURCE_LINES = 10_000;
 const MAX_WORKER_SOURCE_BYTES = 600 * 1024;
@@ -27,6 +29,10 @@ async function walk(dir) {
   return out;
 }
 
+console.log("Source scope: packages/*/src and apps/*/src (.ts/.tsx/.js/.mjs), including colocated tests.");
+console.log(`Source limits: ${MAX_FILE_LINES} physical lines/file; ${MAX_PACKAGE_SOURCE_LINES} lines/package; ` +
+  `Worker ${MAX_WORKER_SOURCE_BYTES} bytes; PWA ${MAX_PWA_SOURCE_BYTES} bytes.`);
+console.log("Emitted artifacts, startup, heap and CPU: NOT_MEASURED by this source scan (S90).");
 const errors = [];
 if (countPhysicalLines("a\nb\n") !== 2 || countPhysicalLines("a\r\nb\r\n") !== 2 ||
     countPhysicalLines("a\rb") !== 2 || countPhysicalLines("") !== 0) {
@@ -38,7 +44,10 @@ for (const rootName of PACKAGE_ROOTS) {
     if (!entry.isDirectory()) continue;
     const packageDir = join(parent, entry.name);
     const sourceDir = join(packageDir, "src");
-    try { await stat(sourceDir); } catch { continue; }
+    try { await stat(sourceDir); } catch (error) {
+      if (error?.code === "ENOENT") continue; // Some workspace packages have no source directory.
+      throw error; // Unreadable sources are not evidence of a passing budget.
+    }
     const files = (await walk(sourceDir)).filter((file) => [".ts", ".tsx", ".js", ".mjs"].includes(extname(file)));
     let lines = 0;
     let bytes = 0;
@@ -56,6 +65,7 @@ for (const rootName of PACKAGE_ROOTS) {
 }
 
 if (errors.length > 0) {
+  console.log(`Source budgets: FAIL (${errors.length} violations)`);
   console.error(errors.join("\n"));
   process.exitCode = 1;
 } else {

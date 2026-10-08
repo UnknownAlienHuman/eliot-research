@@ -4,6 +4,7 @@ import type {
   ResearchChangesRequest,
   ResearchChangesResult,
 } from "@eliotr/interfaces";
+import { createD1ScopeService, createOwnerScopeAuthority } from "@eliotr/cloudflare-navigation";
 import { handleHttp } from "../src/http.js";
 import {
   createResearchChangesService,
@@ -14,6 +15,7 @@ import {
   body,
   credential,
   db,
+  insert,
   principal,
   runtime,
   setupOrientationDatabase,
@@ -22,7 +24,6 @@ import {
 
 const TEST_CURSOR_KEY = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 const NOW_MS = Date.parse("2026-09-11T12:00:00.000Z");
-const FUTURE = "2026-09-12T12:00:00.000Z";
 
 beforeAll(async () => {
   await setupOrientationDatabase();
@@ -93,6 +94,30 @@ async function seedChange(index: number, kind: "SOURCE_ADMITTED" | "SOURCE_UPDAT
     occurred_at: `2026-09-11T11:00:0${index}.000Z`,
     metadata: { exact: true, index },
   });
+}
+
+async function grantEmptyGlobalScope() {
+  const now = Date.now();
+  const createdAt = new Date(now).toISOString();
+  await insert("scope_read_policy", {
+    source_namespace_id: "scope-change-empty-namespace",
+    principal_ref: principal,
+    client_class: "owner_pwa",
+    policy_ref: "scope-change-empty-policy",
+    generation: 1,
+    allowed_use_json: '["research"]',
+    disclosure_ceiling: "private",
+    state: "ACTIVE",
+    expires_at: new Date(now + 24 * 60 * 60 * 1_000).toISOString(),
+    created_at: createdAt,
+  });
+  const access = { principal_ref: principal, client_class: "owner_pwa" as const, credential_generation: credential };
+  const owner = createOwnerScopeAuthority(db, access, () => now);
+  const scopes = createD1ScopeService(db, owner, { now: () => now });
+  const snapshot = await scopes.freeze({ kind: "GLOBAL_LIBRARY" }, credential);
+  if (snapshot.member_source_revision_refs.length !== 0) throw new Error("expected an empty GLOBAL_LIBRARY fixture scope");
+  await owner.grant(snapshot);
+  return snapshot;
 }
 
 describe("durable authenticated research changes", () => {
@@ -199,28 +224,7 @@ describe("durable authenticated research changes", () => {
   });
 
   it("rechecks scope grants on every page and hides revoked scope events", async () => {
-    await db.prepare(
-      "INSERT INTO scope_snapshot " +
-      "(snapshot_id,revision,resolved_scope_expression_json,participant_generations_json," +
-      "member_source_revision_refs_json,source_owner_generations_json,policy_authority_ref," +
-      "disclosure_closure_digest,purge_ledger_revision,client_fence_ref,snapshot_digest," +
-      "created_at,expires_at,invalidated_at,invalidation_reason) " +
-      "VALUES (?1,1,'{}','{}','[]','{}','policy:scope','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'," +
-      "0,NULL,'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',?2,?3,NULL,NULL)",
-    ).bind("scope-change-1", "2026-09-11T10:00:00.000Z", FUTURE).run();
-    await db.prepare(
-      "INSERT INTO scope_access_grant " +
-      "(snapshot_id,snapshot_revision,principal_ref,client_class,credential_generation," +
-      "policy_authority_ref,allowed_use_json,disclosure_ceiling,authorization_receipt_ref," +
-      "state,expires_at,created_at) VALUES (?1,1,?2,'owner_pwa',?3,'policy:scope'," +
-      "'[\"research\"]','private','grant:scope-change-1','ACTIVE',?4,?5)",
-    ).bind(
-      "scope-change-1",
-      principal,
-      credential,
-      FUTURE,
-      "2026-09-11T10:00:00.000Z",
-    ).run();
+    const scope = await grantEmptyGlobalScope();
     await recordResearchChange(db, {
       change_ref: "scope-private-change",
       kind: "ARTIFACT_DRAFTED",
@@ -229,7 +233,7 @@ describe("durable authenticated research changes", () => {
       payload_ref: "payload:scope-private",
       payload_sha256: "c".repeat(64),
       visibility_principal_ref: principal,
-      visibility_scope_ref: { id: "scope-change-1", revision: 1 },
+      visibility_scope_ref: { id: scope.snapshot_id, revision: scope.revision },
       occurred_at: "2026-09-11T11:40:00.000Z",
     });
 
@@ -245,9 +249,9 @@ describe("durable authenticated research changes", () => {
     ]);
     expect(beforeRevocation.has_more).toBe(true);
 
-    await db.prepare(
-      "UPDATE scope_access_grant SET state='REVOKED' WHERE authorization_receipt_ref='grant:scope-change-1'",
-    ).run();
+    await db.prepare("UPDATE scope_access_grant SET state='REVOKED' WHERE snapshot_id=?1 AND snapshot_revision=?2 " +
+      "AND principal_ref=?3 AND client_class='owner_pwa' AND credential_generation=?4")
+      .bind(scope.snapshot_id, scope.revision, principal, credential).run();
     const afterRevocation = await readChanges({
       after_cursor: beforeRevocation.next_cursor,
       limit: 100,

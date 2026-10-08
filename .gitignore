@@ -36,3 +36,6 @@ Thumbs.db
 apps/eliotr-core/wrangler.deploy.jsonc
 
 apps/eliotr-core/wrangler.local.jsonc
+
+# Regenerated host/runtime declarations from the Core cf:types command.
+apps/eliotr-core/src/worker-configuration.d.ts

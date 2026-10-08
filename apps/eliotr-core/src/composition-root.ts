@@ -1,18 +1,19 @@
+import { cancelResearchRun, recoverResearchRun } from "./research-run-control.js";
 import {
   createD1FederationChangeAuthority,
   createD1FederationJobAuthority,
   createD1FederationManifestStore,
   createD1R2FederationBundleAuthority,
 } from "@eliotr/cloudflare-federation";
-import { createFederationService } from "./federation-service.js";
+import { createFederationService } from "@eliotr/cloudflare-federation";
 import { createWikiProposalReaderService, createWikiProposalService, publishWikiProposal, requireWikiIdempotencyKey } from "./wiki-service.js";
 import { proposeWikiFromResearchRun as proposeWikiFromResearchRunOperation } from "./wiki-proposal-from-research-run.js";
 import { proposeWikiFromOwnerEdit as proposeWikiFromOwnerEditOperation } from "./wiki-owner-edit-proposal.js";
 import { createResearchChangesService } from "./research-changes.js";
 import { reconcileExpiredOutboxLeases } from "./outbox-reconciler.js";
 import { createD1ScopeService, createOrientationApi, createOwnerScopeAuthority, ORIENTATION_PROFILE, OrientationError } from "@eliotr/cloudflare-navigation";
-import { createNavigationExpandService } from "./navigation-expand-service.js";
-import type { ScopeSnapshot, VersionedRef } from "@eliotr/contracts";
+import { createNavigationExpandService } from "@eliotr/cloudflare-navigation";
+import { ArtifactRevisionSchema, type ScopeSnapshot, type VersionedRef } from "@eliotr/contracts";
 import type {
   ApplicationLifecycle,
   AuthenticatedRequestContext,
@@ -22,43 +23,36 @@ import type {
   SemanticApi,
 } from "@eliotr/interfaces";
 import { artifactSectionResponse, ROUTES } from "@eliotr/interfaces";
-import {
-  createD1IngestAdmissionAuthority,
-  createR2StagedBundlePort,
-  IngestAuthorityError,
-  type PreparedIngestOperation,
-} from "@eliotr/platform-cloudflare";
-import { readSourceRevisions } from "./source-revisions.js";
+
+import { readSourceRevisions } from "@eliotr/cloudflare-navigation";
 import { readSourceContent } from "./source-content.js";
-import { readCatalog } from "./catalog-service.js";
+import { readCatalog } from "@eliotr/cloudflare-navigation";
 import { createEvidenceService } from "./evidence-service.js";
 import { createResearchQueryService, createResearchRunService } from "./research-session.js";
 import { createExhaustiveWorkflowService } from "./exhaustive-workflow-service.js";
 import { readRetrievalTrace } from "@eliotr/retrieval";
-export { CatalogInputError } from "./catalog-service.js";
+export { CatalogInputError } from "@eliotr/cloudflare-navigation";
 import type { Env } from "./env.js";
-import {
-  authorizeIngestPromotion,
-  requireCurrentIngestOwner,
-} from "./ingest-promotion-authorization.js";
-import { createIngestService } from "./ingest-service.js";
+
+import { createIngestApplication } from "./ingest-composition.js";
 import { readReadiness } from "./readiness.js";
-import { createSourceAdmissionService } from "./source-admission-service.js";
-import { createProjectOwnerService } from "./project-owner-service.js";
+import { createProjectOwnerService } from "@eliotr/cloudflare-navigation";
 import { readGoogleExternalTransport } from "@eliotr/cloudflare-workspace-mcp";
 import { createRawCaptureService } from "@eliotr/cloudflare-raw-ingest";
 import { createRawMarkdownOwnerConverter } from "@eliotr/cloudflare-markdown";
 import { createRawNormalizedAdmissionService } from "./raw-normalized-admission.js";
 import { readLibraryReadiness } from "./library-readiness.js";
 import { readArtifactDraft, readArtifactDraftSection, readArtifactDraftSectionCitations } from "@eliotr/cloudflare-research";
-import { ArtifactReadNotFoundError } from "./artifact-draft-http.js";
+import { reopenOwnerArtifactDraft, reopenOwnerArtifactSection, reopenOwnerArtifactSectionCitations } from "./research-artifact-reauthorization-http.js";
+import { ArtifactReadNotFoundError } from "@eliotr/interfaces";
+import { acceptOwnerArtifact, readOwnerArtifactPublication } from "./artifact-product-composition.js";
 import { createErasureOwnerService } from "./erasure-owner-service.js";
 import { readErasureOwnerStatus } from "./erasure-owner-status.js";
 import { prepareErasureForOwner } from "./erasure-owner-prepare.js";
 import { createSourceNamespaceOwnerService } from "./source-namespace-owner-service.js";
-import { parseNamespaceBootstrapProfiles } from "./source-namespace-bootstrap-profiles.js";
+import { parseNamespaceBootstrapProfiles } from "@eliotr/cloudflare-navigation";
 import { createWorkspaceCandidateAdmissionService } from "./workspace-candidate-admission.js";
-import { createD1WorkspaceMcpCandidateStore } from "./workspace-mcp-candidate-store.js";
+import { createD1WorkspaceMcpCandidateStore } from "@eliotr/cloudflare-workspace-mcp/workspace-mcp-candidate-d1-store";
 import { parseWorkspaceOwnerBindings } from "./workspace-owner-authorization.js";
 export interface CompositionRootInput {
   readonly env: Env;
@@ -126,17 +120,21 @@ function semanticApi(env: Env): SemanticApi {
     },
     queryStatus: (context, workflowInstanceId) => exhaustiveWorkflow.status(context, workflowInstanceId),
     queryCancel: (context, workflowInstanceId) => exhaustiveWorkflow.cancel(context, workflowInstanceId),
+    runCancel: (context, workflowInstanceId, body) => cancelResearchRun(env, context, workflowInstanceId, body),
+    runRecover: (context, workflowInstanceId, body) => recoverResearchRun(env, context, workflowInstanceId, body),
     runStatus: (context, workflowInstanceId) => researchRun.runStatus(context, workflowInstanceId),
     queryJobs: (context, request) => exhaustiveWorkflow.list(context, request),
     open: (context, ref, range) => evidence.open(context, ref, range),
     verify: (context, request) => evidence.verify(context, request),
     run: (context, request) => researchRun.run(context, request),
     artifact: async (context, artifactRef) => {
+      if (context.client_class !== "owner_pwa") return ArtifactRevisionSchema.parse((await reopenOwnerArtifactDraft(env, context, artifactRef)).artifact);
       const revision = await readArtifactDraft(artifactInput(context, artifactRef));
       if (revision === null) throw new ArtifactReadNotFoundError();
       return revision;
     },
     artifactSection: async (context, artifactRef, sectionRef) => {
+      if (context.client_class !== "owner_pwa") return reopenOwnerArtifactSection(env, context, artifactRef, sectionRef);
       const section = await readArtifactDraftSection({
         ...artifactInput(context, artifactRef), section_ref: sectionRef,
       });
@@ -144,6 +142,7 @@ function semanticApi(env: Env): SemanticApi {
       return artifactSectionResponse(section);
     },
     artifactSectionCitations: async (context, artifactRef, sectionRef) => {
+      if (context.client_class !== "owner_pwa") return reopenOwnerArtifactSectionCitations(env, context, artifactRef, sectionRef);
       const citations = await readArtifactDraftSectionCitations({
         ...artifactInput(context, artifactRef), section_ref: sectionRef,
       });
@@ -151,6 +150,8 @@ function semanticApi(env: Env): SemanticApi {
       if (citations.semantic_verification === "EXECUTED") return { protocol: "eliotr.artifact-section-citations.v2", ...citations };
       return { protocol: "eliotr.artifact-section-citations.v1", ...citations };
     },
+    acceptArtifact: (context, request) => acceptOwnerArtifact(env, context, request),
+    artifactPublication: (context, artifactRef) => readOwnerArtifactPublication(env, context, artifactRef),
     proposeWiki: createWikiProposalService(env),
     proposeWikiFromResearchRun: (context, operationId) => proposeWikiFromResearchRunOperation(
       env, context, operationId, requireWikiIdempotencyKey(context),
@@ -204,36 +205,7 @@ function federationApi(env: Env): FederationApi {
   });
 }
 function ownerApi(env: Env): OwnerApi {
-  const authority = createD1IngestAdmissionAuthority(env.CORE_DB);
-  const stagedBundles = createR2StagedBundlePort({
-    work_bucket: env.WORK_BUCKET,
-    evidence_bucket: env.EVIDENCE_BUCKET,
-    authorize_promotion: (input, admissionReceiptRef) =>
-      authorizeIngestPromotion(env.CORE_DB, authority, input, admissionReceiptRef),
-  });
-  const deterministicAdmission = createSourceAdmissionService();
-  const ingest = createIngestService({
-    authority,
-    stagedBundles,
-    admission: {
-      async evaluate(operation: PreparedIngestOperation, verification) {
-        const expiresAt = Date.parse(operation.expires_at);
-        if (!Number.isSafeInteger(expiresAt) || expiresAt <= Date.now()) {
-          throw new IngestAuthorityError(
-            "INGEST_STATE_CONFLICT",
-            "ingest operation expired before source-admission decision",
-          );
-        }
-        await requireCurrentIngestOwner(env.CORE_DB, {
-          source_namespace_id: operation.source_namespace_id,
-          owner_system_id: operation.owner_system_id,
-          source_owner_generation: operation.source_owner_generation,
-          policy_revision: operation.policy.revision,
-        });
-        return deterministicAdmission.evaluate(operation, verification);
-      },
-    },
-  });
+  const ingest = createIngestApplication(env);
   const rawCapture = createRawCaptureService(env);
   const sourceNamespaces = createSourceNamespaceOwnerService({
     database: env.CORE_DB,

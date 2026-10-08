@@ -9,6 +9,7 @@ export {
   createD1DynamicRouteRegistry,
   createD1ModelGatewayDeploymentRegistry,
   type D1DynamicRouteRegistryOptions,
+  type PinnedModelSelection,
 } from "./model-gateway-deployment-registry-d1.js";
 export {
   createD1DynamicRouteQualificationProofStore,
@@ -44,6 +45,7 @@ export * from "./research-model-profile-config.js";
 export * from "./research-model-pricing-store.js";
 export * from "./research-model-pricing-quote.js";
 export * from "./research-model-installation.js";
+export * from "./research-model-candidate-staging.js";
 export * from "./research-model-qualification-store.js";
 export * from "./research-model-qualification.js";
 export * from "./research-model-qualification-renewal.js";
@@ -51,13 +53,32 @@ export * from "./research-owner-qualification-renewal.js";
 export * from "./research-model-qualification-dispatch.js";
 export * from "./research-qualification-prompt.js";
 export * from "./dynamic-route-rest-binding-store-d1.js";
+export * from "./research-semantic-config-revision-store.js";
 export * from "./research-model-attempt-revalidator.js";
 export type { ResearchModelGatewayBinding } from "./research-model-gateway-binding.js";
 export * from "./research-model-spend-admission.js";
 export * from "./research-model-spend-policy.js";
+export * from "./research-model-spend-observation.js";
 export * from "./research-synthesis-preparation.js";
 export * from "./research-held-scope.js";
-export * from "./research-run-status.js";
+export { readResearchRunStatus } from "./research-run-status.js";
+export type { RunStatusAuthoritySnapshot, RunStatusReadInput } from "./research-run-status.js";
+export {
+  RESEARCH_RUN_CONFIGURATION_PROTOCOL,
+  RESEARCH_RUN_CONFIGURATION_MAX_BYTES,
+  ResearchRunConfigurationStoreError,
+  deriveResearchRunConfigurationRef,
+  createD1ResearchRunConfigurationStore,
+} from "./research-run-configuration-store.js";
+export type {
+  ResearchRunConfigurationMode,
+  ResearchRunConfigurationStoreErrorCode,
+  ResearchRunConfigurationAssociation,
+  ResearchRunConfigurationWriteInput,
+  ResearchRunConfigurationRecord,
+  ResearchRunConfigurationWriteReceipt,
+  ResearchRunConfigurationStore,
+} from "./research-run-configuration-store.js";
 export * from "./research-materialize-result.js";
 export * from "./research-materialize-stage-handler.js";
 export type { ResearchV2MaterializationCandidate } from "./research-v2-materialize-adapter.js";
@@ -69,3 +90,30 @@ export * from "./research-materialize-output-reader.js";
 export * from "./research-synthesis-output-reader.js";
 export * from "./research-materialize-recovery.js";
 export { decodeSynthesisSectionCandidate, sameEvidence } from "./research-artifact-draft.js";
+
+export * from "./research-inquiry-protocol.js";
+
+export * from "./research-planning-manifest.js";
+
+export * from "./research-branch-execution.js";
+export * from "./research-w1-observations.js";
+export * from "./research-branch-role-model.js";
+export * from "./research-branch-role-output.js";
+export * from "./research-branch-role-preparation.js";
+export * from "./research-branch-role-evidence-pack.js";
+export * from "./research-branch-role-server-preparation.js";
+export * from "./research-branch-role-manifest-store.js";
+export { decodeResearchReadExtractCheckpoint } from "./research-branch-execution-shared.js";
+export * from "./research-external-branch-analysis.js";
+
+export * from "@eliotr/cloudflare-artifacts/artifact-publication.js";
+export * from "./artifact-cow-freeze-reader.js";
+export * from "./artifact-cow-product.js";
+export * from "./artifact-cow-model-executor.js";
+export * from "./artifact-cow-model-runtime.js";
+export * from "./artifact-cow-section-producer.js";
+export * from "./artifact-cow-revision-runner.js";
+export * from "./artifact-cow-draft-materialization.js";
+export * from "./artifact-cow-model-revalidator.js";
+export * from "./artifact-cow-spend-admission.js";
+export * from "./research-project-configuration-store.js";

@@ -13,6 +13,9 @@
   ],
   "references": [
     {
+      "path": "../cloudflare-navigation"
+    },
+    {
       "path": "../cloudflare-evidence"
     },
     {
@@ -20,6 +23,12 @@
     },
     {
       "path": "../platform-cloudflare"
+    },
+    {
+      "path": "../domain"
+    },
+    {
+      "path": "../cloudflare-workflows"
     }
   ]
 }

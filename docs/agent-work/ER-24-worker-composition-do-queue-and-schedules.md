@@ -11,30 +11,47 @@ fail-closed. The Worker is a composition and transport boundary, not a second do
 
 ## Owned paths
 
+- `apps/eliotr-core/src/client-grant-http.ts`
+- `apps/eliotr-core/src/ingest-composition.ts`
+- `packages/cloudflare-navigation/src/client-grant-store.ts`
+- `packages/cloudflare-navigation/src/client-grant-service.ts`
+- `packages/cloudflare-navigation/src/client-grant-authority.ts`
+- `packages/cloudflare-navigation/src/client-scope-grant.ts`
+
 - `apps/eliotr-core/src/env.ts`
 - `apps/eliotr-core/src/index.ts`
 - `apps/eliotr-core/src/http.ts`
 - `apps/eliotr-core/src/http-errors.ts`
-- `apps/eliotr-core/src/artifact-draft-http.ts`
 - `apps/eliotr-core/src/research-query-http.ts`
 - `apps/eliotr-core/src/queue.ts`
 - `apps/eliotr-core/src/scheduled.ts`
 - `apps/eliotr-core/src/readiness.ts`
 - `apps/eliotr-core/src/research-session.ts`
+- `apps/eliotr-core/src/research-run-failure.ts`
+- `apps/eliotr-core/src/research-service-error.ts`
+- `apps/eliotr-core/src/research-run-admission.ts`
+- `apps/eliotr-core/src/research-run-read-authorization.ts`
+- `apps/eliotr-core/src/research-client-run-read.ts`
+- `apps/eliotr-core/src/research-deployment-compatibility.ts`
+- `apps/eliotr-core/test/research-deployment-compatibility.test.ts`
+- `apps/eliotr-core/src/research-run-control.ts`
+- `apps/eliotr-core/src/research-client-spend.ts`
+- `apps/eliotr-core/src/research-client-execution.ts`
+- `apps/eliotr-core/src/research-run-control-fence.ts`
+- `apps/eliotr-core/src/research-run-list.ts`
 - `apps/eliotr-core/test/research-run-status.test.ts`
-- `apps/eliotr-core/src/research-stage-handlers.ts`
-- `apps/eliotr-core/src/research-retrieve-branches.ts`
-- `apps/eliotr-core/src/research-retrieval-composition.ts`
-- `apps/eliotr-core/src/research-exact-search.ts`
+- `apps/eliotr-core/test/research-session.test.ts`
+- `apps/eliotr-core/test/research-input.test.ts`
 - `apps/eliotr-core/test/research-exact-search.test.ts`
 - `apps/eliotr-core/test/research-query-retrieval.test.ts`
-- `apps/eliotr-core/src/research-evidence-freeze-composition.ts`
+- `apps/eliotr-core/test/research-query-replay.test.ts`
 - `apps/eliotr-core/src/exhaustive-query-service.ts`
 - `apps/eliotr-core/src/exhaustive-workflow-service.ts`
 - `apps/eliotr-core/test/research-query-jobs.test.ts`
 - `apps/eliotr-core/wrangler.jsonc`
 - `packages/cloudflare-navigation/src/index.ts`
 - `packages/cloudflare-navigation/src/orientation-authority.ts`
+- `packages/cloudflare-navigation/src/owner-scope-profile.ts`
 - `packages/cloudflare-navigation/src/orientation-currentness.test.ts`
 - `packages/cloudflare-navigation/src/orientation-currentness.ts`
 - `packages/cloudflare-navigation/src/orientation-input.ts`
@@ -46,11 +63,9 @@ fail-closed. The Worker is a composition and transport boundary, not a second do
 - `apps/eliotr-core/test/orientation-http.test.ts`
 - `apps/eliotr-core/test/orientation-resilience.test.ts`
 - `apps/eliotr-core/vitest.config.ts`
-- `apps/eliotr-core/src/catalog-service.ts`
 - `apps/eliotr-core/test/catalog-service.test.ts`
-- `apps/eliotr-core/src/catalog-queries.ts`
+- `apps/eliotr-core/test/project-owner-service.test.ts`
 - `apps/eliotr-core/test/catalog-http.test.ts`
-- `apps/eliotr-core/src/source-revisions.ts`
 - `apps/eliotr-core/test/source-revisions.test.ts`
 - `apps/eliotr-core/src/library-readiness.ts`
 - `apps/eliotr-core/test/library-readiness.test.ts`
@@ -79,6 +94,7 @@ fail-closed. The Worker is a composition and transport boundary, not a second do
 - `apps/eliotr-core/test/bounded-json.test.ts`
 - `apps/eliotr-core/src/federation-http.ts`
 - `apps/eliotr-core/test/federation-runtime-http.test.ts`
+- `apps/eliotr-core/src/research-artifact-reauthorization-http.ts`
 
 ER-09 exclusively owns `apps/eliotr-core/src/research-workflow.ts`; ER-24 may compose its exported
 boundary but does not edit or reimplement that workflow authority.
@@ -321,3 +337,184 @@ Focused Core tests cover the distinct digests and reject mismatched anchor, cand
 identities. The real two-section research fixture also reaches evidence resolution through admission,
 projection and retrieval. These are local controlled acceptance checks; they do not establish a
 live retrieval channel or enable a new public research generation.
+
+## S06 owner reauthentication read boundary
+
+The owner run-status and recent-runs routes authorize a refreshed Access session through the existing
+historical-scope and artifact readers. The run's original credential, frozen source references,
+W1/W2/W3 receipts and cancellation state remain execution provenance; reading does not renew the
+execution grant or rerun a model. Original grant revocation, current source-policy denial and purge
+still deny disclosure. Request expiry and currentness are rechecked after asynchronous native-status
+or result reads. A new credential does not imply compatibility with another deployment.
+
+Local acceptance uses `apps/eliotr-core/test/research-run-status.test.ts`: 13 cases, including a real
+D1/R2 v3 synthesis/audit/citation/coverage/materialization chain with controlled external AI responses,
+followed by HTTP reads using the original and refreshed owner sessions. The same draft reference is
+returned without another synthesis/audit; corrupt result bytes and revoke/expiry races fail closed.
+The focused combined suite also covers artifact readers, gateway runtime and workflow recovery
+(5 files, 41 tests). Core/PWA source and core-test TypeScript checks, package boundaries and their
+negative tests pass locally. This is not whole-project CI or live Cloudflare qualification; S05
+compatible deployment and S33 long-run execution renewal remain separate tasks. See PR #198 for
+implementation commits and exact commands; no schema migration or public DTO change is introduced.
+
+
+## S14 public run cancellation
+
+`POST /api/v1/research/run/:workflow_id/cancel` accepts only `{}` and a bounded
+`Idempotency-Key`. The verified current owner is authorized independently of the original
+execution credential. The action uses the existing W2 run and deterministic cancellation
+receipt: it does not create a second job, change frozen inputs or renew execution authority.
+The existing ledger/orientation epochs and current grant/deadline predicates fence the
+conditional cancellation write. Failed or lost D1 acknowledgements are reconciled by reading
+that same run; only confirmed CANCELLED returns success. A completion that won first returns
+409. Native termination is attempted only after durable cancellation and cannot undo it.
+
+The shared store's explicit `owner-read` mode returns owner-filtered, structurally validated
+metadata, not an authorization result. Current reader/action authorization is mandatory
+before disclosure or mutation; the default execution mode and all executor guards remain.
+
+Focused local acceptance: 32 tests across run status and workflow recovery, including 10 new
+public-cancellation scenarios. These use the actual HTTP/application/D1/R2 path and controlled
+Access/native lifecycle boundaries. Concurrent callers, revoke-at-settlement, failure/lost ACK,
+refreshed JWT, completion-first and late in-flight output are covered. This does not qualify
+native Cloudflare termination. S15 public recovery, S10 machine delegation, S32 client controls
+and S05/S33 lifetime changes remain separate. See PR #206 for the code commit and commands.
+
+## S15 public run recovery
+
+`POST /api/v1/research/run/:workflow_id/recover` accepts only `{}` and a
+bounded `Idempotency-Key`. It authorizes the current owner over the run's
+original frozen source set, then acts on the same native Workflow instance;
+it never creates a replacement run or rewrites the stored scope, handler,
+source revisions or W1/W2/W3 identities. Active and completed runs are
+read-only responses. Paused runs use native resume; errored or terminated
+runs use one durable restart action, from the current Workflow step when an
+attempt already exists. A lost native acknowledgement is reconciled by
+status and cannot issue a second restart for the same run/stage.
+
+Recovery of an existing W2 attempt keeps its original spend receipt. While
+that receipt is current the normal Budget Governor check remains mandatory.
+After expiry, settlement is allowed only when the exact owner-authorized
+`research.run.recover.v1` action exists for that run and stage. The executor
+then invokes only the registered readback recovery callback, never the paid
+handler. The D1 output/checkpoint guards independently require the same
+recovery action before accepting an expired-reservation settlement. VERIFY
+recovery replays the deterministic verifier over the exact persisted
+synthesis bytes; SYNTHESIZE, AUDIT_CLAIMS, RESOLVE_CITATIONS and MATERIALIZE
+reuse their existing recovery adapters. Unknown provider effects remain
+unresolved and cancelled/revoked/corrupt state stays closed.
+
+Focused local acceptance covers five public HTTP recovery cases, a real
+STARTED VERIFY recovery with no second synthesis, and four W3 lost-ACK
+readback cases including expiry of the original spend reservation. Core/PWA
+and test TypeScript, changed-file ESLint, package boundaries and ownership
+checks pass locally. Native Cloudflare lifecycle acceptance, UI/MCP controls,
+delegated service recovery and the full product suite remain separate gates.
+
+
+## S04 Project mutation runtime regression
+
+`test/project-owner-service.test.ts` calls the actual project-owner service through
+local workerd/D1 after the full current migrations. It verifies membership history,
+immutable response digests, replay after a new service instance, stale-head rejection,
+a concurrent service commit between preflight and batch, in-transaction policy
+revocation fencing, rollback of earlier statements after a late constraint failure,
+and readback after a lost commit acknowledgement. Scheduling/fault hooks delegate to
+the native D1 batch; no application SQL or D1 results are reimplemented in the test.
+The depth-100/max+1 negative explicitly distinguishes D1 from permissive host SQLite.
+Project mutations currently have no outbox producer; tests assert no invented events.
+The independent `d1-mutations` CI job uses the existing Workers configuration on Linux
+and Windows, alongside ER-12's Wiki edit/publication regressions. It does not bypass
+or replace the full CI gates, enable a feature, or qualify a live deployment.
+
+## Protocol retrieval generation compatibility
+
+New explicit InquiryProtocol requests use `research-handlers.exploratory.v6`, whose
+RETRIEVE_BRANCHES plan includes managed SEM. Stored v5 runs retain FAST_SEARCH and
+their original request/output hashes; replay selects the stored generation, never
+the current admission default. Existing v3/v4 behavior also remains unchanged.
+The shared generation predicate keeps v3-v6 report readback, cancellation, recovery
+and materialization on the existing services. This is a new-run correction, not
+an automatic upgrade of old checkpoints or a live search-quality qualification.
+
+## Project-client delegation backend (S10 / S31)
+
+Migration 0072 introduces one append-only `project_client_grant` authority/receipt table.
+One project and verified issuer/method/Client ID tuple owns one immutable logical grant ID;
+changes append CAS revisions and revocation retains the tombstone. Owner issuance checks
+project ownership, the complete current source-read ceiling and explicit import namespaces.
+Grant identifiers are lookup keys, never credentials. A spend-policy locator is currently rejected
+with `CLIENT_GRANT_SPEND_NOT_SUPPORTED`; no model budget is delegated by a read grant.
+
+Owner GET/PUT/DELETE routes live under `/api/v1/research/projects/:project_id/client-grants`.
+Creation requires expected_revision=0; changes and revocation require the previous revision and
+Idempotency-Key. Same-key replay reads the original immutable receipt even after later mutations;
+authorization always reads the latest revision. No receipt replay itself reactivates access.
+
+`GET /api/v1/research/catalog?project_id=...` and service-token MCP `eliotr_catalog` share
+the same delegation gate and existing source-authority decoder. The actual signed actor is
+preserved separately from the grantor's read-policy subject and the legacy Workspace logical label.
+Every requested project member must pass the read ceiling; the result stays bounded metadata,
+not evidence or an implicit frozen-scope grant. Cursors bind actor, delegation revision and epoch;
+expiry, membership, purge and current authority are checked before disclosure.
+
+Connections management is implemented through the same owner API. Service-token HTTP FAST_SEARCH
+and query-derived evidence verify/open are wired as described below. Runtime/native acceptance,
+managed-OAuth/MCP query, machine run/control/history and actual import handlers remain separate.
+Operation enum membership never enables a handler. No existing execution grant is renewed or
+reinterpreted; later run integration must also pin the originating delegation revision.
+
+
+## Delegated FAST_SEARCH and query evidence (S11 code checkpoint)
+
+`POST /api/v1/research/query` admits verified service-token clients only for FAST_SEARCH under
+one active project-client grant with `query`. A PROJECT atom selects that project; expressions
+without one require the existing non-secret `X-Eliotr-Client-Grant` locator. GLOBAL_LIBRARY,
+multiple projects and any atom extending outside the project fail before scope storage. Every
+atom is resolved against the grantor's existing read-policy ceiling in full; it is never silently
+intersected with the delegated project. Actor attribution remains the verified service identity.
+
+The existing scope service freezes the expression and membership. Its atom/policy identities bind
+the exact delegation revision and project generation. Additive migration 0073 appends that origin
+to `scope_access_grant`; a current-authority epoch fences issuance and ambiguous writes reconcile
+by exact readback. Grant expiry is capped by the frozen scope, signed service session, delegation,
+source policy/admission and project membership boundaries. No old grant is promoted or renewed.
+
+Retrieval and the exact evidence resolver use the same `scope_access_grant_effective` SQL view.
+Current delegation, project/grantor ownership, membership, policy, source owner and purge state
+are mandatory both during resolution and at durable result/trace/handle/receipt writes. Query
+scope revocation invalidates persisted results; regrant cannot revive a prior scope or cache.
+Source/head/tag/namespace/admission changes conservatively revoke all active delegated query
+scopes, including unrelated ones, so arbitrary tag/class expressions cannot resurrect earlier
+rights. Project and read-policy changes target their affected grant origins. This deliberately
+coarse query-cache invalidation is not a complete reverse-dependency index. It does not touch
+legacy grants or S33 owner execution reservations.
+
+Public `/research/verify` and `/research/open/:ref` additionally require `evidence` on the same
+originating revision, before and after the shared resolver. A `query`-only grant can receive its
+search pack but cannot use a returned handle as independent evidence-read permission. These are
+query-derived evidence reads, not general Research report/section/history or MCP readers.
+
+FAST_SEARCH retains its 64-member/16-result and existing byte/section budgets; overflow is explicit,
+coverage stays NONE/SAMPLED and no model/spend authority is inferred. Owner behavior and the
+existing serializer/digests are retained. **Apply migrations through 0073 before deploying this
+code**, including owner paths that now read the effective-grant view. Code compilation and static
+SQL/ownership checks are not native D1/R2, concurrency, browser or live acceptance. Machine run,
+status, control, paid sponsorship and import/attach remain implementation work.
+
+## Delegated run status (S11 code checkpoint)
+
+`research-client-run-read.ts` composes model-free HTTP/MCP status for a known owner-authored
+run originally scoped to one explicit delegated project. It requires `status`, the actual signed
+service actor, current grantor/project authority and all original-source policies, membership,
+ownership, disclosure and purge checks. Original owner grants may expire but may not be revoked;
+only the existing proven source-head-advance invalidation can be reauthorized. Compatible
+deployment readback and W1/W2 identity remain mandatory; no execution grant is issued or renewed.
+
+`report` separately permits discovery of the completed DRAFT reference through the shared historical
+coverage reader and delegated artifact reader. Without it, answer availability stays `unavailable`.
+The common reader keeps recorded authorship separate from the actual service identity and preserves
+all original manifests, references, hashes and lineage checks. No new reader engine or storage schema.
+GET run status alone admits owner-or-service; admission/cancel/recover handlers are not broadened.
+Machine run creation, controls, sponsorship and machine-authored history remain code work.
+Compilation/static review only; native/behavioral acceptance and live qualification remain pending.

@@ -138,6 +138,8 @@ export interface BundlePromotionAuthorization {
 }
 
 export interface R2StagedBundleDependencies {
+  /** Caller-supplied authorization only; this adapter never owns policy decisions. */
+  readonly require_current?: () => Promise<void>;
   readonly work_bucket: R2Bucket;
   readonly evidence_bucket: R2Bucket;
   readonly evidence_store?: EvidenceObjectStore;

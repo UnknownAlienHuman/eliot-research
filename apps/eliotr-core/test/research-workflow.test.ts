@@ -4,10 +4,10 @@ import { RESEARCH_WORKFLOW_STAGES } from "@eliotr/domain";
 import {
   createMonotoneStageExecutor,
   createWorkflowCheckpointExecutor, decodeReceipt, digest, MAX_WORKFLOW_OUTPUT_BYTES, readWorkflowObject,
-  type StageReceipt, type StageRequest,
+  WorkflowCheckpointStore, type StageReceipt, type StageRequest,
 } from "@eliotr/cloudflare-research";
 import { decodeProtocolScopeCheckpoint } from "@eliotr/cloudflare-research";
-import { SERVER_OWNED_RESEARCH_HANDLER_GENERATION } from "../src/research-stage-handlers.js";
+import { SERVER_OWNED_RESEARCH_HANDLER_GENERATION } from "@eliotr/cloudflare-research-runtime/research-stage-handlers.js";
 import { faultBucket, faultDatabase, principal, runtime, workflowFixture } from "./research-workflow-fixture.js";
 import type { Env } from "../src/env.js";
 
@@ -88,12 +88,45 @@ describe("eliotr.workflow-checkpoint.v1 — actual D1/R2 single-stage execution"
   it("does not call a handler twice after unknown execution", async () => {
     const f = await workflowFixture("unknown");
     let calls = 0;
-    await expect(f.executor.execute(f.request, principal, async () => { calls += 1; throw new Error("unknown upstream settlement"); }))
+    const unknown = Object.assign(new Error("private unknown upstream settlement"), {
+      code: "MODEL_PROFILE_BINDING_AUTHORITY_STALE_EXTRA",
+    });
+    await expect(f.executor.execute(f.request, principal, async () => { calls += 1; throw unknown; }))
       .rejects.toMatchObject({ code: "WORKFLOW_EFFECT_UNCERTAIN" });
+    const stored = await f.db.prepare(`SELECT first_failure_json, latest_failure_json
+      FROM research_workflow_run WHERE operation_id=?1`).bind(f.request.operation_id)
+      .first<{ first_failure_json: string | null; latest_failure_json: string | null }>();
+    expect(JSON.parse(stored?.first_failure_json ?? "null")).toEqual({
+      code: "WORKFLOW_EFFECT_UNCERTAIN", phase: "STAGE", stage: f.request.stage, retryable: false,
+    });
+    expect(stored?.latest_failure_json ?? "").not.toContain("private unknown");
     await expect(createWorkflowCheckpointExecutor(f.db, f.bucket, f.ports).execute(f.request, principal,
       async () => { calls += 1; return resultBytes(); })).rejects.toMatchObject({ code: "WORKFLOW_EFFECT_UNCERTAIN" });
     expect(calls).toBe(1);
     expect(await counts(f.db)).toEqual({ attempts: 1, checkpoints: 0, outbox: 0, ledger_events: 0 });
+  });
+
+  it("retains an exact typed handler diagnosis without changing uncertain-effect semantics", async () => {
+    const f = await workflowFixture("typed-failure");
+    let calls = 0;
+    const typed = Object.assign(new Error("private model-profile detail"), {
+      code: "MODEL_PROFILE_BINDING_AUTHORITY_STALE",
+    });
+    await expect(f.executor.execute(f.request, principal, async () => { calls += 1; throw typed; }))
+      .rejects.toMatchObject({ code: "WORKFLOW_EFFECT_UNCERTAIN", failure: {
+        code: "MODEL_PROFILE_BINDING_AUTHORITY_STALE", phase: "STAGE",
+        stage: f.request.stage, retryable: false,
+      } });
+    const stored = await f.db.prepare(`SELECT first_failure_json, latest_failure_json
+      FROM research_workflow_run WHERE operation_id=?1`).bind(f.request.operation_id)
+      .first<{ first_failure_json: string | null; latest_failure_json: string | null }>();
+    const expected = { code: "MODEL_PROFILE_BINDING_AUTHORITY_STALE", phase: "STAGE",
+      stage: f.request.stage, retryable: false };
+    expect(JSON.parse(stored?.first_failure_json ?? "null")).toEqual(expected);
+    expect(JSON.parse(stored?.latest_failure_json ?? "null")).toEqual(expected);
+    expect(stored?.first_failure_json).not.toContain("private model-profile detail");
+    expect(await counts(f.db)).toEqual({ attempts: 1, checkpoints: 0, outbox: 0, ledger_events: 0 });
+    expect(calls).toBe(1);
   });
 
   it("reconciles a lost attempt-reservation ACK before the single handler call", async () => {
@@ -474,7 +507,7 @@ describe("eliotr.workflow-stage.v1 W2 monotone bounded executor — actual D1/R2
   it("executes the ResearchWorkflow binding via step.do with handle-only <=64KiB results and restart resume", async () => {
     const f = await workflowFixture("w2-binding");
     const { ResearchWorkflow } = await import("../src/research-workflow.js");
-    const env = { CORE_DB: f.db, WORK_BUCKET: f.bucket } as unknown as Env;
+    const env = { CORE_DB: f.db, WORK_BUCKET: f.bucket, DEPLOYMENT_GENERATION: principal.deployment_generation } as unknown as Env;
     const params = {
       operation_id: f.request.operation_id,
       investigation_ref: { ...f.request.investigation_ref },
@@ -486,7 +519,7 @@ describe("eliotr.workflow-stage.v1 W2 monotone bounded executor — actual D1/R2
       deployment_generation: principal.deployment_generation,
     };
     const fakeStep = {
-      do: async (name: string, callback: () => Promise<unknown>) => {
+      do: async (name: string, _options: unknown, callback: () => Promise<unknown>) => {
         expect(name.startsWith("w2-stage-")).toBe(true);
         const outcome = await callback();
         expect(new TextEncoder().encode(JSON.stringify(outcome)).byteLength).toBeLessThanOrEqual(65536);
@@ -507,6 +540,7 @@ describe("eliotr.workflow-stage.v1 W2 monotone bounded executor — actual D1/R2
 
   it("executes the server-owned exploratory generation only for an exploratory W1 lane", async () => {
     const f = await workflowFixture("server-owned", "exploratory");
+    await new WorkflowCheckpointStore(f.db).ensureRun(f.request, principal);
     const { ResearchWorkflow } = await import("../src/research-workflow.js");
     const env = { CORE_DB: f.db, SEARCH_DB: runtime.SEARCH_DB, WORK_BUCKET: f.bucket, DEPLOYMENT_GENERATION: principal.deployment_generation } as unknown as Env;
     const params = {
@@ -520,7 +554,7 @@ describe("eliotr.workflow-stage.v1 W2 monotone bounded executor — actual D1/R2
       deployment_generation: principal.deployment_generation,
     };
     const fakeStep = {
-      do: async (_name: string, callback: () => Promise<unknown>) => callback(),
+      do: async (_name: string, _options: unknown, callback: () => Promise<unknown>) => callback(),
     };
     const first = await ResearchWorkflow.prototype.run.call({ env }, { payload: params } as never, fakeStep as never);
     if (!("state" in first) || !("receipt_refs" in first)) throw new Error("expected the exploratory workflow result");
@@ -550,6 +584,10 @@ describe("eliotr.workflow-stage.v1 W2 monotone bounded executor — actual D1/R2
       principal_ref: principal.principal_ref,
       credential_generation: principal.credential_generation,
       deployment_generation: principal.deployment_generation,
-    } } as never, fakeStep as never)).rejects.toMatchObject({ code: "WORKFLOW_AUTHORITY_STALE" });
+    } } as never, fakeStep as never)).rejects.toMatchObject({
+      code: "WORKFLOW_PREPARATION_FAILED",
+      failure: { code: "WORKFLOW_AUTHORITY_STALE", phase: "PREPARATION", retryable: false },
+    });
+    expect(await counts(typo.db)).toEqual({ attempts: 0, checkpoints: 0, outbox: 0, ledger_events: 0 });
   }, 30_000);
 });

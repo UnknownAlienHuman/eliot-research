@@ -2,6 +2,10 @@ import * as z from "zod";
 
 import * as backup from "./backup.js";
 import * as common from "./common.js";
+import * as computerAgentConnection from "./computer-agent-connection.js";
+import * as computerAgentDispatch from "./computer-agent-dispatch.js";
+import * as computerAgentQualification from "./computer-agent-qualification.js";
+import * as computerAgentRoute from "./computer-agent-route.js";
 import * as coordinateMap from "./coordinate-map.js";
 import * as driveExchange from "./drive-exchange.js";
 import * as erasure from "./erasure.js";
@@ -19,9 +23,13 @@ import * as policy from "./policy.js";
 import * as publication from "./publication.js";
 import * as registryContracts from "./registry-contracts.js";
 import * as research from "./research.js";
+import * as researchBranch from "./research-branch.js";
+import * as researchProviderKey from "./research-provider-key.js";
+import * as researchProviderKeyModelUse from "./research-provider-key-model-use.js";
 import * as residency from "./residency.js";
 import * as retrieval from "./retrieval.js";
 import * as scope from "./scope.js";
+import * as projectClientGrant from "./project-client-grant.js";
 import * as security from "./security.js";
 import * as snapshotView from "./snapshot-view.js";
 import * as source from "./source.js";
@@ -36,7 +44,7 @@ import {
   type ContractStructuralStrictness,
 } from "./registry-contracts.js";
 
-export const CONTRACT_SCHEMA_REGISTRY_GENERATION = 4 as const;
+export const CONTRACT_SCHEMA_REGISTRY_GENERATION = 8 as const;
 
 export type ContractJsonPrimitive = string | number | boolean | null;
 export type ContractJsonValue =
@@ -64,6 +72,10 @@ interface SchemaModule {
 const SCHEMA_MODULES: readonly SchemaModule[] = [
   { family: "backup", exports: backup },
   { family: "common", exports: common },
+  { family: "computer-agent", exports: computerAgentConnection },
+  { family: "computer-agent", exports: computerAgentDispatch },
+  { family: "computer-agent", exports: computerAgentQualification },
+  { family: "computer-agent", exports: computerAgentRoute },
   { family: "navigation", exports: coordinateMap },
   { family: "drive-exchange", exports: driveExchange },
   { family: "erasure", exports: erasure },
@@ -81,9 +93,13 @@ const SCHEMA_MODULES: readonly SchemaModule[] = [
   { family: "publication", exports: publication },
   { family: "registry", exports: registryContracts },
   { family: "research", exports: research },
+  { family: "research", exports: researchBranch },
+  { family: "research", exports: researchProviderKey },
+  { family: "research", exports: researchProviderKeyModelUse },
   { family: "residency", exports: residency },
   { family: "retrieval", exports: retrieval },
   { family: "scope", exports: scope },
+  { family: "scope", exports: projectClientGrant },
   { family: "security", exports: security },
   { family: "source", exports: snapshotView },
   { family: "source", exports: source },
@@ -98,6 +114,7 @@ const FAMILY_VERSIONS: Readonly<
 > = Object.freeze({
   backup: { schema_version: 1, schema_generation: 1 },
   common: { schema_version: 1, schema_generation: 1 },
+  "computer-agent": { schema_version: 1, schema_generation: 1 },
   "drive-exchange": { schema_version: 1, schema_generation: 1 },
   erasure: { schema_version: 1, schema_generation: 1 },
   evidence: { schema_version: 1, schema_generation: 1 },
@@ -111,7 +128,7 @@ const FAMILY_VERSIONS: Readonly<
   "owner-cutover": { schema_version: 1, schema_generation: 1 },
   policy: { schema_version: 1, schema_generation: 1 },
   publication: { schema_version: 1, schema_generation: 1 },
-  registry: { schema_version: 2, schema_generation: 1 },
+  registry: { schema_version: 3, schema_generation: 1 },
   research: { schema_version: 1, schema_generation: 1 },
   residency: { schema_version: 1, schema_generation: 1 },
   retrieval: { schema_version: 1, schema_generation: 1 },
@@ -292,9 +309,11 @@ function buildRegistry(): readonly ContractSchemaDescriptor[] {
       // table-cell contract; publish that breaking schema as v2 while retaining protocol v1.
       const version = ["ScopeSnapshotSchema", "RetrievalTraceSchema", "InvestigationSchema"].includes(exportName)
         ? { schema_version: 1, schema_generation: 2 }
-        : ["CoordinateMapEntrySchema", "CoordinateMapSchema"].includes(exportName)
-          ? { schema_version: 2, schema_generation: 1 }
-          : familyVersion;
+        : exportName === "InquiryProtocolProfileSchema"
+          ? { schema_version: 1, schema_generation: 2 }
+          : ["CoordinateMapEntrySchema", "CoordinateMapSchema"].includes(exportName)
+            ? { schema_version: 2, schema_generation: 1 }
+            : familyVersion;
       const schemaId = buildContractSchemaId(
         module.family,
         exportName,

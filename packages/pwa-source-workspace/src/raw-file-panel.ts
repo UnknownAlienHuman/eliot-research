@@ -1,0 +1,594 @@
+import { ApiRequestError } from "./api.js";
+import { escapeHtml } from "./html.js";
+import {
+  captureRawFile,
+  createRawMarkdownIdempotencyKey,
+  convertRawFileToMarkdown,
+  admitRawFileToLibrary,
+  prepareRawFileSelection,
+  readRawFileByIdempotency,
+  readRawFileAdmissionStatus,
+  RAW_FILE_MAX_BYTES,
+  RAW_SOURCE_VERSION_REQUESTED_EVENT,
+  type RawFileCaptureReceipt,
+  type RawFileSelection,
+  type RawMarkdownConversionResult,
+  type RawNormalizedAdmissionResult,
+  type RawSourceVersionTarget,
+} from "./raw-file-api.js";
+import {
+  formatRawFileBytes,
+  parseSourceVersionRequest,
+  rawFileAdmissionCopy,
+  rawFileProcessingCopy,
+  rawFileReceiptCopy,
+  renderSourceVersionTarget,
+  SOURCE_VERSION_FORM_REQUESTED_EVENT,
+  type SourceVersionRequest,
+} from "./raw-file-version-view.js";
+import { readSourceRevisionsPage } from "./source-revisions-api.js";
+
+interface RawFilePanelHost {
+  readonly generation: () => string | undefined;
+  readonly ready: () => boolean;
+  readonly sourceNamespace?: () => string | undefined;
+}
+
+type HealthLossReason = "initial-unavailable" | "connection-lost" | "generation-changed";
+
+export function mountRawFilePanel(element: HTMLElement, host: RawFilePanelHost): () => void {
+  element.innerHTML = `<section class="raw-file-panel" aria-label="Add a document">
+    <div class="tool-heading"><div><span class="eyebrow">Library</span><h2>Add a document</h2></div><span class="tool-badge">PRIVATE</span></div>
+    <p>Select a PDF, document, image or text file. Add document uploads it, processes it, and adds it to your Library; search readiness is reported separately.</p>
+    <form>
+      <label>Source file<input type="file" data-raw-file accept=".pdf,.doc,.docx,.html,.htm,.txt,.md,.csv,.json,.png,.jpg,.jpeg,.webp,.svg,.gif,.bmp,application/pdf,text/plain,text/markdown,text/html,image/*" /></label>
+      <div class="raw-file-actions"><button class="button button--primary" type="submit" data-raw-submit disabled>Add document</button>
+        <button class="button button--quiet" type="button" data-raw-find-library hidden disabled>Open Library</button>
+        <button class="button button--quiet" type="button" data-raw-cancel-version hidden>Cancel version</button>
+        <button class="button button--quiet" type="button" data-raw-stop hidden>Stop</button></div>
+    </form>
+    <p class="raw-file-limit">Up to ${formatRawFileBytes(RAW_FILE_MAX_BYTES)} per file in this browser session; processing accepts up to 8.0 MiB.</p>
+    <p class="raw-file-version" data-raw-version hidden></p>
+    <p role="status" aria-live="polite" data-raw-status>Choose a file to begin.</p>
+    <details><summary>Import details and recovery</summary>
+    <div class="raw-file-actions">
+      <button class="button button--quiet" type="button" data-raw-recover disabled>Check upload status</button>
+      <button class="button button--quiet" type="button" data-raw-process hidden disabled>Process file</button>
+      <button class="button button--quiet" type="button" data-raw-admit hidden disabled>Add to Library</button>
+    </div>
+    <dl class="raw-file-version-details" data-raw-version-details hidden></dl>
+    <dl class="raw-file-receipt" data-raw-receipt hidden></dl>
+    <dl class="raw-file-processing" data-raw-processing hidden></dl>
+    <dl class="raw-file-admission" data-raw-admission hidden></dl>
+    </details>
+  </section>`;
+  const form = element.querySelector<HTMLFormElement>("form");
+  const input = element.querySelector<HTMLInputElement>("[data-raw-file]");
+  const submit = element.querySelector<HTMLButtonElement>("[data-raw-submit]");
+  const recover = element.querySelector<HTMLButtonElement>("[data-raw-recover]");
+  const process = element.querySelector<HTMLButtonElement>("[data-raw-process]");
+  const admit = element.querySelector<HTMLButtonElement>("[data-raw-admit]");
+  const findLibrary = element.querySelector<HTMLButtonElement>("[data-raw-find-library]");
+  const cancelVersion = element.querySelector<HTMLButtonElement>("[data-raw-cancel-version]");
+  const stopButton = element.querySelector<HTMLButtonElement>("[data-raw-stop]");
+  const status = element.querySelector<HTMLElement>("[data-raw-status]");
+  const versionNode = element.querySelector<HTMLElement>("[data-raw-version]");
+  const versionDetails = element.querySelector<HTMLElement>("[data-raw-version-details]");
+  const receiptNode = element.querySelector<HTMLElement>("[data-raw-receipt]");
+  const processingNode = element.querySelector<HTMLElement>("[data-raw-processing]");
+  const admissionNode = element.querySelector<HTMLElement>("[data-raw-admission]");
+  if (!form || !input || !submit || !recover || !process || !admit || !findLibrary || !cancelVersion || !stopButton ||
+      !status || !versionNode || !versionDetails || !receiptNode || !processingNode || !admissionNode) {
+    throw new Error("Raw file panel is incomplete");
+  }
+
+  let serial = 0;
+  let controller: AbortController | undefined;
+  let disposed = false;
+  let busy = false;
+  let selection: RawFileSelection | undefined;
+  let receipt: RawFileCaptureReceipt | undefined;
+  let conversion: RawMarkdownConversionResult | undefined;
+  let processingKey: string | undefined;
+  let processingOutcomeUnknown = false;
+  let admission: RawNormalizedAdmissionResult | undefined;
+  let admissionOutcomeUnknown = false;
+  let admissionNeedsResume = false;
+  let versionTarget: SourceVersionRequest | undefined;
+  let versionHeadConfirmed = false;
+  let healthLossStatus: string | undefined;
+  let lastGeneration = host.ready() ? host.generation() : undefined;
+  const hasSuccessfulAdmission = (): boolean => admission?.state === "COMMITTED" &&
+    (admission.admission_receipt?.decision === "ADMITTED" || admission.admission_receipt?.decision === "DUPLICATE") &&
+    (versionTarget === undefined || versionHeadConfirmed);
+
+  const renderReceipt = (value: RawFileCaptureReceipt, recovered: boolean): void => {
+    receiptNode.hidden = false;
+    receiptNode.innerHTML = `<dt>Status</dt><dd>${recovered ? "Captured · recovered" : "Captured"}</dd>
+      <dt>File</dt><dd>${escapeHtml(value.original_file_name)}</dd>
+      <dt>Size</dt><dd>${formatRawFileBytes(value.size_bytes)}</dd>
+      <dt>Capture</dt><dd>${escapeHtml(value.capture_id)}</dd>
+      <dt>Digest</dt><dd>${escapeHtml(value.content_sha256)}</dd>
+      <dt>Captured</dt><dd>${escapeHtml(value.captured_at)}</dd>`;
+  };
+  const renderProcessing = (value: RawMarkdownConversionResult | undefined): void => {
+    processingNode.hidden = value === undefined;
+    if (value === undefined) { processingNode.replaceChildren(); return; }
+    if (value.state === "COMPLETE") {
+      processingNode.innerHTML = `<dt>Processing</dt><dd>Complete · conversion ready</dd>
+        <dt>Operation</dt><dd>${escapeHtml(value.operation_id)}</dd>
+        <dt>Output</dt><dd>${escapeHtml(value.output_sha256 ?? "")} · ${formatRawFileBytes(value.output_bytes ?? 0)}</dd>
+        <dt>Detected</dt><dd>${escapeHtml(value.detected_mime ?? "")} · ${escapeHtml(value.format ?? "")}</dd>
+        <dt>Tokens</dt><dd>${String(value.tokens ?? 0)}</dd>
+        <dt>Library</dt><dd>Not admitted or indexed by this result.</dd>`;
+      return;
+    }
+    processingNode.innerHTML = `<dt>Processing</dt><dd>${escapeHtml(value.state)} · ${escapeHtml(value.failure_code ?? "pending")}</dd>
+      <dt>Operation</dt><dd>${escapeHtml(value.operation_id)}</dd>
+      <dt>Capture</dt><dd>${escapeHtml(value.capture_id)}</dd>
+      <dt>Digest</dt><dd>${escapeHtml(value.content_sha256)}</dd>`;
+  };
+  const renderAdmission = (value: RawNormalizedAdmissionResult | undefined): void => {
+    admissionNode.hidden = value === undefined;
+    if (value === undefined) { admissionNode.replaceChildren(); return; }
+    admissionNode.innerHTML = `<dt>Library</dt><dd>${escapeHtml(value.state)}</dd>
+      <dt>Admission</dt><dd>${escapeHtml(value.admission_operation_id)}</dd>
+      <dt>Candidate</dt><dd>${escapeHtml(value.candidate_ref)}</dd>
+      <dt>Source revision</dt><dd>${escapeHtml(value.source_revision_ref)}</dd>
+      <dt>Source view</dt><dd>${escapeHtml(value.source_view_ref)}</dd>
+      <dt>Updated</dt><dd>${escapeHtml(value.updated_at)}</dd>
+      <dt>Reason</dt><dd>${escapeHtml(value.reason_codes.join(", ") || "None recorded")}</dd>
+      <dt>Readiness</dt><dd>Search readiness is not established by admission.</dd>`;
+  };
+  const primaryActionText = (): string => {
+    if (hasSuccessfulAdmission()) return "Ready";
+    if (receipt === undefined) return "Add document";
+    if (conversion?.state !== "COMPLETE") {
+      if (processingOutcomeUnknown || conversion?.state === "STARTED" || conversion?.state === "UNKNOWN") {
+        return "Continue processing";
+      }
+      if (conversion?.state === "FAILED") return "Retry processing";
+      return "Add document";
+    }
+    if (admissionNeedsResume || admissionOutcomeUnknown || admission?.state === "UNKNOWN") return "Continue adding";
+    if (admission?.admission_operation_id !== undefined) return "Check Library add";
+    return "Add document";
+  };
+  const renderButtons = (): void => {
+    const ready = host.ready() && host.generation() !== undefined &&
+      (versionTarget !== undefined || host.sourceNamespace === undefined || host.sourceNamespace() !== undefined);
+    submit.disabled = busy || !selection || hasSuccessfulAdmission() || !ready;
+    submit.textContent = primaryActionText();
+    recover.disabled = busy || !selection || !ready;
+    process.hidden = receipt === undefined;
+    process.disabled = busy || receipt === undefined || !ready;
+    process.textContent = processingOutcomeUnknown || conversion?.state === "STARTED" || conversion?.state === "UNKNOWN"
+      ? "Check processing status" : "Process file";
+    admit.hidden = conversion?.state !== "COMPLETE";
+    admit.disabled = busy || conversion?.state !== "COMPLETE" || !ready;
+    admit.textContent = admissionNeedsResume
+      ? "Resume Library add"
+      : admission?.admission_operation_id !== undefined
+        ? "Check Library status"
+        : admissionOutcomeUnknown
+          ? "Reconcile Library add"
+          : "Add to Library";
+    findLibrary.hidden = !hasSuccessfulAdmission();
+    findLibrary.disabled = busy || !hasSuccessfulAdmission();
+    cancelVersion.hidden = versionTarget === undefined;
+    cancelVersion.disabled = busy;
+    input.disabled = busy || (versionTarget === undefined && host.sourceNamespace !== undefined && host.sourceNamespace() === undefined);
+    stopButton.hidden = !busy;
+    stopButton.disabled = !busy;
+  };
+  const clear = (message: string): void => {
+    serial++;
+    controller?.abort();
+    controller = undefined;
+    busy = false;
+    selection = undefined;
+    receipt = undefined;
+    conversion = undefined;
+    processingKey = undefined;
+    processingOutcomeUnknown = false;
+    admission = undefined;
+    admissionOutcomeUnknown = false;
+    admissionNeedsResume = false;
+    versionTarget = undefined;
+    versionHeadConfirmed = false;
+    input.value = "";
+    receiptNode.hidden = true;
+    receiptNode.replaceChildren();
+    processingNode.hidden = true;
+    processingNode.replaceChildren();
+    admissionNode.hidden = true;
+    admissionNode.replaceChildren();
+    renderSourceVersionTarget(versionNode, versionDetails, versionTarget);
+    status.textContent = message;
+    renderButtons();
+  };
+  const showError = (error: unknown): void => {
+    if (error instanceof ApiRequestError) {
+      if (versionTarget !== undefined && error.status === 409) {
+        status.textContent = "The selected source changed before this version was admitted. Refresh versions and choose Add new version again; no overwrite was attempted.";
+        return;
+      }
+      status.textContent = error.status === 401 || error.status === 403
+        ? "Authorization changed. Sign in again, then choose the file again."
+        : `${error.code}: ${error.message}`;
+      return;
+    }
+    status.textContent = "The request was interrupted. Keep this file selected and check again before starting a new identity.";
+  };
+  const finish = (local: AbortController): void => {
+    if (controller === local) { controller = undefined; busy = false; renderButtons(); }
+  };
+  const readback = async (current: RawFileSelection, generation: string, signal: AbortSignal, isCurrent: () => boolean): Promise<boolean> => {
+    const found = await readRawFileByIdempotency(current, generation, signal);
+    if (!found || !isCurrent()) return false;
+    receipt = found;
+    renderReceipt(found, true);
+    status.textContent = rawFileReceiptCopy(true, current.target_source_id !== undefined);
+    return true;
+  };
+  const confirmVersionHead = async (target: RawSourceVersionTarget, admittedRevision: string,
+    generation: string, signal: AbortSignal): Promise<boolean> => {
+    const received = await readSourceRevisionsPage(target.target_source_id, generation, undefined, signal);
+    return received.source_id === target.target_source_id && received.head_revision_ref === admittedRevision;
+  };
+  const runCapture = (recoverOnly: boolean, continueAfter?: () => void): void => {
+    if (busy || !selection || !host.ready()) return;
+    const generation = host.generation();
+    if (!generation) { status.textContent = "The current deployment is still being checked."; return; }
+    const current = selection;
+    const active = ++serial;
+    const local = new AbortController();
+    controller = local;
+    busy = true;
+    renderButtons();
+    status.textContent = recoverOnly ? "Checking the selected file's previous capture…" : "Uploading the selected file…";
+    let stepComplete = false;
+    void (async () => {
+      if (recoverOnly) {
+        try {
+          const currentRequest = () => active === serial && !disposed && !local.signal.aborted;
+          const found = await readback(current, generation, local.signal, currentRequest);
+          stepComplete = found;
+          if (currentRequest() && !found) status.textContent = "No upload is recorded for this file yet. Uploading it will keep this same identity.";
+        } catch (error) {
+          if (active === serial && !disposed && !local.signal.aborted) {
+            if (error instanceof ApiRequestError && error.code === "API_GENERATION_MISMATCH") {
+              clear("Application changed. Private upload and processing state cleared; choose the file again.");
+            } else showError(error);
+          }
+        }
+        return;
+      }
+      try {
+        const captured = await captureRawFile(current, generation, local.signal);
+        if (active !== serial || disposed) return;
+        receipt = captured;
+        stepComplete = true;
+        conversion = undefined;
+        processingKey = undefined;
+        processingOutcomeUnknown = false;
+        admission = undefined;
+        admissionOutcomeUnknown = false;
+        renderReceipt(captured, false);
+        status.textContent = rawFileReceiptCopy(false, current.target_source_id !== undefined);
+      } catch (error) {
+        if (active !== serial || disposed) return;
+        if (local.signal.aborted) {
+          status.textContent = "Capture stopped. Check the previous outcome before trying again.";
+          return;
+        }
+        if (error instanceof ApiRequestError && error.code === "API_GENERATION_MISMATCH") {
+          clear("Application changed. Private upload and processing state cleared; choose the file again.");
+          return;
+        }
+        if (error instanceof ApiRequestError && error.retryable) {
+          status.textContent = "Capture outcome is unknown. Checking the same server identity…";
+          try {
+            const currentRequest = () => active === serial && !disposed && !local.signal.aborted;
+            const found = await readback(current, generation, local.signal, currentRequest);
+            stepComplete = found;
+            if (currentRequest() && !found) status.textContent = "No receipt is available yet. Keep this file selected and check again; no replacement upload was created.";
+          } catch (readError) {
+            if (active === serial && !disposed) showError(readError);
+          }
+        } else showError(error);
+      }
+    })().finally(() => {
+      if (active === serial && !disposed) {
+        finish(local);
+        if (stepComplete && continueAfter !== undefined) continueAfter();
+      }
+    });
+  };
+  const runProcess = (continueAfter?: () => void): void => {
+    if (busy || !receipt || !host.ready()) return;
+    const generation = host.generation();
+    if (!generation) { status.textContent = "The current deployment is still being checked."; return; }
+    const current = receipt;
+    const priorConversion = conversion;
+    const active = ++serial;
+    const local = new AbortController();
+    controller = local;
+    // A new processing attempt supersedes any prior conversion/admission
+    // display. Until this request settles, the UI must not offer Library add
+    // against an older COMPLETE result after Stop or a late response.
+    conversion = undefined;
+    admission = undefined;
+    admissionOutcomeUnknown = false;
+    admissionNeedsResume = false;
+    renderProcessing(undefined);
+    renderAdmission(undefined);
+    busy = true;
+    renderButtons();
+    status.textContent = processingOutcomeUnknown ? "Checking processing status…" : "Processing the captured file…";
+    let stepComplete = false;
+    void (async () => {
+      try {
+        let requestKey = processingKey;
+        if (priorConversion?.state === "FAILED") {
+          requestKey = await createRawMarkdownIdempotencyKey(current, priorConversion.operation_id);
+        } else if (requestKey === undefined) {
+          requestKey = await createRawMarkdownIdempotencyKey(current);
+        }
+        if (active !== serial || disposed || local.signal.aborted) return;
+        processingKey = requestKey;
+        const result = await convertRawFileToMarkdown(current, generation, local.signal, requestKey);
+        if (active !== serial || disposed) return;
+        conversion = result;
+        stepComplete = result.state === "COMPLETE";
+        processingOutcomeUnknown = false;
+        admission = undefined;
+        admissionOutcomeUnknown = false;
+        renderProcessing(result);
+        renderAdmission(undefined);
+        status.textContent = rawFileProcessingCopy(result);
+      } catch (error) {
+        if (active !== serial || disposed) return;
+        if (local.signal.aborted) {
+          processingOutcomeUnknown = true;
+          status.textContent = "Processing stopped. Check processing status again before starting another request.";
+          return;
+        }
+        if (error instanceof ApiRequestError && error.code === "API_GENERATION_MISMATCH") {
+          clear("Application changed. Private upload and processing state cleared; choose the file again.");
+          return;
+        }
+        if (error instanceof ApiRequestError && error.retryable) {
+          processingOutcomeUnknown = true;
+          status.textContent = "Processing status is unknown. Check processing status again.";
+        } else showError(error);
+      }
+    })().finally(() => {
+      if (active === serial && !disposed) {
+        finish(local);
+        if (stepComplete && continueAfter !== undefined) continueAfter();
+      }
+    });
+  };
+  const runAdmission = (): void => {
+    if (busy || !receipt || !conversion || conversion.state !== "COMPLETE" || !host.ready()) return;
+    const generation = host.generation();
+    if (!generation) { status.textContent = "The current deployment is still being checked."; return; }
+    const currentReceipt = receipt;
+    const currentConversion = conversion;
+    const currentVersionTarget = versionTarget;
+    const active = ++serial;
+    const local = new AbortController();
+    controller = local;
+    busy = true;
+    renderButtons();
+    const readbackOnly = admission?.admission_operation_id !== undefined && !admissionNeedsResume;
+    status.textContent = readbackOnly ? "Checking Library status…"
+      : admissionNeedsResume ? "Resuming the Library add…"
+        : admissionOutcomeUnknown ? "Reconciling the Library add…" : "Adding the processed file to Library…";
+    void (async () => {
+      try {
+        const result = readbackOnly
+          ? await readRawFileAdmissionStatus(currentReceipt, currentConversion, admission?.admission_operation_id ?? "", generation, local.signal)
+          : await admitRawFileToLibrary(currentReceipt, currentConversion, generation, local.signal);
+        if (active !== serial || disposed) return;
+        admission = result;
+        admissionOutcomeUnknown = false;
+        admissionNeedsResume = result.state !== "COMMITTED";
+        renderAdmission(result);
+        status.textContent = rawFileAdmissionCopy(result, currentVersionTarget);
+        if (result.state === "COMMITTED" && currentVersionTarget !== undefined) {
+          versionHeadConfirmed = false;
+          status.textContent = "Admission recorded. Confirming the new source head…";
+          try {
+            const confirmed = await confirmVersionHead(currentVersionTarget, result.source_revision_ref, generation, local.signal);
+            if (active !== serial || disposed) return;
+            if (!confirmed) {
+              status.textContent = "New version admission was recorded, but the new head was not confirmed. Refresh versions before retrying.";
+              return;
+            }
+            versionHeadConfirmed = true;
+            status.textContent = rawFileAdmissionCopy(result, currentVersionTarget);
+            window.dispatchEvent(new Event("eliotr:raw-admission-completed"));
+          } catch (confirmationError) {
+            if (active !== serial || disposed) return;
+            if (local.signal.aborted) {
+              status.textContent = "New version admission was recorded, but head confirmation was stopped. Refresh versions before retrying.";
+            } else if (confirmationError instanceof ApiRequestError &&
+                (confirmationError.code === "API_GENERATION_MISMATCH" || confirmationError.code === "CATALOG_GENERATION_CHANGED")) {
+              clear("Application changed. Private upload and processing state cleared; choose the file again.");
+            } else {
+              status.textContent = "New version admission was recorded, but its head could not be confirmed. Refresh versions before retrying.";
+            }
+          }
+          return;
+        }
+        if (result.state === "COMMITTED") window.dispatchEvent(new Event("eliotr:raw-admission-completed"));
+      } catch (error) {
+        if (active !== serial || disposed) return;
+        if (local.signal.aborted) {
+          admissionOutcomeUnknown = true;
+          status.textContent = "Library add stopped. Check Library status again before starting another request.";
+          return;
+        }
+        if (error instanceof ApiRequestError && error.code === "API_GENERATION_MISMATCH") {
+          clear("Application changed. Private upload and processing state cleared; choose the file again.");
+          return;
+        }
+        if (error instanceof ApiRequestError && error.retryable) {
+          admissionOutcomeUnknown = true;
+          status.textContent = "Library add status is unknown. Check Library status again.";
+        } else showError(error);
+      }
+    })().finally(() => { if (active === serial && !disposed) finish(local); });
+  };
+  const runAddDocument = (): void => {
+    if (busy || !selection || !host.ready()) return;
+    if (hasSuccessfulAdmission()) {
+      status.textContent = versionTarget === undefined
+        ? "Ready. This document is in Library; search readiness is reported separately."
+        : "Ready. The new version is in Library; previous versions remain available. Search readiness is reported separately.";
+      return;
+    }
+    if (receipt === undefined) {
+      runCapture(false, runAddDocument);
+      return;
+    }
+    if (conversion?.state !== "COMPLETE") {
+      runProcess(runAddDocument);
+      return;
+    }
+    runAdmission();
+  };
+
+  input.onchange = () => {
+    serial++;
+    controller?.abort();
+    controller = undefined;
+    busy = false;
+    selection = undefined;
+    receipt = undefined;
+    conversion = undefined;
+    processingKey = undefined;
+    processingOutcomeUnknown = false;
+    admission = undefined;
+    admissionOutcomeUnknown = false;
+    admissionNeedsResume = false;
+    versionHeadConfirmed = false;
+    receiptNode.hidden = true;
+    receiptNode.replaceChildren();
+    renderProcessing(undefined);
+    renderAdmission(undefined);
+    const file = input.files?.[0];
+    if (!file) { status.textContent = "Choose a file to begin."; renderButtons(); return; }
+    const active = serial;
+    const currentVersionTarget = versionTarget;
+    const local = new AbortController();
+    controller = local;
+    busy = true;
+    renderButtons();
+    status.textContent = "Checking file size and digest…";
+    const namespace = currentVersionTarget === undefined ? host.sourceNamespace?.() : undefined;
+    void prepareRawFileSelection(file, local.signal, namespace, currentVersionTarget).then((prepared) => {
+      if (active !== serial || disposed) return;
+      selection = prepared;
+      status.textContent = currentVersionTarget === undefined
+        ? "Ready to add this document. Re-selecting the same file can recover its saved upload."
+        : "Ready to add this new version. The previous version remains available; submit to continue.";
+    }).catch((error: unknown) => { if (active === serial && !disposed) showError(error); })
+      .finally(() => { if (active === serial && !disposed) finish(local); });
+  };
+  form.onsubmit = (event) => { event.preventDefault(); runAddDocument(); };
+  recover.onclick = () => runCapture(true);
+  process.onclick = () => runProcess();
+  admit.onclick = () => runAdmission();
+  findLibrary.onclick = () => {
+    if (!hasSuccessfulAdmission() || busy) return;
+    element.dispatchEvent(new Event("eliotr:find-in-library", { bubbles: true }));
+  };
+  stopButton.onclick = () => {
+    if (!busy) return;
+    serial++;
+    controller?.abort();
+    controller = undefined;
+    busy = false;
+    const libraryAddInFlight = receipt !== undefined && conversion?.state === "COMPLETE";
+    status.textContent = receipt === undefined
+      ? "Upload stopped. Continue to check the previous outcome before trying again."
+      : libraryAddInFlight
+        ? "Library add stopped. Continue to check the previous outcome before trying again."
+        : "Processing stopped. Continue to check the previous outcome before trying again.";
+    if (libraryAddInFlight) admissionOutcomeUnknown = true;
+    else if (receipt !== undefined) processingOutcomeUnknown = true;
+    renderButtons();
+  };
+  const sourceVersionRequested = (event: Event): void => {
+    const requested = parseSourceVersionRequest(event);
+    if (requested === undefined || disposed) return;
+    if (busy) {
+      status.textContent = "Stop the current upload before choosing a new version.";
+      return;
+    }
+    clear("Choose the replacement file for this source.");
+    versionTarget = requested;
+    renderSourceVersionTarget(versionNode, versionDetails, versionTarget);
+    status.textContent = `Adding a new version of ${requested.source_title ?? "the selected document"}. The previous version remains available. Choose the replacement file.`;
+    renderButtons();
+    element.dispatchEvent(new Event(SOURCE_VERSION_FORM_REQUESTED_EVENT, { bubbles: true }));
+    element.scrollIntoView({ block: "start" });
+    input.focus();
+  };
+  cancelVersion.onclick = () => {
+    if (!busy && versionTarget !== undefined) clear("Version target cleared. Choose a file to begin.");
+  };
+  const healthUpdated = () => {
+    const generation = host.generation();
+    const generationChanged = host.ready() && generation !== undefined && lastGeneration !== undefined && generation !== lastGeneration;
+    if (generationChanged) {
+      clear("Application changed. Private upload and processing state cleared; choose the file again.");
+    }
+    if (!generationChanged && host.ready() && healthLossStatus !== undefined && status.textContent === healthLossStatus) {
+      status.textContent = "Workspace reconnected. Choose a file to begin.";
+    }
+    if (host.ready()) healthLossStatus = undefined;
+    if (host.ready() && generation !== undefined) lastGeneration = generation;
+    renderButtons();
+  };
+  const clearOnHealthLost = (event: Event): void => {
+    const reason = (event as CustomEvent<{ readonly reason?: HealthLossReason }>).detail?.reason;
+    const message = reason === "generation-changed"
+      ? "Application changed. Private upload and processing state cleared; choose the file again."
+      : reason === "connection-lost"
+        ? "Workspace connection lost. Retry connection above; private upload state was cleared."
+        : "Workspace connection unavailable. Retry connection above before choosing a file.";
+    clear(message);
+    healthLossStatus = message;
+  };
+  const clearOnAuth = () => clear("Authorization changed. Private upload state cleared. Choose the file again.");
+  const clearOnOffline = () => clear("Offline. Private upload state cleared; choose the file again when online.");
+  const app = element.closest("#app");
+  const namespaceSelected = (): void => clear(host.sourceNamespace?.() === undefined
+    ? "Select or create a workspace above before adding a document."
+    : "Workspace selected. Choose a file to add.");
+  app?.addEventListener("eliotr:namespace-selected", namespaceSelected);
+  app?.addEventListener("eliotr:health-updated", healthUpdated);
+  app?.addEventListener("eliotr:health-lost", clearOnHealthLost);
+  window.addEventListener("eliotr:authorization-cleared", clearOnAuth);
+  window.addEventListener(RAW_SOURCE_VERSION_REQUESTED_EVENT, sourceVersionRequested);
+  window.addEventListener("offline", clearOnOffline);
+  window.addEventListener("pagehide", clearOnOffline);
+  renderButtons();
+  return () => {
+    disposed = true;
+    clear("Upload panel closed.");
+    form.onsubmit = null; input.onchange = null; recover.onclick = null; process.onclick = null; admit.onclick = null;
+    findLibrary.onclick = null; cancelVersion.onclick = null; stopButton.onclick = null;
+    app?.removeEventListener("eliotr:health-updated", healthUpdated);
+    app?.removeEventListener("eliotr:namespace-selected", namespaceSelected);
+    app?.removeEventListener("eliotr:health-lost", clearOnHealthLost);
+    window.removeEventListener("eliotr:authorization-cleared", clearOnAuth);
+    window.removeEventListener(RAW_SOURCE_VERSION_REQUESTED_EVENT, sourceVersionRequested);
+    window.removeEventListener("offline", clearOnOffline);
+    window.removeEventListener("pagehide", clearOnOffline);
+  };
+}

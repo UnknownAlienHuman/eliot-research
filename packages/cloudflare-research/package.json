@@ -23,6 +23,9 @@
     "@eliotr/research": "workspace:*",
     "@eliotr/retrieval": "workspace:*",
     "zod": "4.4.3",
-    "@eliotr/cloudflare-workflows": "workspace:*"
+    "@eliotr/cloudflare-workflows": "workspace:*",
+    "@eliotr/cloudflare-model-control": "workspace:*",
+    "@eliotr/cloudflare-model-execution": "workspace:*",
+    "@eliotr/cloudflare-research-branches": "workspace:*"
   }
 }

@@ -11,6 +11,9 @@
     { "gate_id": "T4-ai-gateway-route", "state": "NOT_EXECUTED" },
     { "gate_id": "T4-drive-append-import-result-readback", "state": "NOT_EXECUTED" },
     { "gate_id": "T5-erasure-restore", "state": "NOT_EXECUTED" },
+    { "gate_id": "T5-disclosure-audit", "state": "NOT_EXECUTED" },
+    { "gate_id": "T5-failure-injection", "state": "NOT_EXECUTED" },
+    { "gate_id": "T5-prompt-injection", "state": "NOT_EXECUTED" },
     { "gate_id": "T6-representative-load", "state": "NOT_EXECUTED" }
   ]
 }

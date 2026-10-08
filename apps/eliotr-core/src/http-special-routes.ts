@@ -5,6 +5,7 @@ import type {
 } from "@eliotr/interfaces";
 import type { AccessIdentity } from "@eliotr/cloudflare-access";
 import { apiResult, HttpRequestError, requireNoQuery, type HttpDependencies } from "./http.js";
+import { handleClientGrantHttp } from "./client-grant-http.js";
 import { handleGoogleOAuthBegin } from "./google-oauth-begin.js";
 import { handleGoogleOAuthCallback } from "./google-oauth-callback.js";
 import { handleGoogleConnectionDisconnect, handleGoogleConnectionStatus, handleGoogleOAuthReconnectBegin } from "./google-oauth-lifecycle.js";
@@ -15,13 +16,34 @@ import { createResearchChangesService } from "./research-changes.js";
 import { readReadiness } from "./readiness.js";
 import { readOwnerResearchRuns } from "./research-run-list.js";
 import { handleResearchModelQualification } from "./research-model-qualification-http.js";
+import { handleResearchModelCatalog } from "./research-model-catalog-http.js";
+import { handleResearchProjectModelConfiguration,
+  handleResearchProjectModelConfigurationImport } from "./research-project-configuration-http.js";
+import { createOwnerResearchProjectConfigurationService } from "./research-project-configuration-composition.js";
+import { handleResearchProviderKeyConfiguration } from "./research-provider-key-configuration-http.js";
+import { createResearchProviderKeyConfigurationComposition } from "./research-provider-key-configuration-composition.js";
+import { createResearchProviderKeyModelUseComposition } from "./research-provider-key-model-use-composition.js";
+import { handleResearchProviderKeyModelUseHttp } from "./research-provider-key-model-use-http.js";
+import { handleAiSearchFunctionalProbeHttp } from "./ai-search-functional-probe-http.js";
 import {
   handleMcpClientDiagnosticIssue,
   handleMcpClientDiagnosticLatest,
 } from "./mcp-client-diagnostic-http.js";
+import {
+  handleAgentTaskHttp,
+  isAgentTaskHttpOperation,
+} from "./agent-task-http.js";
+import { handleComputerAgentConnectionHttp } from "./computer-agent-connection-http.js";
+import { handleComputerAgentRouteHttp } from "./computer-agent-route-http.js";
+import { handleComputerAgentDispatchHttp } from "./computer-agent-dispatch-http.js";
+import {
+  handleComputerAgentQualificationConfirmHttp,
+  handleComputerAgentQualificationOwnerHttp,
+} from "./computer-agent-qualification-http.js";
 
 interface SpecialRouteMatch {
   readonly route: RouteDefinition;
+  readonly params: Readonly<Record<string, string>>;
 }
 
 function requireDriveExchangeTransport(env: Env): void {
@@ -52,7 +74,91 @@ export async function dispatchHttpSpecialRoute(input: {
       input.match.route.operation.startsWith("google.connection.")) {
     requireDriveExchangeTransport(input.env);
   }
+  if (isAgentTaskHttpOperation(input.match.route.operation)) {
+    return handleAgentTaskHttp(
+      input.request,
+      input.env,
+      input.context,
+      input.match.route.operation,
+      input.match.route.maximum_request_bytes,
+    );
+  }
   switch (input.match.route.operation) {
+    case "system.ai-search.functional-probe":
+      return handleAiSearchFunctionalProbeHttp({
+        request: input.request,
+        env: input.env,
+        url: input.url,
+        context: input.context,
+        maximum_request_bytes: input.match.route.maximum_request_bytes,
+      });
+    case "research.project-model-configuration.read":
+    case "research.project-model-configuration.select":
+    case "research.project-model-configuration.import": {
+      const projectId = input.match.params.project_id ?? "";
+      const service = createOwnerResearchProjectConfigurationService(input.env, input.context, projectId);
+      if (input.match.route.operation === "research.project-model-configuration.import") {
+        return handleResearchProjectModelConfigurationImport(input.request, input.env, input.context, projectId, service);
+      }
+      return handleResearchProjectModelConfiguration(input.request, input.env, input.context, projectId, service);
+    }
+    case "system.research.models":
+      return handleResearchModelCatalog(input.request, input.env, input.context);
+    case "project.provider-key-configuration.read":
+    case "project.provider-key-configuration.create": {
+      const projectId = input.match.params.project_id ?? "";
+      const composition = createResearchProviderKeyConfigurationComposition(input.env);
+      return handleResearchProviderKeyConfiguration(input.request, input.env, input.context, projectId,
+        input.match.route.maximum_request_bytes, composition.service);
+    }
+    case "project.provider-key-model-use.start":
+    case "project.provider-key-model-use.read": {
+      const projectId = input.match.params.project_id ?? "";
+      const composition = createResearchProviderKeyModelUseComposition(input.env, input.context, projectId);
+      return handleResearchProviderKeyModelUseHttp(
+        input.request,
+        input.env,
+        input.context,
+        projectId,
+        input.match.params.key_operation_id ?? "",
+        input.match.params.operation_id ?? "",
+        input.match.route.maximum_request_bytes,
+        composition,
+      );
+    }
+    case "system.computer-agent-qualifications.status":
+    case "system.computer-agent-qualifications.issue":
+      return handleComputerAgentQualificationOwnerHttp(input.request, input.env, input.context,
+        input.match.params, input.match.route.maximum_request_bytes);
+    case "computer-agent-qualifications.confirm":
+      return handleComputerAgentQualificationConfirmHttp(input.request, input.env, input.context,
+        input.match.route.maximum_request_bytes);
+    case "system.computer-agents.list":
+    case "system.computer-agents.put":
+    case "system.computer-agents.disable":
+      return handleComputerAgentConnectionHttp(input.request, input.env, input.context,
+        input.match.params, input.match.route.maximum_request_bytes);
+    case "research.computer-agent-routes.read":
+    case "research.computer-agent-routes.put":
+    case "research.computer-agent-routes.disable":
+    case "research.computer-agent-routes.readiness":
+      return handleComputerAgentRouteHttp(input.request, input.env, input.context,
+        input.match.params, input.match.route.maximum_request_bytes);
+    case "research.computer-agent-dispatches.create":
+    case "research.computer-agent-dispatches.create-preferred":
+    case "research.computer-agent-dispatches.abandon":
+    case "research.computer-agent-dispatches.reassign":
+    case "research.computer-agent-dispatches.status":
+    case "research.computer-agent-dispatches.pull":
+    case "research.computer-agent-dispatches.accept":
+    case "research.computer-agent-dispatches.decline":
+      return handleComputerAgentDispatchHttp(input.request, input.env, input.context,
+        input.match.route.operation, input.match.params, input.match.route.maximum_request_bytes);
+    case "research.client-grants.list":
+    case "research.client-grants.put":
+    case "research.client-grants.revoke":
+      return handleClientGrantHttp(input.request, input.env, input.context, input.match.params,
+        input.match.route.maximum_request_bytes);
     case "system.research.model-qualification":
       requireNoQuery(input.url);
       return handleResearchModelQualification(input.request, input.env, input.context,

@@ -97,7 +97,9 @@ function singleObligationFlip(
       maskFail("obligation status transition is not permitted for this event kind");
     }
     if (a.obligation_id !== b.obligation_id || a.verifier_ref !== b.verifier_ref ||
-      a.lane !== b.lane || a.exposed !== b.exposed) {
+      a.lane !== b.lane || a.exposed !== b.exposed || a.kind !== b.kind ||
+      !sameJson(a.dependency_obligation_ids, b.dependency_obligation_ids) ||
+      a.certificate_kind !== b.certificate_kind || a.blocking !== b.blocking) {
       maskFail("obligation identity changed outside registration");
     }
     if (to === "ACCEPTED") {

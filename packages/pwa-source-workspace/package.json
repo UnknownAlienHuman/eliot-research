@@ -1,0 +1,24 @@
+{
+  "name": "@eliotr/pwa-source-workspace",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "sideEffects": [
+    "./src/reading-markdown.worker.ts"
+  ],
+  "exports": {
+    ".": "./src/index.ts",
+    "./navigation-expand-api": "./src/navigation-expand-api.ts"
+  },
+  "types": "./src/index.ts",
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc -b --pretty false",
+    "test": "vitest run --root ../.. packages/pwa-source-workspace --reporter=verbose"
+  },
+  "dependencies": {
+    "@eliotr/contracts": "workspace:*",
+    "@eliotr/pwa-http-client": "workspace:*",
+    "markdown-it": "15.0.2"
+  }
+}

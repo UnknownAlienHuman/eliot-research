@@ -27,6 +27,7 @@ outside the paths below.
 - `docs/implementation/drive-credentials.md`
 - `packages/google-drive-exchange/src/oauth-types.ts`
 - `packages/google-drive-exchange/src/oauth-transport.ts`
+- `packages/google-drive-exchange/src/oauth-transport-input.ts`
 - `packages/google-drive-exchange/src/oauth-identity.ts`
 - `packages/google-drive-exchange/src/oauth-admission.ts`
 - `packages/google-drive-exchange/src/oauth-test-fixture.ts`

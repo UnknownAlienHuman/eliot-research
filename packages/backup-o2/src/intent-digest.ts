@@ -42,6 +42,17 @@ function canonicalIntentFields(intent: OperationIntent): Record<string, unknown>
   };
 }
 
+// Producer admission is keyed before a snapshot exists, so it cannot bind the
+// candidate vector yet. Keep the exact same canonical immutable intent fields
+// as the epoch receipt digest and use a separate protocol domain so the base
+// identity cannot be confused with a completed candidate digest.
+export async function canonicalProducerIntentDigest(intent: OperationIntent): Promise<string> {
+  return backupSha256Hex(canonicalBackupJson({
+    protocol: "eliotr.backup-epoch-producer-intent.v1",
+    intent: canonicalIntentFields(intent),
+  }));
+}
+
 export async function canonicalEpochIntentDigest(intent: OperationIntent, bindings: EpochCandidateBindings): Promise<string> {
   if (bindings.vector_digest.length !== 64 || bindings.manifest_digest.length !== 64) {
     failBackup("BACKUP_VECTOR_UNVERIFIABLE", "epoch candidate bindings carry no complete authority digest");

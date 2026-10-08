@@ -137,13 +137,10 @@ export function inventoryBrandClass(provider) {
   return brandOf(provider);
 }
 
-// Explicit authoritative source set per required metric. Counters exposed by
-// this transport have no stable account-wide aggregate: they stay unknown
-// with provenance `unavailable` and an explicit limitation and require a
-// controller-owned project ledger plus a fresh full inventory before any
-// runtime lease opens. Inventory lists (paginated, account-wide, including
-// unrelated consumption) are authoritative for existence/shape but never
-// fabricate a zero usage counter. Provenance per metric is one of
+// Sources and precise coverage limitations per required metric. Metadata
+// stocks and adaptive analytics are diagnostic only: they cannot establish
+// the canonical monthly/daily billing quantities. Inventory lists prove
+// existence/shape, never an inferred zero usage counter. Provenance is one of
 // authoritative_billing | authoritative_inventory | analytics_nonbilling |
 // ledger_estimate | unavailable (see cloudflare-usage-envelope.mjs).
 // Account-wide coverage spans Workers, D1, R2, Queues, SQLite Durable
@@ -153,25 +150,25 @@ export function inventoryBrandClass(provider) {
 // billing usage or a demonstrably complete account-bound ledger proves them.
 export const METRIC_SOURCE_REGISTRY = (() => {
   const registry = {
-  workers_requests: { sources: [], window: "monthly", authoritative: false, provenance: METRIC_PROVENANCE.UNAVAILABLE, limitation: "no stable account-wide counter transport; ledger+inventory required" },
-  workers_cpu_ms: { sources: [], window: "monthly", authoritative: false, provenance: METRIC_PROVENANCE.UNAVAILABLE, limitation: "no stable account-wide counter transport; ledger+inventory required" },
-  d1_storage_bytes: { sources: ["d1-inventory-list"], window: "monthly", authoritative: false, provenance: METRIC_PROVENANCE.UNAVAILABLE, limitation: "inventory proves existence, not byte totals; ledger+inventory required" },
-  d1_rows_read: { sources: [], window: "monthly", authoritative: false, provenance: METRIC_PROVENANCE.UNAVAILABLE, limitation: "no stable account-wide counter transport; ledger+inventory required" },
-  d1_rows_written: { sources: [], window: "monthly", authoritative: false, provenance: METRIC_PROVENANCE.UNAVAILABLE, limitation: "no stable account-wide counter transport; ledger+inventory required" },
-  r2_storage_gb_month: { sources: ["r2-inventory-list"], window: "monthly", authoritative: false, provenance: METRIC_PROVENANCE.UNAVAILABLE, limitation: "inventory proves buckets, not GB-mo; ledger+inventory required" },
-  r2_class_a_ops: { sources: [], window: "monthly", authoritative: false, provenance: METRIC_PROVENANCE.UNAVAILABLE, limitation: "no stable account-wide counter transport; ledger+inventory required" },
-  r2_class_b_ops: { sources: [], window: "monthly", authoritative: false, provenance: METRIC_PROVENANCE.UNAVAILABLE, limitation: "no stable account-wide counter transport; ledger+inventory required" },
-  queue_ops: { sources: [], window: "monthly", authoritative: false, provenance: METRIC_PROVENANCE.UNAVAILABLE, limitation: "no stable account-wide counter transport; ledger+inventory required" },
-  do_requests: { sources: [], window: "monthly", authoritative: false, provenance: METRIC_PROVENANCE.UNAVAILABLE, limitation: "no stable account-wide counter transport; ledger+inventory required" },
-  do_gb_seconds: { sources: [], window: "monthly", authoritative: false, provenance: METRIC_PROVENANCE.UNAVAILABLE, limitation: "no stable account-wide counter transport; ledger+inventory required" },
-  do_sql_reads: { sources: [], window: "monthly", authoritative: false, provenance: METRIC_PROVENANCE.UNAVAILABLE, limitation: "no stable account-wide counter transport; ledger+inventory required" },
-  do_sql_writes: { sources: [], window: "monthly", authoritative: false, provenance: METRIC_PROVENANCE.UNAVAILABLE, limitation: "no stable account-wide counter transport; ledger+inventory required" },
-  do_storage_bytes: { sources: [], window: "monthly", authoritative: false, provenance: METRIC_PROVENANCE.UNAVAILABLE, limitation: "no stable account-wide counter transport; ledger+inventory required" },
-  workers_ai_neurons_per_day: { sources: [], window: "daily", authoritative: false, provenance: METRIC_PROVENANCE.UNAVAILABLE, limitation: "no stable account-wide counter transport; ledger+inventory required" },
+  workers_requests: { sources: ["workers-requests-diagnostic"], window: "monthly", authoritative: false, provenance: METRIC_PROVENANCE.ANALYTICS_NONBILLING, limitation: "Workers adaptive analytics requests are diagnostic, not verified monthly billing usage" },
+  workers_cpu_ms: { sources: [], window: "monthly", authoritative: false, provenance: METRIC_PROVENANCE.UNAVAILABLE, limitation: "documented Workers CPU quantiles do not provide an exact monthly CPU-ms sum" },
+  d1_storage_bytes: { sources: ["d1-storage-diagnostic"], window: "monthly", authoritative: false, provenance: METRIC_PROVENANCE.ANALYTICS_NONBILLING, limitation: "D1 metadata file_size is observed current stock across reads, not atomic or monthly storage usage" },
+  d1_rows_read: { sources: ["d1-rows-diagnostic"], window: "monthly", authoritative: false, provenance: METRIC_PROVENANCE.ANALYTICS_NONBILLING, limitation: "D1 adaptive rows-read analytics are diagnostic, not verified monthly billing usage" },
+  d1_rows_written: { sources: ["d1-rows-diagnostic"], window: "monthly", authoritative: false, provenance: METRIC_PROVENANCE.ANALYTICS_NONBILLING, limitation: "D1 adaptive rows-written analytics are diagnostic, not verified monthly billing usage" },
+  r2_storage_gb_month: { sources: ["r2-inventory-list"], window: "monthly", authoritative: false, provenance: METRIC_PROVENANCE.UNAVAILABLE, limitation: "bucket inventory has no GB-month quantity; no OAuth-compatible exact monthly source is qualified" },
+  r2_class_a_ops: { sources: [], window: "monthly", authoritative: false, provenance: METRIC_PROVENANCE.UNAVAILABLE, limitation: "bucket inventory has no Class A operation quantity; no OAuth-compatible exact monthly source is qualified" },
+  r2_class_b_ops: { sources: [], window: "monthly", authoritative: false, provenance: METRIC_PROVENANCE.UNAVAILABLE, limitation: "bucket inventory has no Class B operation quantity; no OAuth-compatible exact monthly source is qualified" },
+  queue_ops: { sources: ["queue-ops-diagnostic"], window: "monthly", authoritative: false, provenance: METRIC_PROVENANCE.ANALYTICS_NONBILLING, limitation: "Queues adaptive billableOperations are diagnostic estimates, not verified monthly billing usage" },
+  do_requests: { sources: ["do-requests-diagnostic"], window: "monthly", authoritative: false, provenance: METRIC_PROVENANCE.ANALYTICS_NONBILLING, limitation: "Durable Objects adaptive request metrics omit the WebSocket billing ratio and do not establish monthly billed requests" },
+  do_gb_seconds: { sources: [], window: "monthly", authoritative: false, provenance: METRIC_PROVENANCE.UNAVAILABLE, limitation: "documented Durable Objects CPU time does not establish billable GB-seconds" },
+  do_sql_reads: { sources: [], window: "monthly", authoritative: false, provenance: METRIC_PROVENANCE.UNAVAILABLE, limitation: "no documented OAuth-compatible exact account-wide monthly Durable Objects SQL-read source is qualified" },
+  do_sql_writes: { sources: [], window: "monthly", authoritative: false, provenance: METRIC_PROVENANCE.UNAVAILABLE, limitation: "no documented OAuth-compatible exact account-wide monthly Durable Objects SQL-write source is qualified" },
+  do_storage_bytes: { sources: [], window: "monthly", authoritative: false, provenance: METRIC_PROVENANCE.UNAVAILABLE, limitation: "Durable Objects storedBytes maximum is a stock statistic, not exact monthly storage usage" },
+  workers_ai_neurons_per_day: { sources: [], window: "daily", authoritative: false, provenance: METRIC_PROVENANCE.UNAVAILABLE, limitation: "no documented OAuth-compatible exact account-wide daily neuron source is qualified" },
   ai_search_instances: { sources: ["ai-search-inventory-list"], window: "point", authoritative: true, provenance: METRIC_PROVENANCE.AUTHORITATIVE_INVENTORY, limitation: "" },
-  ai_search_queries_month: { sources: [], window: "monthly", authoritative: false, provenance: METRIC_PROVENANCE.UNAVAILABLE, limitation: "no stable account-wide counter transport; ledger+inventory required" },
-  vectorize_queried_dims_month: { sources: [], window: "monthly", authoritative: false, provenance: METRIC_PROVENANCE.UNAVAILABLE, limitation: "no stable account-wide counter transport; ledger+inventory required" },
-  vectorize_stored_dims_month: { sources: [], window: "monthly", authoritative: false, provenance: METRIC_PROVENANCE.UNAVAILABLE, limitation: "no stable account-wide counter transport; ledger+inventory required" },
+  ai_search_queries_month: { sources: [], window: "monthly", authoritative: false, provenance: METRIC_PROVENANCE.UNAVAILABLE, limitation: "AI Search instance stats expose indexing status, not account-wide monthly search-query usage" },
+  vectorize_queried_dims_month: { sources: [], window: "monthly", authoritative: false, provenance: METRIC_PROVENANCE.UNAVAILABLE, limitation: "Vectorize index info has no monthly queried-dimension usage; Wrangler has no documented Vectorize-specific scope" },
+  vectorize_stored_dims_month: { sources: [], window: "monthly", authoritative: false, provenance: METRIC_PROVENANCE.UNAVAILABLE, limitation: "per-index dimensions and vectorCount are current stock, not account-wide monthly stored-dimension usage" },
   };
   const registryKeys = Object.keys(registry);
   for (let i = 0; i < registryKeys.length; i += 1) {

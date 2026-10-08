@@ -2,34 +2,20 @@
 /// <reference types="vite/client" />
 import { describe, expect, it } from "vitest";
 import { DatabaseSync } from "node:sqlite";
-import type { OperationIntent } from "@eliotr/contracts";
+import { ProjectClientGrantSchema, type OperationIntent } from "@eliotr/contracts";
+import { applyCanonicalCoreMigrations, recordCanonicalCoreMigrationLedger } from "./core-migration-fixture.js";
 import { BackupError } from "./shared.js";
 import { createBackupPort } from "./index.js";
-import { createControlledOffsiteAdapter } from "./offsite.js";
+import { createControlledOffsiteAdapter, openOffsiteBackupPart } from "./offsite.js";
 import { authorizeBackupDestination, revokeBackupDestination } from "./destination-authority.js";
-import type { BackupDestinationPolicy } from "./destination-policy.js";
+import { destinationDescriptorDigest, destinationPolicyDigest, type BackupDestinationPolicy } from "./destination-policy.js";
+import { verifyPortableBackupManifests } from "./portable-manifest.js";
 import type { BackupSourcePorts } from "./epoch.js";
 import type { Sha256DigestSink, EvidenceObjectStore } from "./shared.js";
-import m0001 from "../../../infra/d1/core/migrations/0001_initial.sql?raw";
-import m0002 from "../../../infra/d1/core/migrations/0002_execution_coordination.sql?raw";
-import m0003 from "../../../infra/d1/core/migrations/0003_delivery_inbox_payload_digest.sql?raw";
-import m0004 from "../../../infra/d1/core/migrations/0004_outbox_delivery_fence.sql?raw";
-import m0005 from "../../../infra/d1/core/migrations/0005_ingest_admission.sql?raw";
-import m0006 from "../../../infra/d1/core/migrations/0006_projection_execution.sql?raw";
-import m0007 from "../../../infra/d1/core/migrations/0007_evidence_resolution.sql?raw";
-import m0008 from "../../../infra/d1/core/migrations/0008_erasure_closure.sql?raw";
-import m0009 from "../../../infra/d1/core/migrations/0009_federation_authority.sql?raw";
-import m0010 from "../../../infra/d1/core/migrations/0010_navigation_artifacts.sql?raw";
-import m0011 from "../../../infra/d1/core/migrations/0011_owner_orientation.sql?raw";
-import m0012 from "../../../infra/d1/core/migrations/0012_google_credentials.sql?raw";
-import m0013 from "../../../infra/d1/core/migrations/0013_google_oauth_intents.sql?raw";
-import m0018 from "../../../infra/d1/core/migrations/0018_backup_o2_replay_authority.sql?raw";
-import m0019 from "../../../infra/d1/core/migrations/0019_backup_o2_replay_authority_fix.sql?raw";
 
 const T = "2026-09-06T00:00:00.000Z";
 const HEX = (c: string): string => c.repeat(64);
 const NOW = Date.parse(T);
-const APPLIED = ["0001_initial.sql", "0002_execution_coordination.sql", "0003_delivery_inbox_payload_digest.sql", "0004_outbox_delivery_fence.sql", "0005_ingest_admission.sql", "0006_projection_execution.sql", "0007_evidence_resolution.sql", "0008_erasure_closure.sql", "0009_federation_authority.sql", "0010_navigation_artifacts.sql", "0011_owner_orientation.sql", "0012_google_credentials.sql", "0013_google_oauth_intents.sql", "0018_backup_o2_replay_authority.sql", "0019_backup_o2_replay_authority_fix.sql"];
 async function sha(b: Uint8Array): Promise<string> {
   const c = new Uint8Array(b.byteLength); c.set(b);
   return [...new Uint8Array(await crypto.subtle.digest("SHA-256", c.buffer))].map((v) => v.toString(16).padStart(2, "0")).join("");
@@ -51,17 +37,17 @@ function d1Database(db: DatabaseSync): D1Database {
     return { bind(...p: unknown[]) { return runBound(p as (string | number | null)[]); }, ...runBound([]) };
   } } as unknown as D1Database;
 }
-interface ShimObject { bytes: Uint8Array; etag: string; version: string; customMetadata: Record<string, string>; contentType?: string | undefined }
+interface ShimObject { bytes: Uint8Array; etag: string; version: string; customMetadata: Record<string, string>; httpMetadata: Record<string, string | Date> }
 function shimBucket(): { bucket: R2Bucket; objects: Map<string, ShimObject> } {
   const objects = new Map<string, ShimObject>(); let seq = 0;
   const streamOf = (b: Uint8Array): ReadableStream<Uint8Array> => new ReadableStream({ start(c) { c.enqueue(b.slice()); c.close(); } });
-  const metaOf = (k: string, o: ShimObject): Record<string, unknown> => ({ key: k, size: o.bytes.byteLength, etag: o.etag, version: o.version, customMetadata: { ...o.customMetadata }, httpMetadata: { contentType: o.contentType } });
+  const metaOf = (k: string, o: ShimObject): Record<string, unknown> => ({ key: k, size: o.bytes.byteLength, etag: o.etag, version: o.version, customMetadata: { ...o.customMetadata }, httpMetadata: { ...o.httpMetadata } });
   const api = {
     async head(k: string) { const o = objects.get(k); return o === undefined ? null : metaOf(k, o); },
     async get(k: string) { const o = objects.get(k); if (o === undefined) return null; const f = o.bytes.slice(); return { ...metaOf(k, o), size: o.bytes.byteLength, body: streamOf(o.bytes), bytes: async () => f.slice(), arrayBuffer: async () => { const cp = new Uint8Array(f.byteLength); cp.set(f); return cp.buffer; } }; },
     async put(k: string, v: Uint8Array | ReadableStream<Uint8Array> | string, po?: Record<string, unknown>) {
       const bytes = typeof v === "string" ? new TextEncoder().encode(v) : v instanceof Uint8Array ? v : new Uint8Array(await new Response(v as ReadableStream<Uint8Array>).arrayBuffer());
-      seq += 1; objects.set(k, { bytes: bytes.slice(), etag: `etag-${seq}`, version: `version-${seq}`, customMetadata: { ...((po?.["customMetadata"] as Record<string, string> | undefined) ?? {}) }, contentType: (po?.["httpMetadata"] as { contentType?: string } | undefined)?.contentType });
+      seq += 1; objects.set(k, { bytes: bytes.slice(), etag: `etag-${seq}`, version: `version-${seq}`, customMetadata: { ...((po?.["customMetadata"] as Record<string, string> | undefined) ?? {}) }, httpMetadata: { ...((po?.["httpMetadata"] as Record<string, string | Date> | undefined) ?? {}) } });
       return { key: k, etag: `etag-${seq}`, version: `version-${seq}` };
     },
     async delete(i: string | string[]) { for (const k of typeof i === "string" ? [i] : i) objects.delete(k); },
@@ -96,8 +82,8 @@ function testPartSink(bucket: R2Bucket): EvidenceObjectStore {
 }
 function openCore(): DatabaseSync {
   const db = new DatabaseSync(":memory:");
-  for (const m of [m0001, m0002, m0003, m0004, m0005, m0006, m0007, m0008, m0009, m0010, m0011, m0012, m0013, m0018, m0019]) db.exec(m);
-  for (const [i, n] of APPLIED.entries()) db.prepare("INSERT INTO d1_migrations (name, applied_at) VALUES (?1,?2)").run(n, `${T.slice(0, 10)}T00:00:${String(i).padStart(2, "0")}.000Z`);
+  applyCanonicalCoreMigrations(db);
+  recordCanonicalCoreMigrationLedger(db, T);
   return db;
 }
 function seedCore(db: DatabaseSync): void {
@@ -129,6 +115,72 @@ async function aesKey(len: number, usages: KeyUsage[] = ["encrypt", "decrypt"]):
 }
 
 describe("ER-34 O2 offsite copy (policy + hardened crypto)", () => {
+  it("archives grant insert, revocation transition, and deletion without copying live authority", async () => {
+    const db = openCore();
+    seedCore(db);
+    db.prepare(`INSERT INTO scope_access_grant(
+      snapshot_id,snapshot_revision,principal_ref,client_class,credential_generation,policy_authority_ref,
+      allowed_use_json,disclosure_ceiling,authorization_receipt_ref,state,expires_at,created_at
+    ) VALUES ('snap-1',1,'author-1','owner_pwa','credential-old','policy-authority-1','["research"]','local',
+      'grant-receipt-1','ACTIVE','2027-01-01T00:00:00.000Z','2026-09-06T00:00:00.000Z')`).run();
+    db.prepare("UPDATE scope_access_grant SET state='REVOKED' WHERE authorization_receipt_ref='grant-receipt-1'").run();
+    db.prepare("DELETE FROM scope_access_grant WHERE authorization_receipt_ref='grant-receipt-1'").run();
+    expect(db.prepare("SELECT archive_revision,state,event_kind FROM historical_scope_access_grant ORDER BY archive_revision").all())
+      .toEqual([
+        { archive_revision: 1, state: "ACTIVE", event_kind: "INSERT" },
+        { archive_revision: 2, state: "REVOKED", event_kind: "UPDATE" },
+        { archive_revision: 3, state: "REVOKED", event_kind: "DELETE" },
+      ]);
+    expect(db.prepare("SELECT COUNT(*) AS n FROM scope_access_grant").get()).toEqual({ n: 0 });
+    db.prepare("INSERT INTO project(project_id,title,default_disclosure,retention_policy_ref,default_source_policy_ref,default_model_profile_ref,default_depth_profile_ref,created_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8)")
+      .run("project-1", "Project 1", "private", "project-default-retention-project-1", "project-default-source-project-1",
+        "project-default-model-project-1", "project-default-depth-project-1", T);
+    db.prepare("INSERT INTO project_owner(project_id,principal_ref,deployment_generation,created_at,updated_at) VALUES (?1,?2,?3,?4,?5)")
+      .run("project-1", "grantor-1", "fixture-deployment-1", T, T);
+    const recordJson = JSON.stringify(ProjectClientGrantSchema.parse({
+      protocol: "eliotr.project-client-grant.v1",
+      grant_id: "client-grant-1",
+      project_id: "project-1",
+      grantor_principal_ref: "grantor-1",
+      revision: 1,
+      state: "ACTIVE",
+      grantee: {
+        issuer: "https://test.cloudflareaccess.com",
+        authentication_method: "service_token",
+        subject: "fixture-agent.access",
+      },
+      allowed_operations: ["catalog"],
+      ingest_namespace_ids: [],
+      expires_at: "2027-01-01T00:00:00.000Z",
+      created_at: T,
+      updated_at: T,
+    }));
+    const recordSha = await sha(new TextEncoder().encode(recordJson));
+    db.prepare(`INSERT INTO project_client_grant(
+      grant_id,revision,project_id,grantor_principal_ref,grantee_issuer,grantee_method,grantee_subject,
+      state,expires_at,idempotency_key,request_sha256,record_json,record_sha256
+    ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)`)
+      .run("client-grant-1", 1, "project-1", "grantor-1", "https://test.cloudflareaccess.com", "service_token",
+        "fixture-agent.access", "ACTIVE", "2027-01-01T00:00:00.000Z", "idempotency-1", HEX("a"), recordJson, recordSha);
+    expect(db.prepare("SELECT grant_id,grantor_principal_ref,state,event_kind FROM historical_project_client_grant").all())
+      .toEqual([{ grant_id: "client-grant-1", grantor_principal_ref: "grantor-1", state: "ACTIVE", event_kind: "INSERT" }]);
+  });
+
+  it("parses the actual full portable epoch and validates its vector against every exported row", async () => {
+    const h = await setup();
+    const { draft } = await h.port.createPortableEpoch(intent("id-parse-portable"), { now_ms: NOW });
+    const plaintext_parts = [];
+    for (const part of draft.part_index) {
+      const object = await h.ports.part_sink.open(part.part_key);
+      expect(object).not.toBeNull();
+      if (object === null) throw new Error("fixture portable part disappeared");
+      plaintext_parts.push({ manifest: part.manifest, index: part.index, bytes: new Uint8Array(await new Response(object.body).arrayBuffer()) });
+    }
+    const parsed = await verifyPortableBackupManifests({ draft, plaintext_parts });
+    expect(parsed.purge_ledger).toHaveLength(1);
+    expect(parsed.source_rows.some((row) => row.table === "source" && row.row["source_id"] === "source-1")).toBe(true);
+  });
+
   it("round-trips with controller authority; deterministic nonces converge across copies; exact replay returns persisted bytes", async () => {
     const h = await setup();
     const key = await aesKey(256);
@@ -152,6 +204,103 @@ describe("ER-34 O2 offsite copy (policy + hardened crypto)", () => {
     expect(replayed.epoch).toEqual(c1.epoch);
     expect(a1.puts).toBe(putsBefore);
   });
+  it("copies bounded R2 payload chunks with exact metadata and denies a foreign epoch read", async () => {
+    const h = await setup();
+    const source = new TextEncoder().encode("payload-bound-to-this-r2-object/" + "r".repeat(1400));
+    const sourceDigest = await sha(source);
+    await (h.ports.evidence_bucket as unknown as { put(key: string, value: Uint8Array, options: unknown): Promise<unknown> }).put("evidence/exact-object", source, {
+      customMetadata: { eliotr_sha256: sourceDigest, residency: "private" },
+      httpMetadata: { contentType: "application/octet-stream", cacheControl: "private, no-store", cacheExpiry: new Date("2026-12-31T00:00:00.000Z") },
+    });
+    const draft = (await h.port.createPortableEpoch(intent("id-payload-offsite"), { now_ms: NOW })).draft;
+    expect(draft.r2_payload_protocol).toBe("eliotr.r2-payload.v1");
+    expect(draft.payload_part_index).toHaveLength(3);
+    expect(draft.payload_part_index?.map((part) => part.size_bytes)).toEqual([512, 512, 408]);
+
+    const plaintextParts = [];
+    for (const part of draft.part_index) {
+      const object = await h.ports.part_sink.open(part.part_key);
+      expect(object).not.toBeNull();
+      if (object === null) throw new Error("fixture portable part disappeared");
+      plaintextParts.push({ manifest: part.manifest, index: part.index, bytes: new Uint8Array(await new Response(object.body).arrayBuffer()) });
+    }
+    const portable = await verifyPortableBackupManifests({ draft, plaintext_parts: plaintextParts });
+    expect(portable.payload_supported).toBe(true);
+    expect(portable.r2_objects).toContainEqual(expect.objectContaining({
+      key: "evidence/exact-object", custom_metadata: { eliotr_sha256: sourceDigest, residency: "private" },
+      http_metadata: { contentType: "application/octet-stream", cacheControl: "private, no-store", cacheExpiry: "2026-12-31T00:00:00.000Z" },
+    }));
+
+    const key = await aesKey(256);
+    const adapter = createControlledOffsiteAdapter({ destination_id: "offsite-1", failure_domain: "domain-remote" });
+    await h.port.copyOffsite({ draft, intent: intent("id-payload-offsite"), encryption_key: key, key_generation: "key-gen-1", primary_failure_domain: "domain-primary", destination_policy: policy(), adapter, now_ms: Date.now() });
+    const descriptor = await adapter.describe();
+    const readAuthority = {
+      destination_id: "offsite-1", key_generation: "key-gen-1", expires_at: draft.expires_at,
+      primary_failure_domain: "domain-primary", destination_policy_digest: await destinationPolicyDigest(policy()),
+      descriptor_digest: await destinationDescriptorDigest(descriptor),
+    };
+    const restoredChunks: Uint8Array[] = [];
+    for (const part of [...(draft.payload_part_index ?? [])].sort((a, b) => a.index - b.index)) {
+      restoredChunks.push(await openOffsiteBackupPart({ draft, part, encryption_key: key, destination_policy: policy(), authority: readAuthority, adapter }));
+    }
+    expect(await sha(restoredChunks.reduce((all, chunk) => { const next = new Uint8Array(all.byteLength + chunk.byteLength); next.set(all); next.set(chunk, all.byteLength); return next; }, new Uint8Array()))).toBe(sourceDigest);
+    await expect(openOffsiteBackupPart({ draft: { ...draft, epoch_id: "epoch-foreign" }, part: draft.payload_part_index?.[0] as NonNullable<typeof draft.payload_part_index>[number], encryption_key: key, destination_policy: policy(), authority: readAuthority, adapter }))
+      .rejects.toMatchObject({ code: "BACKUP_PART_READBACK_MISMATCH" });
+  });
+  it("opens a copied part with the original AAD and rejects ciphertext tampering", async () => {
+    const h = await setup();
+    const key = await aesKey(256);
+    const draft = (await h.port.createPortableEpoch(intent("id-open-part"), { now_ms: NOW })).draft;
+    const adapter = createControlledOffsiteAdapter({ destination_id: "offsite-1", failure_domain: "domain-remote" });
+    await h.port.copyOffsite({ draft, intent: intent("id-open-part"), encryption_key: key, key_generation: "key-gen-1", primary_failure_domain: "domain-primary", destination_policy: policy(), adapter, now_ms: Date.now() });
+    const authority = {
+      destination_id: "offsite-1",
+      key_generation: "key-gen-1",
+      expires_at: draft.expires_at,
+      primary_failure_domain: "domain-primary",
+      destination_policy_digest: await destinationPolicyDigest(policy()),
+      descriptor_digest: await destinationDescriptorDigest(await adapter.describe()),
+    };
+    const part = draft.part_index[0];
+    expect(part).toBeDefined();
+    if (part === undefined) throw new Error("fixture epoch has no parts");
+    const openInput = { draft, part, encryption_key: key, destination_policy: policy(), authority, adapter, now_ms: Date.now() };
+    const plaintext = await openOffsiteBackupPart(openInput);
+    expect(await sha(plaintext)).toBe(part.sha256);
+    expect(new TextDecoder().decode(plaintext)).toContain("\"manifest_protocol\"");
+    const corrupt: typeof adapter = {
+      ...adapter,
+      async get(partRef) {
+        const read = await adapter.get(partRef);
+        if (read === null) return null;
+        const ciphertext = read.ciphertext.slice();
+        ciphertext[ciphertext.length - 1] = (ciphertext[ciphertext.length - 1] ?? 0) ^ 1;
+        return { ...read, ciphertext };
+      },
+    };
+    await expect(openOffsiteBackupPart({ ...openInput, adapter: corrupt }))
+      .rejects.toMatchObject({ code: "BACKUP_OFFSITE_READBACK_MISMATCH" });
+    const malformed: typeof adapter = {
+      ...adapter,
+      async get(partRef) {
+        const read = await adapter.get(partRef);
+        return read === null ? null : { ...read, ciphertext: [1, 2, 3] as unknown as Uint8Array };
+      },
+    };
+    await expect(openOffsiteBackupPart({ ...openInput, adapter: malformed }))
+      .rejects.toMatchObject({ code: "BACKUP_PART_READBACK_MISMATCH" });
+    const oversized: typeof adapter = {
+      ...adapter,
+      async get(partRef) {
+        const read = await adapter.get(partRef);
+        return read === null ? null : { ...read, ciphertext: new Uint8Array(part.size_bytes + 29) };
+      },
+    };
+    await expect(openOffsiteBackupPart({ ...openInput, adapter: oversized }))
+      .rejects.toMatchObject({ code: "BACKUP_PART_READBACK_MISMATCH" });
+  });
+
   it("refuses copies with no controller authority and rejects adapter self-report", async () => {
     const h = await setup();
     const key = await aesKey(256);

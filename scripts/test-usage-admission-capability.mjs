@@ -1,7 +1,6 @@
 // Usage admission capability: deterministic, mocked, no live calls.
-// FIX11: ADMITTED is necessary but never sufficient for a remote/billable
-// mutation. Every deploy, each provisioner apply path, and
-// admitHeavyOperation additionally requires the same-process admission
+// ADMITTED is necessary but never sufficient for a heavy runtime operation.
+// AI Search instance creation and admitHeavyOperation require the same-process admission
 // capability minted ONLY by the fresh default-live collection lifecycle
 // (verified browser-OAuth identity plus live collection plus ADMITTED plus
 // complete live trust). No structural object, recomputable digest,
@@ -47,7 +46,6 @@ import {
   isUsageAdmissionCapability as isRedirectedCapability,
   runUsagePreflight as standinPreflight,
 } from "./test-usage-gate-standin.mjs";
-import { deployCloudflare } from "./deploy-cloudflare.mjs";
 
 const ACCOUNT = "cccccccccccccccccccccccccccccccc";
 const DIGEST = digestAccountId(ACCOUNT);
@@ -165,7 +163,7 @@ await check("issuer predicate admits only live-brand plus verified plus full tru
   assert.equal(isLiveAdmissibleForCapability(null, admitted), false);
 });
 
-await check("fabricated live-family receipt is integrity-only, every gate denies", async () => {
+await check("fabricated live-family receipt is integrity-only, heavy operations deny", async () => {
   // Luna bypass (1): hand-built live evidence plus a recomputed digest via
   // the exported helper. Integrity holds (validator-clean) — and that is ALL
   // it proves. No capability exists, so authorization is impossible.
@@ -180,39 +178,9 @@ await check("fabricated live-family receipt is integrity-only, every gate denies
   const forgedCap = heavyAttempt(receipt, { capability: Object.freeze({}) });
   assert.equal(forgedCap.allowed, false);
   assert.equal(forgedCap.reason, "MISSING_ADMISSION_CAPABILITY");
-  // The deploy mutation gate denies the same shape: an ADMITTED evaluation
-  // from a staged fabricated snapshot carries no capability.
-  const snapshot = { ...fixtureSnapshot(), source: USAGE_SOURCE_LIVE, readback: {} };
-  const calls = [];
-  const deploy = deployCloudflare({
-    confirmLive: true,
-    verifyCode: async () => {},
-    environment: {
-      CLOUDFLARE_ACCOUNT_ID: ACCOUNT,
-      CLOUDFLARE_API_TOKEN: "secret-token",
-      ELIOTR_ENVIRONMENT: "staging",
-      ELIOTR_DEPLOYMENT_GENERATION: "git-test",
-      ELIOTR_CUSTOM_DOMAIN: "1",
-      ELIOTR_ACCESS_HOSTNAME: "research.example.com",
-      ELIOTR_OWNER_EMAILS: "owner@example.com",
-      ELIOTR_ACCESS_TEAM_DOMAIN: "https://team-example.cloudflareaccess.com",
-      ELIOTR_ACCESS_AUDIENCE: "test-aud",
-      ELIOTR_ACCESS_SERVICE_PRINCIPALS: "",
-    },
-    now: () => NOW,
-    log: () => {},
-    execute: (command, args) => { calls.push(`${command} ${args.join(" ")}`); },
-    read: async () => { throw new Error("must not read"); },
-    archive: async () => { calls.push("archive"); },
-    save: async () => { calls.push("save"); },
-    fetchImpl: async () => { throw new Error("billable must not be invoked"); },
-    usageSnapshot: JSON.stringify(snapshot),
-  });
-  await assert.rejects(deploy, /admission capability/u);
-  assert.ok(!calls.includes("archive"), "deploy archived before capability denial");
-  assert.ok(!calls.some((call) => call.includes("d1 migrations apply")), "deploy migrated without capability");
-  assert.ok(!calls.some((call) => call.startsWith("pnpm exec wrangler deploy ")), "deploy uploaded without capability");
-  assert.ok(!calls.includes("save"), "deploy saved without capability");
+  // Ordinary deployment is an operation-specific control-plane check under
+  // ADR-0009. Its missing-billing-evidence coverage lives in the deployment
+  // fixtures; fabricated receipts still never authorize heavy execution here.
 });
 
 await check("source change plus digest recompute stays unauthenticated", async () => {

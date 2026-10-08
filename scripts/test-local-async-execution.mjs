@@ -106,22 +106,37 @@ test("async D1 retry separates command timeout, retry window, and hard budget", 
 test("async local timeout cleans a child process tree before returning", async () => {
   const directory = await mkdtemp(join(tmpdir(), "eliotr-async-cleanup-"));
   const marker = join(directory, "late-grandchild-write");
+  const pidMarker = join(directory, "grandchild-pid");
   const grandchildCode = [
-    `require("node:fs").writeFileSync(${JSON.stringify(marker)}, "started");`,
-    `setTimeout(() => require("node:fs").writeFileSync(${JSON.stringify(marker)}, "late"), 3000);`,
+    `const fs = require("node:fs"); fs.writeFileSync(${JSON.stringify(marker)}, "started");`,
+    `fs.writeFileSync(${JSON.stringify(pidMarker)}, String(process.pid));`,
+    `let pulse = 0; setInterval(() => { try { fs.writeFileSync(${JSON.stringify(marker)}, String(++pulse)); } catch { process.exit(0); } }, 25);`,
   ].join("");
   const parentCode = [
     "const { spawn } = require(\"node:child_process\"); const fs = require(\"node:fs\");",
     `spawn(process.execPath, ["-e", ${JSON.stringify(grandchildCode)}], { stdio: "inherit" });`,
-    `const started = Date.now(); const wait = setInterval(() => { if (fs.existsSync(${JSON.stringify(marker)})) { clearInterval(wait); process.stdout.write("grandchild-started\\n"); setTimeout(() => {}, 2000); } else if (Date.now() - started > 1000) { clearInterval(wait); process.exit(12); } }, 5);`,
+    `const started = Date.now(); const wait = setInterval(() => { if (fs.existsSync(${JSON.stringify(marker)})) { clearInterval(wait); process.stdout.write("grandchild-started\\n"); setInterval(() => {}, 1000); } else if (Date.now() - started > 1000) { clearInterval(wait); process.exit(12); } }, 5);`,
   ].join("");
   try {
     await assert.rejects(
       executeLocalAsync(["-e", parentCode], { capture: true, timeoutMs: 1500 }),
       (error) => error?.cause?.code === "ETIMEDOUT" && String(error.cause.stdout).includes("grandchild-started"),
     );
-    await new Promise((resolve) => setTimeout(resolve, 3500));
-    assert.equal(await readFile(marker, "utf8"), "started", "grandchild must not perform its delayed write after tree cleanup");
+    const grandchildPid = Number(await readFile(pidMarker, "utf8"));
+    assert.ok(Number.isSafeInteger(grandchildPid) && grandchildPid > 0, "grandchild must publish its pid before timeout");
+    let grandchildAlive = false;
+    try {
+      process.kill(grandchildPid, 0);
+      grandchildAlive = true;
+    } catch (error) {
+      if (error?.code === "ESRCH") grandchildAlive = false;
+      else if (error?.code === "EPERM") grandchildAlive = true;
+      else throw error;
+    }
+    assert.equal(grandchildAlive, false, "grandchild must be terminated before timeout cleanup returns");
+    const markerAtReturn = await readFile(marker, "utf8");
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.equal(await readFile(marker, "utf8"), markerAtReturn, "grandchild must not remain alive after tree cleanup returns");
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

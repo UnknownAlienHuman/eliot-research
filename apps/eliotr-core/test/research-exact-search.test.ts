@@ -9,7 +9,7 @@ import {
 } from "@eliotr/cloudflare-evidence";
 import type { LocatorCandidate, ScopeSnapshot } from "@eliotr/contracts";
 import type { RetrievalRequest } from "@eliotr/retrieval";
-import { createExactPhraseVerifier, type ExactPhraseVerifierDependencies } from "../src/research-exact-search.js";
+import { createExactPhraseVerifier, type ExactPhraseVerifierDependencies } from "@eliotr/cloudflare-research-runtime/research-exact-search.js";
 
 const EXACT_EXCERPT = "Résumé (v2)! ";
 const CONTENT_DIGEST = "a".repeat(64);

@@ -48,3 +48,54 @@ test("EADDRINUSE preserves an existing owner and is not retried", async () => {
   await guard.release();
   await close(owner);
 });
+
+test("EACCES skips only the denied endpoint and continues reserving Windows ports", async () => {
+  const attempted = [];
+  const released = [];
+  const accessDenied = Object.assign(new Error("excluded port range"), { code: "EACCES" });
+  const guard = await reserveMiniflareForbiddenPorts({
+    platform: "win32",
+    ports: [6000],
+    hosts: ["127.0.0.1", "::1"],
+    async bindPort(port, host) {
+      attempted.push({ host, port });
+      if (host === "127.0.0.1") throw accessDenied;
+      return {
+        listening: true,
+        address: () => ({ address: host, port }),
+        close(callback) { this.listening = false; released.push({ host, port }); callback(); },
+      };
+    },
+  });
+
+  assert.deepEqual(attempted, [
+    { host: "127.0.0.1", port: 6000 },
+    { host: "::1", port: 6000 },
+  ]);
+  assert.deepEqual(guard.skipped, [{ host: "127.0.0.1", port: 6000, reason: "EACCES" }]);
+  assert.deepEqual(guard.reservations, [{ host: "::1", port: 6000 }]);
+  await guard.release();
+  assert.deepEqual(released, [{ host: "::1", port: 6000 }]);
+});
+
+test("unexpected bind errors remain fatal and release earlier reservations", async () => {
+  let released = false;
+  const failure = Object.assign(new Error("unexpected bind failure"), { code: "EPERM" });
+  await assert.rejects(
+    reserveMiniflareForbiddenPorts({
+      platform: "win32",
+      ports: [6000],
+      hosts: ["127.0.0.1", "::1"],
+      async bindPort(port, host) {
+        if (host === "::1") throw failure;
+        return {
+          listening: true,
+          address: () => ({ address: host, port }),
+          close(callback) { this.listening = false; released = true; callback(); },
+        };
+      },
+    }),
+    (error) => error.cause === failure,
+  );
+  assert.equal(released, true);
+});

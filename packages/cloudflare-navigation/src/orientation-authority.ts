@@ -1,11 +1,19 @@
-import { SourceRevisionSchema, type ScopeSnapshot, type SourceRevision } from "@eliotr/contracts";
+import { SourceRevisionSchema, type ScopeExpression, type ScopeSnapshot, type SourceRevision } from "@eliotr/contracts";
 import {
-  canonicalEvidenceJson, evidenceSha256, loadSourceAuthorities,
+  canonicalEvidenceJson, evidenceSha256, loadSourceAuthorities, loadScopeAuthority,
   type EvidenceAccessContext, type EvidenceSourceAuthority,
 } from "@eliotr/cloudflare-evidence";
-import type { DeterministicScopeAtom } from "@eliotr/domain";
+import type { AuthenticatedRequestContext } from "@eliotr/interfaces";
+import { authorizeProjectClientGrant, readClientProjectMembers, type ClientGrantLease } from "./client-grant-authority.js";
+import { grantEpoch, grantFail } from "./client-grant-store.js";
+import { scopeExpressionAtoms, scopeExpressionIdentity, type DeterministicScopeAtom } from "@eliotr/domain";
+import { readOwnerScopeProfile } from "./owner-scope-profile.js";
+import { createD1ScopeService } from "./d1-scope-service.js";
+import { orientationCurrentness } from "./orientation-currentness.js";
+import { issueClientResearchScopeGrant, issueClientQueryScopeGrant, requireClientScopeProvenance, requireClientArtifactScopeSchema, requireClientScopeSchema, type ClientArtifactScopeOrigin } from "./client-scope-grant.js";
 import type { ScopeAuthorityRequest, ScopeRepository } from "./scope-service.js";
 import { ORIENTATION_MAX_SOURCES, orientationFail, orientationId } from "./orientation-input.js";
+import { historicalPolicyAuthorityRef, historicalPolicyClosureRef as computeHistoricalPolicyClosureRef } from "./owner-policy-lease-history.js";
 
 type Bind = string | number | null;
 interface PolicyRow {
@@ -37,8 +45,8 @@ export interface OwnerScopeAuthority extends Pick<ScopeRepository, "resolveAtom"
    * admission, owner-generation, and purge checks performed by `sources`.
    */
   exhaustiveSources(refs: readonly string[]): Promise<readonly OrientationSource[]>;
-  grant(snapshot: ScopeSnapshot): Promise<void>;
-  exhaustiveGrant(snapshot: ScopeSnapshot): Promise<void>;
+  grant(snapshot: ScopeSnapshot, expiresAtCeilingMs?: number): Promise<void>;
+  exhaustiveGrant(snapshot: ScopeSnapshot, expiresAtCeilingMs?: number): Promise<void>;
   exhaustiveRequireReadPolicy(): Promise<void>;
 }
 /** Keep retrieval's larger bound explicit while preserving the orientation batch bound. */
@@ -59,10 +67,16 @@ const columns = "r.source_revision_ref, s.source_id, s.source_namespace_id, s.so
 /** Read policy is explicit and independent of both Access authentication and ingestion admission. */
 export function createOwnerScopeAuthority(db: D1Database, context: EvidenceAccessContext,
   now: () => number = Date.now): OwnerScopeAuthority {
+  if (context.client_class !== "owner_pwa") orientationFail("ORIENTATION_OWNER_REQUIRED", 403);
+  return createReadPolicyAuthority(db, context, context.principal_ref, now);
+}
+
+/** The policy subject is separate from the authenticated actor. Not exported as an impersonation factory. */
+function createReadPolicyAuthority(db: D1Database, context: EvidenceAccessContext,
+  policyPrincipal: string, now: () => number): OwnerScopeAuthority {
   const access: EvidenceAccessContext = { principal_ref: context.principal_ref,
     client_class: context.client_class, credential_generation: context.credential_generation };
-  if (access.client_class !== "owner_pwa") orientationFail("ORIENTATION_OWNER_REQUIRED", 403);
-  orientationId(access.principal_ref); orientationId(access.credential_generation);
+  orientationId(access.principal_ref); orientationId(access.credential_generation); orientationId(policyPrincipal);
   const clock = () => {
     const value = now();
     if (!Number.isSafeInteger(value) || value < 0) orientationFail("ORIENTATION_CLOCK_INVALID", 503);
@@ -79,7 +93,7 @@ export function createOwnerScopeAuthority(db: D1Database, context: EvidenceAcces
       "CASE WHEN length(CAST(allowed_use_json AS BLOB))<=4096 THEN allowed_use_json ELSE NULL END AS allowed_use_json, " +
       "disclosure_ceiling, expires_at FROM scope_read_policy WHERE principal_ref=?1 AND client_class=?2 " +
       "AND state='ACTIVE' AND julianday(expires_at)>julianday(?3) ORDER BY source_namespace_id LIMIT ?4",
-    [access.principal_ref, access.client_class, clock(), maximumRows + 1], maximumRows);
+    [policyPrincipal, "owner_pwa", clock(), maximumRows + 1], maximumRows);
     if (!rows.length) orientationFail("ORIENTATION_READ_POLICY_REQUIRED", 403);
     for (const row of rows) {
       orientationId(row.source_namespace_id); orientationId(row.policy_ref); orientationId(row.disclosure_ceiling);
@@ -120,7 +134,7 @@ export function createOwnerScopeAuthority(db: D1Database, context: EvidenceAcces
       const { title, kind, source_class: _sourceClass, parser_profile_generation: parser, ...revisionFields } = row;
       const revision = SourceRevisionSchema.parse({ ...revisionFields,
         ...(parser === null ? {} : { parser_profile_generation: parser }) });
-      const policyClosure = `read-${await evidenceSha256({ policy, authority, revision, title, kind })}`;
+      const policyClosure = await computeHistoricalPolicyClosureRef({ policy, authority, revision, title, kind });
       return { revision, authority, policy, policy_uses: uses(policy), policy_closure_ref: policyClosure, title, kind };
     }));
   }
@@ -163,7 +177,7 @@ export function createOwnerScopeAuthority(db: D1Database, context: EvidenceAcces
         project = await db.prepare("SELECT p.project_id, p.generation, p.default_disclosure, p.default_source_policy_ref, " +
           "p.retention_policy_ref FROM project p WHERE p.project_id=?1 AND EXISTS " +
           "(SELECT 1 FROM project_owner po WHERE po.project_id=p.project_id AND po.principal_ref=?2)")
-          .bind(atom.project_id, access.principal_ref).first();
+          .bind(atom.project_id, policyPrincipal).first();
         if (!project) orientationFail("ORIENTATION_PROJECT_UNAVAILABLE", 404);
         filters.push("EXISTS (SELECT 1 FROM project_source_membership m WHERE m.source_id=s.source_id AND m.project_id=?3 " +
           "AND julianday(m.valid_from)<=julianday(?2) AND (m.valid_to IS NULL OR julianday(m.valid_to)>julianday(?2)))");
@@ -201,8 +215,8 @@ export function createOwnerScopeAuthority(db: D1Database, context: EvidenceAcces
     if (ceilings.length > 1) orientationFail("ORIENTATION_MIXED_DISCLOSURE", 403);
     const purge = await db.prepare("SELECT COALESCE(MAX(ledger_revision),0) AS revision FROM purge_ledger").first<{ revision: number }>();
     if (!purge || !Number.isSafeInteger(purge.revision) || purge.revision < 0) orientationFail("ORIENTATION_PURGE_UNAVAILABLE", 503);
-    return { policy_authority_ref: `policy-${await evidenceSha256({ access, policies: policyRows,
-      members: loaded.map((source) => source.policy_closure_ref) })}`,
+    return { policy_authority_ref: await historicalPolicyAuthorityRef({ access, policies: policyRows,
+      members: loaded.map((source) => source.policy_closure_ref) }),
     disclosure_closure_digest: await evidenceSha256(loaded.map((source) => ({ ref: source.revision.source_revision_ref,
       disclosure: source.policy.disclosure_ceiling, allowed_use: source.policy_uses }))),
     purge_ledger_revision: purge.revision, client_fence_valid: request.client_fence_ref === access.credential_generation,
@@ -218,37 +232,367 @@ export function createOwnerScopeAuthority(db: D1Database, context: EvidenceAcces
     snapshot: ScopeSnapshot,
     load: (refs: readonly string[]) => Promise<readonly OrientationSource[]>,
     maximumPolicyRows: number,
+    expiresAtCeilingMs?: number,
   ): Promise<void> {
     const loaded = await load(snapshot.member_source_revision_refs);
     const allowedUses = [...new Set(loaded.flatMap((source) => source.authority.allowed_use))].sort();
     if (!allowedUses.length) allowedUses.push("research");
     const disclosure = loaded[0]?.policy.disclosure_ceiling ?? "private";
     const policyExpiry = Math.min(...[...(await policies(maximumPolicyRows)).values()].map((policy) => Date.parse(policy.expires_at)));
-    const expiresAt = new Date(Math.min(Date.parse(snapshot.expires_at), policyExpiry)).toISOString();
+    if (expiresAtCeilingMs !== undefined && (!Number.isSafeInteger(expiresAtCeilingMs) ||
+        expiresAtCeilingMs <= now())) orientationFail("ORIENTATION_OPERATION_EXPIRED", 409);
+    const expiresAt = new Date(Math.min(Date.parse(snapshot.expires_at), policyExpiry,
+      expiresAtCeilingMs ?? Infinity)).toISOString();
     const receipt = `grant-${await evidenceSha256({ scope: snapshot.digest, access })}`;
     const values: Bind[] = [snapshot.snapshot_id, snapshot.revision, access.principal_ref, access.client_class,
       access.credential_generation, snapshot.policy_authority_ref, JSON.stringify(allowedUses), disclosure,
       receipt, expiresAt, clock(), snapshot.digest];
     // Conflict never revives a revoked/expired grant. Currentness is rechecked by the caller on both sides.
+    let writeFailure: { cause: unknown } | undefined;
     try {
-      await db.prepare("INSERT INTO scope_access_grant (snapshot_id,snapshot_revision,principal_ref,client_class," +
+      const result = await db.prepare("INSERT INTO scope_access_grant (snapshot_id,snapshot_revision,principal_ref,client_class," +
         "credential_generation,policy_authority_ref,allowed_use_json,disclosure_ceiling,authorization_receipt_ref,state,expires_at,created_at) " +
         "SELECT ?1,?2,?3,?4,?5,?6,?7,?8,?9,'ACTIVE',?10,?11 FROM scope_snapshot " +
         "WHERE snapshot_id=?1 AND revision=?2 AND snapshot_digest=?12 AND invalidated_at IS NULL " +
         "AND julianday(expires_at)>julianday(?11) ON CONFLICT DO NOTHING").bind(...values).run();
-    } catch { /* Reconcile once through exact readback, never retry an ambiguous write. */ }
-    const row = await db.prepare("SELECT policy_authority_ref,allowed_use_json,disclosure_ceiling,authorization_receipt_ref,state,expires_at " +
-      "FROM scope_access_grant WHERE snapshot_id=?1 AND snapshot_revision=?2 AND principal_ref=?3 AND client_class=?4 " +
-      "AND credential_generation=?5").bind(...values.slice(0, 5)).first();
+      if (!result.success) writeFailure = { cause: new Error("Scope grant write did not report success") };
+    } catch (cause) {
+      // Retain even a thrown undefined value. An absent row is not proof that the write was denied.
+      writeFailure = { cause };
+    }
     const expected = { policy_authority_ref: snapshot.policy_authority_ref, allowed_use_json: JSON.stringify(allowedUses),
       disclosure_ceiling: disclosure, authorization_receipt_ref: receipt, state: "ACTIVE", expires_at: expiresAt };
-    if (!row || canonicalEvidenceJson(row) !== canonicalEvidenceJson(expected)) orientationFail("ORIENTATION_GRANT_UNAVAILABLE", 403);
+    let confirmed: boolean;
+    try {
+      const row = await db.prepare("SELECT policy_authority_ref,allowed_use_json,disclosure_ceiling,authorization_receipt_ref,state,expires_at " +
+        "FROM scope_access_grant WHERE snapshot_id=?1 AND snapshot_revision=?2 AND principal_ref=?3 AND client_class=?4 " +
+        "AND credential_generation=?5").bind(...values.slice(0, 5)).first();
+      confirmed = row !== null && canonicalEvidenceJson(row) === canonicalEvidenceJson(expected);
+    } catch (cause) {
+      // Causes stay internal; HTTP/MCP expose only the bounded code and generic message.
+      orientationFail("ORIENTATION_GRANT_STORAGE_UNAVAILABLE", 503, false, writeFailure === undefined
+        ? cause : new AggregateError([writeFailure.cause, cause], "Scope grant write/readback outcome is unknown"));
+    }
+    // Exact durable readback reconciles a lost acknowledgement without another INSERT.
+    if (confirmed) return;
+    if (writeFailure !== undefined) {
+      orientationFail("ORIENTATION_GRANT_STORAGE_UNAVAILABLE", 503, false, writeFailure.cause);
+    }
+    orientationFail("ORIENTATION_GRANT_UNAVAILABLE", 403);
   }
   return {
     resolveAtom, exhaustiveResolveAtom, resolveAuthorityClosure, exhaustiveResolveAuthorityClosure, sources, exhaustiveSources,
-    grant: (snapshot) => grantWithLoader(snapshot, sources, ORIENTATION_MAX_SOURCES),
-    exhaustiveGrant: (snapshot) => grantWithLoader(snapshot, exhaustiveSources, 4096),
+    grant: (snapshot, expiresAtCeilingMs) => grantWithLoader(snapshot, sources, ORIENTATION_MAX_SOURCES, expiresAtCeilingMs),
+    exhaustiveGrant: (snapshot, expiresAtCeilingMs) => grantWithLoader(snapshot, exhaustiveSources, 4096, expiresAtCeilingMs),
     exhaustiveRequireReadPolicy: async () => { await policies(4096); },
     requireReadPolicy: async () => { await policies(); },
   };
+}
+
+/** Metadata-only delegation: no scope creation, grants, mutation, paid effects or global resolver escapes. */
+export async function createProjectClientCatalogAuthority(db: D1Database, context: AuthenticatedRequestContext,
+  projectId: string, now: () => number = Date.now) {
+  const lease = await authorizeProjectClientGrant(db, context, { operation: "catalog", project_id: projectId }, now);
+  const refs = await readClientProjectMembers(db, projectId, now());
+  const members = new Set(refs);
+  const shared = createReadPolicyAuthority(db, context, lease.grant.grantor_principal_ref, now);
+  // Check ALL requested members. Filtering inaccessible rows out of a full-project request is not authorization.
+  await shared.exhaustiveSources(refs);
+  await lease.requireCurrent();
+  return {
+    lease,
+    policy_principal_ref: lease.grant.grantor_principal_ref,
+    requireReadPolicy: shared.exhaustiveRequireReadPolicy,
+    async sources(requested: readonly string[]) {
+      if (requested.some((ref) => !members.has(ref))) grantFail("CLIENT_GRANT_SCOPE_DENIED", 403, "Source is outside the delegated project");
+      const result = await shared.exhaustiveSources(requested);
+      await lease.requireCurrent();
+      return result;
+    },
+  };
+}
+
+/** One delegated query scope. Every atom is authorized in full; no project intersection is silently added. */
+export async function createProjectClientScopeAuthority(db: D1Database, context: AuthenticatedRequestContext,
+  expression: ScopeExpression, now: () => number = Date.now,
+  execution?: { readonly operation_id: string; readonly expires_at_ms: number }) {
+  await requireClientScopeSchema(db);
+  const atoms = scopeExpressionAtoms(expression);
+  const projects = [...new Set(atoms.flatMap((atom) => atom.kind === "PROJECT" ? [atom.project_id] : []))];
+  if (projects.length > 1 || atoms.some((atom) => atom.kind === "GLOBAL_LIBRARY")) {
+    grantFail("CLIENT_SCOPE_DENIED", 403, "A delegated query cannot request global or multiple-project authority");
+  }
+  if (execution && (expression.kind !== "PROJECT" || !/^run-[0-9a-f]{48}$/u.test(execution.operation_id) ||
+      !Number.isSafeInteger(execution.expires_at_ms) || execution.expires_at_ms <= now())) {
+    grantFail("CLIENT_SCOPE_DENIED", 403, "Research execution requires one explicit project and a current server-bound deadline");
+  }
+  const lease = await authorizeProjectClientGrant(db, context, { operation: execution ? "run" : "query",
+    ...(projects[0] === undefined ? {} : { project_id: projects[0] }) }, now);
+  const projectId = lease.grant.project_id;
+  const refs = await readClientProjectMembers(db, projectId, now());
+  const members = new Set(refs);
+  const identity = scopeExpressionIdentity(expression);
+  const shared = createReadPolicyAuthority(db, context, lease.grant.grantor_principal_ref, now);
+  const delegation = { grant_id: lease.grant.grant_id, revision: lease.grant.revision,
+    project_id: projectId, project_generation: lease.project_generation, operation: execution ? "run" : "query",
+    ...(execution ? { operation_id: execution.operation_id } : {}) };
+  const delegationDigest = await evidenceSha256(lease.grant);
+  async function requireProject() {
+    const epoch = await grantEpoch(db);
+    await lease.requireGrantCurrent();
+    const current = await readClientProjectMembers(db, projectId, now());
+    if (current.length !== members.size || current.some((ref) => !members.has(ref))) {
+      grantFail("CLIENT_SCOPE_MEMBERSHIP_CHANGED", 409, "Delegated project membership changed; repeat with a new request", true);
+    }
+    if (await grantEpoch(db) !== epoch) grantFail("CLIENT_SCOPE_AUTHORITY_CHANGED", 409, "Project authority changed during read", true);
+  }
+  async function sources(requested: readonly string[]) {
+    await requireProject();
+    if (requested.some((ref) => !members.has(ref))) grantFail("CLIENT_SCOPE_DENIED", 403, "Source is outside the delegated project");
+    const result = await shared.exhaustiveSources(requested);
+    await lease.requireGrantCurrent();
+    return result;
+  }
+  async function resolveAtom(atom: DeterministicScopeAtom, observedAt: string) {
+    if (atom.kind === "GLOBAL_LIBRARY" || (atom.kind === "PROJECT" && atom.project_id !== projectId)) {
+      grantFail("CLIENT_SCOPE_DENIED", 403, "Scope atom is outside the delegated project");
+    }
+    await requireProject();
+    const resolved = await shared.exhaustiveResolveAtom(atom, observedAt);
+    if (resolved.members.some((member) => !members.has(member.source_revision_ref)) ||
+        (atom.kind === "PROJECT" && resolved.members.length !== members.size)) {
+      grantFail("CLIENT_SCOPE_DENIED", 403, "The complete scope atom is not authorized; implicit filtering is forbidden");
+    }
+    await requireProject();
+    return { ...resolved, atom_generation_ref: `client-atom-${await evidenceSha256({
+      original: resolved.atom_generation_ref, delegation, delegationDigest })}` };
+  }
+  async function resolveAuthorityClosure(request: ScopeAuthorityRequest) {
+    if (scopeExpressionIdentity(request.expression) !== identity) {
+      grantFail("CLIENT_SCOPE_DENIED", 403, "Scope expression does not match this delegated request");
+    }
+    await sources(request.member_source_revision_refs);
+    const closure = await shared.exhaustiveResolveAuthorityClosure(request);
+    const policy = `client-policy-${await evidenceSha256({ original: closure.policy_authority_ref, delegation, delegationDigest })}`;
+    await requireProject();
+    return { ...closure, policy_authority_ref: policy };
+  }
+  const authority: OwnerScopeAuthority = {
+    resolveAtom, exhaustiveResolveAtom: resolveAtom,
+    resolveAuthorityClosure, exhaustiveResolveAuthorityClosure: resolveAuthorityClosure,
+    requireReadPolicy: async () => { await requireProject(); await shared.exhaustiveRequireReadPolicy(); },
+    exhaustiveRequireReadPolicy: async () => { await requireProject(); await shared.exhaustiveRequireReadPolicy(); },
+    sources, exhaustiveSources: sources,
+    grant: issue, exhaustiveGrant: issue,
+  };
+  // Same scope algorithm and clock frontier as the owner, with the grantor policy subject kept separate.
+  const scopes = createD1ScopeService(db, authority, { now, max_snapshot_members: 4096, preserve_resolution_errors: true });
+  const current = orientationCurrentness(db, scopes, lease.grant.grantor_principal_ref, now);
+  async function issue(snapshot: ScopeSnapshot, expiresAtCeilingMs?: number) {
+    const input = { database: db, context, snapshot, lease,
+      sources: () => sources(snapshot.member_source_revision_refs), require_current: current, now,
+      ...(expiresAtCeilingMs === undefined ? {} : { expires_at_ceiling_ms: expiresAtCeilingMs }) };
+    if (execution) await issueClientResearchScopeGrant({ ...input,
+      expires_at_ceiling_ms: Math.min(expiresAtCeilingMs ?? Infinity, execution.expires_at_ms) },
+      { operation: "run", operation_id: execution.operation_id });
+    else await issueClientQueryScopeGrant(input);
+  }
+  async function requireScopeCurrent(snapshot: ScopeSnapshot) {
+    await lease.requireGrantCurrent();
+    await current(snapshot);
+    await requireClientScopeProvenance(db, context, snapshot, lease,
+      execution ? { operation: "run", operation_id: execution.operation_id } : undefined);
+  }
+  await lease.requireCurrent();
+  return { authority, requireScopeCurrent, lease, policy_principal_ref: lease.grant.grantor_principal_ref };
+}
+
+/** Read every original source under the current project and grantor policy.
+ * The authenticated service remains distinct from the policy subject. */
+function projectHistoricalSources(
+  db: D1Database, shared: OwnerScopeAuthority, lease: ClientGrantLease,
+  requireOrigin: () => Promise<void>, now: () => number,
+) {
+  return async (refs: readonly string[]) => {
+    const epoch = await grantEpoch(db);
+    await requireOrigin();
+    // Validate every historical source ID against today's membership without adopting its new head.
+    for (const batch of splitExhaustiveSourceRefs(refs)) {
+      const rows = await db.prepare("SELECT sr.source_revision_ref FROM source_revision sr " +
+        "JOIN project_source_membership m ON m.source_id=sr.source_id AND m.project_id=?1 " +
+        "WHERE sr.source_revision_ref IN (SELECT value FROM json_each(?2)) " +
+        "AND julianday(m.valid_from)<=julianday(?3) AND (m.valid_to IS NULL OR julianday(m.valid_to)>julianday(?3)) " +
+        "ORDER BY sr.source_revision_ref LIMIT ?4")
+        .bind(lease.grant.project_id, JSON.stringify(batch), new Date(now()).toISOString(), batch.length + 1)
+        .all<{ source_revision_ref: string }>();
+      const expected = new Set(batch);
+      if (!rows.success || !Array.isArray(rows.results) || rows.results.length !== batch.length ||
+          rows.results.some((row) => !expected.delete(row.source_revision_ref)) || expected.size !== 0) {
+        grantFail("CLIENT_ARTIFACT_SOURCE_DENIED", 403, "Historical sources are not all current project members");
+      }
+    }
+    const result = await shared.exhaustiveSources(refs);
+    await requireOrigin();
+    if (await grantEpoch(db) !== epoch) grantFail("CLIENT_ARTIFACT_AUTHORITY_CHANGED", 409, "Historical read authority changed during read", true);
+    return result;
+  };
+}
+
+/** Historical report reads keep the service actor and the grantor's policy subject separate.
+ * Only reports originally scoped to this explicit project are shareable; overlapping sources
+ * do not authorize a global, another project's, or another owner's report. */
+export async function createProjectClientArtifactAuthority(
+  db: D1Database, context: AuthenticatedRequestContext, original: ScopeSnapshot,
+  origin: ClientArtifactScopeOrigin,
+  originalPrincipal: string, now: () => number = Date.now,
+) {
+  if (original.resolved_scope_expression.kind !== "PROJECT") {
+    grantFail("CLIENT_ARTIFACT_PROJECT_REQUIRED", 403, "Report must originate from one explicit project");
+  }
+  await requireClientArtifactScopeSchema(db);
+  const projectId = original.resolved_scope_expression.project_id;
+  const lease = await authorizeProjectClientGrant(db, context, { operation: origin.operation, project_id: projectId }, now);
+  if (!lease.grant.allowed_operations.includes("report")) {
+    grantFail("CLIENT_ARTIFACT_DENIED", 403, "Report reading is not delegated");
+  }
+  const readOrigin = () => db.prepare("SELECT origin_client_class FROM project_client_artifact_read_origin " +
+    "WHERE artifact_id=?1 AND artifact_revision=?2 AND principal_ref=?3 " +
+    "AND scope_snapshot_id=?4 AND scope_snapshot_revision=?5 AND client_grant_id=?6 " +
+    "AND client_grant_revision=?7 AND project_generation=?8 " +
+    "AND (origin_client_class='owner_pwa' OR origin_client_class=?9) LIMIT 1")
+    .bind(origin.artifact_ref.id, origin.artifact_ref.revision, originalPrincipal, original.snapshot_id,
+      original.revision, lease.grant.grant_id, lease.grant.revision, lease.project_generation, context.client_class)
+    .first<{ origin_client_class: EvidenceAccessContext["client_class"] }>();
+  const recorded = await readOrigin();
+  if (!recorded || !["owner_pwa", "trusted_agent", "named_api_client"].includes(recorded.origin_client_class)) {
+    grantFail("CLIENT_ARTIFACT_DENIED", 403, "Saved report does not belong to this delegation");
+  }
+  const originalClientClass = recorded.origin_client_class;
+  // The author may be a machine; its grantor remains the source-policy subject.
+  const shared = createReadPolicyAuthority(db, context, lease.grant.grantor_principal_ref, now);
+  async function requireOrigin() {
+    await lease.requireGrantCurrent();
+    const row = await readOrigin();
+    if (row?.origin_client_class !== originalClientClass) {
+      grantFail("CLIENT_ARTIFACT_DENIED", 403, "Saved report origin was revoked or changed");
+    }
+    await lease.requireGrantCurrent();
+  }
+  const sources = projectHistoricalSources(db, shared, lease, requireOrigin, now);
+  async function resolveAtom(atom: DeterministicScopeAtom, observedAt: string) {
+    if (atom.kind !== "PROJECT" || atom.project_id !== projectId) grantFail("CLIENT_ARTIFACT_DENIED", 403, "Report project differs");
+    await requireOrigin();
+    const result = await shared.exhaustiveResolveAtom(atom, observedAt);
+    await requireOrigin();
+    return result;
+  }
+  async function resolveAuthorityClosure(request: ScopeAuthorityRequest) {
+    if (scopeExpressionIdentity(request.expression) !== scopeExpressionIdentity(original.resolved_scope_expression)) {
+      grantFail("CLIENT_ARTIFACT_DENIED", 403, "Report expression differs");
+    }
+    await sources(request.member_source_revision_refs);
+    const closure = await shared.exhaustiveResolveAuthorityClosure(request);
+    const policy = `client-report-${await evidenceSha256({ original: closure.policy_authority_ref,
+      scope: original.digest, artifact: origin, grant: lease.grant, project_generation: lease.project_generation })}`;
+    await requireOrigin();
+    return { ...closure, policy_authority_ref: policy };
+  }
+  const requireReadPolicy = async () => { await requireOrigin(); await shared.exhaustiveRequireReadPolicy(); };
+  const noUnboundGrant = async (): Promise<never> => grantFail("CLIENT_ARTIFACT_DENIED", 403, "Artifact-bound grant issuance is required");
+  const authority: OwnerScopeAuthority = { sources, exhaustiveSources: sources, resolveAtom, exhaustiveResolveAtom: resolveAtom,
+    resolveAuthorityClosure, exhaustiveResolveAuthorityClosure: resolveAuthorityClosure,
+    requireReadPolicy, exhaustiveRequireReadPolicy: requireReadPolicy, grant: noUnboundGrant, exhaustiveGrant: noUnboundGrant };
+  await requireOrigin();
+  return { authority, lease, requireOrigin, original_client_class: originalClientClass };
+}
+
+/** Current authority for a known owner run or its originating machine client.
+ * Status and cancellation are separate delegated operations; neither renews execution.
+ * The caller must also validate the original snapshot's historical currentness. */
+export async function createProjectClientRunReadAuthority(
+  db: D1Database, context: AuthenticatedRequestContext, operationId: string,
+  now: () => number = Date.now, operation: "status" | "cancel" | "recover" = "status",
+) {
+  const lease = await authorizeProjectClientGrant(db, context, { operation }, now);
+  const binding = await db.prepare("SELECT investigation_id, principal_ref, credential_generation, " +
+    "deployment_generation, handler_generation, scope_snapshot_id, scope_snapshot_revision, policy_authority_ref, " +
+    "authorization_receipt_ref, origin_client_class FROM project_client_run_control_origin " +
+    "WHERE operation_id=?1 AND client_grant_id=?2 AND client_grant_revision=?3 " +
+    "AND (origin_client_class='owner_pwa' OR origin_client_class=?4) LIMIT 1")
+    .bind(orientationId(operationId), lease.grant.grant_id, lease.grant.revision, context.client_class).first<{
+      investigation_id: string; principal_ref: string; credential_generation: string;
+      deployment_generation: string; handler_generation: string; scope_snapshot_id: string;
+      scope_snapshot_revision: number; policy_authority_ref: string; authorization_receipt_ref: string;
+      origin_client_class: string;
+    }>();
+  if (binding === null) { await lease.requireCurrent(); return null; }
+  for (const value of [binding.investigation_id, binding.principal_ref, binding.credential_generation,
+    binding.deployment_generation, binding.handler_generation, binding.scope_snapshot_id,
+    binding.policy_authority_ref, binding.authorization_receipt_ref]) orientationId(value);
+  if (!Number.isSafeInteger(binding.scope_snapshot_revision) || binding.scope_snapshot_revision < 1) {
+    grantFail("CLIENT_RUN_ORIGIN_INVALID", 409, "Saved run identity is inconsistent");
+  }
+  const ref = { id: binding.scope_snapshot_id, revision: binding.scope_snapshot_revision };
+  const persisted = await loadScopeAuthority(db, ref);
+  const original = persisted?.snapshot;
+  if (!original || original.resolved_scope_expression.kind !== "PROJECT" ||
+      original.resolved_scope_expression.project_id !== lease.grant.project_id ||
+      original.client_fence_ref !== binding.credential_generation ||
+      original.policy_authority_ref !== binding.policy_authority_ref) {
+    grantFail("CLIENT_RUN_DENIED", 403, "Run does not originate from this delegated project");
+  }
+  await readOwnerScopeProfile(db, original);
+  // Policies belong to the grantor; recorded authorship may belong to the machine.
+  const shared = createReadPolicyAuthority(db, context, lease.grant.grantor_principal_ref, now);
+  const requireOrigin = async () => {
+    await lease.requireGrantCurrent();
+    const row = await db.prepare("SELECT 1 AS present FROM project_client_run_control_origin " +
+      "WHERE operation_id=?1 AND investigation_id=?2 AND principal_ref=?3 AND credential_generation=?4 " +
+      "AND deployment_generation=?5 AND handler_generation=?6 AND scope_snapshot_id=?7 " +
+      "AND scope_snapshot_revision=?8 AND policy_authority_ref=?9 AND authorization_receipt_ref=?10 " +
+      "AND client_grant_id=?11 AND client_grant_revision=?12 AND origin_client_class=?13 " +
+      "AND project_generation=?14 LIMIT 1")
+      .bind(operationId, binding.investigation_id, binding.principal_ref, binding.credential_generation,
+        binding.deployment_generation, binding.handler_generation, ref.id, ref.revision,
+        binding.policy_authority_ref, binding.authorization_receipt_ref, lease.grant.grant_id,
+        lease.grant.revision, binding.origin_client_class, lease.project_generation).first();
+    if (row === null) grantFail("CLIENT_RUN_DENIED", 403, "Original run authority was revoked or changed");
+    await lease.requireGrantCurrent();
+  };
+  const sources = projectHistoricalSources(db, shared, lease, requireOrigin, now);
+  const requireCurrent = async () => {
+    const epoch = await grantEpoch(db);
+    const loaded = await sources(original.member_source_revision_refs);
+    if (loaded.some((source) => original.source_owner_generations[source.revision.source_revision_ref] !==
+        source.revision.source_owner_generation) || new Set(loaded.map((source) => source.revision.source_id)).size !== loaded.length) {
+      grantFail("CLIENT_RUN_SOURCE_DENIED", 403, "Historical source ownership is inconsistent");
+    }
+    const closure = await shared.exhaustiveResolveAuthorityClosure({
+      expression: original.resolved_scope_expression, canonical_expression: scopeExpressionIdentity(original.resolved_scope_expression),
+      member_source_revision_refs: original.member_source_revision_refs,
+      member_policy_closure_refs: Object.fromEntries(loaded.map((source) => [source.revision.source_revision_ref, source.policy_closure_ref])),
+      observed_at: new Date(now()).toISOString(), client_fence_ref: context.credential_generation,
+    });
+    if (!closure.client_fence_valid || closure.denied_source_revision_refs.length !== 0 ||
+        closure.disclosure_closure_digest !== original.disclosure_closure_digest ||
+        closure.purge_ledger_revision < original.purge_ledger_revision) {
+      grantFail("CLIENT_RUN_SOURCE_DENIED", 403, "Current disclosure does not cover the original run");
+    }
+    // Epochs catch mutations, but not time alone. Cancellation must not cross
+    // a source/policy/membership deadline between authorization and its SQL write.
+    const membership = await db.prepare("SELECT MIN(valid_to) AS expires_at FROM project_source_membership " +
+      "WHERE project_id=?1 AND julianday(valid_from)<=julianday(?2) AND julianday(valid_to)>julianday(?2)")
+      .bind(lease.grant.project_id, new Date(now()).toISOString()).first<{ expires_at: string | null }>();
+    if (membership === null) grantFail("CLIENT_RUN_AUTHORITY_UNAVAILABLE", 503, "Membership deadline is unavailable", true);
+    const validUntil = Math.min(lease.expires_at_ms,
+      ...(membership.expires_at === null ? [] : [Date.parse(membership.expires_at)]),
+      ...loaded.flatMap((source) => [Date.parse(source.policy.expires_at),
+        ...(source.authority.admission_expires_at === undefined ? [] : [Date.parse(source.authority.admission_expires_at)])]));
+    await requireOrigin();
+    if (!Number.isSafeInteger(validUntil) || validUntil <= now()) grantFail("CLIENT_RUN_DENIED", 403, "Run authority expired");
+    if (await grantEpoch(db) !== epoch) grantFail("CLIENT_RUN_AUTHORITY_CHANGED", 409, "Run read authority changed", true);
+    return validUntil;
+  };
+  await lease.requireCurrent();
+  return { binding: Object.freeze(binding), original, lease, requireCurrent };
 }

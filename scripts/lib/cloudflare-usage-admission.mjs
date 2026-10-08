@@ -167,6 +167,7 @@ export async function runUsagePreflight(options = {}) {
     // Omitted/null selects the default live registry after OAuth identity
     // verification. An explicit [] remains a test-only empty override.
     providers = null,
+    signal,
     cwd = process.cwd(),
     // Explicit test-only snapshot (object/JSON). Never ambient env;
     // production entry points must never pass it. Real-envelope
@@ -218,14 +219,8 @@ export async function runUsagePreflight(options = {}) {
   let oauthWhoamiOutput = null;
   if (authMode === WRANGLER_OAUTH_MODE) {
     const readFileImpl = readFile ?? (await import("node:fs/promises")).readFile;
-    try {
-      const credential = await loadWranglerOAuthCredential({ env, readFile: readFileImpl, now: nowMs });
-      oauthBearer = credential.bearer;
-    } catch (error) {
-      if (error instanceof UsageCollectionError) throw error;
-      throw new UsageCollectionError(error?.code ?? "OAUTH_UNAVAILABLE", error?.message ?? "OAuth credential unavailable");
-    }
-    // No ambient whoami seam: explicit injection or the official spawn below.
+    // Verify the official profile before reading its bearer: `wrangler whoami`
+    // can refresh the cached OAuth credentials as a normal CLI operation.
     if (typeof getWhoamiOutput === "function") {
       oauthWhoamiOutput = await getWhoamiOutput();
     } else {
@@ -243,6 +238,13 @@ export async function runUsagePreflight(options = {}) {
     } catch (error) {
       if (error instanceof UsageCollectionError) throw error;
       throw new UsageCollectionError(error?.code ?? "OAUTH_ACCOUNT_MISMATCH", error?.message ?? "account verification failed");
+    }
+    try {
+      const credential = await loadWranglerOAuthCredential({ env, readFile: readFileImpl, now: nowMs });
+      oauthBearer = credential.bearer;
+    } catch (error) {
+      if (error instanceof UsageCollectionError) throw error;
+      throw new UsageCollectionError(error?.code ?? "OAUTH_UNAVAILABLE", error?.message ?? "OAuth credential unavailable");
     }
   }
 
@@ -294,10 +296,11 @@ export async function runUsagePreflight(options = {}) {
     providers: collectionProviders,
     whoamiOutput: oauthWhoamiOutput,
     source: USAGE_SOURCE_LIVE,
+    signal,
   });
   const evaluation = evaluateUsageSnapshot(snapshot, { expectedAccountDigest: expectedDigest, now: nowMs, maxAgeMs });
   if (evaluation.decision !== "ADMITTED") {
-    evaluation.reasons.unshift(`live profile verified for ${accountRef(expectedAccountId)}; no authoritative counter aggregate exposed, heavy work sealed; ledger+full-inventory required`);
+    evaluation.reasons.unshift(`live profile verified for ${accountRef(expectedAccountId)}; required counters lack complete authoritative coverage, heavy work sealed; see per-metric source limitations`);
   }
   const capability = usingDefaultLiveRegistry && isLiveAdmissibleForCapability(snapshot, evaluation)
     ? mintLiveCapability() : null;

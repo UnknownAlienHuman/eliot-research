@@ -3,6 +3,7 @@
 import { describe, expect, it } from "vitest";
 import { DatabaseSync } from "node:sqlite";
 import type { OperationIntent } from "@eliotr/contracts";
+import { applyCanonicalCoreMigrations, recordCanonicalCoreMigrationLedger } from "./core-migration-fixture.js";
 import { createBackupPort } from "./index.js";
 import { reopenPersistedVector, type BackupSourcePorts } from "./epoch.js";
 import { assertO2MigrationAuthority, O2_MIGRATION_FILENAME, O2_UPGRADE_FILENAME, O2_EXPECTED_MIGRATION_DIGEST, O2_EXPECTED_UPGRADE_DIGEST, O2_EXPECTED_SCHEMA_DIGEST, canonicalO2SchemaFingerprint, canonicalizeSchemaSql } from "./migration-gate.js";
@@ -34,6 +35,8 @@ import m0019 from "../../../infra/d1/core/migrations/0019_backup_o2_replay_autho
 const T = "2026-09-06T00:00:00.000Z";
 const HEX = (c: string): string => c.repeat(64);
 const NOW = Date.parse(T);
+// These abbreviated rows belong only to the explicitly partial 0018 + 0019
+// mutation fixtures below.
 const APPLIED = ["0001_initial.sql", "0002_execution_coordination.sql", "0003_delivery_inbox_payload_digest.sql", "0004_outbox_delivery_fence.sql", "0005_ingest_admission.sql", "0006_projection_execution.sql", "0007_evidence_resolution.sql", "0008_erasure_closure.sql", "0009_federation_authority.sql", "0010_navigation_artifacts.sql", "0011_owner_orientation.sql", "0012_google_credentials.sql", "0013_google_oauth_intents.sql", "0018_backup_o2_replay_authority.sql", "0019_backup_o2_replay_authority_fix.sql"];
 function sink(): Sha256DigestSink {
   const chunks: Uint8Array[] = [];
@@ -90,11 +93,11 @@ function testPartSink(bucket: R2Bucket): EvidenceObjectStore {
 const MIGRATIONS = [m0001, m0002, m0003, m0004, m0005, m0006, m0007, m0008, m0009, m0010, m0011, m0012, m0013, m0018, m0019];
 function openCore(): DatabaseSync {
   const db = new DatabaseSync(":memory:");
-  for (const m of MIGRATIONS) db.exec(m);
+  applyCanonicalCoreMigrations(db);
   return db;
 }
 function recordLedger(db: DatabaseSync): void {
-  for (const [i, n] of APPLIED.entries()) db.prepare("INSERT INTO d1_migrations (name, applied_at) VALUES (?1,?2)").run(n, `${T.slice(0, 10)}T00:00:${String(i).padStart(2, "0")}.000Z`);
+  recordCanonicalCoreMigrationLedger(db, T);
 }
 function seedCore(db: DatabaseSync): void {
   db.exec(`INSERT INTO source_namespace_ownership (source_namespace_id,ownership_record_revision,owner_system_id,owner_incarnation_ref,source_owner_generation,source_admission_policy_revision,status,cutover_receipt_ref,created_at) VALUES ('ns-1',1,'owner-sys-1','incarnation-1','gen-1',1,'ACTIVE',NULL,'${T}');

@@ -5,6 +5,7 @@ import { access, mkdir, mkdtemp, readFile, rename, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { runInNewContext } from "node:vm";
 import { digestAccountId, evaluateUsageSnapshot } from "./lib/cloudflare-usage-envelope.mjs";
 import { dailyWindowFor, monthlyWindowFor } from "./lib/cloudflare-usage-collection.mjs";
 import {
@@ -30,7 +31,10 @@ const aiSearchDesired = JSON.parse(await readFile(
 ));
 const backupRoot = resolve(repositoryRoot, `.eliotr-provisioner-test-backup-${process.pid}`);
 const backupGeneratedConfigPath = resolve(backupRoot, "wrangler.deploy.jsonc");
+const foundationReceiptPath = resolve(repositoryRoot, ".eliotr-state/cloudflare-foundation-receipt.json");
+const backupFoundationReceiptPath = resolve(backupRoot, "cloudflare-foundation-receipt.json");
 let generatedConfigBackedUp = false;
+let foundationReceiptBackedUp = false;
 async function exists(path) {
   try { await access(path); return true; } catch { return false; }
 }
@@ -38,6 +42,11 @@ if (await exists(generatedConfigPath)) {
   await mkdir(backupRoot, { recursive: true });
   await rename(generatedConfigPath, backupGeneratedConfigPath);
   generatedConfigBackedUp = true;
+}
+if (await exists(foundationReceiptPath)) {
+  await mkdir(backupRoot, { recursive: true });
+  await rename(foundationReceiptPath, backupFoundationReceiptPath);
+  foundationReceiptBackedUp = true;
 }
 
 function emptyState() {
@@ -51,9 +60,12 @@ function emptyState() {
     accessApps: new Map(),
     accessPolicies: new Map(),
     serviceTokens: new Map(),
+    organization: null,
     mutations: [],
     requests: [],
     sequence: 0,
+    workerGoogleTransport: null,
+    workerAiSearchBound: false,
   };
 }
 let state = emptyState();
@@ -96,6 +108,10 @@ const server = createServer(async (req, res) => {
     if (accountIndex < 0 || parts[accountIndex + 1] !== accountId) return json(res, notFound("unknown account"));
     const tail = parts.slice(accountIndex + 2);
 
+    if (tail[0] === "access" && tail[1] === "organizations" && method === "GET") {
+      return json(res, state.organization ? success(state.organization) : notFound());
+    }
+
     if (tail[0] === "d1" && tail[1] === "database") {
       if (method === "GET") {
         const name = url.searchParams.get("name");
@@ -125,6 +141,23 @@ const server = createServer(async (req, res) => {
       }
     }
 
+    if (tail[0] === "workers" && tail[1] === "scripts" && method === "GET" && state.workerGoogleTransport !== null) {
+      const versionId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+      const workerBindings = [
+        { name: "DEPLOYMENT_GENERATION", type: "plain_text", text: "git-existing" },
+        { name: "GOOGLE_EXTERNAL_TRANSPORT", type: "plain_text", text: state.workerGoogleTransport },
+      ];
+      if (state.workerAiSearchBound) workerBindings.push({ name: "AI_SEARCH", type: "ai_search_namespace", namespace: "fixture" });
+      if (tail.length === 2) return json(res, success([{ id: "eliotr-core", compatibility_date: "2026-08-28", has_assets: true }]));
+      if (tail[2] === "eliotr-core" && tail[3] === "deployments") return json(res, success({ deployments: [{
+        id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", created_on: "2026-10-03T12:00:00Z", strategy: "percentage",
+        versions: [{ version_id: versionId, percentage: 100 }],
+      }] }));
+      if (tail[2] === "eliotr-core" && tail[3] === "versions" && tail[4] === versionId) return json(res, success({
+        id: versionId, number: 9, resources: { script_runtime: { compatibility_date: "2026-08-28" }, bindings: workerBindings },
+      }));
+    }
+
     if (tail[0] === "queues") {
       if (method === "GET" && tail.length === 1) return json(res, success([...state.queues.values()]));
       if (method === "POST" && tail.length === 1) {
@@ -139,7 +172,8 @@ const server = createServer(async (req, res) => {
         return json(res, state.aiNamespace?.name === tail[2] ? success(state.aiNamespace) : notFound());
       }
       if (tail.length === 2 && method === "POST") {
-        state.aiNamespace = { id: nextId("namespace"), name: body.name, description: body.description };
+        state.aiNamespace = { id: nextId("namespace"), name: body.name, description: body.description,
+          created_at: "2026-10-03T20:14:14.000Z" };
         return json(res, success(state.aiNamespace));
       }
       if (tail.length === 5 && tail[3] === "instances" && method === "GET") {
@@ -602,6 +636,267 @@ try {
     assert.equal(mutationCount(), 0, "managed MCP CREATE plan mutated");
   }
 
+  // Exercise the actual private request wrappers in an isolated VM, without
+  // adding production exports, loaders, or transport seams. GET is the
+  // positive control; every other method must fail before either transport.
+  const provisioners = ["cloudflare-core", "cloudflare-access", "ai-search", "ai-gateways"]
+    .map((name) => `scripts/provision-${name}.mjs`);
+  for (const script of provisioners) {
+    const source = (await readFile(resolve(repositoryRoot, script), "utf8")).replace(/\r\n/gu, "\n");
+    const start = source.indexOf("async function request(");
+    const end = source.indexOf("\n}\n", start);
+    assert.ok(start >= 0 && end > start, `${script} request wrapper is missing`);
+    for (const viaMcp of script.includes("cloudflare-access") ? [false, true] : [false]) {
+      let calls = 0;
+      const observe = () => { calls += 1; return { observed: true }; };
+      const request = runInNewContext(`(${source.slice(start, end + 2)})`, {
+        verifyExisting: true, apiBase: "https://example.invalid", headers: {},
+        prebillingMetadata: false,
+        mcpTransport: viaMcp ? { request: async () => observe() } : null,
+        fetch: async () => globalThis.Response.json({ success: true, result: observe() }),
+      });
+      assert.equal(JSON.stringify(await request("GET", "/fixture")), '{"observed":true}');
+      assert.equal(calls, 1, `${script} GET control did not reach transport`);
+      for (const method of ["POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS", "get"]) {
+        await assert.rejects(request(method, "/fixture"), /permits GET requests only/u);
+      }
+      assert.equal(calls, 1, `${script} non-GET reached transport`);
+    }
+  }
+
+  const foundationDesired = JSON.parse(await readFile(resolve(repositoryRoot, "infra/cloudflare/resources.json"), "utf8"));
+  const gatewaysDesired = JSON.parse(await readFile(resolve(repositoryRoot, "infra/cloudflare/ai-gateways.json"), "utf8"));
+  const verifyEnv = { ELIOTR_CLOUDFLARE_AUTH_MODE: "api-token", ELIOTR_GOOGLE_EXTERNAL_TRANSPORT: "gemini-mcp",
+    ELIOTR_MCP_ACCESS_AUTH_PROFILE: "managed-oauth", ELIOTR_MCP_ACCESS_TEAM_DOMAIN: commonEnv.ELIOTR_ACCESS_TEAM_DOMAIN,
+    ELIOTR_MCP_ACCESS_AUDIENCE: "mock-mcp-audience" };
+  const accessScript = "scripts/provision-cloudflare-access.mjs";
+  const coreScript = "scripts/provision-cloudflare-core.mjs";
+  async function seedExisting() {
+    reset();
+    state.workerGoogleTransport = "disabled";
+    await rm(join(isolatedStateDirectory, "cloudflare-access-receipt.json"), { force: true });
+    state.organization = { auth_domain: "mock-team-example.cloudflareaccess.com" };
+    for (const spec of foundationDesired.d1_databases) state.d1.set(spec.name, { uuid: `existing-${spec.name}`, name: spec.name });
+    for (const spec of foundationDesired.r2_buckets) state.r2.set(spec.name, { name: spec.name, jurisdiction: spec.jurisdiction, storage_class: spec.storage_class });
+    for (const spec of foundationDesired.queues) state.queues.set(spec.name, { queue_id: `existing-${spec.name}`, queue_name: spec.name });
+    state.aiNamespace = { id: "existing-namespace", name: aiSearchDesired.namespace,
+      description: "Eliot Research private managed retrieval namespace",
+      created_at: "2026-10-03T20:14:14.000Z" };
+    for (const spec of aiSearchDesired.instances) state.aiInstances.set(spec.id, structuredClone(spec.create));
+    for (const spec of gatewaysDesired.gateways) state.gateways.set(spec.id, structuredClone(spec));
+    for (const mcp of [false, true]) {
+      const id = mcp ? "existing-mcp-app" : "existing-owner-app";
+      const domain = `${accessHostname}${mcp ? "/mcp" : ""}`;
+      state.accessApps.set(id, { id, name: `${mcp ? "Eliot Research MCP" : "Eliot Research"}: ${domain}`,
+        type: "self_hosted", domain, destinations: [{ type: "public", uri: domain }],
+        session_duration: "24h", app_launcher_visible: false,
+        aud: mcp ? "mock-mcp-audience" : commonEnv.ELIOTR_ACCESS_AUDIENCE,
+        ...(mcp ? { path_cookie_attribute: true, oauth_configuration: { enabled: true } } : {}) });
+      state.accessPolicies.set(id, [{ id: `policy-${id}`, name: mcp ? `Eliot Research MCP: ${domain}` : "Eliot Research owners",
+        decision: "allow", include: [{ email: { email: ownerEmail } }], exclude: [], require: [] }]);
+    }
+  }
+  function assertGetOnly(label, allowNoReads = false) {
+    if (!allowNoReads) assert.ok(state.requests.length > 0, `${label} did not exercise remote readback`);
+    assert.ok(state.requests.every((item) => item.method === "GET"), `${label} sent a non-GET request`);
+    assert.equal(mutationCount(), 0, `${label} mutated a resource`);
+  }
+  await seedExisting();
+  for (const script of [accessScript, coreScript, "scripts/provision-ai-search.mjs", "scripts/provision-ai-gateways.mjs"]) {
+    state.requests.length = 0;
+    expectPass(await run(script, ["--verify-existing"], verifyEnv), `${script} existing resources`);
+    assertGetOnly(script);
+  }
+  const canonicalConfig = JSON.parse(canonicalConfigBefore);
+  assert.deepEqual(JSON.parse(await readFile(generatedConfigPath, "utf8")).ai_search_namespaces,
+    canonicalConfig.ai_search_namespaces, "default Core verify-existing must retain canonical AI Search bindings");
+  assert.equal(await readFile(canonicalConfigPath, "utf8"), canonicalConfigBefore);
+  assert.equal(await exists(generatedConfigPath), true);
+  const accessReadback = JSON.parse(await readFile(join(isolatedStateDirectory, "cloudflare-access-receipt.json"), "utf8"));
+  assert.equal(accessReadback.application.id, "existing-owner-app");
+  assert.equal(accessReadback.mcp.application.id, "existing-mcp-app");
+
+  const preserveEnv = { ...verifyEnv, ELIOTR_GOOGLE_EXTERNAL_TRANSPORT: undefined,
+    ELIOTR_MAINTENANCE_PRESERVE_GOOGLE_TRANSPORT: "disabled" };
+  const preserveCoreEnv = { ...preserveEnv, ELIOTR_MAINTENANCE_PRESERVE_AI_SEARCH: "absent" };
+  await seedExisting();
+  const generatedBeforeCheckOnly = await readFile(generatedConfigPath, "utf8");
+  state.requests.length = 0;
+  expectPass(await run(coreScript, ["--check-only"], preserveCoreEnv), "Core absent AI Search check-only");
+  assertGetOnly("Core absent AI Search check-only");
+  assert.equal(await readFile(generatedConfigPath, "utf8"), generatedBeforeCheckOnly,
+    "check-only must not rewrite generated config while preserving absent AI Search");
+  for (const script of [accessScript, coreScript]) {
+    state.requests.length = 0;
+    const environment = script === coreScript ? preserveCoreEnv : preserveEnv;
+    expectPass(await run(script, ["--verify-existing"], environment), `${script} preserve active disabled`);
+    assertGetOnly(`${script} preserve active disabled`);
+    assert.ok(state.requests.some((item) => item.pathname.includes(`/workers/scripts/eliotr-core/versions/`)));
+  }
+  assert.equal(JSON.parse(await readFile(generatedConfigPath, "utf8")).vars.GOOGLE_EXTERNAL_TRANSPORT, "disabled");
+  assert.deepEqual(JSON.parse(await readFile(generatedConfigPath, "utf8")).ai_search_namespaces, [],
+    "disabled maintenance must preserve the observed absence of an active AI Search binding");
+  assert.equal(await readFile(canonicalConfigPath, "utf8"), canonicalConfigBefore);
+
+  // AI Search absence is preserved only when the same maintenance command
+  // verifies no live binding and the current static profile keeps both
+  // retrieval and erasure disabled. Present bindings, unknown selectors and
+  // apply mode cannot activate this exception.
+  await seedExisting();
+  state.workerAiSearchBound = true;
+  state.requests.length = 0;
+  const presentAiSearch = await run(coreScript, ["--verify-existing"], preserveCoreEnv);
+  expectFail(presentAiSearch, "present AI Search binding cannot be preserved as absent");
+  assert.match(presentAiSearch.stderr, /verified absent binding/u);
+  assertGetOnly("present AI Search binding", true);
+  for (const args of [["--verify-existing"], []]) {
+    state.requests.length = 0;
+    const invalidSelector = await run(coreScript, args, {
+      ...preserveCoreEnv, ELIOTR_MAINTENANCE_PRESERVE_AI_SEARCH: "enabled",
+    });
+    expectFail(invalidSelector, `AI Search unknown selector ${args.length === 0 ? "apply" : "verify"}`);
+    assertGetOnly("AI Search unknown selector", true);
+  }
+  state.requests.length = 0;
+  const preserveAiSearchApply = await run(coreScript, [], preserveCoreEnv);
+  expectFail(preserveAiSearchApply, "AI Search absence preservation in apply mode");
+  assertGetOnly("AI Search absence preservation in apply mode", true);
+
+  // The disabled-maintenance selector verifies the existing Access app by
+  // exact hostname and live ID while preserving its display/session settings.
+  // These values intentionally differ from access.json's normal CREATE shape.
+  function selectPreservedAccessSettings() {
+    const app = state.accessApps.get("existing-owner-app");
+    app.name = "Existing owner entry";
+    app.session_duration = "168h";
+    app.app_launcher_visible = true;
+    state.accessPolicies.get("existing-owner-app")[0].name = "Existing owner allow";
+  }
+  for (const args of [["--check-only"], ["--verify-existing"]]) {
+    await seedExisting();
+    selectPreservedAccessSettings();
+    state.requests.length = 0;
+    const result = await run(accessScript, args, preserveEnv);
+    expectPass(result, `Access maintenance preservation ${args[0]}`);
+    assertGetOnly(`Access maintenance preservation ${args[0]}`);
+    if (args[0] === "--check-only") {
+      const plan = JSON.parse(result.stdout);
+      assert.equal(plan.application.name, "Existing owner entry");
+      assert.equal(plan.application.session_duration, "168h");
+      assert.equal(plan.application.app_launcher_visible, true);
+      assert.equal(plan.policy.name, "Existing owner allow");
+      assert.equal(plan.policy.disposition, "PRESERVE");
+    } else {
+      const receipt = JSON.parse(await readFile(join(isolatedStateDirectory, "cloudflare-access-receipt.json"), "utf8"));
+      assert.equal(receipt.application.name, "Existing owner entry");
+      assert.equal(receipt.policy.name, "Existing owner allow");
+    }
+  }
+
+  // A receipt pins the application identity. A replacement application on
+  // the same host cannot silently become the maintenance target.
+  await seedExisting();
+  expectPass(await run(accessScript, ["--verify-existing"], verifyEnv), "normal Access receipt setup");
+  state.accessApps.get("existing-owner-app").id = "replacement-owner-app";
+  state.requests.length = 0;
+  const replacedApp = await run(accessScript, ["--verify-existing"], preserveEnv);
+  expectFail(replacedApp, "maintenance Access app id differs from receipt");
+  assertGetOnly("maintenance Access app id differs from receipt");
+
+  const maintenanceAccessDriftCases = [
+    ["extra policy", () => state.accessPolicies.get("existing-owner-app").push({
+      id: "extra-policy", name: "Extra owner path", decision: "allow", include: [{ everyone: {} }], exclude: [], require: [],
+    })],
+    ["extra email", () => state.accessPolicies.get("existing-owner-app")[0].include.push({ email: { email: "other@example.test" } })],
+    ["service-token selector", () => { state.accessPolicies.get("existing-owner-app")[0].include = [{ service_token: { token_id: "token-fixture" } }]; }],
+    ["bypass decision", () => { state.accessPolicies.get("existing-owner-app")[0].decision = "bypass"; }],
+    ["exclude rule", () => { state.accessPolicies.get("existing-owner-app")[0].exclude = [{ everyone: {} }]; }],
+    ["require rule", () => { state.accessPolicies.get("existing-owner-app")[0].require = [{ email: { email: ownerEmail } }]; }],
+    ["multi-host app", () => state.accessApps.get("existing-owner-app").destinations.push({ type: "public", uri: "other.example.test" })],
+    ["second app domain without destination", () => state.accessApps.set("competing-owner-app", {
+      id: "competing-owner-app", name: "Contradictory fixture", type: "self_hosted",
+      domain: accessHostname, destinations: [],
+    })],
+    ["wrong app type", () => { state.accessApps.get("existing-owner-app").type = "bookmark"; }],
+    ["wrong app hostname", () => { state.accessApps.get("existing-owner-app").domain = "other.example.test"; }],
+    ["wrong audience", () => { state.accessApps.get("existing-owner-app").aud = "other-audience"; }],
+    ["malformed duration", () => { state.accessApps.get("existing-owner-app").session_duration = "forever"; }],
+  ];
+  for (const [label, change] of maintenanceAccessDriftCases) {
+    await seedExisting();
+    selectPreservedAccessSettings();
+    change();
+    state.requests.length = 0;
+    const result = await run(accessScript, ["--verify-existing"], preserveEnv);
+    expectFail(result, `maintenance Access ${label}`);
+    assertGetOnly(`maintenance Access ${label}`);
+  }
+
+  // The maintenance selector does not relax the normal desired-state path.
+  await seedExisting();
+  selectPreservedAccessSettings();
+  state.accessApps.get("existing-owner-app").name = `Eliot Research: ${accessHostname}`;
+  const normalAccessDrift = await run(accessScript, ["--verify-existing"], verifyEnv);
+  expectFail(normalAccessDrift, "normal Access provisioning rejects preserved setting drift");
+  assertGetOnly("normal Access provisioning rejects preserved setting drift");
+
+  for (const script of [accessScript, coreScript]) {
+    for (const transport of ["gemini-mcp", "unknown", null]) {
+      state.workerGoogleTransport = transport;
+      state.requests.length = 0;
+      expectFail(await run(script, ["--verify-existing"], preserveEnv), `${script} unconfirmed disabled`);
+      assertGetOnly(`${script} unconfirmed disabled`);
+    }
+    for (const args of [[], ["--verify-existing"]]) {
+      state.requests.length = 0;
+      expectFail(await run(script, args, { ...preserveEnv,
+        ELIOTR_MAINTENANCE_PRESERVE_GOOGLE_TRANSPORT: args.length ? "gemini-mcp" : "disabled" }),
+      `${script} enabling or mutation-mode preservation`);
+      assertGetOnly(`${script} enabling or mutation-mode preservation`, true);
+    }
+  }
+
+  const missingCases = [
+    [coreScript, () => state.d1.delete("eliotr-core")],
+    [coreScript, () => state.r2.delete("eliotr-work")],
+    [coreScript, () => state.queues.delete("eliotr-jobs")],
+    [coreScript, () => rm(join(isolatedStateDirectory, "cloudflare-access-receipt.json"), { force: true }), true],
+    [accessScript, () => state.accessApps.delete("existing-owner-app")],
+    [accessScript, () => state.accessPolicies.set("existing-owner-app", [])],
+    [accessScript, () => state.accessApps.delete("existing-mcp-app")],
+    [accessScript, () => state.accessPolicies.set("existing-mcp-app", [])],
+    [accessScript, () => { state.organization = null; }],
+    ["scripts/provision-ai-search.mjs", () => { state.aiNamespace = null; }],
+    ["scripts/provision-ai-search.mjs", () => state.aiInstances.delete(aiSearchDesired.instances[0].id)],
+    ["scripts/provision-ai-gateways.mjs", () => state.gateways.delete(gatewaysDesired.gateways[0].id)],
+  ];
+  const driftCases = [
+    [coreScript, () => { state.r2.get("eliotr-work").storage_class = "InfrequentAccess"; }],
+    [coreScript, () => { state.d1.get("eliotr-core").uuid = ""; }],
+    [coreScript, () => { state.accessApps.get("existing-owner-app").aud = "substituted-audience"; }],
+    [accessScript, () => { state.accessApps.get("existing-owner-app").session_duration = "48h"; }],
+    [accessScript, () => { state.accessPolicies.get("existing-owner-app")[0].include = [{ email: { email: "other@example.invalid" } }]; }],
+    [accessScript, () => { state.accessApps.get("existing-mcp-app").aud = commonEnv.ELIOTR_ACCESS_AUDIENCE; }],
+    [accessScript, () => { state.accessPolicies.get("existing-mcp-app")[0].decision = "bypass"; }],
+    ["scripts/provision-ai-search.mjs", () => { state.aiInstances.get(aiSearchDesired.instances[0].id).embedding_model = "@cf/incompatible/model"; }],
+    ["scripts/provision-ai-gateways.mjs", () => { state.gateways.get(gatewaysDesired.gateways[0].id).authentication = false; }],
+  ];
+  for (const [kind, cases] of [["missing", missingCases], ["drift", driftCases]]) {
+    for (const [script, change, allowNoReads] of cases) {
+      await seedExisting();
+      if (script === coreScript) expectPass(await run(accessScript, ["--verify-existing"], verifyEnv), "Access authority setup");
+      if (kind === "missing") expectPass(await run(script, ["--check-only"], verifyEnv), "existing-resource preflight");
+      await change();
+      state.requests.length = 0;
+      const result = await run(script, ["--verify-existing"], verifyEnv);
+      expectFail(result, `${script} ${kind}`);
+      assert.match(result.stderr, allowNoReads ? /MCP Access receipt is required/u :
+        kind === "missing" ? /missing resource/u : /drift|stable uuid|audience must differ/iu);
+      assertGetOnly(`${script} ${kind}`, allowNoReads);
+    }
+  }
+  console.log(`- verify-existing: ${provisioners.length} positives, ${missingCases.length} missing, ${driftCases.length} drift, GET-only transport guards: PASS`);
+
   console.log("Cloudflare provisioner mock conformance: PASS");
   console.log("- check-only mutations: 0");
   console.log("- poisoned ambient env: SEALED BEFORE FIRST CALL, zero mutations");
@@ -619,6 +914,11 @@ try {
 } finally {
   await new Promise((resolveClose) => server.close(resolveClose));
   await rm(generatedConfigPath, { force: true });
+  await rm(foundationReceiptPath, { force: true });
+  if (foundationReceiptBackedUp) {
+    await mkdir(dirname(foundationReceiptPath), { recursive: true });
+    await rename(backupFoundationReceiptPath, foundationReceiptPath);
+  }
   await rm(isolatedStateDirectory, { recursive: true, force: true });
   if (generatedConfigBackedUp) {
     await mkdir(dirname(generatedConfigPath), { recursive: true });

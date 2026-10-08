@@ -4,10 +4,10 @@
 > authority map, how to claim work, verification gates and branch discipline. The non-negotiable
 > boundaries are in [AGENTS.md](AGENTS.md).
 
-**Private owner workspace is deployed:** [eliotr-core.kleymor-metal.workers.dev](https://eliotr-core.kleymor-metal.workers.dev).
+**Private owner workspace is deployed** (owner-only URL, not published).
 The live owner path imports and reads TXT, Markdown, PDF and DOCX documents, saves projects,
 supports exact and lexical search, and runs a full scan of the selected scope. Owner research
-executes the 18-stage workflow with Cloudflare `@cf/zai-org/glm-5.3-flash`, saves a DRAFT,
+executes the 18-stage workflow through an owner-qualified model route, saves a DRAFT,
 reopens it from Research history, and verifies its citations against current owner evidence.
 The recorded two-document project run produced four `SUPPORTED` claim assessments while
 retaining incomplete scope coverage. Research drafts can also be saved as Wiki proposals,
@@ -190,10 +190,12 @@ check is not a deployment gate. The ordered closure criteria are maintained in t
 
 ## Continuous integration
 
-Pull-request CI is enabled. It installs the frozen pnpm graph and runs contract fixtures, package
+GitHub Actions are manual-only (`workflow_dispatch`): no automatic PR/push/schedule triggers, per
+owner policy. When dispatched, CI installs the frozen pnpm graph and runs contract fixtures, package
 boundaries, source budgets, work-packet validation, D1 authority fixtures, lint, strict TypeScript,
 unit and Workers-runtime tests, PWA build, generated Cloudflare binding types and a Wrangler deployment
-dry-run. Branch hygiene runs independently on `main`.
+dry-run. Branch hygiene runs independently on `main` when dispatched. See
+[docs/START-HERE.md](docs/START-HERE.md) §6.
 
 Rust gates become mandatory when migration M1 introduces the Cargo workspace. No green local or CI gate
 is represented as live Cloudflare, Google, provider, recovery or workload qualification.

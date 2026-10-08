@@ -42,6 +42,8 @@ const baseEnvironment = {
   ELIOTR_DEPLOYMENT_GENERATION: "git-test",
   ELIOTR_CUSTOM_DOMAIN: "1",
   ELIOTR_ACCESS_HOSTNAME: "research.example.com",
+  ELIOTR_STAGING_TARGET_JSON: JSON.stringify({ protocol: "eliotr.staging-target.v1", isolation: "dedicated-account",
+    account_id: ACCOUNT, protected_account_ids: ["production-test-account"], access_hostname: "research.example.com" }),
   ELIOTR_OWNER_EMAILS: "owner@example.com",
   ELIOTR_ACCESS_TEAM_DOMAIN: "https://team-example.cloudflareaccess.com",
   ELIOTR_ACCESS_AUDIENCE: "test-aud",
@@ -55,10 +57,11 @@ const config = {
     DEPLOYMENT_GENERATION: "git-test", ENVIRONMENT: "staging",
     ACCESS_TEAM_DOMAIN: "https://team-example.cloudflareaccess.com", ACCESS_AUDIENCE: "test-aud",
     ACCESS_SERVICE_PRINCIPALS: "",
+    GOOGLE_EXTERNAL_TRANSPORT: "disabled",
   },
   d1_databases: [
-    { binding: "CORE_DB", database_name: "eliotr-core", database_id: "11111111-1111-4111-8111-111111111111" },
-    { binding: "SEARCH_DB", database_name: "eliotr-search", database_id: "22222222-2222-4222-8222-222222222222" },
+    { binding: "CORE_DB", database_name: "eliotr-core", database_id: "11111111-1111-4111-8111-111111111111", migrations_dir: "../../infra/d1/core/migrations" },
+    { binding: "SEARCH_DB", database_name: "eliotr-search", database_id: "22222222-2222-4222-8222-222222222222", migrations_dir: "../../infra/d1/search/migrations" },
   ],
 };
 const configBytes = Buffer.from(JSON.stringify(config));
@@ -152,6 +155,7 @@ const noBearer = (value, label) => assert.ok(
 function deployHarness(overrides = {}) {
   const calls = [];
   const childTokens = [];
+  const authenticatedTokens = [];
   const logs = [];
   const receipts = [];
   const options = {
@@ -176,12 +180,16 @@ function deployHarness(overrides = {}) {
       }
       return globalThis.Response.json({ trace_id: "trace-test", deployment_generation: "git-test", data: { protocol: "eliotr.capabilities.v1", deployment_generation: "git-test", enabled_slices: ["HEALTH", "ACCESS"], disabled_slices: ["RESEARCH"], exact_evidence_resolution_required: true, transport_completion_is_research_completion: false, ingest_live_qualified: false } });
     },
-    // Injected usage evidence for the preflight seam; SEALED-negative tests
-    // override with [] to prove the fail-closed default is intact.
-    usageProviders: admittedUsageProviders(),
+    // Stop at the first authenticated deployment read. This isolates OAuth
+    // refresh/bearer ordering from later Worker, D1, and deployment gates.
+    readActiveWorker: async ({ env }) => {
+      calls.push("authenticated-worker-read");
+      authenticatedTokens.push(env?.CLOUDFLARE_API_TOKEN ?? null);
+      throw new Error("fixture stopped at authenticated Worker read boundary");
+    },
     ...overrides,
   };
-  return { calls, childTokens, logs, receipts, options };
+  return { calls, childTokens, authenticatedTokens, logs, receipts, options };
 }
 
 const enoentRead = async () => { const error = new Error("missing"); error.code = "ENOENT"; throw error; };
@@ -276,17 +284,13 @@ await check("account verification rejects unrelated-text and ambiguity structura
   }
 });
 
-await check("env snapshot never precedes identity verification in oauth mode", async () => {
-  // Manager repro: the fixture path consumed ELIOTR_TEST_USAGE_SNAPSHOT_JSON
-  // before any credential read or whoami. The gate must verify identity
-  // FIRST even when a snapshot is staged explicitly: zero reads/verifications
-  // is a bypass. Here a valid staged ADMITTED snapshot is supplied via the
-  // explicit `snapshot` option in oauth mode with failing seams — the run
-  // must fail closed on identity, never admit. Ambient
-  // ELIOTR_TEST_USAGE_SNAPSHOT_JSON is never read (poisoned env alone seals).
+await check("OAuth preflight verifies the profile before loading credentials or evaluating a snapshot", async () => {
+  // A staged ADMITTED snapshot cannot bypass identity checks. The official
+  // whoami runs first so it can refresh the profile; only then is the cached
+  // bearer read and the explicit test snapshot evaluated. Ambient
+  // ELIOTR_TEST_USAGE_SNAPSHOT_JSON remains ignored.
   const staged = await admittedSnapshotJson();
-  let credReads = 0;
-  let whoamiCalls = 0;
+  const missingOrder = [];
   const result = await runUsagePreflight({
     env: {
       ELIOTR_CLOUDFLARE_AUTH_MODE: "wrangler-oauth",
@@ -294,16 +298,16 @@ await check("env snapshot never precedes identity verification in oauth mode", a
       CLOUDFLARE_ACCOUNT_ID: ACCOUNT,
     },
     nowMs: NOW,
-    readFile: async () => { credReads += 1; throw Object.assign(new Error("missing"), { code: "ENOENT" }); },
-    getWhoamiOutput: async () => { whoamiCalls += 1; return `Account ${ACCOUNT} via browser OAuth`; },
+    readFile: async () => { missingOrder.push("credential"); throw Object.assign(new Error("missing"), { code: "ENOENT" }); },
+    getWhoamiOutput: async () => { missingOrder.push("whoami"); return `Account ${ACCOUNT} via browser OAuth`; },
     providers: admittedUsageProviders(),
     snapshot: staged,
   }).then(() => assert.fail("must throw on missing credential"), (error) => error);
   assert.ok(["OAUTH_UNAVAILABLE", "OAUTH_EXPIRED"].includes(result.code), `unexpected code ${result.code}`);
-  assert.equal(credReads, 1);
-  assert.equal(whoamiCalls, 0);
-  // And with a readable credential but a wrong-account whoami, the staged
-  // snapshot must still not admit: verification precedes evaluation.
+  assert.deepEqual(missingOrder, ["whoami", "credential"], "whoami must have a chance to refresh before the profile read");
+  // A wrong account is rejected before the credential is loaded or the staged
+  // snapshot is evaluated.
+  let wrongCredentialReads = 0;
   const wrong = await runUsagePreflight({
     env: {
       ELIOTR_CLOUDFLARE_AUTH_MODE: "wrangler-oauth",
@@ -311,52 +315,113 @@ await check("env snapshot never precedes identity verification in oauth mode", a
       CLOUDFLARE_ACCOUNT_ID: ACCOUNT,
     },
     nowMs: NOW,
-    readFile: async () => validToml(),
+    readFile: async () => { wrongCredentialReads += 1; return validToml(); },
     getWhoamiOutput: async () => "Account other-account via browser OAuth",
     providers: admittedUsageProviders(),
     snapshot: staged,
   }).then(() => assert.fail("must throw on wrong account"), (error) => error);
   assert.equal(wrong.code, "OAUTH_ACCOUNT_MISMATCH");
+  assert.equal(wrongCredentialReads, 0);
+
+  let refreshedProfile = validToml(PAST);
+  const refreshOrder = [];
+  const refreshed = await runUsagePreflight({
+    env: {
+      ELIOTR_CLOUDFLARE_AUTH_MODE: "wrangler-oauth",
+      ELIOTR_WRANGLER_CONFIG_FILE: "wrangler-test-default.toml",
+      CLOUDFLARE_ACCOUNT_ID: ACCOUNT,
+    },
+    nowMs: NOW,
+    readFile: async () => { refreshOrder.push("credential"); return refreshedProfile; },
+    getWhoamiOutput: async () => {
+      refreshOrder.push("whoami");
+      refreshedProfile = validToml();
+      return `Account ${ACCOUNT} via browser OAuth`;
+    },
+    providers: admittedUsageProviders(),
+    snapshot: staged,
+  });
+  assert.deepEqual(refreshOrder, ["whoami", "credential"]);
+  assert.equal(refreshed.decision, "ADMITTED");
+  assert.equal(refreshed.capability, null, "an injected snapshot never mints live authority");
 });
 
-await check("OAuth omission selects the live registry and preserves metadata-only inventory", async () => {
+await check("OAuth omission selects inventory and diagnostic sources without restricted billing", async () => {
   const previousFetch = globalThis.fetch;
   const seen = [];
-  globalThis.fetch = async (url) => {
+  const liveAccountId = "cccccccccccccccccccccccccccccccc";
+  const jsonResponse = (payload, status = 200) => new Response(JSON.stringify(payload), {
+    status,
+    headers: { "content-type": "application/json" },
+  });
+  globalThis.fetch = async (url, init = {}) => {
     seen.push(url);
+    if (url.includes("/d1/database/")) {
+      return jsonResponse({ success: true, errors: [], messages: [], result: { uuid: "d1-one", file_size: 8192 } });
+    }
     if (url.includes("/d1/database")) {
-      return { status: 200, json: async () => ({ success: true, result: [{ uuid: "d1-one" }], result_info: { page: 1, per_page: 100, count: 1, total_count: 1 } }) };
+      return jsonResponse({ success: true, errors: [], messages: [], result: [{ uuid: "d1-one" }], result_info: { page: 1, per_page: 100, count: 1, total_count: 1 } });
     }
     if (url.includes("/r2/buckets")) {
-      return { status: 200, json: async () => ({ success: true, result: { buckets: [{ name: "r2-one" }] } }) };
+      return jsonResponse({ success: true, errors: [], messages: [], result: { buckets: [{ name: "r2-one" }] } });
     }
     if (url.includes("/queues")) {
-      return { status: 200, json: async () => ({ success: true, result: [{ queue_id: "queue-one", queue_name: "eliotr-jobs" }], result_info: { page: 1, per_page: 100, count: 1, total_count: 1, total_pages: 1 } }) };
+      return jsonResponse({ success: true, errors: [], messages: [], result: [{ queue_id: "queue-one", queue_name: "eliotr-jobs" }], result_info: { page: 1, per_page: 100, count: 1, total_count: 1, total_pages: 1 } });
     }
     if (url.includes("/ai-search/instances")) {
-      return { status: 200, json: async () => ({ success: true, result: [], result_info: { page: 1, per_page: 100, count: 0, total_count: 0, total_pages: 1 } }) };
+      return jsonResponse({ success: true, errors: [], messages: [], result: [], result_info: { page: 1, per_page: 100, count: 0, total_count: 0, total_pages: 1 } });
+    }
+    if (url.includes("/graphql")) {
+      const query = JSON.parse(init.body).query;
+      const datasets = [
+        "workersInvocationsAdaptive",
+        "d1AnalyticsAdaptiveGroups",
+        "queueMessageOperationsAdaptiveGroups",
+        "durableObjectsInvocationsAdaptiveGroups",
+      ];
+      const dataset = datasets.find((name) => query.includes(name));
+      assert.ok(dataset, "unexpected GraphQL dataset");
+      return jsonResponse({ data: { viewer: { accounts: [{ accountTag: liveAccountId, [dataset]: [] }] } } });
     }
     if (url.includes("/billable/usage")) {
-      return { status: 403, json: async () => ({}) };
+      return jsonResponse({}, 403);
     }
     throw new Error("unexpected preflight URL");
   };
   try {
     const gate = await runUsagePreflight({
-      env: { ...baseEnvironment },
+      env: { ...baseEnvironment, CLOUDFLARE_ACCOUNT_ID: liveAccountId },
       nowMs: NOW,
       readFile: async () => validToml(),
-      getWhoamiOutput: async () => `Account ${ACCOUNT} via browser OAuth`,
+      getWhoamiOutput: async () => `Account ${liveAccountId} via browser OAuth`,
     });
     assert.equal(gate.decision, "SEALED");
+    assert.equal(gate.capability, null);
+    assert.equal(gate.evaluation.unknown.length, 18);
     assert.deepEqual(gate.snapshot.readback.provider_results.map((entry) => entry.group), [
-      "d1-inventory-list", "r2-inventory-list", "queue-inventory-list", "ai-search-inventory-list", "billable-usage",
+      "d1-inventory-list",
+      "d1-storage-diagnostic",
+      "workers-requests-diagnostic",
+      "d1-rows-diagnostic",
+      "queue-ops-diagnostic",
+      "do-requests-diagnostic",
+      "r2-inventory-list",
+      "queue-inventory-list",
+      "ai-search-inventory-list",
     ]);
     assert.equal(gate.snapshot.metrics.ai_search_instances, 0);
     assert.ok(gate.snapshot.readback.provider_results.find((entry) => entry.group === "queue-inventory-list")?.inventory_count === 1);
+    assert.deepEqual(gate.snapshot.readback.provider_results.find((entry) => entry.group === "d1-storage-diagnostic")?.diagnostic_values, { d1_storage_bytes: 8192 });
+    assert.deepEqual(gate.snapshot.readback.provider_errors, [
+      "d1-storage-diagnostic analytics samples are diagnostic-only, never billing authority",
+    ]);
+    for (const key of ["d1_storage_bytes", "workers_requests", "d1_rows_read", "d1_rows_written", "queue_ops", "do_requests"]) {
+      assert.equal(gate.snapshot.metrics[key], "unknown", `${key} diagnostics must not become billing counters`);
+    }
     assert.ok(!gate.snapshot.readback.provider_errors.some((line) => line.includes("authority brand without provenance")));
-    assert.ok(gate.snapshot.readback.provider_errors.some((line) => line.includes("billable-usage failed: AUTH_SCOPE_DENIED")));
     assert.ok(seen.some((url) => url.includes("/queues?page=1&per_page=100")));
+    assert.equal(seen.filter((url) => url.includes("/graphql")).length, 4);
+    assert.ok(!seen.some((url) => url.includes("/billable/usage")), "restricted billable usage endpoint must remain unused");
   } finally {
     globalThis.fetch = previousFetch;
   }
@@ -389,17 +454,9 @@ await check("bearer injection stays in child env memory, verification env stays 
   assert.equal(scrubbed.CLOUDFLARE_ACCOUNT_ID, ACCOUNT);
 });
 
-await check("test-only providers admit evaluation but never authorize deploy apply", async () => {
-  const test = deployHarness();
-  // FIX11 negative (Luna bypass 2): the mocked providers below flow through
-  // the real collector and the real envelope to a fully-known ADMITTED
-  // evaluation — and the exported deploy apply still denies with zero
-  // mutations, because ADMITTED alone never suffices without the
-  // same-process admission capability (which only fresh live collection
-  // mints). Fresh lambdas mirror the harness seams without recording calls,
-  // so the gate-order assertions below observe only the deploy path.
+await check("test-only providers admit evaluation without minting live capability", async () => {
   const gate = await runUsagePreflight({
-    env: { ...test.options.environment },
+    env: { ...baseEnvironment },
     nowMs: NOW,
     readFile: async () => validToml(),
     getWhoamiOutput: async () => `Account ${ACCOUNT} via browser OAuth`,
@@ -408,52 +465,79 @@ await check("test-only providers admit evaluation but never authorize deploy app
   assert.equal(gate.decision, "ADMITTED");
   assert.deepEqual(gate.evaluation.unknown, []);
   assert.equal(gate.capability, null);
-  const error = await deployCloudflare(test.options).then(() => assert.fail("must throw"), (error) => error);
-  assert.match(error.message, /admission capability/u);
-  assert.ok(test.childTokens.length > 0 && test.childTokens.every((token) => token === BEARER));
-  assert.ok(test.calls.indexOf("pnpm check") < test.calls.indexOf("whoami"));
-  assert.ok(!test.calls.includes("archive"), "capability denial archived a receipt");
-  assert.ok(!test.calls.some((call) => call.startsWith("node scripts/provision")), "capability denial ran a provisioner");
-  assert.ok(!test.calls.some((call) => call.includes("d1 migrations apply")), "capability denial applied a migration");
-  assert.ok(!test.calls.some((call) => call.startsWith("GET ")), "capability denial made a remote call");
-  assert.ok(!test.calls.includes("save"), "capability denial saved a receipt");
-  assert.equal(test.receipts.length, 0);
-  noBearer(test.calls, "argv");
-  noBearer(test.logs, "logs");
-  noBearer(test.receipts, "receipts");
-  noBearer(process.argv, "process argv");
-  noBearer(error.message, "error");
+  noBearer(gate.receipt, "test-only receipt");
 });
 
-await check("sealed zero-provider preflight denies before archive and mutation", async () => {
-  const test = deployHarness({ usageProviders: [] });
-  const error = await deployCloudflare(test.options).then(() => assert.fail("must throw"), (error) => error);
-  assert.match(error.message, /SEALED/);
-  assert.match(error.message, /Zero billable bindings/);
-  assert.ok(test.calls.includes("pnpm check") && test.calls.includes("whoami"));
-  assert.ok(!test.calls.includes("archive"), "sealed path archived a receipt");
-  assert.ok(!test.calls.includes("save"), "sealed path saved a receipt");
-  assert.ok(!test.calls.some((call) => call.startsWith("node scripts/provision")), "sealed path ran a provisioner");
-  assert.ok(!test.calls.some((call) => call.startsWith("GET ")), "sealed path made a remote call");
-  assert.equal(test.receipts.length, 0);
-  noBearer(error.message, "error");
+await check("empty provider preflight seals with unknown counters and no capability", async () => {
+  const gate = await runUsagePreflight({
+    env: { ...baseEnvironment },
+    nowMs: NOW,
+    readFile: async () => validToml(),
+    getWhoamiOutput: async () => `Account ${ACCOUNT} via browser OAuth`,
+    providers: [],
+  });
+  assert.equal(gate.decision, "SEALED");
+  assert.equal(gate.capability, null);
+  assert.ok(gate.evaluation.unknown.length > 0);
+  assert.ok(gate.evaluation.reasons.some((reason) => reason.includes("no authoritative aggregate for:")));
+  assert.deepEqual(gate.snapshot.readback.provider_results, []);
+  noBearer(gate.receipt, "empty-provider receipt");
 });
 
-await check("expired oauth blocks before any local gate or mutation", async () => {
+await check("expired oauth remains fail-closed after the late whoami refresh opportunity", async () => {
   const test = deployHarness({ readWranglerFile: async () => validToml(PAST) });
   const error = await deployCloudflare(test.options).then(() => assert.fail("must throw"), (error) => error);
   assert.equal(error.code, "OAUTH_EXPIRED");
-  assert.deepEqual(test.calls, []);
+  assert.ok(test.calls.includes("pnpm check") && test.calls.includes("whoami"), "local gates and profile verification must precede bearer load");
+  assert.ok(!test.calls.some((call) => call.startsWith("GET ")), "expired profile reached an authenticated API read");
+  assert.ok(!test.calls.includes("archive") && !test.calls.includes("save"));
+  assert.equal(test.calls.includes("authenticated-worker-read"), false);
+  assert.ok(test.childTokens.length > 0 && test.childTokens.every((token) => token === null), "local children received a bearer before OAuth verification");
+  assert.deepEqual(test.authenticatedTokens, []);
   assert.equal(test.receipts.length, 0);
   noBearer(error.message, "error");
 });
 
-await check("missing profile means no-auth-no-mutation", async () => {
+await check("missing profile fails after scrubbed account verification without an API request", async () => {
   const test = deployHarness({ readWranglerFile: enoentRead });
   const error = await deployCloudflare(test.options).then(() => assert.fail("must throw"), (error) => error);
   assert.equal(error.code, "OAUTH_UNAVAILABLE");
-  assert.deepEqual(test.calls, []);
+  assert.ok(test.calls.includes("pnpm check") && test.calls.includes("whoami"));
+  assert.ok(!test.calls.some((call) => call.startsWith("GET ")));
+  assert.ok(!test.calls.includes("archive") && !test.calls.includes("save"));
+  assert.equal(test.calls.includes("authenticated-worker-read"), false);
+  assert.ok(test.childTokens.length > 0 && test.childTokens.every((token) => token === null), "local children received a bearer before OAuth verification");
+  assert.deepEqual(test.authenticatedTokens, []);
   assert.equal(test.receipts.length, 0);
+  noBearer(error.message, "error");
+});
+
+await check("late official whoami refreshes an expired cached profile before deploy loads its bearer", async () => {
+  let profile = validToml(PAST);
+  const authOrder = [];
+  let test;
+  test = deployHarness({
+    readWranglerFile: async () => { authOrder.push("credential"); return profile; },
+    runWranglerWhoami: async () => {
+      authOrder.push("whoami");
+      test.calls.push("whoami");
+      profile = validToml();
+      return `Account ${ACCOUNT} via browser OAuth`;
+    },
+  });
+  const error = await deployCloudflare(test.options).then(() => assert.fail("authenticated read boundary should stop the fixture"), (error) => error);
+  assert.deepEqual(authOrder.slice(0, 2), ["whoami", "credential"]);
+  assert.equal(profile, validToml());
+  assert.equal(error.message, "fixture stopped at authenticated Worker read boundary");
+  assert.deepEqual(test.authenticatedTokens, [BEARER], "the first authenticated read must receive the refreshed bearer");
+  assert.ok(test.calls.indexOf("whoami") > test.calls.indexOf("pnpm check"), "all local gates must precede the late whoami call");
+  assert.ok(test.childTokens.length > 0 && test.childTokens.every((token) => token === null), "local children received a bearer before OAuth verification");
+  assert.ok(!test.calls.includes("archive") && !test.calls.includes("save"));
+  assert.ok(!test.calls.some((call) => call.startsWith("node scripts/provision")));
+  assert.ok(!test.calls.some((call) => call.includes("d1 migrations apply")));
+  assert.ok(!test.calls.some((call) => call.startsWith("pnpm exec wrangler deploy")));
+  assert.equal(test.receipts.length, 0);
+  noBearer(test.calls, "argv");
   noBearer(error.message, "error");
 });
 
@@ -465,44 +549,27 @@ await check("wrong profile account fails after gates but before archive and muta
   assert.ok(!test.calls.includes("archive"));
   assert.ok(!test.calls.some((call) => call.startsWith("node scripts/provision")));
   assert.ok(!test.calls.some((call) => call.startsWith("GET ")));
+  assert.equal(test.calls.includes("authenticated-worker-read"), false);
+  assert.ok(test.childTokens.length > 0 && test.childTokens.every((token) => token === null), "local children received a bearer before OAuth verification");
+  assert.deepEqual(test.authenticatedTokens, []);
   assert.equal(test.receipts.length, 0);
   noBearer(test.calls, "argv");
   noBearer(error.message, "error");
 });
 
-await check("staged snapshot admits evaluation but never authorizes deploy apply", async () => {
-  // Staged admission: the snapshot below was produced by the real collector
-  // over the same FOCUS/inventory providers, so the gate evaluates a
-  // genuinely admitted aggregate through the real envelope. It travels via
-  // the explicit `snapshot`/`usageSnapshot` options (test-called builder
-  // path), never ambient env: production CLIs never pass the capability.
-  // FIX11: the ADMITTED label still denies apply without the capability.
+await check("staged snapshot admits evaluation without a production capability", async () => {
+  // The snapshot is produced by the real collector over test-only providers,
+  // then evaluated through the explicit snapshot seam. It never mints a
+  // same-process live collection capability.
   const staged = await admittedSnapshotJson();
   noBearer(staged, "staged snapshot");
-  const test = deployHarness({
-    environment: {
-      ...baseEnvironment,
-      ELIOTR_CLOUDFLARE_AUTH_MODE: undefined,
-      CLOUDFLARE_API_TOKEN: "secret-token",
-    },
-    usageSnapshot: staged,
-    runWranglerWhoami: async () => assert.fail("whoami must not run in api-token mode"),
-  });
-  const gate = await runUsagePreflight({ env: { ...test.options.environment }, nowMs: NOW, providers: test.options.usageProviders, snapshot: staged });
+  const environment = { ...baseEnvironment, ELIOTR_CLOUDFLARE_AUTH_MODE: undefined, CLOUDFLARE_API_TOKEN: "secret-token" };
+  const gate = await runUsagePreflight({ env: environment, nowMs: NOW, providers: admittedUsageProviders(),
+    getWhoamiOutput: async () => assert.fail("whoami must not run in API-token mode"), snapshot: staged });
   assert.equal(gate.decision, "ADMITTED");
   assert.deepEqual(gate.evaluation.unknown, []);
   assert.equal(gate.capability, null);
-  const error = await deployCloudflare(test.options).then(() => assert.fail("must throw"), (error) => error);
-  assert.match(error.message, /admission capability/u);
-  assert.ok(test.childTokens.every((token) => token === "secret-token"));
-  assert.ok(!test.calls.includes("whoami"));
-  assert.ok(!test.calls.includes("archive"), "capability denial archived a receipt");
-  assert.ok(!test.calls.some((call) => call.includes("d1 migrations apply")), "capability denial applied a migration");
-  assert.ok(!test.calls.some((call) => call.startsWith("GET ")), "capability denial made a remote call");
-  assert.ok(!test.calls.includes("save"), "capability denial saved a receipt");
-  assert.equal(test.receipts.length, 0);
-  noBearer(test.receipts, "receipts");
-  noBearer(error.message, "error");
+  noBearer(gate.receipt, "staged-snapshot receipt");
 });
 
 await check("dry run never touches credentials or the network", async () => {

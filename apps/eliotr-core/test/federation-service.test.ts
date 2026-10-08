@@ -13,7 +13,7 @@ import {
   createFederationService,
   type FederationJobRecord,
   type FederationServiceDependencies,
-} from "../src/federation-service.js";
+} from "@eliotr/cloudflare-federation";
 
 const NOW = Date.parse("2026-09-01T20:00:00.000Z");
 const FUTURE = "2026-09-02T20:00:00.000Z";

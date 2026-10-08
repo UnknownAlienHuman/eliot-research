@@ -1,15 +1,15 @@
+import { applyD1Migrations, reset, type D1Migration } from "cloudflare:test";
 import { env } from "cloudflare:workers";
-import { beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { canonicalEvidenceJson, evidenceSha256, createD1EvidenceAuthorityPort, createD1ScopeSnapshotStore, readD1ScopeSnapshot } from "@eliotr/cloudflare-evidence";
 import { scopeSnapshotDigestPayload, scopeSnapshotIdentityPayload } from "@eliotr/domain";
 import type { ScopeSnapshot } from "@eliotr/contracts";
-import { type ScopeRepository } from "../src/scope-service.js";
+import { type ScopeRepository } from "@eliotr/cloudflare-navigation";
 import { createD1ScopeService } from "@eliotr/cloudflare-navigation";
-import initialSchema from "../../../infra/d1/core/migrations/0001_initial.sql?raw";
-import evidenceSchema from "../../../infra/d1/core/migrations/0007_evidence_resolution.sql?raw";
 
 const NOW = Date.parse("2026-09-04T23:00:00.000Z");
-const db = (env as unknown as { CORE_DB: D1Database }).CORE_DB;
+const runtime = env as unknown as { readonly CORE_DB: D1Database; readonly CORE_MIGRATIONS: D1Migration[] };
+const db = runtime.CORE_DB;
 const access = { principal_ref: "owner-1", client_class: "owner_pwa" as const, credential_generation: "credential-1" };
 function authority(): Pick<ScopeRepository, "resolveAtom" | "resolveAuthorityClosure"> {
   return {
@@ -30,27 +30,17 @@ async function load(scope: ScopeSnapshot) {
   if (result === null) throw new Error("expected a persisted snapshot");
   return result;
 }
-function ddl(text: string, table: string): string {
-  const start = text.indexOf(`CREATE TABLE ${table} (`);
-  const end = text.indexOf(") STRICT;", start);
-  if (start < 0 || end < 0) throw new Error(`missing migration table ${table}`);
-  return text.slice(start, end + ") STRICT;".length);
-}
 async function grant(scope: ScopeSnapshot) {
-  await db.prepare("INSERT INTO scope_access_grant VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,'ACTIVE',?10,?11)")
+  await db.prepare("INSERT INTO scope_access_grant (snapshot_id,snapshot_revision,principal_ref,client_class,credential_generation,policy_authority_ref,allowed_use_json,disclosure_ceiling,authorization_receipt_ref,state,expires_at,created_at) " +
+    "VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,'ACTIVE',?10,?11)")
     .bind(scope.snapshot_id, scope.revision, access.principal_ref, access.client_class, access.credential_generation,
       scope.policy_authority_ref, '["research"]', "private", "authorization-1", scope.expires_at, scope.created_at).run();
 }
 
-beforeAll(async () => {
-  // Execute the exact repository table definitions, not a hand-built SQL mock.
-  await db.prepare(ddl(initialSchema, "scope_snapshot")).run();
-  await db.prepare("CREATE UNIQUE INDEX scope_snapshot_digest_unique ON scope_snapshot(snapshot_digest)").run();
-  await db.prepare(ddl(evidenceSchema, "scope_access_grant")).run();
-});
 beforeEach(async () => {
-  await db.prepare("DELETE FROM scope_access_grant").run();
-  await db.prepare("DELETE FROM scope_snapshot").run();
+  // Immutable current-authority baselines/history require a clean local database per case.
+  await reset();
+  await applyD1Migrations(db, runtime.CORE_MIGRATIONS);
 });
 
 describe("ScopeService -> real local D1 -> evidence authority", () => {

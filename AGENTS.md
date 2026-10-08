@@ -9,6 +9,8 @@ This repository is governed by:
 
 - `docs/architecture/ELIOT_RESEARCH.md` for product and authority architecture;
 - `docs/architecture/LANGUAGE_RUNTIME_CONTRACT.md` for language and runtime ownership;
+- [ADR-0007](docs/adr/0007-external-agents-and-cloudflare-evolution.md) for the scoped 2026-09-29
+  external-agent and platform-evolution amendments;
 - `docs/implementation/branch-discipline.md` for branch/worktree lifecycle.
 
 Agents should not reread the whole architecture for normal work. Start from the work packet in
@@ -35,39 +37,58 @@ Agents should not reread the whole architecture for normal work. Start from the 
 
 ## Language and runtime ownership
 
-1. TypeScript permanently owns the Cloudflare control plane: Worker routing, Access, D1/R2/Queues,
+1. TypeScript currently owns the Cloudflare control plane: Worker routing, Access, D1/R2/Queues,
    Workflows, Durable Objects, AI Search, Workers AI/AI Gateway, Analytics Engine, MCP transport,
-   Google orchestration, PWA, Wrangler, and provisioning.
+   Google orchestration, PWA, Wrangler, and provisioning. ADR-0007 permits incremental Rust platform
+   adapters, including a Rust-authored backend; preserve behavior and record each ownership cutover.
 2. Rust owns pure deterministic domain authority: canonicalization, stable IDs, state machines, scope,
    policy/residency invariants, qualification, evidence/coverage dispositions, and algorithmic cores.
 3. SQL owns D1 migrations, constraints, indexes, and executable transaction fixtures.
 4. Pure Rust crates receive explicit bytes/state and perform no network, filesystem, clock, randomness,
    environment, process, or Cloudflare binding access.
-5. The TypeScript↔Rust/Wasm boundary is versioned canonical UTF-8 bytes in and canonical bytes or typed
-   errors out. Cloudflare handles never cross it.
+5. The pure-kernel TypeScript↔Rust/Wasm ABI is versioned canonical UTF-8 bytes in and canonical bytes
+   or typed errors out. Platform I/O belongs to separate adapters, not that kernel ABI.
 6. TypeScript may reject malformed/oversized transport input earlier but may not strengthen a promoted
    Rust result.
 7. Permanent duplicate TypeScript/Rust authority is prohibited. Differential shadow mode is temporary
    and must converge to one owner.
-8. A new production language or a change to this ownership matrix requires a normative ADR.
+8. Record TypeScript/Rust capability ownership under ADR-0007. An additional production language
+   outside the approved runtime roles requires a normative ADR.
+
+## External models and agents
+
+Model providers, agent clients and Google tools are independent choices. Muse may replace Spark;
+no vendor is mandatory. The owner grants the required actions, including production writes or
+administration; no blanket QA-only/staging-only restriction applies. Reuse existing authorization,
+evidence and attempt semantics. See [ADR-0007](docs/adr/0007-external-agents-and-cloudflare-evolution.md)
+for current adapter gaps and the [short runbook](docs/implementation/muse-operator-runbook.md).
 
 ## Swarm edit protocol
 
+The owner's current code-delivery phase is defined in [backend-delivery-plan.md](docs/implementation/backend-delivery-plan.md).
+Its compilation/scoped-lint-first procedure overrides routine test-first/full-suite-per-push defaults
+below until assembly. Preserve all negative/final acceptance criteria and report unexecuted checks as pending.
+
 - Claim exactly one work packet. Edit only its `owned_paths`.
-- One agent = one worktree = one branch = one task.
-- Do not start another task while the current worktree or branch remains open.
-- Merge, quarantine, or delete the branch immediately on completion.
-- At most five non-default branches may exist; a branch without an open PR expires after 24 hours.
+- Owner-directed implementation is on `main` only, without additional worktrees or task branches.
+- One agent holds one checkpoint; finish or explicitly hand it off before taking another.
+- Publish tested commits without rewriting history; preserve concurrent main changes.
+- Branch count, age, and a closed PR never authorize deletion. Automated cleanup requires the exact
+  head already in main, no open PR, no protection, and an expected-head conditional deletion.
 - Do not edit another agent's barrel file, package manifest, migration, or shared fixture unless the
   packet grants ownership.
 - Add implementation behind existing interfaces; do not rename public fields or enums.
-- Keep a source file below 600 lines and a package below 10,000 source lines. Split by capability,
-  not by arbitrary line count.
+- Source-maintainability heuristics: at most 600 physical lines/file and 10,000 lines/package for
+  `.ts/.tsx/.js/.mjs` under `src`, including colocated tests. Raw Worker/PWA source-byte ceilings are
+  600 KiB/2 MiB. `scripts/check-budgets.mjs` defines the counted paths and exclusions. Split by
+  capability, not arbitrary line count; never remove tests or move files merely to game the count.
+  These are not emitted-artifact or platform limits. S90 separately measures the release targets
+  (compressed Worker <= 4 MiB; initial PWA JavaScript <= 600 KiB gzip) and runtime resources.
 - Every mutation implements Intent → Attempt → Receipt → Readback → Reconciliation.
 - Every expensive or retryable operation accepts an idempotency identity and cancellation/budget
   context.
 - Tests must cover the negative case named in the packet, not only the happy path.
-- Finish by running `pnpm check:affected`; after the Cargo workspace lands, Rust changes also run the
+- Finish by running `pnpm check:full`; after the Cargo workspace lands, Rust changes also run the
   complete Cargo gate defined by `LANGUAGE_RUNTIME_CONTRACT.md`.
 - Record commands and results in the PR body.
 
@@ -89,7 +110,8 @@ platform-cloudflare  → application ports
 google-drive-exchange → contracts/domain/policy
 interfaces            → application services
 apps/eliotr-core       → composition root and Cloudflare control plane only
-apps/eliotr-pwa        → contracts + HTTPS API only
+apps/eliotr-pwa        → contracts + browser feature libs + HTTPS API only
+browser feature libs  → contracts + pwa-http-client; Research UI → Source UI
 
 Rust pure crates       → no Cloudflare/runtime dependency
 eliotr-kernel-wasm     → Rust pure crates only
@@ -97,6 +119,12 @@ TypeScript Worker      → versioned Wasm ABI + Cloudflare bindings
 ```
 
 The automated boundary check is authoritative for allowed package imports.
+
+[ADR-0015](docs/adr/0015-browser-capability-libraries.md) permits the finite browser-only
+libraries `pwa-http-client`, `pwa-source-workspace`, `pwa-research-workspace`, and
+`pwa-knowledge-workspace`. The static PWA composes them; they receive no Worker bindings,
+provider credentials, backend authority, or additional deployment. The isolated agent inbox
+retains its standalone build and session rules.
 
 ## Implementation-state gate
 

@@ -5,6 +5,8 @@ import { fileURLToPath } from "node:url";
 import { LOGIN_INSTRUCTION, loadWranglerOAuthCredential, resolveAuthMode,
   scrubTokenEnv, verifyWranglerOAuthAccount, WRANGLER_OAUTH_MODE } from "./lib/cloudflare-wrangler-oauth.mjs";
 import { isUsageAdmissionCapability, runUsagePreflight } from "./lib/cloudflare-usage-admission.mjs";
+import { assertAiSearchPrebillingManifest, consumeAiSearchPrebillingMetadataPost,
+  issueAiSearchPrebillingMetadataCapability } from "./lib/cloudflare-ai-search-prebilling-capability.mjs";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // Isolated state root for tests: ELIOTR_STATE_DIRECTORY overrides the shared
@@ -16,9 +18,19 @@ let token = process.env.CLOUDFLARE_API_TOKEN;
 const apiBase = process.env.CLOUDFLARE_API_BASE_URL ??
   "https://api.cloudflare.com/client/v4";
 const checkOnly = process.argv.includes("--check-only");
+const verifyExisting = process.argv.includes("--verify-existing");
+const prebillingMetadata = process.argv.includes("--prebilling-metadata-v1");
+if (checkOnly && verifyExisting) {
+  console.error("--check-only and --verify-existing cannot be used together");
+  process.exit(2);
+}
+if (prebillingMetadata && (checkOnly || verifyExisting)) {
+  console.error("--prebilling-metadata-v1 is an explicit create mode and cannot be combined with read-only flags");
+  process.exit(2);
+}
 const showHelp = process.argv.includes("--help") || process.argv.includes("-h");
 if (showHelp) {
-  console.log("Usage: scripts/provision-ai-search.mjs [--check-only] [--help]\nProvisions the AI Search namespace and instances from infra/ai-search/instances.json. --check-only prints the plan with zero mutations.");
+  console.log("Usage: scripts/provision-ai-search.mjs [--check-only | --verify-existing | --prebilling-metadata-v1] [--help]\nProvisions the AI Search namespace and instances from infra/ai-search/instances.json. --check-only prints the plan with zero mutations. --verify-existing performs GET-only exact readback and fails if the namespace or any desired instance is missing. --prebilling-metadata-v1 allows only the exact namespace and five empty instance metadata POSTs under verified Wrangler OAuth, fresh complete inventory, and a short capability that expires before 2026-10-31T00:00:00Z.");
   process.exitCode = 0;
 }
 if (!showHelp) {
@@ -38,16 +50,8 @@ if (authMode === WRANGLER_OAUTH_MODE) {
     process.exit(2);
   }
   try {
-    const credential = await loadWranglerOAuthCredential({ env: process.env, now: Date.now() });
-    token = credential.bearer;
-  } catch (error) {
-    console.error(error?.message ?? String(error));
-    process.exit(2);
-  }
-  try {
-    // Official-profile account pin before the first Cloudflare GET. Always
-    // spawns the official `wrangler whoami` with a token-scrubbed env. No
-    // ambient test seam is honored here.
+    // Verify using Wrangler's official OAuth profile first; whoami may refresh
+    // an expired cached token. Only load the resulting bearer afterward.
     const scrubbed = scrubTokenEnv(process.env);
     const result = spawnSync("pnpm", ["exec", "wrangler", "whoami"],
       { cwd: repositoryRoot, env: scrubbed, encoding: "utf8", shell: process.platform === "win32" });
@@ -56,6 +60,8 @@ if (authMode === WRANGLER_OAUTH_MODE) {
       process.exit(2);
     }
     await verifyWranglerOAuthAccount({ expectedAccountId: accountId, getWhoamiOutput: async () => result.stdout ?? "" });
+    const credential = await loadWranglerOAuthCredential({ env: process.env, now: Date.now() });
+    token = credential.bearer;
   } catch (error) {
     console.error(error?.message ?? String(error));
     process.exit(2);
@@ -65,14 +71,10 @@ if (authMode === WRANGLER_OAUTH_MODE) {
   process.exit(2);
 }
 
-// FIX1-B usage-envelope gate (narrow): usage preflight before the first
-// remote mutation. In-process shared runner writes the redacted admission
-// receipt. BLOCKED exits in every mode; any other non-ADMITTED decision
-// (SEALED) exits in apply mode — SEALED never POSTs instance or namespace
-// creates. ADMITTED alone never suffices in apply mode: the same-process
-// admission capability minted by fresh live collection is additionally
-// required. Check-only inspection stays read-only metadata.
-{
+// Default apply retains the fresh live-usage admission fence. The explicit
+// prebilling mode uses a separate native-OAuth, exact-request capability that
+// cannot authorize heavy operations. Read-only modes skip usage collection.
+if (!checkOnly && !verifyExisting && !prebillingMetadata) {
   let usageGate;
   try {
     usageGate = await runUsagePreflight({ env: process.env, nowMs: Date.now(), writeReceipt: true,
@@ -88,19 +90,55 @@ if (authMode === WRANGLER_OAUTH_MODE) {
   }
 }
 
-const desired = JSON.parse(
-  await readFile(
-    new URL("../infra/ai-search/instances.json", import.meta.url),
-    "utf8",
-  ),
+const manifestSource = await readFile(
+  new URL("../infra/ai-search/instances.json", import.meta.url),
+  "utf8",
 );
+const desired = JSON.parse(manifestSource);
+let prebillingCapability = null;
+const prebillingGetPaths = new Set();
+if (prebillingMetadata) {
+  if (authMode !== WRANGLER_OAUTH_MODE) {
+    console.error("--prebilling-metadata-v1 requires verified Wrangler OAuth; static API-token mode is not eligible");
+    process.exit(2);
+  }
+  try {
+    prebillingCapability = await issueAiSearchPrebillingMetadataCapability();
+    assertAiSearchPrebillingManifest(prebillingCapability, manifestSource);
+  } catch (error) {
+    console.error(error?.message ?? String(error));
+    process.exit(2);
+  }
+}
 const headers = {
   Authorization: `Bearer ${token}`,
   "Content-Type": "application/json",
 };
 const enc = encodeURIComponent;
+function prebillingDenial(message) {
+  const error = new Error(message);
+  error.code = "AI_SEARCH_PREBILLING_ADMISSION_DENIED";
+  return error;
+}
 
 async function request(method, path, body, allow404 = false) {
+  if (verifyExisting && method !== "GET") {
+    throw new Error(`--verify-existing permits GET requests only; refused ${method} ${path}`);
+  }
+  if (prebillingMetadata && method !== "GET") {
+    if (method !== "POST" || prebillingCapability === null) {
+      throw prebillingDenial(`--prebilling-metadata-v1 refused out-of-scope ${method} ${path}`);
+    }
+    consumeAiSearchPrebillingMetadataPost(prebillingCapability, {
+      method,
+      path,
+      body,
+      accountId,
+    });
+  }
+  if (prebillingMetadata && method === "GET" && !prebillingGetPaths.has(path)) {
+    throw prebillingDenial(`--prebilling-metadata-v1 refused out-of-scope GET ${path}`);
+  }
   const response = await fetch(`${apiBase}${path}`, {
     method,
     headers,
@@ -149,10 +187,19 @@ function normalizedRetrievalOptions(value) {
   ) {
     return value;
   }
-  return {
-    ...value,
-    boost_by: Array.isArray(value.boost_by) ? value.boost_by : [],
-  };
+  return value.boost_by === undefined ? { ...value, boost_by: [] } : { ...value };
+}
+
+function normalizedIndexingOptions(value) {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return value;
+  }
+  const normalized = { ...value };
+  // Current Cloudflare AI Search OpenAPI documents porter and use_ocr=false
+  // as defaults, and GET may materialize these defaults or omit them.
+  if (normalized.keyword_tokenizer === undefined) normalized.keyword_tokenizer = "porter";
+  if (normalized.use_ocr === undefined) normalized.use_ocr = false;
+  return normalized;
 }
 
 function normalizedEnable(instance) {
@@ -170,7 +217,24 @@ function normalizedEnable(instance) {
   return undefined;
 }
 
+function normalizedSyncInterval(instance) {
+  const configuredSource = ["type", "source", "source_params", "token_id"]
+    .some((key) => instance[key] !== undefined && instance[key] !== null);
+  const configuredPublicEndpoint = ["public_endpoint_id", "public_endpoint_params"]
+    .some((key) => instance[key] !== undefined && instance[key] !== null);
+  const interval = instance.sync_interval ?? null;
+  // Cloudflare's current built-in-storage readback materializes its documented
+  // 21600-second default even though create requests omit sync_interval. Accept
+  // that default only for the source-free, private instance shape in desired
+  // state; configured sources, tokens, and public endpoints remain exact drift.
+  if (interval === 21600 && !configuredSource && !configuredPublicEndpoint) {
+    return null;
+  }
+  return interval;
+}
+
 function normalizedExisting(instance, path) {
+  if (path === "namespace") return instance.namespace === undefined ? desired.namespace : instance.namespace;
   if (path === "embedding_model") {
     return instance.embedding_model ??
       instance.ai_search_model?.embedding_model ??
@@ -189,18 +253,51 @@ function normalizedExisting(instance, path) {
   if (path === "retrieval_options") {
     return normalizedRetrievalOptions(instance.retrieval_options);
   }
-  if (path === "type" || path === "source") return instance[path] ?? null;
+  if (path === "indexing_options") return normalizedIndexingOptions(instance.indexing_options);
+  if (path === "sync_interval") return normalizedSyncInterval(instance);
+  if (path === "type" || path === "source" || path === "source_params" ||
+      path === "token_id" || path === "public_endpoint_id" ||
+      path === "public_endpoint_params") return instance[path] ?? null;
   return readPath(instance, path);
 }
 
+function normalizedExistingForSpec(spec, existing, path) {
+  const actual = normalizedExisting(existing, path);
+  const create = spec.create;
+  if (
+    path === "embedding_model" &&
+    create.embedding_model === undefined &&
+    create.index_method?.vector === false &&
+    existing.index_method?.vector === false &&
+    actual === "@cf/qwen/qwen3-embedding-0.6b"
+  ) return undefined;
+  if (
+    path === "fusion_method" &&
+    create.fusion_method === undefined &&
+    actual === "rrf"
+  ) return undefined;
+  if (
+    path === "reranking_model" &&
+    create.reranking === false &&
+    existing.reranking === false &&
+    create.reranking_model === undefined &&
+    actual === ""
+  ) return undefined;
+  return actual;
+}
+
 function expectedValue(create, path) {
+  if (path === "namespace") return desired.namespace;
   if (path === "custom_metadata") {
     return normalizedMetadata(create.custom_metadata);
   }
   if (path === "retrieval_options") {
     return normalizedRetrievalOptions(create.retrieval_options);
   }
-  if (path === "type" || path === "source") return null;
+  if (path === "indexing_options") return normalizedIndexingOptions(create.indexing_options);
+  if (path === "type" || path === "source" || path === "source_params" ||
+      path === "token_id" || path === "sync_interval" || path === "public_endpoint_id" ||
+      path === "public_endpoint_params") return null;
   return readPath(create, path);
 }
 
@@ -228,7 +325,13 @@ function errorDescription(error) {
 const comparedPaths = [
   "type",
   "source",
+  "source_params",
+  "token_id",
+  "sync_interval",
   "id",
+  "namespace",
+  "public_endpoint_id",
+  "public_endpoint_params",
   "ai_gateway_id",
   "embedding_model",
   "index_method",
@@ -251,8 +354,12 @@ const comparedPaths = [
 function configurationDrift(spec, existing) {
   const drift = [];
   for (const field of comparedPaths) {
+    // Cloudflare's current instance GET schema and examples omit the
+    // create-only `chunk` flag. Compare it whenever a response does expose it;
+    // otherwise the GET route cannot report that setting for verification.
+    if (field === "chunk" && !Object.hasOwn(existing, "chunk")) continue;
     const expected = expectedValue(spec.create, field);
-    const actual = normalizedExisting(existing, field);
+    const actual = normalizedExistingForSpec(spec, existing, field);
     if (!equal(actual, expected)) {
       drift.push({
         field,
@@ -283,17 +390,26 @@ function assertExactNamespace(namespace, phase) {
   ) {
     throw new Error(`AI Search namespace ${phase} is not an object`);
   }
-  if (
-    typeof namespace.id !== "string" ||
-    namespace.id.length < 1 ||
-    namespace.id.length > 256
-  ) {
-    throw new Error(`AI Search namespace ${phase} has an invalid id`);
-  }
+  const drift = [];
   if (namespace.name !== desired.namespace) {
+    drift.push({ field: "name", expected: desired.namespace, actual: stable(namespace.name) });
+  }
+  if (namespace.description !== namespaceDescription) {
+    drift.push({ field: "description", expected: namespaceDescription, actual: stable(namespace.description) });
+  }
+  if (namespace.public_endpoint_id !== undefined && namespace.public_endpoint_id !== null) {
+    drift.push({ field: "public_endpoint_id", expected: null, actual: stable(namespace.public_endpoint_id) });
+  }
+  if (namespace.public_endpoint_params !== undefined && namespace.public_endpoint_params !== null) {
+    drift.push({ field: "public_endpoint_params", expected: null, actual: stable(namespace.public_endpoint_params) });
+  }
+  if (typeof namespace.created_at !== "string" || !Number.isFinite(Date.parse(namespace.created_at))) {
+    drift.push({ field: "created_at", expected: "valid date-time", actual: stable(namespace.created_at) });
+  }
+  if (drift.length > 0) {
     throw new Error(
-      `AI Search namespace ${phase} returned ${String(namespace.name)} ` +
-        `instead of ${desired.namespace}`,
+      `AI Search namespace ${phase} differs from the requested namespace. ` +
+        `Drift: ${JSON.stringify(drift, null, 2)}`,
     );
   }
 }
@@ -364,7 +480,16 @@ const namespacePath =
   `/accounts/${enc(accountId)}/ai-search/namespaces/${enc(desired.namespace)}`;
 const namespaceCollectionPath =
   `/accounts/${enc(accountId)}/ai-search/namespaces`;
+if (prebillingMetadata) {
+  prebillingGetPaths.add(namespacePath);
+  for (const spec of desired.instances) {
+    prebillingGetPaths.add(`${namespacePath}/instances/${enc(spec.id)}`);
+  }
+}
 const namespace = await request("GET", namespacePath, undefined, true);
+if (verifyExisting && namespace === null) {
+  throw new Error(`--verify-existing found missing resource: AI Search namespace ${desired.namespace}`);
+}
 let namespaceDisposition;
 if (namespace === null && checkOnly) {
   console.log(
@@ -395,6 +520,7 @@ if (namespace === null) {
       description: namespaceDescription,
     });
   } catch (error) {
+    if (error?.code === "AI_SEARCH_PREBILLING_ADMISSION_DENIED") throw error;
     createError = error;
   }
 
@@ -430,6 +556,9 @@ for (const spec of desired.instances) {
     receipts.push({ id: spec.id, disposition: "VERIFIED" });
     continue;
   }
+  if (verifyExisting) {
+    throw new Error(`--verify-existing found missing resource: AI Search instance ${spec.id}`);
+  }
   if (checkOnly) {
     receipts.push({ id: spec.id, disposition: "CREATE" });
     continue;
@@ -439,6 +568,7 @@ for (const spec of desired.instances) {
   try {
     await request("POST", `${namespacePath}/instances`, spec.create);
   } catch (error) {
+    if (error?.code === "AI_SEARCH_PREBILLING_ADMISSION_DENIED") throw error;
     createError = error;
   }
 

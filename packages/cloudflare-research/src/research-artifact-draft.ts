@@ -24,7 +24,7 @@ import type { CloudflareEvidenceResolver, NavigationReadAuthority } from "@eliot
 import { canonicalDigest } from "@eliotr/platform-cloudflare";
 import { decodeModelGatewayBody } from "@eliotr/cloudflare-ai";
 import { encodeArtifactDraftVerification, type ArtifactDraftSemanticAudit } from "@eliotr/cloudflare-artifacts";
-import { decodeSynthesisSectionCandidateV1, SynthesisClaimsCandidateError, type SynthesisSectionCandidateV1 } from "@eliotr/research";
+import { decodeSynthesisSectionCandidateV1, SynthesisClaimsCandidateError, type SynthesisSectionCandidateV1, type NormalizedSynthesisClaims } from "@eliotr/research";
 import { validateCoverageReceipt as validateDomainCoverageReceipt } from "@eliotr/domain";
 import {
   createArtifactDraftStore,
@@ -34,6 +34,7 @@ import {
 } from "./artifact-draft.js";
 import type { ResearchEvidencePack } from "./research-reference-manifest.js";
 import type { ResearchSynthesisOutputReadback } from "./research-synthesis-output-reader.js";
+import { artifactStatementLabels } from "./artifact-statement-labels.js";
 
 export interface ResearchArtifactDraftMaterializationInput {
   readonly database: D1Database;
@@ -54,6 +55,9 @@ export interface ResearchArtifactDraftMaterializationInput {
   readonly normalized_synthesis?: {
     readonly section_text: string;
     readonly cited_handle_refs: readonly VersionedRef[];
+    /** Present on the committed audited path; legacy callers retain their prior shape. */
+    readonly claims?: NormalizedSynthesisClaims["claims"];
+    readonly normalization_binding_sha256?: string;
   };
   /** V3 materialization must fail closed when its normalized V2 readback is absent. */
   readonly require_v2_synthesis?: boolean;
@@ -315,10 +319,39 @@ function requireCurrentEvidenceAuthority(
   }
 }
 
+function auditedStatementLabels(
+  normalized: NonNullable<ResearchArtifactDraftMaterializationInput["normalized_synthesis"]>,
+  audit: ArtifactDraftSemanticAudit,
+): ArtifactSectionRevision["statement_labels"] {
+  const claims = normalized.claims;
+  if (claims === undefined || claims.length === 0 || claims.length !== audit.claims.length ||
+      !/^[a-f0-9]{64}$/u.test(normalized.normalization_binding_sha256 ?? "") ||
+      normalized.normalization_binding_sha256 !== audit.normalization_binding_sha256) {
+    fail("RESEARCH_ARTIFACT_DRAFT_EVIDENCE_INVALID", "Claim audit is not bound to the normalized claim set");
+  }
+  const byRef = new Map(claims.map((claim) => [refKey(claim.claim_ref), claim]));
+  if (byRef.size !== claims.length || new Set(claims.map((claim) => claim.claim_ref.id)).size !== claims.length ||
+      new Set(audit.claims.map((claim) => claim.claim_ref.id)).size !== audit.claims.length) {
+    fail("RESEARCH_ARTIFACT_DRAFT_EVIDENCE_INVALID", "Claim audit contains duplicate statement identities");
+  }
+  return artifactStatementLabels(audit.claims.map((claim) => {
+    const expected = byRef.get(refKey(claim.claim_ref));
+    if (expected === undefined || expected.text !== claim.claim_text || expected.text_digest !== claim.claim_text_digest ||
+        !["observation", "interpretation", "assumption", "recommendation"].includes(expected.kind) ||
+        canonicalEvidenceJson(expected.support_handle_refs) !== canonicalEvidenceJson(claim.support_handle_refs) ||
+        canonicalEvidenceJson(expected.counterevidence_handle_refs) !== canonicalEvidenceJson(claim.counterevidence_handle_refs)) {
+      fail("RESEARCH_ARTIFACT_DRAFT_EVIDENCE_INVALID", "Claim audit differs from the normalized statement");
+    }
+    return { claim_id: claim.claim_ref.id, claim_kind: expected.kind, disposition: claim.disposition };
+  }));
+}
+
 /** Converts one committed SYNTHESIZE output into one DRAFT section. */
 export async function materializeResearchArtifactDraft(input: ResearchArtifactDraftMaterializationInput): Promise<PrepareArtifactDraftResult> {
   /* Snapshot the optional server-owned receipt before any awaited readback. */
   const coverageReceipt = snapshotCoverageReceipt(input.coverage_receipt);
+  const normalizedSynthesis = input.normalized_synthesis === undefined ? undefined
+    : deepFreeze(JSON.parse(canonicalEvidenceJson(input.normalized_synthesis)) as NonNullable<ResearchArtifactDraftMaterializationInput["normalized_synthesis"]>);
   const claimAudit = input.claim_audit === undefined ? undefined
     : JSON.parse(canonicalEvidenceJson(input.claim_audit)) as ArtifactDraftSemanticAudit;
   const readback = input.synthesis_readback;
@@ -338,11 +371,11 @@ export async function materializeResearchArtifactDraft(input: ResearchArtifactDr
   } catch (cause) {
     fail("RESEARCH_ARTIFACT_DRAFT_EVIDENCE_INVALID", `SYNTHESIZE gateway output is invalid: ${cause instanceof Error ? cause.message : "decode failed"}`);
   }
-  if (input.require_v2_synthesis === true && input.normalized_synthesis === undefined) {
+  if (input.require_v2_synthesis === true && normalizedSynthesis === undefined) {
     fail("RESEARCH_ARTIFACT_DRAFT_INPUT_INVALID", "V2 synthesis readback is required for this workflow");
   }
-  const candidate = input.normalized_synthesis ?? decodeSynthesisSectionCandidate(assistantContent);
-  if (claimAudit !== undefined && (input.normalized_synthesis === undefined ||
+  const candidate = normalizedSynthesis ?? decodeSynthesisSectionCandidate(assistantContent);
+  if (claimAudit !== undefined && (normalizedSynthesis === undefined ||
       claimAudit.synthesis_output_sha256 !== readback.output.output_sha256)) {
     fail("RESEARCH_ARTIFACT_DRAFT_EVIDENCE_INVALID", "Claim audit is not bound to normalized synthesis");
   }
@@ -396,7 +429,9 @@ export async function materializeResearchArtifactDraft(input: ResearchArtifactDr
   if (Object.values(input.section.statement_labels).some((label) => label !== "UNRESOLVED")) {
     fail("RESEARCH_ARTIFACT_DRAFT_INPUT_INVALID", "DRAFT section labels require semantic verification before promotion");
   }
-  if (input.navigation.access.principal_ref !== input.intent.principal_ref || input.navigation.access.client_class !== "owner_pwa") {
+  const statementLabels = claimAudit === undefined ? input.section.statement_labels
+    : auditedStatementLabels(normalizedSynthesis as NonNullable<typeof normalizedSynthesis>, claimAudit);
+  if (input.navigation.access.principal_ref !== input.intent.principal_ref || !["owner_pwa", "trusted_agent", "named_api_client"].includes(input.navigation.access.client_class)) {
     fail("RESEARCH_ARTIFACT_DRAFT_AUTHORITY_STALE", "draft authority is not owner-bound");
   }
   let initialGrant;
@@ -455,6 +490,7 @@ export async function materializeResearchArtifactDraft(input: ResearchArtifactDr
   });
   const draftSection: ArtifactSectionRevision = {
     ...input.section,
+    statement_labels: statementLabels,
     body_sha256: sectionSha256,
     verification_receipt_ref: verification.section_verification_ref,
   };

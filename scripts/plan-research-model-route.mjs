@@ -29,7 +29,7 @@ async function main() {
       requiredKeys.some((key) => !Object.prototype.hasOwnProperty.call(input, key)) ||
       Object.keys(input).some((key) => !allowedKeys.has(key))) throw new Error("Route plan has missing or unknown fields");
   const { createResearchOwnerRoutePlan } = await loadCompiledWorkspaceModule(
-    "apps/eliotr-core/dist/research-owner-route-plan.js",
+    "packages/cloudflare-research-configuration/dist/research-owner-route-plan.js",
   );
   const plan = await createResearchOwnerRoutePlan(input);
   await mkdir(dirname(outputPath), { recursive: true });

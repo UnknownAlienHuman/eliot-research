@@ -1,11 +1,6 @@
 name: branch-hygiene
 
 on:
-  push:
-    branches:
-      - main
-  schedule:
-    - cron: "17 * * * *"
   workflow_dispatch:
 
 permissions:
@@ -27,7 +22,7 @@ jobs:
           node-version: 22
       - name: Verify branch-hygiene planner
         run: node scripts/test-branch-hygiene.mjs
-      - name: Delete closed, expired and excess quarantine branches
+      - name: Remove only confirmed integrated, unprotected heads
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: node scripts/branch-hygiene.mjs

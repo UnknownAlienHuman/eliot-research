@@ -1,5 +1,57 @@
 # Implementation gap register
 
+## Owner configuration checkpoint — 2026-10-03
+
+The current source assembly adds owner model catalog/project revisions, durable
+v2 spend/report choices, immutable run configuration, verified Managed OAuth
+document reading, managed projection metadata correction and encrypted offsite
+body/restore-control storage. These changes do not promote their containing
+slices to LIVE. Actual checks and remaining deployed functional acceptance are
+recorded in [product-resume-2026-10-03.md](product-resume-2026-10-03.md).
+The one-source shadow Search diagnostic has no generation qualification or
+promotion authority. Full S1 quality evaluation, dedicated MCP connection and
+production restore/erasure closure remain open.
+
+The October 5 source checkpoint adds a current restore permission installer,
+read-only verifier and atomic permission/revocation/lease check in the primary
+coordinator D1. Its target profile remains separately pinned; no live permission
+or production restore caller is installed. Offsite expiry/purge replay now
+includes the complete manifest-plus-payload part set and rejects incomplete,
+extra or unverified committed checkpoints before provider effects. Primary local
+backup-part cleanup and pre-claim orphan tracking remain missing; the production
+`part_sink` bucket binding is not established, and offsite absence does not prove
+absence in that local store;
+later-purge sanitation, restored read re-admission and full O3/O4 acceptance
+remain open. Source components do not promote a contour to LIVE.
+
+On October 5 at published source `075f32d7`, one existing native local Workflow
+case completed all 18 stages and read the DRAFT report, cited handle, history and
+unchanged replay with two synthetic model responses. The populated Native
+migration/refusal case also passed. PWA/Worker dry-run assembly and local gzip
+size limits passed. This does not qualify live models, browser/MCP operation,
+the historical RECONCILE failure cause or full S92; launch-code still blocks on
+disabled ERASURE and RETRIEVAL. See the [delivery plan](backend-delivery-plan.md)
+for the exact checks and remaining acceptance.
+
+## S19 code checkpoint — transient Research reconnect (2026-09-25)
+
+The PWA now separates in-tab question/scope/run intent from protected response data. Temporary
+network/health loss clears reports, history and evidence but retains the existing run and request keys.
+Reconnect verifies the same owner via the existing session GET before reading that run, without
+resubmitting Research or uploads. Auth/identity/deployment changes and disposal still clear input.
+Unconfirmed starts allow only explicit unchanged-key retries; no browser disk persistence or automatic
+write retry is introduced. Production compilation/lint only; actual browser/authorization and uncertain
+acknowledgement acceptance remains pending under #211. This does not qualify other launch blockers.
+
+## S27 checkpoint — integration-proven branch cleanup (2026-09-19)
+
+The former count/age/closed-PR deletion rules are removed under the owner's explicit direction.
+`eliotr.branch-hygiene.v2` permits cleanup only for an exact head proven in current main, with no open
+PR or protection, repeat observations and a conditional Git deletion against that SHA. A real local
+Git race test confirms a newly advanced head survives. Agent implementation remains main-only.
+This procedural checkpoint does not qualify product launch, erase other code gaps, or approve live deployment.
+
+
 This register prevents agents from confusing broad architecture coverage with executable coverage.
 It supplements the per-agent packets; it does not create a second ownership system. The dependency order,
 production definition and final exit evidence are specified in
@@ -46,8 +98,8 @@ at `2026-09-14 09:59:54` UTC (`39ffd48`). The owner browser admitted a replaceme
 retained both LIVE revisions and two project memberships, and rejected a stale second form.
 D1 recorded SOURCE_UPDATED sequence 5, revision 2. Historical report reopening requires
 the follow-up correction described in the stop checkpoint; this is not whole-project acceptance.
-The selected model is Cloudflare `@cf/zai-org/glm-5.3-flash`; both installed routes use
-`owner-cloudflare-glm53-v6`. Run credentials are installed. Automatic qualification renewal is
+The selected model is an owner-chosen Workers AI model; exact identifiers remain in
+operator configuration. Both installed routes use version `v6`. Run credentials are installed. Automatic qualification renewal is
 implemented, but its live Worker path still requires the missing `ELIOTR_MODEL_GATEWAY_READ_TOKEN`.
 Fresh v6 synthesis and audit proofs were promoted on September 14 with a seven-day lifetime through
 September 21, 03:10 UTC; the deployed PWA showed READY TO RUN with Start research enabled.
@@ -66,6 +118,7 @@ the DRAFT is accepted. Invalid model audit observations are discarded as a whole
 
 | Priority | Gap | Existing owner | Closure evidence |
 |---|---|---|---|
+| P1 | S17 runtime failure classification, per-attempt first cause and run first/latest provenance are implemented through migration0083 and failure-status v2/PWA. Unknown or unretained legacy causes remain unknown; no change to retry, budget, disposition or execution authority. | ER-09, ER-24, ER-25 | Compile/static review only; actual preparation→Workflow→status injection, recovery/concurrency and payload-redaction acceptance remain pending in #209. See `workflow-checkpoints.md`. |
 | P1 | The owner document-to-DRAFT loop and PWA Markdown download have real Cloudflare/browser receipts. Remaining work includes automatic qualification renewal with its route-read credential, representative-corpus quality/recovery acceptance, and accepted report publication. | ER-21, ER-24, ER-25, ER-11 | Preserve the successful runs and byte-verified report/source/export readbacks in local-launch.md; complete renewal, quality, replay/revocation and publication requirements. Never promote ENGINE_COMPLETED or an UNRESOLVED DRAFT to verified research completion. |
 | P1 | Local signed owner bridge, explicit read-policy command and guarded initial immutable-import namespace setup are implemented; real Access login qualification and complete populated owner loops remain open | ER-44, ER-43, ER-24, ER-25, ER-26 | signed-verifier, loopback session/CSRF/logout and policy CAS tests; retain actual owner login and finish full source-to-evidence loops; see `local-launch.md` |
 | P1 | Deployment HTTP verification and release ordering are implemented but not live-qualified; complete binding/version attestation is still missing | ER-26, ER-27 | retain real generation-bound authenticated smoke, full binding/version readback and failure/redeploy receipts; see `deployment-audit-2026-09-04.md` |
@@ -78,16 +131,16 @@ the DRAFT is accepted. Invalid model audit observations are discarded as a whole
 | P1 | Raw capture, durable one-attempt conversion, owner admission and active Library readiness are composed locally; focused actual scheduled outbox-to-Queue-to-projection-to-browser search passed; complete owner lifecycle and live provider qualification remain open | ER-05, ER-14, ER-16, ER-24, ER-25, ER-27, ER-29, ER-37, ER-38 | retain local Worker/D1/R2 admission, replay and witness rollback; focused cdb95d93 proves actual Queue delivery, R2 projection and exact-byte Chromium FAST_SEARCH with honest managed-index degradation; finish both operating-system owner suites, then qualify managed conversion and deployed storage; recorded conversion output is not a live Workers AI receipt |
 | P1 | Governed bundle ingest includes current-policy continuation and transaction-time revocation guards; remote qualification remains open | ER-13, ER-14, ER-21, ER-24, ER-29, ER-37 | deployed owner/service prepare, real multipart R2 readback/promotion, remote guarded D1 commit, duplicate/lost-ACK and Queue projection receipts |
 | P1 | Worker composition and Access dispatch are implemented but not live-qualified | ER-17, ER-21, ER-24, ER-26 | deployed owner JWT, service-token class denial/allow fixtures and remote D1 catalog readback |
-| P1 | The selected `GOOGLE_EXTERNAL_TRANSPORT=gemini-mcp` Workspace profile has strict v2 server-issued plans and append-only D1 candidate observations with exact historical replay; authenticated Workspace action/readback and source-byte admission remain open. Catalog is withheld until explicit service-scope read authority exists | ER-17, ER-18, ER-20, ER-24, ER-26, ER-36 | retain local Worker/D1 ledger receipts and v1 compatibility; generate and verify dedicated MCP Access runtime authority on the existing hostname, qualify initialize/tools/list/tools/call and authenticated Workspace readback, then retain a separate ELIOT byte-admission/reconciliation receipt; Google Cloud and custom OAuth setup are not part of this selected profile |
+| P1 | The selected `GOOGLE_EXTERNAL_TRANSPORT=gemini-mcp` Workspace profile has strict v2 server-issued plans and append-only D1 candidate observations with exact historical replay; authenticated Workspace action/readback and source-byte admission remain open. Service-token project catalog uses the S10 owner-issued grant backend and Connections manages grants. S11 adds service-token HTTP FAST_SEARCH and separately permitted query-derived evidence reads with migration0073; S12 adds HTTP reads of grantor-authored explicit-project reports/citations with migration0074; S13 connects those existing query/read services to service-token MCP tools; known owner-project run status and separately authorized completed-report reference discovery are also composed (compilation/static review only); known owner-project cancellation is composed through the shared durable transition and service-token MCP; sponsored recovery of the same owner-project run is composed with migration0075, fingerprint-bound owner approval and the original W2/W3 budgets; exploratory machine creation and same-client/original-grant cancel/recover are composed with migrations0076/0077; historical machine status/report reads are composed with migration0078 without renewing execution; migration0079 adds independent original-grantor owner saved-draft discovery, report/section/citation reads and existing Markdown export; migration0080 composes independent owner machine-run list/status/cancel/recover and PWA controls; migration0081 composes same-service HTTP/MCP append-only project attachment with independent grantor source authority and immutable actor/grant-bound receipts; migration0082 composes namespace-delegated immutable normalized ingestion through the existing HTTP pipeline and six MCP metadata adapters, with exact original-grant and namespace-policy fences; attachment-only namespace ceilings are enforced independently of import rights; managed-OAuth delegation and native acceptance remain open | ER-17, ER-18, ER-20, ER-24, ER-26, ER-36 | retain local Worker/D1 ledger receipts and v1 compatibility; generate and verify dedicated MCP Access runtime authority on the existing hostname, qualify initialize/tools/list/tools/call and authenticated Workspace readback, then retain a separate ELIOT byte-admission/reconciliation receipt; Google Cloud and custom OAuth setup are not part of this selected profile |
 | P1 | D1 outbox, Queue inbox and projection acceptance are implemented but not live-qualified | ER-13, ER-15, ER-24 | remote Queue lost-ACK, duplicate delivery, poison message, DLQ and restart receipts |
 | P1 | The deployed owner 18-stage ResearchWorkflow now has actual project-scoped REPORT/AUDIT execution, saved DRAFT readback and four SUPPORTED claim assessments. Coverage remains incomplete. Branch scheduling, notification, retention/restore, representative-corpus quality and recovery qualification remain open. | ER-09, ER-10, ER-13, ER-16, ER-24 | Preserve run `65c62850c6f012ddc67340faf6d2fa4bcde6354d1ba53bd8` at `a68e21c`, exact provider/Stage14 hashes and source readback in `live-document-project-acceptance-2026-09-14.md`; complete the remaining lifecycle and quality requirements without treating engine completion as full research completion. |
 | P1 | Managed search response needs strict locator decoding before canonical resolution | ER-06, ER-07, ER-16 | oversized/malformed/fake-handle fixtures; exact resolver required |
-| P1 | Scope authority and explicit read grants are composed for owner metadata orientation and bounded FAST_SEARCH; full research integration and federation live qualification remain open | ER-10, ER-24, ER-30 | retain remote policy/grant/currentness receipts and complete non-metadata product paths |
+| P1 | Scope authority and explicit read grants are composed for owner metadata orientation and bounded FAST_SEARCH; S11 adds immutable delegation-revision scopes for service-token HTTP FAST_SEARCH and query-derived verify/open. S12 adds grantor-authored explicit-project report/section/citation reads; S13 reuses them for service-token MCP query/read tools; S11 also composes known owner-project run status with separate report-reference authorization; exploratory machine execution and its original-client controls are composed with migrations0076/0077; machine historical reads and independent original-grantor owner saved-report reads are composed with migrations0078/0079; owner machine-run management and PWA Stop/Recover are composed with migration0080; managed-OAuth delegation and federation live qualification remain open | ER-10, ER-24, ER-30 | retain remote policy/grant/currentness receipts and complete non-metadata product paths |
 | P1 | Owner metadata Corpus Lens, normalized N1 structural maps, and the admitted table-cell native coordinate-map adapter are locally executable; native page/region/code precision, full structural expansion, Atlas and source-span evidence navigation remain incomplete | ER-06, ER-07, ER-24, ER-31, ER-39 | retain the Q1 import→R2/D1 normalized and table-cell map readbacks; complete exact source-span/Atlas paths, full query retrieval and retained remote receipts; see `local-launch.md` |
 | P1 | Owner REPORT admission, semantic audit, saved DRAFT bytes and claim-to-citation readback have bounded live evidence. Wiki proposals can be created from research, manually reviewed, published, edited through a separate revision and reopened with preserved history; accepted artifact publication and dependency invalidation remain open. Artifact-draft, research-completed and Wiki-publication change producers are atomic in migrations `0060`–`0062`, while source admitted/updated/erasure producers and the remaining feed scope remain open. | ER-11, ER-12, ER-21, ER-24 | Retain the actual report/audit/citation and owner Wiki publication/edit receipts in `live-document-project-acceptance-2026-09-14.md`. Manual Wiki publication admits server-owned review with currentness checked in the head-CAS transaction; complete accepted report semantics and the update/purge/change lifecycle. |
 | P1 (unselected profile) | The separate server-owned `drive-exchange` profile remains incomplete: bounded Sheet/changes REST, contribution guards, encrypted D1 credential refresh/rotation, internal first-connection OAuth admission and owner-only OAuth begin/callback HTTP/PWA exist. Provisioning, Docs/export/publication and runtime composition remain missing. Durable leased cursor polling with ID/hash dedup and frozen-envelope tamper audit exists (`reconciler.test.ts`, 10 real-D1 cases). This legacy path is not a prerequisite for the selected `gemini-mcp` Workspace profile and must not trigger Google Cloud or custom OAuth setup | ER-18, ER-19, ER-20, ER-24, ER-26 | retain the unfinished Drive Exchange work for explicit future profile selection; the active Spark/Antigravity candidate-admission and readback requirements are tracked separately above; `drive-rest.md`, `drive-credentials.md`, `drive-oauth-admission.md`, `canonical-alignment.md` |
 | P2 | Local preparation, signed Access browser bridge and explicit read-policy setup are implemented; live owner login is not yet qualified | ER-00, ER-26 | real owner/IdP session and current namespace-policy receipt, no auth bypass; `local-launch.md` |
-| P2 | Backup/restore export exists only as design contour | ER-34 | clean-account restore with purge ledger applied before payload exposure |
+| P2 | O2 export, isolated restore primitives and a current-permission installer/verifier are implemented as source; Native/key history stays archived without activating authority. Offsite expiry/purge includes the full payload part set. Production O3 composition, primary local backup-part store binding/cleanup, pre-claim orphans, later-purge sanitation, historical read re-admission and readiness remain open; the O2 restore port stays closed. | ER-34 | October 5 compilation, 21-file scoped lint, depth-100 SQL and source budgets passed. The first bounded runtime run was 67 PASS / 2 fixture FAIL; six selected repaired/issuer cases and seven synthetic plan-only cases then passed. Earlier Native history checks are recorded separately in the delivery plan. Complete purge-before-exposure and handle/query acceptance remain required |
 | P2 | PWA has authorized Library-to-Lens, operation recovery, revision history, active readiness and FAST_SEARCH with persisted trace and selected-head checks; project editing, remaining failure UI and the full setup-to-search browser/storage loop remain incomplete (#98) | ER-25 | retain focused Library/readiness/retrieval checks and the controlled-HTTP desktop/mobile selection-to-excerpt proof; complete actual Worker/D1/R2/Queue owner-loop and deployed session/reconnect receipts with degraded dependencies |
 | P2 | T2/T3 deterministic corpus is expanded with adjudicated RU/EN/code/table cases and collapsing-extractor negatives; live generation promotion and workload qualification remain open | ER-23, ER-31, ER-32 | GC-009..GC-012 adjudicated RU/EN/code/table cases, LF SHA-256 pins, promotion thresholds, collapsing/malformed/empty/oversized negatives; live T2/T3 quality and T6 receipts NOT_EXECUTED |
 | P2 | T6 workload profile has not been measured | ER-35 | 5/20/50 readers, D1 contention, index throughput, cost and p95 receipts |

@@ -1,29 +1,21 @@
 import {
   createD1InboxStore,
   createQueueConsumerRuntime,
+  queueDeliveryMetric,
+  type QueueDeliveryMetricInput,
   type DeliveryHandler,
-  type QueueConsumptionResult,
 } from "@eliotr/platform-cloudflare";
 import type { Env } from "./env.js";
 import { createProjectionDeliveryHandler } from "@eliotr/cloudflare-projection";
-import { createProjectionExecutionDeliveryHandler } from "./projection-execution-handler.js";
+import { createProjectionExecutionDeliveryHandler } from "@eliotr/cloudflare-ai";
 
 const CONSUMER_WORKER_ID = "eliotr-queue-consumer";
 const CONSUMER_LEASE_MS = 60_000;
 const PLATFORM_OWNS_TERMINAL_RETRY = 10_000;
 
-function metric(env: Env, result: QueueConsumptionResult | null, reason: string): void {
+function metric(env: Env, input: QueueDeliveryMetricInput): void {
   try {
-    env.METRICS.writeDataPoint({
-      blobs: [
-        "queue",
-        result?.disposition ?? "UNEXPECTED_FAILURE",
-        result?.error_code ?? reason,
-        env.DEPLOYMENT_GENERATION,
-      ],
-      doubles: [result === null ? 0 : 1],
-      indexes: [result?.disposition ?? "UNEXPECTED_FAILURE"],
-    });
+    env.METRICS.writeDataPoint(queueDeliveryMetric(input));
   } catch {
     // Metrics are observational and never change acknowledgement semantics.
   }
@@ -31,7 +23,13 @@ function metric(env: Env, result: QueueConsumptionResult | null, reason: string)
 
 function projectionHandler(env: Env): DeliveryHandler {
   const accept = createProjectionDeliveryHandler(env.CORE_DB);
-  const execute = createProjectionExecutionDeliveryHandler(env);
+  const execute = createProjectionExecutionDeliveryHandler({
+    core_database: env.CORE_DB,
+    search_database: env.SEARCH_DB,
+    evidence_bucket: env.EVIDENCE_BUCKET,
+    work_bucket: env.WORK_BUCKET,
+    ai_search: env.AI_SEARCH,
+  });
   return async (message, context) => {
     await accept(message, context);
     return execute(message, context);
@@ -57,12 +55,17 @@ export async function handleQueue(batch: MessageBatch<unknown>, env: Env): Promi
   for (const message of batch.messages) {
     try {
       const result = await runtime.consume(message, handler);
-      metric(env, result, "QUEUE_DELIVERY_HANDLED");
-    } catch {
-      // Malformed envelopes and unexpected runtime failures are never acknowledged. Cloudflare moves
-      // them to the configured DLQ after max_retries, preserving poison-message evidence.
-      metric(env, null, "QUEUE_CONSUMER_UNEXPECTED_FAILURE");
-      message.retry({ delaySeconds: 0 });
+      metric(env, { result, deployment_generation: env.DEPLOYMENT_GENERATION });
+    } catch (error) {
+      // The bounded diagnostic excludes the thrown message and Queue body. Malformed messages and
+      // unexpected failures remain unacknowledged for the configured retry delay/max_retries/DLQ.
+      // Omitting per-message delaySeconds preserves the consumer's configured retry_delay.
+      metric(env, {
+        result: null,
+        deployment_generation: env.DEPLOYMENT_GENERATION,
+        failure: { error, platform_message_id: message.id, attempt: message.attempts },
+      });
+      message.retry();
     }
   }
 }

@@ -11,6 +11,7 @@ import {
   METRIC_PROVENANCE,
   isUnknownReason,
 } from "./cloudflare-usage-envelope.mjs";
+import { classifyCloudflareUsageHttpStatus } from "./cloudflare-usage-source-decoder.mjs";
 export class UsageCollectionError extends Error {
   constructor(code, message) {
     super(message);
@@ -39,6 +40,39 @@ export function toTypedReason(error, fallback = "HTTP_ERROR") {
   if (candidate === "PROVIDER_MALFORMED" || candidate === "MALFORMED") return "MALFORMED";
   if (candidate === "COLLECTION_UNAVAILABLE" || candidate === "NO_AUTH_ENDPOINT") return "NO_AUTH_ENDPOINT";
   return fallback;
+}
+// Snapshot diagnostics carry only fixed codes and HTTP status, never an
+// exception message/body. HTTP status alone cannot prove a missing scope.
+export function safeProviderFailure(error) {
+  try { return describeProviderFailure(error); }
+  catch { return { code: "HTTP_ERROR", classification: "unclassified-source-failure", http_status: null }; }
+}
+function describeProviderFailure(error) {
+  const keys = ownKeysOf(error);
+  const status = readOwn(error, keys, "httpStatus");
+  const http = classifyCloudflareUsageHttpStatus(status);
+  if (http !== null && http.httpStatus !== null) {
+    return { code: http.code, classification: http.classification, http_status: http.httpStatus };
+  }
+  const ownCode = readOwn(error, keys, "code");
+  let code = toTypedReason(error);
+  let classification = "unclassified-source-failure";
+  if (ownCode === "HTTP_STATUS_UNKNOWN" || ownCode === "HTTP_BODY_READ_UNKNOWN") {
+    code = ownCode;
+    classification = readOwn(error, keys, "classification") === "cancelled-or-deadline"
+      ? "cancelled-or-deadline" : "unknown-transport-or-response-gap";
+  } else if (ownCode === "HTTP_RESPONSE_ERROR") {
+    code = ownCode;
+    classification = "provider-data-gap";
+  } else if (code === "MALFORMED") classification = "malformed-data";
+  else if (code === "PARTIAL_PAGINATION") classification = "incomplete-coverage";
+  else if (code === "ACCOUNT_MISMATCH" || code === "WINDOW_MISMATCH" || code === "STALE") classification = "coverage-mismatch";
+  else if (code === "NO_AUTH_ENDPOINT") classification = "source-unavailable";
+  return { code, classification, http_status: Number.isInteger(status) && status >= 200 && status < 300 ? status : null };
+}
+function rejectFailedHttpStatus(status) {
+  const failure = classifyCloudflareUsageHttpStatus(status);
+  if (failure !== null) throw new ProviderFailure(failure.code, failure.message, { httpStatus: failure.httpStatus });
 }
 export function safeFetchMeta({ httpStatus = null, kind = "inventory", pages = null, cursors = null, full = false, authoritative = false, reason = null } = {}) {
   return { httpStatus, kind, pages, cursors, full, authoritative, reason };
@@ -81,7 +115,14 @@ function readStatus(response) {
   if (response === null || response === undefined || typeof response !== "object") return null;
   const keys = ownKeysOf(response);
   const status = readOwn(response, keys, "status");
-  return Number.isInteger(status) ? status : null;
+  if (Number.isInteger(status)) return status;
+  // Native fetch Response.status is a platform getter, not an own JSON key.
+  // Its branded getter rejects plain objects with inherited status fields.
+  try {
+    const getter = Object.getOwnPropertyDescriptor(Response.prototype, "status").get;
+    const nativeStatus = getter.call(response);
+    return Number.isInteger(nativeStatus) ? nativeStatus : null;
+  } catch { return null; }
 }
 const DEFAULT_IDENTITY_FIELDS = Object.freeze(["id", "uuid", "name"]);
 const QUEUE_IDENTITY_FIELDS = Object.freeze(["queue_id", "queue_name"]);
@@ -192,8 +233,7 @@ export function createPaginatedInventoryProvider({ group, covers = [], endpoint,
           throw new ProviderFailure("HTTP_ERROR", `${group} page ${page} transport failure`, { httpStatus: null });
         }
         lastHttpStatus = readStatus(response);
-        if (lastHttpStatus === 401 || lastHttpStatus === 403) { throw new ProviderFailure("AUTH_SCOPE_DENIED", `${group} page ${page} denied (http ${lastHttpStatus})`, { httpStatus: lastHttpStatus }); }
-        if (lastHttpStatus === 429 || (Number.isInteger(lastHttpStatus) && lastHttpStatus >= 500)) { throw new ProviderFailure("HTTP_ERROR", `${group} page ${page} http ${lastHttpStatus}`, { httpStatus: lastHttpStatus }); }
+        rejectFailedHttpStatus(lastHttpStatus);
         let body;
         try {
           body = await response.json();
@@ -321,8 +361,7 @@ export function createR2CursorInventoryProvider({ group = "r2-inventory-list", c
           throw new ProviderFailure("HTTP_ERROR", `${group} cursor hop ${hop} transport failure`);
         }
         lastHttpStatus = readStatus(response);
-        if (lastHttpStatus === 401 || lastHttpStatus === 403) { throw new ProviderFailure("AUTH_SCOPE_DENIED", `${group} cursor hop ${hop} denied (http ${lastHttpStatus})`, { httpStatus: lastHttpStatus }); }
-        if (lastHttpStatus === 429 || (Number.isInteger(lastHttpStatus) && lastHttpStatus >= 500)) { throw new ProviderFailure("HTTP_ERROR", `${group} cursor hop ${hop} http ${lastHttpStatus}`, { httpStatus: lastHttpStatus }); }
+        rejectFailedHttpStatus(lastHttpStatus);
         let body;
         try {
           body = await response.json();
@@ -433,8 +472,7 @@ export function createAiSearchInventoryProvider({ group = "ai-search-inventory-l
           throw new ProviderFailure("HTTP_ERROR", `${group} page ${page} transport failure`);
         }
         lastHttpStatus = readStatus(response);
-        if (lastHttpStatus === 401 || lastHttpStatus === 403) { throw new ProviderFailure("AUTH_SCOPE_DENIED", `${group} page ${page} denied (http ${lastHttpStatus})`, { httpStatus: lastHttpStatus }); }
-        if (lastHttpStatus === 429 || (Number.isInteger(lastHttpStatus) && lastHttpStatus >= 500)) { throw new ProviderFailure("HTTP_ERROR", `${group} page ${page} http ${lastHttpStatus}`, { httpStatus: lastHttpStatus }); }
+        rejectFailedHttpStatus(lastHttpStatus);
         let body;
         try {
           body = await response.json();
@@ -553,8 +591,7 @@ export function createGraphQlAnalyticsProvider({ group = "graphql-analytics", co
         throw new ProviderFailure("HTTP_ERROR", `${group} transport failure`);
       }
       const httpStatus = readStatus(response);
-      if (httpStatus === 401 || httpStatus === 403) { throw new ProviderFailure("AUTH_SCOPE_DENIED", `${group} denied (http ${httpStatus})`, { httpStatus }); }
-      if (httpStatus === 429 || (Number.isInteger(httpStatus) && httpStatus >= 500)) { throw new ProviderFailure("HTTP_ERROR", `${group} http ${httpStatus}`, { httpStatus }); }
+      rejectFailedHttpStatus(httpStatus);
       let body;
       try {
         body = await response.json();

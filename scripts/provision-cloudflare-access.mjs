@@ -8,6 +8,7 @@ import { LOGIN_INSTRUCTION, loadWranglerOAuthCredential, resolveAuthMode,
 import { CLOUDFLARE_MCP_TRANSPORT, createCloudflareMcpTransport } from "./lib/cloudflare-mcp-oauth.mjs";
 import { isUsageAdmissionCapability, runUsagePreflight } from "./lib/cloudflare-usage-admission.mjs";
 import { readConfiguredTransport } from "./check-launch-code.mjs";
+import { readActiveDeploymentIdentity, selectDeploymentGoogleTransport } from "./lib/deployment-maintenance.mjs";
 import {
   applyMcp,
   buildMcpReceipt,
@@ -25,9 +26,19 @@ const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
 let token = process.env.CLOUDFLARE_API_TOKEN;
 const apiBase = process.env.CLOUDFLARE_API_BASE_URL ?? "https://api.cloudflare.com/client/v4";
 const checkOnly = process.argv.includes("--check-only");
+const verifyExisting = process.argv.includes("--verify-existing");
+if (checkOnly && verifyExisting) {
+  console.error("--check-only and --verify-existing cannot be used together");
+  process.exit(2);
+}
+const preserveGoogleTransport = process.env.ELIOTR_MAINTENANCE_PRESERVE_GOOGLE_TRANSPORT;
+if (preserveGoogleTransport !== undefined && (preserveGoogleTransport !== "disabled" || (!checkOnly && !verifyExisting))) {
+  throw new Error("Google transport preservation accepts disabled in check-only or verify-existing only");
+}
+const maintenancePreservation = preserveGoogleTransport === "disabled";
 const showHelp = process.argv.includes("--help") || process.argv.includes("-h");
 if (showHelp) {
-  console.log("Usage: scripts/provision-cloudflare-access.mjs [--check-only] [--help]\nProvisions the hostname-based Cloudflare Access application and owner policy. --check-only prints the plan with zero mutations.");
+  console.log("Usage: scripts/provision-cloudflare-access.mjs [--check-only | --verify-existing] [--help]\nProvisions hostname-based Cloudflare Access. --check-only prints the plan with zero mutations. --verify-existing performs GET-only exact readback, writes an ignored local receipt, and fails if the application or required policies are missing.");
   process.exitCode = 0;
 }
 if (!showHelp) {
@@ -76,13 +87,6 @@ if (accessTransport === CLOUDFLARE_MCP_TRANSPORT) {
     process.exit(2);
   }
   try {
-    const credential = await loadWranglerOAuthCredential({ env: process.env, now: Date.now() });
-    token = credential.bearer;
-  } catch (error) {
-    console.error(error?.message ?? String(error));
-    process.exit(2);
-  }
-  try {
     // Official-profile account pin before the first Cloudflare GET. Always
     // spawns the official `wrangler whoami` with a token-scrubbed env. No
     // ambient test seam is honored here.
@@ -98,19 +102,25 @@ if (accessTransport === CLOUDFLARE_MCP_TRANSPORT) {
     console.error(error?.message ?? String(error));
     process.exit(2);
   }
+  // `wrangler whoami` may refresh the official OAuth profile. Read its bearer
+  // only after the token-scrubbed account check has completed.
+  try {
+    const credential = await loadWranglerOAuthCredential({ env: process.env, now: Date.now() });
+    token = credential.bearer;
+  } catch (error) {
+    console.error(error?.message ?? String(error));
+    process.exit(2);
+  }
 } else if (!accountId || !token) {
   console.error("CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN are required");
   process.exit(2);
 }
 
-// FIX1-B usage-envelope gate (narrow): usage preflight before the first
-// remote mutation. In-process shared runner writes the redacted admission
-// receipt. BLOCKED exits in every mode; any other non-ADMITTED decision
-// (SEALED) exits in apply mode — SEALED never POSTs app or policy creates.
-// ADMITTED alone never suffices in apply mode: the same-process admission
-// capability minted by fresh live collection is additionally required.
-// Check-only inspection stays read-only metadata.
-{
+// Default apply retains the fresh live-usage admission fence. Check-only and
+// verify-existing are read-only inspection paths and skip usage collection;
+// verify-existing also guards the direct API and MCP request wrapper as
+// GET-only while it writes the local receipt from exact readbacks.
+if (!checkOnly && !verifyExisting) {
   let usageGate;
   try {
     usageGate = await runUsagePreflight({ env: process.env, nowMs: Date.now(), writeReceipt: true,
@@ -123,6 +133,17 @@ if (accessTransport === CLOUDFLARE_MCP_TRANSPORT) {
   if (usageGate.decision === "BLOCKED" || (!checkOnly && !admittedWithCapability)) {
     console.error(`Cloudflare usage preflight ${usageGate.decision} denies Access provisioning before any mutation. ${usageGate.evaluation.reasons.join("; ")}${usageGate.decision === "ADMITTED" ? " Missing same-process admission capability: ADMITTED alone never authorizes mutations." : ""}`);
     process.exit(2);
+  }
+  if (authMode === WRANGLER_OAUTH_MODE && accessTransport !== CLOUDFLARE_MCP_TRANSPORT) {
+    // The gate repeats whoami and may refresh the profile after the initial
+    // token read. Reload the strict local profile before direct API calls;
+    // the MCP transport verifies and authenticates through its own boundary.
+    try {
+      token = (await loadWranglerOAuthCredential({ env: process.env, now: Date.now() })).bearer;
+    } catch (error) {
+      console.error(error?.message ?? String(error));
+      process.exit(2);
+    }
   }
 }
 if (accessTransport === CLOUDFLARE_MCP_TRANSPORT) {
@@ -156,14 +177,20 @@ const policyName = desired.policy.name;
 const configuredGoogleTransport = process.env.ELIOTR_GOOGLE_EXTERNAL_TRANSPORT;
 const canonicalConfig = JSON.parse(await readFile(resolve(repositoryRoot, "apps/eliotr-core/wrangler.jsonc"), "utf8"));
 const canonicalGoogleTransport = readConfiguredTransport(canonicalConfig);
-const googleTransport = configuredGoogleTransport ?? "disabled";
+const activeTransport = preserveGoogleTransport === undefined ? null :
+  await readActiveDeploymentIdentity({ env: { CLOUDFLARE_ACCOUNT_ID: accountId, CLOUDFLARE_API_TOKEN: token },
+    input: { apiBase }, ...(mcpTransport === null ? {} : { readRequest: (path) => request("GET", path) }) });
+const selectedGoogleTransport = selectDeploymentGoogleTransport({ purpose: "MAINTENANCE", preserve: preserveGoogleTransport,
+  canonicalTransport: canonicalGoogleTransport, observedTransport: activeTransport?.google_external_transport });
+const googleTransport = configuredGoogleTransport ?? (preserveGoogleTransport === undefined ? "disabled" : selectedGoogleTransport);
 if (!["disabled", "gemini-mcp", "drive-exchange"].includes(googleTransport)) {
   throw new Error("ELIOTR_GOOGLE_EXTERNAL_TRANSPORT must be disabled, gemini-mcp, or drive-exchange");
 }
-if (configuredGoogleTransport !== undefined && googleTransport !== canonicalGoogleTransport) {
+if (configuredGoogleTransport !== undefined && googleTransport !== selectedGoogleTransport) {
   throw new Error("ELIOTR_GOOGLE_EXTERNAL_TRANSPORT differs from the canonical Core deployment config");
 }
-if (!checkOnly && configuredGoogleTransport === undefined && canonicalGoogleTransport !== "disabled") {
+if (!checkOnly && configuredGoogleTransport === undefined && canonicalGoogleTransport !== "disabled" &&
+    preserveGoogleTransport === undefined) {
   throw new Error("ELIOTR_GOOGLE_EXTERNAL_TRANSPORT must be explicit before issuing an owner-only Access receipt");
 }
 const mcpEnabled = googleTransport === "gemini-mcp";
@@ -178,6 +205,9 @@ function validateHostname(value) {
 }
 
 async function request(method, path, body) {
+  if (verifyExisting && method !== "GET") {
+    throw new Error(`--verify-existing permits GET requests only; refused ${method} ${path}`);
+  }
   if (mcpTransport !== null) return mcpTransport.request(method, path, body);
   const response = await fetch(`${apiBase}${path}`, {
     method,
@@ -329,6 +359,87 @@ function normalizedEmailIncludes(policy) {
     .sort();
 }
 
+function destinationUsesHostname(destination, expectedHostname) {
+  if (typeof destination?.uri !== "string") return false;
+  try {
+    const uri = destination.uri.includes("://") ? destination.uri : `https://${destination.uri}`;
+    return new URL(uri).hostname.toLowerCase() === expectedHostname;
+  } catch {
+    return destination.uri.toLowerCase().startsWith(`${expectedHostname}/`);
+  }
+}
+
+function maintenanceApplicationAud(candidate) {
+  const values = [candidate?.aud, candidate?.aud_tag, candidate?.audience]
+    .filter((value) => value !== undefined);
+  if (values.length === 0 || values.some((value) => typeof value !== "string" || !AUD_TAG_PATTERN.test(value)) ||
+      new Set(values).size !== 1) {
+    throw new Error("Maintenance Access application readback lacks one exact bounded AUD");
+  }
+  return values[0];
+}
+
+function assertMaintenanceApplicationContour(candidate) {
+  const drift = [];
+  const destinations = Array.isArray(candidate?.destinations) ? candidate.destinations : [];
+  const normalized = normalizedDestinations(candidate);
+  if (typeof candidate?.id !== "string" || candidate.id.length === 0) drift.push({ field: "id", expected: "live Access application id", actual: candidate?.id ?? null });
+  if (candidate?.type !== desired.application.type) drift.push({ field: "type", expected: desired.application.type, actual: candidate?.type ?? null });
+  if (candidate?.domain !== hostname) drift.push({ field: "domain", expected: hostname, actual: candidate?.domain ?? null });
+  if (destinations.length !== 1 || normalized.length !== 1 || normalized[0].uri !== hostname ||
+      destinations.some((item) => item?.type !== desired.application.destination_type)) {
+    drift.push({ field: "destinations", expected: expectedDestination, actual: normalized });
+  }
+  if (typeof candidate?.name !== "string" || candidate.name.trim() === "" || candidate.name.length > 256) {
+    drift.push({ field: "name", expected: "existing display name", actual: candidate?.name ?? null });
+  }
+  if (typeof candidate?.session_duration !== "string" || !/^[1-9]\d{0,4}(?:m|h|d)$/u.test(candidate.session_duration)) {
+    drift.push({ field: "session_duration", expected: "existing Cloudflare duration", actual: candidate?.session_duration ?? null });
+  }
+  if (typeof candidate?.app_launcher_visible !== "boolean") {
+    drift.push({ field: "app_launcher_visible", expected: "existing boolean setting", actual: candidate?.app_launcher_visible ?? null });
+  }
+  if (drift.length > 0) throw new Error(`Maintenance Access application contour is invalid: ${JSON.stringify(drift, null, 2)}`);
+
+  const liveAud = maintenanceApplicationAud(candidate);
+  const receiptAud = priorReceipt?.protocol === ACCESS_RECEIPT_PROTOCOL && typeof priorReceipt.aud === "string"
+    ? priorReceipt.aud : "";
+  const configuredAud = process.env.ELIOTR_ACCESS_AUDIENCE?.trim() ?? "";
+  const expectedAuds = [configuredAud, receiptAud].filter(Boolean);
+  if (expectedAuds.length === 0 || expectedAuds.some((value) => !AUD_TAG_PATTERN.test(value)) ||
+      new Set(expectedAuds).size !== 1 || liveAud !== expectedAuds[0]) {
+    throw new Error("Maintenance Access AUD differs from configured or receipted authority");
+  }
+  if (priorReceipt?.protocol === ACCESS_RECEIPT_PROTOCOL && priorReceipt.application?.id &&
+      candidate.id !== priorReceipt.application.id) {
+    throw new Error("Maintenance Access application id differs from the existing receipt");
+  }
+  return liveAud;
+}
+
+function assertMaintenanceOwnerPolicy(policy) {
+  const include = Array.isArray(policy?.include) ? policy.include : null;
+  const includedEmails = include?.map((rule) => {
+    if (!rule || typeof rule !== "object" || Array.isArray(rule) || Object.keys(rule).length !== 1 ||
+        !rule.email || typeof rule.email !== "object" || Array.isArray(rule.email) ||
+        Object.keys(rule.email).length !== 1 || typeof rule.email.email !== "string") return null;
+    return rule.email.email.toLowerCase();
+  }) ?? null;
+  const rulesAreExact = include !== null && includedEmails !== null && !includedEmails.includes(null) &&
+    equal([...includedEmails].sort(), ownerEmails) &&
+    (policy.exclude === undefined || (Array.isArray(policy.exclude) && policy.exclude.length === 0)) &&
+    (policy.require === undefined || (Array.isArray(policy.require) && policy.require.length === 0));
+  if (typeof policy?.id !== "string" || policy.id.length === 0 ||
+      typeof policy?.name !== "string" || policy.name.trim() === "" || policy.name.length > 256 ||
+      policy.decision !== desired.policy.decision || !rulesAreExact) {
+    throw new Error("Maintenance Access owner policy must be one exact owner-email allow rule without extra selectors");
+  }
+  if (priorReceipt?.protocol === ACCESS_RECEIPT_PROTOCOL && priorReceipt.policy?.id &&
+      policy.id !== priorReceipt.policy.id) {
+    throw new Error("Maintenance Access owner policy id differs from the existing receipt");
+  }
+}
+
 const expectedDestination = [{ type: desired.application.destination_type, uri: hostname }];
 const expectedPolicy = {
   name: policyName,
@@ -342,16 +453,44 @@ const mcpConfig = createMcpAccessConfig({ enabled: mcpEnabled, environment: proc
 const priorReceipt = await loadPriorReceipt();
 const applicationsResult = await request("GET", `/accounts/${enc(accountId)}/access/apps?per_page=100`);
 const applications = Array.isArray(applicationsResult) ? applicationsResult : [];
-const exactApps = applications.filter((app) => app.name === appName);
-if (exactApps.length > 1) throw new Error(`multiple Access applications named ${appName}; refusing ambiguous binding`);
-const hostnameCollisions = applications.filter((app) => app.name !== appName &&
-  normalizedDestinations(app).some((destination) => destination.uri === hostname));
-if (hostnameCollisions.length > 0) {
-  throw new Error(`wrong Access application already claims ${hostname}: ${JSON.stringify(hostnameCollisions.map((app) => ({ id: app.id ?? null, name: app.name ?? null })))}`);
+let application;
+if (maintenancePreservation) {
+  if (!Array.isArray(applicationsResult) || applications.length >= 100) {
+    throw new Error("Maintenance Access application inventory is incomplete");
+  }
+  if (priorReceipt?.protocol === ACCESS_RECEIPT_PROTOCOL &&
+      (priorReceipt.account_id !== accountId || priorReceipt.hostname !== hostname)) {
+    throw new Error("Maintenance Access receipt binds a different account or hostname");
+  }
+  // The explicitly configured /mcp app has its own strict preflight below.
+  const hostnameApps = applications.filter((candidate) => (!mcpConfig || candidate?.name !== mcpConfig.appName) &&
+    (candidate?.domain === hostname || (Array.isArray(candidate?.destinations) &&
+      candidate.destinations.some((destination) => destinationUsesHostname(destination, hostname)))));
+  if (hostnameApps.length !== 1) {
+    throw new Error(hostnameApps.length === 0
+      ? `--maintenance-preservation found missing resource: Access application for ${hostname}`
+      : `multiple Access applications claim ${hostname}; refusing ambiguous binding`);
+  }
+  application = hostnameApps[0];
+  if (priorReceipt?.protocol === ACCESS_RECEIPT_PROTOCOL && priorReceipt.application?.id &&
+      application.id !== priorReceipt.application.id) {
+    throw new Error("Maintenance Access application id differs from the existing receipt");
+  }
+} else {
+  const exactApps = applications.filter((app) => app.name === appName);
+  if (exactApps.length > 1) throw new Error(`multiple Access applications named ${appName}; refusing ambiguous binding`);
+  const hostnameCollisions = applications.filter((app) => app.name !== appName &&
+    normalizedDestinations(app).some((destination) => destination.uri === hostname));
+  if (hostnameCollisions.length > 0) {
+    throw new Error(`wrong Access application already claims ${hostname}: ${JSON.stringify(hostnameCollisions.map((app) => ({ id: app.id ?? null, name: app.name ?? null })))}`);
+  }
+  application = exactApps[0] ?? null;
 }
-let application = exactApps[0] ?? null;
 let applicationDisposition = "VERIFIED";
 let policyDisposition = "VERIFIED";
+if ((verifyExisting || maintenancePreservation) && application === null) {
+  throw new Error(`--verify-existing found missing resource: Access application ${appName}`);
+}
 
 function assertApplicationContour(candidate) {
   const drift = [];
@@ -362,11 +501,28 @@ function assertApplicationContour(candidate) {
   if (drift.length > 0) throw new Error(`Access application drift; refusing in-place mutation: ${JSON.stringify(drift, null, 2)}`);
 }
 
-if (application) assertApplicationContour(application);
-if (application && (!checkOnly || mcpConfig)) {
+function assertSelectedApplicationContour(candidate) {
+  return maintenancePreservation ? assertMaintenanceApplicationContour(candidate) : assertApplicationContour(candidate);
+}
+
+if (application) assertSelectedApplicationContour(application);
+if (application && (maintenancePreservation || !checkOnly || mcpConfig)) {
+  const firstPreservedSettings = maintenancePreservation ? {
+    name: application.name,
+    session_duration: application.session_duration,
+    app_launcher_visible: application.app_launcher_visible,
+  } : null;
   application = await freshApplication(application.id);
-  assertApplicationContour(application);
-  const freshOwnerAud = resolveLiveAud(application, { allowEnvironmentFallback: false }).aud;
+  assertSelectedApplicationContour(application);
+  if (maintenancePreservation && !equal(firstPreservedSettings, {
+    name: application.name,
+    session_duration: application.session_duration,
+    app_launcher_visible: application.app_launcher_visible,
+  })) {
+    throw new Error("Maintenance Access display/session/launcher settings changed during readback");
+  }
+  const freshOwnerAud = maintenancePreservation ? maintenanceApplicationAud(application) :
+    resolveLiveAud(application, { allowEnvironmentFallback: false }).aud;
   if (!freshOwnerAud) throw new Error("existing Access application readback lacks a bounded AUD");
   const configuredOwnerAud = process.env.ELIOTR_ACCESS_AUDIENCE?.trim() ?? "";
   if (configuredOwnerAud !== "" && configuredOwnerAud !== freshOwnerAud) throw new Error("Access AUD differs from the existing application readback");
@@ -374,8 +530,24 @@ if (application && (!checkOnly || mcpConfig)) {
 // GET-only team-origin preflight (live organization readback wins; the
 // environment fallback exists only for mocks/transition and must reconcile).
 const teamPreflight = await fetchLiveTeamDomain();
+if ((verifyExisting || maintenancePreservation) && teamPreflight.source !== "CLOUDFLARE_READBACK") {
+  throw new Error("--verify-existing found missing resource: Cloudflare Access team-origin readback");
+}
+if (maintenancePreservation && priorReceipt?.protocol === ACCESS_RECEIPT_PROTOCOL && priorReceipt.team_domain &&
+    priorReceipt.team_domain !== teamPreflight.teamDomain) {
+  throw new Error("Maintenance Access team domain differs from the existing receipt");
+}
 let mcpState = null;
 if (mcpConfig) mcpState = await preflightMcp({ config: mcpConfig, applications, request, accountId, enc, teamDomain: teamPreflight.teamDomain, ordinaryApplication: application, resolveOrdinaryAud: resolveLiveAud, equal, freshApplication });
+if (verifyExisting && mcpConfig) {
+  const mcpPlan = mcpPlanSummary(mcpConfig, mcpState);
+  const missingMcp = [];
+  if (mcpPlan.application.disposition === "CREATE") missingMcp.push(`MCP Access application ${mcpConfig.appName}`);
+  if (mcpPlan.policy.disposition === "CREATE") missingMcp.push(`MCP Access owner policy ${mcpConfig.policyName}`);
+  if (missingMcp.length > 0) {
+    throw new Error(`--verify-existing found missing resource: ${missingMcp.join(", ")}`);
+  }
+}
 
 function strictPlanBase(extra) {
   return {
@@ -423,6 +595,12 @@ const policiesResult = await request("GET", `/accounts/${enc(accountId)}/access/
 let policies = Array.isArray(policiesResult) ? policiesResult : [];
 
 function classifyPolicies(items) {
+  if (maintenancePreservation) {
+    if (!Array.isArray(items) || items.length !== 1) {
+      throw new Error("Maintenance Access application must have exactly one owner policy");
+    }
+    return { owner: items[0], additional: [] };
+  }
   const owners = items.filter((item) => item.name === policyName);
   if (owners.length > 1) throw new Error(`multiple Access owner policies named ${policyName}`);
   const additional = items.filter((item) => item.name !== policyName);
@@ -434,6 +612,9 @@ function classifyPolicies(items) {
 }
 
 let classified = classifyPolicies(policies);
+if (verifyExisting && !classified.owner) {
+  throw new Error(`--verify-existing found missing resource: Access owner policy ${policyName}`);
+}
 if (!classified.owner && checkOnly) {
   const liveAud = resolveLiveAud(application);
   console.log(JSON.stringify(strictPlanBase({
@@ -456,18 +637,26 @@ if (!classified.owner) {
 }
 const policy = classified.owner;
 if (!policy) throw new Error("Access owner policy creation readback is missing");
+if (maintenancePreservation) assertMaintenanceOwnerPolicy(policy);
 const policyDrift = [];
-if (policy.decision !== expectedPolicy.decision) policyDrift.push({ field: "decision", expected: expectedPolicy.decision, actual: policy.decision });
-if (!equal(normalizedEmailIncludes(policy), ownerEmails)) policyDrift.push({ field: "include.email", expected: ownerEmails, actual: normalizedEmailIncludes(policy) });
-if (Array.isArray(policy.exclude) && policy.exclude.length > 0) policyDrift.push({ field: "exclude", expected: [], actual: policy.exclude });
-if (Array.isArray(policy.require) && policy.require.length > 0) policyDrift.push({ field: "require", expected: [], actual: policy.require });
+if (!maintenancePreservation) {
+  if (policy.decision !== expectedPolicy.decision) policyDrift.push({ field: "decision", expected: expectedPolicy.decision, actual: policy.decision });
+  if (!equal(normalizedEmailIncludes(policy), ownerEmails)) policyDrift.push({ field: "include.email", expected: ownerEmails, actual: normalizedEmailIncludes(policy) });
+  if (Array.isArray(policy.exclude) && policy.exclude.length > 0) policyDrift.push({ field: "exclude", expected: [], actual: policy.exclude });
+  if (Array.isArray(policy.require) && policy.require.length > 0) policyDrift.push({ field: "require", expected: [], actual: policy.require });
+}
 if (policyDrift.length > 0) throw new Error(`Access owner policy drift; refusing in-place mutation: ${JSON.stringify(policyDrift, null, 2)}`);
 
 if (checkOnly) {
-  const liveAud = resolveLiveAud(application);
+  const liveAud = maintenancePreservation
+    ? { aud: maintenanceApplicationAud(application) }
+    : resolveLiveAud(application);
   console.log(JSON.stringify(strictPlanBase({
-    application: { id: application.id, name: appName, disposition: "VERIFY" },
-    policy: { id: policy.id ?? null, name: policyName, disposition: "VERIFY", owner_email_count: ownerEmails.length },
+    application: { id: application.id, name: maintenancePreservation ? application.name : appName,
+      ...(maintenancePreservation ? { session_duration: application.session_duration, app_launcher_visible: application.app_launcher_visible } : {}),
+      disposition: maintenancePreservation ? "PRESERVE" : "VERIFY" },
+    policy: { id: policy.id ?? null, name: maintenancePreservation ? policy.name : policyName,
+      disposition: maintenancePreservation ? "PRESERVE" : "VERIFY", owner_email_count: ownerEmails.length },
     aud: liveAud.aud,
     aud_disposition: "VERIFY",
     approved_additional_policy_count: classified.additional.length,
@@ -481,7 +670,7 @@ if (mcpConfig) mcpState = await applyMcp({ config: mcpConfig, state: mcpState, o
 // Apply readback: AUD plus exact team origin are Cloudflare authority and are
 // persisted only in the ignored non-secret receipt for core config generation.
 application = await freshApplication(application.id);
-assertApplicationContour(application);
+assertSelectedApplicationContour(application);
 const liveAud = resolveLiveAud(application, { allowEnvironmentFallback: false });
 if (!liveAud.aud) throw new Error("Access application readback lacks a bounded AUD tag; refusing to persist unverified authority");
 const teamFinal = teamPreflight.teamDomain ?? (await fetchLiveTeamDomain()).teamDomain;
@@ -524,13 +713,13 @@ const receipt = {
   team_domain: teamFinal,
   application: {
     id: application.id,
-    name: appName,
+    name: maintenancePreservation ? application.name : appName,
     destination: hostname,
     disposition: applicationDisposition,
   },
   policy: {
     id: policy.id ?? null,
-    name: policyName,
+    name: maintenancePreservation ? policy.name : policyName,
     owner_email_count: ownerEmails.length,
     owner_email_set_sha256: ownerEmailSetSha256,
     disposition: policyDisposition,

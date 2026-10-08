@@ -1,9 +1,13 @@
 import "./styles.css";
-import { ApiRequestError, getSystemHealth, type GoogleExternalTransport, type SystemHealth } from "./api.js";
+import { renderWorkspaceShell } from "./workspace-shell.js";
+import { mountWorkspaceChrome } from "./workspace-chrome.js";
+import { mountWorkspaceTheme } from "./workspace-theme.js";
+import { getSystemHealth, type GoogleExternalTransport, type SystemHealth } from "./api.js";
 import { mountBundleImportPanel } from "./bundle-import-panel.js";
 import { mountGoogleOAuthPanel } from "./google-oauth-panel.js";
 import { mountLibraryPanel } from "./library-panel.js";
-import { mountProjectPanel, type ProjectPanelHandle } from "./project-panel.js";
+import { mountProjectPanel } from "./project-panel.js";
+import { mountClientGrantPanel } from "./client-grant-panel.js";
 import { mountOrientationPanel } from "./orientation-panel.js";
 import { mountRetrievalPanel } from "./retrieval-panel.js";
 import { mountEvidenceRail } from "./evidence-rail.js";
@@ -17,8 +21,12 @@ import { mountMcpClientDiagnosticPanel } from "./mcp-client-diagnostic-panel.js"
 import { mountErasurePanel } from "./erasure-panel.js";
 import { mountSourceNamespacePanel } from "./source-namespace-panel.js";
 import { mountResearchConfigurationPanel, type ResearchConfigurationStartState } from "./research-configuration-panel.js";
+import { mountResearchProviderKeyPanel } from "./research-provider-key-panel.js";
+import { mountResearchProviderKeyModelUsePanel } from "./research-provider-key-model-use-panel.js";
 import { mountOwnerSessionPanel } from "./owner-session-panel.js";
+import { createOwnerSessionLifecycle } from "./owner-session-lifecycle.js";
 import { escapeHtml } from "./html.js";
+import { classifyHealthFailure, type HealthFailure } from "./health-failure.js";
 import type { ResolvedEvidence, VersionedRef } from "@eliotr/contracts";
 
 const root = document.querySelector<HTMLDivElement>("#app");
@@ -26,20 +34,11 @@ if (root === null) throw new Error("missing #app root");
 const app: HTMLDivElement = root;
 
 let googleOAuthCleanup: (() => void) | undefined;
+let healthController: AbortController | undefined;
+let healthSerial = 0;
+let pageClosed = false;
 let mountedGoogleTransport: GoogleExternalTransport | "unknown" | null = null;
 type HealthLossReason = "initial-unavailable" | "connection-lost" | "generation-changed";
-type HealthFailureKind = "network" | "access" | "server";
-interface HealthFailure { readonly kind: HealthFailureKind; readonly code: string; readonly status: number; }
-
-function classifyHealthFailure(error: unknown): HealthFailure {
-  if (!(error instanceof ApiRequestError)) return { kind: "network", code: "API_UNREACHABLE", status: 0 };
-  const code = /^[A-Z0-9_:-]{1,128}$/u.test(error.code) ? error.code : "API_REQUEST_FAILED";
-  const status = Number.isSafeInteger(error.status) && error.status >= 100 && error.status <= 599 ? error.status : 0;
-  const kind: HealthFailureKind = code === "API_UNREACHABLE" || code === "API_REQUEST_ABORTED"
-    ? "network"
-    : code.startsWith("ACCESS_") || status === 401 || status === 403 ? "access" : "server";
-  return { kind, code, status };
-}
 
 function healthBadge(health: SystemHealth | null): string {
   if (health === null) return '<span class="status status--pending">checking</span>';
@@ -76,10 +75,10 @@ function googleConnectorLabel(transport: GoogleExternalTransport | undefined): s
 
 function healthSummary(health: SystemHealth | null, failure?: HealthFailure): string {
   if (health === null) return "Checking current deployment…";
-  if (failure?.kind === "access") return "Sign-in verification unavailable. Retry the server check or sign in again.";
+  if (failure?.kind === "access") return "Sign-in could not be verified. Check Connections or sign in again.";
   if (failure?.kind === "network") return "Server unavailable. Retry server check.";
   if (failure !== undefined) return "Server check failed. Retry server check.";
-  if (health.ready) return "Server ready. Workspace access is shown in Connections.";
+  if (health.ready) return "Workspace is ready.";
   if (health.blocking_reason_codes.includes("HEALTH_ENDPOINT_UNREACHABLE")) return "Server unavailable. Retry server check.";
   return "Server responded. Workspace needs attention.";
 }
@@ -122,92 +121,35 @@ function renderGoogleConnector(health: SystemHealth | null): void {
 }
 
 function render(health: SystemHealth | null): void {
-  app.innerHTML = `
-    <header class="topbar">
-      <a class="brand" href="/" aria-label="Eliot Research home"><span class="brand-mark">E</span><span>Eliot Research</span></a>
-      <div class="topbar-meta"><span class="workspace-label">PRIVATE WORKSPACE</span><span id="health-badge">${healthBadge(health)}</span></div>
-    </header>
-    <div class="health-strip" role="status" aria-live="polite">
-      <span class="health-dot" aria-hidden="true"></span><strong>Owner API</strong>
-      <span id="health-summary">${healthSummary(health)}</span>
-      <span class="health-generation">${displayText(health?.deployment_generation, "generation pending")}</span>
-      <details class="health-details"><summary>Details</summary><div id="health-details" class="health-details-content">${healthDetails(health)}</div></details>
-    </div>
-    <main class="workspace" aria-label="Research workspace">
-      <aside class="panel panel--corpus" aria-label="Research navigation">
-        <div class="sidebar-heading"><span class="eyebrow">Workspace</span></div>
-        <nav class="workspace-nav" aria-label="Primary">
-          <button class="nav-item nav-item--active" type="button" data-nav-target="#library" aria-controls="sources-view" aria-current="page"><span class="nav-icon">⌂</span><span>Sources</span></button>
-          <button class="nav-item" type="button" data-nav-target="#research-card" aria-controls="research-view"><span class="nav-icon">⌕</span><span>Research</span></button>
-          <button class="nav-item" type="button" data-nav-target="#wiki-card" aria-controls="wiki-view"><span class="nav-icon">▤</span><span>Wiki</span></button>
-          <button class="nav-item" type="button" data-nav-target="#connections-card" aria-controls="connections-card"><span class="nav-icon">◌</span><span>Connections</span></button>
-        </nav>
-        <button class="source-chooser-toggle" type="button" data-source-chooser-toggle aria-controls="library" aria-expanded="false"><span>Choose a source</span><span data-source-chooser-state>Show list</span></button>
-        <div id="library"></div>
-      </aside>
-      <section class="panel panel--investigation" aria-label="Investigation workspace">
-        <div class="content-heading"><div><span class="eyebrow" data-workspace-eyebrow>Sources</span><h1 data-workspace-title>Sources</h1><p class="lede" data-workspace-lede>Import or select admitted sources, then open Corpus Lens for structure and readiness.</p></div><div class="content-actions"><span class="profile-chip" data-workspace-owner-profile>E0 · owner read</span><button class="button button--quiet" type="button" data-refresh>Refresh</button></div></div>
-        <section id="sources-view" class="workspace-view" data-workspace-view="sources" tabindex="-1" aria-label="Sources">
-          <div class="workspace-cards">
-            <article class="intro-card"><div class="intro-card-mark">◎</div><div><strong>Start with your sources</strong><p>Import a folder or choose an admitted source from the Library before opening its structure.</p><div class="intro-card-actions"><button class="button button--quiet workspace-jump" type="button" data-nav-target="#corpus-lens-card">Open Corpus Lens</button></div></div></article>
-          </div>
-          <div class="tool-stack">
-            <section class="tool-card" id="projects-card"><div id="projects"></div></section>
-            <section class="tool-card tool-card--import"><div id="source-namespace"></div><div class="tool-divider"></div><div id="raw-upload"></div><div class="tool-divider"></div><div id="bundle-import"></div></section>
-            <section class="tool-card" id="corpus-lens-card"><div id="corpus-lens"></div></section>
-            <details class="tool-card"><summary>Delete selected document</summary><div id="erasure"></div></details>
-          </div>
-        </section>
-        <section id="research-view" class="workspace-view" data-workspace-view="research" tabindex="-1" aria-label="Research" hidden>
-          <div class="workspace-cards">
-            <article class="intro-card"><div class="intro-card-mark">⌕</div><div><strong>Ask across selected sources</strong><p>Run a bounded search or research workflow, then open only evidence that resolves against the admitted revision.</p></div></article>
-            <div class="mini-grid"><div class="mini-stat"><span class="eyebrow">Coverage</span><strong id="coverage">Not queried</strong><span id="coverage-note">Run Research to measure sampled resolution.</span></div><div class="mini-stat"><span class="eyebrow">Evidence</span><strong id="evidence-count">0 resolved</strong><span>Verified excerpts in this session.</span></div></div>
-          </div>
-          <div class="tool-stack">
-            <section class="tool-card" id="research-changes-card"><div id="research-changes"></div></section>
-            <section class="tool-card research-configuration-card" id="research-configuration-card"><div id="research-configuration"></div></section>
-            <section class="tool-card tool-card--research" id="research-card"><div id="retrieval"></div><div class="tool-divider"></div><div id="research-run"></div><div class="tool-divider"></div><div id="exhaustive-workflow"></div></section>
-          </div>
-        </section>
-        <section id="wiki-view" class="workspace-view" data-workspace-view="wiki" tabindex="-1" aria-label="Wiki" hidden>
-          <div class="workspace-cards">
-            <article class="intro-card"><div class="intro-card-mark">▤</div><div><strong>Review saved Wiki proposals</strong><p>Review proposals and read saved page text.</p></div></article>
-          </div>
-          <div class="tool-stack"><section class="tool-card" id="wiki-card"><div id="wiki"></div></section></div>
-        </section>
-        <section id="connections-card" class="workspace-view" data-workspace-view="connections" tabindex="-1" aria-label="Connections" hidden>
-          <div class="connection-stack">
-            <article class="connection-card" id="connection-agent-card"><div id="mcp-client-diagnostic"></div></article>
-            <article class="connection-card" id="connection-server-card">
-              <div class="connection-heading"><div><span class="eyebrow">Server check</span><h2>Owner API</h2></div><span id="connection-server-state" class="connection-state connection-state--pending">Checking</span></div>
-              <p id="connection-server-copy" class="connection-copy">Checking the server. This check covers API and schema readiness only.</p>
-              <dl class="connection-facts"><dt>Deployment</dt><dd id="connection-deployment">generation pending</dd><dt>Core schema</dt><dd id="connection-core-generation">Unknown</dd><dt>Search schema</dt><dd id="connection-search-generation">Unknown</dd></dl>
-              <details class="connection-details"><summary>Readback</summary><div id="connection-health-details" class="health-details-content">${healthDetails(health)}</div></details>
-              <div class="connection-actions"><button class="button button--quiet" type="button" data-connection-refresh>Retry server check</button></div>
-            </article>
-            <article class="connection-card" id="connection-workspace-card">
-              <div class="connection-heading"><div><span class="eyebrow">Workspace connection</span><h2>Google Drive</h2></div><span id="connection-transport-state" class="connection-state connection-state--unknown">Unknown</span></div>
-              <p id="connection-transport-copy" class="connection-copy">${escapeHtml(googleTransportExplanation(health?.google_external_transport))}</p>
-              <div class="connection-profile"><span class="eyebrow">Owner profile</span><strong>E0 · owner read</strong></div>
-              <div id="google-oauth"></div>
-              <div id="owner-session"></div>
-            </article>
-          </div>
-          <details class="access-boundary"><summary>Access and privacy</summary><p>All reads resolve through the owner API. Private data is never cached in the browser.</p></details>
-        </section>
-      </section>
-      <aside class="panel panel--evidence" aria-label="Evidence details">
-        <div class="evidence-heading"><div><span class="eyebrow">Evidence details</span><h2>Evidence</h2></div><span class="rail-status">No excerpt selected</span></div>
-        <div id="evidence-empty" class="evidence-empty"><span class="evidence-glyph">✦</span><strong>Select an excerpt</strong><p>The source text and verification details will appear here.</p></div>
-        <article id="evidence-detail" class="evidence-detail" hidden></article>
-        <div class="system-facts"><span class="eyebrow">System facts</span><dl><dt>Core schema</dt><dd id="core-generation">${displayText(health?.core_schema_generation, "Unknown")}</dd><dt>Search schema</dt><dd id="search-generation">${displayText(health?.search_schema_generation, "Unknown")}</dd><dt>Connector</dt><dd id="connector-mode">${googleConnectorLabel(health?.google_external_transport)}</dd></dl></div>
-      </aside>
-    </main>
-  `;
+  app.innerHTML = renderWorkspaceShell({
+    healthBadge: healthBadge(health), healthSummary: healthSummary(health),
+    healthDetails: healthDetails(health), workspaceConnection: escapeHtml(googleTransportExplanation(health?.google_external_transport)),
+  });
+  const themeCleanup = mountWorkspaceTheme(app);
   const lens = app.querySelector<HTMLElement>("#corpus-lens");
   const importer = app.querySelector<HTMLElement>("#bundle-import");
   const rawUploadHost = app.querySelector<HTMLElement>("#raw-upload");
   let selectedNamespace: string | undefined;
+  let ownerSessionScopeSerial = 0;
+  let ownerSessionScopeEpoch: number | undefined;
+  const publishOwnerSessionScope = (verified: boolean): void => {
+    ownerSessionScopeSerial += 1;
+    ownerSessionScopeEpoch = verified ? ownerSessionScopeSerial : undefined;
+    app.dispatchEvent(new Event("eliotr:owner-session-scope-changed"));
+  };
+  const ownerSessionLifecycle = createOwnerSessionLifecycle({
+    deploymentGeneration: () => app.dataset.healthGeneration,
+    healthReady: () => !pageClosed && app.dataset.healthReady === "true",
+    onVerified: (session, deploymentGeneration) => {
+      publishOwnerSessionScope(true);
+      namespacePanel?.verifyOwnerSession(session, deploymentGeneration);
+    },
+    onCleared: () => {
+      publishOwnerSessionScope(false);
+      namespacePanel?.clearPrivate("Owner session verification ended. Workspace data was cleared.");
+    },
+    refreshReadPanes: () => { projectPanel?.refresh(); libraryPanel?.refresh(); researchRun?.refreshHistory(); },
+  });
   const namespaceSelected = (event: Event): void => {
     const id = (event as CustomEvent<{ sourceNamespaceId?: unknown }>).detail?.sourceNamespaceId;
     selectedNamespace = typeof id === "string" && /^[A-Za-z0-9][A-Za-z0-9._:@-]{0,255}$/u.test(id) ? id : undefined;
@@ -217,27 +159,12 @@ function render(health: SystemHealth | null): void {
   const namespacePanel = namespaceHost ? mountSourceNamespacePanel(namespaceHost, {
     deploymentGeneration: () => app.dataset.healthGeneration,
     healthReady: () => app.dataset.healthReady === "true",
+    onResumed: ownerSessionLifecycle.onResumed,
   }) : undefined;
   app.dataset.healthReady = health?.ready === true ? "true" : "false";
   renderGoogleConnector(health);
   const orientation = lens ? mountOrientationPanel(lens) : undefined;
   const library = app.querySelector<HTMLElement>("#library");
-  const sourcePanel = app.querySelector<HTMLElement>(".panel--corpus");
-  const sourceChooserToggle = app.querySelector<HTMLButtonElement>("[data-source-chooser-toggle]");
-  const sourceChooserState = app.querySelector<HTMLElement>("[data-source-chooser-state]");
-  const sourceChooserViewport = window.matchMedia("(max-width: 720px)");
-  let sourceChooserExpanded = !sourceChooserViewport.matches;
-  const setSourceChooserExpanded = (expanded: boolean): void => {
-    sourceChooserExpanded = expanded;
-    if (sourcePanel) sourcePanel.dataset.sourceChooserCollapsed = expanded ? "false" : "true";
-    sourceChooserToggle?.setAttribute("aria-expanded", String(expanded));
-    if (sourceChooserState) sourceChooserState.textContent = expanded ? "Hide list" : "Show list";
-  };
-  const toggleSourceChooser = (): void => setSourceChooserExpanded(!sourceChooserExpanded);
-  const handleSourceChooserViewport = (): void => setSourceChooserExpanded(!sourceChooserViewport.matches);
-  sourceChooserToggle?.addEventListener("click", toggleSourceChooser);
-  sourceChooserViewport.addEventListener("change", handleSourceChooserViewport);
-  setSourceChooserExpanded(sourceChooserExpanded);
   const retrievalHost = app.querySelector<HTMLElement>("#retrieval");
   const retrieval = retrievalHost ? mountRetrievalPanel(retrievalHost, () => app.dataset.healthReady === "true") : undefined;
   let researchConfigurationStartState: ResearchConfigurationStartState | null = null;
@@ -252,8 +179,25 @@ function render(health: SystemHealth | null): void {
     deploymentGeneration: () => app.dataset.healthGeneration,
     onStateChange: (state) => { researchConfigurationStartState = state; researchRun?.refreshAvailability(); },
   }) : undefined;
+  const providerKeyHost = app.querySelector<HTMLElement>("#research-provider-key");
+  const providerKeyPanel = providerKeyHost ? mountResearchProviderKeyPanel(providerKeyHost, {
+    deploymentGeneration: () => app.dataset.healthGeneration,
+    healthReady: () => app.dataset.healthReady === "true",
+    ownerSessionScopeEpoch: () => ownerSessionScopeEpoch,
+  }) : undefined;
+  const providerKeyUseHost = app.querySelector<HTMLElement>("#research-provider-key-model-use");
+  const providerKeyUsePanel = providerKeyUseHost ? mountResearchProviderKeyModelUsePanel(providerKeyUseHost, {
+    deploymentGeneration: () => app.dataset.healthGeneration,
+    healthReady: () => app.dataset.healthReady === "true",
+    ownerSessionScopeEpoch: () => ownerSessionScopeEpoch,
+  }) : undefined;
   const wikiHost = app.querySelector<HTMLElement>("#wiki");
   const wiki = wikiHost ? mountWikiPanel(wikiHost, () => app.dataset.healthGeneration, () => app.dataset.healthReady === "true") : undefined;
+  const grantHost = app.querySelector<HTMLElement>("#client-grants");
+  const clientGrants = grantHost ? mountClientGrantPanel(grantHost, {
+    deploymentGeneration: () => app.dataset.healthGeneration,
+    healthReady: () => app.dataset.healthReady === "true",
+  }) : undefined;
   const diagnosticHost = app.querySelector<HTMLElement>("#mcp-client-diagnostic");
   const erasureHost = app.querySelector<HTMLElement>("#erasure");
   const erasure = erasureHost ? mountErasurePanel(erasureHost, {
@@ -268,12 +212,17 @@ function render(health: SystemHealth | null): void {
   const ownerSession = ownerSessionHost ? mountOwnerSessionPanel(ownerSessionHost, {
     deploymentGeneration: () => app.dataset.healthGeneration,
     healthReady: () => app.dataset.healthReady === "true",
+    onVerified: ownerSessionLifecycle.onVerified,
+    onCleared: ownerSessionLifecycle.onCleared,
+    onExpired: ownerSessionLifecycle.onExpired,
   }) : undefined;
   const evidenceEmpty = app.querySelector<HTMLElement>("#evidence-empty");
   const evidenceDetail = app.querySelector<HTMLElement>("#evidence-detail");
   const evidenceStatus = app.querySelector<HTMLElement>(".rail-status");
   const evidenceRail = evidenceEmpty && evidenceDetail && evidenceStatus
     ? mountEvidenceRail(evidenceEmpty, evidenceDetail, evidenceStatus) : undefined;
+  const workspaceChrome = mountWorkspaceChrome(app);
+  const setSourceChooserExpanded = workspaceChrome.setSourceChooserExpanded;
   const selectResearchEvidence = (event: Event): void => {
     const detail = (event as CustomEvent<{ scopeSnapshotRef?: VersionedRef; handleRef?: VersionedRef; excerptSha256?: string }>).detail;
     if (detail?.scopeSnapshotRef !== undefined && detail.handleRef !== undefined) evidenceRail?.selectHandle(detail.scopeSnapshotRef, detail.handleRef, detail.excerptSha256);
@@ -281,13 +230,14 @@ function render(health: SystemHealth | null): void {
   app.addEventListener("research:evidence-selected", selectResearchEvidence);
   type WorkspaceViewName = "sources" | "research" | "wiki" | "connections";
   type WorkspaceViewDefinition = { name: WorkspaceViewName; title: string; lede: string; sectionSelector: string; historyHash: string; anchorSelector: string };
-  const sourcesView: WorkspaceViewDefinition = { name: "sources", title: "Sources", lede: "Import or select admitted sources, then open Corpus Lens for structure and readiness.", sectionSelector: "#sources-view", historyHash: "#library", anchorSelector: "#library" };
+  const sourcesView: WorkspaceViewDefinition = { name: "sources", title: "Documents", lede: "Choose a document to read, or add a source to your library.", sectionSelector: "#sources-view", historyHash: "#library", anchorSelector: "#library" };
   const workspaceViews: Record<string, WorkspaceViewDefinition> = {
     "#library": sourcesView,
     "#corpus-lens-card": { ...sourcesView, anchorSelector: "#corpus-lens-card" },
-    "#research-card": { name: "research", title: "Research", lede: "Search selected source bytes, inspect sampled coverage, and open only verified evidence.", sectionSelector: "#research-view", historyHash: "#research-card", anchorSelector: "#research-card" },
+    "#research-card": { name: "research", title: "Research", lede: "Ask your documents a question. Read the saved report alongside its sources.", sectionSelector: "#research-view", historyHash: "#research-card", anchorSelector: "#research-card" },
     "#wiki-card": { name: "wiki", title: "Wiki", lede: "Review saved Wiki proposals and read their current owner-authorized page text.", sectionSelector: "#wiki-view", historyHash: "#wiki-card", anchorSelector: "#wiki-card" },
     "#connections-card": { name: "connections", title: "Connections", lede: "Check the server and workspace connection; client activity appears only after a manual check.", sectionSelector: "#connections-card", historyHash: "#connections-card", anchorSelector: "#connections-card" },
+    "#research-configuration-card": { name: "connections", title: "Connections", lede: "Check the server and workspace connection; client activity appears only after a manual check.", sectionSelector: "#connections-card", historyHash: "#research-configuration-card", anchorSelector: "#research-configuration-card" },
   };
   const locationSelector = (): string => {
     switch (window.location.hash) {
@@ -296,6 +246,7 @@ function render(health: SystemHealth | null): void {
       case "#research-card": return "#research-card";
       case "#wiki":
       case "#wiki-card": return "#wiki-card";
+      case "#research-configuration-card": return "#research-configuration-card";
       case "#connections":
       case "#connections-card": return "#connections-card";
       case "#sources":
@@ -313,7 +264,7 @@ function render(health: SystemHealth | null): void {
     if (workspace) workspace.dataset.activeView = view.name;
     const ownerProfile = app.querySelector<HTMLElement>("[data-workspace-owner-profile]");
     if (ownerProfile) ownerProfile.hidden = view.name === "connections";
-    if (view.name !== "sources" && sourceChooserViewport.matches) setSourceChooserExpanded(false);
+    if (view.name !== "sources") setSourceChooserExpanded(false);
     for (const item of app.querySelectorAll<HTMLButtonElement>('.workspace-nav [data-nav-target]')) {
       const active = workspaceViews[item.dataset.navTarget ?? ""]?.name === view.name;
       item.classList.toggle("nav-item--active", active);
@@ -330,6 +281,7 @@ function render(health: SystemHealth | null): void {
     if (title) title.textContent = view.title;
     const lede = app.querySelector<HTMLElement>("[data-workspace-lede]");
     if (lede) lede.textContent = view.lede;
+    workspaceChrome.sync();
     if (options.history !== false && window.location.hash !== view.historyHash) {
       history.pushState({ eliotrWorkspaceView: view.name }, "", `${window.location.pathname}${window.location.search}${view.historyHash}`);
     }
@@ -342,6 +294,8 @@ function render(health: SystemHealth | null): void {
     setWorkspaceView("#library", { history: true, focus: true });
   };
   const handleSourceVersionFormRequested = (): void => {
+    const importCard = app.querySelector<HTMLDetailsElement>("#source-import-card");
+    if (importCard) importCard.open = true;
     setSourceChooserExpanded(true);
     setWorkspaceView("#library", { history: true, focus: true });
   };
@@ -375,15 +329,26 @@ function render(health: SystemHealth | null): void {
       if (coverageNote) coverageNote.textContent = "Run Research to measure sampled resolution.";
     }
   };
-  let projectPanel: (() => void) & ProjectPanelHandle | undefined;
-  let libraryPanel: ReturnType<typeof mountLibraryPanel> | undefined;
-  const clearPrivateEvidence = (researchNotice?: string): void => { clearEvidenceRail(); retrieval?.clearPrivate(); exhaustive?.clearPrivate(); erasure?.clearPrivate(); ownerSession?.clearPrivate(); projectPanel?.clearPrivate(); libraryPanel?.clearPrivate(); researchRun?.clearPrivate(researchNotice); researchChanges?.clearPrivate(); wiki?.clearPrivate(); };
-  const sourceErased = (): void => { clearEvidenceRail(); retrieval?.clearPrivate(); researchRun?.clearPrivate(); exhaustive?.clearPrivate(); researchChanges?.clearPrivate(); wiki?.clearPrivate(); };
+  let selectionSerial = 0;
+  const clearPrivateEvidence = (researchNotice?: string, preserveIntent = false): void => {
+    selectionSerial += 1;
+    if (preserveIntent) researchRun?.suspendPrivate(); else researchRun?.clearPrivate(researchNotice);
+    clearEvidenceRail(); retrieval?.clearPrivate(); exhaustive?.clearPrivate(); erasure?.clearPrivate(); ownerSession?.clearPrivate();
+    projectPanel?.clearPrivate(); libraryPanel?.clearPrivate(); researchChanges?.clearPrivate(); wiki?.clearPrivate();
+  };
+  const sourceErased = (): void => { selectionSerial += 1; clearEvidenceRail(); retrieval?.clearPrivate(); researchRun?.clearPrivate(); exhaustive?.clearPrivate(); researchChanges?.clearPrivate(); wiki?.clearPrivate(); };
   erasureHost?.addEventListener("eliotr:source-erased", sourceErased);
   erasureHost?.addEventListener("eliotr:source-erasure-requested", sourceErased);
-  const clearEvidenceOnEvent = (): void => clearPrivateEvidence();
-  const clearEvidenceOnAuthorization = (): void => clearPrivateEvidence("Authorization changed. Sign in again or renew the read policy, then try again.");
-  const clearEvidenceOnHealthLost = (): void => clearPrivateEvidence();
+  const clearEvidenceOnEvent = (): void => {
+    healthSerial += 1; healthController?.abort();
+    app.querySelectorAll<HTMLButtonElement>("[data-refresh], [data-connection-refresh]").forEach((button) => { button.disabled = false; });
+    updateHealth(unavailableHealth());
+  };
+  const clearEvidenceOnAuthorization = (): void => clearPrivateEvidence("Authorization changed. Sign in again, then refresh to check which sources remain permitted.");
+  const clearEvidenceOnHealthLost = (event: Event): void => {
+    const reason = (event as CustomEvent<{ reason?: unknown }>).detail?.reason;
+    clearPrivateEvidence(undefined, reason === "connection-lost" || reason === "initial-unavailable");
+  };
   const clearEvidenceOnScopeChange = (event: Event): void => {
     const detail = (event as CustomEvent<{ readonly reason?: unknown; readonly projectId?: unknown; readonly title?: unknown }>).detail;
     if (detail?.reason === "project-filter") {
@@ -405,16 +370,6 @@ function render(health: SystemHealth | null): void {
     researchChanges?.refresh();
   };
   const clearEvidenceOnQueryStart = (): void => clearEvidenceRail();
-  const refreshHealth = (): void => {
-    const previousGeneration = app.querySelector(".health-generation")?.textContent;
-    const refreshButtons = app.querySelectorAll<HTMLButtonElement>("[data-refresh], [data-connection-refresh]");
-    refreshButtons.forEach((button) => { button.disabled = true; });
-    void getSystemHealth().then((next) => {
-      if (previousGeneration && previousGeneration !== "generation pending" && previousGeneration !== next.deployment_generation) clearPrivateEvidence();
-      updateHealth(next);
-    }).catch((error) => { clearPrivateEvidence(); updateHealth(unavailableHealth(), classifyHealthFailure(error));
-    }).finally(() => { refreshButtons.forEach((button) => { button.disabled = false; }); });
-  };
   app.querySelector<HTMLButtonElement>("[data-refresh]")?.addEventListener("click", refreshHealth);
   app.querySelector<HTMLButtonElement>("[data-connection-refresh]")?.addEventListener("click", refreshHealth);
   // Coverage stays "sampled" until an exhaustive denominator is reconciled; the summary reports
@@ -431,6 +386,7 @@ function render(health: SystemHealth | null): void {
   });
   retrievalHost?.addEventListener("retrieval:started", clearEvidenceOnQueryStart);
   researchRunHost?.addEventListener("research:started", clearEvidenceOnQueryStart);
+  researchRunHost?.addEventListener("research:private-cleared", clearEvidenceOnQueryStart);
   exhaustiveHost?.addEventListener("exhaustive:started", clearEvidenceOnQueryStart);
   exhaustiveHost?.addEventListener("exhaustive:completed", (event) => {
     const detail = (event as CustomEvent<{ matches: number; sections: number }>).detail;
@@ -447,6 +403,7 @@ function render(health: SystemHealth | null): void {
   app.addEventListener("eliotr:health-updated", refreshProjects);
   app.addEventListener("library:scope-changed", clearEvidenceOnScopeChange);
   window.addEventListener("offline", clearEvidenceOnEvent);
+  window.addEventListener("online", refreshHealth);
   window.addEventListener("eliotr:authorization-cleared", clearEvidenceOnAuthorization);
   window.addEventListener("eliotr:raw-admission-completed", refreshAfterSourceAdmission);
   retrievalHost?.addEventListener("retrieval:evidence-selected", (event) => {
@@ -454,29 +411,56 @@ function render(health: SystemHealth | null): void {
     evidenceRail?.select(evidence, evidence.handle.scope_snapshot_ref);
   });
   const projectHost = app.querySelector<HTMLElement>("#projects");
-  projectPanel = projectHost ? mountProjectPanel(projectHost, {
+  const projectPanel = projectHost ? mountProjectPanel(projectHost, {
     deploymentGeneration: () => app.dataset.healthGeneration,
     healthReady: () => app.dataset.healthReady === "true",
     onOpenProject: (projectId) => libraryPanel?.openProject(projectId),
   }) : undefined;
-  libraryPanel = library ? mountLibraryPanel(library, async (id, context) => {
-    if (!id) { retrieval?.clearPrivate(); researchRun?.clearPrivate(); exhaustive?.clearPrivate(); erasure?.clearPrivate(); return; }
+  const libraryPanel = library ? mountLibraryPanel(library, async (id, context) => {
+    // Empty Library callbacks clear protected selection, not retained Research intent.
+    if (!id) { retrieval?.clearPrivate(); exhaustive?.clearPrivate(); erasure?.clearPrivate(); return; }
+    const selection = selectionSerial;
     erasure?.selectSource(id, context);
     if (!context?.sourceRevisionRef) {
       if (!orientation || !(await orientation.selectSource(id))) return false;
+    }
+    if (selection !== selectionSerial || pageClosed || !navigator.onLine || app.dataset.healthReady !== "true") return false;
+    if (!context?.sourceRevisionRef) {
+      setSourceChooserExpanded(false);
+      setWorkspaceView("#corpus-lens-card", { anchor: true });
     }
     retrieval?.selectSource(id, context);
     researchRun?.selectSource(id, context);
     exhaustive?.selectSource(id);
     return true;
   }) : undefined;
-  const cleanups = [orientation, retrieval, researchRun, exhaustive, researchChanges, researchConfiguration, wiki, diagnostic, erasure, ownerSession, projectPanel,
+  const cleanups = [orientation, retrieval, researchRun, exhaustive, researchChanges, researchConfiguration, providerKeyPanel, providerKeyUsePanel, wiki, diagnostic, clientGrants, erasure, ownerSession, projectPanel,
     () => erasureHost?.removeEventListener("eliotr:source-erased", sourceErased),
     () => erasureHost?.removeEventListener("eliotr:source-erasure-requested", sourceErased), importer ? mountBundleImportPanel(importer) : undefined,
     namespacePanel, () => app.removeEventListener("eliotr:namespace-selected", namespaceSelected),
     rawUploadHost ? mountRawFilePanel(rawUploadHost, { generation: () => app.dataset.healthGeneration, ready: () => app.dataset.healthReady === "true", sourceNamespace: () => selectedNamespace }) : undefined,
     libraryPanel];
-  window.addEventListener("pagehide", () => { cleanups.forEach((cleanup) => cleanup?.()); googleOAuthCleanup?.(); googleOAuthCleanup = undefined; mountedGoogleTransport = null; evidenceRail?.dispose(); sourceChooserToggle?.removeEventListener("click", toggleSourceChooser); sourceChooserViewport.removeEventListener("change", handleSourceChooserViewport); rawUploadHost?.removeEventListener("eliotr:find-in-library", handleFindInLibrary); rawUploadHost?.removeEventListener(SOURCE_VERSION_FORM_REQUESTED_EVENT, handleSourceVersionFormRequested); app.removeEventListener("library:scope-changed", clearEvidenceOnScopeChange); window.removeEventListener("offline", clearEvidenceOnEvent); window.removeEventListener("eliotr:authorization-cleared", clearEvidenceOnAuthorization); window.removeEventListener("eliotr:raw-admission-completed", refreshAfterSourceAdmission); retrievalHost?.removeEventListener("retrieval:started", clearEvidenceOnQueryStart); researchRunHost?.removeEventListener("research:started", clearEvidenceOnQueryStart); exhaustiveHost?.removeEventListener("exhaustive:started", clearEvidenceOnQueryStart); app.removeEventListener("eliotr:health-lost", clearEvidenceOnHealthLost); app.removeEventListener("eliotr:health-lost", clearResearchConfiguration); app.removeEventListener("eliotr:health-updated", refreshResearchConfiguration); app.removeEventListener("eliotr:health-updated", refreshResearchChanges); app.removeEventListener("eliotr:health-updated", refreshWiki); app.removeEventListener("eliotr:health-updated", refreshProjects); window.removeEventListener("popstate", handleLocationChange); window.removeEventListener("hashchange", handleLocationChange); app.removeEventListener("research:evidence-selected", selectResearchEvidence); }, { once: true });
+  window.addEventListener("pagehide", () => { pageClosed = true; healthSerial += 1; healthController?.abort(); cleanups.forEach((cleanup) => cleanup?.()); googleOAuthCleanup?.(); googleOAuthCleanup = undefined; mountedGoogleTransport = null; evidenceRail?.dispose(); workspaceChrome.dispose(); themeCleanup(); rawUploadHost?.removeEventListener("eliotr:find-in-library", handleFindInLibrary); rawUploadHost?.removeEventListener(SOURCE_VERSION_FORM_REQUESTED_EVENT, handleSourceVersionFormRequested); app.removeEventListener("library:scope-changed", clearEvidenceOnScopeChange); window.removeEventListener("offline", clearEvidenceOnEvent); window.removeEventListener("online", refreshHealth); window.removeEventListener("eliotr:authorization-cleared", clearEvidenceOnAuthorization); window.removeEventListener("eliotr:raw-admission-completed", refreshAfterSourceAdmission); retrievalHost?.removeEventListener("retrieval:started", clearEvidenceOnQueryStart); researchRunHost?.removeEventListener("research:started", clearEvidenceOnQueryStart); researchRunHost?.removeEventListener("research:private-cleared", clearEvidenceOnQueryStart); exhaustiveHost?.removeEventListener("exhaustive:started", clearEvidenceOnQueryStart); app.removeEventListener("eliotr:health-lost", clearEvidenceOnHealthLost); app.removeEventListener("eliotr:health-lost", clearResearchConfiguration); app.removeEventListener("eliotr:health-updated", refreshResearchConfiguration); app.removeEventListener("eliotr:health-updated", refreshResearchChanges); app.removeEventListener("eliotr:health-updated", refreshWiki); app.removeEventListener("eliotr:health-updated", refreshProjects); window.removeEventListener("popstate", handleLocationChange); window.removeEventListener("hashchange", handleLocationChange); app.removeEventListener("research:evidence-selected", selectResearchEvidence); }, { once: true });
+}
+
+function refreshHealth(): void {
+  if (pageClosed) return;
+  healthController?.abort();
+  const mine = ++healthSerial;
+  const local = new AbortController(); healthController = local;
+  const buttons = app.querySelectorAll<HTMLButtonElement>("[data-refresh], [data-connection-refresh]");
+  buttons.forEach((button) => { button.disabled = true; });
+  void getSystemHealth(local.signal).then((health) => {
+    if (mine === healthSerial && !pageClosed && navigator.onLine) updateHealth(health);
+  }).catch((error: unknown) => {
+    if (mine !== healthSerial || pageClosed || local.signal.aborted) return;
+    const failure = classifyHealthFailure(error);
+    if (failure.kind === "access") window.dispatchEvent(new Event("eliotr:authorization-cleared"));
+    updateHealth(unavailableHealth(), failure);
+  }).finally(() => {
+    if (healthController === local) healthController = undefined;
+    if (mine === healthSerial && !pageClosed) buttons.forEach((button) => { button.disabled = false; });
+  });
 }
 
 function updateHealth(health: SystemHealth, failure?: HealthFailure): void {
@@ -493,7 +477,7 @@ function updateHealth(health: SystemHealth, failure?: HealthFailure): void {
   if (reason !== undefined) {
     app.dispatchEvent(new CustomEvent("eliotr:health-lost", { detail: { reason } }));
   }
-  app.dataset.healthGeneration = health.deployment_generation;
+  if (!endpointUnreachable) app.dataset.healthGeneration = health.deployment_generation;
   app.dataset.healthReady = health.ready ? "true" : "false";
   app.dataset.healthObserved = "true";
   renderGoogleConnector(health);
@@ -549,7 +533,7 @@ function updateHealth(health: SystemHealth, failure?: HealthFailure): void {
 
 window.addEventListener("pageshow", (event) => { if (event.persisted) window.location.reload(); });
 render(null);
-void getSystemHealth().then(updateHealth).catch((error) => updateHealth(unavailableHealth(), classifyHealthFailure(error)));
+refreshHealth();
 
 if ("serviceWorker" in navigator) {
   void navigator.serviceWorker.register("/sw.js");

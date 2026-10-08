@@ -11,7 +11,6 @@ authority. The server derives visibility from the authenticated principal and cu
 
 ## Owned paths
 
-- `apps/eliotr-core/src/research-changes-cursor.ts`
 - `apps/eliotr-core/src/research-changes.ts`
 - `apps/eliotr-core/test/research-changes.test.ts`
 

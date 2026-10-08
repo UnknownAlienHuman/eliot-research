@@ -82,13 +82,15 @@ function d1(rows: Map<string, Row>, options: D1Options = {}): D1Database {
               if (sql.startsWith("INSERT INTO raw_file_capture")) {
                 const row: Row = {
                   capture_id: values[0], principal_ref: values[1], owner_system_id: values[2],
-                  source_namespace_id: values[3], source_revision_ref: values[4], source_logical_id: values[5],
-                  source_owner_generation: values[6], idempotency_key: values[7], original_file_name: values[8], request_digest: values[9],
-                  residency_key_json: values[10], residency_key_digest: values[11], content_sha256: values[12],
-                  size_bytes: values[13], content_type: values[14], state: "INTENT", object_key: values[15],
-                  receipt_json: null, receipt_sha256: null, created_at: values[16], updated_at: values[16], expires_at: values[17],
+                  source_namespace_id: values[3], source_revision_ref: values[4],
+                  target_source_id: values[5], expected_head_revision_ref: values[6],
+                  source_logical_id: values[7], source_owner_generation: values[8],
+                  idempotency_key: values[9], original_file_name: values[10], request_digest: values[11],
+                  residency_key_json: values[12], residency_key_digest: values[13], content_sha256: values[14],
+                  size_bytes: values[15], content_type: values[16], state: "INTENT", object_key: values[17],
+                  receipt_json: null, receipt_sha256: null, created_at: values[18], updated_at: values[18], expires_at: values[19],
                 };
-                if (rows.has(String(values[0])) || [...rows.values()].some((existing) => existing.principal_ref === values[1] && existing.idempotency_key === values[7])) {
+                if (rows.has(String(values[0])) || [...rows.values()].some((existing) => existing.principal_ref === values[1] && existing.idempotency_key === values[9])) {
                   throw new Error("UNIQUE constraint failed: raw_file_capture");
                 }
                 rows.set(String(values[0]), row);

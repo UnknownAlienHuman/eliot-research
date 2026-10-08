@@ -19,8 +19,8 @@ new process/port returns the persisted draft/attempt/receipt bytes verbatim, and
 divergence in any bound field conflicts with zero new side effects. A controller-owned coherent-cut
 token (`backup_export_cut`) binds D1 tables/schema/migration/purge plus the R2 inventory generation
 to one cut; the phase-2 seal rejects observable drift, including R2 re-put rollback via fresh
-etag/version. Every real Core column is exported and PRAGMA-verified against the complete schema
-inventory, and manifests carry the versioned `eliotr.backup-manifest.v1` protocol identifier. The
+etag/version. Export columns are PRAGMA-verified against the complete schema inventory; unclassified
+new Core tables block export until their explicit canonical coverage is added. Manifests carry the versioned `eliotr.backup-manifest.v1` protocol identifier. The
 complete authority vector (schema generation, migration ledger, per-table counts/digests, purge
 frontier, R2 pagination fingerprints and watermarks) is persisted as a content-addressed `vector`
 manifest; its digest is bound into the epoch, parts and receipts, and reopened independently.
@@ -41,4 +41,33 @@ blocks auditably. See `offsite-test-destination.json` for the controlled test de
 Restore order is fail-closed: restore Core in isolation, apply PurgeLedger and current policy before any
 payload exposure, remove or quarantine purged influence, restore remaining R2 objects, then rebuild
 projections and run LIVE/REDACTED handle acceptance cases. No readiness receipt is issued before this
-sequence completes. O3 isolated restore and O4 purge replay stay NOT_IMPLEMENTED and fail closed.
+sequence completes. O3 isolated restore remains closed pending the real restore/admission sequence.
+
+Provider-key configuration operations, model-use operations and price observations, and native-model
+preparation/qualification history are retained in the authenticated encrypted source epoch but are
+archive-only during isolated restore. The v2 restore receipt records the exact applicable table set,
+source row counts and canonical row digests, binds them to the source migration ledger and the
+authenticated `heads`/`generations` manifest pins, and records a fenced zero-row readback for each
+corresponding target table. It does not copy those rows into the target or recreate current owner,
+credential, selection, pricing, qualification, or proof authority. Fresh target-local admissions must
+establish those authorities through their normal guarded workflows. The row digests describe canonical
+decoded source rows; the manifest and group digests separately bind the authenticated source bytes.
+Legacy v1 receipts remain readable byte-for-byte and do not gain the v2 archive claim.
+
+The local O4 primitive persists the full original copy request before the first offsite write and
+binds each erasure obligation to its exact epoch/copy, current execution lease, destination grant,
+hold and expiry journal. The Worker now resolves an optional installed transport through the existing
+OffsiteCopyAdapter contract. Its R2 S3 implementation uses immutable conditional puts, authenticated
+readback and conditional same-key tombstones; terminal replay proves the same exact part is absent
+and cannot be reinserted. This implementation subset requires nonversioned R2; other providers may
+implement the existing port independently. It is not a new provider requirement.
+
+The optional server profile is `eliotr.backup-offsite-r2-config.v1` in
+`ELIOTR_BACKUP_OFFSITE_R2_CONFIG_JSON`; access credentials use separate server secret bindings.
+The installed destination/endpoint/approval must match current D1 controller authority and an
+independent failure domain. An absent adapter or unverifiable legacy/partial copy blocks completion.
+No endpoint, credentials or live resources were installed by this change.
+
+O4 subject-to-epoch scope reconciliation and O3 restore acceptance remain required.
+ERASURE stays disabled; local primitives and test receipts do not authorize readiness,
+deployment or live qualification.

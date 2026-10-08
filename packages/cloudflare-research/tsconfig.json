@@ -5,7 +5,8 @@
     "outDir": "dist",
     "tsBuildInfoFile": "dist/.tsbuildinfo",
     "types": [
-      "@cloudflare/workers-types"
+      "@cloudflare/workers-types",
+      "node"
     ]
   },
   "include": [
@@ -41,6 +42,15 @@
     },
     {
       "path": "../cloudflare-workflows"
+    },
+    {
+      "path": "../cloudflare-model-control"
+    },
+    {
+      "path": "../cloudflare-model-execution"
+    },
+    {
+      "path": "../cloudflare-research-branches"
     }
   ]
 }

@@ -13,6 +13,83 @@ The owner's current priority is composing the existing protocol, retrieval, evid
 stages into the usable document-to-answer flow. New financial budgeting/accounting work is deferred
 (2026-09-10); existing provider authorization, cancellation and duplicate-call guards are preserved.
 
+## Runtime failure provenance (S17 code, 2026-09-25)
+
+Apply the complete migration chain through `0083_research_runtime_failures.sql` before deploying
+these status readers/executors, together with the updated PWA. Existing rows are not backfilled:
+old failures with no retained diagnosis remain unknown or use the finite native error fallback.
+
+Semantic preparation and the preceding qualification-renewal path distinguish missing/invalid
+configuration, gateway credentials, route qualification expiry, current authority, storage read
+failure and corrupt output. Existing error families supply a closed safe vocabulary. Neither
+messages, nested causes, stacks, config values nor provider/source payloads enter diagnostics.
+
+The existing W2 run keeps its first failure and most recent consequence; each actual W2 attempt
+also retains its first failure. A metadata-only write cannot change request/attempt identity,
+output, budget, checkpoint revision, cancellation or execution state. First fields are immutable
+once set. Output/currentness checks remain mandatory for output/state transitions, while recording
+an expired-authority failure does not itself require renewed execution authorization. The attempt
+and run diagnostic writes use one D1 batch; uncertain acknowledgement reads that same run back.
+Failure to retain diagnostics emits only a bounded safe-code event and never replaces the original
+error or claims successful persistence. A database outage can therefore leave diagnostics absent.
+
+Callbacks record safe cause/phase/stage before native Workflow error serialization. An outer
+`step.do` wrapper cannot overwrite them with a generic consequence. Status reads do not record
+failures. Only a native `errored` observation on an ACTIVE run exposes the retained failure;
+a recovered/running, cancelled or completed run is not relabelled failed by its history.
+Failure-bearing status uses `eliotr.research-run-status.v2` with one optional `consequence`;
+normal statuses retain v1, and the PWA accepts both. Existing HTTP/MCP authorization and trace
+identities remain unchanged. The UI names the initial cause and later consequence separately.
+
+Diagnostic retryability is not permission to replay a Workflow or a model call. It defaults false;
+only a known model-free semantic-preparation storage read can mark its own operation retryable.
+Qualification renewal can dispatch probes and never acquires that automatic-retry hint. Native
+step retry limits, UNKNOWN handling, Stop/Recover authority and CompletionDisposition are unchanged.
+This is code with compile/static checks only; signed native lifecycle, injection, secret-redaction,
+restart/recovery and concurrency acceptance remain pending in #209. No new test run or live claim.
+
+## Operation-bound execution scopes (S33 code checkpoint, 2026-09-23)
+
+New owner runs require additive migration `0070_research_execution_scope.sql`.
+The existing orientation reservation stores a unique execution operation ID and immutable deadline;
+its request digest binds the complete Research input. Only the server run-admission path selects
+this mode, with a maximum lifetime of 24 hours. Public ORIENT keeps its 15-minute lease.
+The original ScopeSnapshot/grant is frozen once, with access capped by current read policies,
+source-admission expiry and scheduled membership changes. W1/W2 retain the originating principal,
+credential generation, scope and receipt; no browser token is stored or needed for background work.
+The canonical W2 current-view additionally requires the matching completed execution reservation.
+Policy revocation, source invalidation/purge/cutover, cancellation, deployment compatibility and
+paid-stage controls still apply. The operation deadline never slides on replay or recovery.
+Repeated POSTs reuse the recorded scope instead of resolving current source heads. Historical
+short-scope runs are not silently extended or upgraded; reauthenticated reads remain read-only.
+Code is integrated separately from acceptance: compilation/schema checks are not D1/Workflow,
+Windows, time-boundary or live qualification. Those remain pending in PR #225.
+
+## Full owner Research scope (S99 code checkpoint, 2026-09-23)
+
+New execution admission additionally requires `0071_research_scope_profile.sql`. It records
+`retrieval-scope-v2` using the existing owner exhaustive loader's ceiling of 4,096 authorized
+members; explicit selection retains the generic parser's 1,000-ID bound. Public ORIENT and ordinary
+query profiles retain their original 64-source limit. Existing `retrieval-scope-v1` rows and completed
+orientation receipts are not upgraded or rewritten. Missing legacy profile metadata is accepted only
+inside the old 64-member envelope; unknown or inconsistent profiles fail closed.
+
+Navigation materializes at most 64 metadata previews and returns at most 16 results, independently
+of the complete frozen Research membership. Planning and historical source witnesses read bounded
+64-member pages with exact requested-set checks. Workflow retrieval, report/history reauthorization
+and Wiki proposal readers use the recorded profile; historical reopening retains original revisions,
+owner generations, current policy and purge checks. The requested denominator is never replaced by
+a preview or top-k subset, and scope size confers neither exhaustive coverage nor extra model budget.
+
+Member ceilings are not universal capacity guarantees: the existing canonical snapshot/D1 envelope,
+450,000-byte orientation receipt, 64-KiB Workflow input/checkpoint and downstream result byte limits
+remain in force. Large inline planning manifests or long questions can exhaust these bounds before
+4,096 members. Admission returns an explicit size error with scope-partition guidance, never a
+truncated successful scope. No whole-corpus bodies are loaded to prepare membership.
+
+Code/static compilation is separate from PR #291's unexecuted 65/299-source native product, replay,
+expiry/revocation and corpus-quality acceptance. No live capacity or release-readiness claim.
+
 ## Configured exploratory evidence freeze
 
 The explicit `research-handlers.exploratory.v3` factory now composes stage 10 (`RECONCILE`) and
@@ -633,3 +710,236 @@ fingerprint readback and the six-field deployment pin bind the model result to t
 The provider, verifier qualification reader and zero-price accounting are explicit controlled fixture
 inputs. Public exploratory.v3 activation, live verifier qualification and stages 15–17 integration
 remain separate work; these tests do not establish a complete production research run.
+
+### Delegated read of a known project run (S11)
+
+GET `/api/v1/research/run/:workflow_id` also accepts a signed service token plus the non-secret
+`X-Eliotr-Client-Grant` locator. The grant must include `status`. A grantor-authored run or the
+requesting service's own machine run under its original grant revision is eligible only when its
+frozen expression is that one explicit PROJECT. Unrelated clients/projects and global or compound
+scopes are denied. No run-list authority is added.
+
+The response remains `eliotr.research-run-status.v1`. Progress, terminal cancellation and engine
+observations reuse the existing checkpoint/status implementation. Current delegated access to every
+original source is required even after the original session/snapshot expires. Original-revision,
+source-owner, policy/disclosure, purge, grant revision and deployment fences remain enforced;
+source updates never replace recorded evidence. These reads do not renew execution or resume stages.
+
+With separate `report` permission, completed semantic runs use the same exact Stage0/15/16/17,
+coverage and DRAFT-artifact readback to discover `answer.artifact_ref`. Without `report`, the answer
+is `unavailable` and no result reference is disclosed. `evidence` remains separate for citation opens.
+A known run ID therefore suffices to locate its authorized result, not to list all runs or reports.
+The MCP `eliotr_run_status` tool delegates to this exact application service. It creates no run and
+invokes no model; completed report discovery can issue fresh read-authority records.
+
+The machine historical-read extension requires the complete migration chain through0078.
+Behavioral/native and signed live acceptance remain pending. Run admission and separately authorized
+cancellation/recovery follow below; historical reading never grants those execution capabilities.
+
+
+### Delegated cancellation of a known owner run (S32)
+
+POST `/api/v1/research/run/:workflow_id/cancel` accepts the same signed service identity and
+project-grant locator as status, but requires the separate `cancel` operation. The body is `{}`;
+`Idempotency-Key` is mandatory. The existing owner Stop path and the MCP `eliotr_cancel` adapter
+use the same W2 cancellation transition. Status/report/query permission alone cannot stop a run.
+
+Only a grantor-authored run originally frozen against that one explicit PROJECT is eligible.
+The final conditional D1 update checks current grant revision, signed actor/issuer, project owner
+and generation, active investigation policy, original run/grant linkage, captured authority/ledger
+epochs and a deadline bounded by current source policy/admission and project membership expiry.
+Original expired session/snapshot lifetimes do not renew execution. Revoked provenance stays denied.
+
+The real client's command is recorded in the existing operation intent/attempt/receipt journal;
+its stable action identity includes authenticated identity, run and caller key. Its policy binding
+pins the delegation revision and project generation. Regrant cannot reuse the old action identity.
+The existing `workflow-cancelled:<operation_id>` receipt remains the canonical outcome. The action
+receipt records confirmed cancellation, not a claim that this client won a concurrent stop race.
+Uncertain writes reconcile exact rows; retries do not start stages, replace runs or replay models.
+
+`CANCELLED` is returned only after canonical readback and action reconciliation. `ENGINE_COMPLETED`
+conflicts rather than becoming cancelled. Native termination remains best effort after the durable
+transition; this does not promise reversal/refund of an already dispatched provider call. No report
+or evidence authority is granted by the response. Sponsored recovery has its own authority below.
+This cancellation checkpoint added no migration. This code has
+compile/static review only; native lifecycle and concurrency acceptance remain pending.
+
+
+### Delegated recovery with explicit spend approval (S32)
+
+POST `/api/v1/research/run/:workflow_id/recover` and MCP `eliotr_recover` accept `{}` and the same
+known run ID/action key as the existing owner recovery engine. The signed service requires separate
+`recover` permission; status, cancel and read permissions confer none. Only the current grantor's
+original explicit-PROJECT run is eligible. Its original execution grant must still be current;
+recovery does not renew an expired scope, adopt new sources, create a run or impersonate its owner.
+
+The owner explicitly supplies `spend_policy_ref` when issuing/editing the project grant in Connections
+or the existing API. The server validates the installed approved owner spend template, principal,
+deployment and expiry, then pins the canonical template SHA-256 in private columns on that same
+immutable grant revision. A changed template requires an explicit new grant revision. Grant expiry
+cannot exceed template expiry; excess authority is rejected, never silently shortened. Removing
+approval does not prevent revocation, whose tombstone preserves its historical binding. Neither
+read-only grants nor policy-name possession permit model costs. Machine run creation stays pending.
+
+Recovery uses one existing run/stage intent and attempt, attributed to the actual service principal.
+The policy decision binds grant-record hash, project generation and template hash. The command does
+not manufacture a budget reservation: `budget_reservation_ref` remains null, and W2/W3 continue to
+reserve and check the original owner's actual stage budgets. Write-time epoch/time/source/grant
+fences protect action creation/claim. Regrant, a changed action key or another actor cannot overwrite
+the occupied slot. Unknown native acknowledgement is read back without issuing a second restart.
+An accepted resume may continue remaining authorized paid stages, including the first audit; existing
+paid attempts are reconciled from their durable outputs, not replayed as fresh synthesis.
+
+Migration **0075_project_client_recovery_spend.sql** adds the private sponsorship columns and one
+shared recovery-authorization view for the W2 runtime and its two expired-reservation settlement
+triggers. Exact owner legacy actions retain their original identity; delegated settlement requires
+the pinned current grant, project, sponsor and original execution. Expiry relaxation is readback-only,
+never authority for another provider invocation. Source/report hashes and original budget receipts
+are not rewritten. Apply the complete chain through0075 before deploying grant mutations or recovery.
+
+Authority can change after a native command was accepted: a denied/unconfirmed response is not proof
+that the run did not resume. Grant revocation blocks further client commands and delegated settlement;
+it is not a rollback of the owner's independently authorized workflow. Use separately authorized
+cancellation to stop it. The response itself grants no report/evidence access. This is code with
+compile/static verification only; native lifecycle, race and paid-call-count acceptance remain pending.
+
+
+### S11 machine Research execution (migration 0076; code checkpoint)
+
+`research-client-execution.ts` composes the existing service-token authorizer, owner-approved
+spend template, execution reservation, recorded scope profile and native Workflow. HTTP
+`POST /api/v1/research/run` and MCP `eliotr_run` use the same strict request parser, request
+key and W1/W2 identities. New service runs support one explicit PROJECT and the exploratory
+lane; unsupported lanes are rejected before reservation. A `run` grant alone is insufficient:
+its private sponsorship fingerprint, deployment and expiry must match the installed approval.
+
+The existing orientation reservation captures the original project grant ID/revision before
+scope issuance. Migration 0076 retains existing rows exactly while admitting this separately
+fenced actor class; run grants bind one operation and cannot be reused as query/report grants.
+The original service actor remains the W1/W2/W3 principal and artifact author, not the grantor.
+Background execution uses that canonical actor, not browser credentials or payload-selected
+classes. Each authority check resolves the same immutable sponsor; the shared effective view
+fences stage/model writes on revocation, expiry, project/source/policy changes and purge.
+No quota is manufactured and no already dispatched call is promised a refund.
+
+Existing synthesis/audit/report services receive a strictly versioned internal delegated
+policy bound to the approved template. Public DTO/schema descriptors remain unchanged.
+Machine execution does not automatically renew model qualification: installed, unexpired
+route qualification remains mandatory. Admission returns a run handle, not model readiness.
+The full metadata profile, preview/result limits and actual Workflow byte limits are retained.
+
+Machine status and report/citation reads authenticate the **current signed service token** and
+retain the original delegation revision. Migration0078 reuses the recorded run origin for status
+and adds `project_client_artifact_read_origin`, shared by historical-scope issuance, effective grants
+and independent artifact readers. Machine artifacts must match the original W2 report admission,
+not merely overlap sources. Fresh report/evidence scopes remain pinned to the saved artifact and
+historical source versions. The old execution credential, scope and fixed deadline are never renewed.
+Expired execution does not require fresh spend approval to read; current grant/source permissions,
+revocation, project generation, purge and compatible deployment checks still apply. Regrant cannot
+restore old machine access. Cancelled machine runs disclose no saved draft through this path.
+Status/report/evidence remain distinct. Internal materialization readback retains its separately
+bound server-only W2 operation locator; it is not a public read capability. Owner readers are unchanged.
+
+Machine controls are integrated below. Remaining code: owner management of machine-authored
+reports and managed-OAuth composition. Full lifecycle/native acceptance is still pending.
+Apply the complete migration chain through **0078** before deploying these shared readers
+and mutation paths, including owner controls. No missing-schema permissive fallback exists.
+
+### Machine-run cancellation and recovery (S11/S32, migration 0077)
+
+Existing HTTP cancel/recover and MCP `eliotr_cancel`/`eliotr_recover` also accept a run created
+by that same signed service. `project_client_run_control_origin` is the shared SQL origin
+predicate used by navigation authorization, command write fences and recovery settlement.
+It binds the original W2 run, completed orientation reservation, scope/grant receipt, service
+principal/class, project generation and exact project-client grant revision. Another client,
+source overlap or replacement grant cannot control it. Owner-authored delegation is retained;
+matching an author principal alone is no longer sufficient for the owner recovery branch.
+
+Current request credentials authorize the command; stored credentials select original records
+only. A refreshed signed token of the same issuer/method/subject can control the original run,
+without changing execution credentials, deadline, source versions or checkpoint bytes. `cancel`
+and `recover` remain distinct permissions that must exist on the originating grant revision.
+Cancellation requires current source/delegation authority but no spend-template lookup; expired
+execution does not prevent stopping it. Recovery additionally requires the original effective
+execution, fixed deadline and exact installed sponsor approval to remain current. It never
+renews an expired scope or creates a replacement run. Existing W2/W3 budget checks and the
+single recovery action slot remain mandatory; unknown native acknowledgements are observe-only.
+
+Cancellation still confirms the canonical receipt before best-effort native termination.
+Changing control access does not roll back an accepted request or refund an in-flight model
+call. This extends commands, not owner management or historical machine-result read authority.
+Migration 0077 changes views only and adds a schema readiness marker; no historical rows,
+public DTOs, grant revisions or model reservations are rewritten. Compile/static review only;
+behavioral and native storage acceptance remains pending.
+
+
+### Owner reading of machine-authored drafts (S12, migration 0079)
+
+The existing owner saved-draft list now includes the original grantor's machine reports for
+projects they still own. The list retains its eight-item bound. Its existing PWA reopen path
+reads report metadata, exact sections/citations and Markdown export through the same POST
+reauthorization handlers. Machine entries deliberately omit a workflow-control locator:
+report access does not confer owner run management, recovery, Wiki promotion or publication.
+Direct legacy owner GET response shapes and service-token MCP tools are unchanged.
+
+`owner_artifact_read_origin` proves ordinary owner authorship or the exact machine W2 operation,
+completed execution reservation, original project grant and report admission. The reader must
+be the original grantor and a current owner of that project, with all original source IDs still
+members. Mere source overlap or a new project owner is not report entitlement. The shared view
+is checked during scope issuance and independently before/after artifact reads. Request-local
+currentness uses the existing mutation epoch/time-frontier checks and pins project generation.
+
+Current owner source policies authorize a fresh owner read scope. The machine's identity,
+credential, delegation, execution deadline and budgets are not adopted or renewed. An expired
+or revoked service grant therefore does not by itself deny the independently entitled owner.
+For this exact owner-machine origin only, `CLIENT_DELEGATION_STALE` may remain historical
+provenance while every current owner/source/disclosure/admission/purge condition is checked.
+The old invalidated snapshot remains invalidated. Other invalidations still fail; the existing
+`SCOPE_INPUT_CHANGED` exception still requires proven source-head advancement. Cancelled
+machine runs and terminal/missing original evidence handles remain unreadable here.
+
+No report bytes, original author, source revisions, hashes, DRAFT/audit verdicts or citation
+identities are rewritten. Citation reopening pairs original references with freshly authorized
+handles and retains the existing exact-projection requirement. Reading starts no model; listing
+and reopening may persist fresh read scopes, grants, receipts and handles. Credentials and
+request cancellation are checked before final disclosure.
+
+Apply the complete migration chain through **0079** before deploying the shared history and
+reauthorization handlers; missing schema is not a permissive fallback. No backfill or source-data
+rewrite is performed. This checkpoint is compilation/lint/schema-reviewed code, not native,
+browser or behavioral acceptance. Owner machine-run control and general run discovery,
+publication/erasure and managed-OAuth integration remain separate work.
+
+
+### Owner management of machine runs (S11/S32, migration 0080)
+
+The bounded owner run list and existing status/cancel/recover routes now include a machine
+run's original grantor, provided they still own its original project and retain current access
+to all original sources. `owner_machine_run_origin` proves the W2 run, historical grant and
+completed execution reservation without requiring a report to exist. Fresh owner read/control
+scopes retain the exact historical source set; machine authorship and execution credentials
+remain unchanged. A revoked/expired service delegation alone does not deny independent owner
+reading or cancellation. Other source/policy/purge/currentness constraints remain mandatory.
+
+Cancellation is fenced at the canonical write by current owner credentials, source/time
+frontiers, project generation and authority epochs. Its command is attributed to the actual
+owner in the existing journal; success requires the canonical CANCELLED receipt. Native
+termination remains best effort and does not roll back data or refund a dispatched model call.
+Recovery also requires the original effective machine execution, fixed deadline and unchanged
+installed sponsorship with existing W2/W3 budget/provider restrictions. It cannot revive a
+revoked/regranted operation. The existing run/stage recovery slot and observe-only uncertain
+acknowledgement behavior remain; an occupied command is never reassigned to another caller.
+The shared recovery-authorization view also applies that owner-machine provenance at settlement.
+
+The existing PWA now has separate Stop research / Recover research controls. They show pending
+until server confirmation, retain the same action key on unknown outcomes, and read status
+rather than start a replacement run. Offline/auth loss/disposal clears private in-memory state;
+late responses cannot repopulate it. Run result opening uses existing artifact reauthorization
+when the original-author GET returns its typed not-found error. Fresh owner report reading
+still grants no Wiki promotion/publication/erasure capability. No new API DTO or MCP tool is
+introduced. Broader pagination/discovery and managed-OAuth composition remain separate work.
+
+Apply the complete chain through **0080** before deploying the shared owner run readers and
+controls, including legacy owner/service controls using the versioned fence. Compilation,
+scoped lint and empty-schema SQL compilation only; behavioral/native/browser acceptance is
+pending. No deployment, remote migration or provider call is part of this checkpoint.

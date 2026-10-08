@@ -33,7 +33,7 @@ import { principal } from "./research-evidence-freeze-fixture.js";
 import {
   createResearchStageHandlerFactory,
   SERVER_OWNED_FREEZE_HANDLER_GENERATION,
-} from "../src/research-stage-handlers.js";
+} from "@eliotr/cloudflare-research-runtime/research-stage-handlers.js";
 import { describe, expect, it } from "vitest";
 
 function refKey(ref: { readonly id: string; readonly revision: number }): string {

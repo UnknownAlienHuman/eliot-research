@@ -72,6 +72,7 @@ function terminal(
 
 function backendFixture(input: {
   readonly blockers?: readonly ErasureBlocker[];
+  readonly currentBlockers?: Readonly<Record<string, ErasureBlocker>>;
   readonly absent?: Readonly<Record<string, boolean>>;
   readonly terminal?: ErasureReceipt;
 } = {}) {
@@ -98,6 +99,15 @@ function backendFixture(input: {
     advanceLifecycle: vi.fn(async (_r: ErasureRequest, _f: ErasureFence, _expected: string, next: string) => { events.push(next); return `stage-${next}`; }),
     enumerateDependencyClosure: vi.fn(async () => { events.push("closure"); return closure; }),
     checkRetentionAndHolds: vi.fn(async () => { events.push("holds"); return input.blockers ?? []; }),
+    recheckTargetRetentionAndHolds: vi.fn(async (
+      _request: ErasureRequest,
+      _fence: ErasureFence,
+      _closure: ErasureDependencyClosure,
+      item: PurgeTarget,
+    ) => {
+      events.push(`recheck:${item.target_id}`);
+      return input.currentBlockers?.[item.target_id];
+    }),
     recordBlockedTarget: vi.fn(async () => { events.push("blocked-target"); }),
     purge: vi.fn(async (_r: ErasureRequest, _f: ErasureFence, item: PurgeTarget) => {
       events.push(`purge:${item.target_id}`);
@@ -146,6 +156,29 @@ describe("exact erasure coordinator", () => {
     expect(fixture.complete).not.toHaveBeenCalled();
     expect(fixture.block).toHaveBeenCalledOnce();
     expect(fixture.events).not.toContain(`purge:${backupTarget.target_id}`);
+  });
+
+  it("blocks a hold that appears after the initial scan and before physical purge", async () => {
+    const lateBlocker: ErasureBlocker = {
+      target_id: coreTarget.target_id,
+      location: "CanonicalPayload",
+      policy_or_hold_ref: "hold-created-between-scans",
+      next_review_at: "2026-09-07T00:00:00.000Z",
+      reason_code: "RETENTION_OR_HOLD_ACTIVE",
+    };
+    const fixture = backendFixture({
+      currentBlockers: { [coreTarget.target_id]: lateBlocker },
+    });
+    const receipt = await createErasureCoordinator(fixture.backend).execute(request);
+    expect(receipt.state).toBe("BLOCKED");
+    expect(receipt.blocked_locations).toEqual([{
+      location: "CanonicalPayload",
+      policy_or_hold_ref: lateBlocker.policy_or_hold_ref,
+      next_review_at: lateBlocker.next_review_at,
+    }]);
+    expect(fixture.events).toContain(`recheck:${coreTarget.target_id}`);
+    expect(fixture.events).not.toContain(`purge:${coreTarget.target_id}`);
+    expect(fixture.block).toHaveBeenCalledOnce();
   });
 
   it("issues COMPLETE only after every exact target has an absence receipt", async () => {

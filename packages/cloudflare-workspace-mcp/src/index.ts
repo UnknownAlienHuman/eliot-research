@@ -7,6 +7,8 @@ export {
   GEMINI_MCP_TOOL_NAMES,
   MCP_COMPATIBLE_PROTOCOL_VERSIONS,
   MCP_PROTOCOL_VERSION,
+  MAX_MCP_REQUEST_BYTES,
+  MAX_MCP_RESPONSE_BYTES,
   McpProtocolError,
   handleGeminiMcpProtocol,
   type GeminiMcpServerDependencies,
@@ -57,3 +59,52 @@ export {
   createWorkspacePlan,
   validateWorkspaceReceipt,
 } from "./workspace-mcp-google-sync.js";
+export {
+  MAX_WORKSPACE_CANDIDATE_BYTES,
+  WORKSPACE_CANDIDATE_ADMISSION_PROTOCOL,
+  WorkspaceCandidateAdmissionError,
+  evaluateWorkspaceCandidateAdmission,
+  type WorkspaceCandidateAdmission,
+  type WorkspaceCandidateAdmissionErrorCode,
+  type WorkspaceCandidateAdmissionInput,
+} from "./workspace-candidate-admission.js";
+
+export {
+  MCP_RESEARCH_TOOLS,
+  type McpResearchToolName,
+  type McpResearchToolCall,
+} from "./gemini-mcp-research-tools.js";
+export { createMcpResearchApplicationDispatch } from "./research-application-dispatch.js";
+export type {
+  McpResearchApplicationDispatchActor,
+  McpResearchPreparedOperation,
+  McpResearchApplicationOperations,
+  McpResearchApplicationDispatchPorts,
+} from "./research-application-dispatch.js";
+export * from "./workspace-owner-authorization.js";
+export { createWorkspaceMcpDiagnosticConsume } from "./gemini-mcp-diagnostic-consume.js";
+export type { WorkspaceMcpDiagnosticConsumeDependencies } from "./gemini-mcp-diagnostic-consume.js";
+export {
+  createMcpResearchServiceOperations,
+  mapMcpResearchServiceError,
+  mcpFastSearchResponse,
+  mcpResearchBindHeader,
+  mcpResearchInvalid,
+} from "./research-service-operations.js";
+export { createMcpResearchProjectMembership } from "./research-project-membership.js";
+export {
+  projectWorkspaceMcpEnvironment,
+  type WorkspaceMcpEnvironmentProjection,
+  type WorkspaceMcpEnvironmentSource,
+} from "./workspace-mcp-env.js";
+export type {
+  McpResearchProjectMembership,
+  McpResearchProjectMembershipOptions,
+  McpResearchScopeAuthority,
+} from "./research-project-membership.js";
+export type {
+  McpResearchServiceOperationPorts,
+  McpResearchIngestCommand,
+  McpResearchSourceReadInput,
+  McpFastSearchResponseShape,
+} from "./research-service-operations.js";

@@ -1,6 +1,7 @@
 /// <reference types="node" />
 /// <reference types="vite/client" />
 import { describe, expect, it } from "vitest";
+import { applyCanonicalCoreMigrations, recordCanonicalCoreMigrationLedger } from "./core-migration-fixture.js";
 import { DatabaseSync } from "node:sqlite";
 import type { OperationIntent } from "@eliotr/contracts";
 import { createBackupPort } from "./index.js";
@@ -12,21 +13,6 @@ import { backupNonceHex } from "./offsite-durability.js";
 import type { BackupDestinationPolicy } from "./destination-policy.js";
 import type { BackupEpochDraft, BackupSourcePorts } from "./epoch.js";
 import type { Sha256DigestSink, EvidenceObjectStore } from "./shared.js";
-import m0001 from "../../../infra/d1/core/migrations/0001_initial.sql?raw";
-import m0002 from "../../../infra/d1/core/migrations/0002_execution_coordination.sql?raw";
-import m0003 from "../../../infra/d1/core/migrations/0003_delivery_inbox_payload_digest.sql?raw";
-import m0004 from "../../../infra/d1/core/migrations/0004_outbox_delivery_fence.sql?raw";
-import m0005 from "../../../infra/d1/core/migrations/0005_ingest_admission.sql?raw";
-import m0006 from "../../../infra/d1/core/migrations/0006_projection_execution.sql?raw";
-import m0007 from "../../../infra/d1/core/migrations/0007_evidence_resolution.sql?raw";
-import m0008 from "../../../infra/d1/core/migrations/0008_erasure_closure.sql?raw";
-import m0009 from "../../../infra/d1/core/migrations/0009_federation_authority.sql?raw";
-import m0010 from "../../../infra/d1/core/migrations/0010_navigation_artifacts.sql?raw";
-import m0011 from "../../../infra/d1/core/migrations/0011_owner_orientation.sql?raw";
-import m0012 from "../../../infra/d1/core/migrations/0012_google_credentials.sql?raw";
-import m0013 from "../../../infra/d1/core/migrations/0013_google_oauth_intents.sql?raw";
-import m0018 from "../../../infra/d1/core/migrations/0018_backup_o2_replay_authority.sql?raw";
-import m0019 from "../../../infra/d1/core/migrations/0019_backup_o2_replay_authority_fix.sql?raw";
 
 // ER-34 O2 FIX4 globally-unique nonce authority (IMPLEMENTED_NOT_LIVE).
 // nonce_hex alone is the PRIMARY KEY across all copies and key generations;
@@ -39,7 +25,6 @@ import m0019 from "../../../infra/d1/core/migrations/0019_backup_o2_replay_autho
 const T = "2026-09-06T00:00:00.000Z";
 const HEX = (c: string): string => c.repeat(64);
 const NOW = Date.parse(T);
-const APPLIED = ["0001_initial.sql", "0002_execution_coordination.sql", "0003_delivery_inbox_payload_digest.sql", "0004_outbox_delivery_fence.sql", "0005_ingest_admission.sql", "0006_projection_execution.sql", "0007_evidence_resolution.sql", "0008_erasure_closure.sql", "0009_federation_authority.sql", "0010_navigation_artifacts.sql", "0011_owner_orientation.sql", "0012_google_credentials.sql", "0013_google_oauth_intents.sql", "0018_backup_o2_replay_authority.sql", "0019_backup_o2_replay_authority_fix.sql"];
 function sink(): Sha256DigestSink {
   const chunks: Uint8Array[] = [];
   let res!: (v: ArrayBuffer) => void; let rej!: (r: unknown) => void;
@@ -101,8 +86,8 @@ function policy(over: Partial<BackupDestinationPolicy> = {}): BackupDestinationP
 type Harness = Awaited<ReturnType<typeof setup>>;
 async function setup() {
   const db = new DatabaseSync(":memory:");
-  for (const m of [m0001, m0002, m0003, m0004, m0005, m0006, m0007, m0008, m0009, m0010, m0011, m0012, m0013, m0018, m0019]) db.exec(m);
-  for (const [i, n] of APPLIED.entries()) db.prepare("INSERT INTO d1_migrations (name, applied_at) VALUES (?1,?2)").run(n, `${T.slice(0, 10)}T00:00:${String(i).padStart(2, "0")}.000Z`);
+  applyCanonicalCoreMigrations(db);
+  recordCanonicalCoreMigrationLedger(db, T);
   db.exec(`INSERT INTO source_namespace_ownership (source_namespace_id,ownership_record_revision,owner_system_id,owner_incarnation_ref,source_owner_generation,source_admission_policy_revision,status,cutover_receipt_ref,created_at) VALUES ('ns-1',1,'owner-sys-1','incarnation-1','gen-1',1,'ACTIVE',NULL,'${T}');
     INSERT INTO source (source_id,source_namespace_id,source_owner_system_id,source_owner_generation,ownership_mode,kind,origin_uri,title,default_storage_policy,default_residency_profile_id,source_class,license_policy_ref,default_retention_policy_id,head_rev,created_at) VALUES ('source-1','ns-1','owner-sys-1','gen-1','immutable_import','document',NULL,'T','policy-store-1','profile-1','public','license-1','retention-1',NULL,'${T}');
     INSERT INTO source_revision (source_revision_ref,source_id,source_owner_generation,content_sha256,object_residency_key_digest,original_r2_key,normalized_artifact_ref,captured_at,parser_profile_generation,quality_state,purge_state,currentness_state,source_view_ref,workspace_view_revision_ref,admitted_at) VALUES ('rev-1','source-1','gen-1','${HEX("a")}','${HEX("b")}',NULL,NULL,'${T}',NULL,'standard','LIVE','unknown','view-1',NULL,'${T}');

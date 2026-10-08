@@ -6,9 +6,13 @@
   "workers_dev": true,
   "preview_urls": false,
   "minify": true,
+  "version_metadata": {
+    "binding": "VERSION_METADATA"
+  },
   "observability": {
     "enabled": true,
-    "head_sampling_rate": 1
+    "head_sampling_rate": 1,
+    "redact_query_string": true
   },
   "assets": {
     "directory": "../eliotr-pwa/dist",
@@ -17,6 +21,8 @@
     "run_worker_first": [
       "/healthz",
       "/mcp",
+      "/agent-inbox",
+      "/agent-inbox/*",
       "/api/*",
       "/federation/*",
       "/oauth/*"
@@ -39,6 +45,9 @@
   },
   "env": {
     "test": {
+      "version_metadata": {
+        "binding": "VERSION_METADATA"
+      },
       "vars": {
         "ENVIRONMENT": "development",
         "DEPLOYMENT_GENERATION": "test-generation",
@@ -76,6 +85,10 @@
         {
           "binding": "WORK_BUCKET",
           "bucket_name": "eliotr-work-test"
+        },
+        {
+          "binding": "BACKUP_PARTS_BUCKET",
+          "bucket_name": "eliotr-backup-parts-test"
         }
       ],
       "queues": {
@@ -141,6 +154,10 @@
     {
       "binding": "WORK_BUCKET",
       "bucket_name": "eliotr-work"
+    },
+    {
+      "binding": "BACKUP_PARTS_BUCKET",
+      "bucket_name": "eliotr-backup-parts"
     }
   ],
   "queues": {

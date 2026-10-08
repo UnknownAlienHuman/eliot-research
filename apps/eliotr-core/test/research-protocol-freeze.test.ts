@@ -14,9 +14,13 @@ import {
   type LedgerD1Database,
 } from "@eliotr/research";
 import {
+  INSTALLED_INQUIRY_PROTOCOL_REFS,
+  compileInquiryLedgerObligations,
+  createResearchPlanningManifest,
   createWorkflowCheckpointExecutor,
   digest,
   fail,
+  installedInquiryProtocolDefinition,
   readWorkflowObject,
   type StageRequest,
   type WorkflowExecutionPorts,
@@ -27,7 +31,7 @@ import {
   decodeProtocolScopeCheckpoint,
   readFreezeProtocolAndScopeCheckpoint,
 } from "../../../packages/cloudflare-research/src/research-protocol-freeze.js";
-import type { ScopeSnapshot } from "@eliotr/contracts";
+import type { EvidenceGrade, ScopeSnapshot, VersionedRef } from "@eliotr/contracts";
 import {
   importAndProject,
   prepareQ1Namespace,
@@ -71,7 +75,12 @@ async function addReadPolicy(world: Q1Namespace, now: string, expiresAt: string)
     decision.disclosure_ceiling, expiresAt, now).run();
 }
 
-async function createProtocolFreezeFixture(tag: string, question = "What evidence is present in the admitted source?"): Promise<ProtocolFreezeFixture> {
+async function createProtocolFreezeFixture(
+  tag: string,
+  question = "What evidence is present in the admitted source?",
+  protocolRef?: VersionedRef,
+  evidenceGrade: EvidenceGrade = "E0",
+): Promise<ProtocolFreezeFixture> {
   await reset();
   const db = runtime.CORE_DB;
   const bucket = runtime.WORK_BUCKET;
@@ -103,13 +112,35 @@ async function createProtocolFreezeFixture(tag: string, question = "What evidenc
   ]);
 
   const payloadKey = `protocol-freeze-input-${tag}`;
+  const installedDefinition = protocolRef === undefined ? null : installedInquiryProtocolDefinition(protocolRef);
+  const sourceRow = await db.prepare(
+    "SELECT sr.source_revision_ref, sr.source_id, s.source_class, s.source_namespace_id, " +
+    "sr.source_owner_generation, s.origin_uri FROM source_revision sr JOIN source s ON s.source_id=sr.source_id " +
+    "WHERE sr.source_revision_ref=?1 LIMIT 1",
+  ).bind(world.revision).first<{
+    source_revision_ref: string; source_id: string; source_class: string; source_namespace_id: string;
+    source_owner_generation: string; origin_uri: string | null;
+  }>();
+  if (sourceRow === null) throw new Error("Missing planning source row");
+  const planningManifest = installedDefinition === null ? undefined : await createResearchPlanningManifest({
+    investigation_id: `protocol-investigation-${tag}`,
+    operation_id: `protocol-run-${tag}`,
+    question,
+    inquiry_protocol_ref: protocolRef as VersionedRef,
+    scope_snapshot_ref: { id: scope.snapshot_id, revision: scope.revision },
+    scope_created_at: scope.created_at,
+    definition: installedDefinition,
+    sources: [sourceRow],
+  });
   const payload = {
     investigation_id: `protocol-investigation-${tag}`,
     operation_id: `protocol-run-${tag}`,
     query: question,
     scope_snapshot_ref: { id: scope.snapshot_id, revision: scope.revision },
-    evidence_grade: "E0",
+    evidence_grade: evidenceGrade,
     principal_ref: principal.principal_ref,
+    ...(protocolRef === undefined ? {} : { inquiry_protocol_ref: protocolRef }),
+    ...(planningManifest === undefined ? {} : { planning_manifest: planningManifest }),
   } as const;
   const payloadBytes = new TextEncoder().encode(canonicalEvidenceJson(payload));
   const payloadDigest = await digest(payloadBytes);
@@ -120,11 +151,13 @@ async function createProtocolFreezeFixture(tag: string, question = "What evidenc
     goal: payload.query,
     scope_snapshot_id: scope.snapshot_id,
     scope_snapshot_revision: scope.revision,
-    evidence_grade: "E0",
+    evidence_grade: evidenceGrade,
     lane: "exploratory",
     lane_registrations: [],
-    obligations: [],
-    hypotheses: [],
+    obligations: protocolRef === undefined
+      ? []
+      : compileInquiryLedgerObligations(installedInquiryProtocolDefinition(protocolRef)),
+    hypotheses: planningManifest?.hypotheses.map((item) => item.hypothesis_id) ?? [],
     portfolio_ref: payloadKey,
     debt_refs: [],
     principal_ref: principal.principal_ref,
@@ -290,6 +323,53 @@ describe("research protocol freeze stage over actual admitted/indexed D1/R2", ()
     expect(source).toEqual({ source_revision_ref: fixture.source_revision_ref, purge_state: "LIVE" });
   }, 30_000);
 
+  it("persists an explicit installed evidence-review profile and matching W1 obligations", async () => {
+    const fixture = await createProtocolFreezeFixture(
+      "installed-evidence-review",
+      "Review both support and counterevidence in the admitted corpus.",
+      INSTALLED_INQUIRY_PROTOCOL_REFS.evidence_review,
+      "E1",
+    );
+    const handler = createFreezeProtocolAndScopeStageHandler({ navigation: fixture.navigation, ledger: fixture.ledger });
+    const first = await fixture.executor.execute(fixture.request, principal, handler);
+    const checkpoint = decodeProtocolScopeCheckpoint(await readWorkflowObject(fixture.bucket, first.output_manifest, true));
+    const head = await fixture.db.prepare(
+      "SELECT evidence_grade, obligations_json FROM investigation_ledger_head WHERE investigation_id=?1",
+    ).bind(fixture.request.investigation_ref.id).first<{ evidence_grade: string; obligations_json: string }>();
+
+    expect(checkpoint.profile_definition_ref).toEqual(INSTALLED_INQUIRY_PROTOCOL_REFS.evidence_review);
+    expect(checkpoint.requested_evidence_grade).toBe("E1");
+    expect(checkpoint.protocol_profile.protocol).toBe("evidence_review");
+    expect(checkpoint.protocol_profile.counter_search_required).toBe(true);
+    expect(checkpoint.planning_manifest_ref?.id).toMatch(/^eliotr\.research\.planning-[a-f0-9]{64}$/u);
+    expect(checkpoint.planning_manifest_digest).toMatch(/^[a-f0-9]{64}$/u);
+    expect(checkpoint.coverage_denominator.required_source_classes).toEqual(["counterevidence", "supporting-evidence"]);
+    expect(checkpoint.coverage_denominator.required_question_branches).toEqual(["COUNTER", "SUPPORT"]);
+    expect(checkpoint.protocol_profile.obligations?.map((item) => item.obligation_id)).toEqual([
+      "evidence_review:grounding",
+      "evidence_review:counterevidence",
+      "evidence_review:coverage",
+    ]);
+    expect(head?.evidence_grade).toBe("E1");
+    const payloadObject = await fixture.bucket.get(fixture.request.input_manifest.object_ref);
+    if (payloadObject === null) throw new Error("Missing planning payload");
+    const payload = JSON.parse(await payloadObject.text()) as {
+      planning_manifest: { required_branch_roles: string[]; hypotheses: Array<{ hypothesis_id: string }> };
+    };
+    expect(payload.planning_manifest.required_branch_roles).toEqual(["COUNTER", "SUPPORT"]);
+    expect(payload.planning_manifest.hypotheses).toEqual([]);
+    expect(JSON.parse(head?.obligations_json ?? "[]")).toMatchObject([
+      { obligation_id: "evidence_review:grounding", status: "REGISTERED", blocking: true },
+      { obligation_id: "evidence_review:counterevidence", status: "REGISTERED", blocking: true },
+      { obligation_id: "evidence_review:coverage", status: "REGISTERED", blocking: true },
+    ]);
+
+    const replay = await fixture.executor.execute(fixture.request, principal, handler);
+    expect(replay.receipt_ref).toBe(first.receipt_ref);
+    expect(decodeProtocolScopeCheckpoint(await readWorkflowObject(fixture.bucket, replay.output_manifest, true)))
+      .toEqual(checkpoint);
+  }, 30_000);
+
   it("derives distinct server profile identities for distinct W1 questions while exact replay is stable", async () => {
     const firstFixture = await createProtocolFreezeFixture("profile-a", "Which evidence supports alpha?");
     const firstHandler = createFreezeProtocolAndScopeStageHandler({ navigation: firstFixture.navigation, ledger: firstFixture.ledger });
@@ -395,4 +475,23 @@ describe("research protocol freeze stage over actual admitted/indexed D1/R2", ()
     })).rejects.toMatchObject({ code: "RESEARCH_PROTOCOL_FREEZE_AUTHORITY_STALE" });
     expect((await identity.db.prepare("SELECT COUNT(*) AS n FROM research_workflow_checkpoint WHERE operation_id=?1").bind(identity.request.operation_id).first<{ n: number }>())?.n).toBe(1);
   }, 30_000);
+});
+
+
+describe("S24 exact long question protocol freeze", () => {
+  it("freezes and replays the formatted question through existing ledger/R2/checkpoints", async () => {
+    const question = "  English question\r\n\t- Русский пункт 😀\n> quoted evidence\n".repeat(180);
+    const fixture = await createProtocolFreezeFixture("s24-long", question, INSTALLED_INQUIRY_PROTOCOL_REFS.lookup);
+    const handler = createFreezeProtocolAndScopeStageHandler({ navigation: fixture.navigation, ledger: fixture.ledger });
+    const first = await fixture.executor.execute(fixture.request, principal, handler);
+    const bytes = await readWorkflowObject(fixture.bucket, first.output_manifest, true);
+    const checkpoint = decodeProtocolScopeCheckpoint(bytes);
+    expect(checkpoint.protocol_profile.question).toBe(question);
+    expect((await fixture.ledger.read(fixture.request.investigation_ref.id))?.head.goal).toBe(question);
+    expect(await fixture.executor.execute(fixture.request, principal, handler)).toEqual(first);
+    expect(await readWorkflowObject(fixture.bucket, first.output_manifest, true)).toEqual(bytes);
+    const readback = await readFreezeProtocolAndScopeCheckpoint({ request: fixture.request, principal, database: fixture.db,
+      bucket: fixture.bucket, navigation: fixture.navigation, ledger: fixture.ledger });
+    expect(readback.protocol_profile.question).toBe(question);
+  });
 });

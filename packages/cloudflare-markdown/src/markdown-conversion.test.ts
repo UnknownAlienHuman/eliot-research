@@ -50,11 +50,17 @@ describe("Workers AI Markdown Conversion binding", () => {
     expect(result).toMatchObject({ disposition: "FAILED", code });
   });
 
-  it("does not accept a detected MIME field from the stale pinned spelling", async () => {
-    const result = await createWorkersAiMarkdownConversionAdapter(binding({
+  it("accepts the stale pinned MIME spelling and normalizes it, but rejects both spellings", async () => {
+    // Cloudflare runtimes have emitted both `mimeType` and `mimetype`; the
+    // decoder accepts exactly one spelling and normalizes it at this boundary.
+    const stale = await createWorkersAiMarkdownConversionAdapter(binding({
       id: "result-1", name: "source.pdf", format: "markdown", mimeType: "application/pdf", tokens: 1, data: "ok",
     })).convert(input());
-    expect(result).toMatchObject({ disposition: "FAILED", code: "RESPONSE_INVALID" });
+    expect(stale).toMatchObject({ disposition: "CONVERTED", detected_mime: "application/pdf" });
+    const ambiguous = await createWorkersAiMarkdownConversionAdapter(binding({
+      id: "result-1", name: "source.pdf", format: "markdown", mimetype: "application/pdf", mimeType: "application/pdf", tokens: 1, data: "ok",
+    })).convert(input());
+    expect(ambiguous).toMatchObject({ disposition: "FAILED", code: "RESPONSE_INVALID" });
   });
 
   it("rejects unknown conversion options before the provider call", async () => {
@@ -106,6 +112,9 @@ describe("Workers AI Markdown Conversion binding", () => {
     const mutableOptions = { output: { format: "markdown" as "markdown" | "text" } };
     const request = input({ context: mutableContext, bounds: mutableBounds, conversion_options: mutableOptions });
     const pending = createWorkersAiMarkdownConversionAdapter(ai).convert(request);
+    // The adapter awaits the local-text path before dispatching; wait for the
+    // provider call so the mutations below race the in-flight request.
+    await vi.waitFor(() => expect(ai.toMarkdown).toHaveBeenCalledTimes(1));
     mutableContext.operation_id = "changed-after-dispatch";
     mutableBounds.max_output_bytes = 1;
     mutableOptions.output.format = "text";

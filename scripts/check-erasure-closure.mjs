@@ -8,8 +8,27 @@ const core = new DatabaseSync(":memory:");
 const search = new DatabaseSync(":memory:");
 core.exec("PRAGMA foreign_keys = ON");
 search.exec("PRAGMA foreign_keys = ON");
-for (const name of readdirSync(resolve(root, "infra/d1/core/migrations"))
-  .filter((value) => /^\d+_.*\.sql$/u.test(value)).sort()) {
+const coreMigrations = readdirSync(resolve(root, "infra/d1/core/migrations"))
+  .filter((value) => /^\d+_.*\.sql$/u.test(value)).sort();
+const manifestMigration = "0119_backup_epoch_manifest_bindings.sql";
+const manifestIndex = coreMigrations.indexOf(manifestMigration);
+assert.notEqual(manifestIndex, -1, "manifest migration must exist to define the historical fixture boundary");
+for (const name of coreMigrations.slice(0, manifestIndex)) {
+  core.exec(readFileSync(resolve(root, "infra/d1/core/migrations", name), "utf8"));
+}
+const now = "2026-09-01T02:00:00.000Z";
+const nextReview = "2026-09-08T02:00:00.000Z";
+const sha = (value) => value.repeat(64);
+// Model an already-verified legacy epoch under its actual pre-0119 schema.
+// Applying 0119 after this row preserves history; the fixture does not insert
+// a VERIFIED row or issue a verification receipt under the new guard.
+core.prepare(
+  "INSERT INTO backup_epoch(backup_epoch_id,core_export_ref,search_projection_manifest_ref," +
+  "evidence_manifest_ref,work_manifest_ref,offsite_copy_ref,purge_ledger_revision," +
+  "verification_state,created_at,verified_at) VALUES (?,?,?,?,?,?,0,'VERIFIED',?,?)",
+).run("backup-1", "core-export-1", "search-manifest-1", "evidence-manifest-1",
+  "work-manifest-1", "offsite-copy-1", now, now);
+for (const name of coreMigrations.slice(manifestIndex)) {
   core.exec(readFileSync(resolve(root, "infra/d1/core/migrations", name), "utf8"));
 }
 for (const name of readdirSync(resolve(root, "infra/d1/search/migrations"))
@@ -32,9 +51,6 @@ const searchStrict = new Map(
 assert.equal(searchStrict.get("ai_search_generation_registry"), 1,
   "AI Search generation registry must be STRICT");
 
-const now = "2026-09-01T02:00:00.000Z";
-const nextReview = "2026-09-08T02:00:00.000Z";
-const sha = (value) => value.repeat(64);
 const registryArtifact = {
   schema: "eliotr.ai-search-generation-registry.v1",
   namespace: "eliotr-managed-search",
@@ -87,12 +103,6 @@ const requestJson = JSON.stringify({
 });
 
 core.prepare(
-  "INSERT INTO backup_epoch(backup_epoch_id,core_export_ref,search_projection_manifest_ref," +
-  "evidence_manifest_ref,work_manifest_ref,offsite_copy_ref,purge_ledger_revision," +
-  "verification_state,created_at,verified_at) VALUES (?,?,?,?,?,?,0,'VERIFIED',?,?)",
-).run("backup-1", "core-export-1", "search-manifest-1", "evidence-manifest-1",
-  "work-manifest-1", "offsite-copy-1", now, now);
-core.prepare(
   "INSERT INTO erasure_case(erasure_id,revision,state,exact_subject_refs_json," +
   "requested_locations_json,completed_locations_json,blocked_locations_json," +
   "legal_basis_ref,deadline,created_at,updated_at) VALUES " +
@@ -130,20 +140,11 @@ const ledgerBlocked = core.prepare(
   "RETURNING ledger_revision",
 ).get(sha("f"), now).ledger_revision;
 
-assert.throws(() => core.prepare(
-  "INSERT INTO erasure_terminal_guard(erasure_id,erasure_revision,closure_digest," +
-  "requested_locations_json,completed_locations_json,blocked_locations_json,terminal_state," +
-  "receipt_sha256,purge_ledger_revision,verified,created_at) VALUES " +
-  "('erase-blocked',1,?,?,?,'[]','COMPLETE',?,?,1,?)",
-).run(sha("b"), '["BackupRestorePath","CanonicalPayload"]', '["CanonicalPayload"]',
-  sha("0"), ledgerBlocked, now), /CHECK constraint failed/u,
-"a subset purge must not satisfy the COMPLETE terminal guard");
-
 core.prepare(
   "INSERT INTO erasure_terminal_guard(erasure_id,erasure_revision,closure_digest," +
   "requested_locations_json,completed_locations_json,blocked_locations_json,terminal_state," +
-  "receipt_sha256,purge_ledger_revision,verified,created_at) VALUES " +
-  "('erase-blocked',1,?,?,?,?,'BLOCKED',?,?,1,?)",
+  "receipt_sha256,purge_ledger_revision,verified,created_at,lease_owner,lease_generation,lease_until) VALUES " +
+  "('erase-blocked',1,?,?,?,?,'BLOCKED',?,?,1,?,'worker-1',1,9999999999999)",
 ).run(sha("b"), '["BackupRestorePath","CanonicalPayload"]', '["CanonicalPayload"]',
   '[{"location":"BackupRestorePath","next_review_at":"2026-09-08T02:00:00.000Z","policy_or_hold_ref":"backup-lock-1"}]',
   sha("1"), ledgerBlocked, now);
@@ -167,8 +168,8 @@ core.prepare(
 ).run(nextReview, now, now);
 core.prepare(
   "INSERT INTO erasure_execution(erasure_id,revision,request_json,request_sha256,state," +
-  "closure_digest,created_at,updated_at) VALUES " +
-  "('erase-complete',1,'{}',?,'INVALIDATE_DEPENDENTS',?,?,?)",
+  "closure_digest,lease_owner,lease_generation,lease_until,created_at,updated_at) VALUES " +
+  "('erase-complete',1,'{}',?,'INVALIDATE_DEPENDENTS',?,'worker-complete',1,9999999999999,?,?)",
 ).run(sha("2"), sha("3"), now, now);
 core.prepare(
   "INSERT INTO erasure_target(erasure_id,erasure_revision,target_id,target_kind," +
@@ -186,13 +187,21 @@ const ledgerComplete = core.prepare(
   "receipt_ref,created_at) VALUES ('erase-complete',?,'COMPLETE','ledger-complete',?) " +
   "RETURNING ledger_revision",
 ).get(sha("6"), now).ledger_revision;
+assert.throws(() => core.prepare(
+  "INSERT INTO erasure_terminal_guard(erasure_id,erasure_revision,closure_digest," +
+  "requested_locations_json,completed_locations_json,blocked_locations_json,terminal_state," +
+  "receipt_sha256,purge_ledger_revision,verified,created_at,lease_owner,lease_generation,lease_until) VALUES " +
+  "('erase-complete',1,?, '[\"CanonicalPayload\",\"Projection\"]', '[\"CanonicalPayload\"]'," +
+  "'[]','COMPLETE',?,?,1,?,'worker-complete',1,9999999999999)",
+).run(sha("3"), sha("0"), ledgerComplete, now), /CHECK constraint failed/u,
+"a subset purge must not satisfy the COMPLETE terminal guard");
 core.prepare(
   "INSERT INTO erasure_terminal_guard(erasure_id,erasure_revision,closure_digest," +
   "requested_locations_json,completed_locations_json,blocked_locations_json,terminal_state," +
-  "receipt_sha256,purge_ledger_revision,verified,created_at) VALUES " +
+  "receipt_sha256,purge_ledger_revision,verified,created_at,lease_owner,lease_generation,lease_until) VALUES " +
   "('erase-complete',1,?,'[\"CanonicalPayload\"]','[\"CanonicalPayload\"]','[]'," +
   "'COMPLETE',?,?,CASE WHEN (SELECT COUNT(*) FROM erasure_target WHERE " +
-  "erasure_id='erase-complete' AND state<>'ABSENT')=0 THEN 1 ELSE 0 END,?)",
+  "erasure_id='erase-complete' AND state<>'ABSENT')=0 THEN 1 ELSE 0 END,?,'worker-complete',1,9999999999999)",
 ).run(sha("3"), sha("7"), ledgerComplete, now);
 assert.equal(core.prepare(
   "SELECT verified FROM erasure_terminal_guard WHERE erasure_id='erase-complete'",

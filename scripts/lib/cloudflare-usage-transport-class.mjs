@@ -7,8 +7,8 @@
 // the product test-only: fully functional for deterministic tests, but
 // carrying no brand, so the collector can never grant it production
 // authority. Factory construction alone is never sufficient for trust; brand
-// lives in module-private WeakMaps, test-only marks in the WeakSet below, so
-// plain objects, copies, spreads, and Proxies of either class stay untrusted.
+// lives in module-private identity arrays, and test-only marks use the array
+// below, so plain objects, copies, spreads, and Proxies stay untrusted.
 
 // lives in module-private identity arrays, so plain objects, copies,
 // spreads, and Proxies of either class stay untrusted. FIX14: identity
@@ -25,6 +25,8 @@ export const LIVE_API_BASE = "https://api.cloudflare.com/client/v4";
 // a pinned window plus injected fetch is a complete test seam.
 export const TRANSPORT_OPTION_KEYS = Object.freeze([
   "endpoint",
+  "listEndpoint",
+  "detailEndpoint",
   "fetchImpl",
   "metricMap",
   "billableMetricMap",
@@ -106,6 +108,12 @@ export function defaultR2CursorEndpoint(apiBase = LIVE_API_BASE) {
     cursor
       ? `${apiBase}/accounts/${accountId}/r2/buckets?cursor=${encodeURIComponent(cursor)}`
       : `${apiBase}/accounts/${accountId}/r2/buckets`;
+}
+
+export function defaultD1DetailsEndpoint(apiBase = LIVE_API_BASE) {
+  if (typeof apiBase !== "string") return null;
+  return (accountId, databaseId) =>
+    `${apiBase}/accounts/${encodeURIComponent(accountId)}/d1/database/${encodeURIComponent(databaseId)}?fields=uuid,file_size`;
 }
 
 export function defaultBillingEndpoint(apiBase = LIVE_API_BASE) {

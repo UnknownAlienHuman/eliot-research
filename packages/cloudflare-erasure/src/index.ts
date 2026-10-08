@@ -8,6 +8,7 @@ export {
 } from "./admission-policy-install.js";
 export * from "./types.js";
 export * from "./authority.js";
+export * from "./shared-execution-fence.js";
 export * from "./authority-reset.js";
 export * from "./ledger.js";
 export * from "./inventory.js";
@@ -21,3 +22,7 @@ export * from "./invalidation.js";
 export * from "./registry.js";
 export * from "./backend.js";
 export * from "./factory.js";
+export * from "./namespace-admission-policy-builder.js";
+export * from "./backup-producer-quiescence-contract.js";
+export * from "./backup-primary-contract.js";
+export * from "./backup-primary-handoff.js";

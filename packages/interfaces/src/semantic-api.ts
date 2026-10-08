@@ -1,13 +1,12 @@
 import type {
-  EvidenceHandle,
-  LocatorCandidate,
-  ResolvedEvidence,
   RetrievalTrace,
   ScopeExpression,
   VersionedRef,
   ArtifactRevision,
   WikiPageRevision,
   ResearchWorkflowStage,
+  VerifyEvidenceRequest,
+  VerifyEvidenceResult,
 } from "@eliotr/contracts";
 import type {
   EvidencePack,
@@ -18,6 +17,8 @@ import type {
 } from "@eliotr/retrieval";
 import type { AuthenticatedRequestContext } from "./http.js";
 
+export type { VerifyEvidenceRequest, VerifyEvidenceResult };
+
 export const SEMANTIC_API_OPERATIONS = [
   "research.catalog",
   "research.orient",
@@ -26,7 +27,11 @@ export const SEMANTIC_API_OPERATIONS = [
   "research.open",
   "research.verify",
   "research.run",
+  "research.run.cancel",
+  "research.run.recover",
   "research.artifact",
+  "research.artifact.accept",
+  "research.artifact.publication",
   "research.wiki.propose",
   "research.wiki.propose.from-run",
   "research.wiki.propose.from-edit",
@@ -58,6 +63,9 @@ export interface QueryRequest {
   readonly evidence_grade: "E0" | "E1" | "E2" | "E3";
   readonly budget_ref: string;
   readonly max_results: number;
+  /** Present only on the explicit v2 research.run contract. */
+  readonly request_version?: "eliotr.research-run-request.v2";
+  readonly inquiry_protocol_ref?: VersionedRef;
 }
 export interface QueryResult {
   /** Present only for ORIENT; navigation is never publication evidence. */
@@ -107,19 +115,84 @@ export type ResearchRunFailureCode =
   | "WORKFLOW_EFFECT_UNCERTAIN"
   | "WORKFLOW_OUTPUT_UNAVAILABLE"
   | "WORKFLOW_OUTPUT_CORRUPT"
+  | "WORKFLOW_CONFIGURATION_MISSING"
+  | "WORKFLOW_CONFIGURATION_INVALID"
+  | "WORKFLOW_CREDENTIALS_MISSING"
+  | "WORKFLOW_CREDENTIALS_INVALID"
+  | "WORKFLOW_STORAGE_UNAVAILABLE"
+  | "WORKFLOW_QUALIFICATION_STALE"
+  | "WORKFLOW_PREPARATION_FAILED"
   | "RESEARCH_QUALIFICATION_RENEWAL_READ_TOKEN_REQUIRED"
   | "RESEARCH_QUALIFICATION_RENEWAL_AUTHORITY_STALE"
   | "RESEARCH_QUALIFICATION_RENEWAL_UNAVAILABLE"
-  | "RESEARCH_QUALIFICATION_RENEWAL_ROUTE_UNAVAILABLE";
+  | "RESEARCH_QUALIFICATION_RENEWAL_ROUTE_UNAVAILABLE"
+  | "MODEL_ATTEMPT_INPUT_INVALID"
+  | "MODEL_ATTEMPT_AUTHORITY_STALE"
+  | "MODEL_ATTEMPT_IDENTITY_CONFLICT"
+  | "MODEL_ATTEMPT_BUDGET_EXPIRED"
+  | "MODEL_ATTEMPT_CONFLICT"
+  | "MODEL_ATTEMPT_SETTLEMENT_UNCERTAIN"
+  | "MODEL_ATTEMPT_READBACK_CORRUPT"
+  | "MODEL_GATEWAY_DEPLOYMENT_MISSING"
+  | "MODEL_GATEWAY_PROMPT_COMPILE_FAILED"
+  | "MODEL_GATEWAY_REQUEST_INVALID"
+  | "MODEL_GATEWAY_CREDENTIAL_INVALID"
+  | "MODEL_GATEWAY_TRANSPORT_FAILED"
+  | "MODEL_GATEWAY_AUTH_REJECTED"
+  | "MODEL_GATEWAY_LIMIT_REJECTED"
+  | "MODEL_GATEWAY_POLICY_REJECTED"
+  | "MODEL_GATEWAY_UPSTREAM_REJECTED"
+  | "MODEL_GATEWAY_RESPONSE_INVALID"
+  | "MODEL_GATEWAY_OUTPUT_TRUNCATED"
+  | "MODEL_GATEWAY_OUTPUT_PERSIST_FAILED"
+  | "MODEL_GATEWAY_FINGERPRINT_PERSIST_FAILED"
+  | "MODEL_GATEWAY_PRICING_FAILED"
+  | "MODEL_PROFILE_BINDING_INPUT_INVALID"
+  | "MODEL_PROFILE_BINDING_CONFIG_MISSING"
+  | "MODEL_PROFILE_BINDING_CONFIG_INVALID"
+  | "MODEL_PROFILE_BINDING_AUTHORITY_STALE"
+  | "MODEL_PROFILE_BINDING_DEPLOYMENT_MISSING"
+  | "MODEL_PROFILE_BINDING_DEPLOYMENT_MISMATCH"
+  | "MODEL_PROFILE_BINDING_EXPIRED"
+  | "REFERENCE_MANIFEST_INPUT_INVALID"
+  | "REFERENCE_MANIFEST_SCOPE_STALE"
+  | "REFERENCE_MANIFEST_EVIDENCE_INVALID"
+  | "REFERENCE_MANIFEST_POLICY_INVALID"
+  | "REFERENCE_MANIFEST_PERSISTENCE_UNCERTAIN"
+  | "EVIDENCE_INPUT_INVALID"
+  | "EVIDENCE_SCOPE_NOT_FOUND"
+  | "EVIDENCE_SCOPE_INVALIDATED"
+  | "EVIDENCE_SCOPE_EXPIRED"
+  | "EVIDENCE_AUTHORIZATION_DENIED"
+  | "EVIDENCE_SOURCE_NOT_FOUND"
+  | "EVIDENCE_SOURCE_NOT_LIVE"
+  | "EVIDENCE_OWNER_GENERATION_MISMATCH"
+  | "EVIDENCE_SCOPE_MISMATCH"
+  | "EVIDENCE_LOCATOR_NOT_RESOLVABLE"
+  | "EVIDENCE_PRECISION_UNSUPPORTED"
+  | "EVIDENCE_OBJECT_NOT_FOUND"
+  | "EVIDENCE_OBJECT_INTEGRITY"
+  | "EVIDENCE_RANGE_INVALID"
+  | "EVIDENCE_HANDLE_NOT_FOUND"
+  | "EVIDENCE_HANDLE_NOT_LIVE"
+  | "EVIDENCE_IDENTITY_CONFLICT"
+  | "EVIDENCE_SETTLEMENT_UNCERTAIN"
+  | "CITATION_SET_INVALID";
 
-export interface ResearchRunFailure {
+export interface ResearchRunFailureContext {
   readonly code: ResearchRunFailureCode;
-  /** The durable checkpoint being attempted when the native Workflow stopped. */
   readonly stage?: ResearchWorkflowStage;
+  readonly phase?: "PREPARATION" | "STAGE" | "RECOVERY";
+  /** True only for known pre-dispatch transient preparation reads, never for a possibly paid effect. */
+  readonly retryable?: boolean;
+}
+export interface ResearchRunFailure extends ResearchRunFailureContext {
+  /** A later native/recovery error cannot overwrite the first retained cause. */
+  readonly consequence?: ResearchRunFailureContext;
 }
 
 export interface ResearchRunStatus {
-  readonly protocol: "eliotr.research-run-status.v1";
+  readonly protocol: "eliotr.research-run-status.v1" | "eliotr.research-run-status.v2";
   readonly workflow_instance_id: string;
   readonly investigation_ref: VersionedRef;
   readonly execution_state: "ACTIVE" | "CANCELLED" | "ENGINE_COMPLETED";
@@ -284,9 +357,71 @@ export interface ResearchArtifactSectionCitationsExecuted extends ResearchArtifa
   readonly audit: ResearchArtifactSectionCitationAudit;
 }
 
+export interface ArtifactPublicationAcceptRequest {
+  readonly protocol: "eliotr.artifact-publication-accept.v1";
+  readonly artifact_ref: VersionedRef;
+  readonly expected_draft_head_revision: number;
+  readonly expected_publication_revision: number | null;
+  readonly idempotency_key: string;
+}
+
+export interface ArtifactPublicationReceipt {
+  readonly publication_ref: string;
+  readonly artifact_ref: VersionedRef;
+  readonly publication_revision: number;
+  readonly manifest_sha256: string;
+  readonly verification_set_sha256: string;
+  readonly evidence_currentness_sha256: string;
+  readonly acceptance_decision_ref: string;
+  readonly acceptance_provenance_ref: string;
+  readonly acceptance_decision_sha256: string;
+  readonly principal_ref: string;
+  readonly authorization_receipt_ref: string;
+  readonly created_at: string;
+}
+
+export interface ArtifactPublicationMutationResult {
+  readonly protocol: "eliotr.artifact-publication.v1";
+  readonly disposition: "CREATED" | "EXISTING";
+  readonly revision: ArtifactRevision;
+  readonly receipt: ArtifactPublicationReceipt;
+}
+
+export interface ArtifactPublicationReadResult {
+  readonly protocol: "eliotr.artifact-publication.v1";
+  readonly revision: ArtifactRevision;
+  readonly receipt: ArtifactPublicationReceipt;
+}
+
 export type ResearchArtifactSectionCitations =
   | ResearchArtifactSectionCitationsNotExecuted
   | ResearchArtifactSectionCitationsExecuted;
+
+/** Existing reauthorization wire format, also returned by service citation GETs.
+ * Saved verification belongs to original_scope_snapshot_ref; new handles belong to
+ * authorization_scope_snapshot_ref. Never relabel the historical verification. */
+export type ResearchArtifactReauthorizedCitations = {
+  readonly protocol: "eliotr.artifact-draft-citations-reauthorization.v1";
+  readonly artifact_ref: VersionedRef;
+  readonly section_ref: VersionedRef;
+  readonly original_scope_snapshot_ref: VersionedRef;
+  readonly authorization_scope_snapshot_ref: VersionedRef;
+  readonly authorization: {
+    readonly authorization_receipt_ref: string;
+    readonly policy_authority_ref: string;
+    readonly allowed_use: readonly string[];
+    readonly disclosure_ceiling: string;
+    readonly expires_at: string;
+  };
+  readonly deployment_generation: string;
+  readonly verification_receipt_ref: string;
+  readonly cited_evidence: readonly {
+    readonly original_handle_ref: VersionedRef;
+    readonly handle_ref: VersionedRef;
+    readonly excerpt_sha256: string;
+  }[];
+} & ({ readonly semantic_verification: "NOT_EXECUTED"; readonly audit?: never }
+  | { readonly semantic_verification: "EXECUTED"; readonly audit: ResearchArtifactSectionCitationAudit });
 
 export type ExhaustiveWorkflowPageStatus = ExhaustiveWorkflowResult["workflow_status"];
 export type ExhaustiveWorkflowJobState = "PENDING" | "COMPLETE" | "INVALIDATED";
@@ -313,15 +448,6 @@ export interface ExhaustiveWorkflowPage {
   readonly next_cursor?: string;
 }
 
-export type VerifyEvidenceRequest =
-  | { readonly scope_snapshot_ref: VersionedRef; readonly locator_candidate: LocatorCandidate }
-  | { readonly scope_snapshot_ref: VersionedRef; readonly handle_ref: VersionedRef };
-
-export interface VerifyEvidenceResult {
-  readonly resolved_evidence: ResolvedEvidence;
-  readonly handle: EvidenceHandle;
-}
-
 export interface SemanticApi {
   catalog(context: AuthenticatedRequestContext, request: CatalogRequest): Promise<CatalogResult>;
   orient(context: AuthenticatedRequestContext, request: QueryRequest): Promise<QueryResult>;
@@ -329,6 +455,8 @@ export interface SemanticApi {
   query(context: AuthenticatedRequestContext, request: QueryRequest): Promise<QueryResult | ExhaustiveQueryResult | ExhaustiveWorkflowResult>;
   queryStatus(context: AuthenticatedRequestContext, workflowInstanceId: string): Promise<ExhaustiveWorkflowResult>;
   queryCancel(context: AuthenticatedRequestContext, workflowInstanceId: string): Promise<ExhaustiveWorkflowResult>;
+  runCancel(context: AuthenticatedRequestContext, workflowInstanceId: string, body: unknown): Promise<ResearchRunStatus>;
+  runRecover(context: AuthenticatedRequestContext, workflowInstanceId: string, body: unknown): Promise<ResearchRunStatus>;
   runStatus(context: AuthenticatedRequestContext, workflowInstanceId: string): Promise<ResearchRunStatus>;
   queryJobs(context: AuthenticatedRequestContext, request: ExhaustiveWorkflowJobsRequest): Promise<ExhaustiveWorkflowPage>;
   open(context: AuthenticatedRequestContext, handleRef: VersionedRef, range?: { start: number; end: number }): Promise<Response>;
@@ -336,7 +464,9 @@ export interface SemanticApi {
   run(context: AuthenticatedRequestContext, request: QueryRequest): Promise<{ investigation_ref: VersionedRef; workflow_instance_id: string }>;
   artifact(context: AuthenticatedRequestContext, artifactRef: VersionedRef): Promise<ArtifactRevision>;
   artifactSection(context: AuthenticatedRequestContext, artifactRef: VersionedRef, sectionRef: VersionedRef): Promise<Response>;
-  artifactSectionCitations(context: AuthenticatedRequestContext, artifactRef: VersionedRef, sectionRef: VersionedRef): Promise<ResearchArtifactSectionCitations>;
+  artifactSectionCitations(context: AuthenticatedRequestContext, artifactRef: VersionedRef, sectionRef: VersionedRef): Promise<ResearchArtifactSectionCitations | ResearchArtifactReauthorizedCitations>;
+  acceptArtifact(context: AuthenticatedRequestContext, request: ArtifactPublicationAcceptRequest): Promise<ArtifactPublicationMutationResult>;
+  artifactPublication(context: AuthenticatedRequestContext, artifactRef: VersionedRef): Promise<ArtifactPublicationReadResult>;
   proposeWiki(context: AuthenticatedRequestContext, request: unknown): Promise<WikiProposalResult>;
   proposeWikiFromResearchRun(context: AuthenticatedRequestContext, operationId: string): Promise<WikiProposalResult>;
   proposeWikiFromOwnerEdit(context: AuthenticatedRequestContext, request: unknown): Promise<WikiProposalResult>;
