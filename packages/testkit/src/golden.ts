@@ -328,28 +328,67 @@ function coverageRank(kind: string): number {
   return -1;
 }
 
-function adjudicateObservedUnknowns(golden: GoldenCase, observed: ObservedExtraction, failures: string[]): void {
+interface ObservedUnknownAdjudication {
+  readonly values: readonly string[];
+  readonly failures: readonly string[];
+}
+
+function adjudicateObservedUnknowns(
+  golden: GoldenCase,
+  rawUnknowns: unknown,
+): ObservedUnknownAdjudication {
+  if (!Array.isArray(rawUnknowns)) {
+    return {
+      values: [],
+      failures: [`MALFORMED_UNKNOWN_CONTAINER:${golden.case_id}`],
+    };
+  }
+  if (rawUnknowns.length > MAX_GOLDEN_ATOMS) {
+    return {
+      values: [],
+      failures: [
+        `OVERSIZED_UNKNOWN_CONTAINER:${golden.case_id}:${String(rawUnknowns.length)}`,
+      ],
+    };
+  }
+
   const acceptable = new Set(golden.acceptable_unknowns);
   const seen = new Set<string>();
-  for (let index = 0; index < observed.unknowns.length; index += 1) {
-    const unknown: unknown = observed.unknowns[index];
-    if (typeof unknown !== "string" || unknown.trim().length === 0 || unknown.length > MAX_GOLDEN_ATOM_CHARS) {
+  const values: string[] = [];
+  const failures: string[] = [];
+  for (let index = 0; index < rawUnknowns.length; index += 1) {
+    const unknown: unknown = rawUnknowns[index];
+    if (
+      typeof unknown !== "string" ||
+      unknown.trim().length === 0 ||
+      unknown.length > MAX_GOLDEN_ATOM_CHARS
+    ) {
       failures.push(`MALFORMED_UNKNOWN:${golden.case_id}:${String(index)}`);
       continue;
     }
+    values.push(unknown);
     if (seen.has(unknown)) {
       failures.push(`DUPLICATE_UNKNOWN:${golden.case_id}:${unknown}`);
       continue;
     }
     seen.add(unknown);
-    if (!acceptable.has(unknown)) failures.push(`UNEXPECTED_UNKNOWN:${golden.case_id}:${unknown}`);
+    if (!acceptable.has(unknown)) {
+      failures.push(`UNEXPECTED_UNKNOWN:${golden.case_id}:${unknown}`);
+    }
   }
+  return { values, failures };
 }
 
-export function adjudicateGoldenCase(
+interface InternalGoldenVerdict {
+  readonly passed: boolean;
+  readonly failures: readonly string[];
+  readonly observed_unknowns: readonly string[];
+}
+
+function adjudicateGoldenCaseInternal(
   golden: GoldenCase,
   observed: ObservedExtraction,
-): { readonly passed: boolean; readonly failures: readonly string[] } {
+): InternalGoldenVerdict {
   const failures: string[] = [];
   const observedAtoms = new Set(observed.atoms);
   for (const atom of golden.required_atoms) {
@@ -372,7 +411,11 @@ export function adjudicateGoldenCase(
       failures.push(`MISSING_HANDLE:${golden.case_id}:${handleKey(required)}`);
     }
   }
-  adjudicateObservedUnknowns(golden, observed, failures);
+  const unknowns = adjudicateObservedUnknowns(
+    golden,
+    (observed as { readonly unknowns?: unknown }).unknowns,
+  );
+  failures.push(...unknowns.failures);
   const requiredRank = coverageRank(golden.coverage_requirement);
   const observedRank = coverageRank(observed.coverage);
   if (observedRank < 0) {
@@ -385,7 +428,19 @@ export function adjudicateGoldenCase(
       failures.push(`COVERAGE_INSUFFICIENT:${golden.case_id}:complete_scope required`);
     }
   }
-  return { passed: failures.length === 0, failures };
+  return {
+    passed: failures.length === 0,
+    failures,
+    observed_unknowns: unknowns.values,
+  };
+}
+
+export function adjudicateGoldenCase(
+  golden: GoldenCase,
+  observed: ObservedExtraction,
+): { readonly passed: boolean; readonly failures: readonly string[] } {
+  const verdict = adjudicateGoldenCaseInternal(golden, observed);
+  return { passed: verdict.passed, failures: verdict.failures };
 }
 
 export function evaluateGoldenRun(
@@ -407,13 +462,13 @@ export function evaluateGoldenRun(
         diagnostics_ref: `missing-observation-${golden.case_id}`,
       };
     }
-    const verdict = adjudicateGoldenCase(golden, observed);
+    const verdict = adjudicateGoldenCaseInternal(golden, observed);
     return {
       case_id: golden.case_id,
       passed: verdict.passed,
       observed_atoms: [...observed.atoms],
       observed_forbidden_collapses: [...observed.forbidden],
-      observed_unknowns: [...observed.unknowns],
+      observed_unknowns: [...verdict.observed_unknowns],
       resolved_handle_refs: [...observed.handles],
       coverage_kind: observed.coverage,
       failures: [...verdict.failures],
