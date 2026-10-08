@@ -161,14 +161,7 @@ function parseScopeExpression(raw: unknown): ScopeExpression {
   }
 }
 
-function parseStringArray(
-  raw: unknown,
-  field: string,
-  minItems: number,
-  maxItems: number,
-  maxChars: number,
-  allowEmptyItems: boolean,
-): readonly string[] {
+function parseStringArray(raw: unknown, field: string, minItems: number, maxItems: number, maxChars: number, allowEmptyItems: boolean): readonly string[] {
   if (!Array.isArray(raw)) throw new Error(`MALFORMED_CASE:${field}:expected array`);
   if (raw.length < minItems) throw new Error(`EMPTY_CASE_FIELD:${field}`);
   if (raw.length > maxItems) throw new Error(`OVERSIZED_CASE_FIELD:${field}:${String(raw.length)}`);
@@ -210,17 +203,8 @@ export function parseGoldenCase(raw: unknown): GoldenCase {
   }
   const caseId = asString(raw["case_id"]);
   if (caseId === null || caseId.length === 0) throw new Error("EMPTY_CASE:case_id");
-  if (caseId.length > MAX_GOLDEN_CASE_ID_CHARS) {
-    throw new Error(`OVERSIZED_CASE_FIELD:case_id:${String(caseId.length)}`);
-  }
-  const sourceRefs = parseStringArray(
-    raw["source_revision_refs"],
-    "source_revision_refs",
-    1,
-    MAX_GOLDEN_SOURCES_PER_CASE,
-    256,
-    false,
-  );
+  if (caseId.length > MAX_GOLDEN_CASE_ID_CHARS) throw new Error(`OVERSIZED_CASE_FIELD:case_id:${String(caseId.length)}`);
+  const sourceRefs = parseStringArray(raw["source_revision_refs"], "source_revision_refs", 1, MAX_GOLDEN_SOURCES_PER_CASE, 256, false);
   const scope = parseScopeExpression(raw["scope_expression"]);
   const question = asString(raw["question"]);
   if (question === null || question.trim().length === 0) throw new Error(`EMPTY_CASE_FIELD:question:${caseId}`);
@@ -229,22 +213,8 @@ export function parseGoldenCase(raw: unknown): GoldenCase {
   if (product === null || !(EXPECTED_PRODUCTS as readonly string[]).includes(product)) {
     throw new Error(`MALFORMED_CASE:expected_product:${caseId}`);
   }
-  const atoms = parseStringArray(
-    raw["required_atoms"],
-    "required_atoms",
-    0,
-    MAX_GOLDEN_ATOMS,
-    MAX_GOLDEN_ATOM_CHARS,
-    false,
-  );
-  const forbidden = parseStringArray(
-    raw["forbidden_collapses"],
-    "forbidden_collapses",
-    1,
-    MAX_GOLDEN_ATOMS,
-    MAX_GOLDEN_ATOM_CHARS,
-    false,
-  );
+  const atoms = parseStringArray(raw["required_atoms"], "required_atoms", 0, MAX_GOLDEN_ATOMS, MAX_GOLDEN_ATOM_CHARS, false);
+  const forbidden = parseStringArray(raw["forbidden_collapses"], "forbidden_collapses", 1, MAX_GOLDEN_ATOMS, MAX_GOLDEN_ATOM_CHARS, false);
   const handlesRaw = raw["required_evidence_handle_refs"];
   if (!Array.isArray(handlesRaw)) throw new Error(`MALFORMED_CASE:required_evidence_handle_refs:${caseId}`);
   if (handlesRaw.length > MAX_GOLDEN_HANDLES_PER_CASE) {
@@ -254,14 +224,10 @@ export function parseGoldenCase(raw: unknown): GoldenCase {
   for (const entry of handlesRaw) {
     handles.push(parseVersionedRef(entry, `handle:${caseId}`));
   }
-  const unknowns = parseStringArray(
-    raw["acceptable_unknowns"],
-    "acceptable_unknowns",
-    0,
-    MAX_GOLDEN_ATOMS,
-    MAX_GOLDEN_ATOM_CHARS,
-    false,
-  );
+  const unknowns = parseStringArray(raw["acceptable_unknowns"], "acceptable_unknowns", 0, MAX_GOLDEN_ATOMS, MAX_GOLDEN_ATOM_CHARS, false);
+  if (unknowns.some((entry) => entry.trim().length === 0)) {
+    throw new Error(`EMPTY_CASE_FIELD:acceptable_unknowns:empty item`);
+  }
   if (new Set(unknowns).size !== unknowns.length) {
     throw new Error(`DUPLICATE_CASE_FIELD:acceptable_unknowns:${caseId}`);
   }
@@ -362,20 +328,12 @@ function coverageRank(kind: string): number {
   return -1;
 }
 
-function adjudicateObservedUnknowns(
-  golden: GoldenCase,
-  observed: ObservedExtraction,
-  failures: string[],
-): void {
+function adjudicateObservedUnknowns(golden: GoldenCase, observed: ObservedExtraction, failures: string[]): void {
   const acceptable = new Set(golden.acceptable_unknowns);
   const seen = new Set<string>();
   for (let index = 0; index < observed.unknowns.length; index += 1) {
     const unknown: unknown = observed.unknowns[index];
-    if (
-      typeof unknown !== "string" ||
-      unknown.trim().length === 0 ||
-      unknown.length > MAX_GOLDEN_ATOM_CHARS
-    ) {
+    if (typeof unknown !== "string" || unknown.trim().length === 0 || unknown.length > MAX_GOLDEN_ATOM_CHARS) {
       failures.push(`MALFORMED_UNKNOWN:${golden.case_id}:${String(index)}`);
       continue;
     }
@@ -384,9 +342,7 @@ function adjudicateObservedUnknowns(
       continue;
     }
     seen.add(unknown);
-    if (!acceptable.has(unknown)) {
-      failures.push(`UNEXPECTED_UNKNOWN:${golden.case_id}:${unknown}`);
-    }
+    if (!acceptable.has(unknown)) failures.push(`UNEXPECTED_UNKNOWN:${golden.case_id}:${unknown}`);
   }
 }
 
@@ -422,9 +378,7 @@ export function adjudicateGoldenCase(
   if (observedRank < 0) {
     failures.push(`MALFORMED_COVERAGE:${golden.case_id}:${observed.coverage}`);
   } else if (observedRank < requiredRank) {
-    failures.push(
-      `COVERAGE_INSUFFICIENT:${golden.case_id}:required ${golden.coverage_requirement} observed ${observed.coverage}`,
-    );
+    failures.push(`COVERAGE_INSUFFICIENT:${golden.case_id}:required ${golden.coverage_requirement} observed ${observed.coverage}`);
   }
   if (golden.coverage_requirement === "complete_scope" && observed.coverage !== "complete_scope") {
     if (!failures.some((entry) => entry.startsWith(`COVERAGE_INSUFFICIENT:${golden.case_id}`))) {
@@ -441,7 +395,6 @@ export function evaluateGoldenRun(
   return cases.map((golden) => {
     const observed = observations.get(golden.case_id);
     if (observed === undefined) {
-      const failures = [`MISSING_OBSERVATION:${golden.case_id}`];
       return {
         case_id: golden.case_id,
         passed: false,
@@ -450,7 +403,7 @@ export function evaluateGoldenRun(
         observed_unknowns: [],
         resolved_handle_refs: [],
         coverage_kind: "none",
-        failures,
+        failures: [`MISSING_OBSERVATION:${golden.case_id}`],
         diagnostics_ref: `missing-observation-${golden.case_id}`,
       };
     }
@@ -516,12 +469,7 @@ export function validateGoldenCases(cases: readonly GoldenCase[]): readonly stri
 }
 
 export function assertGoldenPromotionGate(results: readonly GoldenRunResult[]): void {
-  const failed = results.filter(
-    (result) =>
-      !result.passed ||
-      result.failures.length > 0 ||
-      result.observed_forbidden_collapses.length > 0,
-  );
+  const failed = results.filter((result) => !result.passed || result.failures.length > 0 || result.observed_forbidden_collapses.length > 0);
   if (failed.length > 0) {
     throw new Error(`GOLDEN_PROMOTION_BLOCKED:${failed.map((result) => result.case_id).join(",")}`);
   }
