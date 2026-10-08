@@ -1,54 +1,89 @@
 ---
 title: "Eliot Research branch discipline"
-protocol: "eliotr.branch-discipline.v2"
-version: "2.0"
-date: 2026-09-19
+protocol: "eliotr.branch-discipline.v3"
+version: "3.0"
+date: 2026-10-08
 status: "normative"
 ---
 
-# Branch discipline
+# Branch and worktree discipline
 
-## Owner-directed implementation
+## Manager-owned implementation
 
-The owner's S27 instruction supersedes the former branch ceiling, dated launch reservations, and
-age-based deletion procedure. Work directly on `main`; do not create implementation branches or
-additional local worktrees. One agent holds one checkpoint at a time. Claim exact paths and base SHA
-in the existing theme PR, test the change, publish without rewriting history, and record its acceptance.
-Preserve concurrent main changes; do not force an implementation update over them.
+The current execution model is **one worktree per manager**.
 
-Existing planning and salvage PRs remain specifications/evidence, not permission to merge stale trees.
-An open theme is not automatically unfinished in every detail: compare each checkpoint against main.
-Keep a theme open until all of its mandatory code acceptance is met; live acceptance stays separate.
+A manager owns one bounded checkpoint and one worktree at a time. Subagents do not create additional
+worktrees or independent integration branches; they work inside the manager-owned tree under disjoint
+path ownership or remain read-only. The manager finishes or explicitly hands off before taking another
+lane.
+
+Example:
+
+```bash
+git fetch origin --prune
+git worktree add ../eliot-research-mgr-<manager> \
+  -b manager/<manager>/<pr>-<slug> origin/main
+```
+
+Before editing, the manager records the exact base SHA, worktree/branch, checkpoint, owned paths,
+shared-file handoff, dependencies and build gates in the active PR.
+
+## Shared integration
+
+One named integrator owns shared contracts, composition roots, public routes, migrations, manifests,
+barrels, package/Cargo manifests, lockfiles, generated bindings and CI.
+
+The integrator uses one dedicated integration worktree and:
+
+1. refreshes `origin/main` and the manager head;
+2. compares the exact diff and file list;
+3. verifies that no stale planning/history tree entered the change;
+4. runs the required scoped compiler/lint/Clippy gate and named narrow reproduction;
+5. preserves persisted identities and legacy codecs unless an explicit migration exists;
+6. publishes without rewriting history;
+7. reads the resulting ref back and records the exact SHA and pending gates.
+
+No manager or integrator force-pushes over concurrent work. A mismatched expected head requires refresh
+and reconciliation, not overwrite.
+
+## Historical and planning branches
+
+Planning, salvage and audit branches are specifications/evidence. They are not implementation trees to
+merge wholesale. Compare every useful delta against current main and current owners.
+
+An open theme is not automatically unfinished in every detail; a closed PR is not automatically
+integrated. Preserve source branches when ancestry/equivalence is not proven.
 
 ## Cleanup authority
 
-There is no numeric quota, expiry, or named/dated exception list. Branch age, count, and a closed PR
-are not evidence of integration. In particular, closed-but-unmerged work must survive.
+There is no numeric branch quota, expiry or age-based deletion rule. Branch age, count and a closed PR
+are not evidence of integration.
 
 Automated cleanup must establish all of the following:
 
-1. The configured default branch is still the repository's actual default branch.
-2. The candidate is neither the default nor a protected branch and has no open same-repository PR.
-3. The exact candidate head is an ancestor of the observed default-branch head. A squash/rebase merge
-   without this ancestry is conservatively preserved for explicit operator review.
-4. Immediately before deletion, repeat default/integration, head, protection and open-PR observations.
-   Any changed head, new PR or protection cancels that candidate.
-5. Delete only the named ref under an explicit expected-SHA lease. REST DELETE has no such precondition
-   and is not used. Confirm absence before recording a successful deletion; do not blindly retry an
-   unknown outcome or a recreated branch.
+1. the configured default branch is still the repository default;
+2. the candidate is neither default nor protected and has no open same-repository PR;
+3. the exact candidate head is an ancestor of the observed default-branch head; squash/rebase without
+   ancestry is preserved for operator review;
+4. immediately before deletion, repeat default/integration, head, protection and open-PR observations;
+5. delete only the named ref under an explicit expected-SHA lease;
+6. confirm absence before recording success; do not blindly retry an unknown outcome or recreated ref.
 
-The lease is limited to deletion of the exact candidate; it is not permission to rewrite `main` or
-force-update another branch. GitHub protection remains enforced by the server. PR metadata and Git refs
-are separate resources: PR protection is an observation immediately before deletion, not an atomic
-cross-resource lock. A branch-head race after observation is rejected by the Git server's exact lease.
+The lease permits deletion of only that exact candidate. It never permits rewriting `main` or another
+manager branch.
+
+## Verification phase
+
+During product assembly, managers run compilation and scoped lint; Rust also runs minimal Clippy, and
+SQL changes run the installed D1 depth/target compiler. Narrow reproductions named by the active PR may
+run immediately. Broad unit/browser/native/mutation/live suites follow assembled product code.
+
+Every unexecuted check is reported `PENDING`.
 
 ## Automation and evidence
 
-`.github/workflows/branch-hygiene.yml` runs on main, hourly, and manually. The planner, executable API
-rechecks, and real local Git lease behavior are covered by `node scripts/test-branch-hygiene.mjs`.
-The job reports confirmed deletions and preserved/skipped work; branch count is informational only.
-It does not replace data/security/runtime checks or qualify product launch. No implementation branch
-or worktree is created by the cleanup job.
+`.github/workflows/branch-hygiene.yml` remains a cleanup aid, not implementation authority. Its planner,
+API rechecks and lease behavior are covered by `node scripts/test-branch-hygiene.mjs`.
 
-Archive explicitly required non-integrated evidence before an operator-directed removal. Never infer
-that a branch is disposable merely because its PR was closed or its commit is old.
+The job reports confirmed deletions and preserved/skipped work. It does not replace product, security,
+data, runtime or release checks.
