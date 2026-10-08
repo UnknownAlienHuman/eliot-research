@@ -13,8 +13,8 @@ This matrix is an execution disposition, not a claim that runtime code, compiler
 |---|---|
 | `READY_FIRST` | First shared dependency; implementation should start here. |
 | `READY_INDEPENDENT` | Bounded implementation may proceed without waiting for another active feature. |
-| `READY_AFTER_REBASE` | Source patch is valid in scope but must be reconciled to current main and run scoped checks. |
-| `READY_AFTER_SCOPED_CHECK` | Branch is based on current main; add/run exact package tests before integration. |
+| `READY_AFTER_REBASE` | Source patch is valid in scope but must be reconciled to current main before checks; retained for future use. |
+| `READY_AFTER_SCOPED_CHECK` | Branch is based on current main; run exact compiler/lint/focused checks before integration. |
 | `BLOCKED_BY(...)` | Do not edit shared contracts until the named owner(s) settle. |
 | `READY_AFTER_CORE` | Unique Eliot behavior, but not part of the first repair wave. |
 | `OPTIONAL_SELECTED_PROFILE` | Implement only when the corresponding external client/profile is selected. |
@@ -23,7 +23,7 @@ This matrix is an execution disposition, not a claim that runtime code, compiler
 | `LATER_ACCEPTANCE` | Native/staging/load/release evidence, not a missing core implementation. |
 | `UI_OWNER` | Owned by the replacement owner-web/UI work. |
 | `FINAL_STATUS_SYNC` | Update historical/current status only after implementation identities are known. |
-| `AUDIT_INDEX` | Documentation/coordination owner for this preparation. |
+| `AUDIT_INDEX` | Completed documentation/coordination handoff; not a runtime implementation PR. |
 | `ABSORBED_CLOSED` | Criteria moved to named active owners; PR closed without merge. |
 | `SUPERSEDED_CLOSED` | Current main contains a later implementation; historical branch preserved and closed. |
 
@@ -94,15 +94,15 @@ This matrix is an execution disposition, not a claim that runtime code, compiler
 | #288 | `LATER_ACCEPTANCE` | After #286/#263/#282; load/latency/cost | No estimates labelled bills or live measurements. |
 | #289 | `LATER_ACCEPTANCE` | Final release after #283/#285–#288 and selected profiles | No universal readiness claim. |
 | #291 | `READY_AFTER_CORE` (accounting fix); `BLOCKED_BY(#320,#242)` (capacity proof) | Split actual preview accounting from managed-search capacity | No arbitrary limit increases or silent paid fan-out. |
-| #320 | `READY_AFTER_REBASE` | Scoped prefilter before AI Search top-k | No global fallback or ACL-by-truncated prefix. |
-| #321 | `READY_AFTER_REBASE` | Common bounded stream cleanup; predecessor #331 | No awaited hostile cancellation. |
+| #320 | `READY_AFTER_SCOPED_CHECK` | Reconciled current-main scoped prefilter before AI Search top-k; head `55b5fedef3f9c5b4d7cca9c490739e24d611e0c8` | No global fallback or ACL-by-truncated prefix. |
+| #321 | `READY_AFTER_SCOPED_CHECK` | Reconciled current-main bounded stream cleanup; head `fbef9fe3fcd28c434581206bd3c1bdd4f64f6a81`; predecessor #331 | No awaited hostile cancellation. |
 | #322 | `READY_AFTER_SCOPED_CHECK` | Direct lanes must all precede SEM | No planner rewrite/framework. |
 | #323 | `READY_AFTER_SCOPED_CHECK` | Land/absorb before #242; collision-free compound key | No persisted identity migration. |
 | #324 | `READY_INDEPENDENT` | AI Search documented `query_kind: text` decoder compatibility | No multimodal expansion or permissive decoder. |
 | #325 | `BLOCKED_BY(#209,#242)` | Branch-local question/retrieval/findings contract | No second model ledger/scheduler/result hierarchy. |
 | #326 | `BLOCKED_BY(#209,#330)` | Native Workflow `waitForEvent`; D1 result remains authority | No normal-path polling/manual-recovery framework. |
-| #327 | `AUDIT_INDEX` | Cloudflare ownership, donor map, matrix and final handoff | No runtime implementation on this branch. |
-| #328 | `BLOCKED_BY(own-bounded-decoder-fix)` | Finish malformed/non-array/oversized observed-unknown handling | Not a complete promotion gate; expected case set stays #285. |
+| #327 | `AUDIT_INDEX` | Audit preparation complete; canonical router is `docs/implementation/backend-entrypoints.md` | No runtime implementation on this branch. |
+| #328 | `READY_AFTER_SCOPED_CHECK` | Bounded observed-unknown decoder repair complete at `96ff0f1a5766a2b400b5f237968bb63d1d088150`; then release #285 deterministic work | Not a complete promotion gate; expected case set stays #285. |
 | #329 | `UI_OWNER` | React/Vite replacement owner web UI and ER-48 client extraction | No backend rewrite/second Worker/Pages service. |
 | #330 | `BLOCKED_BY(#209)` | Effect inventory may start; shared implementation after failure vocabulary | No wrapper over two surviving workflow engines. |
 | #331 | `BLOCKED_BY(#321)` | Migrate complete-body callers and delete private copies | No generic HTTP framework. |
@@ -118,7 +118,7 @@ This matrix is an execution disposition, not a claim that runtime code, compiler
 
 #321 → #331
 #322 + #323
-#324 + rebased #320 → #242
+#324 + #320 → #242
 #332 (independent)
 
 #242 + #209 → #325 → #214
@@ -132,7 +132,7 @@ This matrix is an execution disposition, not a claim that runtime code, compiler
 #239 + #240 → #248
 #240 + #247 + #248 → #249
 
-#328 deterministic decoder → #285 exact case-set / Golden v2
+#328 bounded decoder complete → scoped checks → #285 exact case-set / Golden v2
 #282 emitted budgets → #268 mechanical formatting
 
 optional client profiles #250–#253
@@ -142,9 +142,14 @@ native/release acceptance #210/#222/#259/#283/#286–#289
 
 There is no dependency from core correctness to optional Google/federation profiles, optional Rust promotion, frontend completion, production deployment or paid quality runs.
 
-## Remaining audit-preparation blockers
+## Audit-preparation closure
 
-1. Finish the bounded decoder correction in #328.
-2. Reconcile #320 and #321 onto current main and record scoped checks; #322/#323 need their focused package checks.
-3. Ensure every active P0/P1 PR body links this matrix or contains equivalent exact ownership/dependency text.
-4. Publish the final implementation handoff in #327 and set `BACKEND_AUDIT_PREPARATION_COMPLETE` only after items 1–3 are resolved.
+The preparation blockers that existed in the earlier matrix revision are now resolved:
+
+1. #328 has a bounded container decoder and adversarial regression source; repository-pinned checks remain implementation acceptance.
+2. #320 and #321 are reconciled to current main without force-push and are no longer rebase blockers.
+3. #322/#323 have bounded current-main source fixes; their focused checks remain implementation acceptance.
+4. The complete handoff is published in #327 with marker `BACKEND_AUDIT_PREPARATION_COMPLETE`.
+5. The current role-based entry point is `docs/implementation/backend-entrypoints.md`.
+
+The remaining work is code implementation, compiler/lint/Clippy/focused checks, native Cloudflare qualification and release acceptance — not further architecture queue discovery.
