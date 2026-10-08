@@ -1,17 +1,46 @@
 # Start here
 
-This is the only entry point for implementation work. It is intentionally short.
+This is the only repository entry point. Choose the route that matches the work; do not read the
+entire documentation tree or infer the active queue from old PRs.
 
-- Current state and execution order: [backend-delivery-plan.md](implementation/backend-delivery-plan.md).
-- Original S01–S99 requirements: [PR #292](https://github.com/UnknownAlienHuman/eliot-research/pull/292).
-- Repository boundaries: [AGENTS.md](../AGENTS.md).
-- Ownership: [agent-work/README.md](agent-work/README.md) and [manifest.json](agent-work/manifest.json).
+## 1. Choose your route
 
-Open planning PRs, old Launch documents and historical audits are evidence, not competing queues.
+| You are doing | First document | Next authority |
+|---|---|---|
+| Backend implementation | [backend-entrypoints.md](implementation/backend-entrypoints.md) | Active PR/passport, owning ER packet, named architecture sections |
+| Backend shared integration | [backend-entrypoints.md](implementation/backend-entrypoints.md) §4 | [final PR matrix](../.github/audits/2026-10-08/FINAL-PR-DISPOSITION-MATRIX.md) |
+| Backend review | [backend-entrypoints.md](implementation/backend-entrypoints.md) §5 | PR acceptance list and exact changed callers/removals |
+| Owner web/UI replacement | [PR #329](https://github.com/UnknownAlienHuman/eliot-research/pull/329) | ER-47/ER-48 and UI-owned documents |
+| Platform operation or release | [production-readiness-plan.md](implementation/production-readiness-plan.md) | Runbook/checklist for the exact accepted build |
+| Understanding current implementation state | [implementation-status.json](implementation/implementation-status.json) and [gap-register.md](implementation/gap-register.md) | Current code and retained receipts |
+| Understanding product authority | [ELIOT_RESEARCH.md](architecture/ELIOT_RESEARCH.md), only the named section | Accepted ADRs and language/runtime contract |
+| Looking up work-packet file ownership | [agent-work/README.md](agent-work/README.md) and [manifest.json](agent-work/manifest.json) | Exact packet and additive fragment |
+| Reviewing historical/audit work | [audit completion marker](../.github/audits/2026-10-08/BACKEND-AUDIT-PREPARATION-COMPLETE.md) | Matrix, preservation reconciliation and dated evidence |
 
-## 1. Orient before editing
+The backend audit and implementation preparation are complete. That marker means the queue and
+ownership graph are bounded; it does **not** mean product implementation, tests, native Cloudflare
+qualification, deployment or release are complete.
 
-Run from the repository root:
+The former [`backend-delivery-plan.md`](implementation/backend-delivery-plan.md) records the paused
+October 6 source checkpoint. It is historical evidence, not the current implementation queue.
+
+## 2. Authority order
+
+When documents disagree, use this order:
+
+1. current `origin/main` code and installed schemas;
+2. the active PR/passport and accepted predecessor SHAs;
+3. [backend-entrypoints.md](implementation/backend-entrypoints.md) and the final PR matrix;
+4. owning work packet and manifest paths;
+5. normative architecture, language/runtime contract and accepted ADRs;
+6. dated audits, old launch plans and closed PRs as historical evidence only.
+
+Do not resolve a shared-contract conflict by inventing a leaf-local schema, registry, retry engine or
+compatibility exception.
+
+## 3. Orient before editing
+
+From the repository root:
 
 ```bash
 git fetch origin --prune
@@ -20,65 +49,73 @@ git status --short
 pnpm launch:code
 pnpm work-packets:check
 pnpm check:implementation-status
-gh pr view 292
-gh pr view 229 --comments
 ```
 
-Then read, in this order:
+Then read only:
 
-1. the **Current active checkpoint** in `backend-delivery-plan.md`;
-2. the latest comment on its GitHub task;
+1. the assigned PR/passport;
+2. [backend-entrypoints.md](implementation/backend-entrypoints.md);
 3. `AGENTS.md`;
-4. only the owning work packet and the architecture sections named by that packet.
+4. the owning work packet;
+5. the exact neighboring contracts and architecture sections named by that packet.
 
-Do not infer current work from an old PR body, branch name, open-PR count, historical audit percentage or a local uncommitted patch. `origin/main` plus the current task discussion is the source of truth.
+Do not infer current work from branch age, open-PR count, an old PR body, a historical audit percentage
+or a local uncommitted patch.
 
-## 2. Claim one checkpoint
+## 4. Manager/worktree discipline
 
-Before editing, post a short claim in the active task:
+The current implementation model is **one worktree per manager**. A manager owns one bounded checkpoint
+at a time. Subagents do not create extra worktrees; they operate inside the manager worktree under
+disjoint path ownership or remain read-only.
+
+Example:
+
+```bash
+git fetch origin --prune
+git worktree add ../eliot-research-mgr-<manager> \
+  -b manager/<manager>/<pr>-<slug> origin/main
+```
+
+Before editing, record in the active PR:
 
 ```text
 Baseline: <exact origin/main SHA>
+Manager/worktree: <manager ID and branch>
 Checkpoint: <one bounded result>
 Owned files: <exact paths>
-Exit: <compile/lint/static conditions>
-Deferred: <behavioral/native/live acceptance not run>
+Shared files: <none, or named integrator handoff>
+Dependencies: <accepted predecessor SHAs or PENDING>
+Build gate: <compile/scoped lint; minimal Clippy for Rust>
+Deferred: <focused/full/native/live checks not executed>
 ```
 
-Rules:
+One named integrator serializes shared contracts, composition roots, public routes, migrations,
+manifests, barrels, lockfiles, generated bindings and CI. Never force-push over another manager.
 
-- work directly on `main`; no task branch or additional worktree;
-- one agent owns one checkpoint at a time;
-- edit only owned paths; shared manifests, migrations, barrels, CI and composition files require the named integrator ownership;
-- if `origin/main` moved after the claim, reconcile before publication; never force-push;
-- finish or explicitly hand off before claiming another checkpoint.
+## 5. Code-first implementation phase
 
-## 3. Implement the product, not a parallel stack
-
-The current owner-directed phase is **code first**:
+During assembly:
 
 - TypeScript: compile and run scoped ESLint;
-- SQL: also run the installed depth-100 compiler;
-- Rust: run compilation and minimal Clippy for the changed crate;
-- broad unit/browser/native/mutation/live suites run after product-code assembly unless the active task explicitly requires a narrow reproduction.
+- Rust: compile and run minimal Clippy for the changed crate;
+- SQL: run the installed D1 depth/target compiler when SQL changes;
+- execute a narrow reproduction only when the active PR requires it;
+- run broad unit/browser/native/mutation/live suites after assembled product code is ready.
 
-Use the [scoped verification guide](implementation/scoped-verification.md) for command templates. The legacy
-`pnpm check:affected` command prints a deprecation warning and runs the full repository check; it does not
-select checks based on changed files.
+Use [scoped-verification.md](implementation/scoped-verification.md) for command templates. Mark every
+unexecuted gate `PENDING`, never `PASS`.
 
-Keep every final acceptance criterion, but mark unexecuted checks `PENDING`, never `PASS`.
-
-Reuse existing contracts, stores, Workflow stages and authority readers. A missing composition path is not permission to add another engine. Every mutation retains:
+Reuse existing contracts, stores, Workflow stages and authority readers. A missing composition path is
+not permission to add another engine. Every mutation retains:
 
 ```text
 Intent → Attempt → Receipt → Readback → Reconciliation
 ```
 
-Never make model, HTTP or R2 calls inside a D1 transaction. A lost acknowledgement is `UNKNOWN`, not permission to mint another identity or repeat a possibly paid effect.
+Never make model, HTTP or R2 calls inside a D1 transaction. A lost acknowledgement is `UNKNOWN`, not
+permission to mint another identity or repeat a possibly paid effect.
 
-## 4. Publish a checkpoint safely
-
-A checkpoint must be coherent and reviewable. Prefer a small source set, but do not split an invariant across commits merely to reduce file count.
+## 6. Publish and integrate safely
 
 Before publication:
 
@@ -87,59 +124,59 @@ git fetch origin --prune
 git diff --check
 ```
 
-Use normal authenticated Git or the authorized GitHub Git Data API. Update `main` only as a non-forced fast-forward from the refreshed expected head.
+The manager refreshes the expected base and records the exact commit. The integrator compares the full
+file list, checks that no historical branch contents leaked into the change, runs the required scoped
+build gate, and publishes without rewriting history.
 
 After publication:
 
-1. read `refs/heads/main` again;
-2. fetch the published commit and verify its file list;
-3. comment on the active task with the exact SHA, commands/results and remaining work;
-4. update `backend-delivery-plan.md` when the active checkpoint or queue changed.
+1. read the resulting ref back;
+2. verify the exact changed-file list;
+3. record SHA, commands, results and pending gates in the PR;
+4. update the execution router only when dependency order or ownership changed.
 
-A local manifest, prepared patch or unattached blob is not published work.
+A local patch, unattached blob, source-only proposal or successful provider response is not published
+or accepted product work.
 
-## 5. Authority map
+## 7. Essential maps
 
 | Need | Read |
 |---|---|
-| Current checkpoint and queue | [backend-delivery-plan.md](implementation/backend-delivery-plan.md) |
-| Complete original task criteria | [PR #292](https://github.com/UnknownAlienHuman/eliot-research/pull/292) and the selected S task |
+| Current backend wave and role entry points | [backend-entrypoints.md](implementation/backend-entrypoints.md) |
+| Full PR disposition/dependency graph | [FINAL-PR-DISPOSITION-MATRIX.md](../.github/audits/2026-10-08/FINAL-PR-DISPOSITION-MATRIX.md) |
+| Cloudflare versus Eliot ownership | [CLOUDFLARE-NATIVE-OWNERSHIP.md](../.github/audits/2026-10-08/CLOUDFLARE-NATIVE-OWNERSHIP.md) |
 | Product/state authority | [ELIOT_RESEARCH.md](architecture/ELIOT_RESEARCH.md), only named sections |
-| TypeScript/Rust/SQL ownership | [LANGUAGE_RUNTIME_CONTRACT.md](architecture/LANGUAGE_RUNTIME_CONTRACT.md), amended by [ADR-0007](adr/0007-external-agents-and-cloudflare-evolution.md) |
-| External models/agents and Cloudflare evolution | [ADR-0007](adr/0007-external-agents-and-cloudflare-evolution.md) and [operator runbook](implementation/muse-operator-runbook.md); not a replacement queue |
+| TypeScript/Rust/SQL ownership | [LANGUAGE_RUNTIME_CONTRACT.md](architecture/LANGUAGE_RUNTIME_CONTRACT.md) and accepted ADRs |
 | File ownership | [agent-work/README.md](agent-work/README.md) and [manifest.json](agent-work/manifest.json) |
 | Implemented vs scaffold vs live | [implementation-status.json](implementation/implementation-status.json) |
 | Known product gaps | [gap-register.md](implementation/gap-register.md) |
 | Failure/retry semantics | [failure-model.md](implementation/failure-model.md) |
-| Security, disclosure and erasure | [security-checklist.md](implementation/security-checklist.md) |
-| Branch/publication rules | [branch-discipline.md](implementation/branch-discipline.md) |
+| Security/disclosure/erasure | [security-checklist.md](implementation/security-checklist.md) |
+| Manager branches/worktrees | [branch-discipline.md](implementation/branch-discipline.md) |
 | Pinned tools | [toolchain.md](implementation/toolchain.md) |
 
-If a packet conflicts with architecture, stop and name the exact conflict. Do not resolve it with a leaf-specific schema or hidden exception.
+## 8. Release acceptance remains separate
 
-## 6. CI and final acceptance
+GitHub Actions are manual-only. Do not dispatch broad workflows or mutate remote Cloudflare/Google
+resources without explicit owner authorization.
 
-GitHub Actions are currently manual-only. Do not restore automatic triggers or dispatch broad workflows without owner authorization.
+After code assembly, acceptance remains ordered:
 
-After code assembly, execute acceptance in this order:
+1. local integration and exact D1 authority;
+2. attested staging build/bindings/schema/assets;
+3. native/security/restore/client conformance and Golden quality;
+4. workload/latency/cost;
+5. final release acceptance.
 
-1. S92 local integration;
-2. S94 staging;
-3. S93 quality, S95 native/security/restore/client conformance and S96 workload/cost on the attested build;
-4. S97 release acceptance.
+Compilation, a green docs check, a local emulator, Workflow completion or provider acceptance alone
+does not establish production readiness or `LIVE_QUALIFIED`.
 
-The explicit repository-wide verification command is `pnpm check:full` (the existing `pnpm check` command
-still runs the same complete chain). It retains the full test and Rust checks and does not replace the
-ordered release acceptance above.
-
-Compilation, a green docs check, a local emulator, a Workflow completion or provider acceptance alone does not establish production readiness or `LIVE_QUALIFIED`.
-
-## 7. Never treat these as permission
+## 9. Never treat these as permission
 
 - age, count or closure of branches;
-- a stale planning head;
-- an audit estimate;
+- a stale planning head or old audit;
 - a configured client ID without verified possession;
 - an index hit without exact authorized evidence bytes;
-- optional managed OAuth or unselected Slice 7 as a baseline blocker;
+- retryability as permission to repeat an unknown paid effect;
+- optional Google/federation/Rust/UI work as a deterministic-core blocker unless the active PR names it;
 - missing local Git credentials as proof that GitHub write access is unavailable.
