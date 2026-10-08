@@ -6,18 +6,23 @@ implementation entry point.
 Start implementation at:
 
 - [`docs/START-HERE.md`](../../../docs/START-HERE.md);
-- [`docs/implementation/backend-entrypoints.md`](../../../docs/implementation/backend-entrypoints.md).
+- [`docs/implementation/backend-entrypoints.md`](../../../docs/implementation/backend-entrypoints.md);
+- [`BACKEND-IMPLEMENTATION-CARDS.md`](BACKEND-IMPLEMENTATION-CARDS.md) for concise per-owner steps and the donor decision register.
 
 ## Canonical handoff documents
 
 | Document | Purpose |
 |---|---|
+| [BACKEND-IMPLEMENTATION-CARDS.md](BACKEND-IMPLEMENTATION-CARDS.md) | Short implementation cards, Cloudflare reuse boundary, donor decisions and anti-Frankenstein review gate. |
 | [BACKEND-AUDIT-PREPARATION-COMPLETE.md](BACKEND-AUDIT-PREPARATION-COMPLETE.md) | Completion marker, settled ownership, first wave and verification boundary. |
 | [FINAL-PR-DISPOSITION-MATRIX.md](FINAL-PR-DISPOSITION-MATRIX.md) | Complete starting-set disposition and non-circular dependency graph. |
 | [CLOUDFLARE-NATIVE-OWNERSHIP.md](CLOUDFLARE-NATIVE-OWNERSHIP.md) | Cloudflare commodity ownership versus Eliot semantic authority. |
 | [PRESERVATION-RECONCILIATION.md](PRESERVATION-RECONCILIATION.md) | Per-delta reconciliation for #121/#173/#174. |
 
-## Implementation donor guides
+## Detailed donor evidence
+
+These documents provide pinned source functions and failure analysis. Their old process introductions
+are historical; execution order comes from the router and implementation cards.
 
 | Document | Purpose |
 |---|---|
@@ -44,4 +49,5 @@ Start implementation at:
 | [R10-ledger-snapshot-consistency.md](R10-ledger-snapshot-consistency.md) | #332 |
 
 Other dated files in this directory are supporting analyses or earlier revisions. When they disagree
-with the completion marker, final matrix or current PR body, treat them as historical evidence.
+with the implementation cards, completion marker, final matrix or current PR body, treat them as
+historical evidence.
