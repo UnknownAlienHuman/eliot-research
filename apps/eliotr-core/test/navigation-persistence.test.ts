@@ -1,12 +1,11 @@
-import { beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { createD1NavigationStore, evidenceSha256Bytes, evidenceUtf8Bytes } from "@eliotr/cloudflare-evidence";
 import { canonicalNavigationJson, projectAtlasIdentity, requireResolvedEvidenceForPublication } from "@eliotr/retrieval";
 import { createD1NavigationService } from "../src/navigation-persistence.js";
-import { createNavigationService } from "../src/navigation-service.js";
+import { createNavigationService } from "@eliotr/cloudflare-navigation";
 import { access, artifacts, clearDatabase, countArtifacts, db, fixture, grant, project,
-  seedHandle, setupDatabase, TIME, wrappedDatabase } from "./navigation-fixture.js";
+  seedHandle, TIME, wrappedDatabase } from "./navigation-fixture.js";
 
-beforeAll(setupDatabase);
 beforeEach(clearDatabase);
 describe("persisted Corpus Lens in local Workers/D1", () => {
   it("persists and reopens card, map and atlas across store instances", async () => {

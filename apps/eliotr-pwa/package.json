@@ -5,15 +5,20 @@
   "type": "module",
   "sideEffects": true,
   "scripts": {
-    "build": "astro build",
-    "dev": "astro dev",
+    "build": "node scripts/build-agent-inbox.mjs && astro build",
+    "build:agent-inbox": "node scripts/build-agent-inbox.mjs",
+    "dev": "node scripts/build-agent-inbox.mjs && astro dev",
     "check": "astro check",
     "typecheck": "tsc -b --pretty false",
     "test": "vitest run",
     "preview": "astro preview"
   },
   "dependencies": {
-    "@eliotr/contracts": "workspace:*"
+    "@eliotr/contracts": "workspace:*",
+    "@eliotr/pwa-http-client": "workspace:*",
+    "@eliotr/pwa-source-workspace": "workspace:*",
+    "markdown-it": "15.0.2",
+    "@eliotr/pwa-research-workspace": "workspace:*"
   },
   "devDependencies": {
     "@astrojs/check": "0.9.10",

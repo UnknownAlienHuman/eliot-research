@@ -2,11 +2,13 @@ import type {
   ErasureBackend,
   ErasureBlocker,
   ErasureDependencyClosure,
+  ErasureFence,
   ErasureRequest,
   PurgeAttemptReceipt,
   PurgeTarget,
 } from "@eliotr/contracts";
 import {
+  ErasureRuntimeError,
   erasureDigest,
   erasureFail,
   isoFromMs,
@@ -20,14 +22,26 @@ import type {
   ErasureInventoryPort,
   ErasureLocationRegistry,
 } from "./types.js";
+import { parseEmptyLocationProof } from "./empty-location-proof.js";
 
 const SOURCE_REVISION_LIMIT = 10_000;
 const SOURCE_REVISION_FETCH_LIMIT = SOURCE_REVISION_LIMIT + 1;
 
 function requireObjectTarget(target: PurgeTarget): void {
-  if (target.target_kind !== "OBJECT") {
-    erasureFail("ERASURE_CLOSURE_INCOMPLETE", "unverified location-empty proof is not executable");
-  }
+  if (target.target_kind !== "OBJECT") erasureFail("ERASURE_CLOSURE_INCOMPLETE", "location-empty proof requires authoritative revalidation");
+}
+
+function exactTargetIdentity(left: PurgeTarget, right: PurgeTarget): boolean {
+  return left.target_id === right.target_id &&
+    left.target_kind === right.target_kind &&
+    left.exact_subject_ref === right.exact_subject_ref &&
+    left.location === right.location &&
+    left.canonical_ref === right.canonical_ref &&
+    left.provider_ref === right.provider_ref &&
+    left.identity_digest === right.identity_digest &&
+    left.shared_live_reference_count === right.shared_live_reference_count &&
+    left.retention_or_hold_ref === right.retention_or_hold_ref &&
+    left.next_review_at === right.next_review_at;
 }
 
 async function sourceRevisionRefs(
@@ -130,12 +144,24 @@ function failureReasonCode(cause: unknown, fallback: string): string {
   return fallback;
 }
 
+function rethrowRetryableSettlementUncertainty(cause: unknown): void {
+  if (cause instanceof ErasureRuntimeError &&
+      cause.code === "ERASURE_SETTLEMENT_UNCERTAIN" && cause.retryable) {
+    throw cause;
+  }
+}
+
 export interface CloudflareErasureBackendDependencies {
   readonly core_database: D1Database;
   readonly authority: ErasureAuthorityPort;
   readonly inventory: ErasureInventoryPort;
   readonly locations: ErasureLocationRegistry;
   readonly invalidation: ErasureInvalidationPort;
+  readonly validateEmptyLocationProof?: (
+    request: ErasureRequest,
+    fence: ErasureFence,
+    target: PurgeTarget,
+  ) => Promise<void>;
   readonly now?: () => number;
 }
 
@@ -143,6 +169,18 @@ export function createCloudflareErasureBackend(
   dependencies: CloudflareErasureBackendDependencies,
 ): ErasureBackend {
   const clock = dependencies.now ?? Date.now;
+  const validateEmptyTarget = async (request: ErasureRequest, fence: ErasureFence, target: PurgeTarget) => {
+    if (target.target_kind !== "LOCATION_EMPTY_PROOF") {
+      requireObjectTarget(target);
+      return;
+    }
+    if (dependencies.validateEmptyLocationProof === undefined) {
+      erasureFail("ERASURE_CLOSURE_INCOMPLETE", "location-empty proof verifier is unavailable");
+    }
+    await parseEmptyLocationProof(target);
+    await dependencies.validateEmptyLocationProof(request, fence, target);
+    await dependencies.authority.assertFence(fence);
+  };
   const advanceLifecycle: ErasureBackend["advanceLifecycle"] = async (
     request,
     fence,
@@ -188,7 +226,7 @@ export function createCloudflareErasureBackend(
 
     async enumerateDependencyClosure(request, fence): Promise<ErasureDependencyClosure> {
       await dependencies.authority.assertFence(fence);
-      const closure = await dependencies.inventory.enumerate(request);
+      const closure = await dependencies.inventory.enumerate(request, fence);
       if (
         closure.erasure_ref.id !== request.erasure_ref.id ||
         closure.erasure_ref.revision !== request.erasure_ref.revision ||
@@ -196,12 +234,13 @@ export function createCloudflareErasureBackend(
       ) {
         erasureFail("ERASURE_CLOSURE_INCOMPLETE", "erasure closure is not bound to the request");
       }
-      for (const target of closure.targets) requireObjectTarget(target);
+      for (const target of closure.targets) await validateEmptyTarget(request, fence, target);
       for (const location of request.required_locations) {
         if (!closure.targets.some((target) => target.location === location)) {
           erasureFail("ERASURE_CLOSURE_INCOMPLETE", `erasure closure omitted ${location}`);
         }
       }
+      await dependencies.authority.assertFence(fence);
       await dependencies.authority.persistClosure(fence, closure);
       await advanceLifecycle(
         request,
@@ -225,12 +264,44 @@ export function createCloudflareErasureBackend(
       return blockers;
     },
 
+    async recheckTargetRetentionAndHolds(request, fence, closure, target) {
+      requireObjectTarget(target);
+      if (
+        closure.erasure_ref.id !== request.erasure_ref.id ||
+        closure.erasure_ref.revision !== request.erasure_ref.revision
+      ) {
+        erasureFail("ERASURE_CLOSURE_INCOMPLETE", "current hold recheck is not bound to the erasure request");
+      }
+      const closureTarget = closure.targets.find((candidate) => exactTargetIdentity(candidate, target));
+      if (closureTarget === undefined) {
+        erasureFail("ERASURE_IDENTITY_CONFLICT", "current hold recheck target differs from the persisted closure");
+      }
+      await dependencies.authority.assertFence(fence);
+      const blockers = await dependencies.authority.blockersFor(request, fence, {
+        ...closure,
+        targets: [closureTarget],
+      });
+      await dependencies.authority.assertFence(fence);
+      return blockers[0];
+    },
+
     recordBlockedTarget(_request, fence, target, blocker) {
       return dependencies.authority.recordBlockedTarget(fence, target, blocker);
     },
 
     async purge(request, fence, target): Promise<PurgeAttemptReceipt> {
       await dependencies.authority.assertFence(fence);
+      if (target.target_kind === "LOCATION_EMPTY_PROOF") {
+        await validateEmptyTarget(request, fence, target);
+        const receipt: PurgeAttemptReceipt = {
+          target_id: target.target_id,
+          disposition: "ALREADY_ABSENT",
+          receipt_ref: await stableErasureId("delete-empty-proof", target.target_id, target.identity_digest),
+        };
+        await dependencies.authority.assertFence(fence);
+        await dependencies.authority.recordPurge(fence, receipt);
+        return receipt;
+      }
       requireObjectTarget(target);
       const adapter = dependencies.locations.forLocation(target.location);
       if (adapter === null) {
@@ -249,6 +320,7 @@ export function createCloudflareErasureBackend(
         await dependencies.authority.recordPurge(fence, receipt);
         return receipt;
       } catch (cause) {
+        rethrowRetryableSettlementUncertainty(cause);
         const receipt: PurgeAttemptReceipt = {
           target_id: target.target_id,
           disposition: "BLOCKED",
@@ -262,6 +334,21 @@ export function createCloudflareErasureBackend(
 
     async verifyAbsent(request, fence, target, purgeReceipt) {
       await dependencies.authority.assertFence(fence);
+      if (target.target_kind === "LOCATION_EMPTY_PROOF") {
+        await validateEmptyTarget(request, fence, target);
+        const expectedReceipt = await stableErasureId("delete-empty-proof", target.target_id, target.identity_digest);
+        const validPurgeReceipt = purgeReceipt.target_id === target.target_id &&
+          purgeReceipt.disposition === "ALREADY_ABSENT" && purgeReceipt.receipt_ref === expectedReceipt;
+        const receipt = {
+          target_id: target.target_id,
+          absent: validPurgeReceipt,
+          receipt_ref: await stableErasureId("absence-empty-proof", target.target_id, target.identity_digest),
+          ...(validPurgeReceipt ? {} : { reason_code: "EMPTY_PROOF_PURGE_RECEIPT_INVALID" }),
+        } as const;
+        await dependencies.authority.assertFence(fence);
+        await dependencies.authority.recordAbsence(fence, receipt);
+        return receipt;
+      }
       requireObjectTarget(target);
       const adapter = dependencies.locations.forLocation(target.location);
       if (adapter === null || purgeReceipt.disposition === "BLOCKED") {
@@ -282,6 +369,7 @@ export function createCloudflareErasureBackend(
         await dependencies.authority.recordAbsence(fence, receipt);
         return receipt;
       } catch (cause) {
+        rethrowRetryableSettlementUncertainty(cause);
         const reasonCode = failureReasonCode(cause, "ABSENCE_READBACK_FAILED");
         const receipt = {
           target_id: target.target_id,
@@ -311,7 +399,9 @@ export function createCloudflareErasureBackend(
         closure,
         ledgerEntryRef,
       );
-      await dependencies.authority.recordInvalidations(fence, invalidations);
+      if (invalidations.length > 0) {
+        await dependencies.authority.recordInvalidations(fence, invalidations);
+      }
       return invalidations.map((item) => item.dependent_ref);
     },
 

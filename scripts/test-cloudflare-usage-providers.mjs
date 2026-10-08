@@ -79,7 +79,7 @@ await check("live registry wires ai-search/instances and never indexes", async (
     return okJson({ success: true, result: [], result_info: { page, total_pages: 2, per_page: 100 } });
   };
   const registry = buildLiveProviderRegistry({ accountId: ACCOUNT, fetchImpl });
-  assert.equal(registry.length, 5);
+  assert.equal(registry.length, 9);
   const aiSearch = registry.find((provider) => provider.group === "ai-search-inventory-list");
   assert.ok(aiSearch, "ai-search-inventory-list provider missing");
   assert.deepEqual(aiSearch.covers, ["ai_search_instances"]);
@@ -155,6 +155,13 @@ await check("Queue accepts only the coherent empty total_pages=0 response", asyn
 });
 
 const REVIEWED_TRIPLE = { "workers_standard_requests:workers_standard_requests:Requests": "workers_requests" };
+await check("native fetch status is read without trusting inherited fixture status", async () => {
+  const endpoint = (id) => `https://api.cloudflare.com/client/v4/accounts/${id}/d1/database`;
+  const native = createPaginatedInventoryProvider({ group: "d1-inventory-list", endpoint, fetchImpl: async () => new Response(JSON.stringify({ success: true, result: [] }), { status: 200 }) });
+  assert.deepEqual((await native.collect({ accountId: ACCOUNT, bearer: BEARER, now: NOW })).inventory, []);
+  const inherited = createPaginatedInventoryProvider({ group: "d1-inventory-list", endpoint, fetchImpl: async () => Object.assign(Object.create({ status: 200 }), { json: async () => ({ success: true, result: [] }) }) });
+  await assert.rejects(inherited.collect({ accountId: ACCOUNT, bearer: BEARER, now: NOW }), (error) => error.code === "HTTP_STATUS_UNKNOWN");
+});
 function registryFetch({ billableStatus = 200, billableRows = null } = {}) {
   return async (url) => {
     if (url.includes("/billable/usage")) {
@@ -176,35 +183,24 @@ function registryFetch({ billableStatus = 200, billableRows = null } = {}) {
   };
 }
 
-await check("live registry includes the billable provider hitting /billable/usage with from+to", async () => {
+await check("default registry never calls restricted Billing even with an injected metric map", async () => {
   const seenUrls = [];
   const watching = async (url, init) => {
     seenUrls.push(url);
     return registryFetch()(url, init);
   };
   const registry = buildLiveProviderRegistry({ accountId: ACCOUNT, nowMs: NOW, billableMetricMap: REVIEWED_TRIPLE, fetchImpl: watching });
-  assert.equal(registry.length, 5);
-  const billable = registry.find((provider) => provider.group === "billable-usage");
-  assert.ok(billable, "billable-usage provider missing from the live registry");
-  assert.equal(billable.kind, "billing-usage");
-  const reported = await billable.collect({ accountId: ACCOUNT, bearer: BEARER, now: NOW });
-  assert.equal(reported.values.workers_requests, 150);
-  assert.equal(reported.provenance, METRIC_PROVENANCE.AUTHORITATIVE_BILLING);
-  assert.ok(seenUrls.some((url) => url.includes(`/accounts/${ACCOUNT}/billable/usage`) && url.includes("from=2026-09-01") && url.includes("to=2026-09-06")));
-  assert.ok(seenUrls.every((url) => !url.includes("to=2026-10-01")), "registry queried a future month end");
-  // A registry-level billing failure (no entitlement) leaves billing metrics
-  // unknown rather than dropping the provider silently — while the
-  // inventory-proved instance count survives (billing never covers it).
-  const denied = buildLiveProviderRegistry({ accountId: ACCOUNT, nowMs: NOW, billableMetricMap: REVIEWED_TRIPLE, fetchImpl: registryFetch({ billableStatus: 403 }) });
+  assert.ok(!registry.some((provider) => provider.group === "billable-usage"));
   const snapshot = await collectAccountUsage({
-    bearer: BEARER, expectedAccountId: ACCOUNT, now: NOW, whoamiOutput: WHOAMI, providers: denied,
+    bearer: BEARER, expectedAccountId: ACCOUNT, now: NOW, whoamiOutput: WHOAMI, providers: registry,
   });
+  assert.ok(!seenUrls.some((url) => url.includes("/billable/usage") || url.includes("/billing/usage")));
   assert.equal(snapshot.metrics.workers_requests, "unknown");
   assert.equal(snapshot.metrics.ai_search_instances, 2);
   // Registry products with mocked transports flow test-only only: the count
   // is recorded but marked non-authoritative, never trusted-partial.
   assert.equal(snapshot.readback.metric_trust.ai_search_instances.state, "test-only");
-  assert.ok(snapshot.readback.provider_errors.some((line) => line.includes("billable-usage")));
+  assert.ok(snapshot.readback.metric_trust.workers_requests.gap);
 });
 
 await check("ai-search provider rejects indexes wiring and degraded payloads", async () => {
@@ -349,7 +345,7 @@ await check("billable usage v2 aggregates FOCUS rows with explicit from/to", asy
     });
     await assert.rejects(
       denied.collect({ accountId: ACCOUNT, bearer: BEARER, now: NOW }),
-      (error) => error instanceof ProviderFailure && error.reason === "AUTH_SCOPE_DENIED",
+      (error) => error instanceof ProviderFailure && error.reason === (status === 401 ? "HTTP_UNAUTHENTICATED" : "HTTP_FORBIDDEN") && error.httpStatus === status,
     );
   }
   const missing = createBillableUsageProvider({
@@ -359,7 +355,7 @@ await check("billable usage v2 aggregates FOCUS rows with explicit from/to", asy
   });
   await assert.rejects(
     missing.collect({ accountId: ACCOUNT, bearer: BEARER, now: NOW }),
-    (error) => error instanceof ProviderFailure && error.reason === "NO_AUTH_ENDPOINT",
+    (error) => error instanceof ProviderFailure && error.reason === "HTTP_NOT_FOUND" && error.httpStatus === 404,
   );
   const synthetic = createBillableUsageProvider({
     covers: ["workers_requests"],

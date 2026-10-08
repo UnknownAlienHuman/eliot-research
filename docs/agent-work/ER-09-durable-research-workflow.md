@@ -13,6 +13,7 @@ outside the paths below.
 
 - `packages/research/src/workflow.ts`
 - `apps/eliotr-core/src/research-workflow.ts`
+- `packages/cloudflare-research-runtime/src/research-workflow-application.ts`
 - `infra/workflows/**`
 - `packages/cloudflare-research/**`
 - `packages/cloudflare-research-stages/**`

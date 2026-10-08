@@ -2,10 +2,10 @@ import {
   FederationD1AuthorityError,
   FederationRuntimeAuthorityError,
 } from "@eliotr/cloudflare-federation";
-import { FederationServiceError } from "./federation-service.js";
+import { FederationServiceError } from "@eliotr/cloudflare-federation";
 import { FederationHttpError } from "./federation-http.js";
 import { NavigationError } from "@eliotr/retrieval";
-import { OrientationError, ScopeServiceError } from "@eliotr/cloudflare-navigation";
+import { ClientGrantError, OrientationError, ScopeServiceError } from "@eliotr/cloudflare-navigation";
 import { EvidenceRuntimeError } from "@eliotr/cloudflare-evidence";
 import {
   IngestAuthorityError,
@@ -21,35 +21,26 @@ import {
   ArtifactHttpInputError,
   ArtifactReadNotFoundError,
   isArtifactReadError,
-} from "./artifact-draft-http.js";
-import { EvidenceHttpInputError } from "./evidence-http.js";
+} from "@eliotr/interfaces";
+import { EvidenceHttpInputError } from "@eliotr/cloudflare-evidence";
 import { IngestHttpInputError } from "./ingest-http.js";
 import { RawNormalizedAdmissionError } from "./raw-normalized-admission.js";
 import { WorkspaceOwnerAuthorizationError } from "./workspace-owner-authorization.js";
-import { NamespaceBootstrapProfileError } from "./source-namespace-bootstrap-profiles.js";
+import { NamespaceBootstrapProfileError } from "@eliotr/cloudflare-navigation";
 import { SourceNamespaceOwnerError } from "./source-namespace-owner-service.js";
 import { ProjectOwnerError } from "./project-owner-contract.js";
 import { ErasureAdmissionError, ErasureRuntimeError } from "@eliotr/cloudflare-erasure";
-import { IngestServiceError } from "./ingest-service.js";
 import {
+  IngestServiceError,
   RawCaptureError,
   RawCaptureHttpError,
   rawCaptureProblem,
 } from "@eliotr/cloudflare-raw-ingest";
+import { ExternalAgentTaskError } from "@eliotr/cloudflare-workflows";
+import { ArtifactPublicationError, ArtifactPublicationReadinessError } from "@eliotr/cloudflare-research";
+import { HttpRequestError } from "@eliotr/cloudflare-http-protocol/http-request-error.js";
 
-export class HttpRequestError extends Error {
-  public readonly code: string;
-  public readonly status: number;
-  public readonly retryable: boolean;
-
-  public constructor(code: string, status: number, message: string, retryable = false) {
-    super(message);
-    this.name = "HttpRequestError";
-    this.code = code;
-    this.status = status;
-    this.retryable = retryable;
-  }
-}
+export { HttpRequestError };
 
 type ProblemResponse = (
   request: Request,
@@ -98,6 +89,17 @@ function mapIngestStorageError(request: Request, error: IngestStorageError, prob
 }
 
 export function mapError(request: Request, error: unknown, problemResponse: ProblemResponse): Response {
+  if (error instanceof ArtifactPublicationError) {
+    const status = error.code === "ARTIFACT_PUBLICATION_DENIED" ? 403
+      : error.code === "ARTIFACT_PUBLICATION_NOT_FOUND" ? 404
+      : error.code === "ARTIFACT_PUBLICATION_INPUT_INVALID" ? 400
+      : error.retryable || error.code === "ARTIFACT_PUBLICATION_EFFECT_UNCERTAIN" ? 503
+      : 409;
+    return problemResponse(request, status, error.code, "Artifact publication could not be completed", status === 503);
+  }
+  if (error instanceof ArtifactPublicationReadinessError) {
+    return problemResponse(request, 409, error.code, "Artifact publication requirements are not satisfied", false);
+  }
   if (error instanceof ErasureAdmissionError) {
     return problemResponse(request, error.code === "ERASURE_PERMISSION_DENIED" ? 403 : 409,
       error.code, error.message, false);
@@ -105,6 +107,16 @@ export function mapError(request: Request, error: unknown, problemResponse: Prob
   if (error instanceof ErasureRuntimeError) {
     return problemResponse(request, error.retryable ? 503 : error.code === "ERASURE_INPUT_INVALID" ? 400 : 409,
       error.code, error.message, error.retryable);
+  }
+  if (error instanceof ClientGrantError) return problemResponse(request, error.status, error.code, error.message, error.retryable);
+  if (error instanceof ExternalAgentTaskError) {
+    return problemResponse(
+      request,
+      error.status,
+      error.code,
+      "External agent task request could not be completed under its exact lease and authority",
+      error.retryable,
+    );
   }
   if (error instanceof OrientationError) return problemResponse(request, error.status, error.code, "Orientation request cannot be completed", error.retryable);
   if (error instanceof ScopeServiceError) return problemResponse(request, 409, error.code, "Current scope authority could not be established", false);

@@ -32,6 +32,9 @@ import {
   createPaginatedInventoryProvider,
   createR2CursorInventoryProvider,
 } from "./cloudflare-usage-authority.mjs";
+import { classifyCloudflareUsageHttpStatus } from "./cloudflare-usage-source-decoder.mjs";
+import { createD1StorageObservationProvider } from "./cloudflare-usage-source-collection.mjs";
+import { createCloudflareUsageAnalyticsProviders } from "./cloudflare-usage-source-analytics.mjs";
 
 // Module-PRIVATE billing brand registry: the non-caller-assertable
 // construction capability for AUTHORITATIVE_BILLING. Populated ONLY inside
@@ -165,6 +168,26 @@ function billingDayDate(millis) {
   return new Date(millis).toISOString().slice(0, 10);
 }
 
+function readResponseStatus(response) {
+  if (response === null || response === undefined || typeof response !== "object") return null;
+  let keys;
+  try { keys = Object.keys(response); } catch { return null; }
+  for (let i = 0; i < keys.length; i += 1) {
+    if (keys[i] === "status") {
+      const ownStatus = response.status;
+      return Number.isInteger(ownStatus) ? ownStatus : null;
+    }
+  }
+  // Native fetch Response.status is a branded platform getter rather than
+  // an own JSON property. Calling the getter rejects plain objects that
+  // merely inherit a fabricated status value.
+  try {
+    const getter = Object.getOwnPropertyDescriptor(Response.prototype, "status").get;
+    const nativeStatus = getter.call(response);
+    return Number.isInteger(nativeStatus) ? nativeStatus : null;
+  } catch { return null; }
+}
+
 export function createBillableUsageProvider(options = {}) {
   const {
     group = "billable-usage",
@@ -257,15 +280,12 @@ export function createBillableUsageProvider(options = {}) {
       } catch {
         throw new ProviderFailure("HTTP_ERROR", `${group} transport failure`);
       }
-      const httpStatus = Number.isInteger(response?.status) ? response.status : null;
-      if (httpStatus === 401 || httpStatus === 403) {
-        throw new ProviderFailure("AUTH_SCOPE_DENIED", `${group} billing usage entitlement unavailable (http ${httpStatus})`, { httpStatus });
-      }
-      if (httpStatus === 404) {
-        throw new ProviderFailure("NO_AUTH_ENDPOINT", `${group} billing endpoint unavailable (http 404)`, { httpStatus });
-      }
-      if (httpStatus === 429 || (Number.isInteger(httpStatus) && httpStatus >= 500)) {
-        throw new ProviderFailure("HTTP_ERROR", `${group} http ${httpStatus}`, { httpStatus });
+      const httpStatus = readResponseStatus(response);
+      const httpFailure = classifyCloudflareUsageHttpStatus(httpStatus);
+      if (httpFailure !== null) {
+        const failure = new ProviderFailure(httpFailure.code, `${group} ${httpFailure.message}`, { httpStatus: httpFailure.httpStatus });
+        failure.classification = httpFailure.classification;
+        throw failure;
       }
       let body;
       try {
@@ -459,68 +479,46 @@ export function createBillableUsageProvider(options = {}) {
   return Object.freeze(product);
 }
 
-// Live registry builder: paginated inventory collectors per service where an
-// authoritative list API exists, plus the Usage v2 billing provider, plus
-// explicit limitations elsewhere. Never fabricates zero and never silently
-// waives an uncovered metric.
-// AI Search uses GET /accounts/{id}/ai-search/instances (never
-// ai-search/indexes). R2 uses cursor pagination over result.buckets. Billing
-// uses GET /accounts/{id}/billable/usage with account-bound from/to derived
-// from the intended interval (month start through start-of-today at nowMs,
-// never a future month end, never over 31 days) and the reviewed triple
-// mapping. A registry-level billing failure (no entitlement etc.) gaps the
-// declared billing covers in collectAccountUsage, leaving those metrics
-// unknown rather than dropping the provider silently.
+// Live registry builder: diagnostic inventory and observed-stock collectors
+// only. Usage v2 billing remains an explicit legacy fixture API and is never
+// invoked by this production builder. Never fabricates zero or silently
+// waives an uncovered metric. AI Search uses GET /accounts/{id}/ai-search/instances
+// (never ai-search/indexes); R2 uses cursor pagination over result.buckets.
+// D1 size is an observed point stock, not monthly billable usage.
 export function buildLiveProviderRegistry(options = {}) {
   const { accountId, nowMs = Date.now() } = options ?? {};
   if (typeof accountId !== "string" || accountId === "") {
     throw new UsageCollectionError("COLLECTION_INVALID", "accountId is required for the live registry");
   }
-  // Live mode (no transport overrides): every product runs on the internal
-  // default live transport, so every product is branded and production keeps
-  // working byte-identically (default endpoints build the same account-bound
-  // URLs from the collect-time accountId; the billing window defaults to the
-  // same month-start through start-of-today interval). ANY caller-supplied
-  // fetchImpl/apiBase/billableMetricMap key selects test mode: the legacy
-  // explicit wiring below, whose products are functional but unbranded
-  // test-only and can never carry authority.
+  // Caller-supplied fetchImpl/apiBase keys select test mode for inventory
+  // seams. The Usage v2 billable factory is deliberately absent from both
+  // registry branches.
   const testMode = callerSuppliedTransportKeys(options).length > 0;
   if (!testMode) {
-    const liveCovers = [];
-    for (let i = 0; i < BILLABLE_LIVE_COVERS.length; i += 1) liveCovers[liveCovers.length] = BILLABLE_LIVE_COVERS[i];
-    return [
-      createPaginatedInventoryProvider({ group: "d1-inventory-list", covers: [] }),
-      createR2CursorInventoryProvider({ group: "r2-inventory-list", covers: [] }),
-      createPaginatedInventoryProvider({ group: "queue-inventory-list", covers: [] }),
-      createAiSearchInventoryProvider({ group: "ai-search-inventory-list", covers: ["ai_search_instances"] }),
-      createBillableUsageProvider({ group: "billable-usage", covers: liveCovers }),
-    ];
+    const analytics = createCloudflareUsageAnalyticsProviders();
+    const providers = [];
+    providers[providers.length] = createPaginatedInventoryProvider({ group: "d1-inventory-list", covers: [] });
+    providers[providers.length] = createD1StorageObservationProvider();
+    for (let i = 0; i < analytics.length; i += 1) providers[providers.length] = analytics[i];
+    providers[providers.length] = createR2CursorInventoryProvider({ group: "r2-inventory-list", covers: [] });
+    providers[providers.length] = createPaginatedInventoryProvider({ group: "queue-inventory-list", covers: [] });
+    providers[providers.length] = createAiSearchInventoryProvider({ group: "ai-search-inventory-list", covers: ["ai_search_instances"] });
+    return providers;
   }
-  const { fetchImpl = globalThis.fetch, apiBase = LIVE_API_BASE, billableMetricMap = REVIEWED_BILLABLE_TRIPLES } = options;
+  const { fetchImpl = globalThis.fetch, apiBase = LIVE_API_BASE } = options;
   const list = (service, page, perPage) =>
     `${apiBase}/accounts/${accountId}/${service}?page=${page}&per_page=${perPage}`;
   const r2CursorList = (id, cursor) =>
     cursor ? `${apiBase}/accounts/${id}/r2/buckets?cursor=${encodeURIComponent(cursor)}`
       : `${apiBase}/accounts/${id}/r2/buckets`;
-  const clock = new Date(Number.isFinite(nowMs) ? nowMs : Date.now());
-  const billableFrom = `${String(clock.getUTCFullYear()).padStart(4, "0")}-${String(clock.getUTCMonth() + 1).padStart(2, "0")}-01`;
-  const billableTo = new Date(Date.UTC(clock.getUTCFullYear(), clock.getUTCMonth(), clock.getUTCDate())).toISOString().slice(0, 10);
-  return [
-    createPaginatedInventoryProvider({ group: "d1-inventory-list", covers: [], endpoint: (id, page, perPage) => list("d1/database", page, perPage), fetchImpl }),
-    createR2CursorInventoryProvider({ group: "r2-inventory-list", covers: [], endpoint: r2CursorList, fetchImpl }),
-    createPaginatedInventoryProvider({ group: "queue-inventory-list", covers: [], endpoint: (id, page, perPage) => list("queues", page, perPage), fetchImpl }),
-    createAiSearchInventoryProvider({ group: "ai-search-inventory-list", covers: ["ai_search_instances"], endpoint: (id, page, perPage) => list("ai-search/instances", page, perPage), fetchImpl }),
-    createBillableUsageProvider({
-      group: "billable-usage",
-      covers: (() => {
-        const out = [];
-        for (let i = 0; i < BILLABLE_LIVE_COVERS.length; i += 1) out[out.length] = BILLABLE_LIVE_COVERS[i];
-        return out;
-      })(),
-      endpoint: (id, from, to) => `${apiBase}/accounts/${id}/billable/usage?from=${from}&to=${to}`,
-      fetchImpl,
-      metricMap: billableMetricMap,
-      expectedWindow: { start: `${billableFrom}T00:00:00.000Z`, end: `${billableTo}T00:00:00.000Z` },
-    }),
-  ];
+  void nowMs;
+  const analytics = createCloudflareUsageAnalyticsProviders({ apiBase, fetchImpl });
+  const providers = [];
+  providers[providers.length] = createPaginatedInventoryProvider({ group: "d1-inventory-list", covers: [], endpoint: (id, page, perPage) => list("d1/database", page, perPage), fetchImpl });
+  providers[providers.length] = createD1StorageObservationProvider({ apiBase, fetchImpl });
+  for (let i = 0; i < analytics.length; i += 1) providers[providers.length] = analytics[i];
+  providers[providers.length] = createR2CursorInventoryProvider({ group: "r2-inventory-list", covers: [], endpoint: r2CursorList, fetchImpl });
+  providers[providers.length] = createPaginatedInventoryProvider({ group: "queue-inventory-list", covers: [], endpoint: (id, page, perPage) => list("queues", page, perPage), fetchImpl });
+  providers[providers.length] = createAiSearchInventoryProvider({ group: "ai-search-inventory-list", covers: ["ai_search_instances"], endpoint: (id, page, perPage) => list("ai-search/instances", page, perPage), fetchImpl });
+  return providers;
 }

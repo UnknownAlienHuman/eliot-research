@@ -158,7 +158,13 @@ async function indexItem(
   if (size < 1 || size > 4 * 1024 * 1024) {
     throw new Error("managed projection item exceeds the AI Search Items API file envelope");
   }
-  const metadata = projectionMetadata(item);
+  // AI Search's `projection_generation` is the managed index profile generation.
+  // The per-source projection generation remains in the durable projection
+  // context and receipt lineage; it must not be stamped into this provider field.
+  const metadata = Object.freeze({
+    ...projectionMetadata(item),
+    projection_generation: profile.managed_generation,
+  });
   const uploaded = decodeItem(
     await instance.items.uploadAndPoll(key, document, {
       metadata,

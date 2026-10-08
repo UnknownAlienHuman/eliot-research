@@ -88,7 +88,12 @@ describe("Gemini Spark MCP protocol", () => {
     }, "2025-06-18"), server(), context);
     const listedBody = await body(listed);
     const result = listedBody.result as { tools: readonly { name: string }[] };
-    expect(result.tools.map((tool) => tool.name)).toEqual(GEMINI_MCP_TOOL_NAMES);
+    // The allow-list is a bounded set: the S98 ingest tools are intentional
+    // members (GEMINI_MCP_TOOL_NAMES). Order is incidental and not a
+    // security property, so compare as sets.
+    expect(result.tools.map((tool) => tool.name).sort()).toEqual(
+      [...GEMINI_MCP_TOOL_NAMES].sort(),
+    );
     expect(result.tools.every((tool) => !tool.name.includes("database"))).toBe(true);
   });
 

@@ -3,8 +3,8 @@ import { canonicalEvidenceJson, evidenceSha256 } from "@eliotr/cloudflare-eviden
 import type { SourceAdmissionDecision } from "@eliotr/contracts";
 import type { AuthenticatedRequestContext, SourceRevisionsResult } from "@eliotr/interfaces";
 import { handleHttp } from "../src/http.js";
-import { readSourceRevisions } from "../src/source-revisions.js";
-import { decodeSourceRevisions } from "../../eliotr-pwa/src/source-revisions-api.js";
+import { readSourceRevisions } from "@eliotr/cloudflare-navigation";
+import { decodeSourceRevisions } from "../../../packages/pwa-source-workspace/src/source-revisions-api.js";
 import { db, insert, observeDatabase, principal, runtime, seedSource, setupOrientationDatabase, verifier } from "./orientation-fixture.js";
 
 beforeAll(setupOrientationDatabase);
@@ -200,10 +200,10 @@ describe("owner revision history through actual HTTP and local D1", () => {
     } });
     expect((await get("history-failure", "", failed)).envelope.code).toBe("SOURCE_REVISIONS_READ_FAILED");
   });
-  it("denies service principals and aborted requests before a database read", async () => {
+  it("denies unscoped service principals and aborted requests before a database read", async () => {
     const noDatabase = { prepare() { throw new Error("Must not read D1"); } } as unknown as D1Database;
     await expect(readSourceRevisions(noDatabase, { ...context("source"), client_class: "trusted_agent" }, { source_id: "source", limit: 1 }, "deploy"))
-      .rejects.toMatchObject({ code: "CATALOG_OWNER_REQUIRED" });
+      .rejects.toMatchObject({ code: "CATALOG_PROJECT_REQUIRED" });
     const abort = new AbortController(); abort.abort();
     await expect(readSourceRevisions(noDatabase, context("source", abort.signal), { source_id: "source", limit: 1 }, "deploy"))
       .rejects.toMatchObject({ code: "CATALOG_REQUEST_ABORTED" });

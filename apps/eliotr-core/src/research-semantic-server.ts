@@ -1,114 +1,74 @@
-import { z } from "zod";
+import { isSemanticResearchHandlerGeneration } from "@eliotr/cloudflare-research-runtime/research-stage-handlers.js";
 import { validateModelGatewayToken } from "@eliotr/cloudflare-ai";
-import { IdentifierSchema, IsoDateTimeSchema, VersionedRefSchema } from "@eliotr/contracts";
-import { canonicalJson, decodeModelRouteDeployment } from "@eliotr/platform-cloudflare";
+import { IdentifierSchema } from "@eliotr/contracts";
+import { canonicalJson } from "@eliotr/platform-cloudflare";
 import type { NavigationReadAuthority } from "@eliotr/cloudflare-evidence";
 import type { InvestigationLedgerStore } from "@eliotr/research";
-import { createD1ScopeProfilePort } from "@eliotr/retrieval";
-import { fail, type WorkflowObject, type WorkflowPrincipal } from "@eliotr/cloudflare-workflows";
 import {
-  createD1ModelGatewayDeploymentRegistry,
-  createD1DynamicRouteQualificationProofStore,
-  createResearchSynthesisPreparation,
-  createResearchModelSpendPolicyService,
+  fail,
+  WorkflowCheckpointError,
+  workflowFailure,
+  retainWorkflowFailure,
+  type WorkflowObject,
+  type WorkflowPrincipal,
+} from "@eliotr/cloudflare-workflows";
+import { ResearchOwnerSpendPolicyError } from "@eliotr/cloudflare-research-configuration/research-owner-spend-policy.js";
+import {
   type ResearchModelGatewayBinding,
   type ResearchModelGatewayRuntimeConfig,
   type ResearchModelSpendPolicy,
-  type TrustedModelPromptParameters,
 } from "@eliotr/cloudflare-research";
-import {
-  createResearchClaimAuditPreparation,
-  parseResearchClaimAuditPolicy,
-  type ResearchClaimAuditVerifierAuthority,
-} from "@eliotr/cloudflare-research-stages";
 import { readResearchSemanticConfiguration, type Env } from "./env.js";
-import { loadHeldResearchScope } from "./research-retrieval-composition.js";
+import { readResearchRunConfiguration } from "./research-run-configuration.js";
+import { bindHandlersToRunConfiguration } from "./research-semantic-run-configuration-bindings.js";
 import {
-  bindResearchOwnerReportPolicy,
-  createBoundResearchOwnerReportConfigSource,
-} from "./research-owner-report-policy.js";
-import { resolveResearchOwnerSpendPolicy } from "./research-owner-spend-policy.js";
-import { createResearchSemanticWorkflowHandlerFactory } from "./research-semantic-composition.js";
-import type { ResearchStageHandlerFactory } from "./research-stage-handlers.js";
+  resolveResearchSemanticConfig,
+  semanticConfigCheckpointError,
+} from "./research-semantic-config-revision.js";
+import { loadHeldResearchScope } from "@eliotr/cloudflare-research-runtime/research-retrieval-composition.js";
+import { ResearchOwnerReportPolicyError } from "@eliotr/cloudflare-research-configuration/research-owner-report-policy.js";
+import { requireClientResearchExecution, resolveResearchExecutionSpend } from "./research-client-execution.js";
+import type { ResearchStageHandlerFactory } from "@eliotr/cloudflare-research-runtime/research-stage-handlers.js";
+import { requireResearchDeploymentCompatibility } from "./research-deployment-compatibility.js";
+import { routeResearchComputerAgentStages } from "./research-external-agent-routing.js";
+import { createResearchSemanticNativeModelRuntime } from "./research-semantic-native-model-runtime.js";
+import {
+  assembleResearchSemanticServerHandlers as assembleResearchSemanticRuntimeHandlers,
+} from "@eliotr/cloudflare-research-runtime/research-semantic-server.js";
+import {
+  parseResearchSemanticConfiguration,
+  researchSemanticPromptParameters,
+  type ResearchSemanticConfiguration,
+} from "@eliotr/cloudflare-research-configuration/research-semantic-configuration-schema.js";
 
-const PromptSchema = z.object({
-  prompt: z.string().min(1), max_tokens: z.number().int().positive().safe(),
-  reasoning_effort: z.enum(["low", "medium", "high"]).optional(),
-  response_format: z.unknown().optional(), seed: z.number().int().optional(),
-  stop: z.union([z.string(), z.array(z.string())]).optional(),
-  temperature: z.number().finite().optional(), top_p: z.number().finite().optional(),
-}).strict();
-const PromptConfigSchema = z.object({
-  trusted_parameters: PromptSchema,
-  request_timeout_ms: z.number().int().min(1).max(300000),
-}).strict();
-const NormalizationSchema = z.object({
-  section_ref: VersionedRefSchema,
-  required_precision: IdentifierSchema,
-  required_source_class: IdentifierSchema,
-}).strict();
-function promptParameters(value: z.infer<typeof PromptSchema>): TrustedModelPromptParameters {
-  return { prompt: value.prompt, max_tokens: value.max_tokens,
-    ...(value.reasoning_effort === undefined ? {} : { reasoning_effort: value.reasoning_effort }),
-    ...(value.response_format === undefined ? {} : { response_format: value.response_format }),
-    ...(value.seed === undefined ? {} : { seed: value.seed }),
-    ...(value.stop === undefined ? {} : { stop: value.stop }),
-    ...(value.temperature === undefined ? {} : { temperature: value.temperature }),
-    ...(value.top_p === undefined ? {} : { top_p: value.top_p }) };
+export { parseResearchSemanticConfiguration, researchSemanticPromptParameters };
+export type { ResearchSemanticConfiguration };
+
+function configurationMissing(): never { return fail("WORKFLOW_CONFIGURATION_MISSING"); }
+
+function preparationError(error: unknown): WorkflowCheckpointError {
+  if (error instanceof WorkflowCheckpointError) return error;
+  if (error instanceof ResearchOwnerSpendPolicyError) return new WorkflowCheckpointError(
+    error.code === "INVALID" ? "WORKFLOW_CONFIGURATION_INVALID" : "WORKFLOW_AUTHORITY_STALE");
+  if (error instanceof ResearchOwnerReportPolicyError) return new WorkflowCheckpointError(
+    error.code === "RESEARCH_OWNER_REPORT_POLICY_INVALID" ? "WORKFLOW_CONFIGURATION_INVALID" : "WORKFLOW_AUTHORITY_STALE");
+  return new WorkflowCheckpointError("WORKFLOW_PREPARATION_FAILED", workflowFailure(error, "PREPARATION"));
 }
-const ConfigurationSchema = z.object({
-  protocol: z.literal("eliotr.research-semantic-config.v1"),
-  synthesis: PromptConfigSchema,
-  audit: PromptConfigSchema.extend({
-    verifier_ref: IdentifierSchema,
-    verifier_schema_generation: IdentifierSchema,
-    allowed_verifier_refs: z.array(IdentifierSchema).min(1).max(512),
-    policy: z.unknown(),
-  }).strict(),
-  normalization: NormalizationSchema,
-}).strict();
-
-export type ResearchSemanticConfiguration = z.infer<typeof ConfigurationSchema>;
-
-export function parseResearchSemanticConfiguration(raw: string): ResearchSemanticConfiguration {
-  if (typeof raw !== "string" || raw.trim() === "" || new TextEncoder().encode(raw).byteLength > 65536) {
-    configurationMissing();
-  }
-  let decoded: unknown;
-  try { decoded = JSON.parse(raw); }
-  catch { configurationMissing(); }
-  const parsed = ConfigurationSchema.safeParse(decoded);
-  if (!parsed.success) configurationMissing();
-  return parsed.data;
-}
-
-export function researchSemanticPromptParameters(
-  value: ResearchSemanticConfiguration["synthesis"]["trusted_parameters"],
-): TrustedModelPromptParameters {
-  return promptParameters(value);
-}
-
-function configurationMissing(): never { return fail("WORKFLOW_AUTHORITY_STALE"); }
-function installed(value: string | undefined): string {
-  if (value === undefined || value.trim() === "") configurationMissing();
-  return value;
-}
-
 interface CurrentInvestigationPolicyRow {
   readonly policy_generation: unknown;
   readonly policy_authority_ref: unknown;
   readonly state: unknown;
 }
 
-function modelGatewayConfiguration(env: Env): ResearchModelGatewayRuntimeConfig {
+export function modelGatewayConfiguration(env: Env): ResearchModelGatewayRuntimeConfig {
   const token = env.ELIOTR_MODEL_GATEWAY_TOKEN;
   if (typeof token === "string" && token.trim() !== "") {
     try { validateModelGatewayToken(token); }
-    catch { configurationMissing(); }
+    catch { fail("WORKFLOW_CREDENTIALS_INVALID"); }
     return { reasoning_gateway_base_url: env.AI_GATEWAY_REASONING_URL, gateway_token: token };
   }
   const binding = env.AI as Partial<ResearchModelGatewayBinding> | undefined;
-  if (typeof binding?.gateway !== "function") configurationMissing();
+  if (typeof binding?.gateway !== "function") fail("WORKFLOW_CREDENTIALS_MISSING");
   return { reasoning_gateway_base_url: env.AI_GATEWAY_REASONING_URL,
     ai_gateway_binding: binding as ResearchModelGatewayBinding };
 }
@@ -116,11 +76,17 @@ function modelGatewayConfiguration(env: Env): ResearchModelGatewayRuntimeConfig 
 export function researchSemanticConfigurationInstalled(env: Env): boolean {
   const hasGatewayToken = typeof env.ELIOTR_MODEL_GATEWAY_TOKEN === "string" && env.ELIOTR_MODEL_GATEWAY_TOKEN.trim() !== "";
   const hasNativeGateway = typeof (env.AI as Partial<ResearchModelGatewayBinding> | undefined)?.gateway === "function";
-  const semantic = readResearchSemanticConfiguration(env);
-  return [semantic, env.ELIOTR_MODEL_PROFILE_DEFINITION_JSON,
-    env.ELIOTR_MODEL_PROFILE_PROVENANCE_REF, env.ELIOTR_MODEL_SPEND_POLICY_JSON,
-    env.ELIOTR_MODEL_SPEND_POLICY_PROVENANCE_REF, env.ELIOTR_RESEARCH_REPORT_CONFIG_JSON,
-    env.ELIOTR_RESEARCH_REPORT_POLICY_PROVENANCE_REF].every((value) => typeof value === "string" && value.trim() !== "") &&
+  const legacySemantic = readResearchSemanticConfiguration(env);
+  const hasRevision = typeof env.ELIOTR_RESEARCH_SEMANTIC_CONFIG_REF === "string" &&
+    env.ELIOTR_RESEARCH_SEMANTIC_CONFIG_REF.trim() !== "" &&
+    typeof env.ELIOTR_RESEARCH_SEMANTIC_CONFIG_SHA256 === "string" &&
+    env.ELIOTR_RESEARCH_SEMANTIC_CONFIG_SHA256.trim() !== "";
+  const semantic = hasRevision || (typeof legacySemantic === "string" && legacySemantic.trim() !== "");
+  return semantic &&
+    [env.ELIOTR_MODEL_PROFILE_DEFINITION_JSON,
+      env.ELIOTR_MODEL_PROFILE_PROVENANCE_REF, env.ELIOTR_MODEL_SPEND_POLICY_JSON,
+      env.ELIOTR_MODEL_SPEND_POLICY_PROVENANCE_REF, env.ELIOTR_RESEARCH_REPORT_CONFIG_JSON,
+      env.ELIOTR_RESEARCH_REPORT_POLICY_PROVENANCE_REF].every((value) => typeof value === "string" && value.trim() !== "") &&
     (hasGatewayToken || hasNativeGateway);
 }
 
@@ -136,14 +102,54 @@ export interface ResearchSemanticServerInput {
 
 /** The actual Worker binding/configuration assembly used by HTTP, DO and Workflow execution. */
 export async function createResearchSemanticServerHandlers(input: ResearchSemanticServerInput): Promise<ResearchStageHandlerFactory> {
-  const { env, navigation, principal } = input;
+  try { return await assembleResearchSemanticServerHandlers(input); }
+  catch (error) {
+    const safe = preparationError(error);
+    const failure = workflowFailure(safe, "PREPARATION", undefined, safe.code === "WORKFLOW_STORAGE_UNAVAILABLE");
+    await retainWorkflowFailure(input.env.CORE_DB, input.operation_id, input.principal, failure);
+    throw new WorkflowCheckpointError(safe.code, failure);
+  }
+}
+
+async function assembleResearchSemanticServerHandlers(input: ResearchSemanticServerInput): Promise<ResearchStageHandlerFactory> {
+  const { navigation, principal } = input;
+  const actor = Object.freeze({ operation_id: input.operation_id, investigation_id: input.investigation_id,
+    principal_ref: principal.principal_ref, deployment_generation: principal.deployment_generation });
+  const runConfiguration = await readResearchRunConfiguration(input.env, actor);
+  const env = runConfiguration.env;
+  const snapshotRunConfiguration = runConfiguration.mode === "legacy-installed" ||
+      runConfiguration.configuration_ref === null || runConfiguration.configuration_sha256 === null
+    ? undefined
+    : Object.freeze({ mode: runConfiguration.mode, configuration_ref: runConfiguration.configuration_ref,
+      configuration_sha256: runConfiguration.configuration_sha256, project_owner_ref: runConfiguration.project_owner_ref,
+      project_id: runConfiguration.project_id, model_selections: runConfiguration.model_selections });
+  const nativeModelRuntime = createResearchSemanticNativeModelRuntime({ env, run_configuration: snapshotRunConfiguration,
+    owner_ref: principal.principal_ref });
+  const gateway = modelGatewayConfiguration(env);
   if (!researchSemanticConfigurationInstalled(env)) configurationMissing();
-  const config = parseResearchSemanticConfiguration(installed(readResearchSemanticConfiguration(env)));
+  await requireResearchDeploymentCompatibility(env.CORE_DB, principal.deployment_generation, env.DEPLOYMENT_GENERATION);
+  const runBinding = await env.CORE_DB.prepare(
+    "SELECT handler_generation FROM research_workflow_run WHERE operation_id=?1 AND investigation_id=?2 " +
+    "AND principal_ref=?3 AND credential_generation=?4 AND deployment_generation=?5",
+  ).bind(input.operation_id, input.investigation_id, principal.principal_ref,
+    principal.credential_generation, principal.deployment_generation).first<{ handler_generation: unknown }>().catch(() => fail("WORKFLOW_STORAGE_UNAVAILABLE"));
+  if (!isSemanticResearchHandlerGeneration(runBinding?.handler_generation)) fail("WORKFLOW_AUTHORITY_STALE");
+  const handlerGeneration = runBinding.handler_generation;
+  const resolvedSemanticConfig = await resolveResearchSemanticConfig({ env, database: env.CORE_DB }).catch((error) => {
+    throw semanticConfigCheckpointError(error);
+  });
+  const config = (() => {
+    try {
+      return parseResearchSemanticConfiguration(resolvedSemanticConfig.config_json);
+    } catch {
+      throw new WorkflowCheckpointError("WORKFLOW_CONFIGURATION_INVALID");
+    }
+  })();
   let policy: ResearchModelSpendPolicy;
   try {
     if (navigation.access.principal_ref !== principal.principal_ref ||
         navigation.access.credential_generation !== principal.credential_generation) {
-      throw new Error("navigation owner mismatch");
+      fail("WORKFLOW_AUTHORITY_STALE");
     }
     const beforeGrant = await navigation.current();
     const authorityRef = IdentifierSchema.parse(navigation.scope.policy_authority_ref);
@@ -156,144 +162,82 @@ export async function createResearchSemanticServerHandlers(input: ResearchSemant
       "AND r.policy_authority_ref=?7 AND r.state='ACTIVE' LIMIT 1",
     ).bind(input.operation_id, principal.principal_ref, principal.credential_generation,
       principal.deployment_generation, navigation.scope.snapshot_id, navigation.scope.revision, authorityRef)
-      .first<CurrentInvestigationPolicyRow>();
+      .first<CurrentInvestigationPolicyRow>().catch(() => fail("WORKFLOW_STORAGE_UNAVAILABLE"));
     const generation = IdentifierSchema.safeParse(currentPolicy?.policy_generation);
     const rowAuthority = IdentifierSchema.safeParse(currentPolicy?.policy_authority_ref);
     if (currentPolicy === null || currentPolicy.state !== "ACTIVE" || !generation.success || !rowAuthority.success ||
-        rowAuthority.data !== authorityRef) throw new Error("current investigation policy is unavailable");
+        rowAuthority.data !== authorityRef) fail("WORKFLOW_AUTHORITY_STALE");
     const afterPolicy = await navigation.current();
-    if (canonicalJson(afterPolicy) !== canonicalJson(beforeGrant)) {
-      throw new Error("navigation grant changed while binding spend policy");
-    }
-    policy = resolveResearchOwnerSpendPolicy({
-      raw: env.ELIOTR_MODEL_SPEND_POLICY_JSON,
-      provenance: installed(env.ELIOTR_MODEL_SPEND_POLICY_PROVENANCE_REF),
-      access: navigation.access,
-      deployment_generation: principal.deployment_generation,
-      policy_generation: generation.data,
-      policy_authority_ref: authorityRef,
-      scope_expires_at: navigation.scope.expires_at,
-      authorization: afterPolicy,
-    }).policy;
+    if (canonicalJson(afterPolicy) !== canonicalJson(beforeGrant)) fail("WORKFLOW_AUTHORITY_STALE");
+    policy = await resolveResearchExecutionSpend(env, navigation, input.operation_id,
+      principal.deployment_generation, generation.data);
     const terminalGrant = await navigation.current();
-    if (canonicalJson(terminalGrant) !== canonicalJson(afterPolicy)) {
-      throw new Error("navigation grant changed after binding spend policy");
-    }
-  } catch {
-    configurationMissing();
+    if (canonicalJson(terminalGrant) !== canonicalJson(afterPolicy)) fail("WORKFLOW_AUTHORITY_STALE");
+  } catch (error) {
+    throw preparationError(error);
   }
   if (policy.principal_ref !== principal.principal_ref || policy.credential_generation !== principal.credential_generation ||
-      policy.deployment_generation !== principal.deployment_generation || principal.deployment_generation !== env.DEPLOYMENT_GENERATION ||
-      navigation.access.client_class !== "owner_pwa") configurationMissing();
-  const synthesisRule = policy.rules.find((rule) => rule.stage === "SYNTHESIZE");
-  const auditRule = policy.rules.find((rule) => rule.stage === "AUDIT_CLAIMS");
-  if (!synthesisRule || !auditRule) configurationMissing();
-  const auditDeployment = auditRule.deployment;
+      policy.deployment_generation !== principal.deployment_generation ||
+      navigation.access.client_class !== policy.client_class) fail("WORKFLOW_AUTHORITY_STALE");
   const deploymentEnvironment = env.ENVIRONMENT === "development" ? "TEST" : "PRODUCTION";
-  const deploymentRegistry = createD1ModelGatewayDeploymentRegistry(env.CORE_DB, { environment: deploymentEnvironment });
-  const spend = createResearchModelSpendPolicyService({ database: env.CORE_DB, navigation,
-    operation_id: input.operation_id, policy, deployment_registry: deploymentRegistry });
-  const prepareSynthesis = createResearchSynthesisPreparation({ spend_admission: spend.admissions });
-  const prepareAudit = createResearchClaimAuditPreparation({ spend_admission: spend.admissions });
-  const reportSource = createBoundResearchOwnerReportConfigSource({
-    raw: env.ELIOTR_RESEARCH_REPORT_CONFIG_JSON,
-    provenance_ref: installed(env.ELIOTR_RESEARCH_REPORT_POLICY_PROVENANCE_REF),
-    current_spend_authority: {
-      principal_ref: policy.principal_ref,
-      client_class: policy.client_class,
-      deployment_generation: policy.deployment_generation,
-      policy_generation: policy.policy_generation,
-      policy_authority_ref: policy.policy_authority_ref,
-      expires_at: policy.expires_at,
-    },
-  });
-  const reportPolicy = await reportSource.readArtifactPolicy();
-  if (!reportPolicy) configurationMissing();
-  try { await navigation.current(); }
-  catch { configurationMissing(); }
-  const boundReportPolicy = (() => {
-    try {
-      return bindResearchOwnerReportPolicy(reportPolicy, {
-        current_scope_snapshot_id: navigation.scope.snapshot_id,
-        current_owner_principal_ref: principal.principal_ref,
-        frozen_manifest_residency: input.initial_manifest.residency,
-      });
-    } catch {
-      configurationMissing();
-    }
-  })();
-  const retrievalProfile = await createD1ScopeProfilePort(env.CORE_DB).loadBinding(navigation.scope);
-  const { content_digest: _contentDigest, ...residency } = input.initial_manifest.residency;
-  void _contentDigest;
 
   const recheckAuthority = async () => {
     const held = await loadHeldResearchScope(env, navigation.access, input.operation_id, principal.deployment_generation);
     if (held.investigation_id !== input.investigation_id || held.scope_snapshot_ref.id !== navigation.scope.snapshot_id ||
-        held.scope_snapshot_ref.revision !== navigation.scope.revision) configurationMissing();
+        held.scope_snapshot_ref.revision !== navigation.scope.revision) fail("WORKFLOW_AUTHORITY_STALE");
     return { investigation_id: held.investigation_id, scope_snapshot_id: held.scope_snapshot_ref.id,
       scope_snapshot_revision: held.scope_snapshot_ref.revision };
   };
 
-  async function readVerifier(): Promise<ResearchClaimAuditVerifierAuthority> {
-    await navigation.current();
-    const readCandidate = () => env.CORE_DB.prepare(
-      "SELECT c.candidate_json,c.candidate_ref,c.candidate_sha256 FROM dynamic_route_active_generation a JOIN dynamic_route_candidate c " +
-      "ON c.candidate_ref=a.candidate_ref AND c.candidate_sha256=a.candidate_sha256 " +
-      "AND c.route_ref=a.route_ref AND c.route_version=a.route_version WHERE a.route_ref=?1 LIMIT 1",
-    ).bind(auditDeployment.route_ref).first<{ candidate_json: string; candidate_ref: string; candidate_sha256: string }>();
-    const before = await readCandidate();
-    const deployment = decodeModelRouteDeployment(await deploymentRegistry.resolve(auditDeployment.route_ref));
-    if (!before || canonicalJson(deployment) !== canonicalJson(auditDeployment)) configurationMissing();
-    let candidate: { execution_probe_ref?: unknown; qualification_expires_at?: unknown };
-    try { candidate = JSON.parse(before.candidate_json) as typeof candidate; } catch { configurationMissing(); }
-    const proof = await createD1DynamicRouteQualificationProofStore(env.CORE_DB).readLatest({
-      route_ref: auditDeployment.route_ref, route_version: auditDeployment.route_version,
-      candidate_ref: before.candidate_ref, candidate_sha256: before.candidate_sha256,
-    });
-    const receipt = IdentifierSchema.safeParse(proof?.qualification.execution_probe_ref ?? candidate.execution_probe_ref);
-    const expires = IsoDateTimeSchema.safeParse(proof?.qualification.expires_at ?? candidate.qualification_expires_at);
-    if (!receipt.success || !expires.success || Date.parse(expires.data) <= Date.now() ||
-        !config.audit.allowed_verifier_refs.includes(config.audit.verifier_ref)) configurationMissing();
-    const after = await readCandidate();
-    if (after?.candidate_json !== before.candidate_json) configurationMissing();
-    await navigation.current();
-    return Object.freeze({ allowed_verifier_refs: Object.freeze([...config.audit.allowed_verifier_refs]),
-      verifier_ref: config.audit.verifier_ref, verifier_schema_generation: config.audit.verifier_schema_generation,
-      deployment, deployment_generation: principal.deployment_generation,
-      qualification_receipt_ref: receipt.data, qualification_expires_at: expires.data, qualified: true, current: true });
-  }
-  const verifier = await readVerifier();
-  const gateway = modelGatewayConfiguration(env);
-  return createResearchSemanticWorkflowHandlerFactory({
-    database: env.CORE_DB, search_database: env.SEARCH_DB, work_bucket: env.WORK_BUCKET, evidence_bucket: env.EVIDENCE_BUCKET,
-    navigation, ledger: input.ledger, operation_id: input.operation_id, investigation_id: input.investigation_id,
-    principal, retrieval_profile: retrievalProfile,
-    model_profile: { raw: env.ELIOTR_MODEL_PROFILE_DEFINITION_JSON, provenance_ref: installed(env.ELIOTR_MODEL_PROFILE_PROVENANCE_REF) },
-    deployment_environment: deploymentEnvironment, recheck_authority: recheckAuthority,
-    manifest: { residency_template: residency, max_context_bytes: synthesisRule.max_input_bytes },
-    model: {
-      synthesis: { gateway, prompt: { trusted_parameters: promptParameters(config.synthesis.trusted_parameters),
-        request_timeout_ms: config.synthesis.request_timeout_ms }, spend_authorization: spend.admissions,
-        prepare: async (context, frozen) => {
-          await spend.admit(context, frozen.stage_ten_input.model_profile_definition.deployment);
-          return prepareSynthesis(context, frozen);
-        } },
-      audit: { gateway, prompt: { trusted_parameters: promptParameters(config.audit.trusted_parameters), request_timeout_ms: config.audit.request_timeout_ms },
-        spend_authorization: spend.admissions, prepare: async (context, audit) => {
-          await spend.admit(context, audit.verifier.deployment);
-          return prepareAudit(context, audit);
-        } },
+  return assembleResearchSemanticRuntimeHandlers({
+    database: env.CORE_DB,
+    search_database: env.SEARCH_DB,
+    work_bucket: env.WORK_BUCKET,
+    evidence_bucket: env.EVIDENCE_BUCKET,
+    ai_search: env.AI_SEARCH,
+    operation_id: input.operation_id,
+    investigation_id: input.investigation_id,
+    principal,
+    navigation,
+    ledger: input.ledger,
+    initial_manifest: input.initial_manifest,
+    handler_generation: handlerGeneration,
+    ...(snapshotRunConfiguration === undefined ? {} : { run_configuration: snapshotRunConfiguration }),
+    native_model_runtime: nativeModelRuntime,
+    gateway,
+    config,
+    policy,
+    semantic_config: {
+      revision_ref: resolvedSemanticConfig.revision_ref,
+      config_sha256: resolvedSemanticConfig.config_sha256,
     },
-    verification: { config: config.normalization },
-    audit: { normalization: config.normalization, policy: parseResearchClaimAuditPolicy(config.audit.policy),
-      verifier: { authority: verifier, read_current: async (request) => {
-        if (request.operation_id !== input.operation_id || request.investigation_ref.id !== input.investigation_id ||
-            request.principal_ref !== principal.principal_ref || request.credential_generation !== principal.credential_generation ||
-            request.deployment_generation !== principal.deployment_generation || request.scope_snapshot_ref.id !== navigation.scope.snapshot_id ||
-            request.scope_snapshot_ref.revision !== navigation.scope.revision) configurationMissing();
-        await recheckAuthority();
-        return readVerifier();
-      } } },
-    report: { policy_source: reportSource, report_policy: boundReportPolicy, expected_draft_head_revision: null },
+    deployment_environment: deploymentEnvironment,
+    model_profile: {
+      raw: env.ELIOTR_MODEL_PROFILE_DEFINITION_JSON,
+      provenance_ref: env.ELIOTR_MODEL_PROFILE_PROVENANCE_REF,
+    },
+    report_config: {
+      raw: env.ELIOTR_RESEARCH_REPORT_CONFIG_JSON,
+      provenance_ref: env.ELIOTR_RESEARCH_REPORT_POLICY_PROVENANCE_REF,
+    },
+    recheck_authority: recheckAuthority,
+    require_client_execution: () => requireClientResearchExecution(
+      env,
+      navigation.access,
+      navigation.scope,
+      input.operation_id,
+      principal.deployment_generation,
+    ),
+    route_external_agent_stages: ({ base, generation, retrieval_profile, grant }) =>
+      routeResearchComputerAgentStages({
+        base,
+        generation,
+        env,
+        navigation,
+        ledger: input.ledger,
+        retrieval_profile,
+        ...(grant === undefined ? {} : { grant }),
+      }),
+    bind_handlers: (handlers) => bindHandlersToRunConfiguration(env, actor, runConfiguration, handlers),
   });
 }

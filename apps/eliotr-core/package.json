@@ -8,7 +8,7 @@
     "typecheck": "tsc -b --pretty false",
     "test": "vitest run",
     "dev": "node ../../scripts/local-runtime.mjs --dev",
-    "cf:types": "wrangler types --env-interface CloudflareEnv src/worker-configuration.d.ts",
+    "cf:types": "node ../../scripts/generate-cloudflare-types.mjs",
     "deploy:dry-run": "wrangler deploy --dry-run --minify --outdir dist",
     "deploy": "node ../../scripts/deploy-cloudflare.mjs --confirm-live"
   },
@@ -34,12 +34,25 @@
     "@eliotr/cloudflare-markdown": "workspace:*",
     "@eliotr/cloudflare-workflows": "workspace:*",
     "@eliotr/cloudflare-federation": "workspace:*",
-    "zod": "4.4.3"
+    "zod": "4.4.3",
+    "@eliotr/cloudflare-computer-agent": "workspace:*",
+    "@eliotr/cloudflare-wiki": "workspace:*",
+    "@eliotr/cloudflare-model-control": "workspace:*",
+    "@eliotr/cloudflare-native-models": "workspace:*",
+    "@eliotr/cloudflare-erasure-operations": "workspace:*",
+    "@eliotr/cloudflare-research-runtime": "workspace:*",
+    "@eliotr/cloudflare-search-probe": "workspace:*",
+    "@eliotr/cloudflare-model-transport": "workspace:*",
+    "@eliotr/cloudflare-research-branches": "workspace:*",
+    "@eliotr/cloudflare-research-configuration": "workspace:*",
+    "@eliotr/cloudflare-backup": "workspace:*",
+    "@eliotr/cloudflare-http-protocol": "workspace:*",
+    "@eliotr/cloudflare-artifacts": "workspace:*"
   },
   "devDependencies": {
-    "wrangler": "4.127.1",
+    "wrangler": "4.143.1",
     "@cloudflare/workers-types": "5.20260827.1",
-    "@cloudflare/vitest-plugin": "1.1.0",
+    "@cloudflare/vitest-plugin": "1.3.2",
     "vitest": "4.1.11"
   }
 }

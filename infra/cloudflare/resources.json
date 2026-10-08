@@ -29,6 +29,12 @@
       "name": "eliotr-work",
       "jurisdiction": "default",
       "storage_class": "Standard"
+    },
+    {
+      "binding": "BACKUP_PARTS_BUCKET",
+      "name": "eliotr-backup-parts",
+      "jurisdiction": "default",
+      "storage_class": "Standard"
     }
   ],
   "queues": [

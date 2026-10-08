@@ -43,7 +43,7 @@
         "ER-24"
       ],
       "state": "IMPLEMENTED_NOT_LIVE",
-      "behavior": "ResearchSession Durable Object persists session authority in DO storage and executes 18-stage W2 checkpoints over D1 Core/R2 with restart resume, single-effect replay, cancel persistence, lost-ACK reconciliation and 64KiB handle-only receipts; research.query serves ORIENT retrieval over injected RetrievalQueryPorts and dispatches EXHAUSTIVE_JOB through the versioned Q8 adapter, whose production path uses owner ScopeSnapshot authority, admitted normalized manifests, persisted DocumentMaps, LIVE EvidenceHandles and pinned R2 reads before Q7 planning/execution/reconciliation; research.run creates a W1 ledger and initial durable W2 status, launches the existing Cloudflare Workflow with one deterministic instance ID, confirms instance status and returns the ID for owner polling before the stages finish; research.artifact returns exact owner-authorized historical DRAFT metadata after WORK_BUCKET byte/readback verification and persisted scope/grant revalidation. The deployed project-scoped owner run has real REPORT/AUDIT outputs and four SUPPORTED claims with incomplete coverage. Wiki proposals can be created, manually reviewed, published and reopened through the owner interface on git-44ea8be, with immutable R2 readback and currentness at the D1 head CAS. Incomplete coverage and original DRAFT artifact labels are retained. On git-8b418fe, Recent work reads the latest owner-authorized events with current historical scope reauthorization. Atomic artifact-draft, workflow-completion and Wiki-publication producers are installed; an actual two-document run completed and its draft/completion events appeared in the UI. Accepted artifact publication and source admission/update/erasure change producers remain open. Owner Wiki edits on git-6f14c0c create a separate DRAFT revision with immutable base/provenance binding. The live owner saved and published Orbit revision 2, reopened both versions, and retained UNRESOLVED labels and incomplete coverage. Migration 0064 corrects the D1 expression-depth failure found during the first real save; retry completed the same draft without duplicate creation. Full accepted-artifact and dependency-invalidation semantics remain open. Owner source replacement binds a target source and expected head across raw capture, normalized prepare and commit. Separate historical read authorization preserves exact saved revisions after a head update; Wiki and saved Research reopen expose source freshness without rewriting immutable artifacts. Migrations 0065/0066 were applied and compiled on live D1, but this new browser flow awaits its own live acceptance. Accepted-artifact/COW, semantic revalidation, erasure and Rust obligations remain open.",
+      "behavior": "ResearchSession Durable Object persists session authority in DO storage and executes 18-stage W2 checkpoints over D1 Core/R2 with restart resume, single-effect replay, cancel persistence, lost-ACK reconciliation and 64KiB handle-only receipts; research.query serves ORIENT retrieval over injected RetrievalQueryPorts and dispatches EXHAUSTIVE_JOB through the versioned Q8 adapter, whose production path uses owner ScopeSnapshot authority, admitted normalized manifests, persisted DocumentMaps, LIVE EvidenceHandles and pinned R2 reads before Q7 planning/execution/reconciliation; research.run creates a W1 ledger and initial durable W2 status, launches the existing Cloudflare Workflow with one deterministic instance ID, confirms instance status and returns the ID for owner polling before the stages finish; research.artifact returns exact owner-authorized historical DRAFT metadata after WORK_BUCKET byte/readback verification and persisted scope/grant revalidation. The deployed project-scoped owner run has real REPORT/AUDIT outputs and four SUPPORTED claims with incomplete coverage. Wiki proposals can be created, manually reviewed, published and reopened through the owner interface on git-44ea8be, with immutable R2 readback and currentness at the D1 head CAS. Incomplete coverage and original DRAFT artifact labels are retained. On git-8b418fe, Recent work reads the latest owner-authorized events with current historical scope reauthorization. Atomic artifact-draft, workflow-completion and Wiki-publication producers are installed; an actual two-document run completed and its draft/completion events appeared in the UI. Accepted artifact publication and source admission/update/erasure change producers remain open. Owner Wiki edits on git-6f14c0c create a separate DRAFT revision with immutable base/provenance binding. The live owner saved and published Orbit revision 2, reopened both versions, and retained UNRESOLVED labels and incomplete coverage. Migration 0064 corrects the D1 expression-depth failure found during the first real save; retry completed the same draft without duplicate creation. Full accepted-artifact and dependency-invalidation semantics remain open. Owner source replacement binds a target source and expected head across raw capture, normalized prepare and commit. Separate historical read authorization preserves exact saved revisions after a head update; Wiki and saved Research reopen expose source freshness without rewriting immutable artifacts. Migrations 0065/0066 were applied and compiled on live D1, but this new browser flow awaits its own live acceptance. Accepted-artifact/COW, semantic revalidation, erasure and Rust obligations remain open. On the bounded 2026-10-02 Stage17 checkpoint, fresh audited original REPORT drafts project exact normalized claim IDs and existing kind/disposition-derived labels before immutable draft creation, using the same label mapper as COW. The committed audit reader remains the normalization/lineage authority; publication policy, legacy no-audit draft bytes and committed/finalized recovery paths are unchanged. Local compilation, scoped lint and focused native Stage17 direct acceptance, exact byte replay, audit-binding refusal and current revoke/purge refusal pass. The existing COW crash/recovery and SUPPORTED-assumption publication refusal pass after sharing the mapper. Browser/process-restart/full/live acceptance remains pending; no implementation state is promoted.",
       "completion_evidence": [
         "apps/eliotr-core/test/research-session.test.ts: 10 local Worker/D1/R2/DO cases passed on Node22.23.2 at669833e, including independent second-source run, same-authority duplicate/retired policy refusal, revoked grant, unfinished exploratory W1 executed through the DO factory, exact real stage-0 readback and duplicate-free replay; no paid provider call is exercised",
         "apps/eliotr-core/src/research-stage-handlers.ts: shared HTTP/Workflow/DO factory preserves historical exploratory.v1 and confirmatory replay; new exploratory.v2 composes real stages0 and5 with persisted requested retrieval limits. Actual HTTP v2 case passed ataaa13fa: exact source excerpt, stored output, replay without duplicate rows and changed-limit409 refusal. Remaining16 stages emit deterministic metadata; evidence freeze, synthesis and live execution remain open. Migration0040 retains one ACTIVE policy per exact authority",
@@ -67,7 +67,9 @@
         "Owner checkpoint git-cad8970 (2026-09-14): actual Cloudflare GLM5.3 runs, saved DRAFT/source readback across deployments and the PWA Markdown download are retained in local-launch.md. Downloaded export has 8290 bytes, exact saved section text and four recorded claim assessments. Read-only model readiness reports missing renewal Read credential and disables new runs while saved reads remain available. Wiki proposal list/page/body and scope reauthorization are composed; the deployed empty list is observed, while populated creation/publication remains open. This supersedes earlier unobserved-owner-loop notes for these specific paths only; no full contour promotion.",
         "Owner activity checkpoint git-8b418fe (2026-09-14): Cloudflare version 7ee92390-e3c7-4fb2-9e0b-54a7bccf1cf6 and migrations 0060-0062 are live. The owner UI displayed a historical Wiki event after original scope expiry. Run run-f1aab21e76884dab48b430cf2fedf64653c368615673b1eb completed in about 125 seconds, saved a readable PDF/DOCX project DRAFT, and produced D1/UI ARTIFACT_DRAFTED sequence 2 and RESEARCH_COMPLETED sequence 3. This does not promote the full contour or complete source/erasure producers.",
         "apps/eliotr-core/src/wiki-owner-edit-proposal.ts, wiki-owner-edit-review-proof.ts and wiki-owner-edit-review-admission.ts: normal owner browser edit/save/publish/reopen on git-6f14c0c with migrations0063/0064, published revision2 at2026-09-14T09:21:45.961Z, unchanged revision1, independently downloaded R2 manifest/review hashes and owner-visible WIKI_PUBLISHED sequence4. See live-document-project-acceptance-2026-09-14.md; this does not qualify the remaining accepted-artifact, revocation, erasure, recovery, federation or Rust scope.",
-        "Source version implementation: raw-capture-owner-service.ts, d1-ingest-authority.ts, owner-historical-scope.ts, source-revision-freshness.ts and owner PWA version/freshness controls. Core/PWA typechecks and PWA build passed; source CAS and historical-read code received independent Luna reviews. Schema commit39ffd48 applied0065/0066 at2026-09-14T09:59:54Z; live EXPLAIN compiled raw INSERT289 and commit guard320 instructions. Browser source-update acceptance not yet executed at this implementation checkpoint."
+        "Source version implementation: raw-capture-owner-service.ts, d1-ingest-authority.ts, owner-historical-scope.ts, source-revision-freshness.ts and owner PWA version/freshness controls. Core/PWA typechecks and PWA build passed; source CAS and historical-read code received independent Luna reviews. Schema commit39ffd48 applied0065/0066 at2026-09-14T09:59:54Z; live EXPLAIN compiled raw INSERT289 and commit guard320 instructions. Browser source-update acceptance not yet executed at this implementation checkpoint.",
+        "Bounded 2026-10-02 Stage17 checkpoint: research-artifact-draft.ts and shared artifact-statement-labels.ts preserve legacy inputs and reuse existing COW projection. Core compilation, scoped edited-file lint, boundaries and depth100 SQL pass (873 recovered, 0 failures, 111 unresolved sites). Native artifact-stage17-owner-http.test.ts plus research-report-admission.test.ts pass 5 cases with 1 existing TODO: fresh original direct acceptance, exact claim-ID labels and immutable receipt/R2 replay, independent revoke/purge refusals with no duplicate effects, corrupted audit binding refusal and actual UNSUPPORTED/HYPOTHESIS disclosure under the unchanged gate. Targeted existing artifact-owner-loop-http.test.ts passes 2 selected crash/recovery and SUPPORTED-assumption refusal cases; 2 unselected cases are not counted. Browser, actual process restart, broad/full checks and live qualification remain pending; no live state promotion or Stage17-specific assumption-kind execution is claimed.",
+        "2026-10-03 source checkpoint: owner model catalog/project revisions, v2 spend/report choices and immutable run snapshots are composed with migrations0104-0106; historical COW keeps original configuration. See docs/implementation/product-resume-2026-10-03.md for actual checks and pending final deployed functional acceptance; no broader LIVE promotion."
       ]
     },
     {
@@ -118,7 +120,7 @@
         "ER-24"
       ],
       "state": "IMPLEMENTED_NOT_LIVE",
-      "behavior": "Bounded application lifecycle, health, capabilities, owner catalog and governed ingest composition are executable; unsupported products remain typed unavailable. Owner catalog uses explicit current read policy and admitted-source verification, primary mutation/time fencing and session-bound v2 cursors. Library selection binds active readiness and FAST_SEARCH to the selected head and deployment; metadata orientation remains separate. Owner-only revision history reuses the catalog read fence and independently validates historical admissions; historical per-channel metadata remains RECORDED_ONLY.",
+      "behavior": "Bounded application lifecycle, health, capabilities, owner catalog and governed ingest composition are executable; unsupported products remain typed unavailable. Owner catalog uses explicit current read policy and admitted-source verification, primary mutation/time fencing and session-bound v2 cursors. Library selection binds active readiness and FAST_SEARCH to the selected head and deployment; metadata orientation remains separate. Owner-only revision history reuses the catalog read fence and independently validates historical admissions; historical per-channel metadata remains RECORDED_ONLY. S19 PWA code separates retained in-tab question/run intent from protected responses: reconnect verifies the same owner/deployment and observes the original run without automatic write replay. Auth/identity changes still clear input; no offline private cache. Compilation/lint only; browser/native acceptance deferred under #211.",
       "completion_evidence": [
         "strict TypeScript check",
         "owner/service authorization negative tests",
@@ -191,27 +193,92 @@
       "completion_evidence": [
         "active owner, purge state and content digest checks",
         "negative receipt-outcome deduplication test",
-        "remote D1/Queue replay receipt"
+        "remote D1/Queue replay receipt",
+        "2026-10-03 source checkpoint: managed item metadata uses the exact managed profile generation while canonical per-source lineage remains separate; focused producer/readback tests pass, including stale-generation rejection. Actual admitted-source managed delivery/readback remains pending."
       ]
     },
     {
       "id": "workspace-candidate-admission",
-      "path": "packages/cloudflare-workspace-mcp/src/gemini-mcp-google-sync.ts",
-      "sentinel": "IN_PROGRESS: ER-36 Workspace candidate bytes admission and live connector readback remain unimplemented; durable v2 plans and observations do not admit sources.",
+      "path": "packages/cloudflare-workspace-mcp/src/workspace-candidate-admission.ts",
+      "sentinel": "IMPLEMENTED_NOT_LIVE: ER-36 authenticated Workspace candidate-bytes admission gate binds caller-supplied bytes to a durable OBSERVED_MATCH v2 observation plus a separate owner-issued exact-candidate authorization; the gate mints no source/evidence authority. Live connector readback (ELIOT-performed Google readback) remains unimplemented.",
       "owner_packets": [
         "ER-36"
       ],
-      "state": "IN_PROGRESS",
+      "state": "IMPLEMENTED_NOT_LIVE",
       "required_for_transports": [
         "gemini-mcp"
       ],
-      "behavior": "The selected Workspace MCP profile preserves v1 behavior and adds strict v2 server-issued intent plans bound to the verified actor, deployment and auth profile. Append-only D1 plans and candidate observations use canonical digests, exact readback and same-key reconciliation. A committed UNKNOWN comparison is distinct from an uncertain D1 write. The ledger does not invoke Google or admit source/evidence bytes; external connector qualification and authenticated source admission remain incomplete.",
+      "behavior": "evaluateWorkspaceCandidateAdmission fails closed on any non-OBSERVED_MATCH disposition, missing/skipped exact readback, unbound payload digest, byte/digest mismatch, oversized or empty bytes, cross-actor or cross-deployment invocation, and missing owner authorization reference. The returned frozen admission intent carries the observation/plan/receipt digests, the verified byte digest and the owner authorization reference with candidate_only=true and source_evidence_authority_changed=false. The ledger still never invokes Google and observations still never admit sources on their own.",
       "completion_evidence": [
-        "packages/contracts/src/workspace-mcp.ts and workspace-mcp.test.ts: strict v2 candidate plans, external receipt input and separate comparison/write uncertainty",
-        "packages/cloudflare-workspace-mcp/src/workspace-mcp-google-sync.test.ts: server-issued plan replay, changed-intent conflict, actor binding and candidate observation behavior",
-        "apps/eliotr-core/test/workspace-mcp-candidate-store.test.ts: actual local Worker/D1 canonical plan and observation readback, actor isolation, historical replay and append-only storage",
-        "infra/d1/core/migrations/0031_workspace_mcp_candidate_ledger.sql: constrained append-only plan and observation ledgers",
-        "Authenticated Workspace source-byte admission, live Google action/readback and managed OAuth client qualification remain NOT_EXECUTED; candidate observations do not establish source/evidence authority."
+        "packages/cloudflare-workspace-mcp/src/workspace-candidate-admission.ts and workspace-candidate-admission.test.ts: 11 deterministic cases (exact-match bind plus 10 negative refusals)",
+        "packages/cloudflare-workspace-mcp/src/index.ts: gate exported through the package barrel (ER-36 owned path)",
+        "Live Google action/readback (google_readback_performed_by_eliotr) and managed OAuth client qualification remain NOT_EXECUTED; app-layer composition (owner grant check against the grant store, HTTP route) remains separate code work."
+      ]
+    },
+    {
+      "id": "implemented-branch-execution",
+      "path": "packages/cloudflare-research-branches/src/research-branch-execution.ts",
+      "sentinel": "IMPLEMENTED_NOT_LIVE: S37 shared governed branch executor for READ_AND_EXTRACT, ANALYZE_BRANCHES and COUNTER_SEARCH with exact scope/protocol/planning/W1/stage-five revalidation and receipt-based recovery; v7 activation in semantic composition and live model/evidence qualification remain separate.",
+      "owner_packets": [
+        "ER-09",
+        "ER-24"
+      ],
+      "state": "IMPLEMENTED_NOT_LIVE",
+      "behavior": "createResearchBranchExecutionHandlers provides one shared governed executor for the v7 branch stages. loadContext revalidates exact scope snapshot, protocol, planning manifest identity and W1/stage-five state before each stage handler runs. READ_AND_EXTRACT emits the read-extract checkpoint; ANALYZE_BRANCHES decodes the committed read-extract and cross-checks operation, investigation, principal, scope and planning bindings before emitting the analysis checkpoint; COUNTER_SEARCH binds the branch analysis to the committed read-extract bytes (sameRef on read_extract_ref) and emits the reconciliation checkpoint with stable per-role observation identities. recover replays from committed stage lineage receipts on restart. readCommittedResearchBranchReconciliationLineage/readCommittedResearchBranchReconciliation expose the committed reconciliation with read-extract and analysis attempt refs. The executor emits evidence-bound candidate material; role model calls and W1 observation mutation are wired in separate modules.",
+      "completion_evidence": [
+        "Commits b98ee60f (shared governed branch executor), 25be3164 (v7 registration and stage-factory connection), 8250ff20 (COUNTER bound to committed read-extract bytes), 05c3c3a1 (assembly acceptance with receipt-based recovery)",
+        "Strict TypeScript check with noUncheckedIndexedAccess and exactOptionalPropertyTypes",
+        "Scoped ESLint for packages/cloudflare-research",
+        "Live model invocation and live evidence qualification receipts NOT_EXECUTED; S93 real-model quality remains a separate gate"
+      ]
+    },
+    {
+      "id": "implemented-branch-role-model",
+      "path": "packages/cloudflare-research-branches/src/research-branch-role-model.ts",
+      "sentinel": "IMPLEMENTED_NOT_LIVE: S37 per-role branch model execution derives role-scoped stage requests and dispatches role-bound model stage handlers through the server-owned W3 preparation seam; role prompt compilation wiring and live model qualification remain separate.",
+      "owner_packets": [
+        "ER-24"
+      ],
+      "state": "IMPLEMENTED_NOT_LIVE",
+      "behavior": "deriveBranchRoleStageRequest derives a role-scoped stage request with a deterministic per-role idempotency key (<key>:branch-role:<ROLE>), so a restart replays the same attempt instead of dispatching a duplicate and an absent role costs zero calls. createResearchBranchRoleModelExecutor caches one ResearchModelStageHandler per role and binds the server-owned W3 preparation seam per role via prepare(context, role), so each role's model call carries its own attempt identity while the spend admission for branch stages stays behind the duration/budget checkpoint.",
+      "completion_evidence": [
+        "Commit a3930696 (substantive model-backed execution for v7 branch roles)",
+        "packages/cloudflare-research/src/research-branch-role-model.test.ts: 4 cases pinning role-scoped idempotency keys, distinct keys per role, deterministic restart replay and unknown-role rejection",
+        "Per-role handler cache and prepare-closure binding are compile/static reviewed only; research-branch-role-preparation.test.ts covers the preparation seam on the other side",
+        "Live model call receipts NOT_EXECUTED"
+      ]
+    },
+    {
+      "id": "implemented-w1-branch-observations",
+      "path": "packages/cloudflare-research-branches/src/research-w1-observations.ts",
+      "sentinel": "IMPLEMENTED_NOT_LIVE: S37 session-level settling of v7 branch execution observations onto the W1 investigation ledger head as one OBSERVED event bound to the committed reconciliation checkpoint; EvidenceFreeze binding of the reconciliation checkpoint and live ledger qualification remain separate.",
+      "owner_packets": [
+        "ER-08",
+        "ER-24"
+      ],
+      "state": "IMPLEMENTED_NOT_LIVE",
+      "behavior": "settleW1BranchObservations runs at the session level after workflow completion, not inside a stage handler, because the stage checkpoint commit is the sole ledger writer per stage. It returns null when the run generation never executed branches or when no committed COUNTER_SEARCH reconciliation checkpoint exists for the investigation. The committed reconciliation checkpoint is evidence-bound: the receipt output manifest ref and digest are verified on read and operation/investigation/principal bindings are checked before use. Only the ledger owner settles on an OPEN ledger; the settling appends one OBSERVED ledger event whose payload is the committed reconciliation checkpoint workflow object and whose deterministic event id (the reconciliation identity digest) makes identical replay a no-op via the store's appliedAlready check.",
+      "completion_evidence": [
+        "Commits b5ea49df (settle W1 observations after v7 branch execution), 05c3c3a1 (gated behind branch-execution handler generations)",
+        "packages/cloudflare-research/src/research-w1-observations.test.ts: no-op case when the run generation never executed branches, with zero D1/R2 effects",
+        "Strict TypeScript check",
+        "D1-backed settling fixture over the committed migration stream and live ledger receipts NOT_EXECUTED; EvidenceFreeze binding of the reconciliation checkpoint remains a separate contour"
+      ]
+    },
+    {
+      "id": "implemented-branch-role-spend-admission",
+      "path": "packages/cloudflare-model-execution/src/research-model-spend-policy.ts",
+      "sentinel": "IMPLEMENTED_NOT_LIVE: S37 branch-aware W3 spend admission for ANALYZE_BRANCHES/COUNTER_SEARCH admits per-role model spend against the durable stage-level W2 authority with role-scoped identities; D1-backed admission readback qualification remains open.",
+      "owner_packets": [
+        "ER-24"
+      ],
+      "state": "IMPLEMENTED_NOT_LIVE",
+      "behavior": "admitBranchRole maps ANALYZE_BRANCHES/COUNTER_SEARCH to stage indexes 8/9 and fails closed with WORKFLOW_CONFIGURATION_MISSING for non-branch stages, a missing policy rule or an invalid role. It reads the durable stage-level W2 authority by the stage request sha; the role-level W3 identity intentionally differs and the role binding is validated here and by the port's assertRequest. A role-scoped model attempt identity is derived from the role sha, so concurrent SUPPORT/COUNTER admissions on the same stage never collide on the (operation_id, stage_index) conflict target. Identity, budget receipt, deployment and the exact stage request are verified against the authority row before minting role-scoped quote, reservation, intent and authorization digests and recording the admission through the D1 spend admission port with the stage-level workflow_stage_request_sha256 preserved for readback.",
+      "completion_evidence": [
+        "Commits fb1c9167/bccd6037 (branch-aware W3 spend admission for ANALYZE_BRANCHES/COUNTER_SEARCH)",
+        "packages/cloudflare-research/src/research-model-spend-policy.test.ts covers the pure JSON policy readers",
+        "Strict TypeScript check with noUncheckedIndexedAccess and exactOptionalPropertyTypes",
+        "D1-backed admit/admitBranchRole fixtures (happy path, expiry, deployment change, two-role concurrency) and live spend receipts NOT_EXECUTED; this is compile/static reviewed code, not behavioral acceptance"
       ]
     },
     {
@@ -227,18 +294,19 @@
       "required_for_transports": [
         "gemini-mcp"
       ],
-      "behavior": "Optional signed Gemini MCP exposes status, Workspace-only no-effect planning and bounded v1 self-reported observation checks through explicit service-token or managed-oauth profiles; managed actors use a domain-separated hashed verified subject, while service-token identity remains bound to the exact signed Client ID. Target ID, pinned read revision, time window, declared descriptors and digests are checked. This is not Google I/O, authenticated plan issuance or write-precondition proof. The separate unselected ChatGPT Drive Exchange profile remains independently tracked. Service catalog remains withheld pending explicit scope authority.",
+      "behavior": "Optional signed Gemini MCP exposes status, Workspace-only no-effect planning and bounded v1 self-reported observation checks through explicit service-token or managed-oauth profiles; managed actors use a domain-separated hashed verified subject, while service-token identity remains bound to the exact signed Client ID. Target ID, pinned read revision, time window, declared descriptors and digests are checked. This is not Google I/O, authenticated plan issuance or write-precondition proof. The separate unselected ChatGPT Drive Exchange profile remains independently tracked. Service-token project catalog is composed through the shared S10 grant authorizer and actual verified issuer/method/Client ID; owner grant HTTP CRUD and migration0072 are code-complete but behavior/native acceptance is pending. This addition is compile/static checked only; the earlier qualification state does not qualify it. Connections grant management and independent service catalog-read command are implemented separately. S13 now composes service-token MCP tools for FAST_SEARCH, grantor-authored explicit-project saved reports/sections/citations and exact handle verify/open through the same HTTP services, with original DTOs/references, strict UTF-8 body transport and persistence-aware annotations. This checkpoint is compilation/static reviewed only; behavioral/native acceptance remains pending. Known owner-project run status is also composed through HTTP/MCP with separate report permission for completed DRAFT-reference discovery. No execution is created or renewed. Known owner-project cancellation and recovery are composed through the same HTTP/MCP engine. Recovery requires distinct recover rights and an explicit installed owner spend-template fingerprint bound to that immutable grant revision (migration0075); it retains original execution and W2/W3 budgets and can continue remaining authorized paid stages. This addition is compile/static reviewed only. Exploratory machine creation is composed through HTTP/MCP with migration0076. Migration0077 extends existing cancellation/recovery to the original machine client and grant revision via a shared run-origin view and independently current execution/spend fences. This is compilation/static-reviewed code, not behavioral acceptance. Migration0078 composes historical machine status/report/citation reads through current signed credentials and fresh artifact-bound authority under the exact original delegation revision; no execution or spend approval is renewed. This is compilation/static-reviewed code only. Migration0079 adds independent original-grantor owner saved-draft discovery and report/section/citation reauthorization through existing PWA reads/export, without adopting machine identity or renewing execution. This is compile/lint/schema-reviewed code only. Migration0080 composes independent original-grantor owner machine-run list/status/cancel/recover and PWA Stop/Recover through the existing journal and engine; original machine execution and sponsorship remain required for recovery. Compilation/lint/schema review only. S98 now composes project.attach through the existing HTTP Project update and eliotr_project_attach; migration0081 adds exact delegation provenance to existing mutation guards/receipts with source, CAS, epoch, expiry and replay checks. It permits only append-only independently admitted/owner-readable sources, not rename/detach, source ownership or model dispatch. Compilation/lint/schema review only. Migration0082 composes namespace-delegated immutable normalized bundle ingestion through the same HTTP pipeline and six metadata MCP adapters. Original grant/namespace ownership, current grantor policy, credential/project write fences and exact byte/receipt readback remain mandatory; no raw conversion or automatic attachment. Attachment additions now obey explicit namespace ceilings without requiring ingest permission. Compilation/lint/schema review only; native acceptance remains pending. Managed-OAuth delegation and broader Research discovery remain unavailable.",
       "completion_evidence": [
         "MCP version/body/principal negative tests, managed-oauth actor separation, mixed-profile and ordinary-audience rejection, and Workspace Cloud/gcloud rejection",
         "secret-free idempotent setup fixture",
         "live Access initialize/tools/call and exact readback receipts for the selected profile; default Workspace/Drive qualification is independent of optional gcloud/Google Cloud",
-        "Explicit service catalog read-scope adapter and revocation tests required before re-enabling eliotr_catalog; owner impersonation prohibited.",
-        "packages/cloudflare-workspace-mcp/src/gemini-mcp.test.ts: target/read-version/time/descriptor/digest/clock negatives, exact expiry, unverified mutation preconditions; candidate-only v1 observations never qualify real effects."
+        "Service-token catalog and S13 query/read adapters use owner-issued project grants and actual verified service identities. Native revocation/replay and full headless lifecycle acceptance remain pending; owner impersonation prohibited.",
+        "packages/cloudflare-workspace-mcp/src/gemini-mcp.test.ts: target/read-version/time/descriptor/digest/clock negatives, exact expiry, unverified mutation preconditions; candidate-only v1 observations never qualify real effects.",
+        "2026-10-03 source checkpoint: verified human Managed OAuth identity and exact project/document reading are composed; a new dedicated Access app/client connection and live MCP acceptance remain pending."
       ]
     },
     {
       "id": "implemented-007",
-      "path": "apps/eliotr-core/src/ingest-service.ts",
+      "path": "packages/cloudflare-raw-ingest/src/ingest-service.ts",
       "sentinel": "IMPLEMENTED_NOT_LIVE: ER-14/ER-21/ER-29 ingest requires remote R2/D1/Queue receipts.",
       "owner_packets": [
         "ER-13",
@@ -249,7 +317,7 @@
         "ER-37"
       ],
       "state": "IMPLEMENTED_NOT_LIVE",
-      "behavior": "Authenticated prepare, bounded multipart staging, exact readback, deterministic qualification, explicit admission and immutable promotion compose into a guarded SourceRevision/outbox batch. Current owner and exact admission policy are rechecked on continuation/promotion and inside the final SQL guard. The PWA can explicitly resume the same frozen upload in one tab or recover a known operation after reload by reselecting exact files and authenticated server readback; existing completed files are reconciled without invented multipart ETags. A separate local operator command initializes only an absent immutable-import namespace without granting read access. Lost operation IDs can be rediscovered with a read-only exact-folder request bound to the same principal, canonical manifest, complete hashes and current policy; discovery does not create a reservation or resume writes automatically. Revision/readiness/project views, remaining failure UI and the full initial populated browser/storage loop remain open in #98.",
+      "behavior": "Authenticated prepare, bounded multipart staging, exact readback, deterministic qualification, explicit admission and immutable promotion compose into a guarded SourceRevision/outbox batch. Current owner and exact admission policy are rechecked on continuation/promotion and inside the final SQL guard. The PWA can explicitly resume the same frozen upload in one tab or recover a known operation after reload by reselecting exact files and authenticated server readback; existing completed files are reconciled without invented multipart ETags. A separate local operator command initializes only an absent immutable-import namespace without granting read access. Lost operation IDs can be rediscovered with a read-only exact-folder request bound to the same principal, canonical manifest, complete hashes and current policy; discovery does not create a reservation or resume writes automatically. Revision/readiness/project views, remaining failure UI and the full initial populated browser/storage loop remain open in #98. S98/migration0082 adds service-token namespace delegation on the existing ingest operation and source/admission journal; the actual uploader remains the service while policy checks use the explicitly authorizing grantor. Original grant revision, input/bytes and deadline cannot be replaced by token refresh. Each request fences current credentials and project ownership, with namespace-policy checks before promotion and D1 settlement. Metadata MCP adapters reuse HTTP parsers; file bytes use the authenticated HTTP part endpoint. This addition is compilation/static reviewed only, not behavioral/native qualification.",
       "completion_evidence": [
         "idempotency, unsafe-path, missing-mapping and partial-transaction negative tests",
         "SQLite migration and commit-guard fixture",
@@ -271,7 +339,7 @@
     },
     {
       "id": "implemented-008",
-      "path": "apps/eliotr-core/src/projection-execution-handler.ts",
+      "path": "packages/cloudflare-ai/src/projection-execution-delivery-handler.ts",
       "sentinel": "IMPLEMENTED_NOT_LIVE: ER-38 projection execution requires remote R2/D1 Search/AI Search receipts.",
       "owner_packets": [
         "ER-05",
@@ -287,12 +355,13 @@
         "UTF-8, item-limit, shadow-activation and provider-readback negative tests",
         "SEARCH_DB active-head, absent-head and immutable-profile negative tests",
         "SQLite projection activation and terminal guard fixture",
-        "remote R2, D1 Search, AI Search and Queue replay receipts"
+        "remote R2, D1 Search, AI Search and Queue replay receipts",
+        "2026-10-03 source checkpoint: owner-only one-source shadow functional probe resolves through current scope and exact evidence with immutable START/terminal receipts. It has no generation qualification or promotion authority; actual observation remains pending."
       ]
     },
     {
       "id": "pending-002",
-      "path": "apps/eliotr-core/src/erasure-coordinator.ts",
+      "path": "packages/cloudflare-erasure-operations/src/erasure-coordinator.ts",
       "sentinel": "IMPLEMENTED_NOT_LIVE: ER-28 exact erasure coordinator",
       "owner_packets": [
         "ER-28"
@@ -307,12 +376,14 @@
         "scripts/check-erasure-closure.mjs blocked-backup and terminal-guard fixture",
         "apps/eliotr-core/test/erasure-coordinator.test.ts exact completion and absence-negative cases",
         "packages/cloudflare-erasure location-adapter and authority tests",
-        "remote R2, D1, AI Search and offsite backup absence receipts NOT EXECUTED"
+        "remote R2, D1, AI Search and offsite backup absence receipts NOT EXECUTED",
+        "2026-10-03 source checkpoint: offsite encrypted bodies/readback and target-bound restore control records (migration0107) are implemented locally. Production isolated target/admission, restore qualification and erasure/restore closure remain pending; no absence or restoration claim.",
+        "2026-10-05 Native-history restore source checkpoint: the ten 0109-0111 key/use/qualification tables remain in the authenticated encrypted epoch and are not materialized as current authority. New v2 receipts bind the actual source groups, validated row digests, full intent reference, exact copy/target environment and final post-R2 empty target readback; stored v1 receipts remain unchanged. TypeScript build, scoped ESLint over six changed source files and source budgets passed on Node24.19.0. Vitest4.1.11 passed 22 initial local cases and seven selected post-review cases, including coherently resealed v2 binding refusal and explicitly simulated D1 readback contamination during authenticated R2 PUT; no physical Native insertion is claimed by that negative. Initial fixture type errors and repaired results are preserved. RESTORED_UNQUALIFIED and the closed O2 port remain; current restore admission, later-purge reconciliation, historical read re-admission and S95/live qualification are not completed."
       ]
     },
     {
       "id": "pending-003",
-      "path": "apps/eliotr-core/src/federation-service.ts",
+      "path": "packages/cloudflare-federation/src/federation-service.ts",
       "sentinel": "IMPLEMENTED_NOT_LIVE: ER-22 federation boundary is locally composed and requires independent-peer deployed receipts.",
       "owner_packets": [
         "ER-22"
@@ -508,12 +579,12 @@
         "ER-13"
       ],
       "state": "IMPLEMENTED_NOT_LIVE",
-      "behavior": "Executable W2a single-stage checkpoint boundary with canonical 18-stage ordering, immutable bounded R2 outputs, one durable attempt per handler, exact ACK reconciliation, currentness/cancellation/budget checks, and W1 CHECKPOINT plus outbox in one D1 batch. Engine completion never upgrades research disposition. Public Workflow, governed W3/W4 handlers, branch scheduler, notification consumer and metadata retention/erasure/restore integration remain uncomposed.",
+      "behavior": "Executable W2a single-stage checkpoint boundary with canonical 18-stage ordering, immutable bounded R2 outputs, one durable attempt per handler, exact ACK reconciliation, currentness/cancellation/budget checks, and W1 CHECKPOINT plus outbox in one D1 batch. Engine completion never upgrades research disposition. Public Workflow, governed W3/W4 handlers, branch scheduler, notification consumer and metadata retention/erasure/restore integration remain uncomposed. S17 adds safe original-cause classification and immutable first diagnostics on existing runs/attempts, with separate latest consequences and a versioned status/PWA projection; native error serialization does not overwrite callback provenance. Migration0083 and compilation/static review only; behavioral/live acceptance remains pending.",
       "completion_evidence": [
         "apps/eliotr-core/test/research-workflow.test.ts: actual local D1/R2 ordering, duplicate/lost ACK, concurrent attempts, cancellation/withdrawal rollback, exact content/residency, 8 MiB/64 KiB bounds, unknown-settlement and strict v1 vector checks.",
         "apps/eliotr-core/src/research-retrieve-branches.ts and its Worker fixture: actual stage-0 protocol readback followed by stage-5 retrieval over the same held scope, separate WORK/EVIDENCE buckets, exact indexed Q1 excerpt, stable replay counts and revoked-grant refusal; authoritative stage-5 reader binds immutable output to persisted result/trace and current authority,3 local reader cases retained. Shared committed-request readback and stage-0 attempt binding replace duplicate SQL/R2 decoding; changed expected-attempt refusal and HTTPv2 source-to-retrieval replay passed ataaa13fa(2selected/13skipped). Stage-5 factory wiring is implemented; configured stage-10/11 composition is recorded separately below; public synthesis remains open.",
         "packages/cloudflare-research/src/research-reference-manifest-store.ts: residency is bound to held scope/principal; manifest permissions, disclosure and expiry are checked against the current grant before storage effects and after readback. Actual Worker/D1/R2 fixture passed 2/2 cases at715598b on Node22.23.2, including foreign residency and changed-grant refusal before any manifest row, positive replay and in-flight currentness checks; actual freeze/synthesis composition remains separate.",
-        "research-evidence-freeze-composition.ts and research-evidence-freeze.test.ts: explicit configured exploratory.v3 reads actual committed stage0/stage5 and current W1/run authority, persists the reference manifest and commits stage10/11 outputs. Q1/W2 freeze and replay passed atf351c33; corrected revoke-only case passed atad59069 with no new manifest/stage11 checkpoint. Stable profile binding passed6/6 atf07a7be. The later68af889 draft proof exercises actual stage12 and stage17 with controlled gateway/intermediate stages; public v3 selection and live provider qualification remain open.",
+        "packages/cloudflare-research-runtime/src/research-evidence-freeze-composition.ts (formerly the Core module) and research-evidence-freeze.test.ts: explicit configured exploratory.v3 reads actual committed stage0/stage5 and current W1/run authority, persists the reference manifest and commits stage10/11 outputs. Q1/W2 freeze and replay passed atf351c33; corrected revoke-only case passed atad59069 with no new manifest/stage11 checkpoint. Stable profile binding passed6/6 atf07a7be. The later68af889 draft proof exercises actual stage12 and stage17 with controlled gateway/intermediate stages; public v3 selection and live provider qualification remain open.",
         "At0c0506e on Node22.23.2, the actual local Worker/D1/R2 source-to-draft case passed with real factory stages12/13/17, exact verification/source/citation readback, replay with one model invocation, and revoked read denial. Stage13 binds the committed synthesis digest to fresh resolution of exact frozen evidence; semantic verification remains NOT_EXECUTED and stages14-16/provider response bytes remain controlled. Workspace/test TypeScript, ESLint, boundaries, source limits, packets/status and Worker dry run passed. Six W2 modules moved unchanged into @eliotr/cloudflare-workflows with compatible exports and no persisted protocol/schema/generation change.",
         "At74203c9,2selected actual local Worker/D1/R2 cases passed(12unchanged skipped): sourceVERIFY-to-draft/HTTP and configuredREPORT factory composition with native atomic decision/intent/outbox/draft readback, missingpolicy/revokedgrant refusal and duplicate-free replay. REPORT fixture controls13-16; source fixture executes13. The shared later-stage reader checks the exact committed synthesis-to-current predecessor chain and current W1 head. Migration0041 adds report admission; explicit config source933f6ba passed3/3. Actual production policy/model installation, semantic stage14-16 composition and public v3 activation remain open.",
         "infra/workflows/checkpoint-vectors.v1.json; deterministic migration target eliotr-research-core, not promoted Rust authority.",
@@ -578,14 +649,15 @@
         "ER-24"
       ],
       "state": "IMPLEMENTED_NOT_LIVE",
-      "behavior": "research.query composes RetrievalQueryPorts at the app layer behind createResearchQueryService instead of delegating to orientation metadata: strict versioned FAST_SEARCH (`retrieval-fast-v1`) and unchanged ORIENT parsing share the frozen 64-member owner scope with per-snapshot profile binding (retrieval-scope-v1 recorded in retrieval_scope_profile over additive migration 0022), replay-before-freeze from the stored frozen scope with live/profile/digest rechecks, IDENT+EXACT+LEX lane executors over D1 Search (EXACT scans bounded pinned sections and verifies literal matches through read-only canonical D1/R2 authority) plus a SEM lane executor over the managed AI Search surface (SEM degrades honestly to SKIPPED_UNAVAILABLE without a namespace binding or a promoted D1 registry generation) with all other lanes degrading to SKIPPED_UNAVAILABLE, reciprocal-rank fusion, exact evidence resolution over D1 authority plus pinned R2 bytes, persisted trace/result with idempotent same-retry versus changed-input handling, typed RetrievalQueryError mapping, and no source-grant minting; ORIENT orientation and research.run internal orient calls remain untouched",
+      "behavior": "research.query composes RetrievalQueryPorts at the app layer behind createResearchQueryService instead of delegating to orientation metadata: strict versioned FAST_SEARCH (`retrieval-fast-v1`) and unchanged ORIENT parsing share the frozen 64-member owner scope with per-snapshot profile binding (retrieval-scope-v1 recorded in retrieval_scope_profile over additive migration 0022), replay-before-freeze from the stored frozen scope with live/profile/digest rechecks, IDENT+EXACT+LEX lane executors over D1 Search (EXACT scans bounded pinned sections and verifies literal matches through read-only canonical D1/R2 authority) plus a SEM lane executor over the managed AI Search surface (SEM degrades honestly to SKIPPED_UNAVAILABLE without a namespace binding or a promoted D1 registry generation) with all other lanes degrading to SKIPPED_UNAVAILABLE, reciprocal-rank fusion, exact evidence resolution over D1 authority plus pinned R2 bytes, persisted trace/result with idempotent same-retry versus changed-input handling, typed RetrievalQueryError mapping, and no source-grant minting; ORIENT orientation and research.run internal orient calls remain untouched. S11 code checkpoint: verified service-token HTTP FAST_SEARCH uses the shared project-client authorizer with exact per-atom project scope, immutable grant-revision origin on scope_access_grant and migration0073 effective-grant checks in retrieval/evidence and durable write guards. Independent query-derived verify/open require the separate evidence operation on the same revision. Owner paths and existing query budgets remain; no machine run/status or spend sponsorship is implied.",
       "completion_evidence": [
         "apps/eliotr-core/test/research-query-retrieval.test.ts: 9 cases over actual local D1 Core/Search and R2 through the production Q1 import/project pipeline, including owner HTTP FAST_SEARCH with a persisted nonzero EXACT candidate count and pinned R2 excerpt, literal punctuation/whitespace hit versus miss, redacted-source and revoked-grant replay refusal, honest SAMPLED and NONE coverage, duplicate-free replay/change conflict and unchanged ORIENT negatives; combined with research-exact-search.test.ts the focused Worker suite passed 16/16",
         "apps/eliotr-core/test/research-session.test.ts: query section serves retrieval over HTTP (genuine no-hit NONE, replay equality with frozen row counts, changed-input 409, foreign 403, unchanged 400/422 negatives)",
         "infra/d1/core/migrations/0022_retrieval_scope_profile.sql: additive profile table with FK to scope_snapshot plus immutability triggers; no backfill, no rewrite, no readiness promotion",
         "#135 fixed by the disclosed ER-07 narrow fix (not worked around here): packages/cloudflare-evidence/src/content-store.ts:136 now issues the conditional range read with unquoted head.etag, and content-store.test.ts rejects S3-quoted values the way the runtime does; the first real LEX-hit success path above executes through it",
         "SEM lane executor composed at the app layer (packages/retrieval/src/lanes.ts createSemLaneExecutor over the D1-backed managed port with expected_namespace eliotr, explicit SEM fusion weight, and honest SKIPPED_UNAVAILABLE without a binding or a promoted generation); coverage stays capped at SAMPLED with no exhaustive denominator",
-        "Worker research.query accepts the strict versioned FAST_SEARCH retrieval profile (`retrieval-fast-v1`) through the existing route while preserving the ORIENT DTO and 64-source/16-result bounds; EXACT is composed through the read-only bounded verifier; its 50-section scan bound applies across sources, overflow stays SEARCH_INCOMPLETE, and NONE/SAMPLED do not earn exhaustive coverage; RETRIEVAL slice stays disabled, research.trace serves persisted retrieval and orientation traces, and live qualification NOT_EXECUTED"
+        "Worker research.query accepts the strict versioned FAST_SEARCH retrieval profile (`retrieval-fast-v1`) through the existing route while preserving the ORIENT DTO and 64-source/16-result bounds; EXACT is composed through the read-only bounded verifier; its 50-section scan bound applies across sources, overflow stays SEARCH_INCOMPLETE, and NONE/SAMPLED do not earn exhaustive coverage; RETRIEVAL slice stays disabled, research.trace serves persisted retrieval and orientation traces, and live qualification NOT_EXECUTED",
+        "S11 delegated query/evidence checkpoint: production TypeScript and SQL schema compilation/static review only; no new behavioral test execution or deployed migration. Existing owner test results above do not qualify this added service path. Native D1/R2, concurrent revocation/replay, HTTP and live acceptance remain pending."
       ]
     },
     {
@@ -711,7 +783,7 @@
     },
     {
       "id": "implemented-library-active-readiness",
-      "path": "apps/eliotr-core/src/library-readiness.ts",
+      "path": "packages/cloudflare-research-runtime/src/library-readiness.ts",
       "sentinel": "IMPLEMENTED_NOT_LIVE: ER-24 owner readiness composes active D1 projection and currentness readback; deployment qualification remains separate.",
       "owner_packets": [
         "ER-01",
@@ -733,7 +805,7 @@
     },
     {
       "id": "implemented-raw-normalized-admission",
-      "path": "apps/eliotr-core/src/raw-normalized-admission.ts",
+      "path": "packages/cloudflare-raw-ingest/src/raw-normalized-admission-service.ts",
       "sentinel": "IMPLEMENTED_NOT_LIVE: ER-37 owner raw conversion admission composes immutable capture and conversion readback with governed normalized ingest; deployed qualification remains separate.",
       "owner_packets": [
         "ER-01",

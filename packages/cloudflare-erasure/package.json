@@ -14,6 +14,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@eliotr/contracts": "workspace:*"
+    "@eliotr/contracts": "workspace:*",
+    "@eliotr/backup-o2": "workspace:*"
   }
 }

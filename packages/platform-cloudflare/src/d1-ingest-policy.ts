@@ -36,6 +36,7 @@ export function ensureOwnerAndPolicy(
   input: Pick<PreparedIngestOperation, "manifest" | "principal_ref">,
   owner: ActiveOwnerRow,
   policy: IngestAdmissionPolicySnapshot,
+  policyPrincipal = input.principal_ref,
 ): void {
   const manifest = input.manifest;
   if (
@@ -60,7 +61,7 @@ export function ensureOwnerAndPolicy(
   } else if (owner.cutover_receipt_ref !== null && cutoverRef !== undefined) {
     authorityFail("INGEST_OWNER_NOT_ACTIVE", "unexpected ownership cutover receipt");
   }
-  if (!policy.authorized_principal_refs.includes(input.principal_ref)) {
+  if (!policy.authorized_principal_refs.includes(policyPrincipal)) {
     authorityFail("INGEST_POLICY_DENIED", "principal is not authorized by the source admission policy");
   }
   if (!policy.allowed_ownership_modes.includes(manifest.origin.ownership_mode)) {
@@ -83,7 +84,12 @@ export async function requireCurrentIngestPolicy(database: D1Database, operation
     authorityFail("INGEST_POLICY_DENIED", "admission policy revision changed after reservation");
   }
   const policy = await policySnapshot(database, operation.source_namespace_id, operation.policy.revision);
-  ensureOwnerAndPolicy(operation, owner, policy);
+  if (operation.client_origin) {
+    const allowed = await database.prepare("SELECT operation_id FROM bundle_ingest_client_authorized WHERE operation_id=?1")
+      .bind(operation.operation_id).first<{ operation_id: string }>();
+    if (!allowed) authorityFail("INGEST_POLICY_DENIED", "The original import delegation is no longer current");
+  }
+  ensureOwnerAndPolicy(operation, owner, policy, operation.client_origin?.grant.grantor_principal_ref);
   if (await canonicalDigest(policy) !== operation.policy_snapshot_sha256) {
     authorityFail("INGEST_POLICY_DENIED", "admission policy bytes changed after reservation");
   }

@@ -17,6 +17,12 @@
     },
     {
       "path": "../platform-cloudflare"
+    },
+    {
+      "path": "../cloudflare-projection"
+    },
+    {
+      "path": "../cloudflare-model-transport"
     }
   ]
 }

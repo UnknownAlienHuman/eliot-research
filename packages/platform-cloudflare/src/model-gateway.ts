@@ -5,12 +5,17 @@ export const APPLICATION_MODEL_ROUTES = Object.freeze(["dynamic/eliotr-economy",
 export type ApplicationModelRoute = (typeof APPLICATION_MODEL_ROUTES)[number];
 export interface ModelRouteDeployment { readonly route_ref: ApplicationModelRoute; readonly route_version: string; readonly prompt_generation: string; readonly schema_generation: string; readonly parameters_digest: string; readonly pricing_snapshot_ref: string; }
 export interface RouteFingerprint extends ModelRouteDeployment { readonly provider: string; readonly exact_model_id: string; }
-export interface ModelGatewayCallPolicy { readonly gateway_id: "eliotr-reasoning"; readonly provider: "compat"; readonly endpoint: "chat/completions"; readonly route_ref: ApplicationModelRoute; readonly headers: Readonly<Record<string, string>>; }
+export type ModelGatewayCallTarget =
+  | Readonly<{ readonly provider: "compat"; readonly endpoint: "chat/completions" }>
+  | Readonly<{ readonly provider: "openai"; readonly endpoint: "chat/completions" | "responses" }>
+  | Readonly<{ readonly provider: "openrouter"; readonly endpoint: "chat/completions" }>
+  | Readonly<{ readonly provider: "anthropic"; readonly endpoint: "v1/messages" }>;
+export type ModelGatewayCallPolicy = ModelGatewayCallTarget & Readonly<{ readonly gateway_id: "eliotr-reasoning"; readonly route_ref: ApplicationModelRoute; readonly headers: Readonly<Record<string, string>> }>;
 export interface ModelGatewayAdapter extends ModelRoutePort { execute(input: ModelCallInput): Promise<ModelCallReceipt>; resolveFingerprint(routeRef: string): Promise<RouteFingerprint>; }
 export class ModelGatewayPolicyError extends Error { public constructor(message: string, cause?: unknown) { super(message, cause === undefined ? undefined : { cause }); this.name = "ModelGatewayPolicyError"; } }
-export function prepareModelGatewayCall(input: ModelCallInput, rawDeployment: unknown): ModelGatewayCallPolicy {
+export function prepareModelGatewayCall(input: ModelCallInput, rawDeployment: unknown, target: ModelGatewayCallTarget = { provider: "compat", endpoint: "chat/completions" }): ModelGatewayCallPolicy {
   const deployment = decodeModelRouteDeployment(rawDeployment); validateInput(input, deployment); const metadata = { budget_reservation_ref: identifier(input.budget_reservation_ref, "budget_reservation_ref"), evidence_pack_ref: refKey(input.evidence_pack.pack_ref, "evidence_pack.pack_ref"), output_object_ref: identifier(input.output_object_ref, "output_object_ref"), prompt_generation: deployment.prompt_generation, schema_generation: deployment.schema_generation };
-  return Object.freeze({ gateway_id: "eliotr-reasoning", provider: "compat", endpoint: "chat/completions", route_ref: deployment.route_ref, headers: Object.freeze({ "cf-aig-collect-log": "true", "cf-aig-collect-log-payload": "false", "cf-aig-metadata": JSON.stringify(metadata), "cf-aig-skip-cache": "true" }) });
+  return Object.freeze({ gateway_id: "eliotr-reasoning", ...target, route_ref: deployment.route_ref, headers: Object.freeze({ "cf-aig-collect-log": "true", "cf-aig-collect-log-payload": "false", "cf-aig-metadata": JSON.stringify(metadata), "cf-aig-skip-cache": "true" }) });
 }
 export function decodeDynamicRouteFingerprint(rawHeaders: Headers | Readonly<Record<string, string>>, rawDeployment: unknown): RouteFingerprint {
   const deployment = decodeModelRouteDeployment(rawDeployment), provider = header(rawHeaders, "cf-aig-provider"), model = header(rawHeaders, "cf-aig-model"); if (provider === null || model === null) fail("dynamic route response is missing cf-aig-provider or cf-aig-model"); return Object.freeze({ ...deployment, provider: identifier(provider, "cf-aig-provider"), exact_model_id: identifier(model, "cf-aig-model") });

@@ -21,6 +21,10 @@ from the tables below, so an unlisted file is a bug, not an omission you may ign
 |---|---|
 | [implementation-status.md](implementation-status.md) | What the four states mean and why a compiling port is not an implemented feature. |
 | [implementation-status.json](implementation-status.json) | The machine-readable registry. `pnpm check:implementation-status` validates it. |
+| [backend-delivery-plan.md](backend-delivery-plan.md) | Single ordered code queue, delivered checkpoint references, and separate assembled-product acceptance. |
+| [product-resume-2026-10-02.md](product-resume-2026-10-02.md) | Dated product integration checkpoint with preserved decisions and pending acceptance. |
+| [product-resume-2026-10-03.md](product-resume-2026-10-03.md) | Owner configuration, immutable Research capture and functional integration checkpoint. |
+| [audit-2026-09-25-review.md](audit-2026-09-25-review.md) | Independent review of audit PR303: reproduced SQL/lint/CI findings, corrections, issue mapping and verification limits. |
 | [gap-register.md](gap-register.md) | Prioritized list of what is genuinely missing, with the closure evidence each gap requires. |
 | [2026-09-10 saved work](checkpoints/2026-09-10/README.md) | Inactive snapshots of unfinished local work, push verification and cleanup inventory. |
 | [2026-09-10 cleanup receipt](checkpoints/2026-09-10/cleanup-receipt.json) | Exact removed build paths, recovered Git objects, preserved state, and cleanup exclusions. |
@@ -35,6 +39,7 @@ from the tables below, so an unlisted file is a bug, not an omission you may ign
 |---|---|
 | [dependency-map.md](dependency-map.md) | Package direction, owners and state authority. |
 | [contract-index.md](contract-index.md) | Canonical schemas and the code file that owns each one. |
+| [rust-kernel-abi-versioning.md](rust-kernel-abi-versioning.md) | Versioned Rust/Wasm ABI and the consumer-newer compatibility guard. |
 | [runtime-contract.md](runtime-contract.md) | Bounded Worker, DO, Workflow, Queue, D1, R2 and AI Search behaviour. |
 | [failure-model.md](failure-model.md) | Retries, lost ACKs, tampering, stale generations, partial failure. |
 | [security-checklist.md](security-checklist.md) | Executable disclosure, taint, erasure and secret boundaries. |
@@ -43,7 +48,8 @@ from the tables below, so an unlisted file is a bug, not an omission you may ign
 
 | Document | Purpose |
 |---|---|
-| [branch-discipline.md](branch-discipline.md) | Branch and worktree lifecycle, the five-branch ceiling, the 24-hour TTL, naming. |
+| [branch-discipline.md](branch-discipline.md) | Main-only implementation and exact-head, integration-proven branch cleanup. |
+| [scoped-verification.md](scoped-verification.md) | Focused verification commands and the distinction between scoped checks and the full chain. |
 | [toolchain.md](toolchain.md) | Pinned bootstrap tools. Leaf agents must not upgrade these; toolchain changes are ER-00. |
 | [launch-prs/README.md](launch-prs/README.md) | Theme map and the checkpoint dependency graph. |
 | [launch-prs/agent-start.md](launch-prs/agent-start.md) | How to select a checkpoint and the claim block to post before editing. |
@@ -59,6 +65,8 @@ from the tables below, so an unlisted file is a bug, not an omission you may ign
 | [cloudflare-runbook.md](cloudflare-runbook.md) | Provision, migrate, dry-run, deploy, verify, roll back. |
 | [cloudflare-usage-envelope.md](cloudflare-usage-envelope.md) | Usage envelope (80% guard), preflight admission receipt, SEALED/BLOCKED discipline. |
 | [local-launch.md](local-launch.md) | The owner loop that runs locally today, and its current limits. |
+| [owner-workspace-setup.md](owner-workspace-setup.md) | Operator-provisioned namespace bootstrap and first owner workspace setup. |
+| [research-runtime-configuration.md](research-runtime-configuration.md) | Server-owned Research configuration envelope, provenance and local/deployment input validation. |
 | [live-document-project-acceptance-2026-09-14.md](live-document-project-acceptance-2026-09-14.md) | Deployed owner login, PDF/DOCX intake, project save, research draft, claim audit and citation readbacks. |
 | [audit-2026-09-14.md](audit-2026-09-14.md) | Consolidated deep audit: coordinator pass, Antigravity Opus 4.6 swarm pass and independent re-verification — authority model, D1 triggers and test-harness depth limits, AI Gateway and canon, UI against NotebookLM, refuted claims. |
 | [audit-2026-09-09.md](audit-2026-09-09.md) | Dated merged-work and Cloudflare OAuth readback audit, with the remaining launch blockers. |
@@ -74,3 +82,5 @@ from the tables below, so an unlisted file is a bug, not an omission you may ign
 | [drive-credentials.md](drive-credentials.md) | Encrypted credential storage, refresh and rotation. |
 | [drive-oauth-admission.md](drive-oauth-admission.md) | Initial Google OAuth admission. |
 | [gemini-spark-mcp.md](gemini-spark-mcp.md) | Spark/Antigravity MCP protocol, client orchestration and live gates. |
+| [muse-operator-runbook.md](muse-operator-runbook.md) | Computer-agent operation — capabilities, transport and operating procedure per ADR-0007. |
+| [computer-agent-web-inbox.md](computer-agent-web-inbox.md) | Browser transport for the computer-agent web inbox; common task semantics live in the operator runbook. |

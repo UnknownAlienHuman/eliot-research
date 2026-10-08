@@ -1,0 +1,284 @@
+import { NormalizedBundleManifestSchema, ScopeExpressionSchema, VersionedRefSchema } from "@eliotr/contracts";
+import type { McpToolCallContext, McpToolDefinition } from "./gemini-mcp-protocol.js";
+
+const identifier = { type: "string", minLength: 1, maxLength: 256,
+  pattern: "^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$" } as const;
+const ref = VersionedRefSchema.toJSONSchema();
+// Move the existing recursive schema under this tool's $defs, without changing its vocabulary.
+const scope = JSON.parse(JSON.stringify(ScopeExpressionSchema.toJSONSchema(), (key, value: unknown) => {
+  if (key === "$schema") return undefined;
+  return key === "$ref" && typeof value === "string" && value.startsWith("#")
+    ? `#/$defs/scope${value.slice(1)}` : value;
+})) as Readonly<Record<string, unknown>>;
+const grant = { client_grant_id: { ...identifier,
+  description: "Owner-issued project grant locator, never a credential." } };
+const annotations = (idempotent: boolean) => ({
+  // Search persists its scope/result; reopening reports and evidence issues read authority/receipts.
+  readOnlyHint: false, destructiveHint: false, idempotentHint: idempotent, openWorldHint: false,
+}) as const;
+
+const bundleRequest = { type: "object", additionalProperties: false,
+  required: ["manifest", "total_bytes", "file_hashes"],
+  properties: { manifest: NormalizedBundleManifestSchema.toJSONSchema(),
+    total_bytes: { type: "integer", minimum: 1, maximum: 5368709120 },
+    file_hashes: { type: "object", minProperties: 3, maxProperties: 128,
+      additionalProperties: { type: "string", pattern: "^[a-f0-9]{64}$" } } } } as const;
+const externalTaskId = { type: "string", pattern: "^external-task:[a-f0-9]{64}$" } as const;
+const externalLeaseId = { type: "string",
+  pattern: "^external-lease:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$" } as const;
+const externalWorkerSlot = { type: "string", minLength: 1, maxLength: 64,
+  pattern: "^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$",
+  description: "Stable caller-chosen pull slot for lost-ack recovery and optional parallel workers; defaults to default." } as const;
+const externalEvidenceRefs = { type: "array", maxItems: 64, uniqueItems: true, items: ref } as const;
+const externalUsage = { type: "object", additionalProperties: false, required: ["accounting"],
+  properties: { accounting: { enum: ["SUBSCRIPTION", "API_METERED", "UNKNOWN"] },
+    input_tokens: { type: "integer", minimum: 0 }, output_tokens: { type: "integer", minimum: 0 },
+    billed_usd: { type: "number", minimum: 0 } },
+  allOf: [
+    { if: { properties: { accounting: { const: "UNKNOWN" } }, required: ["accounting"] },
+      then: { not: { anyOf: [{ required: ["input_tokens"] }, { required: ["output_tokens"] }, { required: ["billed_usd"] }] } } },
+    { if: { properties: { accounting: { const: "SUBSCRIPTION" } }, required: ["accounting"] },
+      then: { not: { required: ["billed_usd"] } } },
+    { if: { properties: { accounting: { const: "API_METERED" } }, required: ["accounting"] },
+      then: { anyOf: [{ required: ["input_tokens"] }, { required: ["output_tokens"] }, { required: ["billed_usd"] }] } },
+  ] } as const;
+const externalResult = { type: "object", additionalProperties: false,
+  required: ["disposition", "output", "evidence_refs", "diagnostics", "usage"],
+  properties: { disposition: { enum: ["SUCCEEDED", "PARTIAL", "FAILED"] },
+    output: { anyOf: [{ type: "object" }, { type: "null" }] }, evidence_refs: externalEvidenceRefs,
+    diagnostics: { type: "array", maxItems: 32, items: { type: "string", minLength: 1, maxLength: 2048 } },
+    usage: externalUsage },
+  allOf: [
+    { if: { properties: { disposition: { const: "FAILED" } }, required: ["disposition"] },
+      then: { properties: { output: { type: "null" }, diagnostics: { minItems: 1 } } } },
+    { if: { properties: { disposition: { enum: ["SUCCEEDED", "PARTIAL"] } }, required: ["disposition"] },
+      then: { properties: { output: { type: "object" } } } },
+  ] } as const;
+
+/** One registry for names, discovery schemas and dispatch. Only implemented consumers; cancellation is an explicit destructive control. */
+export const MCP_RESEARCH_TOOLS = {
+  eliotr_ingest_prepare: {
+    name: "eliotr_ingest_prepare",
+    description: "Prepare an immutable normalized bundle in an explicitly granted namespace. Requires ingest.bundle. The actual client, original grant revision, manifest/hashes and idempotency key bind the upload. Return values are staging locators, not admission or evidence. Upload bytes through the existing authenticated HTTP multipart endpoint; no raw conversion, model dispatch or automatic project attachment.",
+    inputSchema: { type: "object", additionalProperties: false, required: ["client_grant_id", "idempotency_key", "request"],
+      properties: { ...grant, idempotency_key: identifier, request: bundleRequest } },
+    annotations: annotations(true),
+  },
+  eliotr_ingest_discover: {
+    name: "eliotr_ingest_discover",
+    description: "Locate this client's exact existing normalized upload using its manifest, byte total and file hashes. Returns the existing recovery identity, never creates an upload. The original ingest.bundle grant revision and namespace authority must still be valid.",
+    inputSchema: { type: "object", additionalProperties: false, required: ["client_grant_id", "request"],
+      properties: { ...grant, request: bundleRequest } },
+    annotations: { ...annotations(true), readOnlyHint: true },
+  },
+  eliotr_ingest_complete_file: {
+    name: "eliotr_ingest_complete_file",
+    description: "Complete one previously uploaded file using its original part receipts. Empty parts requests readback of an already completed file, not a new upload. Checks exact staged bytes. Does not admit a source. HTTP and MCP use the same completion service and identifiers.",
+    inputSchema: { type: "object", additionalProperties: false, required: ["client_grant_id", "operation_id", "request"],
+      properties: { ...grant, operation_id: identifier, request: { type: "object", additionalProperties: false,
+        required: ["multipart_session_ref", "path", "parts"], properties: { multipart_session_ref: identifier,
+          path: { type: "string", minLength: 1, maxLength: 1024 }, parts: { type: "array", maxItems: 10000,
+            items: { type: "object", additionalProperties: false, required: ["part_number", "size_bytes", "etag"],
+              properties: { part_number: { type: "integer", minimum: 1, maximum: 10000 },
+                size_bytes: { type: "integer", minimum: 1, maximum: 268435456 },
+                etag: { type: "string", minLength: 1, maxLength: 1024 } } } } } } } },
+    annotations: annotations(true),
+  },
+  eliotr_ingest_commit: {
+    name: "eliotr_ingest_commit",
+    description: "Qualify, publish immutable bundle bytes and commit source admission through the existing guarded D1/R2 service. Uses the original operation/session/manifest hash; reconcile uncertain results without a new identity. Requires the exact original ingest.bundle grant and namespace. Returns ADMITTED, QUARANTINED or REJECTED honestly. Admission queues existing projections but is not index/evidence readiness or project attachment.",
+    inputSchema: { type: "object", additionalProperties: false, required: ["client_grant_id", "request"],
+      properties: { ...grant, request: { type: "object", additionalProperties: false,
+        required: ["operation_id", "multipart_session_ref", "manifest_sha256"],
+        properties: { operation_id: identifier, multipart_session_ref: identifier,
+          manifest_sha256: { type: "string", pattern: "^[a-f0-9]{64}$" } } } } },
+    annotations: annotations(true),
+  },
+  eliotr_ingest_status: {
+    name: "eliotr_ingest_status",
+    description: "Read the original client's authorized ingest operation and terminal receipt. Does not import, convert or start models. A known operation ID cannot bypass namespace/grant checks.",
+    inputSchema: { type: "object", additionalProperties: false, required: ["client_grant_id", "operation_id"],
+      properties: { ...grant, operation_id: identifier } },
+    annotations: { ...annotations(true), readOnlyHint: true },
+  },
+  eliotr_ingest_recovery: {
+    name: "eliotr_ingest_recovery",
+    description: "Read the exact existing upload identity, manifest hash, file hashes and total bytes after a lost response. A refreshed token for the same client is allowed, a changed or expired grant is not. This is observation only: it neither retries writes nor extends upload lifetime.",
+    inputSchema: { type: "object", additionalProperties: false, required: ["client_grant_id", "operation_id"],
+      properties: { ...grant, operation_id: identifier } },
+    annotations: { ...annotations(true), readOnlyHint: true },
+  },
+  eliotr_project_attach: {
+    name: "eliotr_project_attach",
+    description: "Append independently admitted, owner-readable sources from explicitly granted ingest_namespace_ids to one project with project.attach permission. Supply the unchanged title, complete desired source ID set (including all existing members), expected project revision and a stable action key. Uses the same guarded HTTP project update and receipt; cannot rename, detach, create source ownership or dispatch preprocessing/models. Repeat an uncertain response with exactly the same input/key/grant revision. Existing research scopes never expand.",
+    inputSchema: { type: "object", additionalProperties: false,
+      required: ["client_grant_id", "project_id", "idempotency_key", "request"],
+      properties: { ...grant, project_id: identifier, idempotency_key: identifier,
+        request: { type: "object", additionalProperties: false, required: ["title", "source_ids", "expected_revision"],
+          properties: { title: { type: "string", minLength: 1, maxLength: 512 },
+            source_ids: { type: "array", maxItems: 256, uniqueItems: true, items: identifier },
+            expected_revision: { type: "integer", minimum: 1, maximum: 9007199254740990 } } } } },
+    annotations: annotations(true),
+  },
+  eliotr_run: {
+    name: "eliotr_run",
+    description: "Create one Research workflow as the signed service actor within one explicit project. Requires run permission and exact owner-approved spend sponsorship. Returns the existing investigation reference and workflow ID; poll eliotr_run_status separately. May dispatch paid stages. Retain the same key and body after an uncertain response; never invent another run. Uses installed qualifications; it does not renew owner qualification probes.",
+    inputSchema: { type: "object", additionalProperties: false,
+      required: ["client_grant_id", "idempotency_key", "request"],
+      properties: { ...grant,
+        idempotency_key: { type: "string", minLength: 1, maxLength: 128, pattern: "^[A-Za-z0-9][A-Za-z0-9:._-]{0,127}$" },
+        request: { type: "object", additionalProperties: false,
+          required: ["query", "product", "scope_expression", "literals", "evidence_grade", "budget_ref", "max_results"],
+          properties: { query: { type: "string", minLength: 1 }, product: { const: "RESEARCH" },
+            scope_expression: { type: "object", additionalProperties: false, required: ["kind", "project_id"],
+              properties: { kind: { const: "PROJECT" }, project_id: identifier } },
+            literals: { type: "array", maxItems: 0 }, evidence_grade: { enum: ["E0", "E1", "E2"] },
+            budget_ref: { const: "research-budget-v1" }, max_results: { type: "integer", minimum: 1, maximum: 16 },
+            request_version: { const: "eliotr.research-run-request.v2" }, inquiry_protocol_ref: ref },
+          dependentRequired: { request_version: ["inquiry_protocol_ref"], inquiry_protocol_ref: ["request_version"] } } } },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  },
+  eliotr_query: {
+    name: "eliotr_query",
+    description: "Run project-authorized FAST_SEARCH through the existing query service. Returns the original evidence pack, trace references, authoritative coverage_claim, and synthesis_status NOT_REQUESTED with a static note; it does not generate an answer. Persisted work is replayed only with the same idempotency key, request and current authority. No model dispatch.",
+    inputSchema: {
+      type: "object", additionalProperties: false, required: ["client_grant_id", "idempotency_key", "request"],
+      $defs: { scope },
+      properties: { ...grant,
+        idempotency_key: { type: "string", minLength: 1, maxLength: 256, pattern: "^[^\\u0000-\\u0020\\u007f]+$" },
+        request: { type: "object", additionalProperties: false,
+          required: ["query", "product", "scope_expression", "literals", "evidence_grade", "budget_ref", "max_results"],
+          properties: {
+            query: { type: "string", minLength: 1, description: "Original question; the MCP JSON envelope is limited to 128 KiB." },
+            product: { const: "FAST_SEARCH" }, scope_expression: { $ref: "#/$defs/scope" },
+            literals: { type: "array", maxItems: 0 }, evidence_grade: { const: "E0" },
+            budget_ref: { const: "retrieval-fast-v1" }, max_results: { type: "integer", minimum: 1, maximum: 16 },
+          },
+        },
+      },
+    },
+    annotations: annotations(true),
+  },
+  eliotr_source_read: {
+    name: "eliotr_source_read",
+    description: "Read exact admitted normalized source bytes for a source revision currently attached to this project. Reads are independent of AI Search and never substitute the current head for the requested revision. Use the returned cursor to continue bounded UTF-8 pages.",
+    inputSchema: { type: "object", additionalProperties: false,
+      required: ["client_grant_id", "project_id", "source_revision_ref"],
+      properties: { ...grant, project_id: identifier, source_revision_ref: identifier,
+        page_bytes: { type: "integer", minimum: 1, maximum: 24576, default: 16384 },
+        cursor: { type: "string", maxLength: 2048 } } },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  eliotr_cancel: {
+    name: "eliotr_cancel",
+    description: "Stop one known explicit-project Research run with separate cancel permission: a grantor-authored run or your own machine run under its exact originating grant revision. Regrant never transfers control of an old machine run. Uses the same HTTP cancellation command and action key. Returns CANCELLED only after durable confirmation; completed runs conflict. Never resumes/restarts or dispatches models. Native termination may remain unconfirmed after canonical cancellation. On uncertain errors keep the same run, grant and idempotency key.",
+    inputSchema: { type: "object", additionalProperties: false,
+      required: ["client_grant_id", "workflow_instance_id", "idempotency_key"],
+      properties: { ...grant, workflow_instance_id: { type: "string", minLength: 1, maxLength: 128,
+        pattern: "^[A-Za-z0-9][A-Za-z0-9:._-]{0,127}$" },
+        idempotency_key: { type: "string", minLength: 1, maxLength: 256, pattern: "^[^\\u0000-\\u0020\\u007f]+$" } } },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+  },
+  eliotr_recover: {
+    name: "eliotr_recover",
+    description: "Recover the same known project Research run with explicit recover permission and fingerprint-bound owner spend sponsorship: a grantor-authored run or your own machine run under its exact originating grant revision. Reuses existing checkpoints and the single run/stage action journal; does not create a new run or renew expired execution. Remaining authorized stages may call models, including the first audit. On an uncertain response keep the same run, grant and idempotency key; never substitute another action.",
+    inputSchema: { type: "object", additionalProperties: false,
+      required: ["client_grant_id", "workflow_instance_id", "idempotency_key"],
+      properties: { ...grant, workflow_instance_id: { type: "string", minLength: 1, maxLength: 128,
+        pattern: "^[A-Za-z0-9][A-Za-z0-9:._-]{0,127}$" },
+        idempotency_key: { type: "string", minLength: 1, maxLength: 256, pattern: "^[^\\u0000-\\u0020\\u007f]+$" } } },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  },
+  eliotr_run_status: {
+    name: "eliotr_run_status",
+    description: "Read a known grantor-authored project run or your own machine run under its original delegation revision with status permission. A refreshed token may read after execution expiry; current project/source rights are still required. Returns the unchanged HTTP run-status DTO, not a new run. Only separate report permission permits discovery of a completed DRAFT reference through exact historical readback; this may issue read authority. No model, restart or execution renewal.",
+    inputSchema: { type: "object", additionalProperties: false, required: ["client_grant_id", "workflow_instance_id"],
+      properties: { ...grant, workflow_instance_id: { type: "string", minLength: 1, maxLength: 128,
+        pattern: "^[A-Za-z0-9][A-Za-z0-9:._-]{0,127}$" } } },
+    annotations: annotations(false),
+  },
+  eliotr_task_pull: {
+    name: "eliotr_task_pull",
+    description: "Claim or recover this exact grant revision's current subscription-agent task. Reuse one stable worker_slot after an uncertain response; independent slots may process separate published tasks concurrently. Returns null when no task is available. The lease is bounded by the existing Research attempt, spend expiry and project grant; this tool does not create a run, select a stage or settle W1/W2.",
+    inputSchema: { type: "object", additionalProperties: false, required: ["client_grant_id"],
+      properties: { ...grant, worker_slot: externalWorkerSlot } },
+    annotations: annotations(false),
+  },
+  eliotr_task_progress: {
+    name: "eliotr_task_progress",
+    description: "Append one exact next progress cursor for a leased subscription-agent task and renew the same lease within its existing bounds. Replaying identical cursor content returns the recorded receipt; gaps, changed content, replaced leases and cancelled workflows fail closed.",
+    inputSchema: { type: "object", additionalProperties: false,
+      required: ["client_grant_id", "task_id", "lease_id", "cursor", "progress"],
+      properties: { ...grant, task_id: externalTaskId, lease_id: externalLeaseId,
+        cursor: { type: "integer", minimum: 1, maximum: 4096 },
+        progress: { type: "object", additionalProperties: false, required: ["phase", "evidence_refs"],
+          properties: { phase: { type: "string", minLength: 1, maxLength: 128 },
+            message: { type: "string", minLength: 1, maxLength: 2048 },
+            completed_units: { type: "integer", minimum: 0, maximum: 1000000000 },
+            total_units: { type: "integer", minimum: 0, maximum: 1000000000 },
+            evidence_refs: externalEvidenceRefs } } } },
+    annotations: annotations(true),
+  },
+  eliotr_task_result: {
+    name: "eliotr_task_result",
+    description: "Record an idempotent subscription-agent callback for the exact live lease. After durable readback Core attempts the existing recover action with deterministic key agent-recover-<first 24 request_sha256 hex>. Repeat the same result after an uncertain response; manual recover is only a fallback with that exact key. workflow_settled becomes true only after the stage-specific consumer validates and W2/W1 advances.",
+    inputSchema: { type: "object", additionalProperties: false,
+      required: ["client_grant_id", "task_id", "lease_id", "idempotency_key", "result"],
+      properties: { ...grant, task_id: externalTaskId, lease_id: externalLeaseId,
+        idempotency_key: { type: "string", minLength: 1, maxLength: 256,
+          pattern: "^[^\\u0000-\\u0020\\u007f]+$" }, result: externalResult } },
+    annotations: annotations(true),
+  },
+  eliotr_task_status: {
+    name: "eliotr_task_status",
+    description: "Read delivery, lease, latest progress, callback digest, canonical next-stage settlement and workflow cancellation for one task bound to this exact grant revision. It never renews a lease or converts a recorded callback into a Research stage result.",
+    inputSchema: { type: "object", additionalProperties: false, required: ["client_grant_id", "task_id"],
+      properties: { ...grant, task_id: externalTaskId } },
+    annotations: { ...annotations(true), readOnlyHint: true },
+  },
+  eliotr_report: {
+    name: "eliotr_report",
+    description: "Reopen a known grantor-authored project DRAFT or your own machine DRAFT under its original delegation revision. Requires report permission. Refreshing your token or expiry of execution does not require restarting the run; expired/revoked/regranted read authority is rejected. Returns the same versioned HTTP reauthorization envelope, preserving hashes, freshness and DRAFT status. Issues fresh read authority, no model or artifact mutation.",
+    inputSchema: { type: "object", additionalProperties: false, required: ["client_grant_id", "artifact_ref"],
+      properties: { ...grant, artifact_ref: ref } },
+    annotations: annotations(false),
+  },
+  eliotr_section: {
+    name: "eliotr_section",
+    description: "Read an exact saved report section with report permission. Wraps the HTTP body as strict UTF-8 with original identity/hash headers and a separate transport-body digest. Never substitutes newer source text. Issues fresh read authority; no models.",
+    inputSchema: { type: "object", additionalProperties: false, required: ["client_grant_id", "artifact_ref", "section_ref"],
+      properties: { ...grant, artifact_ref: ref, section_ref: ref } },
+    annotations: annotations(false),
+  },
+  eliotr_citations: {
+    name: "eliotr_citations",
+    description: "Reopen saved section citations with BOTH report and evidence permissions. Returns the existing HTTP envelope pairing original references with fresh authorized handles. Preserve audit verdicts and coverage; this does not prove every claim. Issues read grants/handles; no models.",
+    inputSchema: { type: "object", additionalProperties: false, required: ["client_grant_id", "artifact_ref", "section_ref"],
+      properties: { ...grant, artifact_ref: ref, section_ref: ref } },
+    annotations: annotations(false),
+  },
+  eliotr_verify: {
+    name: "eliotr_verify",
+    description: "Resolve an existing evidence handle against its exact scope and canonical bytes. Requires evidence permission and the handle's original delegation revision. Returns the same HTTP resolved evidence and handle; may persist a verification receipt. No model call.",
+    inputSchema: { type: "object", additionalProperties: false, required: ["client_grant_id", "scope_snapshot_ref", "handle_ref"],
+      properties: { ...grant, scope_snapshot_ref: ref, handle_ref: ref } },
+    annotations: annotations(false),
+  },
+  eliotr_open: {
+    name: "eliotr_open",
+    description: "Open exact UTF-8 evidence bytes with evidence permission. Optional range is [start,end) in bytes. Returns original HTTP status/identity/verification headers and a separate digest of returned bytes, not a new evidence ID. May persist a verification receipt; no models.",
+    inputSchema: { type: "object", additionalProperties: false, required: ["client_grant_id", "handle_ref"],
+      properties: { ...grant, handle_ref: ref, range: { type: "object", additionalProperties: false,
+        required: ["start", "end"], properties: { start: { type: "integer", minimum: 0 }, end: { type: "integer", minimum: 1 } } } } },
+    annotations: annotations(false),
+  },
+} as const satisfies Readonly<Record<string, Omit<McpToolDefinition, "name"> & { readonly name: string }>>;
+
+export type McpResearchToolName = keyof typeof MCP_RESEARCH_TOOLS;
+export const MCP_RESEARCH_TOOL_NAMES = Object.freeze(Object.keys(MCP_RESEARCH_TOOLS) as McpResearchToolName[]);
+export function isMcpResearchTool(name: string): name is McpResearchToolName {
+  return Object.hasOwn(MCP_RESEARCH_TOOLS, name);
+}
+export type McpResearchToolCall = (
+  name: McpResearchToolName, input: unknown, context: McpToolCallContext,
+) => Promise<unknown>;

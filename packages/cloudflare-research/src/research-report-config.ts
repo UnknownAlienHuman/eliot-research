@@ -77,12 +77,12 @@ function parseAdmission(value: unknown, provenanceRef: string): ResearchReportAd
   const record = plain(value, ADMISSION_KEYS, "admission policy");
   if (record.config_provenance_ref !== provenanceRef) invalid("admission policy provenance does not match installed provenance");
   const result = z.object({
-    schema: z.literal("eliotr.research.report-admission.v1"),
+    schema: z.enum(["eliotr.research.report-admission.v1", "eliotr.research.delegated-report-admission.v1"]),
     policy_ref: IdentifierSchema,
     policy_revision: z.number().int().positive(),
     config_provenance_ref: IdentifierSchema,
     principal_ref: IdentifierSchema,
-    client_class: z.literal("owner_pwa"),
+    client_class: z.enum(["owner_pwa", "trusted_agent", "named_api_client"]),
     policy_generation: IdentifierSchema,
     policy_authority_ref: IdentifierSchema,
     allowed_use: z.array(IdentifierSchema).min(1),
@@ -91,7 +91,8 @@ function parseAdmission(value: unknown, provenanceRef: string): ResearchReportAd
     purpose: z.literal("research-report-materialization"),
     expires_at: IsoDateTimeSchema,
   }).strict().safeParse(record);
-  if (!result.success) invalid("admission policy fails strict validation");
+  if (!result.success || (result.data.schema === "eliotr.research.report-admission.v1") !==
+      (result.data.client_class === "owner_pwa")) invalid("admission policy fails strict validation");
   return result.data;
 }
 

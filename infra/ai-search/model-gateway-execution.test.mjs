@@ -1,7 +1,8 @@
+import { TextEncoder } from "node:util";
 import { describe, expect, it, vi } from "vitest";
 
 import {
-  ModelGatewayExecutionError,
+  ModelGatewayExecutionError, modelGatewayDynamicRouteTarget, validateModelGatewayRequestBody,
   canonicalModelGatewayJson,
   createModelGatewayFetchAdapter,
   decodeModelGatewayResponse,
@@ -107,6 +108,18 @@ async function deployment(body = requestBody(), overrides = {}) {
   };
 }
 
+// Since 2c395a76 the request model must address the deployment-identity-bound
+// dynamic route target, not the bare route ref. `model` is outside the
+// parameter projection, so the deployment digest is stable while the model is
+// patched to the computed target. Overrides that stay within JSON_BODY_KEYS
+// are reflected in the deployment before targeting.
+async function targetedRequestBody(overrides = {}) {
+  const body = requestBody(overrides);
+  const deployed = await deployment(body);
+  const target = await modelGatewayDynamicRouteTarget(deployed);
+  return { ...body, model: target.model };
+}
+
 function fingerprint(deployed, overrides = {}) {
   return {
     ...deployed,
@@ -170,7 +183,7 @@ function gatewayResponse(body = responseBody(), options = {}) {
 }
 
 async function fixture(overrides = {}) {
-  const body = overrides.request_body ?? requestBody();
+  const body = overrides.request_body ?? (await targetedRequestBody());
   const deployed = overrides.deployment ?? (await deployment(body));
   const compiledPrompt =
     overrides.compiled ?? (await compiled(body));
@@ -252,7 +265,7 @@ async function expectCode(promise, code) {
 
 describe("ER-16 reasoning gateway fetch execution boundary", () => {
   it("prepares the authenticated dynamic-route endpoint without leaking a provider Authorization header", async () => {
-    const body = requestBody();
+    const body = await targetedRequestBody();
     const deployed = await deployment(body);
     const prepared = await prepareModelGatewayHttpRequest(
       input(),
@@ -285,7 +298,7 @@ describe("ER-16 reasoning gateway fetch execution boundary", () => {
   });
 
   it("preserves multiline prompts and newline stop sequences", async () => {
-    const body = requestBody({ stop: ["\n\n", "\r\nEND"] });
+    const body = await targetedRequestBody({ stop: ["\n\n", "\r\nEND"] });
     const prepared = await prepareModelGatewayHttpRequest(
       input(),
       await deployment(body),
@@ -299,7 +312,7 @@ describe("ER-16 reasoning gateway fetch execution boundary", () => {
   });
 
   it("rejects wrong endpoints, malformed tokens, unsafe body fields, and reservation overflow before fetch", async () => {
-    const body = requestBody();
+    const body = await targetedRequestBody();
     const deployed = await deployment(body);
     const compiledPrompt = await compiled(body);
     await expectCode(
@@ -312,7 +325,13 @@ describe("ER-16 reasoning gateway fetch execution boundary", () => {
       ),
       "MODEL_GATEWAY_REQUEST_INVALID",
     );
-    const unsafeBody = requestBody({ tools: [] });
+    // tools:[] is outside JSON_BODY_KEYS, so the body cannot seed its own
+    // deployment: patch the model to the already-valid deployment's target so
+    // the tools rejection (not a model mismatch) is what fires.
+    const unsafeBody = {
+      ...requestBody({ tools: [] }),
+      model: (await modelGatewayDynamicRouteTarget(deployed)).model,
+    };
     await expectCode(
       prepareModelGatewayHttpRequest(
         input(),
@@ -333,7 +352,7 @@ describe("ER-16 reasoning gateway fetch execution boundary", () => {
       ),
       "MODEL_GATEWAY_REQUEST_INVALID",
     );
-    const oversizedOutput = requestBody({ max_tokens: 9_000 });
+    const oversizedOutput = await targetedRequestBody({ max_tokens: 9_000 });
     await expectCode(
       prepareModelGatewayHttpRequest(
         input(),
@@ -359,7 +378,7 @@ describe("ER-16 reasoning gateway fetch execution boundary", () => {
   });
 
   it("rejects request-body and deployed-parameter digest drift", async () => {
-    const body = requestBody();
+    const body = await targetedRequestBody();
     const deployed = await deployment(body);
     await expectCode(
       prepareModelGatewayHttpRequest(
@@ -716,5 +735,36 @@ describe("ER-16 reasoning gateway fetch execution boundary", () => {
       ),
       "MODEL_GATEWAY_POLICY_REJECTED",
     );
+  });
+});
+
+
+describe("S24 prepared model question envelope", () => {
+  it("preserves LF/CRLF/tab and enforces reserved full canonical UTF-8 bytes at max/max+1", async () => {
+    const question = "  Question\r\n\tРусский 😀\n".repeat(400);
+    const body = requestBody({ messages: [{ role: "system", content: "Trusted instructions" }, { role: "user", content: question }] });
+    const deployed = await deployment(body);
+    body.model = (await modelGatewayDynamicRouteTarget(deployed)).model;
+    const maximum = new TextEncoder().encode(canonicalModelGatewayJson(body)).byteLength;
+    const exact = await validateModelGatewayRequestBody(body, deployed, maximum, 8192);
+    expect(new TextEncoder().encode(exact.body).byteLength).toBe(maximum);
+    expect(JSON.parse(exact.body).messages[1].content).toBe(question);
+    const larger = { ...body, messages: [body.messages[0], { role: "user", content: `${question}x` }] };
+    await expect(validateModelGatewayRequestBody(larger, deployed, maximum, 8192)).rejects.toMatchObject({
+      code: "MODEL_GATEWAY_REQUEST_INVALID", message: "canonical model request exceeds the reserved input byte budget",
+    });
+    // This is the actual validation used by HTTP preparation before dispatch, not a question-only cap.
+    const prepared = await prepareModelGatewayHttpRequest(input({ max_input_bytes: maximum }), deployed, await compiled(body), BASE_URL, TOKEN);
+    expect(prepared.body).toBe(exact.body);
+    await expect(prepareModelGatewayHttpRequest(input({ max_input_bytes: maximum }), deployed, await compiled(larger), BASE_URL, TOKEN))
+      .rejects.toMatchObject({ code: "MODEL_GATEWAY_REQUEST_INVALID", message: "canonical model request exceeds the reserved input byte budget" });
+  });
+  it.each(["a\ud800b", "a\udc00b", "a\rb", "a\u0000b", "a\u0001b"])("rejects malformed question text before identity/transport", async (question) => {
+    const body = requestBody({ messages: [{ role: "system", content: "Trusted instructions" }, { role: "user", content: question }] });
+    const deployed = await deployment(body);
+    body.model = (await modelGatewayDynamicRouteTarget(deployed)).model;
+    await expect(validateModelGatewayRequestBody(body, deployed, 262144, 8192)).rejects.toMatchObject({
+      code: "MODEL_GATEWAY_REQUEST_INVALID", message: "model request messages[1].content is invalid",
+    });
   });
 });

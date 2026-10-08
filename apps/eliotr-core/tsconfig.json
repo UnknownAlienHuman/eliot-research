@@ -77,6 +77,45 @@
     },
     {
       "path": "../../packages/cloudflare-federation"
+    },
+    {
+      "path": "../../packages/cloudflare-computer-agent"
+    },
+    {
+      "path": "../../packages/cloudflare-wiki"
+    },
+    {
+      "path": "../../packages/cloudflare-model-control"
+    },
+    {
+      "path": "../../packages/cloudflare-native-models"
+    },
+    {
+      "path": "../../packages/cloudflare-erasure-operations"
+    },
+    {
+      "path": "../../packages/cloudflare-research-runtime"
+    },
+    {
+      "path": "../../packages/cloudflare-search-probe"
+    },
+    {
+      "path": "../../packages/cloudflare-model-transport"
+    },
+    {
+      "path": "../../packages/cloudflare-research-branches"
+    },
+    {
+      "path": "../../packages/cloudflare-research-configuration"
+    },
+    {
+      "path": "../../packages/cloudflare-backup"
+    },
+    {
+      "path": "../../packages/cloudflare-http-protocol"
+    },
+    {
+      "path": "../../packages/cloudflare-artifacts"
     }
   ]
 }

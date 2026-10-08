@@ -1,4 +1,13 @@
-export const DELIVERY_MESSAGE_PROTOCOL = "eliotr.delivery.message.v1" as const;
+import {
+  DELIVERY_MESSAGE_PROTOCOL,
+  type OutboxLease,
+  type DeliveryMessage,
+  type QueueSendReceipt,
+  type OutboxClaimRequest,
+  type InboxLease,
+  type DeliveryHandlerContext,
+} from "@eliotr/contracts";
+export { DELIVERY_MESSAGE_PROTOCOL, type OutboxLease, type DeliveryMessage, type QueueSendReceipt, type OutboxClaimRequest, type InboxLease, type DeliveryHandlerContext } from "@eliotr/contracts";
 
 const SAFE_IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/u;
 const SHA256 = /^[a-f0-9]{64}$/u;
@@ -32,45 +41,8 @@ export class DeliveryRuntimeError extends Error {
   }
 }
 
-export interface OutboxLease {
-  readonly outbox_id: string;
-  readonly topic: string;
-  readonly payload_ref: string;
-  readonly payload_sha256: string;
-  readonly idempotency_key: string;
-  readonly attempt: number;
-  readonly lease_owner: string;
-  readonly lease_generation: number;
-  readonly lease_until_ms: number;
-  readonly created_at_ms: number;
-}
-
-export interface DeliveryMessage {
-  readonly protocol: typeof DELIVERY_MESSAGE_PROTOCOL;
-  readonly message_id: string;
-  readonly topic: string;
-  readonly payload_ref: string;
-  readonly payload_sha256: string;
-  readonly idempotency_key: string;
-  readonly outbox_id: string;
-  readonly outbox_attempt: number;
-  readonly created_at_ms: number;
-}
-
-export interface QueueSendReceipt {
-  readonly queue_message_ref: string;
-  readonly accepted_at_ms: number;
-}
-
 export interface DeliveryProducer {
   send(message: DeliveryMessage): Promise<QueueSendReceipt>;
-}
-
-export interface OutboxClaimRequest {
-  readonly worker_id: string;
-  readonly now_ms: number;
-  readonly lease_ms: number;
-  readonly limit: number;
 }
 
 export interface OutboxStore {
@@ -97,16 +69,6 @@ export type InboxBeginDisposition =
   | "ACQUIRED"
   | "DUPLICATE_COMPLETED"
   | "DUPLICATE_PROCESSING";
-
-export interface InboxLease {
-  readonly message_id: string;
-  readonly topic: string;
-  readonly idempotency_key: string;
-  readonly lease_owner: string;
-  readonly lease_generation: number;
-  readonly attempt: number;
-  readonly lease_until_ms: number;
-}
 
 export interface InboxBeginResult {
   readonly disposition: InboxBeginDisposition;
@@ -135,13 +97,6 @@ export interface QueueDelivery {
   readonly body: unknown;
   ack(): void;
   retry(options?: { readonly delaySeconds?: number }): void;
-}
-
-export interface DeliveryHandlerContext {
-  readonly message_id: string;
-  readonly idempotency_key: string;
-  readonly topic: string;
-  readonly attempt: number;
 }
 
 export type DeliveryHandler = (

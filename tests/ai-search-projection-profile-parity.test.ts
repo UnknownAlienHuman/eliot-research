@@ -1,7 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
-import { PROJECTION_EXECUTION_PROFILE } from
-  "../apps/eliotr-core/src/projection-execution-handler.js";
+import { PROJECTION_EXECUTION_PROFILE } from "../packages/cloudflare-ai/src/index.js";
 
 interface DesiredInstance {
   readonly id: string;

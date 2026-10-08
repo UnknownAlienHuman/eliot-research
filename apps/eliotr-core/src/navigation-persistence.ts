@@ -1,7 +1,7 @@
 import { createD1NavigationStore, type D1NavigationStoreInput } from "@eliotr/cloudflare-evidence";
 import type { NavigationService } from "@eliotr/retrieval";
-import { createNavigationService } from "./navigation-service.js";
-import type { ScopeService } from "./scope-service.js";
+import { createNavigationService } from "@eliotr/cloudflare-navigation";
+import type { ScopeService } from "@eliotr/cloudflare-navigation";
 
 /** Supply an authoritative scope service, not user-provided snapshot validity. No grant is minted here. */
 export function createD1NavigationService(

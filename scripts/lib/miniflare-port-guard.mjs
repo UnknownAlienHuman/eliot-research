@@ -65,15 +65,19 @@ function validateInputs(ports, hosts) {
 /**
  * Reserve the Fetch-forbidden loopback ports for the lifetime of a test
  * project. There is one bounded bind attempt per port/host: EADDRINUSE means
- * another process owns that endpoint and is preserved; every other error is
- * fatal after releasing reservations already made by this call.
+ * another process owns that endpoint; on Windows, EACCES means the endpoint is
+ * unavailable to this process as well. Both are preserved as unavailable;
+ * every other error is fatal after releasing reservations already made by this
+ * call.
  */
 export async function reserveMiniflareForbiddenPorts({
   platform = process.platform,
   ports = FETCH_FORBIDDEN_PORTS,
   hosts = LOOPBACK_HOSTS,
+  bindPort = listenReservedPort,
 } = {}) {
   validateInputs(ports, hosts);
+  if (typeof bindPort !== "function") throw new TypeError("port guard requires a bind function");
   if (platform !== "win32") return { active: false, reservations: [], skipped: [], release: noopRelease };
 
   const reservations = [];
@@ -90,11 +94,11 @@ export async function reserveMiniflareForbiddenPorts({
     for (const port of ports) {
       for (const host of hosts) {
         try {
-          const server = await listenReservedPort(port, host);
+          const server = await bindPort(port, host);
           reservations.push(server);
         } catch (error) {
-          if (error?.code === "EADDRINUSE") {
-            skipped.push({ host, port, reason: "EADDRINUSE" });
+          if (error?.code === "EADDRINUSE" || error?.code === "EACCES") {
+            skipped.push({ host, port, reason: error.code });
             continue;
           }
           throw new Error(`failed to reserve Fetch-forbidden loopback port ${host}:${port}`, { cause: error });

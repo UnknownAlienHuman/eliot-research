@@ -9,7 +9,6 @@
       "ER-36"
     ],
     "owned_paths": [
-      "apps/eliotr-core/src/research-changes-cursor.ts",
       "apps/eliotr-core/src/research-changes.ts",
       "apps/eliotr-core/test/research-changes.test.ts"
     ],

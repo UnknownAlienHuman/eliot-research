@@ -170,6 +170,16 @@ export interface ErasureBackend {
     fence: ErasureFence,
     closure: ErasureDependencyClosure,
   ): Promise<readonly ErasureBlocker[]>;
+  /**
+   * Recheck one object target immediately before physical purge dispatch. The
+   * fenced authority read is not atomic with a later external adapter call.
+   */
+  recheckTargetRetentionAndHolds(
+    request: ErasureRequest,
+    fence: ErasureFence,
+    closure: ErasureDependencyClosure,
+    target: PurgeTarget,
+  ): Promise<ErasureBlocker | undefined>;
   recordBlockedTarget(
     request: ErasureRequest,
     fence: ErasureFence,

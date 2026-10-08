@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
 import { access, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
@@ -23,7 +23,7 @@ const LOCAL_SERVER_CONFIGURATION_KEYS = RESEARCH_RUNTIME_CONFIGURATION_KEYS;
 
 export function localEnvironment(environment = process.env) {
   const env = Object.fromEntries(Object.entries(environment).filter(([key]) =>
-    !/^(?:CLOUDFLARE|CF_|WRANGLER|ELIOTR_|ACCESS_|AI_GATEWAY_|MCP_|GOOGLE_)/iu.test(key)));
+    !/^(?:CLOUDFLARE|CF_|WRANGLER|ELIOTR_|ACCESS_|AI_GATEWAY_|MCP_|GOOGLE_|RESEARCH_CHANGES_CURSOR_KEY$)/iu.test(key)));
   return { ...env, CI: "true", WRANGLER_SEND_METRICS: "false",
     CLOUDFLARE_LOAD_DEV_VARS_FROM_DOT_ENV: "false", CLOUDFLARE_INCLUDE_PROCESS_ENV: "false" };
 }
@@ -31,7 +31,10 @@ export function localEnvironment(environment = process.env) {
 export function localConfig(canonical, root = ROOT) {
   if (canonical.name !== "eliotr-core" || canonical.main !== "src/index.ts" ||
       !canonical.assets || !Array.isArray(canonical.d1_databases) ||
-      canonical.d1_databases.length !== 2 || canonical.r2_buckets?.length !== 2) {
+      canonical.d1_databases.length !== 2 || canonical.r2_buckets?.length !== 3 ||
+      ["EVIDENCE_BUCKET", "WORK_BUCKET", "BACKUP_PARTS_BUCKET"].some((binding) =>
+        canonical.r2_buckets.filter((bucket) => bucket?.binding === binding).length !== 1) ||
+      canonical.version_metadata?.binding !== "VERSION_METADATA") {
     throw new Error("Unsupported canonical Worker configuration; local profile must be reviewed");
   }
   const core = resolve(root, "apps/eliotr-core");
@@ -49,6 +52,7 @@ export function localConfig(canonical, root = ROOT) {
     compatibility_date: canonical.compatibility_date,
     ...(canonical.compatibility_flags ? { compatibility_flags: canonical.compatibility_flags } : {}),
     workers_dev: false, preview_urls: false, minify: true,
+    version_metadata: { binding: "VERSION_METADATA" },
     assets: { ...canonical.assets, directory: resolve(core, canonical.assets.directory) },
     vars: { ENVIRONMENT: "development", DEPLOYMENT_GENERATION: "local-development",
       ACCESS_TEAM_DOMAIN: "https://replace-me.cloudflareaccess.com", ACCESS_AUDIENCE: "replace-me",
@@ -77,18 +81,43 @@ function forwardExplicitServerConfiguration(config, environment) {
 }
 
 export async function validateLocalVars(path) {
-  if ((await stat(path)).size > 8192) throw new Error("Local Access settings exceed 8192 bytes");
-  const allowed = new Set(["ACCESS_TEAM_DOMAIN", "ACCESS_AUDIENCE", "ACCESS_SERVICE_PRINCIPALS"]);
+  if ((await stat(path)).size > 8192) throw new Error("Local settings exceed 8192 bytes");
+  const allowed = new Set(["ACCESS_TEAM_DOMAIN", "ACCESS_AUDIENCE", "ACCESS_SERVICE_PRINCIPALS", "RESEARCH_CHANGES_CURSOR_KEY"]);
   const seen = new Set();
-  for (const raw of (await readFile(path, "utf8")).split(/\r?\n/u)) {
+  const original = await readFile(path, "utf8");
+  for (const raw of original.split(/\r?\n/u)) {
     const line = raw.trim();
     if (!line || line.startsWith("#")) continue;
     const match = /^([A-Z_]+)="([^"\\\r\n]*)"$/u.exec(line);
     if (!match || !allowed.has(match[1]) || seen.has(match[1]) || /[\u0000-\u001f\u007f]/u.test(match[2])) {
-      throw new Error('Local .dev.vars permits only unique ACCESS_* settings in KEY="value" form; provider/deployment settings are forbidden');
+      throw new Error('Local .dev.vars permits only unique Access settings and a local cursor key in KEY="value" form; provider/deployment settings are forbidden');
+    }
+    if (match[1] === "RESEARCH_CHANGES_CURSOR_KEY" &&
+        (!/^[A-Za-z0-9_-]{43}$/u.test(match[2]) || Buffer.from(match[2], "base64url").byteLength !== 32 ||
+         Buffer.from(match[2], "base64url").toString("base64url") !== match[2])) {
+      throw new Error("Local changes cursor key must be canonical base64url for 32 bytes");
     }
     seen.add(match[1]);
   }
+  return { original, hasCursorKey: seen.has("RESEARCH_CHANGES_CURSOR_KEY") };
+}
+
+async function prepareLocalVars(path) {
+  // Keep secrets out of generated config vars, CLI arguments and inherited env.
+  // Wrangler masks values loaded from this existing local-only secret file.
+  const { original, hasCursorKey } = await validateLocalVars(path);
+  if (hasCursorKey) return;
+  const separator = original && !original.endsWith("\n") ? "\n" : "";
+  const content = `${original}${separator}RESEARCH_CHANGES_CURSOR_KEY="${randomBytes(32).toString("base64url")}"\n`;
+  if (Buffer.byteLength(content) > 8192) throw new Error("Local settings exceed 8192 bytes");
+  const temporary = `${path}.${process.pid}.${randomBytes(8).toString("hex")}.tmp`;
+  try {
+    await writeFile(temporary, content, { flag: "wx", mode: 0o600 });
+    // Preparation and owner-settings updates are single-writer operations for
+    // one local profile. Reject observed concurrent edits rather than erase them.
+    if (await readFile(path, "utf8") !== original) throw new Error("Local settings changed during preparation");
+    await rename(temporary, path);
+  } finally { await rm(temporary, { force: true }); }
 }
 
 export function localPaths(stateDirectory = resolve(ROOT, ".eliotr-state/local")) {
@@ -465,7 +494,7 @@ export async function prepareLocal({ stateDirectory, execute = executeLocal, log
   // Existing local Access settings are never overwritten.
   try { await writeFile(resolve(paths.directory, ".dev.vars"), "", { flag: "wx", mode: 0o600 }); }
   catch (error) { if (error.code !== "EEXIST") throw error; }
-  await validateLocalVars(resolve(paths.directory, ".dev.vars"));
+  await prepareLocalVars(resolve(paths.directory, ".dev.vars"));
   const temporary = `${paths.config}.${process.pid}.tmp`;
   await writeFile(temporary, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
   await rename(temporary, paths.config);

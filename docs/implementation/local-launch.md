@@ -1,9 +1,12 @@
 # Local launch checkpoint
 
+Deployment hostnames are redacted as `<ELIOTR_ACCESS_HOSTNAME>`; resolve the exact target
+from the ignored operator profile. Historical deployment evidence is not approval for a new deploy.
+
 ## Deployed owner workspace
 
 The private Cloudflare workspace is available at
-[eliotr-core.kleymor-metal.workers.dev](https://eliotr-core.kleymor-metal.workers.dev).
+[<ELIOTR_ACCESS_HOSTNAME>](https://<ELIOTR_ACCESS_HOSTNAME>).
 Choose the existing workspace, add a document, select it in Sources and press **Read document**.
 Reading and downloading use the exact admitted normalized bytes, require the current owner read
 policy, and do not depend on a search index or model. This reader is bounded to 2 MiB per document;
@@ -12,8 +15,8 @@ it does not create citation evidence. Private content is not cached by the PWA.
 The minute scheduler dispatches admitted-source jobs to the queue. A completed D1 projection makes
 exact and lexical retrieval available; semantic retrieval remains unavailable without AI Search.
 The Research screen separately reports model configuration and actual run state. On 2026-09-13, the
-owner document path completed a real 18-stage SYNTHESIZE and AUDIT run with Cloudflare
-`@cf/zai-org/glm-5.3-flash` and saved a DRAFT in R2. The PWA displayed the draft, opened its answer
+owner document path completed a real 18-stage SYNTHESIZE and AUDIT run with the
+owner-selected Workers AI model route and saved a DRAFT in R2. The PWA displayed the draft, opened its answer
 section, loaded seven claim checks and verified a cited excerpt in Evidence Rail. This confirms the
 owner path without establishing full production readiness. After two deployments on the same date, the
 owner reopened that saved draft from Research history, opened its Russian answer section, loaded seven
@@ -47,7 +50,7 @@ active attempt are now read in one D1 transaction. A remaining `RESEARCH_RUN_STA
 response preserves the loaded run and history for manual refresh; actual authorization loss still clears them.
 
 Route qualification uses a seven-day window in the current code, including the future lazy-renewal path.
-Version `owner-cloudflare-glm53-v6` was qualified through real synthesis and audit calls at 23:44 UTC
+The installed owner route version `v6` was qualified through real synthesis and audit calls at 23:44 UTC
 on September 13; its initial proofs expired at 00:29 UTC on September 14. Its new immutable pricing
 snapshots and owner configuration run until October 12; the model and rates are unchanged. These
 timestamps describe the release configuration, not continuing readiness. A live check on deployment
@@ -149,9 +152,19 @@ pnpm local:dev
 `.eliotr-state/local/wrangler.json` and `.eliotr-state/local/state/` are ignored. The config is
 allowlisted; remote bindings, credentials, environment selectors and parent dotenv files cannot leak
 into local preparation. Local resources use separate names and one absolute persistence path.
-Only explicit local Access settings are accepted; authentication is never disabled. External providers
+Only explicit local Access settings and the local changes-cursor signing key are accepted; authentication is never disabled. External providers
 are disabled, not simulated. This isolated profile does not import or erase state from the earlier
 `wrangler.local.jsonc` profile; that old state remains untouched.
+
+Local preparation generates a random 32-byte `RESEARCH_CHANGES_CURSOR_KEY` in the profile's ignored,
+permission-restricted `.dev.vars` when missing. Wrangler masks it as a secret; it is not copied into
+printable `wrangler.json` vars, CLI arguments or browser storage. Repeat preparation and owner-settings
+reconciliation preserve the existing key, including a valid explicitly supplied local key. Separate
+profiles generate independent keys. A malformed, duplicate or oversized persisted setting fails before
+build/migration subprocesses and is not silently replaced. The complete `.dev.vars` remains limited to
+8192 bytes. As with the existing owner-settings writer, prepare one profile serially; an observed
+concurrent edit is rejected. Parent process keys are stripped rather than imported. This local key
+signs change-feed cursors only: it grants no Access identity, source admission or live qualification.
 
 Run `pnpm local:smoke` for a disposable loopback test. It applies every tracked migration, checks both
 migration ledgers and SQLite foreign-key/quick integrity checks, loads the actual PWA JavaScript asset,

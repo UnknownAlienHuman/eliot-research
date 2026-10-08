@@ -7,7 +7,7 @@ import {
   type ExhaustiveQueryRuntime,
 } from "@eliotr/cloudflare-navigation";
 import type { AuthenticatedRequestContext, ExhaustiveQueryResult } from "@eliotr/interfaces";
-import { CatalogInputError } from "./catalog-service.js";
+import { CatalogInputError } from "@eliotr/cloudflare-navigation";
 import type { Env } from "./env.js";
 
 export {

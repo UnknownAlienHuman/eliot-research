@@ -1,15 +1,20 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { after, before, test } from "node:test";
 import { createServer, request as httpRequest } from "node:http";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
+import { gzipSync } from "node:zlib";
 import { isChromiumSafePort, startOwnerBridge } from "./lib/local-owner-bridge.mjs";
 import { startLocalWorker, reserveChromiumSafePort } from "./lib/local-worker.mjs";
 import { loginOwner, readOwnerIdentity, validateWorkerOrigin } from "./lib/local-owner-login.mjs";
 import { loadOwnerConfig, validateOwnerConfig } from "./lib/local-owner-config.mjs";
 
 const TOKEN = "header.private.signature";
+const SECTION_BYTES = Buffer.from("section readback bytes\n");
+const SECTION_SHA256 = createHash("sha256").update(SECTION_BYTES).digest("hex");
+const SECTION_PATH = "/api/v1/research/artifact/artifact-report-1%3A1/sections/section-intro%3A1";
 const config = { app: "https://research.example.com", team: "https://team.cloudflareaccess.com", audience: "audience" };
 const localOwnerSource = await readFile(resolve(process.cwd(), "scripts/local-owner.mjs"), "utf8");
 const identity = () => ({ protocol: "eliotr.owner-session.v1", principal_ref: "owner-subject", client_class: "owner_pwa",
@@ -21,6 +26,22 @@ before(async () => {
     requests.push({ path: request.url, headers: request.headers, body: Buffer.concat(chunks).toString() });
     response.setHeader("content-type", "application/json");
     if (request.headers["cf-access-jwt-assertion"] !== TOKEN) { response.statusCode = 401; return response.end("{}"); }
+    if (behavior === "artifact-section" && request.url.startsWith("/api/v1/research/artifact/")) {
+      const compressed = gzipSync(SECTION_BYTES);
+      response.statusCode = request.url.endsWith("/reauthorize") ? 206 : 200;
+      response.setHeader("content-type", "application/octet-stream");
+      response.setHeader("content-encoding", "gzip"); response.setHeader("content-length", String(compressed.byteLength));
+      response.setHeader("x-eliotr-artifact-ref", encodeURIComponent("artifact-report-1:1"));
+      response.setHeader("x-eliotr-section-ref", encodeURIComponent("section-intro:1"));
+      response.setHeader("x-eliotr-section-object-ref", encodeURIComponent("artifact-draft/section/section-intro:1"));
+      response.setHeader("x-eliotr-section-sha256", SECTION_SHA256);
+      response.setHeader("x-eliotr-deployment-generation", "expected");
+      response.setHeader("set-cookie", "upstream-session=private; HttpOnly");
+      response.setHeader("authorization", "Bearer upstream-secret");
+      response.setHeader("x-upstream-private-debug", "must-not-forward");
+      response.setHeader("content-security-policy", "default-src *");
+      return response.end(compressed);
+    }
     if (behavior === "hold" && request.url === "/api/private") {
       held = () => response.end(JSON.stringify({ private: "secret-evidence" })); return;
     }
@@ -120,29 +141,80 @@ test("one-time pairing sets a private cookie; proxy sends only the server-held t
     assert.equal(replay.status, 403);
   } finally { await value.close(); }
 });
-test("raw capture metadata stays route-scoped while forwarding the browser file headers", async () => {
+test("raw capture metadata stays route-scoped while forwarding namespace and expected-head identity", async () => {
   const value = await bridge();
   try {
     const cookie = await pair(value);
-    const fileHeaders = {
-      cookie,
-      origin: value.origin,
-      "content-type": "text/plain",
-      "content-length": "4",
+    const metadata = {
       "x-eliotr-content-sha256": "a".repeat(64),
       "x-eliotr-original-file-name": encodeURIComponent("исследование.txt"),
+      "x-eliotr-source-namespace-id": "owner-library-selected",
+      "x-eliotr-target-source-id": "source-existing",
+      "x-eliotr-expected-head-revision-ref": "revision-original",
     };
+    const fileHeaders = { cookie, origin: value.origin, "content-type": "text/plain",
+      "content-length": "4", ...metadata, "x-ignored": "never-forward" };
     const uploaded = await fetch(`${value.origin}/api/v1/ingest/raw`, { method: "POST", headers: fileHeaders, body: "data" });
     assert.equal(uploaded.status, 200);
-    assert.equal(requests.at(-1).headers["x-eliotr-content-sha256"], fileHeaders["x-eliotr-content-sha256"]);
-    assert.equal(requests.at(-1).headers["x-eliotr-original-file-name"], fileHeaders["x-eliotr-original-file-name"]);
+    for (const [name, expected] of Object.entries(metadata)) assert.equal(requests.at(-1).headers[name], expected,
+      "the exact selected namespace and source-head contract must reach the Worker unchanged");
     assert.equal(requests.at(-1).headers["content-length"], "4");
-    const ordinary = await fetch(`${value.origin}/api/private`, { method: "POST", headers: { ...fileHeaders, "content-length": "4" }, body: "data" });
-    assert.equal(ordinary.status, 200);
-    assert.equal(requests.at(-1).headers["x-eliotr-content-sha256"], undefined);
-    assert.equal(requests.at(-1).headers["x-eliotr-original-file-name"], undefined);
+    assert.equal(requests.at(-1).headers["x-ignored"], undefined);
+    assert.equal(requests.at(-1).headers.cookie, undefined);
+    assert.equal(requests.at(-1).headers["cf-access-jwt-assertion"], TOKEN);
+    // Other routes/methods cannot acquire the raw capture header surface.
+    for (const [path, method] of [["/api/private", "POST"], ["/api/v1/ingest/raw/capture/markdown", "POST"],
+      ["/api/v1/ingest/raw", "GET"], ["/api/v1/ingest/raw", "PUT"]]) {
+      const headers = { ...fileHeaders };
+      if (method === "GET") delete headers["content-length"];
+      const response = await fetch(`${value.origin}${path}`, { method, headers,
+        ...(method === "GET" ? {} : { body: "data" }) });
+      assert.equal(response.status, 200);
+      for (const name of Object.keys(metadata)) assert.equal(requests.at(-1).headers[name], undefined);
+    }
+    // Existing callers without optional namespace/target locators are not assigned invented ones.
+    const legacyHeaders = { ...fileHeaders };
+    for (const name of ["x-eliotr-source-namespace-id", "x-eliotr-target-source-id", "x-eliotr-expected-head-revision-ref"]) delete legacyHeaders[name];
+    const legacy = await fetch(`${value.origin}/api/v1/ingest/raw`, { method: "POST", headers: legacyHeaders, body: "data" });
+    assert.equal(legacy.status, 200);
+    for (const name of ["x-eliotr-source-namespace-id", "x-eliotr-target-source-id", "x-eliotr-expected-head-revision-ref"]) assert.equal(requests.at(-1).headers[name], undefined);
   } finally { await value.close(); }
 });
+test("artifact section readback forwards only exact metadata and recomputes emitted length", async () => {
+  const value = await bridge();
+  const required = {
+    "x-eliotr-artifact-ref": encodeURIComponent("artifact-report-1:1"),
+    "x-eliotr-section-ref": encodeURIComponent("section-intro:1"),
+    "x-eliotr-section-object-ref": encodeURIComponent("artifact-draft/section/section-intro:1"),
+    "x-eliotr-section-sha256": SECTION_SHA256,
+    "x-eliotr-deployment-generation": "expected",
+  };
+  try {
+    const cookie = (await pair(value)).split(";")[0];
+    behavior = "artifact-section";
+    const cases = [[SECTION_PATH, "GET", 200], [SECTION_PATH + "/reauthorize", "POST", 206]];
+    for (const [path, method, status] of cases) {
+      const response = await fetch(value.origin + path, { method, headers: { cookie, origin: value.origin, accept: "application/octet-stream" } });
+      assert.equal(response.status, status);
+      assert.deepEqual(Buffer.from(await response.arrayBuffer()), SECTION_BYTES);
+      assert.equal(response.headers.get("content-length"), String(SECTION_BYTES.byteLength));
+      for (const [name, expected] of Object.entries(required)) assert.equal(response.headers.get(name), expected);
+      assert.equal(response.headers.get("set-cookie"), null);
+      assert.equal(response.headers.get("authorization"), null);
+      assert.equal(response.headers.get("x-upstream-private-debug"), null);
+      assert.equal(response.headers.get("content-encoding"), null);
+      assert.equal(response.headers.get("content-security-policy"), "default-src 'self'; script-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'");
+      assert.equal(response.headers.get("cache-control"), "no-store");
+    }
+    const unrelated = await fetch(value.origin + SECTION_PATH + "/citations", { headers: { cookie } });
+    assert.equal(unrelated.status, 200);
+    for (const name of Object.keys(required)) assert.equal(unrelated.headers.get(name), null);
+    assert.equal(unrelated.headers.get("set-cookie"), null);
+    assert.equal(unrelated.headers.get("authorization"), null);
+    assert.equal(unrelated.headers.get("x-upstream-private-debug"), null);
+  } finally { behavior = "normal"; await value.close(); }
+});
+
 test("cross-origin, DNS rebinding, cookie duplication and credential substitution never reach Worker", async () => {
   const value = await bridge();
   try {

@@ -2,7 +2,7 @@
 import type { Investigation, InquiryProtocolProfile, ScopeSnapshot, VersionedRef } from "@eliotr/contracts";
 import { z } from "zod";
 import {
-  LEDGER_SQL, LedgerError, LedgerEventSchema, LedgerHeadSchema, decodeLedgerEvent, decodeLedgerHead, ledgerFenceDriftCode, parseLedgerTriggerCode, sameLedgerEvent, sameLedgerFence, sameLedgerHead, throwIfCancelled,
+  LEDGER_SQL, LedgerGoalSchema, LedgerError, LedgerEventSchema, LedgerHeadSchema, decodeLedgerEvent, decodeLedgerHead, ledgerFenceDriftCode, parseLedgerTriggerCode, sameLedgerEvent, sameLedgerFence, sameLedgerHead, throwIfCancelled,
   type InvestigationLedgerStore, type LedgerAuthorityFence, type LedgerEvent, type LedgerEventRow, type LedgerHead, type LedgerHeadRow,
   type LedgerObligation, type LedgerSnapshot,
 } from "./ports.js";
@@ -36,13 +36,15 @@ export interface InvestigationService {
   result(investigationRef: VersionedRef): Promise<ResearchRunResult | null>;
 }
 const HEX64 = /^[a-f0-9]{64}$/;
-const ID = z.string().min(1).max(128); const REF256 = z.string().min(1).max(256); const GOAL = z.string().min(1).max(2000);
+const ID = z.string().min(1).max(128); const REF256 = z.string().min(1).max(256); const GOAL = LedgerGoalSchema;
 const HANDLE = z.string().min(1).max(256); const DIGEST = z.string().regex(HEX64); const ISO = z.string().datetime({ offset: true });
 const GENERATION = z.string().min(1).max(256); const GRADE = z.enum(["E0", "E1", "E2", "E3"]);
 const LANE = z.enum(["confirmatory", "exploratory", "mixed_with_declared_split"]); const OBL_LANE = z.enum(["confirmatory", "exploratory"]);
 const ObligationSchema = z.object({
   obligation_id: ID, verifier_ref: REF256, lane: OBL_LANE, metric_ref: REF256,
   status: z.enum(["REGISTERED", "ACCEPTED", "DEVIATED"]), exposed: z.boolean(),
+  kind: REF256.optional(), dependency_obligation_ids: z.array(ID).max(16).optional(),
+  certificate_kind: REF256.optional(), blocking: z.boolean().optional(),
 }).strict();
 const CreateInputSchema = z.object({
   investigation_id: ID, goal: GOAL, scope_snapshot_id: REF256, scope_snapshot_revision: z.number().int().min(1).max(1000000), evidence_grade: GRADE, lane: LANE,

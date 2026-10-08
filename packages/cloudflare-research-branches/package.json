@@ -1,0 +1,48 @@
+{
+  "name": "@eliotr/cloudflare-research-branches",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": "./src/index.ts",
+    "./research-branch-execution.js": "./src/research-branch-execution.ts",
+    "./research-branch-execution-context.js": "./src/research-branch-execution-context.ts",
+    "./research-branch-execution-results.js": "./src/research-branch-execution-results.ts",
+    "./research-branch-execution-shared.js": "./src/research-branch-execution-shared.ts",
+    "./research-branch-role-model.js": "./src/research-branch-role-model.ts",
+    "./research-branch-role-output.js": "./src/research-branch-role-output.ts",
+    "./research-branch-role-preparation.js": "./src/research-branch-role-preparation.ts",
+    "./research-branch-role-server-preparation.js": "./src/research-branch-role-server-preparation.ts",
+    "./research-branch-role-evidence-pack.js": "./src/research-branch-role-evidence-pack.ts",
+    "./research-branch-role-manifest-store.js": "./src/research-branch-role-manifest-store.ts",
+    "./research-external-branch-analysis.js": "./src/research-external-branch-analysis.ts",
+    "./research-w1-observations.js": "./src/research-w1-observations.ts",
+    "./research-planning-manifest.js": "./src/research-planning-manifest.ts",
+    "./research-inquiry-protocol.js": "./src/research-inquiry-protocol.ts",
+    "./research-evidence-freeze.js": "./src/research-evidence-freeze.ts",
+    "./research-evidence-freeze-preparation.js": "./src/research-evidence-freeze-preparation.ts",
+    "./research-evidence-freeze-composition.js": "./src/research-evidence-freeze-composition.ts",
+    "./research-evidence-freeze-branch-lineage.js": "./src/research-evidence-freeze-branch-lineage.ts",
+    "./research-protocol-freeze.js": "./src/research-protocol-freeze.ts"
+  },
+  "types": "./src/index.ts",
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc -b --pretty false"
+  },
+  "dependencies": {
+    "@eliotr/cloudflare-ai": "workspace:*",
+    "@eliotr/cloudflare-evidence": "workspace:*",
+    "@eliotr/cloudflare-model-control": "workspace:*",
+    "@eliotr/cloudflare-model-execution": "workspace:*",
+    "@eliotr/cloudflare-workflows": "workspace:*",
+    "@eliotr/contracts": "workspace:*",
+    "@eliotr/domain": "workspace:*",
+    "@eliotr/platform-cloudflare": "workspace:*",
+    "@eliotr/policy": "workspace:*",
+    "@eliotr/research": "workspace:*",
+    "@eliotr/retrieval": "workspace:*",
+    "zod": "4.4.3"
+  }
+}

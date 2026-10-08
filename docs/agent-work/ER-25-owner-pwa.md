@@ -20,6 +20,8 @@ outside the paths below.
 - `scripts/lib/browser-import-fixture.mjs`
 - `scripts/lib/browser-mcp-diagnostic-fixture.mjs`
 - `scripts/lib/browser-research-readiness-fixture.mjs`
+- `scripts/lib/browser-research-screen-fixture.mjs`
+- `scripts/check-project-client.mjs`
 
 ## Read only
 
@@ -266,3 +268,56 @@ does not close the broader theme or project work.
 
 Disabled upload, workflow, Recent scans and Retrieval actions share the existing muted treatment,
 so their visible state matches their availability without changing layout or the calm palette.
+
+## S31 project-agent management code checkpoint
+
+Connections mounts one project grant editor using S10's strict DTO and existing owner
+GET/PUT/DELETE routes. Project and grant pages are bounded and explicitly loaded; new grants
+default to catalog read only. Other declared operations remain visibly unimplemented service
+handlers, and spend sponsorship is not offered. Editing retains the grantee identity and current
+expected revision. Revocation requires a separate confirmation; regrant is an explicit owner action.
+
+An uncertain mutation retains its exact project/grant/key/body in memory for explicit retry.
+A receipt is acknowledged separately from the subsequent current-list readback, so replaying an old
+receipt cannot mark an obsolete grant current. Offline, authorization or deployment/readiness loss
+and disposal clear all private controls and invalidate late responses. No credentials or grants
+are stored in localStorage, sessionStorage, IndexedDB or the service-worker cache.
+
+The selected grant exposes a command for `scripts/check-project-client.mjs`. This independent
+service client requires explicit `--confirm-live`, an HTTPS origin, project, grant locator and
+deployment generation, plus `CF_ACCESS_CLIENT_ID`/`CF_ACCESS_CLIENT_SECRET` in the process's private
+environment. It sends one bounded catalog GET with no owner cookie and refuses redirects, wrong
+generation/project, malformed output or an absent readable source witness. It prints only a
+bounded read observation and response digest, not source titles, source text or secrets. It neither
+mutates permissions nor calls models. No command result is accepted as server authority in the PWA;
+configured permissions and the generic MCP connection diagnostic remain explicitly separate.
+
+This code-first checkpoint has compile/static verification only. Behavioral/native/browser and
+live client acceptance remain pending; no new test files or test runs are part of the checkpoint.
+
+
+## S32 owner run controls (2026-09-24 code checkpoint)
+
+The existing Research panel exposes Stop research and Recover research separately from Load
+status. `research-run-controls.ts` is a thin adapter to the existing run routes and strict status
+decoder. It retains in-memory action identities for explicit uncertain-outcome retry, never
+optimistically cancels, and clears private state with the panel lifecycle. Report opening reuses
+POST reauthorization for non-author owners without conferring Wiki/publication authority.
+Production compilation/lint only; browser/native acceptance remains pending.
+
+
+## S19 transient reconnect (2026-09-25 code checkpoint)
+
+Research keeps the user-entered question, scope selection, known run locator and unresolved
+request/action keys in this tab's memory across network loss, health unavailability and session
+reverification. Protected reports, sections, citations, history and the evidence rail are cleared.
+The existing strict owner-session decoder is shared with the connection gate. A fresh GET must
+confirm the same owner and deployment before observing the same run; auth denial, identity/deployment
+change and disposal clear retained input too. Scope/source invalidation retains its hard clearing rule.
+
+Reconnect reads session, status and history; it never submits or retries a run, control or upload.
+An unacknowledged start keeps its body/key for an explicit unchanged retry, not a replacement run.
+In-flight responses are fenced by lifecycle serial, cancellation, current generation and session
+expiry. Health checks are cancellable/latest-only and browser online initiates a new check.
+No private browser storage or offline response cache is introduced. Report presentation is extracted
+from the existing controller, not duplicated. Compilation/lint only; browser/native acceptance pending.

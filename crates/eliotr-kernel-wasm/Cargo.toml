@@ -16,6 +16,7 @@ default = []
 m1-self-test-export = []
 
 [dependencies]
+eliotr-canonical = { path = "../eliotr-canonical", version = "=0.1.0" }
 eliotr-test-vectors = { path = "../eliotr-test-vectors", version = "=0.1.0" }
 
 [lints]

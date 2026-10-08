@@ -41,18 +41,36 @@ if (imports.length !== 0) {
 
 const exports = globalThis.WebAssembly.Module.exports(module);
 const kernelExports = exports.map(({ name }) => name).filter((name) => name.startsWith("eliotr_"));
+// Version stamps are metadata, not product operations: a consumer must read them before
+// invoking any operation, so they are always exported. See
+// docs/implementation/rust-kernel-abi-versioning.md.
+const VERSION_STAMP_EXPORTS = Object.freeze([
+  "eliotr_kernel_abi_version_v1",
+  "eliotr_kernel_schema_generation_v1",
+]);
 
 if (mode === "default") {
-  if (kernelExports.length !== 0) {
+  const productExports = kernelExports.filter(
+    (name) => !VERSION_STAMP_EXPORTS.includes(name),
+  );
+  if (productExports.length !== 0) {
     throw new Error(
-      `default Rust/Wasm exposed product-shaped ABI symbols: ${kernelExports.join(", ")}`,
+      `default Rust/Wasm exposed product-shaped ABI symbols: ${productExports.join(", ")}`,
+    );
+  }
+  const missingStamps = VERSION_STAMP_EXPORTS.filter(
+    (name) => !kernelExports.includes(name),
+  );
+  if (missingStamps.length !== 0) {
+    throw new Error(
+      `default Rust/Wasm is missing required version stamps: ${missingStamps.join(", ")}`,
     );
   }
   console.log(
     `Rust/Wasm default: PASS (${bytes.byteLength} raw bytes, ${compressedBytes} gzip bytes, zero imports).`,
   );
 } else {
-  const allowed = new Set(SELF_TEST_EXPORTS);
+  const allowed = new Set([...SELF_TEST_EXPORTS, ...VERSION_STAMP_EXPORTS]);
   const unexpected = kernelExports.filter((name) => !allowed.has(name));
   const missing = SELF_TEST_EXPORTS.filter((name) => !kernelExports.includes(name));
   if (unexpected.length !== 0 || missing.length !== 0) {

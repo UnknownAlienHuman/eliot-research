@@ -1,1 +1,5 @@
 export * from "./runtime-limits.js"; export * from "./bindings.js"; export * from "./d1.js"; export * from "./d1-outbox-authority.js"; export * from "./d1-outbox-store.js"; export * from "./d1-ingest-types.js"; export * from "./d1-ingest-authority.js"; export * from "./d1-ingest-policy.js"; export * from "./d1-ingest-snapshot-view.js"; export { canonicalDigest, residencyKeyForManifest, stableIngestId } from "./d1-ingest-validation.js"; export * from "./r2.js"; export * from "./outbox.js"; export * from "./ai-search.js"; export * from "./model-gateway.js"; export * from "./observability.js"; export * from "./ingest.js"; export * from "./erasure-backend.js"; export * from "./backup.js"; export * from "./queue.js"; export * from "./delivery-runtime.js";
+
+export { createS3OffsiteCopyAdapter, type S3OffsiteCopyAdapterConfig } from "./backup-offsite-s3.js";
+export { encodeCanonicalBase64Bytes, decodeCanonicalBase64Bytes, type CanonicalBase64DecodeOptions } from "./canonical-base64-bytes.js";
+export { queueDeliveryMetric, scheduledOutboxMetric, type QueueDeliveryMetricInput, type ScheduledOutboxMetricInput } from "./delivery-metrics.js";

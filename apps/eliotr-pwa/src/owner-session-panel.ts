@@ -1,71 +1,13 @@
-import { ApiRequestError, isAuthorizationLoss, requestApi } from "./api.js";
-
-const SAFE_IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/u;
-const SAFE_TRACE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
-const CLIENT_CLASSES = new Set(["owner_pwa", "named_api_client", "trusted_agent", "federation_client"]);
-
-interface OwnerSession {
-  readonly principal_ref: string;
-  readonly credential_generation: string;
-  readonly expires_at: string;
-  readonly client_class: string;
-}
+import { ApiRequestError, isAuthorizationLoss } from "./api.js";
+import { isOwnerSessionUnexpired, readOwnerSession, type OwnerSession } from "./owner-session-api.js";
 
 export interface OwnerSessionPanelOptions {
   readonly deploymentGeneration: () => string | undefined;
   readonly healthReady: () => boolean;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function schemaError(message: string): never {
-  throw new ApiRequestError({ status: 502, code: "API_RESPONSE_SCHEMA_MISMATCH", message });
-}
-
-function exactKeys(value: Record<string, unknown>, required: readonly string[], label: string): void {
-  const keys = Object.keys(value);
-  if (keys.length !== required.length || required.some((key) => !Object.hasOwn(value, key))) {
-    schemaError(`${label} has missing or unknown fields`);
-  }
-}
-
-function identifier(value: unknown, label: string, pattern = SAFE_IDENTIFIER): string {
-  if (typeof value !== "string" || value.length === 0 || value.length > 256 || value !== value.trim() ||
-      /[\u0000-\u001f\u007f]/u.test(value) || !pattern.test(value)) {
-    schemaError(`${label} is invalid`);
-  }
-  return value;
-}
-
-function timestamp(value: unknown, label: string): string {
-  const text = identifier(value, label, /^.{1,64}$/u);
-  const milliseconds = Date.parse(text);
-  if (!Number.isFinite(milliseconds) || new Date(milliseconds).toISOString() !== text) schemaError(`${label} is invalid`);
-  return text;
-}
-
-function decodeOwnerSessionEnvelope(value: unknown, expectedGeneration: string): OwnerSession {
-  if (!isRecord(value)) schemaError("owner session envelope is not an object");
-  exactKeys(value, ["data", "trace_id", "deployment_generation"], "owner session envelope");
-  const envelopeGeneration = identifier(value.deployment_generation, "envelope deployment generation");
-  if (envelopeGeneration !== expectedGeneration) {
-    throw new ApiRequestError({ status: 409, code: "API_GENERATION_MISMATCH", message: "Owner session belongs to another deployment" });
-  }
-  const trace = identifier(value.trace_id, "envelope trace id", SAFE_TRACE_ID);
-  if (!SAFE_TRACE_ID.test(trace)) schemaError("envelope trace id is invalid");
-  if (!isRecord(value.data)) schemaError("owner session data is not an object");
-  exactKeys(value.data, ["protocol", "principal_ref", "client_class", "credential_generation", "expires_at"], "owner session data");
-  if (value.data.protocol !== "eliotr.owner-session.v1") schemaError("owner session protocol is invalid");
-  const clientClass = identifier(value.data.client_class, "owner session client class");
-  if (!CLIENT_CLASSES.has(clientClass)) schemaError("owner session client class is invalid");
-  return {
-    principal_ref: identifier(value.data.principal_ref, "owner session principal"),
-    credential_generation: identifier(value.data.credential_generation, "owner session credential generation"),
-    expires_at: timestamp(value.data.expires_at, "owner session expiry"),
-    client_class: clientClass,
-  };
+  readonly onVerified?: (session: OwnerSession, deploymentGeneration: string) => void;
+  readonly onCleared?: () => void;
+  /** Clears every private owner view when the verified Cloudflare session expires. */
+  readonly onExpired?: () => void;
 }
 
 function online(): boolean {
@@ -120,6 +62,7 @@ export function mountOwnerSessionPanel(
   let controller: AbortController | undefined;
   let session: OwnerSession | undefined;
   let sessionGeneration: string | undefined;
+  let expiryTimer: number | undefined;
 
   const currentGeneration = (): string | undefined => {
     const generation = options.deploymentGeneration();
@@ -154,10 +97,12 @@ export function mountOwnerSessionPanel(
     controller = undefined;
     session = undefined;
     sessionGeneration = undefined;
+    clearExpiryTimer();
     summary.textContent = message;
     status.textContent = "";
     details.open = false;
     renderSession();
+    options.onCleared?.();
   };
   const refresh = (): void => {
     if (disposed || controller !== undefined) return;
@@ -180,20 +125,31 @@ export function mountOwnerSessionPanel(
     updateButton();
     void (async () => {
       try {
-        const response = await requestApi("/api/v1/system/session", { signal: local.signal });
+        const response = await readOwnerSession(generation, local.signal);
         if (mine !== serial || disposed || currentGeneration() !== generation) return;
-        session = decodeOwnerSessionEnvelope(response, generation);
+        if (!isOwnerSessionUnexpired(response)) {
+          throw new ApiRequestError({ status: 401, code: "ACCESS_SESSION_EXPIRED", message: "The verified owner session has expired." });
+        }
+        session = response;
         sessionGeneration = generation;
+        scheduleExpiry(response);
         summary.textContent = "Current owner session is available.";
         status.textContent = "Read from the current deployment.";
         renderSession();
+        options.onVerified?.(response, generation);
       } catch (error) {
         if (mine !== serial || disposed) return;
+        if (error instanceof ApiRequestError && error.code === "ACCESS_SESSION_EXPIRED" && options.onExpired !== undefined) {
+          options.onExpired();
+          return;
+        }
         session = undefined;
         sessionGeneration = undefined;
+        clearExpiryTimer();
         summary.textContent = failureMessage(error);
         status.textContent = "";
         renderSession();
+        options.onCleared?.();
       } finally {
         if (controller === local) {
           controller = undefined;
@@ -207,24 +163,58 @@ export function mountOwnerSessionPanel(
   const authorizationCleared = (): void => clearPrivate("Authorization changed. Sign in again to read the current owner session.");
   const healthLost = (): void => clearPrivate("The server connection changed. Read the current owner session again when ready.");
   const healthUpdated = (): void => {
+    if (session !== undefined && !isOwnerSessionUnexpired(session)) {
+      expireSession(session);
+      return;
+    }
     if (session !== undefined && sessionGeneration !== currentGeneration()) {
       clearPrivate("The deployment changed. Read the current owner session again.");
       return;
     }
+    if (session === undefined && options.healthReady() && online() && currentGeneration() !== undefined) {
+      refresh();
+      return;
+    }
     updateButton();
   };
+  function clearExpiryTimer(): void {
+    if (expiryTimer !== undefined) window.clearTimeout(expiryTimer);
+    expiryTimer = undefined;
+  }
+  function scheduleExpiry(current: OwnerSession): void {
+    clearExpiryTimer();
+    const remaining = Date.parse(current.expires_at) - Date.now();
+    if (!Number.isFinite(remaining)) return;
+    if (remaining <= 0) {
+      expireSession(current);
+      return;
+    }
+    expiryTimer = window.setTimeout(() => expireSession(current), Math.min(remaining, 2_147_483_647));
+  }
+  function expireSession(current: OwnerSession): void {
+    if (disposed || session !== current) return;
+    if (isOwnerSessionUnexpired(current)) {
+      scheduleExpiry(current);
+      return;
+    }
+    options.onExpired?.();
+    if (session === current) clearPrivate("Owner session expired. Checking the current verified session again.");
+    if (options.healthReady() && online() && currentGeneration() !== undefined) refresh();
+  }
   readButton.onclick = refresh;
   window.addEventListener("offline", offline);
   window.addEventListener("eliotr:authorization-cleared", authorizationCleared);
   window.addEventListener("eliotr:health-lost", healthLost);
   window.addEventListener("eliotr:health-updated", healthUpdated);
   updateButton();
+  if (options.healthReady() && online() && currentGeneration() !== undefined) refresh();
 
   const cleanup = (): void => {
     disposed = true;
     serial += 1;
     controller?.abort();
     controller = undefined;
+    clearExpiryTimer();
     readButton.onclick = null;
     window.removeEventListener("offline", offline);
     window.removeEventListener("eliotr:authorization-cleared", authorizationCleared);

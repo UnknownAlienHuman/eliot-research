@@ -15,6 +15,17 @@ const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
 let token = process.env.CLOUDFLARE_API_TOKEN;
 const apiBase = process.env.CLOUDFLARE_API_BASE_URL ?? "https://api.cloudflare.com/client/v4";
 const checkOnly = process.argv.includes("--check-only");
+const verifyExisting = process.argv.includes("--verify-existing");
+const showHelp = process.argv.includes("--help") || process.argv.includes("-h");
+if (checkOnly && verifyExisting) {
+  console.error("--check-only and --verify-existing cannot be used together");
+  process.exit(2);
+}
+if (showHelp) {
+  console.log("Usage: scripts/provision-ai-gateways.mjs [--check-only | --verify-existing] [--help]\nProvisions AI Gateway configuration from infra/cloudflare/ai-gateways.json. --check-only prints the plan with zero mutations. --verify-existing performs GET-only exact readback and fails if any gateway is missing.");
+  process.exitCode = 0;
+}
+if (!showHelp) {
 let authMode = "api-token";
 try {
   authMode = resolveAuthMode(process.env);
@@ -26,13 +37,6 @@ if (authMode === WRANGLER_OAUTH_MODE) {
   // Direct-invocation OAuth path: bearer stays in process memory only.
   if (!accountId) {
     console.error(`CLOUDFLARE_ACCOUNT_ID is required. ${LOGIN_INSTRUCTION}`);
-    process.exit(2);
-  }
-  try {
-    const credential = await loadWranglerOAuthCredential({ env: process.env, now: Date.now() });
-    token = credential.bearer;
-  } catch (error) {
-    console.error(error?.message ?? String(error));
     process.exit(2);
   }
   try {
@@ -51,19 +55,24 @@ if (authMode === WRANGLER_OAUTH_MODE) {
     console.error(error?.message ?? String(error));
     process.exit(2);
   }
+  // `wrangler whoami` may refresh the official OAuth profile. Read its bearer
+  // only after the token-scrubbed account check has completed.
+  try {
+    const credential = await loadWranglerOAuthCredential({ env: process.env, now: Date.now() });
+    token = credential.bearer;
+  } catch (error) {
+    console.error(error?.message ?? String(error));
+    process.exit(2);
+  }
 } else if (!accountId || !token) {
   console.error("CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN are required");
   process.exit(2);
 }
 
-// FIX1-B usage-envelope gate (narrow): usage preflight before the first
-// remote mutation. In-process shared runner writes the redacted admission
-// receipt. BLOCKED exits in every mode; any other non-ADMITTED decision
-// (SEALED) exits in apply mode — SEALED never POSTs gateway creates.
-// ADMITTED alone never suffices in apply mode: the same-process admission
-// capability minted by fresh live collection is additionally required.
-// Check-only inspection stays read-only metadata.
-{
+// Default apply retains the fresh live-usage admission fence. Check-only and
+// verify-existing are read-only inspection paths and skip usage collection;
+// verify-existing guards every Cloudflare request as GET-only.
+if (!checkOnly && !verifyExisting) {
   let usageGate;
   try {
     usageGate = await runUsagePreflight({ env: process.env, nowMs: Date.now(), writeReceipt: true,
@@ -77,12 +86,25 @@ if (authMode === WRANGLER_OAUTH_MODE) {
     console.error(`Cloudflare usage preflight ${usageGate.decision} denies AI Gateway provisioning before any mutation. ${usageGate.evaluation.reasons.join("; ")}${usageGate.decision === "ADMITTED" ? " Missing same-process admission capability: ADMITTED alone never authorizes mutations." : ""}`);
     process.exit(2);
   }
+  if (authMode === WRANGLER_OAUTH_MODE) {
+    // The gate repeats whoami and may refresh the profile after the initial
+    // token read. Reload the strict local profile before bearer-backed calls.
+    try {
+      token = (await loadWranglerOAuthCredential({ env: process.env, now: Date.now() })).bearer;
+    } catch (error) {
+      console.error(error?.message ?? String(error));
+      process.exit(2);
+    }
+  }
 }
 const desired = JSON.parse(await readFile(new URL("../infra/cloudflare/ai-gateways.json", import.meta.url), "utf8"));
 const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
 const enc = encodeURIComponent;
 
 async function request(method, path, body, allow404 = false) {
+  if (verifyExisting && method !== "GET") {
+    throw new Error(`--verify-existing permits GET requests only; refused ${method} ${path}`);
+  }
   const response = await fetch(`${apiBase}${path}`, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
   const text = await response.text();
   let payload;
@@ -98,6 +120,9 @@ for (const spec of desired.gateways) {
   const path = `/accounts/${enc(accountId)}/ai-gateway/gateways/${enc(spec.id)}`;
   let existing = await request("GET", path, undefined, true);
   if (existing === null) {
+    if (verifyExisting) {
+      throw new Error(`--verify-existing found missing resource: AI Gateway ${spec.id}`);
+    }
     if (checkOnly) {
       receipts.push({ id: spec.id, disposition: "CREATE" });
       continue;
@@ -119,3 +144,4 @@ console.log(JSON.stringify({
   mode: checkOnly ? "CHECK_ONLY_NO_MUTATION" : "APPLIED",
   gateways: receipts,
 }, null, 2));
+}

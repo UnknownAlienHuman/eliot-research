@@ -1,10 +1,10 @@
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import type { AuthenticatedRequestContext, CatalogResult } from "@eliotr/interfaces";
 import { handleHttp } from "../src/http.js";
-import { readCatalog } from "../src/catalog-service.js";
-import { catalogTimeFrontier } from "../src/catalog-queries.js";
+import { readCatalog } from "@eliotr/cloudflare-navigation";
+import { catalogTimeFrontier } from "@eliotr/cloudflare-navigation";
 import { db, insert, observeDatabase, runtime, seedSource, setupOrientationDatabase, verifier } from "./orientation-fixture.js";
-import { readLibraryPage } from "../../eliotr-pwa/src/library-api.js";
+import { readLibraryPage } from "../../../packages/pwa-source-workspace/src/library-api.js";
 import { orientationBody, orientSources } from "../../eliotr-pwa/src/orientation-api.js";
 beforeAll(setupOrientationDatabase);
 const request = (query = "") => new Request(`https://research.example/api/v1/research/catalog${query}`);

@@ -14,13 +14,13 @@ outside the paths below.
 - `packages/domain/src/scope.ts`
 - `packages/domain/src/project-membership.ts`
 - `packages/domain/src/project-membership.test.ts`
-- `apps/eliotr-core/src/scope-service.ts`
 - `apps/eliotr-core/test/scope-service.test.ts`
 - `packages/domain/src/scope/snapshot-identity.ts`
 - `packages/domain/src/scope/snapshot-identity.test.ts`
 - `apps/eliotr-core/test/scope-persistence.test.ts`
 - `apps/eliotr-core/src/sql-fixture.d.ts`
 - `packages/cloudflare-navigation/src/scope-service.ts`
+- `packages/cloudflare-navigation/src/owner-historical-scope.ts`
 
 ## Read only
 

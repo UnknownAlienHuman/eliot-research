@@ -1,9 +1,18 @@
 # Cloudflare provision and deploy runbook
 
-**Deployment hold:** `deploy-cloudflare.mjs --confirm-live` rejects registered unfinished mandatory
-product paths before any remote effect. Develop/test locally with [local-launch.md](local-launch.md);
-do not bypass the hold by invoking raw Wrangler deployment. Removing this negative hold still requires
-all normative code, security and live qualification gates.
+**Deployment gate:** `deploy-cloudflare.mjs --confirm-live` defaults to `FULL_RELEASE`, retaining
+`assertLaunchCodeComplete`, `pnpm check`, and the full release gates. Explicit `--maintenance`
+selects `MAINTENANCE`: it records launch blockers and source-budget findings while still requiring
+compile, lint, boundary, build, binding, and Wrangler artifact checks. Both purposes use the guarded
+path and standard Wrangler deployment of one Worker version to 100% traffic with exact readback.
+Neither purpose applies D1 migrations. The four resource children run `--verify-existing` with
+GET-only exact readback; missing or drifted resources fail closed. The existing exact 18-counter
+usage envelope is not a prerequisite for this existing-resource deployment, but remains unknown and
+remains required by operations whose heavy-operation policy needs it. Apply D1 migrations separately
+through the pinned bounded migration operation described below. Resource creation and AI Search
+provisioning retain their existing admission controls. Deployment alone never promotes a product
+contour to `LIVE_QUALIFIED`. See
+[ADR-0009](../adr/0009-control-plane-deployment-and-runtime-cost-authority.md).
 
 This runbook deploys one Worker/PWA contour without committing Cloudflare account state. It is safe to
 hand to a deployment agent; no step requires reading the architecture master document.
@@ -45,16 +54,26 @@ local profile, and live readback fails closed before any Cloudflare mutation. Br
 any financial/billing consent cannot be automated: a human completes them in the browser; scripts
 only consume the resulting local OAuth profile. A $1 usage alert is advisory monitoring only and does not enforce a billing cap.
 
-### Current browser-OAuth API scope limitation
+### Browser-OAuth source compatibility
 
-As observed on 2026-09-09 with Wrangler 4.127.1, the current browser-OAuth profile can still be
-valid for the account while a read-only Access organization request returns HTTP 403 and the
-collector classifies Usage v2 billing HTTP 403 as `AUTH_SCOPE_DENIED`. The available Wrangler
-scopes do not establish Access-management or billing authority, and the exact cause may also be
-endpoint entitlement or restricted API availability. These responses are typed authority gaps,
-not evidence of zero usage. Preflight must keep the affected values unknown/sealed; it must not
-fabricate counters, treat dashboard state as API evidence, or fall back to a static token. Resolving
-these permissions must preserve the existing usage and product-completion gates.
+The owner granted every scope requested by Wrangler 4.127.1, and normal browser login was
+restored on 2026-10-03. This does not establish compatibility with every Cloudflare API:
+[full application access grants the application's requested scopes](https://developers.cloudflare.com/fundamentals/oauth/authorizing-an-application/).
+Wrangler's [scope catalog](https://github.com/cloudflare/workers-sdk/blob/main/packages/workers-auth/src/core/scopes.ts)
+includes account analytics and D1 write access, but no Billing scope. The
+[Usage v2 specification](https://developers.cloudflare.com/api/resources/billing/subresources/usage/methods/get_account_usage_v2/)
+is Alpha/Restricted and does not document a Wrangler OAuth grant; token-based billing access
+has separate [Billing Read/Edit permissions](https://developers.cloudflare.com/billing/understand/billing-permissions/).
+The default collector therefore excludes both Billing routes. It does not retry a denied route
+through another credential, method, or transport.
+
+The historical 2026-09-09 collector label `AUTH_SCOPE_DENIED` for any 401/403 was too specific.
+Current diagnostics distinguish HTTP 401 authentication failure, HTTP 403 authorization denial,
+HTTP 404 resource not found, other HTTP failures, and a missing/invalid status. Status alone
+does not prove missing owner consent, a missing scope, endpoint entitlement, or unsupported
+OAuth. Source limitations describe unsupported counter coverage separately. Errors retain only
+fixed safe codes and numeric HTTP status; raw provider bodies, errors, URLs, and credentials are
+excluded. Unknown quantities seal admission and never become zero.
 
 The user selected the installed official Cloudflare MCP plugin on 2026-09-09. Reconnecting its
 existing project-local server with `codex mcp login cloudflare-api` restored managed OAuth.
@@ -70,9 +89,80 @@ labels that endpoint Alpha/Restricted; the precise authorization or entitlement 
 unconfirmed. Keep those counters unknown. Account-specific readbacks belong only in ignored
 operator state and the local MCP map.
 
-The local operator policy still declares `free-tier` with `paid_overage:false`, while the current
-account plan readback shows Paid; that policy/account-plan distinction is an unresolved
+The local operator policy declares `free-tier` with `paid_overage:false`, while the historical
+2026-09-09 account plan readback showed Paid; that policy/account-plan distinction is an unresolved
 configuration reconciliation item, and no tier thresholds are inferred here.
+
+### Usage source coverage (2026-10-03)
+
+The canonical snapshot has 19 required metrics. Complete AI Search instance inventory is the
+one point-count source; the other 18 remain `unknown` for admission with the current qualified
+sources. D1 metadata and documented GraphQL samples are exposed separately as
+`readback.provider_results[].diagnostic_values`, with untrusted metric provenance. Their values
+cannot mint an admission capability or change the canonical monthly/daily windows.
+
+D1 collection performs bounded list/detail reads and inventory reconciliation. Its `file_size`
+sum is observed current bytes across separate reads, with collection timestamps; it is neither
+atomic nor a monthly storage quantity. GraphQL observations are bounded, possibly partial,
+adaptive samples for the requested interval. Cloudflare explicitly states
+[GraphQL analytics is not a measure of billable usage](https://developers.cloudflare.com/analytics/graphql-api/);
+[sampling](https://developers.cloudflare.com/analytics/graphql-api/sampling/) and
+[record/date limits](https://developers.cloudflare.com/analytics/graphql-api/limits/) prevent
+assuming complete exact monthly coverage. An empty, truncated, malformed, denied, or
+undocumented response never establishes a billable zero.
+
+A fresh 2026-10-03 exact-account `wrangler whoami` verification and a single bounded
+Workers GraphQL query returned HTTP 200 with no GraphQL errors and the documented numeric
+response shape under the existing OAuth profile. This confirms that transport for that read;
+it does not establish every dataset's entitlement or complete billing coverage. The standard
+registry collects D1 stock and Workers/D1/Queues/DO analytics separately. R2 operation classes
+remain uncollected because the documented `actionType` description does not qualify its literal
+mapping to pricing names. No additional transport or credential is substituted for a failed read.
+D1 list/detail metadata collection also succeeded under that verified profile, with matching
+inventory and file-size readbacks across both passes. Account-specific sizes and identifiers
+remain outside tracked documentation; this receipt proves metadata transport, not monthly usage.
+
+| Unknown admission counter | Unit/window | Official read source and precise limitation |
+|---|---|---|
+| `workers_requests` | requests/month | [Workers analytics](https://developers.cloudflare.com/analytics/graphql-api/tutorials/querying-workers-metrics/) `workersInvocationsAdaptive.sum.requests`: adaptive diagnostic only. |
+| `workers_cpu_ms` | CPU-ms/month | Same source documents CPU quantiles, not an exact CPU total. |
+| `d1_storage_bytes` | bytes/month | [D1 metadata](https://developers.cloudflare.com/api/resources/d1/subresources/database/methods/get/) `file_size`: current stock; GET accepts D1 Read or D1 Write. |
+| `d1_rows_read` | rows/month | [D1 analytics](https://developers.cloudflare.com/d1/observability/metrics-analytics/) `rowsRead`: adaptive observation, 31-day retention. |
+| `d1_rows_written` | rows/month | Same source, `rowsWritten`: adaptive observation, 31-day retention. |
+| `r2_storage_gb_month` | GB-month/month | [R2 analytics](https://developers.cloudflare.com/r2/platform/metrics-analytics/) reports storage maxima; [pricing](https://developers.cloudflare.com/r2/pricing/) uses average daily peak storage. Bucket inventory has no GB-month quantity. |
+| `r2_class_a_ops` | operations/month | R2 adaptive operations grouped by `actionType` can diagnose requests; exact billable Class A monthly coverage is unqualified. |
+| `r2_class_b_ops` | operations/month | Same limitation for Class B; unknown actions must not be guessed into a class. |
+| `queue_ops` | operations/month | [Queues analytics](https://developers.cloudflare.com/queues/observability/metrics/) `sum.billableOperations`: adaptive reads/writes/deletes, diagnostic only. |
+| `do_requests` | requests/month | [Durable Objects analytics](https://developers.cloudflare.com/durable-objects/observability/metrics-and-analytics/) `sum.requests`: adaptive observation; [WebSocket billing](https://developers.cloudflare.com/durable-objects/platform/pricing/) uses a 20:1 ratio that metrics do not apply. |
+| `do_gb_seconds` | GB-seconds/month | Documented CPU time does not establish billed duration multiplied by memory. |
+| `do_sql_reads` | rows/month | No exact account-wide OAuth monthly SQL-read source is qualified; no undocumented field aliases are invented. |
+| `do_sql_writes` | rows/month | Same limitation for SQL writes. |
+| `do_storage_bytes` | bytes/month | DO `max.storedBytes` is a stock statistic, not monthly storage usage. |
+| `workers_ai_neurons_per_day` | neurons/day | [Workers AI pricing](https://developers.cloudflare.com/workers-ai/platform/pricing/) directs usage monitoring to its dashboard; no documented exact daily API source is qualified. |
+| `ai_search_queries_month` | queries/month | [AI Search stats](https://developers.cloudflare.com/api/resources/ai_search/subresources/namespaces/subresources/instances/methods/stats/) report indexing status and managed-instance metadata, not account-wide monthly search usage. |
+| `vectorize_queried_dims_month` | dimensions/month | [Vectorize info](https://developers.cloudflare.com/api/resources/vectorize/subresources/indexes/methods/info/) has no monthly queried-dimension quantity; Wrangler has no documented Vectorize-specific scope. |
+| `vectorize_stored_dims_month` | dimensions/month | Per-index `dimensions` and `vectorCount` are current stock, not exact account-wide monthly stored dimensions. |
+
+This source inventory still qualifies neither a complete account ledger nor a release. The existing
+18 required counters remain `UNKNOWN`; diagnostic D1/GraphQL samples do not become canonical usage,
+and unknown is not zero. Their status does not block guarded deployment of an already existing
+Worker when exact deployment readback succeeds. D1 migrations use a separately reviewed bounded
+operation and do not acquire a general spend capability from this deployment decision. Resource
+creation, AI Search indexing/query work, model calls, and other heavy operations retain their
+existing usage-admission policies. The 18 counters stay unknown until exact evidence is qualified;
+ADR-0009 does not mint a capability or alter usage authority. Full S92 and live product acceptance
+remain pending.
+
+Model calls retain their existing operation-specific budgets, reservations, authorization,
+cancellation, idempotency, and qualification controls; the exact usage proof applies where the
+existing operation policy requires it. AI Search indexing/reindexing/query work keeps its existing
+heavy-operation controls. Read-only verification of an existing AI Search namespace/instance does
+not initiate indexing. If an AI Search namespace or instance is absent, its provisioning path
+remains behind the existing admission gate before any AI Search mutation; do not create a fresh
+instance while that gate is sealed. A Worker deployment can activate behavior that consumes runtime
+resources; this change makes no claim that deployment is free or has no operational effect. The
+18 counters stay unknown until exact evidence is qualified; this runbook change does not mint a
+capability or alter usage authority. Full S92 and live product acceptance remain pending.
 
 ## Preconditions
 
@@ -121,6 +211,7 @@ ELIOTR_ACCESS_SERVICE_PRINCIPALS   optional comma-separated signed service-token
                                     empty denies every service principal
 ELIOTR_OWNER_EMAILS                required: owner email list from the local ignored profile
 ELIOTR_ENVIRONMENT                 optional: staging|production; live default is production
+ELIOTR_STAGING_TARGET_JSON         required for staging live apply: exact dedicated-account declaration below
 ELIOTR_DEPLOYMENT_GENERATION       optional; defaults to git-<short-sha>
 ELIOTR_CUSTOM_DOMAIN               required: 0 for this profile (workers.dev only; 1 is out of scope here)
 ELIOTR_ALLOWED_ADDITIONAL_ACCESS_POLICY_IDS
@@ -128,6 +219,22 @@ ELIOTR_ALLOWED_ADDITIONAL_ACCESS_POLICY_IDS
 ELIOTR_ACCESS_SMOKE_COOKIE         optional CF_Authorization value for authenticated HTTP smoke
 ELIOTR_SMOKE_BASE_URL              optional; must equal https://ELIOTR_ACCESS_HOSTNAME (optional trailing slash)
 ```
+
+A staging live apply must provide an ignored local `ELIOTR_STAGING_TARGET_JSON` value with exactly
+`protocol`, `isolation`, `account_id`, `protected_account_ids` and `access_hostname`:
+
+```json
+{"protocol":"eliotr.staging-target.v1","isolation":"dedicated-account","account_id":"staging-example-account","protected_account_ids":["production-example-account"],"access_hostname":"staging.example.com"}
+```
+
+The account and hostname must exactly match the selected deployment environment. The protected
+account list must be nonempty, unique and exclude the target account. Missing declarations,
+same-account profiles, identity drift and extra approval flags fail before credential loading,
+commands or remote calls. Fixed resource names currently support a dedicated account only;
+a reviewed same-account profile still needs complete naming and reconciliation support.
+The receipt stores declaration/account digests. This destination guard does not establish owner
+approval, account isolation remotely, paid usage permission or S94 acceptance. Obtain the explicit
+approval for the exact target and deployment window independently before live apply.
 
 See `.env.example` for placeholder shapes (fictional values only). Google credentials, provider
 keys, OAuth tokens and Access cookies are secrets. Add runtime secrets with `wrangler secret put`
@@ -142,11 +249,27 @@ next run instead of silently overwriting it (Reconciliation). The exact binding 
 hostname, team origin, AUD, owner set) is read back from live state and compared against the
 local ignored profile before any mutation; drift fails closed.
 
-Step 0 — browser login (human, one time per OAuth expiry; cannot be automated):
+Step 0 — OAuth refresh and account verification (read-only first):
+
+```bash
+pnpm exec wrangler whoami
+```
+
+The scripts run `whoami` with token variables scrubbed, verify the exact expected account, and only
+then load the OAuth credential. `whoami` refreshes a refreshable session, so OAuth expiry alone does
+not require a human login. If the session is absent or cannot be refreshed, complete the official
+human login and verify the account again:
 
 ```bash
 pnpm exec wrangler login
-pnpm exec wrangler whoami   # must show the account in the local ignored profile
+pnpm exec wrangler whoami
+```
+
+When the local callback listener cannot start, use Wrangler's device flow instead:
+
+```bash
+pnpm exec wrangler login --device --browser=false
+pnpm exec wrangler whoami
 ```
 
 If `whoami` shows any other account, log in with the correct account and retry. Never paste an
@@ -198,19 +321,189 @@ change. `pnpm check` also invokes the pinned Rust gates from `LANGUAGE_RUNTIME_C
 toolchain and the pinned Cargo tools before running it locally.
 
 `cf:preflight:remote` performs only GET/readback operations. `cf:deploy` repeats local gates, repeats the
-remote preflight, then performs create-or-verify provisioning. It writes the account-specific
+remote preflight, then verifies the existing resources without creating them. It writes the account-specific
 `apps/eliotr-core/wrangler.deploy.jsonc` locally. The file and `.eliotr-state/` receipts are ignored by
 Git.
+
+Before candidate-profile inspection or local gates, the deployer captures actual bytes and file
+membership for its explicit Worker/package and PWA source/configuration inputs, build scripts,
+root manifests/lockfiles, installed pnpm state, and runtime dependency files. Untracked build inputs
+are refused, including ignored imported files. The only generated-source exceptions are declared
+outputs; an exception does not authorize importing arbitrary files outside the captured inventory.
+Maintenance runs both `boundaries:check` against the repository and the supplemental negative
+fixtures. Source changes during or after gates stop the operation.
+
+Maintenance preserves the existing Access application's display names, session duration and launcher
+setting while verifying its exact hostname, identity/AUD and unchanged owner allow policy. The `24h`
+and display-name defaults in `infra/cloudflare/access.json` originated in scaffold commit `554641f65`;
+they remain creation defaults, not instructions to rewrite a verified existing maintenance target.
+Maintenance also preserves a freshly verified absent `AI_SEARCH` binding while `RETRIEVAL` and
+`ERASURE` remain disabled. It omits AI Search provisioning and removes only that binding from the
+ignored generated deployment config. Full-release configuration and gates remain unchanged. The
+planned managed resource is namespace `eliotr`, instance `private-prose-g2`; it is not the account's
+`default` namespace. [Wrangler can create a missing namespace on deploy](https://developers.cloudflare.com/workers/wrangler/configuration/#ai-search-namespaces), so an absent disabled binding
+must not be uploaded accidentally.
+
+An existing AI Gateway configuration may differ from the canonical provisioning manifest or have
+one gateway absent. A confirmed live `MAINTENANCE` deployment may opt into exact preservation with
+`ELIOTR_MAINTENANCE_PRESERVE_AI_GATEWAYS=existing`. The deployer captures the complete account
+gateway inventory through the registered Cloudflare MCP connection using managed OAuth and GET-only
+requests. It requires one authenticated `eliotr-reasoning` gateway; `eliotr-retrieval` may be present
+or absent. Both account-scoped Worker URL bindings must match the captured target URLs, and
+`RETRIEVAL` must remain disabled in both source and authenticated capability profiles. The captured
+presence and the seven normalized settings tracked in `infra/cloudflare/ai-gateways.json` per
+existing gateway are pinned, then freshly read and compared before upload, after upload before
+deployment-authority synchronization, and after that synchronization. The generated Worker
+configuration must retain the exact pinned URLs. This narrow exception skips only AI Gateway
+provisioning and does not create, edit, or delete a gateway, enable
+retrieval, change Access, or apply migrations. It preserves an absent retrieval gateway as absent;
+it does not make the canonical full release configuration pass or qualify Research/model operations.
+This comparison covers the manifest's `id`, authentication, cache, logging, and rate-limit fields;
+untracked API fields such as `byok_only` are outside its preservation proof.
+Without this explicit opt-in, normal AI Gateway `--check-only` and `--verify-existing` behavior is
+unchanged.
+
+Maintenance normally requires the exact active route surface to remain unchanged. A product update
+that intentionally changes routes may opt into one pinned route update by setting
+`ELIOTR_MAINTENANCE_ROUTE_UPDATE_FILE` to an ignored intent file under `.eliotr-state/`. This opt-in
+is valid only for a confirmed live maintenance deployment; it is rejected for dry runs and full
+releases. The intent pins the active deployment/version/generation and complete live route set, plus
+the candidate Git head/generation and complete statically extracted route set. It permits route
+additions with non-public authentication and `owner` to `owner_or_service` auth changes only; it
+permits no route removals or other edits to existing route definitions. The intent file's SHA-256
+is rechecked throughout the deployment.
+
+Before upload, fresh readback must still match the pinned active route set. After upload and after
+deployment-authority synchronization, authenticated capabilities must match the exact pinned
+candidate routes, while every non-route capability remains unchanged. The generated and active
+Worker `ACCESS_SERVICE_PRINCIPALS` values must both remain exactly empty, and the Access provisioner
+must verify the existing owner-only policy without changing it; adding `owner_or_service` handlers
+does not grant a service identity. This option changes only the Worker API surface. It does not
+apply migrations, alter Access policy, enable Google transport or bind AI Search.
+
+For owner HTTP readback, `ELIOTR_OWNER_HTTP_TRANSPORT=cloudflared` selects the official
+`cloudflared access curl` client; `ELIOTR_CLOUDFLARED_BINARY` optionally supplies its executable path.
+The client manages its existing application login/cache and token injection. The deployer does not
+read or copy its JWT and receives only bounded response bytes, HTTP status and content type.
+Normal existing-application browser sign-in may occur; each request has a bounded deadline. The same
+capability, health freshness/generation and asset byte/hash validators remain mandatory. Control-plane
+OAuth is separate from this owner session. Cookie transport remains available; the two are not mixed.
+
+After resource readback generates the deployment configuration, its bytes are pinned separately.
+A minified Wrangler dry run writes a dedicated bundle and esbuild metafile. Every reported input
+must match the pre-gate inventory, and the emitted Worker entrypoint and ancillary files are hashed
+and checked again immediately before upload. The normal single-step deployment uploads that
+prepared entrypoint with `--no-bundle`. The receipt note records both manifest and artifact digests.
+These are bounded local integrity checks. The metafile records input paths and byte counts, not
+the exact bytes read by the compiler. A same-size edit during compilation that is restored before
+the next hash check may evade this observation; unchanged pre/post snapshots do not prove an
+immutable source-to-artifact seal. The checks do not cryptographically attest compiler or tool
+internals or make an atomic remote source/build seal. Authenticated assets and active-version
+readback remain separate requirements.
 
 ## Resource behavior
 
 ### D1
 
 The provisioner lists by exact database name, rejects duplicates/jurisdiction drift and injects returned
-UUIDs into the generated config. The deployer applies both additive migration streams before exposing the
-new Worker generation. The exact generated config is identity-validated and dry-run before either remote
-migration stream. Its digest is rechecked between release steps; drift stops the next effect. Do not
-depend on Wrangler's automatic D1 config mutation.
+UUIDs into the generated config. The Worker deployer never runs `wrangler d1 migrations apply`.
+It identity-validates and dry-runs the generated config, then compares each remote `d1_migrations`
+ledger with the exact local migration names and reads the required Core/Search schema-generation
+markers. A missing, extra, duplicate, malformed, or pending ledger; a missing schema marker; or local
+input drift stops before Worker upload, deployment-authority changes, and a successful receipt. The
+local migration bundle hash is recorded separately: ledger names do not prove remote SQL bytes or
+schema shape.
+
+### Separate bounded D1 migration operation
+
+Use `scripts/migrate-cloudflare-d1.mjs` only for one explicit, reviewed, bounded migration intent.
+This separate bounded operation does not require the exact 18-counter billing envelope. Its
+reviewed risk profile, exact SQL/target pins, count/byte/time bounds, Time Travel bookmark and
+reconciliation govern this operation; migration application can consume resources. Resource
+creation and heavy runtime operations retain their existing admission requirements.
+The versioned intent binds the exact account, generated-config digest, database binding/name/UUID,
+entire ordered pending migration suffix, per-file SQL hashes, bundle digest, risk review, schema
+probes, and maximum migration count, SQL bytes, deadline, and runtime. The operation validates the
+local plan without network or Wrangler when `--confirm-live` is absent:
+
+Intent v1 retains its original flat `schema_probes` array of 1–64 objects and
+its existing receipt format. Intent v2 uses `schema_probe_groups`: 1–4 nonempty
+groups of at most 64 objects, for at most 256 probes. Groups are numbered from
+one and pin their canonical probe bytes with `group_sha256`. The objects are
+ordered by type and case-insensitive name; all groups except the last contain
+64 probes. Duplicate identities, changed order, wrong group hashes and omitted
+SQL-derived required objects fail closed. Grouping covers the entire pending
+suffix in one operation; it does not authorize applying only its first portion.
+V2 receipts retain each group identity and aligned observation prefix. Missing
+or partial readback cannot become a successful schema proof or automatic retry.
+
+```bash
+node scripts/migrate-cloudflare-d1.mjs --plan ./reviewed-core-migration-intent.json
+```
+
+Live use requires explicit confirmation and the same plan file:
+
+```bash
+node scripts/migrate-cloudflare-d1.mjs --plan ./reviewed-core-migration-intent.json --confirm-live
+```
+
+The command checks the exact account and database identity, production/staging isolation, OAuth
+profile where selected, full pending migration suffix, config and SQL hashes, and each declared
+schema probe. Every probe includes `before_sql_sha256` (null for required absence, otherwise the
+reviewed initial SQLite CREATE SQL hash) and the final `create_sql_sha256`. Fresh table, view,
+trigger, and index creation requires absence. Named view/trigger replacement can require either
+absence or an exact reviewed existing definition; existing ALTER targets and metadata tables
+require their reviewed initial hash. The pre-effect lookup compares names case-insensitively
+across all schema object types, so a conflicting object cannot hide behind `IF NOT EXISTS`.
+A mismatch records `FAILED`/`NOT_STARTED` before applying SQL or advancing the migration ledger.
+It captures the current Time Travel bookmark, records the attempt before running the
+standard remote migration command against the pinned database name, then reconciles both the exact
+ledger and schema probes. The bookmark is a readback, not a newly created backup. Ledger names are
+not proof of remote SQL bytes. Restore remains an explicit manual recovery action.
+
+The SQL classifier fails closed outside its documented bounded grammar: `PRAGMA foreign_keys=ON`,
+literal-keyed `schema_state` generation updates, `CREATE TABLE`, `ALTER TABLE ... ADD COLUMN`,
+`CREATE VIEW`, `CREATE TRIGGER`, named trigger/view replacement, and `CREATE INDEX` only on a table created earlier
+within the same approved operation. It rejects table rebuild/copy migrations, data backfills,
+unsupported or unbounded DML, and index builds on pre-existing tables. The existing 0108 semantic
+revision repair is a separate empty-only metadata-repair case: its pinned guard rejects any table
+with rows before replacement and it copies no data. The sole bounded data-copy exception is
+`0113_research_provider_key_model_use_failure_alignment.sql`, which may be classified as
+`data_preserving_bounded_copy_rebuild` only when its UTF-8 bytes match SHA-256
+`308df2409b85ff48fce06e25b98564f02852a1a3cd2db1c6746a6b8492a9492b`, and the 0110, 0111, and 0112
+source hashes match their frozen predecessor pins. That SQL guards the rebuilt table at no more than
+64 rows (with a 65-row overflow scan) and at no more than 1 MiB total serialized field payload, then
+checks the copied rows for equality, restores the nine named triggers, and runs a global foreign-key
+check before disabling deferred foreign keys. It probes the rebuilt table, all nine triggers, its
+parent, and both child tables. This bounded copy classification does not claim metadata-only work,
+reviewed index cost, or a broader data-migration allowance. Neither special case permits any other
+rebuild, copy, backfill, or generic DML. The current candidate support matrix below is derived from
+local files relative to the last known Core ledger `0066`; it does not assert that any candidate is
+currently pending remotely. Read the live ledger in a new exact intent.
+
+| Candidate Core migration after `0066` | Offline bounded-operation support | Review note |
+|---|---|---|
+| `0067`, `0072`, `0077`-`0080`, `0083`-`0094`, `0097`-`0099` | Supported (21 files) | Bounded schema/metadata forms; exact declared objects and final literal metadata values require readback. |
+| `0068`, `0075`, `0081`, `0082`, `0095`, `0100`, `0102` | Review required (7 files) | Column checks/references fall outside the bounded ADD COLUMN grammar. |
+| `0069`, `0071`, `0076`, `0096`, `0101`, `0103` | Review required (6 files) | Rebuild/copy/backfill or foreign-key deferral/disabling is outside this operation. |
+| `0070`, `0073`, `0074` | Review required (3 files) | Index build targets a pre-existing table. |
+
+The migration command never silently omits an unsupported migration. If any selected file falls
+outside the classifier's allowed grammar, the whole intent is refused before the first migration
+effect. After command start, timeout, cancellation, or lost acknowledgement is recorded as
+`UNKNOWN`; partial ledger progress is preserved and reconciled without automatic restore, retry, or
+resume. Continuing requires a new intent after reviewing the live ledger and resulting schema.
+
+Worker readback follows the active deployment to its exact single version at 100% traffic, checks
+runtime settings, named exports, the generation variable and configured resource identities before
+deployment authority synchronization. Cloudflare's ETag is an opaque observation, not a local
+SHA-256 attestation. A deterministic local PWA manifest is pinned and rehashed between release steps. With an Access
+cookie, every served asset body must match its local byte count/hash, then active deployment/version
+identity is re-read before authority synchronization. A mismatch, redirect, fallback body, deadline
+or local drift fails closed. Without a cookie the receipt explicitly records `NOT_EXECUTED`.
+Root `_headers`/`_redirects` are excluded from served-content hashing; routing and an atomic
+source/build seal are not proved by this observation. Product/T4/T6 qualifications remain separate. The current Worker does not deploy/import the Rust
+Wasm kernel; do not fabricate a mandatory empty Wasm binding or a passing Wasm receipt.
 
 ### R2
 
@@ -265,9 +558,19 @@ a previous receipt is moved to `cloudflare-deployment-receipt.json.previous`; a 
 leave the previous PASS at the current receipt path. The previous file is historical evidence, not a
 statement about the current environment.
 
-Worker inventory readback checks the expected compatibility date, static assets and `ResearchSession`
-export. This bounded observation is **not** attestation of every binding or the exact deployed code
-version. A large/ambiguous inventory fails closed rather than claiming a matching deployment.
+Worker readback requires one active deployment with 100% traffic on one version, then
+checks that version's resources: every configured typed runtime variable, D1/R2/Queue/DO/Workflow,
+AI/Search/Vectorize/Analytics/assets bindings, runtime compatibility and exports. Unknown bindings
+fail closed; optional secret bindings are restricted to the reviewed runtime names and secret type.
+Secret values are never read or recorded. The receipt records variable count and equality only.
+The version identifier and API etag are observations, not a SHA-256 proof of uploaded code bytes.
+A large/ambiguous inventory or stale variable fails before deployment authority synchronization.
+
+Canonical and generated D1 configs must explicitly resolve both repository migration directories;
+Wrangler's omitted default directory is refused. Local bundle digests bind the selected SQL files;
+remote ledgers prove the exact applied names, not historical remote SQL byte equality.
+The staging target declaration binds the requested account and excludes declared protected IDs.
+It does not prove that the account contains no production resources or supply owner authorization.
 
 Authenticated HTTP smoke runs only with an Access cookie. Both `/healthz` and the capabilities envelope
 must report the expected deployment generation; health must be ready and timestamped within two minutes.

@@ -1,3 +1,5 @@
+import type { SemanticResearchHandlerGeneration } from "@eliotr/cloudflare-research-runtime/research-stage-handlers.js";
+import { modelGatewayDynamicRouteTarget } from "@eliotr/cloudflare-ai";
 import type { VersionedRef } from "@eliotr/contracts";
 import { canonicalEvidenceJson, evidenceSha256Bytes } from "@eliotr/cloudflare-evidence";
 import type { ModelRouteDeployment } from "@eliotr/platform-cloudflare";
@@ -28,7 +30,7 @@ import {
   createResearchStageHandlerFactory,
   SERVER_OWNED_FREEZE_HANDLER_GENERATION,
   type ResearchStageHandlerFactory,
-} from "../src/research-stage-handlers.js";
+} from "@eliotr/cloudflare-research-runtime/research-stage-handlers.js";
 import {
   readCommittedStageLineage,
   readWorkflowObject,
@@ -183,16 +185,21 @@ function auditPrompt(
 }
 
 export interface ResearchClaimAuditStageFixtureOptions {
+  readonly handler_generation?: SemanticResearchHandlerGeneration;
   /** Include a second real projected counterevidence section in the committed pack. */
   readonly include_counterevidence?: boolean;
+  /** Use the production execution-bound ORIENT lifecycle for the original scope. */
+  readonly orientation_backed_scope?: boolean;
 }
 
 async function committedAuditInputFixture(options: ResearchClaimAuditStageFixtureOptions = {}) {
   const fixture = await committedFreezeSynthesisFixture({
+    ...(options.handler_generation === undefined ? {} : { handler_generation: options.handler_generation }),
     candidate_protocol: "v2",
     synthesis_prompt: "Produce eliotr.research.synthesis-claims-candidate.v2 from the frozen evidence.",
     allowed_verifier_refs: [AUDIT_VERIFIER_REF],
     ...(options.include_counterevidence === true ? { include_counterevidence: true } : {}),
+    ...(options.orientation_backed_scope === true ? { orientation_backed_scope: true } : {}),
   });
   const synthesis = await fixture.freeze.executor.execute(fixture.stage_twelve, principal, fixture.handler.handler);
   const stage13: StageRequest = {
@@ -203,7 +210,7 @@ async function committedAuditInputFixture(options: ResearchClaimAuditStageFixtur
   };
   const verification = createResearchStageHandlerFactory({
     kind: "server-owned-exploratory",
-    generation: SERVER_OWNED_FREEZE_HANDLER_GENERATION,
+    generation: options.handler_generation ?? SERVER_OWNED_FREEZE_HANDLER_GENERATION,
     navigation: fixture.freeze.navigation,
     ledger: fixture.freeze.ledger,
     verification: {
@@ -331,8 +338,12 @@ export async function researchClaimAuditStageFixture(
           if (gatewayId !== "eliotr-reasoning") throw new Error("unexpected audit gateway binding");
           return {
             getUrl: async () => `https://gateway.ai.cloudflare.com/v1/${"b".repeat(32)}/eliotr-reasoning`,
-            run: async (request, options) => {
-              if (Array.isArray(request) || request.provider !== "compat" || request.endpoint !== "chat/completions") {
+            getLog: async () => { throw new Error("fingerprinted audit response must not request a log"); },
+          };
+        },
+        run: async (model, inputs, options) => {
+              if (model !== (await modelGatewayDynamicRouteTarget(deployment)).model || inputs.model !== model || options.gateway.id !== "eliotr-reasoning" ||
+                  options.returnRawResponse !== true) {
                 throw new Error("unexpected audit binding request");
               }
               const headers = new Headers(options?.extraHeaders as Record<string, string>);
@@ -340,7 +351,7 @@ export async function researchClaimAuditStageFixture(
                   headers.get("cf-aig-collect-log-payload") !== "false") {
                 throw new Error("audit binding policy changed");
               }
-              const query = request.query as { readonly messages?: readonly { readonly role?: unknown; readonly content?: unknown }[] };
+              const query = inputs as { readonly messages?: readonly { readonly role?: unknown; readonly content?: unknown }[] };
               const user = query.messages?.find((message) => message.role === "user");
               if (typeof user?.content !== "string") throw new Error("audit prompt payload is missing");
               const payload = JSON.parse(user.content) as { readonly prompt?: unknown };
@@ -363,8 +374,6 @@ export async function researchClaimAuditStageFixture(
                   "cf-aig-log-id": "freeze-audit-gateway-log",
                 },
               });
-            },
-          };
         },
       },
     },
@@ -423,7 +432,7 @@ export async function researchClaimAuditStageFixture(
   };
   const auditFactory = createResearchStageHandlerFactory({
     kind: "server-owned-exploratory",
-    generation: SERVER_OWNED_FREEZE_HANDLER_GENERATION,
+    generation: options.handler_generation ?? SERVER_OWNED_FREEZE_HANDLER_GENERATION,
     navigation: prepared.fixture.freeze.navigation,
     ledger: prepared.fixture.freeze.ledger,
     audit_claims: auditModel,

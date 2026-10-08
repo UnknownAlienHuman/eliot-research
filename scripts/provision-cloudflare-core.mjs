@@ -7,10 +7,15 @@ import { applyAccessRuntimeVars, applyMcpRuntimeVars, resolveAccessRuntimeConfig
   resolveMcpAccessRuntimeConfiguration } from "./lib/access-runtime-config.mjs";
 import { LOGIN_INSTRUCTION, loadWranglerOAuthCredential, resolveAuthMode,
   scrubTokenEnv, verifyWranglerOAuthAccount, WRANGLER_OAUTH_MODE } from "./lib/cloudflare-wrangler-oauth.mjs";
+import { CLOUDFLARE_MCP_TRANSPORT, createCloudflareMcpTransport } from "./lib/cloudflare-mcp-oauth.mjs";
 import { isUsageAdmissionCapability, runUsagePreflight } from "./lib/cloudflare-usage-admission.mjs";
 import { loadResearchRuntimeEnvironment, RESEARCH_RUNTIME_CONFIGURATION_KEYS,
-  RESEARCH_RUNTIME_SEMANTIC_CONFIGURATION_CHUNK_KEYS, RESEARCH_RUNTIME_SEMANTIC_CONFIGURATION_KEY,
-  splitResearchSemanticConfiguration } from "./lib/research-runtime-config.mjs";
+  RESEARCH_RUNTIME_SEMANTIC_TRANSPORT_KEYS, semanticConfigurationTransport } from "./lib/research-runtime-config.mjs";
+
+import { validateDeploymentMigrationDirectories } from "./lib/deployment-migrations.mjs";
+import { readConfiguredTransport, readCompositionCapabilityProfile } from "./check-launch-code.mjs";
+import { readActiveDeploymentIdentity, selectDeploymentGoogleTransport,
+  selectDeploymentAiSearchNamespaces } from "./lib/deployment-maintenance.mjs";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // Isolated state root for tests: ELIOTR_STATE_DIRECTORY overrides the shared
@@ -21,9 +26,22 @@ const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
 let token = process.env.CLOUDFLARE_API_TOKEN;
 const apiBase = process.env.CLOUDFLARE_API_BASE_URL ?? "https://api.cloudflare.com/client/v4";
 const checkOnly = process.argv.includes("--check-only");
+const verifyExisting = process.argv.includes("--verify-existing");
+if (checkOnly && verifyExisting) {
+  console.error("--check-only and --verify-existing cannot be used together");
+  process.exit(2);
+}
+const preserveGoogleTransport = process.env.ELIOTR_MAINTENANCE_PRESERVE_GOOGLE_TRANSPORT;
+const preserveAiSearch = process.env.ELIOTR_MAINTENANCE_PRESERVE_AI_SEARCH;
+if (preserveGoogleTransport !== undefined && (preserveGoogleTransport !== "disabled" || (!checkOnly && !verifyExisting))) {
+  throw new Error("Google transport preservation accepts disabled in check-only or verify-existing only");
+}
+if (preserveAiSearch !== undefined && (preserveAiSearch !== "absent" || (!checkOnly && !verifyExisting))) {
+  throw new Error("AI Search preservation accepts absent in check-only or verify-existing only");
+}
 const showHelp = process.argv.includes("--help") || process.argv.includes("-h");
 if (showHelp) {
-  console.log("Usage: scripts/provision-cloudflare-core.mjs [--check-only] [--help]\nProvisions the Cloudflare foundation (D1/R2/Queues) from infra/cloudflare/resources.json. --check-only prints the plan with zero mutations.");
+  console.log("Usage: scripts/provision-cloudflare-core.mjs [--check-only | --verify-existing] [--help]\nProvisions the Cloudflare foundation (D1/R2/Queues) from infra/cloudflare/resources.json. --check-only prints the plan with zero mutations. --verify-existing performs GET-only exact readback, writes ignored local config/receipt, and fails if any resource is missing.");
   process.exitCode = 0;
 }
 if (!showHelp) {
@@ -35,18 +53,20 @@ try {
   console.error(error?.message ?? String(error));
   process.exit(2);
 }
+const accessTransport = (process.env.ELIOTR_ACCESS_TRANSPORT ?? "wrangler").trim() || "wrangler";
+if (accessTransport !== "wrangler" && accessTransport !== CLOUDFLARE_MCP_TRANSPORT) {
+  console.error("ELIOTR_ACCESS_TRANSPORT must be wrangler or cloudflare-mcp");
+  process.exit(2);
+}
+if (accessTransport === CLOUDFLARE_MCP_TRANSPORT && authMode !== WRANGLER_OAUTH_MODE) {
+  console.error(`ELIOTR_ACCESS_TRANSPORT=${CLOUDFLARE_MCP_TRANSPORT} requires ELIOTR_CLOUDFLARE_AUTH_MODE=${WRANGLER_OAUTH_MODE}; static-token mode is prohibited`);
+  process.exit(2);
+}
 if (authMode === WRANGLER_OAUTH_MODE) {
   // Direct-invocation OAuth path (cf:preflight:remote bypasses the deployer
   // injection). Bearer stays in process memory only: never argv/logs/files.
   if (!accountId) {
     console.error(`CLOUDFLARE_ACCOUNT_ID is required. ${LOGIN_INSTRUCTION}`);
-    process.exit(2);
-  }
-  try {
-    const credential = await loadWranglerOAuthCredential({ env: process.env, now: Date.now() });
-    token = credential.bearer;
-  } catch (error) {
-    console.error(error?.message ?? String(error));
     process.exit(2);
   }
   try {
@@ -67,21 +87,25 @@ if (authMode === WRANGLER_OAUTH_MODE) {
     console.error(error?.message ?? String(error));
     process.exit(2);
   }
+  // `wrangler whoami` may refresh the official OAuth profile. Read its bearer
+  // only after the token-scrubbed account check has completed.
+  try {
+    const credential = await loadWranglerOAuthCredential({ env: process.env, now: Date.now() });
+    token = credential.bearer;
+  } catch (error) {
+    console.error(error?.message ?? String(error));
+    process.exit(2);
+  }
 } else if (!accountId || !token) {
   console.error("CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN are required");
   process.exit(2);
 }
 
-// FIX1-B usage-envelope gate (narrow): usage preflight before the first
-// remote mutation. In-process shared runner writes the redacted admission
-// receipt. BLOCKED exits in every mode; any other non-ADMITTED decision
-// (SEALED) exits in apply mode — SEALED never POSTs/PUTs/PATCHes/DELETEs,
-// uploads a Worker, or applies a migration. ADMITTED alone never suffices:
-// apply additionally requires the same-process admission capability minted by
-// the fresh live collection lifecycle (staged snapshots and persisted
-// receipts carry none). Check-only inspection stays read-only metadata
-// (GET inventory lists, local config generation).
-{
+// Default apply retains the fresh live-usage admission fence. Check-only and
+// verify-existing are read-only inspection paths and skip usage collection;
+// verify-existing also guards every Cloudflare request as GET-only while it
+// writes local generated config and receipt files from exact readbacks.
+if (!checkOnly && !verifyExisting) {
   let usageGate;
   try {
     usageGate = await runUsagePreflight({ env: process.env, nowMs: Date.now(), writeReceipt: true,
@@ -95,6 +119,16 @@ if (authMode === WRANGLER_OAUTH_MODE) {
     console.error(`Cloudflare usage preflight ${usageGate.decision} denies foundation provisioning before any mutation. ${usageGate.evaluation.reasons.join("; ")}${usageGate.decision === "ADMITTED" ? " Missing same-process admission capability: ADMITTED alone never authorizes mutations." : ""}`);
     process.exit(2);
   }
+  if (authMode === WRANGLER_OAUTH_MODE) {
+    // The gate repeats whoami and may refresh the profile after the initial
+    // token read. Reload the strict local profile before bearer-backed calls.
+    try {
+      token = (await loadWranglerOAuthCredential({ env: process.env, now: Date.now() })).bearer;
+    } catch (error) {
+      console.error(error?.message ?? String(error));
+      process.exit(2);
+    }
+  }
 }
 
 const desiredPath = resolve(repositoryRoot, "infra/cloudflare/resources.json");
@@ -106,6 +140,18 @@ const canonicalConfig = parseStrictJsonCompatibleJsonc(await readFile(canonicalP
 const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
 const enc = encodeURIComponent;
 const SEMANTIC_SERVER_CONFIGURATION_KEYS = RESEARCH_RUNTIME_CONFIGURATION_KEYS;
+const activeTransport = preserveGoogleTransport === undefined && preserveAiSearch === undefined ? null :
+  await readActiveDeploymentIdentity({ env: { CLOUDFLARE_ACCOUNT_ID: accountId, CLOUDFLARE_API_TOKEN: token },
+    input: { apiBase } });
+const googleTransport = selectDeploymentGoogleTransport({ purpose: "MAINTENANCE", preserve: preserveGoogleTransport,
+  canonicalTransport: readConfiguredTransport(canonicalConfig), observedTransport: activeTransport?.google_external_transport });
+if (preserveGoogleTransport !== undefined && process.env.ELIOTR_GOOGLE_EXTERNAL_TRANSPORT !== undefined &&
+    process.env.ELIOTR_GOOGLE_EXTERNAL_TRANSPORT !== googleTransport) {
+  throw new Error("Configured Google transport differs from freshly preserved transport");
+}
+const aiSearchNamespaces = selectDeploymentAiSearchNamespaces({ purpose: "MAINTENANCE", canonicalConfig,
+  preserve: preserveAiSearch, activeWorkerIdentity: activeTransport,
+  candidate: preserveAiSearch === undefined ? undefined : await readCompositionCapabilityProfile({ root: repositoryRoot }) });
 
 function parseStrictJsonCompatibleJsonc(text, label) {
   try {
@@ -129,6 +175,9 @@ function assertUnique(values, label) {
 }
 
 async function request(method, path, { body, extraHeaders, allow404 = false } = {}) {
+  if (verifyExisting && method !== "GET") {
+    throw new Error(`--verify-existing permits GET requests only; refused ${method} ${path}`);
+  }
   const response = await fetch(`${apiBase}${path}`, {
     method,
     headers: { ...headers, ...extraHeaders },
@@ -142,6 +191,25 @@ async function request(method, path, { body, extraHeaders, allow404 = false } = 
     throw new Error(`${method} ${path} failed (${response.status}): ${JSON.stringify(payload.errors ?? payload, null, 2)}`);
   }
   return payload.result ?? payload;
+}
+
+async function readAccessApplications() {
+  const path = `/accounts/${enc(accountId)}/access/apps?per_page=100`;
+  if (accessTransport !== CLOUDFLARE_MCP_TRANSPORT) return request("GET", path);
+  const transport = createCloudflareMcpTransport({
+    cwd: process.env.ELIOTR_CLOUDFLARE_MCP_CWD,
+    accountId,
+    // The core provisioner may receive an ephemeral OAuth bearer in its child
+    // environment for Wrangler REST reads. The managed MCP transport must not
+    // inherit any static-token-shaped variable.
+    env: scrubTokenEnv(process.env),
+  });
+  try {
+    await transport.verifyAccount();
+    return await transport.request("GET", path);
+  } finally {
+    transport.close();
+  }
 }
 
 function assertManifest() {
@@ -160,6 +228,7 @@ function assertManifest() {
 }
 
 function assertCanonicalBindingAlignment() {
+  validateDeploymentMigrationDirectories(canonicalConfig, { root: repositoryRoot });
   const canonicalD1 = new Map((canonicalConfig.d1_databases ?? []).map((item) => [item.binding, item]));
   const canonicalR2 = new Map((canonicalConfig.r2_buckets ?? []).map((item) => [item.binding, item]));
   const canonicalQueues = new Map((canonicalConfig.queues?.producers ?? []).map((item) => [item.binding, item]));
@@ -276,6 +345,7 @@ function validatePublicRouteConfiguration() {
 
 function buildGeneratedConfig(d1Results, publicRoute, accessRuntime, mcpAccessRuntime) {
   const generated = structuredClone(canonicalConfig);
+  if (preserveAiSearch !== undefined) generated.ai_search_namespaces = aiSearchNamespaces;
   const ids = new Map(d1Results.map((item) => [item.spec.binding, item.existing.uuid]));
   generated.d1_databases = generated.d1_databases.map((item) => {
     const databaseId = ids.get(item.binding);
@@ -289,18 +359,16 @@ function buildGeneratedConfig(d1Results, publicRoute, accessRuntime, mcpAccessRu
   generated.vars = applyAccessRuntimeVars({
     ...generated.vars,
     ENVIRONMENT: environment,
+    GOOGLE_EXTERNAL_TRANSPORT: googleTransport,
     DEPLOYMENT_GENERATION: deploymentGeneration,
     AI_GATEWAY_REASONING_URL: `https://gateway.ai.cloudflare.com/v1/${accountId}/eliotr-reasoning`,
     AI_GATEWAY_RETRIEVAL_URL: `https://gateway.ai.cloudflare.com/v1/${accountId}/eliotr-retrieval`,
   }, accessRuntime);
-  for (const key of [RESEARCH_RUNTIME_SEMANTIC_CONFIGURATION_KEY, ...RESEARCH_RUNTIME_SEMANTIC_CONFIGURATION_CHUNK_KEYS]) {
+  for (const key of RESEARCH_RUNTIME_SEMANTIC_TRANSPORT_KEYS) {
     delete generated.vars[key];
   }
-  if (typeof researchRuntimeEnvironment[RESEARCH_RUNTIME_SEMANTIC_CONFIGURATION_KEY] === "string") {
-    Object.assign(generated.vars,
-      splitResearchSemanticConfiguration(researchRuntimeEnvironment[RESEARCH_RUNTIME_SEMANTIC_CONFIGURATION_KEY]));
-  }
-  for (const key of SEMANTIC_SERVER_CONFIGURATION_KEYS.filter((item) => item !== RESEARCH_RUNTIME_SEMANTIC_CONFIGURATION_KEY)) {
+  Object.assign(generated.vars, semanticConfigurationTransport(researchRuntimeEnvironment).vars);
+  for (const key of SEMANTIC_SERVER_CONFIGURATION_KEYS.filter((item) => !RESEARCH_RUNTIME_SEMANTIC_TRANSPORT_KEYS.includes(item))) {
     if (Object.hasOwn(researchRuntimeEnvironment, key) && typeof researchRuntimeEnvironment[key] === "string") {
       generated.vars[key] = researchRuntimeEnvironment[key];
     } else delete generated.vars[key];
@@ -308,6 +376,8 @@ function buildGeneratedConfig(d1Results, publicRoute, accessRuntime, mcpAccessRu
   if (mcpAccessRuntime !== null) {
     generated.vars = applyMcpRuntimeVars(generated.vars, mcpAccessRuntime);
   }
+  generated.vars = omitUnusedMcpPlaceholderVars(generated.vars, preserveGoogleTransport,
+    accessRuntime?.mcpAccessRuntime, mcpAccessRuntime);
 
   if (publicRoute.customDomainMode === "1") {
     generated.routes = [{ pattern: publicRoute.accessHostname, custom_domain: true }];
@@ -318,6 +388,24 @@ function buildGeneratedConfig(d1Results, publicRoute, accessRuntime, mcpAccessRu
   }
   generated.preview_urls = false;
   return generated;
+}
+
+function omitUnusedMcpPlaceholderVars(vars, preservedGoogleTransport, receiptMcpRuntime, coreMcpRuntime) {
+  if (preservedGoogleTransport !== "disabled" ||
+      (receiptMcpRuntime !== null && receiptMcpRuntime !== undefined) ||
+      (coreMcpRuntime !== null && coreMcpRuntime !== undefined)) return vars;
+  const placeholders = {
+    MCP_HOSTNAME: "mcp.replace-me.example",
+    MCP_ACCESS_TEAM_DOMAIN: "https://replace-me.cloudflareaccess.com",
+    MCP_ACCESS_AUDIENCE: "replace-me",
+    MCP_ACCESS_AUTH_PROFILE: "service-token",
+    MCP_ACCESS_SERVICE_TOKEN_CLIENT_ID: "replace-me.access",
+  };
+  const result = { ...vars };
+  for (const [key, placeholder] of Object.entries(placeholders)) {
+    if (result[key] === placeholder) delete result[key];
+  }
+  return result;
 }
 
 function validateHostname(hostname, label) {
@@ -367,7 +455,7 @@ if (accessReceipt) {
   accessDisposition = "CREATE";
 }
 
-if (canonicalConfig.vars.GOOGLE_EXTERNAL_TRANSPORT === "gemini-mcp") {
+if (googleTransport === "gemini-mcp") {
   mcpAccessRuntime = resolveMcpAccessRuntimeConfiguration(process.env, accessReceipt, {
     ordinaryAudience: accessRuntime?.audience,
     publicHostname: publicRoute.accessHostname,
@@ -388,7 +476,7 @@ const queuePlans = await inspectQueues();
 // the wire) working while live drift still fails closed below.
 let liveAccessBinding = null;
 if (accessReceipt?.application?.id) {
-  const liveApps = await request("GET", `/accounts/${enc(accountId)}/access/apps?per_page=100`);
+  const liveApps = await readAccessApplications();
   const candidates = (Array.isArray(liveApps) ? liveApps : []).filter((app) => app?.id === accessReceipt.application.id);
   if (candidates.length > 1) throw new Error("ambiguous live Access application binding; refusing to proceed");
   const live = candidates[0] ?? null;
@@ -400,6 +488,20 @@ if (accessReceipt?.application?.id) {
     throw new Error("live Access AUD drift vs receipt; refusing stale receipt");
   }
   liveAccessBinding = { id: live.id, aud: accessReceipt.aud ?? live.aud ?? null };
+}
+
+if (verifyExisting) {
+  const missing = [
+    ...d1Plans.filter((item) => item.existing === null).map((item) => `D1 ${item.spec.name}`),
+    ...r2Plans.filter((item) => item.existing === null).map((item) => `R2 ${item.spec.name}`),
+    ...queuePlans.filter((item) => item.existing === null).map((item) => `Queue ${item.spec.name}`),
+  ];
+  if (!accessRuntime || !accessReceipt?.application?.id || !liveAccessBinding) {
+    missing.push("verified Access authority receipt");
+  }
+  if (missing.length > 0) {
+    throw new Error(`--verify-existing found missing resource: ${missing.join(", ")}`);
+  }
 }
 
 if (checkOnly) {

@@ -14,11 +14,11 @@ const desiredSearch = JSON.parse(readFileSync(
   "utf8",
 ));
 const runtimeSource = readFileSync(
-  resolve(root, "apps/eliotr-core/src/projection-execution-handler.ts"),
+  resolve(root, "packages/cloudflare-ai/src/projection-execution-delivery-handler.ts"),
   "utf8",
 );
 const primaryProfileSource = readFileSync(
-  resolve(root, "packages/cloudflare-ai/src/ai-search-primary-profile.ts"),
+  resolve(root, "packages/cloudflare-projection/src/ai-search-primary-profile.ts"),
   "utf8",
 );
 function exportedString(source, name) {
@@ -64,7 +64,7 @@ assert.match(
 );
 assert.match(
   runtimeSource,
-  /createD1AiSearchGenerationRegistryStore\(env\.SEARCH_DB\)/u,
+  /createD1AiSearchGenerationRegistryStore\(bindings\.search_database\)/u,
   "managed readiness must read the SEARCH_DB generation registry",
 );
 assert.match(

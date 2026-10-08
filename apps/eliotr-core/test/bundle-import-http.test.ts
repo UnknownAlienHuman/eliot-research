@@ -3,9 +3,9 @@ import { env } from "cloudflare:workers";
 import { beforeEach, describe, expect, it } from "vitest";
 import { canonicalDigest, createD1IngestAdmissionAuthority, residencyKeyForManifest, sha256Utf8 } from "@eliotr/platform-cloudflare";
 import { bundleFixture } from "../../../packages/platform-cloudflare/src/ingest-test-fixture.js";
-import { prepareBrowserBundle } from "../../eliotr-pwa/src/bundle-input.js";
-import { createBrowserBundleImport, discoverBrowserBundleImport, importBrowserBundle, recoverBrowserBundleImport } from "../../eliotr-pwa/src/bundle-import.js";
-import { type ImportTransport } from "../../eliotr-pwa/src/bundle-import-api.js";
+import { prepareBrowserBundle } from "../../../packages/pwa-source-workspace/src/bundle-input.js";
+import { createBrowserBundleImport, discoverBrowserBundleImport, importBrowserBundle, recoverBrowserBundleImport } from "../../../packages/pwa-source-workspace/src/bundle-import.js";
+import { type ImportTransport } from "../../../packages/pwa-source-workspace/src/bundle-import-api.js";
 import { decodeApiProblem } from "../../eliotr-pwa/src/api.js";
 import { handleHttp } from "../src/http.js";
 import { type Env } from "../src/env.js";
@@ -67,6 +67,10 @@ describe("actual PWA import protocol through Worker/D1/R2", () => {
     expect(receipt?.manifest_sha256).toBe(await canonicalDigest(bundle.manifest));
     expect(receipt?.manifest_sha256).not.toBe(bundle.hashes["manifest.json"]);
     expect(await delta("source_revision")).toBe(1);
+    const currentness = await db.prepare(
+      "SELECT currentness_state,source_view_ref FROM source_revision WHERE source_revision_ref=?1 LIMIT 1",
+    ).bind(revision).first<{ readonly currentness_state: string; readonly source_view_ref: string }>();
+    expect(currentness).toEqual({ currentness_state: "current_confirmed", source_view_ref: "source-view-1" });
     expect(await delta("outbox")).toBe(1);
     expect(await delta("scope_read_policy")).toBe(0);
     expect(await importBrowserBundle(bundle, "pwa-first-import", { transport })).toEqual(receipt);

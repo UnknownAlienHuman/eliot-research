@@ -25,3 +25,40 @@ Honestly refused in this checkpoint: generation *currency* (equality against
 the actually-deployed Worker/data generations needs the missing
 binding/version attestation reader) and cost/bounds/rollback-target checks
 (no live cost observer exists; any such check would always pass).
+
+## Implemented runner: T5-failure-injection
+
+`t5-failure-injection-runner.ts` is the T5 fault-injection arm. Five fault
+classes are injected through dependency-injected probes — D1 write error, R2
+readback mismatch, queue duplicate delivery, model timeout, ledger conflict —
+and each must fail closed: the fault is detected, a well-formed digest-pinned
+negative receipt is produced, nothing is partially committed, and nothing
+silently passes. The model-timeout class must surface uncertainty (exactly one
+attempt, no retry), never success. One owned key per class
+(`probe/<test-generation>/T5-failure-injection/<fault-class>/001`); cleanup
+names exactly those five keys. State discipline mirrors the T4 runner: no
+credentials -> `NOT_EXECUTED`, unsatisfied prerequisite -> `BLOCKED`,
+mishandled fault -> `FAIL`, timeout/lost response -> `RUNNING` with
+`SETTLEMENT_UNCERTAIN`. Only `live` trials with attested worker/data
+generations can satisfy `gateMayBeReportedAsPass`; `local` trials are
+downgraded to unattested identity.
+
+## Implemented runner: T5-disclosure-audit
+
+`t5-disclosure-audit-runner.ts` verifies the Phase 10 disclosure, inference,
+source/task and client policies independently — the first gate covering them
+(`T5-disclosure-audit` in `live-gates.example.json`). It plants three synthetic
+fixtures under a named test generation (two per-client shared fixtures, one
+per-client evidence object), then checks four dimensions: (a) the disclosure
+redactor removes sensitive shapes and emits markers; (b) shared-fixture reads
+stay visible and correctly attributed for the owning client, and are denied —
+without leaking bytes even in the denial — for anyone else; (c) the
+source-task reference survives redaction unchanged; (d) evidence reads allow
+the owner and deny strangers. Each dimension carries its own FAIL reason code
+(`DISCLOSURE_REDACTION_LEAK`, `INFERENCE_BOUNDARY_LEAK`, `ATTRIBUTION_LOST`,
+`CLIENT_POLICY_GRANT_VIOLATION`, `CLIENT_POLICY_OWNER_DENIED`). State
+discipline mirrors the T4 runner: no credentials -> `NOT_EXECUTED`,
+unsatisfied prerequisite -> `BLOCKED`, policy violation -> `FAIL`,
+timeout/lost response -> `RUNNING` with `SETTLEMENT_UNCERTAIN` and no retry.
+Receipts carry digests only; the diagnostic log carries redacted text; cleanup
+names the three exact fixture keys, never a prefix.

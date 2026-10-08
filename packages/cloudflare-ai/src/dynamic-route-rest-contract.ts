@@ -81,6 +81,21 @@ export interface DynamicRouteRestCredentialPort {
   readApiToken(): Promise<string>;
 }
 
+/**
+ * Authenticated API transport supplied by a first-party Cloudflare OAuth
+ * connector. It receives no bearer or Authorization header; the returned
+ * response remains subject to the same status, envelope, byte and readback
+ * checks as the direct REST transport.
+ */
+export interface DynamicRouteRestRequestPort {
+  request(
+    method: "GET" | "POST",
+    url: string,
+    body: string | undefined,
+    ambiguousEffect: DynamicRouteRestAmbiguousEffect,
+  ): Promise<DynamicRouteRestResponse>;
+}
+
 export interface DynamicRouteRestBinding {
   readonly protocol: "eliotr.dynamic-route-rest-binding.v1";
   readonly account_id: string;
@@ -106,12 +121,25 @@ export interface DynamicRouteRestBindingStorePort {
   ): Promise<unknown>;
 }
 
-export interface DynamicRouteRestControlPlaneDependencies {
+type DynamicRouteRestControlPlaneCommonDependencies = {
   readonly account_id: string;
-  readonly fetch: DynamicRouteRestFetchPort;
-  readonly credentials: DynamicRouteRestCredentialPort;
   readonly bindings: DynamicRouteRestBindingStorePort;
-}
+};
+
+export type DynamicRouteRestControlPlaneDependencies =
+  DynamicRouteRestControlPlaneCommonDependencies &
+    (
+      | {
+          readonly fetch: DynamicRouteRestFetchPort;
+          readonly credentials: DynamicRouteRestCredentialPort;
+          readonly request_port?: never;
+        }
+      | {
+          readonly request_port: DynamicRouteRestRequestPort;
+          readonly fetch?: never;
+          readonly credentials?: never;
+        }
+    );
 
 export interface DynamicRouteRestControlPlane
   extends DynamicRouteControlPlanePort {

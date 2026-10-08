@@ -1,6 +1,5 @@
-import { applyD1Migrations } from "cloudflare:test";
 import { env } from "cloudflare:workers";
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import { createApplication } from "../src/composition-root.js";
 import { handleHttp } from "../src/http.js";
 import type { Env } from "../src/env.js";
@@ -37,12 +36,14 @@ async function seedCompleteConversion(db: D1Database, bucket: R2Bucket, captureI
 }
 
 describe("raw normalized admission actual Worker path", () => {
-  it("reads one durable COMPLETE candidate, commits through D1/R2, replays, and fails closed on witness deletion", async () => {
-    await applyD1Migrations(runtime.CORE_DB, runtime.CORE_MIGRATIONS);
-    await applyD1Migrations(runtime.SEARCH_DB, runtime.SEARCH_MIGRATIONS);
-    const principal = `raw-admission-owner-${crypto.randomUUID()}`;
+  const principal = `raw-admission-owner-${crypto.randomUUID()}`;
+  beforeAll(async () => {
+    // The namespace fixture applies both complete migration streams. Prepare
+    // its authority separately from the timed actual Worker mutation cases.
     const namespace = await prepareQ1Namespace(runtime, runtime.CORE_DB, runtime.SEARCH_DB, principal);
     await runtime.CORE_DB.prepare("UPDATE source_admission_policy SET minimum_quality_state='degraded' WHERE source_namespace_id=?1").bind(namespace.namespace).run();
+  });
+  it("reads one durable COMPLETE candidate, commits through D1/R2, replays, and fails closed on witness deletion", async () => {
     const sourceBytes = new TextEncoder().encode("%PDF source bytes are not the normalized output");
     const sourceSha = await sha(sourceBytes);
     const captureResponse = await handleHttp(captureRequest(sourceBytes, sourceSha, "raw-admission-capture-1"), runtime, {} as ExecutionContext, ownerAccess(principal));

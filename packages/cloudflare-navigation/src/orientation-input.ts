@@ -1,4 +1,4 @@
-import { IdentifierSchema, QueryProductSchema, ScopeExpressionSchema } from "@eliotr/contracts";
+import { isResearchQuestionText, IdentifierSchema, QueryProductSchema, ScopeExpressionSchema } from "@eliotr/contracts";
 import { inspectScopeExpression } from "@eliotr/domain";
 import type { QueryRequest } from "@eliotr/interfaces";
 import { readStreamWithinBytes } from "@eliotr/platform-cloudflare";
@@ -9,10 +9,13 @@ export const ORIENTATION_MAX_RESULTS = 16;
 export const ORIENTATION_TTL_MS = 15 * 60 * 1000;
 export class OrientationError extends Error {
   public constructor(public readonly code: string, public readonly status = 409,
-    public readonly retryable = false) { super(code); this.name = "OrientationError"; }
+    public readonly retryable = false, cause?: unknown) {
+    super(code, cause === undefined ? undefined : { cause });
+    this.name = "OrientationError";
+  }
 }
-export function orientationFail(code: string, status = 409, retryable = false): never {
-  throw new OrientationError(code, status, retryable);
+export function orientationFail(code: string, status = 409, retryable = false, cause?: unknown): never {
+  throw new OrientationError(code, status, retryable, cause);
 }
 export function orientationId(value: unknown): string {
   const result = IdentifierSchema.safeParse(value);
@@ -21,7 +24,11 @@ export function orientationId(value: unknown): string {
   }
   return result.data;
 }
-export function parseOrientationRequest(value: unknown): QueryRequest {
+export function parseOrientationRequest(value: unknown, maximumSelectedSources = ORIENTATION_MAX_SOURCES): QueryRequest {
+  // Only server execution supplies the larger generic-parser bound; public ORIENT keeps 64.
+  if (!Number.isSafeInteger(maximumSelectedSources) || maximumSelectedSources < 1 || maximumSelectedSources > 1000) {
+    orientationFail("ORIENTATION_INPUT_LIMIT", 413);
+  }
   // Bound the complete object before the recursive public scope schema is invoked.
   const pending: { value: unknown; depth: number }[] = [{ value, depth: 0 }];
   let nodes = 0;
@@ -33,7 +40,7 @@ export function parseOrientationRequest(value: unknown): QueryRequest {
       if (seen.has(next.value)) orientationFail("ORIENTATION_INPUT_INVALID", 400);
       seen.add(next.value);
       const entries = Object.values(next.value);
-      if (entries.length > 128) orientationFail("ORIENTATION_INPUT_LIMIT", 413);
+      if (entries.length > (Array.isArray(next.value) ? Math.max(128, maximumSelectedSources) : 128)) orientationFail("ORIENTATION_INPUT_LIMIT", 413);
       entries.forEach((item) => pending.push({ value: item, depth: next.depth + 1 }));
     }
   }
@@ -47,14 +54,14 @@ export function parseOrientationRequest(value: unknown): QueryRequest {
       record.evidence_grade !== "E0" || record.budget_ref !== ORIENTATION_PROFILE) {
     orientationFail("ORIENTATION_PROFILE_UNSUPPORTED", 422);
   }
-  if (typeof record.query !== "string" || new TextEncoder().encode(record.query).byteLength > 1024 ||
-      /[\u0000-\u001f\u007f]/u.test(record.query) || !Array.isArray(record.literals) || record.literals.length !== 0 ||
+  if (typeof record.query !== "string" || (record.query !== "" && !isResearchQuestionText(record.query)) ||
+      !Array.isArray(record.literals) || record.literals.length !== 0 ||
       !Number.isSafeInteger(record.max_results) || (record.max_results as number) < 1 ||
       (record.max_results as number) > ORIENTATION_MAX_RESULTS) orientationFail("ORIENTATION_INPUT_INVALID", 400);
   const expression = ScopeExpressionSchema.safeParse(record.scope_expression);
   if (!expression.success) orientationFail("ORIENTATION_INPUT_INVALID", 400);
   const metrics = inspectScopeExpression(expression.data);
-  if (metrics.depth > 8 || metrics.atom_count > 16 || metrics.selected_source_count > ORIENTATION_MAX_SOURCES) {
+  if (metrics.depth > 8 || metrics.atom_count > 16 || metrics.selected_source_count > maximumSelectedSources) {
     orientationFail("ORIENTATION_INPUT_LIMIT", 413);
   }
   return { query: record.query, product: "ORIENT", scope_expression: expression.data, literals: [],

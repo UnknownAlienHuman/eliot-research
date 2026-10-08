@@ -416,6 +416,35 @@ if (await exists(generatedConfigPath)) {
 }
 
 try {
+  const verifyScripts = ["cloudflare-core", "cloudflare-access", "ai-search", "ai-gateways"]
+    .map((name) => `scripts/provision-${name}.mjs`);
+  await check("verify-existing conflicts with check-only before any call", async () => {
+    mock = emptyMockState();
+    for (const script of verifyScripts) {
+      const result = await runScript(script, ["--verify-existing", "--check-only"], provisionEnv);
+      assert.notEqual(result.status, 0, `${script} conflicting modes passed`);
+      assert.match(result.stderr, /cannot be used together/u);
+    }
+    assert.equal(mock.requests.length, 0);
+    assert.equal(mock.mutations.length, 0);
+  });
+  await check("verify-existing preserves OAuth account pin before any call", async () => {
+    mock = emptyMockState();
+    const profilePath = join(scratch, "verify-existing-oauth-profile.toml");
+    await writeFile(profilePath, `oauth_token = "${BEARER}"\nexpiration_time = 4102444800\n`, "utf8");
+    for (const script of verifyScripts) {
+      const result = await runScript(script, ["--verify-existing"], {
+        ...provisionEnv, CLOUDFLARE_ACCOUNT_ID: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        CLOUDFLARE_API_TOKEN: undefined, ELIOTR_CLOUDFLARE_AUTH_MODE: "wrangler-oauth",
+        ELIOTR_WRANGLER_CONFIG_FILE: profilePath, PATH: fakePath,
+      });
+      assert.notEqual(result.status, 0, `${script} substituted account passed`);
+      assert.match(result.stderr, /account.*mismatch|mismatch.*account/iu);
+      assert.ok(!result.stdout.includes(BEARER) && !result.stderr.includes(BEARER));
+    }
+    assert.equal(mock.requests.length, 0);
+    assert.equal(mock.mutations.length, 0);
+  });
   await check("blocked usage aborts core and access before any mutation", async () => {
     mock = emptyMockState();
     const blocked = JSON.stringify(liveFixtureSnapshot({ r2_class_a_ops: 900_000 }));

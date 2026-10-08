@@ -1,17 +1,27 @@
-import { AccessVerificationError } from "@eliotr/cloudflare-access";
+import {
+  OWNER_E2E_AUDIENCE,
+  OWNER_E2E_CERTS_PATH,
+  OWNER_E2E_ISSUER,
+  resolveOwnerE2ETestFetch as resolveAccessOwnerE2ETestFetch,
+} from "@eliotr/cloudflare-access";
 import type { AiSearchNamespaceLike } from "@eliotr/platform-cloudflare";
 import type { WorkersAiMarkdownBinding } from "@eliotr/cloudflare-markdown";
+import type { InstalledSemanticConfigurationEnvironment } from "@eliotr/cloudflare-research-configuration";
 
-export interface Env {
+export interface Env extends InstalledSemanticConfigurationEnvironment {
   readonly CORE_DB: D1Database;
   readonly SEARCH_DB: D1Database;
   readonly EVIDENCE_BUCKET: R2Bucket;
   readonly WORK_BUCKET: R2Bucket;
+  /** Dedicated O2 backup-part bucket; never aliased from WORK_BUCKET. */
+  readonly BACKUP_PARTS_BUCKET?: R2Bucket;
+  /** Cloudflare-supplied active code version for privileged backup readback. */
+  readonly VERSION_METADATA?: WorkerVersionMetadata;
   readonly JOB_QUEUE: Queue<unknown>;
   readonly RESEARCH_SESSION: DurableObjectNamespace;
   readonly RESEARCH_WORKFLOW: Workflow;
   readonly AI_SEARCH: AiSearchNamespaceLike;
-  readonly AI?: WorkersAiMarkdownBinding;
+  readonly AI?: (WorkersAiMarkdownBinding & Partial<Pick<Ai, "models">>) | undefined;
   readonly METRICS: AnalyticsEngineDataset;
   readonly ASSETS: Fetcher;
   readonly ENVIRONMENT: "development" | "staging" | "production";
@@ -21,39 +31,40 @@ export interface Env {
   readonly AI_GATEWAY_REASONING_URL: string;
   readonly AI_GATEWAY_RETRIEVAL_URL: string;
   /** Optional server-held Cloudflare AI Gateway credential; never exposed to callers. */
-  readonly ELIOTR_MODEL_GATEWAY_TOKEN?: string;
+  readonly ELIOTR_MODEL_GATEWAY_TOKEN?: string | undefined;
   /** Dedicated read-only Dynamic Route control-plane credential; never used for model calls. */
   readonly ELIOTR_MODEL_GATEWAY_READ_TOKEN?: string;
+  /** Dedicated server-only Cloudflare API credential for provider-key management; never caller supplied or used for model calls. */
+  readonly ELIOTR_MODEL_PROVIDER_CONTROL_TOKEN?: string;
   /** Installed server model definition and its provenance; no request may override either. */
-  readonly ELIOTR_MODEL_PROFILE_DEFINITION_JSON?: string;
-  readonly ELIOTR_MODEL_PROFILE_PROVENANCE_REF?: string;
-  /** Installed synthesis/audit prompts and normalization contract. */
-  readonly ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON?: string;
-  /** Wrangler-safe chunks for the installed semantic configuration; provide both or neither. */
-  readonly ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON_0?: string;
-  readonly ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON_1?: string;
+  readonly ELIOTR_MODEL_PROFILE_DEFINITION_JSON?: string | undefined;
+  readonly ELIOTR_MODEL_PROFILE_PROVENANCE_REF?: string | undefined;
+  /** Operator-approved transport policies used before exact model qualification. */
+  readonly ELIOTR_RESEARCH_MODEL_TRANSPORT_POLICIES_JSON?: string;
   /** Explicit approved model spend policy; no browser field selects it. */
-  readonly ELIOTR_MODEL_SPEND_POLICY_JSON?: string;
-  readonly ELIOTR_MODEL_SPEND_POLICY_PROVENANCE_REF?: string;
-  readonly ELIOTR_RESEARCH_REPORT_CONFIG_JSON?: string;
+  readonly ELIOTR_MODEL_SPEND_POLICY_JSON?: string | undefined;
+  readonly ELIOTR_MODEL_SPEND_POLICY_PROVENANCE_REF?: string | undefined;
+  readonly ELIOTR_RESEARCH_REPORT_CONFIG_JSON?: string | undefined;
   /** Explicit owner-bound policy authorizing private report materialization. */
   readonly ELIOTR_RESEARCH_REPORT_POLICY_JSON?: string;
-  readonly ELIOTR_RESEARCH_REPORT_POLICY_PROVENANCE_REF?: string;
+  readonly ELIOTR_RESEARCH_REPORT_POLICY_PROVENANCE_REF?: string | undefined;
   /** Installed owner-to-MCP import delegation, scoped to exact principals and namespace. */
   readonly ELIOTR_WORKSPACE_OWNER_BINDINGS_JSON?: string;
   readonly ELIOTR_NAMESPACE_BOOTSTRAP_PROFILES_JSON?: string;
   readonly ACCESS_TEAM_DOMAIN?: string;
-  readonly ACCESS_AUDIENCE?: string;
+  readonly ACCESS_AUDIENCE?: string | undefined;
   readonly ACCESS_SERVICE_PRINCIPALS?: string;
   /** Development-only loopback JWKS endpoint for the real signed local harness. */
   readonly ACCESS_TEST_JWKS_URL?: string;
-  readonly MCP_HOSTNAME?: string;
-  readonly MCP_ACCESS_TEAM_DOMAIN?: string;
-  readonly MCP_ACCESS_AUDIENCE?: string;
+  readonly MCP_HOSTNAME?: string | undefined;
+  readonly MCP_ACCESS_TEAM_DOMAIN?: string | undefined;
+  readonly MCP_ACCESS_AUDIENCE?: string | undefined;
   /** Dedicated MCP authentication profile; omitted means the legacy service-token profile. */
-  readonly MCP_ACCESS_AUTH_PROFILE?: "service-token" | "managed-oauth";
-  readonly MCP_ACCESS_SERVICE_TOKEN_CLIENT_ID?: string;
-  readonly GOOGLE_EXTERNAL_TRANSPORT?: "disabled" | "gemini-mcp" | "drive-exchange";
+  readonly MCP_ACCESS_AUTH_PROFILE?: "service-token" | "managed-oauth" | undefined;
+  readonly MCP_ACCESS_SERVICE_TOKEN_CLIENT_ID?: string | undefined;
+  /** Additional independent MCP clients; array binding or JSON-encoded array, no secrets. */
+  readonly MCP_ACCESS_SERVICE_TOKEN_CLIENT_IDS?: readonly string[] | string | undefined;
+  readonly GOOGLE_EXTERNAL_TRANSPORT?: "disabled" | "gemini-mcp" | "drive-exchange" | undefined;
   readonly GOOGLE_CLIENT_ID?: string;
   readonly GOOGLE_CLIENT_SECRET?: string;
   readonly GOOGLE_TOKEN_ENCRYPTION_KEY?: string;
@@ -68,91 +79,20 @@ export interface Env {
   readonly GOOGLE_OAUTH_GOOGLE_EMAIL?: string;
   /** Explicit operator attestation that the OAuth client is published (Production). */
   readonly GOOGLE_OAUTH_PRODUCTION_EVIDENCE_REF?: string;
+  /** Optional installed R2 offsite transport; destination authority remains in D1. */
+  readonly ELIOTR_BACKUP_OFFSITE_R2_CONFIG_JSON?: string;
+  /** Server credentials for the installed offsite transport; never caller fields. */
+  readonly ELIOTR_BACKUP_OFFSITE_R2_ACCESS_KEY_ID?: string;
+  readonly ELIOTR_BACKUP_OFFSITE_R2_SECRET_ACCESS_KEY?: string;
   readonly OWNER_NOTIFICATION_WEBHOOK?: string;
 }
 
-const SEMANTIC_CONFIGURATION_CHUNK_BYTES = 4_096;
-const SEMANTIC_CONFIGURATION_MAX_BYTES = 65_536;
+export { readResearchSemanticConfiguration } from "@eliotr/cloudflare-research-configuration";
 
-/** Assemble the optional Wrangler chunks before the strict semantic parser sees the JSON. */
-export function readResearchSemanticConfiguration(
-  env: Pick<Env, "ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON" | "ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON_0" | "ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON_1">,
-): string | undefined {
-  const whole = env.ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON;
-  const first = env.ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON_0;
-  const second = env.ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON_1;
-  const hasChunks = first !== undefined || second !== undefined;
-  if (whole !== undefined && typeof whole !== "string") return undefined;
-  if (!hasChunks) return whole;
-  if (whole !== undefined || typeof first !== "string" || typeof second !== "string") return undefined;
-  const encoder = new TextEncoder();
-  if (encoder.encode(first).byteLength > SEMANTIC_CONFIGURATION_CHUNK_BYTES ||
-      encoder.encode(second).byteLength > SEMANTIC_CONFIGURATION_CHUNK_BYTES) return undefined;
-  const combined = first + second;
-  if (encoder.encode(combined).byteLength > SEMANTIC_CONFIGURATION_MAX_BYTES) return undefined;
-  return combined;
-}
+export { OWNER_E2E_AUDIENCE, OWNER_E2E_CERTS_PATH, OWNER_E2E_ISSUER };
 
-export const OWNER_E2E_ISSUER = ["https://owner-e2e", ".cloudflareaccess.com"].join("");
-export const OWNER_E2E_AUDIENCE = "owner-e2e-audience";
-export const OWNER_E2E_CERTS_PATH = "/cdn-cgi/access/certs";
-
-export function parseServicePrincipals(raw: string | undefined): readonly string[] {
-  if (raw === undefined || raw.trim() === "") return [];
-  const values = raw.split(",").map((value) => value.trim()).filter(Boolean);
-  if (values.length > 64 || new Set(values).size !== values.length) {
-    throw new AccessVerificationError("ACCESS_CONFIG_INVALID",
-      "ACCESS_SERVICE_PRINCIPALS must contain at most 64 unique values", true);
-  }
-  return values;
-}
-
-function failConfig(message: string): never {
-  throw new AccessVerificationError("ACCESS_CONFIG_INVALID", message, true);
-}
-
-function validatedLoopbackJwksUrl(raw: string): URL {
-  let url: URL;
-  try { url = new URL(raw); }
-  catch { failConfig("Access test JWKS URL is malformed"); }
-  if (url.protocol !== "http:" || url.hostname !== "127.0.0.1" || url.username !== "" ||
-      url.password !== "" || url.pathname !== OWNER_E2E_CERTS_PATH || url.search !== "" ||
-      url.hash !== "") {
-    failConfig("Access test JWKS URL must be loopback http://127.0.0.1:<port>/cdn-cgi/access/certs");
-  }
-  const port = Number(url.port);
-  if (!Number.isSafeInteger(port) || port < 1024 || port > 65535) {
-    failConfig("Access test JWKS port is outside its allowed range");
-  }
-  return url;
-}
+export { parseServicePrincipals } from "@eliotr/cloudflare-access";
 
 export function resolveOwnerE2ETestFetch(env: Env, certsUrl: string): typeof fetch | undefined {
-  const override = env.ACCESS_TEST_JWKS_URL;
-  if (override === undefined || override === "") return undefined;
-  if (env.ENVIRONMENT !== "development") {
-    failConfig("Access test JWKS override is development-only; staging/production must use the real network verifier");
-  }
-  if (env.ACCESS_TEAM_DOMAIN !== OWNER_E2E_ISSUER || env.ACCESS_AUDIENCE !== OWNER_E2E_AUDIENCE) {
-    failConfig("Access test JWKS override outside the exact owner-e2e profile is denied");
-  }
-  if (certsUrl !== `${OWNER_E2E_ISSUER}${OWNER_E2E_CERTS_PATH}`) {
-    failConfig("Access test profile expects the exact controlled certs URL");
-  }
-  const target = validatedLoopbackJwksUrl(override);
-  const destination = target.toString();
-  return async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
-    const requested = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
-    if (requested !== certsUrl) {
-      throw new AccessVerificationError("ACCESS_JWKS_UNAVAILABLE",
-        "Access test fetch denies non-certs requests", true);
-    }
-    void init;
-    const response = await globalThis.fetch(destination);
-    if (response.redirected || (response.status >= 300 && response.status < 400)) {
-      throw new AccessVerificationError("ACCESS_JWKS_UNAVAILABLE",
-        "Access test JWKS redirect denied", true);
-    }
-    return response;
-  };
+  return resolveAccessOwnerE2ETestFetch(env, certsUrl);
 }

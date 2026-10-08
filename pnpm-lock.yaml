@@ -12,8 +12,8 @@ importers:
   .:
     devDependencies:
       '@cloudflare/vitest-plugin':
-        specifier: 1.1.0
-        version: 1.1.0(@cloudflare/workers-types@5.20260827.1)(@types/node@26.4.0)(@vitest/runner@4.1.11)(@vitest/snapshot@4.1.11)(vitest@4.1.11(@types/node@26.4.0)(vite@8.2.2(@types/node@26.4.0)(esbuild@0.28.1)(yaml@2.9.0)))
+        specifier: 1.3.2
+        version: 1.3.2(@cloudflare/workers-types@5.20260827.1)(@types/node@26.4.0)(@vitest/runner@4.1.11)(@vitest/snapshot@4.1.11)(vitest@4.1.11(@types/node@26.4.0)(vite@8.2.2(@types/node@26.4.0)(esbuild@0.28.1)(yaml@2.9.0)))
       '@cloudflare/workers-types':
         specifier: 5.20260827.1
         version: 5.20260827.1
@@ -42,8 +42,8 @@ importers:
         specifier: 4.1.11
         version: 4.1.11(@types/node@26.4.0)(vite@8.2.2(@types/node@26.4.0)(esbuild@0.28.1)(yaml@2.9.0))
       wrangler:
-        specifier: 4.127.1
-        version: 4.127.1(@cloudflare/workers-types@5.20260827.1)(@types/node@26.4.0)
+        specifier: 4.143.1
+        version: 4.143.1(@cloudflare/workers-types@5.20260827.1)(@types/node@26.4.0)
 
   apps/eliotr-core:
     dependencies:
@@ -53,18 +53,42 @@ importers:
       '@eliotr/cloudflare-ai':
         specifier: workspace:*
         version: link:../../packages/cloudflare-ai
+      '@eliotr/cloudflare-artifacts':
+        specifier: workspace:*
+        version: link:../../packages/cloudflare-artifacts
+      '@eliotr/cloudflare-backup':
+        specifier: workspace:*
+        version: link:../../packages/cloudflare-backup
+      '@eliotr/cloudflare-computer-agent':
+        specifier: workspace:*
+        version: link:../../packages/cloudflare-computer-agent
       '@eliotr/cloudflare-erasure':
         specifier: workspace:*
         version: link:../../packages/cloudflare-erasure
+      '@eliotr/cloudflare-erasure-operations':
+        specifier: workspace:*
+        version: link:../../packages/cloudflare-erasure-operations
       '@eliotr/cloudflare-evidence':
         specifier: workspace:*
         version: link:../../packages/cloudflare-evidence
       '@eliotr/cloudflare-federation':
         specifier: workspace:*
         version: link:../../packages/cloudflare-federation
+      '@eliotr/cloudflare-http-protocol':
+        specifier: workspace:*
+        version: link:../../packages/cloudflare-http-protocol
       '@eliotr/cloudflare-markdown':
         specifier: workspace:*
         version: link:../../packages/cloudflare-markdown
+      '@eliotr/cloudflare-model-control':
+        specifier: workspace:*
+        version: link:../../packages/cloudflare-model-control
+      '@eliotr/cloudflare-model-transport':
+        specifier: workspace:*
+        version: link:../../packages/cloudflare-model-transport
+      '@eliotr/cloudflare-native-models':
+        specifier: workspace:*
+        version: link:../../packages/cloudflare-native-models
       '@eliotr/cloudflare-navigation':
         specifier: workspace:*
         version: link:../../packages/cloudflare-navigation
@@ -77,9 +101,24 @@ importers:
       '@eliotr/cloudflare-research':
         specifier: workspace:*
         version: link:../../packages/cloudflare-research
+      '@eliotr/cloudflare-research-branches':
+        specifier: workspace:*
+        version: link:../../packages/cloudflare-research-branches
+      '@eliotr/cloudflare-research-configuration':
+        specifier: workspace:*
+        version: link:../../packages/cloudflare-research-configuration
+      '@eliotr/cloudflare-research-runtime':
+        specifier: workspace:*
+        version: link:../../packages/cloudflare-research-runtime
       '@eliotr/cloudflare-research-stages':
         specifier: workspace:*
         version: link:../../packages/cloudflare-research-stages
+      '@eliotr/cloudflare-search-probe':
+        specifier: workspace:*
+        version: link:../../packages/cloudflare-search-probe
+      '@eliotr/cloudflare-wiki':
+        specifier: workspace:*
+        version: link:../../packages/cloudflare-wiki
       '@eliotr/cloudflare-workflows':
         specifier: workspace:*
         version: link:../../packages/cloudflare-workflows
@@ -115,8 +154,8 @@ importers:
         version: 4.4.3
     devDependencies:
       '@cloudflare/vitest-plugin':
-        specifier: 1.1.0
-        version: 1.1.0(@cloudflare/workers-types@5.20260827.1)(@types/node@26.4.0)(@vitest/runner@4.1.11)(@vitest/snapshot@4.1.11)(vitest@4.1.11(@types/node@26.4.0)(vite@8.2.2(@types/node@26.4.0)(esbuild@0.28.1)(yaml@2.9.0)))
+        specifier: 1.3.2
+        version: 1.3.2(@cloudflare/workers-types@5.20260827.1)(@types/node@26.4.0)(@vitest/runner@4.1.11)(@vitest/snapshot@4.1.11)(vitest@4.1.11(@types/node@26.4.0)(vite@8.2.2(@types/node@26.4.0)(esbuild@0.28.1)(yaml@2.9.0)))
       '@cloudflare/workers-types':
         specifier: 5.20260827.1
         version: 5.20260827.1
@@ -124,14 +163,26 @@ importers:
         specifier: 4.1.11
         version: 4.1.11(@types/node@26.4.0)(vite@8.2.2(@types/node@26.4.0)(esbuild@0.28.1)(yaml@2.9.0))
       wrangler:
-        specifier: 4.127.1
-        version: 4.127.1(@cloudflare/workers-types@5.20260827.1)(@types/node@26.4.0)
+        specifier: 4.143.1
+        version: 4.143.1(@cloudflare/workers-types@5.20260827.1)(@types/node@26.4.0)
 
   apps/eliotr-pwa:
     dependencies:
       '@eliotr/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@eliotr/pwa-http-client':
+        specifier: workspace:*
+        version: link:../../packages/pwa-http-client
+      '@eliotr/pwa-research-workspace':
+        specifier: workspace:*
+        version: link:../../packages/pwa-research-workspace
+      '@eliotr/pwa-source-workspace':
+        specifier: workspace:*
+        version: link:../../packages/pwa-source-workspace
+      markdown-it:
+        specifier: 15.0.2
+        version: 15.0.2
     devDependencies:
       '@astrojs/check':
         specifier: 0.9.10
@@ -160,6 +211,12 @@ importers:
 
   packages/cloudflare-ai:
     dependencies:
+      '@eliotr/cloudflare-model-transport':
+        specifier: workspace:*
+        version: link:../cloudflare-model-transport
+      '@eliotr/cloudflare-projection':
+        specifier: workspace:*
+        version: link:../cloudflare-projection
       '@eliotr/contracts':
         specifier: workspace:*
         version: link:../contracts
@@ -172,18 +229,75 @@ importers:
       '@eliotr/cloudflare-evidence':
         specifier: workspace:*
         version: link:../cloudflare-evidence
+      '@eliotr/cloudflare-navigation':
+        specifier: workspace:*
+        version: link:../cloudflare-navigation
+      '@eliotr/cloudflare-workflows':
+        specifier: workspace:*
+        version: link:../cloudflare-workflows
       '@eliotr/contracts':
         specifier: workspace:*
         version: link:../contracts
+      '@eliotr/domain':
+        specifier: workspace:*
+        version: link:../domain
+      '@eliotr/platform-cloudflare':
+        specifier: workspace:*
+        version: link:../platform-cloudflare
+      zod:
+        specifier: 4.4.3
+        version: 4.4.3
+
+  packages/cloudflare-backup:
+    dependencies:
+      '@eliotr/backup-o2':
+        specifier: workspace:*
+        version: link:../backup-o2
+      '@eliotr/cloudflare-erasure':
+        specifier: workspace:*
+        version: link:../cloudflare-erasure
+      '@eliotr/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+
+  packages/cloudflare-computer-agent:
+    dependencies:
+      '@eliotr/cloudflare-navigation':
+        specifier: workspace:*
+        version: link:../cloudflare-navigation
+      '@eliotr/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@eliotr/interfaces':
+        specifier: workspace:*
+        version: link:../interfaces
       '@eliotr/platform-cloudflare':
         specifier: workspace:*
         version: link:../platform-cloudflare
 
   packages/cloudflare-erasure:
     dependencies:
+      '@eliotr/backup-o2':
+        specifier: workspace:*
+        version: link:../backup-o2
       '@eliotr/contracts':
         specifier: workspace:*
         version: link:../contracts
+
+  packages/cloudflare-erasure-operations:
+    dependencies:
+      '@eliotr/backup-o2':
+        specifier: workspace:*
+        version: link:../backup-o2
+      '@eliotr/cloudflare-erasure':
+        specifier: workspace:*
+        version: link:../cloudflare-erasure
+      '@eliotr/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@eliotr/interfaces':
+        specifier: workspace:*
+        version: link:../interfaces
 
   packages/cloudflare-evidence:
     dependencies:
@@ -196,6 +310,9 @@ importers:
       '@eliotr/platform-cloudflare':
         specifier: workspace:*
         version: link:../platform-cloudflare
+      '@eliotr/policy':
+        specifier: workspace:*
+        version: link:../policy
       '@eliotr/retrieval':
         specifier: workspace:*
         version: link:../retrieval
@@ -205,9 +322,108 @@ importers:
       '@eliotr/contracts':
         specifier: workspace:*
         version: link:../contracts
+      '@eliotr/interfaces':
+        specifier: workspace:*
+        version: link:../interfaces
+
+  packages/cloudflare-http-protocol:
+    dependencies:
+      '@eliotr/cloudflare-navigation':
+        specifier: workspace:*
+        version: link:../cloudflare-navigation
+      '@eliotr/interfaces':
+        specifier: workspace:*
+        version: link:../interfaces
+      '@eliotr/platform-cloudflare':
+        specifier: workspace:*
+        version: link:../platform-cloudflare
 
   packages/cloudflare-markdown:
     dependencies:
+      '@eliotr/platform-cloudflare':
+        specifier: workspace:*
+        version: link:../platform-cloudflare
+
+  packages/cloudflare-model-control:
+    dependencies:
+      '@eliotr/cloudflare-ai':
+        specifier: workspace:*
+        version: link:../cloudflare-ai
+      '@eliotr/cloudflare-evidence':
+        specifier: workspace:*
+        version: link:../cloudflare-evidence
+      '@eliotr/cloudflare-workflows':
+        specifier: workspace:*
+        version: link:../cloudflare-workflows
+      '@eliotr/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@eliotr/interfaces':
+        specifier: workspace:*
+        version: link:../interfaces
+      '@eliotr/platform-cloudflare':
+        specifier: workspace:*
+        version: link:../platform-cloudflare
+      '@eliotr/policy':
+        specifier: workspace:*
+        version: link:../policy
+      '@eliotr/retrieval':
+        specifier: workspace:*
+        version: link:../retrieval
+      zod:
+        specifier: 4.4.3
+        version: 4.4.3
+
+  packages/cloudflare-model-execution:
+    dependencies:
+      '@eliotr/cloudflare-ai':
+        specifier: workspace:*
+        version: link:../cloudflare-ai
+      '@eliotr/cloudflare-evidence':
+        specifier: workspace:*
+        version: link:../cloudflare-evidence
+      '@eliotr/cloudflare-model-control':
+        specifier: workspace:*
+        version: link:../cloudflare-model-control
+      '@eliotr/cloudflare-native-models':
+        specifier: workspace:*
+        version: link:../cloudflare-native-models
+      '@eliotr/cloudflare-workflows':
+        specifier: workspace:*
+        version: link:../cloudflare-workflows
+      '@eliotr/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@eliotr/platform-cloudflare':
+        specifier: workspace:*
+        version: link:../platform-cloudflare
+      '@eliotr/research':
+        specifier: workspace:*
+        version: link:../research
+      zod:
+        specifier: 4.4.3
+        version: 4.4.3
+
+  packages/cloudflare-model-transport:
+    dependencies:
+      '@eliotr/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@eliotr/platform-cloudflare':
+        specifier: workspace:*
+        version: link:../platform-cloudflare
+
+  packages/cloudflare-native-models:
+    dependencies:
+      '@eliotr/cloudflare-ai':
+        specifier: workspace:*
+        version: link:../cloudflare-ai
+      '@eliotr/cloudflare-model-control':
+        specifier: workspace:*
+        version: link:../cloudflare-model-control
+      '@eliotr/contracts':
+        specifier: workspace:*
+        version: link:../contracts
       '@eliotr/platform-cloudflare':
         specifier: workspace:*
         version: link:../platform-cloudflare
@@ -235,6 +451,9 @@ importers:
       '@eliotr/retrieval':
         specifier: workspace:*
         version: link:../retrieval
+      zod:
+        specifier: 4.4.3
+        version: 4.4.3
 
   packages/cloudflare-projection:
     dependencies:
@@ -253,6 +472,9 @@ importers:
       '@eliotr/contracts':
         specifier: workspace:*
         version: link:../contracts
+      '@eliotr/domain':
+        specifier: workspace:*
+        version: link:../domain
       '@eliotr/interfaces':
         specifier: workspace:*
         version: link:../interfaces
@@ -271,6 +493,15 @@ importers:
       '@eliotr/cloudflare-evidence':
         specifier: workspace:*
         version: link:../cloudflare-evidence
+      '@eliotr/cloudflare-model-control':
+        specifier: workspace:*
+        version: link:../cloudflare-model-control
+      '@eliotr/cloudflare-model-execution':
+        specifier: workspace:*
+        version: link:../cloudflare-model-execution
+      '@eliotr/cloudflare-research-branches':
+        specifier: workspace:*
+        version: link:../cloudflare-research-branches
       '@eliotr/cloudflare-workflows':
         specifier: workspace:*
         version: link:../cloudflare-workflows
@@ -295,6 +526,147 @@ importers:
       zod:
         specifier: 4.4.3
         version: 4.4.3
+
+  packages/cloudflare-research-branches:
+    dependencies:
+      '@eliotr/cloudflare-ai':
+        specifier: workspace:*
+        version: link:../cloudflare-ai
+      '@eliotr/cloudflare-evidence':
+        specifier: workspace:*
+        version: link:../cloudflare-evidence
+      '@eliotr/cloudflare-model-control':
+        specifier: workspace:*
+        version: link:../cloudflare-model-control
+      '@eliotr/cloudflare-model-execution':
+        specifier: workspace:*
+        version: link:../cloudflare-model-execution
+      '@eliotr/cloudflare-workflows':
+        specifier: workspace:*
+        version: link:../cloudflare-workflows
+      '@eliotr/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@eliotr/domain':
+        specifier: workspace:*
+        version: link:../domain
+      '@eliotr/platform-cloudflare':
+        specifier: workspace:*
+        version: link:../platform-cloudflare
+      '@eliotr/policy':
+        specifier: workspace:*
+        version: link:../policy
+      '@eliotr/research':
+        specifier: workspace:*
+        version: link:../research
+      '@eliotr/retrieval':
+        specifier: workspace:*
+        version: link:../retrieval
+      zod:
+        specifier: 4.4.3
+        version: 4.4.3
+
+  packages/cloudflare-research-configuration:
+    dependencies:
+      '@eliotr/cloudflare-ai':
+        specifier: workspace:*
+        version: link:../cloudflare-ai
+      '@eliotr/cloudflare-evidence':
+        specifier: workspace:*
+        version: link:../cloudflare-evidence
+      '@eliotr/cloudflare-model-control':
+        specifier: workspace:*
+        version: link:../cloudflare-model-control
+      '@eliotr/cloudflare-model-transport':
+        specifier: workspace:*
+        version: link:../cloudflare-model-transport
+      '@eliotr/cloudflare-native-models':
+        specifier: workspace:*
+        version: link:../cloudflare-native-models
+      '@eliotr/cloudflare-research':
+        specifier: workspace:*
+        version: link:../cloudflare-research
+      '@eliotr/cloudflare-research-stages':
+        specifier: workspace:*
+        version: link:../cloudflare-research-stages
+      '@eliotr/cloudflare-workflows':
+        specifier: workspace:*
+        version: link:../cloudflare-workflows
+      '@eliotr/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@eliotr/interfaces':
+        specifier: workspace:*
+        version: link:../interfaces
+      '@eliotr/platform-cloudflare':
+        specifier: workspace:*
+        version: link:../platform-cloudflare
+      zod:
+        specifier: 4.4.3
+        version: 4.4.3
+
+  packages/cloudflare-research-runtime:
+    dependencies:
+      '@eliotr/cloudflare-ai':
+        specifier: workspace:*
+        version: link:../cloudflare-ai
+      '@eliotr/cloudflare-artifacts':
+        specifier: workspace:*
+        version: link:../cloudflare-artifacts
+      '@eliotr/cloudflare-evidence':
+        specifier: workspace:*
+        version: link:../cloudflare-evidence
+      '@eliotr/cloudflare-model-control':
+        specifier: workspace:*
+        version: link:../cloudflare-model-control
+      '@eliotr/cloudflare-model-execution':
+        specifier: workspace:*
+        version: link:../cloudflare-model-execution
+      '@eliotr/cloudflare-native-models':
+        specifier: workspace:*
+        version: link:../cloudflare-native-models
+      '@eliotr/cloudflare-navigation':
+        specifier: workspace:*
+        version: link:../cloudflare-navigation
+      '@eliotr/cloudflare-projection':
+        specifier: workspace:*
+        version: link:../cloudflare-projection
+      '@eliotr/cloudflare-research':
+        specifier: workspace:*
+        version: link:../cloudflare-research
+      '@eliotr/cloudflare-research-branches':
+        specifier: workspace:*
+        version: link:../cloudflare-research-branches
+      '@eliotr/cloudflare-research-configuration':
+        specifier: workspace:*
+        version: link:../cloudflare-research-configuration
+      '@eliotr/cloudflare-research-stages':
+        specifier: workspace:*
+        version: link:../cloudflare-research-stages
+      '@eliotr/cloudflare-workflows':
+        specifier: workspace:*
+        version: link:../cloudflare-workflows
+      '@eliotr/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@eliotr/domain':
+        specifier: workspace:*
+        version: link:../domain
+      '@eliotr/interfaces':
+        specifier: workspace:*
+        version: link:../interfaces
+      '@eliotr/platform-cloudflare':
+        specifier: workspace:*
+        version: link:../platform-cloudflare
+      '@eliotr/policy':
+        specifier: workspace:*
+        version: link:../policy
+      '@eliotr/research':
+        specifier: workspace:*
+        version: link:../research
+      '@eliotr/retrieval':
+        specifier: workspace:*
+        version: link:../retrieval
 
   packages/cloudflare-research-stages:
     dependencies:
@@ -323,14 +695,68 @@ importers:
         specifier: 4.4.3
         version: 4.4.3
 
+  packages/cloudflare-search-probe:
+    dependencies:
+      '@eliotr/cloudflare-ai':
+        specifier: workspace:*
+        version: link:../cloudflare-ai
+      '@eliotr/cloudflare-evidence':
+        specifier: workspace:*
+        version: link:../cloudflare-evidence
+      '@eliotr/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@eliotr/platform-cloudflare':
+        specifier: workspace:*
+        version: link:../platform-cloudflare
+      '@eliotr/retrieval':
+        specifier: workspace:*
+        version: link:../retrieval
+      zod:
+        specifier: 4.4.3
+        version: 4.4.3
+
+  packages/cloudflare-wiki:
+    dependencies:
+      '@eliotr/cloudflare-evidence':
+        specifier: workspace:*
+        version: link:../cloudflare-evidence
+      '@eliotr/cloudflare-navigation':
+        specifier: workspace:*
+        version: link:../cloudflare-navigation
+      '@eliotr/cloudflare-research':
+        specifier: workspace:*
+        version: link:../cloudflare-research
+      '@eliotr/cloudflare-research-stages':
+        specifier: workspace:*
+        version: link:../cloudflare-research-stages
+      '@eliotr/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@eliotr/interfaces':
+        specifier: workspace:*
+        version: link:../interfaces
+      '@eliotr/research':
+        specifier: workspace:*
+        version: link:../research
+      '@eliotr/retrieval':
+        specifier: workspace:*
+        version: link:../retrieval
+
   packages/cloudflare-workflows:
     dependencies:
+      '@eliotr/cloudflare-evidence':
+        specifier: workspace:*
+        version: link:../cloudflare-evidence
       '@eliotr/contracts':
         specifier: workspace:*
         version: link:../contracts
       '@eliotr/domain':
         specifier: workspace:*
         version: link:../domain
+      '@eliotr/platform-cloudflare':
+        specifier: workspace:*
+        version: link:../platform-cloudflare
       '@eliotr/research':
         specifier: workspace:*
         version: link:../research
@@ -343,12 +769,27 @@ importers:
       '@eliotr/cloudflare-access':
         specifier: workspace:*
         version: link:../cloudflare-access
+      '@eliotr/cloudflare-computer-agent':
+        specifier: workspace:*
+        version: link:../cloudflare-computer-agent
+      '@eliotr/cloudflare-raw-ingest':
+        specifier: workspace:*
+        version: link:../cloudflare-raw-ingest
+      '@eliotr/cloudflare-workflows':
+        specifier: workspace:*
+        version: link:../cloudflare-workflows
       '@eliotr/contracts':
         specifier: workspace:*
         version: link:../contracts
+      '@eliotr/interfaces':
+        specifier: workspace:*
+        version: link:../interfaces
       '@eliotr/platform-cloudflare':
         specifier: workspace:*
         version: link:../platform-cloudflare
+      zod:
+        specifier: 4.4.3
+        version: 4.4.3
 
   packages/contracts:
     dependencies:
@@ -404,6 +845,9 @@ importers:
       '@eliotr/backup-o2':
         specifier: workspace:*
         version: link:../backup-o2
+      '@eliotr/cloudflare-backup':
+        specifier: workspace:*
+        version: link:../cloudflare-backup
       '@eliotr/contracts':
         specifier: workspace:*
         version: link:../contracts
@@ -425,6 +869,40 @@ importers:
       '@eliotr/domain':
         specifier: workspace:*
         version: link:../domain
+
+  packages/pwa-http-client:
+    dependencies:
+      '@eliotr/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+
+  packages/pwa-research-workspace:
+    dependencies:
+      '@eliotr/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@eliotr/pwa-http-client':
+        specifier: workspace:*
+        version: link:../pwa-http-client
+      '@eliotr/pwa-source-workspace':
+        specifier: workspace:*
+        version: link:../pwa-source-workspace
+    devDependencies:
+      vitest:
+        specifier: 4.1.11
+        version: 4.1.11(@types/node@26.4.0)(vite@8.2.2(@types/node@26.4.0)(esbuild@0.28.1)(yaml@2.9.0))
+
+  packages/pwa-source-workspace:
+    dependencies:
+      '@eliotr/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@eliotr/pwa-http-client':
+        specifier: workspace:*
+        version: link:../pwa-http-client
+      markdown-it:
+        specifier: 15.0.2
+        version: 15.0.2
 
   packages/research:
     dependencies:
@@ -667,8 +1145,8 @@ packages:
     resolution: {integrity: sha512-jxQYkj8dSIzc0cD6cMMNdOc1UVjqSqu8BZdor5s8cGjW2I8BjODt/kWPVdY+u9zj3ms75Q5qaZgnxUad83+eAg==}
     engines: {node: '>=22.0.0'}
 
-  '@cloudflare/unenv-preset@2.16.1':
-    resolution: {integrity: sha512-ECxObrMfyTl5bhQf/lZCXwo5G6xX9IAUo+nDMKK4SZ8m4Jvvxp52vilxyySSWh2YTZz8+HQ07qGH/2rEom1vDw==}
+  '@cloudflare/unenv-preset@2.16.2':
+    resolution: {integrity: sha512-JBP1+Z7ZSNG/d4mRP+y8VC5dka3tZVMLEZRvS+rzQ4DGV1EoxRFQckcJTTkXbHSQiTj0DtNI01Zwb/V2fX0mvQ==}
     peerDependencies:
       unenv: 2.0.0-rc.24
       workerd: '>1.20260305.0 <2.0.0-0'
@@ -676,69 +1154,39 @@ packages:
       workerd:
         optional: true
 
-  '@cloudflare/vitest-plugin@1.1.0':
-    resolution: {integrity: sha512-fiJJidv8wRRVwM1J7i5TD0Cv6Z6iqXPAfPKqtMitvf429i4lANY8K6IrU8o7XNHcfes4Kg/e0Ul8tWqq7x4kXw==}
+  '@cloudflare/vitest-plugin@1.3.2':
+    resolution: {integrity: sha512-SsM4eccEiF6MQXIp2fhLCd8EdVCxUVcpBQkIVJg6+hTKkqOiglTBM8u7r9kcJ5aI6pxuwhfmP5oV8XVVEuHyIg==}
     peerDependencies:
       '@vitest/runner': ^4.1.0
       '@vitest/snapshot': ^4.1.0
       vitest: ^4.1.0
 
-  '@cloudflare/workerd-darwin-64@1.20260825.1':
-    resolution: {integrity: sha512-oHu38dwaUuzAilyTb0QkQ1YxU/kzqzIQybCvQKAhiK1CGtQS9h0MmjIZYogv3g8cFGGY2k+Wxs0wV9hHK8z78g==}
+  '@cloudflare/workerd-darwin-64@1.20260926.1':
+    resolution: {integrity: sha512-VCIpwgJu5Dm1o+VHLclNOKIdpttEqss7oDHS5DYxgVoonM9Dxxxr1xCQvJbh6IXFuQ1DDrbm5krjte5NsTgX3Q==}
     engines: {node: '>=16'}
     cpu: [x64]
     os: [darwin]
 
-  '@cloudflare/workerd-darwin-64@1.20260828.1':
-    resolution: {integrity: sha512-CVd+xPhqUESg8Xhq09TZx0wl4FSirfJGOzvbPz2yHhBIvmNHFFQkSN3rkd7wEwnhQQk37Xi0/aD6ykPLJbmGiQ==}
-    engines: {node: '>=16'}
-    cpu: [x64]
-    os: [darwin]
-
-  '@cloudflare/workerd-darwin-arm64@1.20260825.1':
-    resolution: {integrity: sha512-ak5zh8YGEjxQQ78bVo7gzU+tcg2fSFxMIjOPZtWk56a/rIYLbGu6ECcliqnYfMUlragg68H0JuVpfdr3BR5Alw==}
+  '@cloudflare/workerd-darwin-arm64@1.20260926.1':
+    resolution: {integrity: sha512-oVuLXfCnr1Xu9sBMNYrEPcFZQNMcviNcacz9l+oqQiLHc5UrVp++lpKbsuWstCfh+/c39Pp37TVeaNBLA8+ReA==}
     engines: {node: '>=16'}
     cpu: [arm64]
     os: [darwin]
 
-  '@cloudflare/workerd-darwin-arm64@1.20260828.1':
-    resolution: {integrity: sha512-5HDPXRM152vU5JveByGFk34X57TVyIsfp4cabepAf45DC0MKvm52ucJqAjW1h8bvW4X+zRw9GU35OHF9FEC9Ww==}
-    engines: {node: '>=16'}
-    cpu: [arm64]
-    os: [darwin]
-
-  '@cloudflare/workerd-linux-64@1.20260825.1':
-    resolution: {integrity: sha512-bNQvzz6NemWAwixDRz1fQa5T+E5lS4xpB7A/H/72ULxrjVpHmq8CGFPSbdmRp3dvgBjZTgp7wHdGLISLSVd9Gg==}
+  '@cloudflare/workerd-linux-64@1.20260926.1':
+    resolution: {integrity: sha512-BjmiDvYBVBG5248gCHSZS3yONbcm3/3qKTu9RaQA8o7jQHJfXx9JnWbhkld2KsbXnRGEGHFwpLLidIpIGtQYUA==}
     engines: {node: '>=16'}
     cpu: [x64]
     os: [linux]
 
-  '@cloudflare/workerd-linux-64@1.20260828.1':
-    resolution: {integrity: sha512-MQ1Ll9P7F72HHUKizbb7BlDfbY8fRoNMpbIpZoU6uKsSkneFICWSKv6UlgU9EQZ+w0i7TMa12iUgJ8l29eRI9A==}
-    engines: {node: '>=16'}
-    cpu: [x64]
-    os: [linux]
-
-  '@cloudflare/workerd-linux-arm64@1.20260825.1':
-    resolution: {integrity: sha512-a5E61YsnNCHHQMnmYsbVXInzeYqFqAMwm/wo16dWW4klXDr6T1bm7u1h5G7ZkxVM7+rtc69oe0yVHjDEqzpYVg==}
+  '@cloudflare/workerd-linux-arm64@1.20260926.1':
+    resolution: {integrity: sha512-28bdfQDIFcpaKXMPisADy8BchpIsX+tEAhD+bhfEBXukFGFr8F3ouyiG3HzN3CqAh/OYvifJizzFZtptUPCy7w==}
     engines: {node: '>=16'}
     cpu: [arm64]
     os: [linux]
 
-  '@cloudflare/workerd-linux-arm64@1.20260828.1':
-    resolution: {integrity: sha512-FBTaUQ1xcU9jcp4OyBPcH8x0QiFvc1iuZL2GkD8zp2q1WyTVHYOptRDQUU+cuHjt0rQ2EIKVPBjahPxfa0joBw==}
-    engines: {node: '>=16'}
-    cpu: [arm64]
-    os: [linux]
-
-  '@cloudflare/workerd-windows-64@1.20260825.1':
-    resolution: {integrity: sha512-EokzVY2suzRSzeURi2HpHnySR5mo6aF5V1klFIqFOZp2YJyXXTI8AvQgYzhlmGTZY3LNL41jjkUQunOM2OErgQ==}
-    engines: {node: '>=16'}
-    cpu: [x64]
-    os: [win32]
-
-  '@cloudflare/workerd-windows-64@1.20260828.1':
-    resolution: {integrity: sha512-yvr77hC7dUbvK5K+SCg062kkPq3sx+drV1PcgHslzHDYcJBtT0V3X80qLE49LW1vq2svaeNmsVQS+vHsqWu8cQ==}
+  '@cloudflare/workerd-windows-64@1.20260926.1':
+    resolution: {integrity: sha512-ehdL3ataKdEmlnW9oom6OZUR8n3XsTL/zl8+KGREpLi5sMSW0mek0PrF4wK9SX51f3Alnlu8tF8eKBg+mc3xFw==}
     engines: {node: '>=16'}
     cpu: [x64]
     os: [win32]
@@ -1548,6 +1996,9 @@ packages:
   argparse@2.0.1:
     resolution: {integrity: sha512-8+9WqebbFzpX9OR+Wa6O29asIogeRMzcGtAINdpMHHyAg10f05aSFVBbcEqGf/PXw1EjAZ+q2/bEBg3DvurK3Q==}
 
+  argparse@3.0.2:
+    resolution: {integrity: sha512-mFdDM6WqWKraGLsVb+C9CahPnzTXOefAOLq3jYcca2YZ8bEWpr++Tzj+zSaKW9+X9L5uSxcm1AZ3Y6aZJ09OhQ==}
+
   aria-query@5.3.2:
     resolution: {integrity: sha512-COROpnaoap1E2F000S62r6A60uHZnmlvomhfyT2DlTcrY1OrBKn2UhH7qn5wTC9zMvD0AY7csdPSNwKP+7WiQw==}
     engines: {node: '>= 0.4'}
@@ -1583,8 +2034,8 @@ packages:
   boolbase@1.0.0:
     resolution: {integrity: sha512-JZOSA7Mo9sNGB8+UjSgzdLtokWAky1zbztM3WRLCbZ70/3cTANmQmOdR7y2g+J0e2WXywy1yS468tY+IruqEww==}
 
-  brace-expansion@5.0.9:
-    resolution: {integrity: sha512-ScQ4IuvIEF1TMlP7Zt+vjJ//9zlPb2SDcxWxM3bk8s6t6GGdJ7KO1dCcTidOPJKePW30LE/2cT7wCyPho9/Wxg==}
+  brace-expansion@5.0.12:
+    resolution: {integrity: sha512-YovQ3rzhaLMIrDjNDMkNS01tea93qhEhG5xy8f6+R0l+dw3Ki+5sCoIoI942iuLZTHWogWktgwVDhU09iNEimQ==}
     engines: {node: 20 || >=22}
 
   ccount@2.0.1:
@@ -1700,8 +2151,8 @@ packages:
     resolution: {integrity: sha512-Btj2BOOO83o3WyH59e8MgXsxEQVcarkUOpEYrubB0urwnN10yQ364rsiByU11nZlqWYZm05i/of7io4mzihBtQ==}
     engines: {node: '>=8'}
 
-  devalue@5.9.2:
-    resolution: {integrity: sha512-po4PAY5c53tw5XMocSnf8A/5OHhbbUftpr93aEN6BBoAdntUmK7vu7wOATqvt7cXO7m1Cl4gMVn6p7n6n4mj0w==}
+  devalue@5.9.4:
+    resolution: {integrity: sha512-sPAT4pztbu6586/hrhOnMKS17IJrvg12mXiSPSS3W5qDeN2RGgvZ0diZCm31dBbnevfVmujNO3IM2wrS4Y2Rhg==}
 
   devlop@1.1.0:
     resolution: {integrity: sha512-RWmIqhcFf1lRYBvNmr7qTNuyCt/7/ns2jbpp1+PalgE/rDQcBT0fioSMUpJ93irlUhC5hrg4cYqe6U+0ImW0rA==}
@@ -1736,6 +2187,10 @@ packages:
   entities@4.5.0:
     resolution: {integrity: sha512-V0hjH4dGPh9Ao5p0MoRY6BVqtwCjhz6vI5LT8AJ55H+4g9/4vbHx1I54fS0XuclLhDHArPQCiMjDxjaL8fPxhw==}
     engines: {node: '>=0.12'}
+
+  entities@8.1.0:
+    resolution: {integrity: sha512-kxL7msIffSuh9aaFAMD7rxAIuTRMAHMeBtgHW2yUdWw732ZNh4MehkF2gdjvtdmikkaIP9bFDDJOPlsvm7avrA==}
+    engines: {node: '>=20.19.0'}
 
   error-stack-parser-es@1.0.5:
     resolution: {integrity: sha512-5qucVt2XcuGMcEGgWI7i+yZpmpByQ8J1lHhcL7PwqCwu9FPP3VUXzT4ltHe5i2z9dePwEHcDVOAfSnHsOlCXRA==}
@@ -1826,8 +2281,8 @@ packages:
   fast-string-width@3.0.2:
     resolution: {integrity: sha512-gX8LrtNEI5hq8DVUfRQMbr5lpaS4nMIWV+7XEbXk2b8kiQIizgnlr12B4dA3ZEx3308ze0O4Q1R+cHts8kyUJg==}
 
-  fast-uri@3.1.7:
-    resolution: {integrity: sha512-dOvZVzjdZdz7phd9v6jCbwxrBW3fK6n8Rc0CtdmM4bumzMnxywBYhuph6J819RRw/ku+rLbelwfMunktuzVVHg==}
+  fast-uri@3.1.8:
+    resolution: {integrity: sha512-GZMtZUTNRpOVIECoXwLNZS5xUGE+mVNbTB8h/7Rwh2TFWcBQiPzTgyZi05BF9UMZKkLJv8XBRJTlU7zg8+ZfMg==}
 
   fast-wrap-ansi@0.2.2:
     resolution: {integrity: sha512-7F2Fl+TjRSenLqlU3UjSH0iyqopqoZIu7eZVpEirP2g1GtWa2G/ecEmBdgz31+Mxr+ELclgg6sokpSFIQiZ02Q==}
@@ -2055,6 +2510,9 @@ packages:
     resolution: {integrity: sha512-WkUDrojuJs0xkgGf2udWxa3yGBRxPtxUkB79i6aCZLRgc7PM8fZe9TosfPDcvEpQZbuFASnHYmRLBLUbmLOIIA==}
     engines: {node: '>= 12.0.0'}
 
+  linkify-it@6.1.0:
+    resolution: {integrity: sha512-wJ/TwpSDTLepCrQoYWYIExIKg5Zchex2Nn5yk2mFnB+6PtdkHtyLx742md9csRjjOnGkKIS/RrbY7l8D6gT9Vw==}
+
   locate-path@6.0.0:
     resolution: {integrity: sha512-iPZK6eYjbxRu3uB4/WZ3EsEIMJFMqAoopl3R+zuq0UjcAm/MO6KCweDgPfP3elTztoKP3KtnVHxTn2NHBSDVUw==}
     engines: {node: '>=10'}
@@ -2072,6 +2530,10 @@ packages:
   magicast@0.5.4:
     resolution: {integrity: sha512-llBEhWm1SacoRwgHUoQJYtwp4PBLF4faQi5TCpIGyGs9n4y5+juI0tDgyKIfpqxckRHaHzouUEph3THklWh03w==}
 
+  markdown-it@15.0.2:
+    resolution: {integrity: sha512-q4IGxMv56jCqT4OCRCADBoDP3LO4MhmTXjFbphHPXs4g3j9Xg5RDnxqN8IF/3vIWEU+VCnUq+7JUg/cfy2E6Qw==}
+    hasBin: true
+
   mdast-util-to-hast@13.2.1:
     resolution: {integrity: sha512-cctsq2wp5vTsLIcaymblUriiTcZd0CwWtCbLvrOzYCDZoWyMNV8sZ7krj09FSnsiJi3WVsHLM4k6Dq/yaPyCXA==}
 
@@ -2080,6 +2542,9 @@ packages:
 
   mdn-data@2.27.1:
     resolution: {integrity: sha512-9Yubnt3e8A0OKwxYSXyhLymGW4sCufcLG6VdiDdUGVkPhpqLxlvP5vl1983gQjJl3tqbrM731mjaZaP68AgosQ==}
+
+  mdurl@2.1.0:
+    resolution: {integrity: sha512-1+HBaOx0zi/dQWht8rNv9MYf9qqpqL/kxI0hXImU6Y547zM6Sni8BQibt7ifgMcYtQg41ao3Ivd6cnSM86inpg==}
 
   micromark-util-character@2.1.1:
     resolution: {integrity: sha512-wv8tdUTJ3thSFFFJKtpYKOYiGP2+v96Hvk4Tu8KpCAsTMs6yi+nVmGh1syvSCsaxz45J6Jbw+9DD6g97+NV67Q==}
@@ -2096,12 +2561,8 @@ packages:
   micromark-util-types@2.0.2:
     resolution: {integrity: sha512-Yw0ECSpJoViF1qTU4DC6NwtC4aWGt1EkzaQB8KPPyCRR8z9TWeV0HbEFGTO+ZY1wB22zmxnJqhPyTpOVCpeHTA==}
 
-  miniflare@5.20260825.0-alpha:
-    resolution: {integrity: sha512-ZwlF6LuX43ilx9EwMRDKHenoGXiNdcKSyGx5aPaJhuozujVZasb2lRR7t3ojJZSnVzwDPsBBYCu8lLnc+/KIgQ==}
-    engines: {node: '>=22.0.0'}
-
-  miniflare@5.20260828.0-alpha:
-    resolution: {integrity: sha512-6nbxhZEcz/UET3Y1OnYPsrAUjUmuFoib3ynUqteRdn1YnDxsLg8cwgZJZCk9QmtOmGzXwzXzgE/d/C0dJAPtVw==}
+  miniflare@5.20260926.1-alpha:
+    resolution: {integrity: sha512-vc4lgl8YVxR2aundPnVPTIcL46UQKK+ebW7yinXNE1Y9joFS0JoakMazr7r3M8DXRvaemKS8EEmszkv/b05qUw==}
     engines: {node: '>=22.0.0'}
 
   minimatch@10.2.6:
@@ -2249,6 +2710,10 @@ packages:
   property-information@7.2.0:
     resolution: {integrity: sha512-IAtzIB6sUiWaJYrX9smp3V46pBGbBeLFRGdh25kg1334VcBlD8HzhPeNIWQH9zhGmo2itIe25EHt9dQP7G5hmg==}
 
+  punycode.js@2.3.1:
+    resolution: {integrity: sha512-uxFIHU0YlHYhDQtV4R9J6a52SLx28BCjT+4ieh7IGbgwVJWO+km431c4yRlREUAsAmt/uMjQUyQHNEPf0M39CA==}
+    engines: {node: '>=6'}
+
   punycode@2.3.1:
     resolution: {integrity: sha512-vYt7UD1U9Wg6138shLtLOvdAu+8DsC/ilFtEVHcH+wydcSpNE20AfSOduf6MkRFahL5FY7X1oU7nKVZFtfq8Fg==}
     engines: {node: '>=6'}
@@ -2333,12 +2798,12 @@ packages:
   sisteransi@1.0.5:
     resolution: {integrity: sha512-bLGGlR1QxBcynn2d5YmDX4MGjlZvy2MRBDRNHLJ8VI6l6+9FUiyTFNJ0IveOSP0bcXgVDPRcfGqA0pjaqUpfVg==}
 
-  smol-toml@1.8.0:
-    resolution: {integrity: sha512-kCZr2V3ch9i00x8zXRhjUNVcjG9ijES5dDudkXvUVCT5QlJNQWElSJdZqyPemffHoLNUYwOcou0Fy+ojN0uHSQ==}
+  smol-toml@1.9.0:
+    resolution: {integrity: sha512-hpd+HLON7HdZXqYchMM/+LaTTbdK0AU3NngIJ4KVyWbY9bfQqdL9cD+4yf6dUoU2Ap4VsU0JkQi6FxAI1B2mXQ==}
     engines: {node: '>= 18'}
 
-  source-map-js@1.2.1:
-    resolution: {integrity: sha512-UXWMKhLOwVKb728IUtQPXxfYU+usdybtUrK/8uGE8CQMvrhOpwvzDBwj0QhSL7MQc7vIsISBG8VQ8+IDQxpfQA==}
+  source-map-js@1.2.2:
+    resolution: {integrity: sha512-KGj/8Y43x35aZVDtt+J4mK1hoLGHULMYfSkODJNQjNDC3oW1PqPoxMwo0pLUsWM/UEGzON/NxeHywEfNXNP3Vw==}
     engines: {node: '>=0.10.0'}
 
   space-separated-tokens@2.0.2:
@@ -2433,6 +2898,9 @@ packages:
     engines: {node: '>=14.17'}
     hasBin: true
 
+  uc.micro@3.0.0:
+    resolution: {integrity: sha512-U3PppEkleoTnIfi8BozMx3yju3qc/L6SwqWo2Sw+54PX+PX0q9I+r1Um5HCmqD7n9VDX5/v3vQH/AjA6deDdtw==}
+
   ufo@1.6.4:
     resolution: {integrity: sha512-JFNbkD1Svwe0KvGi8GOeLcP4kAWQ609twvCdcHxq1oSL8svv39ZuSvajcD8B+5D0eL4+s1Is2D/O6KN3qcTeRA==}
 
@@ -2445,8 +2913,8 @@ packages:
   undici-types@8.3.0:
     resolution: {integrity: sha512-j375ScV60dom+YkPFIfTLcOiPxkN/buHz5GobjLhixFuANaNs3C9l4GmrWqejgXWJ7BbJcFYpTEUkS1Ge8bpZQ==}
 
-  undici@7.29.0:
-    resolution: {integrity: sha512-IDxfleLmmbSskfWSUATiN1nfn2rDuvnMOqb5CWR92iIfojA0Ud+ulOAAEQ57LPr9rWmsreUyf5lwyao+7GNNVw==}
+  undici@7.29.1:
+    resolution: {integrity: sha512-RYONW2MeafgYlkVOKYKkA/Ag7BmXqgIWCa8t1m0JcxrQg9pI9lEqRhAOruOBCbAohOa/gkCF+iPi9hrgvTzu6Q==}
     engines: {node: '>=20.18.1'}
 
   undici@8.10.2:
@@ -2762,32 +3230,17 @@ packages:
     resolution: {integrity: sha512-BN22B5eaMMI9UMtjrGd5g5eCYPpCPDUy0FJXbYsaT5zYxjFOckS53SQDE3pWkVoWpHXVb3BrYcEN4Twa55B5cA==}
     engines: {node: '>=0.10.0'}
 
-  workerd@1.20260825.1:
-    resolution: {integrity: sha512-ccS6TEaaRxgONKawiYGnFYUVGfr2pmN1b7mrNtw0ADVhFaYsEIVoCHnQ4UjhM9EJDzuaNgAWFY82nzVrjWpuOA==}
+  workerd@1.20260926.1:
+    resolution: {integrity: sha512-YojhsWBuZwk3Jk9OC0QfTgVbLeQOD1tK1olC9ZXAUcmeip8z4NE/xtttpxCsuTvQBRqppvy7Tkac0kxPYMjIXA==}
     engines: {node: '>=16'}
     hasBin: true
 
-  workerd@1.20260828.1:
-    resolution: {integrity: sha512-pB9yvt0kkwZDAGZHmpY59r0o3hM0DzdW6BJERqwZOhunZ3ssOyDSgQxOQer2cSZW4YCFeOTIQYN1qwhK5wv/Cw==}
-    engines: {node: '>=16'}
-    hasBin: true
-
-  wrangler@4.126.0:
-    resolution: {integrity: sha512-glDq/nxaeQwue0XMIeupfwlu2jVxnFs+wjDFT71DQuURN5LsVdCwu0Af/1ep10U5xr1rKPGhHDEDkKG9nxE/dg==}
+  wrangler@4.143.1:
+    resolution: {integrity: sha512-ilQJRMRcMgdk82XWIg7hlgeB1I2CoOWmSiJeoqZufoNCWUiJTN5DaYPYb6M/oIXBXk3+IQIxNDgdtPUuxcxdeg==}
     engines: {node: '>=22.0.0'}
     hasBin: true
     peerDependencies:
-      '@cloudflare/workers-types': ^5.20260825.1
-    peerDependenciesMeta:
-      '@cloudflare/workers-types':
-        optional: true
-
-  wrangler@4.127.1:
-    resolution: {integrity: sha512-OzsiNgaI8i681L/+KnAKc+uEZ5D57xK5JuNvCOpRKICF4/5Q3Cu1oTGuUiT/f3GDUqQb3gzXNT0tfOHGMEtknw==}
-    engines: {node: '>=22.0.0'}
-    hasBin: true
-    peerDependencies:
-      '@cloudflare/workers-types': ^5.20260828.1
+      '@cloudflare/workers-types': ^5.20260926.1
     peerDependenciesMeta:
       '@cloudflare/workers-types':
         optional: true
@@ -2934,7 +3387,7 @@ snapshots:
       picomatch: 4.0.7
       retext-smartypants: 6.2.0
       shiki: 4.4.3
-      smol-toml: 1.8.0
+      smol-toml: 1.9.0
       unified: 11.0.5
 
   '@astrojs/language-server@2.16.16(prettier@3.9.6)(typescript@6.0.3)':
@@ -3046,27 +3499,21 @@ snapshots:
 
   '@cloudflare/kv-asset-handler@0.5.0': {}
 
-  '@cloudflare/unenv-preset@2.16.1(unenv@2.0.0-rc.24)(workerd@1.20260825.1)':
+  '@cloudflare/unenv-preset@2.16.2(unenv@2.0.0-rc.24)(workerd@1.20260926.1)':
     dependencies:
       unenv: 2.0.0-rc.24
     optionalDependencies:
-      workerd: 1.20260825.1
+      workerd: 1.20260926.1
 
-  '@cloudflare/unenv-preset@2.16.1(unenv@2.0.0-rc.24)(workerd@1.20260828.1)':
-    dependencies:
-      unenv: 2.0.0-rc.24
-    optionalDependencies:
-      workerd: 1.20260828.1
-
-  '@cloudflare/vitest-plugin@1.1.0(@cloudflare/workers-types@5.20260827.1)(@types/node@26.4.0)(@vitest/runner@4.1.11)(@vitest/snapshot@4.1.11)(vitest@4.1.11(@types/node@26.4.0)(vite@8.2.2(@types/node@26.4.0)(esbuild@0.28.1)(yaml@2.9.0)))':
+  '@cloudflare/vitest-plugin@1.3.2(@cloudflare/workers-types@5.20260827.1)(@types/node@26.4.0)(@vitest/runner@4.1.11)(@vitest/snapshot@4.1.11)(vitest@4.1.11(@types/node@26.4.0)(vite@8.2.2(@types/node@26.4.0)(esbuild@0.28.1)(yaml@2.9.0)))':
     dependencies:
       '@vitest/runner': 4.1.11
       '@vitest/snapshot': 4.1.11
       cjs-module-lexer: 1.2.3
       esbuild: 0.28.1
-      miniflare: 5.20260825.0-alpha(@types/node@26.4.0)
+      miniflare: 5.20260926.1-alpha(@types/node@26.4.0)
       vitest: 4.1.11(@types/node@26.4.0)(vite@8.2.2(@types/node@26.4.0)(esbuild@0.28.1)(yaml@2.9.0))
-      wrangler: 4.126.0(@cloudflare/workers-types@5.20260827.1)(@types/node@26.4.0)
+      wrangler: 4.143.1(@cloudflare/workers-types@5.20260827.1)(@types/node@26.4.0)
       zod: 4.4.3
     transitivePeerDependencies:
       - '@cloudflare/workers-types'
@@ -3074,34 +3521,19 @@ snapshots:
       - bufferutil
       - utf-8-validate
 
-  '@cloudflare/workerd-darwin-64@1.20260825.1':
+  '@cloudflare/workerd-darwin-64@1.20260926.1':
     optional: true
 
-  '@cloudflare/workerd-darwin-64@1.20260828.1':
+  '@cloudflare/workerd-darwin-arm64@1.20260926.1':
     optional: true
 
-  '@cloudflare/workerd-darwin-arm64@1.20260825.1':
+  '@cloudflare/workerd-linux-64@1.20260926.1':
     optional: true
 
-  '@cloudflare/workerd-darwin-arm64@1.20260828.1':
+  '@cloudflare/workerd-linux-arm64@1.20260926.1':
     optional: true
 
-  '@cloudflare/workerd-linux-64@1.20260825.1':
-    optional: true
-
-  '@cloudflare/workerd-linux-64@1.20260828.1':
-    optional: true
-
-  '@cloudflare/workerd-linux-arm64@1.20260825.1':
-    optional: true
-
-  '@cloudflare/workerd-linux-arm64@1.20260828.1':
-    optional: true
-
-  '@cloudflare/workerd-windows-64@1.20260825.1':
-    optional: true
-
-  '@cloudflare/workerd-windows-64@1.20260828.1':
+  '@cloudflare/workerd-windows-64@1.20260926.1':
     optional: true
 
   '@cloudflare/workers-types@5.20260827.1': {}
@@ -3774,7 +4206,7 @@ snapshots:
   ajv@8.20.0:
     dependencies:
       fast-deep-equal: 3.1.3
-      fast-uri: 3.1.7
+      fast-uri: 3.1.8
       json-schema-traverse: 1.0.0
       require-from-string: 2.0.2
 
@@ -3792,6 +4224,8 @@ snapshots:
       picomatch: 2.3.2
 
   argparse@2.0.1: {}
+
+  argparse@3.0.2: {}
 
   aria-query@5.3.2: {}
 
@@ -3813,7 +4247,7 @@ snapshots:
       clsx: 2.1.1
       common-ancestor-path: 2.0.0
       cookie: 2.0.1
-      devalue: 5.9.2
+      devalue: 5.9.4
       diff: 9.0.0
       dset: 3.1.4
       es-module-lexer: 2.3.2
@@ -3839,7 +4273,7 @@ snapshots:
       picomatch: 4.0.7
       semver: 7.8.5
       shiki: 4.4.3
-      smol-toml: 1.8.0
+      smol-toml: 1.9.0
       svgo: 4.1.0
       tinyclip: 0.1.15
       tinyexec: 1.3.0
@@ -3898,7 +4332,7 @@ snapshots:
 
   boolbase@1.0.0: {}
 
-  brace-expansion@5.0.9:
+  brace-expansion@5.0.12:
     dependencies:
       balanced-match: 4.0.4
 
@@ -3965,12 +4399,12 @@ snapshots:
   css-tree@2.2.1:
     dependencies:
       mdn-data: 2.0.28
-      source-map-js: 1.2.1
+      source-map-js: 1.2.2
 
   css-tree@3.2.1:
     dependencies:
       mdn-data: 2.27.1
-      source-map-js: 1.2.1
+      source-map-js: 1.2.2
 
   css-what@7.0.0: {}
 
@@ -3994,7 +4428,7 @@ snapshots:
 
   detect-libc@2.1.2: {}
 
-  devalue@5.9.2: {}
+  devalue@5.9.4: {}
 
   devlop@1.1.0:
     dependencies:
@@ -4030,6 +4464,8 @@ snapshots:
   emoji-regex@10.6.0: {}
 
   entities@4.5.0: {}
+
+  entities@8.1.0: {}
 
   error-stack-parser-es@1.0.5: {}
 
@@ -4154,7 +4590,7 @@ snapshots:
     dependencies:
       fast-string-truncated-width: 3.0.3
 
-  fast-uri@3.1.7: {}
+  fast-uri@3.1.8: {}
 
   fast-wrap-ansi@0.2.2:
     dependencies:
@@ -4341,6 +4777,10 @@ snapshots:
       lightningcss-win32-arm64-msvc: 1.33.0
       lightningcss-win32-x64-msvc: 1.33.0
 
+  linkify-it@6.1.0:
+    dependencies:
+      uc.micro: 3.0.0
+
   locate-path@6.0.0:
     dependencies:
       p-locate: 5.0.0
@@ -4359,7 +4799,16 @@ snapshots:
     dependencies:
       '@babel/parser': 7.29.8
       '@babel/types': 7.29.8
-      source-map-js: 1.2.1
+      source-map-js: 1.2.2
+
+  markdown-it@15.0.2:
+    dependencies:
+      argparse: 3.0.2
+      entities: 8.1.0
+      linkify-it: 6.1.0
+      mdurl: 2.1.0
+      punycode.js: 2.3.1
+      uc.micro: 3.0.0
 
   mdast-util-to-hast@13.2.1:
     dependencies:
@@ -4376,6 +4825,8 @@ snapshots:
   mdn-data@2.0.28: {}
 
   mdn-data@2.27.1: {}
+
+  mdurl@2.1.0: {}
 
   micromark-util-character@2.1.1:
     dependencies:
@@ -4394,25 +4845,12 @@ snapshots:
 
   micromark-util-types@2.0.2: {}
 
-  miniflare@5.20260825.0-alpha(@types/node@26.4.0):
+  miniflare@5.20260926.1-alpha(@types/node@26.4.0):
     dependencies:
       '@cspotcode/source-map-support': 0.8.1
       sharp: 0.35.4(@types/node@26.4.0)
-      undici: 7.29.0
-      workerd: 1.20260825.1
-      ws: 8.21.0
-      youch: 4.1.0-beta.10
-    transitivePeerDependencies:
-      - '@types/node'
-      - bufferutil
-      - utf-8-validate
-
-  miniflare@5.20260828.0-alpha(@types/node@26.4.0):
-    dependencies:
-      '@cspotcode/source-map-support': 0.8.1
-      sharp: 0.35.4(@types/node@26.4.0)
-      undici: 7.29.0
-      workerd: 1.20260828.1
+      undici: 7.29.1
+      workerd: 1.20260926.1
       ws: 8.21.0
       youch: 4.1.0-beta.10
     transitivePeerDependencies:
@@ -4422,7 +4860,7 @@ snapshots:
 
   minimatch@10.2.6:
     dependencies:
-      brace-expansion: 5.0.9
+      brace-expansion: 5.0.12
 
   mrmime@2.0.1: {}
 
@@ -4522,7 +4960,7 @@ snapshots:
     dependencies:
       nanoid: 3.3.18
       picocolors: 1.1.1
-      source-map-js: 1.2.1
+      source-map-js: 1.2.2
 
   prelude-ls@1.2.1: {}
 
@@ -4533,6 +4971,8 @@ snapshots:
   process-ancestry@0.1.0: {}
 
   property-information@7.2.0: {}
+
+  punycode.js@2.3.1: {}
 
   punycode@2.3.1: {}
 
@@ -4662,9 +5102,9 @@ snapshots:
 
   sisteransi@1.0.5: {}
 
-  smol-toml@1.8.0: {}
+  smol-toml@1.9.0: {}
 
-  source-map-js@1.2.1: {}
+  source-map-js@1.2.2: {}
 
   space-separated-tokens@2.0.2: {}
 
@@ -4753,6 +5193,8 @@ snapshots:
 
   typescript@6.0.3: {}
 
+  uc.micro@3.0.0: {}
+
   ufo@1.6.4: {}
 
   ultrahtml@1.7.0: {}
@@ -4761,7 +5203,7 @@ snapshots:
 
   undici-types@8.3.0: {}
 
-  undici@7.29.0: {}
+  undici@7.29.1: {}
 
   undici@8.10.2: {}
 
@@ -4996,50 +5438,24 @@ snapshots:
 
   word-wrap@1.2.5: {}
 
-  workerd@1.20260825.1:
+  workerd@1.20260926.1:
     optionalDependencies:
-      '@cloudflare/workerd-darwin-64': 1.20260825.1
-      '@cloudflare/workerd-darwin-arm64': 1.20260825.1
-      '@cloudflare/workerd-linux-64': 1.20260825.1
-      '@cloudflare/workerd-linux-arm64': 1.20260825.1
-      '@cloudflare/workerd-windows-64': 1.20260825.1
+      '@cloudflare/workerd-darwin-64': 1.20260926.1
+      '@cloudflare/workerd-darwin-arm64': 1.20260926.1
+      '@cloudflare/workerd-linux-64': 1.20260926.1
+      '@cloudflare/workerd-linux-arm64': 1.20260926.1
+      '@cloudflare/workerd-windows-64': 1.20260926.1
 
-  workerd@1.20260828.1:
-    optionalDependencies:
-      '@cloudflare/workerd-darwin-64': 1.20260828.1
-      '@cloudflare/workerd-darwin-arm64': 1.20260828.1
-      '@cloudflare/workerd-linux-64': 1.20260828.1
-      '@cloudflare/workerd-linux-arm64': 1.20260828.1
-      '@cloudflare/workerd-windows-64': 1.20260828.1
-
-  wrangler@4.126.0(@cloudflare/workers-types@5.20260827.1)(@types/node@26.4.0):
+  wrangler@4.143.1(@cloudflare/workers-types@5.20260827.1)(@types/node@26.4.0):
     dependencies:
       '@cloudflare/kv-asset-handler': 0.5.0
-      '@cloudflare/unenv-preset': 2.16.1(unenv@2.0.0-rc.24)(workerd@1.20260825.1)
+      '@cloudflare/unenv-preset': 2.16.2(unenv@2.0.0-rc.24)(workerd@1.20260926.1)
       blake3-wasm: 2.1.5
       esbuild: 0.28.1
-      miniflare: 5.20260825.0-alpha(@types/node@26.4.0)
+      miniflare: 5.20260926.1-alpha(@types/node@26.4.0)
       path-to-regexp: 6.3.0
       unenv: 2.0.0-rc.24
-      workerd: 1.20260825.1
-    optionalDependencies:
-      '@cloudflare/workers-types': 5.20260827.1
-      fsevents: 2.3.3
-    transitivePeerDependencies:
-      - '@types/node'
-      - bufferutil
-      - utf-8-validate
-
-  wrangler@4.127.1(@cloudflare/workers-types@5.20260827.1)(@types/node@26.4.0):
-    dependencies:
-      '@cloudflare/kv-asset-handler': 0.5.0
-      '@cloudflare/unenv-preset': 2.16.1(unenv@2.0.0-rc.24)(workerd@1.20260828.1)
-      blake3-wasm: 2.1.5
-      esbuild: 0.28.1
-      miniflare: 5.20260828.0-alpha(@types/node@26.4.0)
-      path-to-regexp: 6.3.0
-      unenv: 2.0.0-rc.24
-      workerd: 1.20260828.1
+      workerd: 1.20260926.1
     optionalDependencies:
       '@cloudflare/workers-types': 5.20260827.1
       fsevents: 2.3.3

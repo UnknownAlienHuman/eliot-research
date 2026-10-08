@@ -73,8 +73,8 @@ same intent/receipt and must not create a second authority mutation or projectio
 ```text
 pnpm delivery:check
 pnpm --filter @eliotr/platform-cloudflare test
-pnpm check:boundaries
-pnpm check:budgets
+pnpm boundaries:check
+pnpm budgets:check
 ```
 
 Remote D1 and Queue/DLQ receipts remain `NOT EXECUTED`; this packet is not `LIVE_QUALIFIED`.

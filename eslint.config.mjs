@@ -1,12 +1,17 @@
 import js from "@eslint/js";
 import tseslint from "typescript-eslint";
 
-const typescriptFiles = ["**/*.ts", "**/*.tsx"];
+const typescriptFiles = ["**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"];
 const typescriptConfigs = tseslint.configs.recommended.map((config) => ({
   ...config,
   files: typescriptFiles,
 }));
 const nodeGlobals = {
+  AbortSignal: "readonly",
+  Response: "readonly",
+  TextDecoder: "readonly",
+  TextEncoder: "readonly",
+  URLSearchParams: "readonly",
   Buffer: "readonly",
   URL: "readonly",
   clearTimeout: "readonly",
@@ -26,6 +31,8 @@ export default tseslint.config(
       "**/.astro/**",
       "**/worker-configuration.d.ts",
       "coverage/**",
+      ".eliotr-state/**",
+      "apps/eliotr-pwa/public/agent-inbox/app.js",
     ],
   },
   js.configs.recommended,

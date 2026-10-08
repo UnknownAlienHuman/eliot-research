@@ -13,6 +13,7 @@ import type {
 export interface SourceRevisionInventoryRow {
   readonly source_revision_ref: string;
   readonly source_id: string;
+  readonly source_owner_generation: string;
   readonly original_r2_key?: string;
   readonly normalized_artifact_ref?: string;
   readonly content_sha256: string;
@@ -54,7 +55,7 @@ export interface RegisteredDependencyRow {
 }
 
 export interface ErasureInventoryPort {
-  enumerate(request: ErasureRequest): Promise<ErasureDependencyClosure>;
+  enumerate(request: ErasureRequest, fence?: ErasureFence): Promise<ErasureDependencyClosure>;
 }
 
 export interface ErasureAuthorityPort {
@@ -147,8 +148,103 @@ export interface ErasureInvalidationPort {
 }
 
 export interface BackupErasurePort {
-  purge(epochRef: string, erasureRef: string): Promise<{ readonly receipt_ref: string }>;
-  verifyAbsent(epochRef: string, erasureRef: string): Promise<{ readonly absent: boolean; readonly receipt_ref: string }>;
+  purge(
+    epochRef: string,
+    erasureRef: string,
+    context: { readonly target_id: string; readonly fence: ErasureFence },
+  ): Promise<{ readonly receipt_ref: string }>;
+  verifyAbsent(
+    epochRef: string,
+    erasureRef: string,
+    context: { readonly target_id: string; readonly fence: ErasureFence },
+  ): Promise<{ readonly absent: boolean; readonly receipt_ref: string }>;
+}
+
+/** Both independent stores must return exact receipts before BackupRestorePath can close. */
+export interface BackupCompositeErasurePort {
+  purge(
+    epochRef: string,
+    erasureRef: string,
+    context: { readonly target_id: string; readonly fence: ErasureFence },
+  ): Promise<{
+    readonly receipt_ref: string;
+    readonly primary_delete_intent_ref: string;
+    readonly primary_delete_intent_digest: string;
+    readonly primary_delete_receipt_ref: string;
+    readonly offsite_delete_receipt_ref: string;
+  }>;
+  verifyAbsent(
+    epochRef: string,
+    erasureRef: string,
+    context: { readonly target_id: string; readonly fence: ErasureFence },
+  ): Promise<{
+    readonly absent: boolean;
+    readonly receipt_ref: string;
+    readonly primary_absence_receipt_ref: string;
+    readonly offsite_absence_receipt_ref: string;
+  }>;
+}
+
+export interface BackupPrimaryErasurePort {
+  purge(
+    epochRef: string,
+    erasureRef: string,
+    context: { readonly target_id: string; readonly fence: ErasureFence },
+  ): Promise<{
+    readonly intent_ref: string;
+    readonly intent_digest: string;
+    readonly receipt_ref: string;
+  }>;
+  verifyAbsent(
+    epochRef: string,
+    erasureRef: string,
+    context: { readonly target_id: string; readonly fence: ErasureFence },
+  ): Promise<{ readonly absent: boolean; readonly receipt_ref: string }>;
+}
+
+export interface BackupPrimaryWriterQualificationInput {
+  readonly protocol: "eliotr.backup-primary-writer-qualification-input.v1";
+  readonly erasure_id: string;
+  readonly revision: number;
+  readonly fence: ErasureFence;
+  readonly request_sha256: string;
+  readonly producer_claim_count: number;
+  readonly producer_claims_digest: string;
+  readonly export_cut_count: number;
+  readonly export_cut_inventory_digest: string;
+  readonly primary_prefix_object_count: number;
+  readonly primary_prefix_inventory_digest: string;
+}
+
+/** Persisted owner/controller evidence; a caller boolean or free-form receipt JSON is never accepted. */
+export interface BackupPrimaryWriterQualificationReceipt {
+  readonly protocol: "eliotr.backup-primary-writer-qualification.v1";
+  readonly mode: "ISOLATED_NEW_BUCKET" | "LEGACY_WRITERS_DRAINED";
+  readonly operation_receipt_ref: string;
+  readonly operation_receipt_digest: string;
+  readonly admission_binding_ref: string;
+  readonly admission_binding_digest: string;
+  readonly cloudflare_account_ref: string;
+  readonly primary_bucket_binding_ref: string;
+  readonly worker_version_ref: string;
+  readonly controller_generation: string;
+  readonly controller_fingerprint: string;
+  readonly source_sha256: string;
+  readonly configuration_sha256: string;
+  readonly artifact_sha256: string;
+  readonly bootstrap_zero_state_receipt_ref: string;
+  readonly bootstrap_zero_state_digest: string;
+  readonly producer_claims_digest: string;
+  readonly export_cut_inventory_digest: string;
+  readonly primary_prefix_inventory_digest: string;
+  readonly evidence_digest: string;
+}
+
+export interface BackupPrimaryWriterQualificationVerifier {
+  /** Resolves persisted owner admission and current native binding/version receipts; never grants on a boolean. */
+  assertCurrentQualification(
+    input: BackupPrimaryWriterQualificationInput,
+  ): Promise<BackupPrimaryWriterQualificationReceipt>;
 }
 
 export interface ManagedSearchErasureItem {

@@ -1,3 +1,5 @@
+import type { SemanticResearchHandlerGeneration } from "@eliotr/cloudflare-research-runtime/research-stage-handlers.js";
+import { modelGatewayDynamicRouteTarget } from "@eliotr/cloudflare-ai";
 import type { AllowedReferenceManifest, SelectionIntegrityReceipt, VersionedRef } from "@eliotr/contracts";
 import { modelGatewayRequestParametersSha256 } from "@eliotr/cloudflare-ai";
 import type { CompiledEvidenceContext } from "@eliotr/policy";
@@ -18,6 +20,7 @@ import { RESEARCH_WORKFLOW_STAGES } from "@eliotr/domain";
 import { governedModelAttemptFixture } from "./model-attempt-fixture.js";
 import { principal, workflowFixture } from "./research-workflow-fixture.js";
 import { expect } from "vitest";
+import runConfigurationMigration from "../../../infra/d1/core/migrations/0104_research_run_configuration.sql?raw";
 export const NOW = "2026-09-10T12:00:00.000Z";
 export const ROUTE = "dynamic/eliotr-report-section" as const;
 const ROUTE_VERSION = "stage-handler-test-v1";
@@ -30,12 +33,50 @@ export type ApprovalMode = "approved" | "missing" | "malformed";
 export type SynthesisCandidateProtocol = "v1" | "v2";
 
 export interface CommittedFreezeSynthesisFixtureOptions {
+  readonly handler_generation?: SemanticResearchHandlerGeneration;
   readonly candidate_protocol?: SynthesisCandidateProtocol;
   readonly synthesis_prompt?: string;
   /** Optional manifest admission used by later committed-stage reader fixtures. */
   readonly allowed_verifier_refs?: readonly string[];
   /** Add a second real projected evidence section for downstream citation fixtures. */
   readonly include_counterevidence?: boolean;
+  /** Use the production execution-bound ORIENT lifecycle for the original scope. */
+  readonly orientation_backed_scope?: boolean;
+}
+
+/** Seed the same row state that 0104 preserves for runs already present at migration time. */
+export async function markResearchRunAsPre0104Legacy(database: D1Database, operationId: string): Promise<void> {
+  const row = await database.prepare(
+    "SELECT configuration_required,configuration_ref FROM research_workflow_run WHERE operation_id=?1 LIMIT 1",
+  ).bind(operationId).first<{ readonly configuration_required: unknown; readonly configuration_ref: unknown }>();
+  if (row === null || row.configuration_required !== 1 || row.configuration_ref !== null) {
+    throw new Error("Legacy REPORT fixture is not a newly-required run without a snapshot");
+  }
+  const transitionStart = runConfigurationMigration.indexOf(
+    "CREATE TRIGGER research_workflow_run_transition BEFORE UPDATE ON research_workflow_run",
+  );
+  if (transitionStart < 0) throw new Error("Run configuration migration is missing its exact transition guard");
+  const transitionTrigger = runConfigurationMigration.slice(transitionStart).trim();
+  await database.prepare("DROP TRIGGER research_workflow_run_transition").run();
+  try {
+    await database.prepare(
+      "UPDATE research_workflow_run SET configuration_required=0 WHERE operation_id=?1 AND configuration_ref IS NULL",
+    ).bind(operationId).run();
+    const readback = await database.prepare(
+      "SELECT configuration_required,configuration_ref FROM research_workflow_run WHERE operation_id=?1 LIMIT 1",
+    ).bind(operationId).first<{ readonly configuration_required: unknown; readonly configuration_ref: unknown }>();
+    if (readback === null || readback.configuration_required !== 0 || readback.configuration_ref !== null) {
+      throw new Error("Legacy REPORT fixture marker did not read back exactly");
+    }
+  } finally {
+    await database.prepare(transitionTrigger).run();
+  }
+  const restored = await database.prepare(
+    "SELECT name FROM sqlite_master WHERE type='trigger' AND name='research_workflow_run_transition' LIMIT 1",
+  ).first<{ readonly name: string }>();
+  if (restored?.name !== "research_workflow_run_transition") {
+    throw new Error("Run configuration transition guard was not restored after legacy fixture setup");
+  }
 }
 
 function futureIso(): string {
@@ -344,8 +385,10 @@ function freezePrompt(
 
 export async function committedFreezeSynthesisFixture(options: CommittedFreezeSynthesisFixtureOptions = {}) {
   const freeze = await committedEvidenceFreezeFixture({
+    ...(options.handler_generation === undefined ? {} : { handler_generation: options.handler_generation }),
     ...(options.allowed_verifier_refs === undefined ? {} : { allowed_verifier_refs: options.allowed_verifier_refs }),
     ...(options.include_counterevidence === true ? { include_counterevidence: true } : {}),
+    ...(options.orientation_backed_scope === true ? { orientation_backed_scope: true } : {}),
   });
   const base = await governedModelAttemptFixture("freeze-synthesis", {
     database: freeze.db, bucket: freeze.bucket, request: freeze.stage_zero, principal: freezePrincipal,
@@ -390,19 +433,21 @@ export async function committedFreezeSynthesisFixture(options: CommittedFreezeSy
     database: freeze.db, work_bucket: freeze.bucket, operation_kind: "REPORT", deployment_environment: "TEST",
     gateway: { reasoning_gateway_base_url: BASE_URL, ai_gateway_binding: { gateway: (gatewayId) => {
       if (gatewayId !== "eliotr-reasoning") throw new Error("unexpected synthesis gateway binding");
-      return { getUrl: async () => BASE_URL, run: async (request, options) => {
-        if (Array.isArray(request) || request.provider !== "compat" || request.endpoint !== "chat/completions") throw new Error("unexpected synthesis binding request");
+      return { getUrl: async () => BASE_URL,
+        getLog: async () => { throw new Error("fingerprinted synthesis response must not request a log"); } };
+    }, run: async (model, inputs, options) => {
+        if (model !== (await modelGatewayDynamicRouteTarget(deployment)).model || inputs.model !== model || options.gateway.id !== "eliotr-reasoning" ||
+            options.returnRawResponse !== true) throw new Error("unexpected synthesis binding request");
         const headers = new Headers(options?.extraHeaders as Record<string, string>);
         if (headers.has("cf-aig-authorization") || headers.get("cf-aig-max-attempts") !== "1" || headers.get("cf-aig-collect-log-payload") !== "false") throw new Error("synthesis binding policy changed");
         provider_calls += 1;
-        request_bodies.push(JSON.stringify(request.query));
+        request_bodies.push(JSON.stringify(inputs));
         return new Response(JSON.stringify({
           id: "freeze-synthesis-response", object: "chat.completion", created: 1, model: deployment.route_ref,
           choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: candidate } }],
           usage: { prompt_tokens: 4, completion_tokens: 8, total_tokens: 12 },
         }), { status: 200, headers: { "content-type": "application/json", "cf-aig-provider": "controlled", "cf-aig-model": "controlled", "cf-aig-log-id": "freeze-synthesis-gateway-log" } });
-      } };
-    } } },
+      } } },
     prompt: freezePrompt(freeze, stage_five, deployment, "freeze", synthesis_prompt, options.allowed_verifier_refs), pricing: { quote: async () => ({ quote_ref: "freeze-synthesis-quote", pricing_snapshot_ref: deployment.pricing_snapshot_ref, billed_usd: 0 }) },
     spend_authorization: { read: async (request: SpendAuthorizationReadRequest): Promise<SpendAuthorizationReadback> => {
       if (prepared === null) throw new Error("spend authorization read before preparation");

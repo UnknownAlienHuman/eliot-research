@@ -404,13 +404,13 @@ await check("denied or missing billing endpoints stay typed unknown", async () =
     const { provider } = providerWith({ rows: [], status });
     await assert.rejects(
       provider.collect({ accountId: ACCOUNT, bearer: BEARER, now: NOW }),
-      (error) => error instanceof ProviderFailure && error.reason === "AUTH_SCOPE_DENIED",
+      (error) => error instanceof ProviderFailure && error.reason === (status === 401 ? "HTTP_UNAUTHENTICATED" : "HTTP_FORBIDDEN") && error.httpStatus === status,
     );
   }
   const { provider } = providerWith({ rows: [], status: 404 });
   await assert.rejects(
     provider.collect({ accountId: ACCOUNT, bearer: BEARER, now: NOW }),
-    (error) => error instanceof ProviderFailure && error.reason === "NO_AUTH_ENDPOINT",
+    (error) => error instanceof ProviderFailure && error.reason === "HTTP_NOT_FOUND" && error.httpStatus === 404,
   );
 });
 

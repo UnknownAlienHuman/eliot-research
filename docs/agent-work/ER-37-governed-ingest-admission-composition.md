@@ -16,12 +16,13 @@ the packets it depends on.
 - `packages/platform-cloudflare/src/d1-ingest-types.ts`
 - `packages/platform-cloudflare/src/d1-ingest-validation.ts`
 - `packages/platform-cloudflare/src/d1-ingest-authority.ts`
+- `packages/platform-cloudflare/src/d1-ingest-client.ts`
+- `packages/platform-cloudflare/src/d1-ingest-source-head.ts`
 - `packages/platform-cloudflare/src/d1-ingest-policy.ts`
 - `packages/platform-cloudflare/src/d1-ingest-commit.ts`
 - `packages/platform-cloudflare/src/d1-ingest-snapshot-view.ts`
 - `packages/platform-cloudflare/src/d1-ingest-authority.test.ts`
 - `apps/eliotr-core/src/ingest-http.ts`
-- `apps/eliotr-core/src/ingest-promotion-authorization.ts`
 - `apps/eliotr-core/test/ingest-promotion-authorization.test.ts`
 - `apps/eliotr-core/test/ingest-service.test.ts`
 - `apps/eliotr-core/test/source-admission-service.test.ts`

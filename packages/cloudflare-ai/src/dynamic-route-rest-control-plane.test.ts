@@ -63,12 +63,11 @@ function version(
   overrides: Readonly<Record<string, unknown>> = {},
 ): Record<string, unknown> {
   return {
-    id: VERSION_ID,
-    name: null,
-    route_id: ROUTE_ID,
+    version_id: VERSION_ID,
     created_at: CREATED_AT,
-    modified_at: CREATED_AT,
-    elements: ROUTE_DEFINITION,
+    active: true,
+    is_valid: true,
+    data: ROUTE_DEFINITION,
     ...overrides,
   };
 }
@@ -76,20 +75,11 @@ function version(
 function deployment(
   overrides: Readonly<Record<string, unknown>> = {},
 ): Record<string, unknown> {
-  const merged = {
-    id: DEPLOYMENT_ID,
-    route_id: ROUTE_ID,
+  return {
+    deployment_id: DEPLOYMENT_ID,
     version_id: VERSION_ID,
     created_at: CREATED_AT,
-    metadata: null,
     ...overrides,
-  };
-  return {
-    ...merged,
-    version: version({
-      id: merged.version_id,
-      route_id: merged.route_id,
-    }),
   };
 }
 
@@ -99,6 +89,7 @@ function route(
 ): Record<string, unknown> {
   return {
     id: ROUTE_ID,
+    gateway_id: "eliotr-reasoning",
     name: "eliotr-draft-v1-abcdef1234567890",
     created_at: CREATED_AT,
     modified_at: CREATED_AT,
@@ -106,6 +97,51 @@ function route(
     version: version(),
     ...overrides,
   };
+}
+
+// POST /deployments acknowledgement shape (ROUTE_ACK_KEYS in the codec).
+function deploymentAck(
+  overrides: Readonly<Record<string, unknown>> = {},
+): Record<string, unknown> {
+  return {
+    id: ROUTE_ID,
+    created_at: CREATED_AT,
+    modified_at: CREATED_AT,
+    gateway_id: "eliotr-reasoning",
+    name: "eliotr-draft-v1-abcdef1234567890",
+    elements: ROUTE_DEFINITION,
+    ...overrides,
+  };
+}
+
+// Minimal route-list item shape (no nested graph; decoded to id+name only).
+function routeListItem(
+  overrides: Readonly<Record<string, unknown>> = {},
+): Record<string, unknown> {
+  return {
+    id: ROUTE_ID,
+    account_tag: ACCOUNT_ID,
+    gateway_id: "eliotr-reasoning",
+    name: "eliotr-draft-v1-abcdef1234567890",
+    created_at: CREATED_AT,
+    modified_at: CREATED_AT,
+    ...overrides,
+  };
+}
+
+// List pages carry pagination inside `result`; `result_info` must be absent.
+function routeListPage(
+  items: readonly Record<string, unknown>[],
+  page: number,
+  perPage: number,
+): Record<string, unknown> {
+  return apiEnvelope({
+    routes: items,
+    page,
+    per_page: perPage,
+    order_by: "name",
+    order_by_direction: "asc",
+  });
 }
 
 function jsonResponse(
@@ -212,9 +248,9 @@ async function successfulCreateFixture() {
   const bindings = fakeBindings();
   const fetch = fakeFetch([
     jsonResponse(apiEnvelope(route(null))),
-    jsonResponse(apiEnvelope(deployment())),
+    jsonResponse(apiEnvelope(deploymentAck())),
     jsonResponse(apiEnvelope(route(deployment()))),
-    jsonResponse(apiEnvelope(deployment())),
+    jsonResponse(apiEnvelope(route(deployment()))),
   ]);
   return {
     request,
@@ -253,7 +289,7 @@ describe("Cloudflare Dynamic Routing REST control plane", () => {
       ],
       [
         "GET",
-        `https://api.cloudflare.com/client/v4/accounts/${ACCOUNT_ID}/ai-gateway/gateways/eliotr-reasoning/routes/${ROUTE_ID}/deployments/${DEPLOYMENT_ID}`,
+        `https://api.cloudflare.com/client/v4/accounts/${ACCOUNT_ID}/ai-gateway/gateways/eliotr-reasoning/routes/${ROUTE_ID}`,
       ],
     ]);
 
@@ -261,11 +297,7 @@ describe("Cloudflare Dynamic Routing REST control plane", () => {
       string,
       unknown
     >;
-    expect(Object.keys(routeBody).sort()).toEqual([
-      "description",
-      "elements",
-      "name",
-    ]);
+    expect(Object.keys(routeBody).sort()).toEqual(["elements", "name"]);
     expect(routeBody.name).toBe(request.name);
     expect(routeBody.elements).toEqual(ROUTE_DEFINITION);
     expect(JSON.parse(String(calls[1]?.[1].body))).toEqual({
@@ -293,7 +325,7 @@ describe("Cloudflare Dynamic Routing REST control plane", () => {
     const fetch = fakeFetch([
       jsonResponse(apiEnvelope(route(deployment()))),
       jsonResponse(apiEnvelope(route(deployment()))),
-      jsonResponse(apiEnvelope(deployment())),
+      jsonResponse(apiEnvelope(route(deployment()))),
     ]);
 
     await expect(controlPlane(fetch, bindings).create(request)).resolves.toEqual({
@@ -304,37 +336,21 @@ describe("Cloudflare Dynamic Routing REST control plane", () => {
   });
 
   it("lists all bounded pages with deterministic provider summaries", async () => {
-    const first = route(deployment());
-    const second = route(
-      deployment({
-        id: "deployment-002",
-        route_id: "route-002",
-        version_id: "version-002",
-      }),
-      {
-        id: "route-002",
-        name: "eliotr-verify-v1-abcdef1234567890",
-        version: version({ id: "version-002", route_id: "route-002" }),
-      },
-    );
+    // page 1 is full (per_page 1), so the codec derives a second page;
+    // page 2 is short, which terminates traversal.
     const fetch = fakeFetch([
+      jsonResponse(routeListPage([routeListItem()], 1, 1)),
       jsonResponse(
-        apiEnvelope([first], {
-          page: 1,
-          per_page: 100,
-          count: 1,
-          total_count: 2,
-          total_pages: 2,
-        }),
-      ),
-      jsonResponse(
-        apiEnvelope([second], {
-          page: 2,
-          per_page: 100,
-          count: 1,
-          total_count: 2,
-          total_pages: 2,
-        }),
+        routeListPage(
+          [
+            routeListItem({
+              id: "route-002",
+              name: "eliotr-verify-v1-abcdef1234567890",
+            }),
+          ],
+          2,
+          2,
+        ),
       ),
     ]);
 
@@ -352,6 +368,32 @@ describe("Cloudflare Dynamic Routing REST control plane", () => {
         },
       ],
     });
+  });
+
+  it("uses the bearerless connector request port with the native data-page envelope", async () => {
+    const requestPort = {
+      request: vi.fn(async () => jsonResponse({
+        success: true,
+        data: {
+          routes: [routeListItem()], page: 1, per_page: 100,
+          order_by: "name", order_by_direction: "asc",
+        },
+      })),
+    };
+    const adapter = createCloudflareDynamicRouteRestControlPlane({
+      account_id: ACCOUNT_ID,
+      bindings: fakeBindings(),
+      request_port: requestPort,
+    });
+    await expect(adapter.list("eliotr-reasoning")).resolves.toEqual({
+      routes: [{ provider_route_id: ROUTE_ID, name: "eliotr-draft-v1-abcdef1234567890" }],
+    });
+    expect(requestPort.request).toHaveBeenCalledWith(
+      "GET",
+      `https://api.cloudflare.com/client/v4/accounts/${ACCOUNT_ID}/ai-gateway/gateways/eliotr-reasoning/routes?page=1&per_page=100`,
+      undefined,
+      "NONE",
+    );
   });
 
   it("reads a route only through an exact immutable binding", async () => {
@@ -438,7 +480,8 @@ describe("Cloudflare Dynamic Routing REST control plane", () => {
       controlPlane(
         fakeFetch([
           jsonResponse(apiEnvelope(route(null))),
-          jsonResponse(apiEnvelope(deployment())),
+          jsonResponse(apiEnvelope(deploymentAck())),
+          jsonResponse(apiEnvelope(route(deployment()))),
         ]),
         bindings,
       ).create(request),
@@ -513,11 +556,10 @@ describe("Cloudflare Dynamic Routing REST control plane", () => {
       jsonResponse(
         apiEnvelope(
           route(deployment(), {
-            version: version({ elements: [{ id: "drift" }] }),
+            version: version({ data: [{ id: "drift" }] }),
           }),
         ),
       ),
-      jsonResponse(apiEnvelope(deployment())),
     ]);
     await expectRestError(
       controlPlane(driftFetch, bindings).get("eliotr-reasoning", ROUTE_ID),
@@ -530,7 +572,10 @@ describe("Cloudflare Dynamic Routing REST control plane", () => {
       string,
       unknown
     >;
+    // adopt (7214e4ea) only reads the provider route and writes the local
+    // immutable binding; it adds no provider mutation.
     expect(Object.keys(adapter).sort()).toEqual([
+      "adopt",
       "create",
       "gateway_id",
       "get",

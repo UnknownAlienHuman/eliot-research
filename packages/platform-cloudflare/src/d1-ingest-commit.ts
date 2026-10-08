@@ -3,6 +3,7 @@ import {
   QualificationReportSchema,
   SourceAdmissionDecisionSchema,
   SNAPSHOT_VIEW_REF_PREFIX,
+  SnapshotViewWitnessSchema,
   type BundleAdmissionReceipt,
   type QualificationReport,
   type SourceAdmissionDecision,
@@ -199,6 +200,7 @@ export async function commitAdmittedBundle(
   input: CommitAdmittedBundleInput,
   loadOperation: (operationId: string) => Promise<PreparedIngestOperation | null>,
   clock: () => number,
+  writeFence: (operationId: string) => readonly D1PreparedStatement[] = () => [],
 ): Promise<BundleAdmissionReceipt> {
   const operationId = authorityIdentifier(input.operation_id, "operation_id");
   const operation = await loadOperation(operationId);
@@ -252,8 +254,14 @@ export async function commitAdmittedBundle(
   const snapshotFence = operation.manifest.origin.source_view_ref.startsWith(SNAPSHOT_VIEW_REF_PREFIX)
     ? await loadVerifiedSnapshotViewFence(database, operation)
     : null;
+  // Snapshot-view observations are historical capture evidence, not confirmation
+  // at admission time. Persist the category from the already-verified witness.
+  const currentnessState = snapshotFence === null
+    ? "current_confirmed"
+    : SnapshotViewWitnessSchema.parse(JSON.parse(snapshotFence.snapshot_view_json)).observation_freshness;
 
   const statements: D1PreparedStatement[] = [
+    ...writeFence(operation.operation_id),
     database.prepare(
       "INSERT INTO source(source_id, source_namespace_id, source_owner_system_id, " +
       "source_owner_generation, ownership_mode, kind, origin_uri, title, default_storage_policy, " +
@@ -280,7 +288,7 @@ export async function commitAdmittedBundle(
       "content_sha256, object_residency_key_digest, original_r2_key, normalized_artifact_ref, " +
       "captured_at, parser_profile_generation, quality_state, purge_state, currentness_state, " +
       "source_view_ref, workspace_view_revision_ref, admitted_at) VALUES (" +
-      "?1,?2,?3,?4,?5,NULL,?6,?7,?8,?9,'LIVE','current_confirmed',?10,?11,?12) " +
+      "?1,?2,?3,?4,?5,NULL,?6,?7,?8,?9,'LIVE',?10,?11,?12,?13) " +
       "ON CONFLICT(source_revision_ref) DO NOTHING",
     ).bind(
       operation.source_revision_ref,
@@ -292,6 +300,7 @@ export async function commitAdmittedBundle(
       operation.manifest.normalization.created_at,
       `parser:${operation.manifest.normalization.config_hash}`,
       operation.manifest.quality.state,
+      currentnessState,
       operation.manifest.origin.source_view_ref,
       operation.manifest.origin.workspace_view_revision_ref ?? null,
       now,
@@ -493,7 +502,7 @@ export async function commitAdmittedBundle(
   ];
 
   try {
-    await database.batch(statements);
+    await database.batch([...statements, ...writeFence(operation.operation_id)]);
   } catch (cause) {
     const raced = await loadOperation(operation.operation_id);
     if (raced?.bundle_receipt !== null && raced?.bundle_receipt !== undefined) {

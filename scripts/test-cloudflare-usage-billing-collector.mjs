@@ -258,4 +258,40 @@ await check("zero-row declared metric never admits its sibling", async () => {
   assert.equal(snapshot.metrics.queue_ops, "unknown");
 });
 
+await check("diagnostic stock stays unknown and drops invalid or arbitrary samples", async () => {
+  const diagnostic = {
+    group: "d1-storage-diagnostic", analyticsOnly: true, covers: ["d1_storage_bytes"],
+    collect: async () => ({
+      values: { d1_storage_bytes: 8192, workers_requests: -1, workers_cpu_ms: Infinity, arbitrary: BEARER },
+      coverage: { accountId: ACCOUNT, fullAccount: true },
+      provenance: METRIC_PROVENANCE.ANALYTICS_NONBILLING,
+    }),
+  };
+  const snapshot = await collectAccountUsage({ bearer: BEARER, expectedAccountId: ACCOUNT, now: NOW, whoamiOutput: WHOAMI, providers: [diagnostic] });
+  assert.equal(snapshot.metrics.d1_storage_bytes, "unknown");
+  assert.equal(snapshot.readback.metric_trust.d1_storage_bytes.state, "unknown-untrusted");
+  assert.deepEqual(snapshot.readback.provider_results[0].diagnostic_values, { d1_storage_bytes: 8192 });
+  assert.ok(snapshot.readback.metric_trust.d1_storage_bytes.gap);
+  assert.ok(!JSON.stringify(snapshot).includes(BEARER));
+});
+
+await check("HTTP diagnostics distinguish authentication and authorization without raw errors", async () => {
+  for (const [status, code, classification] of [[401, "HTTP_UNAUTHENTICATED", "authentication-failure"], [403, "HTTP_FORBIDDEN", "authorization-denial"], [404, "HTTP_NOT_FOUND", "not-found"]]) {
+    const provider = { group: "failed-source", covers: ["workers_requests"], collect: async () => { throw new ProviderFailure("AUTH_SCOPE_DENIED", `unsafe ${BEARER}`, { httpStatus: status }); } };
+    const snapshot = await collectAccountUsage({ bearer: BEARER, expectedAccountId: ACCOUNT, now: NOW, whoamiOutput: WHOAMI, providers: [provider] });
+    assert.deepEqual(snapshot.readback.provider_results[0].failure, { code, classification, http_status: status });
+    assert.equal(snapshot.metrics.workers_requests, "unknown");
+    assert.ok(!JSON.stringify(snapshot).includes(BEARER));
+    assert.ok(!snapshot.readback.provider_errors[0].includes("AUTH_SCOPE_DENIED"));
+  }
+  const unsafe = { group: "failed-source", covers: ["queue_ops"], collect: async () => { throw Object.assign(new Error(BEARER), { code: BEARER }); } };
+  const snapshot = await collectAccountUsage({ bearer: BEARER, expectedAccountId: ACCOUNT, now: NOW, whoamiOutput: WHOAMI, providers: [unsafe] });
+  assert.equal(snapshot.readback.provider_results[0].failure.code, "HTTP_ERROR");
+  assert.ok(!JSON.stringify(snapshot).includes(BEARER));
+  const getterFailure = { group: "failed-source", covers: ["queue_ops"], collect: async () => { throw Object.defineProperty({}, "httpStatus", { enumerable: true, get: () => { throw new Error(BEARER); } }); } };
+  const getterSnapshot = await collectAccountUsage({ bearer: BEARER, expectedAccountId: ACCOUNT, now: NOW, whoamiOutput: WHOAMI, providers: [getterFailure] });
+  assert.equal(getterSnapshot.readback.provider_results[0].failure.code, "HTTP_ERROR");
+  assert.ok(!JSON.stringify(getterSnapshot).includes(BEARER));
+});
+
 console.log(`Billing collector: ${cases} groups passed; live Cloudflare NOT_EXECUTED`);

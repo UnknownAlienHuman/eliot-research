@@ -3,28 +3,14 @@
 import { describe, expect, it } from "vitest";
 import { DatabaseSync } from "node:sqlite";
 import type { OperationIntent } from "@eliotr/contracts";
+import { applyCanonicalCoreMigrations, recordCanonicalCoreMigrationLedger } from "./core-migration-fixture.js";
 import { BackupError } from "./shared.js";
 import { createBackupPort, createPendingRestorePort } from "./index.js";
 import { reopenPersistedVector, type BackupSourcePorts } from "./epoch.js";
 import type { EvidenceObjectStore, Sha256DigestSink } from "./shared.js";
-import m0001 from "../../../infra/d1/core/migrations/0001_initial.sql?raw";
-import m0002 from "../../../infra/d1/core/migrations/0002_execution_coordination.sql?raw";
-import m0003 from "../../../infra/d1/core/migrations/0003_delivery_inbox_payload_digest.sql?raw";
-import m0004 from "../../../infra/d1/core/migrations/0004_outbox_delivery_fence.sql?raw";
-import m0005 from "../../../infra/d1/core/migrations/0005_ingest_admission.sql?raw";
-import m0006 from "../../../infra/d1/core/migrations/0006_projection_execution.sql?raw";
-import m0007 from "../../../infra/d1/core/migrations/0007_evidence_resolution.sql?raw";
-import m0008 from "../../../infra/d1/core/migrations/0008_erasure_closure.sql?raw";
-import m0009 from "../../../infra/d1/core/migrations/0009_federation_authority.sql?raw";
-import m0010 from "../../../infra/d1/core/migrations/0010_navigation_artifacts.sql?raw";
-import m0011 from "../../../infra/d1/core/migrations/0011_owner_orientation.sql?raw";
-import m0012 from "../../../infra/d1/core/migrations/0012_google_credentials.sql?raw";
-import m0013 from "../../../infra/d1/core/migrations/0013_google_oauth_intents.sql?raw";
-import m0018 from "../../../infra/d1/core/migrations/0018_backup_o2_replay_authority.sql?raw";
-import m0019 from "../../../infra/d1/core/migrations/0019_backup_o2_replay_authority_fix.sql?raw";
 
 // O2 epoch tests run against real SQLite executing tracked core migrations
-// plus 0018 + 0019, and byte-exact R2 shims through production readback paths.
+// plus 0018 + 0019 + 0099 + 0116 + 0117, and byte-exact R2 shims through production readback paths.
 const T = "2026-09-06T00:00:00.000Z";
 const HEX = (c: string): string => c.repeat(64);
 const NOW = Date.parse(T);
@@ -121,17 +107,13 @@ function testPartSink(bucket: R2Bucket): EvidenceObjectStore {
 }
 function openCore(): DatabaseSync {
   const db = new DatabaseSync(":memory:");
-  for (const m of [m0001, m0002, m0003, m0004, m0005, m0006, m0007, m0008, m0009, m0010, m0011, m0012, m0013, m0018, m0019]) db.exec(m);
+  applyCanonicalCoreMigrations(db);
   return db;
 }
 // Simulate the authoritative migration runner (wrangler): every applied file
-// is recorded in d1_migrations. The O2 gate requires the 0018 row; nothing
-// here swallows migration errors.
-const APPLIED_MIGRATIONS = ["0001_initial", "0002_execution_coordination", "0003_delivery_inbox_payload_digest", "0004_outbox_delivery_fence", "0005_ingest_admission", "0006_projection_execution", "0007_evidence_resolution", "0008_erasure_closure", "0009_federation_authority", "0010_navigation_artifacts", "0011_owner_orientation", "0012_google_credentials", "0013_google_oauth_intents", "0018_backup_o2_replay_authority", "0019_backup_o2_replay_authority_fix"];
+// is recorded in d1_migrations. Nothing here swallows migration errors.
 function recordLedger(db: DatabaseSync): void {
-  for (const [i, n] of APPLIED_MIGRATIONS.entries()) {
-    db.prepare("INSERT INTO d1_migrations (name, applied_at) VALUES (?1,?2)").run(`${n}.sql`, `${T.slice(0, 10)}T00:00:${String(i).padStart(2, "0")}.000Z`);
-  }
+  recordCanonicalCoreMigrationLedger(db, T);
 }
 function seedCore(db: DatabaseSync, withLedger: boolean): void {
   db.exec(`INSERT INTO source_namespace_ownership (source_namespace_id,ownership_record_revision,owner_system_id,owner_incarnation_ref,source_owner_generation,source_admission_policy_revision,status,cutover_receipt_ref,created_at) VALUES ('ns-1',1,'owner-sys-1','incarnation-1','gen-1',1,'ACTIVE',NULL,'${T}');

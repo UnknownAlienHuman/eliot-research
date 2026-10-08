@@ -77,3 +77,14 @@ exact initialization/replay case in its existing disposable local smoke (control
 no browser authentication bypass). No schema
 migration, remote adapter, auth bypass or read capability is introduced. Local initialization/byte parity
 and actual signed-assertion Worker/D1/R2 tests are not a live Access login or remote authority receipt.
+
+
+## S03 local raw-capture transport integration
+
+The owner bridge forwards the existing raw-capture namespace, target source and expected-head
+headers only for exact `POST /api/v1/ingest/raw`. These values are locators, not authorization:
+the Worker still checks current owner, namespace policy, target membership and expected head.
+Dropping the selected namespace made a two-namespace owner ambiguous and correctly produced 403.
+Do not fix this by choosing a default namespace, removing the negative namespace fixture or
+weakening `currentBinding`. Tests verify exact forwarding and absence on other routes/methods;
+caller cookies, arbitrary headers and supplied credentials do not gain access to the upstream.

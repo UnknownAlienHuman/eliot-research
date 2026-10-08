@@ -142,7 +142,7 @@ await check("paginated inventory proves pages without fabricating counters", asy
     const page = Number(new URL(url).searchParams.get("page"));
     const total_pages = 2;
     const result = page === 1 ? [{ queue_id: "queue-one", queue_name: "one" }] : [{ queue_id: "queue-two", queue_name: "two" }];
-    return { json: async () => ({ success: true, result, result_info: { page, total_pages } }) };
+    return { status: 200, json: async () => ({ success: true, result, result_info: { page, total_pages } }) };
   };
   const provider = createPaginatedInventoryProvider({
     group: "queue-inventory-list",
@@ -155,7 +155,7 @@ await check("paginated inventory proves pages without fabricating counters", asy
   assert.equal(reported.coverage.completedPages, 2);
   assert.equal(calls, 2);
   // Missing second page fails closed.
-  const shortFetch = async () => ({ json: async () => ({ success: false, result: null }) });
+  const shortFetch = async () => ({ status: 200, json: async () => ({ success: false, result: null }) });
   const bad = createPaginatedInventoryProvider({
     group: "bad-pages",
     covers: ["queue_ops"],
@@ -169,11 +169,11 @@ await check("paginated inventory proves pages without fabricating counters", asy
   assert.equal(snapshot.metrics.queue_ops, "unknown");
 });
 
-await check("live registry builds inventory collectors plus billing and rejects bad account", async () => {
-  const registry = buildLiveProviderRegistry({ accountId: ACCOUNT, fetchImpl: async () => ({ json: async () => ({ success: true, result: [], result_info: { page: 1, total_pages: 1 } }) }) });
-  assert.equal(registry.length, 5);
+await check("live registry separates branded inventory from untrusted diagnostics", async () => {
+  const registry = buildLiveProviderRegistry({ accountId: ACCOUNT, fetchImpl: async () => ({ status: 200, json: async () => ({ success: true, result: [], result_info: { page: 1, total_pages: 1 } }) }) });
   assert.ok(registry.some((provider) => provider.group === "ai-search-inventory-list"));
-  assert.ok(registry.some((provider) => provider.group === "billable-usage" && provider.kind === "billing-usage"));
+  assert.ok(!registry.some((provider) => provider.group === "billable-usage"));
+  assert.ok(registry.some((provider) => provider.analyticsOnly === true));
   assert.ok(registry.every((provider) => Object.isFrozen(provider)));
   // Explicit test transports stay test-only: no brand, never authoritative.
   assert.ok(registry.every((provider) => !isInventoryProvider(provider) && !isUsageVBillingProvider(provider)));
@@ -181,8 +181,8 @@ await check("live registry builds inventory collectors plus billing and rejects 
   // Live defaults (no transport overrides) stay branded: production keeps
   // working, and brand is granted only on the default live transport.
   const live = buildLiveProviderRegistry({ accountId: ACCOUNT });
-  assert.equal(live.length, 5);
-  assert.ok(live.every((provider) => isInventoryProvider(provider) || isUsageVBillingProvider(provider)));
+  assert.ok(live.every((provider) => isInventoryProvider(provider) || provider.analyticsOnly === true));
+  assert.ok(live.filter((provider) => provider.analyticsOnly === true).every((provider) => !isInventoryProvider(provider) && !isUsageVBillingProvider(provider)));
   assert.ok(live.every((provider) => !isTestTransportProvider(provider)));
   assert.throws(() => buildLiveProviderRegistry({ accountId: "" }), /accountId is required/u);
   void digestAccountId;

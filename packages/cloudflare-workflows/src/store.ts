@@ -1,4 +1,5 @@
 import { RESEARCH_WORKFLOW_STAGES } from "@eliotr/domain";
+import { decodeWorkflowFailure, type WorkflowFailure } from "./failures.js";
 import {
   COMMAND_SQL, buildAppendCommand, decodeLedgerHead,
   type LedgerEvent, type LedgerHead, type LedgerHeadRow,
@@ -15,6 +16,7 @@ interface RunRow {
   idempotency_key: string; handler_generation: string; initial_manifest_json: string;
   next_stage_index: number; state: "ACTIVE" | "CANCELLED" | "ENGINE_COMPLETED";
   cancellation_receipt_ref: string | null; ledger_revision?: number;
+  first_failure_json?: string | null; latest_failure_json?: string | null;
 }
 export interface AttemptRow {
   operation_id: string; stage_index: number; request_json: string; request_sha256: string;
@@ -22,6 +24,8 @@ export interface AttemptRow {
   state: "STARTED" | "OUTPUT_RECORDED" | "COMMITTED"; output_json: string | null;
 }
 export interface WorkflowRunStatus {
+  readonly first_failure: WorkflowFailure | null;
+  readonly latest_failure: WorkflowFailure | null;
   readonly operation_id: string;
   readonly investigation_id: string;
   readonly initial_revision: number;
@@ -87,14 +91,17 @@ export class WorkflowCheckpointStore {
    * Read the owner-bound durable run state. This deliberately does not call
    * current(), because cancelled and engine-completed runs remain readable.
    */
-  async readRunStatus(operationId: string, principal: WorkflowPrincipal): Promise<WorkflowRunStatus | null> {
+  async readRunStatus(
+    operationId: string, principal: WorkflowPrincipal,
+    mode: "execution" | "owner-read" = "execution",
+  ): Promise<WorkflowRunStatus | null> {
     let snapshot: readonly D1Result<unknown>[];
     try {
       snapshot = await this.db.batch([
         this.db.prepare(
           "SELECT operation_id, investigation_id, initial_revision, current_revision, principal_ref, " +
           "credential_generation, deployment_generation, scope_snapshot_id, scope_snapshot_revision, " +
-          "next_stage_index, state, cancellation_receipt_ref, handler_generation, idempotency_key, " +
+          "next_stage_index, state, cancellation_receipt_ref, handler_generation, idempotency_key, first_failure_json, latest_failure_json, " +
           "policy_generation, policy_authority_ref, authorization_receipt_ref, purge_revision, initial_manifest_json " +
           "FROM research_workflow_run WHERE operation_id = ?1 AND principal_ref = ?2 LIMIT 1",
         ).bind(operationId, principal.principal_ref),
@@ -136,7 +143,9 @@ export class WorkflowCheckpointStore {
     if (run.state === "ACTIVE" && run.next_stage_index === RESEARCH_WORKFLOW_STAGES.length) {
       fail("WORKFLOW_OUTPUT_CORRUPT");
     }
-    if (run.credential_generation === principal.credential_generation &&
+    // owner-read only reads owner-filtered metadata. The application must
+    // independently authorize the current reader before disclosure or control.
+    if (mode === "execution" && run.credential_generation === principal.credential_generation &&
         run.deployment_generation === principal.deployment_generation) {
       const current = (snapshot[1]?.results[0] as StoredCurrentRunRow | undefined) ?? null;
       if (current === null) fail("WORKFLOW_AUTHORITY_STALE");
@@ -184,7 +193,8 @@ export class WorkflowCheckpointStore {
         fail("WORKFLOW_OUTPUT_CORRUPT");
       }
       return Object.freeze({
-        operation_id: run.operation_id, investigation_id: run.investigation_id, initial_revision: run.initial_revision,
+        first_failure: decodeWorkflowFailure(run.first_failure_json), latest_failure: decodeWorkflowFailure(run.latest_failure_json),
+      operation_id: run.operation_id, investigation_id: run.investigation_id, initial_revision: run.initial_revision,
         current_revision: run.current_revision, principal_ref: run.principal_ref,
         credential_generation: run.credential_generation, deployment_generation: run.deployment_generation,
         scope_snapshot_id: run.scope_snapshot_id, scope_snapshot_revision: run.scope_snapshot_revision,
@@ -193,6 +203,7 @@ export class WorkflowCheckpointStore {
       });
     }
     return Object.freeze({
+      first_failure: decodeWorkflowFailure(run.first_failure_json), latest_failure: decodeWorkflowFailure(run.latest_failure_json),
       operation_id: run.operation_id, investigation_id: run.investigation_id, initial_revision: run.initial_revision,
       current_revision: run.current_revision, principal_ref: run.principal_ref,
       credential_generation: run.credential_generation, deployment_generation: run.deployment_generation,
@@ -294,6 +305,18 @@ export class WorkflowCheckpointStore {
       .bind(request.operation_id, workflowStageIndex(request)).first<AttemptRow>();
     if (row !== null && (row.request_sha256 !== requestDigest || row.request_json !== JSON.stringify(request))) fail("WORKFLOW_CONFLICT");
     return row;
+  }
+  async requireRecoveryAuthorization(request: StageRequest, principal: WorkflowPrincipal): Promise<void> {
+    const stageIndex = workflowStageIndex(request);
+    let row: { readonly ok: number } | null;
+    try {
+      row = await this.db.prepare(`SELECT 1 AS ok FROM research_workflow_recovery_authorized
+        WHERE operation_id=?1 AND stage_index=?2 AND principal_ref=?3 LIMIT 1`)
+        .bind(request.operation_id, stageIndex, principal.principal_ref).first<{ readonly ok: number }>();
+    } catch {
+      fail("WORKFLOW_EFFECT_UNCERTAIN");
+    }
+    if (row?.ok !== 1) fail("WORKFLOW_AUTHORITY_STALE");
   }
   async reserve(request: StageRequest, requestDigest: string, attemptRef: string, budget: WorkflowBudgetGrant): Promise<AttemptRow> {
     try {

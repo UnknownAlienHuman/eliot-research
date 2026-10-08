@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { WorkflowFailureSchema, type WorkflowFailure } from "./workflow-failure-protocol.js";
 import { ObjectResidencyKeySchema, ResearchWorkflowStageSchema, Sha256Schema } from "@eliotr/contracts";
 
 export const MAX_WORKFLOW_OUTPUT_BYTES = 8 * 1024 * 1024;
@@ -74,14 +75,78 @@ export type WorkflowStageHandler = (input: {
   readonly budget_receipt_ref: string;
   readonly signal?: AbortSignal;
 }) => Promise<Uint8Array>;
-export type WorkflowErrorCode =
-  | "WORKFLOW_INPUT_INVALID" | "WORKFLOW_CONFLICT" | "WORKFLOW_AUTHORITY_STALE"
-  | "WORKFLOW_STAGE_OUT_OF_ORDER" | "WORKFLOW_CANCELLED" | "WORKFLOW_BUDGET_STOP"
-  | "WORKFLOW_EFFECT_UNCERTAIN" | "WORKFLOW_OUTPUT_UNAVAILABLE" | "WORKFLOW_OUTPUT_CORRUPT";
+const WORKFLOW_ERROR_CODE_VALUES = [
+  "WORKFLOW_INPUT_INVALID",
+  "WORKFLOW_CONFLICT",
+  "WORKFLOW_AUTHORITY_STALE",
+  "WORKFLOW_STAGE_OUT_OF_ORDER",
+  "WORKFLOW_CANCELLED",
+  "WORKFLOW_BUDGET_STOP",
+  "WORKFLOW_EFFECT_UNCERTAIN",
+  "WORKFLOW_OUTPUT_UNAVAILABLE",
+  "WORKFLOW_OUTPUT_CORRUPT",
+  "WORKFLOW_CONFIGURATION_MISSING",
+  "WORKFLOW_CONFIGURATION_INVALID",
+  "WORKFLOW_CREDENTIALS_MISSING",
+  "WORKFLOW_CREDENTIALS_INVALID",
+  "WORKFLOW_STORAGE_UNAVAILABLE",
+  "WORKFLOW_QUALIFICATION_STALE",
+  "WORKFLOW_PREPARATION_FAILED",
+] as const;
+export type WorkflowErrorCode = typeof WORKFLOW_ERROR_CODE_VALUES[number];
+const WorkflowErrorCodeSchema = z.enum(WORKFLOW_ERROR_CODE_VALUES);
+
+const WORKFLOW_NATIVE_FAILURE_PROTOCOL = "eliotr.workflow-native-failure.v1";
+const WORKFLOW_NATIVE_FAILURE_PREFIX = ` [${WORKFLOW_NATIVE_FAILURE_PROTOCOL}:`;
+const MAX_WORKFLOW_NATIVE_ERROR_MESSAGE_BYTES = 512;
+const WorkflowNativeFailureEnvelopeSchema = z.object({
+  protocol: z.literal(WORKFLOW_NATIVE_FAILURE_PROTOCOL),
+  failure: WorkflowFailureSchema,
+}).strict();
+
+export interface WorkflowNativeFailureMessage {
+  readonly outer_code: WorkflowErrorCode;
+  readonly failure?: WorkflowFailure;
+}
+
+function nativeFailureMessage(outerCode: WorkflowErrorCode, failure: WorkflowFailure): string {
+  const envelope = JSON.stringify({ protocol: WORKFLOW_NATIVE_FAILURE_PROTOCOL, failure });
+  const message = `${outerCode}${WORKFLOW_NATIVE_FAILURE_PREFIX}${envelope}]`;
+  return new TextEncoder().encode(message).byteLength <= MAX_WORKFLOW_NATIVE_ERROR_MESSAGE_BYTES
+    ? message : outerCode;
+}
+
+/** Parses only the bounded WorkflowCheckpointError wire form, never arbitrary nested errors. */
+export function parseWorkflowCheckpointErrorMessage(value: unknown): WorkflowNativeFailureMessage | null {
+  if (typeof value !== "string" || new TextEncoder().encode(value).byteLength > MAX_WORKFLOW_NATIVE_ERROR_MESSAGE_BYTES) return null;
+  const message = value.startsWith("WorkflowCheckpointError: ")
+    ? value.slice("WorkflowCheckpointError: ".length) : value;
+  const markerIndex = message.indexOf(WORKFLOW_NATIVE_FAILURE_PREFIX);
+  if (markerIndex < 0) {
+    const outerCode = WorkflowErrorCodeSchema.safeParse(message);
+    return outerCode.success ? { outer_code: outerCode.data } : null;
+  }
+  const outerCode = WorkflowErrorCodeSchema.safeParse(message.slice(0, markerIndex));
+  if (!outerCode.success) return null;
+  if (message.indexOf(WORKFLOW_NATIVE_FAILURE_PREFIX, markerIndex + WORKFLOW_NATIVE_FAILURE_PREFIX.length) >= 0 ||
+      !message.endsWith("]")) return { outer_code: outerCode.data };
+  const json = message.slice(markerIndex + WORKFLOW_NATIVE_FAILURE_PREFIX.length, -1);
+  try {
+    const parsed = WorkflowNativeFailureEnvelopeSchema.safeParse(JSON.parse(json));
+    return parsed.success
+      ? { outer_code: outerCode.data, failure: Object.freeze(parsed.data.failure) }
+      : { outer_code: outerCode.data };
+  } catch { return { outer_code: outerCode.data }; }
+}
+
 export class WorkflowCheckpointError extends Error {
-  constructor(readonly code: WorkflowErrorCode) {
-    super(code);
+  /** Safe underlying diagnosis; the outer code can remain WORKFLOW_EFFECT_UNCERTAIN. */
+  readonly failure?: WorkflowFailure;
+  constructor(readonly code: WorkflowErrorCode, failure?: WorkflowFailure) {
+    const parsed = failure === undefined ? undefined : WorkflowFailureSchema.safeParse(failure);
+    super(parsed?.success === true ? nativeFailureMessage(code, parsed.data) : code);
     this.name = "WorkflowCheckpointError";
+    if (parsed?.success === true) this.failure = Object.freeze(parsed.data);
   }
 }
 export function fail(code: WorkflowErrorCode): never { throw new WorkflowCheckpointError(code); }

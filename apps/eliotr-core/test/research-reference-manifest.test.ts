@@ -1,5 +1,7 @@
 import { env } from "cloudflare:workers";
-import { beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { handleHttp } from "../src/http.js";
+import { admissionTestEnvironment, admissionTestScopeExpression, terminateAdmissionWorkflows } from "./research-admission-fixture.js";
 import {
   canonicalEvidenceJson,
   createCloudflareEvidenceResolver,
@@ -25,8 +27,8 @@ import {
   type Q1Namespace,
   type Q1Runtime,
 } from "./retrieval-q1-fixture.js";
-import { body, db, principal, run, runtime, setupOrientationDatabase } from "./orientation-fixture.js";
-import { loadHeldResearchScope, retrieveWithHeldScope } from "../src/research-retrieval-composition.js";
+import { body, db, principal, runtime, setupOrientationDatabase, verifier } from "./orientation-fixture.js";
+import { loadHeldResearchScope, retrieveWithHeldScope } from "@eliotr/cloudflare-research-runtime/research-retrieval-composition.js";
 
 const q1Runtime = env as unknown as Q1Runtime;
 const access: RetrievalQueryAccess = {
@@ -59,13 +61,14 @@ async function addReadPolicy(world: Q1Namespace): Promise<void> {
 }
 
 function request(sourceId: string, key: string): Request {
+  void sourceId;
   return new Request("https://research.example/api/v1/research/run", {
     method: "POST",
     headers: { "content-type": "application/json", "idempotency-key": key },
     body: JSON.stringify({
       query: "Reference manifest source",
       product: "RESEARCH",
-      scope_expression: { kind: "SELECTED_SOURCES", source_ids: [sourceId] },
+      scope_expression: admissionTestScopeExpression("manifest-scope"),
       literals: [], evidence_grade: "E1", budget_ref: "research-budget-v1", max_results: 8,
     }),
   });
@@ -93,6 +96,8 @@ function failureBucket(bucket: R2Bucket): R2Bucket {
 }
 
 describe("research reference manifest over real D1/R2", () => {
+  const admitted: string[] = [];
+  afterAll(() => terminateAdmissionWorkflows(runtime, admitted));
   let world: Q1Namespace;
   let held: Awaited<ReturnType<typeof loadHeldResearchScope>>;
   let evidencePack: Awaited<ReturnType<typeof retrieveWithHeldScope>>["evidence_pack"];
@@ -112,9 +117,15 @@ describe("research reference manifest over real D1/R2", () => {
     };
     await importAndProject(world);
     await addReadPolicy(world);
-    const response = await run(request(`source-${world.namespace}`, "manifest-scope-run"));
+    const configured = await admissionTestEnvironment(runtime, principal, "manifest-scope", {
+      source_ids: [`source-${world.namespace}`],
+    });
+    const response = await handleHttp(request(`source-${world.namespace}`, "manifest-scope-run"),
+      configured, {} as ExecutionContext, { accessVerifier: verifier() });
     const payload = await body<{ readonly workflow_instance_id: string }>(response);
     expect(response.status, JSON.stringify(payload)).toBe(200);
+    admitted.push(payload.data.workflow_instance_id);
+    await terminateAdmissionWorkflows(runtime, admitted);
     held = await loadHeldResearchScope(
       { CORE_DB: runtime.CORE_DB, SEARCH_DB: runtime.SEARCH_DB }, access,
       payload.data.workflow_instance_id, deployment,

@@ -1,10 +1,64 @@
 # Research runtime configuration
 
+Deployment hostnames are redacted as `<ELIOTR_ACCESS_HOSTNAME>`; resolve the exact target
+from the ignored operator profile. Historical deployment evidence is not approval for a new deploy.
+
 The research Worker receives its server-owned semantic configuration from one
 operator-installed envelope. Use this same envelope for local launch,
 Cloudflare foundation generation, and deployment readback. It keeps the
 configuration values and their provenance references together; it does not
 grant access, select a provider, or prove that a remote resource is live.
+
+## Project selection and run capture, 2026-10-03
+
+[ADR-0010](../adr/0010-project-model-revisions-and-run-authority.md) records the
+versioned owner configuration amendment and the retained execution checks.
+
+The model catalog is descriptive. `GET /api/v1/system/research-models` requires
+an owner-authorized `project_id`; seeing a model in that catalog does not qualify
+it or authorize inference. Workers AI uses its live binding catalog. An external
+provider without an installed catalog adapter is explicitly unavailable.
+
+Migration `0106` stores immutable owner/project configuration revisions and a
+compare-and-swap selected revision. The owner routes are:
+
+- `GET /api/v1/research/projects/:project_id/model-configuration`: bounded saved
+  revision history and current selection.
+- `PUT` at the same path: `{expected_revision, select_configuration_ref}` selects
+  a saved revision only after current authority and exact model proof checks.
+- `POST .../model-configuration/revisions`: imports an exact qualified bundle
+  through the same server validator. It does not call or automatically qualify a model.
+
+The bundle pins canonical semantic bytes, the seven existing runtime values,
+and each stage's route/candidate/qualification references and hashes, provider,
+model, billing mode and transport capabilities. Provider presence, a bare hash,
+or the current active route pointer cannot substitute for these identities.
+`GET /api/v1/system/research-configuration?project_id=...` checks the selected
+bundle; a missing project selection blocks new research while history remains readable.
+
+Migration `0104` captures the bundle once per operation before workflow creation.
+Retries and recovery read that immutable capture. Workflows created before this
+migration retain the explicit legacy path; newly created workflows cannot silently
+fall back to installed environment configuration when their capture is absent.
+Changing the project selection affects subsequent runs.
+
+Owner model/spend/report template v2 separates owner configuration from a build
+generation and browser session. Execution still requires current scope, grant,
+budget and revocation authority. Exact pinned v2 qualification may survive its
+original time window; v1 retains its original expiry semantics. This does not
+permit a different candidate, proof, model or revoked authority.
+
+An optional operator-installed `ELIOTR_RESEARCH_MODEL_TRANSPORT_POLICIES_JSON`
+uses `eliotr.research-model-transport-policies.v1` and exact per-stage route,
+provider/model and transport policy. It supplies authoritative capabilities
+before qualification; qualification request bodies cannot override it. Selected
+run capabilities control the final token field and supported reasoning effort.
+BYOK carries an existing Gateway alias and prevents fallback to Unified Billing.
+Unsupported native request formats fail before inference.
+
+These contracts describe the implementation checkpoint. Local checks, production
+deployment, live model/source/MCP receipts and release acceptance are separate
+results; none is implied by this document.
 
 ## Canonical file and shape
 
@@ -28,6 +82,9 @@ authority/configuration source.
   protocol: "eliotr.research-runtime.v1",
   vars: {
     ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON: <semantic configuration object>,
+    // ...or, after the S29 migration, the immutable revision identity instead:
+    // ELIOTR_RESEARCH_SEMANTIC_CONFIG_REF: <revision reference, e.g. scr-abc123def456>,
+    // ELIOTR_RESEARCH_SEMANTIC_CONFIG_SHA256: <SHA-256 of the canonical config bytes>,
     ELIOTR_MODEL_PROFILE_DEFINITION_JSON: <model profile definition object>,
     ELIOTR_MODEL_PROFILE_PROVENANCE_REF: <profile provenance reference>,
     ELIOTR_MODEL_SPEND_POLICY_JSON: <spend policy object>,
@@ -52,7 +109,9 @@ model configuration first. At least one supported variable is required.
 
 | Key | Required for research | Native validation and meaning |
 | --- | --- | --- |
-| ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON | Yes | Strictly parsed by ConfigurationSchema in apps/eliotr-core/src/research-semantic-server.ts, including the synthesis/audit configuration and normalization binding. |
+| ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON | Yes, unless migrated | The legacy semantic configuration object. Strictly parsed by ConfigurationSchema in apps/eliotr-core/src/research-semantic-server.ts, including the synthesis/audit configuration and normalization binding. Superseded by the revision identity below; recognized during the migration window, then removed. |
+| ELIOTR_RESEARCH_SEMANTIC_CONFIG_REF | Yes, after migration | Short immutable revision reference (`scr-` + 12 hex chars) identifying one row of the `research_semantic_config_revision` D1 table (migration 0097). The Worker resolves the canonical config bytes from D1 and verifies them against the digest before model dispatch. |
+| ELIOTR_RESEARCH_SEMANTIC_CONFIG_SHA256 | Yes, after migration | Expected SHA-256 (64 lowercase hex) of the canonical semantic configuration bytes for the revision above. A mismatch fails closed; the Worker never runs a config whose bytes differ from this digest. |
 | ELIOTR_MODEL_PROFILE_DEFINITION_JSON | Yes | Parsed and bound through packages/cloudflare-research/src/research-model-profile-config.ts and its persisted profile authority. It must describe an installed profile; no model is supplied by a default. |
 | ELIOTR_MODEL_PROFILE_PROVENANCE_REF | Yes | The exact provenance reference matched by the profile binding source and its current persisted authority. |
 | ELIOTR_MODEL_SPEND_POLICY_JSON | Yes | Parsed by readResearchModelSpendPolicy in packages/cloudflare-research/src/research-model-spend-policy.ts; current principal, credential, deployment, and policy authority are checked by Core. |
@@ -92,13 +151,47 @@ The existing call sites use the same loader:
   generated deployment configuration has the same allowlisted values before
   the deployment path can proceed. A generated file by itself is not a live
   deployment receipt.
-* The generated Wrangler transport splits the canonical semantic JSON with
-  `splitResearchSemanticConfiguration` into
-  `ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON_0` and `_1`, with at most 4,000 UTF-8
-  bytes per chunk and 8,000 bytes total. The Worker reassembles these chunks
-  before its existing strict parser; chunking is only a transport encoding and
-  does not change the `eliotr.research-runtime.v1` envelope, its canonical JSON
-  identity, or its allowlisted keys.
+* The generated Wrangler transport carries the semantic configuration by revision
+identity after the S29 migration: `ELIOTR_RESEARCH_SEMANTIC_CONFIG_REF` and
+`ELIOTR_RESEARCH_SEMANTIC_CONFIG_SHA256` are forwarded as Worker vars, and no
+chunk vars are emitted, so the Worker can never see mixed sources. Before
+migration, the canonical semantic JSON is split with
+`splitResearchSemanticConfiguration` into
+`ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON_0` and `_1`, with at most 4,000 UTF-8
+bytes per chunk and 8,000 bytes total. The Worker reassembles these chunks
+before its existing strict parser; chunking is only a transport encoding and
+does not change the `eliotr.research-runtime.v1` envelope, its canonical JSON
+identity, or its allowlisted keys.
+
+## Migrate the semantic configuration to an immutable revision
+
+The revision table is immutable: a deployed reference can never change
+meaning, and migration/restart/rollback cannot silently change a run's frozen
+model, prompt, or schema. The migration is deliberate and operator-driven; the
+Worker read path never installs revisions.
+
+1. Ensure migration `0097_research_semantic_config_revision.sql` is applied to
+   the Core D1 database.
+2. Run `scripts/install-semantic-config-revision.mjs <created-by-principal-ref>`
+   with the research runtime envelope available. It prints the revision
+   reference, the SHA-256 digest, the exact SQL `INSERT` for the
+   `research_semantic_config_revision` table, and the two vars to set.
+3. Execute the printed `INSERT` against the Core D1 database
+   (e.g. `wrangler d1 execute`). The insert is idempotent: reinstalling
+   identical bytes returns the same revision reference.
+4. Set `ELIOTR_RESEARCH_SEMANTIC_CONFIG_REF` and
+   `ELIOTR_RESEARCH_SEMANTIC_CONFIG_SHA256` in the research runtime envelope
+   (the legacy `ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON` may stay as the
+   human-readable source of truth; the deploy transport drops it in favor of
+   the revision) and redeploy.
+5. Verify: the configuration status endpoint reports the revision source, and
+   a research dispatch succeeds. A missing, unknown, or digest-mismatched
+   revision fails before model dispatch with `WORKFLOW_CONFIGURATION_MISSING`
+   or `WORKFLOW_CONFIGURATION_INVALID`.
+6. After the migration is proven, remove the legacy
+   `ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON` from the envelope and the
+   `_JSON_0`/`_JSON_1` chunk transport. The Worker rejects a revision
+   configured alongside legacy vars as an ambiguous mixed source.
 
 Install the envelope first, then use the existing entrypoint for the intended
 environment. Treat a loader error, Core schema error, provenance mismatch, or
@@ -197,7 +290,7 @@ hostname. Account-wide preview Access policies still apply.
 
 When a local remote preview cannot start, use the deployed Worker bindings:
 
-    node scripts/install-research-model-authority.mjs qualify --input qualification-request.json --worker-url https://eliotr-core.kleymor-metal.workers.dev
+    node scripts/install-research-model-authority.mjs qualify --input qualification-request.json --worker-url https://<ELIOTR_ACCESS_HOSTNAME>
 
 This mode uses the existing Cloudflare Access session through `cloudflared access curl`.
 The operator still performs both actual Gateway control-plane reads and stores the
@@ -207,22 +300,22 @@ one-shot dispatch claim (migration `0055`) before invoking its configured model 
 Neither an ambiguous HTTP response nor a repeated dispatch authorizes another call.
 The endpoint returns execution observations; it does not install an ACTIVE profile.
 
-On 2026-09-13 the owner selected OpenRouter `thinkingmachines/inkling:free` and
-installed its BYOK key under alias `default` in `eliotr-reasoning`. The synthesis
-and audit routes for `owner-inkling-free-v1` were created and their active versions
-read back through Cloudflare MCP. This provider requires `prompt_json`: its
-[official model page](https://openrouter.ai/thinkingmachines/inkling:free) lists
-no `response_format` support. The same page says prompts and outputs are logged
-for model improvement and prohibits confidential or personal data on this free
-endpoint. Initial qualification uses the public project README. Published routes
+On 2026-09-13 the owner selected a free external endpoint and installed its BYOK
+key under the operator's selected alias. The synthesis and audit routes were
+created and their active versions read back through Cloudflare MCP. The selected
+endpoint required `prompt_json`; its then-current model page listed no
+`response_format` support and described prompt/output logging for model improvement
+and a prohibition on confidential or personal data. Exact provider, model, route
+and alias values remain in operator configuration. Initial qualification uses
+the public project README. Published routes
 are configuration evidence, not proof of a completed model response or report.
 
-The current owner-authorized fallback is Cloudflare `@cf/zai-org/glm-5.3-flash` for
-document work; the owner rejected `gpt-oss-120b` for this integration.
-Both `owner-cloudflare-glm53-v2` routes and their published token pricing have been
+The recorded owner-authorized route for document work is a Workers AI text model.
+Exact model identifiers, route names and pricing snapshots remain in operator
+configuration. Its synthesis and audit routes and published token pricing were
 prepared with explicit `reasoning_effort: "low"`. The parameter is included in the
-deployment digest; omission preserves provider defaults. GLM defaults to maximum
-reasoning, so short document work needs an explicit effort setting.
+deployment digest; omission preserves provider defaults. The selected model's
+default reasoning effort motivated an explicit setting for short document work.
 A native Worker request on 2026-09-13 returned HTTP 200 with 1,240 output tokens in
 26.584 seconds. Application qualification remains incomplete until response
 provenance and immutable output persistence succeed; HTTP 200 alone does not
@@ -370,3 +463,54 @@ surface. The runtime file cannot mint those authorities, turn a route LIVE,
 or establish billing approval. A workspace binding likewise does not prove
 that the current capture, namespace, ledger, or source is readable; the
 workspace admission path rechecks those facts.
+
+## Research question input: migration 0069
+
+Research questions preserve their original text: LF, CRLF, tabs, leading/trailing
+spaces, Cyrillic and supplementary Unicode remain byte-distinct inputs. The
+shared contracts predicate rejects empty strings, NUL, prohibited C0/DEL controls,
+lone CR and unpaired UTF-16 surrogates before encoding or identity calculation.
+The metadata-only orientation API retains its existing empty-query behavior.
+There is no independent 1,024-byte question quota or textarea character ceiling.
+Literal navigation probes remain independently bounded; a whole Research question
+is not a literal probe and cannot be combined with one on the internal port.
+
+Existing execution envelopes still apply, including all serialized overhead:
+
+- The complete `/research/query` or `/research/run` HTTP JSON body is at most
+  262,144 UTF-8 bytes. The PWA measures the same complete body, including scope,
+  protocol, fields and JSON escaping, before sending it.
+- The immutable initial workflow payload is at most 65,536 UTF-8 bytes. This
+  includes the planning manifest and its question copy, when present. Overflow
+  returns `RESEARCH_INPUT_LIMIT` naming this bound before R2 input publication,
+  ledger/run creation or model reservation. It is not a 65,536-character promise.
+- The complete prepared model request must fit both the existing 262,144-byte
+  gateway envelope and the explicitly reserved input budget, with trusted
+  instructions, evidence and parameters included. Input validation does not
+  authorize spending or qualify a provider route.
+
+Apply Core migration `0069_research_question_envelopes.sql` **before** deploying
+these readers/writers. It atomically replaces the old 2,000-character ledger-goal
+constraint with the existing HTTP UTF-8 envelope, restores the original index and
+all owned command/immutability triggers, and leaves historical heads, events,
+workflow foreign keys and their identities unchanged. It records
+`research_question_generation=research-question-v2-utf8-envelopes`; the run
+entrypoint refuses a missing/old generation with `RESEARCH_INPUT_SCHEMA_MISMATCH`
+before scope or ledger effects. Applied migrations are not edited. Run migration
+0069 through the normal transactional D1 migration path, never by manually
+executing selected statements without a transaction.
+
+No public wire version, short-request digest, planning/profile identity algorithm,
+canonical serialization or historical R2 object changes. Once long questions have
+been stored, rolling back to pre-0069 *application readers* is unsupported: those
+readers still impose the obsolete 2,000/8,192-character codecs. A transaction
+failure during migration rolls back to the original schema/data; application
+rollback after successful writes instead requires a forward-compatible reader.
+
+Verification includes populated SQLite success/rollback with linked workflows,
+unchanged head/event bytes and trigger definitions; fresh migration application
+and long-question admission/freeze/replay in local Workers D1/R2; full-JSON HTTP
+and workflow max/max+1 tests; and selected-model prepared-request boundaries.
+The HTTP admission fixture compiles explicit local configuration through the
+production installer but does not install a route or qualify live execution.
+No live D1 migration or paid model execution was performed for this checkpoint.

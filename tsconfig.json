@@ -2,6 +2,12 @@
   "files": [],
   "references": [
     {
+      "path": "packages/pwa-http-client"
+    },
+    {
+      "path": "packages/pwa-source-workspace"
+    },
+    {
       "path": "packages/cloudflare-artifacts"
     },
     {
@@ -78,6 +84,48 @@
     },
     {
       "path": "packages/cloudflare-workflows"
+    },
+    {
+      "path": "packages/cloudflare-backup"
+    },
+    {
+      "path": "packages/pwa-research-workspace"
+    },
+    {
+      "path": "packages/cloudflare-model-control"
+    },
+    {
+      "path": "packages/cloudflare-model-execution"
+    },
+    {
+      "path": "packages/cloudflare-research-branches"
+    },
+    {
+      "path": "packages/cloudflare-computer-agent"
+    },
+    {
+      "path": "packages/cloudflare-wiki"
+    },
+    {
+      "path": "packages/cloudflare-native-models"
+    },
+    {
+      "path": "packages/cloudflare-erasure-operations"
+    },
+    {
+      "path": "packages/cloudflare-model-transport"
+    },
+    {
+      "path": "packages/cloudflare-research-runtime"
+    },
+    {
+      "path": "packages/cloudflare-search-probe"
+    },
+    {
+      "path": "packages/cloudflare-research-configuration"
+    },
+    {
+      "path": "packages/cloudflare-http-protocol"
     }
   ]
 }

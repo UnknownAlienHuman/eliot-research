@@ -1,10 +1,13 @@
-import { beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { handleHttp } from "../src/http.js";
+import { admissionTestEnvironment, admissionTestScopeExpression, terminateAdmissionWorkflows } from "./research-admission-fixture.js";
 import { createD1ScopeProfilePort, type RetrievalQueryAccess, type ScopeProfileBinding } from "@eliotr/retrieval";
+import { OWNER_RESEARCH_SCOPE_PROFILE } from "@eliotr/cloudflare-navigation";
 import { createD1EvidenceAuthorityPort, evidenceSha256, evidenceSha256Bytes } from "@eliotr/cloudflare-evidence";
 import {
   loadHeldResearchScope,
   retrieveWithHeldScope,
-} from "../src/research-retrieval-composition.js";
+} from "@eliotr/cloudflare-research-runtime/research-retrieval-composition.js";
 import {
   body,
   count,
@@ -14,6 +17,7 @@ import {
   run,
   runtime,
   setupOrientationDatabase,
+  verifier,
 } from "./orientation-fixture.js";
 import {
   importAndProject,
@@ -28,13 +32,14 @@ const access: RetrievalQueryAccess = {
   credential_generation: "credential-v1",
 };
 function runRequest(sourceId: string, key: string): Request {
+  void sourceId;
   return new Request("https://research.example/api/v1/research/run", {
     method: "POST",
     headers: { "content-type": "application/json", "idempotency-key": key },
     body: JSON.stringify({
       query: "Held scope research",
       product: "RESEARCH",
-      scope_expression: { kind: "SELECTED_SOURCES", source_ids: [sourceId] },
+      scope_expression: admissionTestScopeExpression("held-scope"),
       literals: [],
       evidence_grade: "E1",
       budget_ref: "research-budget-v1",
@@ -89,6 +94,8 @@ async function digest(bytes: Uint8Array): Promise<string> {
 
 describe("held research scope retrieval over real D1", () => {
   let operationId: string;
+  const admitted: string[] = [];
+  afterAll(() => terminateAdmissionWorkflows(runtime, admitted));
   let held: Awaited<ReturnType<typeof loadHeldResearchScope>>;
   let projectedWorld: Q1Namespace;
   let unboundHeld: Pick<Awaited<ReturnType<typeof loadHeldResearchScope>>, "scope_snapshot_ref" | "scope_snapshot">;
@@ -105,10 +112,16 @@ describe("held research scope retrieval over real D1", () => {
     };
     await importAndProject(projectedWorld);
     await addReadPolicy(projectedWorld, principal);
-    const response = await run(runRequest(`source-${projectedWorld.namespace}`, "held-scope-run"));
+    const configured = await admissionTestEnvironment(runtime, principal, "held-scope", {
+      source_ids: [`source-${projectedWorld.namespace}`],
+    });
+    const response = await handleHttp(runRequest(`source-${projectedWorld.namespace}`, "held-scope-run"),
+      configured, {} as ExecutionContext, { accessVerifier: verifier() });
     const payload = await body<{ readonly workflow_instance_id: string }>(response);
     expect(response.status, JSON.stringify(payload)).toBe(200);
     operationId = payload.data.workflow_instance_id;
+    admitted.push(operationId);
+    await terminateAdmissionWorkflows(runtime, admitted);
     held = await loadHeldResearchScope(
       { CORE_DB: runtime.CORE_DB, SEARCH_DB: runtime.SEARCH_DB },
       access,
@@ -116,7 +129,7 @@ describe("held research scope retrieval over real D1", () => {
       deployment,
     );
     profile = await createD1ScopeProfilePort(db).loadBinding(held.scope_snapshot);
-    expect(profile).toEqual({ version: "retrieval-scope-v1", max_sources: 64, max_results: 8 });
+    expect(profile).toEqual({ ...OWNER_RESEARCH_SCOPE_PROFILE, max_results: 8 });
     const unboundResponse = await run(request(`source-${projectedWorld.namespace}`, {}, "held-scope-unbound-orientation"));
     const unboundPayload = await body<{ readonly evidence_pack: { readonly scope_snapshot_ref: { readonly id: string; readonly revision: number } } }>(unboundResponse);
     expect(unboundResponse.status, JSON.stringify(unboundPayload)).toBe(200);
@@ -273,7 +286,9 @@ describe("held research scope retrieval over real D1", () => {
         deadline_ms: Date.now() + 30_000,
         idempotency_key: "held-scope-profile-conflict",
         signal: new AbortController().signal,
-        profile: { ...profile, version: "retrieval-scope-other" },
+        // A non-v2 candidate uses its valid 64-source cap, so this exercises
+        // immutable binding conflict rather than the SQL input constraint.
+        profile: { ...profile, version: "retrieval-scope-other", max_sources: 64 },
       },
     )).rejects.toMatchObject({ code: "RETRIEVAL_IDEMPOTENCY_CONFLICT" });
     await expect(loadHeldResearchScope(

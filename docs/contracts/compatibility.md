@@ -70,3 +70,15 @@ The challenge token appears only in the issued challenge response; status and co
 closed and reject token or verified-actor fields. These additions keep the family version at v1/g1,
 preserve every generation 3 identity and digest, and are recorded as `INITIAL` entries with dedicated
 canonical issued and confirmed JSON fixtures.
+
+## Computer agent and research branch schema publication
+
+Registry generation 7 registers 48 existing strict schemas in the `computer-agent` family and six existing research branch and read-extract checkpoint schemas in the `research` family, each at version 1, generation 1. These 54 contracts receive `INITIAL` entries.
+
+Adding `computer-agent` widens the closed schema-family enum. All 15 registry-family schemas advance from version 2, generation 1 to version 3, generation 1, with `BREAKING` entries that supersede their exact previous schema identities. Version 2 readers must retain the previous catalog or explicitly upgrade before consuming this publication. The compatibility ledger preserves every historical identity and digest. The registry document protocol remains version 1; `registry_generation` advances from 6 to 7.
+
+This metadata publication does not require D1/R2 migration or change normalized-bundle and owner-cutover bytes. Canonical fixtures remain governed by their existing schema identities and digests. Runtime composition and live platform qualification retain their separate acceptance requirements.
+
+## Research Provider Key schema registration
+
+Registry generation 8 adds the twelve already-exported Research Provider Key configuration and model-use schemas to the existing `research` family at version 1, generation 1. Each receives an `INITIAL` history entry because it has no prior generated schema identity; all generation 7 schema identities and compatibility entries remain unchanged. The generated corpus, index, and canonical-fixture registry are refreshed at registry generation 8. This registration does not change the Zod wire shapes, widen the closed schema-family enum, or require a D1/R2 migration.

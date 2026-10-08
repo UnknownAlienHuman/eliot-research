@@ -1,9 +1,15 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
+import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { runInNewContext } from "node:vm";
+import { readConfiguredTransport } from "./check-launch-code.mjs";
 import { createCloudflareMcpTransport } from "./lib/cloudflare-mcp-oauth.mjs";
+import { readActiveDeploymentIdentity, selectDeploymentGoogleTransport } from "./lib/deployment-maintenance.mjs";
 
 const ACCOUNT_ID = "00000000000000000000000000000000";
+const DYNAMIC_ROUTE_TEST_ACCOUNT_ID = "11111111111111111111111111111111";
 const MCP_URL = "https://mcp.cloudflare.com/mcp";
 
 class FakeProcess extends EventEmitter {
@@ -13,11 +19,18 @@ class FakeProcess extends EventEmitter {
     this.stderr = new EventEmitter();
     this.calls = [];
     this.killCount = 0;
+    this.rpcError = null;
     this.stdin = {
       write: (line) => {
         const message = JSON.parse(line);
         this.calls.push(message);
         if (message.id === undefined) return true;
+        if (this.rpcError?.method === message.method) {
+          process.nextTick(() => this.stdout.emit("data", `${JSON.stringify({
+            jsonrpc: "2.0", id: message.id, error: this.rpcError.error,
+          })}\n`));
+          return true;
+        }
         const result = this.#result(message);
         process.nextTick(() => this.stdout.emit("data", `${JSON.stringify({ jsonrpc: "2.0", id: message.id, result })}\n`));
         return true;
@@ -33,6 +46,38 @@ class FakeProcess extends EventEmitter {
       assert.match(code, /^async \(\) => cloudflare\.request\(/u);
       assert.doesNotMatch(code, /CLOUDFLARE_API_TOKEN|bearer|Authorization/iu);
       const request = JSON.parse(code.slice("async () => cloudflare.request(".length, -1));
+      const scripts = `/accounts/${ACCOUNT_ID}/workers/scripts`;
+      const versionId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+      const workerResults = {
+        [scripts]: [{ id: "eliotr-core", compatibility_date: "2026-08-28", has_assets: true }],
+        [`${scripts}/eliotr-core/deployments`]: { deployments: [{
+          id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", created_on: "2026-10-03T12:00:00Z", strategy: "percentage",
+          versions: [{ version_id: versionId, percentage: 100 }],
+        }] },
+        [`${scripts}/eliotr-core/versions/${versionId}`]: { id: versionId, number: 9, resources: {
+          script_runtime: { compatibility_date: "2026-08-28" }, bindings: [
+            { name: "DEPLOYMENT_GENERATION", type: "plain_text", text: "git-existing" },
+            { name: "GOOGLE_EXTERNAL_TRANSPORT", type: "plain_text", text: this.workerGoogleTransport },
+          ],
+        } },
+      };
+      if (Object.hasOwn(workerResults, request.path)) {
+        return { content: [{ type: "text", text: JSON.stringify({ status: this.workerStatus ?? 200,
+          success: true, errors: this.workerErrors ?? [], result: workerResults[request.path] }) }] };
+      }
+      const dynamicRoutePath = `/accounts/${DYNAMIC_ROUTE_TEST_ACCOUNT_ID}/ai-gateway/gateways/eliotr-reasoning/routes`;
+      if (request.method === "GET" && request.path === `${dynamicRoutePath}?page=1&per_page=100`) {
+        return { content: [{ type: "text", text: JSON.stringify({ status: 200, success: true,
+          data: { routes: [], page: 1, per_page: 50, order_by: "name", order_by_direction: "asc" } }) }] };
+      }
+      if (request.method === "POST" && request.path === dynamicRoutePath) {
+        return { content: [{ type: "text", text: JSON.stringify({ status: 201, success: true,
+          result: { id: "route-created", name: request.body.name } }) }] };
+      }
+      if (request.method === "POST" && request.path === `${dynamicRoutePath}/route-1/deployments`) {
+        return { content: [{ type: "text", text: JSON.stringify({ status: 201, success: true,
+          result: { id: "route-1", version_id: request.body.version_id } }) }] };
+      }
       if (request.path === `/accounts/${ACCOUNT_ID}`) {
         return { content: [{ type: "text", text: JSON.stringify({ status: 200, success: true, result: { id: ACCOUNT_ID } }) }] };
       }
@@ -70,7 +115,7 @@ class FakeProcess extends EventEmitter {
 }
 
 const fake = new FakeProcess();
-const transport = createCloudflareMcpTransport({
+const transportOptions = {
   cwd: resolve("."),
   accountId: ACCOUNT_ID,
   runCli: (args, cliOptions) => {
@@ -109,7 +154,8 @@ const transport = createCloudflareMcpTransport({
     return fake;
   },
   env: { PATH: process.env.PATH ?? "" },
-});
+};
+const transport = createCloudflareMcpTransport(transportOptions);
 await transport.verifyAccount();
 assert.deepEqual(await transport.request("GET", `/accounts/${ACCOUNT_ID}/access/organizations`), [{ auth_domain: "test.cloudflareaccess.com" }]);
 assert.deepEqual(await transport.request("GET", `/accounts/${ACCOUNT_ID}/access/apps?per_page=100`), []);
@@ -137,6 +183,51 @@ await assert.rejects(
 );
 transport.close();
 assert.equal(fake.killCount, 1, "closing the transport must terminate its app-server child");
+const dynamicRoutePath = `/accounts/${DYNAMIC_ROUTE_TEST_ACCOUNT_ID}/ai-gateway/gateways/eliotr-reasoning/routes`;
+const dynamicReadFake = new FakeProcess();
+const dynamicRead = createCloudflareMcpTransport({ ...transportOptions,
+  accountId: DYNAMIC_ROUTE_TEST_ACCOUNT_ID, gatewayId: "eliotr-reasoning",
+  resourceReadback: "dynamic-routes", spawnProcess: () => dynamicReadFake });
+try {
+  const beforeRefusedWrite = dynamicReadFake.calls.length;
+  await assert.rejects(() => dynamicRead.request("POST", dynamicRoutePath, { name: "route", elements: [{}] }),
+    (error) => error?.code === "MCP_REQUEST_INVALID");
+  await assert.rejects(() => dynamicRead.request("GET", `${dynamicRoutePath}/../other`),
+    (error) => error?.code === "MCP_REQUEST_INVALID");
+  await assert.rejects(() => dynamicRead.request("GET", dynamicRoutePath.replace("eliotr-reasoning", "other-gateway") + "?page=1&per_page=100"),
+    (error) => error?.code === "MCP_REQUEST_INVALID");
+  await assert.rejects(() => dynamicRead.request("GET", `${dynamicRoutePath}/%2e%2e`),
+    (error) => error?.code === "MCP_REQUEST_INVALID");
+  assert.equal(dynamicReadFake.calls.length, beforeRefusedWrite, "out-of-scope reads and read-only writes must be rejected before MCP dispatch");
+  assert.deepEqual(await dynamicRead.request("GET", `${dynamicRoutePath}?page=1&per_page=100`), {
+    status: 200, success: true,
+    data: { routes: [], page: 1, per_page: 50, order_by: "name", order_by_direction: "asc" },
+  });
+} finally {
+  dynamicRead.close();
+}
+assert.equal(dynamicReadFake.killCount, 1);
+const dynamicWriteFake = new FakeProcess();
+const dynamicWrite = createCloudflareMcpTransport({ ...transportOptions,
+  accountId: DYNAMIC_ROUTE_TEST_ACCOUNT_ID, gatewayId: "eliotr-reasoning",
+  resourceReadback: "dynamic-routes", allowRouteWrites: true, spawnProcess: () => dynamicWriteFake });
+try {
+  assert.deepEqual(await dynamicWrite.request("POST", dynamicRoutePath,
+    { name: "eliotr-balanced-test", elements: [{}] }), {
+    status: 201, success: true, result: { id: "route-created", name: "eliotr-balanced-test" },
+  });
+  assert.deepEqual(await dynamicWrite.request("POST", `${dynamicRoutePath}/route-1/deployments`,
+    { version_id: "version-1" }), {
+    status: 201, success: true, result: { id: "route-1", version_id: "version-1" },
+  });
+  const beforeRefusals = dynamicWriteFake.calls.length;
+  await assert.rejects(() => dynamicWrite.request("POST", `${dynamicRoutePath}/route-1/deployments`,
+    { version_id: "version-1", unexpected: true }), (error) => error?.code === "MCP_REQUEST_INVALID");
+  assert.equal(dynamicWriteFake.calls.length, beforeRefusals, "malformed mutation must not reach MCP");
+} finally {
+  dynamicWrite.close();
+}
+assert.equal(dynamicWriteFake.killCount, 1);
 assert.deepEqual(fake.calls.map((call) => call.method), [
   "initialize",
   "initialized",
@@ -157,4 +248,119 @@ assert.throws(
   () => createCloudflareMcpTransport({ cwd: resolve("."), accountId: ACCOUNT_ID, env: { CLOUDFLARE_API_TOKEN: "redacted" } }),
   (error) => error?.code === "MCP_AUTH_UNAVAILABLE",
 );
+const rpcFailureFake = new FakeProcess();
+rpcFailureFake.rpcError = {
+  method: "mcpServer/tool/call",
+  error: {
+    code: -32042,
+    message: "private-native-error-message-must-not-leak",
+    data: { bearer: "private-native-error-data-must-not-leak" },
+  },
+};
+const rpcFailureTransport = createCloudflareMcpTransport({
+  ...transportOptions,
+  spawnProcess: () => rpcFailureFake,
+});
+let rpcFailure;
+try {
+  await rpcFailureTransport.verifyAccount();
+  assert.fail("JSON-RPC tool-call errors must fail the Access readback");
+} catch (error) {
+  rpcFailure = error;
+} finally {
+  rpcFailureTransport.close();
+}
+assert.equal(rpcFailure?.code, "MCP_PROTOCOL_ERROR");
+assert.equal(rpcFailure?.rpcMethod, "mcpServer/tool/call");
+assert.equal(rpcFailure?.rpcErrorCode, -32042);
+assert.match(rpcFailure?.message ?? "", /MCP tool call \(mcpServer\/tool\/call\).*JSON-RPC code -32042/u);
+assert.doesNotMatch(rpcFailure?.message ?? "", /private-native-error-message|private-native-error-data|bearer/iu);
+assert.equal(rpcFailureFake.killCount, 1);
+const invalidRpcCodeFake = new FakeProcess();
+invalidRpcCodeFake.rpcError = {
+  method: "thread/start",
+  error: { code: "not-numeric", message: "private-invalid-code-message", data: "private-data" },
+};
+const invalidRpcCodeTransport = createCloudflareMcpTransport({
+  ...transportOptions,
+  spawnProcess: () => invalidRpcCodeFake,
+});
+let invalidRpcCodeFailure;
+try {
+  await invalidRpcCodeTransport.verifyAccount();
+  assert.fail("malformed JSON-RPC error codes must fail the Access readback");
+} catch (error) {
+  invalidRpcCodeFailure = error;
+} finally {
+  invalidRpcCodeTransport.close();
+}
+assert.equal(invalidRpcCodeFailure?.code, "MCP_PROTOCOL_ERROR");
+assert.equal(invalidRpcCodeFailure?.rpcMethod, "thread/start");
+assert.equal(invalidRpcCodeFailure?.rpcErrorCode, null);
+assert.match(invalidRpcCodeFailure?.message ?? "", /thread start \(thread\/start\).*non-safe numeric error code/u);
+assert.doesNotMatch(invalidRpcCodeFailure?.message ?? "", /private-invalid-code-message|private-data/iu);
+assert.equal(invalidRpcCodeFake.killCount, 1);
+// Run the actual Access provisioner's preservation/dispatch source with the real
+// bounded MCP protocol transport, no token, and a raw-fetch refusal sentinel.
+const root = fileURLToPath(new URL("../", import.meta.url));
+const source = (await readFile(resolve(root, "scripts/provision-cloudflare-access.mjs"), "utf8")).replace(/\r\n/gu, "\n");
+const selectionStart = source.indexOf("const configuredGoogleTransport =");
+const selectionEnd = source.indexOf("const mcpEnabled =", selectionStart);
+const requestStart = source.indexOf("async function request(");
+const requestEnd = source.indexOf("\n}\n", requestStart);
+assert.ok(selectionStart >= 0 && selectionEnd > selectionStart && requestStart >= 0 && requestEnd > requestStart);
+const maintenanceFake = new FakeProcess();
+const maintenanceTransport = createCloudflareMcpTransport({ ...transportOptions, spawnProcess: () => maintenanceFake });
+const rawFetch = () => assert.fail("MCP preservation must never use raw fetch");
+try {
+  for (const verifyExisting of [false, true]) {
+    const request = runInNewContext(`(${source.slice(requestStart, requestEnd + 2)})`, {
+      verifyExisting, mcpTransport: maintenanceTransport, fetch: rawFetch,
+    });
+    const selection = runInNewContext(`(async () => { ${source.slice(selectionStart, selectionEnd)}
+      return { googleTransport, activeTransport }; })`, {
+      process: { env: {} }, token: undefined, accountId: ACCOUNT_ID,
+      apiBase: "https://api.cloudflare.com/client/v4", mcpTransport: maintenanceTransport, request,
+      repositoryRoot: root, readFile, resolve, readConfiguredTransport, selectDeploymentGoogleTransport,
+      preserveGoogleTransport: "disabled",
+      readActiveDeploymentIdentity: (options) => readActiveDeploymentIdentity({ ...options, fetchImpl: rawFetch }),
+      checkOnly: !verifyExisting, verifyExisting,
+    });
+    maintenanceFake.workerGoogleTransport = "disabled";
+    const preserved = await selection();
+    assert.equal(preserved.googleTransport, "disabled");
+    assert.equal(preserved.activeTransport.generation, "git-existing");
+    for (const observed of [undefined, "unknown", "gemini-mcp"]) {
+      maintenanceFake.workerGoogleTransport = observed;
+      await assert.rejects(selection(), /freshly verified disabled/u);
+    }
+    maintenanceFake.workerGoogleTransport = "disabled";
+    maintenanceFake.workerStatus = 201;
+    await assert.rejects(selection(), (error) => error.code === "MCP_REQUEST_FAILED");
+    maintenanceFake.workerStatus = 200;
+    maintenanceFake.workerErrors = [{ code: 10000, message: "private-provider-diagnostic" }];
+    await assert.rejects(selection(), (error) => error.code === "MCP_REQUEST_FAILED" &&
+      !error.message.includes("private-provider-diagnostic"));
+    maintenanceFake.workerErrors = [];
+  }
+  const beforeRefusals = maintenanceFake.calls.length;
+  for (const [method, path, body] of [
+    ["POST", `/accounts/${ACCOUNT_ID}/workers/scripts`],
+    ["GET", `/accounts/${ACCOUNT_ID}/workers/scripts/another-worker/deployments`],
+    ["GET", `/accounts/${ACCOUNT_ID}/workers/scripts/eliotr-core/versions/not-a-uuid`],
+    ["GET", `/accounts/${ACCOUNT_ID}/workers/scripts?arbitrary=true`],
+    ["GET", `/accounts/${"1".repeat(32)}/workers/scripts`],
+    ["GET", `/accounts/${ACCOUNT_ID}/workers/scripts`, {}],
+  ]) await assert.rejects(maintenanceTransport.request(method, path, body), (error) => error.code === "MCP_REQUEST_INVALID");
+  assert.equal(maintenanceFake.calls.length, beforeRefusals, "out-of-scope Worker reads reached MCP");
+  const requests = maintenanceFake.calls.filter((call) => call.method === "mcpServer/tool/call")
+    .map((call) => JSON.parse(call.params.arguments.code.slice("async () => cloudflare.request(".length, -1)));
+  assert.ok(requests.length >= 6);
+  assert.ok(requests.every((request) => request.method === "GET" && request.body === undefined &&
+    request.path.startsWith(`/accounts/${ACCOUNT_ID}/workers/scripts`)));
+  console.log("Cloudflare MCP + preserve disabled: check-only/verify-existing PASS; tokenless GET-only, fail-closed negatives PASS");
+} finally {
+  maintenanceTransport.close();
+}
+assert.equal(maintenanceFake.killCount, 1);
 console.log("Cloudflare official MCP OAuth protocol fixture: PASS");

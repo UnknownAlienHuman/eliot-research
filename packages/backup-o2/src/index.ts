@@ -1,4 +1,4 @@
-// ER-34 O2 composition root. IMPLEMENTED_NOT_LIVE; O3/O4 NOT_IMPLEMENTED.
+// ER-34 composition root. Local O2/O4 primitives; isolated restore remains closed.
 export * from "./shared.js";
 export * from "./coverage.js";
 export * from "./intent-digest.js";
@@ -10,11 +10,16 @@ export * from "./replay-authority.js";
 export * from "./r2-inventory.js";
 export * from "./r2-conformance.js";
 export * from "./epoch.js";
+export * from "./epoch-plan.js";
+export * from "./epoch-producer-fence.js";
 export * from "./destination-policy.js";
 export * from "./hold-authority.js";
 export * from "./nonce-authority.js";
 export * from "./offsite.js";
+export * from "./portable-manifest.js";
 export * from "./expiry.js";
+export * from "./o4-authority.js";
+export * from "./purge-replay.js";
 
 import type { BackupEpoch, OperationIntent, RestoreVerificationReceipt } from "@eliotr/contracts";
 import { BackupError, resolveBackupExportLimits, type BackupExportLimits } from "./shared.js";

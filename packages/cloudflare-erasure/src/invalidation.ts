@@ -5,6 +5,7 @@ import type {
 } from "@eliotr/contracts";
 import {
   assertErasureIdentifier,
+  erasureDigest,
   isoFromMs,
   stableErasureId,
 } from "./canonical.js";
@@ -31,6 +32,14 @@ interface WikiRow {
 interface ArtifactRow {
   readonly artifact_id: unknown;
   readonly revision: unknown;
+}
+
+interface PublicationHeadRow {
+  readonly artifact_id: unknown;
+  readonly draft_revision: unknown;
+  readonly publication_revision: unknown;
+  readonly publication_ref: unknown;
+  readonly disposition: unknown;
 }
 
 interface InvestigationRow {
@@ -94,6 +103,44 @@ function explicitScopes(closure: ErasureDependencyClosure): readonly { id: strin
   return output;
 }
 
+async function currentPublicationHeads(
+  database: D1Database,
+  closure: ErasureDependencyClosure,
+): Promise<readonly PublicationHeadRow[]> {
+  // The immutable accepted receipt carries exact current evidence graph edges.
+  // Use those persisted edges instead of inferring publication dependencies.
+  const exactDependencies = [
+    ...revisionRefs(closure).map((source_revision_ref) => ({ source_revision_ref })),
+    ...explicitHandles(closure).map((handle) => ({ handle_id: handle.id, handle_revision: handle.revision })),
+    ...explicitScopes(closure).map((scope) => ({ scope_snapshot_id: scope.id, scope_snapshot_revision: scope.revision })),
+  ];
+  if (exactDependencies.length === 0) return [];
+  const result = await database.prepare(
+    "SELECT h.artifact_id,p.draft_revision,h.publication_revision,h.publication_ref,h.disposition " +
+    "FROM artifact_publication_head h JOIN artifact_publication_receipt p " +
+    "ON p.publication_ref=h.publication_ref " +
+    "WHERE h.disposition IN ('ACCEPTED','PENDING_REVALIDATION') AND EXISTS (" +
+    "SELECT 1 FROM json_each(p.evidence_currentness_json) c JOIN json_each(?1) d WHERE " +
+    "json_extract(d.value,'$.source_revision_ref')=json_extract(c.value,'$.source_revision_ref') " +
+    "OR (json_extract(d.value,'$.handle_id')=json_extract(c.value,'$.handle_id') " +
+    "AND json_extract(d.value,'$.handle_revision')=json_extract(c.value,'$.handle_revision')) " +
+    "OR (json_extract(d.value,'$.scope_snapshot_id')=json_extract(c.value,'$.scope_snapshot_id') " +
+    "AND json_extract(d.value,'$.scope_snapshot_revision')=json_extract(c.value,'$.scope_snapshot_revision'))) " +
+    "ORDER BY h.artifact_id,h.publication_revision LIMIT 10001",
+  ).bind(JSON.stringify(exactDependencies)).all<PublicationHeadRow>();
+  const rows = result.results ?? [];
+  if ((result as { readonly success?: boolean }).success === false) throw new Error("publication dependency inventory failed");
+  if (rows.length > 10000) throw new Error("publication dependency inventory exceeds the bounded 10000-row limit");
+  return rows;
+}
+
+function safePublicationDisposition(value: unknown): "ACCEPTED" | "PENDING_REVALIDATION" | "REDACTED_DEPENDENCY" {
+  if (value !== "ACCEPTED" && value !== "PENDING_REVALIDATION" && value !== "REDACTED_DEPENDENCY") {
+    throw new Error("publication head disposition is invalid");
+  }
+  return value;
+}
+
 async function allRows<T>(statement: D1PreparedStatement, label: string): Promise<readonly T[]> {
   const result = await statement.all<T>();
   if ((result as { readonly success?: boolean }).success === false) throw new Error(`${label} inventory failed`);
@@ -126,8 +173,8 @@ export function createD1ErasureInvalidationPort(
   const clock = dependencies.now ?? Date.now;
   return {
     async invalidate(
-      _request: ErasureRequest,
-      _fence: ErasureFence,
+      request: ErasureRequest,
+      fence: ErasureFence,
       closure,
       ledgerEntryRef,
     ): Promise<readonly ErasureDependentInvalidation[]> {
@@ -158,7 +205,63 @@ export function createD1ErasureInvalidationPort(
       }
 
       const invalidations: ErasureDependentInvalidation[] = [];
+      const publicationInvalidations: ErasureDependentInvalidation[] = [];
       const now = isoFromMs(clock());
+      if (fence.erasure_id !== request.erasure_ref.id || fence.revision !== request.erasure_ref.revision ||
+          closure.erasure_ref.id !== request.erasure_ref.id || closure.erasure_ref.revision !== request.erasure_ref.revision) {
+        throw new Error("publication invalidation request, closure, and fence do not match");
+      }
+      const requestedSubjects = new Set(request.exact_subject_refs);
+      if (closure.targets.some((target) => !requestedSubjects.has(target.exact_subject_ref))) {
+        throw new Error("publication invalidation closure contains a subject outside the exact erasure request");
+      }
+      const publicationHeads = await currentPublicationHeads(database, closure);
+      let desiredHeadDisposition: "PENDING_REVALIDATION" | "REDACTED_DEPENDENCY" | undefined;
+      if (publicationHeads.length > 0) {
+        const ledger = await database.prepare(
+          "SELECT erasure_id,non_revealing_subject_digest,disposition FROM purge_ledger " +
+          "WHERE receipt_ref=?1 ORDER BY ledger_revision DESC LIMIT 1",
+        ).bind(ledgerEntryRef).first<{
+          readonly erasure_id: unknown;
+          readonly non_revealing_subject_digest: unknown;
+          readonly disposition: unknown;
+        }>();
+        const expectedSubjectDigest = await erasureDigest([...request.exact_subject_refs].sort());
+        if (ledger === null || ledger.erasure_id !== request.erasure_ref.id ||
+            ledger.non_revealing_subject_digest !== expectedSubjectDigest) {
+          throw new Error("publication invalidation purge ledger does not match the exact erasure request");
+        }
+        if (ledger.disposition === "COMPLETE") desiredHeadDisposition = "REDACTED_DEPENDENCY";
+        else if (ledger.disposition === "BLOCKED") desiredHeadDisposition = "PENDING_REVALIDATION";
+        else throw new Error("publication invalidation requires its exact persisted purge-ledger disposition");
+      }
+      for (const row of publicationHeads) {
+        const artifactId = assertErasureIdentifier(row.artifact_id, "publication artifact ID");
+        const draftRevision = positiveRevision(row.draft_revision, "publication draft");
+        const publicationRevision = positiveRevision(row.publication_revision, "publication head");
+        const publicationRef = assertErasureIdentifier(row.publication_ref, "publication receipt ref");
+        const updated = await database.prepare(
+          "UPDATE artifact_publication_head SET disposition=?4,updated_at=?5 " +
+          "WHERE artifact_id=?1 AND publication_revision=?2 AND publication_ref=?3 " +
+          "AND (disposition='ACCEPTED' OR (?4='REDACTED_DEPENDENCY' AND disposition='PENDING_REVALIDATION')) " +
+          "RETURNING disposition",
+        ).bind(artifactId, publicationRevision, publicationRef, desiredHeadDisposition, now)
+          .first<{ readonly disposition: unknown }>();
+        const current = updated ?? await database.prepare(
+          "SELECT disposition FROM artifact_publication_head WHERE artifact_id=?1 " +
+          "AND publication_revision=?2 AND publication_ref=?3 LIMIT 1",
+        ).bind(artifactId, publicationRevision, publicationRef).first<{ readonly disposition: unknown }>();
+        if (current === null) continue;
+        const finalDisposition = safePublicationDisposition(current.disposition);
+        if (finalDisposition === "ACCEPTED") throw new Error("publication head invalidation did not change the accepted head");
+        const dependentDisposition = finalDisposition === "REDACTED_DEPENDENCY" ? "REDACTED" : "PENDING_REVALIDATION";
+        publicationInvalidations.push(await invalidation(
+          "ArtifactRevision",
+          dependentDisposition,
+          `artifact:${artifactId}:${draftRevision}`,
+          ledgerEntryRef,
+        ));
+      }
       for (const row of handles.values()) {
         const id = assertErasureIdentifier(row.handle_id, "evidence handle ID");
         const revision = positiveRevision(row.revision, "evidence handle");
@@ -266,6 +369,7 @@ export function createD1ErasureInvalidationPort(
         ).bind(id, revision).run();
       }
 
+      invalidations.push(...publicationInvalidations);
       const unique = new Map<string, ErasureDependentInvalidation>();
       for (const item of invalidations) unique.set(item.dependent_ref, item);
       return [...unique.values()].sort((left, right) => left.dependent_ref.localeCompare(right.dependent_ref));

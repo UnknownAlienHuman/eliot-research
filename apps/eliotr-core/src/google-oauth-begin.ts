@@ -1,7 +1,7 @@
 import type { BeginGoogleOAuthResult } from "@eliotr/interfaces";
 import {
   GoogleCredentialError,
-  oauthIdentifier,
+  parseGoogleOAuthBeginTransportInput,
 } from "@eliotr/google-drive-exchange";
 import {
   readStreamWithinBytes,
@@ -38,45 +38,12 @@ export async function handleGoogleOAuthBegin(
   if (!readiness.ready) {
     return problem(request, 503, "SCHEMA_NOT_READY", "Required D1 migrations are not applied", true);
   }
-  const expectedOrigin = new URL(request.url).origin;
-  const origin = request.headers.get("origin");
-  if (origin === null || origin === "") {
-    throw new HttpRequestError("GOOGLE_OAUTH_ORIGIN_REQUIRED", 400, "Same-origin OAuth begin requires an Origin header");
-  }
-  if (origin !== expectedOrigin) {
-    throw new HttpRequestError("GOOGLE_OAUTH_ORIGIN_FORBIDDEN", 403, "Cross-origin OAuth begin is forbidden");
-  }
-  const referer = request.headers.get("referer");
-  if (referer !== null && referer !== expectedOrigin && !referer.startsWith(`${expectedOrigin}/`)) {
-    throw new HttpRequestError("GOOGLE_OAUTH_ORIGIN_FORBIDDEN", 403, "Cross-origin OAuth begin is forbidden");
-  }
-  if (request.headers.get("x-eliotr-csrf") !== "1") {
-    throw new HttpRequestError("GOOGLE_OAUTH_CSRF_REQUIRED", 400, "OAuth begin requires the CSRF header");
-  }
-  const contentType = request.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase();
-  if (contentType !== "application/json" || !request.body) {
-    throw new HttpRequestError("GOOGLE_OAUTH_INPUT_INVALID", 400, "OAuth begin requires a JSON body");
-  }
-  const raw = await readStreamWithinBytes(request.body, { label: "http.request.google-oauth-begin", max_bytes: 1024 });
-  let value: unknown;
-  try {
-    value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(raw));
-  } catch {
-    throw new HttpRequestError("GOOGLE_OAUTH_INPUT_INVALID", 400, "OAuth begin body is not valid UTF-8 JSON");
-  }
-  if (!value || typeof value !== "object" || Array.isArray(value) || Object.keys(value).length !== 1 ||
-      !Object.hasOwn(value, "operation_ref")) {
-    throw new HttpRequestError("GOOGLE_OAUTH_INPUT_INVALID", 400, "OAuth begin accepts only operation_ref");
-  }
-  let operationRef: string;
-  try {
-    operationRef = oauthIdentifier((value as Record<string, unknown>).operation_ref);
-  } catch (error) {
-    if (error instanceof GoogleCredentialError) {
-      throw new HttpRequestError("GOOGLE_OAUTH_INPUT_INVALID", 400, "OAuth begin operation_ref is invalid");
-    }
-    throw error;
-  }
+  const parsedInput = await parseGoogleOAuthBeginTransportInput({
+    request,
+    read_bounded_body: (body, options) => readStreamWithinBytes(body, options),
+    fail: (code, status, message) => { throw new HttpRequestError(code, status, message); },
+  });
+  const { expected_origin: expectedOrigin, operation_ref: operationRef } = parsedInput;
   let admission;
   try {
     const verifier = dependencies.accessVerifier ?? configuredAccessVerifier(env);

@@ -4,8 +4,34 @@
     "rootDir": "src",
     "outDir": "dist",
     "tsBuildInfoFile": "dist/.tsbuildinfo",
-    "types": ["@cloudflare/workers-types"]
+    "types": [
+      "@cloudflare/workers-types"
+    ]
   },
-  "include": ["src/**/*.ts"],
-  "references": [{ "path": "../platform-cloudflare" }, { "path": "../cloudflare-access" }, { "path": "../contracts" }]
+  "include": [
+    "src/**/*.ts"
+  ],
+  "references": [
+    {
+      "path": "../platform-cloudflare"
+    },
+    {
+      "path": "../cloudflare-access"
+    },
+    {
+      "path": "../contracts"
+    },
+    {
+      "path": "../cloudflare-computer-agent"
+    },
+    {
+      "path": "../cloudflare-raw-ingest"
+    },
+    {
+      "path": "../cloudflare-workflows"
+    },
+    {
+      "path": "../interfaces"
+    }
+  ]
 }

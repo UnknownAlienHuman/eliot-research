@@ -4,7 +4,7 @@ import {
   backupUtf8Bytes, bufferBackupStream, canonicalBackupJson, failBackup, ownedBackupBytes,
   assertBackupIdentifier, assertBackupIntent, BackupError, type BackupExportLimits,
 } from "./shared.js";
-import type { BackupEpochDraft, BackupSourcePorts } from "./epoch.js";
+import type { BackupEpochDraft, BackupPartRef, BackupPayloadPartRef, BackupSourcePorts } from "./epoch.js";
 import { assertDestinationPolicy, destinationDescriptorDigest, destinationPolicyDigest, reconcileDestinationDescriptor, type BackupDestinationPolicy, type OffsiteDestinationDescriptor } from "./destination-policy.js";
 import { requireDestinationAuthority } from "./destination-authority.js";
 import { readEpochDraftById } from "./replay-authority.js";
@@ -15,6 +15,8 @@ import {
   backupIsoNow, backupNonceHex, commitCopyReceipt, copyIdForDigest,
   deriveBackupNonce, readCopyCheckpoints, readCopyReceipt, recordCopyCheckpoint, resolveControllerClock,
 } from "./offsite-durability.js";
+import { commitOffsiteCopyReplayIntent, persistOffsiteCopyReplayIntent } from "./o4-authority.js";
+import { BACKUP_R2_PAYLOAD_PROTOCOL } from "./r2-inventory.js";
 
 // ER-34 O2 FIX2 encrypted offsite copy. Encryption happens before the
 // destination boundary; KEK/key bytes never enter the epoch, logs, receipts
@@ -86,6 +88,21 @@ async function canonicalAad(input: { epoch_id: string; manifest: string; index: 
   return backupUtf8Bytes(canonicalBackupJson(input));
 }
 
+type OffsitePart = BackupPartRef | BackupPayloadPartRef;
+
+function isPayloadPart(part: OffsitePart): part is BackupPayloadPartRef {
+  return "object_identity_digest" in part;
+}
+
+function offsitePartRef(epochId: string, part: OffsitePart): string {
+  if (isPayloadPart(part)) return `offsite/${epochId}/r2-payload/${part.object_identity_digest}/${String(part.index).padStart(6, "0")}-${part.sha256}`;
+  return `offsite/${epochId}/${part.manifest}/${String(part.index).padStart(6, "0")}-${part.sha256}`;
+}
+
+function offsitePartManifest(part: OffsitePart): string {
+  return isPayloadPart(part) ? "r2-payload" : part.manifest;
+}
+
 async function encryptBackupPart(key: CryptoKey, aad: Uint8Array, nonce: Uint8Array, plaintext: Uint8Array): Promise<Uint8Array<ArrayBuffer>> {
   if (nonce.byteLength !== 12) failBackup("BACKUP_KEY_INVALID", "offsite nonce must be 96 bits");
   let sealed: ArrayBuffer;
@@ -126,6 +143,9 @@ export async function copyOffsiteExport(ports: BackupSourcePorts, limits: Backup
   const signal = input.signal;
   const draft = input.draft;
   if (draft.part_index.length === 0) failBackup("BACKUP_INPUT_INVALID", "backup draft carries no audited parts");
+  if (draft.r2_payload_protocol !== BACKUP_R2_PAYLOAD_PROTOCOL || !Array.isArray(draft.payload_part_index)) {
+    failBackup("BACKUP_PAYLOAD_UNSUPPORTED", "legacy backup epoch has no authenticated R2 payload part index and cannot be copied for restore");
+  }
   if (draft.vector_digest.length !== 64) failBackup("BACKUP_VECTOR_UNVERIFIABLE", "backup draft carries no complete authority vector binding");
   await assertO2MigrationAuthority(ports.core_db);
   // Controller-owned authority first: caller policy must equal the persisted
@@ -144,6 +164,10 @@ export async function copyOffsiteExport(ports: BackupSourcePorts, limits: Backup
   } catch (cause) {
     failBackup("BACKUP_VECTOR_UNVERIFIABLE", "D1-persisted epoch draft is corrupt", false, {}, cause);
   }
+  if (persistedDraft.r2_payload_protocol !== BACKUP_R2_PAYLOAD_PROTOCOL || !Array.isArray(persistedDraft.payload_part_index)) {
+    failBackup("BACKUP_PAYLOAD_UNSUPPORTED", "legacy backup epoch has no authenticated R2 payload part index and cannot be copied for restore");
+  }
+  const payloadParts = persistedDraft.payload_part_index;
   const policyDigest = await destinationPolicyDigest(authority.policy);
   const descriptor = await input.adapter.describe();
   reconcileDestinationDescriptor(authority.policy, descriptor, primaryDomain);
@@ -162,12 +186,29 @@ export async function copyOffsiteExport(ports: BackupSourcePorts, limits: Backup
     expiry_identity: authority.policy.expiry_identity,
   });
   const copyId = await copyIdForDigest({ epoch_id: persistedDraft.epoch_id, destination_id: authority.destination_id, key_generation: keyGeneration, policy_digest: policyDigest, intent_digest: storedIntentDigest });
+  const replayAuthority = await persistOffsiteCopyReplayIntent(ports.core_db, {
+    copy_id: copyId,
+    epoch_id: persistedDraft.epoch_id,
+    destination_id: authority.destination_id,
+    intent,
+    key_generation: keyGeneration,
+    expires_at: persistedDraft.expires_at,
+    primary_failure_domain: primaryDomain,
+    destination_policy: authority.policy,
+    destination_policy_json: authority.policy_json,
+    intent_digest: storedIntentDigest,
+    policy_digest: policyDigest,
+    descriptor_digest: descriptorDigest,
+    authority_authorized_at: authority.authorized_at,
+    created_at: now,
+  });
   // Exact replay of a committed copy returns persisted bytes verbatim.
   const committed = await readCopyReceipt(ports.core_db, copyId);
   if (committed !== null) {
     if (committed.epoch_id !== persistedDraft.epoch_id || committed.destination_id !== authority.destination_id || committed.key_generation !== keyGeneration || committed.policy_digest !== policyDigest || committed.intent_digest !== storedIntentDigest || committed.failure_domain !== descriptor.failure_domain || committed.descriptor_digest !== descriptorDigest || committed.authority_authorized_at !== authority.authorized_at) {
       failBackup("BACKUP_INTENT_CONFLICT", "offsite copy identity reuses divergent content", false, {});
     }
+    if (replayAuthority.state === "INTENT") await commitOffsiteCopyReplayIntent(ports.core_db, copyId, clockMs);
     let receipt: OperationReceipt;
     let epoch: BackupEpoch;
     let attempt: OperationAttempt;
@@ -183,9 +224,10 @@ export async function copyOffsiteExport(ports: BackupSourcePorts, limits: Backup
   let checkpoints = await readCopyCheckpoints(ports.core_db, copyId);
   let reconciled = false;
   const remoteRefs: string[] = [];
-  for (const part of persistedDraft.part_index) {
+  const copyParts: readonly OffsitePart[] = [...persistedDraft.part_index, ...payloadParts];
+  for (const part of copyParts) {
     if (backupAborted(signal)) failBackup("BACKUP_CANCELLED", "backup offsite copy was cancelled", true);
-    const partRef = `offsite/${persistedDraft.epoch_id}/${part.manifest}/${String(part.index).padStart(6, "0")}-${part.sha256}`;
+    const partRef = offsitePartRef(persistedDraft.epoch_id, part);
     const checkpoint = checkpoints.get(partRef);
     if (checkpoint !== undefined && checkpoint.content_digest === part.sha256 && checkpoint.size_bytes === part.size_bytes && checkpoint.state === "VERIFIED") {
       // FIX5 durable resume: re-prove the checkpoint nonce against the durable
@@ -216,11 +258,13 @@ export async function copyOffsiteExport(ports: BackupSourcePorts, limits: Backup
       failBackup("BACKUP_INTENT_CONFLICT", "offsite checkpoint binds this ref to divergent content", false, {});
     }
     const reopened = await ports.part_sink.open(part.part_key);
-    if (reopened === null) failBackup("BACKUP_PART_READBACK_MISMATCH", "backup part is absent before offsite copy", false, { manifest: part.manifest });
+    if (reopened === null) failBackup("BACKUP_PART_READBACK_MISMATCH", "backup part is absent before offsite copy", false, isPayloadPart(part) ? {} : { manifest: part.manifest });
+    if (reopened.etag !== part.etag) failBackup("BACKUP_PART_READBACK_MISMATCH", "backup part etag disagrees before offsite copy", false, isPayloadPart(part) ? {} : { manifest: part.manifest });
     const plaintext = await bufferBackupStream(reopened.body, limits.max_object_bytes);
-    if (plaintext.byteLength !== part.size_bytes) failBackup("BACKUP_PART_READBACK_MISMATCH", "backup part size disagrees before offsite copy", false, { manifest: part.manifest });
+    if (plaintext.byteLength !== part.size_bytes) failBackup("BACKUP_PART_READBACK_MISMATCH", "backup part size disagrees before offsite copy", false, isPayloadPart(part) ? {} : { manifest: part.manifest });
+    if (await backupSha256Hex(plaintext) !== part.sha256) failBackup("BACKUP_PART_READBACK_MISMATCH", "backup part digest disagrees before offsite copy", false, isPayloadPart(part) ? {} : { manifest: part.manifest });
     const aad = await canonicalAad({
-      epoch_id: persistedDraft.epoch_id, manifest: part.manifest, index: part.index, part_ref: partRef,
+      epoch_id: persistedDraft.epoch_id, manifest: offsitePartManifest(part), index: part.index, part_ref: partRef,
       part_sha256: part.sha256, destination_policy_digest: policyDigest,
       key_generation: keyGeneration, expires_at: persistedDraft.expires_at,
       retention_policy_ref: authority.policy.retention_policy_ref, expiry_identity: authority.policy.expiry_identity,
@@ -317,6 +361,7 @@ export async function copyOffsiteExport(ports: BackupSourcePorts, limits: Backup
     if (winner.epoch_id !== persistedDraft.epoch_id || winner.destination_id !== authority.destination_id || winner.key_generation !== keyGeneration || winner.policy_digest !== policyDigest || winner.intent_digest !== storedIntentDigest || winner.failure_domain !== descriptor.failure_domain || winner.descriptor_digest !== descriptorDigest || winner.authority_authorized_at !== authority.authorized_at) {
       failBackup("BACKUP_INTENT_CONFLICT", "offsite copy identity reuses divergent content", false, {});
     }
+    await commitOffsiteCopyReplayIntent(ports.core_db, copyId, clockMs);
     try {
       const winnerReceipt = OperationReceiptSchema.parse(JSON.parse(winner.receipt_json) as unknown);
       const winnerEpoch = BackupEpochSchema.parse(JSON.parse(winner.epoch_json) as unknown);
@@ -326,7 +371,102 @@ export async function copyOffsiteExport(ports: BackupSourcePorts, limits: Backup
       failBackup("BACKUP_VECTOR_UNVERIFIABLE", "persisted offsite copy bytes are corrupt", false, {}, cause);
     }
   }
+  await commitOffsiteCopyReplayIntent(ports.core_db, copyId, clockMs);
   return { epoch, offsite_copy_ref: offsiteCopyRef, readback_digest: readbackDigest, attempt, receipt };
+}
+
+export interface BackupOffsiteReadAuthority {
+  readonly destination_id: string;
+  readonly key_generation: string;
+  readonly expires_at: string;
+  readonly primary_failure_domain: string;
+  readonly destination_policy_digest: string;
+  readonly descriptor_digest: string;
+}
+
+/**
+ * Authenticates and decrypts one offsite part using the same AAD construction
+ * as copy-time encryption. The authority and policy arguments must come from
+ * the controller's immutable D1 copy authority; this primitive does not
+ * authorize caller-provided refs or policy.
+ */
+export async function openOffsiteBackupPart(input: {
+  readonly draft: BackupEpochDraft;
+  readonly part: OffsitePart;
+  readonly encryption_key: CryptoKey;
+  readonly destination_policy: BackupDestinationPolicy;
+  readonly authority: BackupOffsiteReadAuthority;
+  readonly adapter: OffsiteCopyAdapter;
+  readonly now_ms?: number;
+}): Promise<Uint8Array<ArrayBuffer>> {
+  assertAes256GcmKey(input.encryption_key);
+  const policy = assertDestinationPolicy(input.destination_policy);
+  const authority = input.authority;
+  if (
+    authority.destination_id !== policy.destination_id ||
+    authority.expires_at !== input.draft.expires_at ||
+    authority.key_generation.length === 0 ||
+    !/^[a-f0-9]{64}$/u.test(authority.destination_policy_digest) ||
+    !/^[a-f0-9]{64}$/u.test(authority.descriptor_digest) ||
+    authority.primary_failure_domain.length === 0 ||
+    await destinationPolicyDigest(policy) !== authority.destination_policy_digest
+  ) {
+    failBackup("BACKUP_VECTOR_UNVERIFIABLE", "offsite read policy or epoch metadata diverges from persisted copy authority");
+  }
+  const part = input.part;
+  const indexed = isPayloadPart(part)
+    ? input.draft.payload_part_index?.find((entry) => entry.object_identity_digest === part.object_identity_digest && entry.index === part.index)
+    : input.draft.part_index.find((entry) => entry.manifest === part.manifest && entry.index === part.index);
+  if (indexed === undefined || canonicalBackupJson(indexed) !== canonicalBackupJson(part)) {
+    failBackup("BACKUP_VECTOR_UNVERIFIABLE", "offsite read part is not present in the persisted epoch index");
+  }
+  if (isPayloadPart(part) && input.draft.r2_payload_protocol !== BACKUP_R2_PAYLOAD_PROTOCOL) {
+    failBackup("BACKUP_PAYLOAD_UNSUPPORTED", "legacy backup epoch does not authorize R2 payload restoration");
+  }
+  const descriptor = await input.adapter.describe();
+  reconcileDestinationDescriptor(policy, descriptor, authority.primary_failure_domain);
+  if (await destinationDescriptorDigest(descriptor) !== authority.descriptor_digest) {
+    failBackup("BACKUP_DESTINATION_POLICY_MISMATCH", "offsite restore descriptor diverges from persisted copy identity");
+  }
+  const now = resolveControllerClock(input.now_ms);
+  if (Date.parse(authority.expires_at) <= now) failBackup("BACKUP_OFFSITE_EXPIRED", "offsite source is past its controller-authorized expiry");
+  const partRef = offsitePartRef(input.draft.epoch_id, part);
+  let stored: Awaited<ReturnType<OffsiteCopyAdapter["get"]>>;
+  try {
+    stored = await input.adapter.get(partRef);
+  } catch (cause) {
+    failBackup("BACKUP_OBJECT_UNREADABLE", "offsite restore part read is unavailable", true, { manifest: offsitePartManifest(part) }, cause);
+  }
+  if (stored === null) failBackup("BACKUP_PART_READBACK_MISMATCH", "offsite restore part is absent", false, { manifest: offsitePartManifest(part) });
+  if (typeof stored !== "object" || !(stored.ciphertext instanceof Uint8Array) ||
+    stored.ciphertext.byteLength < 28 || stored.ciphertext.byteLength > part.size_bytes + 28 ||
+    typeof stored.stored !== "object" || stored.stored === null || Array.isArray(stored.stored)) {
+    failBackup("BACKUP_PART_READBACK_MISMATCH", "offsite restore ciphertext or metadata has an invalid shape or exceeds its bound", false, { manifest: offsitePartManifest(part) });
+  }
+  if (
+    stored.stored.content_digest !== part.sha256 || stored.stored.size_bytes !== part.size_bytes ||
+    stored.stored.epoch_id !== input.draft.epoch_id || stored.stored.key_generation !== authority.key_generation ||
+    stored.stored.expires_at !== authority.expires_at
+  ) {
+    failBackup("BACKUP_PART_READBACK_MISMATCH", "offsite restore metadata diverges from the persisted epoch authority", false, { manifest: offsitePartManifest(part) });
+  }
+  const aad = await canonicalAad({
+    epoch_id: input.draft.epoch_id,
+    manifest: offsitePartManifest(part),
+    index: part.index,
+    part_ref: partRef,
+    part_sha256: part.sha256,
+    destination_policy_digest: authority.destination_policy_digest,
+    key_generation: authority.key_generation,
+    expires_at: authority.expires_at,
+    retention_policy_ref: policy.retention_policy_ref,
+    expiry_identity: policy.expiry_identity,
+  });
+  const plaintext = await decryptBackupPart(input.encryption_key, aad, stored.ciphertext);
+  if (plaintext.byteLength !== part.size_bytes || await backupSha256Hex(plaintext) !== part.sha256) {
+    failBackup("BACKUP_PART_READBACK_MISMATCH", "offsite restore plaintext size or digest diverges from the epoch", false, { manifest: offsitePartManifest(part) });
+  }
+  return plaintext;
 }
 
 export interface ControlledOffsiteFaults {

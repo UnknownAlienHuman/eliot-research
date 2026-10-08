@@ -1,8 +1,9 @@
 // OAuth direct-preflight proof: ELIOTR_CLOUDFLARE_AUTH_MODE=wrangler-oauth with
 // empty CLOUDFLARE_API_TOKEN plus a mock Wrangler credential succeeds on the
 // --check-only (GET-only, zero-mutation) path for all four provisioners, while
-// missing/expired/wrong-account fail closed with a `wrangler login`
-// instruction. Fully mocked localhost; no live Cloudflare writes.
+// missing/still-expired/wrong-account fail closed with a `wrangler login`
+// instruction, while fake whoami can refresh a stale cached profile first.
+// Fully mocked localhost; no live Cloudflare writes.
 //
 // Bearer travels ONLY via process memory (OAuth file -> env injection). Every
 // happy path asserts the mock saw `Authorization: Bearer <mock>` while stdout,
@@ -10,7 +11,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createServer } from "node:http";
-import { access, chmod, mkdir, mkdtemp, rename, rm, writeFile } from "node:fs/promises";
+import { access, chmod, mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -89,7 +90,7 @@ const credentialDir = await mkdtemp(join(tmpdir(), "wrangler-oauth-proof-"));
 const validCredentialPath = join(credentialDir, "default.toml");
 const expiredCredentialPath = join(credentialDir, "expired.toml");
 await writeFile(validCredentialPath, `oauth_token = "${BEARER}"\nrefresh_token = "proof-refresh"\nexpiration_time = "${FUTURE}"\n`);
-await writeFile(expiredCredentialPath, `oauth_token = "${BEARER}"\nexpiration_time = "${PAST}"\n`);
+await writeFile(expiredCredentialPath, `oauth_token = "${BEARER}"\nrefresh_token = "proof-refresh"\nexpiration_time = "${PAST}"\n`);
 
 // Fake `pnpm` earlier on PATH so the official `pnpm exec wrangler whoami`
 // verification spawn resolves to this shim (no ambient whoami seam in
@@ -98,8 +99,10 @@ await writeFile(expiredCredentialPath, `oauth_token = "${BEARER}"\nexpiration_ti
 const fakeBinDir = await mkdtemp(join(tmpdir(), "fake-pnpm-"));
 async function setFakeWhoami(output) {
   const line = String(output).replace(/"/gu, "");
-  await writeFile(join(fakeBinDir, "pnpm.cmd"), `@echo off\r\nif "%1"=="exec" if "%2"=="wrangler" if "%3"=="whoami" (\r\n  echo ${line}\r\n  exit /b 0\r\n)\r\necho unexpected pnpm invocation: %* 1>&2\r\nexit /b 1\r\n`);
-  await writeFile(join(fakeBinDir, "pnpm"), `#!/bin/sh\nif [ "$1" = "exec" ] && [ "$2" = "wrangler" ] && [ "$3" = "whoami" ]; then\n  echo "${line}"\n  exit 0\nfi\necho "unexpected pnpm invocation: $*" >&2\nexit 1\n`);
+  const windowsRefresh = `if "%ELIOTR_TEST_REFRESH_OAUTH%"=="1" (\r\n  > "%ELIOTR_WRANGLER_CONFIG_FILE%" echo oauth_token = "${BEARER}"\r\n  >> "%ELIOTR_WRANGLER_CONFIG_FILE%" echo refresh_token = "proof-refresh"\r\n  >> "%ELIOTR_WRANGLER_CONFIG_FILE%" echo expiration_time = "${FUTURE}"\r\n)\r\n`;
+  const unixRefresh = `if [ "$ELIOTR_TEST_REFRESH_OAUTH" = "1" ]; then\n  printf '%s\\n' 'oauth_token = "${BEARER}"' 'refresh_token = "proof-refresh"' 'expiration_time = "${FUTURE}"' > "$ELIOTR_WRANGLER_CONFIG_FILE"\nfi\n`;
+  await writeFile(join(fakeBinDir, "pnpm.cmd"), `@echo off\r\nif "%1"=="exec" if "%2"=="wrangler" if "%3"=="whoami" (\r\n  ${windowsRefresh}  echo ${line}\r\n  exit /b 0\r\n)\r\necho unexpected pnpm invocation: %* 1>&2\r\nexit /b 1\r\n`);
+  await writeFile(join(fakeBinDir, "pnpm"), `#!/bin/sh\nif [ "$1" = "exec" ] && [ "$2" = "wrangler" ] && [ "$3" = "whoami" ]; then\n  ${unixRefresh}  echo "${line}"\n  exit 0\nfi\necho "unexpected pnpm invocation: $*" >&2\nexit 1\n`);
   // Same Linux determinism as test-usage-preflight-children: +x required,
   // otherwise the real wrangler runs and the test becomes env-dependent.
   await chmod(join(fakeBinDir, "pnpm"), 0o755);
@@ -115,6 +118,7 @@ function baseEnv(overrides = {}) {
     CLOUDFLARE_API_BASE_URL: apiBase,
     ELIOTR_CLOUDFLARE_AUTH_MODE: "wrangler-oauth",
     ELIOTR_WRANGLER_CONFIG_FILE: validCredentialPath,
+    ELIOTR_TEST_REFRESH_OAUTH: "0",
     ELIOTR_STATE_DIRECTORY: isolatedStateDirectory,
     PATH: fakePath,
     ELIOTR_ACCESS_HOSTNAME: HOSTNAME,
@@ -218,6 +222,32 @@ try {
     assert.equal(state.mutations.length, beforeMutations);
     assert.equal(state.requests.length, beforeRequests, "expired credential contacted the API");
     noBearer(result.stderr, "expired-credential stderr");
+  });
+
+  await check("official whoami refreshes stale profiles before all affected provisioners load their bearer", async () => {
+    for (const script of [
+      "scripts/provision-cloudflare-core.mjs",
+      "scripts/provision-cloudflare-access.mjs",
+      "scripts/provision-ai-gateways.mjs",
+    ]) {
+      await writeFile(expiredCredentialPath,
+        `oauth_token = "${BEARER}"\nrefresh_token = "proof-refresh"\nexpiration_time = "${PAST}"\n`);
+      const beforeRequests = state.requests.length;
+      const beforeMutations = state.mutations.length;
+      const beforeAuth = state.authSeen.length;
+      const result = await run(script, ["--check-only"], {
+        ELIOTR_WRANGLER_CONFIG_FILE: expiredCredentialPath,
+        ELIOTR_TEST_REFRESH_OAUTH: "1",
+      });
+      expectPlanPass(result, `${script} refreshed cached profile`);
+      assert.equal(state.mutations.length, beforeMutations, `${script} check-only mutated Cloudflare`);
+      assert.ok(state.requests.length > beforeRequests, `${script} never reached the mocked authenticated reads`);
+      assert.ok(state.authSeen.length > beforeAuth && state.authSeen.slice(beforeAuth).every((header) => header === `Bearer ${BEARER}`));
+      assert.match(await readFile(expiredCredentialPath, "utf8"), new RegExp(FUTURE));
+      noBearer(result.stdout, `${script} refreshed-profile stdout`);
+      noBearer(result.stderr, `${script} refreshed-profile stderr`);
+      noBearer(result.argv, `${script} refreshed-profile argv`);
+    }
   });
 
   await check("wrong-account OAuth profile fails closed with login instruction", async () => {

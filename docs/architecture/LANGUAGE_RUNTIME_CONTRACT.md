@@ -32,6 +32,10 @@ SQL
 This decision is permanent until superseded by a later normative ADR. It is not a temporary compromise
 and it is not a license to implement the same authority twice.
 
+[ADR-0015](../adr/0015-browser-capability-libraries.md) permits finite browser-only capability
+libraries within the existing static PWA build. TypeScript retains browser composition; no
+backend authority, extra runtime, service, or authentication implementation moves into them.
+
 The priority order is:
 
 1. fastest safe adoption of current Cloudflare platform capabilities;

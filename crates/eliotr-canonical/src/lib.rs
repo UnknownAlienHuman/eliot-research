@@ -6,6 +6,7 @@
 
 #![forbid(unsafe_code)]
 
+mod abi_version;
 mod canonical_json;
 mod canonical_json_error;
 mod generation;
@@ -16,6 +17,7 @@ mod scope_snapshot_identity;
 mod sha256;
 mod stable_id;
 
+pub use abi_version::*;
 pub use canonical_json::*;
 pub use canonical_json_error::*;
 pub use generation::*;

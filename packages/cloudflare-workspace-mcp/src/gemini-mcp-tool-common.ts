@@ -1,3 +1,4 @@
+import type { McpResearchToolCall } from "./gemini-mcp-research-tools.js";
 import type { McpToolCallContext } from "./gemini-mcp-protocol.js";
 import type {
   McpDiagnosticConsumeInput,
@@ -28,6 +29,7 @@ export function readGoogleExternalTransport(raw: unknown): GoogleExternalTranspo
 }
 
 export interface GeminiMcpToolDependencies {
+  readonly research?: McpResearchToolCall;
   readonly google_transport: GoogleExternalTransport;
   readonly now: () => number;
   readonly systemStatus: (context: McpToolCallContext) => Promise<unknown>;

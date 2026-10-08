@@ -36,6 +36,7 @@ interface RoundtripFixture {
   readonly mcp: SigningFixture;
   readonly mcpIssuer: string;
   readonly mcpAudience: string;
+  readonly mcpServiceClientId: string;
   readonly mcpHostname: string;
   readonly ownerToken: string;
   readonly mcpToken: string;
@@ -98,7 +99,7 @@ function jsonResponse(value: unknown): Response {
   });
 }
 
-async function makeFixture(): Promise<RoundtripFixture> {
+async function makeFixture(profile: "service-token" | "managed-oauth" = "service-token"): Promise<RoundtripFixture> {
   const tag = crypto.randomUUID().replaceAll("-", "");
   const tokenIssuedAt = Math.floor(Date.now() / 1000) - 5;
   const tokenExpiresAt = tokenIssuedAt + 3600;
@@ -108,6 +109,7 @@ async function makeFixture(): Promise<RoundtripFixture> {
   const ownerJwksUrl = `http://127.0.0.1:${ownerJwksPort}/cdn-cgi/access/certs`;
   const mcpIssuer = `https://mcp-${tag}.cloudflareaccess.com`;
   const mcpAudience = `mcp-audience-${tag}`;
+  const mcpServiceClientId = `service-${tag}.access`;
   const mcpHostname = `mcp-${tag}.example`;
   const deploymentGeneration = `diagnostic-roundtrip-${tag}`;
   const ownerSubject = `owner-${tag}`;
@@ -123,17 +125,20 @@ async function makeFixture(): Promise<RoundtripFixture> {
     aud: [OWNER_E2E_AUDIENCE],
     sub: ownerSubject,
   });
+  const mcpIdentityClaims = profile === "service-token"
+    ? { sub: "", common_name: mcpServiceClientId }
+    : { sub: mcpSubject };
   const mcpToken = await sign(mcp, {
     ...commonClaims,
     iss: mcpIssuer,
     aud: [mcpAudience],
-    sub: mcpSubject,
+    ...mcpIdentityClaims,
   });
   const wrongAudienceToken = await sign(mcp, {
     ...commonClaims,
     iss: mcpIssuer,
     aud: [OWNER_E2E_AUDIENCE],
-    sub: mcpSubject,
+    ...mcpIdentityClaims,
   });
   const environment = {
     ...runtime,
@@ -148,8 +153,11 @@ async function makeFixture(): Promise<RoundtripFixture> {
     MCP_HOSTNAME: mcpHostname,
     MCP_ACCESS_TEAM_DOMAIN: mcpIssuer,
     MCP_ACCESS_AUDIENCE: mcpAudience,
-    MCP_ACCESS_AUTH_PROFILE: "managed-oauth",
+    MCP_ACCESS_AUTH_PROFILE: profile,
     MCP_ACCESS_SERVICE_TOKEN_CLIENT_ID: undefined,
+    MCP_ACCESS_SERVICE_TOKEN_CLIENT_IDS: profile === "service-token"
+      ? JSON.stringify([mcpServiceClientId])
+      : undefined,
     GOOGLE_EXTERNAL_TRANSPORT: "gemini-mcp",
   } as unknown as Env;
   return {
@@ -162,6 +170,7 @@ async function makeFixture(): Promise<RoundtripFixture> {
     mcp,
     mcpIssuer,
     mcpAudience,
+    mcpServiceClientId,
     mcpHostname,
     ownerToken,
     mcpToken,
@@ -231,7 +240,7 @@ function mcpToolCall(challenge: McpDiagnosticChallengeResult): Record<string, un
 describe("default Worker MCP client diagnostic roundtrip", () => {
   afterEach(() => vi.unstubAllGlobals());
 
-  it("issues through owner Access, confirms through managed MCP, and replays from durable state", async () => {
+  it("issues through owner Access, confirms through explicit service-token MCP, and replays from durable state", async () => {
     await applyD1Migrations(runtime.CORE_DB, runtime.CORE_MIGRATIONS);
     await applyD1Migrations(runtime.SEARCH_DB, runtime.SEARCH_MIGRATIONS);
     const fixture = await makeFixture();
@@ -256,7 +265,7 @@ describe("default Worker MCP client diagnostic roundtrip", () => {
     expect(issued).toMatchObject({
       protocol: MCP_DIAGNOSTIC_PROTOCOL,
       status: "ISSUED",
-      auth_profile: "managed-oauth",
+      auth_profile: "service-token",
       deployment_generation: fixture.deploymentGeneration,
     });
     expect(typeof issued.challenge_token).toBe("string");
@@ -325,12 +334,13 @@ describe("default Worker MCP client diagnostic roundtrip", () => {
       protocol: MCP_DIAGNOSTIC_PROTOCOL,
       status: "CONFIRMED",
       challenge_id: issued.challenge_id,
-      auth_profile: "managed-oauth",
+      auth_profile: "service-token",
       deployment_generation: fixture.deploymentGeneration,
       trace_id: fixture.mcpTrace,
     });
     expect(JSON.stringify(consumeDocument).includes(issued.challenge_token)).toBe(false);
-    expect(JSON.stringify(consumeDocument).includes(fixture.mcpSubject)).toBe(false);
+    expect(JSON.stringify(consumeDocument)).not.toContain(fixture.mcpSubject);
+    expect(JSON.stringify(consumeDocument)).not.toContain(fixture.mcpServiceClientId);
 
     const row = await runtime.CORE_DB.prepare(
       "SELECT state,owner_principal_ref,auth_profile,deployment_generation,verified_actor_ref,verified_credential_generation,verified_authentication_method,verified_expires_at,trace_id,observation_ref FROM mcp_client_diagnostic_challenge WHERE challenge_id=?1",
@@ -349,14 +359,14 @@ describe("default Worker MCP client diagnostic roundtrip", () => {
     expect(row).toMatchObject({
       state: "CONFIRMED",
       owner_principal_ref: fixture.ownerSubject,
-      auth_profile: "managed-oauth",
+      auth_profile: "service-token",
       deployment_generation: fixture.deploymentGeneration,
       verified_credential_generation: `cf-access-jwt:${fixture.mcp.kid}:${fixture.tokenIssuedAt}`,
-      verified_authentication_method: "cloudflare_access",
+      verified_authentication_method: "service_token",
       verified_expires_at: new Date(fixture.tokenExpiresAt * 1000).toISOString(),
       trace_id: fixture.mcpTrace,
     });
-    expect(row?.verified_actor_ref).toMatch(/^mcp-actor-[a-f0-9]{64}$/u);
+    expect(row?.verified_actor_ref).toMatch(/^mcp-service-[a-f0-9]{64}$/u);
     expect(row?.verified_actor_ref).not.toBe(fixture.ownerSubject);
     expect(row?.observation_ref).toMatch(/^mcp-diagnostic-observation-/u);
 
@@ -368,7 +378,7 @@ describe("default Worker MCP client diagnostic roundtrip", () => {
       protocol: MCP_DIAGNOSTIC_PROTOCOL,
       status: "CONFIRMED",
       challenge_id: issued.challenge_id,
-      auth_profile: "managed-oauth",
+      auth_profile: "service-token",
       deployment_generation: fixture.deploymentGeneration,
       observation_ref: row?.observation_ref,
       trace_id: fixture.mcpTrace,
@@ -414,6 +424,7 @@ describe("default Worker MCP client diagnostic roundtrip", () => {
       ...fixture.environment,
       MCP_ACCESS_SERVICE_TOKEN_CLIENT_ID: serviceClientId,
     } as { -readonly [Key in keyof Env]?: Env[Key] } & Record<string, unknown>;
+    delete legacyEnvironment.MCP_ACCESS_SERVICE_TOKEN_CLIENT_IDS;
     delete legacyEnvironment.MCP_ACCESS_AUTH_PROFILE;
     expect(Object.hasOwn(legacyEnvironment, "MCP_ACCESS_AUTH_PROFILE")).toBe(false);
 
@@ -449,4 +460,29 @@ describe("default Worker MCP client diagnostic roundtrip", () => {
     ).bind(serviceClientId).first<number>("count");
     expect(afterRows).toBe(0);
   }, 30_000);
+
+  it("does not expose headless confirmation in the Managed OAuth profile", async () => {
+    const fixture = await makeFixture("managed-oauth");
+    const mcpCertsUrl = `${fixture.mcpIssuer}/cdn-cgi/access/certs`;
+    const jwksFetch = vi.fn(async (input: string | URL | Request): Promise<Response> => {
+      const url = targetUrl(input);
+      if (url === mcpCertsUrl) return jsonResponse({ keys: [fixture.mcp.publicJwk] });
+      throw new Error(`unexpected Access JWKS URL: ${url}`);
+    });
+    vi.stubGlobal("fetch", jwksFetch);
+    const response = await worker.fetch(
+      mcpRequest(fixture, fixture.mcpToken, {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/list",
+      }),
+      fixture.environment,
+      {} as ExecutionContext,
+    );
+    const result = await document(response);
+    expect(response.status, JSON.stringify(result)).toBe(200);
+    const listedTools = ((result.result as { tools: readonly { name: string }[] }).tools ?? [])
+      .map((tool) => tool.name);
+    expect(listedTools).not.toContain(MCP_CLIENT_DIAGNOSTIC_TOOL_NAME);
+  });
 });

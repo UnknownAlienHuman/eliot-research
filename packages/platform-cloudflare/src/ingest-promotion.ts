@@ -45,6 +45,7 @@ function stablePayload(receipt: BundlePromotionReceipt): unknown {
 }
 
 export async function promoteStagedSession(input: {
+  readonly require_current?: () => Promise<void>;
   readonly work_bucket: R2Bucket;
   readonly evidence_store: EvidenceObjectStore;
   readonly session: InternalStagedBundleSession;
@@ -52,6 +53,7 @@ export async function promoteStagedSession(input: {
   readonly now: () => number;
   readonly create_sha256_sink?: Sha256DigestSinkFactory;
 }): Promise<BundlePromotionReceipt> {
+  await input.require_current?.();
   const verification = await verifyStagedBundle({
     bucket: input.work_bucket,
     session: input.session,
@@ -76,6 +78,7 @@ export async function promoteStagedSession(input: {
   const promoted: PromotedObjectReceipt[] = [];
 
   for (const upload of input.session.uploads) {
+    await input.require_current?.();
     const object = await input.work_bucket.get(upload.staging_key);
     const expectedSize = verification.sizes[upload.path];
     if (object === null || expectedSize === undefined) {
@@ -91,6 +94,7 @@ export async function promoteStagedSession(input: {
       content_digest: { algorithm: "sha256", digest: upload.expected_sha256 },
     });
     const key = await canonicalNormalizedBundleKey(residencyDigest, identity, upload.path);
+    await input.require_current?.();
     const receipt = await input.evidence_store.putImmutable({
       key,
       body: object.body,
@@ -103,6 +107,7 @@ export async function promoteStagedSession(input: {
         source_owner_generation: input.session.manifest.origin.source_owner_generation,
       },
     });
+    await input.require_current?.();
     promoted.push({
       logical_path: upload.path,
       canonical_key: receipt.key,
@@ -132,6 +137,7 @@ export async function promoteStagedSession(input: {
     ...provisional,
     readback_digest: await sha256Utf8(canonicalJson(stablePayload(provisional))),
   };
+  await input.require_current?.();
   await writeImmutableJsonCandidate(
     input.work_bucket,
     promotionKey(input.session.session_id),
@@ -147,5 +153,6 @@ export async function promoteStagedSession(input: {
   if (winner === null) {
     fail("STAGING_STATE_CONFLICT", "promotion receipt is missing after immutable publication", true);
   }
+  await input.require_current?.();
   return winner;
 }

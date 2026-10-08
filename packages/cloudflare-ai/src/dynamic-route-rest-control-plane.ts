@@ -284,37 +284,56 @@ function createRestClient(
       body: unknown | undefined,
       ambiguousEffect: DynamicRouteRestAmbiguousEffect,
     ) {
-      let token: string;
-      try {
-        token = requireDynamicRouteApiToken(
-          await dependencies.credentials.readApiToken(),
-        );
-      } catch (error) {
-        if (error instanceof DynamicRouteRestError) throw error;
-        dynamicRouteRestFailure(
-          "DYNAMIC_ROUTE_REST_CREDENTIAL_INVALID",
-          "Cloudflare API credential could not be read",
-        );
-      }
-
+      const bodyJson =
+        body === undefined ? undefined : canonicalModelGatewayJson(body);
       let response: DynamicRouteRestResponse;
-      try {
-        const bodyJson =
-          body === undefined ? undefined : canonicalModelGatewayJson(body);
-        response = await dependencies.fetch.fetch(url, {
-          method,
-          headers: dynamicRouteRequestHeaders(token, bodyJson !== undefined),
-          ...(bodyJson === undefined ? {} : { body: bodyJson }),
-        });
-      } catch {
-        dynamicRouteRestFailure(
-          "DYNAMIC_ROUTE_REST_TRANSPORT_FAILED",
-          "Cloudflare control-plane transport failed",
-          {
-            retryable: method === "GET",
-            ambiguous_effect: ambiguousEffect,
-          },
-        );
+      if (dependencies.request_port !== undefined) {
+        try {
+          response = await dependencies.request_port.request(
+            method,
+            url,
+            bodyJson,
+            ambiguousEffect,
+          );
+        } catch {
+          dynamicRouteRestFailure(
+            "DYNAMIC_ROUTE_REST_TRANSPORT_FAILED",
+            "Cloudflare control-plane transport failed",
+            {
+              retryable: method === "GET",
+              ambiguous_effect: ambiguousEffect,
+            },
+          );
+        }
+      } else {
+        let token: string;
+        try {
+          token = requireDynamicRouteApiToken(
+            await dependencies.credentials.readApiToken(),
+          );
+        } catch (error) {
+          if (error instanceof DynamicRouteRestError) throw error;
+          dynamicRouteRestFailure(
+            "DYNAMIC_ROUTE_REST_CREDENTIAL_INVALID",
+            "Cloudflare API credential could not be read",
+          );
+        }
+        try {
+          response = await dependencies.fetch.fetch(url, {
+            method,
+            headers: dynamicRouteRequestHeaders(token, bodyJson !== undefined),
+            ...(bodyJson === undefined ? {} : { body: bodyJson }),
+          });
+        } catch {
+          dynamicRouteRestFailure(
+            "DYNAMIC_ROUTE_REST_TRANSPORT_FAILED",
+            "Cloudflare control-plane transport failed",
+            {
+              retryable: method === "GET",
+              ambiguous_effect: ambiguousEffect,
+            },
+          );
+        }
       }
 
       const raw = await readDynamicRouteRestJson(response, ambiguousEffect);
