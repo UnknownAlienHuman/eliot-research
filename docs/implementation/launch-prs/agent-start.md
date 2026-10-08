@@ -1,77 +1,113 @@
-# Start an agent on a launch checkpoint
+# Start a manager on a launch checkpoint
 
-New to the repository? Read [`docs/START-HERE.md`](../../START-HERE.md) first; this file covers only
-the launch-checkpoint procedure.
+New to the repository? Read [`docs/START-HERE.md`](../../START-HERE.md) first. For backend work, the
+current queue and role routes are in [`backend-entrypoints.md`](../backend-entrypoints.md).
 
-Start from current `main`; read the selected existing theme PR as a specification, not a branch to merge. Task refresh changes documentation
-only; it launches no agent, implements no missing feature, and authorizes no deployment.
+This file covers only the manager launch procedure. It does not create a new queue and does not replace
+the active PR/passport, ER ownership or product architecture.
 
-Read [execution-contract.md](execution-contract.md), the selected numbered plan and its cited canonical
-sections/ER packets. The plan's tests and good-result conditions are mandatory, not suggestions.
+## 1. Select a dependency-ready checkpoint
 
-## Selecting a checkpoint
-
-**Do not hardcode a wave of assignments into this document.** An earlier revision named three specific
-first-wave tasks; all three were completed and merged while this file kept telling new agents to start
-them. Derive the open work instead:
+Use the current role router and final PR matrix, not an old numbered wave:
 
 ```bash
-git fetch origin --prune && git log --oneline -15 origin/main
-gh pr list --state open --limit 20        # which themes are open, and which are red
-gh pr view <theme-PR> --json body         # unchecked boxes in the plan are the remaining work
+git fetch origin --prune
+git log --oneline -5 origin/main
+pnpm work-packets:check
 pnpm check:implementation-status
 ```
 
-An unchecked box in a theme plan is remaining work even when the surrounding package compiles. A
-checked box plus a merged checkpoint PR is done. The dependency graph in [README.md](README.md) says
-which checkpoint outputs release which downstream work — a blocked integration task never authorizes
-a stub service; take an independent predecessor or report the precise missing dependency.
+Then read:
 
-Follow [`branch-discipline.md`](../branch-discipline.md): one active checkpoint per agent, implemented
-on `main` without additional worktrees or task branches. There is no branch-count quota or reservation
-list. All UI belongs to ER-25; all shared code is integrator-serialized.
+1. [`backend-entrypoints.md`](../backend-entrypoints.md);
+2. the assigned PR/passport;
+3. the owning ER packet and exact `owned_paths`;
+4. only the named contracts and architecture sections.
 
-## Start/finish message an agent must post in its PR
+A documentation-only passport is not implemented code. A source patch without repository-pinned gates
+is not integrated. A blocked shared task never authorizes a stub or parallel engine.
+
+## 2. Create one manager worktree
+
+Each manager gets exactly one worktree and one checkpoint at a time. Subagents do not create their own
+worktrees.
+
+```bash
+git fetch origin --prune
+git worktree add ../eliot-research-mgr-<manager> \
+  -b manager/<manager>/<pr>-<slug> origin/main
+cd ../eliot-research-mgr-<manager>
+git status --short
+git log --oneline -5
+```
+
+If the manager already has a worktree, reuse or finish it. Do not create a second one.
+
+## 3. Post the claim before editing
 
 ```text
-Claim: <checkpoint ID>, <ER owner>, base main=<SHA>, head=<SHA>
-Files: <exact existing/new paths; shared-file owner approvals>
-Inputs: <accepted predecessor commit/fixture/artifact references>
-Tests: <named success, negative, race, restart and bound tests>
+Baseline: <exact origin/main SHA>
+Manager/worktree: <manager ID and branch>
+Checkpoint: <PR/checkpoint ID and one bounded result>
+Owner: <ER packet>
+Owned files: <exact paths>
+Shared files: <none, or named integrator handoff>
+Inputs: <accepted predecessor SHAs/artifacts>
+Build gate: <compile/scoped lint; minimal Clippy for Rust>
+Narrow reproduction: <named case or NONE>
+Deferred: <focused/full/native/live acceptance still PENDING>
 No account changes: true
 ```
 
-At finish replace intent with evidence: commands, exit codes, before/after regression, durable identity
-and expected/actual states, output SHA, contract/migration impact and unchecked follow-ups. No test count
-alone closes a task. No secrets or source payloads in comments. Keep a theme draft until all its local
-code acceptance passes; preserve live work separately as NOT_EXECUTED. An owner-requested partial merge
-must keep the incomplete theme tracked rather than silently close it.
+Read other active claims before writing. Shared contracts, migrations, composition, barrels, manifests,
+lockfiles, generated bindings and CI belong to one named integrator.
 
-## Existing code agents must not duplicate
+## 4. Implement and hand off
 
-Library: normalized-folder upload, same-tab/reload/lost-ID recovery, namespace/read-policy local setup,
-Library-to-metadata-Lens and recorded-only revision history are on main. #98 now owns their remaining
-raw-file/project/active-readiness/error/full-browser acceptance.
+The current phase is code first:
 
-Google: G1a REST/serializer, encrypted vault/D1 refresh and internal first OAuth admission are on main.
-Use `drive-rest.md`, `drive-credentials.md`, `drive-oauth-admission.md` for the explicit
-`drive-exchange` profile. Its Required Drive path stays IN_PROGRESS. The selected `gemini-mcp`
-profile follows a separate Workspace admission/readback gate through Gemini Spark Connected Apps or
-Google Antigravity and does not require the legacy custom OAuth path. The retained Gemini CLI installer
-is legacy and unselected. Legacy first admission deliberately returns AUTHORIZING, not ACTIVE.
+- TypeScript: compile and scoped ESLint;
+- Rust: compile and minimal Clippy;
+- SQL: installed D1 depth/target compiler;
+- run the narrow reproduction required by the active PR;
+- defer broad suites/native/live acceptance until assembled product code unless explicitly required.
 
-Rust: M1 plus narrow canonical JSON/SHA/generation/residency shadow primitives exist. They accept their
-current schema domains (including safe-integer canonical-body rules), not every imaginable JSON value.
-M5 is Wasm/shadow, M6 promotion and M7 superseded TS removal. The per-family checklist is
-[09-rust.md](09-rust.md), merged to main; PR #97 is closed and is not the current reference.
+At handoff record:
 
-## When account agents may start
+```text
+Exact commit SHA
+Changed paths
+Migrated callers
+Deleted/retired duplicate functions or branches
+Legacy codec/persisted-identity impact
+Net production LOC/bundle delta
+D1/R2/provider-call delta
+Commands and exit codes
+Negative/replay/lost-ACK/bound evidence
+PENDING gates and downstream owner
+```
 
-They may implement test/probe runners locally now. They may NOT start provisioning/deploy to finish code.
-O6/O7 in #96 and the shared handoff govern first complete staging; O8 governs production qualification.
-`pnpm launch:code` currently must fail. All nine local code checklists, complete integrated user loops,
-critical Rust promotion, full exact-head CI and an explicitly approved isolated target are required.
-Real T4/T6 receipts are generated during/after that first staging trial, not fabricated beforehand.
+A wrapper over two unchanged implementations is not completion.
 
-Use the checkpoint dependency graph in README.md. A blocked integration task does not authorize a stub
-service: take only an independent specified predecessor or report the precise missing dependency.
+## 5. Reconcile and publish safely
+
+Before handoff:
+
+```bash
+git fetch origin --prune
+git diff --check
+```
+
+Never force-push over concurrent work. Reconcile the refreshed expected head. The named integrator
+compares the exact file list, rejects stale historical-tree contamination, runs the required build gate,
+publishes without rewriting history and reads the resulting ref back.
+
+## 6. Do not use these as launch authority
+
+- an old first-wave list in a dated launch document;
+- branch age/count or a closed PR;
+- a historical audit percentage;
+- a local unattached patch/blob;
+- a provider 200 response;
+- optional Google/federation/Rust/UI work as a core blocker unless the active PR names it;
+- missing local Git credentials as proof that GitHub write access is unavailable.
