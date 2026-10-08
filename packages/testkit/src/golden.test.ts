@@ -47,7 +47,11 @@ const hypothesisCase: GoldenCase = {
   scope_expression: { kind: "SELECTED_SOURCES", source_ids: ["golden-research-status"] },
   question: "What was hypothesized, what was observed, and what remains untested?",
   expected_product: "RESEARCH",
-  required_atoms: ["H-001 remains a hypothesis", "O-001 is a bounded pilot observation", "semantic recall was not tested"],
+  required_atoms: [
+    "H-001 remains a hypothesis",
+    "O-001 is a bounded pilot observation",
+    "semantic recall was not tested",
+  ],
   forbidden_collapses: ["hypothesis presented as measured result", "pilot generalized to production"],
   required_evidence_handle_refs: [
     { id: "handle-gc002-hypothesis", revision: 1 },
@@ -70,8 +74,10 @@ describe("Golden Corpus gates", () => {
       passed: false,
       observed_atoms: [],
       observed_forbidden_collapses: ["recommendation-to-decision"],
+      observed_unknowns: [],
       resolved_handle_refs: [],
       coverage_kind: "complete_scope",
+      failures: ["FORBIDDEN_COLLAPSE:case-1:recommendation-to-decision"],
       diagnostics_ref: "diag-1",
     }])).toThrow("GOLDEN_PROMOTION_BLOCKED");
   });
@@ -81,11 +87,15 @@ describe("Golden Corpus gates", () => {
     expect(collapsed).toHaveLength(2);
     expect(collapsed[0]?.observed_forbidden_collapses).toEqual(["recommendation promoted to decision"]);
     expect(collapsed[1]?.observed_forbidden_collapses).toEqual(["hypothesis presented as measured result"]);
-    expect(() => assertGoldenPromotionGate(collapsed)).toThrow("GOLDEN_PROMOTION_BLOCKED:GC-001-recommendation-vs-decision,GC-002-hypothesis-vs-observation");
+    expect(collapsed[0]?.passed).toBe(false);
+    expect(() => assertGoldenPromotionGate(collapsed)).toThrow(
+      "GOLDEN_PROMOTION_BLOCKED:GC-001-recommendation-vs-decision,GC-002-hypothesis-vs-observation",
+    );
     const verdict = adjudicateGoldenCase(recommendationCase, {
       atoms: [],
       forbidden: collapsed[0]?.observed_forbidden_collapses ?? [],
       handles: [],
+      unknowns: [],
       coverage: collapsed[0]?.coverage_kind ?? "sampled",
     });
     expect(verdict.passed).toBe(false);
@@ -103,6 +113,7 @@ describe("Golden Corpus gates", () => {
         { id: "handle-gc001-decision", revision: 1 },
         { id: "handle-gc001-recommendation", revision: 1 },
       ],
+      unknowns: ["whether Browser Rendering is enabled in a deployed account"],
       coverage: "complete_scope",
     });
     expect(verdict).toEqual({ passed: true, failures: [] });
@@ -116,12 +127,53 @@ describe("Golden Corpus gates", () => {
             { id: "handle-gc001-decision", revision: 1 },
             { id: "handle-gc001-recommendation", revision: 1 },
           ],
+          unknowns: ["whether Browser Rendering is enabled in a deployed account"],
           coverage: "complete_scope",
         }],
       ]),
     );
-    expect(results[0]?.passed).toBe(true);
+    expect(results[0]).toMatchObject({
+      passed: true,
+      observed_unknowns: ["whether Browser Rendering is enabled in a deployed account"],
+      failures: [],
+    });
     expect(() => assertGoldenPromotionGate(results)).not.toThrow();
+  });
+
+  it("fails undeclared, duplicate, and malformed observed unknowns", () => {
+    const faithful = {
+      atoms: ["D-001 is a decision", "R-001 is a recommendation"],
+      forbidden: [] as readonly string[],
+      handles: [
+        { id: "handle-gc001-decision", revision: 1 },
+        { id: "handle-gc001-recommendation", revision: 1 },
+      ],
+      coverage: "complete_scope",
+    };
+    const unexpected = adjudicateGoldenCase(recommendationCase, {
+      ...faithful,
+      unknowns: ["an undeclared uncertainty"],
+    });
+    expect(unexpected.failures).toContain(
+      "UNEXPECTED_UNKNOWN:GC-001-recommendation-vs-decision:an undeclared uncertainty",
+    );
+
+    const duplicate = adjudicateGoldenCase(recommendationCase, {
+      ...faithful,
+      unknowns: [
+        "whether Browser Rendering is enabled in a deployed account",
+        "whether Browser Rendering is enabled in a deployed account",
+      ],
+    });
+    expect(duplicate.failures).toContain(
+      "DUPLICATE_UNKNOWN:GC-001-recommendation-vs-decision:whether Browser Rendering is enabled in a deployed account",
+    );
+
+    const malformed = adjudicateGoldenCase(recommendationCase, {
+      ...faithful,
+      unknowns: ["   "],
+    });
+    expect(malformed.failures).toContain("MALFORMED_UNKNOWN:GC-001-recommendation-vs-decision:0");
   });
 
   it("rejects malformed, empty, and oversized cases", () => {
@@ -138,13 +190,29 @@ describe("Golden Corpus gates", () => {
       coverage_requirement: "complete_scope",
       adjudication_notes: "Notes.",
     };
-    expect(() => parseGoldenCase({ ...base, unknown_field: true })).toThrow("MALFORMED_CASE:unknown field unknown_field");
+    expect(() => parseGoldenCase({ ...base, unknown_field: true })).toThrow(
+      "MALFORMED_CASE:unknown field unknown_field",
+    );
     expect(() => parseGoldenCase({ ...base, case_id: "" })).toThrow("EMPTY_CASE:case_id");
     expect(() => parseGoldenCase({ ...base, question: "   " })).toThrow("EMPTY_CASE_FIELD:question:GC-X");
-    expect(() => parseGoldenCase({ ...base, forbidden_collapses: [] })).toThrow("EMPTY_CASE_FIELD:forbidden_collapses");
-    expect(() => parseGoldenCase({ ...base, adjudication_notes: "" })).toThrow("EMPTY_CASE_FIELD:adjudication_notes:GC-X");
-    expect(() => parseGoldenCase({ ...base, question: "x".repeat(2001) })).toThrow("OVERSIZED_CASE_FIELD:question:GC-X");
-    expect(() => parseGoldenCase({ ...base, required_atoms: ["x".repeat(513)] })).toThrow("OVERSIZED_CASE_FIELD:required_atoms");
+    expect(() => parseGoldenCase({ ...base, forbidden_collapses: [] })).toThrow(
+      "EMPTY_CASE_FIELD:forbidden_collapses",
+    );
+    expect(() => parseGoldenCase({ ...base, acceptable_unknowns: [""] })).toThrow(
+      "EMPTY_CASE_FIELD:acceptable_unknowns:empty item",
+    );
+    expect(() => parseGoldenCase({ ...base, acceptable_unknowns: ["u", "u"] })).toThrow(
+      "DUPLICATE_CASE_FIELD:acceptable_unknowns:GC-X",
+    );
+    expect(() => parseGoldenCase({ ...base, adjudication_notes: "" })).toThrow(
+      "EMPTY_CASE_FIELD:adjudication_notes:GC-X",
+    );
+    expect(() => parseGoldenCase({ ...base, question: "x".repeat(2001) })).toThrow(
+      "OVERSIZED_CASE_FIELD:question:GC-X",
+    );
+    expect(() => parseGoldenCase({ ...base, required_atoms: ["x".repeat(513)] })).toThrow(
+      "OVERSIZED_CASE_FIELD:required_atoms",
+    );
     expect(() => parseGoldenCase({
       ...base,
       required_atoms: Array.from({ length: 33 }, (_, index) => `atom-${String(index)}`),
@@ -174,7 +242,9 @@ describe("Golden Corpus gates", () => {
       notes: ["test"],
     };
     expect(parseGoldenManifest(good).generation).toBe("golden-test-1");
-    expect(() => parseGoldenManifest({ ...good, protocol: "wrong" })).toThrow("MALFORMED_MANIFEST:bad protocol wrong");
+    expect(() => parseGoldenManifest({ ...good, protocol: "wrong" })).toThrow(
+      "MALFORMED_MANIFEST:bad protocol wrong",
+    );
     expect(() => parseGoldenManifest({ ...good, sources: [] })).toThrow("EMPTY_MANIFEST:sources");
     expect(() => parseGoldenManifest({ ...good, case_files: [] })).toThrow("EMPTY_MANIFEST:case_files");
     expect(() => parseGoldenManifest({
@@ -187,9 +257,13 @@ describe("Golden Corpus gates", () => {
     })).toThrow("DUPLICATE_MANIFEST_SOURCE:golden-project-decisions-r1");
   });
 
-  it("fails evaluation when an observation is missing", () => {
+  it("persists a typed failure when an observation is missing", () => {
     const results = evaluateGoldenRun([recommendationCase], new Map());
-    expect(results[0]?.passed).toBe(false);
+    expect(results[0]).toMatchObject({
+      passed: false,
+      observed_unknowns: [],
+      failures: ["MISSING_OBSERVATION:GC-001-recommendation-vs-decision"],
+    });
     expect(() => assertGoldenPromotionGate(results)).toThrow("GOLDEN_PROMOTION_BLOCKED");
   });
 });
