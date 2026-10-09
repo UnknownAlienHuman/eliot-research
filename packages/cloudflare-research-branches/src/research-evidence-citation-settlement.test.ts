@@ -40,6 +40,22 @@ function v2Receipt(outcome: CitationResolutionOutcome) {
 }
 
 describe("research citation settlement", () => {
+  it("keeps a legacy terminal handle reason uncertain without qualified cause", () => {
+    const receipt = CitationResolutionReceiptV1Schema.parse({
+      receipt_ref: { id: "citation-v1-terminal", revision: 1 },
+      scope_snapshot_ref: scopeRef,
+      requested_handle_refs: [handleRef],
+      resolved: [],
+      rejected: [{ handle_ref: handleRef, reason_code: "EVIDENCE_HANDLE_NOT_LIVE" }],
+      requested_count: 1,
+      resolved_count: 0,
+      all_material_citations_resolved: false,
+      created_at: createdAt,
+      receipt_digest: digest,
+    });
+    expect(classifyCitationReceiptSettlement(receipt)).toBe("UNCERTAIN");
+  });
+
   it.each([false, true])("keeps uncovered historical V1 members uncertain with a proven rejection: %s", (withRejection) => {
     const receipt = CitationResolutionReceiptV1Schema.parse({
       receipt_ref: { id: "citation-v1-incomplete", revision: 1 },

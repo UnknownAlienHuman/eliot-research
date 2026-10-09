@@ -2,7 +2,6 @@ import type { CitationResolutionReceipt } from "@eliotr/contracts";
 
 const LEGACY_PROVEN_CITATION_REJECTIONS = new Set([
   "EVIDENCE_HANDLE_NOT_FOUND",
-  "EVIDENCE_HANDLE_NOT_LIVE",
   "EVIDENCE_SCOPE_NOT_FOUND",
   "EVIDENCE_SCOPE_INVALIDATED",
   "EVIDENCE_SCOPE_EXPIRED",
