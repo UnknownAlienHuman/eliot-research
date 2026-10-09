@@ -96,3 +96,54 @@ describe("injected owner transport", () => {
     expect(fetcher).not.toHaveBeenCalled(); expect(clock.setTimeout).not.toHaveBeenCalled();
   });
 });
+
+describe("exact reauthorized section byte read", () => {
+  const path = "/api/v1/research/artifact/artifact-1%3A1/sections/section-1%3A1/reauthorize";
+  it("uses POST-empty protected manual policy and the existing whole200 byte parser", async () => {
+    const fetcher = vi.fn<typeof fetch>(async () => new Response(new Uint8Array([42]), { headers: { "content-type": "application/octet-stream", "content-length": "1" } }));
+    const client = createOwnerApiClient(ports(fetcher));
+    expect((await client.requestReauthorizedSectionBytes(path)).bytes).toEqual(new Uint8Array([42]));
+    const init = fetcher.mock.calls[0]?.[1];
+    expect(init).toMatchObject({ method: "POST", credentials: "same-origin", redirect: "manual", cache: "no-store" });
+    expect(init?.body).toBeUndefined();
+    expect(new Headers(init?.headers).get("x-eliotr-csrf")).toBe("1");
+    expect(new Headers(init?.headers).get("accept")).toBe("application/octet-stream");
+    client.dispose();
+  });
+  it("rejects foreign routes, query, noncanonical or malformed encoded references before dispatch", async () => {
+    const fetcher = vi.fn<typeof fetch>(); const client = createOwnerApiClient(ports(fetcher));
+    for (const invalid of ["/api/v1/mutation", path + "?x=1", path.replace("%3A", ":"), path.replace("%3A", "%xx"), path.replace("%3A1", "%3A0")]) {
+      await expect(client.requestReauthorizedSectionBytes(invalid)).rejects.toMatchObject({ code: "API_REQUEST_INVALID" });
+    }
+    expect(fetcher).not.toHaveBeenCalled(); client.dispose();
+  });
+  it("preserves canonical versioned references across the actual256 character identifier bound", async () => {
+    const fetcher = vi.fn<typeof fetch>(async () => new Response(new Uint8Array([42]), { headers: { "content-type": "application/octet-stream" } }));
+    const client = createOwnerApiClient(ports(fetcher));
+    const id = "Источник/with:space ".padEnd(256, "я");
+    const exactPath = `/api/v1/research/artifact/${encodeURIComponent(id + ":1")}/sections/${encodeURIComponent("section/часть:2")}/reauthorize`;
+    expect((await client.requestReauthorizedSectionBytes(exactPath)).bytes).toEqual(new Uint8Array([42]));
+    expect(fetcher.mock.calls[0]?.[0]).toBe(exactPath);
+    for (const badRef of [id + "я:1", "section:01", "section:9007199254740992"]) {
+      await expect(client.requestReauthorizedSectionBytes(path.replace("section-1%3A1", encodeURIComponent(badRef)))).rejects.toMatchObject({ code: "API_REQUEST_INVALID" });
+    }
+    expect(fetcher).toHaveBeenCalledTimes(1); client.dispose();
+  });
+  it("keeps status200/media/1MiB completion bounds without widening GET bytes", async () => {
+    for (const [status, media, bytes] of [[206, "application/octet-stream", 1], [200, "text/plain", 1], [200, "application/octet-stream", 1024 * 1024 + 1]] as const) {
+      const client = createOwnerApiClient(ports(async () => new Response(new Uint8Array(bytes), { status, headers: { "content-type": media, "content-length": String(bytes) } })));
+      await expect(client.requestReauthorizedSectionBytes(path)).rejects.toBeInstanceOf(Error); client.dispose();
+    }
+  });
+  it("rejects post-await old authority and never dispatches in a closed session", async () => {
+    const epoch = createSessionEpoch(), held = deferred<Response>(), fetcher = vi.fn<typeof fetch>(() => held.promise);
+    const client = createOwnerApiClient(ports(fetcher, timers(), epoch));
+    const read = client.requestReauthorizedSectionBytes(path);
+    epoch.close(); epoch.advance();
+    held.resolve(new Response(new Uint8Array([42]), { headers: { "content-type": "application/octet-stream" } }));
+    await expect(read).rejects.toMatchObject({ code: "API_SESSION_CLOSED" });
+    epoch.close();
+    await expect(client.requestReauthorizedSectionBytes(path)).rejects.toMatchObject({ code: "API_SESSION_CLOSED" });
+    expect(fetcher).toHaveBeenCalledTimes(1); client.dispose();
+  });
+});

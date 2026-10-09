@@ -184,6 +184,31 @@ export function createOwnerApiClient(ports: OwnerClientPorts) {
       const object = Object.freeze({ ...input });
       return request(path, readOptions(options), object.expectedContentType, (response, signal) => readWholeObject(response, object, signal));
     },
+    async requestReauthorizedSectionBytes(path: string, options: Pick<RequestOptions, "signal" | "timeoutMs"> = {}) {
+      // The implemented report reauthorization read is POST with an empty body. Keep this
+      // operation finite: no generic mutation-byte transport, range, header or status override.
+      const match = /^\/api\/v1\/research\/artifact\/([^/?#]+)\/sections\/([^/?#]+)\/reauthorize$/u.exec(path);
+      if (!match || Object.keys(options).some(key => key !== "signal" && key !== "timeoutMs")) {
+        throw failure("API_REQUEST_INVALID", "Expected an exact reauthorized report section read", undefined, 400);
+      }
+      for (const segment of match.slice(1)) {
+        let decoded: string;
+        try { decoded = decodeURIComponent(segment); }
+        catch { throw failure("API_REQUEST_INVALID", "Invalid section reference encoding", undefined, 400); }
+        const separator = decoded.lastIndexOf(":");
+        const id = decoded.slice(0, separator);
+        const revision = decoded.slice(separator + 1);
+        // IdentifierSchema permits 1..256 UTF-16 characters; it is not the narrower
+        // Workflow identifier. Compare canonical component encoding before dispatch.
+        if (separator < 1 || id.length > 256 || !/^[1-9][0-9]*$/u.test(revision) ||
+            !Number.isSafeInteger(Number(revision)) || encodeURIComponent(decoded) !== segment) {
+          throw failure("API_REQUEST_INVALID", "Invalid exact section reference", undefined, 400);
+        }
+      }
+      const object = { expectedContentType: "application/octet-stream", maximumBytes: 1024 * 1024 };
+      return request(path, { ...options, method: "POST" }, object.expectedContentType,
+        (response, signal) => readWholeObject(response, object, signal));
+    },
     requestObjectRange(path: string, input: RangeRequestOptions, options: Pick<RequestOptions, "signal" | "timeoutMs" | "headers"> = {}) {
       const range = Object.freeze({ ...input });
       if (!Number.isSafeInteger(range.requestedStart) || range.requestedStart < 0 || !Number.isSafeInteger(range.requestedEnd) || range.requestedEnd < range.requestedStart || !isStrongValidator(range.expectedETag) || !["if-match", "if-range"].includes(range.conditional)) throw failure("API_RANGE_INVALID", "Invalid immutable range request", undefined, 400);
