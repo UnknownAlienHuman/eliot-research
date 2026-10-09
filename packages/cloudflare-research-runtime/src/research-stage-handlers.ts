@@ -3,7 +3,7 @@ import type { NavigationReadAuthority } from "@eliotr/cloudflare-evidence";
 import type { InquiryProtocolProfile, ResearchWorkflowStage } from "@eliotr/contracts";
 import type { InvestigationLedgerStore } from "@eliotr/research";
 import { createD1ScopeProfilePort } from "@eliotr/retrieval";
-import type { WorkflowStartedAttemptRecovery } from "@eliotr/cloudflare-workflows";
+import { NATIVE_EXTERNAL_TASK_HANDLER_GENERATION, type NativeExternalTaskServerPortsInput, type WorkflowStartedAttemptRecovery } from "@eliotr/cloudflare-workflows";
 import type { AiSearchNamespaceLike } from "@eliotr/platform-cloudflare";
 import {
   createFreezeProtocolAndScopeStageHandler,
@@ -69,9 +69,12 @@ export const SERVER_OWNED_PROTOCOL_HANDLER_GENERATION = SEMANTIC_PROTOCOL_HANDLE
 export const SERVER_OWNED_BRANCH_HANDLER_GENERATION = BRANCH_EXECUTION_HANDLER_GENERATION;
 /** Provider-neutral computer-agent analysis for delegated explicit-protocol runs. */
 export const SERVER_OWNED_EXTERNAL_AGENT_HANDLER_GENERATION = EXTERNAL_AGENT_BRANCH_HANDLER_GENERATION;
+/** New native sibling prepare/wait/settle graph; persisted v8 keeps manual recovery. */
+export const SERVER_OWNED_NATIVE_EXTERNAL_AGENT_HANDLER_GENERATION = NATIVE_EXTERNAL_TASK_HANDLER_GENERATION;
 export type SemanticResearchHandlerGeneration =
   typeof SERVER_OWNED_FREEZE_HANDLER_GENERATION | typeof SERVER_OWNED_SEMANTIC_HANDLER_GENERATION |
   typeof SERVER_OWNED_LEGACY_PROTOCOL_HANDLER_GENERATION | typeof SERVER_OWNED_PROTOCOL_HANDLER_GENERATION |
+  typeof SERVER_OWNED_NATIVE_EXTERNAL_AGENT_HANDLER_GENERATION |
   typeof SERVER_OWNED_BRANCH_HANDLER_GENERATION | typeof SERVER_OWNED_EXTERNAL_AGENT_HANDLER_GENERATION;
 export function isSemanticResearchHandlerGeneration(generation: unknown): generation is SemanticResearchHandlerGeneration {
   return generation === SERVER_OWNED_FREEZE_HANDLER_GENERATION ||
@@ -79,6 +82,7 @@ export function isSemanticResearchHandlerGeneration(generation: unknown): genera
     generation === SERVER_OWNED_LEGACY_PROTOCOL_HANDLER_GENERATION ||
     generation === SERVER_OWNED_PROTOCOL_HANDLER_GENERATION ||
     generation === SERVER_OWNED_BRANCH_HANDLER_GENERATION ||
+    generation === SERVER_OWNED_NATIVE_EXTERNAL_AGENT_HANDLER_GENERATION ||
     generation === SERVER_OWNED_EXTERNAL_AGENT_HANDLER_GENERATION;
 }
 export const SERVER_RETRIEVAL_SCOPE_PROFILE = {
@@ -146,12 +150,16 @@ function assertFrozenAcquisitionSourceMode(
   if (frozenSourceMode !== installedSourceMode) fail("WORKFLOW_AUTHORITY_STALE");
 }
 
+export type ResearchStageExternalTaskPorts = Pick<NativeExternalTaskServerPortsInput, "prepare_task" | "read_recorded_result">;
+
 export type ResearchStageHandlerFactory = MonotoneHandlerFactory & {
+  readonly external_task?: ResearchStageExternalTaskPorts;
   readonly native: (stage: ResearchWorkflowStage) => WorkflowNativeStageHandler | undefined;
   readonly recoverStartedAttempt?: WorkflowStartedAttemptRecovery;
 };
 
 const NATIVE_DETERMINISTIC_HANDLER_GENERATIONS = new Set([
+  SERVER_OWNED_NATIVE_EXTERNAL_AGENT_HANDLER_GENERATION,
   "research-handlers.exploratory.v1", "research-handlers.exploratory.v2",
   "research-handlers.exploratory.v3", "research-handlers.exploratory.v4",
   "research-handlers.exploratory.v5", "research-handlers.exploratory.v6",
@@ -163,6 +171,7 @@ const NATIVE_DETERMINISTIC_STAGES = new Set<ResearchWorkflowStage>([
 
 function branchGeneration(generation: unknown): boolean {
   return generation === SERVER_OWNED_BRANCH_HANDLER_GENERATION ||
+    generation === SERVER_OWNED_NATIVE_EXTERNAL_AGENT_HANDLER_GENERATION ||
     generation === SERVER_OWNED_EXTERNAL_AGENT_HANDLER_GENERATION;
 }
 
@@ -285,7 +294,8 @@ export function createResearchStageHandlerFactory(
       return branchExecution?.read_and_extract ?? (async () => fail("WORKFLOW_AUTHORITY_STALE"));
     }
     if (stage === "ANALYZE_BRANCHES" && mode.kind === "server-owned-exploratory" &&
-        mode.generation === SERVER_OWNED_EXTERNAL_AGENT_HANDLER_GENERATION) {
+        (mode.generation === SERVER_OWNED_EXTERNAL_AGENT_HANDLER_GENERATION ||
+          mode.generation === SERVER_OWNED_NATIVE_EXTERNAL_AGENT_HANDLER_GENERATION)) {
       return async () => fail("WORKFLOW_AUTHORITY_STALE");
     }
     if (stage === "ANALYZE_BRANCHES" && mode.kind === "server-owned-exploratory" &&

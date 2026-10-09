@@ -52,6 +52,7 @@ import {
   createResearchStageHandlerFactory,
   SERVER_OWNED_BRANCH_HANDLER_GENERATION,
   SERVER_OWNED_EXTERNAL_AGENT_HANDLER_GENERATION,
+  SERVER_OWNED_NATIVE_EXTERNAL_AGENT_HANDLER_GENERATION,
   SERVER_OWNED_FREEZE_HANDLER_GENERATION,
   type ResearchStageHandlerFactory,
 } from "./research-stage-handlers.js";
@@ -216,6 +217,7 @@ export function createResearchSemanticComposition(
   const predecessorReader = createEvidenceFreezePredecessorReader(input.navigation, readers, {
     requires_branch_reconciliation: (generation) =>
       generation === SERVER_OWNED_BRANCH_HANDLER_GENERATION ||
+      generation === SERVER_OWNED_NATIVE_EXTERNAL_AGENT_HANDLER_GENERATION ||
       generation === SERVER_OWNED_EXTERNAL_AGENT_HANDLER_GENERATION,
   });
   const freeze: EvidenceFreezeCompositionDependencies = {

@@ -8,6 +8,7 @@ import {
 import type { Env } from "./env.js";
 import { createProjectionDeliveryHandler } from "@eliotr/cloudflare-projection";
 import { createProjectionExecutionDeliveryHandler } from "@eliotr/cloudflare-ai";
+import { createExternalTaskResultDeliveryHandler, EXTERNAL_AGENT_RESULT_WAKE_TOPIC } from "@eliotr/cloudflare-workflows";
 
 const CONSUMER_WORKER_ID = "eliotr-queue-consumer";
 const CONSUMER_LEASE_MS = 60_000;
@@ -36,6 +37,17 @@ function projectionHandler(env: Env): DeliveryHandler {
   };
 }
 
+function deliveryHandler(env: Env): DeliveryHandler {
+  const projection = projectionHandler(env);
+  const externalResult = createExternalTaskResultDeliveryHandler({
+    database: env.CORE_DB,
+    get_instance: (operationId) => env.RESEARCH_WORKFLOW.get(operationId),
+  });
+  return (message, context) => message.topic === EXTERNAL_AGENT_RESULT_WAKE_TOPIC
+    ? externalResult(message, context)
+    : projection(message, context);
+}
+
 // IMPLEMENTED_NOT_LIVE: ER-24 Queue dispatch requires remote duplicate-delivery and DLQ receipts.
 export async function handleQueue(batch: MessageBatch<unknown>, env: Env): Promise<void> {
   const runtime = createQueueConsumerRuntime(
@@ -50,7 +62,7 @@ export async function handleQueue(batch: MessageBatch<unknown>, env: Env): Promi
       retry_maximum_ms: 5 * 60_000,
     },
   );
-  const handler = projectionHandler(env);
+  const handler = deliveryHandler(env);
 
   for (const message of batch.messages) {
     try {

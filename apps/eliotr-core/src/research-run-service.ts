@@ -13,7 +13,7 @@ import {
 import type { WorkflowPrincipal } from "@eliotr/cloudflare-research";
 import { createD1InvestigationLedgerStore, LedgerError } from "@eliotr/research";
 import type { LedgerD1Database } from "@eliotr/research";
-import { SERVER_OWNED_RESEARCH_HANDLER_GENERATION, SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION, SERVER_OWNED_FREEZE_HANDLER_GENERATION, SERVER_OWNED_SEMANTIC_HANDLER_GENERATION, SERVER_OWNED_LEGACY_PROTOCOL_HANDLER_GENERATION, SERVER_OWNED_PROTOCOL_HANDLER_GENERATION, SERVER_OWNED_BRANCH_HANDLER_GENERATION, SERVER_OWNED_EXTERNAL_AGENT_HANDLER_GENERATION, isSemanticResearchHandlerGeneration, SERVER_RETRIEVAL_SCOPE_PROFILE } from "@eliotr/cloudflare-research-runtime/research-stage-handlers.js";
+import { SERVER_OWNED_RESEARCH_HANDLER_GENERATION, SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION, SERVER_OWNED_FREEZE_HANDLER_GENERATION, SERVER_OWNED_SEMANTIC_HANDLER_GENERATION, SERVER_OWNED_LEGACY_PROTOCOL_HANDLER_GENERATION, SERVER_OWNED_PROTOCOL_HANDLER_GENERATION, SERVER_OWNED_BRANCH_HANDLER_GENERATION, SERVER_OWNED_NATIVE_EXTERNAL_AGENT_HANDLER_GENERATION, SERVER_OWNED_EXTERNAL_AGENT_HANDLER_GENERATION, isSemanticResearchHandlerGeneration, SERVER_RETRIEVAL_SCOPE_PROFILE } from "@eliotr/cloudflare-research-runtime/research-stage-handlers.js";
 import { attachResearchRunConfiguration, readResearchRunConfiguration } from "./research-run-configuration.js";
 import { resolveResearchRunAdmissionConfiguration } from "./research-run-configuration-admission.js";
 import { RESEARCH_QUALIFICATION_RENEWAL_MARKER } from "./research-qualification-renewal.js";
@@ -187,7 +187,7 @@ export function createResearchRunService(env: Env): { run(context: Authenticated
       if (!snapshotRow || typeof snapshotRow.policy_authority_ref !== "string") fail("RESEARCH_AUTHORITY_STALE", "scope snapshot is unavailable", 409);
       const priorWorkflow = pre === null ? null : await db.prepare("SELECT handler_generation,configuration_required,configuration_ref FROM research_workflow_run WHERE idempotency_key = ?1")
         .bind(key).first<{ handler_generation: string; configuration_required: number; configuration_ref: string | null }>();
-      const supportedGenerations = new Set([HANDLER_GEN, SERVER_OWNED_RESEARCH_HANDLER_GENERATION, SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION, SERVER_OWNED_FREEZE_HANDLER_GENERATION, SERVER_OWNED_SEMANTIC_HANDLER_GENERATION, SERVER_OWNED_LEGACY_PROTOCOL_HANDLER_GENERATION, SERVER_OWNED_PROTOCOL_HANDLER_GENERATION, SERVER_OWNED_BRANCH_HANDLER_GENERATION, SERVER_OWNED_EXTERNAL_AGENT_HANDLER_GENERATION]);
+      const supportedGenerations = new Set([HANDLER_GEN, SERVER_OWNED_RESEARCH_HANDLER_GENERATION, SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION, SERVER_OWNED_FREEZE_HANDLER_GENERATION, SERVER_OWNED_SEMANTIC_HANDLER_GENERATION, SERVER_OWNED_LEGACY_PROTOCOL_HANDLER_GENERATION, SERVER_OWNED_PROTOCOL_HANDLER_GENERATION, SERVER_OWNED_BRANCH_HANDLER_GENERATION, SERVER_OWNED_EXTERNAL_AGENT_HANDLER_GENERATION, SERVER_OWNED_NATIVE_EXTERNAL_AGENT_HANDLER_GENERATION]);
       const interruptedMachineAdmission = delegated !== undefined && pre?.head.revision === 1 && priorWorkflow === null;
       if (pre !== null && !interruptedMachineAdmission && (priorWorkflow === null || !supportedGenerations.has(priorWorkflow.handler_generation))) {
         fail("RESEARCH_CONFLICT", "persisted workflow handler generation is unsupported", 409);
@@ -259,15 +259,17 @@ export function createResearchRunService(env: Env): { run(context: Authenticated
       const handlerGeneration = lane === "exploratory"
         ? priorWorkflow?.handler_generation ?? (request.inquiry_protocol_ref === undefined
           ? SERVER_OWNED_SEMANTIC_HANDLER_GENERATION
-          : delegated === undefined ? SERVER_OWNED_BRANCH_HANDLER_GENERATION : SERVER_OWNED_EXTERNAL_AGENT_HANDLER_GENERATION)
+          : delegated === undefined ? SERVER_OWNED_BRANCH_HANDLER_GENERATION : SERVER_OWNED_NATIVE_EXTERNAL_AGENT_HANDLER_GENERATION)
         : HANDLER_GEN;
-      if (handlerGeneration === SERVER_OWNED_EXTERNAL_AGENT_HANDLER_GENERATION &&
+      const externalGeneration = handlerGeneration === SERVER_OWNED_EXTERNAL_AGENT_HANDLER_GENERATION ||
+        handlerGeneration === SERVER_OWNED_NATIVE_EXTERNAL_AGENT_HANDLER_GENERATION;
+      if (externalGeneration &&
           (delegated === undefined || !delegated.lease.grant.allowed_operations.includes("recover") ||
             !delegated.lease.grant.allowed_operations.includes("evidence"))) {
         fail("RESEARCH_AUTHORITY_STALE",
           "Computer-agent Research requires the same grant revision to authorize run, recover and evidence", 403);
       }
-      if (handlerGeneration === SERVER_OWNED_EXTERNAL_AGENT_HANDLER_GENERATION && delegated !== undefined) {
+      if (externalGeneration && delegated !== undefined) {
         await bindComputerAgentRunRoute({
           database: db,
           context,

@@ -5,6 +5,8 @@ import type { ResearchWorkflowStage, ScopeSnapshot } from "@eliotr/contracts";
 import { createWorkflowCheckpointExecutor } from "@eliotr/cloudflare-research";
 import {
   createResearchWorkflowServerPorts,
+  createNativeExternalTaskServerPorts,
+  NATIVE_EXTERNAL_TASK_HANDLER_GENERATION,
   executeResearchWorkflowNativeSteps,
   MAX_WORKFLOW_RECEIPT_BYTES,
   parseWorkflowCheckpointErrorMessage,
@@ -218,6 +220,11 @@ export async function executeResearchWorkflowApplication<QualificationRenewalMar
         : { recover_started_attempt: handlers.recoverStartedAttempt }),
     });
     const executor = createWorkflowCheckpointExecutor(database, environment.WORK_BUCKET, ports);
+    const externalTask = params.handler_generation === NATIVE_EXTERNAL_TASK_HANDLER_GENERATION
+      ? handlers.external_task : undefined;
+    if (params.handler_generation === NATIVE_EXTERNAL_TASK_HANDLER_GENERATION && externalTask === undefined) {
+      failWorkflow("WORKFLOW_CONFIGURATION_MISSING");
+    }
     const result = await executeResearchWorkflowNativeSteps({
       step,
       database,
@@ -229,6 +236,9 @@ export async function executeResearchWorkflowApplication<QualificationRenewalMar
         initial_input_manifest: params.initial_input_manifest,
       },
       principal,
+      ...(externalTask === undefined ? {} : { external_task: createNativeExternalTaskServerPorts({
+        database, bucket: environment.WORK_BUCKET, ports, ...externalTask,
+      }) }),
       execute_checkpoint: (request, runPrincipal) =>
         executor.execute(request, runPrincipal, handlers(request.stage)),
       native_handler: (stage) => handlers.native(stage),

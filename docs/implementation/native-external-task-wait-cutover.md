@@ -14,12 +14,12 @@ Historical runs and their manual recovery path remain compatible.
   grant/route/current scope, publishes exact task payload and task row, reads
   the recorded result, and uses `consumeResult` for exact evidence readback.
   Missing immediate result currently produces `WORKFLOW_EFFECT_UNCERTAIN`.
-- `research-workflow-step-execution.ts` calls the W2 executor inside an outer
-  `step.do`. `WorkflowStageHandler` receives request/principal/input/attempt/
-  budget/signal; it has no native `step`. The new topology must durably prepare
-  the same W2 attempt/task, wait at the Workflow orchestration level, then settle
-  through the existing known-result executor. Do not inject an invented handler
-  field or assume nested native steps are supported.
+- `research-workflow-step-execution.ts` selects the native sibling helper for
+  new-generation stage 8 outside the former outer `step.do`. Historical
+  generations retain that outer step. `WorkflowStageHandler` receives
+  request/principal/input/attempt/budget/signal and still has no native `step`.
+  Server preparation owns the original W2 attempt/task; settlement uses existing
+  known-result guards. Missing native ports fail before dispatch.
 - `ExternalAgentTaskStore.recordResult/#reconcileResult` commits and reads the
   exact immutable result before returning its receipt. The event's
   `result_digest` must bind the stored `result_sha256`; it is a locator hint,
@@ -47,18 +47,28 @@ Historical runs and their manual recovery path remain compatible.
   is checked against original stored-byte readback before existing `consumeResult`.
   The W2 executor's separate preparation seam uses the same durable attempt and
   original deadline, returning WAIT, SETTLE or a committed receipt for orchestration.
-  These source-accepted ports do not activate the native topology.
+  The source assembly injects these ports only for the new native generation;
+  canonical native qualification remains separate.
 - `native-external-task-step.ts` provides deterministic sibling prepare, wait
   and settle steps with strict persisted metadata and receipt validation. WAIT
   visits the cached wait step on resume; a transport error permits one canonical
   reread, and foreign/malformed events fail. Its exact source review,
-  compile and lint pass. The helper is still unimported; it supplies no new
-  result, grant or budget authority and does not qualify native execution.
+  compile and lint pass. Native prepare persists primitive canonical JSON after
+  strict metadata validation and strictly decodes it on replay. Cloudflare RPC
+  attaches disposer symbols to object results; the primitive representation
+  avoids admitting unknown wire fields. Nine helper cases pass. The assembled
+  helper supplies no new result, grant or budget authority.
 - `handleScheduled` delivers existing outbox messages through `JOB_QUEUE`.
-  `handleQueue` currently composes only the projection delivery handler. A wake
-  topic needs explicit dispatch and canonical result/currentness readback before
+  `handleQueue` explicitly dispatches the reserved wake topic alongside existing
+  projection delivery. The new handler reads canonical result/currentness before
   `RESEARCH_WORKFLOW.get(operation_id).sendEvent`. Queue/inbox deduplication
   accelerates delivery and never substitutes for canonical task/result identity.
+- `routeExternalAgentResultReceipt` reuses the existing strict receipt codec after
+  the store's exact result/outbox reconciliation. Immutable task/run D1 readback
+  binds generation and the recorded tuple; it does not use expired fresh-effect
+  `_current` authority. Native returns the durable receipt; historical generations
+  retain the existing digest-bound recovery helper. Twenty source cases and one
+  actual Core depth-100 query pass. Canonical callback/Queue acceptance is pending.
 
 ## Lease and timeout composition
 
@@ -83,7 +93,8 @@ with the recorded timestamp strictly before both original lease and budget expir
 The existing output/checkpoint fences still own the ledger mutation. Its depth-100
 schema and focused view-predicate checks pass; native integration/currentness,
 exact result consumption and delayed-wake acceptance remain pending. The new
-generation is not yet admitted or selected by runtime composition.
+generation is admitted and selected by the pending source assembly; historical
+v8 remains compatible. No deployment or live acceptance follows from assembly.
 
 The migration must explicitly handle a result committed before expiry whose
 wake is delayed across expiry. Preserve current grant/route/scope/cancellation
@@ -93,6 +104,13 @@ financial permission from a digest, or invoke a native restart as the normal
 wake path. Missing result at timeout remains unconfirmed; reread it exactly once
 before choosing the documented versioned timeout behavior. Native wait must not
 create a new logical task or automatically repeat UNKNOWN external dispatch.
+
+The revised native server ports perform that single read before expired
+known-result authorization. OUTPUT_RECORDED still forwards the expected stored
+result digest and verifies the returned bytes against its original W2 manifest.
+Existing executor SQL/currentness/cancellation/commit guards own mutation; the
+reader itself does not authorize settlement. Pre-aborted actors and COMMITTED
+replay retain the existing executor paths.
 
 ## Locator and topology prerequisites
 
@@ -119,10 +137,19 @@ steps are supported.
 References: [Workers API](https://developers.cloudflare.com/workflows/build/workers-api/),
 [events and parameters](https://developers.cloudflare.com/workflows/build/events-and-parameters/),
 [Rules of Workflows](https://developers.cloudflare.com/workflows/build/rules-of-workflows/).
+RPC object lifecycle: [automatic disposal](https://developers.cloudflare.com/workers/runtime-apis/rpc/lifecycle/),
+retrieved October 9, 2026.
 
 ## Remaining acceptance
 
-Source codec checks alone are preparatory. The coherent implementation still
+Seven local native topology cases pass: buffered and duplicate events, foreign
+and malformed locators, event before recorded result, and both timeout result
+states. Two added-only cases pass for restart from prepare and pause/resume with
+cached preparation. These run actual native steps/events under Miniflare
+5.20260926.1-alpha with injected preparation/settlement ports and counter D1.
+They do not establish canonical W2/grant/R2/callback/Queue or live acceptance.
+
+The complete canonical implementation still
 requires native early/duplicate/late/foreign events, lost result/send ACK,
 event-before-result, timeout/result-boundary, restart/completed-predecessor,
 revoked/cancelled authority, old generation and malformed persisted event cases.

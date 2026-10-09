@@ -27,7 +27,7 @@ closure is published in `2adbc42d`; bounded local Session transport acceptance
 now has five passing cases across the retained run and one failed-case-only
 repair. C1/C2/C5 still defer their named pipeline cutovers.
 
-Current shared-checkout continuation: normal publication reached `531a830a`.
+Current shared-checkout continuation: normal publication reached `63537a16`.
 Frontend B-U source `1e1c6213`, acceptance receipt `950bf86e`, tooling `0a211f6f`
 and the accepted backend prerequisites are published. SQL depth recovery and five
 receipt boundary cases pass with source review; these do not qualify the native pipeline.
@@ -57,17 +57,44 @@ The SQL extractor now respects `.tsx` filename dialects. Its focused parser
 fixture and corrected depth compiler pass; target qualification remains incomplete
 (1,048 unknown targets, 85 unknown arities and 152 unresolved sites).
 
-The sibling native prepare/wait/settle helper has exact source acceptance,
-owning compile and lint. It remains unimported. New-generation result recording
+The published sibling native prepare/wait/settle prerequisite has exact source
+acceptance, owning compile and lint. New-generation result recording
 now uses one D1 batch for the existing canonical result UPDATE and intent/outbox
 inserts. Migration 0131 binds locator authority to the exact recorded timestamp,
 digest and 0130 settlement view; a missing/replaced result cannot leave an orphan
 wake. Original result/outbox readback reconciles a lost ACK; legacy callbacks
 retain their original path. Exact source review, seven focused cases, depth-100
 Core schema (639 shapes) and nineteen owning-source queries pass. Upstream
-currentness in the focused fixture is explicit input. Runtime generation
-admission, native topology composition, Queue dispatch and native acceptance
-remain pending; no Issue, PR or Goal closure follows from these prerequisites.
+currentness in the focused fixture is explicit input.
+
+The next source assembly wires `research-handlers.exploratory.external-wait.v1`
+through admission, same-grant routing, pinned configuration and the Workflow
+application. Stage 8 uses sibling native prepare/wait/settle steps outside the
+legacy outer `step.do`; historical generations retain their graph. Manual
+recovery restarts the new generation at its named prepare step. Queue dispatch
+uses the existing outbox/inbox runtime with an explicit reserved-topic handler;
+native callbacks return the exact durable receipt after canonical generation
+readback, while historical callbacks retain digest-bound recovery.
+
+Preparation persists a strictly validated canonical JSON string because native
+RPC objects acquire platform disposer symbols. Settlement reads canonical result
+bytes once, forwards the event digest even for OUTPUT_RECORDED, and checks the
+original W2 manifest before existing executor settlement. Absent expired results
+remain uncertain; recovery authorization still fences known-result mutation.
+Nine helper, three pinned-configuration, twenty callback and nine server-port
+composition cases pass. The final test fixture's metadata/type-only correction
+passes owning compilation and lint; passing runtime cases were retained.
+The new callback query compiles against actual Core at depth 100 (639 schema
+shapes, one query, no unresolved site or failure). The R05-only Core graph compiles
+on TypeScript 6.0.3 with zero diagnostics, excluding earlier C2 WIP. Revised
+executor/ports and runtime routing have bounded source acceptance; generation
+review leaves canonical acceptance outside its scope. Publication remains
+separate from canonical native acceptance.
+
+Seven local native topology cases and two added restart/pause cases pass with
+injected server ports and counter D1. These exercise real Workflow steps/events,
+not the complete W2/grant/R2/callback/Queue path. Canonical/native/live/release
+acceptance and #326 remain open; the Goal remains active.
 
 This is the canonical day-to-day backend router. It does not replace product architecture, work-packet
 ownership or release acceptance. It tells each role where to begin, which active PR owns the result,

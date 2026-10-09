@@ -6,7 +6,7 @@ import {
   digest, fail, MAX_WORKFLOW_OUTPUT_BYTES, MAX_WORKFLOW_RECEIPT_BYTES, parseRequest, snapshotPrincipal, textDigest, WorkflowCheckpointError, WorkflowObjectSchema,
   type StageReceipt, type StageRequest, type WorkflowBudgetGrant, type WorkflowExecutionPorts,
   type WorkflowNativeStageHandler, type WorkflowNativeStagePolicy, type WorkflowNativeStageReceipt,
-  type WorkflowObject, type WorkflowPrincipal, type WorkflowStageHandler,
+  type WorkflowObject, type WorkflowPrincipal, type WorkflowStageHandler, type WorkflowAttemptRecoveryInput,
 } from "./types.js";
 import type { ResearchWorkflowStage } from "@eliotr/contracts";
 import { workflowFailure, retainWorkflowFailure, type WorkflowFailure } from "./failures.js";
@@ -34,6 +34,18 @@ export type WorkflowExternalTaskPreparation =
     readonly budget_expires_at_ms: number;
     readonly result_sha256: string | null;
   };
+
+/** One exact recovery identity shared by canonical readback and the existing W2 executor. */
+export function workflowAttemptRecoveryInput(
+  request: StageRequest, principal: WorkflowPrincipal, attempt: AttemptRow, existing?: WorkflowObject,
+): WorkflowAttemptRecoveryInput {
+  return Object.freeze({ request, principal_ref: principal.principal_ref,
+    credential_generation: principal.credential_generation, deployment_generation: principal.deployment_generation,
+    stage_index: RESEARCH_WORKFLOW_STAGES.indexOf(request.stage), request_sha256: attempt.request_sha256,
+    attempt_ref: attempt.attempt_ref, expected_revision: attempt.expected_revision,
+    output_object_ref: existing?.object_ref ?? `workflow/${attempt.request_sha256}/${attempt.attempt_ref}`,
+    budget_receipt_ref: attempt.budget_receipt_ref, budget_expires_at_ms: attempt.budget_expires_at_ms });
+}
 
 /** One reservation admits at most ONE handler invocation. Unknown execution is never auto-retried. */
 export function createWorkflowCheckpointExecutor(
@@ -292,15 +304,7 @@ export function createWorkflowCheckpointExecutor(
           if (recoverStartedAttempt === undefined) fail("WORKFLOW_EFFECT_UNCERTAIN");
           let recovered: Uint8Array | null;
           try {
-            recovered = await recoverStartedAttempt(Object.freeze({
-              request, principal_ref: principal.principal_ref, credential_generation: principal.credential_generation,
-              deployment_generation: principal.deployment_generation,
-              stage_index: RESEARCH_WORKFLOW_STAGES.indexOf(request.stage), request_sha256: recoveryAttempt.request_sha256,
-              attempt_ref: recoveryAttempt.attempt_ref, expected_revision: recoveryAttempt.expected_revision,
-              output_object_ref: existing?.object_ref ?? `workflow/${requestDigest}/${recoveryAttempt.attempt_ref}`,
-              budget_receipt_ref: recoveryAttempt.budget_receipt_ref,
-              budget_expires_at_ms: recoveryAttempt.budget_expires_at_ms,
-            }));
+            recovered = await recoverStartedAttempt(workflowAttemptRecoveryInput(request, principal, recoveryAttempt, existing));
           } catch (error) {
             throw new WorkflowCheckpointError("WORKFLOW_EFFECT_UNCERTAIN", workflowFailure(error, "RECOVERY", request.stage));
           }

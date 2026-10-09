@@ -3,6 +3,10 @@ import type { ResearchWorkflowStage } from "@eliotr/contracts";
 import { RESEARCH_WORKFLOW_STAGES } from "@eliotr/domain";
 import { retainWorkflowFailure, workflowFailure, type WorkflowFailureOutcome } from "./failures.js";
 import {
+  executeNativeExternalTaskStep, NATIVE_EXTERNAL_TASK_HANDLER_GENERATION,
+  type NativeExternalTaskStepInput,
+} from "./native-external-task-step.js";
+import {
   executeResearchWorkflowSequence,
   type ResearchWorkflowSequenceParams,
   type ResearchWorkflowSequenceRequest,
@@ -83,6 +87,7 @@ export interface ResearchWorkflowNativeStepExecutionInput {
   readonly step: WorkflowStep;
   readonly params: ResearchWorkflowSequenceParams;
   readonly principal: WorkflowPrincipal;
+  readonly external_task?: Pick<NativeExternalTaskStepInput, "prepare" | "settle">;
   readonly execute_checkpoint: (
     request: ResearchWorkflowSequenceRequest,
     principal: WorkflowPrincipal,
@@ -134,12 +139,18 @@ export async function executeResearchWorkflowNativeSteps(
     executeStage: async (request, index) => {
       const stage = request.stage;
       input.set_active_stage(stage);
-      const nativeHandler = input.native_handler(stage);
+      const external = stage === "ANALYZE_BRANCHES" &&
+        request.handler_generation === NATIVE_EXTERNAL_TASK_HANDLER_GENERATION;
+      const nativeHandler = external ? undefined : input.native_handler(stage);
       const nativePolicy = nativeHandler === undefined ? null : await input.native_stage_policy(request, input.principal);
       const native = nativeHandler === undefined || nativePolicy === null ? null : { handler: nativeHandler, policy: nativePolicy };
       const executeStage = async (): Promise<WorkflowStageCompletion> => {
         try {
-          const outcome = native === null
+          if (external && input.external_task === undefined) failWorkflow("WORKFLOW_CONFIGURATION_MISSING");
+          const outcome = external && input.external_task !== undefined
+            ? { kind: "W2" as const, receipt: await executeNativeExternalTaskStep({ step: input.step, request,
+              principal: input.principal, ...input.external_task }) }
+            : native === null
             ? { kind: "W2" as const, receipt: await input.execute_checkpoint(request, input.principal) }
             : { kind: "NATIVE" as const, receipt: await input.execute_native(request, input.principal, native.handler, native.policy) };
           const completion = parseWorkflowStageCompletion(outcome);
@@ -167,7 +178,8 @@ export async function executeResearchWorkflowNativeSteps(
       const retries = native === null || native.policy.effect_class !== "PURE_COMPUTE"
         ? { limit: 0, delay: 0 }
         : { limit: native.policy.retry_limit, delay: native.policy.retry_delay_ms, backoff: "constant" as const };
-      const rawCompletion = timeout === undefined
+      // The helper owns sibling durable steps; never place its wait inside this outer do.
+      const rawCompletion = external ? await executeStage() : timeout === undefined
         ? await input.step.do(stepName, { retries }, executeStage)
         : await input.step.do(stepName, { retries, timeout }, executeStage);
       let completion: WorkflowStageCompletion;

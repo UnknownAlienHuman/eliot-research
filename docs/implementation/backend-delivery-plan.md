@@ -111,8 +111,9 @@ targets and 85 unknown arities. Passing prior suites were not repeated.
 
 Normal expected-head publication reached `531a830a`; fresh fetch, live
 `ls-remote` and the reviewed remote blobs match. The sibling native helper
-prepare/wait/settle source is accepted by Luna Max Laplace with compile/lint;
-it is unimported and native qualification remains pending. The new-generation
+prepare/wait/settle prerequisite is accepted by Luna Max Laplace with compile/lint.
+The following eight-file publication reached `63537a16`; native qualification
+remains pending. The new-generation
 callback now commits canonical result and existing intent/outbox in one D1 batch.
 Migration 0131 rejects orphan/foreign locator authority through the 0130
 settlement view and freezes its identity while preserving delivery lease changes.
@@ -123,7 +124,65 @@ compatibility are covered. The fixture uses explicit upstream authority rows.
 Actual Core depth-100 compilation passes 639 schema shapes and nineteen queries
 from the two owning files with no unresolved site. This bounded check does not
 replace repository-wide target qualification or native/currentness acceptance.
-Generation admission, orchestration/Queue composition and release remain pending.
+The subsequent source assembly includes generation admission, orchestration and
+Queue composition; its publication and complete native acceptance are separate
+gates described below. Release remains pending.
+
+The R05 assembly selects `research-handlers.exploratory.external-wait.v1` for
+new delegated explicit runs, preserving historical v8. It retains the same grant,
+route, immutable run configuration, original W2 attempt and budget deadline.
+Stage 8 invokes sibling prepare/wait/settle outside the legacy outer `step.do`;
+missing server ports fail configuration before dispatch. The route factory keeps
+the base native handlers and wraps both external ports in pinned-configuration
+revalidation. Manual restart begins at the native prepare step. Existing Queue
+delivery explicitly dispatches the reserved topic after canonical result and
+known-result authority readback; default projection delivery remains compatible.
+
+An actual native preparation failed because Cloudflare RPC adds a disposer
+symbol to returned objects. The helper now validates metadata before storing
+primitive canonical JSON and strictly decodes it on replay, without a symbol
+allowlist. Nine helper and three configuration regressions pass. Seven real local
+native topology cases pass, plus two added-only restart/pause cases. Miniflare
+5.20260926.1-alpha runs real Workflow step/event behavior, with injected server
+ports and counter D1; this does not qualify canonical W2/grant/R2/Queue/callback.
+
+The revised server ports perform one read-only canonical result read before
+expired known-result authorization, forwarding the supplied expected digest even
+when W2 already has OUTPUT_RECORDED. Returned bytes must match that original
+manifest. Absent results stay uncertain; existing W2 SQL/currentness/cancellation
+and commit guards still own settlement. The executor shares its unchanged bound
+recovery tuple through a pure builder. Its earlier source verdict is superseded
+for this revision. Beauvoir accepted the final executor/ports blobs, and the
+integrator verified all five reviewed routing/application/executor/ports blobs.
+Nine composition regressions pass; final fixture metadata/type-only corrections
+pass owning compilation/lint without repeating passing runtime cases.
+
+The callback routes only after the store validates immutable result bytes and
+exact atomic outbox readback. The existing strict receipt codec is reused; D1's
+immutable task/run binding supplies generation. Native returns the durable receipt
+without manual recovery, while historical generations retain the existing wake
+helper and digest-derived key. Twenty focused cases, owning compile and exact
+lint pass. SQLite 3.50.4 depth-100 actual Core accepts its one query and 639 schema
+shapes with no failure or unresolved site. Sagan accepted the callback pair and
+two-line caller change; root verified the actual blobs and control-character
+escape bytes. The reviewer's repeated test/compile runs were ignored. Archimedes
+accepted the bounded generation/helper candidates; root checked its named B7
+and semantic-server context limits against the actual sources. Complete canonical
+native acceptance remains separate. The R05-only Core graph compiles on TypeScript
+6.0.3 with zero diagnostics and virtual outputs only, including the callback.
+R05 publication candidates exclude earlier
+unaccepted C2 changes; shared frontend work and index windows remain coordinated.
+
+The assembled boundary checker passes. Source-budget readback is still FAIL:
+the working tree has nine violations, while actual HEAD plus exact R05-only
+candidates has the same six violations already present in HEAD. No R05 file or
+package newly crosses a source limit. Workflow source moves 6,089 → 6,746 lines,
+Research runtime 9,739 → 9,885, MCP 7,941 → 8,099, and Core 11,283 → 11,297.
+The retained violations are AI, projection, contracts, platform and Core package
+totals plus Core's `research-session.ts`. Unaccepted C2 adds the other runtime/
+retrieval working-tree violations and is excluded. This is bounded source
+acceptance, not a green repository-wide or emitted/release budget gate; #282
+and the release gates remain open. The limits were not relaxed.
 
 Kuhn's later Go2 Queue analysis was rejected: its SQL referenced columns not
 exposed by the settlement view and undefined aliases, and its proposed current

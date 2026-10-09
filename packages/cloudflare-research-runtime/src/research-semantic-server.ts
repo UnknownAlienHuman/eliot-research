@@ -55,6 +55,7 @@ import { createResearchBranchRoleServerPromptInput } from "./research-branch-rol
 import {
   SERVER_OWNED_BRANCH_HANDLER_GENERATION,
   SERVER_OWNED_EXTERNAL_AGENT_HANDLER_GENERATION,
+  SERVER_OWNED_NATIVE_EXTERNAL_AGENT_HANDLER_GENERATION,
   type ResearchStageHandlerFactory,
   type SemanticResearchHandlerGeneration,
 } from "./research-stage-handlers.js";
@@ -448,10 +449,12 @@ export async function assembleResearchSemanticServerHandlers(
     report: { policy_source: reportSource, report_policy: boundReportPolicy, expected_draft_head_revision: null },
   });
   if (input.handler_generation !== SERVER_OWNED_BRANCH_HANDLER_GENERATION &&
-      input.handler_generation !== SERVER_OWNED_EXTERNAL_AGENT_HANDLER_GENERATION) {
+      input.handler_generation !== SERVER_OWNED_EXTERNAL_AGENT_HANDLER_GENERATION &&
+      input.handler_generation !== SERVER_OWNED_NATIVE_EXTERNAL_AGENT_HANDLER_GENERATION) {
     return input.bind_handlers(base);
   }
-  const sponsored = input.handler_generation === SERVER_OWNED_EXTERNAL_AGENT_HANDLER_GENERATION
+  const sponsored = (input.handler_generation === SERVER_OWNED_EXTERNAL_AGENT_HANDLER_GENERATION ||
+    input.handler_generation === SERVER_OWNED_NATIVE_EXTERNAL_AGENT_HANDLER_GENERATION)
     ? await input.require_client_execution()
     : undefined;
   return input.bind_handlers(input.route_external_agent_stages({

@@ -9,6 +9,9 @@ import {
 } from "./types.js";
 
 export const NATIVE_EXTERNAL_TASK_HANDLER_GENERATION = "research-handlers.exploratory.external-wait.v1";
+export const NATIVE_EXTERNAL_TASK_STEP_NAMES = Object.freeze({
+  prepare: "w2-external-task-08-prepare", wait: "w2-external-task-08-wait", settle: "w2-external-task-08-settle",
+});
 const reference = z.string().min(1).max(256).regex(/^[^\u0000-\u001f\u007f]+$/u);
 const sha256 = z.string().regex(/^[a-f0-9]{64}$/u);
 const preparedShape = {
@@ -56,6 +59,17 @@ function preparation(raw: unknown): WorkflowExternalTaskPreparation {
   } catch { return fail("WORKFLOW_OUTPUT_CORRUPT"); }
 }
 
+function persistedPreparation(raw: unknown): WorkflowExternalTaskPreparation {
+  try {
+    if (typeof raw !== "string" || new TextEncoder().encode(raw).byteLength > MAX_WORKFLOW_RECEIPT_BYTES) {
+      return fail("WORKFLOW_OUTPUT_CORRUPT");
+    }
+    const value = preparation(JSON.parse(raw));
+    if (JSON.stringify(value) !== raw) return fail("WORKFLOW_OUTPUT_CORRUPT");
+    return value;
+  } catch { return fail("WORKFLOW_OUTPUT_CORRUPT"); }
+}
+
 function receipt(raw: unknown, request: StageRequest, requestDigest: string,
   prepared?: Exclude<WorkflowExternalTaskPreparation, { readonly kind: "COMMITTED" }>): StageReceipt {
   const parsed = StageReceiptSchema.safeParse(raw);
@@ -82,8 +96,10 @@ export async function executeNativeExternalTaskStep(input: NativeExternalTaskSte
   }
   const requestDigest = await textDigest(JSON.stringify(request));
   const retries = { limit: 0, delay: 0 };
-  const rawPrepared = await step.do("w2-external-task-08-prepare", { retries }, () => prepare(structuredClone(request), principal));
-  const prepared = preparation(rawPrepared);
+  // Primitive state avoids RPC object disposers becoming wire fields. Validate before and after persistence.
+  const rawPrepared = await step.do(NATIVE_EXTERNAL_TASK_STEP_NAMES.prepare, { retries }, async () =>
+    JSON.stringify(preparation(await prepare(structuredClone(request), principal))));
+  const prepared = persistedPreparation(rawPrepared);
   if (prepared.kind === "COMMITTED") return receipt(prepared.receipt, request, requestDigest);
   if (prepared.operation_id !== request.operation_id || prepared.request_sha256 !== requestDigest ||
       prepared.budget_expires_at_ms > Date.now() + 600_000) return fail("WORKFLOW_OUTPUT_CORRUPT");
@@ -94,7 +110,7 @@ export async function executeNativeExternalTaskStep(input: NativeExternalTaskSte
     let received = false;
     try {
       // Always visit this cached step on resume. A transport wait never extends callback/budget authority.
-      const event = await step.waitForEvent("w2-external-task-08-wait", {
+      const event = await step.waitForEvent(NATIVE_EXTERNAL_TASK_STEP_NAMES.wait, {
         type, timeout: Math.max(1_000, prepared.budget_expires_at_ms - Date.now()),
       });
       payload = event.payload;
@@ -112,7 +128,7 @@ export async function executeNativeExternalTaskStep(input: NativeExternalTaskSte
       expectedResultSha256 = wake.result_digest;
     }
   }
-  const rawReceipt = await step.do("w2-external-task-08-settle", { retries },
+  const rawReceipt = await step.do(NATIVE_EXTERNAL_TASK_STEP_NAMES.settle, { retries },
     () => settle(structuredClone(request), principal, prepared, expectedResultSha256));
   return receipt(rawReceipt, request, requestDigest, prepared);
 }

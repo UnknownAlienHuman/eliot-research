@@ -28,7 +28,7 @@ import {
   type WorkflowPrincipal,
   type WorkflowStageHandler,
 } from "@eliotr/cloudflare-research";
-import { WorkflowCheckpointStore } from "@eliotr/cloudflare-workflows";
+import { WorkflowCheckpointStore, NATIVE_EXTERNAL_TASK_HANDLER_GENERATION } from "@eliotr/cloudflare-workflows";
 import {
   loadHeldResearchScope,
   retrieveWithHeldScope,
@@ -47,6 +47,7 @@ function retrievalProduct(handlerGeneration: string): "FAST_SEARCH" | "RESEARCH"
   return handlerGeneration === SEMANTIC_RETRIEVAL_HANDLER_GENERATION ||
     handlerGeneration === SEMANTIC_PROTOCOL_HANDLER_GENERATION ||
     handlerGeneration === BRANCH_EXECUTION_HANDLER_GENERATION ||
+    handlerGeneration === NATIVE_EXTERNAL_TASK_HANDLER_GENERATION ||
     handlerGeneration === EXTERNAL_AGENT_BRANCH_HANDLER_GENERATION
     ? "RESEARCH" : "FAST_SEARCH";
 }

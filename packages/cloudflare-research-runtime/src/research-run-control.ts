@@ -1,6 +1,7 @@
 import { WorkflowCheckpointError, WorkflowCheckpointStore } from "@eliotr/cloudflare-research";
 import {
   claimWorkflowRecoveryAction,
+  NATIVE_EXTERNAL_TASK_STEP_NAMES,
   ensureWorkflowRecoveryAction,
   settleWorkflowRecoveryAction,
 } from "@eliotr/cloudflare-workflows";
@@ -17,7 +18,7 @@ import { prepareProjectClientRecoverySpend, prepareOwnerMachineRecoverySpend, re
 import { RUN_CONTROL_FENCE_SQL, runControlFenceBindings, requireRunControlSchema, type AuthorizedRunControl } from "./research-run-control-fence.js";
 import { prepareProjectClientRunRead, type ProjectClientRunReadEnvironment } from "./research-client-run-read.js";
 import { prepareProjectClientCancelAction } from "./research-run-cancel-action.js";
-import { isSemanticResearchHandlerGeneration, SERVER_OWNED_EXTERNAL_AGENT_HANDLER_GENERATION } from "./research-stage-handlers.js";
+import { isSemanticResearchHandlerGeneration, SERVER_OWNED_EXTERNAL_AGENT_HANDLER_GENERATION, SERVER_OWNED_NATIVE_EXTERNAL_AGENT_HANDLER_GENERATION } from "./research-stage-handlers.js";
 import { readResearchEngineStatusValue } from "./research-run-failure.js";
 
 export interface ResearchRunControlEnvironment {
@@ -182,7 +183,8 @@ async function latestAuthorizedStatus(
 export function isRecoverableStartedResearchStage(handlerGeneration: string, stage: string): boolean {
   return isSemanticResearchHandlerGeneration(handlerGeneration) &&
     (RECOVERABLE_STARTED_STAGES.has(stage) ||
-      (handlerGeneration === SERVER_OWNED_EXTERNAL_AGENT_HANDLER_GENERATION &&
+      ( (handlerGeneration === SERVER_OWNED_EXTERNAL_AGENT_HANDLER_GENERATION ||
+         handlerGeneration === SERVER_OWNED_NATIVE_EXTERNAL_AGENT_HANDLER_GENERATION) &&
         stage === "ANALYZE_BRANCHES"));
 }
 
@@ -265,7 +267,8 @@ export async function recoverResearchRun(
       try {
         if (action === "RESUME") await instance.resume();
         else if (read.status.current_attempt === null) await instance.restart();
-        else await instance.restart({ from: { name: stepName(read.status.next_stage_index), type: "do" } });
+        else await instance.restart({ from: { name: read.handler_generation === SERVER_OWNED_NATIVE_EXTERNAL_AGENT_HANDLER_GENERATION && read.status.next_stage_index === 8
+          ? NATIVE_EXTERNAL_TASK_STEP_NAMES.prepare : stepName(read.status.next_stage_index), type: "do" } });
       } catch {
         // A lost native ACK is reconciled by status below. Never issue a second
         // resume/restart for the same durable stage action.

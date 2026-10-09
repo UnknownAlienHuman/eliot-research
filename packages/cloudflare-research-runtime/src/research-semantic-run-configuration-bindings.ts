@@ -155,12 +155,29 @@ export function bindHandlersToRunConfiguration(
       return handler(call);
     };
   };
-  if (recoverStartedAttempt === undefined) return Object.assign(wrapped, { native });
+  const external = handlers.external_task;
+  const externalTask = external === undefined ? {} : { external_task: Object.freeze({
+    async prepare_task(call: Parameters<typeof external.prepare_task>[0]) {
+      if (call.request.operation_id !== actor.operation_id || call.request.investigation_ref.id !== actor.investigation_id ||
+          call.principal.principal_ref !== actor.principal_ref ||
+          call.principal.deployment_generation !== actor.deployment_generation) fail("WORKFLOW_AUTHORITY_STALE");
+      await revalidate();
+      return external.prepare_task(call);
+    },
+    async read_recorded_result(call: Parameters<typeof external.read_recorded_result>[0], expectedDigest?: string) {
+      if (call.request.operation_id !== actor.operation_id || call.request.investigation_ref.id !== actor.investigation_id ||
+          call.principal_ref !== actor.principal_ref ||
+          call.deployment_generation !== actor.deployment_generation) fail("WORKFLOW_AUTHORITY_STALE");
+      await revalidate();
+      return external.read_recorded_result(call, expectedDigest);
+    },
+  }) };
+  if (recoverStartedAttempt === undefined) return Object.assign(wrapped, { native, ...externalTask });
   const recovery: WorkflowStartedAttemptRecovery = async (call) => {
     if (call.request.operation_id !== actor.operation_id || call.principal_ref !== actor.principal_ref ||
         call.deployment_generation !== actor.deployment_generation) fail("WORKFLOW_AUTHORITY_STALE");
     await revalidate();
     return recoverStartedAttempt(call);
   };
-  return Object.assign(wrapped, { native, recoverStartedAttempt: recovery });
+  return Object.assign(wrapped, { native, ...externalTask, recoverStartedAttempt: recovery });
 }

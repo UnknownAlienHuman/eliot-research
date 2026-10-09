@@ -10,6 +10,7 @@ import {
   createResearchExternalBranchAnalysisHandlers,
   fail,
   type WorkflowStartedAttemptRecovery,
+  readWorkflowObject,
 } from "@eliotr/cloudflare-research";
 import type { AiSearchNamespaceLike } from "@eliotr/platform-cloudflare";
 import type { InvestigationLedgerStore } from "@eliotr/research";
@@ -18,6 +19,7 @@ import { createEvidenceFreezeWorkflowReaders } from "./research-evidence-freeze-
 import {
   SERVER_OWNED_BRANCH_HANDLER_GENERATION,
   SERVER_OWNED_EXTERNAL_AGENT_HANDLER_GENERATION,
+  SERVER_OWNED_NATIVE_EXTERNAL_AGENT_HANDLER_GENERATION,
   type ResearchStageHandlerFactory,
 } from "./research-stage-handlers.js";
 
@@ -45,9 +47,14 @@ export interface ResearchExternalAgentRoutingInputV1 {
   ) => Promise<void>;
 }
 
+function externalGeneration(value: string): boolean {
+  return value === SERVER_OWNED_EXTERNAL_AGENT_HANDLER_GENERATION ||
+    value === SERVER_OWNED_NATIVE_EXTERNAL_AGENT_HANDLER_GENERATION;
+}
+
 function selectedGeneration(value: string): boolean {
   return value === SERVER_OWNED_BRANCH_HANDLER_GENERATION ||
-    value === SERVER_OWNED_EXTERNAL_AGENT_HANDLER_GENERATION;
+    externalGeneration(value);
 }
 
 /**
@@ -86,7 +93,7 @@ export function routeResearchComputerAgentStages(
   };
   const branches = createResearchBranchExecutionHandlers(branchDependencies);
   let external: ReturnType<typeof createResearchExternalBranchAnalysisHandlers> | undefined;
-  if (input.generation === SERVER_OWNED_EXTERNAL_AGENT_HANDLER_GENERATION) {
+  if (externalGeneration(input.generation)) {
     const grant = input.grant;
     if (grant === undefined || grant.grantee.subject !== input.navigation.access.principal_ref ||
         grant.revision < 1 || grant.state !== "ACTIVE" || !grant.allowed_operations.includes("run") ||
@@ -116,6 +123,7 @@ export function routeResearchComputerAgentStages(
   const factory = ((stage) => {
     if (stage === "READ_AND_EXTRACT") return branches.read_and_extract;
     if (stage === "ANALYZE_BRANCHES") {
+      if (input.generation === SERVER_OWNED_NATIVE_EXTERNAL_AGENT_HANDLER_GENERATION) return async () => fail("WORKFLOW_CONFIGURATION_MISSING");
       return input.generation === SERVER_OWNED_EXTERNAL_AGENT_HANDLER_GENERATION
         ? external?.handler ?? (async () => fail("WORKFLOW_AUTHORITY_STALE"))
         : branches.analyze_branches;
@@ -124,8 +132,32 @@ export function routeResearchComputerAgentStages(
     return input.base(stage);
   }) as ResearchStageHandlerFactory;
 
+  const readRecordedResult = async (attempt: Parameters<WorkflowStartedAttemptRecovery>[0], expectedDigest?: string) => {
+    if (attempt.request.handler_generation !== input.generation || attempt.request.stage !== "ANALYZE_BRANCHES") {
+      return fail("WORKFLOW_AUTHORITY_STALE");
+    }
+    if (external === undefined) return fail("WORKFLOW_CONFIGURATION_MISSING");
+    const bytes = await readWorkflowObject(input.bindings.work_bucket, attempt.request.input_manifest, true);
+    return external.readRecordedResult({
+      request: attempt.request,
+      principal: { principal_ref: attempt.principal_ref, credential_generation: attempt.credential_generation,
+        deployment_generation: attempt.deployment_generation },
+      input_bytes: bytes, attempt_ref: attempt.attempt_ref, request_sha256: attempt.request_sha256,
+    }, expectedDigest);
+  };
+  Object.defineProperty(factory, "native", { value: input.base.native, enumerable: true });
+  if (input.generation === SERVER_OWNED_NATIVE_EXTERNAL_AGENT_HANDLER_GENERATION) {
+    if (external === undefined) return fail("WORKFLOW_CONFIGURATION_MISSING");
+    Object.defineProperty(factory, "external_task", {
+      value: Object.freeze({ prepare_task: external.prepareTask, read_recorded_result: readRecordedResult }),
+      enumerable: true,
+    });
+  }
+
   const recoverStartedAttempt: WorkflowStartedAttemptRecovery = async (attempt) => {
     if (attempt.request.handler_generation !== input.generation) return null;
+    if (attempt.request.stage === "ANALYZE_BRANCHES" &&
+        input.generation === SERVER_OWNED_NATIVE_EXTERNAL_AGENT_HANDLER_GENERATION) return readRecordedResult(attempt);
     if (attempt.request.stage === "ANALYZE_BRANCHES" &&
         input.generation === SERVER_OWNED_EXTERNAL_AGENT_HANDLER_GENERATION) {
       return external?.recoverStartedAttempt(attempt) ?? null;
