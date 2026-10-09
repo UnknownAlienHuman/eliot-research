@@ -303,6 +303,12 @@ verdict is claimed. Local JWKS/network, owner/policy/scope/project/predecessor/
 stage-five/budget/configuration fixtures and private Workflow entrypoint remain
 limits. Production-selected full scientific/COMPUTER dispatch/native/live/release,
 implementation-status promotion, #326 and the Goal remain open.
+Three further distinct admitted/public-HTTP/native event negatives pass once
+each: foreign attempt and unknown locator field fail before settlement/read;
+valid locator before canonical result performs one read and remains uncertain.
+Original STARTED attempt, stage 8/revision 9 and zero checkpoints are retained.
+The detailed qualification record and private event completion proof own the
+remaining limits; earlier passing cases and fixture bytes are unchanged.
 
 The same continuation archives two directly verified malformed loose probe files
 from the Research root (891 bytes) into the private checkpoint directory with

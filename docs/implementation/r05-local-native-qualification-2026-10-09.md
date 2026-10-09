@@ -350,6 +350,29 @@ it executed no Workflow/result/Queue/scientific path. The completion proof recor
 this correction without rewriting the raw receipt. The separate public-denial
 receipt uses a narrow scope matching its execution.
 
+## Native locator negatives after public admission
+
+Three separate added-only cases reuse the passing public-admission fixture without
+changing or repeating its earlier cases. A private native subclass records the
+typed terminal error and rethrows; the original product helper/ports own behavior.
+The private event-type reader calls the existing `externalTaskWakeEventType`.
+
+| Added event | Bounded result |
+|---|---|
+| Correct native event type, foreign attempt in locator | PASS: `WORKFLOW_OUTPUT_CORRUPT` before settlement or canonical result read. |
+| Locator with an unknown authority field | PASS: `WORKFLOW_OUTPUT_CORRUPT` before settlement or canonical result read. |
+| Valid locator before a canonical result exists | PASS: exactly one canonical read and `WORKFLOW_EFFECT_UNCERTAIN`; no result authority or scientific consumption. |
+
+Each case retains stage 8/revision 9, one original `STARTED` attempt, one published
+task with null result digest, and zero Stage-8 checkpoints. No Queue result was
+delivered in these cases. All three passed on their first run; loaded input hashes
+and the retained passing runner read back exactly. Receipts are
+`native-http-admitted-events-{foreign-attempt,malformed-locator,event-before-result}-receipt-20261009.json`;
+`native-http-admitted-events-completion-proof-20261009.json` records their scope.
+The same local owner/policy/JWKS/scope/stage-five/predecessor/budget/configuration
+and private Workflow entrypoint limits apply. These negative results do not close
+lost/duplicate/late ACK, full product Workflow, selected native/live or release gates.
+
 ## ResearchSession HTTP extraction — bounded regression result
 
 The existing `project`, `start`, `read`, `execute` and `cancel` handlers now live in

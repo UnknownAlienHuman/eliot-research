@@ -170,6 +170,10 @@ Workflow entrypoint still bound acceptance; production Access/ingress, full
 scientific/COMPUTER dispatch/native/live/release remain open. The new private
 graph has esbuild/runtime acceptance, not a new semantic TypeScript verdict.
 See the same qualification record and private admitted-evidence completion proof.
+Three later public-admission/native negatives also pass: foreign attempt and
+unknown locator field fail before settlement; event before canonical result
+performs one read and remains uncertain. Each retains the original STARTED
+attempt, stage 8/revision 9 and zero checkpoints; full selected acceptance stays open.
 
 The bounded ResearchSession HTTP extraction preserves all five existing handler
 bodies, six helpers and retained DO members; persistence remains private through

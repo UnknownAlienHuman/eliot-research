@@ -207,6 +207,11 @@ were not repeated. Local JWKS/policy/scope/stage-five/budget/configuration and t
 private Workflow entrypoint retain the same full scientific/COMPUTER dispatch/
 production/native/live/release limits. New semantic TypeScript qualification is
 pending; see the detailed qualification record for receipts and preserved failures.
+Three additional admitted/public-HTTP/native event negatives pass at that scope:
+foreign attempt and unknown locator field fail before settlement, while a valid
+event without canonical result performs one read and remains uncertain. All
+retain the original STARTED attempt and no Stage-8 checkpoint; no Queue/result
+or selected full-product/live acceptance is inferred.
 
 The separate ResearchSession HTTP extraction retains the existing native-waiting
 projection and bootstrap behavior. Owning compilation, exact lint, AST preservation
