@@ -18,7 +18,7 @@ export interface ResearchEngineObservation {
 export interface ResearchEngineObservationPorts {
   readonly get_workflow: (operationId: string) => Promise<WorkflowInstance>;
 }
-function readResearchEngineStatusValue(value: unknown): ResearchEngineStatus {
+export function readResearchEngineStatusValue(value: unknown): ResearchEngineStatus {
   return typeof value === "string" && RESEARCH_ENGINE_STATUSES.has(value as ResearchEngineStatus) ? value as ResearchEngineStatus : "unknown";
 }
 function readResearchNativeFailure(value: unknown): {

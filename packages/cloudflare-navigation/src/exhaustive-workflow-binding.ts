@@ -33,7 +33,7 @@ interface WorkflowInstance {
   terminate(options?: { readonly rollback?: boolean }): Promise<void>;
 }
 interface WorkflowStatus {
-  readonly status: WorkflowStatusName;
+  readonly status: unknown;
   readonly output?: unknown;
   readonly error?: { readonly name: string; readonly message: string };
 }
@@ -73,6 +73,12 @@ function failWorkflow(message: string, status = 503, retryable = true): never {
   throw new ExhaustiveWorkflowBindingError("RESEARCH_WORKFLOW_UNAVAILABLE", message, status, retryable);
 }
 
+function readWorkflowStatusName(value: unknown): WorkflowStatusName {
+  const status = [...WORKFLOW_STATUSES].find((candidate) => candidate === value);
+  if (status === undefined) failWorkflow("exhaustive Workflow status is invalid");
+  return status;
+}
+
 function workflowId(value: unknown): string {
   if (typeof value !== "string" || !/^exhaustive-workflow-[a-f0-9]{64}$/u.test(value)) {
     throw new ExhaustiveWorkflowBindingError("RESEARCH_INPUT_INVALID", "workflow id is invalid", 400, false);
@@ -102,7 +108,8 @@ async function envelope(
   validateCurrentJob?: (jobId: string, context: AuthenticatedRequestContext) => Promise<void>,
   validateCurrentWorkflowJob?: (jobId: string, context: AuthenticatedRequestContext) => Promise<void>,
 ): Promise<ExhaustiveWorkflowResult> {
-  let result = status.status === "complete"
+  const workflowStatus = readWorkflowStatusName(status.status);
+  let result = workflowStatus === "complete"
     ? await validateExhaustiveWorkflowOutput(database, binding, context, status.output)
     : null;
   if (result !== null) {
@@ -110,13 +117,13 @@ async function envelope(
     if (result.job.status === "COMPLETE") await validateCurrentJob?.(binding.job_id, context);
     result = await validateExhaustiveWorkflowOutput(database, binding, context, status.output);
     if (result === null) {
-      return { protocol: "eliotr.exhaustive-query.v1", workflow_instance_id: instanceId, workflow_status: status.status };
+      return { protocol: "eliotr.exhaustive-query.v1", workflow_instance_id: instanceId, workflow_status: workflowStatus };
     }
   }
   return {
     protocol: "eliotr.exhaustive-query.v1",
     workflow_instance_id: instanceId,
-    workflow_status: status.status,
+    workflow_status: workflowStatus,
     ...(result === null ? {} : { job: result.job }),
   };
 }
@@ -438,8 +445,7 @@ export function createExhaustiveWorkflowBinding<T>(input: ExhaustiveWorkflowBind
           // expose only the binding/status metadata and omit job fields honestly.
           if (row.job_state !== null) await input.validateCurrentWorkflowJob?.(row.job_id, context);
           const instance = await workflow.get(row.workflow_id);
-          const workflowStatus = await instance.status();
-          if (!WORKFLOW_STATUSES.has(workflowStatus.status)) failWorkflow("exhaustive Workflow status is invalid");
+          const workflowStatus = readWorkflowStatusName((await instance.status()).status);
           const finalJob = await readCurrentWorkflowJobMetadata(input.database, row.job_id);
           if (finalJob === null) {
             if (row.job_state !== null) continue;
@@ -450,13 +456,13 @@ export function createExhaustiveWorkflowBinding<T>(input: ExhaustiveWorkflowBind
           await requireActiveOwnerPolicy(input.database, context);
           items.push({
             workflow_instance_id: row.workflow_id,
-            workflow_status: workflowStatus.status,
+            workflow_status: workflowStatus,
             binding_state: finalBinding.state,
             created_at: row.created_at,
             ...(finalJob === null ? {} : { job_state: finalJob.state, expires_at: finalJob.expires_at }),
-            recoverable: isRecoverable(workflowStatus.status) &&
+            recoverable: isRecoverable(workflowStatus) &&
               (finalJob === null || finalJob.state === "PENDING") && finalBinding.state === "BOUND",
-            cancelable: isRecoverable(workflowStatus.status) && finalBinding.state === "BOUND",
+            cancelable: isRecoverable(workflowStatus) && finalBinding.state === "BOUND",
           });
         } catch (error) {
           if (isStaleWorkflowRow(error)) continue;
@@ -491,7 +497,8 @@ export function createExhaustiveWorkflowBinding<T>(input: ExhaustiveWorkflowBind
       try { instance = await workflow.get(id); }
       catch { failWorkflow("exhaustive Workflow status is unavailable"); }
       const before = await instance.status();
-      if (before.status === "complete" || before.status === "terminated" || before.status === "errored") {
+      const beforeStatus = readWorkflowStatusName(before.status);
+      if (beforeStatus === "complete" || beforeStatus === "terminated" || beforeStatus === "errored") {
         return envelope(input.database, binding, id, before, context, input.validateCurrentJob, input.validateCurrentWorkflowJob);
       }
       await input.database.prepare("UPDATE retrieval_exhaustive_workflow SET state='CANCEL_REQUESTED' WHERE workflow_id=?1 AND state='BOUND'")

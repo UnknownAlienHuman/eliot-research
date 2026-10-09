@@ -11,11 +11,18 @@ import {
   type WorkflowRunStatus,
 } from "@eliotr/cloudflare-workflows";
 import { readNativeStepWorkflowFailure } from "./research-workflow-application.js";
-import { readResearchEngineStatus, researchRunFailure } from "./research-run-failure.js";
+import { readResearchEngineStatus, readResearchEngineStatusValue, researchRunFailure } from "./research-run-failure.js";
 import {
   createResearchSemanticComposition,
   type ResearchSemanticCompositionDependencies,
 } from "./research-semantic-composition.js";
+
+describe("native Workflow status normalization", () => {
+  it("keeps rollingBack outside the public enum and normalizes it to unknown", () => {
+    expect(readResearchEngineStatusValue("rollingBack")).toBe("unknown");
+    expect(readResearchEngineStatusValue("complete")).toBe("complete");
+  });
+});
 
 function semanticCompositionInput(): ResearchSemanticCompositionDependencies {
   const stage = () => ({

@@ -18,6 +18,7 @@ import { RUN_CONTROL_FENCE_SQL, runControlFenceBindings, requireRunControlSchema
 import { prepareProjectClientRunRead, type ProjectClientRunReadEnvironment } from "./research-client-run-read.js";
 import { prepareProjectClientCancelAction } from "./research-run-cancel-action.js";
 import { isSemanticResearchHandlerGeneration, SERVER_OWNED_EXTERNAL_AGENT_HANDLER_GENERATION } from "./research-stage-handlers.js";
+import { readResearchEngineStatusValue } from "./research-run-failure.js";
 
 export interface ResearchRunControlEnvironment {
   readonly database: D1Database;
@@ -161,7 +162,7 @@ function stepName(index: number): string {
 }
 
 function nativeState(value: Awaited<ReturnType<WorkflowInstance["status"]>>): ResearchEngineStatus {
-  return value.status;
+  return readResearchEngineStatusValue(value.status);
 }
 
 async function latestAuthorizedStatus(
