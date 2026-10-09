@@ -2,6 +2,7 @@ import {
   LocatorCandidateSchema,
   type LocatorCandidate,
 } from "@eliotr/contracts";
+import { utf8Length } from "../utf8-length.js";
 
 export interface LocatorDecodeLimits {
   readonly max_results: number;
@@ -24,10 +25,6 @@ function record(value: unknown, label: string): Record<string, unknown> {
     throw new LocatorDecodeError(`${label} must be an object`);
   }
   return value as Record<string, unknown>;
-}
-
-function utf8Length(value: string): number {
-  return new TextEncoder().encode(value).byteLength;
 }
 
 const forbiddenAuthorityFields = new Set([

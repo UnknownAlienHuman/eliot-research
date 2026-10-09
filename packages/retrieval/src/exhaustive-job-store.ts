@@ -1,6 +1,7 @@
 import type { ScopeSnapshot } from "@eliotr/contracts";
 import { mergeExhaustiveShards, type ExactScanPlan, type ExhaustiveShardOutcome } from "./exhaustive.js";
 import { canonicalRetrievalJson, type RetrievalQueryAccess, type RetrievalQueryD1 } from "./query-persistence.js";
+import { sha256HexText as sha256Hex } from "./digest.js";
 import { RetrievalQueryError, type RetrievalQueryErrorCode } from "./service.js";
 
 function failJob(code: RetrievalQueryErrorCode, message: string, retryable = false): never {
@@ -17,14 +18,6 @@ function mapJobStoreError(error: unknown): never {
     failJob("RETRIEVAL_IDEMPOTENCY_CONFLICT", "idempotency identity is bound to different inputs");
   }
   failJob("RETRIEVAL_RESOLUTION_UNCERTAIN", "exhaustive job settlement is uncertain", true);
-}
-
-async function sha256Hex(text: string): Promise<string> {
-  const bytes = new TextEncoder().encode(text);
-  const copy = new ArrayBuffer(bytes.byteLength);
-  new Uint8Array(copy).set(bytes);
-  const digest = await crypto.subtle.digest("SHA-256", copy);
-  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
 function checkJobAccess(access: RetrievalQueryAccess): void {

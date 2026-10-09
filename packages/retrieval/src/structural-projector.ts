@@ -5,6 +5,8 @@ import {
   type SourceRevision,
 } from "@eliotr/contracts";
 import { MAX_MAP_OBJECTS_PER_FIELD } from "./navigation-limits.js";
+import { sha256HexText as sha256 } from "./digest.js";
+import { utf8Length } from "./utf8-length.js";
 
 const DEFAULT_TARGET_BYTES = 32 * 1024;
 const DEFAULT_MAX_BYTES = 64 * 1024;
@@ -69,10 +71,6 @@ function fail(code: StructuralProjectionErrorCode, message: string): never {
   throw new StructuralProjectionError(code, message);
 }
 
-function utf8Length(value: string): number {
-  return new TextEncoder().encode(value).byteLength;
-}
-
 /** Count UTF-8 bytes without allocating an encoded copy, stopping at the bound. */
 function boundedUtf8Length(value: string, limit: number): number {
   if (value.length > limit) return limit + 1;
@@ -92,16 +90,6 @@ function boundedUtf8Length(value: string, limit: number): number {
     if (width === 4) index += 1;
   }
   return bytes;
-}
-
-function hex(input: ArrayBuffer): string {
-  return [...new Uint8Array(input)]
-    .map((value) => value.toString(16).padStart(2, "0"))
-    .join("");
-}
-
-async function sha256(value: string): Promise<string> {
-  return hex(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value)));
 }
 
 function assertIdentifier(value: string, label: string): void {

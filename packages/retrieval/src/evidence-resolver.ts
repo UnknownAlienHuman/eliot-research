@@ -9,6 +9,7 @@ import {
   type VersionedRef,
 } from "@eliotr/contracts";
 import { validateEvidenceResolution } from "@eliotr/domain";
+import { sha256HexBytes } from "./digest.js";
 
 export interface EvidenceResolutionContext {
   readonly principal_ref: string;
@@ -222,16 +223,6 @@ function decodeFatal(bytes: Uint8Array, label: string): string {
   } catch {
     failExact("EXACT_RANGE_INVALID", `${label} cuts through UTF-8 boundaries`);
   }
-}
-
-function hexOf(bytes: Uint8Array): string {
-  return [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
-}
-
-async function sha256HexBytes(bytes: Uint8Array): Promise<string> {
-  const copy = new ArrayBuffer(bytes.byteLength);
-  new Uint8Array(copy).set(bytes);
-  return hexOf(new Uint8Array(await crypto.subtle.digest("SHA-256", copy)));
 }
 
 function requireByteRange(start: number, end: number, objectSize: number): { start: number; end: number } {

@@ -2,6 +2,7 @@
 import type { ScopeSnapshot } from "@eliotr/contracts";
 import { mergeExhaustiveShards, type ExactScanPlan, type ExactScanShard, type ExhaustiveSectionDescriptor, type ExhaustiveShardOutcome } from "./exhaustive.js";
 import { canonicalRetrievalJson } from "./query-persistence.js";
+import { sha256HexText as sha256Hex } from "./digest.js";
 import type { ExhaustiveJobReceipt, ExhaustiveJobStore } from "./exhaustive-job-store.js";
 
 export { createD1ExhaustiveJobStore, exhaustiveJobId, readExhaustiveJobCoverage } from "./exhaustive-job-store.js";
@@ -98,7 +99,7 @@ export async function exhaustiveRequestDigest(input: {
   /** Bind every authority tuple, not only the non-cryptographic plan label. */
   readonly inventory?: readonly ExhaustiveSectionDescriptor[];
 }): Promise<string> {
-  const bytes = new TextEncoder().encode(canonicalRetrievalJson({
+  return sha256Hex(canonicalRetrievalJson({
     plan_id: input.plan_id,
     scope_digest: input.scope_digest,
     probes: [...input.probes],
@@ -116,6 +117,4 @@ export async function exhaustiveRequestDigest(input: {
       })),
     }),
   }));
-  const digest = await crypto.subtle.digest("SHA-256", bytes);
-  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }

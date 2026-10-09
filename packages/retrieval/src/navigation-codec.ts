@@ -40,6 +40,10 @@ import {
   type NavigationSection,
   type SectionEvidenceHandleRequest,
 } from "./navigation-model.js";
+import { sha256HexText } from "./digest.js";
+import { utf8Length } from "./utf8-length.js";
+
+export { utf8Length };
 
 type JsonValue = null | boolean | string | number | readonly JsonValue[] | JsonRecord;
 interface JsonRecord { readonly [key: string]: JsonValue; }
@@ -50,10 +54,6 @@ export function fail(code: NavigationErrorCode, message: string): never {
 
 export function compareText(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
-}
-
-export function utf8Length(value: string): number {
-  return new TextEncoder().encode(value).byteLength;
 }
 
 export function sameArray(left: readonly string[], right: readonly string[]): boolean {
@@ -138,8 +138,7 @@ export function requireCanonicalSize(value: unknown): void {
 }
 
 export async function sha256Hex(value: string): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
-  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  return sha256HexText(value);
 }
 
 function assertNoEvidenceAuthority(value: unknown, depth = 0, counter = { nodes: 0 }): void {
