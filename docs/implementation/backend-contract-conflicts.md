@@ -30,3 +30,14 @@ Until that review, this acceptance criterion is deferred. Other retrieval, Sessi
 ## C2 — READ_AND_EXTRACT proposal call cardinality
 
 Status: **OWNER_DECISION_PENDING** before activation. The concrete contract and stage-7 admission mismatch, normative sources and possible cutovers are recorded in [read-extract-proposal-cutover.md](read-extract-proposal-cutover.md). The existing deterministic direct plan continues without invented model calls, profiles or budgets; preparatory source work remains independent.
+
+## C3 — Selected Workflow conversion request
+
+Status: **INPUT_PENDING**, rather than a choice between contradictory policies.
+Native acquisition selection does not carry the separate converter's output,
+token and timeout bounds/options. The inspected Workflow has no documented
+producer of that selected request. The concrete missing inputs, reusable
+authority/policy seams and explicit subsequent scope cutover are recorded in
+[workflow-conversion-admission-cutover.md](workflow-conversion-admission-cutover.md).
+Automatic conversion is deferred; current-authority and admission infrastructure
+work continues independently.
