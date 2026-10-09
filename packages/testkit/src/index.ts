@@ -4,3 +4,4 @@ export * from "./digest.js";
 export * from "./golden.js";
 export * from "./fakes.js";
 export * from "./failure-injection.js";
+export * from "./golden-v2.js";

@@ -70,8 +70,10 @@ describe("Golden Corpus gates", () => {
       passed: false,
       observed_atoms: [],
       observed_forbidden_collapses: ["recommendation-to-decision"],
+      observed_unknowns: [],
       resolved_handle_refs: [],
       coverage_kind: "complete_scope",
+      failures: ["FORBIDDEN_COLLAPSE:case-1:recommendation-to-decision"],
       diagnostics_ref: "diag-1",
     }])).toThrow("GOLDEN_PROMOTION_BLOCKED");
   });
@@ -86,6 +88,7 @@ describe("Golden Corpus gates", () => {
       atoms: [],
       forbidden: collapsed[0]?.observed_forbidden_collapses ?? [],
       handles: [],
+      unknowns: [],
       coverage: collapsed[0]?.coverage_kind ?? "sampled",
     });
     expect(verdict.passed).toBe(false);
@@ -103,6 +106,7 @@ describe("Golden Corpus gates", () => {
         { id: "handle-gc001-decision", revision: 1 },
         { id: "handle-gc001-recommendation", revision: 1 },
       ],
+      unknowns: [],
       coverage: "complete_scope",
     });
     expect(verdict).toEqual({ passed: true, failures: [] });
@@ -116,12 +120,53 @@ describe("Golden Corpus gates", () => {
             { id: "handle-gc001-decision", revision: 1 },
             { id: "handle-gc001-recommendation", revision: 1 },
           ],
+          unknowns: [],
           coverage: "complete_scope",
         }],
       ]),
     );
     expect(results[0]?.passed).toBe(true);
     expect(() => assertGoldenPromotionGate(results)).not.toThrow();
+  });
+
+  it("bounds and adjudicates unknown observation containers before retaining values", () => {
+    const faithful = adjudicateGoldenCase(recommendationCase, {
+      atoms: [...recommendationCase.required_atoms],
+      forbidden: [],
+      handles: [...recommendationCase.required_evidence_handle_refs],
+      unknowns: [...recommendationCase.acceptable_unknowns],
+      coverage: "complete_scope",
+    });
+    expect(faithful).toEqual({ passed: true, failures: [] });
+
+    const unexpected = adjudicateGoldenCase(recommendationCase, {
+      atoms: [...recommendationCase.required_atoms],
+      forbidden: [],
+      handles: [...recommendationCase.required_evidence_handle_refs],
+      unknowns: ["not declared"],
+      coverage: "complete_scope",
+    });
+    expect(unexpected.failures).toContain("UNEXPECTED_UNKNOWN:GC-001-recommendation-vs-decision:not declared");
+
+    const malformed = evaluateGoldenRun([recommendationCase], new Map([[recommendationCase.case_id, {
+      atoms: [],
+      forbidden: [],
+      handles: [],
+      unknowns: "not-an-array" as unknown as readonly string[],
+      coverage: "sampled",
+    }]]));
+    expect(malformed[0]?.failures).toContain("MALFORMED_UNKNOWN_CONTAINER:GC-001-recommendation-vs-decision");
+    expect(malformed[0]?.observed_unknowns).toEqual([]);
+
+    const oversized = evaluateGoldenRun([recommendationCase], new Map([[recommendationCase.case_id, {
+      atoms: [],
+      forbidden: [],
+      handles: [],
+      unknowns: Array.from({ length: 33 }, (_, index) => `unknown-${String(index)}`),
+      coverage: "sampled",
+    }]]));
+    expect(oversized[0]?.failures).toContain("OVERSIZED_UNKNOWN_CONTAINER:GC-001-recommendation-vs-decision:33");
+    expect(oversized[0]?.observed_unknowns).toEqual([]);
   });
 
   it("rejects malformed, empty, and oversized cases", () => {

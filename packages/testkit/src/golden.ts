@@ -30,13 +30,24 @@ export interface GoldenCase {
   readonly adjudication_notes: string;
 }
 
+type GoldenCaseAdjudicationRequirements = Pick<GoldenCase,
+  | "case_id"
+  | "required_atoms"
+  | "forbidden_collapses"
+  | "required_evidence_handle_refs"
+  | "acceptable_unknowns"
+  | "coverage_requirement"
+>;
+
 export interface GoldenRunResult {
   readonly case_id: string;
   readonly passed: boolean;
   readonly observed_atoms: readonly string[];
   readonly observed_forbidden_collapses: readonly string[];
+  readonly observed_unknowns: readonly string[];
   readonly resolved_handle_refs: readonly VersionedRef[];
   readonly coverage_kind: string;
+  readonly failures: readonly string[];
   readonly diagnostics_ref: string;
 }
 
@@ -222,7 +233,13 @@ export function parseGoldenCase(raw: unknown): GoldenCase {
   for (const entry of handlesRaw) {
     handles.push(parseVersionedRef(entry, `handle:${caseId}`));
   }
-  const unknowns = parseStringArray(raw["acceptable_unknowns"], "acceptable_unknowns", 0, MAX_GOLDEN_ATOMS, MAX_GOLDEN_ATOM_CHARS, true);
+  const unknowns = parseStringArray(raw["acceptable_unknowns"], "acceptable_unknowns", 0, MAX_GOLDEN_ATOMS, MAX_GOLDEN_ATOM_CHARS, false);
+  if (unknowns.some((entry) => entry.trim().length === 0)) {
+    throw new Error("EMPTY_CASE_FIELD:acceptable_unknowns:empty item");
+  }
+  if (new Set(unknowns).size !== unknowns.length) {
+    throw new Error(`DUPLICATE_CASE_FIELD:acceptable_unknowns:${caseId}`);
+  }
   const coverage = asString(raw["coverage_requirement"]);
   if (coverage === null || !(COVERAGE_LEVELS as readonly string[]).includes(coverage)) {
     throw new Error(`MALFORMED_CASE:coverage_requirement:${caseId}`);
@@ -305,6 +322,7 @@ export interface ObservedExtraction {
   readonly atoms: readonly string[];
   readonly forbidden: readonly string[];
   readonly handles: readonly VersionedRef[];
+  readonly unknowns: readonly string[];
   readonly coverage: string;
 }
 
@@ -319,10 +337,67 @@ function coverageRank(kind: string): number {
   return -1;
 }
 
-export function adjudicateGoldenCase(
-  golden: GoldenCase,
+interface ObservedUnknownAdjudication {
+  readonly values: readonly string[];
+  readonly failures: readonly string[];
+}
+
+function adjudicateObservedUnknowns(
+  golden: GoldenCaseAdjudicationRequirements,
+  rawUnknowns: unknown,
+): ObservedUnknownAdjudication {
+  if (!Array.isArray(rawUnknowns)) {
+    return {
+      values: [],
+      failures: [`MALFORMED_UNKNOWN_CONTAINER:${golden.case_id}`],
+    };
+  }
+  if (rawUnknowns.length > MAX_GOLDEN_ATOMS) {
+    return {
+      values: [],
+      failures: [
+        `OVERSIZED_UNKNOWN_CONTAINER:${golden.case_id}:${String(rawUnknowns.length)}`,
+      ],
+    };
+  }
+
+  const acceptable = new Set(golden.acceptable_unknowns);
+  const seen = new Set<string>();
+  const values: string[] = [];
+  const failures: string[] = [];
+  for (let index = 0; index < rawUnknowns.length; index += 1) {
+    const unknown: unknown = rawUnknowns[index];
+    if (
+      typeof unknown !== "string" ||
+      unknown.trim().length === 0 ||
+      unknown.length > MAX_GOLDEN_ATOM_CHARS
+    ) {
+      failures.push(`MALFORMED_UNKNOWN:${golden.case_id}:${String(index)}`);
+      continue;
+    }
+    values.push(unknown);
+    if (seen.has(unknown)) {
+      failures.push(`DUPLICATE_UNKNOWN:${golden.case_id}:${unknown}`);
+      continue;
+    }
+    seen.add(unknown);
+    if (!acceptable.has(unknown)) {
+      failures.push(`UNEXPECTED_UNKNOWN:${golden.case_id}:${unknown}`);
+    }
+  }
+  return { values, failures };
+}
+
+interface InternalGoldenVerdict {
+  readonly passed: boolean;
+  readonly failures: readonly string[];
+  readonly observed_unknowns: readonly string[];
+}
+
+function adjudicateGoldenCaseInternal(
+  golden: GoldenCaseAdjudicationRequirements,
   observed: ObservedExtraction,
-): { readonly passed: boolean; readonly failures: readonly string[] } {
+): InternalGoldenVerdict {
   const failures: string[] = [];
   const observedAtoms = new Set(observed.atoms);
   for (const atom of golden.required_atoms) {
@@ -345,6 +420,11 @@ export function adjudicateGoldenCase(
       failures.push(`MISSING_HANDLE:${golden.case_id}:${handleKey(required)}`);
     }
   }
+  const unknowns = adjudicateObservedUnknowns(
+    golden,
+    (observed as { readonly unknowns?: unknown }).unknowns,
+  );
+  failures.push(...unknowns.failures);
   const requiredRank = coverageRank(golden.coverage_requirement);
   const observedRank = coverageRank(observed.coverage);
   if (observedRank < 0) {
@@ -357,7 +437,19 @@ export function adjudicateGoldenCase(
       failures.push(`COVERAGE_INSUFFICIENT:${golden.case_id}:complete_scope required`);
     }
   }
-  return { passed: failures.length === 0, failures };
+  return {
+    passed: failures.length === 0,
+    failures,
+    observed_unknowns: unknowns.values,
+  };
+}
+
+export function adjudicateGoldenCase(
+  golden: GoldenCaseAdjudicationRequirements,
+  observed: ObservedExtraction,
+): { readonly passed: boolean; readonly failures: readonly string[] } {
+  const verdict = adjudicateGoldenCaseInternal(golden, observed);
+  return { passed: verdict.passed, failures: verdict.failures };
 }
 
 export function evaluateGoldenRun(
@@ -372,34 +464,50 @@ export function evaluateGoldenRun(
         passed: false,
         observed_atoms: [],
         observed_forbidden_collapses: [],
+        observed_unknowns: [],
         resolved_handle_refs: [],
         coverage_kind: "none",
+        failures: [`MISSING_OBSERVATION:${golden.case_id}`],
         diagnostics_ref: `missing-observation-${golden.case_id}`,
       };
     }
-    const verdict = adjudicateGoldenCase(golden, observed);
+    const verdict = adjudicateGoldenCaseInternal(golden, observed);
     return {
       case_id: golden.case_id,
       passed: verdict.passed,
       observed_atoms: [...observed.atoms],
       observed_forbidden_collapses: [...observed.forbidden],
+      observed_unknowns: [...verdict.observed_unknowns],
       resolved_handle_refs: [...observed.handles],
       coverage_kind: observed.coverage,
+      failures: [...verdict.failures],
       diagnostics_ref: verdict.passed ? `pass-${golden.case_id}` : `fail-${golden.case_id}`,
     };
   });
 }
 
 export function runCollapsingExtractor(cases: readonly GoldenCase[]): readonly GoldenRunResult[] {
-  return cases.map((golden) => ({
-    case_id: golden.case_id,
-    passed: true,
-    observed_atoms: [],
-    observed_forbidden_collapses: golden.forbidden_collapses.slice(0, 1),
-    resolved_handle_refs: [],
-    coverage_kind: "sampled",
-    diagnostics_ref: `collapsing-${golden.case_id}`,
-  }));
+  return cases.map((golden) => {
+    const observed: ObservedExtraction = {
+      atoms: [],
+      forbidden: golden.forbidden_collapses.slice(0, 1),
+      handles: [],
+      unknowns: [],
+      coverage: "sampled",
+    };
+    const verdict = adjudicateGoldenCase(golden, observed);
+    return {
+      case_id: golden.case_id,
+      passed: verdict.passed,
+      observed_atoms: [],
+      observed_forbidden_collapses: [...observed.forbidden],
+      observed_unknowns: [],
+      resolved_handle_refs: [],
+      coverage_kind: observed.coverage,
+      failures: [...verdict.failures],
+      diagnostics_ref: `collapsing-${golden.case_id}`,
+    };
+  });
 }
 
 export function validateGoldenCases(cases: readonly GoldenCase[]): readonly string[] {
@@ -411,6 +519,12 @@ export function validateGoldenCases(cases: readonly GoldenCase[]): readonly stri
     if (testCase.source_revision_refs.length === 0) errors.push(`NO_SOURCE_REVISIONS:${testCase.case_id}`);
     if (testCase.forbidden_collapses.length === 0) errors.push(`NO_FORBIDDEN_COLLAPSES:${testCase.case_id}`);
     if (testCase.question.trim().length === 0) errors.push(`EMPTY_QUESTION:${testCase.case_id}`);
+    if (testCase.acceptable_unknowns.some((value) => value.trim().length === 0)) {
+      errors.push(`MALFORMED_ACCEPTABLE_UNKNOWN:${testCase.case_id}`);
+    }
+    if (new Set(testCase.acceptable_unknowns).size !== testCase.acceptable_unknowns.length) {
+      errors.push(`DUPLICATE_ACCEPTABLE_UNKNOWN:${testCase.case_id}`);
+    }
     if (testCase.coverage_requirement === "complete_scope" && testCase.expected_product === "LOCATE") {
       errors.push(`LOCATE_CANNOT_PROVE_COMPLETE_SCOPE:${testCase.case_id}`);
     }
@@ -419,7 +533,14 @@ export function validateGoldenCases(cases: readonly GoldenCase[]): readonly stri
 }
 
 export function assertGoldenPromotionGate(results: readonly GoldenRunResult[]): void {
-  const failed = results.filter((result) => !result.passed || result.observed_forbidden_collapses.length > 0);
+  if (results.length === 0) {
+    throw new Error("GOLDEN_PROMOTION_BLOCKED:EMPTY_RESULT_SET");
+  }
+  const failed = results.filter((result) =>
+    !result.passed ||
+    result.failures.length > 0 ||
+    result.observed_forbidden_collapses.length > 0
+  );
   if (failed.length > 0) {
     throw new Error(`GOLDEN_PROMOTION_BLOCKED:${failed.map((result) => result.case_id).join(",")}`);
   }

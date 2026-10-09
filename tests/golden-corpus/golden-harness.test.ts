@@ -98,6 +98,7 @@ describe("golden corpus harness", () => {
         atoms: [...result.observed_atoms],
         forbidden: [...result.observed_forbidden_collapses],
         handles: [...result.resolved_handle_refs],
+        unknowns: [...result.observed_unknowns],
         coverage: result.coverage_kind,
       });
       expect(verdict.passed).toBe(false);
