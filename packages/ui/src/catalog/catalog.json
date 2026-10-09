@@ -1,0 +1,23 @@
+{
+  "protocol": "eliotr.ui-catalog.v1",
+  "authority": "packages/ui/src/catalog/catalog.json",
+  "import": "@eliotr/ui",
+  "foundation": "Native HTML; React19.3.0; one local Material Symbols Outlined family",
+  "component_family": "native",
+  "components": [
+    { "id": "material.button", "export": "Button", "consumer": "Research composer; source review action", "variants": ["primary", "tonal", "text"], "states": ["default", "hover", "focus", "pressed", "disabled", "loading"], "props": ["variant", "icon", "loading", "className", "native button attributes except style and dangerouslySetInnerHTML"], "stories": ["primitives-native--primary", "primitives-native--tonal", "primitives-native--text", "primitives-native--loading", "primitives-native--disabled"] },
+    { "id": "material.icon-button", "export": "IconButton", "consumer": "Source and evidence details", "variants": [], "props": ["label", "icon", "className", "native button attributes except children, style and dangerouslySetInnerHTML"], "stories": ["primitives-native--labelled-icon"], "focus": "native button, required accessible label" },
+    { "id": "material.field", "export": "Field", "consumer": "Source title, connection settings", "variants": [], "props": ["label", "hint", "error", "className", "native input attributes except style and dangerouslySetInnerHTML"], "stories": ["primitives-native--field-hint", "primitives-native--field-error", "primitives-native--long-russian"], "relationships": "useId/id label binding; hint/error describedBy; invalid from error" },
+    { "id": "material.status", "export": "Status", "consumer": "Source readiness and connection observation", "variants": ["neutral", "error"], "props": ["tone", "icon", "children: required text"], "stories": ["primitives-native--neutral-status", "primitives-native--error-status"], "truth": "Text plus local icon; primary never implies success or confidence" },
+    { "id": "material.dialog", "export": "Dialog", "consumer": "Explicit source review before action", "variants": [], "props": ["open", "title", "onClose", "children"], "stories": ["primitives-native--modal-interaction"], "focus": "native showModal/cancel; connected opener return; unmount cleanup; StrictMode remount" }
+  ],
+  "scenarios": {
+    "u1-primitives": ["primitives-native--primary", "primitives-native--tonal", "primitives-native--text", "primitives-native--loading", "primitives-native--disabled", "primitives-native--labelled-icon", "primitives-native--field-hint", "primitives-native--field-error", "primitives-native--neutral-status", "primitives-native--error-status", "primitives-native--long-russian", "primitives-native--modal-interaction"],
+    "u1-direction": ["direction-workspace--useful", "direction-workspace--dark", "direction-workspace--long-russian", "direction-workspace--long-russian-dark", "direction-workspace--loading", "direction-workspace--degraded"],
+    "u1-tokens": ["tokens-colorroles--light-and-dark", "tokens-colorroles--semantic-pairings", "tokens-colorroles--english-sample", "tokens-colorroles--long-russian"]
+  },
+  "mathematical_layout_allowlist": ["0, 1fr, 100percent, auto, minmax(0,1fr), 100dvh", "calc(100percent - 2 * panel spacing)", "48rem compact and 64rem medium boundaries; 80rem supporting-context minimum", "skip link translateY(-200percent) until focused"],
+  "tokens": "packages/ui/src/tokens/catalog.json",
+  "qualification": "tests/ui-owner/receipts/u1-d/native-foundation.json",
+  "limitations": ["No composite library needed by these consumed native roles", "Storybook MCP unavailable; committed catalogue plus live index and pinned CLI are the fallback", "Full product CSP, native screenreader and staging/live/release remain pending"]
+}

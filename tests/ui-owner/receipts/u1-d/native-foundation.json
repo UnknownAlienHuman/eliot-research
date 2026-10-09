@@ -1,0 +1,24 @@
+{
+  "protocol": "eliotr.native-ui-foundation-receipt.v1",
+  "checkpoint": "U1.3",
+  "status": "ACCEPTED_BOUNDED_NATIVE_FOUNDATION",
+  "source_commit": "06e7a3b09978a95311d03fd3aec4706ce3a68d22",
+  "claim": "docs/agent-work/frontend-owner-claims/ER-47/u1-3-native-primitives-20261009.json",
+  "predecessor": "b568b250b43698eff346ce901049e33cb3cba805",
+  "reference": "U1-R observation matrix; official native-first Material component procedure",
+  "versions": { "react": "19.3.0", "storybook": "10.6.1", "vitest": "4.1.11", "playwright": "1.63.0", "axe": "4.14.0", "chrome": "155.0.8059.40", "node": "25.6.1", "os": "Windows10.0.26300" },
+  "leaf_integration": "Step-5 leaf stopped after incomplete draft; manager repaired exact five files. Private failure audit records stale import, unbound Field and constant-open dialog stories. No second primitive family was introduced.",
+  "verification": {
+    "owning_typescript_and_lint": "PASS",
+    "shared_semantic_visual_gate": "PASS",
+    "focus_helper_tests": "PASS 2; no DOM import and detached old opener never focused",
+    "storybook_browser": "PASS 11 retained cases plus repaired one modal case; native cancel handler simulation in Storybook, actual keyboard Escape in isolated CSP browser",
+    "strict_csp_isolation": "PASS light/dark390; real Escape, explicit Back, unmount return, StrictMode remount, hint relationship, axe, console and overflow; zero remote request",
+    "strict_csp": "default-src none; script/style/img/font self; connect/worker/form/base/frame none",
+    "root_boundary": "PASS after exact backend host-test fs/sqlite registration handoff; existing global SQLite policy retained"
+  },
+  "private_evidence": [".eliotr-state/frontend-primitives-csp/review.json", ".eliotr-state/frontend-primitives-csp/light.png", ".eliotr-state/frontend-primitives-csp/dark.png", ".eliotr-state/frontend-ui-proposals/native-integration-failure-audit.md"],
+  "csp_build_limit": "Isolation bundles only source-owned native controls and committed CSS; @theme is an ignored Tailwind at-rule in this isolated non-Tailwind build. Full product graph is not qualified by this receipt.",
+  "U1_D": "PENDING harness and coherent fixture acceptance",
+  "pending": ["canonical narrow browser harness", "native screenreader and exact native200percent zoom", "integrated product CSP/performance", "native/staging/live/release"]
+}
