@@ -1,0 +1,15 @@
+{
+  "protocol": "eliotr.ui-review-receipt.v1",
+  "status": "ACCEPTED_INTERNAL_CLIENT",
+  "checkpoint": "C3-RR",
+  "source_commit": "97762ce928236a198a88e7059b512ca768e60196",
+  "behavior": "Canonical original Research body, explicit operation identity and frozen scope. First failure immutable; ordered consequences preserve protocol dispatch/reference/recovery fields. Poll/readback cannot admit a new run.",
+  "checks": {
+    "tests": "15casesPASS after canonical repair; final admission-epoch case1PASS6skipped after safe Headers test expression",
+    "lint": "Exact6paths lint PASS",
+    "compiler": "Owning memory-only TS6.0.3 PASS0diag462outputs after finaltest expression"
+  },
+  "limitations": [
+    "Bounded client acceptance only. Compatibility facade, real UI/browser/API composition and FINAL-UI remain open."
+  ]
+}

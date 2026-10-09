@@ -1,0 +1,18 @@
+{
+  "protocol": "eliotr.ui-review-receipt.v1",
+  "status": "ACCEPTED_INTERNAL_CLIENT",
+  "checkpoint": "C2-D",
+  "source_commits": [
+    "f37333d5d462e8520f2a7dc7758b49db9e5dd8c4",
+    "0b7bde384d7d5cbe0566caf3f0520f0b5c7b8192"
+  ],
+  "behavior": "Exact admitted bytes/header/digest verification and strict orientation/navigation coordinates; original trace/scope authority; required typed error identity and epoch guards.",
+  "checks": {
+    "tests": "Retained reader13 + actualorientation/navigation31 PASS",
+    "lint": "Exact4 orientation/navigation lint PASS",
+    "compiler": "Owning TS6.0.3 PASS0diag494 outputs including all document source/tests"
+  },
+  "limitations": [
+    "Bounded client acceptance. Actual UI/runtime/Worker/browser and FINAL-UI remain open."
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "protocol": "eliotr.ui-review-receipt.v1",
+  "status": "ACCEPTED_INTERNAL_CLIENT",
+  "checkpoint": "C2-E",
+  "source_commit": "84073bc1c7f83584ec82acb99728ed585bfe27cf",
+  "behavior": "Explicit prepare/execute/status through required caller HTTP, typed error identity and shared epoch. Terminal COMPLETE needs strict matching receipt; partial/held/unknown is not complete.",
+  "checks": {
+    "tests": "25 cases PASS before type-only root helper/fixture narrowing repair; behavior preserved",
+    "lint": "Exact source/test lint PASS",
+    "compiler": "Owning memory-only TS6.0.3 PASS0diag462outputs after root integration repairs"
+  },
+  "limitations": [
+    "Bounded client acceptance only. Compatibility facade, real UI/browser/API composition and FINAL-UI remain open."
+  ]
+}

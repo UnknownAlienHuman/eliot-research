@@ -1,0 +1,32 @@
+{
+  "protocol": "eliotr.frontend-owner-claim.v1",
+  "manager_identity": "frontend-manager",
+  "manager_context_id": "01a120c9-2637-7952-b6c9-be07b395b4fd",
+  "owner_authorization_ref": "tests/ui-owner/receipts/owner-authorization.json",
+  "base_sha": "544a65cf822603001cf1ed543367e9a20493bf5f",
+  "history_base_sha": "c37e56e0ebdfc7f6d294879008a4036d1b95b985",
+  "state": "ACTIVE",
+  "evidence_refs": [],
+  "blocker_refs": [],
+  "claim_id": "u3-d-document-20261009",
+  "checkpoint_id": "U3-D",
+  "packet_id": "ER-47",
+  "leaf_identity": "01a120cd-7350-7f81-97a8-bc730b908330",
+  "write_paths": [
+    "packages/ui/src/features/sources/document/DocumentReader.tsx",
+    "packages/ui/src/features/sources/document/SafeMarkdown.tsx",
+    "packages/ui/src/features/sources/document/document.css",
+    "packages/ui/src/stories/sources/document/DocumentReader.stories.tsx"
+  ],
+  "predecessor_refs": [
+    {
+      "checkpoint_id": "C2-D",
+      "commit_sha": "f37333d5d462e8520f2a7dc7758b49db9e5dd8c4",
+      "approval_ref": "tests/ui-owner/receipts/u1-d/client-document.json"
+    },
+    {
+      "checkpoint_id": "U2-S",
+      "commit_sha": "ff85ee4827366bac620750010f2e648c51d3bea9"
+    }
+  ]
+}

@@ -6,7 +6,17 @@
   "checks": {
     "policy": "Parser/constants and all policy functions text-identical; only Git read implementation and per-check cache reset changed",
     "tests": "Actual49negative/regression cases PASS, including2new same-head working-claim and newly-unclaimed-source freshness cases",
-    "history": "PENDING one actual frontier check after this tooling commit"
+    "history": {
+      "status": "PASS",
+      "head": "31d3485b48e005901ac08eabd5c21e163346e111",
+      "history_base": "c37e56e0ebdfc7f6d294879008a4036d1b95b985",
+      "session": 59822,
+      "checkpoints": 52,
+      "claims": 33,
+      "active": 9,
+      "history_commits": 97,
+      "semantic_approval": "NOT_EVALUATED"
+    }
   },
   "retainedFailure": {
     "head": "2e144b17d639a5e08b94df63411b51bcf3e532f0",

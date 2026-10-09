@@ -1,0 +1,15 @@
+{
+  "protocol": "eliotr.ui-review-receipt.v1",
+  "status": "ACCEPTED_INTERNAL_CLIENT",
+  "checkpoint": "C3-RC",
+  "source_commit": "4cdd3b38f62f058eb9ef5d6a225b5b75dca21314",
+  "behavior": "Current research/model/transport configuration with explicit caller selection identity; configured, qualified and runnable stay distinct.",
+  "checks": {
+    "tests": "31 cases PASS; corrected foreign-generation valid-envelope case1PASS12skipped",
+    "lint": "Exact6paths lint PASS",
+    "compiler": "Owning memory-only TS6.0.3 PASS0diag462outputs"
+  },
+  "limitations": [
+    "Bounded client acceptance only. Compatibility facade, real UI/browser/API composition and FINAL-UI remain open."
+  ]
+}
