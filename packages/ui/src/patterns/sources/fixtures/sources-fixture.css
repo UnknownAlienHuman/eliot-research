@@ -1,0 +1,108 @@
+/* U2-S Sources fixture surfaces. Committed semantic tokens only. */
+.er-sources-fixture {
+  display: grid;
+  gap: var(--eliot-space-panel);
+  background: var(--md-sys-color-surface);
+}
+
+.er-sources-fixture__head {
+  display: grid;
+  gap: var(--eliot-space-block-control);
+  justify-items: start;
+}
+
+.er-sources-fixture__heading {
+  margin: 0;
+  color: var(--md-sys-color-on-surface);
+  font-family: var(--eliot-type-font-family);
+  font-size: var(--eliot-type-title-medium-size);
+  font-weight: var(--eliot-type-font-weight-medium);
+  line-height: var(--eliot-type-title-medium-line-height);
+}
+
+.er-sources-fixture__hint,
+.er-sources-fixture__note {
+  margin: 0;
+  max-width: var(--eliot-type-reading-measure);
+  color: var(--md-sys-color-on-surface-variant);
+  font-family: var(--eliot-type-font-family);
+  font-size: var(--eliot-type-body-medium-size);
+  line-height: var(--eliot-type-body-medium-line-height);
+}
+
+.er-sources-fixture__list {
+  display: grid;
+  gap: var(--eliot-space-block-control);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.er-sources-fixture__row {
+  display: grid;
+  gap: var(--eliot-space-block-control);
+  padding: var(--eliot-space-panel);
+  border-block-end: var(--eliot-divider-width) solid var(--md-sys-color-outline-variant);
+}
+
+.er-sources-fixture__lead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--eliot-space-inline-control);
+}
+
+.er-sources-fixture__select {
+  display: flex;
+  align-items: start;
+  gap: var(--eliot-space-inline-control);
+  min-width: 0;
+  color: var(--md-sys-color-on-surface);
+  font-family: var(--eliot-type-font-family);
+  font-size: var(--eliot-type-body-medium-size);
+  line-height: var(--eliot-type-body-medium-line-height);
+}
+
+.er-sources-fixture__select input[type="checkbox"] {
+  width: var(--eliot-size-checkbox);
+  height: var(--eliot-size-checkbox);
+  margin: 0;
+}
+
+.er-sources-fixture__name { overflow-wrap: anywhere; }
+
+.er-sources-fixture__facts {
+  display: grid;
+  grid-template-columns: minmax(0, auto) minmax(0, 1fr);
+  gap: var(--eliot-space-block-control) var(--eliot-space-inline-control);
+  margin: 0;
+  color: var(--md-sys-color-on-surface-variant);
+  font-family: var(--eliot-type-font-family);
+  font-size: var(--eliot-type-label-medium-size);
+  line-height: var(--eliot-type-label-medium-line-height);
+}
+
+.er-sources-fixture__facts dt { font-weight: var(--eliot-type-font-weight-medium); }
+.er-sources-fixture__facts dd { margin: 0; overflow-wrap: anywhere; }
+.er-sources-fixture__processing summary { cursor: pointer; color: var(--md-sys-color-on-surface-variant); font-size: var(--eliot-type-label-medium-size); min-height: var(--eliot-size-touch-target); display: list-item; align-content: center; }
+
+.er-sources-fixture__actions { display: flex; gap: var(--eliot-space-inline-control); flex-wrap: wrap; }
+
+.er-sources-fixture__excerpt {
+  margin: 0;
+  max-width: var(--eliot-type-reading-measure);
+  color: var(--md-sys-color-on-surface);
+  font-family: var(--eliot-type-font-family);
+  font-size: var(--eliot-type-body-large-size);
+  line-height: var(--eliot-type-reading-line-height);
+}
+
+.er-sources-fixture__skeleton {
+  min-height: var(--eliot-space-touch-target);
+  border-radius: var(--eliot-shape-medium);
+  background: var(--md-sys-color-surface-container-high);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .er-sources-fixture__row { transition: none; }
+}
