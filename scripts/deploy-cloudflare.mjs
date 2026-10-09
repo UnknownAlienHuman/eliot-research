@@ -353,9 +353,8 @@ export async function deployCloudflare({ confirmLive = false, secretsFilePath, e
     : env;
   if (purpose === FULL_RELEASE_PURPOSE) {
     exec("pnpm", ["check"]);
-    exec("pnpm", ["build:pwa"]);
     exec("pnpm", ["--filter", "@eliotr/core", "cf:types"]);
-    exec("pnpm", ["--filter", "@eliotr/core", "deploy:dry-run"]);
+    exec("pnpm", ["budgets:emitted"]);
   } else {
     fullReleaseBlockers ??= await readReleaseBlockers({ root, read });
     candidateCapabilityProfile ??= await readCapabilityProfile({ root, read });
@@ -384,9 +383,8 @@ export async function deployCloudflare({ confirmLive = false, secretsFilePath, e
       "scripts/check-launch-code.mjs"]);
     exec("pnpm", ["boundaries:check"]);
     exec("pnpm", ["boundaries:negative"]);
-    exec("pnpm", ["build:pwa"]);
     exec("pnpm", ["--filter", "@eliotr/core", "cf:types"]);
-    exec("pnpm", ["--filter", "@eliotr/core", "deploy:dry-run"]);
+    exec("pnpm", ["budgets:emitted"]);
   }
   await checkBuildInputs({ root, manifest: testedInputs });
   if (!confirmLive) {

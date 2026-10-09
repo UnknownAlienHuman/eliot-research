@@ -4,12 +4,17 @@ import { fileURLToPath } from "node:url";
 
 const ROOT = fileURLToPath(new URL("../", import.meta.url));
 const PACKAGE_ROOTS = ["packages", "apps"];
-// Source-maintainability heuristics, not emitted-artifact or platform/runtime limits.
-// Colocated tests under src are included; moving a file cannot establish a smaller deployed bundle.
 const MAX_FILE_LINES = 600;
 const MAX_PACKAGE_SOURCE_LINES = 10_000;
 const MAX_WORKER_SOURCE_BYTES = 600 * 1024;
 const MAX_PWA_SOURCE_BYTES = 2 * 1024 * 1024;
+const args = process.argv.slice(2);
+
+function usage() {
+  console.log("Usage: node scripts/check-budgets.mjs [--source]");
+  console.log("This entrypoint checks source maintainability; emitted artifacts use the separate emitted checker.");
+  console.log("--source   print source maintainability diagnostics without gating");
+}
 
 export function countPhysicalLines(text) {
   if (text.length === 0) return 0;
@@ -29,45 +34,90 @@ async function walk(dir) {
   return out;
 }
 
-console.log("Source scope: packages/*/src and apps/*/src (.ts/.tsx/.js/.mjs), including colocated tests.");
-console.log(`Source limits: ${MAX_FILE_LINES} physical lines/file; ${MAX_PACKAGE_SOURCE_LINES} lines/package; ` +
-  `Worker ${MAX_WORKER_SOURCE_BYTES} bytes; PWA ${MAX_PWA_SOURCE_BYTES} bytes.`);
-console.log("Emitted artifacts, startup, heap and CPU: NOT_MEASURED by this source scan (S90).");
-const errors = [];
-if (countPhysicalLines("a\nb\n") !== 2 || countPhysicalLines("a\r\nb\r\n") !== 2 ||
-    countPhysicalLines("a\rb") !== 2 || countPhysicalLines("") !== 0) {
-  errors.push("physical line counter is not cross-platform exact");
-}
-for (const rootName of PACKAGE_ROOTS) {
-  const parent = join(ROOT, rootName);
-  for (const entry of await readdir(parent, { withFileTypes: true })) {
-    if (!entry.isDirectory()) continue;
-    const packageDir = join(parent, entry.name);
-    const sourceDir = join(packageDir, "src");
-    try { await stat(sourceDir); } catch (error) {
-      if (error?.code === "ENOENT") continue; // Some workspace packages have no source directory.
-      throw error; // Unreadable sources are not evidence of a passing budget.
-    }
-    const files = (await walk(sourceDir)).filter((file) => [".ts", ".tsx", ".js", ".mjs"].includes(extname(file)));
-    let lines = 0;
-    let bytes = 0;
-    for (const file of files) {
-      const text = await readFile(file, "utf8");
-      const fileLines = countPhysicalLines(text);
-      lines += fileLines;
-      bytes += Buffer.byteLength(text);
-      if (fileLines > MAX_FILE_LINES) errors.push(`${relative(ROOT, file).split(sep).join("/")} has ${fileLines} lines (max ${MAX_FILE_LINES})`);
-    }
-    if (lines > MAX_PACKAGE_SOURCE_LINES) errors.push(`${rootName}/${entry.name} has ${lines} source lines (max ${MAX_PACKAGE_SOURCE_LINES})`);
-    if (`${rootName}/${entry.name}` === "apps/eliotr-core" && bytes > MAX_WORKER_SOURCE_BYTES) errors.push(`Worker source is ${bytes} bytes (max ${MAX_WORKER_SOURCE_BYTES})`);
-    if (`${rootName}/${entry.name}` === "apps/eliotr-pwa" && bytes > MAX_PWA_SOURCE_BYTES) errors.push(`PWA source is ${bytes} bytes (max ${MAX_PWA_SOURCE_BYTES})`);
+async function runSourceBudgetScan(advisory) {
+  console.log("Source scope: packages/*/src and apps/*/src (.ts/.tsx/.js/.mjs), including colocated tests.");
+  console.log("Source limits are maintainability heuristics only; emitted artifacts and runtime remain separate metrics.");
+  console.log("Source limits: " + MAX_FILE_LINES + " physical lines/file; " + MAX_PACKAGE_SOURCE_LINES +
+    " lines/package; Worker " + MAX_WORKER_SOURCE_BYTES + " bytes; PWA " + MAX_PWA_SOURCE_BYTES + " bytes.");
+  console.log("Emitted artifacts, startup, heap and CPU: NOT_MEASURED by source diagnostics (S90).");
+
+  const errors = [];
+  if (countPhysicalLines("a\nb\n") !== 2 || countPhysicalLines("a\r\nb\r\n") !== 2 ||
+      countPhysicalLines("a\rb") !== 2 || countPhysicalLines("") !== 0) {
+    errors.push("physical line counter is not cross-platform exact");
   }
+  for (const rootName of PACKAGE_ROOTS) {
+    const parent = join(ROOT, rootName);
+    for (const entry of await readdir(parent, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      const packageDir = join(parent, entry.name);
+      const sourceDir = join(packageDir, "src");
+      try {
+        await stat(sourceDir);
+      } catch (error) {
+        if (error?.code === "ENOENT") continue;
+        throw error;
+      }
+      const files = (await walk(sourceDir))
+        .filter((file) => [".ts", ".tsx", ".js", ".mjs"].includes(extname(file)));
+      let lines = 0;
+      let bytes = 0;
+      for (const file of files) {
+        const text = await readFile(file, "utf8");
+        const fileLines = countPhysicalLines(text);
+        lines += fileLines;
+        bytes += Buffer.byteLength(text);
+        if (fileLines > MAX_FILE_LINES) {
+          errors.push(relative(ROOT, file).split(sep).join("/") + " has " + fileLines +
+            " lines (max " + MAX_FILE_LINES + ")");
+        }
+      }
+      if (lines > MAX_PACKAGE_SOURCE_LINES) {
+        errors.push(rootName + "/" + entry.name + " has " + lines +
+          " source lines (max " + MAX_PACKAGE_SOURCE_LINES + ")");
+      }
+      if (rootName + "/" + entry.name === "apps/eliotr-core" && bytes > MAX_WORKER_SOURCE_BYTES) {
+        errors.push("Worker source is " + bytes + " bytes (max " + MAX_WORKER_SOURCE_BYTES + ")");
+      }
+      if (rootName + "/" + entry.name === "apps/eliotr-pwa" && bytes > MAX_PWA_SOURCE_BYTES) {
+        errors.push("PWA source is " + bytes + " bytes (max " + MAX_PWA_SOURCE_BYTES + ")");
+      }
+    }
+  }
+
+  if (errors.length > 0) {
+    if (advisory) {
+      console.log("Source maintainability: ADVISORY (" + errors.length + " observations)");
+      console.error(errors.join("\n"));
+      return 0;
+    }
+    console.log("Source budgets: FAIL (" + errors.length + " violations)");
+    console.error(errors.join("\n"));
+    return 1;
+  }
+  if (advisory) console.log("Source maintainability: ADVISORY (no threshold observations)");
+  else console.log("Source budgets: PASS");
+  return 0;
 }
 
-if (errors.length > 0) {
-  console.log(`Source budgets: FAIL (${errors.length} violations)`);
-  console.error(errors.join("\n"));
-  process.exitCode = 1;
-} else {
-  console.log("Source budgets: PASS");
+async function main() {
+  if (args.includes("--help") || args.includes("-h")) {
+    usage();
+    return 0;
+  }
+  const source = args.includes("--source");
+  const unknown = args.filter((argument) => argument !== "--source");
+  if (unknown.length > 0) {
+    console.error("Unknown budget option: " + unknown[0]);
+    usage();
+    return 2;
+  }
+  return runSourceBudgetScan(source);
 }
+
+main().then((code) => {
+  process.exitCode = code;
+}).catch((error) => {
+  console.error("Budget check failed: " + (error?.message ?? "unknown error"));
+  process.exitCode = 1;
+});

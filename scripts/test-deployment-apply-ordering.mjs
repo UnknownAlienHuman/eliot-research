@@ -558,7 +558,7 @@ await check("existing Worker deploy proceeds with 18 UNKNOWN counters and no mig
   const events = test.buildEvents();
   assert.equal(events[0], "capture-build-inputs");
   assert.ok(events.indexOf("capture-build-inputs") < events.indexOf("verify-code"));
-  assert.ok(events.indexOf("command:pnpm --filter @eliotr/core deploy:dry-run") < events.indexOf("check-build-inputs-1"));
+  assert.ok(events.indexOf("command:pnpm budgets:emitted") < events.indexOf("check-build-inputs-1"));
   assert.ok(generatedDryRunIndex(test.calls) < test.calls.indexOf(deployCommand));
   assert.ok(!test.calls.some((call) => call.includes("wrangler d1 migrations apply")));
   assert.ok(!test.calls.some((call) => /\/(?:billable|billing)\/usage(?:\?|$)/u.test(call)));
@@ -884,7 +884,7 @@ await check("maintenance deploy records blockers and budget findings without cla
   assert.equal(events[0], "capture-build-inputs");
   assert.ok(events.indexOf("capture-build-inputs") < events.indexOf("read-full-release-blockers"));
   assert.ok(events.indexOf("read-full-release-blockers") < events.indexOf("read-candidate-capability-profile"));
-  assert.ok(events.indexOf("command:pnpm --filter @eliotr/core deploy:dry-run") < events.indexOf("check-build-inputs-1"));
+  assert.ok(events.indexOf("command:pnpm budgets:emitted") < events.indexOf("check-build-inputs-1"));
   assert.equal(test.generatedConfigPins(), 1);
   assert.equal(test.bundleAttestations(), 1);
   assert.ok(test.buildInputChecks() >= 8, "sealed repository inputs are rechecked throughout the maintenance flow");

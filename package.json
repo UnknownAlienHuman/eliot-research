@@ -19,6 +19,8 @@
     "boundaries:check": "node scripts/check-boundaries.mjs",
     "boundaries:negative": "node scripts/test-boundary-negative.mjs",
     "budgets:check": "node scripts/check-budgets.mjs",
+    "budgets:emitted": "node scripts/check-emitted-budgets.mjs",
+    "budgets:emitted:check": "node scripts/check-emitted-budgets.mjs --check-only",
     "delivery:check": "node scripts/check-delivery-authority.mjs",
     "ingest:check": "node scripts/check-ingest-admission.mjs",
     "projection:check": "node scripts/check-projection-execution.mjs",

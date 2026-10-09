@@ -181,10 +181,10 @@ await check("dry run has no remote or receipt effects", async () => {
     assert.equal(env.ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON, environment.ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON);
   };
   assert.equal(await deployCloudflare(test.options), null);
-  assert.deepEqual(test.calls, ["pnpm check", "pnpm build:pwa", "pnpm --filter @eliotr/core cf:types",
-    "pnpm --filter @eliotr/core deploy:dry-run"]);
+  assert.deepEqual(test.calls, ["pnpm check", "pnpm --filter @eliotr/core cf:types",
+    "pnpm budgets:emitted"]);
   assert.equal(test.events[0], "capture-build-inputs");
-  assert.ok(test.events.indexOf("command:pnpm --filter @eliotr/core deploy:dry-run") < test.events.indexOf("check-build-inputs"));
+  assert.ok(test.events.indexOf("command:pnpm budgets:emitted") < test.events.indexOf("check-build-inputs"));
 });
 await check("invalid smoke input fails even before local commands", async () => {
   const test = harness({ options: { environment: { ...environment, ELIOTR_SMOKE_BASE_URL: "https://wrong.example" } } });
@@ -289,22 +289,22 @@ await check("maintenance records launch blockers and budget findings", async () 
   assert.equal(await deployCloudflare(test.options), null);
   assert.deepEqual(test.calls, ["pnpm --filter @eliotr/core typecheck",
     "pnpm exec eslint scripts/deploy-cloudflare.mjs scripts/lib/deployment-maintenance.mjs scripts/lib/deployment-ai-search-bootstrap.mjs scripts/test-deployment-ai-search-bootstrap.mjs scripts/lib/deployment-route-update.mjs scripts/test-deployment-route-update.mjs scripts/lib/deployment-ai-gateways.mjs scripts/test-deployment-ai-gateways.mjs scripts/test-deployment-maintenance.mjs scripts/test-deployment-apply-ordering.mjs scripts/test-deployment-orchestration.mjs scripts/lib/deployment-build-inputs.mjs scripts/check-launch-code.mjs",
-    "pnpm boundaries:check", "pnpm boundaries:negative", "pnpm build:pwa", "pnpm --filter @eliotr/core cf:types",
-    "pnpm --filter @eliotr/core deploy:dry-run"]);
+    "pnpm boundaries:check", "pnpm boundaries:negative", "pnpm --filter @eliotr/core cf:types",
+    "pnpm budgets:emitted"]);
   assert.ok(logs.some((message) => message.includes("known launch blocker")));
   assert.ok(logs.some((message) => message.includes("Source budgets: FAIL (17 violations)")));
   assert.ok(!test.calls.includes("pnpm check"));
   assert.ok(!test.calls.some((call) => call.startsWith("GET ") || call.startsWith("POST ")));
   assert.equal(test.events[0], "capture-build-inputs");
   assert.ok(test.events.indexOf("capture-build-inputs") < test.events.indexOf("read-full-release-blockers"));
-  assert.ok(test.events.indexOf("capture-source-budget") < test.events.indexOf("command:pnpm --filter @eliotr/core deploy:dry-run"));
-  assert.ok(test.events.indexOf("command:pnpm --filter @eliotr/core deploy:dry-run") < test.events.indexOf("check-build-inputs"));
+  assert.ok(test.events.indexOf("capture-source-budget") < test.events.indexOf("command:pnpm budgets:emitted"));
+  assert.ok(test.events.indexOf("command:pnpm budgets:emitted") < test.events.indexOf("check-build-inputs"));
 });
 await check("maintenance compile, lint, boundary and artifact gates still block", async () => {
   const commands = ["pnpm --filter @eliotr/core typecheck",
     "pnpm exec eslint scripts/deploy-cloudflare.mjs scripts/lib/deployment-maintenance.mjs scripts/lib/deployment-ai-search-bootstrap.mjs scripts/test-deployment-ai-search-bootstrap.mjs scripts/lib/deployment-route-update.mjs scripts/test-deployment-route-update.mjs scripts/lib/deployment-ai-gateways.mjs scripts/test-deployment-ai-gateways.mjs scripts/test-deployment-maintenance.mjs scripts/test-deployment-apply-ordering.mjs scripts/test-deployment-orchestration.mjs scripts/lib/deployment-build-inputs.mjs scripts/check-launch-code.mjs",
-    "pnpm boundaries:check", "pnpm boundaries:negative", "pnpm build:pwa", "pnpm --filter @eliotr/core cf:types",
-    "pnpm --filter @eliotr/core deploy:dry-run"];
+    "pnpm boundaries:check", "pnpm boundaries:negative", "pnpm --filter @eliotr/core cf:types",
+    "pnpm budgets:emitted"];
   for (const command of commands) {
     const test = harness({ failCommand: command, options: { confirmLive: false, environment: {}, purpose: "MAINTENANCE",
       readReleaseBlockers: async () => [], readCapabilityProfile: async () => ({ protocol: "eliotr.capabilities.v1" }),
