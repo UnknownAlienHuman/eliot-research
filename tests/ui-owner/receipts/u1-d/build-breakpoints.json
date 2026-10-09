@@ -1,0 +1,11 @@
+{
+  "protocol": "eliotr.ui-token-maintenance.v1",
+  "checkpoint": "U1.2",
+  "claim_id": "u1-2-build-breakpoints-20261009",
+  "source_commit": "6aa4504d78b7fbeb4c1182eb7ecece52016b97db",
+  "predecessor": "f0418687cb184308c8a61df1e12b662f2aa1976e",
+  "change": "Only two @theme compile-time breakpoints now use static48rem/64rem. Existing runtime768px/1024px and all color/type roles unchanged.",
+  "negative": "Actual Tailwind4.3.3 production CSS generated invalid var() media queries and LightningCSS failed; static mapping removes that failure without suppressing warnings.",
+  "verification": "PASS: Vite8.2.2/Tailwind4.3.3 production consumer build,76modules, no invalidmedia or unknown@theme warning. Existing apps/eliotr-web/dist/client was locked; no cleanup attempted. Qualification uses fresh private .eliotr-state/u1-shell-build-qualified-20261009.",
+  "limits": "Token build fix only. U1.5 render acceptance recorded separately. Full integrated Worker/CSP/native/live/release remain pending."
+}
