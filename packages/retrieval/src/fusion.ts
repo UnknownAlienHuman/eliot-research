@@ -39,7 +39,7 @@ export function reciprocalRankFuse(
   for (const [lane, candidates] of candidatesByLane) {
     const weight = options.lane_weights[lane] ?? 1;
     for (const candidate of candidates) {
-      const key = `${candidate.source_revision_ref}:${candidate.canonical_section_id}`;
+      const key = JSON.stringify([candidate.source_revision_ref, candidate.canonical_section_id]);
       const current = aggregate.get(key) ?? { candidate, score: 0, lanes: new Set<string>() };
       current.score += weight / (options.reciprocal_rank_constant + candidate.rank);
       current.lanes.add(lane);

@@ -26,16 +26,79 @@ describe("retrieval planning", () => {
     expect(plan.complete_scope_required).toBe(true);
   });
 
-  it("deduplicates candidates by canonical section", () => {
+  it("preserves compound fusion identity across tuple collisions and same-identity deduplication", () => {
     const base = {
       candidate_id: "c", source_revision_ref: "r", canonical_section_id: "s", preview: "p",
       raw_score: 1, rank: 1, index_generation: "g", metadata: {},
     } as const;
+    const options = { reciprocal_rank_constant: 60, lane_weights: {}, maxPerSourceRevision: 5 };
     const result = reciprocalRankFuse(new Map([
       ["LEX", [{ ...base, lane: "LEX" }]],
       ["SEM", [{ ...base, candidate_id: "c2", lane: "SEM" }]],
-    ]), { reciprocal_rank_constant: 60, lane_weights: {}, maxPerSourceRevision: 5 });
+    ]), options);
     expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({
+      candidate: { candidate_id: "c", lane: "LEX" },
+      contributing_lanes: ["LEX", "SEM"],
+    });
+    expect(result[0]?.fused_score).toBeCloseTo(2 / 61);
+
+    const collisionResult = reciprocalRankFuse(new Map([
+      ["LEX", [{
+        ...base,
+        candidate_id: "a-pair",
+        source_revision_ref: "a:b",
+        canonical_section_id: "c",
+        lane: "LEX",
+      }]],
+      ["SEM", [{
+        ...base,
+        candidate_id: "b-pair",
+        source_revision_ref: "a",
+        canonical_section_id: "b:c",
+        lane: "SEM",
+      }]],
+    ]), options);
+    expect(collisionResult).toHaveLength(2);
+    expect(collisionResult.map(({ candidate }) => [
+      candidate.source_revision_ref,
+      candidate.canonical_section_id,
+    ])).toEqual([["a:b", "c"], ["a", "b:c"]]);
+  });
+
+  it("checks every direct lane placement and repeated direct lanes after semantic", () => {
+    const basePlan = compileQueryPlan({
+      raw_query: "needle", product: "RESEARCH", literals: ["needle"], requested_limit: 10,
+      deadline_ms: 1000,
+      scope_snapshot: {} as never,
+    });
+    const planned = (lanes: readonly RetrievalLane[]) =>
+      directLanesPrecedeSemantic({ ...basePlan, lanes });
+    const directPermutations: readonly (readonly RetrievalLane[])[] = [
+      ["IDENT", "EXACT", "LEX"],
+      ["IDENT", "LEX", "EXACT"],
+      ["EXACT", "IDENT", "LEX"],
+      ["EXACT", "LEX", "IDENT"],
+      ["LEX", "IDENT", "EXACT"],
+      ["LEX", "EXACT", "IDENT"],
+    ];
+
+    for (const directOrder of directPermutations) {
+      expect(planned([...directOrder, "SEM"])).toBe(true);
+      for (let semanticIndex = 0; semanticIndex < directOrder.length; semanticIndex += 1) {
+        expect(planned([
+          ...directOrder.slice(0, semanticIndex),
+          "SEM",
+          ...directOrder.slice(semanticIndex),
+        ])).toBe(false);
+      }
+    }
+
+    for (const repeatedDirectLane of ["IDENT", "EXACT", "LEX"] as const) {
+      expect(planned(["IDENT", "SEM", repeatedDirectLane, repeatedDirectLane])).toBe(false);
+    }
+    expect(planned([])).toBe(true);
+    expect(planned(["SEM"])).toBe(true);
   });
 });
 
