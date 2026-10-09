@@ -1,0 +1,40 @@
+{
+  "protocol": "eliotr.ui-review-receipt.v1",
+  "status": "ACCEPTED_INTERNAL_CLIENT",
+  "qualification_commit": "8faf432d648d7d608a36cee841c525f99c770edc",
+  "history_repair": "Source bytes preserved exactly by claim-sized split; retained test/compiler results were not repeated. Original tip is recoverable and full final tree is identical.",
+  "limitations": [
+    "Client/source acceptance only. Real UI wiring, live backend and release qualification remain open."
+  ],
+  "checkpoint": "C2-P",
+  "source_commit": "3e40e1b8956c140196d658cbfb337cafd8cc1c8c",
+  "predecessors": [
+    {
+      "checkpoint": "C2-L",
+      "source_commit": "6e21638c5b2463b60733e042500b9c83d855dd71",
+      "receipt": "tests/ui-owner/receipts/u1-d/client-projects-library.json"
+    },
+    {
+      "checkpoint": "C2-R",
+      "source_commit": "29dcc594fa294b857d464c88c866a2cc2391e818",
+      "receipt": "tests/ui-owner/receipts/u1-d/client-readiness-revisions.json"
+    },
+    {
+      "checkpoint": "C2-N",
+      "source_commit": "fa2eeb889bd111b2ef008d02993c02976f301212",
+      "receipt": "tests/ui-owner/receipts/u1-d/client-namespaces.json"
+    }
+  ],
+  "behavior": "Finite owner-client exports; five served legacy APIs become thin facades over one decoder implementation. Original legacy transport and typed error class retained. Shared source epoch is bound explicitly at app startup and unbound on pagehide.",
+  "checks": {
+    "compiler": "Owning legacy virtual TypeScript6.0.3 graph PASS0diagnostics942outputs after relocation; original938 result retained",
+    "tests": "3 relocated legacy fetch/deferred/pagehide cases PASS; test body AST identical except4 imports resolving same modules; original1 affected library-panel result retained",
+    "lint_boundary": "Exact15paths lint and live boundary PASS; private seeded backend import denied",
+    "install": "pnpm11.23.0 offline lock/frozen ignore-scripts PASS46workspaces zero downloads; only importer3lines added",
+    "build": "Private Astro7.2.8 build PASS; large-chunk warning retained, no performance acceptance",
+    "audit": "Independent static finite five-shim/export/error/lifecycle audit PASS; global sourceworkspace fetch absence was not asserted by manager",
+    "history": "Official unchanged checker PASS52checkpoints28claims7active87commits at3e40; no semanticapproval inferred"
+  },
+  "negative": "Late response after pagehide cannot return data; original typed class identity stays intact; no duplicate decoder or forbidden backend import is accepted.",
+  "registration_commit": "56dc6ba40f294e97c37327eb61f9d74cc7cbb780"
+}

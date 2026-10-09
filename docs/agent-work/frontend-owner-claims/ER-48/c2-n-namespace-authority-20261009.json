@@ -5,8 +5,11 @@
   "owner_authorization_ref": "tests/ui-owner/receipts/owner-authorization.json",
   "base_sha": "e14c1974d999d35a7fe7b26e65711aa153a92c50",
   "history_base_sha": "c37e56e0ebdfc7f6d294879008a4036d1b95b985",
-  "state": "ACTIVE",
-  "evidence_refs": [],
+  "state": "HANDED_OFF",
+  "evidence_refs": [
+    "git:fa2eeb889bd111b2ef008d02993c02976f301212; exact qualified source bytes retained through unpublished history repair",
+    "tests/ui-owner/receipts/u1-d/client-namespaces.json"
+  ],
   "blocker_refs": [],
   "claim_id": "c2-n-namespace-authority-20261009",
   "checkpoint_id": "C2-N",
@@ -27,5 +30,7 @@
       "checkpoint_id": "C1.4",
       "commit_sha": "4f7c99546bd7adfcf766bdc1a398a94a8e20fedb"
     }
-  ]
+  ],
+  "handoff_reason": "COMPLETED",
+  "handoff_receipt_ref": "tests/ui-owner/receipts/u1-d/client-namespaces.json"
 }

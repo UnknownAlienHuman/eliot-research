@@ -1,0 +1,19 @@
+{
+  "protocol": "eliotr.ui-review-receipt.v1",
+  "status": "ACCEPTED_INTERNAL_CLIENT",
+  "qualification_commit": "b10c4b4a3101e4cb4a98e6b17fe9837efaf48a20",
+  "history_repair": "Source bytes preserved exactly by claim-sized split; retained test/compiler results were not repeated. Original tip is recoverable and full final tree is identical.",
+  "limitations": [
+    "Client/source acceptance only. Real UI wiring, live backend and release qualification remain open."
+  ],
+  "checkpoint": "C2-L",
+  "claim_id": "c2-l-projects-library-20261009",
+  "source_commit": "6e21638c5b2463b60733e042500b9c83d855dd71",
+  "behavior": "Projects and library operations preserve original bodies, strict decoders, pagination, generation, revisions, request statuses and caller operation identity.",
+  "negative": "Foreign generation, invalid cursor/order and stale epoch fail closed; request bytes and statuses are retained.",
+  "checks": {
+    "tests": "24 scoped cases PASS; original namespace expectation corrected before accepted qualification",
+    "compiler": "Owning TypeScript6.0.3 C1/C2-L/R/N/Reader virtual graph PASS0diagnostics394outputs; unrelated unfinished leaves excluded",
+    "lint": "Exact accepted16 source/test paths PASS"
+  }
+}

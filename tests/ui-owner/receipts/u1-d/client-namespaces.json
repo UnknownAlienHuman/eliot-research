@@ -1,0 +1,19 @@
+{
+  "protocol": "eliotr.ui-review-receipt.v1",
+  "status": "ACCEPTED_INTERNAL_CLIENT",
+  "qualification_commit": "b10c4b4a3101e4cb4a98e6b17fe9837efaf48a20",
+  "history_repair": "Source bytes preserved exactly by claim-sized split; retained test/compiler results were not repeated. Original tip is recoverable and full final tree is identical.",
+  "limitations": [
+    "Client/source acceptance only. Real UI wiring, live backend and release qualification remain open."
+  ],
+  "checkpoint": "C2-N",
+  "claim_id": "c2-n-namespace-authority-20261009",
+  "source_commit": "fa2eeb889bd111b2ef008d02993c02976f301212",
+  "behavior": "Original catalog and resume coordinator preserve title/TTL policy, typed authorization/conflict identity, 409 renewal readback, renewed/confirmed distinction and final binding fence.",
+  "negative": "Concurrent renewal is confirmed by readback without another mutation; an untyped conflict object cannot masquerade as request authority.",
+  "checks": {
+    "tests": "16 scoped cases PASS; original namespace expectation corrected before accepted qualification",
+    "compiler": "Owning TypeScript6.0.3 C1/C2-L/R/N/Reader virtual graph PASS0diagnostics394outputs; unrelated unfinished leaves excluded",
+    "lint": "Exact accepted16 source/test paths PASS"
+  }
+}
