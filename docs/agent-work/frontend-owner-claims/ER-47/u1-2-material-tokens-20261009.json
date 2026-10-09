@@ -1,0 +1,27 @@
+{
+  "protocol": "eliotr.frontend-owner-claim.v1",
+  "claim_id": "u1-2-material-tokens-20261009",
+  "checkpoint_id": "U1.2",
+  "packet_id": "ER-47",
+  "manager_identity": "frontend-manager",
+  "manager_context_id": "01a120c9-2637-7952-b6c9-be07b395b4fd",
+  "leaf_identity": "01a120cd-7241-7253-88dd-a35359d8103f",
+  "owner_authorization_ref": "tests/ui-owner/receipts/owner-authorization.json",
+  "base_sha": "edc5935b99c64ecf73e146585653d67289058887",
+  "history_base_sha": "c37e56e0ebdfc7f6d294879008a4036d1b95b985",
+  "write_paths": [
+    "packages/ui/src/tokens/theme.css",
+    "packages/ui/src/tokens/catalog.json",
+    "packages/ui/src/tokens/contrast.test.ts",
+    "packages/ui/src/tokens/ColorRoles.stories.tsx"
+  ],
+  "predecessor_refs": [
+    {
+      "checkpoint_id": "U1-R",
+      "commit_sha": "f0418687cb184308c8a61df1e12b662f2aa1976e"
+    }
+  ],
+  "state": "ACTIVE",
+  "evidence_refs": [],
+  "blocker_refs": []
+}
