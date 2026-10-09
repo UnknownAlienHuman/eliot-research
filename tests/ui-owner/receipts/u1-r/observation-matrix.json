@@ -1,6 +1,8 @@
 {
   "checkpoint": "U1-R",
-  "status": "PREPARATORY",
+  "status": "ACCEPTED_WITH_REFERENCE_LIMITS",
+  "acceptance_scope": "Local design progression only; manager accepts live-study evidence after bounded bootstrap. Unobserved reference states remain PENDING and are covered independently for Eliot in the pinned local harness.",
+  "predecessor_approval": "tests/ui-owner/receipts/u1-1b/bootstrap.json",
   "date": "2026-10-09",
   "live_reference": "https://notebook.google.com/",
   "theme_observed": "dark",

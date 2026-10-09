@@ -5,8 +5,9 @@ to `https://notebook.google.com/`, titled Gemini Notebook. The existing Eliot UX
 its test source content as synthetic. No private Eliot/customer material was uploaded, no question/generator
 was submitted, and no account state or authenticated source text is committed.
 
-This is preparatory U1-R evidence. Its checkpoint acceptance follows B-U/U1.1b; it does not qualify a product
-shell, live API, release or deployment.
+U1-R is accepted for local design progression after bounded B-U/U1.1b acceptance in
+`tests/ui-owner/receipts/u1-1b/bootstrap.json`. The unavailable reference states listed below remain explicit
+limits. This study does not qualify a product shell, live API, release or deployment.
 
 | Screen/state | Observed behavior | Eliot decision input |
 | --- | --- | --- |
@@ -42,6 +43,10 @@ Official current pages inspected in the same real browser:
   expressive schemes may overshoot. Reading, evidence and status geometry use restrained standard motion.
 - `https://design.google/library/design-notes-material-3-expressive-liam-spradlin` redirects to the current
   Inside M3 Expressive article: expression can be quiet and must serve usability/accessibility/purpose.
+- `https://m3.material.io/components/buttons/overview`: current page inspected on 2026-10-09, with its
+  May 2025 Expressive update. Five color styles/sizes, concise sentence-case labels, optional 20 dp icon,
+  default 40 dp button and round/square shape choices. Expressive web component library is unavailable;
+  ordinary native controls will implement only consumed variants.
 
 Google Design MCP was called through its public endpoint, using its actual tool schemas. A key-color proposal
 `#1a73e8` produced deterministic light/dark TONAL_SPOT roles. Font search requested web English Latin and

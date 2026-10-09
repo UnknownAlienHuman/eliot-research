@@ -1,5 +1,7 @@
 {
   "date": "2026-10-09",
+  "checkpoint_status": "ACCEPTED_WITH_REFERENCE_LIMITS",
+  "material_component_page": { "url": "https://m3.material.io/components/buttons/overview", "observed_date": "2026-10-09", "page_update": "May 2025", "web_expressive_library": "UNAVAILABLE" },
   "browser": "Codex in-app browser, authenticated real NotebookLM/Gemini Notebook session",
   "os": "Windows",
   "browser_version": "PENDING exact version readback",
