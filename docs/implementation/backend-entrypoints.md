@@ -36,7 +36,13 @@ reconciled/frozen installation. Native fixture acceptance injects AccessVerifier
 and simulates Workflow status `waiting`; real JWT/native Workflow/browser/live
 acceptance remains pending. Workflow-kind parser compile/lint and six focused
 cases pass. Socrates accepted the exact parser and Session test pairs read-only
-and is closed/archived; bounded local commits follow the shared index window.
+and is closed/archived; local source commits are `3f7d873a` and `8c5fc604`.
+Canonical result readback `a2b38729` retains existing guards and exposes the
+original stored-byte digest, with compile/lint/six focused cases and independent
+source acceptance. One separate generated Session DO qualification passes on
+the exact emitted graph through injected AccessVerifier/source HTTP, using the
+real local fixture's active `running` status. Neither result accepts actual
+ResearchWorkflow wait, emitted JWT/HTTP, browser, live or release behavior.
 Root owns [R05 topology/outbox integration](native-external-task-wait-cutover.md); neither repair
 qualifies native wait. All 37 previous backend descendants are closed/archived.
 

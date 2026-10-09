@@ -24,6 +24,12 @@ Historical runs and their manual recovery path remain compatible.
   exact immutable result before returning its receipt. The event's
   `result_digest` must bind the stored `result_sha256`; it is a locator hint,
   not evidence, completion or grant authority.
+- `readRecordedResultReadback` now returns the existing strictly decoded result
+  together with its original stored `result_sha256`, preserving the schema gate
+  and exact binding validator. It rejects foreign tuple components and
+  noncanonical bytes. The old result-only API remains compatible. Currentness,
+  grant, route, cancellation and settlement checks still belong to the consumer;
+  the structural reader does not establish those permissions.
 - `prepareIntentWithOutboxMutation` / `appendIntentWithOutbox` already provide
   stable intent/outbox identity, atomic D1 mutation and exact readback. Reuse
   them after authoritative result readback; compute hashes outside the batch.

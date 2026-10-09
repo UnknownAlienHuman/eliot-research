@@ -58,8 +58,9 @@ Boole's Workflow-kind parser pair now rejects supplied unknown discriminants
 before topology selection, retaining omitted/explicit `RESEARCH` normalization
 and exhaustive decoder behavior. Owning compile, scoped lint and six focused
 cases pass; Socrates accepted both exact parser blobs and both exact Session
-test blobs in a read-only source review. Bounded local commits follow the shared
-index window; normal publication still waits coherent frontend B-U/U1.1b.
+test blobs in a read-only source review. The parser pair is locally committed in
+`3f7d873a`, Session fixtures in `8c5fc604` and the integration mapping in
+`f5886f1d`; normal publication still waits coherent frontend B-U/U1.1b.
 This parser repair does not implement native wait. Read-only recursive inventory
 confirmed all 37 previous backend descendants archived and all spawn edges
 closed; the fresh reviewer is also closed/archived after acceptance, and one
@@ -72,6 +73,28 @@ contract. Root is verifying the existing intent/outbox and Queue seams before
 implementing the new topology; no code follows that rejected recipe. The actual
 topology, callback/outbox/Queue seams and lease-expiry settlement fence are mapped
 in [native-external-task-wait-cutover.md](native-external-task-wait-cutover.md).
+
+Canonical external-result readback is locally committed in `a2b38729`. The
+existing `readRecordedResult` API and schema/row/strict decoder guards remain;
+`readRecordedResultReadback` additionally returns the digest of the original
+stored canonical JSON bytes. It does not hash a decoded reserialization or
+authorize execution. Owning compilation, exact lint and six new focused cases
+pass; Helmholtz accepted the three actual working-tree blobs and is
+closed/archived. An intermediate claim about a missing schema check came from
+the old index and was discarded after exact working-tree review.
+
+The frontend's generated Session handoff has one additional bounded local PASS:
+raw emitted ESM modules, an explicit auxiliary Worker namespace and the source
+HTTP/injected AccessVerifier seam confirm plain GET 410, WebSocket 101,
+canonical projection RPC, forbidden chat close 1008, unchanged canonical run
+and zero Workflow creation after the separate fixture seed. Emitted Worker
+SHA-256 `b18947f2b39d5a80b278503dd717c868fb4d1114dcd00bd084b6e94cccf0ec66` and
+config `948b1fa94f9efc3755d0fd3f9008d3302087b5aadc501ee0037c7354d4d4b5c3`
+remain unchanged after the run. Pool Miniflare 5.20260926.1-alpha reports the
+isolated event-wait fixture as `running`; the assertion uses that observed
+active status. This differs from frontend's Vite Miniflare 5.20260916.0-alpha.
+Actual ResearchWorkflow topology, emitted HTTP/JWT, browser, live and release
+acceptance remain pending; passing source suites were not rerun.
 
 The model trial has no demonstrated quality advantage over Luna. Useful
 artifacts required root corrections for Windows commands, assertion coverage
