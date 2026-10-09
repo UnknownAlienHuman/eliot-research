@@ -1,0 +1,39 @@
+{
+  "protocol": "eliotr.frontend-owner-claim.v1",
+  "manager_identity": "frontend-manager",
+  "manager_context_id": "01a120c9-2637-7952-b6c9-be07b395b4fd",
+  "owner_authorization_ref": "tests/ui-owner/receipts/owner-authorization.json",
+  "base_sha": "f4bc180ec65f72b604a006550e03b2e1046fd2db",
+  "history_base_sha": "c37e56e0ebdfc7f6d294879008a4036d1b95b985",
+  "state": "ACTIVE",
+  "evidence_refs": [],
+  "blocker_refs": [],
+  "claim_id": "u2-r-research-fixture-20261009",
+  "checkpoint_id": "U2-R",
+  "packet_id": "ER-47",
+  "leaf_identity": "01a120cd-7350-7f81-97a8-bc730b908330",
+  "write_paths": [
+    "packages/ui/src/patterns/research/fixtures/ResearchFixture.tsx",
+    "packages/ui/src/patterns/research/fixtures/research-fixture.css",
+    "packages/ui/src/stories/research/Research.stories.tsx"
+  ],
+  "predecessor_refs": [
+    {
+      "checkpoint_id": "U1.2",
+      "commit_sha": "6aa4504d78b7fbeb4c1182eb7ecece52016b97db"
+    },
+    {
+      "checkpoint_id": "U1.3",
+      "commit_sha": "06e7a3b09978a95311d03fd3aec4706ce3a68d22"
+    },
+    {
+      "checkpoint_id": "U1.4",
+      "commit_sha": "60e2550071795db3ab207a0beba491eee13d002a"
+    },
+    {
+      "checkpoint_id": "U1.5",
+      "commit_sha": "328913e8c67110780387fc3464362adb21ff340e",
+      "approval_ref": "tests/ui-owner/receipts/u1-d/shell.json"
+    }
+  ]
+}
