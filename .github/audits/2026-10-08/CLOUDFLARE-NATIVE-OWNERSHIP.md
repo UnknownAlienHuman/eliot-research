@@ -1,7 +1,7 @@
 # Cloudflare-native ownership and backend audit completion gate
 
-Date: 2026-10-08  
-Eliot source baseline: `3e6c25660c1ae515760e19d5f9e6b8a735795c4c`  
+Date: 2026-10-08\
+Eliot source baseline: `3e6c25660c1ae515760e19d5f9e6b8a735795c4c`\
 Scope: backend. UI and interface documentation are owned by the other agent.
 
 This document answers one question before any new backend code is approved:

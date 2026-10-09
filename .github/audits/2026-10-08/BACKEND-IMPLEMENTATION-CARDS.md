@@ -1,7 +1,7 @@
 # Backend implementation cards and donor decision register
 
-Date: 2026-10-08  
-Audited source baseline: `3e6c25660c1ae515760e19d5f9e6b8a735795c4c`  
+Date: 2026-10-08\
+Audited source baseline: `3e6c25660c1ae515760e19d5f9e6b8a735795c4c`\
 Execution router: [`docs/implementation/backend-entrypoints.md`](../../../docs/implementation/backend-entrypoints.md)
 
 This is the short implementation companion to the final PR matrix and donor playbooks. It is not a

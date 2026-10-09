@@ -1,8 +1,8 @@
 # Final PR disposition matrix — Cloudflare-first backend preparation
 
-Date: 2026-10-08  
-Source baseline: `3e6c25660c1ae515760e19d5f9e6b8a735795c4c`  
-Initial audit set: **76 open pull requests**  
+Date: 2026-10-08\
+Source baseline: `3e6c25660c1ae515760e19d5f9e6b8a735795c4c`\
+Initial audit set: **76 open pull requests**\
 After preservation/profile cleanup in this audit branch: **65 remain open**.
 
 This matrix is an execution disposition, not a claim that runtime code, compiler checks, native Cloudflare acceptance or deployment has passed.

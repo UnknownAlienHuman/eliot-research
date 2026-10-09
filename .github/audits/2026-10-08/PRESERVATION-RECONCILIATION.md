@@ -1,6 +1,6 @@
 # Preservation branch reconciliation — current-main dispositions
 
-Date: 2026-10-08  
+Date: 2026-10-08\
 Current source baseline: `3e6c25660c1ae515760e19d5f9e6b8a735795c4c`
 
 This document reconciles the three open preservation-only pull requests against current `main`. It is a source-preservation audit, not a request to merge or delete their branches.
@@ -14,7 +14,7 @@ Disposition vocabulary:
 
 ## PR #173 — Research citation-resolution WIP
 
-Retained head: `df9f814131c3cb7e033f0b56c362bea030242c8c`  
+Retained head: `df9f814131c3cb7e033f0b56c362bea030242c8c`\
 Compared with current main: 20 commits ahead / 866 behind; five final changed paths.
 
 | Preserved path | Current-main owner | Disposition | Evidence / difference |
@@ -31,7 +31,7 @@ No current-main delta should be extracted from #173. The preserved v1 result is 
 
 ## PR #174 — Research coverage/report-admission WIP
 
-Retained head: `1abf2fa09ee78c3daa8bb0073b42630e1cb00e8c`  
+Retained head: `1abf2fa09ee78c3daa8bb0073b42630e1cb00e8c`\
 Compared with current main: 20 commits ahead / 866 behind; twelve final changed paths.
 
 | Preserved area | Current-main owner | Disposition | Evidence / difference |
@@ -49,7 +49,7 @@ No current-main delta should be extracted from #174. Copying its v1 coverage cod
 
 ## PR #121 — N1 integration bundle
 
-Retained head: `f1e678cc20eec9787d2c803f65a2ac0426827f0d`  
+Retained head: `f1e678cc20eec9787d2c803f65a2ac0426827f0d`\
 Compared with current main: 10 commits ahead / 1961 behind; 65 final changed paths across multiple owners.
 
 The octopus integration commit is not a valid modern implementation branch. Its component commits reconcile as follows.
