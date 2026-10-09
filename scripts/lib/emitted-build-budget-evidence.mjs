@@ -524,7 +524,8 @@ export async function inspectPwaBuild(root, buildStartedAt) {
 function parseByteQuantity(value, unit) {
   const multiplier = BINARY_UNITS.get(String(unit).toUpperCase());
   if (!multiplier) throw new Error("Wrangler reported an unsupported size unit");
-  return { bytes: Number(value) * multiplier, precisionBytes: multiplier / 200 };
+  const decimalPlaces = String(value).split(".")[1]?.length ?? 0;
+  return { bytes: Number(value) * multiplier, precisionBytes: multiplier * (10 ** -decimalPlaces) / 2 };
 }
 
 function sourceMapModules(sourceMap) {
@@ -555,6 +556,15 @@ export function parseWranglerBundleReport(output) {
   const match = matches[0];
   const raw = parseByteQuantity(match[1], match[2]);
   const gzip = parseByteQuantity(match[3], match[4]);
+  if ([raw, gzip].some((quantity) => !Number.isFinite(quantity.bytes) ||
+      quantity.bytes > Number.MAX_SAFE_INTEGER || quantity.precisionBytes <= 0)) {
+    return {
+      status: "NOT_MEASURED",
+      issues: ["Wrangler size report exceeds supported numeric precision"],
+      version,
+      assetReadEntryCount: assetReadCount === undefined ? null : Number(assetReadCount),
+    };
+  }
   return {
     status: "MEASURED",
     version,
