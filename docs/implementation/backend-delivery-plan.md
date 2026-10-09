@@ -125,8 +125,8 @@ Actual Core depth-100 compilation passes 639 schema shapes and nineteen queries
 from the two owning files with no unresolved site. This bounded check does not
 replace repository-wide target qualification or native/currentness acceptance.
 The subsequent source assembly includes generation admission, orchestration and
-Queue composition; its publication and complete native acceptance are separate
-gates described below. Release remains pending.
+Queue composition and is published in `a59f441e`. Complete native acceptance
+is a separate gate described below. Release remains pending.
 
 The R05 assembly selects `research-handlers.exploratory.external-wait.v1` for
 new delegated explicit runs, preserving historical v8. It retains the same grant,
@@ -172,6 +172,25 @@ native acceptance remains separate. The R05-only Core graph compiles on TypeScri
 6.0.3 with zero diagnostics and virtual outputs only, including the callback.
 R05 publication candidates exclude earlier
 unaccepted C2 changes; shared frontend work and index windows remain coordinated.
+
+After publication, a separate actual-Core D1/R2/W2 fixture exposed three stale
+generation predicates: payload binding, mandatory payload and COMPUTER dispatch
+acceptance still recognized only v8. Append-only migration 0132 admits native
+external-wait.v1 in those exact predicates and preserves all other guards.
+Three new Core regressions pass; owning TypeScript 6.0.3 compilation and exact
+lint pass. The depth-100 SQLite 3.50.4 check passes 128 migrations, 639 shapes
+and the callback query with zero failures/unresolved sites.
+
+The [October 9 native qualification record](r05-local-native-qualification-2026-10-09.md)
+retains bounded canonical early-result, result/send lost-ACK, cancellation and
+revocation cases, plus direct settlement of a predeadline result after expiry.
+The fixture uses actual migrations, delegated PROJECT grant/orientation/epoch,
+R2, W2, callback routing, Queue and inbox; scientific conversion is injected.
+Paused native continuation after original expiry failed three times and was
+stopped for audit. Direct settlement passes, so neither a product defect nor a
+Miniflare defect is established by the failure. Exact branch `consumeResult`,
+pinned configuration, COMPUTER route, public HTTP/JWT, complete native and
+live/release acceptance remain pending. #326 is open and the Goal is active.
 
 The assembled boundary checker passes. Source-budget readback is still FAIL:
 the working tree has nine violations, while actual HEAD plus exact R05-only

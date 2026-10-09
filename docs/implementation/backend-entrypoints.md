@@ -27,7 +27,7 @@ closure is published in `2adbc42d`; bounded local Session transport acceptance
 now has five passing cases across the retained run and one failed-case-only
 repair. C1/C2/C5 still defer their named pipeline cutovers.
 
-Current shared-checkout continuation: normal publication reached `63537a16`.
+Current shared-checkout continuation: R05 source assembly is published in `a59f441e`.
 Frontend B-U source `1e1c6213`, acceptance receipt `950bf86e`, tooling `0a211f6f`
 and the accepted backend prerequisites are published. SQL depth recovery and five
 receipt boundary cases pass with source review; these do not qualify the native pipeline.
@@ -48,7 +48,7 @@ qualifies native wait. All 37 previous backend descendants are closed/archived.
 
 Branch prepare/read ports are published in `79f66f54`; owning compile,
 exact lint and independent source review pass. The separate W2 preparation seam
-and migration 0130 have source acceptance, with native assembly still pending.
+and migration 0130 have source acceptance; native assembly is now published.
 The migration preserves the exact legacy recovery predicate and permits only
 current, predeadline recorded-result settlement for the new descriptive generation.
 SQLite 3.50.4 depth-100 Core schema checks and five positive/eighteen negative
@@ -67,7 +67,7 @@ retain their original path. Exact source review, seven focused cases, depth-100
 Core schema (639 shapes) and nineteen owning-source queries pass. Upstream
 currentness in the focused fixture is explicit input.
 
-The next source assembly wires `research-handlers.exploratory.external-wait.v1`
+The published source assembly wires `research-handlers.exploratory.external-wait.v1`
 through admission, same-grant routing, pinned configuration and the Workflow
 application. Stage 8 uses sibling native prepare/wait/settle steps outside the
 legacy outer `step.do`; historical generations retain their graph. Manual
@@ -95,6 +95,20 @@ Seven local native topology cases and two added restart/pause cases pass with
 injected server ports and counter D1. These exercise real Workflow steps/events,
 not the complete W2/grant/R2/callback/Queue path. Canonical/native/live/release
 acceptance and #326 remain open; the Goal remains active.
+
+The subsequent actual-Core fixture found missing native-generation predicates
+in the existing payload binding/current view and COMPUTER dispatch trigger.
+Append-only migration 0132 extends exactly those three predicates, retaining
+historical v8 and every existing authority fence. Three Core regressions pass
+for exact payload, absent payload and foreign attempt; owning TypeScript 6.0.3
+compilation and exact lint pass. SQLite 3.50.4 depth-100 accepts 128 migrations,
+639 schema shapes and the callback query without failure or unresolved site.
+The [local native qualification record](r05-local-native-qualification-2026-10-09.md)
+distinguishes the bounded actual D1/R2/W2/callback/Queue results from scientific
+`consumeResult`, pinned production configuration, COMPUTER/public caller and
+live acceptance. Paused native continuation after original expiry is unresolved
+after three stopped attempts; direct known-result settlement after expiry passes.
+Neither result completes #326 or changes implementation status.
 
 This is the canonical day-to-day backend router. It does not replace product architecture, work-packet
 ownership or release acceptance. It tells each role where to begin, which active PR owns the result,

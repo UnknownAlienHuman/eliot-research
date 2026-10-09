@@ -40,7 +40,8 @@ Historical runs and their manual recovery path remain compatible.
   Legacy generations retain the original callback path. Seven focused cases,
   exact source review, compile/lint and depth-100 actual Core schema/owning
   query compilation pass; the focused fixture supplies upstream currentness
-  explicitly, so native callback/Queue acceptance remains pending.
+  explicitly. Subsequent bounded actual-Core callback/Queue evidence is recorded
+  below; complete native acceptance remains pending.
 - The branch adapter now separates `prepareTask` from `readRecordedResult`.
   Its legacy handler/recovery sequence remains compatible; read-only consumption
   returns null for an absent result without publishing a task. The expected digest
@@ -68,7 +69,8 @@ Historical runs and their manual recovery path remain compatible.
   binds generation and the recorded tuple; it does not use expired fresh-effect
   `_current` authority. Native returns the durable receipt; historical generations
   retain the existing digest-bound recovery helper. Twenty source cases and one
-  actual Core depth-100 query pass. Canonical callback/Queue acceptance is pending.
+  actual Core depth-100 query pass. Subsequent bounded actual-Core callback/Queue
+  evidence does not complete scientific result consumption or public acceptance.
 
 ## Lease and timeout composition
 
@@ -93,7 +95,7 @@ with the recorded timestamp strictly before both original lease and budget expir
 The existing output/checkpoint fences still own the ledger mutation. Its depth-100
 schema and focused view-predicate checks pass; native integration/currentness,
 exact result consumption and delayed-wake acceptance remain pending. The new
-generation is admitted and selected by the pending source assembly; historical
+generation is admitted and selected by source assembly published in `a59f441e`; historical
 v8 remains compatible. No deployment or live acceptance follows from assembly.
 
 The migration must explicitly handle a result committed before expiry whose
@@ -141,6 +143,15 @@ RPC object lifecycle: [automatic disposal](https://developers.cloudflare.com/wor
 retrieved October 9, 2026.
 
 ## Remaining acceptance
+
+The [October 9 local qualification record](r05-local-native-qualification-2026-10-09.md)
+records actual D1/R2/W2/callback/Queue/inbox cases and their fixture limits.
+It also records the append-only 0132 payload/COMPUTER generation repair and
+three public Core regressions. The fixture confirms direct settlement of a
+predeadline result after original expiry; paused native continuation across
+that expiry remains unresolved after three stopped attempts. Production
+configuration, exact branch `consumeResult`, COMPUTER/public caller and live
+qualification remain separate mandatory gates.
 
 Seven local native topology cases pass: buffered and duplicate events, foreign
 and malformed locators, event before recorded result, and both timeout result
