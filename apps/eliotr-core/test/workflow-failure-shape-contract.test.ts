@@ -117,7 +117,7 @@ describe("persisted workflow failure shape contract", () => {
         proxy.first = async <T = Record<string, unknown>>(column?: string): Promise<T | null> => {
           reads += 1;
           if (reads === 2) throw new Error("lost read acknowledgement");
-          return statement.first<T>(column);
+          return column === undefined ? statement.first<T>() : statement.first<T>(column);
         };
         return proxy;
       };
@@ -136,7 +136,7 @@ describe("persisted workflow failure shape contract", () => {
   it("refuses replacing a legacy first cause while initializing matching new history", async () => {
     const fixture = await workflowFixture("failure-legacy-bootstrap");
     await new WorkflowCheckpointStore(fixture.db).ensureRun(fixture.request, principal);
-    const original = { code: "EVIDENCE_FREEZE_EVIDENCE_INVALID", phase: "STAGE",
+    const original = { code: "EVIDENCE_FREEZE_EVIDENCE_INVALID" as const, phase: "STAGE" as const,
       stage: fixture.request.stage, retryable: false };
     await fixture.db.prepare(`UPDATE research_workflow_run SET first_failure_json=?1,latest_failure_json=?1
       WHERE operation_id=?2`).bind(JSON.stringify(original), fixture.request.operation_id).run();
