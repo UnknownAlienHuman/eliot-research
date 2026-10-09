@@ -14,7 +14,15 @@
     "storybook": "storybook dev --host 127.0.0.1 --port 6006 --no-open --disable-telemetry",
     "build:storybook": "storybook build --output-dir ../../.eliotr-state/frontend-storybook --disable-telemetry",
     "test:storybook": "vitest run --config .storybook/vitest.config.ts",
-    "typecheck": "tsc -b --pretty false"
+    "typecheck": "tsc -b --pretty false",
+    "test:browser": "node ../../scripts/ui-owner/verify.mjs browser",
+    "test:visual": "node ../../scripts/ui-owner/verify.mjs visual",
+    "test:a11y": "node ../../scripts/ui-owner/verify.mjs a11y",
+    "test:csp": "node ../../scripts/ui-owner/verify.mjs csp",
+    "test:props": "node ../../scripts/ui-owner/verify.mjs props",
+    "check:design": "node ../../scripts/ui-owner/verify.mjs design",
+    "check:history": "node ../../scripts/ui-owner/verify.mjs history",
+    "review:receipt": "node ../../scripts/ui-owner/verify.mjs receipt"
   },
   "peerDependencies": {
     "react": "19.3.0",

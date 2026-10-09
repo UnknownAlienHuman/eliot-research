@@ -1,0 +1,32 @@
+{
+  "protocol": "eliotr.ui-harness-receipt.v1",
+  "checkpoint": "U1.4",
+  "source_commit": "60e2550071795db3ab207a0beba491eee13d002a",
+  "claim": "docs/agent-work/frontend-owner-claims/ER-47/u1-4-browser-harness-20261009.json",
+  "status": "ACCEPTED_LOCAL_HARNESS",
+  "commands": {
+    "entry": "node scripts/ui-owner/verify.mjs",
+    "modes": ["design", "props", "history", "stories", "browser", "a11y", "visual", "receipt", "csp"],
+    "package": "pnpm --filter @eliotr/ui check:design|check:history|test:browser|test:visual|test:a11y|test:props|test:csp|review:receipt",
+    "storybook": "pnpm --filter @eliotr/ui storybook",
+    "root_aliases": "Deferred ER-00 convenience aliases; package-local commands and pinned node entry are authoritative"
+  },
+  "versions": { "node": "25.6.1", "typescript": "6.0.3", "storybook": "10.6.1", "vitest": "4.1.11", "playwright": "1.63.0", "chrome": "155.0.8059.40", "axe": "4.14.0", "os": "Windows10.0.26300" },
+  "checks": {
+    "binding_and_baseline_negatives": "6 node:test cases PASS; remote/auth/query/hash/unknown/docs/missing story, real grouped catalog, unknown/duplicate flag and auto-baseline reject",
+    "undocumented_prop": "Actual TS2322 naming undocumentedDesignProp; no unrelated diagnostic accepted; TypeScript6 --ignoreConfig explicit",
+    "design": "Shared semantic gate PASS 20 source inputs; seeded raw-color negative rejected",
+    "storybook": "6 new direction stories PASS through the stable stories command; previous primitive/token passing suites retained",
+    "browser": "30 cases PASS; 1440/1024/768/390/320, light/dark/EN/longRU/useful/loading/degraded; zero overflow, axe, console, failed or remote requests; physical Escape/citation/source focus return; no nested scrolling containers",
+    "native_csp": "2 light/dark390 cases PASS; real strict HTTP CSP, physical Escape, explicit Back, unmount and StrictMode remount focus return; seeded inline script blocked and its policy error detected",
+    "lint": "Exact two harness files PASS",
+    "ER49": "PASS at593f4e058d33e4958fb4a289b81c4ce6176eca43:52checkpoints,9claims,2active,38commits; prior accepted overlap/source temporal negatives retained"
+  },
+  "scroll_scope": "Native multiline form-control scrolling is counted separately from pane/container scroll ownership; no generic nested scrolling surfaces accepted",
+  "catalog": "packages/ui/src/catalog/catalog.json plus live loopback Storybook index",
+  "baseline": "PENDING manager visual acceptance. Visual command needs an explicit reviewed baseline and fails on changed digests; no update/accept switch",
+  "private_evidence": [".eliotr-state/ui-owner/u1-direction-harness/review.json", ".eliotr-state/ui-owner/native-csp/review.json"],
+  "storybook_mcp": "PENDING unavailable; committed catalog/live index/pinned CLI fallback used",
+  "build_warning": "@theme ignored only in the isolated non-Tailwind native-control bundle; full application graph uses pinned Tailwind plugin",
+  "pending": ["U1-D canonical-source acceptance", "native screenreader", "actual native200percent zoom", "full product CSP/performance", "native/staging/live/release"]
+}

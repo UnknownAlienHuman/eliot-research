@@ -28,7 +28,9 @@
       "commit_sha": "06e7a3b09978a95311d03fd3aec4706ce3a68d22"
     }
   ],
-  "state": "ACTIVE",
-  "evidence_refs": [],
+  "state": "HANDED_OFF",
+  "handoff_reason": "COMPLETED",
+  "handoff_receipt_ref": "tests/ui-owner/receipts/u1-d/harness.json",
+  "evidence_refs": ["git:60e2550071795db3ab207a0beba491eee13d002a; tests/ui-owner/receipts/u1-d/harness.json; 6preflight 6stories 30browser 2CSP propsnegative design lint PASS"],
   "blocker_refs": []
 }
