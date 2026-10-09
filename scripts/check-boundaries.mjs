@@ -298,7 +298,7 @@ const PACKAGE_RULES = new Map([
   ["packages/testkit", new Set(["@eliotr/contracts", "@eliotr/domain", "@eliotr/policy", "@eliotr/retrieval", "@eliotr/research", "@eliotr/google-drive-exchange", "@eliotr/interfaces"])],
   ["packages/pwa-http-client", new Set(["@eliotr/contracts"])],
   ["packages/owner-api-client", new Set(["@eliotr/contracts"])],
-  ["packages/pwa-source-workspace", new Set(["@eliotr/contracts", "@eliotr/pwa-http-client"])],
+  ["packages/pwa-source-workspace", new Set(["@eliotr/contracts", "@eliotr/owner-api-client", "@eliotr/pwa-http-client"])],
   ["packages/pwa-research-workspace", new Set(["@eliotr/contracts", "@eliotr/pwa-http-client", "@eliotr/pwa-source-workspace"])],
   ["packages/pwa-knowledge-workspace", new Set(["@eliotr/contracts", "@eliotr/pwa-http-client", "@eliotr/pwa-source-workspace"])],
   ["packages/ui", new Set(["react", "react-dom"])],

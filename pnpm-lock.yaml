@@ -970,6 +970,9 @@ importers:
       '@eliotr/contracts':
         specifier: workspace:*
         version: link:../contracts
+      '@eliotr/owner-api-client':
+        specifier: workspace:*
+        version: link:../owner-api-client
       '@eliotr/pwa-http-client':
         specifier: workspace:*
         version: link:../pwa-http-client

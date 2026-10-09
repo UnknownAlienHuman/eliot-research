@@ -13,6 +13,7 @@ export * from "./library-readiness-panel.js";
 export * from "./orientation-api.js";
 export * from "./orientation-panel.js";
 export * from "./navigation-expand-api.js";
+export { bindSourceWorkspaceClientLifecycle } from "./owner-client-ports.js";
 export * from "./project-api.js";
 export * from "./project-panel.js";
 export * from "./raw-file-api.js";

@@ -28,10 +28,13 @@ import { createOwnerSessionLifecycle } from "./owner-session-lifecycle.js";
 import { escapeHtml } from "./html.js";
 import { classifyHealthFailure, type HealthFailure } from "./health-failure.js";
 import type { ResolvedEvidence, VersionedRef } from "@eliotr/contracts";
+import { bindSourceWorkspaceClientLifecycle } from "@eliotr/pwa-source-workspace";
 
 const root = document.querySelector<HTMLDivElement>("#app");
 if (root === null) throw new Error("missing #app root");
 const app: HTMLDivElement = root;
+const unbindSourceClientLifecycle = bindSourceWorkspaceClientLifecycle(window, app);
+window.addEventListener("pagehide", unbindSourceClientLifecycle, { once: true });
 
 let googleOAuthCleanup: (() => void) | undefined;
 let healthController: AbortController | undefined;

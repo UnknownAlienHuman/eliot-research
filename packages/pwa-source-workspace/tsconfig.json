@@ -15,6 +15,9 @@
   ],
   "references": [
     {
+      "path": "../owner-api-client"
+    },
+    {
       "path": "../contracts"
     },
     {
