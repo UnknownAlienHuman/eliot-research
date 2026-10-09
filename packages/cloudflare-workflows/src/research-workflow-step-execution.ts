@@ -12,7 +12,12 @@ import {
   MAX_WORKFLOW_RECEIPT_BYTES,
   type StageReceipt,
   type WorkflowExecutionPorts,
+  type WorkflowNativeStageHandler,
+  type WorkflowNativeStagePolicy,
+  type WorkflowNativeStageReceipt,
   type WorkflowPrincipal,
+  type WorkflowStageCompletion,
+  parseWorkflowStageCompletion,
 } from "./types.js";
 
 export interface ResearchWorkflowServerPortInput {
@@ -82,6 +87,17 @@ export interface ResearchWorkflowNativeStepExecutionInput {
     request: ResearchWorkflowSequenceRequest,
     principal: WorkflowPrincipal,
   ) => Promise<StageReceipt>;
+  readonly native_handler: (stage: ResearchWorkflowStage) => WorkflowNativeStageHandler | undefined;
+  readonly native_stage_policy: (
+    request: ResearchWorkflowSequenceRequest,
+    principal: WorkflowPrincipal,
+  ) => Promise<WorkflowNativeStagePolicy | null>;
+  readonly execute_native: (
+    request: ResearchWorkflowSequenceRequest,
+    principal: WorkflowPrincipal,
+    handler: WorkflowNativeStageHandler,
+    policy: WorkflowNativeStagePolicy,
+  ) => Promise<WorkflowNativeStageReceipt>;
   readonly stage_timeout_ms: (stage: ResearchWorkflowStage) => number | undefined;
   readonly set_active_stage: (stage: ResearchWorkflowStage) => void;
   readonly set_step_pending: (pending: boolean) => void;
@@ -98,15 +114,20 @@ export async function executeResearchWorkflowNativeSteps(
     executeStage: async (request, index) => {
       const stage = request.stage;
       input.set_active_stage(stage);
-      const executeStage = async (): Promise<StageReceipt> => {
+      const nativeHandler = input.native_handler(stage);
+      const nativePolicy = nativeHandler === undefined ? null : await input.native_stage_policy(request, input.principal);
+      const native = nativeHandler === undefined || nativePolicy === null ? null : { handler: nativeHandler, policy: nativePolicy };
+      const executeStage = async (): Promise<WorkflowStageCompletion> => {
         try {
-          const outcome = await input.execute_checkpoint(request, input.principal);
-          const text = JSON.stringify(outcome);
+          const outcome = native === null
+            ? { kind: "W2" as const, receipt: await input.execute_checkpoint(request, input.principal) }
+            : { kind: "NATIVE" as const, receipt: await input.execute_native(request, input.principal, native.handler, native.policy) };
+          const completion = parseWorkflowStageCompletion(outcome);
+          const text = JSON.stringify(completion);
           if (new TextEncoder().encode(text).byteLength > MAX_WORKFLOW_RECEIPT_BYTES) {
             failWorkflow("WORKFLOW_INPUT_INVALID");
           }
-          if ("completion_disposition" in outcome) failWorkflow("WORKFLOW_INPUT_INVALID");
-          return outcome;
+          return completion;
         } catch (error) {
           // The executor already records handler/recovery failures before step serialization.
           const failure = workflowFailure(error, "STAGE", stage);
@@ -120,11 +141,23 @@ export async function executeResearchWorkflowNativeSteps(
       const stepName = `w2-stage-${String(index).padStart(2, "0")}-${stage}`;
       input.set_step_pending(true);
       const timeout = input.stage_timeout_ms(stage);
-      const receipt = timeout === undefined
-        ? await input.step.do(stepName, { retries: { limit: 0, delay: 0 } }, executeStage)
-        : await input.step.do(stepName, { retries: { limit: 0, delay: 0 }, timeout }, executeStage);
+      const retries = native === null
+        ? { limit: 0, delay: 0 }
+        : { limit: native.policy.retry_limit, delay: native.policy.retry_delay_ms, backoff: "constant" as const };
+      const rawCompletion = timeout === undefined
+        ? await input.step.do(stepName, { retries }, executeStage)
+        : await input.step.do(stepName, { retries, timeout }, executeStage);
+      let completion: WorkflowStageCompletion;
+      try {
+        completion = parseWorkflowStageCompletion(rawCompletion);
+      } catch {
+        input.non_retryable_output_corrupt("WORKFLOW_OUTPUT_CORRUPT");
+      }
+      if (new TextEncoder().encode(JSON.stringify(completion)).byteLength > MAX_WORKFLOW_RECEIPT_BYTES) {
+        input.non_retryable_output_corrupt("WORKFLOW_OUTPUT_CORRUPT");
+      }
       input.set_step_pending(false);
-      return receipt;
+      return completion;
     },
     invalidReceipt: input.invalid_receipt,
   });

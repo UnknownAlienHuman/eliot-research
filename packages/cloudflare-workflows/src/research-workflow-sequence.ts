@@ -1,6 +1,9 @@
 import { RESEARCH_WORKFLOW_STAGES } from "@eliotr/domain";
 import type { ResearchWorkflowStage, VersionedRef } from "@eliotr/contracts";
-import type { StageReceipt, WorkflowObject } from "./types.js";
+import {
+  type WorkflowStageCompletion,
+  type WorkflowObject,
+} from "./types.js";
 
 export interface ResearchWorkflowSequenceParams {
   readonly operation_id: string;
@@ -31,7 +34,7 @@ export interface ResearchWorkflowSequenceRequest {
 /** Monotone stage ordering and receipt continuity, with all execution/authority supplied by Core. */
 export async function executeResearchWorkflowSequence(input: {
   readonly params: ResearchWorkflowSequenceParams;
-  readonly executeStage: (request: ResearchWorkflowSequenceRequest, index: number) => Promise<StageReceipt>;
+  readonly executeStage: (request: ResearchWorkflowSequenceRequest, index: number) => Promise<WorkflowStageCompletion>;
   readonly invalidReceipt: () => never;
 }): Promise<ResearchWorkflowSequenceResult> {
   const { params, executeStage, invalidReceipt } = input;
@@ -50,9 +53,18 @@ export async function executeResearchWorkflowSequence(input: {
       handler_generation: params.handler_generation,
       input_manifest: inputManifest,
     };
-    const receipt = await executeStage(request, index);
+    const completion = await executeStage(request, index);
+    const receipt = completion.receipt;
     const expectedEngine = index === RESEARCH_WORKFLOW_STAGES.length - 1 ? "ENGINE_COMPLETED" : "CHECKPOINTED";
     if (receipt.engine_state !== expectedEngine || receipt.operation_id !== params.operation_id || receipt.stage !== stage) {
+      invalidReceipt();
+    }
+    if (receipt.investigation_ref.id !== investigationRef.id ||
+        receipt.investigation_ref.revision !== investigationRef.revision + 1 ||
+        receipt.input_manifest_ref !== inputManifest.object_ref) invalidReceipt();
+    if (completion.kind === "NATIVE" && (index < 1 || index > 4 || completion.receipt.stage_index !== index ||
+        completion.receipt.expected_revision !== investigationRef.revision ||
+        completion.receipt.handler_generation !== params.handler_generation)) {
       invalidReceipt();
     }
     receiptRefs.push(receipt.receipt_ref);

@@ -13,3 +13,18 @@ export async function deterministicWorkflowStageBytes(
   if (bytes.byteLength > MAX_WORKFLOW_OUTPUT_BYTES) fail("WORKFLOW_INPUT_INVALID");
   return bytes;
 }
+
+/** Stable native-stage bytes deliberately contain no W2 attempt identity. */
+export async function deterministicWorkflowNativeStageBytes(
+  operationId: string,
+  stage: ResearchWorkflowStage,
+  inputBytes: Uint8Array,
+): Promise<Uint8Array> {
+  if (stage !== "ORIENT" && stage !== "INTERPRET" && stage !== "COMPILE_OBLIGATIONS" && stage !== "PLAN") {
+    fail("WORKFLOW_INPUT_INVALID");
+  }
+  const inputSha = await digest(inputBytes);
+  const bytes = new TextEncoder().encode(JSON.stringify({ operation_id: operationId, stage, input_sha: inputSha }));
+  if (bytes.byteLength > MAX_WORKFLOW_OUTPUT_BYTES) fail("WORKFLOW_INPUT_INVALID");
+  return bytes;
+}

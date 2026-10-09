@@ -35,6 +35,68 @@ export const StageReceiptSchema = z.object({
   engine_state: z.enum(["CHECKPOINTED", "ENGINE_COMPLETED"]),
 }).strict();
 export type StageReceipt = z.infer<typeof StageReceiptSchema>;
+export const WORKFLOW_NATIVE_STAGE_EFFECT_POLICY_GENERATION = "eliotr.workflow-stage-effects.v1" as const;
+export const WorkflowNativeStageEffectClassSchema = z.enum(["PURE_COMPUTE", "AUTHORIZED_READ"]);
+export type WorkflowNativeStageEffectClass = z.infer<typeof WorkflowNativeStageEffectClassSchema>;
+const WorkflowNativeStageAuthoritySchema = z.object({
+  principal_ref: ref,
+  credential_generation: ref,
+  deployment_generation: ref,
+  policy_generation: ref,
+  policy_authority_ref: ref,
+  scope_snapshot_id: ref,
+  scope_snapshot_revision: z.number().int().min(1).max(999_999),
+  authorization_receipt_ref: ref,
+  purge_revision: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+}).strict();
+export const WorkflowNativeStageReceiptSchema = z.object({
+  protocol: z.literal("eliotr.workflow-native-stage.v1"),
+  operation_id: id,
+  stage: ResearchWorkflowStageSchema,
+  stage_index: z.number().int().min(0).max(17),
+  request_sha256: Sha256Schema,
+  receipt_ref: ref,
+  handler_generation: ref,
+  effect_policy_generation: z.literal(WORKFLOW_NATIVE_STAGE_EFFECT_POLICY_GENERATION),
+  effect_class: WorkflowNativeStageEffectClassSchema,
+  authority: WorkflowNativeStageAuthoritySchema,
+  expected_revision: z.number().int().min(1).max(999_999),
+  investigation_ref: z.object({ id, revision: z.number().int().min(2).max(1_000_000) }).strict(),
+  input_manifest_ref: ref,
+  output_manifest: WorkflowObjectSchema,
+  engine_state: z.enum(["CHECKPOINTED", "ENGINE_COMPLETED"]),
+}).strict();
+export type WorkflowNativeStageReceipt = z.infer<typeof WorkflowNativeStageReceiptSchema>;
+export const WorkflowStageCompletionSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("W2"), receipt: StageReceiptSchema }).strict(),
+  z.object({ kind: z.literal("NATIVE"), receipt: WorkflowNativeStageReceiptSchema }).strict(),
+]);
+export type WorkflowStageCompletion = z.infer<typeof WorkflowStageCompletionSchema>;
+/** Accept pre-cutover durable step results while writing all new results as tagged completions. */
+export function parseWorkflowStageCompletion(value: unknown): WorkflowStageCompletion {
+  const tagged = WorkflowStageCompletionSchema.safeParse(value);
+  if (tagged.success) return tagged.data;
+  const historicalW2 = StageReceiptSchema.safeParse(value);
+  if (historicalW2.success) return { kind: "W2", receipt: historicalW2.data };
+  return fail("WORKFLOW_OUTPUT_CORRUPT");
+}
+export interface WorkflowNativeStagePolicy {
+  readonly effect_class: WorkflowNativeStageEffectClass;
+  readonly effect_policy_generation: typeof WORKFLOW_NATIVE_STAGE_EFFECT_POLICY_GENERATION;
+  readonly retry_limit: 1;
+  readonly retry_delay_ms: 1_000;
+}
+export interface WorkflowNativeStageAuthority {
+  readonly principal_ref: string;
+  readonly credential_generation: string;
+  readonly deployment_generation: string;
+  readonly policy_generation: string;
+  readonly policy_authority_ref: string;
+  readonly scope_snapshot_id: string;
+  readonly scope_snapshot_revision: number;
+  readonly authorization_receipt_ref: string;
+  readonly purge_revision: number;
+}
 export interface WorkflowPrincipal {
   readonly principal_ref: string;
   readonly credential_generation: string;
@@ -77,6 +139,12 @@ export type WorkflowStageHandler = (input: {
   readonly attempt_ref: string;
   readonly budget_receipt_ref: string;
   readonly signal?: AbortSignal;
+}) => Promise<Uint8Array>;
+/** Pure/read native handlers receive no W2 attempt or budget identity. */
+export type WorkflowNativeStageHandler = (input: {
+  readonly request: StageRequest;
+  readonly principal: Pick<WorkflowPrincipal, "principal_ref" | "credential_generation" | "deployment_generation">;
+  readonly input_bytes: Uint8Array;
 }) => Promise<Uint8Array>;
 const WORKFLOW_ERROR_CODE_VALUES = [
   "WORKFLOW_INPUT_INVALID",

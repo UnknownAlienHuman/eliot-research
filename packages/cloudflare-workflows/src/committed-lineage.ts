@@ -1,4 +1,9 @@
-import { fail, type StageReceipt, type StageRequest } from "./types.js";
+import {
+  fail,
+  type StageReceipt,
+  type StageRequest,
+  type WorkflowStageCompletion,
+} from "./types.js";
 import type { WorkflowCheckpointStore } from "./store.js";
 
 export interface CommittedStageLineage {
@@ -22,4 +27,16 @@ export async function readCommittedStageLineage(
     fail("WORKFLOW_OUTPUT_CORRUPT");
   }
   return { ...committed, receipt };
+}
+
+/** Additive canonical reader; W2 history and native completion remain separately tagged. */
+export async function readCommittedWorkflowStageCompletion(
+  checkpoints: WorkflowCheckpointStore,
+  operation_id: string,
+  stage: StageRequest["stage"],
+): Promise<WorkflowStageCompletion> {
+  const native = await checkpoints.readCommittedNativeStage(operation_id, stage);
+  if (native !== null) return { kind: "NATIVE", receipt: native.receipt };
+  const w2 = await readCommittedStageLineage(checkpoints, operation_id, stage);
+  return { kind: "W2", receipt: w2.receipt };
 }

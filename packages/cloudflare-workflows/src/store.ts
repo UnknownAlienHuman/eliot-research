@@ -11,9 +11,13 @@ import {
 } from "@eliotr/research";
 import {
   decodeReceipt, encodeReceipt, fail, parseRequest, textDigest, WorkflowCheckpointError,
+  WORKFLOW_NATIVE_STAGE_EFFECT_POLICY_GENERATION,
   type StageReceipt, type StageRequest, type WorkflowBudgetGrant, type WorkflowErrorCode, type WorkflowObject,
-  type WorkflowPrincipal,
+  type WorkflowNativeStageAuthority, type WorkflowNativeStagePolicy, type WorkflowNativeStageReceipt, type WorkflowPrincipal,
 } from "./types.js";
+import { compileWorkflowNativeStagePolicy } from "./stage-execution-policy.js";
+import { WorkflowNativeStageCompletionPersistence, type CommittedNativeStage } from "./native-stage-completion-persistence.js";
+export type { CommittedNativeStage } from "./native-stage-completion-persistence.js";
 
 const WORKFLOW_OUTER_ERROR_CODES = [
   "WORKFLOW_INPUT_INVALID",
@@ -42,8 +46,10 @@ function isWorkflowErrorCode(value: unknown): value is WorkflowErrorCode {
 interface RunRow {
   operation_id: string; investigation_id: string; initial_revision: number; current_revision: number;
   principal_ref: string; credential_generation: string; deployment_generation: string;
+  policy_generation: string; policy_authority_ref: string; authorization_receipt_ref: string; purge_revision: number;
   scope_snapshot_id: string; scope_snapshot_revision: number;
   idempotency_key: string; handler_generation: string; initial_manifest_json: string;
+  stage_effect_policy_generation: string | null;
   next_stage_index: number; state: "ACTIVE" | "CANCELLED" | "ENGINE_COMPLETED";
   cancellation_receipt_ref: string | null; ledger_revision?: number;
   first_failure_json?: string | null; latest_failure_json?: string | null; failure_history_json?: string | null;
@@ -104,7 +110,17 @@ export function workflowStageIndex(request: StageRequest): number {
   return RESEARCH_WORKFLOW_STAGES.indexOf(request.stage);
 }
 export class WorkflowCheckpointStore {
-  constructor(private readonly db: D1Database) {}
+  private readonly nativeCompletion: WorkflowNativeStageCompletionPersistence;
+  constructor(private readonly db: D1Database) {
+    this.nativeCompletion = new WorkflowNativeStageCompletionPersistence(db, {
+      read_run: (operationId) => this.run(operationId),
+      same_principal: (run, principal) => this.samePrincipal(run, principal),
+      current: (request, principal) => this.current(request, principal),
+      assert_ready: (request, principal, policy) => this.assertNativeStageReady(request, principal, policy),
+      head: (investigationId) => this.head(investigationId),
+      map_failure: mapFailure,
+    });
+  }
 
   async head(id: string): Promise<LedgerHead> {
     const row = await this.db.prepare("SELECT * FROM investigation_ledger_head WHERE investigation_id = ?1").bind(id).first<LedgerHeadRow>();
@@ -114,7 +130,8 @@ export class WorkflowCheckpointStore {
   private async run(operation: string): Promise<RunRow | null> {
     return this.db.prepare("SELECT * FROM research_workflow_run WHERE operation_id = ?1").bind(operation).first<RunRow>();
   }
-  private samePrincipal(run: RunRow, principal: WorkflowPrincipal): void {
+  private samePrincipal(run: Pick<RunRow, "principal_ref" | "credential_generation" | "deployment_generation">,
+    principal: WorkflowPrincipal): void {
     if (run.principal_ref !== principal.principal_ref || run.credential_generation !== principal.credential_generation ||
         run.deployment_generation !== principal.deployment_generation) fail("WORKFLOW_AUTHORITY_STALE");
   }
@@ -134,6 +151,7 @@ export class WorkflowCheckpointStore {
           "credential_generation, deployment_generation, scope_snapshot_id, scope_snapshot_revision, " +
           "next_stage_index, state, cancellation_receipt_ref, handler_generation, idempotency_key, first_failure_json, latest_failure_json, failure_history_json, " +
           "policy_generation, policy_authority_ref, authorization_receipt_ref, purge_revision, initial_manifest_json " +
+          ", stage_effect_policy_generation " +
           "FROM research_workflow_run WHERE operation_id = ?1 AND principal_ref = ?2 LIMIT 1",
         ).bind(operationId, principal.principal_ref),
         this.db.prepare(
@@ -270,6 +288,102 @@ export class WorkflowCheckpointStore {
     }
     return Object.freeze({ request, request_sha256: row.request_sha256, attempt_ref: row.attempt_ref });
   }
+  async readCommittedNativeStage(operationId: string, stage: StageRequest["stage"]): Promise<CommittedNativeStage | null> {
+    return this.nativeCompletion.readCommittedNativeStage(operationId, stage);
+  }
+  /** Compile the installed native effect tuple; unmapped and already-started W2 stages stay on W2. */
+  async nativeStagePolicy(request: StageRequest, principal: WorkflowPrincipal): Promise<WorkflowNativeStagePolicy | null> {
+    const stageIndex = workflowStageIndex(request);
+    if (stageIndex < 1 || stageIndex > 4) return null;
+    const committed = await this.readCommittedNativeStage(request.operation_id, request.stage);
+    if (committed !== null) {
+      if (JSON.stringify(committed.request) !== JSON.stringify(request)) fail("WORKFLOW_CONFLICT");
+      const run = await this.run(request.operation_id);
+      if (run === null) fail("WORKFLOW_OUTPUT_CORRUPT");
+      const policy = await compileWorkflowNativeStagePolicy({
+        request, authority: committed.receipt.authority,
+        run_effect_policy_generation: run.stage_effect_policy_generation,
+      });
+      if (policy === null || policy.effect_class !== committed.receipt.effect_class ||
+          policy.effect_policy_generation !== committed.receipt.effect_policy_generation) fail("WORKFLOW_OUTPUT_CORRUPT");
+      return policy;
+    }
+
+    await this.ensureRun(request, principal);
+    const run = await this.run(request.operation_id);
+    if (run === null) fail("WORKFLOW_AUTHORITY_STALE");
+    this.samePrincipal(run, principal);
+    const authority: WorkflowNativeStageAuthority = {
+      principal_ref: run.principal_ref, credential_generation: run.credential_generation,
+      deployment_generation: run.deployment_generation, policy_generation: run.policy_generation,
+      policy_authority_ref: run.policy_authority_ref, scope_snapshot_id: run.scope_snapshot_id,
+      scope_snapshot_revision: run.scope_snapshot_revision, authorization_receipt_ref: run.authorization_receipt_ref,
+      purge_revision: run.purge_revision,
+    };
+    const policy = await compileWorkflowNativeStagePolicy({
+      request, authority, run_effect_policy_generation: run.stage_effect_policy_generation,
+    });
+    if (policy === null) return null;
+    const ready = await this.assertNativeStageReady(request, principal, policy);
+    return ready ? policy : null;
+  }
+
+  private async assertNativeStageReady(
+    request: StageRequest, principal: WorkflowPrincipal, policy: WorkflowNativeStagePolicy,
+  ): Promise<boolean> {
+    await this.current(request, principal);
+    const stageIndex = workflowStageIndex(request);
+    let current: RunRow | null;
+    let previous: { output_json: string | null } | null;
+    let attempt: { operation_id: string } | null;
+    try {
+      current = await this.db.prepare("SELECT * FROM research_workflow_current WHERE operation_id = ?1")
+        .bind(request.operation_id).first<RunRow>();
+      previous = await this.db.prepare(`SELECT COALESCE(
+          (SELECT output_json FROM research_workflow_attempt WHERE operation_id = ?1 AND stage_index = ?2 AND state = 'COMMITTED'),
+          (SELECT output_manifest_json FROM research_workflow_native_stage_completion WHERE operation_id = ?1 AND stage_index = ?2)
+        ) AS output_json`).bind(request.operation_id, stageIndex - 1).first<{ output_json: string | null }>();
+      attempt = await this.db.prepare("SELECT operation_id FROM research_workflow_attempt WHERE operation_id = ?1 AND stage_index = ?2 LIMIT 1")
+        .bind(request.operation_id, stageIndex).first<{ operation_id: string }>();
+    } catch {
+      fail("WORKFLOW_STORAGE_UNAVAILABLE");
+    }
+    if (current === null) fail("WORKFLOW_AUTHORITY_STALE");
+    this.samePrincipal(current, principal);
+    if (current.state === "CANCELLED") fail("WORKFLOW_CANCELLED");
+    if (current.state !== "ACTIVE" || current.next_stage_index !== stageIndex ||
+        current.current_revision !== request.investigation_ref.revision || current.ledger_revision !== request.investigation_ref.revision) {
+      fail("WORKFLOW_STAGE_OUT_OF_ORDER");
+    }
+    if (current.investigation_id !== request.investigation_ref.id || current.idempotency_key !== request.idempotency_key ||
+        current.handler_generation !== request.handler_generation ||
+        current.stage_effect_policy_generation !== policy.effect_policy_generation) fail("WORKFLOW_CONFLICT");
+    if (previous?.output_json === null || previous === null || previous.output_json !== JSON.stringify(request.input_manifest)) {
+      fail("WORKFLOW_STAGE_OUT_OF_ORDER");
+    }
+    // An existing W2 reservation owns recovery and may not be bypassed by a new native path.
+    return attempt === null;
+  }
+
+  /** Persist native intent through the private completion capability; no W2 attempt is created. */
+  async ensureNativeStageIntent(input: {
+    readonly request: StageRequest;
+    readonly principal: WorkflowPrincipal;
+    readonly output: WorkflowObject;
+    readonly request_sha256: string;
+  }): Promise<void> {
+    return this.nativeCompletion.ensureNativeStageIntent(input);
+  }
+
+  /** Commit canonical event, native receipt/outbox, and current-run advance atomically. */
+  async commitNativeStage(input: {
+    readonly request: StageRequest;
+    readonly principal: WorkflowPrincipal;
+    readonly policy: WorkflowNativeStagePolicy;
+    readonly output: WorkflowObject;
+  }): Promise<WorkflowNativeStageReceipt> {
+    return this.nativeCompletion.commitNativeStage(input);
+  }
   async current(request: StageRequest, principal: WorkflowPrincipal): Promise<void> {
     const run = await this.run(request.operation_id);
     if (run === null) fail("WORKFLOW_AUTHORITY_STALE");
@@ -302,14 +416,15 @@ export class WorkflowCheckpointStore {
           (operation_id, investigation_id, initial_revision, current_revision, principal_ref, credential_generation,
            deployment_generation, policy_generation, policy_authority_ref, authorization_receipt_ref,
            scope_snapshot_id, scope_snapshot_revision, purge_revision, idempotency_key, handler_generation,
-           initial_manifest_json, created_at)
-          VALUES (?1,?2,?3,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16)
+           initial_manifest_json, stage_effect_policy_generation, created_at)
+          VALUES (?1,?2,?3,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17)
           ON CONFLICT(operation_id) DO NOTHING`)
           .bind(request.operation_id, head.investigation_id, head.revision, principal.principal_ref,
             principal.credential_generation, principal.deployment_generation, head.policy_generation,
             head.policy_authority_ref, grant.authorization_receipt_ref, head.scope_snapshot_id,
             head.scope_snapshot_revision, purge?.n ?? -1, request.idempotency_key, request.handler_generation,
-            JSON.stringify(request.input_manifest), new Date().toISOString()).run();
+            JSON.stringify(request.input_manifest), WORKFLOW_NATIVE_STAGE_EFFECT_POLICY_GENERATION,
+            new Date().toISOString()).run();
       } catch (error) {
         run = await this.run(request.operation_id);
         if (run === null) mapFailure(error);

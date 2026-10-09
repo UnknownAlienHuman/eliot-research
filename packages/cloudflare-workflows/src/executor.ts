@@ -5,6 +5,7 @@ import { readWorkflowObject, writeWorkflowObject } from "./objects.js";
 import {
   digest, fail, MAX_WORKFLOW_OUTPUT_BYTES, MAX_WORKFLOW_RECEIPT_BYTES, parseRequest, snapshotPrincipal, textDigest, WorkflowCheckpointError, WorkflowObjectSchema,
   type StageReceipt, type StageRequest, type WorkflowBudgetGrant, type WorkflowExecutionPorts,
+  type WorkflowNativeStageHandler, type WorkflowNativeStagePolicy, type WorkflowNativeStageReceipt,
   type WorkflowObject, type WorkflowPrincipal, type WorkflowStageHandler,
 } from "./types.js";
 import type { ResearchWorkflowStage } from "@eliotr/contracts";
@@ -68,6 +69,83 @@ export function createWorkflowCheckpointExecutor(
     return receipt;
   }
   return {
+    async nativeStagePolicy(raw: unknown, actor: WorkflowPrincipal): Promise<WorkflowNativeStagePolicy | null> {
+      const request = parseRequest(raw);
+      const principal = snapshotPrincipal(actor);
+      return store.nativeStagePolicy(request, principal);
+    },
+    async executeNative(
+      raw: unknown,
+      actor: WorkflowPrincipal,
+      handler: WorkflowNativeStageHandler,
+      expectedPolicy: WorkflowNativeStagePolicy,
+    ): Promise<WorkflowNativeStageReceipt> {
+      const request = parseRequest(raw);
+      const principal = snapshotPrincipal(actor);
+      const requestDigest = await textDigest(JSON.stringify(request));
+
+      async function beforeNativeEffect(): Promise<void> {
+        // Durable run cancellation and the same principal fence used by W2 guard every native leg.
+        await store.current(request, principal);
+        await ports.authorizeResidency(request, principal);
+      }
+      async function finishNativeReadback(receipt: WorkflowNativeStageReceipt): Promise<WorkflowNativeStageReceipt> {
+        await beforeNativeEffect();
+        await readWorkflowObject(bucket, receipt.output_manifest, true);
+        await store.current(request, principal);
+        return receipt;
+      }
+
+      const committed = await store.readCommittedNativeStage(request.operation_id, request.stage);
+      if (committed !== null) {
+        if (committed.request_sha256 !== requestDigest || JSON.stringify(committed.request) !== JSON.stringify(request)) {
+          fail("WORKFLOW_CONFLICT");
+        }
+        return finishNativeReadback(committed.receipt);
+      }
+
+      await store.ensureRun(request, principal);
+      const compiled = await store.nativeStagePolicy(request, principal);
+      if (compiled === null || compiled.effect_policy_generation !== expectedPolicy.effect_policy_generation ||
+          compiled.effect_class !== expectedPolicy.effect_class || compiled.retry_limit !== expectedPolicy.retry_limit ||
+          compiled.retry_delay_ms !== expectedPolicy.retry_delay_ms) fail("WORKFLOW_AUTHORITY_STALE");
+      await beforeNativeEffect();
+      const inputBytes = await readWorkflowObject(bucket, request.input_manifest, true);
+      await beforeNativeEffect();
+
+      let bytes: Uint8Array;
+      try {
+        bytes = await handler({
+          request: structuredClone(request),
+          principal: Object.freeze({
+            principal_ref: principal.principal_ref,
+            credential_generation: principal.credential_generation,
+            deployment_generation: principal.deployment_generation,
+          }),
+          input_bytes: inputBytes,
+        });
+      } catch (error) {
+        if (error instanceof WorkflowCheckpointError) throw error;
+        throw new WorkflowCheckpointError("WORKFLOW_PREPARATION_FAILED", workflowFailure(error, "STAGE", request.stage));
+      }
+      if (!(bytes instanceof Uint8Array) || bytes.byteLength > MAX_WORKFLOW_OUTPUT_BYTES) fail("WORKFLOW_INPUT_INVALID");
+      bytes = new Uint8Array(bytes);
+      const outputDigest = await digest(bytes);
+      const output = WorkflowObjectSchema.parse({
+        object_ref: `workflow-native/${requestDigest}/${outputDigest}`,
+        sha256: outputDigest,
+        byte_length: bytes.byteLength,
+        residency: { ...request.input_manifest.residency, content_digest: { algorithm: "sha256", digest: outputDigest } },
+      });
+
+      await beforeNativeEffect();
+      await store.ensureNativeStageIntent({ request, principal, output, request_sha256: requestDigest });
+      await beforeNativeEffect();
+      await writeWorkflowObject(bucket, output, bytes);
+      await beforeNativeEffect();
+      const receipt = await store.commitNativeStage({ request, principal, policy: compiled, output });
+      return finishNativeReadback(receipt);
+    },
     async execute(raw: unknown, actor: WorkflowPrincipal, handler: WorkflowStageHandler): Promise<StageReceipt> {
       const request = parseRequest(raw);
       const principal = snapshotPrincipal(actor);
