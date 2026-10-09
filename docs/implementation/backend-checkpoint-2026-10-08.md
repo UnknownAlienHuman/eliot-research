@@ -75,8 +75,39 @@ and times remain admissible. Root/branch projection refs and digest remain stabl
 across those receipt changes. Owning runtime compilation/scoped lint pass; the
 role-parser negative passes 1/1 with nine skipped, three frozen-binding cases
 pass before helper extraction, and the final projection negative/compatibility
-case passes 1/1 with three skipped. Full library source review and publication
-are pending, separately from native/runtime acceptance.
+case passes 1/1 with three skipped. The coherent 26-file library closure is
+source-reviewed and published in `2adbc42d`; its later duplicate-receipt regression
+passes 3/3. Runtime/native acceptance remains separate.
+
+### October 9 frozen synthesis evidence handoff
+
+The synthesis preparation and prompt now select the existing frozen
+`synthesis_evidence_pack` when present. Historical contexts retain their Stage-5
+pack. The prompt carries frozen branch findings, debts and omissions as untrusted
+candidate context and requires their existing exact handle references; duplicate
+references are collected once. The candidate payload uses the existing
+`EvidenceFreezeBranchFindingsProvenance`: wrapper-only resolved evidence and its
+envelope digest are excluded, so raw excerpts are supplied through manifest
+selection rather than duplicated in candidate context. Replacing a frozen branch pack with the root pack
+is rejected before prompt compilation. Existing STARTED-attempt, deployment,
+scope, immutable R2 and spend-admission guards are retained.
+
+TypeScript 6.0.3 compiles the published HEAD plus these two sources and their new
+owning regression with zero diagnostics and 3,766 virtual outputs. Exact lint
+passes. Three new preparation/prompt handoff cases pass on the same bounded HEAD
+overlay; they use the real W3 validator and row/R2 guards with an explicit trusted
+context-port fixture. The initial compiler rejected the fixture's unsupported
+route; only that fixture was corrected to the existing typed dynamic route.
+The initial handoff case passed with an incomplete context-port fixture; root
+source review then found raw evidence duplicated in the candidate envelope.
+The fixture now includes that material and the changed handoff case additionally
+proves its exclusion, while preserving findings and reconciliation debts/omissions.
+Maxwell independently accepts the final two source hashes on `gpt-6-luna` with
+Max reasoning; the reviewer ran no additional tests and is closed/archived.
+Only that changed case is requalified; the compatibility and denial passes are
+retained. These checks do not qualify the
+canonical freeze reader, paid provider dispatch, full scientific/native pipeline,
+or C1/C2/C5 activation; those acceptance criteria remain open.
 
 The new [C5 budget gap](branch-query-budget-selection.md) records that the prepared
 planner's former 16/64/8/16 KiB/four-leg defaults had no identified selection.

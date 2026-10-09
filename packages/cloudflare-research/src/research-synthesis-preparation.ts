@@ -239,7 +239,7 @@ export function createResearchSynthesisPreparation(
       route_ref: deployment.route_ref,
       prompt_generation: deployment.prompt_generation,
       schema_generation: deployment.schema_generation,
-      evidence_pack: snapshot(frozen.stage_five.evidence_pack, "frozen evidence pack"),
+      evidence_pack: snapshot(frozen.synthesis_evidence_pack ?? frozen.stage_five.evidence_pack, "frozen evidence pack"),
       output_object_ref: text(input.model_output_object_ref, "model output object"),
       max_input_bytes: admitted.max_input_bytes,
       max_output_bytes: admitted.max_output_bytes,

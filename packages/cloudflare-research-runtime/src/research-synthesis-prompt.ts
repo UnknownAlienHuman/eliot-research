@@ -1,4 +1,4 @@
-import { IdentifierSchema } from "@eliotr/contracts";
+import { IdentifierSchema, type EvidenceFreezeBranchFindingsProvenance } from "@eliotr/contracts";
 import {
   canonicalEvidenceJson,
   type CloudflareEvidenceResolver,
@@ -159,6 +159,14 @@ function validateTrustedParameters(value: TrustedModelPromptParameters): Trusted
   return snapshot(value, "installed trusted model parameters");
 }
 
+function candidateFindingContext(
+  findings: EvidenceFreezeSynthesisContext["branch_findings"],
+): EvidenceFreezeBranchFindingsProvenance | undefined {
+  if (findings === undefined) return undefined;
+  const { identity_digest: _identityDigest, resolved_evidence: _resolvedEvidence, ...provenance } = findings;
+  return snapshot(provenance, "frozen candidate findings");
+}
+
 function validateModelBinding(
   input: ModelCallInput,
   suppliedDeployment: ModelRouteDeployment,
@@ -170,7 +178,7 @@ function validateModelBinding(
       input.route_ref !== expectedDeployment.route_ref ||
       input.prompt_generation !== expectedDeployment.prompt_generation ||
       input.schema_generation !== expectedDeployment.schema_generation ||
-      canonicalEvidenceJson(input.evidence_pack) !== canonicalEvidenceJson(frozen.stage_five.evidence_pack) ||
+      canonicalEvidenceJson(input.evidence_pack) !== canonicalEvidenceJson(frozen.synthesis_evidence_pack ?? frozen.stage_five.evidence_pack) ||
       input.max_input_bytes !== definition.max_context_bytes) {
     fail("model call is not bound to the current frozen synthesis context");
   }
@@ -308,8 +316,14 @@ export function createResearchSynthesisPromptDependencies(
     ): Promise<BuildReferenceManifestInput> => {
       const bound = await readBound(rawModelInput, deployment);
       const definition = bound.context.stage_ten_input.model_profile_definition;
+      const candidateContext = candidateFindingContext(bound.context.branch_findings);
       return Object.freeze({
-        evidence_pack: snapshot(bound.context.stage_five.evidence_pack, "frozen evidence pack"),
+        evidence_pack: snapshot(bound.context.synthesis_evidence_pack ?? bound.context.stage_five.evidence_pack, "frozen evidence pack"),
+        ...(candidateContext === undefined ? {} : {
+          untrusted_candidate_context: candidateContext,
+          required_handle_refs: [...new Map(candidateContext.findings.flatMap((finding) =>
+            finding.evidence_handle_refs.map((ref) => [canonicalEvidenceJson(ref), { ...ref }] as const))).values()],
+        }),
         navigation: input.navigation,
         resolver: input.evidence_resolver,
         policy: snapshot(definition.policy, "frozen model policy"),
