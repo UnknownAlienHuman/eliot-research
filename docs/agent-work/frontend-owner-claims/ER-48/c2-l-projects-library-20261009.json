@@ -1,0 +1,31 @@
+{
+  "protocol": "eliotr.frontend-owner-claim.v1",
+  "manager_identity": "frontend-manager",
+  "manager_context_id": "01a120c9-2637-7952-b6c9-be07b395b4fd",
+  "owner_authorization_ref": "tests/ui-owner/receipts/owner-authorization.json",
+  "base_sha": "e14c1974d999d35a7fe7b26e65711aa153a92c50",
+  "history_base_sha": "c37e56e0ebdfc7f6d294879008a4036d1b95b985",
+  "state": "ACTIVE",
+  "evidence_refs": [],
+  "blocker_refs": [],
+  "claim_id": "c2-l-projects-library-20261009",
+  "checkpoint_id": "C2-L",
+  "packet_id": "ER-48",
+  "leaf_identity": "01a120cd-7241-7253-88dd-a35359d8103f",
+  "write_paths": [
+    "packages/owner-api-client/src/sources/projects-library/projects.ts",
+    "packages/owner-api-client/src/sources/projects-library/library.ts",
+    "packages/owner-api-client/src/sources/projects-library/projects.test.ts",
+    "packages/owner-api-client/src/sources/projects-library/library.test.ts"
+  ],
+  "predecessor_refs": [
+    {
+      "checkpoint_id": "C0.3",
+      "commit_sha": "9029cbf18717365641c079c8180b8a9f7a4001b8"
+    },
+    {
+      "checkpoint_id": "C1.4",
+      "commit_sha": "4f7c99546bd7adfcf766bdc1a398a94a8e20fedb"
+    }
+  ]
+}
