@@ -2,6 +2,11 @@ import type { ProjectClientGrant, VersionedRef } from "@eliotr/contracts";
 import { RESEARCH_WORKFLOW_STAGES } from "@eliotr/domain";
 import { parseRequest, textDigest, type StageRequest } from "./types.js";
 import {
+  readExternalAgentRecordedResult,
+  type ExternalAgentRecordedResultIdentity,
+  type ExternalAgentRecordedResultReadback,
+} from "./external-agent-recorded-result-reader.js";
+import {
   LEASE_ID, MAX_PROGRESS_BYTES, MAX_RESULT_BYTES, SHA256, TASK_ID, WORKER_SLOT,
   ExternalAgentTaskError, decodeExternalAgentRecordedProgress, decodeExternalAgentRecordedResult,
   externalTaskCanonical, externalTaskDeny,
@@ -562,24 +567,16 @@ export class ExternalAgentTaskStore {
   }
 
   /** Internal W2 consumer seam. Recorded callback bytes are not a W1 checkpoint or stage output. */
-  async readRecordedResult(inputValue: { readonly operation_id: string; readonly stage_index: number;
-    readonly attempt_ref: string; readonly request_sha256: string }): Promise<ExternalAgentRecordedResult | null> {
+  async readRecordedResult(inputValue: ExternalAgentRecordedResultIdentity): Promise<ExternalAgentRecordedResult | null> {
+    return (await this.readRecordedResultReadback(inputValue))?.result ?? null;
+  }
+
+  /** Internal native-wake readback; callers still revalidate current execution authority before consumption. */
+  async readRecordedResultReadback(
+    inputValue: ExternalAgentRecordedResultIdentity,
+  ): Promise<ExternalAgentRecordedResultReadback | null> {
+    const identity = Object.freeze({ ...inputValue });
     await this.#schema();
-    input(Number.isSafeInteger(inputValue.stage_index) && inputValue.stage_index >= 0 &&
-      inputValue.stage_index < RESEARCH_WORKFLOW_STAGES.length && SHA256.test(inputValue.request_sha256),
-    "Recorded-result identity is invalid");
-    let row: TaskRow | null;
-    try {
-      row = await this.#db.prepare("SELECT * FROM research_external_agent_task_binding " +
-        "WHERE operation_id=?1 AND stage_index=?2 AND attempt_ref=?3 AND request_sha256=?4 LIMIT 1")
-        .bind(inputValue.operation_id, inputValue.stage_index, inputValue.attempt_ref, inputValue.request_sha256)
-        .first<TaskRow>();
-    } catch { fail("EXTERNAL_AGENT_TASK_EFFECT_UNCERTAIN", 503, "Recorded result read is unavailable", true); }
-    if (row === null || row.state !== "RESULT_RECORDED") return null;
-    await this.#validateRow(row);
-    if (row.result_json === null || row.result_sha256 === null || await textDigest(row.result_json) !== row.result_sha256) {
-      fail("EXTERNAL_AGENT_TASK_OUTPUT_CORRUPT", 500, "Recorded result digest is corrupt");
-    }
-    return decodeExternalAgentRecordedResult(row);
+    return readExternalAgentRecordedResult<TaskRow>(this.#db, identity, (row) => this.#validateRow(row));
   }
 }
