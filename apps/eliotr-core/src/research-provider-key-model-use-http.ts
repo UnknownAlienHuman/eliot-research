@@ -5,24 +5,11 @@ import {
 } from "@eliotr/contracts";
 import { readJsonBodyWithinBytes } from "./bounded-json.js";
 import { apiResult, HttpRequestError, requireNoQuery } from "./http.js";
+import { requireProviderKeyMutationSecurity } from "./http-request-auth.js";
 import type { Env } from "./env.js";
 import { ResearchProviderKeyModelUseServiceError, type ResearchProviderKeyModelUseService } from "./research-provider-key-model-use-service.js";
 
 const MAX_REQUEST_BYTES = 2_048;
-
-function requireMutationSecurity(request: Request, url: URL): void {
-  const origin = request.headers.get("Origin");
-  const site = request.headers.get("Sec-Fetch-Site");
-  if (origin === null || origin !== url.origin || request.headers.get("x-eliotr-csrf") !== "1" ||
-      (site !== null && site !== "same-origin" && site !== "none")) {
-    throw new HttpRequestError("PROVIDER_KEY_MODEL_USE_CSRF_DENIED", 403,
-      "Model-key activation requires a same-origin owner request");
-  }
-  if (request.headers.get("Content-Type")?.split(";", 1)[0]?.trim().toLowerCase() !== "application/json") {
-    throw new HttpRequestError("PROVIDER_KEY_MODEL_USE_INPUT_INVALID", 415,
-      "Model-key activation requires application/json");
-  }
-}
 
 function responseFailure(): never {
   throw new HttpRequestError("PROVIDER_KEY_MODEL_USE_RESPONSE_INVALID", 503,
@@ -56,7 +43,14 @@ export async function handleResearchProviderKeyModelUseHttp(
     if (request.method !== "POST") {
       throw new HttpRequestError("METHOD_NOT_ALLOWED", 405, "Method is not supported for model-key activation");
     }
-    requireMutationSecurity(request, url);
+    requireProviderKeyMutationSecurity(
+      request,
+      url,
+      new HttpRequestError("PROVIDER_KEY_MODEL_USE_CSRF_DENIED", 403,
+        "Model-key activation requires a same-origin owner request"),
+      new HttpRequestError("PROVIDER_KEY_MODEL_USE_INPUT_INVALID", 415,
+        "Model-key activation requires application/json"),
+    );
     const byteLimit = Math.min(maximumRequestBytes, MAX_REQUEST_BYTES);
     if (!Number.isSafeInteger(byteLimit) || byteLimit < 1) {
       throw new HttpRequestError("PROVIDER_KEY_MODEL_USE_REQUEST_INVALID", 400,

@@ -6,6 +6,7 @@ import {
 } from "@eliotr/contracts";
 import { readJsonBodyWithinBytes } from "./bounded-json.js";
 import { apiResult, HttpRequestError } from "./http.js";
+import { requireProviderKeyMutationSecurity } from "./http-request-auth.js";
 import type { Env } from "./env.js";
 import {
   ResearchProviderKeyConfigurationError,
@@ -17,20 +18,6 @@ export const RESEARCH_PROVIDER_KEY_CONFIGURATION_MAX_REQUEST_BYTES = 8_192;
 function protocolFailure(): never {
   throw new HttpRequestError("RESEARCH_PROVIDER_KEY_CONFIGURATION_RESPONSE_INVALID", 503,
     "Provider key configuration response is unavailable", true);
-}
-
-function requireMutationSecurity(request: Request, url: URL): void {
-  const origin = request.headers.get("Origin");
-  const site = request.headers.get("Sec-Fetch-Site");
-  if (origin === null || origin !== url.origin || request.headers.get("x-eliotr-csrf") !== "1" ||
-      (site !== null && site !== "same-origin" && site !== "none")) {
-    throw new HttpRequestError("RESEARCH_PROVIDER_KEY_CONFIGURATION_CSRF_DENIED", 403,
-      "Provider key changes require a same-origin owner request");
-  }
-  if (request.headers.get("Content-Type")?.split(";", 1)[0]?.trim().toLowerCase() !== "application/json") {
-    throw new HttpRequestError("RESEARCH_PROVIDER_KEY_CONFIGURATION_INPUT_INVALID", 415,
-      "Provider key changes require application/json");
-  }
 }
 
 /** Owner-only, write-only key configuration. It never returns the submitted credential. */
@@ -79,7 +66,14 @@ export async function handleResearchProviderKeyConfiguration(
       throw new HttpRequestError("RESEARCH_PROVIDER_KEY_CONFIGURATION_INPUT_INVALID", 400,
         "Provider key creation does not accept query parameters");
     }
-    requireMutationSecurity(request, url);
+    requireProviderKeyMutationSecurity(
+      request,
+      url,
+      new HttpRequestError("RESEARCH_PROVIDER_KEY_CONFIGURATION_CSRF_DENIED", 403,
+        "Provider key changes require a same-origin owner request"),
+      new HttpRequestError("RESEARCH_PROVIDER_KEY_CONFIGURATION_INPUT_INVALID", 415,
+        "Provider key changes require application/json"),
+    );
     const cap = Math.min(maximumRequestBytes, RESEARCH_PROVIDER_KEY_CONFIGURATION_MAX_REQUEST_BYTES);
     if (!Number.isSafeInteger(cap) || cap < 1) {
       throw new HttpRequestError("RESEARCH_PROVIDER_KEY_CONFIGURATION_REQUEST_INVALID", 400,

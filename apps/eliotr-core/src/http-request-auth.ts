@@ -89,3 +89,20 @@ export function authorize(
     },
   };
 }
+
+export function requireProviderKeyMutationSecurity(
+  request: Request,
+  url: URL,
+  csrfDenied: HttpRequestError,
+  contentTypeInvalid: HttpRequestError,
+): void {
+  const origin = request.headers.get("Origin");
+  const site = request.headers.get("Sec-Fetch-Site");
+  if (origin === null || origin !== url.origin || request.headers.get("x-eliotr-csrf") !== "1" ||
+      (site !== null && site !== "same-origin" && site !== "none")) {
+    throw csrfDenied;
+  }
+  if (request.headers.get("Content-Type")?.split(";", 1)[0]?.trim().toLowerCase() !== "application/json") {
+    throw contentTypeInvalid;
+  }
+}
