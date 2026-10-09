@@ -202,6 +202,30 @@ function staticEvaluator(source) {
     return undefined;
   }
 
+  function evaluateAddition(node, environment, depth) {
+    const pending = [{ node, ready: false }];
+    const values = new Map();
+    while (pending.length) {
+      const entry = pending.pop();
+      const expression = entry.node;
+      if (!ts.isBinaryExpression(expression) || expression.operatorToken.kind !== ts.SyntaxKind.PlusToken) {
+        const value = evaluate(expression, environment, depth + 1);
+        if (typeof value !== "string" && typeof value !== "number") return undefined;
+        values.set(expression, value);
+      } else if (!entry.ready) {
+        pending.push({ node: expression, ready: true },
+          { node: expression.right, ready: false }, { node: expression.left, ready: false });
+      } else {
+        const left = values.get(expression.left);
+        const right = values.get(expression.right);
+        // Preserve the AST grouping: numeric addition precedes string coercion.
+        values.set(expression, typeof left === "number" && typeof right === "number"
+          ? left + right : String(left) + String(right));
+      }
+    }
+    return values.get(node);
+  }
+
   function evaluate(node, environment = new Map(), depth = 0) {
     if (!node || depth > 20) return undefined;
     if (ts.isParenthesizedExpression(node) || ts.isAsExpression(node) || ts.isTypeAssertionExpression(node) || ts.isSatisfiesExpression(node)) {
@@ -232,10 +256,7 @@ function staticEvaluator(source) {
       return result;
     }
     if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.PlusToken) {
-      const left = evaluate(node.left, environment, depth + 1);
-      const right = evaluate(node.right, environment, depth + 1);
-      if ((typeof left === "string" || typeof left === "number") && (typeof right === "string" || typeof right === "number")) return String(left) + String(right);
-      return undefined;
+      return evaluateAddition(node, environment, depth);
     }
     if (ts.isBinaryExpression(node) && [ts.SyntaxKind.EqualsEqualsEqualsToken, ts.SyntaxKind.EqualsEqualsToken].includes(node.operatorToken.kind)) {
       const left = evaluate(node.left, environment, depth + 1);
