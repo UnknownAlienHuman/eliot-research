@@ -14,6 +14,7 @@
   "scenarios": {
     "u1-primitives": ["primitives-native--primary", "primitives-native--tonal", "primitives-native--text", "primitives-native--loading", "primitives-native--disabled", "primitives-native--labelled-icon", "primitives-native--field-hint", "primitives-native--field-error", "primitives-native--neutral-status", "primitives-native--error-status", "primitives-native--long-russian", "primitives-native--modal-interaction"],
     "u1-direction": ["direction-workspace--useful", "direction-workspace--dark", "direction-workspace--long-russian", "direction-workspace--long-russian-dark", "direction-workspace--loading", "direction-workspace--degraded"],
+    "u1-direction-journey": ["direction-workspace--fixture-journey"],
     "u1-tokens": ["tokens-colorroles--light-and-dark", "tokens-colorroles--semantic-pairings", "tokens-colorroles--english-sample", "tokens-colorroles--long-russian"]
   },
   "mathematical_layout_allowlist": ["0, 1fr, 100percent, auto, minmax(0,1fr), 100dvh", "calc(100percent - 2 * panel spacing)", "48rem compact and 64rem medium boundaries; 80rem supporting-context minimum", "skip link translateY(-200percent) until focused"],
