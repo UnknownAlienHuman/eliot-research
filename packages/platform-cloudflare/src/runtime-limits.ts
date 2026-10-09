@@ -179,7 +179,7 @@ export async function readStreamWithinBytes(
           options.max_bytes,
         );
       }
-      chunks.push(chunk.slice());
+      chunks.push(new Uint8Array(chunk));
     }
   } catch (error) {
     cancelQuietly(reader);

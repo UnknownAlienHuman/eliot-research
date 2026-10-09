@@ -215,4 +215,21 @@ describe("bounded stream cleanup", () => {
     expect([...bytes]).toEqual([1, 2, 3, 4]);
     expect(stream.locked).toBe(false);
   });
+
+  it("owns bytes even when the chunk slice method returns an alias", async () => {
+    const reused = new Uint8Array(2);
+    Object.defineProperty(reused, "slice", { value: () => reused });
+    let pull = 0;
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        reused.set(pull === 0 ? [1, 2] : [3, 4]);
+        controller.enqueue(reused);
+        pull += 1;
+        if (pull === 2) controller.close();
+      },
+    }, { highWaterMark: 0 });
+    const bytes = await readStreamWithinBytes(stream, { label: "body", max_bytes: 4, max_chunks: 2 });
+    expect([...bytes]).toEqual([1, 2, 3, 4]);
+    expect(stream.locked).toBe(false);
+  });
 });
