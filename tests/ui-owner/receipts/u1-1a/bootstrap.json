@@ -1,0 +1,24 @@
+{
+  "checkpoint": "U1.1a",
+  "manager_context": "01a120c9-2637-7952-b6c9-be07b395b4fd",
+  "baseline": "0b7c307e9e7c267bda712e6ae41b87b555e9fc01",
+  "authorization": "Owner message in manager chat 2026-10-09: complete Eliot Research frontend with 5-10 Go Step-5 high agents and a Goal.",
+  "scope": "Package-local manifests, TypeScript/Vite configuration and HTML only. No product shell, token decisions or owner feature endpoint.",
+  "dependency_proposal": {
+    "react": "19.3.0",
+    "vite": "8.2.2",
+    "cloudflare_vite_plugin": "1.54.11",
+    "react_plugin": "6.1.2",
+    "router": "7.18.4",
+    "query": "5.104.1",
+    "tailwind": "4.3.3",
+    "typescript": "6.0.3"
+  },
+  "checks": [
+    { "name": "JSON parse, pinned tuple and forbidden frontend dependency inspection", "status": "PASS" },
+    { "name": "Registry react 19.3.0 and @types/react 19.3.0 availability", "status": "PASS" },
+    { "name": "Registry Cloudflare/React plugin peer metadata", "status": "PASS", "note": "React compiler/babel/oxc optional peers remain optional." }
+  ],
+  "integration": "PENDING B-U; automatic pnpm workspace reconciliation is not acceptance.",
+  "pending": ["frozen install and peer graph", "root registration and negatives", "candidate source compile", "generated sibling Worker parity", "Storybook", "browser acceptance", "staging/live/release/cutover"]
+}
