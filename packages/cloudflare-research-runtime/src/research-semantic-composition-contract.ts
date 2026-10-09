@@ -2,6 +2,7 @@ import type { CloudflareEvidenceResolver, EvidenceAuthorityPort, EvidenceContent
 import type { ModelGatewayPricingPort, ModelGatewayRequestCapabilitiesV1 } from "@eliotr/cloudflare-ai";
 import type { ReferenceManifestStore } from "@eliotr/policy";
 import type { InvestigationLedgerStore } from "@eliotr/research";
+import type { ResearchNativeAcquisitionSelection } from "@eliotr/cloudflare-research";
 import type { ScopeProfileBinding } from "@eliotr/retrieval";
 import type { ResearchBranchRole } from "@eliotr/contracts";
 import type { WorkflowPrincipal } from "@eliotr/cloudflare-workflows";
@@ -41,6 +42,7 @@ import type {
 import type { ResearchBranchRolePromptDependenciesInput } from "./research-branch-role-prompt.js";
 import type { SemanticResearchHandlerGeneration } from "./research-stage-handlers.js";
 import type { AiSearchNamespaceLike } from "@eliotr/platform-cloudflare";
+import type { createResearchNativeAcquisitionStageRoute } from "./research-native-acquisition.js";
 
 type SemanticPrincipal = Pick<
   WorkflowPrincipal,
@@ -252,6 +254,10 @@ export interface ResearchSemanticComposition {
 export interface ResearchSemanticWorkflowDependencies extends ResearchSemanticCompositionDependencies {
   /** Explicitly pinned by the stored run; omitted only by legacy v3 fixtures. */
   readonly handler_generation?: SemanticResearchHandlerGeneration;
+  /** Exact immutable run selection; omitted only when that run has no acquisition selection. */
+  readonly native_acquisition_selection?: ResearchNativeAcquisitionSelection;
+  /** Native transports and owner capability; never selected by a request or model. */
+  readonly native_acquisition_runtime?: Omit<Parameters<typeof createResearchNativeAcquisitionStageRoute>[0], "selection">;
   readonly report: Pick<ResearchCoverageMaterializeStageDependencies,
     "policy_source" | "report_policy" | "expected_draft_head_revision">;
 }

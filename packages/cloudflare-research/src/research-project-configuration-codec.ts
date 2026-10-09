@@ -4,6 +4,8 @@ import {
   validateModelGatewayTransportPolicy,
   type ModelGatewayTransportPolicyV1,
 } from "@eliotr/cloudflare-ai";
+import { canonicalJson, RUNTIME_LIMITS } from "@eliotr/platform-cloudflare";
+import { WorkflowCheckpointError } from "@eliotr/cloudflare-workflows";
 
 export const RESEARCH_PROJECT_MODEL_CONFIGURATION_PROTOCOL =
   "eliotr.research-project-model-configuration.v1" as const;
@@ -25,6 +27,7 @@ const RUNTIME_VAR_KEYS = [
   "ELIOTR_RESEARCH_REPORT_CONFIG_JSON",
   "ELIOTR_RESEARCH_REPORT_POLICY_PROVENANCE_REF",
 ] as const;
+const NATIVE_ACQUISITION_SELECTION_VAR = "ELIOTR_RESEARCH_NATIVE_ACQUISITION_SELECTION_JSON" as const;
 const BUNDLE_KEYS = new Set(["protocol", "semantic_revision", "model_selections", "vars"]);
 const SEMANTIC_REVISION_KEYS = new Set(["revision_ref", "config_sha256"]);
 const MODEL_SELECTION_REQUIRED_KEYS = new Set([
@@ -32,7 +35,145 @@ const MODEL_SELECTION_REQUIRED_KEYS = new Set([
   "qualification_ref", "qualification_sha256", "transport_policy",
 ]);
 const MODEL_SELECTION_NATIVE_KEYS = new Set([...MODEL_SELECTION_REQUIRED_KEYS, "candidate_kind"]);
-const VAR_KEYS = new Set<string>(RUNTIME_VAR_KEYS);
+const LEGACY_VAR_KEYS = new Set<string>(RUNTIME_VAR_KEYS);
+const VAR_KEYS = new Set<string>([...RUNTIME_VAR_KEYS, NATIVE_ACQUISITION_SELECTION_VAR]);
+
+export const RESEARCH_NATIVE_ACQUISITION_SELECTION_PROTOCOL =
+  "eliotr.research-native-acquisition-selection.v1" as const;
+
+type ResearchSourceMode = "corpus_only" | "corpus_plus_web" | "web_discovery";
+type NativeWebSearchProvider = "ceramic" | "exa" | "linkup";
+
+interface NativeWebSearchProfileSelection {
+  readonly gateway_id: string;
+  readonly provider: NativeWebSearchProvider;
+  readonly byok_alias?: string;
+  readonly timeout_ms: number;
+}
+
+interface NativeBrowserMarkdownProfileSelection {
+  readonly timeout_ms: number;
+  readonly max_markdown_bytes: number;
+  readonly redirect_policy: "exact_url_only";
+}
+
+interface NativeAcquisitionProfileSelection {
+  readonly result_limit: number;
+  readonly search: NativeWebSearchProfileSelection;
+  readonly browser_markdown: NativeBrowserMarkdownProfileSelection;
+}
+
+export type ResearchNativeAcquisitionSelection =
+  | Readonly<{
+    readonly protocol: typeof RESEARCH_NATIVE_ACQUISITION_SELECTION_PROTOCOL;
+    readonly source_mode: "corpus_only";
+    readonly profile: null;
+  }>
+  | Readonly<{
+    readonly protocol: typeof RESEARCH_NATIVE_ACQUISITION_SELECTION_PROTOCOL;
+    readonly source_mode: Exclude<ResearchSourceMode, "corpus_only">;
+    readonly profile: Readonly<NativeAcquisitionProfileSelection>;
+  }>;
+
+const NATIVE_SELECTION_KEYS = new Set(["protocol", "source_mode", "profile"]);
+const NATIVE_PROFILE_KEYS = new Set(["result_limit", "search", "browser_markdown"]);
+const NATIVE_SEARCH_KEYS = new Set(["gateway_id", "provider", "byok_alias", "timeout_ms"]);
+const NATIVE_SEARCH_KEYS_WITHOUT_BYOK = new Set(["gateway_id", "provider", "timeout_ms"]);
+const NATIVE_BROWSER_MARKDOWN_KEYS = new Set(["timeout_ms", "max_markdown_bytes", "redirect_policy"]);
+const NATIVE_SEARCH_PROVIDERS = new Set<NativeWebSearchProvider>(["ceramic", "exa", "linkup"]);
+const NATIVE_GATEWAY_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/u;
+const NATIVE_BYOK_ALIAS = /^[A-Za-z0-9_-]{1,64}$/u;
+const MAX_NATIVE_SELECTION_BYTES = 65_536;
+const MAX_NATIVE_RESULTS = 10;
+const MAX_NATIVE_SEARCH_WAIT_MS = 30_000;
+const MAX_NATIVE_BROWSER_WAIT_MS = 60_000;
+
+function invalidNativeSelection(): never {
+  throw new WorkflowCheckpointError("WORKFLOW_CONFIGURATION_INVALID");
+}
+
+function nativeSelectionRecord(value: unknown): Record<string, unknown> {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return invalidNativeSelection();
+  return value as Record<string, unknown>;
+}
+
+function exactNativeSelectionKeys(value: Record<string, unknown>, expected: ReadonlySet<string>): void {
+  const actual = Object.keys(value);
+  if (actual.length !== expected.size || actual.some((key) => !expected.has(key))) invalidNativeSelection();
+}
+
+function boundedNativeSelectionInteger(value: unknown, minimum: number, maximum: number): number {
+  if (!Number.isSafeInteger(value) || (value as number) < minimum || (value as number) > maximum) {
+    return invalidNativeSelection();
+  }
+  return value as number;
+}
+
+function parseNativeAcquisitionProfile(value: unknown): Readonly<NativeAcquisitionProfileSelection> {
+  const profile = nativeSelectionRecord(value);
+  exactNativeSelectionKeys(profile, NATIVE_PROFILE_KEYS);
+  const search = nativeSelectionRecord(profile.search);
+  exactNativeSelectionKeys(search, search.byok_alias === undefined ? NATIVE_SEARCH_KEYS_WITHOUT_BYOK : NATIVE_SEARCH_KEYS);
+  const browserMarkdown = nativeSelectionRecord(profile.browser_markdown);
+  exactNativeSelectionKeys(browserMarkdown, NATIVE_BROWSER_MARKDOWN_KEYS);
+
+  if (typeof search.gateway_id !== "string" || !NATIVE_GATEWAY_ID.test(search.gateway_id) ||
+      typeof search.provider !== "string" || !NATIVE_SEARCH_PROVIDERS.has(search.provider as NativeWebSearchProvider) ||
+      (search.byok_alias !== undefined &&
+        (typeof search.byok_alias !== "string" || !NATIVE_BYOK_ALIAS.test(search.byok_alias))) ||
+      browserMarkdown.redirect_policy !== "exact_url_only") return invalidNativeSelection();
+
+  return Object.freeze({
+    result_limit: boundedNativeSelectionInteger(profile.result_limit, 1, MAX_NATIVE_RESULTS),
+    search: Object.freeze({
+      gateway_id: search.gateway_id,
+      provider: search.provider as NativeWebSearchProvider,
+      ...(search.byok_alias === undefined ? {} : { byok_alias: search.byok_alias as string }),
+      timeout_ms: boundedNativeSelectionInteger(search.timeout_ms, 1, MAX_NATIVE_SEARCH_WAIT_MS),
+    }),
+    browser_markdown: Object.freeze({
+      timeout_ms: boundedNativeSelectionInteger(browserMarkdown.timeout_ms, 1, MAX_NATIVE_BROWSER_WAIT_MS),
+      max_markdown_bytes: boundedNativeSelectionInteger(
+        browserMarkdown.max_markdown_bytes, 1, RUNTIME_LIMITS.buffered_r2_bytes,
+      ),
+      redirect_policy: "exact_url_only",
+    }),
+  });
+}
+
+export function parseResearchNativeAcquisitionSelection(value: unknown): ResearchNativeAcquisitionSelection {
+  const selection = nativeSelectionRecord(value);
+  exactNativeSelectionKeys(selection, NATIVE_SELECTION_KEYS);
+  if (selection.protocol !== RESEARCH_NATIVE_ACQUISITION_SELECTION_PROTOCOL) return invalidNativeSelection();
+
+  if (selection.source_mode === "corpus_only") {
+    if (selection.profile !== null) return invalidNativeSelection();
+    return Object.freeze({ protocol: RESEARCH_NATIVE_ACQUISITION_SELECTION_PROTOCOL,
+      source_mode: "corpus_only", profile: null });
+  }
+  if (selection.source_mode !== "corpus_plus_web" && selection.source_mode !== "web_discovery") {
+    return invalidNativeSelection();
+  }
+  return Object.freeze({ protocol: RESEARCH_NATIVE_ACQUISITION_SELECTION_PROTOCOL,
+    source_mode: selection.source_mode, profile: parseNativeAcquisitionProfile(selection.profile) });
+}
+
+export function parseResearchNativeAcquisitionSelectionJson(value: unknown): ResearchNativeAcquisitionSelection {
+  if (typeof value !== "string" || value.trim() === "" ||
+      new TextEncoder().encode(value).byteLength > MAX_NATIVE_SELECTION_BYTES) return invalidNativeSelection();
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value) as unknown;
+  } catch {
+    return invalidNativeSelection();
+  }
+  try {
+    if (canonicalJson(parsed) !== value) return invalidNativeSelection();
+  } catch {
+    return invalidNativeSelection();
+  }
+  return parseResearchNativeAcquisitionSelection(parsed);
+}
 
 export type ResearchProjectModelConfigurationErrorCode =
   | "RESEARCH_PROJECT_MODEL_CONFIGURATION_INPUT_INVALID"
@@ -61,6 +202,7 @@ export interface ResearchProjectModelRuntimeVars {
   readonly ELIOTR_MODEL_SPEND_POLICY_PROVENANCE_REF: string;
   readonly ELIOTR_RESEARCH_REPORT_CONFIG_JSON: string;
   readonly ELIOTR_RESEARCH_REPORT_POLICY_PROVENANCE_REF: string;
+  readonly ELIOTR_RESEARCH_NATIVE_ACQUISITION_SELECTION_JSON?: string;
 }
 
 export interface ResearchProjectModelSelection {
@@ -228,8 +370,11 @@ function canonicalJsonText(value: unknown, label: string, maxBytes: number): str
 
 function runtimeVars(value: unknown): ResearchProjectModelRuntimeVars {
   const record = plainObject(value, "configuration.vars");
-  exactKeys(record, VAR_KEYS, "configuration.vars");
-  const result = {} as Record<(typeof RUNTIME_VAR_KEYS)[number], string>;
+  const hasNativeSelection = Object.prototype.hasOwnProperty.call(record, NATIVE_ACQUISITION_SELECTION_VAR);
+  exactKeys(record, hasNativeSelection ? VAR_KEYS : LEGACY_VAR_KEYS, "configuration.vars");
+  const result = {} as Record<(typeof RUNTIME_VAR_KEYS)[number], string> & {
+    ELIOTR_RESEARCH_NATIVE_ACQUISITION_SELECTION_JSON?: string;
+  };
   for (const key of RUNTIME_VAR_KEYS) {
     const raw = record[key];
     if (typeof raw !== "string" || raw.length === 0 || utf8Length(raw) > 65_536 || /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u.test(raw)) {
@@ -238,6 +383,21 @@ function runtimeVars(value: unknown): ResearchProjectModelRuntimeVars {
     if (key.endsWith("_PROVENANCE_REF")) identifier(raw, `configuration.vars.${key}`);
     else canonicalJsonText(raw, `configuration.vars.${key}`, 65_536);
     result[key] = raw;
+  }
+  if (hasNativeSelection) {
+    const raw = record[NATIVE_ACQUISITION_SELECTION_VAR];
+    if (typeof raw !== "string" || raw.length === 0 || utf8Length(raw) > 65_536 ||
+        /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u.test(raw)) {
+      failure("RESEARCH_PROJECT_MODEL_CONFIGURATION_INPUT_INVALID",
+        `configuration.vars.${NATIVE_ACQUISITION_SELECTION_VAR} is invalid or oversized`);
+    }
+    try {
+      parseResearchNativeAcquisitionSelectionJson(raw);
+    } catch (cause) {
+      failure("RESEARCH_PROJECT_MODEL_CONFIGURATION_INPUT_INVALID",
+        `configuration.vars.${NATIVE_ACQUISITION_SELECTION_VAR} is invalid`, 400, false, cause);
+    }
+    result[NATIVE_ACQUISITION_SELECTION_VAR] = raw;
   }
   return Object.freeze(result);
 }

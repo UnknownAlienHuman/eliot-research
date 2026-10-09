@@ -21,7 +21,9 @@ export interface Env extends InstalledSemanticConfigurationEnvironment {
   readonly RESEARCH_SESSION: DurableObjectNamespace;
   readonly RESEARCH_WORKFLOW: Workflow;
   readonly AI_SEARCH: AiSearchNamespaceLike;
-  readonly AI?: (WorkersAiMarkdownBinding & Partial<Pick<Ai, "models">>) | undefined;
+  readonly AI?: (WorkersAiMarkdownBinding & Partial<Pick<Ai, "models" | "websearch">>) | undefined;
+  /** Optional native Browser Run capture transport; absence never selects a fallback. */
+  readonly BROWSER?: BrowserRun;
   readonly METRICS: AnalyticsEngineDataset;
   readonly ASSETS: Fetcher;
   readonly ENVIRONMENT: "development" | "staging" | "production";

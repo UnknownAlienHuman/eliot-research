@@ -268,6 +268,16 @@ await check("Worker inventory export/compatibility/assets fail closed", async ()
   assert.deepEqual(attestation.vars_readback, { state: "PASS", binding_count: Object.keys(config.vars).length });
   assert.ok(!JSON.stringify(attestation).includes("test-aud"));
   assert.ok(!JSON.stringify(attestation).includes("never-return-this-secret-value"));
+  const browserConfig = { ...config, browser: { binding: "BROWSER" } };
+  await assert.rejects(read({}, browserConfig), /binding identity drift: BROWSER/u);
+  const browserVersion = structuredClone(version);
+  browserVersion.resources.bindings.BROWSER = { type: "browser" };
+  const browserReadback = await read({ versionResponse: { success: true, result: browserVersion } }, browserConfig);
+  assert.deepEqual(browserReadback.binding_readback.find((binding) => binding.name === "BROWSER"),
+    { name: "BROWSER", type: "browser", identity: {} });
+  browserVersion.resources.bindings.BROWSER.type = "service";
+  await assert.rejects(read({ versionResponse: { success: true, result: browserVersion } }, browserConfig),
+    /binding identity drift: BROWSER/u);
   const withoutOptionalSecret = structuredClone(version);
   delete withoutOptionalSecret.resources.bindings.GOOGLE_CLIENT_SECRET;
   assert.deepEqual((await read({ versionResponse: { success: true, result: withoutOptionalSecret } })).vars_readback,

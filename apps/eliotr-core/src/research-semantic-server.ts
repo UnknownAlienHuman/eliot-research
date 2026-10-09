@@ -32,6 +32,7 @@ import type { ResearchStageHandlerFactory } from "@eliotr/cloudflare-research-ru
 import { requireResearchDeploymentCompatibility } from "./research-deployment-compatibility.js";
 import { routeResearchComputerAgentStages } from "./research-external-agent-routing.js";
 import { createResearchSemanticNativeModelRuntime } from "./research-semantic-native-model-runtime.js";
+import { createResearchNativeCaptureOwner } from "./research-native-capture-owner.js";
 import {
   assembleResearchSemanticServerHandlers as assembleResearchSemanticRuntimeHandlers,
 } from "@eliotr/cloudflare-research-runtime/research-semantic-server.js";
@@ -181,6 +182,17 @@ async function assembleResearchSemanticServerHandlers(input: ResearchSemanticSer
       navigation.access.client_class !== policy.client_class) fail("WORKFLOW_AUTHORITY_STALE");
   const deploymentEnvironment = env.ENVIRONMENT === "development" ? "TEST" : "PRODUCTION";
 
+  const nativeAcquisitionSelection = runConfiguration.native_acquisition_selection;
+  const nativeAcquisitionRuntime = nativeAcquisitionSelection === undefined ||
+      nativeAcquisitionSelection.source_mode === "corpus_only" ||
+      typeof env.AI?.websearch !== "function" || env.BROWSER === undefined
+    ? undefined
+    : {
+      websearch_binding: env.AI,
+      browser: env.BROWSER,
+      capture_owner: createResearchNativeCaptureOwner(env, input.operation_id, principal),
+    };
+
   const recheckAuthority = async () => {
     const held = await loadHeldResearchScope(env, navigation.access, input.operation_id, principal.deployment_generation);
     if (held.investigation_id !== input.investigation_id || held.scope_snapshot_ref.id !== navigation.scope.snapshot_id ||
@@ -203,6 +215,12 @@ async function assembleResearchSemanticServerHandlers(input: ResearchSemanticSer
     initial_manifest: input.initial_manifest,
     handler_generation: handlerGeneration,
     ...(snapshotRunConfiguration === undefined ? {} : { run_configuration: snapshotRunConfiguration }),
+    ...(runConfiguration.native_acquisition_selection === undefined ? {} : {
+      native_acquisition_selection: runConfiguration.native_acquisition_selection,
+    }),
+    ...(nativeAcquisitionRuntime === undefined ? {} : {
+      native_acquisition_runtime: nativeAcquisitionRuntime,
+    }),
     native_model_runtime: nativeModelRuntime,
     gateway,
     config,

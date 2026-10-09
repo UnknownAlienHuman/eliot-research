@@ -15,6 +15,9 @@ import { WorkflowCheckpointError } from "@eliotr/cloudflare-workflows";
 import { resolveResearchSemanticConfig, type ResearchSemanticConfigInput } from "./research-semantic-config-revision.js";
 import { parseResearchRunModelSelections as parseModelSelections,
   type ResearchRunModelSelection } from "./research-run-model-selection-codec.js";
+import { parseResearchNativeAcquisitionSelection,
+  parseResearchNativeAcquisitionSelectionJson,
+  type ResearchNativeAcquisitionSelection } from "./research-native-acquisition-selection.js";
 
 export type { ResearchRunModelSelection } from "./research-run-model-selection-codec.js";
 
@@ -40,6 +43,7 @@ export interface ResolvedResearchRunConfiguration<RuntimeEnvironment = unknown> 
   readonly project_configuration_sha256: string | null;
   readonly project_owner_ref: string | null;
   readonly project_id: string | null;
+  readonly native_acquisition_selection?: ResearchNativeAcquisitionSelection;
 }
 
 export interface CaptureResearchRunConfigurationInput extends ResearchRunConfigurationAssociation {
@@ -57,6 +61,7 @@ export interface ResearchRunConfigurationRuntimeSnapshot {
   readonly model_profile: { readonly config_json: string; readonly provenance_ref: string };
   readonly spend_policy: { readonly config_json: string; readonly provenance_ref: string };
   readonly report: { readonly config_json: string; readonly provenance_ref: string };
+  readonly native_acquisition_selection?: ResearchNativeAcquisitionSelection;
 }
 
 /** Core supplies runtime-bound environment, semantic-source and auth/error adapters explicitly. */
@@ -93,6 +98,7 @@ interface SnapshotEnvelope {
   readonly model_profile: { readonly config_json: string; readonly provenance_ref: string };
   readonly spend_policy: { readonly config_json: string; readonly provenance_ref: string };
   readonly report: { readonly config_json: string; readonly provenance_ref: string };
+  readonly native_acquisition_selection?: ResearchNativeAcquisitionSelection;
 }
 
 interface WorkflowConfigurationBindingRow {
@@ -107,10 +113,11 @@ interface WorkflowConfigurationBindingRow {
 const ID_RE = /^[A-Za-z0-9][A-Za-z0-9:._-]{0,255}$/u;
 const OP_RE = /^[A-Za-z0-9][A-Za-z0-9:._-]{0,127}$/u;
 const SHA256_RE = /^[a-f0-9]{64}$/u;
-const ROOT_KEYS = new Set(["protocol", "mode", "association", "project_configuration", "model_selections",
+const ROOT_KEYS_LEGACY = new Set(["protocol", "mode", "association", "project_configuration", "model_selections",
   "semantic", "model_profile", "spend_policy", "report"]);
+const ROOT_KEYS_WITH_ACQUISITION = new Set([...ROOT_KEYS_LEGACY, "native_acquisition_selection"]);
 const PROJECT_CONFIGURATION_KEYS = new Set(["protocol", "semantic_revision", "model_selections", "vars"]);
-const PROJECT_RUNTIME_KEYS = new Set([
+const PROJECT_RUNTIME_KEYS_LEGACY = new Set([
   "ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON",
   "ELIOTR_MODEL_PROFILE_DEFINITION_JSON",
   "ELIOTR_MODEL_PROFILE_PROVENANCE_REF",
@@ -119,6 +126,8 @@ const PROJECT_RUNTIME_KEYS = new Set([
   "ELIOTR_RESEARCH_REPORT_CONFIG_JSON",
   "ELIOTR_RESEARCH_REPORT_POLICY_PROVENANCE_REF",
 ]);
+const NATIVE_ACQUISITION_SELECTION_VAR = "ELIOTR_RESEARCH_NATIVE_ACQUISITION_SELECTION_JSON";
+const PROJECT_RUNTIME_KEYS_WITH_ACQUISITION = new Set([...PROJECT_RUNTIME_KEYS_LEGACY, NATIVE_ACQUISITION_SELECTION_VAR]);
 function checkpoint(code: ConstructorParameters<typeof WorkflowCheckpointError>[0]): never {
   throw new WorkflowCheckpointError(code);
 }
@@ -168,7 +177,8 @@ async function parseSnapshotRecord(record: ResearchRunConfigurationRecord): Prom
   try { parsed = JSON.parse(record.configuration_json) as unknown; }
   catch { checkpoint("WORKFLOW_CONFIGURATION_INVALID"); }
   const root = object(parsed, "run configuration");
-  exactKeys(root, ROOT_KEYS);
+  const hasNativeAcquisition = Object.prototype.hasOwnProperty.call(root, "native_acquisition_selection");
+  exactKeys(root, hasNativeAcquisition ? ROOT_KEYS_WITH_ACQUISITION : ROOT_KEYS_LEGACY);
   if (root.protocol !== RESEARCH_RUN_CONFIGURATION_PROTOCOL || root.mode !== record.mode ||
       canonicalJson(root) !== record.configuration_json) checkpoint("WORKFLOW_CONFIGURATION_INVALID");
   const bound = object(root.association, "association");
@@ -213,6 +223,8 @@ async function parseSnapshotRecord(record: ResearchRunConfigurationRecord): Prom
   exactKeys(spendPolicy, new Set(["config_json", "provenance_ref"]));
   const report = object(root.report, "report configuration");
   exactKeys(report, new Set(["config_json", "provenance_ref"]));
+  const nativeAcquisitionSelection = hasNativeAcquisition
+    ? parseResearchNativeAcquisitionSelection(root.native_acquisition_selection) : undefined;
   let spend: unknown;
   try { spend = JSON.parse(requiredJson(spendPolicy.config_json, "spend policy")) as unknown; }
   catch (error) { if (error instanceof WorkflowCheckpointError) throw error; checkpoint("WORKFLOW_CONFIGURATION_INVALID"); }
@@ -237,6 +249,7 @@ async function parseSnapshotRecord(record: ResearchRunConfigurationRecord): Prom
       provenance_ref: provenance(spendPolicy.provenance_ref) }),
     report: Object.freeze({ config_json: requiredJson(report.config_json, "report configuration"),
       provenance_ref: provenance(report.provenance_ref) }),
+    ...(nativeAcquisitionSelection === undefined ? {} : { native_acquisition_selection: nativeAcquisitionSelection }),
   });
 }
 
@@ -253,7 +266,10 @@ async function resolved<RuntimeEnvironment>(environment: RuntimeEnvironment,
     project_configuration_ref: snapshot.project_configuration?.configuration_ref ?? null,
     project_configuration_sha256: snapshot.project_configuration?.configuration_sha256 ?? null,
     project_owner_ref: snapshot.project_configuration?.owner_ref ?? null,
-    project_id: snapshot.project_configuration?.project_id ?? null });
+    project_id: snapshot.project_configuration?.project_id ?? null,
+    ...(snapshot.native_acquisition_selection === undefined ? {} : {
+      native_acquisition_selection: snapshot.native_acquisition_selection,
+    }) });
 }
 
 function runBindingError<RuntimeEnvironment>(error: unknown,
@@ -344,6 +360,7 @@ async function semanticSource(database: D1Database, source: ResearchSemanticConf
 function selectedProjectSources(project: SelectedResearchProjectConfiguration): {
   readonly envelope: Record<string, unknown>;
   readonly vars: Record<string, unknown>;
+  readonly native_acquisition_selection?: ResearchNativeAcquisitionSelection;
 } {
   if (typeof project.configuration_json !== "string" || project.configuration_json.length === 0 ||
       typeof project.configuration_ref !== "string" || !ID_RE.test(project.configuration_ref) ||
@@ -356,9 +373,14 @@ function selectedProjectSources(project: SelectedResearchProjectConfiguration): 
   exactKeys(envelope, PROJECT_CONFIGURATION_KEYS);
   if (envelope.protocol !== "eliotr.research-project-model-configuration.v1") checkpoint("WORKFLOW_CONFIGURATION_INVALID");
   const vars = object(envelope.vars, "project runtime variables");
-  exactKeys(vars, PROJECT_RUNTIME_KEYS);
-  for (const key of PROJECT_RUNTIME_KEYS) sourceString(vars[key], key);
-  return { envelope, vars };
+  const hasNativeAcquisition = Object.prototype.hasOwnProperty.call(vars, NATIVE_ACQUISITION_SELECTION_VAR);
+  exactKeys(vars, hasNativeAcquisition ? PROJECT_RUNTIME_KEYS_WITH_ACQUISITION : PROJECT_RUNTIME_KEYS_LEGACY);
+  for (const key of PROJECT_RUNTIME_KEYS_LEGACY) sourceString(vars[key], key);
+  const nativeAcquisitionSelection = hasNativeAcquisition
+    ? parseResearchNativeAcquisitionSelectionJson(vars[NATIVE_ACQUISITION_SELECTION_VAR]) : undefined;
+  return { envelope, vars, ...(nativeAcquisitionSelection === undefined ? {} : {
+    native_acquisition_selection: nativeAcquisitionSelection,
+  }) };
 }
 
 async function projectConfigurationDigest(project: SelectedResearchProjectConfiguration): Promise<void> {
@@ -380,12 +402,14 @@ async function composeSnapshot<RuntimeEnvironment>(
 ): Promise<{ readonly mode: ResearchRunConfigurationMode; readonly configuration_json: string }> {
   let envelope: Record<string, unknown> | undefined;
   let vars: Record<string, unknown> | undefined;
+  let nativeAcquisitionSelection: ResearchNativeAcquisitionSelection | undefined;
   let projectConfiguration: SnapshotEnvelope["project_configuration"] = null;
   if (selectedProject !== undefined) {
     const source = selectedProjectSources(selectedProject);
     await projectConfigurationDigest(selectedProject);
     envelope = source.envelope;
     vars = source.vars;
+    nativeAcquisitionSelection = source.native_acquisition_selection;
     projectConfiguration = Object.freeze({ configuration_ref: selectedProject.configuration_ref,
       configuration_sha256: selectedProject.configuration_sha256, selection_revision: selectedProject.selection_revision,
       ...(selectedProject.owner_ref === undefined ? {} : { owner_ref: identifier(selectedProject.owner_ref) }),
@@ -447,7 +471,10 @@ async function composeSnapshot<RuntimeEnvironment>(
     association: actor, project_configuration: projectConfiguration, model_selections: modelSelections, semantic,
     model_profile: Object.freeze({ config_json: profileJson, provenance_ref: profileProvenance }),
     spend_policy: Object.freeze({ config_json: spendJson, provenance_ref: spendProvenance }),
-    report: Object.freeze({ config_json: reportJson, provenance_ref: reportProvenance }) });
+    report: Object.freeze({ config_json: reportJson, provenance_ref: reportProvenance }),
+    ...(nativeAcquisitionSelection === undefined ? {} : {
+      native_acquisition_selection: nativeAcquisitionSelection,
+    }) });
   return Object.freeze({ mode, configuration_json: canonicalJson(snapshot) });
 }
 

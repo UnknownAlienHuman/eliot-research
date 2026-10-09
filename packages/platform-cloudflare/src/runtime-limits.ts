@@ -1,3 +1,5 @@
+import { cancelQuietly } from "./runtime-async.js";
+
 export const RUNTIME_LIMITS = {
   ordinary_json_bytes: 256 * 1024,
   semantic_api_response_bytes: 512 * 1024,
@@ -118,16 +120,6 @@ export interface BoundedStreamReadOptions {
   readonly label: string;
   readonly max_bytes: number;
   readonly max_chunks?: number;
-}
-
-function cancelQuietly(target: Pick<ReadableStream<Uint8Array>, "cancel">): void {
-  try {
-    // Source cleanup is asynchronous and may never settle. Start it, but do not
-    // make a known rejection wait for it or leak its rejected promise.
-    void target.cancel().catch(() => undefined);
-  } catch {
-    // Cancellation is best effort; retain the original bounded-read failure.
-  }
 }
 
 export async function readStreamWithinBytes(

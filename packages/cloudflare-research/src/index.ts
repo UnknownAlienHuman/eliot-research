@@ -117,3 +117,9 @@ export * from "./artifact-cow-draft-materialization.js";
 export * from "./artifact-cow-model-revalidator.js";
 export * from "./artifact-cow-spend-admission.js";
 export * from "./research-project-configuration-store.js";
+export {
+  RESEARCH_NATIVE_ACQUISITION_SELECTION_PROTOCOL,
+  parseResearchNativeAcquisitionSelection,
+  parseResearchNativeAcquisitionSelectionJson,
+  type ResearchNativeAcquisitionSelection,
+} from "./research-project-configuration-codec.js";

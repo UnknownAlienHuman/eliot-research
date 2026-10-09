@@ -697,6 +697,7 @@ function expectedDeploymentBindings(config) {
     add(item?.binding, "analytics_engine", { dataset: item?.dataset });
   }
   if (config.ai?.binding !== undefined) add(config.ai.binding, "ai");
+  if (config.browser?.binding !== undefined) add(config.browser.binding, "browser");
   if (config.assets?.binding !== undefined) add(config.assets.binding, "assets");
   if (config.version_metadata !== undefined) {
     const metadata = validateVersionMetadataConfig(config.version_metadata);

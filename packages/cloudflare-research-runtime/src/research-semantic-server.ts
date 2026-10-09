@@ -28,6 +28,7 @@ import {
   createResearchModelSpendPolicyService,
   decodeResearchReadExtractCheckpoint,
   parseResearchModelProfileDefinition,
+  type ResearchNativeAcquisitionSelection,
   type ReferenceManifestPolicyProfile,
   type ResearchModelGatewayRuntimeConfig,
   type ResearchModelSpendPolicy,
@@ -61,6 +62,7 @@ import type { ResearchSemanticRolesModelDependencies } from "./research-semantic
 import type { createResearchSemanticNativeModelRuntime } from "./research-semantic-native-model-runtime.js";
 import type { ResolvedResearchRunConfiguration } from "@eliotr/cloudflare-research-configuration/research-run-configuration.js";
 import { createResearchSemanticWorkflowHandlerFactory } from "./research-semantic-composition.js";
+import type { createResearchNativeAcquisitionStageRoute } from "./research-native-acquisition.js";
 
 type NativeModelRuntime = ReturnType<typeof createResearchSemanticNativeModelRuntime>;
 type CapturedResearchRunConfiguration = Pick<ResolvedResearchRunConfiguration,
@@ -86,6 +88,8 @@ export interface ResearchSemanticServerRuntimeInput {
   readonly initial_manifest: WorkflowObject;
   readonly handler_generation: SemanticResearchHandlerGeneration;
   readonly run_configuration?: ResearchSemanticRunModelConfiguration;
+  readonly native_acquisition_selection?: ResearchNativeAcquisitionSelection;
+  readonly native_acquisition_runtime?: Omit<Parameters<typeof createResearchNativeAcquisitionStageRoute>[0], "selection">;
   readonly native_model_runtime: NativeModelRuntime;
   readonly gateway: ResearchModelGatewayRuntimeConfig;
   readonly config: ResearchSemanticConfiguration;
@@ -376,6 +380,12 @@ export async function assembleResearchSemanticServerHandlers(
     navigation, ledger: input.ledger, operation_id: input.operation_id, investigation_id: input.investigation_id,
     principal, retrieval_profile: retrievalProfile,
     ...(input.run_configuration === undefined ? {} : { run_configuration: input.run_configuration }),
+    ...(input.native_acquisition_selection === undefined ? {} : {
+      native_acquisition_selection: input.native_acquisition_selection,
+    }),
+    ...(input.native_acquisition_runtime === undefined ? {} : {
+      native_acquisition_runtime: input.native_acquisition_runtime,
+    }),
     model_profile: {
       raw: input.model_profile.raw,
       provenance_ref: installed(input.model_profile.provenance_ref),

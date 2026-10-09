@@ -1,12 +1,13 @@
 import { requireOwnerScopeProfile } from "@eliotr/cloudflare-navigation";
 import type { NavigationReadAuthority } from "@eliotr/cloudflare-evidence";
-import type { ResearchWorkflowStage } from "@eliotr/contracts";
+import type { InquiryProtocolProfile, ResearchWorkflowStage } from "@eliotr/contracts";
 import type { InvestigationLedgerStore } from "@eliotr/research";
 import { createD1ScopeProfilePort } from "@eliotr/retrieval";
 import type { WorkflowStartedAttemptRecovery } from "@eliotr/cloudflare-workflows";
 import type { AiSearchNamespaceLike } from "@eliotr/platform-cloudflare";
 import {
   createFreezeProtocolAndScopeStageHandler,
+  decodeProtocolScopeCheckpoint,
   deterministicWorkflowStageBytes,
   deterministicWorkflowNativeStageBytes,
   fail,
@@ -109,8 +110,41 @@ export type ResearchStageHandlerFactoryMode =
       readonly resolve_citations?: ResearchCitationsStageDependencies;
       /** Server-composed deterministic coverage calculation over the frozen sources. */
       readonly calculate_coverage?: WorkflowStageHandler;
+      /** Explicit per-run ACQUIRE_AND_CAPTURE route resolved from immutable server-owned selection. */
+      readonly acquisition_route?: ResearchAcquisitionStageRoute;
     }
   | { readonly kind: "legacy-deterministic" };
+
+/**
+ * Runtime handoff for the existing ACQUIRE_AND_CAPTURE stage. New forward-mode
+ * composition must provide this only after it has resolved and validated the
+ * immutable server-owned selection for this operation. Omission preserves the
+ * historical deterministic stage path for already-persisted runs.
+ */
+interface ResearchAcquisitionStageRoute {
+  readonly source_mode: InquiryProtocolProfile["source_mode"];
+  /**
+   * Executes selected discovery + raw candidate capture with the supplied
+   * Workflow request/attempt_ref. Preserve NO_HIT vs FAILED and item omissions;
+   * locators/snippets are not source text or evidence, and admission is later.
+   */
+  readonly handler?: WorkflowStageHandler;
+  /** Read-only exact result recovery. Missing readback must return null, never redispatch. */
+  readonly recoverStartedAttempt?: WorkflowStartedAttemptRecovery;
+}
+
+function assertFrozenAcquisitionSourceMode(
+  inputBytes: Uint8Array,
+  installedSourceMode: ResearchAcquisitionStageRoute["source_mode"],
+): void {
+  let frozenSourceMode: ResearchAcquisitionStageRoute["source_mode"];
+  try {
+    frozenSourceMode = decodeProtocolScopeCheckpoint(inputBytes).protocol_profile.source_mode;
+  } catch {
+    fail("WORKFLOW_OUTPUT_CORRUPT");
+  }
+  if (frozenSourceMode !== installedSourceMode) fail("WORKFLOW_AUTHORITY_STALE");
+}
 
 export type ResearchStageHandlerFactory = MonotoneHandlerFactory & {
   readonly native: (stage: ResearchWorkflowStage) => WorkflowNativeStageHandler | undefined;
@@ -232,6 +266,17 @@ export function createResearchStageHandlerFactory(
 
   const factory = ((stage) => {
     if (stage === "FREEZE_PROTOCOL_AND_SCOPE" && protocolScopeHandler !== undefined) return protocolScopeHandler;
+    if (stage === "ACQUIRE_AND_CAPTURE" && mode.kind === "server-owned-exploratory" &&
+        mode.acquisition_route !== undefined) {
+      const route = mode.acquisition_route;
+      if (route.source_mode === "corpus_only") {
+        return ({ request, input_bytes, attempt_ref }) => {
+          assertFrozenAcquisitionSourceMode(input_bytes, route.source_mode);
+          return deterministicWorkflowStageBytes(request.operation_id, request.stage, input_bytes, attempt_ref);
+        };
+      }
+      return route.handler ?? (async () => fail("WORKFLOW_CONFIGURATION_MISSING"));
+    }
     if (stage === "RETRIEVE_BRANCHES" && mode.kind === "server-owned-exploratory" &&
         (mode.generation === SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION || isSemanticResearchHandlerGeneration(mode.generation))) {
       return retrievalHandler ?? (async () => fail("WORKFLOW_AUTHORITY_STALE"));
@@ -302,6 +347,16 @@ export function createResearchStageHandlerFactory(
   if (explicitSemantic) {
     const recoverStartedAttempt: WorkflowStartedAttemptRecovery = async (input) => {
       if (input.request.handler_generation !== mode.generation) return null;
+      if (input.request.stage === "ACQUIRE_AND_CAPTURE" && mode.acquisition_route !== undefined) {
+        const route = mode.acquisition_route;
+        if (route.source_mode === "corpus_only") {
+          if (mode.kind !== "server-owned-exploratory" || mode.environment === undefined) return null;
+          const inputBytes = await readWorkflowObject(mode.environment.WORK_BUCKET, input.request.input_manifest, true);
+          assertFrozenAcquisitionSourceMode(inputBytes, route.source_mode);
+          return deterministicWorkflowStageBytes(input.request.operation_id, input.request.stage, inputBytes, input.attempt_ref);
+        }
+        return route.recoverStartedAttempt?.(input) ?? null;
+      }
       if ((input.request.stage === "READ_AND_EXTRACT" || input.request.stage === "ANALYZE_BRANCHES" ||
           input.request.stage === "COUNTER_SEARCH") && branchExecution !== undefined) {
         return branchExecution.recover(input.request.stage, input.request, {

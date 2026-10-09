@@ -47,6 +47,7 @@ import { createResearchClaimAuditPromptDependencies } from "./research-claim-aud
 import { createResearchSynthesisPromptDependencies } from "./research-synthesis-prompt.js";
 import { createResearchBranchRolePromptDependencies } from "./research-branch-role-prompt.js";
 import type { RetrieveBranchesStageDependencies } from "./research-retrieve-branches.js";
+import { createResearchNativeAcquisitionStageRoute } from "./research-native-acquisition.js";
 import {
   createResearchStageHandlerFactory,
   SERVER_OWNED_BRANCH_HANDLER_GENERATION,
@@ -376,6 +377,14 @@ export function createResearchSemanticWorkflowHandlerFactory(
     manifest_store: semantic.manifest_store,
     read_stage_five: semantic.readers.read_stage_five,
   };
+  const acquisitionSelection = input.native_acquisition_selection;
+  const acquisitionRoute = acquisitionSelection === undefined ||
+    acquisitionSelection.source_mode === "corpus_only" || input.native_acquisition_runtime === undefined
+    ? acquisitionSelection
+    : createResearchNativeAcquisitionStageRoute({
+      ...input.native_acquisition_runtime,
+      selection: { ...acquisitionSelection.profile, source_mode: acquisitionSelection.source_mode },
+    });
   return createResearchStageHandlerFactory({
     kind: "server-owned-exploratory",
     generation: input.handler_generation ?? SERVER_OWNED_FREEZE_HANDLER_GENERATION,
@@ -387,6 +396,9 @@ export function createResearchSemanticWorkflowHandlerFactory(
       read_stage_five: semantic.readers.read_stage_five,
       ...(roleModel === undefined ? {} : { role_model: roleModel }),
     },
+    ...(acquisitionRoute === undefined ? {} : {
+      acquisition_route: acquisitionRoute,
+    }),
     environment: {
       CORE_DB: input.database,
       SEARCH_DB: input.search_database,

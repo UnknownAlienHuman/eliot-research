@@ -10,6 +10,21 @@ import {
   createR2EvidenceObjectStore,
   sha256Utf8,
 } from "@eliotr/platform-cloudflare";
+import {
+  bindRawCaptureWorkflowOwnerOperations,
+  type RawCaptureWorkflowOwnerActorAuthority,
+  type RawCaptureWorkflowOwnerAuthorityInput,
+  type RawCaptureWorkflowOwnerOperations,
+  type RawCaptureWorkflowOwnerPort,
+} from "./raw-capture-workflow-owner-service.js";
+
+export type {
+  RawCaptureWorkflowOwnerAuthoritySnapshot,
+  RawCaptureWorkflowOwnerAuthorityInput,
+  RawCaptureWorkflowOwnerPort,
+  RawCaptureWorkflowPrincipal,
+} from "./raw-capture-workflow-owner-service.js";
+
 export interface RawCaptureOwnerEnvironment {
   readonly CORE_DB: D1Database;
   readonly EVIDENCE_BUCKET: R2Bucket;
@@ -246,7 +261,15 @@ function replayMatches(
     receipt.size_bytes === request.size_bytes && receipt.content_type === request.content_type;
 }
 
-export function createRawCaptureService(env: RawCaptureOwnerEnvironment) {
+interface RawCaptureOwnerOperations extends RawCaptureWorkflowOwnerOperations {
+  readRawCaptureForServer(captureId: string): Promise<RawCaptureReceipt | null>;
+  readRawFile(captureId: string): Promise<RawFileCaptureResult | null>;
+}
+
+function createRawCaptureOwnerOperations(
+  env: RawCaptureOwnerEnvironment,
+  authority: RawCaptureWorkflowOwnerActorAuthority,
+): RawCaptureOwnerOperations {
   const sanitized = (captured: RawCaptureResult): RawFileCaptureResult => ({
     protocol: "eliotr.raw-file-capture.v1",
     disposition: captured.disposition,
@@ -258,13 +281,13 @@ export function createRawCaptureService(env: RawCaptureOwnerEnvironment) {
     content_type: captured.receipt.content_type,
     captured_at: captured.receipt.captured_at,
   });
-  const assertContextCurrent = async (
-    context: AuthenticatedRequestContext,
+  const assertOwnerCurrent = async (
     input: RawCaptureAuthorityInput,
     expected?: RawOwnerBinding,
     requireTargetHead = false,
   ): Promise<void> => {
-    const binding = await currentBinding(env.CORE_DB, context.principal_ref, expected, input.source_namespace_id);
+    await authority.assertCurrent();
+    const binding = await currentBinding(env.CORE_DB, authority.principal_ref, expected, input.source_namespace_id);
     await assertSourceNotPurged(env.CORE_DB, input.source_revision_ref);
     if (!authorityMatches(input, binding)) fail("RAW_CAPTURE_OWNER_NOT_CURRENT", "raw capture authority is no longer current");
     if (input.target_source_id !== undefined && input.expected_head_revision_ref !== undefined) {
@@ -273,18 +296,18 @@ export function createRawCaptureService(env: RawCaptureOwnerEnvironment) {
   };
   return {
     /** Server-only bridge for capability composition; the public OwnerApi never exposes storage identity. */
-    async readRawCaptureForServer(context: AuthenticatedRequestContext, captureId: string) {
-      if (context.client_class !== "owner_pwa") fail("RAW_CAPTURE_OWNER_NOT_CURRENT", "raw capture requires an owner session");
+    async readRawCaptureForServer(captureId: string) {
+      await authority.assertCurrent();
       const port = createRawCapturePort({
         database: env.CORE_DB,
         evidence_store: createR2EvidenceObjectStore(env.EVIDENCE_BUCKET),
         max_size_bytes: MAX_APPLICATION_UPLOAD_BYTES,
-        assertCurrent: (input) => assertContextCurrent(context, input),
+        assertCurrent: (input) => assertOwnerCurrent(input),
       });
-      return port.read({ principal_ref: context.principal_ref, capture_id: captureId });
+      return port.read({ principal_ref: authority.principal_ref, capture_id: captureId });
     },
-    async captureRawFile(context: AuthenticatedRequestContext, request: RawFileCaptureRequest): Promise<RawFileCaptureResult> {
-      if (context.client_class !== "owner_pwa") fail("RAW_CAPTURE_OWNER_NOT_CURRENT", "raw capture requires an owner session");
+    async captureRawFile(request: RawFileCaptureRequest): Promise<RawFileCaptureResult> {
+      await authority.assertCurrent();
       if ((request.target_source_id === undefined) !== (request.expected_head_revision_ref === undefined)) {
         fail("RAW_CAPTURE_INPUT_INVALID", "target source and expected head must be supplied together");
       }
@@ -304,25 +327,20 @@ export function createRawCaptureService(env: RawCaptureOwnerEnvironment) {
       const targetNamespaceId = target === undefined
         ? request.source_namespace_id
         : target.source_namespace_id as string;
-      const binding = await currentBinding(
-        env.CORE_DB,
-        context.principal_ref,
-        undefined,
-        targetNamespaceId,
-      );
+      const binding = await currentBinding(env.CORE_DB, authority.principal_ref, undefined, targetNamespaceId);
       const targetSourceId = request.target_source_id;
       const expectedHead = request.expected_head_revision_ref;
-      const ids = await sourceIdentity(context.principal_ref, binding, request.idempotency_key, targetSourceId, expectedHead);
+      const ids = await sourceIdentity(authority.principal_ref, binding, request.idempotency_key, targetSourceId, expectedHead);
       await assertSourceNotPurged(env.CORE_DB, ids.revisionRef);
-      const rawResidency = residency(binding, context.principal_ref, request.content_sha256);
+      const rawResidency = residency(binding, authority.principal_ref, request.content_sha256);
       if (targetSourceId !== undefined && expectedHead !== undefined) {
         const replayPort = createRawCapturePort({
           database: env.CORE_DB,
           evidence_store: createR2EvidenceObjectStore(env.EVIDENCE_BUCKET),
           max_size_bytes: MAX_APPLICATION_UPLOAD_BYTES,
-          assertCurrent: (input) => assertContextCurrent(context, input),
+          assertCurrent: (input) => assertOwnerCurrent(input),
         });
-        const replay = await replayPort.read({ principal_ref: context.principal_ref, idempotency_key: request.idempotency_key });
+        const replay = await replayPort.read({ principal_ref: authority.principal_ref, idempotency_key: request.idempotency_key });
         if (replay !== null) {
           if (!replayMatches(replay, request, binding, ids)) {
             fail("RAW_CAPTURE_IDEMPOTENCY_CONFLICT", "raw capture idempotency identity is bound to different input or source head");
@@ -332,7 +350,7 @@ export function createRawCaptureService(env: RawCaptureOwnerEnvironment) {
         await assertTargetSourceCurrent(env.CORE_DB, binding, targetSourceId, expectedHead);
       }
       const assertCurrent = async (input: RawCaptureAuthorityInput): Promise<void> => {
-        await assertContextCurrent(context, input, binding, true);
+        await assertOwnerCurrent(input, binding, true);
       };
       const port = createRawCapturePort({
         database: env.CORE_DB,
@@ -342,7 +360,7 @@ export function createRawCaptureService(env: RawCaptureOwnerEnvironment) {
       });
       const captured = await port.capture({
         ...request,
-        principal_ref: context.principal_ref,
+        principal_ref: authority.principal_ref,
         owner_system_id: binding.owner_system_id,
         source_namespace_id: binding.source_namespace_id,
         source_revision_ref: ids.revisionRef,
@@ -353,27 +371,61 @@ export function createRawCaptureService(env: RawCaptureOwnerEnvironment) {
       });
       return sanitized(captured);
     },
-    async readRawFile(context: AuthenticatedRequestContext, captureId: string): Promise<RawFileCaptureResult | null> {
-      if (context.client_class !== "owner_pwa") fail("RAW_CAPTURE_OWNER_NOT_CURRENT", "raw capture requires an owner session");
+    async readRawFile(captureId: string): Promise<RawFileCaptureResult | null> {
+      await authority.assertCurrent();
       const port = createRawCapturePort({
         database: env.CORE_DB,
         evidence_store: createR2EvidenceObjectStore(env.EVIDENCE_BUCKET),
         max_size_bytes: MAX_APPLICATION_UPLOAD_BYTES,
-        assertCurrent: (input) => assertContextCurrent(context, input),
+        assertCurrent: (input) => assertOwnerCurrent(input),
       });
-      const receipt = await port.read({ principal_ref: context.principal_ref, capture_id: captureId });
+      const receipt = await port.read({ principal_ref: authority.principal_ref, capture_id: captureId });
       return receipt === null ? null : sanitized({ disposition: "CAPTURED", receipt });
     },
-    async readRawFileByIdempotency(context: AuthenticatedRequestContext, idempotencyKey: string): Promise<RawFileCaptureResult | null> {
-      if (context.client_class !== "owner_pwa") fail("RAW_CAPTURE_OWNER_NOT_CURRENT", "raw capture requires an owner session");
+    async readRawFileByIdempotency(idempotencyKey: string): Promise<RawFileCaptureResult | null> {
+      await authority.assertCurrent();
       const port = createRawCapturePort({
         database: env.CORE_DB,
         evidence_store: createR2EvidenceObjectStore(env.EVIDENCE_BUCKET),
         max_size_bytes: MAX_APPLICATION_UPLOAD_BYTES,
-        assertCurrent: (input) => assertContextCurrent(context, input),
+        assertCurrent: (input) => assertOwnerCurrent(input),
       });
-      const receipt = await port.read({ principal_ref: context.principal_ref, idempotency_key: idempotencyKey });
+      const receipt = await port.read({ principal_ref: authority.principal_ref, idempotency_key: idempotencyKey });
       return receipt === null ? null : sanitized({ disposition: "CAPTURED", receipt });
+    },
+  };
+}
+
+export function createRawCaptureWorkflowOwnerService(
+  env: RawCaptureOwnerEnvironment,
+  authority: RawCaptureWorkflowOwnerAuthorityInput,
+): RawCaptureWorkflowOwnerPort {
+  return bindRawCaptureWorkflowOwnerOperations(authority,
+    (actor) => createRawCaptureOwnerOperations(env, actor));
+}
+
+export function createRawCaptureService(env: RawCaptureOwnerEnvironment) {
+  const operations = (context: AuthenticatedRequestContext): RawCaptureOwnerOperations =>
+    createRawCaptureOwnerOperations(env, {
+      principal_ref: context.principal_ref,
+      async assertCurrent() {
+        if (context.client_class !== "owner_pwa") {
+          fail("RAW_CAPTURE_OWNER_NOT_CURRENT", "raw capture requires an owner session");
+        }
+      },
+    });
+  return {
+    readRawCaptureForServer(context: AuthenticatedRequestContext, captureId: string) {
+      return operations(context).readRawCaptureForServer(captureId);
+    },
+    captureRawFile(context: AuthenticatedRequestContext, request: RawFileCaptureRequest) {
+      return operations(context).captureRawFile(request);
+    },
+    readRawFile(context: AuthenticatedRequestContext, captureId: string) {
+      return operations(context).readRawFile(captureId);
+    },
+    readRawFileByIdempotency(context: AuthenticatedRequestContext, idempotencyKey: string) {
+      return operations(context).readRawFileByIdempotency(idempotencyKey);
     },
   };
 }

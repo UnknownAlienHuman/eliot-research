@@ -8,6 +8,7 @@ import {
   createD1ResearchProjectModelConfigurationStore,
   RESEARCH_PROJECT_MODEL_CONFIGURATION_PROTOCOL,
 } from "./research-project-configuration-store.js";
+import { RESEARCH_NATIVE_ACQUISITION_SELECTION_PROTOCOL } from "./research-project-configuration-codec.js";
 
 const MIGRATION = readFileSync(resolve(__dirname, "../../../infra/d1/core/migrations/0106_research_project_model_configuration.sql"), "utf8");
 
@@ -169,6 +170,51 @@ describe("research project model configuration store and 0106 migration", () => 
       .toBe(0);
     expect(await ownerRemovedStore.readSelected("owner-1", "project-1")).toBeNull();
     ownerRemovedDb.close();
+  });
+
+  it("preserves the legacy seven-key bytes and reads back the optional native acquisition selection", async () => {
+    const db = freshDb();
+    const store = createD1ResearchProjectModelConfigurationStore(createD1Shim(db), {
+      now: () => "2026-10-03T12:00:00.000Z",
+    });
+    const legacy = await bundle();
+    await store.saveAndSelect({ owner_id: "owner-1", project_id: "project-1",
+      expected_project_generation: 1, expected_revision: null, configuration: legacy });
+
+    const legacyReadback = await store.readSelected("owner-1", "project-1");
+    if (legacyReadback === null) throw new Error("legacy project configuration was not selected");
+    expect(legacyReadback.revision.configuration_json).toBe(canonicalModelGatewayJson(legacy));
+    expect(Object.keys(legacyReadback.revision.configuration.vars).sort()).toEqual([
+      "ELIOTR_MODEL_PROFILE_DEFINITION_JSON",
+      "ELIOTR_MODEL_PROFILE_PROVENANCE_REF",
+      "ELIOTR_MODEL_SPEND_POLICY_JSON",
+      "ELIOTR_MODEL_SPEND_POLICY_PROVENANCE_REF",
+      "ELIOTR_RESEARCH_REPORT_CONFIG_JSON",
+      "ELIOTR_RESEARCH_REPORT_POLICY_PROVENANCE_REF",
+      "ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON",
+    ].sort());
+
+    const nativeSelectionJson = canonicalModelGatewayJson({
+      protocol: RESEARCH_NATIVE_ACQUISITION_SELECTION_PROTOCOL,
+      source_mode: "corpus_only",
+      profile: null,
+    });
+    const withNativeSelection = {
+      ...legacy,
+      vars: { ...legacy.vars, ELIOTR_RESEARCH_NATIVE_ACQUISITION_SELECTION_JSON: nativeSelectionJson },
+    };
+    await store.saveAndSelect({ owner_id: "owner-1", project_id: "project-1",
+      expected_project_generation: 1, expected_revision: 1, configuration: withNativeSelection });
+
+    const nativeReadback = await store.readSelected("owner-1", "project-1");
+    if (nativeReadback === null) throw new Error("native selection project configuration was not selected");
+    expect(nativeReadback.revision.configuration.vars.ELIOTR_RESEARCH_NATIVE_ACQUISITION_SELECTION_JSON)
+      .toBe(nativeSelectionJson);
+    const rereadRevision = await store.readRevision("owner-1", "project-1", nativeReadback.configuration_ref);
+    expect(rereadRevision?.configuration_json).toBe(nativeReadback.revision.configuration_json);
+    expect(rereadRevision?.configuration.vars.ELIOTR_RESEARCH_NATIVE_ACQUISITION_SELECTION_JSON)
+      .toBe(nativeSelectionJson);
+    db.close();
   });
 
   it("rejects a malformed content-addressed ref in the SQL migration itself", () => {
