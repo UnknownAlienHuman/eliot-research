@@ -1,0 +1,21 @@
+{
+  "protocol": "eliotr.frontend-owner-claim.v1",
+  "claim_id": "u1-4-story-selection-20261009",
+  "checkpoint_id": "U1.4",
+  "packet_id": "ER-47",
+  "manager_identity": "frontend-manager",
+  "manager_context_id": "01a120c9-2637-7952-b6c9-be07b395b4fd",
+  "leaf_identity": "frontend-manager-harness-maintenance",
+  "owner_authorization_ref": "tests/ui-owner/receipts/owner-authorization.json",
+  "base_sha": "29a7f8bfb00e0c498234dc84cb072db8eda47193",
+  "history_base_sha": "c37e56e0ebdfc7f6d294879008a4036d1b95b985",
+  "write_paths": ["scripts/ui-owner/verify.mjs"],
+  "predecessor_refs": [
+    { "checkpoint_id": "U1.1b", "commit_sha": "1e1c6213bbda01c34a87c7e105016ffe4cfd0dd3", "approval_ref": "tests/ui-owner/receipts/u1-1b/bootstrap.json" },
+    { "checkpoint_id": "U1.2", "commit_sha": "b568b250b43698eff346ce901049e33cb3cba805" },
+    { "checkpoint_id": "U1.3", "commit_sha": "06e7a3b09978a95311d03fd3aec4706ce3a68d22" }
+  ],
+  "state": "ACTIVE",
+  "evidence_refs": [],
+  "blocker_refs": []
+}
