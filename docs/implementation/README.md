@@ -25,6 +25,15 @@ from the tables below, so an unlisted file is a bug, not an omission you may ign
 | [backend-delivery-plan.md](backend-delivery-plan.md) | Owner-resumed checkpoint, historical October 6 evidence and separate assembled-product acceptance. |
 | [backend-checkpoint-2026-10-08.md](backend-checkpoint-2026-10-08.md) | Published backend slices, scoped verification and remaining acceptance. |
 | [backend-contract-conflicts.md](backend-contract-conflicts.md) | Concrete contract conflicts and missing inputs for owner review. |
+| [frontend-platform-migration.md](frontend-platform-migration.md) | React/Vite executable migration route. |
+| [frontend-stack-validation-2026-10-08.md](frontend-stack-validation-2026-10-08.md) | Stack, Cloudflare, primitive, binding and compatibility validation. |
+| [frontend-agent-harness.md](frontend-agent-harness.md) | Component catalog, fixtures, visual evidence and UI-agent workflow. |
+| [frontend-performance-acceptance.md](frontend-performance-acceptance.md) | Bundle/render/progressive/list/report/pane/lifecycle performance contract. |
+| [frontend-transport-audit-2026-10-08.md](frontend-transport-audit-2026-10-08.md) | Existing browser transport audit and ER-48 test requirements. |
+| [frontend-client-extraction-inventory-2026-10-08.md](frontend-client-extraction-inventory-2026-10-08.md) | File-level owner-client extraction inventory. |
+| [frontend-feature-parity-inventory-2026-10-08.md](frontend-feature-parity-inventory-2026-10-08.md) | Capability destination, visibility, ownership and negative map. |
+| [frontend-cutover-inventory-2026-10-08.md](frontend-cutover-inventory-2026-10-08.md) | Build, deploy, rollback, service-worker and browser cutover inventory. |
+| [frontend-preflight-2026-10-09.md](frontend-preflight-2026-10-09.md) | Current-main bootstrap, routing, projection and deployment preflight. |
 | [product-resume-2026-10-02.md](product-resume-2026-10-02.md) | Dated product integration checkpoint with preserved decisions and pending acceptance. |
 | [product-resume-2026-10-03.md](product-resume-2026-10-03.md) | Owner configuration, immutable Research capture and functional integration checkpoint. |
 | [audit-2026-09-25-review.md](audit-2026-09-25-review.md) | Independent review of audit PR303: reproduced SQL/lint/CI findings, corrections, issue mapping and verification limits. |

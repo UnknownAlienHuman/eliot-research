@@ -1,44 +1,64 @@
 # Implementation entry point
 
-The repository is under active implementation and is not production-ready. The architecture remains
-authoritative for product intent; the language/runtime contract owns responsibility boundaries; the
-readiness plan owns the ordered path to a production declaration; and the files below are authoritative
-for day-to-day agent work.
+The repository is not production-ready. Architecture owns product intent; language/runtime contract owns
+responsibility; readiness plan owns production declaration; current delivery plan controls source stop/resume.
 
-1. Read [`docs/implementation/backend-delivery-plan.md`](docs/implementation/backend-delivery-plan.md)
-   for the current ordered queue; use [#292](https://github.com/UnknownAlienHuman/eliot-research/pull/292)
-   for the original S01–S99 contracts. The production-readiness plan owns final release criteria.
-2. Inspect [`docs/implementation/implementation-status.json`](docs/implementation/implementation-status.json)
-   and [`docs/implementation/gap-register.md`](docs/implementation/gap-register.md).
-3. Claim one packet from [`docs/agent-work/`](docs/agent-work/README.md).
-4. Read its owned paths, input contracts, acceptance cases, and named architecture sections only.
-5. Read the language owner for the capability in
-   [`LANGUAGE_RUNTIME_CONTRACT.md`](docs/architecture/LANGUAGE_RUNTIME_CONTRACT.md).
-6. Implement behind existing ports. Do not redesign cross-package contracts inside a leaf packet.
-7. Follow [`branch-discipline.md`](docs/implementation/branch-discipline.md): one checkpoint on main,
-   no task branches/worktrees, numeric branch quota or age-based deletion. Preserve concurrent work.
-8. During the owner-directed code phase, compile and run scoped lint (minimal Clippy for Rust);
-   SQL changes require the D1-limit compiler check from #294. Broad suites wait until assembly.
-   Then run `pnpm check:affected` and the required Cargo/native/browser gates; never report deferred checks as passed.
-9. Record deterministic, live, recovery and workload evidence separately. No omitted live gate becomes
-   `PASS` by implication.
+1. Start at [`docs/START-HERE.md`](docs/START-HERE.md), then current backend router/delivery plan. Use PR #292
+   for original S01–S99; readiness plan owns release criteria.
+2. Inspect `implementation-status.json` and `gap-register.md`.
+3. Claim one packet from [`docs/agent-work/`](docs/agent-work/README.md). ER-47/48 are manager packets; ER-49
+   owns static scheduler. Exact C/U/B assignments are in execution map.
+4. Before ER-49, at most one frontend manager + one leaf. After ER-49:
+   - claim is committed before source work;
+   - each source-edit commit has exactly one active covering claim in parent tree;
+   - one active claim per checkpoint and one manager context per packet;
+   - predecessor refs name checkpoint + ancestor commit; manager/external gates include approval ref.
+   ER-49 validates mechanics, not semantic truth of approval/test evidence.
+5. Read owned paths, exact checkpoint, input contracts, acceptance cases and named architecture only.
+6. Read `LANGUAGE_RUNTIME_CONTRACT.md` for capability owner.
+7. Implement behind existing ports. A package-local manifest/compiler result is not root integration: C1/U1
+   build waits for ER-00 B-C/B-U lock/reference/boundary receipt.
+8. Follow `branch-discipline.md`. Direct main default; only explicit owner authorization assigns one manager
+   worktree/review branch. Leaves create no additional worktree/branch. Branch/claim does not lift stop or
+   authorize merge/deploy/account mutation.
+9. During authorized code phase, run scoped compile/lint. Frontend checkpoints run scheduler/bootstrap,
+   component/browser/visual/CSP/performance and named human gates. Broad suites follow assembly. Deferred checks
+   never PASS.
+10. Record deterministic, human-review, live, recovery and workload evidence separately.
+
+Frontend cutover additionally requires:
+
+- one exact attested Vite client + existing Worker graph;
+- one attested retirement-safe legacy rollback with no root service-worker registration;
+- permanent non-claiming `/sw.js` tombstone and old cache/fetch worker retirement;
+- controller-null standalone inbox recovery;
+- synchronous first-paint privacy mask across bfcache restore;
+- exact byte ranges bound to admitted revision + strong immutable representation validator;
+- no hidden reasoning or parallel Research completion authority;
+- U1-R live NotebookLM/Material reference and internal U1-D visual acceptance before shell assembly;
+- fresh-context U2-X internal usability audit before completing real feature wiring;
+- one owner review of the complete U5-X interface before final merge/deploy.
 
 Primary maps:
 
-- [`docs/implementation/production-readiness-plan.md`](docs/implementation/production-readiness-plan.md)
-- [`docs/architecture/ELIOT_RESEARCH.md`](docs/architecture/ELIOT_RESEARCH.md)
-- [`docs/architecture/LANGUAGE_RUNTIME_CONTRACT.md`](docs/architecture/LANGUAGE_RUNTIME_CONTRACT.md)
-- [`docs/implementation/branch-discipline.md`](docs/implementation/branch-discipline.md)
-- [`docs/implementation/toolchain.md`](docs/implementation/toolchain.md)
-- [`docs/implementation/dependency-map.md`](docs/implementation/dependency-map.md)
-- [`docs/implementation/contract-index.md`](docs/implementation/contract-index.md)
-- [`docs/implementation/runtime-contract.md`](docs/implementation/runtime-contract.md)
-- [`docs/implementation/slice-gates.md`](docs/implementation/slice-gates.md)
-- [`docs/implementation/cloudflare-runbook.md`](docs/implementation/cloudflare-runbook.md)
-- [`docs/implementation/release-checklist.md`](docs/implementation/release-checklist.md)
-- [`docs/implementation/security-checklist.md`](docs/implementation/security-checklist.md)
-- [`docs/agent-work/manifest.json`](docs/agent-work/manifest.json)
+- `docs/implementation/production-readiness-plan.md`
+- `docs/architecture/ELIOT_RESEARCH.md`
+- `docs/architecture/LANGUAGE_RUNTIME_CONTRACT.md`
+- `docs/implementation/branch-discipline.md`
+- `docs/implementation/toolchain.md`
+- `docs/implementation/dependency-map.md`
+- `docs/implementation/contract-index.md`
+- `docs/implementation/runtime-contract.md`
+- `docs/implementation/slice-gates.md`
+- `docs/implementation/cloudflare-runbook.md`
+- `docs/implementation/release-checklist.md`
+- `docs/implementation/security-checklist.md`
+- `docs/agent-work/manifest.json`
+- `docs/agent-work/frontend-owner-execution-map.md`
+- `docs/design/OWNER_WEB_UI.md`
+- `docs/implementation/frontend-agent-harness.md`
+- `docs/implementation/frontend-cutover-inventory-2026-10-08.md`
 
-The system starts and remains fail-closed. A type-compatible placeholder is not an implemented feature;
-a local fixture is not a live platform receipt; Workflow or transport completion is not research
-completion. A production declaration requires every mandatory condition in the readiness plan.
+System remains fail-closed. A type-compatible placeholder is not implemented; a fixture, claim, package-local
+build, attractive screenshot or automated click flow is not repository/live/aesthetic/usability acceptance.
+Production declaration requires every mandatory readiness condition.

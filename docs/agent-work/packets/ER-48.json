@@ -1,0 +1,17 @@
+{
+  "protocol": "eliotr.agent-work.packet.v1",
+  "packet": {
+    "id": "ER-48",
+    "depends_on": [],
+    "owned_paths": [
+      "packages/owner-api-client/**",
+      "packages/pwa-http-client/**",
+      "packages/pwa-source-workspace/**",
+      "packages/pwa-research-workspace/**",
+      "docs/agent-work/frontend-owner-claims/ER-48/**"
+    ],
+    "mandatory_negative_case": "Hold a protected source/report response, change owner session, page lifecycle, or deployment generation, then release it; neither the client nor React adapter may restore protected data, the legacy adapter emits one clear transition, and uncertain mutation retry preserves the original effect identity.",
+    "document": "ER-48-owner-api-client-extraction.md",
+    "max_package_source_lines": 10000
+  }
+}

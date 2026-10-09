@@ -1,0 +1,15 @@
+{
+  "protocol": "eliotr.agent-work.packet.v1",
+  "packet": {
+    "id": "ER-49",
+    "depends_on": [],
+    "owned_paths": [
+      "docs/agent-work/frontend-owner-checkpoints.json",
+      "scripts/check-frontend-owner-checkpoints.mjs",
+      "scripts/test-frontend-owner-checkpoints.mjs"
+    ],
+    "mandatory_negative_case": "Seed unknown or duplicate checkpoint IDs, dependency cycles, packet-scope escape, manager/external-gate misuse, malformed paths or SHAs, cross-packet placement, missing or foreign predecessor/approval references, multiple manager contexts, duplicate checkpoint claims, overlapping active paths, unreachable history, claim and source introduced in the same commit, source edits before or outside an active covering claim, immutable claim rewrites, evidence deletion, reverse transitions, unauthorized takeover, claim rename/deletion/recreation, replacement while the old claim remains active, and false completion handoff; the checker must fail before affected leaf work is accepted.",
+    "document": "ER-49-frontend-leaf-scheduler.md",
+    "max_package_source_lines": 10000
+  }
+}
