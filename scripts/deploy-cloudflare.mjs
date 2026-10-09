@@ -837,6 +837,7 @@ export async function deployCloudflare({ confirmLive = false, secretsFilePath, e
     ...(stagingTarget === null ? {} : { staging_target: stagingTarget }),
     worker,
     d1_migrations: migrationReadback,
+    schema_generation_readback: schemaGenerationReadback,
     assets: { manifest: assetManifest, readback: assetReadback },
     generated_config_sha256: digest,
     build_evidence: buildEvidence,

@@ -85,6 +85,41 @@
         }
       }
     },
+    "schema_generation_readback": {
+      "description": "Read-only comparison of required schema_generation markers; not a full remote schema attestation.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state", "streams"],
+      "properties": {
+        "state": { "const": "PASS" },
+        "streams": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "binding",
+              "database_id",
+              "required_schema_generation",
+              "observed_schema_generation",
+              "readback"
+            ],
+            "properties": {
+              "binding": { "enum": ["CORE_DB", "SEARCH_DB"] },
+              "database_id": {
+                "type": "string",
+                "pattern": "^[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}$"
+              },
+              "required_schema_generation": { "type": "string", "minLength": 1 },
+              "observed_schema_generation": { "type": "string", "minLength": 1 },
+              "readback": { "const": "PASS" }
+            }
+          }
+        }
+      }
+    },
     "assets": {
       "type": "object",
       "additionalProperties": false,

@@ -576,6 +576,20 @@ await check("existing Worker deploy proceeds with 18 UNKNOWN counters and no mig
   assert.ok(test.calls.indexOf("archive") < test.calls.indexOf("node scripts/provision-cloudflare-access.mjs --verify-existing"));
   assert.equal(receipt.remote_http_smoke.state, "PASS");
   assert.deepEqual(receipt.worker.vars_readback, { state: "PASS", binding_count: Object.keys(config.vars).length });
+  const expectedSchemaGenerations = {
+    CORE_DB: "core-v11-owner-orientation",
+    SEARCH_DB: "search-v4-ai-search-generation-registry",
+  };
+  assert.deepEqual(receipt.schema_generation_readback, {
+    state: "PASS",
+    streams: migrationPlan.map((stream) => ({
+      binding: stream.binding,
+      database_id: stream.database_id,
+      required_schema_generation: expectedSchemaGenerations[stream.binding],
+      observed_schema_generation: expectedSchemaGenerations[stream.binding],
+      readback: "PASS",
+    })),
+  });
   assert.equal(receipt.assets.readback.state, "PASS");
   assert.equal(receipt.assets.readback.active_version_unchanged, "PASS");
   assert.equal(receipt.assets.readback.version_id, receipt.worker.version_id);
@@ -588,6 +602,15 @@ await check("existing Worker deploy proceeds with 18 UNKNOWN counters and no mig
   const schema = JSON.parse(await readFile(new URL("../infra/cloudflare/deployment-receipt.schema.json", import.meta.url), "utf8"));
   for (const key of schema.required) assert.ok(Object.hasOwn(receipt, key), `required receipt field is missing: ${key}`);
   for (const key of Object.keys(receipt)) assert.ok(Object.hasOwn(schema.properties, key), `receipt field is absent from schema: ${key}`);
+  const schemaGenerationSchema = schema.properties.schema_generation_readback;
+  assert.ok(!schema.required.includes("schema_generation_readback"),
+    "the additive v1 field remains optional for previously written receipts");
+  assert.deepEqual(schemaGenerationSchema.required, ["state", "streams"]);
+  assert.equal(schemaGenerationSchema.additionalProperties, false);
+  assert.equal(schemaGenerationSchema.description,
+    "Read-only comparison of required schema_generation markers; not a full remote schema attestation.");
+  assert.deepEqual(Object.keys(receipt.schema_generation_readback.streams[0]).sort(),
+    schemaGenerationSchema.properties.streams.items.required.slice().sort());
   assert.match(receipt.backend_fingerprint, /^[0-9a-f]{64}$/u);
   assert.equal(receipt.deployment_authority_sync.backend_fingerprint, receipt.backend_fingerprint);
   assert.equal(receipt.deployment_authority_sync.deployment_generation, receipt.deployment_generation);
