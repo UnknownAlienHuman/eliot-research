@@ -31,6 +31,11 @@ export async function readRawMarkdownCandidate(
   capture: RawMarkdownCaptureReceipt & { readonly residency_key_digest?: string },
   operationId: string,
   guards: { readonly assertCurrent?: () => Promise<void>; readonly signal?: AbortSignal } = {},
+  expectedConversionContext?: {
+    readonly credential_generation: string;
+    readonly deployment_generation: string;
+    readonly profile_generation: string;
+  },
 ): Promise<RawMarkdownCandidateReadback | null> {
   if (!ID.test(operationId)) return null;
   if (guards.signal?.aborted) return null;
@@ -40,6 +45,24 @@ export async function readRawMarkdownCandidate(
     .bind(operationId).first<Record<string, unknown>>();
   if (row === null || row.principal_ref !== context.principal_ref || row.capture_id !== capture.capture_id ||
       row.content_sha256 !== capture.content_sha256 || row.state !== "COMPLETE" || typeof row.output_object_key !== "string" || !ID.test(row.output_object_key)) return null;
+  if (expectedConversionContext !== undefined) {
+    const { credential_generation, deployment_generation, profile_generation } = expectedConversionContext;
+    if (typeof credential_generation !== "string" || !ID.test(credential_generation) ||
+        typeof deployment_generation !== "string" || !ID.test(deployment_generation) ||
+        typeof profile_generation !== "string" || !ID.test(profile_generation) ||
+        typeof capture.capture_id !== "string" || !ID.test(capture.capture_id) ||
+        typeof capture.source_owner_generation !== "string" || !ID.test(capture.source_owner_generation) ||
+        typeof capture.content_sha256 !== "string" || !SHA256.test(capture.content_sha256)) return null;
+    const expectedAuthoritySha = await sha256Utf8Canonical([
+      credential_generation,
+      deployment_generation,
+      profile_generation,
+      capture.capture_id,
+      capture.content_sha256,
+      capture.source_owner_generation,
+    ]);
+    if (row.authority_sha256 !== expectedAuthoritySha) return null;
+  }
   const result = decodeStoredRawMarkdownResult(row);
   const outputSha = result?.output_sha256;
   const outputBytes = result?.output_bytes;
