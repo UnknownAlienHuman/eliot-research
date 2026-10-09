@@ -9,8 +9,15 @@ import type { Env } from "./env.js";
 import { loadResearchExecutionAccess } from "./research-client-execution.js";
 import { requireResearchDeploymentCompatibility } from "./research-deployment-compatibility.js";
 
-export type ResearchWorkflowOwnerAuthorityReader =
+type ExistingOwnerAuthorityReader =
   Parameters<typeof createRawCaptureWorkflowOwnerService>[1]["read_current_authority"];
+
+export type ResearchWorkflowOwnerAuthorityReader = (
+  operationId: Parameters<ExistingOwnerAuthorityReader>[0],
+  principal: Parameters<ExistingOwnerAuthorityReader>[1],
+) => Promise<Awaited<ReturnType<ExistingOwnerAuthorityReader>> & {
+  readonly deployment_generation: string;
+}>;
 
 function authorityStale(): never {
   throw new WorkflowCheckpointError("WORKFLOW_AUTHORITY_STALE");
@@ -74,6 +81,7 @@ export function createResearchWorkflowOwnerAuthorityReader(
       principal_ref: currentPrincipal.principal_ref,
       client_class: "owner_pwa",
       credential_generation: currentPrincipal.credential_generation,
+      deployment_generation: status.deployment_generation,
       workflow_state: "ACTIVE",
     };
   };

@@ -12,17 +12,25 @@ import {
 } from "@eliotr/platform-cloudflare";
 import {
   bindRawCaptureWorkflowOwnerOperations,
+  bindRawCaptureWorkflowServerReadOperations,
   type RawCaptureWorkflowOwnerActorAuthority,
   type RawCaptureWorkflowOwnerAuthorityInput,
+  type RawCaptureWorkflowOwnerServerReadPort,
   type RawCaptureWorkflowOwnerOperations,
   type RawCaptureWorkflowOwnerPort,
+  type RawCaptureWorkflowServerReadPort,
+  type RawCaptureWorkflowServerReadAuthorityInput,
 } from "./raw-capture-workflow-owner-service.js";
 
 export type {
   RawCaptureWorkflowOwnerAuthoritySnapshot,
   RawCaptureWorkflowOwnerAuthorityInput,
+  RawCaptureWorkflowOwnerServerReadPort,
   RawCaptureWorkflowOwnerPort,
   RawCaptureWorkflowPrincipal,
+  RawCaptureWorkflowServerReadAuthorityInput,
+  RawCaptureWorkflowServerReadAuthoritySnapshot,
+  RawCaptureWorkflowServerReadPort,
 } from "./raw-capture-workflow-owner-service.js";
 
 export interface RawCaptureOwnerEnvironment {
@@ -261,8 +269,7 @@ function replayMatches(
     receipt.size_bytes === request.size_bytes && receipt.content_type === request.content_type;
 }
 
-interface RawCaptureOwnerOperations extends RawCaptureWorkflowOwnerOperations {
-  readRawCaptureForServer(captureId: string): Promise<RawCaptureReceipt | null>;
+interface RawCaptureOwnerOperations extends RawCaptureWorkflowOwnerOperations, RawCaptureWorkflowServerReadPort {
   readRawFile(captureId: string): Promise<RawFileCaptureResult | null>;
 }
 
@@ -401,6 +408,15 @@ export function createRawCaptureWorkflowOwnerService(
   authority: RawCaptureWorkflowOwnerAuthorityInput,
 ): RawCaptureWorkflowOwnerPort {
   return bindRawCaptureWorkflowOwnerOperations(authority,
+    (actor) => createRawCaptureOwnerOperations(env, actor));
+}
+
+/** Internal Workflow capability for Core admission composition; public capture receipts stay sanitized. */
+export function createRawCaptureWorkflowOwnerServiceWithServerReadback(
+  env: RawCaptureOwnerEnvironment,
+  authority: RawCaptureWorkflowServerReadAuthorityInput,
+): RawCaptureWorkflowOwnerServerReadPort {
+  return bindRawCaptureWorkflowServerReadOperations(authority,
     (actor) => createRawCaptureOwnerOperations(env, actor));
 }
 
