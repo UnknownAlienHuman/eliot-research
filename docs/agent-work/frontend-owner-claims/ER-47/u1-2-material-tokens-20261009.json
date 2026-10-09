@@ -21,7 +21,11 @@
       "commit_sha": "f0418687cb184308c8a61df1e12b662f2aa1976e"
     }
   ],
-  "state": "ACTIVE",
-  "evidence_refs": [],
-  "blocker_refs": []
+  "state": "HANDED_OFF",
+  "evidence_refs": [
+    "git:b568b250b43698eff346ce901049e33cb3cba805; token5casesPASS, owningcompile/lintPASS, fourtokenstoriesBrowserPASS; preparatory direction30cases nooverflow/axe but not U1-Dacceptance"
+  ],
+  "blocker_refs": [],
+  "handoff_reason": "COMPLETED",
+  "handoff_receipt_ref": "git:b568b250b43698eff346ce901049e33cb3cba805"
 }
