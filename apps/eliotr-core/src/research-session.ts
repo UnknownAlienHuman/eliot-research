@@ -23,11 +23,13 @@ import {
   sessionIdForAgentRequest,
   sessionProjectionRequest,
 } from "./research-session-chat-authority.js";
-import type { SessionChatBinding, SessionChatConnectionState } from "./research-session-chat-authority.js";
-import { readCurrentSessionAuthority } from "./research-session-current-authority.js";
+import type { SessionChatAuthorization, SessionChatBinding, SessionChatConnectionState } from "./research-session-chat-authority.js";
+import { readCurrentSessionAuthority, readCurrentSessionAuthorityWithExpiry } from "./research-session-current-authority.js";
 import {
   createSessionConnectionSendGuard,
+  minimumSessionConnectionDeadline,
   requireCurrentSessionConnection,
+  sessionConnectionDeadline,
   sessionAccessExpiresAt,
 } from "./research-session-connection-authority.js";
 import { checkId, ID_RE, readResearchRunStatus } from "./research-run-service.js";
@@ -69,14 +71,19 @@ export class ResearchSession extends AIChatAgent<Env> {
     // Wrap the installed lifecycle hooks so expiry applies to every SDK frame.
     const connect = this.onConnect.bind(this);
     this.onConnect = async (connection: Connection<SessionChatConnectionState>, context) => {
-      const expiresAt = sessionAccessExpiresAt(context.request);
-      if (expiresAt === null) { connection.close(1008, "SESSION_AUTHORITY_STALE"); return; }
-      connection.setState((previous) => ({ ...(previous ?? {}), research_access_expires_at: expiresAt }));
+      if (sessionAccessExpiresAt(context.request) === null) { connection.close(1008, "SESSION_AUTHORITY_STALE"); return; }
       this.guardConnectionSend(connection);
       if (!await this.bindChatConnection(connection, context)) return;
       try {
-        await this.schedule(new Date(Math.ceil(Date.parse(expiresAt) / 1000) * 1000),
-          "expireResearchSessionConnections", { connection_id: connection.id, expires_at: expiresAt }, { idempotent: true });
+        const deadline = sessionConnectionDeadline(connection.state);
+        if (deadline === null || deadline.expires_at_ms <= Date.now()) {
+          requireCurrentSessionConnection(connection);
+          return;
+        }
+        // Agents stores Date schedules in epoch seconds using floor; round up so cleanup never precedes expiry.
+        const scheduledAtMs = Math.ceil(deadline.expires_at_ms / 1_000) * 1_000;
+        await this.schedule(new Date(scheduledAtMs),
+          "expireResearchSessionConnections", { connection_id: connection.id, expires_at: deadline.expires_at }, { idempotent: true });
         if (requireCurrentSessionConnection(connection)) await connect(connection, context);
       } catch (error) {
         connection.close(1008, "SESSION_AUTHORITY_STALE");
@@ -101,7 +108,7 @@ export class ResearchSession extends AIChatAgent<Env> {
   public expireResearchSessionConnections(expected?: { connection_id: string; expires_at: string }): void {
     for (const connection of this.getConnections<SessionChatConnectionState>()) {
       if (expected === undefined || (connection.id === expected.connection_id &&
-          connection.state?.research_access_expires_at === expected.expires_at)) requireCurrentSessionConnection(connection);
+          sessionConnectionDeadline(connection.state)?.expires_at === expected.expires_at)) requireCurrentSessionConnection(connection);
     }
   }
   public override broadcast(message: Parameters<AIChatAgent<Env>["broadcast"]>[0], without?: string[]): void {
@@ -135,7 +142,7 @@ export class ResearchSession extends AIChatAgent<Env> {
       return next;
     });
   }
-  private async authorizeChatRequest(request: Request, sessionId: string): Promise<SessionChatBinding | Response> {
+  private async authorizeChatRequest(request: Request, sessionId: string): Promise<SessionChatAuthorization | Response> {
     const projection = await this.execute(sessionProjectionRequest(request, sessionId), sessionId);
     const projectionBody = await projection.clone().json().catch(() => null) as { code?: unknown } | null;
     if (projection.status !== 200 && projectionBody?.code !== "SESSION_CANCELLED") return projection;
@@ -151,6 +158,12 @@ export class ResearchSession extends AIChatAgent<Env> {
       return problem(request, 409, "SESSION_AUTHORITY_STALE");
     }
 
+    const env = this.env;
+    if (!env?.CORE_DB || !env.SEARCH_DB) return problem(request, 503, "SESSION_SETTLEMENT_UNCERTAIN");
+    const authority = await readCurrentSessionAuthorityWithExpiry(env, caller, record.investigation_id);
+    if (authority.status === "STALE") return problem(request, 409, "SESSION_AUTHORITY_STALE");
+    if (authority.status === "UNAVAILABLE") return problem(request, 503, "SESSION_SETTLEMENT_UNCERTAIN");
+
     const expected = sessionChatBindingFor(record);
     const binding = await this.ctx.storage.transaction(async (transaction) => {
       const existing = await transaction.get<unknown>(SESSION_CHAT_BINDING_KEY);
@@ -161,7 +174,11 @@ export class ResearchSession extends AIChatAgent<Env> {
       return sameSessionChatBinding(existing, expected) ? expected : null;
     });
     if (binding === null) return problem(request, 409, "SESSION_CONFLICT");
-    return binding;
+    return {
+      binding,
+      scope_expires_at: authority.scope_expires_at,
+      grant_expires_at: authority.grant_expires_at,
+    };
   }
   private async readCurrentChatProjection(binding: SessionChatBinding): Promise<unknown> {
     return readCurrentSessionChatProjection(
@@ -198,20 +215,36 @@ export class ResearchSession extends AIChatAgent<Env> {
       connection.close(1008, "SESSION_AUTHORITY_STALE");
       return false;
     }
-    let binding: SessionChatBinding | Response;
-    try { binding = await this.authorizeChatRequest(context.request, sessionId); }
+    const accessExpiresAt = sessionAccessExpiresAt(context.request);
+    if (accessExpiresAt === null) {
+      connection.close(1008, "SESSION_AUTHORITY_STALE");
+      return false;
+    }
+    let authorization: SessionChatAuthorization | Response;
+    try { authorization = await this.authorizeChatRequest(context.request, sessionId); }
     catch {
       connection.close(1008, "SESSION_AUTHORITY_STALE");
       return false;
     }
-    if (binding instanceof Response) {
+    if (authorization instanceof Response) {
+      connection.close(1008, "SESSION_AUTHORITY_STALE");
+      return false;
+    }
+    const deadline = minimumSessionConnectionDeadline(
+      accessExpiresAt,
+      authorization.scope_expires_at,
+      authorization.grant_expires_at,
+    );
+    if (deadline === null) {
       connection.close(1008, "SESSION_AUTHORITY_STALE");
       return false;
     }
     const previous = connection.state;
     connection.setState({
       ...(typeof previous === "object" && previous !== null ? previous : {}),
-      research_session: binding,
+      research_session: authorization.binding,
+      research_access_expires_at: accessExpiresAt,
+      research_authority_expires_at: deadline.expires_at,
     });
     return true;
   }

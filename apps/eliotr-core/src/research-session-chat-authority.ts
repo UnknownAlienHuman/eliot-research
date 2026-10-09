@@ -14,9 +14,16 @@ export interface SessionChatBinding {
   deployment_generation: string;
 }
 
+export interface SessionChatAuthorization {
+  readonly binding: SessionChatBinding;
+  readonly scope_expires_at: string;
+  readonly grant_expires_at: string;
+}
+
 export interface SessionChatConnectionState {
   research_session?: SessionChatBinding;
   research_access_expires_at?: string;
+  research_authority_expires_at?: string;
   [key: string]: unknown;
 }
 

@@ -1,6 +1,7 @@
 // IMPLEMENTED_NOT_LIVE: ER-04 D1-backed retrieval query persistence over migration 0021 with frozen-scope binding, idempotent result replay and exact trace linkage; lane/R2 composition and Worker wiring remain separate.
 import {
   RetrievalTraceSchema,
+  IsoDateTimeSchema,
   ScopeSnapshotSchema,
   type RetrievalTrace,
   type ScopeSnapshot,
@@ -93,6 +94,11 @@ interface ScopeAuthorityRow {
   readonly stale_members: unknown;
 }
 
+export interface CurrentScopeExpiry {
+  readonly scope_expires_at: string;
+  readonly grant_expires_at: string;
+}
+
 async function readScopeAuthority(
   database: RetrievalQueryD1,
   snapshotId: string,
@@ -123,22 +129,30 @@ async function readScopeAuthority(
   return row;
 }
 
-function requireLiveScope(row: ScopeAuthorityRow, scope: ScopeSnapshot, nowIso: string): void {
+function requireLiveScope(row: ScopeAuthorityRow, scope: ScopeSnapshot, nowIso: string): CurrentScopeExpiry {
   if (row.snapshot_digest !== scope.digest || row.invalidated_at !== null) {
     failQuery("RETRIEVAL_SCOPE_STALE", "ScopeSnapshot is invalidated or displaced");
   }
-  if (typeof row.expires_at !== "string" || Date.parse(row.expires_at) <= Date.parse(nowIso)) {
+  const parsedNow = IsoDateTimeSchema.safeParse(nowIso);
+  const nowMs = parsedNow.success ? Date.parse(parsedNow.data) : Number.NaN;
+  const parsedScopeExpiry = IsoDateTimeSchema.safeParse(row.expires_at);
+  const scopeExpiryMs = parsedScopeExpiry.success ? Date.parse(parsedScopeExpiry.data) : Number.NaN;
+  if (!Number.isFinite(nowMs) || !parsedScopeExpiry.success || !Number.isFinite(scopeExpiryMs) || scopeExpiryMs <= nowMs) {
     failQuery("RETRIEVAL_SCOPE_STALE", "ScopeSnapshot expired");
   }
   if (row.purge_ledger_revision !== row.purge_frontier || row.stale_members !== 0) {
     failQuery("RETRIEVAL_SCOPE_STALE", "scope members are purged or rotated");
   }
-  if (
-    row.grant_state !== "ACTIVE" || row.grant_policy_ref !== row.policy_authority_ref ||
-    typeof row.grant_expires_at !== "string" || Date.parse(row.grant_expires_at) <= Date.parse(nowIso)
-  ) {
+  const parsedGrantExpiry = IsoDateTimeSchema.safeParse(row.grant_expires_at);
+  const grantExpiryMs = parsedGrantExpiry.success ? Date.parse(parsedGrantExpiry.data) : Number.NaN;
+  if (row.grant_state !== "ACTIVE" || row.grant_policy_ref !== row.policy_authority_ref ||
+      !parsedGrantExpiry.success || !Number.isFinite(grantExpiryMs) || grantExpiryMs <= nowMs) {
     failQuery("RETRIEVAL_AUTHORITY_STALE", "no active exact ScopeSnapshot authorization exists");
   }
+  return {
+    scope_expires_at: parsedScopeExpiry.data,
+    grant_expires_at: parsedGrantExpiry.data,
+  };
 }
 
 export function createD1ScopePorts(
@@ -148,8 +162,16 @@ export function createD1ScopePorts(
 ): {
   freezeScope(request: RetrievalRequest): Promise<ScopeSnapshot>;
   requireCurrentScope(snapshot: ScopeSnapshot): Promise<void>;
+  requireCurrentScopeWithExpiry(snapshot: ScopeSnapshot): Promise<CurrentScopeExpiry>;
 } {
   checkAccess(access);
+  const requireCurrentScopeWithExpiry = async (snapshot: ScopeSnapshot): Promise<CurrentScopeExpiry> => {
+    const parsed = ScopeSnapshotSchema.safeParse(snapshot);
+    if (!parsed.success) failQuery("RETRIEVAL_INPUT_INVALID", "scope snapshot fails strict validation");
+    const row = await readScopeAuthority(database, parsed.data.snapshot_id, parsed.data.revision, access);
+    if (row === null) failQuery("RETRIEVAL_SCOPE_STALE", "ScopeSnapshot does not exist");
+    return requireLiveScope(row, parsed.data, now());
+  };
   return {
     async freezeScope(request: RetrievalRequest): Promise<ScopeSnapshot> {
       const parsed = ScopeSnapshotSchema.safeParse(request.scope_snapshot);
@@ -160,12 +182,9 @@ export function createD1ScopePorts(
       requireLiveScope(row, scope, now());
       return scope;
     },
+    requireCurrentScopeWithExpiry,
     async requireCurrentScope(snapshot: ScopeSnapshot): Promise<void> {
-      const parsed = ScopeSnapshotSchema.safeParse(snapshot);
-      if (!parsed.success) failQuery("RETRIEVAL_INPUT_INVALID", "scope snapshot fails strict validation");
-      const row = await readScopeAuthority(database, parsed.data.snapshot_id, parsed.data.revision, access);
-      if (row === null) failQuery("RETRIEVAL_SCOPE_STALE", "ScopeSnapshot does not exist");
-      requireLiveScope(row, parsed.data, now());
+      await requireCurrentScopeWithExpiry(snapshot);
     },
   };
 }

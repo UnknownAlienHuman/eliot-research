@@ -6,27 +6,33 @@ import type { WorkflowPrincipal } from "@eliotr/cloudflare-research";
 import type { Env } from "./env.js";
 
 type SessionAuthorityRead = "CURRENT" | "STALE" | "UNAVAILABLE";
+type SessionAuthorityFailure = Exclude<SessionAuthorityRead, "CURRENT">;
 
-function sessionAuthorityReadFailure(error: unknown): SessionAuthorityRead {
+export type SessionAuthorityReadWithExpiry =
+  | { readonly status: "CURRENT"; readonly scope_expires_at: string; readonly grant_expires_at: string }
+  | { readonly status: "STALE" }
+  | { readonly status: "UNAVAILABLE" };
+
+function sessionAuthorityReadFailure(error: unknown): SessionAuthorityFailure {
   const code = error !== null && typeof error === "object" && "code" in error
     ? String((error as { readonly code: unknown }).code)
     : "";
   return code === "RETRIEVAL_AUTHORITY_STALE" || code === "RETRIEVAL_SCOPE_STALE" ? "STALE" : "UNAVAILABLE";
 }
 
-export async function readCurrentSessionAuthority(
+export async function readCurrentSessionAuthorityWithExpiry(
   env: Env,
   caller: WorkflowPrincipal,
   investigationId: string,
-): Promise<SessionAuthorityRead> {
+): Promise<SessionAuthorityReadWithExpiry> {
   const ledger = createD1InvestigationLedgerStore(env.CORE_DB as unknown as LedgerD1Database);
   let investigation: Awaited<ReturnType<typeof ledger.read>>;
   try {
     investigation = await ledger.read(investigationId);
   } catch {
-    return "UNAVAILABLE";
+    return { status: "UNAVAILABLE" };
   }
-  if (investigation === null) return "STALE";
+  if (investigation === null) return { status: "STALE" };
   const access = { principal_ref: caller.principal_ref, client_class: "owner_pwa" as const, credential_generation: caller.credential_generation };
   let authority: Awaited<ReturnType<ReturnType<typeof createD1EvidenceAuthorityPort>["loadScope"]>>;
   try {
@@ -38,13 +44,22 @@ export async function readCurrentSessionAuthority(
       revision: investigation.head.scope_snapshot_revision,
     });
   } catch (error) {
-    return sessionAuthorityReadFailure(error);
+    return { status: sessionAuthorityReadFailure(error) };
   }
-  if (authority === null) return "STALE";
+  if (authority === null) return { status: "STALE" };
   try {
-    await createD1ScopePorts(env.CORE_DB, access).requireCurrentScope(authority.snapshot);
+    const expiry = await createD1ScopePorts(env.CORE_DB, access)
+      .requireCurrentScopeWithExpiry(authority.snapshot);
+    return { status: "CURRENT", ...expiry };
   } catch (error) {
-    return sessionAuthorityReadFailure(error);
+    return { status: sessionAuthorityReadFailure(error) };
   }
-  return "CURRENT";
+}
+
+export async function readCurrentSessionAuthority(
+  env: Env,
+  caller: WorkflowPrincipal,
+  investigationId: string,
+): Promise<SessionAuthorityRead> {
+  return (await readCurrentSessionAuthorityWithExpiry(env, caller, investigationId)).status;
 }

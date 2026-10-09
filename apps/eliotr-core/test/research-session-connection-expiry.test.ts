@@ -3,8 +3,9 @@ import { env } from "cloudflare:workers";
 import type { Connection } from "agents";
 import { expect, it, vi } from "vitest";
 import type { Env } from "../src/env.js";
-import type { ResearchSession } from "../src/research-session.js";
+import { ResearchSession } from "../src/research-session.js";
 import type { SessionChatConnectionState } from "../src/research-session-chat-authority.js";
+import { requireCurrentSessionConnection } from "../src/research-session-connection-authority.js";
 import { prepareHistoricalV2Workflow } from "./research-session-legacy-fixture.js";
 
 const bindings = env as unknown as Env;
@@ -296,5 +297,86 @@ it("enforces expiry for SDK frames, scheduled callbacks, restored sockets, and g
     }
     get.mockRestore();
     create.mockRestore();
+  }
+}, 30_000);
+
+it("rejects restored connections without a canonical authority deadline", () => {
+  const close = vi.fn();
+  const restored = {
+    state: { research_access_expires_at: new Date(Date.now() + 60 * 60 * 1_000).toISOString() },
+    close,
+  } as unknown as Connection<SessionChatConnectionState>;
+  expect(requireCurrentSessionConnection(restored)).toBe(false);
+  expect(close).toHaveBeenCalledWith(1008, "SESSION_AUTHORITY_STALE");
+});
+
+it("closes at the earliest canonical scope, grant, or Access expiry", async () => {
+  const fixture = await prepareHistoricalV2Workflow(`session-scope-expiry-${crypto.randomUUID().replaceAll("-", "")}`);
+  const scopeExpiresAt = fixture.scope.expires_at;
+  const scopeExpiresAtMs = Date.parse(scopeExpiresAt);
+  const grantExpiresAt = new Date(scopeExpiresAtMs + 30 * 60 * 1_000).toISOString();
+  const accessExpiresAt = new Date(scopeExpiresAtMs + 60 * 60 * 1_000).toISOString();
+  await fixture.db.prepare(
+    "UPDATE scope_access_grant SET expires_at=?1 WHERE snapshot_id=?2 AND snapshot_revision=?3 " +
+      "AND principal_ref=?4 AND client_class='owner_pwa' AND credential_generation=?5",
+  ).bind(
+    grantExpiresAt,
+    fixture.scope.snapshot_id,
+    fixture.scope.revision,
+    fixture.principal.principal_ref,
+    fixture.principal.credential_generation,
+  ).run();
+
+  const workflow = bindings.RESEARCH_WORKFLOW;
+  const get = vi.spyOn(workflow, "get").mockImplementation(async (id) => ({
+    id,
+    status: async () => ({ status: "waiting" }),
+  } as never));
+  const create = vi.spyOn(workflow, "create");
+  const schedule = vi.spyOn(ResearchSession.prototype, "schedule");
+  const namespace = bindings.RESEARCH_SESSION;
+  const stub = namespace.get(namespace.idFromName(fixture.session_body.session_id));
+  let socket: WebSocket | undefined;
+
+  try {
+    const started = await stub.fetch(new Request("https://session.example/session/start", {
+      method: "POST",
+      headers: { "content-type": "application/json", ...fixture.session_headers },
+      body: JSON.stringify(fixture.session_body),
+    }));
+    expect(started.status).toBe(200);
+    await started.json();
+
+    socket = await openSocket(stub, fixture.session_body.session_id, fixture.session_headers, accessExpiresAt);
+    const connection = await connectedState(stub);
+    expect(connection.state).toMatchObject({
+      research_access_expires_at: accessExpiresAt,
+      research_authority_expires_at: scopeExpiresAt,
+    });
+    const scheduledClose = schedule.mock.calls.find((call) => call[1] === "expireResearchSessionConnections");
+    expect(scheduledClose?.[0]).toEqual(new Date(Math.ceil(scopeExpiresAtMs / 1_000) * 1_000));
+    expect(scheduledClose?.[2]).toEqual({ connection_id: connection.id, expires_at: scopeExpiresAt });
+
+    const close = vi.fn();
+    const laterDeadlinesConnection = {
+      state: {
+        research_access_expires_at: accessExpiresAt,
+        research_authority_expires_at: scopeExpiresAt,
+      },
+      close,
+    } as unknown as Connection<SessionChatConnectionState>;
+    const clock = vi.spyOn(Date, "now").mockReturnValue(scopeExpiresAtMs + 1);
+    try {
+      expect(requireCurrentSessionConnection(laterDeadlinesConnection)).toBe(false);
+      expect(close).toHaveBeenCalledWith(1008, "SESSION_AUTHORITY_STALE");
+    } finally {
+      clock.mockRestore();
+    }
+    expect(create).not.toHaveBeenCalled();
+  } finally {
+    try { socket?.close(1000, "test cleanup"); } catch { /* The server may already have closed it. */ }
+    get.mockRestore();
+    create.mockRestore();
+    schedule.mockRestore();
   }
 }, 30_000);
