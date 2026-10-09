@@ -106,9 +106,15 @@ compilation and exact lint pass. SQLite 3.50.4 depth-100 accepts 128 migrations,
 The [local native qualification record](r05-local-native-qualification-2026-10-09.md)
 distinguishes the bounded actual D1/R2/W2/callback/Queue results from scientific
 `consumeResult`, pinned production configuration, COMPUTER/public caller and
-live acceptance. Paused native continuation after original expiry is unresolved
-after three stopped attempts; direct known-result settlement after expiry passes.
-Neither result completes #326 or changes implementation status.
+live acceptance. Paused native continuation after original expiry initially
+failed three stopped attempts. The causal audit found pause falling through the
+helper's catch-all into premature settlement. Explicit RPC error serialization
+preserves `WorkflowTimeoutError`; only that timeout now permits canonical reread,
+while native lifecycle and unknown errors propagate. Eight changed/new helper
+cases, owning compilation/lint and independent source review pass. Actual native
+pause/resume after expiry and timeout with a recorded result both pass against
+canonical D1/R2/W2, each with one read and the original attempt. Complete scientific,
+production/public/live acceptance, #326 and implementation status remain open.
 
 This is the canonical day-to-day backend router. It does not replace product architecture, work-packet
 ownership or release acceptance. It tells each role where to begin, which active PR owns the result,

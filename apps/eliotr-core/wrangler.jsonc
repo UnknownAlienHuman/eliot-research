@@ -3,6 +3,7 @@
   "name": "eliotr-core",
   "main": "src/index.ts",
   "compatibility_date": "2026-08-28",
+  "compatibility_flags": ["enhanced_error_serialization"],
   "workers_dev": true,
   "preview_urls": false,
   "minify": true,

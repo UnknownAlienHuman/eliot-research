@@ -115,8 +115,12 @@ export async function executeNativeExternalTaskStep(input: NativeExternalTaskSte
       });
       payload = event.payload;
       received = true;
-    } catch {
-      // Timeout or another transport failure permits one canonical reread through settle, never success by default.
+    } catch (error) {
+      // RPC preserves error fields with enhanced_error_serialization, not custom prototypes.
+      // Lifecycle interruptions return to the native engine; only a timeout permits canonical reread.
+      if (typeof error !== "object" || error === null || !("name" in error) || error.name !== "WorkflowTimeoutError") {
+        throw error;
+      }
     }
     if (received) {
       let wake;

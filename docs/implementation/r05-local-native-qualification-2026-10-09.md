@@ -51,7 +51,8 @@ remote bindings, paid provider calls or deployment.
 | Revocation before wake | PASS: obsolete transport ACK, stage 8 remains STARTED and no new checkpoint. |
 | Cancellation before wake | PASS: run remains CANCELLED and no new checkpoint. |
 | Known result, direct settlement after expiry | PASS: same native server ports return SETTLE and advance original attempt to stage 9/revision 10. This excludes paused Workflow continuation. |
-| Paused native delivery after expiry | UNRESOLVED: three attempts stopped for audit. |
+| Paused native delivery after expiry | PASS after the lifecycle repair: native Queue wakes the original attempt after expiry; one canonical read and checkpoint at stage 9/revision 10. |
+| Native timeout with a recorded result | PASS after the lifecycle repair: no event is sent; one canonical read settles the original attempt after timeout. |
 
 The retained progressive record holds the first four cases; it is not a complete
 aggregate suite receipt. Separate receipts retain payload baseline/fix,
@@ -64,9 +65,9 @@ Private files are under `.eliotr-state/backend-full-20261008/`:
 - `native-canonical-receipt-canonical-cancelled-before-wake_canonical-revoked-before-wake.json`;
 - `native-canonical-receipt-canonical-known-result-direct-after-expiry.json`.
 
-## Unresolved paused continuation
+## Paused continuation — diagnosis and local resolution
 
-The result commits before both original lease and W2 budget expiry. Delivery is
+In the original failed attempts, the result commits before both lease and W2 budget expiry. Delivery is
 delayed across expiry while the Workflow is paused, then native Queue returns a
 `:sent` receipt. The canonical settlement-authority row exists. On resume the
 helper reaches settlement, but Workflow reports `WORKFLOW_EFFECT_UNCERTAIN`;
@@ -99,12 +100,46 @@ accept the completed paused continuation. The diagnostic remains failed, with
 no new checkpoint. Its logs are the two `PRIVATE_PHASE` rows in the same debug
 artifact named above; the original progressive successes have been preserved.
 
-The current [Workers API reference](https://developers.cloudflare.com/workflows/build/workers-api/),
+The initial [Workers API reference](https://developers.cloudflare.com/workflows/build/workers-api/),
 retrieved October 9, documents a timeout exception but does not specify a public
 pause/timeout discriminator in the returned excerpt. Do not introduce a guessed
 error-message check or treat internal Miniflare strings as a production contract.
 
-Remaining acceptance includes pause/resume, exact scientific `consumeResult`,
+The subsequent [Workers RPC error contract](https://developers.cloudflare.com/workers/runtime-apis/rpc/error-handling/)
+and [compatibility flag reference](https://developers.cloudflare.com/workers/configuration/compatibility-flags/#enhanced-error-serialization),
+retrieved October 9, specify preserved error `name`/serializable fields with
+`enhanced_error_serialization`; custom prototypes and `instanceof` are not the
+RPC contract. The current SDK donor's [errors.ts](https://github.com/cloudflare/workers-sdk/blob/794855c42714f68fafaf6be420ab192707ef8f43/packages/workflows-shared/src/lib/errors.ts#L1)
+defines `WorkflowTimeoutError`, and its [context.ts](https://github.com/cloudflare/workers-sdk/blob/794855c42714f68fafaf6be420ab192707ef8f43/packages/workflows-shared/src/context.ts#L1349)
+uses that error for native wait. The inspected commit is dated October 9,
+`17:18:14Z`. These are platform references, not a copied Workflow runtime.
+
+The installed Miniflare engine fixes its compatibility date at `2024-10-22` and
+copies explicit application flags. The application's newer date alone therefore
+left the native timeout's observed `name` as `Error`. One dedicated actual
+canonical timeout qualification established that shape. Adding the documented
+flag preserved `WorkflowTimeoutError` through RPC in a separate qualification.
+Core Wrangler now declares the flag explicitly. The helper reads the preserved
+name field, permits exactly one canonical read after that timeout, and rethrows
+pause/restart/terminate/unknown errors to the native engine. It never inspects
+error message/stack or requires a custom prototype.
+
+Eight changed/new helper regressions pass (seven unchanged cases skipped), with
+TypeScript 6.0.3 owning compilation at zero diagnostics, exact ESLint and bounded
+three-file source acceptance. The final affected native run passes pause/resume
+across original expiry and timeout with a predeadline recorded result. Both reach
+canonical stage 9/revision 10 with the original attempt, one task publication,
+one predecessor execution and one authorized canonical-result read. Passing
+earlier unrelated native cases were retained rather than repeated.
+
+The final private receipt is
+`native-canonical-receipt-enhanced-errors-canonical-paused-delivery-after-expiry_canonical-timeout-recorded-result.json`.
+The baseline timeout and flag-only platform qualification are retained separately
+in `native-canonical-receipt-canonical-timeout-recorded-result.json` and
+`native-canonical-enhanced-timeout-platform-qualification.json`. The final run
+uses the same explicit flag as Core; scientific conversion remains fixture data.
+
+Remaining acceptance includes production pause/resume, exact scientific `consumeResult`,
 pinned production configuration, COMPUTER route, public HTTP/JWT, foreign/
 malformed/late events, timeout/result boundary, restart/completed predecessors,
 historical generation, selected-profile native/live and release receipts. Passing

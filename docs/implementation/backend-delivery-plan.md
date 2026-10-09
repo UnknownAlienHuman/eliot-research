@@ -187,10 +187,27 @@ revocation cases, plus direct settlement of a predeadline result after expiry.
 The fixture uses actual migrations, delegated PROJECT grant/orientation/epoch,
 R2, W2, callback routing, Queue and inbox; scientific conversion is injected.
 Paused native continuation after original expiry failed three times and was
-stopped for audit. Direct settlement passes, so neither a product defect nor a
-Miniflare defect is established by the failure. Exact branch `consumeResult`,
+stopped for audit. A diagnostic-only run then identified pause falling through
+the helper's catch-all into premature settlement before result recording.
+The current Cloudflare RPC contract preserves error fields with explicit
+`enhanced_error_serialization`; the installed Workflow engine's older fixed
+compatibility date requires that explicit flag. Actual timeout qualification
+verified `Error` before the flag and `WorkflowTimeoutError` after it. The helper
+now permits one canonical reread only for that named timeout and propagates
+lifecycle/unknown failures without inspecting error messages, stacks or custom
+prototypes. Eight changed/new helper cases, TypeScript 6.0.3 owning compilation
+with zero diagnostics, exact lint and bounded independent source review pass.
+The affected actual native pause/resume-after-expiry and recorded-result timeout
+cases both pass, preserving one task, predecessor execution, canonical read and
+original W2 attempt. These are local fixture results. Exact branch `consumeResult`,
 pinned configuration, COMPUTER route, public HTTP/JWT, complete native and
 live/release acceptance remain pending. #326 is open and the Goal is active.
+
+The same continuation archives two directly verified malformed loose probe files
+from the Research root (891 bytes) into the private checkpoint directory with
+exact hash readback. It preserves the unique Unicode regeneration set, registered
+worktrees, active coordination log and all product WIP. This is bounded root
+cleanup, not completion of the broader cleanup requirement.
 
 The assembled boundary checker passes. Source-budget readback is still FAIL:
 the working tree has nine violations, while actual HEAD plus exact R05-only

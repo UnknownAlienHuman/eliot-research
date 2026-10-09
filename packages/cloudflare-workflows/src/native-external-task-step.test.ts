@@ -75,19 +75,36 @@ describe("R05 orchestration contracts with explicit server/native-step fixtures"
     expect(f.wait).not.toHaveBeenCalled(); expect(f.settle).not.toHaveBeenCalled();
   });
 
-  it("performs one canonical settlement read after wait transport failure", async () => {
+  it.each([Object.assign(new Error("native timeout"), { name: "WorkflowTimeoutError" }),
+    { name: "WorkflowTimeoutError", message: "serialized native timeout" }])(
+    "performs one canonical settlement read after native wait timeout", async (error) => {
     const f = await fixture();
-    f.wait.mockRejectedValue(new Error("transport timed out"));
+    f.wait.mockRejectedValue(error);
     expect(await executeNativeExternalTaskStep(f.input)).toEqual(f.receipt);
     expect(f.settle).toHaveBeenCalledExactlyOnceWith(f.input.request, f.input.principal, f.prepared, undefined);
   });
 
   it("does not convert an absent canonical result at timeout into a successful receipt", async () => {
     const f = await fixture();
-    f.wait.mockRejectedValue(new Error("transport timed out"));
+    f.wait.mockRejectedValue(Object.assign(new Error("native timeout"), { name: "WorkflowTimeoutError" }));
     f.settle.mockRejectedValue(Object.assign(new Error("unknown"), { code: "WORKFLOW_EFFECT_UNCERTAIN" }));
     await expect(executeNativeExternalTaskStep(f.input)).rejects.toMatchObject({ code: "WORKFLOW_EFFECT_UNCERTAIN" });
     expect(f.settle).toHaveBeenCalledTimes(1); expect(f.prepare).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["pause", new Error("Aborting engine: User called pause")],
+    ["restart", new Error("Aborting engine: User called restart")],
+    ["terminate", new Error("Aborting engine: User called terminate")],
+    ["transport", new Error("RPC disconnected")],
+    ["untyped timeout", { message: "Execution timed out" }],
+  ])("preserves native wait interruption %s without canonical settlement", async (_kind, error) => {
+    const f = await fixture();
+    f.wait.mockRejectedValue(error);
+    await expect(executeNativeExternalTaskStep(f.input)).rejects.toBe(error);
+    expect(f.prepare).toHaveBeenCalledTimes(1);
+    expect(f.settle).not.toHaveBeenCalled();
+    expect(f.durable).toHaveBeenCalledTimes(1);
   });
 
   it("rejects a foreign or malformed locator before canonical settlement", async () => {

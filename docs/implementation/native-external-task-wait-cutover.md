@@ -52,8 +52,9 @@ Historical runs and their manual recovery path remain compatible.
   canonical native qualification remains separate.
 - `native-external-task-step.ts` provides deterministic sibling prepare, wait
   and settle steps with strict persisted metadata and receipt validation. WAIT
-  visits the cached wait step on resume; a transport error permits one canonical
-  reread, and foreign/malformed events fail. Its exact source review,
+  visits the cached wait step on resume; only a named native timeout permits one
+  canonical reread, and lifecycle/unknown failures propagate back to the engine.
+  Foreign/malformed events fail. Its exact source review,
   compile and lint pass. Native prepare persists primitive canonical JSON after
   strict metadata validation and strictly decodes it on replay. Cloudflare RPC
   attaches disposer symbols to object results; the primitive representation
@@ -148,8 +149,11 @@ The [October 9 local qualification record](r05-local-native-qualification-2026-1
 records actual D1/R2/W2/callback/Queue/inbox cases and their fixture limits.
 It also records the append-only 0132 payload/COMPUTER generation repair and
 three public Core regressions. The fixture confirms direct settlement of a
-predeadline result after original expiry; paused native continuation across
-that expiry remains unresolved after three stopped attempts. Production
+predeadline result after original expiry. The later lifecycle repair and explicit
+RPC serialization flag also pass paused native continuation across that expiry
+and native timeout with a recorded result against actual canonical D1/R2/W2.
+Each uses one canonical read and the original attempt; scientific conversion is
+still injected. Production
 configuration, exact branch `consumeResult`, COMPUTER/public caller and live
 qualification remain separate mandatory gates.
 
