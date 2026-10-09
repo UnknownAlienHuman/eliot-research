@@ -1,0 +1,24 @@
+{
+  "protocol": "eliotr.frontend-owner-claim.v1",
+  "claim_id": "c0-2-transport-characterization-20261009",
+  "checkpoint_id": "C0.2",
+  "packet_id": "ER-48",
+  "manager_identity": "frontend-manager",
+  "manager_context_id": "01a120c9-2637-7952-b6c9-be07b395b4fd",
+  "leaf_identity": "01a120cd-7350-7f81-97a8-bc730b908330",
+  "owner_authorization_ref": "tests/ui-owner/receipts/owner-authorization.json",
+  "base_sha": "950bf86e51419b550b62e954843347dc678a3849",
+  "history_base_sha": "c37e56e0ebdfc7f6d294879008a4036d1b95b985",
+  "write_paths": [
+    "packages/pwa-http-client/src/api.characterization.test.ts"
+  ],
+  "predecessor_refs": [
+    {
+      "checkpoint_id": "C0.1",
+      "commit_sha": "0afe24ec1285311b489b6a5dffcec7297ab32412"
+    }
+  ],
+  "state": "ACTIVE",
+  "evidence_refs": [],
+  "blocker_refs": []
+}
