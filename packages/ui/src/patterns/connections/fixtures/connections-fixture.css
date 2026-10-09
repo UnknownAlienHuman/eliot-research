@@ -71,6 +71,7 @@
 
 .connections-fixture__diagnostic {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: var(--eliot-space-block-control);
   margin: var(--eliot-shape-none);
 }
@@ -82,10 +83,11 @@
 }
 
 .connections-fixture__diagnostic-value {
+  min-width: 0;
   font-family: var(--eliot-type-font-family-mono);
   font-size: var(--eliot-type-label-medium-size);
   line-height: var(--eliot-type-label-medium-line-height);
-  overflow-wrap: break-word;
+  overflow-wrap: anywhere;
 }
 
 @media (prefers-reduced-motion: reduce) {
