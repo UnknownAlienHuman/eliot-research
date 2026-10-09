@@ -8,22 +8,25 @@ audit_pr: 327
 
 # Backend implementation entry points
 
-**Owner-resumed checkpoint, 2026-10-08:** the owner assigned this chat the backend
-and a separate agent the frontend. The named integrator and Luna Max workers use
-the existing `main` checkout with disjoint write sets for #209, #321/#331,
-#322/#323, #324/#320 and #332. The manager/worktree examples below describe the
-audit handoff protocol; this owner-directed run creates no additional worktree.
-No backup/export/restore, deployment, paid qualification or historical uncertain-run
-replay is included. Refer to [the current checkpoint](backend-delivery-plan.md)
-and [October 8 source evidence](backend-checkpoint-2026-10-08.md)
-for source/check results; deferred native and release criteria remain pending.
+**Owner-resumed full continuation, 2026-10-08:** the owner assigned this chat all
+remaining documented implementation and acceptance except website design, with
+up to ten Luna Max workers. The named integrator and workers use the existing
+`main` checkout with disjoint write sets. The manager/worktree examples below
+describe the historical audit handoff protocol; this run creates no additional
+worktree. The Goal remains active across checkpoints and publication. Explicitly
+canceled backup/export/restore and replay of the historical uncertain run remain
+excluded. Refer to [the active delivery plan](backend-delivery-plan.md) and
+[October 8 source evidence](backend-checkpoint-2026-10-08.md) for actual results.
+Native, selected-profile and release acceptance remains pending until its
+required receipts exist; a source checkpoint does not establish those gates.
 
 This is the canonical day-to-day backend router. It does not replace product architecture, work-packet
 ownership or release acceptance. It tells each role where to begin, which active PR owns the result,
 and where the concise donor/anti-duplication instructions live.
 
-The former [`backend-delivery-plan.md`](backend-delivery-plan.md) records the paused October 6 source
-checkpoint. It is historical evidence, **not** the current implementation queue.
+[`backend-delivery-plan.md`](backend-delivery-plan.md) records the active owner
+continuation and retains the October 6 stop as dated historical evidence. The
+cards and passports below govern the implementation queue.
 
 ## 1. Start by role
 

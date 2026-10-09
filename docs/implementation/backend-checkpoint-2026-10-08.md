@@ -6,6 +6,36 @@ with disjoint file ownership. The current router/cards and active PR passports
 govern this checkpoint. Historical preservation branches were inspected as
 evidence and were not merged wholesale. Frontend delivery has a separate owner.
 
+## Full continuation after the first checkpoint
+
+The owner resumed all remaining documented implementation and acceptance,
+excluding website design. The Goal remains active across these checkpoints.
+The existing `main` checkout is shared by ten Luna Max workers; the integrator
+owns shared contracts, composition and publication. Canceled backup/export/
+restore work and the historical uncertain Research run are not resumed.
+
+| Passport | Source commit | Delivered source | Evidence boundary |
+|---|---|---|---|
+| #210 | `31703ff6`; correction `209c05c2` | Mandatory capability partitions are checked against the actual unique source-owned `capabilities()` return | Syntax, scoped lint and bounded negative launch fixture passed; independent Luna accepted the corrected exact source SHA. ERASURE/RETRIEVAL disabled and FEDERATION/WIKI partial still block launch. Handler completeness remains open. |
+| #330 | `8e2c25f3` | VERIFY and MATERIALIZE defensively snapshot and validate persisted input byte length/SHA before context reads | Owning compilation/lint and two exact regressions passed; independent Luna accepted the exact source SHA. Native effect partition and retirement of duplicate executors remain open. |
+| #291 | `3f6e88a0` | Actual preview selection accounting and an immutable persisted work receipt; completed replay retains historical stored result/trace | Owning compilation/lint and the three focused selection cases passed; independent Luna accepted the exact source SHA. Source-family diversity is explicitly NOT_MEASURED; provider capacity and profile acceptance remain pending. |
+| #294 | `bbb80649` | The production eleven-bind failure UPDATE is extracted and compiled against the Core guards and wrong Search schema | Independent exact-SHA source audit accepted the bounded criterion. The owner fixture uses SQLite 3.50.4 depth 100 and 122 Core/four Search migrations. Four UPDATE OF guards are selected; an unrelated-column UPDATE selects none; Search rejects the production query. Publication/readback is required before issue closure. |
+| #282 | `a847d4df`; corrections `64213579` / `ef3d5bb4` | Root emitted-budget commands and fail-fast deployment ordering run one existing PWA/Worker dry-run before remote effects | Syntax/scoped lint, orchestration (13 groups), apply-ordering (31 groups) and narrow decimal-precision/boundary reproduction passed. Independent Luna accepted the cutover and exact precision correction. Actual stable emitted build and platform/runtime qualification remain pending. |
+| #328 / #285 | `1a996da1`; repair `385fb0cf` | Immutable expected-case/run manifests and retained-facts re-adjudication, preserving the historical seven-field V1 result and parser | Testkit typecheck/scoped lint and four focused cases passed (17 skipped). Independent Luna accepted the exact repair SHA, including nonboolean verdict rejection with a recomputed receipt. Receipt hashes prove integrity; live product-receipt authority and full #285 integration remain pending. |
+
+The #294 positive Workflow-to-Core caller path is explicitly non-exhaustive:
+the generic receiver remains `unknown`. This bounded production case does not
+reduce or reinterpret the saved 1,029 unknown targets, 85 unknown arities or
+144 unresolved prepare sites. It executes EXPLAIN, not the production mutation.
+
+The emitted Worker gzip gate compares the installed Wrangler aggregate's
+rounding interval with the 4 MiB limit. A rounded `4096.00 KiB` is NOT_MEASURED,
+not PASS. Generated bindings are the mandatory build input actually produced
+by the existing generator, `.eliotr-state/generated-types/eliotr-core.d.ts`.
+The source maintainability gate remains separate. Golden v2, branch-local
+query/findings contracts, Items lifecycle and native execution changes are
+concurrent work; uncommitted prerequisites do not establish their acceptance.
+
 ## Frozen source slices
 
 | Passport | Source commit | Change | Verification |
