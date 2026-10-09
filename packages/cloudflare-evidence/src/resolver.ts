@@ -391,7 +391,10 @@ async function resolveHandle(
   const handle = await dependencies.authority.loadHandle(handleRef);
   if (handle === null) fail("EVIDENCE_HANDLE_NOT_FOUND", "EvidenceHandle does not exist");
   if (handle.terminal_state !== "LIVE") {
-    fail("EVIDENCE_HANDLE_NOT_LIVE", "EvidenceHandle is terminal and exposes no content");
+    // Historical STALE rows include quarantine invalidations; the state alone
+    // cannot prove their cause. Do not revive them or infer a revoked authority.
+    fail("EVIDENCE_HANDLE_NOT_LIVE", "EvidenceHandle is terminal and exposes no content",
+      handle.terminal_state === "STALE" ? {} : { invalidation_state: handle.terminal_state });
   }
   if (expectedScopeRef !== undefined && !exactEvidenceRef(handle.scope_snapshot_ref, expectedScopeRef)) {
     fail("EVIDENCE_SCOPE_MISMATCH", "EvidenceHandle is bound to another ScopeSnapshot");

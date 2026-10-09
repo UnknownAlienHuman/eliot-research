@@ -9,6 +9,49 @@ ALTER TABLE citation_resolution_receipt
 CREATE TRIGGER citation_resolution_guard_outcomes_alignment
 BEFORE INSERT ON citation_resolution_guard
 BEGIN
+  -- A verified V2 row must expose the same strict projections and identity in
+  -- receipt_json as in its indexed columns. Keep this independent of the larger
+  -- outcome-admission expression so each statement stays within depth 100.
+  SELECT RAISE(ABORT, 'CITATION_OUTCOMES_MISMATCH')
+  WHERE EXISTS (
+    SELECT 1 FROM citation_resolution_receipt receipt
+    WHERE receipt.receipt_id = NEW.receipt_id AND receipt.revision = NEW.receipt_revision
+      AND json_extract(receipt.receipt_json, '$.schema_version') = 2
+      AND COALESCE((
+        json_type(receipt.receipt_json) = 'object'
+        AND (SELECT COUNT(*) FROM json_each(receipt.receipt_json)) = 12
+        AND json_type(receipt.receipt_json, '$.receipt_ref') = 'object'
+        AND (SELECT COUNT(*) FROM json_each(json_extract(receipt.receipt_json, '$.receipt_ref'))) = 2
+        AND json_type(receipt.receipt_json, '$.receipt_ref.id') = 'text'
+        AND json_extract(receipt.receipt_json, '$.receipt_ref.id') = receipt.receipt_id
+        AND json_type(receipt.receipt_json, '$.receipt_ref.revision') = 'integer'
+        AND json_extract(receipt.receipt_json, '$.receipt_ref.revision') = receipt.revision
+        AND json_type(receipt.receipt_json, '$.scope_snapshot_ref') = 'object'
+        AND (SELECT COUNT(*) FROM json_each(json_extract(receipt.receipt_json, '$.scope_snapshot_ref'))) = 2
+        AND json_type(receipt.receipt_json, '$.scope_snapshot_ref.id') = 'text'
+        AND json_extract(receipt.receipt_json, '$.scope_snapshot_ref.id') = receipt.scope_snapshot_id
+        AND json_type(receipt.receipt_json, '$.scope_snapshot_ref.revision') = 'integer'
+        AND json_extract(receipt.receipt_json, '$.scope_snapshot_ref.revision') = receipt.scope_snapshot_revision
+        AND json_type(receipt.receipt_json, '$.requested_handle_refs') = 'array'
+        AND json(receipt.requested_handle_refs_json) = json(json_extract(receipt.receipt_json, '$.requested_handle_refs'))
+        AND json_type(receipt.receipt_json, '$.resolved') = 'array'
+        AND json(receipt.resolved_json) = json(json_extract(receipt.receipt_json, '$.resolved'))
+        AND json_type(receipt.receipt_json, '$.rejected') = 'array'
+        AND json(receipt.rejected_json) = json(json_extract(receipt.receipt_json, '$.rejected'))
+        AND json_type(receipt.receipt_json, '$.requested_count') = 'integer'
+        AND json_extract(receipt.receipt_json, '$.requested_count') = receipt.requested_count
+        AND json_type(receipt.receipt_json, '$.resolved_count') = 'integer'
+        AND json_extract(receipt.receipt_json, '$.resolved_count') = receipt.resolved_count
+        AND json_type(receipt.receipt_json, '$.all_material_citations_resolved') IN ('true','false')
+        AND json_extract(receipt.receipt_json, '$.all_material_citations_resolved') = receipt.all_material_citations_resolved
+        AND json_type(receipt.receipt_json, '$.created_at') = 'text'
+        AND json_extract(receipt.receipt_json, '$.created_at') = receipt.created_at
+        AND json_type(receipt.receipt_json, '$.receipt_digest') = 'text'
+        AND length(json_extract(receipt.receipt_json, '$.receipt_digest')) = 64
+        AND json_extract(receipt.receipt_json, '$.receipt_digest') NOT GLOB '*[^a-f0-9]*'
+      ), 0) = 0
+  );
+
   SELECT RAISE(ABORT, 'CITATION_OUTCOMES_MISMATCH')
   WHERE NOT EXISTS (
     SELECT 1

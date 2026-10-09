@@ -24,8 +24,10 @@ export function citationOutcomeForError(
     case "EVIDENCE_SOURCE_NOT_FOUND":
     case "EVIDENCE_SOURCE_NOT_LIVE":
     case "EVIDENCE_OWNER_GENERATION_MISMATCH":
-    case "EVIDENCE_HANDLE_NOT_LIVE":
       return { handle_ref, outcome: "AUTHORITY_REVOKED" };
+    case "EVIDENCE_HANDLE_NOT_LIVE":
+      return { handle_ref, outcome: error.invalidation_state === undefined
+        ? "VERIFY_UNAVAILABLE" : "AUTHORITY_REVOKED" };
     case "EVIDENCE_SOURCE_QUARANTINED":
       return { handle_ref, outcome: "SOURCE_QUARANTINED" };
     case "EVIDENCE_OBJECT_INTEGRITY":
