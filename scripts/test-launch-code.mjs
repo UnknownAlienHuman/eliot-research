@@ -8,8 +8,9 @@ const requiredSlices = ["RETRIEVAL", "RESEARCH", "FEDERATION", "WIKI", "ERASURE"
 const composition = (slices = "", operations = "", partial = "", enabled) => {
   const active = enabled ?? requiredSlices.filter((slice) =>
     !slices.includes(JSON.stringify(slice)) && !partial.includes(JSON.stringify(slice)));
-  return `function createApplication() { return { enabled_slices: ${JSON.stringify(active)},
-    partial_slices: [${partial}], disabled_slices: [${slices}] }; } ${operations}`;
+  return `function capabilities() { return { enabled_slices: ${JSON.stringify(active)},
+    partial_slices: [${partial}], disabled_slices: [${slices}] }; }
+    function createApplication() { return { capabilities }; } ${operations}`;
 };
 const profile = { protocol: "eliotr.release-profile.v1", google_external_transport: "gemini-mcp" };
 assert.equal(readConfiguredTransport({ vars: { GOOGLE_EXTERNAL_TRANSPORT: "gemini-mcp" }, env: {
@@ -49,7 +50,7 @@ assert.deepEqual(launchCodeBlockers(complete, composition("", "", '"OPTIONAL_EXP
 assert.throws(() => launchCodeBlockers(complete, composition('"WIKI"', "", '"WIKI"')), /conflicting capability states/u);
 assert.throws(() => launchCodeBlockers(complete, composition("", "", '"WIKI"', requiredSlices)), /conflicting capability states/u);
 for (const input of [composition("", "", "...dynamic"), composition("", "", '"WIKI", "WIKI"'),
-  composition() + "const duplicate = { enabled_slices: [] };",
+  composition().replace("partial_slices: []", "partial_slices: [], enabled_slices: []"),
   composition().replace("partial_slices: []", "partial_slices: compute()")]) {
   assert.throws(() => launchCodeBlockers(complete, input));
 }
@@ -63,9 +64,15 @@ for (const input of [
   'function createApplication() { return { ["disabled_slices"]: [] }; }',
   composition('...dynamic'), composition('"DRIVE_EXCHANGE", "DRIVE_EXCHANGE"'),
   composition('null'), composition('"bad slice"'), composition('', 'unavailable(operation);'),
-  composition() + 'const extra = { disabled_slices: [] };',
+  composition() + 'function capabilities() { return { disabled_slices: [] }; }',
   'function createApplication() { invalid( {',
 ]) assert.throws(() => launchCodeBlockers(complete, input));
+assert.throws(() => launchCodeBlockers(complete,
+  'function createApplication() { return {}; } const stray = { enabled_slices: ' +
+  JSON.stringify(requiredSlices) + ', partial_slices: [], disabled_slices: [] };'), /capability profile/u);
+assert.deepEqual(launchCodeBlockers(complete,
+  composition() + 'const unrelated = { enabled_slices: [], partial_slices: [], disabled_slices: ["WIKI"] };'), [],
+  "unrelated partitions are not the capability profile");
 assert.throws(() => launchCodeBlockers({ ...complete, release_profile: { protocol: "eliotr.release-profile.v1", google_external_transport: "gemini-and-drive" } }, composition()));
 assert.throws(() => launchCodeBlockers({ ...complete, entries: [
   ...complete.entries, { id: "common-entry", path: "test-common.ts", state: "IMPLEMENTED_NOT_LIVE", required_for_transports: ["gemini-mcp"] },

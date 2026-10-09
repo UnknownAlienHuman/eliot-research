@@ -53,6 +53,13 @@ export function launchCodeBlockers(registry, composition) {
   const ts = require("typescript");
   const source = ts.createSourceFile("composition-root.ts", composition, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
   if (source.parseDiagnostics.length) throw new Error("Launch composition cannot be parsed");
+  const profiles = source.statements.filter((statement) =>
+    ts.isFunctionDeclaration(statement) && statement.name?.text === "capabilities");
+  const returns = profiles.length === 1 && profiles[0].body !== undefined
+    ? profiles[0].body.statements.filter(ts.isReturnStatement) : [];
+  if (returns.length !== 1 || !ts.isObjectLiteralExpression(returns[0].expression)) {
+    throw new Error("Launch capability profile must return one explicit object literal");
+  }
   const sliceDeclarations = new Map();
   const visit = (node) => {
     if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "unavailable") {
@@ -61,16 +68,24 @@ export function launchCodeBlockers(registry, composition) {
       }
       blockers.push(node.arguments[0].text);
     }
-    if (ts.isPropertyAssignment(node) &&
-        (ts.isIdentifier(node.name) || ts.isStringLiteral(node.name)) &&
-        ["enabled_slices", "partial_slices", "disabled_slices"].includes(node.name.text)) {
-      const field = node.name.text;
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  // Only the source-owned capabilities profile supplies product state. A stray
+  // example, dead object or unrelated function cannot establish launch readiness.
+  for (const property of returns[0].expression.properties) {
+    if (!ts.isPropertyAssignment(property) ||
+        !(ts.isIdentifier(property.name) || ts.isStringLiteral(property.name))) {
+      throw new Error("Launch capability profile has a dynamic or spread property");
+    }
+    const field = property.name.text;
+    if (["enabled_slices", "partial_slices", "disabled_slices"].includes(field)) {
       if (sliceDeclarations.has(field)) throw new Error(`Duplicate ${field} declaration`);
-      if (!ts.isArrayLiteralExpression(node.initializer) || node.initializer.elements.length > 64) {
+      if (!ts.isArrayLiteralExpression(property.initializer) || property.initializer.elements.length > 64) {
         throw new Error(`Dynamic or oversized ${field} requires launch-gate review`);
       }
       const seen = new Set();
-      for (const item of node.initializer.elements) {
+      for (const item of property.initializer.elements) {
         if (!ts.isStringLiteral(item) || !/^[A-Z][A-Z0-9_]{0,63}$/u.test(item.text) || seen.has(item.text)) {
           throw new Error(`Invalid or duplicate ${field} slice`);
         }
@@ -82,9 +97,7 @@ export function launchCodeBlockers(registry, composition) {
       }
       sliceDeclarations.set(field, seen);
     }
-    ts.forEachChild(node, visit);
-  };
-  visit(source);
+  }
   if (sliceDeclarations.size !== 3) throw new Error("Expected explicit enabled_slices, partial_slices and disabled_slices declarations");
   const declared = new Set();
   for (const slices of sliceDeclarations.values()) {
@@ -380,6 +393,7 @@ export async function assertLaunchCodeComplete() {
   if (registry.release_profile.google_external_transport !== configuredTransport) {
     throw new Error("Launch release profile does not match the canonical deployment config");
   }
+  await readCompositionCapabilityProfile();
   const blockers = launchCodeBlockers(registry, composition);
   if (blockers.length) throw new Error(`LIVE_DEPLOY_BLOCKED: known unfinished product paths: ${blockers.join("; ")}`);
 }
