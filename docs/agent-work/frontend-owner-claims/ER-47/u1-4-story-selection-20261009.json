@@ -15,7 +15,9 @@
     { "checkpoint_id": "U1.2", "commit_sha": "b568b250b43698eff346ce901049e33cb3cba805" },
     { "checkpoint_id": "U1.3", "commit_sha": "06e7a3b09978a95311d03fd3aec4706ce3a68d22" }
   ],
-  "state": "ACTIVE",
-  "evidence_refs": [],
+  "state": "HANDED_OFF",
+  "handoff_reason": "COMPLETED",
+  "handoff_receipt_ref": "tests/ui-owner/receipts/u1-d/story-selection.json",
+  "evidence_refs": ["git:43e056419489f61846e090a4f912d13d4be883ed; tests/ui-owner/receipts/u1-d/story-selection.json; one requested journey PASS six retained skipped"],
   "blocker_refs": []
 }

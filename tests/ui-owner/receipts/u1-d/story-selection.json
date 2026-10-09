@@ -1,0 +1,8 @@
+{
+  "protocol": "eliotr.ui-harness-refinement.v1",
+  "checkpoint": "U1.4",
+  "source_commit": "43e056419489f61846e090a4f912d13d4be883ed",
+  "change": "Use the exact live-index story names as Vitest testNamePattern, retaining the safe catalog and import-path gates",
+  "verification": "One requested Fixture Journey passed; six retained cases skipped. Owning compiler and exact lint PASS. History PASS at4df3fc06:10claims2active41commits",
+  "claim": "docs/agent-work/frontend-owner-claims/ER-47/u1-4-story-selection-20261009.json"
+}

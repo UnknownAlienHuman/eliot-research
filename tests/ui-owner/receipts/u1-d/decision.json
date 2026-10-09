@@ -1,0 +1,29 @@
+{
+  "protocol": "eliotr.ui-direction-decision.v1",
+  "checkpoint": "U1-D",
+  "status": "ACCEPTED_INTERNAL_DIRECTION",
+  "reviewer": "frontend-manager",
+  "source_commit": "fe26f0102be0430914998338ebb0b053fe287a09",
+  "predecessor": "60e2550071795db3ab207a0beba491eee13d002a",
+  "reference": "tests/ui-owner/receipts/u1-r/observation-matrix.json",
+  "composition": "Stable Sources/Research/Studio/Connections; tonal support and calm reading; selected future scope alongside question; numbered evidence opens only when requested; below80rem evidence replaces reading; compact destinations at bottom with one visible task",
+  "improvements_over_reference": ["Original report scope survives new source capture and future selections", "Exact revision context and focus return", "Independent access/configuration/observed-call facts", "Long Cyrillic, narrow layout, deterministic light/dark and forced-color tokens"],
+  "components": "Accepted native Button, Field and Dialog; one local Material Symbols family; bounded source/citation/navigation patterns share one semantic stylesheet",
+  "checks": {
+    "owning_typescript_lint_design": "PASS; no feature raw visual literals",
+    "fixture_journey": "One requested Storybook journey PASS: capture not admitted, original scope remains3, loading/sample report, Connections unknown details and explicit Back; six retained tests skipped",
+    "browser": "30 canonical cases PASS bound to committedfe26f010; 1440/1024/768/390/320 x useful/dark/longRU/longRUdark/loading/degraded; no horizontal overflow, nested scrolling container, axe/console/network error or remote request; physical Escape/citation/source focus return",
+    "manual_visual": "Manager inspected actual 1440dark and390longRU PNGs, plus live browser1280 composition. Clear reading hierarchy and one compact task; no generic admin/card dashboard or NotebookLM brand copy",
+    "CSP": "Accepted native-control isolation PASS under strict HTTP CSP; full application graph remains pending"
+  },
+  "baseline_review": {
+    "reviewer": "frontend-manager",
+    "reason": "Initial canonical semantic Material composition accepted after live-reference study and repaired focus/scope journey",
+    "previous": "NONE initial direction",
+    "source": ".eliotr-state/ui-owner/u1-direction-canonical/review.json",
+    "policy": "Evidence stays private; later pixel changes require a named reason, old/new digests and review. No automatic baseline acceptance."
+  },
+  "reference_limits": "NotebookLM light/narrow/degraded states unobserved; Eliot independently qualified locally. Token forced colors/reduced motion and native-control CSP are scoped evidence, not full product qualification.",
+  "pending": ["U1.5 protected shell and URL/query lifecycle", "U2 fixture-complete screens and fresh-context U2-X", "U3-U5 real clients and integrated FINAL-UI", "native screenreader and actual native200percent zoom", "full product CSP/performance", "native/staging/live/release"],
+  "continuation": "Continue directly to U1.5 and U2; no owner aesthetics approval or program completion"
+}
