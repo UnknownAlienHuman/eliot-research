@@ -69,8 +69,30 @@ default output when unset. It does not change the strict gate: an incomplete str
 
 The owner stopped implementation after publishing source checkpoint
 `557c081098e6459e89c4d78051cbef290a44ac9e`. #294 remains open for the production
-prepared UPDATE OF source/target/trigger case; that extension is not implemented
-or tested. The results below are saved evidence, not an instruction to resume work.
+prepared UPDATE OF source/target/trigger case; that extension was not implemented
+or tested at the October 6 stop. The owner resumed on October 8; see the follow-up below.
+
+## October 8 #294 continuation: production UPDATE OF source path
+
+A focused invocation of the installed extractor now reports bounded positive callsite
+evidence for this parameter-forwarded query without promoting its global target
+classification. The source query is packages/cloudflare-workflows/src/failures.ts:248, and the current
+production binding arity is 11. retainWorkflowFailure forwards the same database
+parameter to recordWorkflowFailure; the Workflow application passes its typed
+environment.CORE_DB, composed from this.env.CORE_DB by the Worker Workflow entry.
+The output labels these observed paths positive-paths-only with exhaustive=false;
+targetStore remains unknown, so this evidence does not claim every invocation or
+reduce the saved 1,029-unknown aggregate count.
+
+The command node infra/d1/test-update-of-source-coverage.mjs extracts that production
+statement and runs the existing calibrated SQLite EXPLAIN compiler at depth 100 against
+all 122 current Core migrations and all four Search migrations. SQLite 3.50.4 compiled
+the statement against Core and selected the four installed UPDATE OF failure guards
+from migration 0123. A schema-derived unrelated-column UPDATE selected none of those
+guards; Search rejected the production statement because it does not own
+research_workflow_run. The test does not execute a product UPDATE or read product
+rows. It replaces the former synthetic-table trigger case; the full D1 inventory and
+native D1 acceptance remain separate and pending.
 
 The assembled checkpoint is based on `main` `65fcf3363c55ef738bbb15a55845a601b8369561`;
 its published SHA is recorded in #294. Prepare-declaration classification and target provenance

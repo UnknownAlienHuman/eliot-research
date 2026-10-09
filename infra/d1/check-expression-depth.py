@@ -45,6 +45,24 @@ def valid_arity(value: object) -> bool:
     return value is None or (isinstance(value, int) and not isinstance(value, bool) and value >= 0)
 
 
+def valid_target_binding_evidence(value: object) -> bool:
+    if value is None:
+        return True
+    if (not isinstance(value, dict) or set(value) != {"coverage", "exhaustive", "paths"}
+            or value["coverage"] != "positive-paths-only" or value["exhaustive"] is not False
+            or not isinstance(value["paths"], list) or not 1 <= len(value["paths"]) <= 8):
+        return False
+    for path in value["paths"]:
+        if (not isinstance(path, dict) or set(path) != {"targetStore", "callsites"}
+                or path["targetStore"] not in STORES or not isinstance(path["callsites"], list)
+                or not 1 <= len(path["callsites"]) <= 12):
+            return False
+        if any(not isinstance(site, str) or not re.fullmatch(r"[^\s:]+(?:/[^\s:]+)*:\d+", site)
+               for site in path["callsites"]):
+            return False
+    return True
+
+
 def valid_binding(site: object) -> bool:
     if not isinstance(site, dict):
         return False
@@ -61,7 +79,8 @@ def valid_binding(site: object) -> bool:
     provenance = site.get("bindingProvenance")
     return (isinstance(site.get("receiver"), str)
             and valid_arity(site.get("bindingArity"))
-            and isinstance(provenance, str) and provenance in BINDING_PROVENANCES)
+            and isinstance(provenance, str) and provenance in BINDING_PROVENANCES
+            and valid_target_binding_evidence(site.get("targetBindingEvidence")))
 
 
 def valid_application_sql_entry(site: object, unresolved: bool = False) -> bool:
@@ -132,12 +151,17 @@ def columns(db: sqlite3.Connection, name: str) -> list[str]:
     return [row[1] for row in db.execute(f"PRAGMA table_xinfo({quoted(name)})") if row[6] == 0]
 
 
-def explain(db: sqlite3.Connection, sql: str, binding_arity: int | None = None) -> None:
+def explain(
+    db: sqlite3.Connection,
+    sql: str,
+    binding_arity: int | None = None,
+    capture_rows: bool = False,
+) -> list[tuple] | None:
     """Compile with inert bindings, optionally enforcing the source .bind() arity."""
     statement = "EXPLAIN " + sql
     if binding_arity is not None:
         try:
-            db.execute(statement, (None,) * binding_arity).close()
+            cursor = db.execute(statement, (None,) * binding_arity)
         except sqlite3.ProgrammingError as error:
             message = str(error)
             # Recent Python versions require mappings for named SQLite parameters.
@@ -146,24 +170,34 @@ def explain(db: sqlite3.Connection, sql: str, binding_arity: int | None = None) 
             if "named placeholders" in message or "named placeholder" in message:
                 names = set(re.findall(r"(?<![\w])[:@$]([A-Za-z_][A-Za-z_0-9]*)", sql))
                 if names and len(names) == binding_arity:
-                    db.execute(statement, {name: None for name in names}).close()
-                    return
-            raise
-        return
+                    cursor = db.execute(statement, {name: None for name in names})
+                else:
+                    raise
+            else:
+                raise
+        if capture_rows:
+            return cursor.fetchall()
+        cursor.close()
+        return None
     try:
-        db.execute(statement).close()
+        cursor = db.execute(statement)
     except sqlite3.ProgrammingError as error:
         message = str(error)
         positional = re.search(r"statement uses (\d+), and there are 0 supplied", message)
         if positional:
-            db.execute(statement, (None,) * int(positional[1])).close()
-            return
-        if "You did not supply a value for binding parameter" in message:
+            cursor = db.execute(statement, (None,) * int(positional[1]))
+        elif "You did not supply a value for binding parameter" in message:
             names = set(re.findall(r"(?<![\w])[\:@$]([A-Za-z_][A-Za-z_0-9]*)", sql))
             if names:
-                db.execute(statement, {name: None for name in names}).close()
-                return
-        raise
+                cursor = db.execute(statement, {name: None for name in names})
+            else:
+                raise
+        else:
+            raise
+    if capture_rows:
+        return cursor.fetchall()
+    cursor.close()
+    return None
 
 
 def write_shapes(name: str, names: list[str], operations: set[str]):
@@ -282,6 +316,8 @@ def classification_detail_record(inventory: dict, application_status: list[list[
             "sourceLocation": query["location"],
             "targetStore": target,
             "targetStatus": query["targetStatus"],
+            **({"targetBindingEvidence": query["targetBindingEvidence"]}
+               if "targetBindingEvidence" in query else {}),
             "prepareDeclarationKind": detail_prepare_declaration_kind(query),
             "bindingArity": query["bindingArity"],
             "bindingProvenance": query["bindingProvenance"],

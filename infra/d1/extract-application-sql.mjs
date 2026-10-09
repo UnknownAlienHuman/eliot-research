@@ -9,6 +9,7 @@ import { createCanonicalPrepareDeclarationAuthority } from "./receiver-target-ge
 import { createPrepareDeclarationMetadata, prepareDeclarationKindAt } from "./prepare-declaration-provenance.mjs";
 import { createSourceLexicalBindings, resolveLocalTarget } from "./source-lexical-bindings.mjs";
 import { createSqlBindingCardinality } from "./sql-binding-cardinality.mjs";
+import { createBoundedCallsiteTargetEvidence } from "./receiver-target-callsite-evidence.mjs";
 
 const root = resolve(fileURLToPath(new URL("../../", import.meta.url)));
 const roots = [resolve(root, "apps/eliotr-core/src"), resolve(root, "packages")];
@@ -270,7 +271,13 @@ function staticEvaluator(source) {
   return evaluateSource;
 }
 
-export function extractSourceText(text, file = resolve(root, "<fixture>.ts"), targetOverrides, prepareDeclarationMetadata) {
+export function extractSourceText(
+  text,
+  file = resolve(root, "<fixture>.ts"),
+  targetOverrides,
+  prepareDeclarationMetadata,
+  targetBindingEvidence,
+) {
   const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
   if (source.parseDiagnostics.length) throw new Error("SOURCE_PARSE_FAILED");
   const evaluateRaw = staticEvaluator(source);
@@ -384,6 +391,8 @@ export function extractSourceText(text, file = resolve(root, "<fixture>.ts"), ta
             receiver,
             targetStore: target.targetStore,
             targetStatus: target.targetStatus,
+            ...(target.targetStore === "unknown" && targetBindingEvidence?.has(node.getStart(source))
+              ? { targetBindingEvidence: targetBindingEvidence.get(node.getStart(source)) } : {}),
             prepareDeclarationKind,
             bindingArity: binding.bindingArity,
             bindingProvenance: binding.bindingProvenance,
@@ -420,12 +429,15 @@ export function extractSourceText(text, file = resolve(root, "<fixture>.ts"), ta
   return { queries, unresolved };
 }
 
-function extractSource(file, targetOverrides, prepareDeclarationMetadata) {
-  return extractSourceText(readFileSync(file, "utf8"), file, targetOverrides, prepareDeclarationMetadata);
+function extractSource(file, targetOverrides, prepareDeclarationMetadata, targetBindingEvidence) {
+  return extractSourceText(readFileSync(file, "utf8"), file, targetOverrides,
+    prepareDeclarationMetadata, targetBindingEvidence);
 }
 
-export function extractApplicationSql() {
-  const files = [...sourceFiles(roots[0]), ...collectPackageSources(roots[1])].sort();
+export function extractApplicationSql(options = {}) {
+  const files = options.sourceFiles === undefined
+    ? [...sourceFiles(roots[0]), ...collectPackageSources(roots[1])].sort()
+    : options.sourceFiles.map((file) => resolve(root, file));
   const program = ts.createProgram([...new Set(files.map((file) => resolve(file)))], compilerOptions(root));
   const checker = program.getTypeChecker();
   const canonicalAuthority = createCanonicalPrepareDeclarationAuthority({ program, checker, root });
@@ -436,12 +448,19 @@ export function extractApplicationSql() {
     sourceFiles: analyzedSources,
     canonicalAuthority,
   });
-  const targetOverrides = createErasureReceiverTargetOverrides(files, root, program);
+  const targetOverrides = options.sourceFiles === undefined
+    ? createErasureReceiverTargetOverrides(files, root, program)
+    : new Map();
+  const targetBindingEvidence = options.includeBoundedTargetEvidence === true
+    ? createBoundedCallsiteTargetEvidence({ program, checker, files, root })
+    : new Map();
   const queries = [];
   const unresolved = [];
   for (const file of files) {
-    const overrides = targetOverrides.get(resolve(file).replaceAll("\\", "/").toLowerCase());
-    const extracted = extractSource(file, overrides, prepareDeclarationMetadata);
+    const fileKey = resolve(file).replaceAll("\\", "/").toLowerCase();
+    const overrides = targetOverrides.get(fileKey);
+    const boundedEvidence = targetBindingEvidence.get(fileKey);
+    const extracted = extractSource(file, overrides, prepareDeclarationMetadata, boundedEvidence);
     queries.push(...extracted.queries);
     unresolved.push(...extracted.unresolved);
   }
