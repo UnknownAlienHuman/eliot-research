@@ -30,6 +30,15 @@ export type ResearchWorkflowParams<
   QualificationRenewalMarker extends string = string,
 > = ResearchWorkflowRunParams<QualificationRenewalMarker> | ResearchWorkflowExhaustiveParams<ExhaustiveRequest>;
 
+type DeclaredResearchWorkflowKind =
+  | NonNullable<ResearchWorkflowRunParams["workflow_kind"]>
+  | ResearchWorkflowExhaustiveParams<unknown>["workflow_kind"];
+
+/** A persisted envelope may omit the discriminant or carry one of the two declared literals. */
+function isDeclaredWorkflowKind(value: unknown): value is DeclaredResearchWorkflowKind {
+  return value === "RESEARCH" || value === "EXHAUSTIVE_QUERY";
+}
+
 function failWorkflow(code: "WORKFLOW_INPUT_INVALID" | "WORKFLOW_CONFLICT"): never {
   const error = new Error(code) as Error & { code: string };
   error.code = code;
@@ -46,6 +55,9 @@ export function parseResearchWorkflowParams<
 }>): ResearchWorkflowParams<ExhaustiveRequest, QualificationRenewalMarker> {
   if (typeof raw !== "object" || raw === null) failWorkflow("WORKFLOW_INPUT_INVALID");
   const value = raw as Record<string, unknown>;
+  if (value.workflow_kind !== undefined && !isDeclaredWorkflowKind(value.workflow_kind)) {
+    failWorkflow("WORKFLOW_INPUT_INVALID");
+  }
   if (value.workflow_kind === "EXHAUSTIVE_QUERY") {
     const allowed = new Set(["workflow_kind", "operation_id", "idempotency_key", "principal_ref",
       "credential_generation", "deployment_generation", "exhaustive_request"]);
