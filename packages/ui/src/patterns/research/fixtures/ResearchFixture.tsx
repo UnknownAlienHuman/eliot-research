@@ -1,4 +1,4 @@
-import { useCallback, useId, useState } from 'react';
+import { useCallback, useId, useRef, useState } from 'react';
 import { Button, Dialog, Field, Status } from '../../../primitives/primitives';
 import './research-fixture.css';
 
@@ -142,6 +142,7 @@ export function ResearchFixture({
   const text = copy[locale];
   const headingId = useId();
   const reportHeadingId = useId();
+  const formRef = useRef<HTMLFormElement>(null);
   const [question, setQuestion] = useState('');
   const [busy, setBusy] = useState(false);
   const [submitted, setSubmitted] = useState<{ readonly question: string; readonly scopeCount: number }>();
@@ -202,7 +203,7 @@ export function ResearchFixture({
       <h2 className='er-research-fixture__heading' id={headingId}>{text.heading}</h2>
       <p className='er-research-fixture__lead'>{text.lead}</p>
 
-      <form className='er-research-fixture__form' onSubmit={submit}>
+      <form ref={formRef} className='er-research-fixture__form' onSubmit={submit}>
         <Field
           label={text.questionLabel}
           hint={text.questionHint}
@@ -215,7 +216,12 @@ export function ResearchFixture({
           <Button variant='tonal' onClick={toggleReport}>
             {reportVisible ? text.hideReport : text.showReport}
           </Button>
-          {busy && <Button variant='text' onClick={() => { setBusy(false); setSubmitted(undefined); }}>{text.reset}</Button>}
+          {busy && <Button variant='text' onClick={() => {
+            setBusy(false);
+            setSubmitted(undefined);
+            setQuestion('');
+            formRef.current?.querySelector('input')?.focus();
+          }}>{text.reset}</Button>}
         </span>
         <p className='er-research-fixture__scope'>{text.scopeCount(scopeCount)}</p>
         {scopeCount === 0 && <p className='er-research-fixture__scope'>{text.noScope}</p>}

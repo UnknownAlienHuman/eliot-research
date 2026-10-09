@@ -85,6 +85,13 @@ export const InteractionJourney: Story = {
     await expect(canvas.getByRole('dialog', { name: /citation detail/i })).toBeVisible();
     canvas.getByRole('dialog').dispatchEvent(new Event('cancel', { cancelable: true }));
     await waitFor(() => expect(canvas.queryByRole('dialog')).not.toBeInTheDocument());
+    await userEvent.click(canvas.getByRole('button', { name: 'Clear sample request' }));
+    await expect(field).toHaveValue('');
+    await expect(field).toHaveFocus();
+    await userEvent.type(field, 'A new question');
+    await userEvent.tab();
+    await expect(ask).toHaveFocus();
+    await expect(ask).toBeEnabled();
   },
 };
 
