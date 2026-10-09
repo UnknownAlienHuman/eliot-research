@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { readFile, readdir, stat } from "node:fs/promises";
+import { lstat, readFile, readdir, realpath, stat } from "node:fs/promises";
 import { extname, dirname, relative, resolve, sep } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import { gzipSync } from "node:zlib";
 import ts from "typescript";
 
@@ -18,12 +19,81 @@ export const OWNER_WEB_INITIAL_GZIP_BUDGET_BYTES = 600 * KIB;
 export const RECEIPT_PROTOCOL = "eliotr.emitted-build-budget-receipt.v1";
 export const DEFAULT_RECEIPT_PATH = "apps/eliotr-core/.wrangler/s90-emitted-budget-receipt.json";
 
+const EXPECTED_BUILD_COMMANDS = Object.freeze({
+  combined: "pnpm build:pwa && pnpm --filter @eliotr/core deploy:dry-run",
+  emitted: "node scripts/check-emitted-budgets.mjs",
+  emittedCheck: "node scripts/check-emitted-budgets.mjs --check-only",
+  pwa: "node scripts/build-agent-inbox.mjs && astro build",
+  worker: "wrangler deploy --dry-run --minify --outdir dist",
+  types: "node ../../scripts/generate-cloudflare-types.mjs",
+});
+const EXPECTED_ENVIRONMENT_PROFILE =
+  "local dry-run; top-level Wrangler config; no --remote; no explicit target environment";
+const SOURCE_BUDGET_DIAGNOSTIC_POLICY = "separate maintainability diagnostics; not runtime metrics";
+const EMITTED_ARTIFACT_ROOTS = Object.freeze([
+  "apps/eliotr-core/dist",
+  "apps/eliotr-pwa/dist",
+]);
+// This process-local identity is not serialized into receipts. Persisted multipart
+// reports cannot reconstruct Wrangler's ordered module-byte input to gzip.
+const freshNativeWorkerMeasurements = new WeakSet();
+
 function sha256(value) {
   return createHash("sha256").update(value).digest("hex");
 }
 
 function normalizedPath(value) {
   return value.split(sep).join("/");
+}
+
+function isAllowedEmittedArtifactPath(path) {
+  if (typeof path !== "string" || path.length === 0 || path.includes("\\") || path.startsWith("/")) {
+    return false;
+  }
+  const segments = path.split("/");
+  if (segments.some((segment) => segment.length === 0 || segment === "." || segment === "..")) return false;
+  return EMITTED_ARTIFACT_ROOTS.some((artifactRoot) =>
+    path === artifactRoot || path.startsWith(artifactRoot + "/"));
+}
+
+async function resolveSafeEmittedArtifactPath(root, artifactPath) {
+  if (!isAllowedEmittedArtifactPath(artifactPath)) {
+    throw new Error("Artifact path is outside the exact emitted build locations");
+  }
+
+  const repositoryRoot = await realpath(root);
+  const segments = artifactPath.split("/");
+  let absolute = repositoryRoot;
+  let missing = false;
+  let details = null;
+  for (let index = 0; index < segments.length; index += 1) {
+    absolute = resolve(absolute, segments[index]);
+    if (missing) continue;
+    try {
+      details = await lstat(absolute);
+    } catch (error) {
+      if (error?.code === "ENOENT") {
+        missing = true;
+        continue;
+      }
+      throw error;
+    }
+    if (details.isSymbolicLink()) throw new Error("Symbolic links are not valid build artifacts");
+    if (index < segments.length - 1 && !details.isDirectory()) {
+      throw new Error("An emitted artifact path crosses a non-directory entry");
+    }
+  }
+
+  if (missing) {
+    return { absolute: resolve(repositoryRoot, ...segments), exists: false, details: null };
+  }
+
+  const actualPath = await realpath(absolute);
+  const repositoryRelative = relative(repositoryRoot, actualPath);
+  if (repositoryRelative === ".." || repositoryRelative.startsWith(".." + sep)) {
+    throw new Error("Artifact path resolves outside the repository");
+  }
+  return { absolute, exists: true, details };
 }
 
 function cleanModuleName(value) {
@@ -87,8 +157,11 @@ export async function captureSourceIdentity(root, buildInputDigests = {}) {
   };
 }
 
-async function listFiles(directory) {
-  const base = resolve(directory);
+async function listFiles(root, artifactDirectory) {
+  const safeDirectory = await resolveSafeEmittedArtifactPath(root, artifactDirectory);
+  if (!safeDirectory.exists) return [];
+  if (!safeDirectory.details.isDirectory()) throw new Error("Emitted artifact root is not a directory");
+  const base = safeDirectory.absolute;
   const result = [];
   async function visit(current) {
     let entries;
@@ -248,7 +321,7 @@ function formatPathForReceipt(prefix, path) {
 
 export async function inspectPwaBuild(root, buildStartedAt) {
   const distRoot = resolve(root, "apps/eliotr-pwa/dist");
-  const files = (await listFiles(distRoot)).filter((entry) =>
+  const files = (await listFiles(root, "apps/eliotr-pwa/dist")).filter((entry) =>
     !entry.relative.split("/").some((part) => part.startsWith(".")),
   );
   const assets = [];
@@ -575,12 +648,14 @@ export function parseWranglerBundleReport(output) {
   };
 }
 
-export async function inspectWorkerBuild(root, buildStartedAt, output) {
-  const distRoot = resolve(root, "apps/eliotr-core/dist");
-  const report = parseWranglerBundleReport(output);
+async function inspectWorkerBuildWithReport(root, buildStartedAt, report) {
   const issues = [...(report.issues ?? [])];
-  const entryPath = resolve(distRoot, "index.js");
-  const mapPath = resolve(distRoot, "index.js.map");
+  const [entryLocation, mapLocation] = await Promise.all([
+    resolveSafeEmittedArtifactPath(root, "apps/eliotr-core/dist/index.js"),
+    resolveSafeEmittedArtifactPath(root, "apps/eliotr-core/dist/index.js.map"),
+  ]);
+  const entryPath = entryLocation.absolute;
+  const mapPath = mapLocation.absolute;
   let entryContent;
   let sourceMapContent;
   let entryStat;
@@ -614,7 +689,7 @@ export async function inspectWorkerBuild(root, buildStartedAt, output) {
     }
   }
 
-  const outputFiles = await listFiles(distRoot);
+  const outputFiles = await listFiles(root, "apps/eliotr-core/dist");
   const wasmFiles = [];
   for (const file of outputFiles.filter((entry) => extname(entry.relative).toLowerCase() === ".wasm")) {
     const content = await readFile(file.absolute);
@@ -736,30 +811,152 @@ export async function inspectWorkerBuild(root, buildStartedAt, output) {
   };
 }
 
-export async function compareReceiptArtifacts(root, receipt) {
+export async function inspectWorkerBuild(root, buildStartedAt, output) {
+  const report = parseWranglerBundleReport(output);
+  const evidence = await inspectWorkerBuildWithReport(root, buildStartedAt, report);
+  if (report.status === "MEASURED" && report.completedDryRun === true) {
+    freshNativeWorkerMeasurements.add(evidence);
+  }
+  return evidence;
+}
+
+export async function compareReceiptArtifacts(root, receipt, expectedArtifacts) {
   const expected = receipt?.artifacts;
-  if (!Array.isArray(expected) || expected.length === 0) {
+  if (!Array.isArray(expected) || expected.length === 0 ||
+      !Array.isArray(expectedArtifacts) || expectedArtifacts.length === 0 ||
+      [...expected, ...expectedArtifacts].some((item) =>
+        !item || typeof item.path !== "string" ||
+        typeof item.sha256 !== "string" || !Number.isSafeInteger(item.rawBytes) || item.rawBytes < 0)) {
     return { status: "NOT_MEASURED", issues: ["Receipt has no emitted artifact manifest"] };
   }
+  const expectedPaths = new Set(expectedArtifacts.map((item) => item?.path));
+  const receiptPaths = new Set(expected.map((item) => item?.path));
+  if (expectedPaths.size !== expectedArtifacts.length || receiptPaths.size !== expected.length ||
+      expectedPaths.size !== receiptPaths.size ||
+      [...receiptPaths].some((path) => !expectedPaths.has(path))) {
+    return { status: "NOT_MEASURED", issues: ["Receipt artifact membership does not match the computed emitted manifest"] };
+  }
+  if (expected.some((item) => !isAllowedEmittedArtifactPath(item.path))) {
+    return { status: "NOT_MEASURED", issues: ["Receipt contains an artifact outside the exact emitted build locations"] };
+  }
+
+  let safePaths;
+  try {
+    safePaths = await Promise.all(expected.map((item) => resolveSafeEmittedArtifactPath(root, item.path)));
+  } catch {
+    return { status: "NOT_MEASURED", issues: ["Receipt artifact path is missing or resolves through a symbolic link"] };
+  }
+
   const changed = [];
   const missing = [];
-  for (const item of expected) {
-    const absolute = resolve(root, item.path);
-    const repoRelative = relative(resolve(root), absolute);
-    if (repoRelative === ".." || repoRelative.startsWith(".." + sep)) {
-      return { status: "NOT_MEASURED", issues: ["Receipt contains an artifact path outside the repository"] };
-    }
+  for (let index = 0; index < expected.length; index += 1) {
+    const item = expected[index];
+    const safePath = safePaths[index];
     try {
-      const content = await readFile(absolute);
-      if (sha256(content) !== item.sha256) changed.push(item.path);
+      const content = await readFile(safePath.absolute);
+      if (sha256(content) !== item.sha256 || content.byteLength !== item.rawBytes) changed.push(item.path);
     } catch (error) {
       if (error?.code === "ENOENT") missing.push(item.path);
-      else throw error;
+      else return { status: "NOT_MEASURED", issues: ["Receipt artifact could not be read safely"] };
     }
   }
   if (missing.length > 0) return { status: "NOT_MEASURED", issues: ["Receipt artifact is missing: " + missing[0]] };
   if (changed.length > 0) return { status: "STALE", issues: ["Receipt artifact changed: " + changed[0]] };
+  if (!isDeepStrictEqual(expected, expectedArtifacts)) {
+    return { status: "NOT_MEASURED", issues: ["Receipt artifact details do not match the computed emitted manifest"] };
+  }
   return { status: "PASS", issues: [] };
+}
+
+function measuredBuildEnvelopeMatches(receipt, currentIdentity) {
+  const { source, build } = receipt;
+  if (!source || !build || typeof currentIdentity?.fingerprint !== "string") return false;
+
+  const startedAt = Date.parse(build.startedAt);
+  const finishedAt = Date.parse(build.finishedAt);
+  if (!Number.isFinite(startedAt) || !Number.isFinite(finishedAt) || startedAt > finishedAt ||
+      receipt.createdAt !== build.finishedAt || build.command !== "pnpm cf:dry-run" ||
+      build.attempted !== true || build.commandStatus !== 0 ||
+      build.environmentProfile !== EXPECTED_ENVIRONMENT_PROFILE ||
+      !isDeepStrictEqual(build.commands, EXPECTED_BUILD_COMMANDS) ||
+      !isDeepStrictEqual(receipt.thresholds, {
+        workerGzipBytes: WORKER_GZIP_BUDGET_BYTES,
+        ownerWebInitialJavaScriptGzipBytes: OWNER_WEB_INITIAL_GZIP_BUDGET_BYTES,
+        sourceLineAndByteBudgets: SOURCE_BUDGET_DIAGNOSTIC_POLICY,
+      })) {
+    return false;
+  }
+
+  const versions = build.toolVersions;
+  if (!versions || ["node", "pnpm", "wrangler", "astro", "vite"].some((key) =>
+    typeof versions[key] !== "string" || versions[key].trim().length === 0)) {
+    return false;
+  }
+  const reportedWranglerVersion = versions.wrangler.match(/\d+\.\d+\.\d+/u)?.[0];
+  if (!reportedWranglerVersion || reportedWranglerVersion !== receipt.worker?.wrangler?.version) return false;
+
+  const sourceMatches = source.stableDuringBuild === true &&
+    source.commit === source.commitAfterBuild && source.commitAfterBuild === currentIdentity.commit &&
+    typeof source.dirty === "boolean" && source.dirty === source.dirtyAfterBuild &&
+    source.dirtyAfterBuild === currentIdentity.dirty &&
+    source.dirtyEntryCount === currentIdentity.dirtyEntryCount &&
+    source.dirtyDigest === currentIdentity.dirtyDigest &&
+    source.fingerprintBeforeBuild === source.fingerprintAfterBuild &&
+    source.fingerprintAfterBuild === currentIdentity.fingerprint &&
+    source.lockfileSha256 === currentIdentity.lockfileSha256 &&
+    source.buildInputDigestSha256 === source.buildInputDigestSha256After &&
+    source.buildInputDigestSha256After === currentIdentity.buildInputDigestSha256 &&
+    isDeepStrictEqual(build.inputDigests, currentIdentity.buildInputDigests) &&
+    isDeepStrictEqual(build.inputDigestsAfter, currentIdentity.buildInputDigests);
+  return sourceMatches;
+}
+
+function measuredArtifactManifestIsWellFormed(artifacts) {
+  return Array.isArray(artifacts) && artifacts.length > 0 && artifacts.every((artifact) =>
+    artifact && typeof artifact === "object" &&
+    typeof artifact.path === "string" && artifact.path.length > 0 &&
+    typeof artifact.sha256 === "string" && /^[0-9a-f]{64}$/iu.test(artifact.sha256) &&
+    Number.isSafeInteger(artifact.rawBytes) && artifact.rawBytes >= 0);
+}
+
+function parseRecordedByteQuantity(value) {
+  if (typeof value !== "string") return null;
+  const match = /^([0-9]+(?:\.[0-9]+)?)\s+(B|KiB|MiB|GiB)$/u.exec(value);
+  if (!match) return null;
+  const quantity = parseByteQuantity(match[1], match[2]);
+  if (!Number.isFinite(quantity.bytes) || quantity.bytes > Number.MAX_SAFE_INTEGER ||
+      quantity.precisionBytes <= 0) {
+    return null;
+  }
+  return { reported: value, ...quantity };
+}
+
+function workerReportFromReceipt(worker) {
+  // Reuse the parsed native quantities directly; no CLI output is synthesized.
+  const version = worker?.wrangler?.version;
+  const assetReadEntryCount = worker?.wrangler?.assetReadEntryCount;
+  const rawReported = worker?.metric?.rawReported;
+  const gzipReported = worker?.metric?.gzipReported;
+  const raw = parseRecordedByteQuantity(rawReported);
+  const gzip = parseRecordedByteQuantity(gzipReported);
+  if (worker?.wrangler?.nativeDryRun !== true ||
+      typeof version !== "string" || !/^\d+\.\d+\.\d+$/u.test(version) ||
+      !(assetReadEntryCount === null || Number.isSafeInteger(assetReadEntryCount) && assetReadEntryCount >= 0) ||
+      !raw || !gzip) {
+    return null;
+  }
+  return {
+    status: "MEASURED",
+    version,
+    completedDryRun: true,
+    assetReadEntryCount,
+    raw,
+    gzip,
+  };
+}
+
+function notMeasured(issue) {
+  return { status: "NOT_MEASURED", issues: [issue] };
 }
 
 export async function validateReceipt(root, receipt, currentIdentity) {
@@ -772,7 +969,55 @@ export async function validateReceipt(root, receipt, currentIdentity) {
   }
   if (receipt.status === "STALE") return { status: "STALE", issues: ["Receipt already records a stale build"] };
   if (receipt.status === "NOT_MEASURED") return { status: "NOT_MEASURED", issues: ["Receipt did not measure all required artifacts"] };
-  const artifacts = await compareReceiptArtifacts(root, receipt);
-  if (artifacts.status !== "PASS") return artifacts;
-  return { status: receipt.status, issues: receipt.issues ?? [] };
+
+  if (receipt.status !== "PASS" && receipt.status !== "FAIL") {
+    return notMeasured("Receipt has an unsupported measurement status");
+  }
+  if (!measuredBuildEnvelopeMatches(receipt, currentIdentity)) {
+    return notMeasured("Receipt source, build, tool, or threshold evidence is incomplete or inconsistent");
+  }
+  if (!measuredArtifactManifestIsWellFormed(receipt.artifacts)) {
+    return notMeasured("Receipt emitted artifact manifest is incomplete or malformed");
+  }
+
+  try {
+    const workerReport = workerReportFromReceipt(receipt.worker);
+    if (!workerReport) return notMeasured("Receipt omits the native Wrangler size report");
+    const [worker, pwa] = await Promise.all([
+      inspectWorkerBuildWithReport(root, receipt.build.startedAt, workerReport),
+      inspectPwaBuild(root, receipt.build.startedAt),
+    ]);
+    const expectedArtifacts = [...worker.artifactFiles, ...pwa.artifactFiles];
+    if (receipt.artifacts.length !== expectedArtifacts.length ||
+        !isDeepStrictEqual(receipt.artifacts.map((item) => item.path), expectedArtifacts.map((item) => item.path))) {
+      return notMeasured("Receipt artifact manifest does not contain the complete Worker and owner-web artifact set");
+    }
+    const artifacts = await compareReceiptArtifacts(root, receipt, expectedArtifacts);
+    if (artifacts.status !== "PASS") return artifacts;
+
+    if (!isDeepStrictEqual(worker, receipt.worker) || !isDeepStrictEqual(pwa, receipt.pwa)) {
+      return notMeasured("Receipt Worker or owner-web evidence does not match the emitted artifacts");
+    }
+
+    if (worker.wasm.length > 0 && !freshNativeWorkerMeasurements.has(receipt.worker)) {
+      return notMeasured("Persisted Worker multipart gzip cannot be reconstructed from emitted artifacts and module order");
+    }
+
+    const expectedIssues = [...worker.issues, ...pwa.issues];
+    if (!isDeepStrictEqual(receipt.issues, expectedIssues) || expectedIssues.length !== 0) {
+      return notMeasured("A PASS/FAIL receipt contains incomplete or inconsistent measurement issues");
+    }
+    if (!["PASS", "FAIL"].includes(worker.status) || !["PASS", "FAIL"].includes(pwa.status)) {
+      return notMeasured("Receipt does not contain complete measured Worker and owner-web contours");
+    }
+
+    const expectedStatus = worker.status === "FAIL" || pwa.status === "FAIL" ? "FAIL" : "PASS";
+    if (receipt.status !== expectedStatus) {
+      return notMeasured("Receipt status does not match the measured Worker and owner-web threshold outcomes");
+    }
+  } catch {
+    return notMeasured("Receipt Worker or owner-web evidence could not be verified");
+  }
+
+  return { status: receipt.status, issues: [] };
 }
