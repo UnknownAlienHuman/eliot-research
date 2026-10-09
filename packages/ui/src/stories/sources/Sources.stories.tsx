@@ -29,6 +29,10 @@ export const InteractionJourney: Story = {
   args: { view: "useful" },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
+    const waiting = canvas.getByRole("checkbox", { name: "Reading list for the next review" });
+    await expect(waiting).toBeDisabled();
+    await expect(waiting).toHaveAccessibleDescription("This source has not been admitted for research yet.");
+    await expect(canvas.getByText("This source has not been admitted for research yet.")).toBeVisible();
     const notes = canvas.getByRole("button", { name: "Open: Notes on evidence and clear thinking" });
     await userEvent.click(notes);
     const reader = canvas.getByRole("dialog", { name: "Notes on evidence and clear thinking" });
@@ -54,6 +58,7 @@ export const InteractionJourney: Story = {
     await expect(added).toBeVisible();
     await expect(added).not.toBeChecked();
     await expect(added).toBeDisabled();
+    await expect(added).toHaveAccessibleDescription("This source has not been admitted for research yet.");
     await expect(canvas.getAllByRole("checkbox")).toHaveLength(4);
     await expect(canvas.getAllByRole("checkbox", { checked: true })).toHaveLength(2);
   },

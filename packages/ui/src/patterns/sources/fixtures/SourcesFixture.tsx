@@ -1,7 +1,7 @@
 // U2-S synthetic Sources fixture. No fetch, provider call, identifier or raw error
 // text. Selection applies to the next question only; a current or completed
 // report keeps its own scope. Conversion options are never claimed as chosen.
-import { useState, type ReactNode } from "react";
+import { useId, useState, type ReactNode } from "react";
 import { Button, Dialog, Field, Status } from "../../../primitives/primitives";
 import "./sources-fixture.css";
 
@@ -115,6 +115,11 @@ const ADMISSION_LABEL = {
   ru: { ADMITTED: "Допущен", DUPLICATE: "Уже в библиотеке", QUARANTINED: "На карантине", REJECTED: "Отклонён" },
 } as const;
 
+const SELECTION_REASON = {
+  en: { pending: "This source has not been admitted for research yet.", DUPLICATE: "Select the existing admitted source in your library.", QUARANTINED: "This source is quarantined and cannot be selected.", REJECTED: "This source was not admitted and cannot be selected." },
+  ru: { pending: "Этот источник ещё не допущен к исследованию.", DUPLICATE: "Выберите уже допущенный источник в библиотеке.", QUARANTINED: "Этот источник на карантине и недоступен для выбора.", REJECTED: "Этот источник не допущен и недоступен для выбора." },
+} as const;
+
 const FACET_LABEL = {
   en: { ready: "Ready", partial: "Partly ready", unavailable: "Unavailable", off: "Not requested" },
   ru: { ready: "Готов", partial: "Частично готов", unavailable: "Недоступно", off: "Не запрашивалось" },
@@ -140,6 +145,7 @@ export type SourcesFixtureProps = {
 export function SourcesFixture({ view = "useful", locale = "en", active = true, dialog, onDialogChange, sources, selection,
   onSelection, onOpenSource, onAddSource, children }: SourcesFixtureProps) {
   const copy = COPY[locale];
+  const instanceId = useId();
   const [addedRows, setAddedRows] = useState<readonly SourcesSource[]>([]);
   const rows = [...(sources ?? (view === "empty" ? [] : INITIAL)), ...addedRows];
   const [own, setOwn] = useState<readonly string[]>(view === "empty" ? [] : ["notes-4"]);
@@ -188,11 +194,12 @@ export function SourcesFixture({ view = "useful", locale = "en", active = true, 
 
   const rowList = (items: readonly SourcesSource[]) => (
     <ul className="er-sources-fixture__list">
-      {items.map((item) => (
+      {items.map((item, index) => (
         <li key={item.key} className="er-sources-fixture__row">
           <div className="er-sources-fixture__lead">
             <label className="er-sources-fixture__select">
-              <input type="checkbox" checked={selected.includes(item.key)} disabled={item.admission !== "ADMITTED"} onChange={() => toggle(item.key)} />
+              <input type="checkbox" checked={selected.includes(item.key)} disabled={item.admission !== "ADMITTED"}
+                aria-describedby={item.admission === "ADMITTED" ? undefined : `${instanceId}-selection-${index}`} onChange={() => toggle(item.key)} />
               <span className="er-sources-fixture__name">{item.title[locale]}</span>
             </label>
             <Button
@@ -203,6 +210,9 @@ export function SourcesFixture({ view = "useful", locale = "en", active = true, 
               {copy.open}
             </Button>
           </div>
+          {item.admission === "ADMITTED" ? null : <p className="er-sources-fixture__hint" id={`${instanceId}-selection-${index}`}>
+            {item.admission === undefined ? SELECTION_REASON[locale].pending : SELECTION_REASON[locale][item.admission]}
+          </p>}
           <details className="er-sources-fixture__processing"><summary>{copy.details}</summary><dl className="er-sources-fixture__facts">
             <dt>{copy.capture}</dt><dd>{CAPTURE_LABEL[locale][item.capture]}</dd>
             <dt>{copy.conversionLabel}</dt><dd>{copy.conversion}</dd>
