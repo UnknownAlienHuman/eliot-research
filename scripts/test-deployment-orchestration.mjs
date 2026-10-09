@@ -95,6 +95,21 @@ const generatedConfigPin = { path: "apps/eliotr-core/wrangler.deploy.jsonc", sha
   byte_length: bytes.byteLength, worker_name: "eliotr-core", worker_main: "apps/eliotr-core/src/index.ts",
   assets_directory: "apps/eliotr-pwa/dist" };
 const assetManifest = { protocol: "eliotr.cloudflare-assets-manifest.v1", manifest_sha256: "c".repeat(64) };
+const schemaManifestResultFixture = {
+  expectedManifest: { protocol: "eliotr.cloudflare-d1.application-schema-manifest.v1", streams: [] },
+  provenance: { protocol: "eliotr.cloudflare-d1.expected-schema-manifest-provenance.v1",
+    scope: "application_schema", exclusions: [], generated_config: {
+      path: generatedConfigPin.path, sha256: generatedConfigPin.sha256, byte_length: generatedConfigPin.byte_length,
+    }, streams: [], expected_manifest_sha256: "f".repeat(64), expected_manifest_byte_length: 0 },
+};
+const applicationSchemaAttestationFixture = {
+  protocol: "eliotr.cloudflare-d1.application-schema-attestation.v1",
+  state: "PASS",
+  scope: "application_schema",
+  catalogue_protocol: "eliotr.cloudflare-d1.application-schema-catalogue.v1",
+  exclusions: [],
+  streams: [],
+};
 function harness(overrides = {}) {
   const calls = [];
   const receipts = [];
@@ -106,6 +121,8 @@ function harness(overrides = {}) {
     pinGeneratedConfig: async () => generatedConfigPin,
     readAssetManifest: async () => assetManifest,
     readBackendFingerprint: () => "d".repeat(64),
+    createSchemaManifest: async () => schemaManifestResultFixture,
+    readApplicationSchemas: async () => applicationSchemaAttestationFixture,
     attestBundle: async () => ({ protocol: "eliotr.deployment-worker-bundle.v1", sha256: "e".repeat(64),
       manifest_sha256: buildInputManifest.sha256, generated_config: generatedConfigPin, entrypoint: workerEntrypoint }),
     checkBundle: async () => true,

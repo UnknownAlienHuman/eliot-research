@@ -13,6 +13,7 @@
 // respawn below scrubs them from the child env), so production behavior is
 // unchanged. Run with:
 //   node scripts/test-deployment-apply-ordering.mjs
+//   node scripts/test-deployment-apply-ordering.mjs --only-application-schema-negative
 
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
@@ -31,6 +32,7 @@ import { loadResearchRuntimeEnvironment, RESEARCH_RUNTIME_CONFIGURATION_KEYS,
   RESEARCH_RUNTIME_SEMANTIC_TRANSPORT_KEYS, semanticConfigurationTransport } from "./lib/research-runtime-config.mjs";
 
 const directExecution = process.argv[1] !== undefined && pathToFileURL(resolve(process.argv[1])).href === import.meta.url;
+const onlyApplicationSchemaNegative = process.argv.slice(2).includes("--only-application-schema-negative");
 if (directExecution && process.env.ELIOTR_TEST_GATE_REDIRECTED !== "1") {
   const shimHref = new URL("./test-usage-gate-shim.mjs", import.meta.url).href;
   const childEnv = { ...process.env, ELIOTR_TEST_GATE_REDIRECTED: "1" };
@@ -39,7 +41,7 @@ if (directExecution && process.env.ELIOTR_TEST_GATE_REDIRECTED !== "1") {
     if (String(stripped).trim() === "") delete childEnv.NODE_OPTIONS;
     else childEnv.NODE_OPTIONS = stripped;
   }
-  const child = spawnSync(process.execPath, ["--import", shimHref, fileURLToPath(import.meta.url)], {
+  const child = spawnSync(process.execPath, ["--import", shimHref, fileURLToPath(import.meta.url), ...process.argv.slice(2)], {
     cwd: fileURLToPath(new URL("../", import.meta.url)),
     env: childEnv,
     stdio: "inherit",
@@ -248,6 +250,11 @@ function harness(overrides = {}) {
   const baselineConfig = overrides.baselineConfig ?? candidateConfig;
   const candidateEnvironment = overrides.environment ?? environment;
   const candidateBytes = Buffer.from(JSON.stringify(candidateConfig));
+  const generatedConfigPinFixture = { path: "apps/eliotr-core/wrangler.deploy.jsonc", sha256: sha256(candidateBytes),
+    byte_length: candidateBytes.byteLength, worker_name: "eliotr-core", worker_main: "apps/eliotr-core/src/index.ts",
+    assets_directory: "apps/eliotr-pwa/dist" };
+  const { schemaManifestResult, applicationSchemaAttestation, applicationSchemaEvidence } =
+    applicationSchemaFixtures(candidateConfig, generatedConfigPinFixture);
   const calls = [];
   const receipts = [];
   const provisionerEnvs = [];
@@ -285,8 +292,12 @@ function harness(overrides = {}) {
     pinGeneratedConfig: async () => {
       generatedConfigPins += 1;
       buildEvents.push("pin-generated-config");
-      return { path: "apps/eliotr-core/wrangler.deploy.jsonc", sha256: sha256(candidateBytes), byte_length: candidateBytes.byteLength,
-        worker_name: "eliotr-core", worker_main: "apps/eliotr-core/src/index.ts", assets_directory: "apps/eliotr-pwa/dist" };
+      return generatedConfigPinFixture;
+    },
+    createSchemaManifest: async () => schemaManifestResult,
+    readApplicationSchemas: async (_env, _input, _config, expectedManifest) => {
+      assert.strictEqual(expectedManifest, schemaManifestResult.expectedManifest);
+      return applicationSchemaAttestation;
     },
     attestBundle: async ({ outdir, metafilePath, generatedConfigPin }) => {
       bundleAttestations += 1;
@@ -298,10 +309,13 @@ function harness(overrides = {}) {
         manifest_sha256: buildInputManifest.sha256, generated_config: generatedConfigPin,
         outdir: resolve(outdir), entrypoint: workerEntrypoint, sha256: bundleSha256 };
     },
-    persistBuildEvidence: async ({ manifest, bundle, generatedConfigPin }) => {
+    persistBuildEvidence: async ({ manifest, bundle, generatedConfigPin, schemaManifestResult: persistedSchemaManifestResult }) => {
       buildEvents.push("persist-build-evidence");
       assert.equal(manifest, buildInputManifest);
       assert.equal(bundle.sha256, bundleSha256);
+      assert.strictEqual(generatedConfigPin, generatedConfigPinFixture);
+      assert.strictEqual(persistedSchemaManifestResult, schemaManifestResult,
+        "the exact schema manifest and provenance used for pre-upload attestation are persisted");
       return {
         protocol: "eliotr.deployment-build-evidence.v1",
         scope: "BOUNDED_LOCAL_INTEGRITY",
@@ -313,6 +327,7 @@ function harness(overrides = {}) {
           file_sha256: "d".repeat(64), attestation_sha256: bundle.sha256 },
         entrypoint: { path: "apps/eliotr-core/src/index.ts", raw_sha256: "e".repeat(64), byte_length: 1 },
         generated_config: { path: generatedConfigPin.path, sha256: generatedConfigPin.sha256, byte_length: generatedConfigPin.byte_length },
+        application_schema: applicationSchemaEvidence,
       };
     },
     checkBundle: async () => {
@@ -452,7 +467,8 @@ function harness(overrides = {}) {
         transport_completion_is_research_completion: false, ingest_live_qualified: false,
       } });
     }, ...overrides.options };
-  return { calls, receipts, provisionerEnvs, options, assetReads: () => assetReads,
+  return { calls, receipts, provisionerEnvs, options, schemaManifestResult, applicationSchemaAttestation,
+    applicationSchemaEvidence, assetReads: () => assetReads,
     authorityReads: () => authorityReads, authorityWrites: () => authorityWrites,
     deploymentRows: () => [...deploymentRows.values()].map((row) => ({ ...row })),
     workerVersionReads: () => workerVersionReads,
@@ -468,6 +484,111 @@ const deploymentSecretName = "ELIOTR_MODEL_PROVIDER_CONTROL_TOKEN";
 const deploymentSecretValue = "fixture-control-token-value";
 const generatedDryRunPrefix = "pnpm exec wrangler deploy --dry-run --minify --config wrangler.deploy.jsonc --outdir ";
 const generatedDryRunIndex = (calls) => calls.findIndex((call) => call.startsWith(generatedDryRunPrefix));
+
+async function applicationSchemaMismatchCase() {
+  let applicationSchemaReads = 0;
+  const test = harness({ options: { readApplicationSchemas: async (_env, _input, _config, expectedManifest) => {
+    applicationSchemaReads += 1;
+    assert.equal(expectedManifest.protocol, "eliotr.cloudflare-d1.application-schema-manifest.v1");
+    throw new Error("Deployment schema attestation rejected: application schema catalogue mismatch for CORE_DB");
+  } } });
+  await assert.rejects(deployCloudflare(test.options), /application schema catalogue mismatch for CORE_DB/u);
+  assert.equal(applicationSchemaReads, 1, "the pre-upload catalogue attestation rejects at its first read");
+  assert.ok(!test.calls.includes(deployCommand), "a catalogue mismatch blocks Worker upload");
+  assert.equal(test.authorityWrites(), 0, "a catalogue mismatch cannot write deployment authority");
+  assert.equal(test.receipts.length, 0, "a catalogue mismatch cannot save a deployment receipt");
+  assert.ok(!test.calls.includes("save"), "the receipt persistence adapter is never called");
+}
+
+if (onlyApplicationSchemaNegative) {
+  await check("pre-upload application-schema catalogue mismatch blocks upload and authority/receipt writes",
+    applicationSchemaMismatchCase);
+  return;
+}
+
+function applicationSchemaFixtures(candidateConfig, generatedConfigPin) {
+  const exclusions = [
+    "SQLite internal schema objects whose names begin with sqlite_ (including automatic indexes)",
+    "Cloudflare D1 system migration ledger object named d1_migrations (ASCII case-insensitive)",
+  ];
+  const schemaObject = { type: "table", name: "fixture_table", tbl_name: "fixture_table",
+    sql: "CREATE TABLE fixture_table (id INTEGER)" };
+  const sourceStreams = candidateConfig.d1_databases.map((database, index) => {
+    const migrationEntry = { name: `${String(index + 1).padStart(4, "0")}_fixture.sql`,
+      sha256: String(index + 3).repeat(64) };
+    const migrationEntries = [migrationEntry];
+    const migrationBundleSha256 = sha256(Buffer.from(JSON.stringify(migrationEntries), "utf8"));
+    const catalogueSha256 = sha256(Buffer.from(JSON.stringify({
+      protocol: "eliotr.cloudflare-d1.application-schema-catalogue.v1", objects: [schemaObject],
+    }), "utf8"));
+    return {
+      expected: { binding: database.binding, account_id: "test-account", database_id: database.database_id,
+        database_name: database.database_name, migration_bundle_sha256: migrationBundleSha256,
+        objects: [schemaObject] },
+      provenance: { binding: database.binding, account_id: "test-account", database_name: database.database_name,
+        database_id: database.database_id, migration_entries: migrationEntries,
+        migration_bundle_sha256: migrationBundleSha256, total_sql_bytes: 1, object_count: 1,
+        catalogue_sha256: catalogueSha256 },
+    };
+  });
+  const expectedManifest = { protocol: "eliotr.cloudflare-d1.application-schema-manifest.v1",
+    streams: sourceStreams.map(({ expected }) => expected) };
+  const expectedManifestBytes = Buffer.from(JSON.stringify(expectedManifest), "utf8");
+  const provenance = {
+    protocol: "eliotr.cloudflare-d1.expected-schema-manifest-provenance.v1",
+    scope: "application_schema",
+    exclusions,
+    generated_config: { path: generatedConfigPin.path, sha256: generatedConfigPin.sha256,
+      byte_length: generatedConfigPin.byte_length },
+    streams: sourceStreams.map(({ provenance: stream }) => stream),
+    expected_manifest_sha256: sha256(expectedManifestBytes),
+    expected_manifest_byte_length: expectedManifestBytes.byteLength,
+  };
+  const schemaManifestResult = { expectedManifest, provenance };
+  const applicationSchemaAttestation = {
+    protocol: "eliotr.cloudflare-d1.application-schema-attestation.v1",
+    state: "PASS",
+    scope: "application_schema",
+    catalogue_protocol: "eliotr.cloudflare-d1.application-schema-catalogue.v1",
+    exclusions,
+    streams: sourceStreams.map(({ expected, provenance: stream }) => ({
+      binding: expected.binding,
+      account_id: expected.account_id,
+      database_id: expected.database_id,
+      database_name: expected.database_name,
+      migration_bundle_sha256: stream.migration_bundle_sha256,
+      object_count: stream.object_count,
+      catalogue_sha256: stream.catalogue_sha256,
+    })),
+  };
+  const persistedDirectory = ".eliotr-state/deployment-build-evidence-12345678-1234-4234-8234-123456789abc";
+  const privateObjectBytes = (value) => Buffer.from(`${JSON.stringify(value, null, 2)}\n`, "utf8");
+  const evidenceReference = (fileName, value) => {
+    const bytes = privateObjectBytes(value);
+    return { path: `${persistedDirectory}/${fileName}`, file_sha256: sha256(bytes),
+      sha256: sha256(Buffer.from(JSON.stringify(value), "utf8")), byte_length: Buffer.byteLength(JSON.stringify(value), "utf8") };
+  };
+  const applicationSchemaEvidence = {
+    protocol: "eliotr.deployment-application-schema-build-evidence.v1",
+    scope: "application_schema",
+    exclusions,
+    expected_manifest: evidenceReference("deployment-application-schema-manifest.json", expectedManifest),
+    provenance: evidenceReference("deployment-application-schema-provenance.json", provenance),
+    generated_config: { path: generatedConfigPin.path, sha256: generatedConfigPin.sha256,
+      byte_length: generatedConfigPin.byte_length },
+    streams: sourceStreams.map(({ expected, provenance: stream }) => ({
+      binding: expected.binding,
+      account_id: expected.account_id,
+      database_id: expected.database_id,
+      database_name: expected.database_name,
+      migration_bundle_sha256: stream.migration_bundle_sha256,
+      migration_entries: stream.migration_entries,
+      catalogue_sha256: stream.catalogue_sha256,
+      object_count: stream.object_count,
+    })),
+  };
+  return { schemaManifestResult, applicationSchemaAttestation, applicationSchemaEvidence };
+}
 
 await check("secrets-file CLI parsing is explicit and rejects missing, duplicate or unsafe inputs", async () => {
   const secretPath = join(resolvedTemporaryDirectory, "deployment-secrets.json");
@@ -596,6 +717,8 @@ await check("existing Worker deploy proceeds with 18 UNKNOWN counters and no mig
   assert.equal(receipt.build_evidence.scope, "BOUNDED_LOCAL_INTEGRITY");
   assert.equal(receipt.build_evidence.input_manifest.manifest_sha256, buildInputManifest.sha256);
   assert.equal(receipt.build_evidence.bundle_attestation.attestation_sha256, bundleSha256);
+  assert.deepEqual(receipt.application_schema_attestation, test.applicationSchemaAttestation);
+  assert.deepEqual(receipt.build_evidence.application_schema, test.applicationSchemaEvidence);
   assert.ok(Object.values(receipt.live_conformance).every((state) => state === "NOT_EXECUTED"));
   assert.equal(test.receipts.length, 1);
   assert.ok(!JSON.stringify(receipt).includes("secret-"));
@@ -807,6 +930,8 @@ await check("required schema-generation drift stops before Worker upload", async
     assert.equal(test.receipts.length, 0);
   }
 });
+await check("pre-upload application-schema catalogue mismatch blocks upload and authority/receipt writes",
+  applicationSchemaMismatchCase);
 await check("partial active traffic stops before upload and authority synchronization", async () => {
   const test = harness({ partialTraffic: true });
   await assert.rejects(deployCloudflare(test.options), /active 100% Worker/u);

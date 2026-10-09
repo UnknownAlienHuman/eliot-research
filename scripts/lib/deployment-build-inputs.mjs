@@ -51,6 +51,8 @@ const INPUT_DIRECTORIES = Object.freeze([
   "apps/eliotr-pwa/src",
   "apps/eliotr-pwa/public",
   "apps/eliotr-pwa/scripts",
+  "infra/d1/core/migrations",
+  "infra/d1/search/migrations",
 ]);
 const EXCLUDED_GENERATED_INPUTS = new Set([
   "apps/eliotr-core/src/worker-configuration.d.ts",

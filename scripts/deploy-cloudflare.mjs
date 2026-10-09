@@ -33,6 +33,8 @@ import { captureDeploymentBuildInputs, requireUnchangedDeploymentBuildInputs,
   pinGeneratedDeploymentConfig, attestDeploymentBundle,
   requireUnchangedDeploymentBundle } from "./lib/deployment-build-inputs.mjs";
 import { persistDeploymentBuildEvidence } from "./lib/deployment-build-evidence.mjs";
+import { createDeploymentSchemaManifest } from "./lib/deployment-schema-manifest.mjs";
+import { attestDeploymentApplicationSchemas } from "./lib/deployment-schema-attestation.mjs";
 import { validateStagingTarget } from "./lib/staging-isolation.mjs";
 import { createCloudflaredOwnerFetch } from "./lib/cloudflare-owner-http.mjs";
 
@@ -227,6 +229,8 @@ export async function deployCloudflare({ confirmLive = false, secretsFilePath, e
   pinGeneratedConfig = pinGeneratedDeploymentConfig,
   attestBundle = attestDeploymentBundle, checkBundle = requireUnchangedDeploymentBundle,
   persistBuildEvidence = persistDeploymentBuildEvidence,
+  createSchemaManifest = createDeploymentSchemaManifest,
+  readApplicationSchemas = attestDeploymentApplicationSchemas,
   readAssetManifest = readDeploymentAssetManifest } = {}) {
   if (![FULL_RELEASE_PURPOSE, MAINTENANCE_PURPOSE].includes(purpose)) throw new Error("Deployment purpose is invalid");
   if (secretsFilePath !== undefined && !confirmLive) {
@@ -575,6 +579,8 @@ export async function deployCloudflare({ confirmLive = false, secretsFilePath, e
   const generatedConfigPin = await pinGeneratedConfig({ root, path: configPath });
   if (generatedConfigPin.sha256 !== digest) throw new Error("Generated deployment config changed before artifact preparation");
   const migrationPlan = await readDeploymentMigrationPlan(config, { root });
+  const schemaManifestResult = await createSchemaManifest({ root, config,
+    accountId: env.CLOUDFLARE_ACCOUNT_ID, generatedConfigPin });
   const assetManifest = await readAssetManifest(config, { root });
   const backendFingerprint = readBackendFingerprint({ root, generated_config: config });
   const coreDatabase = config.d1_databases.find((database) => database.binding === "CORE_DB");
@@ -683,6 +689,8 @@ export async function deployCloudflare({ confirmLive = false, secretsFilePath, e
   await requireUnchangedInputs();
   const schemaGenerationReadback = await readSchemaGenerations({ env, input, plan: migrationPlan,
     root, fetchImpl, read });
+  const applicationSchemaBeforeUpload = await readApplicationSchemas(env, input, config,
+    schemaManifestResult.expectedManifest, { fetchImpl });
   await requireUnchangedInputs();
   {
     const currentCapabilities = purpose === MAINTENANCE_PURPOSE
@@ -830,8 +838,14 @@ export async function deployCloudflare({ confirmLive = false, secretsFilePath, e
   }
   await requireUnchangedInputs();
   if (workerBundle === null) throw new Error("Deployment build evidence requires a prepared Worker bundle");
+  const applicationSchemaAfterUpload = await readApplicationSchemas(env, input, config,
+    schemaManifestResult.expectedManifest, { fetchImpl });
+  if (canonicalJson(applicationSchemaBeforeUpload) !== canonicalJson(applicationSchemaAfterUpload)) {
+    throw new Error("Core/Search application schema changed during deployment");
+  }
+  await requireUnchangedInputs();
   const buildEvidence = await persistBuildEvidence({ root, manifest: testedInputs,
-    bundle: workerBundle, generatedConfigPin });
+    bundle: workerBundle, generatedConfigPin, schemaManifestResult });
   const receipt = {
     protocol: "eliotr.cloudflare-deployment-receipt.v1",
     deployment_generation: env.ELIOTR_DEPLOYMENT_GENERATION,
@@ -840,6 +854,7 @@ export async function deployCloudflare({ confirmLive = false, secretsFilePath, e
     worker,
     d1_migrations: migrationReadback,
     schema_generation_readback: schemaGenerationReadback,
+    application_schema_attestation: applicationSchemaAfterUpload,
     assets: { manifest: assetManifest, readback: assetReadback },
     generated_config_sha256: digest,
     build_evidence: buildEvidence,

@@ -63,19 +63,13 @@
                   "SEARCH_DB"
                 ]
               },
-              "database_id": {
-                "type": "string",
-                "pattern": "^[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}$"
-              },
+              "database_id": { "$ref": "#/$defs/uuid" },
               "migration_names": {
                 "type": "array",
                 "minItems": 1,
                 "maxItems": 2048,
                 "uniqueItems": true,
-                "items": {
-                  "type": "string",
-                  "pattern": "^\\d{4}_[A-Za-z0-9_-]+\\.sql$"
-                }
+                "items": { "$ref": "#/$defs/migrationName" }
               },
               "local_migration_bundle_sha256": {
                 "$ref": "#/$defs/sha256"
@@ -108,10 +102,7 @@
             ],
             "properties": {
               "binding": { "enum": ["CORE_DB", "SEARCH_DB"] },
-              "database_id": {
-                "type": "string",
-                "pattern": "^[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}$"
-              },
+              "database_id": { "$ref": "#/$defs/uuid" },
               "required_schema_generation": { "type": "string", "minLength": 1 },
               "observed_schema_generation": { "type": "string", "minLength": 1 },
               "readback": { "const": "PASS" }
@@ -119,6 +110,9 @@
           }
         }
       }
+    },
+    "application_schema_attestation": {
+      "$ref": "#/$defs/applicationSchemaAttestation"
     },
     "assets": {
       "type": "object",
@@ -366,10 +360,7 @@
         "protocol": { "const": "eliotr.deployment-build-evidence.v1" },
         "scope": { "const": "BOUNDED_LOCAL_INTEGRITY" },
         "source_head": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
-        "persisted_directory": {
-          "type": "string",
-          "pattern": "^\\.eliotr-state/deployment-build-evidence-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
-        },
+        "persisted_directory": { "$ref": "#/$defs/deploymentBuildEvidenceDirectory" },
         "input_manifest": {
           "type": "object",
           "additionalProperties": false,
@@ -409,6 +400,9 @@
             "sha256": { "$ref": "#/$defs/sha256" },
             "byte_length": { "type": "integer", "minimum": 0, "maximum": 16777216 }
           }
+        },
+        "application_schema": {
+          "$ref": "#/$defs/applicationSchemaBuildEvidence"
         }
       }
     },
@@ -473,6 +467,220 @@
   },
   "$defs": {
     "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
-    "gateState": { "enum": ["PASS", "FAIL", "NOT_EXECUTED"] }
+    "gateState": { "enum": ["PASS", "FAIL", "NOT_EXECUTED"] },
+    "uuid": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}$"
+    },
+    "migrationName": {
+      "type": "string",
+      "pattern": "^\\d{4}_[A-Za-z0-9_-]+\\.sql$"
+    },
+    "deploymentBuildEvidenceDirectory": {
+      "type": "string",
+      "pattern": "^\\.eliotr-state/deployment-build-evidence-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "applicationSchemaExclusions": {
+      "const": [
+        "SQLite internal schema objects whose names begin with sqlite_ (including automatic indexes)",
+        "Cloudflare D1 system migration ledger object named d1_migrations (ASCII case-insensitive)"
+      ]
+    },
+    "applicationSchemaStream": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "binding",
+        "account_id",
+        "database_id",
+        "database_name",
+        "migration_bundle_sha256",
+        "object_count",
+        "catalogue_sha256"
+      ],
+      "properties": {
+        "binding": { "enum": ["CORE_DB", "SEARCH_DB"] },
+        "account_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$"
+        },
+        "database_id": { "$ref": "#/$defs/uuid" },
+        "database_name": { "enum": ["eliotr-core", "eliotr-search"] },
+        "migration_bundle_sha256": { "$ref": "#/$defs/sha256" },
+        "object_count": { "type": "integer", "minimum": 1, "maximum": 20000 },
+        "catalogue_sha256": { "$ref": "#/$defs/sha256" },
+        "migration_entries": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 2048,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/applicationSchemaMigrationEntry" }
+        }
+      }
+    },
+    "applicationSchemaMigrationEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "sha256"],
+      "properties": {
+        "name": { "$ref": "#/$defs/migrationName" },
+        "sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "applicationSchemaAttestationCoreStream": {
+      "allOf": [
+        { "$ref": "#/$defs/applicationSchemaStream" },
+        {
+          "properties": {
+            "binding": { "const": "CORE_DB" },
+            "database_name": { "const": "eliotr-core" }
+          },
+          "not": { "required": ["migration_entries"] }
+        }
+      ]
+    },
+    "applicationSchemaAttestationSearchStream": {
+      "allOf": [
+        { "$ref": "#/$defs/applicationSchemaStream" },
+        {
+          "properties": {
+            "binding": { "const": "SEARCH_DB" },
+            "database_name": { "const": "eliotr-search" }
+          },
+          "not": { "required": ["migration_entries"] }
+        }
+      ]
+    },
+    "applicationSchemaAttestation": {
+      "description": "Read-only application_schema comparison. Excludes SQLite internals and the D1 migration ledger; digests are integrity pins and do not establish source authority.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "protocol",
+        "state",
+        "scope",
+        "catalogue_protocol",
+        "exclusions",
+        "streams"
+      ],
+      "properties": {
+        "protocol": { "const": "eliotr.cloudflare-d1.application-schema-attestation.v1" },
+        "state": { "const": "PASS" },
+        "scope": { "const": "application_schema" },
+        "catalogue_protocol": { "const": "eliotr.cloudflare-d1.application-schema-catalogue.v1" },
+        "exclusions": { "$ref": "#/$defs/applicationSchemaExclusions" },
+        "streams": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "prefixItems": [
+            { "$ref": "#/$defs/applicationSchemaAttestationCoreStream" },
+            { "$ref": "#/$defs/applicationSchemaAttestationSearchStream" }
+          ],
+          "items": false
+        }
+      }
+    },
+    "applicationSchemaBuildCoreStream": {
+      "allOf": [
+        { "$ref": "#/$defs/applicationSchemaStream" },
+        {
+          "required": ["migration_entries"],
+          "properties": {
+            "binding": { "const": "CORE_DB" },
+            "database_name": { "const": "eliotr-core" },
+            "object_count": { "minimum": 1 }
+          }
+        }
+      ]
+    },
+    "applicationSchemaBuildSearchStream": {
+      "allOf": [
+        { "$ref": "#/$defs/applicationSchemaStream" },
+        {
+          "required": ["migration_entries"],
+          "properties": {
+            "binding": { "const": "SEARCH_DB" },
+            "database_name": { "const": "eliotr-search" },
+            "object_count": { "minimum": 1 }
+          }
+        }
+      ]
+    },
+    "applicationSchemaPersistedObjectReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "file_sha256", "sha256", "byte_length"],
+      "properties": {
+        "path": {
+          "type": "string",
+          "pattern": "^\\.eliotr-state/deployment-build-evidence-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/deployment-application-schema-(?:manifest|provenance)\\.json$"
+        },
+        "file_sha256": { "$ref": "#/$defs/sha256" },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "byte_length": { "type": "integer", "minimum": 1, "maximum": 16777216 }
+      }
+    },
+    "applicationSchemaExpectedManifestReference": {
+      "allOf": [
+        { "$ref": "#/$defs/applicationSchemaPersistedObjectReference" },
+        {
+          "properties": {
+            "path": { "pattern": "/deployment-application-schema-manifest\\.json$" }
+          }
+        }
+      ]
+    },
+    "applicationSchemaProvenanceReference": {
+      "allOf": [
+        { "$ref": "#/$defs/applicationSchemaPersistedObjectReference" },
+        {
+          "properties": {
+            "path": { "pattern": "/deployment-application-schema-provenance\\.json$" }
+          }
+        }
+      ]
+    },
+    "applicationSchemaBuildEvidence": {
+      "description": "Locally persisted bounded integrity evidence. File and source hashes pin bytes only; they are not a signature or source-authority claim.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "protocol",
+        "scope",
+        "exclusions",
+        "expected_manifest",
+        "provenance",
+        "generated_config",
+        "streams"
+      ],
+      "properties": {
+        "protocol": { "const": "eliotr.deployment-application-schema-build-evidence.v1" },
+        "scope": { "const": "application_schema" },
+        "exclusions": { "$ref": "#/$defs/applicationSchemaExclusions" },
+        "expected_manifest": { "$ref": "#/$defs/applicationSchemaExpectedManifestReference" },
+        "provenance": { "$ref": "#/$defs/applicationSchemaProvenanceReference" },
+        "generated_config": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["path", "sha256", "byte_length"],
+          "properties": {
+            "path": { "const": "apps/eliotr-core/wrangler.deploy.jsonc" },
+            "sha256": { "$ref": "#/$defs/sha256" },
+            "byte_length": { "type": "integer", "minimum": 1, "maximum": 16777216 }
+          }
+        },
+        "streams": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "prefixItems": [
+            { "$ref": "#/$defs/applicationSchemaBuildCoreStream" },
+            { "$ref": "#/$defs/applicationSchemaBuildSearchStream" }
+          ],
+          "items": false
+        }
+      }
+    }
   }
 }
