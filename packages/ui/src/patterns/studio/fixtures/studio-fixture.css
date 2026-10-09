@@ -1,0 +1,64 @@
+/* StudioFixture — U2-T fixture styles. Semantic tokens only; no raw visual values. */
+.er-studio {
+  display: grid;
+  gap: var(--eliot-space-section);
+  padding: var(--eliot-space-panel);
+  border-radius: var(--eliot-shape-large);
+  background: var(--md-sys-color-surface-container-low);
+  color: var(--md-sys-color-on-surface);
+  font-family: var(--eliot-type-font-family);
+}
+
+.er-studio__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--eliot-space-panel);
+  flex-wrap: wrap;
+}
+
+.er-studio__title {
+  margin: 0;
+  font-size: var(--eliot-type-title-large-size);
+  line-height: var(--eliot-type-title-large-line-height);
+  font-weight: var(--eliot-type-font-weight-medium);
+  letter-spacing: var(--eliot-type-letter-spacing-label);
+}
+
+.er-studio__saved {
+  margin: 0;
+  color: var(--md-sys-color-on-surface-variant);
+  font-size: var(--eliot-type-body-large-size);
+  line-height: var(--eliot-type-body-large-line-height);
+}
+
+.er-studio__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--eliot-space-inline-control);
+  flex-wrap: wrap;
+}
+
+.er-studio__report {
+  margin: 0;
+  max-width: var(--eliot-layout-reading-max);
+  padding: var(--eliot-space-panel);
+  border-radius: var(--eliot-shape-medium);
+  background: var(--md-sys-color-surface-container-highest);
+  color: var(--md-sys-color-on-surface);
+  font-family: var(--eliot-type-font-family);
+  font-size: var(--eliot-type-reading-size);
+  line-height: var(--eliot-type-reading-line-height);
+}
+
+.er-studio__proposal {
+  display: grid;
+  gap: var(--eliot-space-block-control);
+  padding: var(--eliot-space-panel);
+  border-radius: var(--eliot-shape-medium);
+  background: var(--md-sys-color-secondary-container);
+  color: var(--md-sys-color-on-secondary-container);
+  font-size: var(--eliot-type-body-medium-size);
+  line-height: var(--eliot-type-body-medium-line-height);
+}
+
