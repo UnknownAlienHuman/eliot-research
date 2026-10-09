@@ -1,5 +1,6 @@
 import {
-  CitationResolutionReceiptSchema,
+  CitationResolutionReceiptV2Schema,
+  type CitationResolutionOutcome,
   EvidenceHandleSchema,
   EvidenceResolutionReceiptSchema,
   ResolvedEvidenceSchema,
@@ -22,6 +23,7 @@ import {
 import {
   evidenceHandleIdentityPayload,
 } from "./registry.js";
+import { citationOutcomeForError, citationRejectionForOutcome } from "./citation-outcomes.js";
 import {
   EvidenceRuntimeError,
   type CandidateAnchorAuthority,
@@ -109,9 +111,27 @@ function requireLiveSource(source: EvidenceSourceAuthority): void {
       invalidation_state: "REDACTED",
     });
   }
-  fail("EVIDENCE_SOURCE_NOT_LIVE", "SourceRevision is quarantined", {
-    invalidation_state: "STALE",
-  });
+  if (source.purge_state === "QUARANTINED") {
+    fail("EVIDENCE_SOURCE_QUARANTINED", "SourceRevision is quarantined", { retryable: true });
+  }
+  fail("EVIDENCE_SOURCE_NOT_LIVE", "SourceRevision is not live", { invalidation_state: "STALE" });
+}
+
+async function invalidateHandleWithSettlement(
+  dependencies: EvidenceResolverDependencies,
+  handle: EvidenceHandle,
+  state: Exclude<EvidenceHandle["terminal_state"], "LIVE">,
+  reasonCode: string,
+  observedAt: string,
+): Promise<EvidenceHandle> {
+  try {
+    return await dependencies.authority.invalidateHandle(handle, state, reasonCode, observedAt);
+  } catch (cause) {
+    fail("EVIDENCE_SETTLEMENT_UNCERTAIN", "EvidenceHandle invalidation outcome is uncertain", {
+      retryable: true,
+      cause,
+    });
+  }
 }
 
 async function loadSource(
@@ -275,18 +295,27 @@ async function buildAndPersist(
     receipt_digest: receiptDigest,
   });
   const receiptJson = canonicalEvidenceJson(receipt);
-  const persisted = await dependencies.authority.persistResolution({
-    proposed_handle: proposedHandle,
-    identity_digest: identityDigest,
-    resolution_receipt: receipt,
-    resolution_receipt_json: receiptJson,
-    resolution_receipt_sha256: await evidenceSha256(receipt),
-    normalized_object_ref: input.materialized.normalized_object_ref,
-    authorization: input.authorization,
-    access: input.access,
-    scope: input.scope,
-    source: input.source,
-  });
+  let persisted: Awaited<ReturnType<EvidenceResolverDependencies["authority"]["persistResolution"]>>;
+  try {
+    persisted = await dependencies.authority.persistResolution({
+      proposed_handle: proposedHandle,
+      identity_digest: identityDigest,
+      resolution_receipt: receipt,
+      resolution_receipt_json: receiptJson,
+      resolution_receipt_sha256: await evidenceSha256(receipt),
+      normalized_object_ref: input.materialized.normalized_object_ref,
+      authorization: input.authorization,
+      access: input.access,
+      scope: input.scope,
+      source: input.source,
+    });
+  } catch (cause) {
+    if (cause instanceof EvidenceRuntimeError && cause.code === "EVIDENCE_IDENTITY_CONFLICT") throw cause;
+    fail("EVIDENCE_SETTLEMENT_UNCERTAIN", "EvidenceHandle resolution persistence outcome is uncertain", {
+      retryable: true,
+      cause,
+    });
+  }
   const validated = validateEvidenceResolution(persisted.handle, {
     authorized: true,
     currentOwnerGeneration: input.source.source_owner_generation,
@@ -374,7 +403,7 @@ async function resolveHandle(
   );
   const time = observedAt(dependencies.now ?? Date.now);
   if (handle.expires_at !== undefined && Date.parse(handle.expires_at) <= time.epoch) {
-    await dependencies.authority.invalidateHandle(handle, "STALE", "EVIDENCE_HANDLE_EXPIRED", time.iso);
+    await invalidateHandleWithSettlement(dependencies, handle, "STALE", "EVIDENCE_HANDLE_EXPIRED", time.iso);
     fail("EVIDENCE_HANDLE_NOT_LIVE", "EvidenceHandle expired", { invalidation_state: "STALE" });
   }
   try {
@@ -419,7 +448,8 @@ async function resolveHandle(
     });
   } catch (error) {
     if (error instanceof EvidenceRuntimeError && error.invalidation_state !== undefined) {
-      await dependencies.authority.invalidateHandle(
+      await invalidateHandleWithSettlement(
+        dependencies,
         handle,
         error.invalidation_state,
         error.code,
@@ -471,6 +501,7 @@ export function createCloudflareEvidenceResolver(
         verification_receipt_ref: string;
       }[] = [];
       const rejected: { handle_ref: VersionedRef; reason_code: string }[] = [];
+      const outcomes: CitationResolutionOutcome[] = [];
       for (const handleRef of ordered) {
         try {
           const evidence = await resolveHandle(
@@ -485,19 +516,24 @@ export function createCloudflareEvidenceResolver(
             excerpt_sha256: evidence.handle.excerpt_sha256,
             verification_receipt_ref: evidence.verification_receipt_ref,
           });
-        } catch (error) {
-          rejected.push({
-            handle_ref: handleRef,
-            reason_code: error instanceof EvidenceRuntimeError
-              ? error.code
-              : "EVIDENCE_SETTLEMENT_UNCERTAIN",
+          outcomes.push({
+            handle_ref: evidence.handle.handle_ref,
+            outcome: "RESOLVED",
+            excerpt_sha256: evidence.handle.excerpt_sha256,
+            verification_receipt_ref: evidence.verification_receipt_ref,
           });
+        } catch (error) {
+          const outcome = citationOutcomeForError(handleRef, error);
+          outcomes.push(outcome);
+          const rejection = citationRejectionForOutcome(outcome);
+          if (rejection !== null) rejected.push(rejection);
         }
       }
       const time = observedAt(dependencies.now ?? Date.now);
       const identityPayload = {
         scope_snapshot_ref: input.scope_snapshot_ref,
         requested_handle_refs: ordered,
+        outcomes,
         resolved,
         rejected,
         principal_ref: input.access.principal_ref,
@@ -507,20 +543,22 @@ export function createCloudflareEvidenceResolver(
       };
       const identityDigest = await evidenceSha256(identityPayload);
       const receiptDraft = {
+        schema_version: 2 as const,
         receipt_ref: {
           id: await stableEvidenceId("citation-resolution", identityDigest),
           revision: 1,
         },
         scope_snapshot_ref: input.scope_snapshot_ref,
         requested_handle_refs: ordered,
+        outcomes,
         resolved,
         rejected,
         requested_count: ordered.length,
         resolved_count: resolved.length,
-        all_material_citations_resolved: resolved.length === ordered.length && rejected.length === 0,
+        all_material_citations_resolved: outcomes.every((outcome) => outcome.outcome === "RESOLVED"),
         created_at: time.iso,
       };
-      const receipt = CitationResolutionReceiptSchema.parse({
+      const receipt = CitationResolutionReceiptV2Schema.parse({
         ...receiptDraft,
         receipt_digest: await evidenceSha256(receiptDraft),
       });

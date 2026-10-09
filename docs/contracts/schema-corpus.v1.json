@@ -1,8 +1,8 @@
 {
   "json_schema_dialect": "https://json-schema.org/draft/2020-12/schema",
   "protocol": "eliotr.contract-schema-corpus.v1",
-  "registry_generation": 8,
-  "schema_count": 217,
+  "registry_generation": 9,
+  "schema_count": 220,
   "schemas": [
     {
       "export_name": "AllowedReferenceManifestSchema",
@@ -1455,7 +1455,603 @@
       "structural_strictness": "CLOSED_OBJECT"
     },
     {
+      "export_name": "CitationResolutionOutcomeSchema",
+      "family": "evidence",
+      "json_schema": {
+        "$defs": {
+          "__schema0": {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "$ref": "#/$defs/__schema1"
+              },
+              "revision": {
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "id",
+              "revision"
+            ],
+            "type": "object"
+          },
+          "__schema1": {
+            "maxLength": 256,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "$id": "urn:eliotr:contracts:evidence:citation-resolution-outcome:v1:g1",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "excerpt_sha256": {
+                "pattern": "^[a-f0-9]{64}$",
+                "type": "string"
+              },
+              "handle_ref": {
+                "$ref": "#/$defs/__schema0"
+              },
+              "outcome": {
+                "const": "RESOLVED",
+                "type": "string"
+              },
+              "verification_receipt_ref": {
+                "$ref": "#/$defs/__schema1"
+              }
+            },
+            "required": [
+              "handle_ref",
+              "outcome",
+              "excerpt_sha256",
+              "verification_receipt_ref"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "handle_ref": {
+                "$ref": "#/$defs/__schema0"
+              },
+              "outcome": {
+                "const": "INVALID_REFERENCE",
+                "type": "string"
+              }
+            },
+            "required": [
+              "handle_ref",
+              "outcome"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "handle_ref": {
+                "$ref": "#/$defs/__schema0"
+              },
+              "outcome": {
+                "const": "AUTHORITY_REVOKED",
+                "type": "string"
+              }
+            },
+            "required": [
+              "handle_ref",
+              "outcome"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "handle_ref": {
+                "$ref": "#/$defs/__schema0"
+              },
+              "outcome": {
+                "const": "SOURCE_QUARANTINED",
+                "type": "string"
+              }
+            },
+            "required": [
+              "handle_ref",
+              "outcome"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "handle_ref": {
+                "$ref": "#/$defs/__schema0"
+              },
+              "outcome": {
+                "const": "CONTENT_MISMATCH",
+                "type": "string"
+              }
+            },
+            "required": [
+              "handle_ref",
+              "outcome"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "handle_ref": {
+                "$ref": "#/$defs/__schema0"
+              },
+              "outcome": {
+                "const": "VERIFY_UNAVAILABLE",
+                "type": "string"
+              }
+            },
+            "required": [
+              "handle_ref",
+              "outcome"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "handle_ref": {
+                "$ref": "#/$defs/__schema0"
+              },
+              "outcome": {
+                "const": "STORAGE_UNAVAILABLE",
+                "type": "string"
+              }
+            },
+            "required": [
+              "handle_ref",
+              "outcome"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "handle_ref": {
+                "$ref": "#/$defs/__schema0"
+              },
+              "outcome": {
+                "const": "EFFECT_UNKNOWN",
+                "type": "string"
+              }
+            },
+            "required": [
+              "handle_ref",
+              "outcome"
+            ],
+            "type": "object"
+          }
+        ],
+        "title": "CitationResolutionOutcome",
+        "x-eliotr-family": "evidence",
+        "x-eliotr-schema-generation": 1,
+        "x-eliotr-schema-version": 1,
+        "x-eliotr-semantic-authority": "zod-runtime"
+      },
+      "kind": "UNION",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:evidence:citation-resolution-outcome:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "NON_OBJECT"
+    },
+    {
       "export_name": "CitationResolutionReceiptSchema",
+      "family": "evidence",
+      "json_schema": {
+        "$defs": {
+          "__schema0": {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "$ref": "#/$defs/__schema1"
+              },
+              "revision": {
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "id",
+              "revision"
+            ],
+            "type": "object"
+          },
+          "__schema1": {
+            "maxLength": 256,
+            "minLength": 1,
+            "type": "string"
+          },
+          "__schema10": {
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+            "type": "string"
+          },
+          "__schema11": {
+            "const": 2,
+            "type": "number"
+          },
+          "__schema12": {
+            "items": {
+              "$ref": "#/$defs/__schema0"
+            },
+            "maxItems": 512,
+            "type": "array"
+          },
+          "__schema13": {
+            "items": {
+              "$ref": "#/$defs/__schema14"
+            },
+            "maxItems": 512,
+            "type": "array"
+          },
+          "__schema14": {
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "excerpt_sha256": {
+                    "$ref": "#/$defs/__schema5"
+                  },
+                  "handle_ref": {
+                    "$ref": "#/$defs/__schema0"
+                  },
+                  "outcome": {
+                    "const": "RESOLVED",
+                    "type": "string"
+                  },
+                  "verification_receipt_ref": {
+                    "$ref": "#/$defs/__schema1"
+                  }
+                },
+                "required": [
+                  "handle_ref",
+                  "outcome",
+                  "excerpt_sha256",
+                  "verification_receipt_ref"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "handle_ref": {
+                    "$ref": "#/$defs/__schema0"
+                  },
+                  "outcome": {
+                    "const": "INVALID_REFERENCE",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "handle_ref",
+                  "outcome"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "handle_ref": {
+                    "$ref": "#/$defs/__schema0"
+                  },
+                  "outcome": {
+                    "const": "AUTHORITY_REVOKED",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "handle_ref",
+                  "outcome"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "handle_ref": {
+                    "$ref": "#/$defs/__schema0"
+                  },
+                  "outcome": {
+                    "const": "SOURCE_QUARANTINED",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "handle_ref",
+                  "outcome"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "handle_ref": {
+                    "$ref": "#/$defs/__schema0"
+                  },
+                  "outcome": {
+                    "const": "CONTENT_MISMATCH",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "handle_ref",
+                  "outcome"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "handle_ref": {
+                    "$ref": "#/$defs/__schema0"
+                  },
+                  "outcome": {
+                    "const": "VERIFY_UNAVAILABLE",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "handle_ref",
+                  "outcome"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "handle_ref": {
+                    "$ref": "#/$defs/__schema0"
+                  },
+                  "outcome": {
+                    "const": "STORAGE_UNAVAILABLE",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "handle_ref",
+                  "outcome"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "handle_ref": {
+                    "$ref": "#/$defs/__schema0"
+                  },
+                  "outcome": {
+                    "const": "EFFECT_UNKNOWN",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "handle_ref",
+                  "outcome"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "__schema15": {
+            "items": {
+              "$ref": "#/$defs/__schema4"
+            },
+            "maxItems": 512,
+            "type": "array"
+          },
+          "__schema16": {
+            "items": {
+              "$ref": "#/$defs/__schema7"
+            },
+            "maxItems": 512,
+            "type": "array"
+          },
+          "__schema17": {
+            "type": "boolean"
+          },
+          "__schema2": {
+            "items": {
+              "$ref": "#/$defs/__schema0"
+            },
+            "maxItems": 512,
+            "type": "array"
+          },
+          "__schema3": {
+            "items": {
+              "$ref": "#/$defs/__schema4"
+            },
+            "maxItems": 512,
+            "type": "array"
+          },
+          "__schema4": {
+            "additionalProperties": false,
+            "properties": {
+              "excerpt_sha256": {
+                "$ref": "#/$defs/__schema5"
+              },
+              "handle_ref": {
+                "$ref": "#/$defs/__schema0"
+              },
+              "verification_receipt_ref": {
+                "$ref": "#/$defs/__schema1"
+              }
+            },
+            "required": [
+              "handle_ref",
+              "excerpt_sha256",
+              "verification_receipt_ref"
+            ],
+            "type": "object"
+          },
+          "__schema5": {
+            "pattern": "^[a-f0-9]{64}$",
+            "type": "string"
+          },
+          "__schema6": {
+            "items": {
+              "$ref": "#/$defs/__schema7"
+            },
+            "maxItems": 512,
+            "type": "array"
+          },
+          "__schema7": {
+            "additionalProperties": false,
+            "properties": {
+              "handle_ref": {
+                "$ref": "#/$defs/__schema0"
+              },
+              "reason_code": {
+                "$ref": "#/$defs/__schema1"
+              }
+            },
+            "required": [
+              "handle_ref",
+              "reason_code"
+            ],
+            "type": "object"
+          },
+          "__schema8": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "__schema9": {
+            "type": "boolean"
+          }
+        },
+        "$id": "urn:eliotr:contracts:evidence:citation-resolution-receipt:v2:g1",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "anyOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "all_material_citations_resolved": {
+                "$ref": "#/$defs/__schema9"
+              },
+              "created_at": {
+                "$ref": "#/$defs/__schema10"
+              },
+              "receipt_digest": {
+                "$ref": "#/$defs/__schema5"
+              },
+              "receipt_ref": {
+                "$ref": "#/$defs/__schema0"
+              },
+              "rejected": {
+                "$ref": "#/$defs/__schema6"
+              },
+              "requested_count": {
+                "$ref": "#/$defs/__schema8"
+              },
+              "requested_handle_refs": {
+                "$ref": "#/$defs/__schema2"
+              },
+              "resolved": {
+                "$ref": "#/$defs/__schema3"
+              },
+              "resolved_count": {
+                "$ref": "#/$defs/__schema8"
+              },
+              "scope_snapshot_ref": {
+                "$ref": "#/$defs/__schema0"
+              }
+            },
+            "required": [
+              "receipt_ref",
+              "scope_snapshot_ref",
+              "requested_handle_refs",
+              "resolved",
+              "rejected",
+              "requested_count",
+              "resolved_count",
+              "all_material_citations_resolved",
+              "created_at",
+              "receipt_digest"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "all_material_citations_resolved": {
+                "$ref": "#/$defs/__schema17"
+              },
+              "created_at": {
+                "$ref": "#/$defs/__schema10"
+              },
+              "outcomes": {
+                "$ref": "#/$defs/__schema13"
+              },
+              "receipt_digest": {
+                "$ref": "#/$defs/__schema5"
+              },
+              "receipt_ref": {
+                "$ref": "#/$defs/__schema0"
+              },
+              "rejected": {
+                "$ref": "#/$defs/__schema16"
+              },
+              "requested_count": {
+                "$ref": "#/$defs/__schema8"
+              },
+              "requested_handle_refs": {
+                "$ref": "#/$defs/__schema12"
+              },
+              "resolved": {
+                "$ref": "#/$defs/__schema15"
+              },
+              "resolved_count": {
+                "$ref": "#/$defs/__schema8"
+              },
+              "schema_version": {
+                "$ref": "#/$defs/__schema11"
+              },
+              "scope_snapshot_ref": {
+                "$ref": "#/$defs/__schema0"
+              }
+            },
+            "required": [
+              "schema_version",
+              "receipt_ref",
+              "scope_snapshot_ref",
+              "requested_handle_refs",
+              "outcomes",
+              "resolved",
+              "rejected",
+              "requested_count",
+              "resolved_count",
+              "all_material_citations_resolved",
+              "created_at",
+              "receipt_digest"
+            ],
+            "type": "object"
+          }
+        ],
+        "title": "CitationResolutionReceipt",
+        "x-eliotr-family": "evidence",
+        "x-eliotr-schema-generation": 1,
+        "x-eliotr-schema-version": 2,
+        "x-eliotr-semantic-authority": "zod-runtime"
+      },
+      "kind": "UNION",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:evidence:citation-resolution-receipt:v2:g1",
+      "schema_version": 2,
+      "structural_strictness": "NON_OBJECT"
+    },
+    {
+      "export_name": "CitationResolutionReceiptV1Schema",
       "family": "evidence",
       "json_schema": {
         "$defs": {
@@ -1557,7 +2153,7 @@
             "type": "boolean"
           }
         },
-        "$id": "urn:eliotr:contracts:evidence:citation-resolution-receipt:v1:g1",
+        "$id": "urn:eliotr:contracts:evidence:citation-resolution-receipt-v1:v1:g1",
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
         "properties": {
@@ -1604,7 +2200,7 @@
           "created_at",
           "receipt_digest"
         ],
-        "title": "CitationResolutionReceipt",
+        "title": "CitationResolutionReceiptV1",
         "type": "object",
         "x-eliotr-family": "evidence",
         "x-eliotr-schema-generation": 1,
@@ -1613,8 +2209,338 @@
       },
       "kind": "OBJECT",
       "schema_generation": 1,
-      "schema_id": "urn:eliotr:contracts:evidence:citation-resolution-receipt:v1:g1",
+      "schema_id": "urn:eliotr:contracts:evidence:citation-resolution-receipt-v1:v1:g1",
       "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "CitationResolutionReceiptV2Schema",
+      "family": "evidence",
+      "json_schema": {
+        "$defs": {
+          "__schema0": {
+            "const": 2,
+            "type": "number"
+          },
+          "__schema1": {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "$ref": "#/$defs/__schema2"
+              },
+              "revision": {
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "id",
+              "revision"
+            ],
+            "type": "object"
+          },
+          "__schema10": {
+            "additionalProperties": false,
+            "properties": {
+              "handle_ref": {
+                "$ref": "#/$defs/__schema1"
+              },
+              "reason_code": {
+                "$ref": "#/$defs/__schema2"
+              }
+            },
+            "required": [
+              "handle_ref",
+              "reason_code"
+            ],
+            "type": "object"
+          },
+          "__schema11": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "__schema12": {
+            "type": "boolean"
+          },
+          "__schema13": {
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+            "type": "string"
+          },
+          "__schema2": {
+            "maxLength": 256,
+            "minLength": 1,
+            "type": "string"
+          },
+          "__schema3": {
+            "items": {
+              "$ref": "#/$defs/__schema1"
+            },
+            "maxItems": 512,
+            "type": "array"
+          },
+          "__schema4": {
+            "items": {
+              "$ref": "#/$defs/__schema5"
+            },
+            "maxItems": 512,
+            "type": "array"
+          },
+          "__schema5": {
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "excerpt_sha256": {
+                    "$ref": "#/$defs/__schema6"
+                  },
+                  "handle_ref": {
+                    "$ref": "#/$defs/__schema1"
+                  },
+                  "outcome": {
+                    "const": "RESOLVED",
+                    "type": "string"
+                  },
+                  "verification_receipt_ref": {
+                    "$ref": "#/$defs/__schema2"
+                  }
+                },
+                "required": [
+                  "handle_ref",
+                  "outcome",
+                  "excerpt_sha256",
+                  "verification_receipt_ref"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "handle_ref": {
+                    "$ref": "#/$defs/__schema1"
+                  },
+                  "outcome": {
+                    "const": "INVALID_REFERENCE",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "handle_ref",
+                  "outcome"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "handle_ref": {
+                    "$ref": "#/$defs/__schema1"
+                  },
+                  "outcome": {
+                    "const": "AUTHORITY_REVOKED",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "handle_ref",
+                  "outcome"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "handle_ref": {
+                    "$ref": "#/$defs/__schema1"
+                  },
+                  "outcome": {
+                    "const": "SOURCE_QUARANTINED",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "handle_ref",
+                  "outcome"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "handle_ref": {
+                    "$ref": "#/$defs/__schema1"
+                  },
+                  "outcome": {
+                    "const": "CONTENT_MISMATCH",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "handle_ref",
+                  "outcome"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "handle_ref": {
+                    "$ref": "#/$defs/__schema1"
+                  },
+                  "outcome": {
+                    "const": "VERIFY_UNAVAILABLE",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "handle_ref",
+                  "outcome"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "handle_ref": {
+                    "$ref": "#/$defs/__schema1"
+                  },
+                  "outcome": {
+                    "const": "STORAGE_UNAVAILABLE",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "handle_ref",
+                  "outcome"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "handle_ref": {
+                    "$ref": "#/$defs/__schema1"
+                  },
+                  "outcome": {
+                    "const": "EFFECT_UNKNOWN",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "handle_ref",
+                  "outcome"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "__schema6": {
+            "pattern": "^[a-f0-9]{64}$",
+            "type": "string"
+          },
+          "__schema7": {
+            "items": {
+              "$ref": "#/$defs/__schema8"
+            },
+            "maxItems": 512,
+            "type": "array"
+          },
+          "__schema8": {
+            "additionalProperties": false,
+            "properties": {
+              "excerpt_sha256": {
+                "$ref": "#/$defs/__schema6"
+              },
+              "handle_ref": {
+                "$ref": "#/$defs/__schema1"
+              },
+              "verification_receipt_ref": {
+                "$ref": "#/$defs/__schema2"
+              }
+            },
+            "required": [
+              "handle_ref",
+              "excerpt_sha256",
+              "verification_receipt_ref"
+            ],
+            "type": "object"
+          },
+          "__schema9": {
+            "items": {
+              "$ref": "#/$defs/__schema10"
+            },
+            "maxItems": 512,
+            "type": "array"
+          }
+        },
+        "$id": "urn:eliotr:contracts:evidence:citation-resolution-receipt-v2:v2:g1",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "all_material_citations_resolved": {
+            "$ref": "#/$defs/__schema12"
+          },
+          "created_at": {
+            "$ref": "#/$defs/__schema13"
+          },
+          "outcomes": {
+            "$ref": "#/$defs/__schema4"
+          },
+          "receipt_digest": {
+            "$ref": "#/$defs/__schema6"
+          },
+          "receipt_ref": {
+            "$ref": "#/$defs/__schema1"
+          },
+          "rejected": {
+            "$ref": "#/$defs/__schema9"
+          },
+          "requested_count": {
+            "$ref": "#/$defs/__schema11"
+          },
+          "requested_handle_refs": {
+            "$ref": "#/$defs/__schema3"
+          },
+          "resolved": {
+            "$ref": "#/$defs/__schema7"
+          },
+          "resolved_count": {
+            "$ref": "#/$defs/__schema11"
+          },
+          "schema_version": {
+            "$ref": "#/$defs/__schema0"
+          },
+          "scope_snapshot_ref": {
+            "$ref": "#/$defs/__schema1"
+          }
+        },
+        "required": [
+          "schema_version",
+          "receipt_ref",
+          "scope_snapshot_ref",
+          "requested_handle_refs",
+          "outcomes",
+          "resolved",
+          "rejected",
+          "requested_count",
+          "resolved_count",
+          "all_material_citations_resolved",
+          "created_at",
+          "receipt_digest"
+        ],
+        "title": "CitationResolutionReceiptV2",
+        "type": "object",
+        "x-eliotr-family": "evidence",
+        "x-eliotr-schema-generation": 1,
+        "x-eliotr-schema-version": 2,
+        "x-eliotr-semantic-authority": "zod-runtime"
+      },
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:evidence:citation-resolution-receipt-v2:v2:g1",
+      "schema_version": 2,
       "structural_strictness": "CLOSED_OBJECT"
     },
     {

@@ -161,13 +161,43 @@
       "structural_strictness": "CLOSED_OBJECT"
     },
     {
+      "export_name": "CitationResolutionOutcomeSchema",
+      "family": "evidence",
+      "json_schema_sha256": "8dc645077f7920fea66d8f4983c836fc55f2ca4a2555e4cc9cc41f90383f118b",
+      "kind": "UNION",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:evidence:citation-resolution-outcome:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "NON_OBJECT"
+    },
+    {
       "export_name": "CitationResolutionReceiptSchema",
       "family": "evidence",
-      "json_schema_sha256": "e6d551721d0f3015d7b1ddc68d7547fe05c989df4ec24d41741331ee47708565",
+      "json_schema_sha256": "7940b6acd47a7a83f4f5fbf182ac9ebcd52fd7ba7d6498c8fe9dedb926a92765",
+      "kind": "UNION",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:evidence:citation-resolution-receipt:v2:g1",
+      "schema_version": 2,
+      "structural_strictness": "NON_OBJECT"
+    },
+    {
+      "export_name": "CitationResolutionReceiptV1Schema",
+      "family": "evidence",
+      "json_schema_sha256": "ee8a80dd11cfcbc423c253025f25003bd1acc488edd092007ca70347c7b3ba14",
       "kind": "OBJECT",
       "schema_generation": 1,
-      "schema_id": "urn:eliotr:contracts:evidence:citation-resolution-receipt:v1:g1",
+      "schema_id": "urn:eliotr:contracts:evidence:citation-resolution-receipt-v1:v1:g1",
       "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "CitationResolutionReceiptV2Schema",
+      "family": "evidence",
+      "json_schema_sha256": "6996c73e3009fed033234295fe63474adcb5cb55f1f9de79d3ad0a8ebcc50c3a",
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:evidence:citation-resolution-receipt-v2:v2:g1",
+      "schema_version": 2,
       "structural_strictness": "CLOSED_OBJECT"
     },
     {
@@ -2173,6 +2203,6 @@
   ],
   "json_schema_dialect": "https://json-schema.org/draft/2020-12/schema",
   "protocol": "eliotr.contract-schema-index.v1",
-  "registry_generation": 8,
-  "schema_count": 217
+  "registry_generation": 9,
+  "schema_count": 220
 }

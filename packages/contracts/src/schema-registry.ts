@@ -44,7 +44,7 @@ import {
   type ContractStructuralStrictness,
 } from "./registry-contracts.js";
 
-export const CONTRACT_SCHEMA_REGISTRY_GENERATION = 8 as const;
+export const CONTRACT_SCHEMA_REGISTRY_GENERATION = 9 as const;
 
 export type ContractJsonPrimitive = string | number | boolean | null;
 export type ContractJsonValue =
@@ -311,7 +311,7 @@ function buildRegistry(): readonly ContractSchemaDescriptor[] {
         ? { schema_version: 1, schema_generation: 2 }
         : exportName === "InquiryProtocolProfileSchema"
           ? { schema_version: 1, schema_generation: 2 }
-          : ["CoordinateMapEntrySchema", "CoordinateMapSchema"].includes(exportName)
+          : ["CoordinateMapEntrySchema", "CoordinateMapSchema", "CitationResolutionReceiptSchema", "CitationResolutionReceiptV2Schema"].includes(exportName)
             ? { schema_version: 2, schema_generation: 1 }
             : familyVersion;
       const schemaId = buildContractSchemaId(

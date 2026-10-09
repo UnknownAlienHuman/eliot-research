@@ -1,10 +1,8 @@
-import type {
-  EvidenceHandle,
-  LocatorCandidate,
-  ScopeSnapshot,
-} from "@eliotr/contracts";
+import { CitationResolutionReceiptV2Schema } from "@eliotr/contracts";
+import type { EvidenceHandle, LocatorCandidate, ScopeSnapshot } from "@eliotr/contracts";
 import { describe, expect, it } from "vitest";
 import { createCloudflareEvidenceResolver } from "./resolver.js";
+import { EvidenceRuntimeError } from "./types.js";
 import type {
   EvidenceAuthorityPort,
   EvidenceSourceAuthority,
@@ -77,6 +75,7 @@ function fixture(options: {
   let storedHandle: EvidenceHandle | null = null;
   let currentSource: EvidenceSourceAuthority | null = source;
   let currentSourceObjectDigest = options.sourceObjectDigest ?? A;
+  let contentFailure: unknown;
   const invalidations: string[] = [];
   let persistedCitationInput: PersistCitationResolutionInput | null = null;
   const authority: EvidenceAuthorityPort = {
@@ -121,6 +120,7 @@ function fixture(options: {
     authority,
     content: {
       async materialize() {
+        if (contentFailure !== undefined) throw contentFailure;
         return {
           exact_excerpt: "alpha",
           excerpt_sha256: EXCERPT_DIGEST,
@@ -139,6 +139,7 @@ function fixture(options: {
     invalidations,
     setSource(value: EvidenceSourceAuthority | null) { currentSource = value; },
     setSourceObjectDigest(value: string) { currentSourceObjectDigest = value; },
+    setContentFailure(value: unknown) { contentFailure = value; },
     get handle() { return storedHandle; },
     get persistedCitationInput() { return persistedCitationInput; },
   };
@@ -258,12 +259,79 @@ describe("exact evidence resolver", () => {
       scope_snapshot_ref: { id: "scope-1", revision: 1 },
       access,
     });
-    expect(result.receipt.all_material_citations_resolved).toBe(false);
-    expect(result.receipt.resolved_count).toBe(1);
-    expect(result.receipt.rejected).toEqual([{
+    const receipt = CitationResolutionReceiptV2Schema.parse(result.receipt);
+    expect(receipt.all_material_citations_resolved).toBe(false);
+    expect(receipt.resolved_count).toBe(1);
+    expect(receipt.outcomes).toHaveLength(2);
+    expect(receipt.outcomes).toEqual(expect.arrayContaining([
+      expect.objectContaining({ handle_ref: first.handle.handle_ref, outcome: "RESOLVED" }),
+      expect.objectContaining({
+        handle_ref: { id: "missing-handle", revision: 1 },
+        outcome: "INVALID_REFERENCE",
+      }),
+    ]));
+    expect(receipt.rejected).toEqual([{
       handle_ref: { id: "missing-handle", revision: 1 },
-      reason_code: "EVIDENCE_HANDLE_NOT_FOUND",
+      reason_code: "INVALID_REFERENCE",
     }]);
+  });
+
+  it("records quarantined sources without treating them as rejected evidence", async () => {
+    const f = fixture();
+    const first = await f.resolver.resolveCandidate({
+      candidate,
+      scope_snapshot_ref: { id: "scope-1", revision: 1 },
+      access,
+    });
+    f.setSource({ ...source, purge_state: "QUARANTINED" });
+    const result = await f.resolver.resolveCitationSet({
+      handle_refs: [first.handle.handle_ref],
+      scope_snapshot_ref: { id: "scope-1", revision: 1 },
+      access,
+    });
+    const receipt = CitationResolutionReceiptV2Schema.parse(result.receipt);
+    expect(receipt.outcomes).toEqual([{
+      handle_ref: first.handle.handle_ref,
+      outcome: "SOURCE_QUARANTINED",
+    }]);
+    expect(receipt.rejected).toEqual([]);
+    expect(f.invalidations).toEqual([]);
+  });
+
+  it("keeps unavailable and unknown verification out of rejected", async () => {
+    const f = fixture();
+    const first = await f.resolver.resolveCandidate({
+      candidate,
+      scope_snapshot_ref: { id: "scope-1", revision: 1 },
+      access,
+    });
+    f.setContentFailure(new EvidenceRuntimeError(
+      "EVIDENCE_STORAGE_UNAVAILABLE",
+      "R2 is temporarily unavailable",
+      { retryable: true },
+    ));
+    const storageUnavailable = await f.resolver.resolveCitationSet({
+      handle_refs: [first.handle.handle_ref],
+      scope_snapshot_ref: { id: "scope-1", revision: 1 },
+      access,
+    });
+    const storageReceipt = CitationResolutionReceiptV2Schema.parse(storageUnavailable.receipt);
+    expect(storageReceipt.outcomes[0]?.outcome).toBe("STORAGE_UNAVAILABLE");
+    expect(storageReceipt.rejected).toEqual([]);
+
+    f.setContentFailure(new EvidenceRuntimeError(
+      "EVIDENCE_SETTLEMENT_UNCERTAIN",
+      "resolution persistence acknowledgement was lost",
+      { retryable: true },
+    ));
+    const unknown = await f.resolver.resolveCitationSet({
+      handle_refs: [first.handle.handle_ref],
+      scope_snapshot_ref: { id: "scope-1", revision: 1 },
+      access,
+    });
+    const unknownReceipt = CitationResolutionReceiptV2Schema.parse(unknown.receipt);
+    expect(unknownReceipt.outcomes[0]?.outcome).toBe("EFFECT_UNKNOWN");
+    expect(unknownReceipt.rejected).toEqual([]);
   });
 
   it("forwards a frozen attempt binding captured before persistence awaits", async () => {

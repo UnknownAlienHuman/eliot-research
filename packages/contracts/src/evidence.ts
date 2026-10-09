@@ -143,7 +143,24 @@ function versionedRefKey(value: { readonly id: string; readonly revision: number
   return `${value.id}:${value.revision}`;
 }
 
-export const CitationResolutionReceiptSchema = z.object({
+export const CitationResolutionOutcomeSchema = z.discriminatedUnion("outcome", [
+  z.object({
+    handle_ref: VersionedRefSchema,
+    outcome: z.literal("RESOLVED"),
+    excerpt_sha256: Sha256Schema,
+    verification_receipt_ref: IdentifierSchema,
+  }).strict(),
+  z.object({ handle_ref: VersionedRefSchema, outcome: z.literal("INVALID_REFERENCE") }).strict(),
+  z.object({ handle_ref: VersionedRefSchema, outcome: z.literal("AUTHORITY_REVOKED") }).strict(),
+  z.object({ handle_ref: VersionedRefSchema, outcome: z.literal("SOURCE_QUARANTINED") }).strict(),
+  z.object({ handle_ref: VersionedRefSchema, outcome: z.literal("CONTENT_MISMATCH") }).strict(),
+  z.object({ handle_ref: VersionedRefSchema, outcome: z.literal("VERIFY_UNAVAILABLE") }).strict(),
+  z.object({ handle_ref: VersionedRefSchema, outcome: z.literal("STORAGE_UNAVAILABLE") }).strict(),
+  z.object({ handle_ref: VersionedRefSchema, outcome: z.literal("EFFECT_UNKNOWN") }).strict(),
+]);
+export type CitationResolutionOutcome = z.infer<typeof CitationResolutionOutcomeSchema>;
+
+export const CitationResolutionReceiptV1Schema = z.object({
   receipt_ref: VersionedRefSchema,
   scope_snapshot_ref: VersionedRefSchema,
   requested_handle_refs: z.array(VersionedRefSchema).max(512),
@@ -189,4 +206,88 @@ export const CitationResolutionReceiptSchema = z.object({
     });
   }
 });
+export type CitationResolutionReceiptV1 = z.infer<typeof CitationResolutionReceiptV1Schema>;
+
+export const CitationResolutionReceiptV2Schema = z.object({
+  schema_version: z.literal(2),
+  receipt_ref: VersionedRefSchema,
+  scope_snapshot_ref: VersionedRefSchema,
+  requested_handle_refs: z.array(VersionedRefSchema).max(512),
+  outcomes: z.array(CitationResolutionOutcomeSchema).max(512),
+  resolved: z.array(CitationResolutionItemSchema).max(512),
+  rejected: z.array(CitationResolutionRejectionSchema).max(512),
+  requested_count: NonNegativeIntegerSchema,
+  resolved_count: NonNegativeIntegerSchema,
+  all_material_citations_resolved: z.boolean(),
+  created_at: IsoDateTimeSchema,
+  receipt_digest: Sha256Schema,
+}).strict().superRefine((value, context) => {
+  const requestedKeys = value.requested_handle_refs.map(versionedRefKey);
+  const outcomeKeys = value.outcomes.map((item) => versionedRefKey(item.handle_ref));
+  const resolvedKeys = value.resolved.map((item) => versionedRefKey(item.handle_ref));
+  const rejectedKeys = value.rejected.map((item) => versionedRefKey(item.handle_ref));
+  if (new Set(requestedKeys).size !== requestedKeys.length) {
+    context.addIssue({ code: "custom", path: ["requested_handle_refs"], message: "duplicate requested handle" });
+  }
+  if (new Set(outcomeKeys).size !== outcomeKeys.length) {
+    context.addIssue({ code: "custom", path: ["outcomes"], message: "duplicate citation outcome" });
+  }
+  if (outcomeKeys.length !== requestedKeys.length ||
+      outcomeKeys.some((key) => !requestedKeys.includes(key))) {
+    context.addIssue({ code: "custom", path: ["outcomes"], message: "outcomes must cover every requested handle exactly once" });
+  }
+  if (new Set(resolvedKeys).size !== resolvedKeys.length) {
+    context.addIssue({ code: "custom", path: ["resolved"], message: "duplicate resolved handle" });
+  }
+  if (new Set(rejectedKeys).size !== rejectedKeys.length) {
+    context.addIssue({ code: "custom", path: ["rejected"], message: "duplicate rejected handle" });
+  }
+  if (value.requested_count !== requestedKeys.length) {
+    context.addIssue({ code: "custom", path: ["requested_count"], message: "requested_count mismatch" });
+  }
+  if (value.resolved_count !== resolvedKeys.length) {
+    context.addIssue({ code: "custom", path: ["resolved_count"], message: "resolved_count mismatch" });
+  }
+
+  const resolvedOutcomes = value.outcomes.filter((item) => item.outcome === "RESOLVED");
+  if (resolvedOutcomes.length !== value.resolved.length || resolvedOutcomes.some((item, index) => {
+    const projection = value.resolved[index];
+    return projection === undefined ||
+      versionedRefKey(projection.handle_ref) !== versionedRefKey(item.handle_ref) ||
+      projection.excerpt_sha256 !== item.excerpt_sha256 ||
+      projection.verification_receipt_ref !== item.verification_receipt_ref;
+  })) {
+    context.addIssue({ code: "custom", path: ["resolved"], message: "resolved is not the RESOLVED outcome projection" });
+  }
+
+  const rejectedOutcomes = value.outcomes.filter((item) =>
+    item.outcome === "INVALID_REFERENCE" ||
+    item.outcome === "AUTHORITY_REVOKED" ||
+    item.outcome === "CONTENT_MISMATCH"
+  );
+  if (rejectedOutcomes.length !== value.rejected.length || rejectedOutcomes.some((item, index) => {
+    const projection = value.rejected[index];
+    return projection === undefined ||
+      versionedRefKey(projection.handle_ref) !== versionedRefKey(item.handle_ref) ||
+      projection.reason_code !== item.outcome;
+  })) {
+    context.addIssue({ code: "custom", path: ["rejected"], message: "rejected is not the proven-invalid outcome projection" });
+  }
+
+  const complete = requestedKeys.length === value.outcomes.length &&
+    value.outcomes.every((item) => item.outcome === "RESOLVED");
+  if (value.all_material_citations_resolved !== complete) {
+    context.addIssue({
+      code: "custom",
+      path: ["all_material_citations_resolved"],
+      message: "all_material_citations_resolved is not derived from outcomes",
+    });
+  }
+});
+export type CitationResolutionReceiptV2 = z.infer<typeof CitationResolutionReceiptV2Schema>;
+
+export const CitationResolutionReceiptSchema = z.union([
+  CitationResolutionReceiptV1Schema,
+  CitationResolutionReceiptV2Schema,
+]);
 export type CitationResolutionReceipt = z.infer<typeof CitationResolutionReceiptSchema>;

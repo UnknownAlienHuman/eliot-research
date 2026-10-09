@@ -1,7 +1,7 @@
 // IMPLEMENTED_NOT_LIVE: ER-07 pinned normalized byte/line excerpt materialization; exact phrase/literal verification, coordinate-map table/cell resolution, tokenizer-fallback table, bounded regex scans and sharded exhaustive execution remain separate.
 import {
-  bufferBounded,
   canonicalNormalizedBundleKey,
+  readStreamWithinBytes,
 } from "@eliotr/platform-cloudflare";
 import {
   evidenceChecksumHex,
@@ -30,6 +30,15 @@ function fail(
   options: ConstructorParameters<typeof EvidenceRuntimeError>[2] = {},
 ): never {
   throw new EvidenceRuntimeError(code, message, options);
+}
+
+async function storageRead<T>(label: string, read: () => Promise<T>): Promise<T> {
+  try {
+    return await read();
+  } catch (cause) {
+    if (cause instanceof EvidenceRuntimeError) throw cause;
+    fail("EVIDENCE_STORAGE_UNAVAILABLE", `${label} is unavailable`, { retryable: true, cause });
+  }
 }
 
 async function normalizedContentKey(source: EvidenceSourceAuthority): Promise<string> {
@@ -123,7 +132,6 @@ function requireSameObject(observed: R2Object | null, head: R2Object): void {
   ) {
     fail("EVIDENCE_SETTLEMENT_UNCERTAIN", "R2 object changed during pinned evidence readback", {
       retryable: true,
-      invalidation_state: "STALE",
     });
   }
 }
@@ -133,14 +141,13 @@ async function openRange(
   head: R2Object, range: ByteRange,
 ): Promise<R2ObjectBody> {
   const length = range.end - range.start;
-  const opened = await bucket.get(key, {
+  const opened = await storageRead("normalized evidence object range", () => bucket.get(key, {
     onlyIf: { etagMatches: head.etag },
     range: { offset: range.start, length },
-  });
+  }));
   if (opened === null || !("body" in opened) || opened.body === undefined) {
     fail("EVIDENCE_SETTLEMENT_UNCERTAIN", "conditional R2 range read did not return body bytes", {
       retryable: true,
-      invalidation_state: "STALE",
     });
   }
   try {
@@ -151,11 +158,11 @@ async function openRange(
       observedRange === undefined || !("offset" in observedRange) ||
       observedRange.offset !== range.start || observedRange.length !== length
     ) {
-      fail("EVIDENCE_RANGE_INVALID", "R2 returned a different byte range");
+      fail("EVIDENCE_STORAGE_UNAVAILABLE", "R2 returned a different byte range", { retryable: true });
     }
     return opened;
   } catch (error) {
-    try { await opened.body.cancel(); } catch { /* preserve the authority error */ }
+    try { void opened.body.cancel().catch(() => undefined); } catch { /* preserve the authority error */ }
     throw error;
   }
 }
@@ -211,8 +218,8 @@ async function locateLines(
     return requireByteRange({ start, end: offset });
   } finally {
     // Also stop the prefix read as soon as the selected line is located.
-    try { await reader.cancel(); } catch { /* preserve the original result */ }
-    reader.releaseLock();
+    try { void reader.cancel().catch(() => undefined); } catch { /* preserve the original result */ }
+    try { reader.releaseLock(); } catch { /* preserve the original result */ }
   }
 }
 
@@ -235,11 +242,10 @@ export async function readAdmittedNormalizedMarkdown(
   source: EvidenceSourceAuthority,
 ): Promise<AdmittedNormalizedMarkdown> {
   const key = await normalizedContentKey(source);
-  const head = await bucket.head(key);
+  const head = await storageRead("normalized evidence object head", () => bucket.head(key));
   if (head === null) {
     fail("EVIDENCE_OBJECT_NOT_FOUND", "normalized Evidence object is missing", {
       retryable: true,
-      invalidation_state: "BROKEN_INTEGRITY",
     });
   }
   requireObjectMetadata(head, source);
@@ -247,7 +253,10 @@ export async function readAdmittedNormalizedMarkdown(
     fail("EVIDENCE_RANGE_INVALID", "normalized Evidence object exceeds the bounded materialization limit");
   }
   const opened = await openRange(bucket, key, source, head, { start: 0, end: head.size });
-  const bytes = await bufferBounded(opened.body, MAX_CANONICAL_BYTES);
+  const bytes = await storageRead("normalized evidence object body", () => readStreamWithinBytes(opened.body, {
+    label: "evidence.normalized-object",
+    max_bytes: MAX_CANONICAL_BYTES,
+  }));
   if (bytes.byteLength !== head.size) {
     fail("EVIDENCE_SETTLEMENT_UNCERTAIN", "normalized object streamed size differs from its pinned head", {
       retryable: true,
@@ -269,7 +278,7 @@ export async function readAdmittedNormalizedMarkdown(
     });
   }
   if (markdown.length === 0) fail("EVIDENCE_RANGE_INVALID", "normalized object is empty");
-  const settled = await bucket.head(key);
+  const settled = await storageRead("normalized evidence object settlement read", () => bucket.head(key));
   requireSameObject(settled, head);
   if (settled !== null) requireObjectMetadata(settled, source);
   return { markdown, bytes, normalized_object_ref: key, readback_sha256: digest, size_bytes: bytes.byteLength };
@@ -284,11 +293,10 @@ export function createR2EvidenceContentPort(
       const source = { ...rawSource };
       const bucket = dependencies.evidence_bucket;
       const key = await normalizedContentKey(source);
-      const head = await bucket.head(key);
+      const head = await storageRead("normalized evidence object head", () => bucket.head(key));
       if (head === null) {
         fail("EVIDENCE_OBJECT_NOT_FOUND", "normalized Evidence object is missing", {
           retryable: true,
-          invalidation_state: "BROKEN_INTEGRITY",
         });
       }
       requireObjectMetadata(head, source);
@@ -314,7 +322,10 @@ export function createR2EvidenceContentPort(
       }
       const opened = await openRange(bucket, key, source, head, range);
       const length = range.end - range.start;
-      const bytes = await bufferBounded(opened.body, MAX_EXCERPT_BYTES);
+      const bytes = await storageRead("normalized evidence excerpt body", () => readStreamWithinBytes(opened.body, {
+        label: "evidence.excerpt",
+        max_bytes: MAX_EXCERPT_BYTES,
+      }));
       if (bytes.byteLength !== length) {
         fail("EVIDENCE_SETTLEMENT_UNCERTAIN", "R2 range streamed length differs from authority", {
           retryable: true,
@@ -328,7 +339,7 @@ export function createR2EvidenceContentPort(
       const excerptSha256 = await evidenceSha256Bytes(bytes);
       const objectRefDigest = await evidenceSha256(key);
       // A matching GET does not cover replacement/deletion while its body was streaming.
-      const settled = await bucket.head(key);
+      const settled = await storageRead("normalized evidence object settlement read", () => bucket.head(key));
       requireSameObject(settled, head);
       if (settled !== null) requireObjectMetadata(settled, source);
       return {

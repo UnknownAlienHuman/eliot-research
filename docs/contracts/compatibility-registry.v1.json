@@ -3071,8 +3071,57 @@
       "schema_id": "urn:eliotr:contracts:research:research-provider-key-model-use-state:v1:g1",
       "schema_version": 1,
       "structural_strictness": "NON_OBJECT"
+    },
+    {
+      "compatibility": "INITIAL",
+      "export_name": "CitationResolutionOutcomeSchema",
+      "family": "evidence",
+      "json_schema_sha256": "8dc645077f7920fea66d8f4983c836fc55f2ca4a2555e4cc9cc41f90383f118b",
+      "kind": "UNION",
+      "note": "R00 versioned citation outcomes; historical V1 receipt bytes and digest remain readable.",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:evidence:citation-resolution-outcome:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "NON_OBJECT"
+    },
+    {
+      "compatibility": "BREAKING",
+      "export_name": "CitationResolutionReceiptSchema",
+      "family": "evidence",
+      "json_schema_sha256": "7940b6acd47a7a83f4f5fbf182ac9ebcd52fd7ba7d6498c8fe9dedb926a92765",
+      "kind": "UNION",
+      "note": "R00 versioned citation outcomes; historical V1 receipt bytes and digest remain readable.",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:evidence:citation-resolution-receipt:v2:g1",
+      "schema_version": 2,
+      "structural_strictness": "NON_OBJECT",
+      "supersedes_schema_id": "urn:eliotr:contracts:evidence:citation-resolution-receipt:v1:g1"
+    },
+    {
+      "compatibility": "INITIAL",
+      "export_name": "CitationResolutionReceiptV1Schema",
+      "family": "evidence",
+      "json_schema_sha256": "ee8a80dd11cfcbc423c253025f25003bd1acc488edd092007ca70347c7b3ba14",
+      "kind": "OBJECT",
+      "note": "R00 versioned citation outcomes; historical V1 receipt bytes and digest remain readable.",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:evidence:citation-resolution-receipt-v1:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "compatibility": "INITIAL",
+      "export_name": "CitationResolutionReceiptV2Schema",
+      "family": "evidence",
+      "json_schema_sha256": "6996c73e3009fed033234295fe63474adcb5cb55f1f9de79d3ad0a8ebcc50c3a",
+      "kind": "OBJECT",
+      "note": "R00 versioned citation outcomes; historical V1 receipt bytes and digest remain readable.",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:evidence:citation-resolution-receipt-v2:v2:g1",
+      "schema_version": 2,
+      "structural_strictness": "CLOSED_OBJECT"
     }
   ],
   "protocol": "eliotr.contract-compatibility-registry.v1",
-  "registry_generation": 8
+  "registry_generation": 9
 }

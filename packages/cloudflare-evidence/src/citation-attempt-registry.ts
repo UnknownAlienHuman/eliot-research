@@ -24,6 +24,7 @@ export interface CitationReceiptRow {
   readonly requested_handle_refs_json: unknown;
   readonly resolved_json: unknown;
   readonly rejected_json: unknown;
+  readonly outcomes_json: unknown;
   readonly requested_count: unknown;
   readonly resolved_count: unknown;
   readonly all_material_citations_resolved: unknown;
@@ -85,13 +86,17 @@ async function loadCitationReceiptRow(
   database: D1Database,
   receipt: CitationResolutionReceipt,
 ): Promise<CitationReceiptRow | null> {
-  return database.prepare(
-    "SELECT receipt_id, revision, scope_snapshot_id, scope_snapshot_revision, " +
-    "principal_ref, client_class, credential_generation, authorization_receipt_ref, " +
-    "requested_handle_refs_json, resolved_json, rejected_json, requested_count, " +
-    "resolved_count, all_material_citations_resolved, receipt_json, receipt_sha256, created_at " +
-    "FROM citation_resolution_receipt WHERE receipt_id = ?1 AND revision = ?2 LIMIT 1",
-  ).bind(receipt.receipt_ref.id, receipt.receipt_ref.revision).first<CitationReceiptRow>();
+  try {
+    return await database.prepare(
+      "SELECT receipt_id, revision, scope_snapshot_id, scope_snapshot_revision, " +
+      "principal_ref, client_class, credential_generation, authorization_receipt_ref, " +
+      "requested_handle_refs_json, resolved_json, rejected_json, requested_count, " +
+      "resolved_count, all_material_citations_resolved, receipt_json, receipt_sha256, created_at, outcomes_json " +
+      "FROM citation_resolution_receipt WHERE receipt_id = ?1 AND revision = ?2 LIMIT 1",
+    ).bind(receipt.receipt_ref.id, receipt.receipt_ref.revision).first<CitationReceiptRow>();
+  } catch (cause) {
+    fail("EVIDENCE_SETTLEMENT_UNCERTAIN", "citation receipt readback is unavailable", { retryable: true, cause });
+  }
 }
 
 async function decodeCitationReceiptRow(
@@ -109,6 +114,7 @@ async function decodeCitationReceiptRow(
     requested_handle_refs_json,
     resolved_json,
     rejected_json,
+    outcomes_json,
     requested_count,
     resolved_count,
     all_material_citations_resolved,
@@ -156,6 +162,9 @@ async function decodeCitationReceiptRow(
     canonicalEvidenceJson(parsed.requested_handle_refs) !== requested_handle_refs_json ||
     canonicalEvidenceJson(parsed.resolved) !== resolved_json ||
     canonicalEvidenceJson(parsed.rejected) !== rejected_json ||
+    ("schema_version" in parsed
+      ? canonicalEvidenceJson(parsed.outcomes) !== outcomes_json
+      : outcomes_json !== null) ||
     parsed.requested_count !== requested_count ||
     parsed.resolved_count !== resolved_count ||
     (parsed.all_material_citations_resolved ? 1 : 0) !== all_material_citations_resolved ||
@@ -230,7 +239,7 @@ export async function loadCitationSettlement(
         "SELECT receipt_id, revision, scope_snapshot_id, scope_snapshot_revision, " +
         "principal_ref, client_class, credential_generation, authorization_receipt_ref, " +
         "requested_handle_refs_json, resolved_json, rejected_json, requested_count, " +
-        "resolved_count, all_material_citations_resolved, receipt_json, receipt_sha256, created_at " +
+        "resolved_count, all_material_citations_resolved, receipt_json, receipt_sha256, created_at, outcomes_json " +
         "FROM citation_resolution_receipt WHERE receipt_id = ?1 AND revision = ?2 LIMIT 1",
       ).bind(receipt.receipt_ref.id, receipt.receipt_ref.revision),
       database.prepare(
@@ -328,8 +337,8 @@ export function citationReceiptInsert(
     "scope_snapshot_revision, principal_ref, client_class, credential_generation, " +
     "authorization_receipt_ref, requested_handle_refs_json, resolved_json, rejected_json, " +
     "requested_count, resolved_count, all_material_citations_resolved, receipt_json, " +
-    "receipt_sha256, created_at) VALUES (" +
-    "?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17) " +
+    "receipt_sha256, created_at, outcomes_json) VALUES (" +
+    "?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18) " +
     "ON CONFLICT(receipt_id, revision) DO NOTHING",
   ).bind(
     receipt.receipt_ref.id,
@@ -349,6 +358,7 @@ export function citationReceiptInsert(
     receiptJson,
     receiptSha256,
     receipt.created_at,
+    "schema_version" in receipt ? canonicalEvidenceJson(receipt.outcomes) : null,
   );
 }
 

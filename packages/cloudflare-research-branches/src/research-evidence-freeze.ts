@@ -26,6 +26,7 @@ import type {
 } from "./research-evidence-freeze-preparation.js";
 import { InquiryProtocolProfileSchema } from "@eliotr/contracts";
 import type { StageRequest, WorkflowPrincipal, WorkflowStageHandler } from "@eliotr/cloudflare-workflows";
+import { classifyCitationReceiptSettlement } from "./research-evidence-citation-settlement.js";
 
 const INPUT_PROTOCOL = "eliotr.evidence-freeze-input.v2" as const;
 const SHA256 = /^[a-f0-9]{64}$/u;
@@ -494,6 +495,7 @@ export function createEvidenceFreezeStageHandler(
         access: dependencies.navigation.access,
       });
     } catch (cause) {
+      if (cause instanceof EvidenceFreezeStageError) throw cause;
       const code = typeof cause === "object" && cause !== null && "code" in cause
         ? (cause as { readonly code?: unknown }).code
         : undefined;
@@ -505,14 +507,21 @@ export function createEvidenceFreezeStageHandler(
       if (code === "EVIDENCE_SETTLEMENT_UNCERTAIN") {
         fail("EVIDENCE_FREEZE_SETTLEMENT_UNCERTAIN", "evidence citation settlement is uncertain", true, cause);
       }
-      if (typeof code === "string" && code.startsWith("EVIDENCE_")) {
+      if (code === "EVIDENCE_INPUT_INVALID" || code === "CITATION_SET_INVALID") {
         fail("EVIDENCE_FREEZE_EVIDENCE_INVALID", "authoritative evidence resolution failed", false, cause);
       }
-      throw cause;
+      fail("EVIDENCE_FREEZE_SETTLEMENT_UNCERTAIN", "evidence citation verification is unavailable", true, cause);
     }
     if (refKey(citation.receipt.scope_snapshot_ref) !== refKey(manifest.scope_snapshot_ref) ||
         JSON.stringify(citation.receipt.requested_handle_refs.map(refKey).sort()) !== JSON.stringify(requested)) {
       fail("EVIDENCE_FREEZE_EVIDENCE_INVALID", "citation receipt is bound to a different evidence set");
+    }
+    const citationSettlement = classifyCitationReceiptSettlement(citation.receipt);
+    if (citationSettlement === "UNCERTAIN") {
+      fail("EVIDENCE_FREEZE_SETTLEMENT_UNCERTAIN", "citation verification or settlement is unavailable", true);
+    }
+    if (citationSettlement === "PROVEN_INVALID") {
+      fail("EVIDENCE_FREEZE_EVIDENCE_INVALID", "one or more requested citations are proven invalid or revoked");
     }
     if (!citation.receipt.all_material_citations_resolved || citation.receipt.rejected.length !== 0 ||
         citation.receipt.resolved_count !== requested.length ||
