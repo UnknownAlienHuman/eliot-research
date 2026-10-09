@@ -1,0 +1,23 @@
+{
+  "protocol": "eliotr.ui-shell-acceptance.v1",
+  "checkpoint": "U1.5",
+  "status": "ACCEPTED_INTERNAL_SHELL",
+  "source_commit": "328913e8c67110780387fc3464362adb21ff340e",
+  "predecessor": "fe26f0102be0430914998338ebb0b053fe287a09",
+  "reference": "tests/ui-owner/receipts/u1-r/observation-matrix.json",
+  "reviewer": "frontend-manager",
+  "versions": { "react": "19.3.0", "router": "7.18.4", "query": "5.104.1", "vite": "8.2.2", "tailwind": "4.3.3", "storybook": "10.6.1", "vitest": "4.1.11", "playwright": "1.63.0", "chrome": "155.0.8059.40" },
+  "checks": {
+    "privacy_route_query": "11 meaningful tests PASS; synchronous mask precedes cancel/clear, stale verification/read/commit rejects, unavailable commits only public recovery, dispose/unbind terminal, no unsafe URL preservation or retry",
+    "compiler_lint": "Owning apps/eliotr-web tsc-b and exact app/story/config lint PASS",
+    "storybook": "One exact Strict Mode Journey PASS via package-local pinned Vitest Storybook CLI; app story is catalog/live-index registered. Stable script currently restricts imports to UI source; direct pinned CLI is the explicit app-story fallback",
+    "browser": "20 canonical committed-source cases PASS:1440/1024/768/390/320 x EN/RU x light/dark; axe/console/network/overflow/native pane/focus and all four route destinations checked; source hashes stable and own source clean",
+    "first_restored_frame": "Actual Chrome bfcache pagehide persisted=true and pageshow persisted=true both rootHidden/rootInert/guardVisible=true before fresh verification; first HTML frame masked while main module is held. Verification never reveals old DOM before new React commit",
+    "forced_colors_keyboard": "Two additional1440/390 forced-color reduced-motion cases PASS with axe and physical Tab/Enter/browserBack heading focus",
+    "production": "Actual optimized static build renders public Verification unavailable and recovery; protected shell absent, zero owner API requests. DEV+explicit fixture flag never acts as real verification",
+    "build": "PASS76modules; JS293.80kB/gzip93.73kB CSS29.61kB/gzip5.01kB; fresh private build output avoids locked pre-existing dist/client, no artifact cleanup attempted",
+    "design": "Shared semantic-literal gate PASS. Manager reviewed canonical1440ENlight/390RUdark and production-unavailable PNGs; stable reading/support hierarchy and compact bottom destinations"
+  },
+  "private_evidence": ".eliotr-state/ui-owner/u1-shell-final/review.json and extra.json; PNG digests are bound in review.json; initial direction baseline preserved",
+  "limits": ["U1 shell only; U2 product fixtures next", "Real session/health/deployment verifier deferred to U3; no feature endpoints connected", "Full Worker integration/CSP/performance, native screenreader, actual zoom, staging/live/release remain pending"]
+}
