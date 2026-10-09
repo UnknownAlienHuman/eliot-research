@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   createD1ExecutionLeaseStore,
+  D1_EXECUTION_LEASE_NOW_SQL,
   type ExecutionLease,
 } from "./execution-lease.js";
 
@@ -82,14 +83,15 @@ describe("D1 execution lease store", () => {
     expectLease(acquired);
     expect(fixture.calls).toHaveLength(1);
     expect(fixture.calls[0]?.sql).toContain("lease_generation = operation_execution_lease.lease_generation + 1");
-    expect(fixture.calls[0]?.sql).toContain("operation_execution_lease.lease_until <= excluded.updated_at");
+    expect(fixture.calls[0]?.sql).toContain(
+      `operation_execution_lease.lease_until <= ${D1_EXECUTION_LEASE_NOW_SQL}`,
+    );
     expect(fixture.calls[0]?.sql).toContain("operation_execution_lease.operation_kind = excluded.operation_kind");
     expect(fixture.calls[0]?.sql).not.toContain("state = 'CANCELLED'");
     expect(fixture.calls[0]?.values).toEqual([
       "operation-1",
       "projection.refresh",
       "worker-1",
-      20_000,
       10_000,
     ]);
   });
@@ -143,7 +145,7 @@ describe("D1 execution lease store", () => {
     }, "r2://eliotr-work/checkpoint-1.json", 10_000))
       .rejects.toMatchObject({ code: "DELIVERY_LEASE_LOST", retryable: true });
     expect(fixture.calls[0]?.sql).toContain("lease_generation = ?3");
-    expect(fixture.calls[0]?.sql).toContain("lease_until > ?5");
+    expect(fixture.calls[0]?.sql).toContain(`lease_until > ${D1_EXECUTION_LEASE_NOW_SQL}`);
   });
 
   it("requires the exact active fence before completing", async () => {
@@ -162,7 +164,7 @@ describe("D1 execution lease store", () => {
     expect(completed.state).toBe("COMPLETED");
     expect(completed.terminal_receipt_ref).toBe("r2://eliotr-work/receipt-1.json");
     expect(fixture.calls[0]?.sql).toContain("state = 'LEASED'");
-    expect(fixture.calls[0]?.sql).toContain("lease_until > ?5");
+    expect(fixture.calls[0]?.sql).toContain(`lease_until > ${D1_EXECUTION_LEASE_NOW_SQL}`);
   });
 
   it("fails closed on malformed authority rows and unsupported timestamps", async () => {

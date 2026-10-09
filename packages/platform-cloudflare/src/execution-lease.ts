@@ -7,6 +7,8 @@ import {
   assertPositiveInteger,
 } from "./delivery-types.js";
 
+export const D1_EXECUTION_LEASE_NOW_SQL = "CAST(unixepoch('subsec') * 1000 AS INTEGER)";
+
 export type ExecutionLeaseState = "LEASED" | "COMPLETED" | "FAILED" | "CANCELLED";
 
 export interface ExecutionLease {
@@ -172,13 +174,12 @@ export function createD1ExecutionLeaseStore(database: D1Database): ExecutionLeas
       assertDeliveryIdentifier(input.operation_kind, "operation_kind");
       assertDeliveryIdentifier(input.lease_owner, "lease_owner");
       validateTiming(input.now_ms, input.lease_ms);
-      const leaseUntil = input.now_ms + input.lease_ms;
-      assertDeliveryTimestamp(leaseUntil, "lease_until");
       const row = await database.prepare(
         "INSERT INTO operation_execution_lease (" +
         "operation_id, operation_kind, lease_owner, lease_generation, lease_until, attempt, state, " +
         "created_at, updated_at" +
-        ") VALUES (?1, ?2, ?3, 1, ?4, 1, 'LEASED', ?5, ?5) " +
+        ") VALUES (?1, ?2, ?3, 1, " + D1_EXECUTION_LEASE_NOW_SQL + " + ?4, " +
+        "1, 'LEASED', " + D1_EXECUTION_LEASE_NOW_SQL + ", " + D1_EXECUTION_LEASE_NOW_SQL + ") " +
         "ON CONFLICT(operation_id) DO UPDATE SET " +
         "lease_owner = excluded.lease_owner, " +
         "lease_generation = operation_execution_lease.lease_generation + 1, " +
@@ -189,14 +190,13 @@ export function createD1ExecutionLeaseStore(database: D1Database): ExecutionLeas
         "WHERE operation_execution_lease.operation_kind = excluded.operation_kind AND (" +
         "operation_execution_lease.state = 'FAILED' OR " +
         "(operation_execution_lease.state = 'LEASED' " +
-        "AND operation_execution_lease.lease_until <= excluded.updated_at)) " +
+        "AND operation_execution_lease.lease_until <= " + D1_EXECUTION_LEASE_NOW_SQL + ")) " +
         "RETURNING *",
       ).bind(
         input.operation_id,
         input.operation_kind,
         input.lease_owner,
-        leaseUntil,
-        input.now_ms,
+        input.lease_ms,
       ).first<ExecutionLeaseRow>();
       if (row !== null) return decodeRow(row);
       await validateExistingIdentity(database, input.operation_id, input.operation_kind);
@@ -206,18 +206,16 @@ export function createD1ExecutionLeaseStore(database: D1Database): ExecutionLeas
     async renew(fence, nowMs, leaseMs) {
       validateFence(fence);
       validateTiming(nowMs, leaseMs);
-      const leaseUntil = nowMs + leaseMs;
-      assertDeliveryTimestamp(leaseUntil, "lease_until");
       return requiredRow(database.prepare(
-        "UPDATE operation_execution_lease SET lease_until = ?4, updated_at = ?5 " +
+        "UPDATE operation_execution_lease SET lease_until = " + D1_EXECUTION_LEASE_NOW_SQL + " + ?4, " +
+        "updated_at = " + D1_EXECUTION_LEASE_NOW_SQL + " " +
         "WHERE operation_id = ?1 AND lease_owner = ?2 AND lease_generation = ?3 " +
-        "AND state = 'LEASED' AND lease_until > ?5 RETURNING *",
+        "AND state = 'LEASED' AND lease_until > " + D1_EXECUTION_LEASE_NOW_SQL + " RETURNING *",
       ).bind(
         fence.operation_id,
         fence.lease_owner,
         fence.lease_generation,
-        leaseUntil,
-        nowMs,
+        leaseMs,
       ), "renew");
     },
 
@@ -226,15 +224,15 @@ export function createD1ExecutionLeaseStore(database: D1Database): ExecutionLeas
       assertPayloadRef(checkpointRef);
       validateTiming(nowMs);
       return requiredRow(database.prepare(
-        "UPDATE operation_execution_lease SET checkpoint_ref = ?4, updated_at = ?5 " +
+        "UPDATE operation_execution_lease SET checkpoint_ref = ?4, updated_at = " +
+        D1_EXECUTION_LEASE_NOW_SQL + " " +
         "WHERE operation_id = ?1 AND lease_owner = ?2 AND lease_generation = ?3 " +
-        "AND state = 'LEASED' AND lease_until > ?5 RETURNING *",
+        "AND state = 'LEASED' AND lease_until > " + D1_EXECUTION_LEASE_NOW_SQL + " RETURNING *",
       ).bind(
         fence.operation_id,
         fence.lease_owner,
         fence.lease_generation,
         checkpointRef,
-        nowMs,
       ), "checkpoint");
     },
 
@@ -244,15 +242,15 @@ export function createD1ExecutionLeaseStore(database: D1Database): ExecutionLeas
       validateTiming(nowMs);
       return requiredRow(database.prepare(
         "UPDATE operation_execution_lease SET state = 'COMPLETED', terminal_receipt_ref = ?4, " +
-        "lease_until = ?5, updated_at = ?5 " +
+        "lease_until = " + D1_EXECUTION_LEASE_NOW_SQL + ", updated_at = " +
+        D1_EXECUTION_LEASE_NOW_SQL + " " +
         "WHERE operation_id = ?1 AND lease_owner = ?2 AND lease_generation = ?3 " +
-        "AND state = 'LEASED' AND lease_until > ?5 RETURNING *",
+        "AND state = 'LEASED' AND lease_until > " + D1_EXECUTION_LEASE_NOW_SQL + " RETURNING *",
       ).bind(
         fence.operation_id,
         fence.lease_owner,
         fence.lease_generation,
         receiptRef,
-        nowMs,
       ), "complete");
     },
 
@@ -262,15 +260,15 @@ export function createD1ExecutionLeaseStore(database: D1Database): ExecutionLeas
       validateTiming(nowMs);
       return requiredRow(database.prepare(
         "UPDATE operation_execution_lease SET state = 'FAILED', last_error_code = ?4, " +
-        "lease_until = ?5, updated_at = ?5 " +
+        "lease_until = " + D1_EXECUTION_LEASE_NOW_SQL + ", updated_at = " +
+        D1_EXECUTION_LEASE_NOW_SQL + " " +
         "WHERE operation_id = ?1 AND lease_owner = ?2 AND lease_generation = ?3 " +
-        "AND state = 'LEASED' AND lease_until > ?5 RETURNING *",
+        "AND state = 'LEASED' AND lease_until > " + D1_EXECUTION_LEASE_NOW_SQL + " RETURNING *",
       ).bind(
         fence.operation_id,
         fence.lease_owner,
         fence.lease_generation,
         errorCode,
-        nowMs,
       ), "fail");
     },
 
@@ -280,15 +278,15 @@ export function createD1ExecutionLeaseStore(database: D1Database): ExecutionLeas
       validateTiming(nowMs);
       return requiredRow(database.prepare(
         "UPDATE operation_execution_lease SET state = 'CANCELLED', terminal_receipt_ref = ?4, " +
-        "lease_until = ?5, updated_at = ?5 " +
+        "lease_until = " + D1_EXECUTION_LEASE_NOW_SQL + ", updated_at = " +
+        D1_EXECUTION_LEASE_NOW_SQL + " " +
         "WHERE operation_id = ?1 AND lease_owner = ?2 AND lease_generation = ?3 " +
-        "AND state = 'LEASED' AND lease_until > ?5 RETURNING *",
+        "AND state = 'LEASED' AND lease_until > " + D1_EXECUTION_LEASE_NOW_SQL + " RETURNING *",
       ).bind(
         fence.operation_id,
         fence.lease_owner,
         fence.lease_generation,
         receiptRef,
-        nowMs,
       ), "cancel");
     },
 
