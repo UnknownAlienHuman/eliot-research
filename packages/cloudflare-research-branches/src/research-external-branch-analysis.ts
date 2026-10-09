@@ -98,6 +98,21 @@ export interface ResearchExternalBranchAnalysisDependencies extends ResearchBran
 export interface ResearchExternalBranchAnalysisHandlers {
   readonly handler: WorkflowStageHandler;
   readonly recoverStartedAttempt: WorkflowStartedAttemptRecovery;
+  /** Server-only preparation seam; the native Workflow topology is not activated by this port. */
+  readonly prepareTask: (input: ResearchExternalBranchAnalysisInput) => Promise<void>;
+  /** Read and consume a known result without publishing a missing task or payload. */
+  readonly readRecordedResult: (
+    input: ResearchExternalBranchAnalysisInput,
+    expectedResultSha256?: string,
+  ) => Promise<Uint8Array | null>;
+}
+
+export interface ResearchExternalBranchAnalysisInput {
+  readonly request: StageRequest;
+  readonly principal: WorkflowPrincipal;
+  readonly input_bytes: Uint8Array;
+  readonly attempt_ref: string;
+  readonly request_sha256: string;
 }
 
 function corrupt(): never { return fail("WORKFLOW_OUTPUT_CORRUPT"); }
@@ -416,16 +431,10 @@ async function consumeResult(
   return bytes;
 }
 
-async function executeOrRecover(
+async function loadExternalContext(
   dependencies: ResearchExternalBranchAnalysisDependencies,
-  inputValue: {
-    readonly request: StageRequest;
-    readonly principal: WorkflowPrincipal;
-    readonly input_bytes: Uint8Array;
-    readonly attempt_ref: string;
-    readonly request_sha256: string;
-  },
-): Promise<Uint8Array> {
+  inputValue: ResearchExternalBranchAnalysisInput,
+) {
   const { request, principal } = inputValue;
   if (request.stage !== "ANALYZE_BRANCHES" ||
       dependencies.navigation.access.principal_ref !== principal.principal_ref ||
@@ -449,27 +458,44 @@ async function executeOrRecover(
     attempt_ref: inputValue.attempt_ref,
     request_sha256: inputValue.request_sha256,
   } as const;
-  const existing = await store.readRecordedResult(identity);
-  if (existing !== null) return consumeResult(dependencies, context, request, principal, existing);
+  return { grant, context, store, identity };
+}
 
+async function publishTask(
+  dependencies: ResearchExternalBranchAnalysisDependencies,
+  prepared: Awaited<ReturnType<typeof loadExternalContext>>,
+): Promise<void> {
+  const { grant, context, store, identity } = prepared;
   const now = dependencies.now?.() ?? Date.now();
-  const taskId = `external-task:${inputValue.request_sha256}`;
+  const taskId = `external-task:${identity.request_sha256}`;
   await publishExternalAgentTaskPayload(dependencies.database, {
     envelope: {
       protocol: "eliotr.external-agent-task-payload.v1",
       task_kind: TASK_KIND,
       task_id: taskId,
-      operation_id: request.operation_id,
+      operation_id: identity.operation_id,
       stage_index: 8,
       stage: "ANALYZE_BRANCHES",
-      attempt_ref: inputValue.attempt_ref,
-      request_sha256: inputValue.request_sha256,
+      attempt_ref: identity.attempt_ref,
+      request_sha256: identity.request_sha256,
       project_id: grant.project_id,
       body: taskBody(context),
     },
     expires_at: taskExpiry(grant, now),
   }, dependencies.now);
   await store.publish({ ...identity, grant });
+}
+
+async function executeOrRecover(
+  dependencies: ResearchExternalBranchAnalysisDependencies,
+  inputValue: ResearchExternalBranchAnalysisInput,
+): Promise<Uint8Array> {
+  const prepared = await loadExternalContext(dependencies, inputValue);
+  const { context, store, identity } = prepared;
+  const { request, principal } = inputValue;
+  const existing = await store.readRecordedResult(identity);
+  if (existing !== null) return consumeResult(dependencies, context, request, principal, existing);
+  await publishTask(dependencies, prepared);
   const settled = await store.readRecordedResult(identity);
   if (settled === null) uncertain();
   return consumeResult(dependencies, context, request, principal, settled);
@@ -503,5 +529,23 @@ export function createResearchExternalBranchAnalysisHandlers(
       request_sha256: input.request_sha256,
     });
   };
-  return Object.freeze({ handler, recoverStartedAttempt });
+  const prepareTask = async (input: ResearchExternalBranchAnalysisInput): Promise<void> => {
+    const prepared = await loadExternalContext(dependencies, input);
+    if (await prepared.store.readRecordedResult(prepared.identity) === null) {
+      await publishTask(dependencies, prepared);
+    }
+  };
+  const readRecordedResult = async (
+    input: ResearchExternalBranchAnalysisInput,
+    expectedResultSha256?: string,
+  ): Promise<Uint8Array | null> => {
+    if (expectedResultSha256 !== undefined &&
+        (typeof expectedResultSha256 !== "string" || !/^[a-f0-9]{64}$/u.test(expectedResultSha256))) corrupt();
+    const { context, store, identity } = await loadExternalContext(dependencies, input);
+    const readback = await store.readRecordedResultReadback(identity);
+    if (readback === null) return null;
+    if (expectedResultSha256 !== undefined && readback.result_sha256 !== expectedResultSha256) corrupt();
+    return consumeResult(dependencies, context, input.request, input.principal, readback.result);
+  };
+  return Object.freeze({ handler, recoverStartedAttempt, prepareTask, readRecordedResult });
 }
