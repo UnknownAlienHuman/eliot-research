@@ -5,8 +5,11 @@
   "owner_authorization_ref": "tests/ui-owner/receipts/owner-authorization.json",
   "base_sha": "70928d5052351c6a881cb9d8854b4387eefe2721",
   "history_base_sha": "c37e56e0ebdfc7f6d294879008a4036d1b95b985",
-  "state": "ACTIVE",
-  "evidence_refs": [],
+  "state": "HANDED_OFF",
+  "handoff_reason": "COMPLETED",
+  "evidence_refs": [
+    "git:7bf931b112c4f4e0e5b2ed436b1e69e1da267668; tests/ui-owner/receipts/u1-d/client-transport-paths.json; 44tests owningcompile exactlint PASS"
+  ],
   "blocker_refs": [],
   "claim_id": "c1-1-pure-transport-20261009",
   "checkpoint_id": "C1.1",
@@ -28,5 +31,6 @@
       "checkpoint_id": "C0.2",
       "commit_sha": "85aaf74f7344df64ca6a2629b236b1cbfc208950"
     }
-  ]
+  ],
+  "handoff_receipt_ref": "tests/ui-owner/receipts/u1-d/client-transport-paths.json"
 }

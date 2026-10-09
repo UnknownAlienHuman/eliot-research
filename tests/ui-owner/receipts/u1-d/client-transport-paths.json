@@ -1,0 +1,17 @@
+{
+  "protocol": "eliotr.frontend-client-receipt.v1",
+  "checkpoint": "C1.1",
+  "source_commit": "7bf931b112c4f4e0e5b2ed436b1e69e1da267668",
+  "claim": "docs/agent-work/frontend-owner-claims/ER-48/c1-1-pure-transport-20261009.json",
+  "status": "ACCEPTED_PURE_PATH_AND_HEADER_POLICY",
+  "checks": {
+    "focused_tests": "44/44 PASS; path/header Vitest files",
+    "owning_typescript": "tsc --noEmit -p packages/owner-api-client/tsconfig.json exit0",
+    "exact_lint": "four claimed transport files exit0",
+    "mandatory_negative": "Absolute/protocol-relative/backslash/hash/encoded-parent paths reject; every conflicting protected-header duplicate rejects including matching first and conflicting second",
+    "runtime_record_negative": "Non-string values reject; legal blank headers preserved",
+    "manager_review": "Actual source reviewed after leaf STOP, no caller.find first-match shortcut remains"
+  },
+  "versions": { "typescript": "6.0.3", "vitest": "4.1.11", "node": "25.6.1" },
+  "pending": ["body readers", "injected transport and session lifecycle", "legacy integration", "feature clients", "product wiring"]
+}
