@@ -3,6 +3,7 @@ import { evidenceSha256 } from "@eliotr/cloudflare-evidence";
 import {
   ResearchBranchRoleSchema,
   VersionedRefSchema,
+  type BranchQueryResult,
   type ResearchBranchRole,
   type ResolvedEvidence,
   type VersionedRef,
@@ -124,6 +125,61 @@ export async function buildBranchRoleEvidencePack(
     resolved_evidence: Object.freeze(resolved),
     omitted_candidates: Object.freeze(omitted),
     trace_ref: stageFivePack.trace_ref,
+    total_utf8_bytes: totalUtf8Bytes,
+  });
+}
+
+/** Build the v2 role pack from only the exact resolved handles of its branch-local query result. */
+export async function buildBranchRoleEvidencePackFromQueryResult(
+  queryResult: BranchQueryResult,
+  role: ResearchBranchRole,
+  selectedHandleRefs: readonly VersionedRef[],
+): Promise<EvidencePack> {
+  const parsedRole = ResearchBranchRoleSchema.parse(role);
+  if (queryResult.role !== parsedRole || queryResult.query_legs.length === 0 || selectedHandleRefs.length === 0) {
+    invalid("v2 branch role query result or evidence selection is empty");
+  }
+  const selected = selectedHandleRefs.map((ref) => VersionedRefSchema.parse(ref));
+  const byHandle = new Map(queryResult.resolved_evidence.map((item) => [refKey(item.handle.handle_ref), item]));
+  const resolved: ResolvedEvidence[] = [];
+  const seen = new Set<string>();
+  for (const ref of selected) {
+    const key = refKey(ref);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const item = byHandle.get(key);
+    if (item === undefined) conflict(`branch query handle ${key} is absent from its exact resolved result`);
+    resolved.push(item);
+  }
+  const omitted = [
+    ...queryResult.omitted_candidate_refs.map((candidate_id) => ({ candidate_id, reason_code: "QUERY_BUDGET_OR_RETRIEVAL_OMISSION" })),
+    ...queryResult.resolved_evidence
+      .filter((item) => !seen.has(refKey(item.handle.handle_ref)))
+      .map((item) => ({ candidate_id: item.handle.handle_ref.id, reason_code: OMITTED_REASON_NOT_SELECTED })),
+  ];
+  const sortedRefs = [...selected].sort(compareRefs).map((ref) => ({ id: ref.id, revision: ref.revision }));
+  const identity = {
+    protocol: "eliotr.research.branch-role-query-evidence-pack.v1",
+    query_result_ref: queryResult.query_result_ref,
+    query_result_digest: queryResult.identity_digest,
+    role: parsedRole,
+    selected_handle_refs: sortedRefs,
+  };
+  const digest = await evidenceSha256({ domain: "eliotr.branch-role.query-evidence-pack.v1", value: identity });
+  const totalUtf8Bytes = resolved.reduce(
+    (sum, item) => sum + new TextEncoder().encode(item.exact_excerpt).byteLength,
+    0,
+  );
+  const firstTrace = queryResult.query_legs.find((leg) => leg.trace !== undefined)?.trace;
+  if (firstTrace === undefined) invalid("branch query evidence has no completed retrieval trace");
+  return Object.freeze({
+    pack_ref: { id: `eliotr.branch-role-query-pack-${digest}`, revision: 1 },
+    scope_snapshot_ref: { ...queryResult.scope_snapshot_ref },
+    resolved_evidence: Object.freeze(resolved),
+    omitted_candidates: Object.freeze(omitted),
+    // Per-leg traces are retained in the query result; this adapter keeps the first
+    // completed trace as the compatibility anchor for existing manifest plumbing.
+    trace_ref: { ...firstTrace.trace_ref },
     total_utf8_bytes: totalUtf8Bytes,
   });
 }

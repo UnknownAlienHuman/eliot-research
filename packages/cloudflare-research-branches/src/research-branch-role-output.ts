@@ -1,4 +1,8 @@
 import {
+  BranchFindingDraftSchema,
+  BranchQueryPlanSchema,
+  BranchQueryResultSchema,
+  branchQueryResultMatchesPlan,
   ResearchBranchRoleSchema,
   VersionedRefSchema,
   type ResearchBranchRole,
@@ -21,6 +25,19 @@ export const ResearchBranchRoleModelOutputSchema = z.object({
   limitations: z.array(z.string().min(1).max(1024)).max(64),
 }).strict();
 export type ResearchBranchRoleModelOutput = z.infer<typeof ResearchBranchRoleModelOutputSchema>;
+
+export const ResearchBranchRoleModelOutputV2Schema = z.object({
+  protocol: z.literal("eliotr.research.branch-role-output.v2"),
+  role: ResearchBranchRoleSchema,
+  root_question_ref: VersionedRefSchema,
+  root_question_sha256: z.string().regex(/^[a-f0-9]{64}$/u),
+  branch_question_ref: VersionedRefSchema,
+  branch_question_sha256: z.string().regex(/^[a-f0-9]{64}$/u),
+  query_plan_ref: VersionedRefSchema,
+  query_plan_digest: z.string().regex(/^[a-f0-9]{64}$/u),
+  finding: BranchFindingDraftSchema,
+}).strict();
+export type ResearchBranchRoleModelOutputV2 = z.infer<typeof ResearchBranchRoleModelOutputV2Schema>;
 
 function corrupt(message: string): never {
   fail("WORKFLOW_OUTPUT_CORRUPT");
@@ -60,4 +77,49 @@ export function parseBranchRoleModelOutput(
     return corrupt("blocked branch role output must not cite evidence");
   }
   return output.data;
+}
+
+/** Parse a substantive finding and bind every model-authored ref to the exact frozen query result. */
+export function parseBranchRoleModelOutputV2(
+  outputBytes: Uint8Array,
+  plan: z.infer<typeof BranchQueryPlanSchema>,
+  result: z.infer<typeof BranchQueryResultSchema>,
+): ResearchBranchRoleModelOutputV2 {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(outputBytes));
+  } catch {
+    return corrupt("v2 branch role model output is not valid JSON");
+  }
+  const output = ResearchBranchRoleModelOutputV2Schema.safeParse(parsed);
+  if (!output.success) return corrupt("v2 branch role model output does not match the installed schema");
+  const value = output.data;
+  const parsedPlan = BranchQueryPlanSchema.safeParse(plan);
+  const parsedResult = BranchQueryResultSchema.safeParse(result);
+  if (!parsedPlan.success || !parsedResult.success ||
+      !branchQueryResultMatchesPlan(parsedPlan.data, parsedResult.data)) {
+    return corrupt("v2 branch role output received an invalid query plan/result pair");
+  }
+  const boundPlan = parsedPlan.data;
+  const boundResult = parsedResult.data;
+  if (value.role !== boundPlan.role || boundResult.role !== boundPlan.role ||
+      refKey(value.root_question_ref) !== refKey(boundPlan.root_question.question_ref) ||
+      value.root_question_sha256 !== boundPlan.root_question.text_sha256 ||
+      refKey(value.branch_question_ref) !== refKey(boundPlan.branch_question.question_ref) ||
+      value.branch_question_sha256 !== boundPlan.branch_question.text_sha256 ||
+      refKey(value.query_plan_ref) !== refKey(boundPlan.query_plan_ref) ||
+      value.query_plan_digest !== boundPlan.identity_digest ||
+      value.finding.role !== boundPlan.role ||
+      refKey(value.finding.question_ref) !== refKey(boundPlan.branch_question.question_ref) ||
+      value.finding.question_sha256 !== boundPlan.branch_question.text_sha256) {
+    return corrupt("v2 branch role output is bound to a different role, question, plan, or result");
+  }
+  const allowed = new Set(boundResult.resolved_evidence.map((item) => refKey(item.handle.handle_ref)));
+  if (value.finding.evidence_handle_refs.some((ref) => !allowed.has(refKey(ref)))) {
+    return corrupt("v2 branch finding cites evidence outside its exact query result");
+  }
+  if (value.finding.state === "CANDIDATE" && boundResult.resolved_evidence.length === 0) {
+    return corrupt("candidate finding has no exact query evidence");
+  }
+  return value;
 }

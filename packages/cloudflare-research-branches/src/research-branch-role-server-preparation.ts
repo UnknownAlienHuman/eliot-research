@@ -3,10 +3,11 @@ import {
   ResearchBranchRoleSchema,
   type ResearchBranchRole,
   type ResearchReadExtractCheckpoint,
+  type ResearchReadExtractCheckpointV2,
 } from "@eliotr/contracts";
 import type { EvidencePack } from "@eliotr/retrieval";
 import { evidenceForRole } from "./research-branch-execution-results.js";
-import { buildBranchRoleEvidencePack } from "./research-branch-role-evidence-pack.js";
+import { buildBranchRoleEvidencePack, buildBranchRoleEvidencePackFromQueryResult } from "./research-branch-role-evidence-pack.js";
 import { recoverBranchStageRequest } from "./research-branch-role-preparation.js";
 import type { createResearchBranchRolePreparation } from "./research-branch-role-preparation.js";
 import type { ModelAttemptPreparationContext } from "@eliotr/cloudflare-model-execution";
@@ -62,7 +63,7 @@ export interface ResearchBranchRoleServerPreparationDependencies {
   readonly read_read_extract: (
     operation_id: string,
     investigation_id: string,
-  ) => Promise<ResearchReadExtractCheckpoint>;
+  ) => Promise<ResearchReadExtractCheckpoint | ResearchReadExtractCheckpointV2>;
   /** Installed spend policy rules; the role's branch stage must have one. */
   readonly policy_rules: ResearchModelSpendPolicy["rules"];
   /** Records the branch-role spend decision and returns the durable admission. */
@@ -101,22 +102,31 @@ export function createResearchBranchRoleServerPreparation(
     }
     const rule = deps.policy_rules.find((candidate) => candidate.stage === stage);
     if (rule === undefined) workflowFail("WORKFLOW_CONFIGURATION_MISSING");
-    const stageFive = await deps.read_stage_five({
-      operation_id: context.request.operation_id,
-      investigation_id: context.request.investigation_ref.id,
-      principal: context.principal,
-    });
     const read = await deps.read_read_extract(
       context.request.operation_id,
       context.request.investigation_ref.id,
     );
-    const selected = evidenceForRole(role, read.evidence);
-    if (selected.length === 0) workflowFail("WORKFLOW_CONFIGURATION_MISSING");
-    const pack = await buildBranchRoleEvidencePack(
-      stageFive.evidence_pack,
-      role,
-      selected.map((item) => item.handle_ref),
-    );
+    let pack: EvidencePack;
+    if ("role_queries" in read) {
+      const query = read.role_queries.find((item) => item.query_plan.role === role);
+      if (query === undefined) workflowFail("WORKFLOW_CONFIGURATION_MISSING");
+      const selected = query.query_result.resolved_evidence.map((item) => item.handle.handle_ref);
+      if (selected.length === 0) workflowFail("WORKFLOW_CONFIGURATION_MISSING");
+      pack = await buildBranchRoleEvidencePackFromQueryResult(query.query_result, role, selected);
+    } else {
+      const stageFive = await deps.read_stage_five({
+        operation_id: context.request.operation_id,
+        investigation_id: context.request.investigation_ref.id,
+        principal: context.principal,
+      });
+      const selected = evidenceForRole(role, read.evidence);
+      if (selected.length === 0) workflowFail("WORKFLOW_CONFIGURATION_MISSING");
+      pack = await buildBranchRoleEvidencePack(
+        stageFive.evidence_pack,
+        role,
+        selected.map((item) => item.handle_ref),
+      );
+    }
     const admission = await deps.admit_branch_role({
       stage_request: recovered.request,
       stage_request_sha256: recovered.sha256,

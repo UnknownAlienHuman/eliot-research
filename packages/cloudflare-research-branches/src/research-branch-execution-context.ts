@@ -1,7 +1,10 @@
 import {
   ResearchBranchEvidenceItemSchema,
   parseResearchPlanningManifest,
+  type BranchQueryPlan,
+  type BranchQueryResult,
   type ResearchBranchEvidenceItem,
+  type ResolvedEvidence,
   type ResearchPlanningManifest,
 } from "@eliotr/contracts";
 import { canonicalEvidenceJson, type NavigationReadAuthority } from "@eliotr/cloudflare-evidence";
@@ -18,6 +21,7 @@ import { assertResearchPlanningManifestIdentity } from "./research-planning-mani
 import type { EvidenceFreezeStageFiveLineage } from "./research-evidence-freeze-preparation.js";
 import { readFreezeProtocolAndScopeCheckpoint, type ProtocolScopeCheckpoint } from "./research-protocol-freeze.js";
 import { refKey, sameRef } from "./research-branch-execution-shared.js";
+import { sourceBoundEvidenceIdentity } from "./research-branch-evidence-identity.js";
 import type { ResearchBranchRoleModelExecutor } from "./research-branch-role-model.js";
 
 interface InitialPayload {
@@ -41,6 +45,14 @@ export interface ResearchBranchExecutionDependencies {
     readonly investigation_id: string;
     readonly principal: WorkflowPrincipal;
   }) => Promise<EvidenceFreezeStageFiveLineage>;
+  /** Existing held-scope retrieval adapter, invoked once per server-bound query plan. */
+  readonly execute_query_plan?: (input: {
+    readonly request: StageRequest;
+    readonly principal: WorkflowPrincipal;
+    readonly plan: BranchQueryPlan;
+  }) => Promise<BranchQueryResult>;
+  /** V9 requires explicit immutable server selection; no installed default exists. */
+  readonly query_plan_budgets?: BranchQueryPlan["budgets"];
   /**
    * Substantive per-role model execution. When absent, any role that requires a
    * model call fails closed; source-class heuristics alone are not substantive
@@ -117,11 +129,29 @@ export async function loadContext(
 }
 
 export function branchEvidence(context: BranchExecutionContext): ResearchBranchEvidenceItem[] {
+  return branchEvidenceFromResolved(context, context.stage_five.evidence_pack.resolved_evidence);
+}
+
+export function branchEvidenceFromResolved(
+  context: BranchExecutionContext,
+  resolvedEvidence: readonly ResolvedEvidence[],
+): ResearchBranchEvidenceItem[] {
+  // V2 flattens sibling query resolutions, so one unchanged handle can arrive
+  // once per sibling query. A fresh exact re-resolution keeps the source-bound
+  // identity while the verification/authorization receipts, resolution time
+  // and display metadata change. Deduplicate on that source-bound identity
+  // and reject only a conflicting identity for the same handle.
+  const identities = new Map<string, string>();
   const members = new Map(context.planning.source_portfolio.members.map((item) => [item.source_revision_ref, item]));
-  const evidence = context.stage_five.evidence_pack.resolved_evidence.map((item) => {
+  const evidence = resolvedEvidence.map((item) => {
     const member = members.get(item.handle.source_revision_ref);
     if (member === undefined || item.handle.terminal_state !== "LIVE" ||
         !sameRef(item.handle.scope_snapshot_ref, context.protocol.scope_snapshot_ref)) fail("WORKFLOW_OUTPUT_CORRUPT");
+    const handleKey = refKey(item.handle.handle_ref);
+    const identity = sourceBoundEvidenceIdentity(item);
+    const previousIdentity = identities.get(handleKey);
+    if (previousIdentity !== undefined && previousIdentity !== identity) fail("WORKFLOW_OUTPUT_CORRUPT");
+    identities.set(handleKey, identity);
     return ResearchBranchEvidenceItemSchema.parse({
       handle_ref: item.handle.handle_ref,
       source_revision_ref: item.handle.source_revision_ref,
@@ -138,5 +168,9 @@ export function branchEvidence(context: BranchExecutionContext): ResearchBranchE
     });
   });
   evidence.sort((left, right) => refKey(left.handle_ref).localeCompare(refKey(right.handle_ref)));
-  return evidence;
+  return evidence.filter((item, index) => {
+    const previous = evidence[index - 1];
+    if (previous === undefined || refKey(previous.handle_ref) !== refKey(item.handle_ref)) return true;
+    return false;
+  });
 }

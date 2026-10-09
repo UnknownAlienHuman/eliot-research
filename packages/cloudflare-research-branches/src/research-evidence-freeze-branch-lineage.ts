@@ -48,9 +48,10 @@ async function branchLineageMaterial(input: {
   const lineage = input.branch_reconciliation;
   if (lineage === undefined || lineage === null) return null;
   const checkpoint = lineage.checkpoint;
+  const v2 = checkpoint.protocol === "eliotr.research.branch-reconciliation.v2";
   const { checkpoint_ref: _checkpointRef, identity_digest: _identityDigest, ...checkpointMaterial } = checkpoint;
   const digest = await evidenceSha256({
-    domain: "eliotr.research.branch-reconciliation.v1",
+    domain: v2 ? "eliotr.research.branch-reconciliation.v2" : "eliotr.research.branch-reconciliation.v1",
     value: checkpointMaterial,
   });
   const requiredRoles = [...checkpoint.required_roles].sort();
@@ -63,13 +64,20 @@ async function branchLineageMaterial(input: {
   const blockedRoles = blockedResults.map((result) => result.role);
   const contradictionRefs = [...checkpoint.unresolved_contradiction_refs].sort();
   const counter = checkpoint.branch_results.find((result) => result.role === "COUNTER");
-  const expectedContradictions = counter === undefined ? [] : (await Promise.all(
+  // V2 has no integrated owner-resolved #214 relation candidates yet; retain the published V1 derivation only.
+  const expectedContradictions = v2 ? [] : counter === undefined ? [] : (await Promise.all(
     counter.evidence_handle_refs.map(async (ref) => `eliotr.research.contradiction-${await evidenceSha256({
       domain: "eliotr.research.contradiction.v1",
       handle_ref: ref,
     })}`),
   )).sort();
   const branchIdentities = await Promise.all(checkpoint.branch_results.map(async (result) => {
+    if ("result_ref" in result) {
+      const { result_ref: _resultRef, identity_digest: _identityDigest, ...material } = result;
+      const resultDigest = await evidenceSha256({ domain: "eliotr.research.branch-result.v2", value: material });
+      return result.identity_digest === resultDigest &&
+        result.result_ref.id === `eliotr.research.branch-result-v2-${resultDigest}` && result.result_ref.revision === 1;
+    }
     const { branch_ref: _branchRef, identity_digest: _identityDigest, ...material } = result;
     const resultDigest = await evidenceSha256({ domain: "eliotr.research.branch-result.v1", value: material });
     return result.identity_digest === resultDigest &&
@@ -93,7 +101,7 @@ async function branchLineageMaterial(input: {
       !sameRef(checkpoint.planning_manifest_ref, input.stage_zero.planning_manifest_ref) ||
       checkpoint.planning_manifest_digest !== input.stage_zero.planning_manifest_digest ||
       digest !== checkpoint.identity_digest ||
-      checkpoint.checkpoint_ref.id !== `eliotr.research.branch-reconciliation-${digest}` ||
+      checkpoint.checkpoint_ref.id !== `eliotr.research.branch-reconciliation${v2 ? "-v2" : ""}-${digest}` ||
       checkpoint.checkpoint_ref.revision !== 1 ||
       !ID.test(lineage.read_extract_attempt_ref) ||
       !SHA256.test(lineage.read_extract_request_sha256) ||

@@ -1,8 +1,8 @@
 import {
-  EvidenceFreezeSchema,
+  EvidenceFreezeBranchFindingsProvenanceSchema,
   VersionedRefSchema,
   type AllowedReferenceManifest,
-  type EvidenceFreeze,
+  type EvidenceFreezeBranchFindingsProvenance,
   type ResolvedEvidence,
   type VersionedRef,
 } from "@eliotr/contracts";
@@ -27,6 +27,9 @@ import type {
 import { InquiryProtocolProfileSchema } from "@eliotr/contracts";
 import type { StageRequest, WorkflowPrincipal, WorkflowStageHandler } from "@eliotr/cloudflare-workflows";
 import { classifyCitationReceiptSettlement } from "./research-evidence-citation-settlement.js";
+import { EvidenceFreezeStageError, failEvidenceFreeze as fail } from "./research-evidence-freeze-errors.js";
+import { freezeBytes, freezeBytesV3 } from "./research-evidence-freeze-output.js";
+export { EvidenceFreezeStageError, type EvidenceFreezeStageErrorCode } from "./research-evidence-freeze-errors.js";
 
 const INPUT_PROTOCOL = "eliotr.evidence-freeze-input.v2" as const;
 const SHA256 = /^[a-f0-9]{64}$/u;
@@ -74,6 +77,7 @@ export interface EvidenceFreezeAuthorityBinding {
   readonly unresolved_contradiction_refs: readonly string[];
   readonly open_research_debt_refs: readonly VersionedRef[];
   readonly provider_model_prompt_tool_generations: Readonly<Record<string, string>>;
+  readonly branch_findings_provenance?: EvidenceFreezeBranchFindingsProvenance;
 }
 
 export interface EvidenceFreezeAuthorityPort {
@@ -91,37 +95,6 @@ export interface EvidenceFreezeStageDependencies {
   readonly manifest_store: Pick<ReferenceManifestStore, "get">;
   readonly resolver: CloudflareEvidenceResolver;
   readonly authority: EvidenceFreezeAuthorityPort;
-}
-
-export type EvidenceFreezeStageErrorCode =
-  | "EVIDENCE_FREEZE_INPUT_INVALID"
-  | "EVIDENCE_FREEZE_SCOPE_STALE"
-  | "EVIDENCE_FREEZE_EVIDENCE_INVALID"
-  | "EVIDENCE_FREEZE_AUTHORITY_INVALID"
-  | "EVIDENCE_FREEZE_SETTLEMENT_UNCERTAIN";
-
-export class EvidenceFreezeStageError extends Error {
-  public readonly retryable: boolean;
-
-  public constructor(
-    public readonly code: EvidenceFreezeStageErrorCode,
-    message: string,
-    retryable = false,
-    cause?: unknown,
-  ) {
-    super(message, cause === undefined ? undefined : { cause });
-    this.name = "EvidenceFreezeStageError";
-    this.retryable = retryable;
-  }
-}
-
-function fail(
-  code: EvidenceFreezeStageErrorCode,
-  message: string,
-  retryable = false,
-  cause?: unknown,
-): never {
-  throw new EvidenceFreezeStageError(code, message, retryable, cause);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -314,12 +287,14 @@ async function validateAuthority(
   let snapshot: EvidenceFreezeAuthorityBinding;
   try { snapshot = JSON.parse(canonicalEvidenceJson(value)) as EvidenceFreezeAuthorityBinding; }
   catch (cause) { fail("EVIDENCE_FREEZE_AUTHORITY_INVALID", "freeze authority readback is not canonical", false, cause); }
-  const authorityKeys = ["freeze_ref", "scope_snapshot_ref", "coverage_denominator_ref", "protocol_digest", "contract_protocol_digest", "lane_digest",
+  const requiredAuthorityKeys = ["freeze_ref", "scope_snapshot_ref", "coverage_denominator_ref", "protocol_digest", "contract_protocol_digest", "lane_digest",
     "stage_zero_attempt_ref", "stage_five_attempt_ref", "stage_five_request_sha256", "model_profile_binding_ref",
     "model_profile_definition", "protocol_profile", "protocol_definition", "lane_material",
     "excluded_evidence", "unresolved_contradiction_refs", "open_research_debt_refs",
     "provider_model_prompt_tool_generations"];
-  if (Object.keys(snapshot).length !== authorityKeys.length || authorityKeys.some((key) => !Object.hasOwn(snapshot, key))) {
+  const optionalAuthorityKeys = ["branch_findings_provenance"];
+  if (requiredAuthorityKeys.some((key) => !Object.hasOwn(snapshot, key)) ||
+      Object.keys(snapshot).some((key) => !requiredAuthorityKeys.includes(key) && !optionalAuthorityKeys.includes(key))) {
     fail("EVIDENCE_FREEZE_AUTHORITY_INVALID", "freeze authority readback has an unexpected shape");
   }
   if (!Array.isArray(snapshot.excluded_evidence) || !Array.isArray(snapshot.unresolved_contradiction_refs) ||
@@ -418,7 +393,24 @@ async function validateAuthority(
     try { VersionedRefSchema.parse(debtRef); }
     catch (cause) { fail("EVIDENCE_FREEZE_AUTHORITY_INVALID", "research debt reference is invalid", false, cause); }
   }
-  return Object.freeze({ ...snapshot, model_profile_definition: modelProfileDefinition });
+  let branchFindingsProvenance: EvidenceFreezeBranchFindingsProvenance | undefined;
+  if (snapshot.branch_findings_provenance !== undefined) {
+    try {
+      branchFindingsProvenance = EvidenceFreezeBranchFindingsProvenanceSchema.parse(snapshot.branch_findings_provenance);
+    } catch (cause) {
+      fail("EVIDENCE_FREEZE_AUTHORITY_INVALID", "branch finding provenance is invalid", false, cause);
+    }
+    const branchSummary = branchFindingsProvenance.reconciliation_summary;
+    const debtRefs = [...branchSummary.research_debts.map((debt) => refKey(debt.debt_ref))].sort();
+    const authorityDebtRefs = [...snapshot.open_research_debt_refs.map(refKey)].sort();
+    if (canonicalEvidenceJson(branchSummary.unresolved_contradiction_refs) !==
+        canonicalEvidenceJson(snapshot.unresolved_contradiction_refs) ||
+        canonicalEvidenceJson(debtRefs) !== canonicalEvidenceJson(authorityDebtRefs)) {
+      fail("EVIDENCE_FREEZE_AUTHORITY_INVALID", "branch findings do not match freeze reconciliation authority");
+    }
+  }
+  return Object.freeze({ ...snapshot, model_profile_definition: modelProfileDefinition,
+    ...(branchFindingsProvenance === undefined ? {} : { branch_findings_provenance: branchFindingsProvenance }) });
 }
 
 function handleKeys(manifest: AllowedReferenceManifest): readonly string[] {
@@ -443,15 +435,6 @@ function resolvedReceiptRecords(evidence: readonly ResolvedEvidence[]): readonly
     excerpt_sha256: item.handle.excerpt_sha256,
     verification_receipt_ref: item.verification_receipt_ref,
   })).sort((left, right) => refKey(left.handle_ref).localeCompare(refKey(right.handle_ref)));
-}
-
-function freezeBytes(freeze: EvidenceFreeze): Uint8Array {
-  let parsed: EvidenceFreeze;
-  try { parsed = EvidenceFreezeSchema.parse(freeze); }
-  catch (cause) { fail("EVIDENCE_FREEZE_INPUT_INVALID", "evidence freeze failed strict validation", false, cause); }
-  const bytes = new TextEncoder().encode(canonicalEvidenceJson(parsed));
-  if (bytes.byteLength > 64 * 1024) fail("EVIDENCE_FREEZE_INPUT_INVALID", "evidence freeze exceeds the receipt bound");
-  return bytes;
 }
 
 export function createEvidenceFreezeStageHandler(
@@ -556,7 +539,7 @@ export function createEvidenceFreezeStageHandler(
       handle_ref: item.handle_ref,
       digest: item.excerpt_sha256,
     })).sort((left, right) => refKey(left.handle_ref).localeCompare(refKey(right.handle_ref)));
-    return freezeBytes({
+    const freeze = {
       freeze_ref: authority.freeze_ref,
       scope_snapshot_ref: manifest.scope_snapshot_ref,
       client_fence_ref: dependencies.navigation.access.credential_generation,
@@ -569,6 +552,10 @@ export function createEvidenceFreezeStageHandler(
       open_research_debt_refs: [...authority.open_research_debt_refs],
       provider_model_prompt_tool_generations: authority.provider_model_prompt_tool_generations,
       frozen_at: observedAt,
-    });
+    };
+    if (authority.branch_findings_provenance !== undefined) {
+      return freezeBytesV3({ freeze, provenance: authority.branch_findings_provenance, resolved_evidence: citation.resolved_evidence });
+    }
+    return freezeBytes(freeze);
   };
 }

@@ -4,7 +4,12 @@ import {
   type StageRequest,
   type WorkflowPrincipal,
 } from "@eliotr/cloudflare-workflows";
-import { ResearchBranchRoleSchema, type ResearchBranchRole } from "@eliotr/contracts";
+import {
+  ResearchBranchRoleSchema,
+  type BranchQueryPlan,
+  type BranchQueryResult,
+  type ResearchBranchRole,
+} from "@eliotr/contracts";
 import {
   createResearchModelStageHandler,
   type ResearchModelStageHandler,
@@ -23,6 +28,13 @@ export interface ResearchBranchRoleModelDependencies {
   /** Snapshot runs select a distinct pinned gateway and prompt policy per actual W2 stage. */
   readonly gateway_for_stage?: (stage: "ANALYZE_BRANCHES" | "COUNTER_SEARCH") => ResearchModelStageHandlerDependencies["gateway"];
   readonly prompt_for_stage?: (role: ResearchBranchRole, stage: "ANALYZE_BRANCHES" | "COUNTER_SEARCH") => ResearchModelPromptCompilerDependencies;
+  /** Dynamic v2 prompt seam: context is derived from the exact committed read/extract bytes. */
+  readonly prompt_for_stage_input?: (
+    role: ResearchBranchRole,
+    stage: "ANALYZE_BRANCHES" | "COUNTER_SEARCH",
+    input_bytes: Uint8Array,
+    branch_query?: { readonly plan: BranchQueryPlan; readonly result: BranchQueryResult },
+  ) => ResearchModelPromptCompilerDependencies;
   /**
    * Server-owned W3 preparation seam. Builds the intent, quote, authority and
    * model call for one role attempt. The spend admission for branch stages is
@@ -49,6 +61,8 @@ export interface ResearchBranchRoleModelInput {
   readonly attempt_ref: string;
   readonly budget_receipt_ref: string;
   readonly input_bytes: Uint8Array;
+  /** Server-only exact query provenance; input_bytes remains the committed stage input. */
+  readonly branch_query?: { readonly plan: BranchQueryPlan; readonly result: BranchQueryResult };
 }
 
 export interface ResearchBranchRoleModelExecutor {
@@ -80,11 +94,20 @@ export function createResearchBranchRoleModelExecutor(
     throw new Error("Native branch execution requires stage-specific model pricing");
   }
   const handlers = new Map<string, ResearchModelStageHandler>();
-  const handlerFor = (role: ResearchBranchRole, stage: "ANALYZE_BRANCHES" | "COUNTER_SEARCH"): ResearchModelStageHandler => {
+  const handlerFor = (
+    role: ResearchBranchRole,
+    stage: "ANALYZE_BRANCHES" | "COUNTER_SEARCH",
+    inputBytes: Uint8Array,
+    branchQuery?: { readonly plan: BranchQueryPlan; readonly result: BranchQueryResult },
+  ): ResearchModelStageHandler => {
     const key = `${stage}:${role}`;
-    const cached = handlers.get(key);
+    const cached = dependencies.prompt_for_stage_input === undefined ? handlers.get(key) : undefined;
     if (cached !== undefined) return cached;
-    if ((dependencies.gateway_for_stage === undefined) !== (dependencies.prompt_for_stage === undefined)) {
+    const stagePromptMismatch = dependencies.prompt_for_stage_input === undefined &&
+      ((dependencies.gateway_for_stage === undefined) !== (dependencies.prompt_for_stage === undefined));
+    const missingStagePrompt = dependencies.gateway_for_stage !== undefined &&
+      dependencies.prompt_for_stage === undefined && dependencies.prompt_for_stage_input === undefined;
+    if (stagePromptMismatch || missingStagePrompt) {
       throw new Error("research branch role stage transport and prompt must be configured together");
     }
     const created = createResearchModelStageHandler({
@@ -92,7 +115,8 @@ export function createResearchBranchRoleModelExecutor(
       work_bucket: dependencies.work_bucket,
       operation_kind: "RESEARCH",
       gateway: dependencies.gateway_for_stage?.(stage) ?? dependencies.gateway,
-      prompt: dependencies.prompt_for_stage?.(role, stage) ?? dependencies.prompt(role),
+      prompt: dependencies.prompt_for_stage_input?.(role, stage, inputBytes, branchQuery) ??
+        dependencies.prompt_for_stage?.(role, stage) ?? dependencies.prompt(role),
       pricing: dependencies.pricing_for_stage?.(stage) ?? dependencies.pricing,
       ...(dependencies.native_model_authority === undefined ? {} : { native_model_authority: dependencies.native_model_authority }),
       prepare: (context) => dependencies.prepare(context, role),
@@ -105,7 +129,7 @@ export function createResearchBranchRoleModelExecutor(
         : { expected_deployment: dependencies.expected_deployment }),
       ...(dependencies.now === undefined ? {} : { now: dependencies.now }),
     });
-    handlers.set(key, created);
+    if (dependencies.prompt_for_stage_input === undefined) handlers.set(key, created);
     return created;
   };
   return Object.freeze({
@@ -116,7 +140,7 @@ export function createResearchBranchRoleModelExecutor(
         throw new Error("research branch role request stage is invalid");
       }
       const roleRequest = deriveBranchRoleStageRequest(input.request, role);
-      return handlerFor(role, stage).handler({
+      return handlerFor(role, stage, input.input_bytes, input.branch_query).handler({
         request: roleRequest,
         principal: input.principal,
         input_bytes: input.input_bytes,

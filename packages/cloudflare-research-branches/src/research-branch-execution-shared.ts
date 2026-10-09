@@ -1,12 +1,18 @@
 import {
   ResearchBranchAnalysisCheckpointSchema,
+  ResearchBranchAnalysisCheckpointV2Schema,
   ResearchBranchReconciliationCheckpointSchema,
+  ResearchBranchReconciliationCheckpointV2Schema,
   ResearchBranchResultSchema,
   ResearchReadExtractCheckpointSchema,
+  ResearchReadExtractCheckpointV2Schema,
   type ResearchBranchAnalysisCheckpoint,
+  type ResearchBranchAnalysisCheckpointV2,
   type ResearchBranchReconciliationCheckpoint,
+  type ResearchBranchReconciliationCheckpointV2,
   type ResearchBranchResult,
   type ResearchReadExtractCheckpoint,
+  type ResearchReadExtractCheckpointV2,
   type VersionedRef,
 } from "@eliotr/contracts";
 import { canonicalEvidenceJson, evidenceSha256 } from "@eliotr/cloudflare-evidence";
@@ -70,10 +76,22 @@ export function decodeResearchReadExtractCheckpoint(bytes: Uint8Array): Research
   return parseCanonical(bytes, ResearchReadExtractCheckpointSchema);
 }
 
+export function decodeResearchReadExtractCheckpointV2(bytes: Uint8Array): ResearchReadExtractCheckpointV2 {
+  return parseCanonical(bytes, ResearchReadExtractCheckpointV2Schema);
+}
+
 export function decodeResearchBranchAnalysisCheckpoint(bytes: Uint8Array): ResearchBranchAnalysisCheckpoint {
   return parseCanonical(bytes, ResearchBranchAnalysisCheckpointSchema);
 }
 
+export function decodeResearchBranchAnalysisCheckpointV2(bytes: Uint8Array): ResearchBranchAnalysisCheckpointV2 {
+  return parseCanonical(bytes, ResearchBranchAnalysisCheckpointV2Schema);
+}
+
 export function decodeResearchBranchReconciliationCheckpoint(bytes: Uint8Array): ResearchBranchReconciliationCheckpoint {
   return parseCanonical(bytes, ResearchBranchReconciliationCheckpointSchema);
+}
+
+export function decodeResearchBranchReconciliationCheckpointV2(bytes: Uint8Array): ResearchBranchReconciliationCheckpointV2 {
+  return parseCanonical(bytes, ResearchBranchReconciliationCheckpointV2Schema);
 }

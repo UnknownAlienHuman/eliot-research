@@ -1,17 +1,25 @@
 // IMPLEMENTED_NOT_LIVE: S37 shared governed branch executor for READ_AND_EXTRACT, ANALYZE_BRANCHES and COUNTER_SEARCH with exact scope/protocol/planning/W1/stage-five revalidation and receipt-based recovery; v7 activation in semantic composition and live model/evidence qualification remain separate.
 import {
   ResearchBranchAnalysisCheckpointSchema,
+  ResearchBranchAnalysisCheckpointV2Schema,
   ResearchBranchReconciliationCheckpointSchema,
+  ResearchBranchReconciliationCheckpointV2Schema,
+  BranchQueryResultSchema,
   ResearchBranchRoleSchema,
   ResearchReadExtractCheckpointSchema,
+  ResearchReadExtractCheckpointV2Schema,
+  branchQueryResultMatchesPlan,
   type ResearchBranchAnalysisCheckpoint,
+  type ResearchBranchAnalysisCheckpointV2,
   type ResearchBranchEvidenceItem,
   type ResearchBranchReconciliationCheckpoint,
+  type ResearchBranchReconciliationCheckpointV2,
   type ResearchBranchResult,
   type ResearchBranchRole,
   type ResearchDebt,
   type ResearchPlanningManifest,
   type ResearchReadExtractCheckpoint,
+  type ResearchReadExtractCheckpointV2,
 } from "@eliotr/contracts";
 import { canonicalEvidenceJson, evidenceSha256 } from "@eliotr/cloudflare-evidence";
 import {
@@ -26,22 +34,28 @@ import {
 import {
   canonicalBytes,
   decodeResearchBranchAnalysisCheckpoint,
+  decodeResearchBranchAnalysisCheckpointV2,
   decodeResearchBranchReconciliationCheckpoint,
+  decodeResearchBranchReconciliationCheckpointV2,
   decodeResearchReadExtractCheckpoint,
+  decodeResearchReadExtractCheckpointV2,
   sameRef,
   uniqueSorted,
   withIdentity,
 } from "./research-branch-execution-shared.js";
 import {
   branchEvidence,
+  branchEvidenceFromResolved,
   loadContext,
   type BranchExecutionContext,
   type ResearchBranchExecutionDependencies,
 } from "./research-branch-execution-context.js";
+import { createResearchBranchQueryPlan } from "./research-branch-query-plan.js";
 import {
   buildRoleResult,
   buildRoleResultFromModelOutput,
   debtFor,
+  executeResearchBranchRolesV2,
   evidenceForRole,
 } from "./research-branch-execution-results.js";
 import { parseBranchRoleModelOutput } from "./research-branch-role-output.js";
@@ -49,17 +63,26 @@ import type { ResearchBranchRoleModelExecutor } from "./research-branch-role-mod
 
 export type {
   ResearchBranchAnalysisCheckpoint,
+  ResearchBranchAnalysisCheckpointV2,
   ResearchBranchReconciliationCheckpoint,
+  ResearchBranchReconciliationCheckpointV2,
   ResearchBranchResult,
+  ResearchBranchResultV2,
   ResearchBranchRole,
   ResearchReadExtractCheckpoint,
+  ResearchReadExtractCheckpointV2,
 } from "@eliotr/contracts";
 export type { ResearchBranchExecutionDependencies } from "./research-branch-execution-context.js";
 export {
   decodeResearchBranchAnalysisCheckpoint,
+  decodeResearchBranchAnalysisCheckpointV2,
   decodeResearchBranchReconciliationCheckpoint,
+  decodeResearchBranchReconciliationCheckpointV2,
   decodeResearchReadExtractCheckpoint,
+  decodeResearchReadExtractCheckpointV2,
 } from "./research-branch-execution-shared.js";
+
+export const BRANCH_QUERY_HANDLER_GENERATION = "research-handlers.exploratory.v9" as const;
 
 export interface ResearchBranchExecutionHandlers {
   readonly read_and_extract: WorkflowStageHandler;
@@ -91,6 +114,57 @@ async function readExtractCheckpoint(
   return ResearchReadExtractCheckpointSchema.parse(await withIdentity(
     "eliotr.research.read-extract.v1",
     "eliotr.research.read-extract-",
+    value,
+  ));
+}
+
+async function readExtractCheckpointV2(
+  dependencies: ResearchBranchExecutionDependencies,
+  context: BranchExecutionContext,
+  request: StageRequest,
+  principal: WorkflowPrincipal,
+): Promise<ResearchReadExtractCheckpointV2> {
+  const executeQueryPlan = dependencies.execute_query_plan;
+  const queryPlanBudgets = dependencies.query_plan_budgets;
+  if (executeQueryPlan === undefined || queryPlanBudgets === undefined) fail("WORKFLOW_CONFIGURATION_MISSING");
+  const requiredRoles = uniqueSorted(context.planning.required_branch_roles.map((role) => ResearchBranchRoleSchema.parse(role)));
+  const roleQueries: ResearchReadExtractCheckpointV2["role_queries"] = [];
+  for (const role of requiredRoles) {
+    const plan = await createResearchBranchQueryPlan({
+      planning: context.planning,
+      role,
+      scope_snapshot_digest: dependencies.navigation.scope.digest,
+      protocol_digest: context.protocol.protocol_digest,
+      required: true,
+      budgets: queryPlanBudgets,
+    });
+    const result = BranchQueryResultSchema.parse(await executeQueryPlan({ request, principal, plan }));
+    if (!branchQueryResultMatchesPlan(plan, result) ||
+        !sameRef(result.scope_snapshot_ref, context.protocol.scope_snapshot_ref) ||
+        result.scope_snapshot_digest !== dependencies.navigation.scope.digest) {
+      fail("WORKFLOW_OUTPUT_CORRUPT");
+    }
+    roleQueries.push({ query_plan: plan, query_result: result });
+  }
+  const resolved = roleQueries.flatMap((item) => item.query_result.resolved_evidence);
+  const value = {
+    protocol: "eliotr.research.read-extract.v2" as const,
+    operation_id: request.operation_id,
+    investigation_ref: { ...request.investigation_ref },
+    principal_ref: principal.principal_ref,
+    scope_snapshot_ref: { ...context.protocol.scope_snapshot_ref },
+    inquiry_protocol_ref: { ...context.protocol.profile_definition_ref },
+    protocol_digest: context.protocol.protocol_digest,
+    planning_manifest_ref: { ...context.planning.manifest_ref },
+    planning_manifest_digest: context.planning.identity_digest,
+    role_queries: roleQueries,
+    evidence: branchEvidenceFromResolved(context, resolved),
+    omitted_candidate_refs: uniqueSorted(roleQueries.flatMap((item) => item.query_result.omitted_candidate_refs)),
+    created_at: context.protocol.observed_at,
+  };
+  return ResearchReadExtractCheckpointV2Schema.parse(await withIdentity(
+    "eliotr.research.read-extract.v2",
+    "eliotr.research.read-extract-v2-",
     value,
   ));
 }
@@ -167,6 +241,38 @@ async function analyzeCheckpoint(
   ));
 }
 
+async function analyzeCheckpointV2(
+  dependencies: ResearchBranchExecutionDependencies,
+  context: BranchExecutionContext,
+  invocation: RoleInvocation,
+  read: ResearchReadExtractCheckpointV2,
+): Promise<ResearchBranchAnalysisCheckpointV2> {
+  const requiredRoles = uniqueSorted(context.planning.required_branch_roles.map((role) => ResearchBranchRoleSchema.parse(role)));
+  const analysisRoles = requiredRoles.filter((role) => role !== "COUNTER");
+  const roleInvocation: RoleInvocation = { ...invocation, role_model: dependencies.role_model };
+  const results = await executeResearchBranchRolesV2(context.planning, analysisRoles, read, roleInvocation);
+  const value = {
+    protocol: "eliotr.research.branch-analysis.v2" as const,
+    operation_id: read.operation_id,
+    investigation_ref: { ...read.investigation_ref },
+    principal_ref: read.principal_ref,
+    scope_snapshot_ref: { ...read.scope_snapshot_ref },
+    inquiry_protocol_ref: { ...read.inquiry_protocol_ref },
+    protocol_digest: read.protocol_digest,
+    planning_manifest_ref: { ...read.planning_manifest_ref },
+    planning_manifest_digest: read.planning_manifest_digest,
+    read_extract_ref: { ...read.checkpoint_ref },
+    required_roles: requiredRoles,
+    branch_results: results,
+    created_at: read.created_at,
+  };
+  return ResearchBranchAnalysisCheckpointV2Schema.parse(await withIdentity(
+    "eliotr.research.branch-analysis.v2",
+    "eliotr.research.branch-analysis-v2-",
+    value,
+  ));
+}
+
 async function reconciliationCheckpoint(
   dependencies: ResearchBranchExecutionDependencies,
   context: BranchExecutionContext,
@@ -226,17 +332,82 @@ async function reconciliationCheckpoint(
     value,
   ));
 }
+
+async function reconciliationCheckpointV2(
+  dependencies: ResearchBranchExecutionDependencies,
+  context: BranchExecutionContext,
+  invocation: RoleInvocation,
+  analysis: ResearchBranchAnalysisCheckpointV2,
+  read: ResearchReadExtractCheckpointV2,
+): Promise<ResearchBranchReconciliationCheckpointV2> {
+  const results = [...analysis.branch_results];
+  const counterRequired = analysis.required_roles.includes("COUNTER");
+  if (counterRequired) {
+    results.push(...await executeResearchBranchRolesV2(
+      context.planning,
+      ["COUNTER"],
+      read,
+      { ...invocation, role_model: dependencies.role_model },
+    ));
+  }
+  results.sort((left, right) => left.role.localeCompare(right.role));
+  const unmet = results.filter((item) => item.status === "BLOCKED").map((item) => item.role).sort();
+  const debts: ResearchDebt[] = [];
+  for (const result of results) if (result.status === "BLOCKED") debts.push(await debtFor(result));
+  const counter = results.find((item) => item.role === "COUNTER");
+  // #214 relation candidates are not integrated here: counter evidence handles alone do not establish contradictions.
+  const contradictions: string[] = [];
+  const value = {
+    protocol: "eliotr.research.branch-reconciliation.v2" as const,
+    operation_id: analysis.operation_id,
+    investigation_ref: { ...analysis.investigation_ref },
+    principal_ref: analysis.principal_ref,
+    scope_snapshot_ref: { ...analysis.scope_snapshot_ref },
+    inquiry_protocol_ref: { ...analysis.inquiry_protocol_ref },
+    protocol_digest: analysis.protocol_digest,
+    planning_manifest_ref: { ...analysis.planning_manifest_ref },
+    planning_manifest_digest: analysis.planning_manifest_digest,
+    branch_analysis_ref: { ...analysis.checkpoint_ref },
+    required_roles: [...analysis.required_roles],
+    branch_results: results,
+    unmet_required_roles: unmet,
+    unresolved_contradiction_refs: uniqueSorted(contradictions),
+    research_debts: debts,
+    counter_search_status: !counterRequired ? "NOT_REQUIRED" as const
+      : counter?.status === "CANDIDATE_READY" ? "COMPLETE" as const
+        : "PARTIAL" as const,
+    created_at: analysis.created_at,
+  };
+  return ResearchBranchReconciliationCheckpointV2Schema.parse(await withIdentity(
+    "eliotr.research.branch-reconciliation.v2",
+    "eliotr.research.branch-reconciliation-v2-",
+    value,
+  ));
+}
 export function createResearchBranchExecutionHandlers(
   dependencies: ResearchBranchExecutionDependencies,
 ): ResearchBranchExecutionHandlers {
   const read_and_extract: WorkflowStageHandler = async ({ request, principal }) => {
     if (request.stage !== "READ_AND_EXTRACT") fail("WORKFLOW_INPUT_INVALID");
     const context = await loadContext(dependencies, request, principal);
+    if (request.handler_generation === BRANCH_QUERY_HANDLER_GENERATION) {
+      return canonicalBytes(await readExtractCheckpointV2(dependencies, context, request, principal));
+    }
     return canonicalBytes(await readExtractCheckpoint(context, request, principal));
   };
   const analyze_branches: WorkflowStageHandler = async ({ request, principal, input_bytes, attempt_ref, budget_receipt_ref }) => {
     if (request.stage !== "ANALYZE_BRANCHES") fail("WORKFLOW_INPUT_INVALID");
     const context = await loadContext(dependencies, request, principal);
+    if (request.handler_generation === BRANCH_QUERY_HANDLER_GENERATION) {
+      const read = decodeResearchReadExtractCheckpointV2(input_bytes);
+      if (read.operation_id !== request.operation_id || read.investigation_ref.id !== request.investigation_ref.id ||
+          read.principal_ref !== principal.principal_ref || !sameRef(read.scope_snapshot_ref, context.protocol.scope_snapshot_ref) ||
+          !sameRef(read.planning_manifest_ref, context.planning.manifest_ref) || read.planning_manifest_digest !== context.planning.identity_digest) {
+        fail("WORKFLOW_OUTPUT_CORRUPT");
+      }
+      return canonicalBytes(await analyzeCheckpointV2(dependencies, context,
+        { request, principal, attempt_ref, budget_receipt_ref, input_bytes }, read));
+    }
     const read = decodeResearchReadExtractCheckpoint(input_bytes);
     if (read.operation_id !== request.operation_id || read.investigation_ref.id !== request.investigation_ref.id ||
         read.principal_ref !== principal.principal_ref || !sameRef(read.scope_snapshot_ref, context.protocol.scope_snapshot_ref) ||
@@ -249,6 +420,20 @@ export function createResearchBranchExecutionHandlers(
   const counter_search: WorkflowStageHandler = async ({ request, principal, input_bytes, attempt_ref, budget_receipt_ref }) => {
     if (request.stage !== "COUNTER_SEARCH") fail("WORKFLOW_INPUT_INVALID");
     const context = await loadContext(dependencies, request, principal);
+    if (request.handler_generation === BRANCH_QUERY_HANDLER_GENERATION) {
+      const analysis = decodeResearchBranchAnalysisCheckpointV2(input_bytes);
+      if (analysis.operation_id !== request.operation_id || analysis.investigation_ref.id !== request.investigation_ref.id ||
+          analysis.principal_ref !== principal.principal_ref || !sameRef(analysis.scope_snapshot_ref, context.protocol.scope_snapshot_ref) ||
+          !sameRef(analysis.planning_manifest_ref, context.planning.manifest_ref) || analysis.planning_manifest_digest !== context.planning.identity_digest) {
+        fail("WORKFLOW_OUTPUT_CORRUPT");
+      }
+      const storedRead = await readCommittedStageLineage(new WorkflowCheckpointStore(dependencies.database), request.operation_id, "READ_AND_EXTRACT");
+      const readInputBytes = await readWorkflowObject(dependencies.work_bucket, storedRead.receipt.output_manifest, true);
+      const read = decodeResearchReadExtractCheckpointV2(readInputBytes);
+      if (!sameRef(read.checkpoint_ref, analysis.read_extract_ref)) fail("WORKFLOW_OUTPUT_CORRUPT");
+      return canonicalBytes(await reconciliationCheckpointV2(dependencies, context,
+        { request, principal, attempt_ref, budget_receipt_ref, input_bytes }, analysis, read));
+    }
     const analysis = decodeResearchBranchAnalysisCheckpoint(input_bytes);
     if (analysis.operation_id !== request.operation_id || analysis.investigation_ref.id !== request.investigation_ref.id ||
         analysis.principal_ref !== principal.principal_ref || !sameRef(analysis.scope_snapshot_ref, context.protocol.scope_snapshot_ref) ||
@@ -282,7 +467,7 @@ export function createResearchBranchExecutionHandlers(
 }
 
 export interface ResearchBranchReconciliationLineage {
-  readonly checkpoint: ResearchBranchReconciliationCheckpoint;
+  readonly checkpoint: ResearchBranchReconciliationCheckpoint | ResearchBranchReconciliationCheckpointV2;
   readonly read_extract_attempt_ref: string;
   readonly read_extract_request_sha256: string;
   readonly branch_analysis_attempt_ref: string;
@@ -322,14 +507,21 @@ export async function readCommittedResearchBranchReconciliationLineage(
       analysisLineage.request.investigation_ref.revision !== committed.request.investigation_ref.revision) {
     fail("WORKFLOW_OUTPUT_CORRUPT");
   }
-  const [read, analysis, checkpoint] = await Promise.all([
-    readWorkflowObject(input.work_bucket, readLineage.receipt.output_manifest, true)
-      .then(decodeResearchReadExtractCheckpoint),
-    readWorkflowObject(input.work_bucket, analysisLineage.receipt.output_manifest, true)
-      .then(decodeResearchBranchAnalysisCheckpoint),
-    readWorkflowObject(input.work_bucket, receipt.output_manifest, true)
-      .then(decodeResearchBranchReconciliationCheckpoint),
+  const isV2 = committed.request.handler_generation === BRANCH_QUERY_HANDLER_GENERATION;
+  if (readLineage.request.handler_generation !== committed.request.handler_generation ||
+      analysisLineage.request.handler_generation !== committed.request.handler_generation) fail("WORKFLOW_OUTPUT_CORRUPT");
+  const [readBytes, analysisBytes, checkpointBytes] = await Promise.all([
+    readWorkflowObject(input.work_bucket, readLineage.receipt.output_manifest, true),
+    readWorkflowObject(input.work_bucket, analysisLineage.receipt.output_manifest, true),
+    readWorkflowObject(input.work_bucket, receipt.output_manifest, true),
   ]);
+  const read = isV2 ? decodeResearchReadExtractCheckpointV2(readBytes) : decodeResearchReadExtractCheckpoint(readBytes);
+  const analysis = isV2
+    ? decodeResearchBranchAnalysisCheckpointV2(analysisBytes)
+    : decodeResearchBranchAnalysisCheckpoint(analysisBytes);
+  const checkpoint = isV2
+    ? decodeResearchBranchReconciliationCheckpointV2(checkpointBytes)
+    : decodeResearchBranchReconciliationCheckpoint(checkpointBytes);
   const analysisResults = [...analysis.branch_results]
     .sort((left, right) => left.role.localeCompare(right.role));
   const reconciledAnalysisResults = checkpoint.branch_results
@@ -364,7 +556,7 @@ export async function readCommittedResearchBranchReconciliationLineage(
 
 export async function readCommittedResearchBranchReconciliation(
   input: ResearchBranchReconciliationReadInput,
-): Promise<ResearchBranchReconciliationCheckpoint | null> {
+): Promise<ResearchBranchReconciliationCheckpoint | ResearchBranchReconciliationCheckpointV2 | null> {
   const lineage = await readCommittedResearchBranchReconciliationLineage(input);
   return lineage?.checkpoint ?? null;
 }

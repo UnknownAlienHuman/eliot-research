@@ -12,7 +12,8 @@ import {
 } from "@eliotr/cloudflare-model-execution";
 import type { ModelAttemptPreparationContext, GovernedModelAttemptHandler } from "@eliotr/cloudflare-model-execution";
 import type { ModelAttemptReservationInput } from "@eliotr/cloudflare-model-execution";
-import { EvidenceFreezeSchema, type AllowedReferenceManifest, type EvidenceFreeze } from "@eliotr/contracts";
+import { type AllowedReferenceManifest,
+  type EvidenceFreeze, type EvidenceFreezeBranchFindings } from "@eliotr/contracts";
 import { digest, fail, type StageRequest, type WorkflowPrincipal, type WorkflowStageHandler, type StageReceipt } from "@eliotr/cloudflare-workflows";
 import {
   createEvidenceFreezeStageHandler,
@@ -20,15 +21,19 @@ import {
 } from "./research-evidence-freeze.js";
 import {
   deriveEvidenceFreezeAuthorityBinding,
+  deriveEvidenceFreezeBranchFindingsProvenance,
+  createSynthesisEvidencePackProjection,
   prepareEvidenceFreezeInput,
   type EvidenceFreezeManifestStoreFactory,
   type EvidenceFreezeModelBinding,
   type EvidenceFreezeResidencyTemplate,
   type EvidenceFreezeStageFiveLineage,
 } from "./research-evidence-freeze-preparation.js";
+import { buildEvidenceFreezeLineage, derivedFreezeRef, derivedManifestRef } from "./research-evidence-freeze-branch-lineage.js";
 import { readFreezeProtocolAndScopeCheckpoint } from "./research-protocol-freeze.js";
 import { WorkflowCheckpointStore } from "@eliotr/cloudflare-workflows";
 import { readCommittedStageLineage } from "@eliotr/cloudflare-workflows";
+import { parseCommittedFreeze, assertSynthesisLineage, assertFrozenBranchEvidenceBinding } from "./research-evidence-freeze-synthesis-lineage.js";
 
 export interface EvidenceFreezePredecessorReadback {
   readonly stage_zero: ProtocolScopeCheckpoint;
@@ -227,6 +232,8 @@ export interface EvidenceFreezeSynthesisContext {
   readonly stage_eleven_attempt_ref: string;
   readonly stage_eleven_receipt: StageReceipt;
   readonly freeze: EvidenceFreeze;
+  readonly branch_findings?: EvidenceFreezeBranchFindings;
+  readonly synthesis_evidence_pack?: EvidenceFreezeStageFiveLineage["evidence_pack"];
   readonly manifest: AllowedReferenceManifest;
   readonly stage_five: EvidenceFreezeStageFiveLineage;
   readonly w1_head: LedgerHead;
@@ -264,17 +271,6 @@ function sameBytes(left: Uint8Array, right: Uint8Array): boolean {
   return true;
 }
 
-function parseCommittedFreeze(bytes: Uint8Array): EvidenceFreeze {
-  try {
-    const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-    const value = EvidenceFreezeSchema.parse(JSON.parse(text));
-    if (canonicalEvidenceJson(value) !== text) fail("WORKFLOW_OUTPUT_CORRUPT");
-    return value;
-  } catch {
-    fail("WORKFLOW_OUTPUT_CORRUPT");
-  }
-}
-
 function ref(value: { readonly id: string; readonly revision: number }): string {
   return `${value.id}:${value.revision}`;
 }
@@ -291,39 +287,12 @@ function evidenceRecords(value: readonly {
   return value.map((item) => `${ref(item.handle_ref)}:${item.excerpt_sha256 ?? item.digest ?? ""}`).sort();
 }
 
-function assertSynthesisLineage(
-  request: StageRequest,
-  stageTen: { readonly request: StageRequest; readonly attempt_ref: string; readonly request_sha256: string },
-  stageTenReceipt: StageReceipt,
-  stageEleven: { readonly request: StageRequest; readonly attempt_ref: string; readonly request_sha256: string },
-  stageElevenReceipt: StageReceipt,
-): void {
-  if (request.stage !== "SYNTHESIZE" || stageTen.request.stage !== "RECONCILE" || stageEleven.request.stage !== "FREEZE_EVIDENCE" ||
-      request.operation_id !== stageTen.request.operation_id || request.operation_id !== stageEleven.request.operation_id ||
-      request.investigation_ref.id !== stageTen.request.investigation_ref.id ||
-      request.investigation_ref.id !== stageEleven.request.investigation_ref.id ||
-      stageTenReceipt.investigation_ref.id !== request.investigation_ref.id ||
-      stageElevenReceipt.investigation_ref.id !== request.investigation_ref.id ||
-      stageTenReceipt.investigation_ref.revision !== stageEleven.request.investigation_ref.revision ||
-      stageElevenReceipt.investigation_ref.revision !== request.investigation_ref.revision ||
-      stageTenReceipt.output_manifest.object_ref !== stageEleven.request.input_manifest.object_ref ||
-      stageTenReceipt.output_manifest.sha256 !== stageEleven.request.input_manifest.sha256 ||
-      stageElevenReceipt.output_manifest.object_ref !== request.input_manifest.object_ref ||
-      stageElevenReceipt.output_manifest.sha256 !== request.input_manifest.sha256 ||
-      stageTenReceipt.input_manifest_ref !== stageTen.request.input_manifest.object_ref ||
-      stageElevenReceipt.input_manifest_ref !== stageEleven.request.input_manifest.object_ref ||
-      stageTenReceipt.attempt_ref !== stageTen.attempt_ref || stageElevenReceipt.attempt_ref !== stageEleven.attempt_ref ||
-      stageTenReceipt.request_sha256 !== stageTen.request_sha256 || stageElevenReceipt.request_sha256 !== stageEleven.request_sha256) {
-    fail("WORKFLOW_OUTPUT_CORRUPT");
-  }
-}
-
 function assertSynthesisPreparation(
   prepared: ModelAttemptReservationInput,
   frozen: EvidenceFreezeSynthesisContext,
 ): void {
   const deployment = frozen.stage_ten_input.model_profile_definition.deployment;
-  if (!sameJson(prepared.call.evidence_pack, frozen.stage_five.evidence_pack) ||
+  if (!sameJson(prepared.call.evidence_pack, frozen.synthesis_evidence_pack ?? frozen.stage_five.evidence_pack) ||
       prepared.call.route_ref !== deployment.route_ref ||
       prepared.call.prompt_generation !== deployment.prompt_generation ||
       prepared.call.schema_generation !== deployment.schema_generation ||
@@ -373,12 +342,54 @@ function createSynthesisContextReader(
       let stageTenInput: EvidenceFreezeStageInput;
       try { stageTenInput = await decodeEvidenceFreezeStageInput(stageTenBytes); }
       catch { fail("WORKFLOW_OUTPUT_CORRUPT"); }
-      const freeze = parseCommittedFreeze(stageElevenBytes);
+      const { freeze, branch_findings: branchFindings } = await parseCommittedFreeze(stageElevenBytes, stageEleven.request.handler_generation);
       const stageFive = await environment.read_stage_five({ operation_id: input.request.operation_id, investigation_id: input.request.investigation_ref.id, principal: input.principal });
+      if (stageZero === null) fail("WORKFLOW_OUTPUT_CORRUPT");
       let manifest: AllowedReferenceManifest | null;
       try { manifest = await environment.manifest_store.get(stageTenInput.manifest_ref); }
       catch { fail("WORKFLOW_OUTPUT_UNAVAILABLE"); }
       if (manifest === null) fail("WORKFLOW_OUTPUT_CORRUPT");
+      if (branchFindings !== undefined) {
+        const branchLineage = await readers.read_branch_reconciliation?.({
+          operation_id: input.request.operation_id, investigation_id: input.request.investigation_ref.id,
+          principal: input.principal,
+        });
+        if (branchLineage === undefined || branchLineage === null ||
+            branchLineage.checkpoint.protocol !== "eliotr.research.branch-reconciliation.v2") fail("WORKFLOW_OUTPUT_CORRUPT");
+        const expectedProvenance = await deriveEvidenceFreezeBranchFindingsProvenance(branchLineage);
+        const { identity_digest: _findingsDigest, resolved_evidence: _resolvedEvidence, ...frozenProvenance } = branchFindings;
+        if (expectedProvenance === undefined || !sameJson(expectedProvenance, frozenProvenance)) fail("WORKFLOW_OUTPUT_CORRUPT");
+        const lineage = await buildEvidenceFreezeLineage({
+          operation_id: input.request.operation_id, stage_zero: stageZero, stage_five: stageFive,
+          model_profile_binding_ref: stageTenInput.model_profile_binding_ref, branch_reconciliation: branchLineage,
+        });
+        const expectedManifestRef = await derivedManifestRef(lineage.identity);
+        const expectedFreezeRef = await derivedFreezeRef(lineage.identity, expectedManifestRef, manifest.manifest_digest);
+        if (ref(expectedManifestRef) !== ref(manifest.manifest_ref) || ref(expectedFreezeRef) !== ref(freeze.freeze_ref)) {
+          fail("WORKFLOW_OUTPUT_CORRUPT");
+        }
+        assertFrozenBranchEvidenceBinding(
+          branchLineage.checkpoint.branch_results.flatMap((result) => result.query_result.resolved_evidence),
+          branchFindings.resolved_evidence,
+        );
+      }
+      const projected = branchFindings === undefined ? undefined : await createSynthesisEvidencePackProjection({
+        stage_five_pack: stageFive.evidence_pack,
+        branch_resolved_evidence: branchFindings.resolved_evidence,
+        branch_omitted_candidate_refs: branchFindings.roles.flatMap((role) => role.omitted_candidate_refs),
+        branch_trace_refs: branchFindings.roles.flatMap((role) => role.retrieval_legs.flatMap((leg) =>
+          leg.trace_ref === undefined ? [] : [leg.trace_ref])),
+        branch_scope_snapshot_ref: freeze.scope_snapshot_ref,
+        branch_reconciliation_ref: branchFindings.reconciliation_ref,
+        branch_reconciliation_digest: branchFindings.reconciliation_digest,
+        freeze_ref: freeze.freeze_ref,
+        manifest_digest: manifest.manifest_digest,
+      });
+      const synthesisPack = projected === undefined ? stageFive.evidence_pack : Object.freeze({
+        pack_ref: projected.pack_ref, scope_snapshot_ref: projected.scope_snapshot_ref,
+        resolved_evidence: projected.resolved_evidence, omitted_candidates: projected.omitted_candidates,
+        trace_ref: projected.trace_ref, total_utf8_bytes: projected.total_utf8_bytes,
+      });
       if (stageFive.operation_id !== input.request.operation_id || stageFive.investigation_ref.id !== input.request.investigation_ref.id ||
           stageFive.principal_ref !== input.principal.principal_ref || stageZero === null ||
           stageTenInput.stage_zero_attempt_ref.length === 0 || stageTenInput.stage_five_attempt_ref !== stageFive.stage_attempt_ref ||
@@ -396,7 +407,7 @@ function createSynthesisContextReader(
           stageTenInput.coverage_denominator_ref.revision !== stageZero.coverage_denominator.denominator_ref.revision ||
           stageFive.denominator_digest !== stageZero.denominator_digest ||
           !sameJson(stageTenInput.protocol_profile, stageZero.protocol_profile) ||
-          !sameJson(evidenceRecords(freeze.included_evidence), evidenceRecords(stageFive.evidence_pack.resolved_evidence.map((item) => ({
+          !sameJson(evidenceRecords(freeze.included_evidence), evidenceRecords(synthesisPack.resolved_evidence.map((item) => ({
             handle_ref: item.handle.handle_ref, excerpt_sha256: item.handle.excerpt_sha256,
           }))))) {
         fail("WORKFLOW_OUTPUT_CORRUPT");
@@ -428,6 +439,7 @@ function createSynthesisContextReader(
         stage_eleven_request: stageEleven.request, stage_eleven_request_sha256: stageEleven.request_sha256,
         stage_eleven_attempt_ref: stageEleven.attempt_ref, stage_eleven_receipt: stageElevenReceipt,
         freeze, manifest, stage_five: stageFive, w1_head: finalHead,
+        ...(branchFindings === undefined ? {} : { branch_findings: branchFindings, synthesis_evidence_pack: synthesisPack }),
       });
     },
   };

@@ -1,8 +1,12 @@
 import {
+  EvidenceFreezeBranchFindingsProvenanceSchema,
   ObjectResidencyKeySchema,
+  ResearchBranchReconciliationCheckpointV2Schema,
   type AllowedReferenceManifest,
+  type EvidenceFreezeBranchFindingsProvenance,
   type InquiryProtocolProfile,
   type ObjectResidencyKey,
+  type ResolvedEvidence,
   type VersionedRef,
 } from "@eliotr/contracts";
 import {
@@ -33,6 +37,13 @@ import {
   derivedFreezeRef,
   derivedManifestRef,
 } from "./research-evidence-freeze-branch-lineage.js";
+import { createSynthesisEvidencePackProjection } from "./research-synthesis-evidence-pack.js";
+
+export { createSynthesisEvidencePackProjection } from "./research-synthesis-evidence-pack.js";
+export type {
+  SynthesisEvidencePackProjection,
+  SynthesisEvidencePackProjectionInput,
+} from "./research-synthesis-evidence-pack.js";
 
 export type { EvidenceFreezeModelBinding, EvidenceFreezeModelDefinition };
 
@@ -102,6 +113,108 @@ export interface EvidenceFreezePreparationResult {
     readonly model_profile_definition: EvidenceFreezeModelDefinition;
   };
   readonly manifest_digest: string;
+}
+
+function branchSynthesisEvidenceInput(lineage: ResearchBranchReconciliationLineage | null | undefined): {
+  readonly branch_resolved_evidence: readonly ResolvedEvidence[];
+  readonly branch_omitted_candidate_refs: readonly string[];
+  readonly branch_trace_refs: readonly VersionedRef[];
+  readonly branch_scope_snapshot_ref: VersionedRef;
+  readonly branch_reconciliation_ref: VersionedRef;
+  readonly branch_reconciliation_digest: string;
+} | null {
+  const checkpoint = lineage?.checkpoint;
+  if (checkpoint === undefined || checkpoint.protocol !== "eliotr.research.branch-reconciliation.v2") return null;
+  const validated = ResearchBranchReconciliationCheckpointV2Schema.parse(checkpoint);
+  return {
+    branch_resolved_evidence: validated.branch_results.flatMap((result) => result.query_result.resolved_evidence),
+    branch_omitted_candidate_refs: validated.branch_results.flatMap((result) => result.query_result.omitted_candidate_refs),
+    branch_trace_refs: validated.branch_results.flatMap((result) => result.query_result.query_legs.flatMap((leg) =>
+      leg.trace === undefined ? [] : [leg.trace.trace_ref])),
+    branch_scope_snapshot_ref: validated.scope_snapshot_ref,
+    branch_reconciliation_ref: validated.checkpoint_ref,
+    branch_reconciliation_digest: validated.identity_digest,
+  };
+}
+
+/**
+ * Shared reconciliation-to-freeze derivation. The freeze writer and synthesis
+ * reader use this same function so the V3 summary is checked against the exact
+ * committed Stage9 checkpoint, not a reader-local approximation.
+ */
+export async function deriveEvidenceFreezeBranchFindingsProvenance(
+  lineage: ResearchBranchReconciliationLineage | null | undefined,
+): Promise<EvidenceFreezeBranchFindingsProvenance | undefined> {
+  const checkpoint = lineage?.checkpoint;
+  if (checkpoint === undefined || checkpoint.protocol !== "eliotr.research.branch-reconciliation.v2") return undefined;
+  const validated = ResearchBranchReconciliationCheckpointV2Schema.parse(checkpoint);
+  const roles = await Promise.all(validated.branch_results.map(async (result) => ({
+    role: result.role,
+    branch_ref: result.branch_ref,
+    status: result.status,
+    query_plan: result.query_plan,
+    query_result_ref: result.query_result.query_result_ref,
+    query_result_digest: result.query_result.identity_digest,
+    failure_disposition: result.query_result.failure_disposition,
+    stop_reason: result.query_result.stop_reason,
+    scope_snapshot_ref: result.query_result.scope_snapshot_ref,
+    scope_snapshot_digest: result.query_result.scope_snapshot_digest,
+    omitted_candidate_refs: [...result.query_result.omitted_candidate_refs],
+    retrieval_legs: await Promise.all(result.query_result.query_legs.map(async (leg) => ({
+      query_id: leg.query_id,
+      query_sha256: leg.query_sha256,
+      retrieval_request_digest: leg.retrieval_request_digest,
+      scope_snapshot_ref: leg.scope_snapshot_ref,
+      scope_snapshot_digest: leg.scope_snapshot_digest,
+      status: leg.status,
+      ...(leg.trace === undefined ? {} : {
+        trace_ref: leg.trace.trace_ref,
+        trace_sha256: await evidenceSha256({ domain: "eliotr.research.branch-query-trace.v1", value: leg.trace }),
+      }),
+      ...(leg.failure_code === undefined ? {} : { failure_code: leg.failure_code }),
+      stop_reason: leg.stop_reason,
+      resolved_handle_refs: leg.resolved_handle_refs.map((item) => ({
+        handle_ref: item.handle_ref,
+        excerpt_sha256: item.excerpt_sha256,
+        excerpt_byte_length: item.excerpt_byte_length,
+      })),
+      omitted_candidates: leg.omitted_candidates,
+    }))),
+    finding_refs: result.findings.map((finding) => finding.finding_ref),
+  })));
+  const provenance = {
+    protocol: "eliotr.research.evidence-freeze-branch-findings.v1" as const,
+    reconciliation_ref: validated.checkpoint_ref,
+    reconciliation_digest: validated.identity_digest,
+    reconciliation_summary: {
+      protocol: validated.protocol,
+      checkpoint_ref: validated.checkpoint_ref,
+      identity_digest: validated.identity_digest,
+      operation_id: validated.operation_id,
+      investigation_ref: validated.investigation_ref,
+      principal_ref: validated.principal_ref,
+      scope_snapshot_ref: validated.scope_snapshot_ref,
+      inquiry_protocol_ref: validated.inquiry_protocol_ref,
+      protocol_digest: validated.protocol_digest,
+      planning_manifest_ref: validated.planning_manifest_ref,
+      planning_manifest_digest: validated.planning_manifest_digest,
+      branch_analysis_ref: validated.branch_analysis_ref,
+      required_roles: validated.required_roles,
+      unmet_required_roles: validated.unmet_required_roles,
+      unresolved_contradiction_refs: validated.unresolved_contradiction_refs,
+      research_debts: validated.research_debts,
+      counter_search_status: validated.counter_search_status,
+      omissions: validated.branch_results.map((result) => ({
+        role: result.role,
+        omitted_candidate_refs: [...result.query_result.omitted_candidate_refs],
+      })),
+      created_at: validated.created_at,
+    },
+    roles,
+    findings: validated.branch_results.flatMap((result) => result.findings)
+      .sort((left, right) => left.role.localeCompare(right.role) || left.finding_ref.id.localeCompare(right.finding_ref.id)),
+  };
+  return EvidenceFreezeBranchFindingsProvenanceSchema.parse(provenance);
 }
 
 function sameRef(left: VersionedRef, right: VersionedRef): boolean {
@@ -232,6 +345,7 @@ export async function deriveEvidenceFreezeAuthorityBinding(input: {
   readonly unresolved_contradiction_refs: readonly string[];
   readonly open_research_debt_refs: readonly VersionedRef[];
   readonly provider_model_prompt_tool_generations: Readonly<Record<string, string>>;
+  readonly branch_findings_provenance?: EvidenceFreezeBranchFindingsProvenance;
 }> {
   cleanW1(input.w1_head, input.stage_zero, input.current_investigation_ref);
   const lineage = await buildEvidenceFreezeLineage({
@@ -285,6 +399,7 @@ export async function deriveEvidenceFreezeAuthorityBinding(input: {
     lane: input.w1_head.lane,
     lane_registrations: [...input.w1_head.lane_registrations],
   });
+  const branchFindings = await deriveEvidenceFreezeBranchFindingsProvenance(input.branch_reconciliation);
   if (input.stage_input.contract_protocol_digest !== contractProtocolDigest || input.stage_input.lane_digest !== laneDigest) {
     throw new Error("freeze authority digest differs from persisted workflow material");
   }
@@ -314,6 +429,7 @@ export async function deriveEvidenceFreezeAuthorityBinding(input: {
       ? []
       : lineage.branch.open_research_debt_refs.map((ref) => ({ ...ref })),
     provider_model_prompt_tool_generations: generationBindings(input.model_binding),
+    ...(branchFindings === undefined ? {} : { branch_findings_provenance: branchFindings }),
   };
 }
 
@@ -368,8 +484,17 @@ export async function prepareEvidenceFreezeInput(
       : { branch_reconciliation: dependencies.branch_reconciliation }),
   });
   const manifestRef = await derivedManifestRef(lineage.identity);
+  // This local projection widens only the manifest's evidence set. The committed
+  // stage-five pack and all of its lineage refs remain unchanged.
+  const branchProjectionInput = branchSynthesisEvidenceInput(dependencies.branch_reconciliation);
+  const synthesisEvidencePack = branchProjectionInput === null
+    ? dependencies.stage_five.evidence_pack
+    : await createSynthesisEvidencePackProjection({
+      stage_five_pack: dependencies.stage_five.evidence_pack,
+      ...branchProjectionInput,
+    });
   const built = await buildAllowedReferenceManifest({
-    evidence_pack: dependencies.stage_five.evidence_pack,
+    evidence_pack: synthesisEvidencePack,
     navigation: dependencies.navigation,
     resolver: dependencies.resolver,
     policy: binding.policy,
@@ -380,6 +505,15 @@ export async function prepareEvidenceFreezeInput(
   const manifestBytes = new TextEncoder().encode(canonicalEvidenceJson(built.manifest));
   if (manifestBytes.byteLength > MAX_BYTES * 4) throw new Error("reference manifest exceeds bounded storage input");
   const manifestContentDigest = await evidenceSha256Bytes(manifestBytes);
+  const freezeRef = await derivedFreezeRef(lineage.identity, manifestRef, built.manifest.manifest_digest);
+  const frozenSynthesisEvidencePack = branchProjectionInput === null
+    ? dependencies.stage_five.evidence_pack
+    : await createSynthesisEvidencePackProjection({
+      stage_five_pack: dependencies.stage_five.evidence_pack,
+      ...branchProjectionInput,
+      freeze_ref: freezeRef,
+      manifest_digest: built.manifest.manifest_digest,
+    });
   const residency = ObjectResidencyKeySchema.parse({
     ...dependencies.manifest_residency_template,
     content_digest: { algorithm: "sha256", digest: manifestContentDigest },
@@ -393,8 +527,8 @@ export async function prepareEvidenceFreezeInput(
     policy_authority_ref: binding.policy_authority_ref,
     authorization_receipt_ref: dependencies.authorization_receipt_ref,
     scope_snapshot_digest: dependencies.navigation.scope.digest,
-    pack_ref: dependencies.stage_five.evidence_pack.pack_ref,
-    trace_ref: dependencies.stage_five.evidence_pack.trace_ref,
+    pack_ref: frozenSynthesisEvidencePack.pack_ref,
+    trace_ref: frozenSynthesisEvidencePack.trace_ref,
     stage_attempt_ref: dependencies.stage_five.stage_attempt_ref,
     stage_request_sha256: dependencies.stage_five.stage_request_sha256,
     created_at: createdAt,
@@ -402,7 +536,6 @@ export async function prepareEvidenceFreezeInput(
   const persisted = await store.persist(built.manifest);
   if (!sameRef(persisted.manifest_ref, manifestRef) || persisted.manifest_digest !== built.manifest.manifest_digest ||
       persisted.r2_content_sha256 !== manifestContentDigest) throw new Error("reference manifest persistence readback is not exact");
-  const freezeRef = await derivedFreezeRef(lineage.identity, manifestRef, built.manifest.manifest_digest);
   const stageInput: EvidenceFreezePreparationResult["stage_input"] = {
     protocol: "eliotr.evidence-freeze-input.v2",
     freeze_ref: freezeRef,
