@@ -11,6 +11,7 @@ The replacement owner workspace is governed by:
   service-worker and bfcache lifecycle;
 - [frontend migration plan](../implementation/frontend-platform-migration.md);
 - [live NotebookLM/Material reference protocol](../agent-work/frontend-notebooklm-material-reference.md);
+- [Material UI agent playbook](../agent-work/frontend-material-agent-playbook.md);
 - [autonomous manager runbook](../agent-work/frontend-autonomous-manager-runbook.md).
 
 The Blue Workspace v2 material below is retained as **historical design research** from 2026-09-12. It is

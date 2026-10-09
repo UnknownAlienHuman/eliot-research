@@ -3,6 +3,7 @@
 **Status:** normative operating contract for the owner-authorized ER-47/ER-48 frontend manager.
 **Owner authorization:** execute F1-F4 continuously and present the finished integrated interface after U5-X.
 **Reference contract:** `frontend-notebooklm-material-reference.md`.
+**UI operating procedure:** `frontend-material-agent-playbook.md`.
 **Deployment authority:** none. F5, production/account mutation, cutover, legacy deletion and final merge remain
 separately authorized actions.
 
@@ -25,6 +26,14 @@ one leaf at a time. After ER-49, only dependency-ready disjoint leaves may run.
 
 The manager does not stop at U1-D or U2-X. Those are internal quality gates. It fixes defects and continues.
 The first owner UI review is after U5-X, with the complete interface and evidence package.
+
+## 2. Mandatory tool and source sequence
+
+For every rendered checkpoint, follow `frontend-material-agent-playbook.md` rather than reconstructing a process.
+The fixed sequence is: exact checkpoint → approved official sources → live NotebookLM U1-R evidence → Google
+Design MCP for token/icon/font proposals → accepted `@eliotr/ui` catalog and Storybook docs → implementation →
+real Chrome inspection → Storybook `test-run` → scoped Playwright interaction/a11y/visual checks → receipt.
+Random design galleries, public dashboard templates and undocumented component props are not inputs.
 
 ## 2. Required design-reference behavior
 
@@ -214,8 +223,8 @@ legacy until separately authorized.
 
 ```text
 Act as the Eliot owner-web manager. Work in one manager worktree and use bounded subagents inside it. Read
-START-HERE, AGENTS, this runbook, the NotebookLM/Material reference protocol, execution map, ER-47/ER-48 and the
-current contract amendment.
+START-HERE, AGENTS, the Material UI agent playbook, this runbook, the NotebookLM/Material reference protocol,
+execution map, ER-47/ER-48 and the current contract amendment.
 
 Execute F1-F4 continuously through U5-X. Open the current live NotebookLM in the available authenticated browser
 and study it before choosing tokens or shell composition. Use current official Material 3 / M3 Expressive

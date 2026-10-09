@@ -11,6 +11,8 @@ production graph.
 [frontend-current-contract-amendment-2026-10-09.md](frontend-current-contract-amendment-2026-10-09.md)
 **Autonomous manager:**
 [frontend-autonomous-manager-runbook.md](frontend-autonomous-manager-runbook.md)
+**UI operating procedure:**
+[frontend-material-agent-playbook.md](frontend-material-agent-playbook.md)
 
 This is the bounded dispatch authority. Longer ADR/design/audit documents are conditional references, not a
 context bundle for every leaf.
@@ -168,10 +170,10 @@ All require C0.3, C1.4 and accepted ER-49 when parallel.
 |---|---|---|---|---|
 | U1.1a | manager-only web/UI manifests, TS/Vite config and HTML | Package-local skeleton and dependency proposal | — | no second Worker/backend, legacy renderer or unpinned production dependency |
 | U1.1b | manager-only candidate config/source and receipts | Frozen tuple, sibling Worker build and generated-route parity | B-U | wrong env/remote binding stops; agent/API/410/upgrade cannot fall through to SPA HTML |
-| U1-R | manager-only private-data-free browser study/receipt | Current live NotebookLM + official M3/M3 Expressive observation matrix | U1.1b | old screenshots or generic component demos cannot substitute for live inspection |
-| U1.2 | `packages/ui/src/tokens/**`, token catalog/tests | Provisional deterministic theme/type/shape/motion roles | U1-R | raw feature design literal fails |
+| U1-R | `tests/ui-owner/receipts/u1-r/**` | Live NotebookLM study, official M3/M3 Expressive matrix, tooling and screenshot manifests | U1.1b | old screenshots, random design search or generic demos cannot substitute for live inspection |
+| U1.2 | `packages/ui/src/tokens/**`, token catalog/tests | Deterministic light/dark/high-contrast Material roles from U1-R + Design MCP proposals | U1-R | raw feature literal, runtime palette or Cyrillic/contrast failure rejects tokens |
 | U1.3 | one primitive path + exact story | Required native-first primitives and one external composite family | U1.2 | focus/CSP/keyboard failure rejects candidate instead of mixing libraries |
-| U1.4 | `scripts/ui-owner/**`, `tests/ui-owner/harness/**` | Catalog/design/binding/Storybook/Playwright/visual tooling + ER-49 invocation | ER-49, U1.1b-U1.3 | unsafe binding/claim overlap/CSP/auto-baseline acceptance fails |
+| U1.4 | `scripts/ui-owner/**`, `tests/ui-owner/harness/**` | Stable UI commands, catalog/private registry, Storybook MCP/manifests, Playwright/design/binding/visual tooling + ER-49 invocation | ER-49, U1.1b-U1.3 | unsafe binding, undocumented prop, claim overlap, CSP or auto-baseline acceptance fails |
 | U1-D | canonical composition story, visual-direction tests, internal decision receipt | Manager-accepted coherent direction grounded in U1-R | U1.4 | swatches, generic admin dashboard or NotebookLM pixel copy cannot pass |
 | U1.5 | `apps/eliotr-web/src/app/**`, `routes/**`, `query/**` | StrictMode shell, URL codecs, Query defaults and synchronous privacy lifecycle | U1-D | first/restored frame never exposes protected fixture bytes |
 

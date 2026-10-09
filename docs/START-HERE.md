@@ -14,6 +14,7 @@ This is the only repository entry point for implementation work.
 
 ### Owner web
 
+- **UI agent first read:** [Material UI agent playbook](agent-work/frontend-material-agent-playbook.md).
 - Exact frontend DAG: [frontend-owner-execution-map.md](agent-work/frontend-owner-execution-map.md).
 - Autonomous manager operation: [frontend-autonomous-manager-runbook.md](agent-work/frontend-autonomous-manager-runbook.md).
 - Current-main reconciliation: [frontend-current-contract-amendment-2026-10-09.md](agent-work/frontend-current-contract-amendment-2026-10-09.md).
@@ -143,12 +144,13 @@ Polling remains canonical progress/readback fallback. The accepted authenticated
 reconcile through canonical readback and never create/repeat a run. Exact range bytes require admitted
 revision, strong validator/conditional and untransformed representation.
 
-### Human gates
+### Internal UI gates and final review
 
-- **U1-D:** owner-visible approval of coherent golden direction before production shell assembly. Token swatches,
-  isolated components or green pixel tests are insufficient.
-- **U2-X:** recorded no-hint owner walkthrough of project → source → question → exact evidence → supported
-  artifact → Connections recovery. Automated clicks cannot substitute.
+- **U1-D:** manager-only rendered design acceptance against live NotebookLM, official Material guidance and the
+  committed U1-R matrix. Fix failures and continue automatically.
+- **U2-X:** fresh-context no-hint internal usability audit. Fix confusion and continue automatically.
+- **FINAL-UI:** the first required owner UI review occurs after U5-X on the complete integrated review build.
+  Deployment, cutover, legacy deletion and final implementation merge remain separately authorized.
 
 ## 4. Publish safely
 
@@ -185,7 +187,7 @@ A local patch, manifest, claim or unattached blob is not published work.
 | React / client | [ER-47](agent-work/ER-47-owner-web-interface.md), [ER-48](agent-work/ER-48-owner-api-client-extraction.md) |
 | Platform/runtime | [ADR-0016](adr/0016-react-cloudflare-owner-ui.md), [ADR-0017](adr/0017-owner-web-browser-runtime-and-tooling.md) |
 | Cutover | [frontend-cutover-inventory](implementation/frontend-cutover-inventory-2026-10-08.md) |
-| Design/human gates | [OWNER_WEB_UI.md](design/OWNER_WEB_UI.md), [agent harness](implementation/frontend-agent-harness.md) |
+| UI procedure/design/gates | [Material UI agent playbook](agent-work/frontend-material-agent-playbook.md), [OWNER_WEB_UI.md](design/OWNER_WEB_UI.md), [agent harness](implementation/frontend-agent-harness.md) |
 | Product/state | [ELIOT_RESEARCH.md](architecture/ELIOT_RESEARCH.md), named sections only |
 | Runtime ownership | [LANGUAGE_RUNTIME_CONTRACT.md](architecture/LANGUAGE_RUNTIME_CONTRACT.md), ADR-0007 |
 | Status/gaps | [implementation-status.json](implementation/implementation-status.json), [gap register](implementation/gap-register.md) |
@@ -215,8 +217,8 @@ controller-null inbox recovery and first-paint privacy mask in one reviewed rece
 - index hit without exact authorized evidence bytes;
 - screenshot/benchmark without exact source/build/fixture/browser identity;
 - claim/predecessor reference without accepted work/evidence;
-- attractive component set without U1-D approval;
-- automated journey without U2-X owner walkthrough;
+- attractive component set without manager-recorded U1-D internal acceptance;
+- automated journey without fresh-context U2-X acceptance;
 - local Golden fixture integrity as product/visual promotion;
 - historical legacy artifact as post-retirement rollback;
 - optional managed OAuth/unselected Slice 7 as baseline blocker;

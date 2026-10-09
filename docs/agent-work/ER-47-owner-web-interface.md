@@ -9,6 +9,7 @@
 [ADR-0017](../adr/0017-owner-web-browser-runtime-and-tooling.md)
 **Leaf dispatch:** [frontend-owner-execution-map.md](frontend-owner-execution-map.md)
 **Autonomous manager:** [frontend-autonomous-manager-runbook.md](frontend-autonomous-manager-runbook.md)
+**Material UI procedure:** [frontend-material-agent-playbook.md](frontend-material-agent-playbook.md)
 **Design authority:** [OWNER_WEB_UI.md](../design/OWNER_WEB_UI.md)
 
 **Status:** ownership reservation and execution contract only. Source implementation remains paused until the

@@ -9,15 +9,25 @@ repository stop/resume state.
 ## Use
 
 1. Run `pnpm work-packets:check`.
-2. Select a dependency-ready leaf packet, or claim an owner-authorized ER-47/ER-48 manager packet and use its
+2. For UI work, read [frontend-material-agent-playbook.md](frontend-material-agent-playbook.md) before any
+   design, component or browser action.
+3. Select a dependency-ready leaf packet, or claim an owner-authorized ER-47/ER-48 manager packet and use its
    exact leaf map plus [frontend-autonomous-manager-runbook.md](frontend-autonomous-manager-runbook.md).
-3. Read this index, packet document and only contracts/source named by exact checkpoint.
+4. Read this index, packet document and only contracts/source named by exact checkpoint.
 4. Claim one checkpoint, not an undefined subsystem portion.
 5. Edit only packet-owned and exact delegated leaf paths.
 6. Record paths, contract/generation effect, commands, negative case, evidence and unresolved gates.
 
 Do not edit another packet's barrel, package manifest, migration, claim directory, fixture or shared
 configuration. A contract conflict returns to its owner; do not create a leaf-local schema.
+
+## Frontend mandatory entrypoint
+
+Every ER-47 rendered-product manager or leaf starts with
+[frontend-material-agent-playbook.md](frontend-material-agent-playbook.md). It contains the approved official
+links, Google Design MCP, Chrome/NotebookLM, Storybook MCP, Playwright, private registry, token mapping, exact
+U1-R receipts, component/screen algorithms, dispatch envelopes and rejection checklist. Do not reconstruct the
+procedure from random web search.
 
 ## Packet and checkpoint semantics
 

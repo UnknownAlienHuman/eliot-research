@@ -5,6 +5,7 @@
 **Leaf scheduler:** ER-49
 **Root integration:** bounded ER-00 handoffs
 **Autonomous manager:** [frontend-autonomous-manager-runbook.md](../agent-work/frontend-autonomous-manager-runbook.md)
+**Material UI procedure:** [frontend-material-agent-playbook.md](../agent-work/frontend-material-agent-playbook.md)
 **Status:** target specification; no harness tool or test is implemented by this documentation PR.
 
 The harness lets a constrained agent discover one permitted component/state, reproduce it, render it and
@@ -24,6 +25,13 @@ A UI leaf starts only when:
 7. the manager confirms the evidence is substantively accepted—ER-49 checks structure/ancestry, not truth.
 
 A claim, package-local build, screenshot or green component test is not completion evidence.
+
+## Exact agent tool order
+
+The harness implements the commands and MCP sequence defined by the Material UI agent playbook. UI leaves must
+query Storybook manifests/docs before component use, use Google Design MCP for U1.2 proposals, inspect actual
+rendering through Chrome, and run scoped Playwright interaction/a11y/visual checks. Repository files and CLI are
+the fallback when optional MCP transport fails; no second catalog or random design search is created.
 
 ## 2. Repository shape
 
@@ -294,7 +302,7 @@ build/output-config digests
 environment and binding disposition
 commands and exit statuses
 stories/components/scenarios exercised
-U1-D approval or U2-X owner walkthrough reference when applicable
+U1-D manager decision or fresh-context U2-X internal audit reference when applicable
 screenshots/diffs and visual-budget delta
 accessibility/CSP findings
 console errors/unhandled rejections

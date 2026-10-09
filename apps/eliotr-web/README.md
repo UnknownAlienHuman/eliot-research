@@ -3,6 +3,7 @@
 Target React owner workspace owned by ER-47 and defined by:
 
 - `docs/agent-work/ER-47-owner-web-interface.md`
+- `docs/agent-work/frontend-material-agent-playbook.md`
 - `docs/agent-work/frontend-owner-execution-map.md`
 - `docs/agent-work/frontend-autonomous-manager-runbook.md`
 - `docs/agent-work/frontend-current-contract-amendment-2026-10-09.md`

@@ -10,6 +10,7 @@ This repository is governed by:
 - [ADR-0007](docs/adr/0007-external-agents-and-cloudflare-evolution.md) for external-agent/platform amendments;
 - [ADR-0016](docs/adr/0016-react-cloudflare-owner-ui.md) for owner-web platform/design migration;
 - [ADR-0017](docs/adr/0017-owner-web-browser-runtime-and-tooling.md) for browser cutover/security/caching;
+- [Material UI agent playbook](docs/agent-work/frontend-material-agent-playbook.md) for the exact UI tool, source, implementation and browser-verification procedure;
 - `docs/implementation/branch-discipline.md` for branch/worktree lifecycle.
 
 Start from the work packet, then read only contracts/modules named by exact checkpoint.
@@ -84,8 +85,9 @@ ADR-0016/0017 change presentation/browser runtime without changing backend autho
   they do not interrupt F1-F4. The owner reviews the finished integrated interface after U5-X and before any
   final merge, deployment or cutover.
 
-Read the autonomous-manager runbook and live NotebookLM/Material reference protocol at manager start. Leaves
-read ER-47/48/49, the execution-map checkpoint and only the specialist source/contracts they need.
+Read the Material UI agent playbook first for every rendered UI checkpoint, then the autonomous-manager
+runbook and live NotebookLM/Material reference protocol. Leaves read the exact execution-map checkpoint and only
+the specialist source/contracts named by it.
 
 ## External models and agents
 
