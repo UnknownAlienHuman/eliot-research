@@ -18,7 +18,11 @@
       "commit_sha": "0afe24ec1285311b489b6a5dffcec7297ab32412"
     }
   ],
-  "state": "ACTIVE",
-  "evidence_refs": [],
-  "blocker_refs": []
+  "state": "HANDED_OFF",
+  "evidence_refs": [
+    "git:85aaf74f7344df64ca6a2629b236b1cbfc208950 24 scoped characterization cases PASS; owning compiler and exact lint PASS; legacy source unchanged"
+  ],
+  "blocker_refs": [],
+  "handoff_reason": "COMPLETED",
+  "handoff_receipt_ref": "git:85aaf74f7344df64ca6a2629b236b1cbfc208950"
 }
