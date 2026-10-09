@@ -36,8 +36,8 @@ it("binds an SDK session from canonical run readback and rejects foreign or stal
       "SELECT next_stage_index,current_revision FROM research_workflow_run WHERE operation_id=?1",
     ).bind(operationId).first();
     const history = await send();
-    expect(history.status).toBe(200);
-    expect(await history.json()).toEqual([]);
+    expect(history.status).toBe(410);
+    expect(await history.json()).toMatchObject({ code: "SESSION_CHAT_HISTORY_DISABLED" });
     const stub = runtime.RESEARCH_SESSION.get(runtime.RESEARCH_SESSION.idFromName(operationId));
     const record = await stub.fetch(new Request(`https://session.example/session/${operationId}`, {
       headers: fixture.session_headers,
