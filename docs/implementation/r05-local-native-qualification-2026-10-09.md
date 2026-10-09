@@ -408,3 +408,56 @@ pinned production configuration, COMPUTER dispatch, selected public HTTP/JWT, fo
 malformed/late events, timeout/result boundary, restart/completed predecessors,
 historical generation, selected-profile native/live and release receipts. Passing
 bounded source or fixture cases do not close those gates.
+
+## Actual Core candidate and product Workflow — added bounded qualification
+
+The retained exact `2607583d` source graph produces a custom esbuild 0.28.1
+candidate of 4,979,092 bytes with 1,209 inputs. Its SHA256 is
+`58157172bc4ca0f5953dcfaa0d136433e8d56db90124278e9760980fcbeab5b2`.
+Actual `ResearchSession` and `ResearchWorkflow` exports are bound under Miniflare
+5.20260926.1-alpha; canonical compatibility date/flags remain unchanged.
+Current Cloudflare documentation makes node compatibility the default from
+August 4, 2026, so the canonical August 28 date needs no speculative flag repair.
+Real Core/Search migrations and product `/healthz` return readiness 200. The
+private createRequire bridge makes this custom candidate loadable; neither its
+build nor bootstrap is official Wrangler 4.143.1 artifact attestation.
+
+Four new separately executed instances run the actual product `ResearchWorkflow`
+class, without a private Workflow subclass or replaced callbacks:
+
+| Input boundary | Actual bounded result |
+|---|---|
+| Unknown Workflow kind | `WORKFLOW_INPUT_INVALID` before stage execution. |
+| Unknown authority field | `WORKFLOW_INPUT_INVALID` before stage execution. |
+| Uninstalled deployment | Existing typed `WORKFLOW_AUTHORITY_STALE` with PREPARATION/NOT_STARTED outcome. |
+| Absent investigation after actual deployment compatibility read | `WORKFLOW_PREPARATION_FAILED` with safe `WORKFLOW_AUTHORITY_STALE` cause. |
+
+Each case leaves seven observed business tables unchanged and both R2 buckets
+empty. No run exists, so durable failure retention is not claimed. The first
+deployment case failed only the private expected-outer-code assertion; its
+failure is retained, the actual error contract was read, and only that failed
+case was repeated. The two earlier passing parser cases were not rerun.
+
+A separate positive invokes the actual product Workflow binding and native
+`step.do` with its existing deterministic confirmatory handler. The existing
+ledger service creates the initial ledger over genuine local D1/R2; owner,
+scope, grant and current policy remain explicit fixture preconditions. All 18
+attempts commit with 18 checkpoints/outbox intents/ledger events, stage 18 and
+revision 19. All 18 output bytes match persisted lengths/digests. A second native
+instance for the same operation returns the identical retained result, with no
+new business effects. `ENGINE_COMPLETED` supplies no scientific disposition.
+
+Private artifacts under `.eliotr-state/backend-full-20261008` retain the
+`core-head-candidate-*` build/bootstrap receipts, four
+`core-product-workflow-*-receipt-20261009.json` negatives, and
+`core-product-confirmatory-workflow-receipt-20261009.json`. The consolidated
+`backend-candidate-continuation-completion-proof-20261009.json` checks 346 exact
+seed inputs and preserves earlier admission/event receipts without rerunning
+them. The previous public-admission audit's raw reviewer label `Nash` is a
+metadata error: actual reviewer was Pasteur; its seven audited hashes are exact
+and its scope does not include the later candidate cases.
+
+Private seed semantic TypeScript, actual DO RPC, product external-task native
+wait and full scientific positive, selected Access/provider/configuration,
+official emitted build, staging/live and release remain pending. The new
+confirmatory native execution does not close #326 or the Goal.

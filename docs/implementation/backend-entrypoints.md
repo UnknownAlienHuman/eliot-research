@@ -404,3 +404,16 @@ Missing semantic guarantee
 ```
 
 Anything else requires a measured gap and an explicit architecture/integrator decision.
+
+### October 9 actual product Workflow qualification checkpoint
+
+Published admission/event status is present in `d1d80a01`/`2607583d`; fresh fetch
+and exact four document blobs confirm remote `2607583d`. Subsequent private work
+loads its actual Core exports in a custom esbuild candidate and passes health,
+four real product Workflow preparation negatives with zero business/R2 effects,
+and native execution of 18 existing deterministic confirmatory stages plus
+durable replay without new effects. This is product binding qualification at
+that bounded scope. Official Wrangler artifact, actual product external-task
+wait/scientific pipeline, DO RPC, selected production/live/release remain open.
+Read the [qualification record](r05-local-native-qualification-2026-10-09.md#actual-core-candidate-and-product-workflow--added-bounded-qualification)
+and continue those existing boundaries without repeating the retained passes.

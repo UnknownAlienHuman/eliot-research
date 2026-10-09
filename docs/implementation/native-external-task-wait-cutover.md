@@ -234,3 +234,12 @@ revoked/cancelled authority, old generation and malformed persisted event cases.
 The new path must retain exact `consumeResult` and W2 settlement. Live/staging and
 release receipts remain pending. No #326, Issue, PR or Goal closure follows from
 this mapping or the locator pair.
+
+The additional exact `2607583d` Core candidate now loads actual product exports
+and passes health bootstrap, four actual product Workflow preparation negatives,
+and a deterministic confirmatory native `step.do` run with 18 committed stages
+and durable replay without new business effects. This replaces neither the
+private external-task fixtures nor their remaining product-topology acceptance.
+The artifact is a custom esbuild/loader candidate, not official Wrangler output;
+scientific/selected external-wait/DO RPC/live/release gates remain open. See the
+[qualification record](r05-local-native-qualification-2026-10-09.md#actual-core-candidate-and-product-workflow--added-bounded-qualification).

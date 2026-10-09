@@ -1802,3 +1802,31 @@ integration gates do not block other work. S29/profile and S10–S13/S98–S99 c
 remaining selection/adapter changes without redoing delivered services. The active checkpoint is S92 local integration; S37 code is delivered (acceptance pending).
 
 No branch deletion, force push, pushed-history rewrite, live deployment, provider spending, hostname change or remote database migration is authorized by this plan.
+
+## October 9 actual product Workflow continuation
+
+Frontend's single normal publisher delivered the admission/event document
+commits `d1d80a01` and `2607583d`; backend confirmed live remote SHA and four
+published blobs. The next private qualification retains that exact source
+baseline, with foreign retrieval/runtime WIP excluded. A custom Core candidate
+loads actual exports and passes product health, four actual Workflow preparation
+negatives and a native binding run of 18 existing deterministic confirmatory
+stages. Its separate native replay returns identical receipts/output with zero
+new business effects; all 18 R2 outputs match persisted bytes/digests.
+
+This is bounded product Workflow execution, not scientific or external-wait
+acceptance. The candidate/loader is distinct from official Wrangler emission;
+private owner/scope/grant/policy preconditions remain. The earlier admission
+source review is ACCEPT with seven exact hashes; the raw reviewer typo is
+corrected in the private continuation proof without rewriting that audit.
+No passing runtime suite was repeated. The failed new deployment assertion was
+corrected against the existing error contract and only that failed case reran.
+
+Installed Astro dependency triage narrows alert 28 to observed remote-image build
+cache paths; deployed provenance and supported remediation remain unknown.
+Frontend owns lock/manifests. A malformed out-of-scope leaf helper's exact 645
+bytes were archived reversibly, with absent source/hash readback. Seven secondary
+worktrees with unique/dirty evidence remain preserved. Source reviews were
+useful on Go2/high; delivery/scope corrections prevent any demonstrated quality
+advantage over Luna. Original Issue/PR and full scientific/native/live/release
+acceptance, final cleanup and the Goal stay open.
