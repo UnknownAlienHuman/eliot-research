@@ -16,6 +16,7 @@ import { readDeploymentMigrationEntries } from "./lib/deployment-migrations.mjs"
 import { WRANGLER } from "./lib/local-launch.mjs";
 
 const ACCOUNT_ID = "0123456789abcdef0123456789abcdef";
+const CORE_ASSETS = JSON.parse(await readFile(new URL("../apps/eliotr-core/wrangler.jsonc", import.meta.url), "utf8")).assets;
 const CORE_ID = "11111111-1111-4111-8111-111111111111";
 const SEARCH_ID = "22222222-2222-4222-8222-222222222222";
 const FIXTURE_PREFIX = "eliotr-schema-manifest-test-";
@@ -41,7 +42,7 @@ async function createFixture() {
     const config = {
       name: "eliotr-core",
       main: "src/index.ts",
-      assets: { directory: "../eliotr-pwa/dist" },
+      assets: CORE_ASSETS,
       d1_databases: [
         {
           binding: "CORE_DB",
@@ -59,6 +60,7 @@ async function createFixture() {
     };
     const configPath = join(coreConfigDirectory, "wrangler.deploy.jsonc");
     await writeFile(configPath, JSON.stringify(config) + "\n", { flag: "wx", mode: 0o600 });
+    await writeFile(join(coreConfigDirectory, "wrangler.jsonc"), JSON.stringify(config) + "\n", { flag: "wx", mode: 0o600 });
     const generatedConfigPin = await pinGeneratedDeploymentConfig({
       root,
       path: "apps/eliotr-core/wrangler.deploy.jsonc",

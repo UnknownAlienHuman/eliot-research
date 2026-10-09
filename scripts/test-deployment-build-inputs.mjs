@@ -13,6 +13,7 @@ import {
 } from "./lib/deployment-build-inputs.mjs";
 
 const FIXTURE_ROOT = path.resolve(os.tmpdir());
+const CORE_ASSETS = JSON.parse(await readFile(new URL("../apps/eliotr-core/wrangler.jsonc", import.meta.url), "utf8")).assets;
 const FIXTURE_PREFIX = "eliotr-build-inputs-";
 const SCRIPT_ENTRYPOINTS = [
   "scripts/check-boundaries.mjs", "scripts/check-budgets.mjs", "scripts/check-launch-code.mjs",
@@ -41,7 +42,7 @@ async function fixture() {
     "tsconfig.json": JSON.stringify({ files: [] }),
     "apps/eliotr-core/package.json": JSON.stringify({ name: "@eliotr/core", dependencies: { zod: "4.4.3" } }),
     "apps/eliotr-core/tsconfig.json": JSON.stringify({ extends: "../../tsconfig.base.json", include: ["src/**/*.ts"] }),
-    "apps/eliotr-core/wrangler.jsonc": JSON.stringify({ name: "eliotr-core", main: "src/index.ts", assets: { directory: "../eliotr-pwa/dist" } }),
+    "apps/eliotr-core/wrangler.jsonc": JSON.stringify({ name: "eliotr-core", main: "src/index.ts", assets: CORE_ASSETS }),
     "apps/eliotr-core/src/index.ts": "export default { fetch() { return new Response('ok'); } };\n",
     "apps/eliotr-core/src/worker-configuration.d.ts": "// generated; excluded\n",
     "apps/eliotr-pwa/astro.config.mjs": "export default {};\n",
@@ -52,6 +53,8 @@ async function fixture() {
     "apps/eliotr-pwa/scripts/build-agent-inbox.mjs": "// fixture build input\n",
     "apps/eliotr-pwa/public/manifest.webmanifest": "{}\n",
     "apps/eliotr-pwa/public/sw.js": "self.addEventListener('fetch', () => {});\n",
+    "infra/d1/core/migrations/0001_fixture.sql": "CREATE TABLE fixture_core (id TEXT PRIMARY KEY);\n",
+    "infra/d1/search/migrations/0001_fixture.sql": "CREATE TABLE fixture_search (id TEXT PRIMARY KEY);\n",
     "apps/eliotr-pwa/public/agent-inbox/app.js": "// generated; excluded\n",
     "apps/eliotr-pwa/public/agent-inbox/app.css": "/* generated; excluded */\n",
     "packages/contracts/package.json": JSON.stringify({ name: "@eliotr/contracts", exports: { ".": "./src/index.ts" } }),
@@ -91,7 +94,7 @@ async function withFixture(run) {
 
 async function generatedConfig(root) {
   return put(root, "apps/eliotr-core/wrangler.deploy.jsonc",
-    JSON.stringify({ name: "eliotr-core", main: "src/index.ts", assets: { directory: "../eliotr-pwa/dist" }, vars: { DEPLOYMENT_GENERATION: "candidate" } }));
+    JSON.stringify({ name: "eliotr-core", main: "src/index.ts", assets: CORE_ASSETS, vars: { DEPLOYMENT_GENERATION: "candidate" } }));
 }
 
 function outputDirectory(root) {
@@ -172,6 +175,29 @@ test("pins only the explicit generated config and catches later mutation", async
     await writeFile(configPath, `${await readFile(configPath, "utf8")}\n`);
     await assert.rejects(() => requireUnchangedDeploymentBuildInputs({ root, manifest, generatedConfigPin: pin }), /changed after its pin/u);
     await assert.rejects(() => pinGeneratedDeploymentConfig({ root, path: "apps/eliotr-core/wrangler.jsonc" }), /Only the provisioner-generated/u);
+  });
+});
+
+test("generated config pin rejects stale agent routing before artifact preparation", async () => {
+  await withFixture(async (root) => {
+    const configPath = await generatedConfig(root);
+    const baseline = JSON.parse(await readFile(configPath, "utf8"));
+    await assert.doesNotReject(() => pinGeneratedDeploymentConfig({ root }));
+    for (const route of ["/agents", "/agents/*"]) {
+      const stale = structuredClone(baseline);
+      stale.assets.run_worker_first = stale.assets.run_worker_first.filter((value) => value !== route);
+      await writeFile(configPath, JSON.stringify(stale));
+      await assert.rejects(() => pinGeneratedDeploymentConfig({ root }), /required Core Worker-first route family/u);
+    }
+    const broad = structuredClone(baseline);
+    broad.assets.run_worker_first = true;
+    await writeFile(configPath, JSON.stringify(broad));
+    await assert.rejects(() => pinGeneratedDeploymentConfig({ root }), /selective Worker-first routing/u);
+    await writeFile(configPath, JSON.stringify(baseline));
+    const canonical = JSON.parse(await readFile(path.join(root, "apps/eliotr-core/wrangler.jsonc"), "utf8"));
+    canonical.assets.not_found_handling = "404-page";
+    await writeFile(path.join(root, "apps/eliotr-core/wrangler.jsonc"), JSON.stringify(canonical));
+    await assert.rejects(() => pinGeneratedDeploymentConfig({ root }), /static asset fallback configuration/u);
   });
 });
 

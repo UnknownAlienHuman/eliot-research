@@ -16,6 +16,8 @@ import {
 } from "./lib/deployment-schema-attestation.mjs";
 import { pinGeneratedDeploymentConfig } from "./lib/deployment-build-inputs.mjs";
 
+const CORE_ASSETS = JSON.parse(await readFile(new URL("../apps/eliotr-core/wrangler.jsonc", import.meta.url), "utf8")).assets;
+
 const digest = (value) => createHash("sha256").update(value).digest("hex");
 const jsonDigest = (value) => digest(Buffer.from(JSON.stringify(value), "utf8"));
 const temporaryRoot = resolve(tmpdir());
@@ -57,7 +59,7 @@ async function createFixture() {
     const config = {
       name: "eliotr-core",
       main: "src/index.ts",
-      assets: { directory: "../eliotr-pwa/dist" },
+      assets: CORE_ASSETS,
       d1_databases: [
         {
           binding: "CORE_DB",
@@ -76,6 +78,7 @@ async function createFixture() {
     const generatedConfigPath = join(root, "apps", "eliotr-core", "wrangler.deploy.jsonc");
     await mkdir(dirname(generatedConfigPath), { recursive: true });
     await writeFile(generatedConfigPath, `${JSON.stringify(config)}\n`, { flag: "wx", mode: 0o600 });
+    await writeFile(join(root, "apps", "eliotr-core", "wrangler.jsonc"), `${JSON.stringify(config)}\n`, { flag: "wx", mode: 0o600 });
     const generatedConfigPin = await pinGeneratedDeploymentConfig({
       root,
       path: "apps/eliotr-core/wrangler.deploy.jsonc",

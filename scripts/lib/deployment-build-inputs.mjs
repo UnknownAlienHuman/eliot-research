@@ -3,6 +3,7 @@ import { spawnSync } from "node:child_process";
 import { lstat, readFile, readdir, realpath } from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
+import { assertCoreWorkerRouteParity } from "./core-worker-route-parity.mjs";
 
 export const DEPLOYMENT_BUILD_INPUT_PROTOCOL = "eliotr.deployment-build-inputs.v1";
 export const DEPLOYMENT_BUILD_INPUT_LIMITS = Object.freeze({
@@ -436,6 +437,9 @@ export async function pinGeneratedDeploymentConfig({ root = process.cwd(), path:
     || config.assets?.directory !== "../eliotr-pwa/dist") {
     throw new Error("Generated deployment config changes the pinned Worker entrypoint or assets directory");
   }
+  const canonicalConfig = JSON.parse(await readFile(
+    path.resolve(absoluteRoot, "apps/eliotr-core/wrangler.jsonc"), "utf8"));
+  assertCoreWorkerRouteParity(canonicalConfig, config);
   return freezeDeep({ path: slash(path.relative(absoluteRoot, absoluteConfig)),
     sha256: digest(bytes), byte_length: bytes.byteLength, worker_name: config.name,
     worker_main: `apps/eliotr-core/${config.main}`,

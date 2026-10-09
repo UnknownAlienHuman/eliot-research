@@ -7,6 +7,7 @@ import { persistDeploymentBuildEvidence } from "./lib/deployment-build-evidence.
 import { pinGeneratedDeploymentConfig } from "./lib/deployment-build-inputs.mjs";
 
 const digest = (value) => createHash("sha256").update(value).digest("hex");
+const CORE_ASSETS = JSON.parse(await readFile(new URL("../apps/eliotr-core/wrangler.jsonc", import.meta.url), "utf8")).assets;
 const temporaryRoot = resolve(tmpdir());
 const temporaryPrefix = "eliot-deployment-build-evidence-";
 const temporaryDirectory = await mkdtemp(join(temporaryRoot, temporaryPrefix));
@@ -22,8 +23,9 @@ try {
   await mkdir(join(root, ".eliotr-state", "deployment-worker-12345678-1234-4234-8234-123456789abc"));
   await mkdir(join(root, "apps", "eliotr-core"), { recursive: true });
   const generatedConfigPath = join(root, "apps", "eliotr-core", "wrangler.deploy.jsonc");
-  const generatedConfigBytes = Buffer.from('{"name":"eliotr-core","main":"src/index.ts","assets":{"directory":"../eliotr-pwa/dist"}}\n');
+  const generatedConfigBytes = Buffer.from(`${JSON.stringify({ name: "eliotr-core", main: "src/index.ts", assets: CORE_ASSETS })}\n`);
   await writeFile(generatedConfigPath, generatedConfigBytes, { flag: "wx", mode: 0o600 });
+  await writeFile(join(root, "apps", "eliotr-core", "wrangler.jsonc"), generatedConfigBytes, { flag: "wx", mode: 0o600 });
   const generatedConfigPin = await pinGeneratedDeploymentConfig({ root, path: generatedConfigPath });
   const manifestBody = {
     protocol: "eliotr.deployment-build-inputs.v1",
