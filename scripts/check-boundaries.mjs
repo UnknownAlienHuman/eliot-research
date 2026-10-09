@@ -301,8 +301,8 @@ const PACKAGE_RULES = new Map([
   ["packages/pwa-source-workspace", new Set(["@eliotr/contracts", "@eliotr/owner-api-client", "@eliotr/pwa-http-client"])],
   ["packages/pwa-research-workspace", new Set(["@eliotr/contracts", "@eliotr/pwa-http-client", "@eliotr/pwa-source-workspace"])],
   ["packages/pwa-knowledge-workspace", new Set(["@eliotr/contracts", "@eliotr/pwa-http-client", "@eliotr/pwa-source-workspace"])],
-  ["packages/ui", new Set(["react", "react-dom"])],
-  ["apps/eliotr-web", new Set(["@eliotr/ui", "@tanstack/react-query", "react", "react-dom", "react-router"])],
+  ["packages/ui", new Set(["react", "react-dom", "@eliotr/owner-api-client"])],
+  ["apps/eliotr-web", new Set(["@eliotr/ui", "@eliotr/owner-api-client", "@eliotr/owner-api-client/research-session-projection", "@tanstack/react-query", "react", "react-dom", "react-router"])],
   ["apps/eliotr-pwa", new Set([...RESEARCH_UI_IMPORTS, "@eliotr/contracts", "@eliotr/pwa-http-client", "@eliotr/pwa-source-workspace", "@eliotr/pwa-source-workspace/navigation-expand-api", "@eliotr/pwa-research-workspace", "@eliotr/pwa-knowledge-workspace"])],
   ["apps/eliotr-core", new Set([
     "@eliotr/cloudflare-artifacts",
@@ -409,7 +409,8 @@ for (const sourceRoot of SOURCE_ROOTS) {
         const packageName = specifier.startsWith("@") ? specifier.split("/").slice(0, 2).join("/") : specifier.split("/")[0];
         const testTool = normalizedPath.endsWith(".test.ts") && packageName === "vitest";
         const storyTool = normalizedPath.endsWith(".stories.tsx") && (packageName === "@storybook/react-vite" || specifier === "storybook/test");
-        if (!allowedHostToolImport && !testTool && !storyTool && !PACKAGE_RULES.get(owner)?.has(packageName)) {
+        const projectionClient = normalizedPath === "packages/owner-api-client/src/research/session-projection/session.ts" && specifier === "agents/client";
+        if (!allowedHostToolImport && !testTool && !storyTool && !projectionClient && !PACKAGE_RULES.get(owner)?.has(packageName)) {
           errors.push(`${normalizedPath} violates dependency direction with ${specifier}`);
         }
       }

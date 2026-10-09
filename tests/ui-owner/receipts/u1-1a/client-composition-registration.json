@@ -1,0 +1,21 @@
+{
+  "protocol": "eliotr.ui-review-receipt.v1",
+  "checkpoint": "U1.1a",
+  "status": "ACCEPTED_INTERNAL_REGISTRATION",
+  "base_sha": "3981d7f5b8ca31f7e901090655dac2ae4f76a4a8",
+  "behavior": "UI/web depend on finite owner-client exports. Official agents/client remains confined to exact session projection submodule and separate subpath; HTTP root has no projection export.",
+  "checks": {
+    "boundaries": "PASS live after exact registration",
+    "install": "pnpm11.23.0 frozen ignore-scripts PASS all46 workspaces; supply-chain861 entries PASS; no graph resolution or package version change",
+    "lock": "Only3 importer descriptor additions9 lines; packages/snapshots byte-identical",
+    "source": "Connections exact7 source extraction owningTS6.0.3 has0Connections diagnostics; RH19diagnostics pending repair. This is not whole graph acceptance."
+  },
+  "retained_failures": [
+    "Offline lock resolution lacked vite8.2.2 metadata",
+    "Offline frozen policy validation lacked @cloudflare/vitest-plugin metadata; normal frozen validation succeeded"
+  ],
+  "limitations": [
+    "C3-RP bundle/browser/Worker behavior pending source",
+    "Real U3-U5 UI composition and FINAL-UI open"
+  ]
+}

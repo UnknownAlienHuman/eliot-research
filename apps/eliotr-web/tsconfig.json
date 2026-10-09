@@ -5,9 +5,21 @@
     "outDir": "dist-types",
     "tsBuildInfoFile": "dist-types/.tsbuildinfo",
     "jsx": "react-jsx",
-    "types": ["vite/client"]
+    "types": [
+      "vite/client"
+    ]
   },
   "files": [],
-  "include": ["src/**/*.ts", "src/**/*.tsx"],
-  "references": [{ "path": "../../packages/ui" }]
+  "include": [
+    "src/**/*.ts",
+    "src/**/*.tsx"
+  ],
+  "references": [
+    {
+      "path": "../../packages/ui"
+    },
+    {
+      "path": "../../packages/owner-api-client"
+    }
+  ]
 }

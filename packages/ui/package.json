@@ -3,7 +3,9 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "sideEffects": ["**/*.css"],
+  "sideEffects": [
+    "**/*.css"
+  ],
   "exports": {
     ".": "./src/index.ts",
     "./theme.css": "./src/theme.css"
@@ -41,5 +43,8 @@
     "storybook": "10.6.1",
     "typescript": "6.0.3",
     "vitest": "4.1.11"
+  },
+  "dependencies": {
+    "@eliotr/owner-api-client": "workspace:*"
   }
 }

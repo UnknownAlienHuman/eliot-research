@@ -15,7 +15,8 @@
     "@tanstack/react-query": "5.104.1",
     "react": "19.3.0",
     "react-dom": "19.3.0",
-    "react-router": "7.18.4"
+    "react-router": "7.18.4",
+    "@eliotr/owner-api-client": "workspace:*"
   },
   "devDependencies": {
     "@babel/plugin-proposal-decorators": "8.0.2",
