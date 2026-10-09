@@ -1,0 +1,212 @@
+/*
+ * U1.3 native primitive styles. Every value is a committed semantic token from
+ * src/tokens/theme.css; nothing here is a raw color, radius, size or duration.
+ */
+
+/* ---- Button and IconButton ---- */
+
+.er-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--eliot-space-inline-control);
+  min-height: var(--eliot-size-touch-target);
+  padding-inline: var(--eliot-space-inline-control);
+  padding-block: var(--eliot-space-block-control);
+  border: none;
+  border-radius: var(--eliot-shape-medium);
+  font-family: var(--eliot-type-font-family);
+  font-size: var(--eliot-type-label-large-size);
+  line-height: var(--eliot-type-label-large-line-height);
+  font-weight: var(--eliot-type-font-weight-medium);
+  letter-spacing: var(--eliot-type-letter-spacing-label);
+  cursor: pointer;
+  position: relative;
+}
+
+.er-button::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background-color: currentcolor;
+  opacity: 0;
+  transition: opacity var(--eliot-motion-effects) var(--eliot-motion-standard-easing);
+  pointer-events: none;
+}
+
+.er-button:hover:not(:disabled)::after {
+  opacity: var(--eliot-state-hover-opacity);
+}
+.er-button:active:not(:disabled)::after { opacity: var(--eliot-state-pressed-opacity); }
+
+.er-button:focus-visible {
+  outline: var(--eliot-focus-width) solid var(--md-sys-color-primary);
+  outline-offset: var(--eliot-focus-offset);
+}
+
+.er-button:disabled {
+  cursor: default;
+  opacity: var(--eliot-state-disabled-opacity);
+}
+
+.er-button--primary {
+  background-color: var(--md-sys-color-primary);
+  color: var(--md-sys-color-on-primary);
+}
+
+.er-button--tonal {
+  background-color: var(--md-sys-color-secondary-container);
+  color: var(--md-sys-color-on-secondary-container);
+}
+
+.er-button--text {
+  background-color: transparent;
+  color: var(--md-sys-color-primary);
+  padding-inline: var(--eliot-space-block-control);
+}
+
+.er-icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--eliot-size-touch-target);
+  height: var(--eliot-size-touch-target);
+  border: none;
+  border-radius: var(--eliot-shape-full);
+  background-color: transparent;
+  color: var(--md-sys-color-on-surface-variant);
+  cursor: pointer;
+  position: relative;
+}
+
+.er-icon-button::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background-color: currentcolor;
+  opacity: 0;
+  transition: opacity var(--eliot-motion-effects) var(--eliot-motion-standard-easing);
+  pointer-events: none;
+}
+
+.er-icon-button:hover:not(:disabled)::after {
+  opacity: var(--eliot-state-hover-opacity);
+}
+.er-icon-button:active:not(:disabled)::after { opacity: var(--eliot-state-pressed-opacity); }
+
+.er-icon-button:focus-visible {
+  outline: var(--eliot-focus-width) solid var(--md-sys-color-primary);
+  outline-offset: var(--eliot-focus-offset);
+}
+
+.er-icon-button:disabled {
+  cursor: default;
+  opacity: var(--eliot-state-disabled-opacity);
+}
+
+/* ---- Field ---- */
+
+.er-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--eliot-space-block-control);
+  font-family: var(--eliot-type-font-family);
+  text-align: start;
+}
+
+.er-field__label {
+  font-size: var(--eliot-type-label-large-size);
+  line-height: var(--eliot-type-label-large-line-height);
+  font-weight: var(--eliot-type-font-weight-medium);
+  letter-spacing: var(--eliot-type-letter-spacing-label);
+  color: var(--md-sys-color-on-surface);
+}
+
+.er-field__control {
+  font-family: var(--eliot-type-font-family);
+  font-size: var(--eliot-type-body-medium-size);
+  line-height: var(--eliot-type-body-medium-line-height);
+  color: var(--md-sys-color-on-surface);
+  background-color: var(--md-sys-color-surface-container-lowest);
+  border: var(--eliot-divider-width) solid var(--md-sys-color-outline);
+  border-radius: var(--eliot-shape-extra-small);
+  min-height: var(--eliot-size-touch-target);
+  padding-inline: var(--eliot-space-inline-control);
+}
+
+.er-field__control:focus-visible {
+  outline: var(--eliot-focus-width) solid var(--md-sys-color-primary);
+  outline-offset: var(--eliot-focus-offset);
+}
+
+.er-field__control[aria-invalid="true"] {
+  border-color: var(--md-sys-color-error);
+}
+
+.er-field__hint {
+  font-size: var(--eliot-type-body-small-size);
+  line-height: var(--eliot-type-body-small-line-height);
+  color: var(--md-sys-color-on-surface-variant);
+}
+
+.er-field__error {
+  font-size: var(--eliot-type-body-small-size);
+  line-height: var(--eliot-type-body-small-line-height);
+  color: var(--md-sys-color-error);
+}
+
+/* ---- Status ---- */
+
+.er-status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--eliot-space-inline-control);
+  padding-inline: var(--eliot-space-inline-control);
+  padding-block: var(--eliot-space-block-control);
+  border-radius: var(--eliot-shape-medium);
+  background-color: var(--md-sys-color-surface-container);
+  font-family: var(--eliot-type-font-family);
+  font-size: var(--eliot-type-body-medium-size);
+  line-height: var(--eliot-type-body-medium-line-height);
+  color: var(--md-sys-color-on-surface-variant);
+}
+
+.er-status--error {
+  background-color: var(--md-sys-color-error-container);
+  color: var(--md-sys-color-on-error-container);
+}
+
+/* ---- Dialog ---- */
+
+.er-dialog {
+  box-sizing: border-box;
+  border: none;
+  border-radius: var(--eliot-shape-extra-large);
+  background-color: var(--md-sys-color-surface-container-high);
+  color: var(--md-sys-color-on-surface);
+  font-family: var(--eliot-type-font-family);
+  padding: var(--eliot-space-panel);
+  inline-size: var(--eliot-layout-reading-max);
+  max-inline-size: calc(100% - 2 * var(--eliot-space-panel));
+}
+
+.er-dialog::backdrop {
+  background-color: var(--md-sys-color-scrim);
+  opacity: var(--eliot-state-focus-opacity);
+}
+
+.er-dialog__title {
+  font-size: var(--eliot-type-title-large-size);
+  line-height: var(--eliot-type-title-large-line-height);
+  font-weight: var(--eliot-type-font-weight-medium);
+  color: var(--md-sys-color-on-surface);
+  margin-block-end: var(--eliot-space-panel);
+}
+
+.er-dialog__body {
+  font-size: var(--eliot-type-body-medium-size);
+  line-height: var(--eliot-type-body-medium-line-height);
+  color: var(--md-sys-color-on-surface-variant);
+}
