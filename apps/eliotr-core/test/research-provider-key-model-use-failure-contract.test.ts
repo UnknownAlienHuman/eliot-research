@@ -1,4 +1,4 @@
-import { applyD1Migrations, env, reset, type D1Migration } from "cloudflare:test";
+import { applyD1Migrations, env as generatedEnv, reset, type D1Migration } from "cloudflare:test";
 import { afterEach, expect, it, vi } from "vitest";
 import {
   RESEARCH_PROVIDER_KEY_CONFIGURATION_PROTOCOL,
@@ -19,6 +19,10 @@ import {
   MODEL_ID,
 } from "./research-provider-key-model-use-fixture.js";
 
+const env = generatedEnv as unknown as Env & {
+  readonly CORE_MIGRATIONS: D1Migration[];
+};
+
 const TEST_ENV = {
   CORE_DB: env.CORE_DB,
   ENVIRONMENT: "development",
@@ -26,9 +30,7 @@ const TEST_ENV = {
   AI_GATEWAY_REASONING_URL: `https://gateway.ai.cloudflare.com/v1/${"a".repeat(32)}/eliotr-reasoning`,
 } as unknown as Env;
 
-const migrationRuntime = env as unknown as Env & {
-  readonly CORE_MIGRATIONS: D1Migration[];
-};
+const migrationRuntime = env;
 
 function ownerContext(owner: string, project: string): AuthenticatedRequestContext {
   const credentialGeneration = `credential-${crypto.randomUUID()}`;

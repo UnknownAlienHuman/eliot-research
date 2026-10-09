@@ -1,5 +1,5 @@
 import { applyD1Migrations } from "cloudflare:test";
-import { env } from "cloudflare:workers";
+import { env as generatedEnv } from "cloudflare:workers";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { OpenRouterProviderKeyRestError } from "@eliotr/cloudflare-ai";
 import { RESEARCH_PROVIDER_KEY_CONFIGURATION_PROTOCOL } from "@eliotr/contracts";
@@ -10,9 +10,10 @@ import { createResearchProviderKeyConfigurationService } from "../src/research-p
 
 const ACCOUNT_ID = "a".repeat(32);
 const GATEWAY_ID = "eliotr-reasoning";
-const runtime = env as unknown as Env & {
+const runtime = generatedEnv as unknown as Env & {
   readonly CORE_MIGRATIONS: Parameters<typeof applyD1Migrations>[1];
 };
+const env = runtime;
 const TEST_ENV = runtime;
 
 beforeAll(async () => {

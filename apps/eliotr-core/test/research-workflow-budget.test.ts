@@ -27,6 +27,7 @@ describe("research workflow D1-clock lease issuance", () => {
     const durationMs = researchStageBudgetLeaseMs(stage8Request.stage);
     const workerOnlyExpiry = workerNowMs + durationMs;
     const d1BoundedExpiry = await readD1BoundedResearchWorkflowLeaseExpiry(f.db, stage8Request.stage, workerNowMs);
+    if (d1BoundedExpiry === null) throw new Error("D1 clock could not bound the stage lease");
     const d1ClockAfterIssue = await f.db.prepare("SELECT CAST(unixepoch('subsec') * 1000 AS INTEGER) AS now_ms")
       .first<{ now_ms: number }>();
     if (d1ClockAfterIssue === null) throw new Error("D1 clock readback after issuance is unavailable");

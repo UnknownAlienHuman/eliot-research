@@ -12,7 +12,7 @@ const purePolicy: WorkflowNativeStagePolicy = {
   effect_class: "PURE_COMPUTE",
   effect_policy_generation: WORKFLOW_NATIVE_STAGE_EFFECT_POLICY_GENERATION,
   retry_limit: 1,
-  retry_delay_ms: 1,
+  retry_delay_ms: 1_000,
 };
 
 describe("native research step denial retries", () => {

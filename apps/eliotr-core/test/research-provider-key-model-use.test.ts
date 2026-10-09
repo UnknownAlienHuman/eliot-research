@@ -1,5 +1,6 @@
-import { applyD1Migrations, env } from "cloudflare:test";
+import { applyD1Migrations, env as generatedEnv } from "cloudflare:test";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { validateModelGatewayTransportPolicy } from "@eliotr/cloudflare-ai";
 import { createResearchProviderKeyConfigurationService } from "../src/research-provider-key-configuration-service.js";
 import { createOwnerResearchProjectConfigurationService } from "../src/research-project-configuration-composition.js";
 import { resolveResearchRunAdmissionConfiguration } from "../src/research-run-configuration-admission.js";
@@ -43,6 +44,10 @@ vi.mock("../src/research-provider-native-model-authority.js", async (importOrigi
   };
 });
 
+const env = generatedEnv as unknown as Env & {
+  readonly CORE_MIGRATIONS: Parameters<typeof applyD1Migrations>[1];
+};
+
 const TEST_ENV = {
   CORE_DB: env.CORE_DB,
   ENVIRONMENT: "development",
@@ -51,9 +56,7 @@ const TEST_ENV = {
   AI_GATEWAY_RETRIEVAL_URL: `https://gateway.ai.cloudflare.com/v1/${"a".repeat(32)}/eliotr-retrieval`,
 } as unknown as Env;
 
-const migrationRuntime = env as unknown as Env & {
-  readonly CORE_MIGRATIONS: Parameters<typeof applyD1Migrations>[1];
-};
+const migrationRuntime = env;
 beforeAll(async () => {
   await applyD1Migrations(migrationRuntime.CORE_DB, migrationRuntime.CORE_MIGRATIONS);
 });
@@ -546,16 +549,20 @@ describe("owner OpenRouter model-key check and use", () => {
       selection.candidate_kind === "provider-native-v1" && selection.transport_policy.billing.mode === "byok" &&
       selection.transport_policy.billing.alias === replacementKeyReceipt.receipt.alias)).toBe(true);
     expect(JSON.stringify(capturedRun.model_selections)).toBe(originalCapturedPins);
-    expect(capturedRun.model_selections.every((selection) => selection.transport_policy.billing.mode === "byok" &&
-      selection.transport_policy.billing.alias === savedKey.receipt.alias)).toBe(true);
+    const capturedBilling = capturedRun.model_selections.map((selection) =>
+      validateModelGatewayTransportPolicy(selection.transport_policy).billing);
+    expect(capturedBilling.every((billing) => billing.mode === "byok" &&
+      billing.alias === savedKey.receipt.alias)).toBe(true);
 
     const replacementRun = await captureRun({
       operation_id: crypto.randomUUID(), investigation_id: `model-use-run-${crypto.randomUUID()}`,
       principal_ref: owner, deployment_generation: runtimeEnv.DEPLOYMENT_GENERATION,
     });
     expect(replacementRun.model_selections).toHaveLength(2);
-    expect(replacementRun.model_selections.every((selection) => selection.transport_policy.billing.mode === "byok" &&
-      selection.transport_policy.billing.alias === replacementKeyReceipt.receipt.alias)).toBe(true);
+    const replacementBilling = replacementRun.model_selections.map((selection) =>
+      validateModelGatewayTransportPolicy(selection.transport_policy).billing);
+    expect(replacementBilling.every((billing) => billing.mode === "byok" &&
+      billing.alias === replacementKeyReceipt.receipt.alias)).toBe(true);
     const candidateBindings = await env.CORE_DB.prepare(
       "SELECT candidate_json FROM provider_native_model_candidate WHERE owner_ref=?1 AND project_id=?2",
     ).bind(owner, project).all<{ readonly candidate_json: string }>();

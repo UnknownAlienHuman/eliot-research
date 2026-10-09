@@ -120,6 +120,7 @@ describe("research semantic run configuration bindings", () => {
       env: {} as Env, mode: "snapshot-v2" as const, configuration_ref: "run-config-1",
       configuration_sha256: "c".repeat(64), model_selections: [],
       project_configuration_ref: "project-config-1", project_configuration_sha256: "d".repeat(64),
+      project_owner_ref: actor.principal_ref, project_id: "semantic-bind-project-1",
     };
     readRunConfiguration.mockReset().mockResolvedValue(expected);
     const invoke = vi.fn(async () => "handled");
