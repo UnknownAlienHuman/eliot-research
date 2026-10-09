@@ -106,7 +106,7 @@ export function createOrientationApi(env: OrientationEnvironment, now: () => num
     else await authority.exhaustiveGrant(snapshot, executionGrantCeiling);
     await requireCurrent(snapshot);
     await delegated?.requireScopeCurrent(snapshot);
-    if (executionBinding !== undefined && operation.state === "COMPLETE") {
+    if (operation.state === "COMPLETE") {
       await evidence.authorizeScope({ snapshot, invalidated_at: null, invalidation_reason: null }, context);
       if (operation.result_json === null) orientationFail("ORIENTATION_OPERATION_CORRUPT", 409);
       const saved = JSON.parse(operation.result_json) as { result: QueryResult };
@@ -120,17 +120,15 @@ export function createOrientationApi(env: OrientationEnvironment, now: () => num
     }
     const store = createD1NavigationStore({ database: env.CORE_DB, scope_snapshot: snapshot, access: context,
       require_current: requireCurrent, now });
-    if (operation.state !== "COMPLETE") {
-      // Preview work is bounded independently. The snapshot/denominator is never sliced.
-      const previewRefs = executionBinding === undefined ? snapshot.member_source_revision_refs
-        : snapshot.member_source_revision_refs.slice(0, ORIENTATION_MAX_SOURCES);
-      const sources = executionBinding === undefined ? await authority.sources(previewRefs)
-        : await authority.exhaustiveSources(previewRefs);
-      checkpoint();
-      await materializeMetadataNavigation(store, snapshot, sources);
-    }
+    // Preview work is bounded independently. The snapshot/denominator is never sliced.
+    const previewRefs = executionBinding === undefined ? snapshot.member_source_revision_refs
+      : snapshot.member_source_revision_refs.slice(0, ORIENTATION_MAX_SOURCES);
+    const sources = executionBinding === undefined ? await authority.sources(previewRefs)
+      : await authority.exhaustiveSources(previewRefs);
     checkpoint();
-    const navigation = await createNavigationService(store).orient({ scope_snapshot: snapshot,
+    await materializeMetadataNavigation(store, snapshot, sources);
+    checkpoint();
+    const { navigation, work } = await createNavigationService(store).orientWithWork({ scope_snapshot: snapshot,
       focus_terms: [], question: request.query, maximum_sources: request.max_results });
     const traceRef = { id: operation.operation_id, revision: 1 };
     const packRef = { id: `${operation.operation_id}:pack`, revision: 1 };
@@ -140,9 +138,9 @@ export function createOrientationApi(env: OrientationEnvironment, now: () => num
       scope_snapshot: snapshot, query_product: "ORIENT", lanes_used: ["SOURCECARD"],
       lanes_skipped: [{ lane: "STRUCTURE", reason: "STRUCTURE_NOT_MATERIALIZED" }, { lane: "ATLAS", reason: "PROJECT_ATLAS_NOT_MATERIALIZED" },
         { lane: "SEM", reason: "METADATA_PROFILE_NO_PROVIDER_CALLS" }, { lane: "VERIFY", reason: "NAVIGATION_ONLY" }],
-      exact_probes: [], index_generations: [ORIENTATION_PROFILE], context_expansion: 0,
+      exact_probes: [], index_generations: [ORIENTATION_PROFILE, work.protocol], context_expansion: 0,
       candidates_by_lane: Object.fromEntries(RetrievalLaneSchema.options.map((lane) => [lane,
-        lane === "SOURCECARD" ? snapshot.member_source_revision_refs.length : 0])),
+        lane === "SOURCECARD" ? work.preview_candidates_examined : 0])),
       expansion_refs: [], represented_source_refs: navigation.represented_source_revision_refs,
       omitted_sources: navigation.omissions.map((item) => ({ source_ref: item.source_revision_ref, reason: item.reason })),
       stale_or_degraded_channels: ["METADATA_ONLY", "STRUCTURE_NOT_MATERIALIZED"],
@@ -152,7 +150,7 @@ export function createOrientationApi(env: OrientationEnvironment, now: () => num
     checkpoint();
     await current(scopeRef);
     await evidence.authorizeScope({ snapshot, invalidated_at: null, invalidation_reason: null }, context);
-    await storage.complete(operation, snapshot, { result, trace, budget: { receipt_ref: budgetRef, profile: ORIENTATION_PROFILE,
+    await storage.complete(operation, snapshot, { result, trace, work, budget: { receipt_ref: budgetRef, profile: ORIENTATION_PROFILE,
       maximum_sources: ORIENTATION_MAX_SOURCES, represented_sources: navigation.represented_source_revision_refs.length,
       provider_calls: 0, cost_measurement: "NOT_MEASURED" },
       ...(executionBinding === undefined ? {} : {

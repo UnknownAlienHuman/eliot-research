@@ -29,11 +29,11 @@ import {
   type NavigationExpansionResult,
   type NavigationOmission,
   type NavigationOmissionReason,
-  type NavigationService,
   type NavigationStore,
   type OrientationRequest,
   type OrientationResult,
 } from "@eliotr/retrieval";
+import { orientationWorkReceipt, type NavigationServiceWithWork, type OrientationWithWork } from "./orientation-work.js";
 
 function fail(code: NavigationError["code"], message: string): never {
   throw new NavigationError(code, message);
@@ -329,7 +329,7 @@ function omissionReason(
   return "SOURCE_LIMIT";
 }
 
-async function orient(store: NavigationStore, request: OrientationRequest): Promise<OrientationResult> {
+async function orient(store: NavigationStore, request: OrientationRequest): Promise<OrientationWithWork> {
   const scope = await requireCurrentScope(store, request.scope_snapshot);
   const limit = maximumSources(request.maximum_sources);
   const focusTerms = questionFocusTerms(request);
@@ -426,7 +426,7 @@ async function orient(store: NavigationStore, request: OrientationRequest): Prom
       source_revision_refs: representedRefs,
     }];
 
-  return {
+  const navigation: OrientationResult = {
     ...(atlas === undefined ? {} : { atlas }),
     source_cards: representedCards,
     document_maps: representedMaps,
@@ -444,6 +444,9 @@ async function orient(store: NavigationStore, request: OrientationRequest): Prom
     recommended_reading_routes: routes,
     navigation_authority: "NAVIGATION_ONLY",
   };
+  return Object.freeze({ navigation, work: orientationWorkReceipt(
+    scope.member_source_revision_refs.length, candidateSources, rankedCards.length, navigation,
+  ) });
 }
 
 async function oneCardBySource(
@@ -575,13 +578,17 @@ async function expand(
 }
 
 // IMPLEMENTED_NOT_LIVE: ER-31 persisted Corpus Lens requires production scope composition and live D1 receipts.
-export function createNavigationService(store: NavigationStore): NavigationService {
+export function createNavigationService(store: NavigationStore): NavigationServiceWithWork {
+  const orientWithWork = async (request: OrientationRequest): Promise<OrientationWithWork> => {
+    const pinned = { ...request, scope_snapshot: parseNavigationScopeSnapshot(request.scope_snapshot) };
+    const result = await orient(store, pinned);
+    await requireCurrentScope(store, pinned.scope_snapshot);
+    return result;
+  };
   return {
+    orientWithWork,
     async orient(request) {
-      const pinned = { ...request, scope_snapshot: parseNavigationScopeSnapshot(request.scope_snapshot) };
-      const result = await orient(store, pinned);
-      await requireCurrentScope(store, pinned.scope_snapshot);
-      return result;
+      return (await orientWithWork(request)).navigation;
     },
     async expand(request) {
       const pinned = { ...request, scope_snapshot: parseNavigationScopeSnapshot(request.scope_snapshot) };
