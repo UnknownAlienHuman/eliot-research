@@ -194,6 +194,20 @@ binding and changed R2 bytes fail before Stage-8 commitment. Explicit source
 admission/scope/retrieval-lineage/budget/configuration fixtures bound this result;
 complete scientific, production-selected/native/live/release acceptance stays open.
 
+Four additional cases replace direct initial source rows with existing canonical
+normalized-bundle admission. One application-only positive and one local signed
+owner public-HTTP positive both reach the original native Stage-8 commitment
+through actual D1/R2 promotion, exact bytes, fresh resolution and Queue delivery.
+The latter enters existing `handleHttp` for all eight ingest mutations, letting
+the product construct its authorization context/application. Application-policy
+denial and actual public nonretryable 403 denial each leave zero canonical/Workflow
+table deltas and zero Work/Evidence objects. Actual Core/Search migrations satisfy
+readiness; no guard or production service was changed. Earlier passing fixtures
+were not repeated. Local JWKS/policy/scope/stage-five/budget/configuration and the
+private Workflow entrypoint retain the same full scientific/COMPUTER dispatch/
+production/native/live/release limits. New semantic TypeScript qualification is
+pending; see the detailed qualification record for receipts and preserved failures.
+
 The separate ResearchSession HTTP extraction retains the existing native-waiting
 projection and bootstrap behavior. Owning compilation, exact lint, AST preservation
 and independent final-source review pass. Three existing scoped regression results

@@ -300,6 +300,56 @@ Complete ingest/admission, actual stage-five retrieval, earlier scientific stage
 production profile/provider, COMPUTER dispatch, complete native/live and release
 remain open. These three cases do not promote implementation status or close #326.
 
+## Canonical admission before evidence — local application and public HTTP
+
+Separate added-only fixtures reuse the existing Core `createIngestApplication`,
+D1 admission authority, R2 staging port and actual persisted promotion authorizer.
+Ownership/policy are explicit fixture preconditions. The product service writes
+operation/candidate/qualification/decision/source/revision/head/readiness/outbox
+and receipt state; the fixture inserts no canonical source/admission result.
+Work and Evidence use separate real R2 buckets. Content is read from the actual
+promotion's `promoted_objects` entry; `normalized_artifact_ref` remains the
+manifest reference. Initial read policy/project membership/scope and scientific
+predecessors remain separately labelled fixtures.
+
+| Added case | Bounded result |
+|---|---|
+| Existing Core application admission, injected owner context | PASS: actual admission/promotion/78 UTF-8 bytes, two exact resolution receipts and one original Stage-8 commitment, stage 9/revision 10, `UNASSESSED`; duplicate callback identical. |
+| Persisted policy excludes injected owner | PASS: typed `INGEST_POLICY_DENIED`, zero deltas in eight canonical/Workflow tables, zero Work/Evidence objects. Private wrapper 500 does not qualify product HTTP mapping. |
+| Existing public HTTP admission, local signed owner RS256/JWKS | PASS: eight existing prepare/part/complete/commit requests return 200; `handleHttp` constructs verified owner context and its application; same actual canonical/evidence/Queue/native single commitment and duplicate result checks pass. |
+| Persisted policy excludes verified public owner | PASS: actual nonretryable product HTTP403 `INGEST_POLICY_DENIED`, one prepare request, eight zero table deltas and zero Work/Evidence objects. Private seed wrapper 500 only carries the observed product response. |
+
+The application-only denial initially read a nested private error field although
+the existing transport had already returned a flat `code`. Only that failed
+assertion was corrected and the failed case repeated. The public positive's first
+attempt failed `SCHEMA_NOT_READY` before ingestion because its private runtime
+bound only Core. Adding Search and applying the actual Search migrations satisfies
+the existing readiness reader; no readiness row was fabricated or guard bypassed.
+Only that failed new case was repeated. Both first failure receipts are preserved.
+
+Miniflare 5.20260926.1-alpha and esbuild 0.28.1 qualify these local private graphs.
+All receipt-loaded input hashes and derivation baselines read back exactly;
+previous passing fixtures and receipts were retained without repetition. The new
+private graph has no semantic TypeScript verdict yet. Local JWKS/network override,
+owner/policy/initial scope/project/stage-five/earlier scientific/budget/configuration
+fixtures and private Workflow entrypoint leave production configured Access/ingress,
+complete ingest/retrieval/scientific pipeline, COMPUTER dispatch, selected native/live
+and release acceptance open. No implementation-status, #326 or Goal closure follows.
+
+Private records in the same checkpoint directory:
+
+- `native-admitted-evidence-receipt-20261009.json`;
+- `native-admitted-denied-owner-receipt-20261009.json`;
+- `native-http-admitted-evidence-receipt-20261009.json`;
+- `native-http-admitted-denied-owner-receipt-20261009.json`;
+- `admitted-evidence-completion-proof-20261009.json`.
+
+The original application-only denial receipt retains a copied broad descriptive
+scope string. Its actual case/zero effects are authoritative for that bounded run;
+it executed no Workflow/result/Queue/scientific path. The completion proof records
+this correction without rewriting the raw receipt. The separate public-denial
+receipt uses a narrow scope matching its execution.
+
 ## ResearchSession HTTP extraction — bounded regression result
 
 The existing `project`, `start`, `read`, `execute` and `cancel` handlers now live in

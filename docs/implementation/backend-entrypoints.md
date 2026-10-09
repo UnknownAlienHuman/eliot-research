@@ -154,6 +154,23 @@ advance the stage. Owning compile/lint and independent final-source review pass.
 and budget/configuration values are fixtures, so complete ingest/retrieval,
 selected scientific/native/live/release acceptance remain open.
 
+Four later added-only cases exercise actual normalized-bundle admission before
+the same nonempty evidence/native path. The first positive calls the existing
+Core application; its owner-policy negative leaves eight canonical/Workflow
+table deltas and both R2 bucket counts at zero. A separate positive replaces
+the injected admission context with locally signed owner RS256/JWKS and existing
+`handleHttp`: eight prepare/part/complete/commit requests return 200, followed by
+two exact resolutions and one original Stage-8 commitment. Its separate policy
+negative observes the product's nonretryable 403 `INGEST_POLICY_DENIED` and zero
+effects. The private seed wrapper's 500 is only an observation envelope.
+Actual Search migrations/binding satisfy existing readiness; no readiness guard
+was bypassed. Earlier passing fixtures were preserved without repetition.
+Local JWKS/policy/scope/stage-five/budget/configuration inputs and the private
+Workflow entrypoint still bound acceptance; production Access/ingress, full
+scientific/COMPUTER dispatch/native/live/release remain open. The new private
+graph has esbuild/runtime acceptance, not a new semantic TypeScript verdict.
+See the same qualification record and private admitted-evidence completion proof.
+
 The bounded ResearchSession HTTP extraction preserves all five existing handler
 bodies, six helpers and retained DO members; persistence remains private through
 per-call closures. The two source files are 393/362 physical lines. AST preservation,

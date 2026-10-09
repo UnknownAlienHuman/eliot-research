@@ -276,6 +276,34 @@ recovery ref retained. Runtime/compile receipts keep the original recorded SHA;
 history acceptance and ordinary remote publication remain separate transitions.
 No pushed ancestor, checker rule, source behavior or test result was rewritten.
 
+Normal publication subsequently reaches `ef1aa4eed1f7734d387f4daaaed8d278bd7058e6`
+with exact remote/ref/blob readback and the frontend's finite history/coherence
+acknowledgement. The Session delivery mapping and reviewed consumer source are
+published; later frontend local commits require their own coherence frontier.
+
+Four added-only local admission cases then pass. The existing Core application
+performs real D1 reservation/qualification/admission/guarded commit and separate
+R2 Work multipart/Evidence promotion, followed by fresh exact resolution and
+one original native Stage-8 settlement. Its persisted-policy owner denial has
+eight zero canonical/Workflow table deltas and zero R2 objects. A separate positive
+uses existing public `handleHttp` and local signed owner RS256/JWKS for eight
+HTTP200 ingest mutations; no injected owner authorization context or alternate
+application factory is used. Its separate public-policy negative verifies actual
+nonretryable HTTP403 `INGEST_POLICY_DENIED` before all those effects.
+
+The injected-owner negative's original flat-error assertion failure and public
+positive's initial `SCHEMA_NOT_READY` failure are retained. Only those failed
+cases were repeated after fixing the private assertion and applying actual
+Search migrations with its required binding. Passing older fixtures/receipts
+remain unchanged; all loaded input hashes and derivation baselines read back
+exactly. `admitted-evidence-completion-proof-20261009.json` records four receipts
+and the copied broad scope correction for the original application-only denial.
+This is esbuild/local-runtime acceptance; no new private semantic TypeScript
+verdict is claimed. Local JWKS/network, owner/policy/scope/project/predecessor/
+stage-five/budget/configuration fixtures and private Workflow entrypoint remain
+limits. Production-selected full scientific/COMPUTER dispatch/native/live/release,
+implementation-status promotion, #326 and the Goal remain open.
+
 The same continuation archives two directly verified malformed loose probe files
 from the Research root (891 bytes) into the private checkpoint directory with
 exact hash readback. It preserves the unique Unicode regeneration set, registered
