@@ -228,8 +228,8 @@ Vite/workerd generated routing parity
 emitted owner-web/Worker/rollback receipt
 routing-policy digest and response matrix
 Storybook / Playwright / CSP / accessibility / performance
-U1-D owner approval
-U2-X owner walkthrough
+U1-D manager-recorded internal acceptance
+U2-X fresh-context internal usability audit
 pnpm check:full
 staging/live acceptance
 ```

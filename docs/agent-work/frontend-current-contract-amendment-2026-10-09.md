@@ -254,8 +254,8 @@ Internal managed projection/Items rows are not owner-web readiness until a versi
 
 ## 9. Golden corpus and unresolved backend decisions
 
-Local Golden fixture integrity cannot satisfy provider/live qualification, U1-D visual approval, U2-X owner
-walkthrough or production promotion.
+Local Golden fixture integrity cannot satisfy provider/live qualification, manager-recorded U1-D rendered
+acceptance, fresh-context U2-X usability acceptance or production promotion.
 
 Until authoritative decisions are accepted, UI must not present as fact:
 
@@ -324,8 +324,8 @@ TypeScript / ESLint / Vitest
 ResearchSession browser reconnect / two-tab / hibernation
 Vite/workerd Agent RPC and routing parity
 Storybook / Playwright / CSP / accessibility / performance
-U1-D owner approval
-U2-X owner walkthrough
+U1-D manager-recorded internal acceptance
+U2-X fresh-context internal usability audit
 pnpm check:full
 staging or live acceptance
 ```
