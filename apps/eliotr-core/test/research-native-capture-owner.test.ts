@@ -4,6 +4,7 @@ import type {
   RawCaptureWorkflowOwnerPort,
 } from "@eliotr/cloudflare-raw-ingest";
 import type { RawFileCaptureRequest, RawFileCaptureResult } from "@eliotr/interfaces";
+import { NATIVE_WEB_SEARCH_CAPTURE_CONTENT_TYPE, type NativeWebSearchRawCaptureRequest } from "@eliotr/platform-cloudflare";
 import type { RunStatusReadInput, WorkflowPrincipal, WorkflowRunStatus } from "@eliotr/cloudflare-workflows";
 import { bindRawCaptureWorkflowOwnerOperations } from "../../../packages/cloudflare-raw-ingest/src/raw-capture-workflow-owner-service.js";
 import type { Env } from "../src/env.js";
@@ -76,12 +77,12 @@ const rawCaptureResult: RawFileCaptureResult = {
   content_type: "text/markdown; charset=utf-8",
   captured_at: "2026-10-09T00:00:00.000Z",
 };
-const rawCaptureRequest: RawFileCaptureRequest = {
+const rawCaptureRequest: NativeWebSearchRawCaptureRequest = {
   idempotency_key: rawCaptureResult.idempotency_key,
   original_file_name: rawCaptureResult.original_file_name,
   content_sha256: rawCaptureResult.content_sha256,
   size_bytes: rawCaptureResult.size_bytes,
-  content_type: rawCaptureResult.content_type,
+  content_type: NATIVE_WEB_SEARCH_CAPTURE_CONTENT_TYPE,
   body: new ReadableStream<Uint8Array>(),
 };
 const rawOwnerPort = {
