@@ -1,0 +1,41 @@
+{
+  "protocol": "eliotr.frontend-owner-claim.v1",
+  "manager_identity": "frontend-manager",
+  "manager_context_id": "01a120c9-2637-7952-b6c9-be07b395b4fd",
+  "owner_authorization_ref": "tests/ui-owner/receipts/owner-authorization.json",
+  "base_sha": "db36d341a38bd1236c7f3768d29963fdb501f378",
+  "history_base_sha": "c37e56e0ebdfc7f6d294879008a4036d1b95b985",
+  "state": "ACTIVE",
+  "evidence_refs": [],
+  "blocker_refs": [],
+  "claim_id": "c3-c-connections-20261009",
+  "checkpoint_id": "C3-C",
+  "packet_id": "ER-48",
+  "leaf_identity": "01a120dc-563e-7df1-8e10-a494dcb21204",
+  "write_paths": [
+    "packages/owner-api-client/src/connections/health.ts",
+    "packages/owner-api-client/src/connections/health.test.ts",
+    "packages/owner-api-client/src/connections/session.ts",
+    "packages/owner-api-client/src/connections/session.test.ts",
+    "packages/owner-api-client/src/connections/grant.ts",
+    "packages/owner-api-client/src/connections/grant.test.ts",
+    "packages/owner-api-client/src/connections/provider.ts",
+    "packages/owner-api-client/src/connections/provider.test.ts",
+    "packages/owner-api-client/src/connections/provider-model-use.ts",
+    "packages/owner-api-client/src/connections/provider-model-use.test.ts",
+    "packages/owner-api-client/src/connections/google.ts",
+    "packages/owner-api-client/src/connections/google.test.ts",
+    "packages/owner-api-client/src/connections/diagnostic.ts",
+    "packages/owner-api-client/src/connections/diagnostic.test.ts"
+  ],
+  "predecessor_refs": [
+    {
+      "checkpoint_id": "C0.3",
+      "commit_sha": "9029cbf18717365641c079c8180b8a9f7a4001b8"
+    },
+    {
+      "checkpoint_id": "C1.4",
+      "commit_sha": "4f7c99546bd7adfcf766bdc1a398a94a8e20fedb"
+    }
+  ]
+}
