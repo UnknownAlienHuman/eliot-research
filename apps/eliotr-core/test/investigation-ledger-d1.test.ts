@@ -119,12 +119,65 @@ function interceptBatch(database: LedgerD1Database, onBatch: (statements: readon
   }) as LedgerD1Database;
 }
 
+function interceptNextEventRead(database: LedgerD1Database, beforeRead: () => Promise<void>): LedgerD1Database {
+  let intercepted = false;
+  return new Proxy(database, {
+    get(target, key) {
+      if (key === "prepare") {
+        return (sql: string) => {
+          const prepared = target.prepare(sql);
+          return {
+            bind(...params: unknown[]) {
+              const statement = prepared.bind(...params);
+              if (!/FROM\s+investigation_ledger_event/i.test(sql) || !/ORDER BY\s+sequence\s+ASC/i.test(sql)) return statement;
+              return new Proxy(statement, {
+                get(bound, property) {
+                  if (property === "all") {
+                    return async <T>() => {
+                      if (!intercepted) {
+                        intercepted = true;
+                        await beforeRead();
+                      }
+                      return statement.all<T>();
+                    };
+                  }
+                  const value = Reflect.get(bound, property);
+                  return typeof value === "function" ? value.bind(bound) : value;
+                },
+              }) as LedgerD1Statement;
+            },
+          };
+        };
+      }
+      const value = Reflect.get(target, key);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  }) as LedgerD1Database;
+}
+
 beforeEach(async () => {
   await applyD1Migrations(db as never, runtime.CORE_MIGRATIONS);
   await seedAuthority();
 });
 
 describe("investigation ledger over actual Cloudflare D1", () => {
+  it("reads the observed event frontier when an append commits between head and event reads", async () => {
+    const ctx = context();
+    const input = baseInput("snapshot-interleave");
+    seedAll(ctx, input);
+    await ctx.service.create(input);
+
+    const reader = createD1InvestigationLedgerStore(interceptNextEventRead(db as unknown as LedgerD1Database, async () => {
+      ctx.digests.set("payload-d1-snapshot-interleave-next", DIGEST_C);
+      await ctx.service.checkpoint(input.investigation_id, 1, 2, "principal-1", "evt-d1-snapshot-interleave-next", "payload-d1-snapshot-interleave-next", DIGEST_C);
+    }));
+
+    const snapshot = await reader.read(input.investigation_id);
+    expect(snapshot?.head.event_head).toBe(1);
+    expect(snapshot?.events.map((event) => event.sequence)).toEqual([1]);
+    expect((await ctx.service.read(input.investigation_id)).event_head).toBe(2);
+  });
+
   it("creates, appends and reconstructs from committed migration rows with readback", async () => {
     const ctx = context();
     const input = baseInput("t1");

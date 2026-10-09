@@ -80,11 +80,28 @@ function mapTriggerError(error: unknown): never {
   if (error instanceof Error && /ABORT|UNIQUE|CHECK|constraint|append-only|guard/i.test(error.message)) ledgerFail("LEDGER_CONFLICT", "ledger conflicted");
   ledgerFail("LEDGER_SETTLEMENT_UNCERTAIN", "ledger outcome is unknown", true, error);
 }
+function mapSnapshotReadError(error: unknown): never {
+  if (error instanceof LedgerError) throw error;
+  ledgerFail("LEDGER_SETTLEMENT_UNCERTAIN", "ledger read outcome is unknown", true, error);
+}
 async function readSnapshot(database: LedgerD1Database, investigationId: string) {
-  const headRow = await database.prepare(LEDGER_SQL.selectHead).bind(investigationId).first<HeadRow>();
+  let headRow: HeadRow | null;
+  try {
+    headRow = await database.prepare(LEDGER_SQL.selectHead).bind(investigationId).first<HeadRow>();
+  } catch (error) {
+    mapSnapshotReadError(error);
+  }
   if (headRow === null) return null;
   const head = decodeHead(headRow);
-  const eventRows = await database.prepare(LEDGER_SQL.selectEvents).bind(investigationId).all<EventRow>();
+  if (!Number.isSafeInteger(head.event_head) || head.event_head < 1) {
+    ledgerFail("LEDGER_INPUT_INVALID", "ledger event head must be a positive safe integer");
+  }
+  let eventRows: { results: EventRow[] };
+  try {
+    eventRows = await database.prepare(LEDGER_SQL.selectEvents).bind(investigationId, head.event_head).all<EventRow>();
+  } catch (error) {
+    mapSnapshotReadError(error);
+  }
   const events = (eventRows.results ?? []).map(decodeEvent);
   assertContiguous(head, events);
   return { head, events };
