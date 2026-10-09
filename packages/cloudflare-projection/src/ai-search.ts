@@ -25,3 +25,4 @@ export {
 } from "./ai-search-provisioning-decode.js";
 export { ensureAiSearchInstance } from "./ai-search-provisioning.js";
 export * from "./ai-search-managed-read.js";
+export { createAiSearchScopeFilter, type AiSearchScopeFilter } from "./ai-search-scope-filter.js";

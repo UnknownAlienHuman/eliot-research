@@ -9,7 +9,8 @@ import {
   type AiSearchGenerationRegistryService,
   type AiSearchGenerationRegistrySnapshot,
 } from "@eliotr/cloudflare-ai";
-import { createAiSearchScopeFilter, decodeAiSearchSearchResult, type AiSearchScopeFilter, type AiSearchInstanceLike, type AiSearchNamespaceLike, type EvidenceObjectStore } from "@eliotr/platform-cloudflare";
+import { createAiSearchScopeFilter, type AiSearchScopeFilter } from "@eliotr/cloudflare-ai";
+import { decodeAiSearchSearchResult, type AiSearchInstanceLike, type AiSearchNamespaceLike, type EvidenceObjectStore } from "@eliotr/platform-cloudflare";
 import type { EvidenceAccessContext } from "@eliotr/cloudflare-evidence";
 import type { RetrievalRequest } from "@eliotr/retrieval";
 import { z } from "zod";

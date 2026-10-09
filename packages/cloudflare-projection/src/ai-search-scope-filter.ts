@@ -1,4 +1,4 @@
-/** Provider-side narrowing only; exact scope/evidence authorization still runs after retrieval. */
+/** Projection-owned scope narrowing; exact evidence authorization still runs after retrieval. */
 export interface AiSearchScopeFilter {
   readonly source_revision_ref: Readonly<{ readonly $in: readonly string[] }>;
   readonly projection_generation: string;

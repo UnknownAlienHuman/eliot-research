@@ -563,8 +563,6 @@ export async function bufferBounded(
           return fail("R2_STREAM_LIMIT_EXCEEDED", "R2 body exceeds its expected byte envelope", false, error);
         case "STREAM_CHUNK_LIMIT_EXCEEDED":
           return fail("R2_STREAM_LIMIT_EXCEEDED", "R2 body exceeds the stream chunk-count limit", false, error);
-        default:
-          throw error;
       }
     }
     throw error;

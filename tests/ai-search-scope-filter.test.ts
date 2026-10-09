@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createAiSearchScopeFilter } from "../packages/platform-cloudflare/src/ai-search-scope-filter.js";
+import { createAiSearchScopeFilter } from "../packages/cloudflare-projection/src/ai-search-scope-filter.js";
 
 const GENERATION = "g2-qwen3-2026-09-03";
 

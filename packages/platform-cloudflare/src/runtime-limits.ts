@@ -25,14 +25,12 @@ export type RuntimeLimitErrorCode =
   | "JSON_SERIALIZATION_FAILED";
 
 export class RuntimeLimitError extends RangeError {
-  public readonly code: RuntimeLimitErrorCode;
-  public readonly label: string;
   public readonly actual: number | undefined;
   public readonly limit: number | undefined;
 
   public constructor(
-    code: RuntimeLimitErrorCode,
-    label: string,
+    public readonly code: RuntimeLimitErrorCode,
+    public readonly label: string,
     message: string,
     actual?: number,
     limit?: number,
@@ -40,8 +38,6 @@ export class RuntimeLimitError extends RangeError {
   ) {
     super(message, cause === undefined ? undefined : { cause });
     this.name = "RuntimeLimitError";
-    this.code = code;
-    this.label = label;
     this.actual = actual;
     this.limit = limit;
   }

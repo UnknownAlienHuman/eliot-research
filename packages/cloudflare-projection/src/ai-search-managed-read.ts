@@ -1,4 +1,5 @@
-import { createAiSearchScopeFilter, type AiSearchScopeFilter, decodeAiSearchSearchResult, type AiSearchAdapter, type AiSearchInstanceLike, type AiSearchNamespaceLike } from "@eliotr/platform-cloudflare";
+import { decodeAiSearchSearchResult, type AiSearchAdapter, type AiSearchInstanceLike, type AiSearchNamespaceLike } from "@eliotr/platform-cloudflare";
+import { createAiSearchScopeFilter, type AiSearchScopeFilter } from "./ai-search-scope-filter.js";
 import { decodeAiSearchGenerationRegistrySnapshot } from "./ai-search-generation-registry-codec.js";
 import type { AiSearchGenerationRegistryService } from "./ai-search-generation-registry-contract.js";
 import { createD1AiSearchGenerationRegistryStore } from "./ai-search-generation-registry-d1.js";
