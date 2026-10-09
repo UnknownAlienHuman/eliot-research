@@ -1,5 +1,24 @@
 # Backend delivery plan
 
+## Owner-resumed backend implementation, October 8
+
+The owner resumed backend development on 2026-10-08 and assigned the frontend to a
+separate agent. The current queue is the [backend implementation router](backend-entrypoints.md)
+and [implementation cards](../../.github/audits/2026-10-08/BACKEND-IMPLEMENTATION-CARDS.md),
+prepared in [#327](https://github.com/UnknownAlienHuman/eliot-research/pull/327).
+The October 6 stop below is retained as historical evidence.
+
+The first source checkpoint covers dependency-ready #209, #321/#331, #322/#323,
+#324/#320 and #332 over baseline `3e6c25660c1ae515760e19d5f9e6b8a735795c4c`.
+One named integrator owns shared surfaces; Luna Max workers have disjoint write
+sets in the existing `main` checkout under the owner's main-delivery instruction.
+The router's worktree examples do not create an additional checkout for this run.
+No frontend, backup/export/restore, deployment, paid qualification or replay of
+the historical uncertain Research run is included. Native/live release criteria
+remain separate from compilation and scoped source checks.
+
+## Historical October 6 stop and evidence
+
 Current bounded work, refreshed on 2026-10-06 for the assembled #294 checkpoint
 based on `main` `65fcf3363c55ef738bbb15a55845a601b8369561`; its published SHA is
 recorded in #294. Broader implementation, release and cleanup are stopped.

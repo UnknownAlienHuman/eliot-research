@@ -2,7 +2,8 @@
 
 This is the only entry point for implementation work. It is intentionally short.
 
-- Current state and execution order: [backend-delivery-plan.md](implementation/backend-delivery-plan.md).
+- Current backend execution order: [backend-entrypoints.md](implementation/backend-entrypoints.md).
+- Owner-resumed checkpoint and historical evidence: [backend-delivery-plan.md](implementation/backend-delivery-plan.md).
 - Original S01–S99 requirements: [PR #292](https://github.com/UnknownAlienHuman/eliot-research/pull/292).
 - Repository boundaries: [AGENTS.md](../AGENTS.md).
 - Ownership: [agent-work/README.md](agent-work/README.md) and [manifest.json](agent-work/manifest.json).
@@ -20,13 +21,13 @@ git status --short
 pnpm launch:code
 pnpm work-packets:check
 pnpm check:implementation-status
-gh pr view 292
-gh pr view 229 --comments
+gh pr view 327
+gh pr view <assigned-task> --comments
 ```
 
 Then read, in this order:
 
-1. the **Current active checkpoint** in `backend-delivery-plan.md`;
+1. the dependency-ready card in `backend-entrypoints.md` and the owner-resumed checkpoint in `backend-delivery-plan.md`;
 2. the latest comment on its GitHub task;
 3. `AGENTS.md`;
 4. only the owning work packet and the architecture sections named by that packet.

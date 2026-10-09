@@ -21,7 +21,8 @@ from the tables below, so an unlisted file is a bug, not an omission you may ign
 |---|---|
 | [implementation-status.md](implementation-status.md) | What the four states mean and why a compiling port is not an implemented feature. |
 | [implementation-status.json](implementation-status.json) | The machine-readable registry. `pnpm check:implementation-status` validates it. |
-| [backend-delivery-plan.md](backend-delivery-plan.md) | Single ordered code queue, delivered checkpoint references, and separate assembled-product acceptance. |
+| [backend-entrypoints.md](backend-entrypoints.md) | Current backend router, dependency-ready cards, donor decisions and shared integration boundaries. |
+| [backend-delivery-plan.md](backend-delivery-plan.md) | Owner-resumed checkpoint, historical October 6 evidence and separate assembled-product acceptance. |
 | [product-resume-2026-10-02.md](product-resume-2026-10-02.md) | Dated product integration checkpoint with preserved decisions and pending acceptance. |
 | [product-resume-2026-10-03.md](product-resume-2026-10-03.md) | Owner configuration, immutable Research capture and functional integration checkpoint. |
 | [audit-2026-09-25-review.md](audit-2026-09-25-review.md) | Independent review of audit PR303: reproduced SQL/lint/CI findings, corrections, issue mapping and verification limits. |
