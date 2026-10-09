@@ -83,6 +83,15 @@ export default tseslint.config(
     },
   },
   {
+    files: ["packages/owner-api-client/src/**/*.ts"],
+    languageOptions: {
+      globals: { window: "readonly", document: "readonly", navigator: "readonly", localStorage: "readonly", sessionStorage: "readonly", location: "readonly" },
+    },
+    rules: {
+      "no-restricted-globals": ["error", "window", "document", "navigator", "localStorage", "sessionStorage", "location", "Worker", "EventSource", "WebSocket"],
+    },
+  },
+  {
     // Owner-web and UI are browser TypeScript/TSX and are not covered by the
     // Node-only exception above. The DOM lib comes from tsconfig; ESLint still
     // needs the globals declared or every React file is flagged as undefined.

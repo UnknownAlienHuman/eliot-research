@@ -264,7 +264,7 @@ async function proveWorkPacketParityFailsClosed() {
   );
 }
 
-if (!process.argv.includes("--owner-web")) {
+if (!process.argv.includes("--owner-web") && !process.argv.includes("--owner-client")) {
   await proveCheckoutPathsArePortable();
   await proveForbiddenImportFailsClosed();
   await proveUnregisteredPendingStateFailsClosed();
@@ -415,5 +415,30 @@ async function proveSourceBudgetEntrypoints() {
   }
 }
 
-await proveWebAndUiBoundariesFailClosed();
-await proveSourceBudgetEntrypoints();
+async function proveOwnerClientBoundariesFailClosed() {
+  const fixture = resolve(root, "packages/owner-api-client/src/__eliotr_client_direction__.ts");
+  const cases = [
+    { content: 'import { createElement } from "react";\nexport const probe = createElement;\n', script: "scripts/check-boundaries.mjs", args: [], expected: "packages/owner-api-client/src/__eliotr_client_direction__.ts violates dependency direction with react" },
+    { content: "export const probe = window;\n", script: "node_modules/eslint/bin/eslint.js", args: [fixture], expected: "no-restricted-globals" },
+  ];
+  for (const candidate of cases) {
+    let created = false;
+    try {
+      await writeFile(fixture, candidate.content, { flag: "wx" });
+      created = true;
+      const result = spawnSync(process.execPath, [candidate.script, ...candidate.args], { cwd: root, encoding: "utf8", timeout: 15_000 });
+      if (result.error) throw result.error;
+      const output = `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
+      if (result.status !== 1 || !output.includes(candidate.expected)) throw new Error("Owner-client negative failed for wrong reason: " + output);
+    } finally {
+      if (created) await removeCreatedFile(fixture, candidate.content);
+    }
+  }
+  console.log("Owner-client boundary negatives: PASS (renderer import and DOM global rejected).");
+}
+
+if (!process.argv.includes("--owner-client")) {
+  await proveWebAndUiBoundariesFailClosed();
+  await proveSourceBudgetEntrypoints();
+}
+if (!process.argv.includes("--owner-web")) await proveOwnerClientBoundariesFailClosed();

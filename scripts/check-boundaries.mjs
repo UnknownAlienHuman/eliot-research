@@ -29,6 +29,7 @@ const FORBIDDEN_IMPORTS = [
 // repository path and specifier. Backup tests read checked-in migration SQL,
 // and the PWA build script reads local source files to generate its asset.
 const HOST_TOOL_IMPORTS = new Map([
+  ["packages/ui/src/tokens/contrast.test.ts", new Set(["node:fs", "node:crypto"])],
   ["packages/backup-o2/src/coverage-full-chain.test.ts", new Set(["node:fs"])],
   ["packages/cloudflare-backup/src/backup-epoch-manifest-publisher.test.ts", new Set(["node:fs/promises"])],
   ["packages/cloudflare-backup/src/primary-writer-admission.test.ts", new Set(["node:fs/promises"])],
@@ -295,6 +296,7 @@ const PACKAGE_RULES = new Map([
   ["packages/interfaces", new Set(["@eliotr/contracts", "@eliotr/domain", "@eliotr/policy", "@eliotr/retrieval", "@eliotr/research", "@eliotr/google-drive-exchange"])],
   ["packages/testkit", new Set(["@eliotr/contracts", "@eliotr/domain", "@eliotr/policy", "@eliotr/retrieval", "@eliotr/research", "@eliotr/google-drive-exchange", "@eliotr/interfaces"])],
   ["packages/pwa-http-client", new Set(["@eliotr/contracts"])],
+  ["packages/owner-api-client", new Set(["@eliotr/contracts"])],
   ["packages/pwa-source-workspace", new Set(["@eliotr/contracts", "@eliotr/pwa-http-client"])],
   ["packages/pwa-research-workspace", new Set(["@eliotr/contracts", "@eliotr/pwa-http-client", "@eliotr/pwa-source-workspace"])],
   ["packages/pwa-knowledge-workspace", new Set(["@eliotr/contracts", "@eliotr/pwa-http-client", "@eliotr/pwa-source-workspace"])],
@@ -400,6 +402,15 @@ for (const sourceRoot of SOURCE_ROOTS) {
       if (!allowedHostToolImport &&
           FORBIDDEN_IMPORTS.some((prefix) => specifier === prefix || specifier.startsWith(prefix))) {
         errors.push(`${normalizedPath} imports forbidden module ${specifier}`);
+      }
+      const browserSource = ["packages/ui", "apps/eliotr-web", "packages/owner-api-client"].includes(owner) && normalizedPath.startsWith(`${owner}/src/`);
+      if (browserSource && !specifier.startsWith(".") && !specifier.startsWith("/") && !specifier.startsWith("@eliotr/")) {
+        const packageName = specifier.startsWith("@") ? specifier.split("/").slice(0, 2).join("/") : specifier.split("/")[0];
+        const testTool = normalizedPath.endsWith(".test.ts") && packageName === "vitest";
+        const storyTool = normalizedPath.endsWith(".stories.tsx") && (packageName === "@storybook/react-vite" || specifier === "storybook/test");
+        if (!allowedHostToolImport && !testTool && !storyTool && !PACKAGE_RULES.get(owner)?.has(packageName)) {
+          errors.push(`${normalizedPath} violates dependency direction with ${specifier}`);
+        }
       }
       if (!specifier.startsWith("@eliotr/")) continue;
       const allowed = PACKAGE_RULES.get(owner);

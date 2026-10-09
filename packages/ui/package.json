@@ -13,7 +13,7 @@
     "build": "tsc -b",
     "storybook": "storybook dev --host 127.0.0.1 --port 6006 --no-open --disable-telemetry",
     "build:storybook": "storybook build --output-dir ../../.eliotr-state/frontend-storybook --disable-telemetry",
-    "test:storybook": "test-storybook --url http://127.0.0.1:6006",
+    "test:storybook": "vitest run --config .storybook/vitest.config.ts",
     "typecheck": "tsc -b --pretty false"
   },
   "peerDependencies": {
@@ -22,12 +22,16 @@
   },
   "devDependencies": {
     "@storybook/addon-a11y": "10.6.1",
+    "@storybook/addon-vitest": "10.6.1",
     "@storybook/react-vite": "10.6.1",
-    "@storybook/test-runner": "0.26.0",
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
+    "@vitest/browser": "4.1.11",
+    "@vitest/browser-playwright": "4.1.11",
     "axe-core": "4.14.0",
+    "playwright": "1.63.0",
     "storybook": "10.6.1",
-    "typescript": "6.0.3"
+    "typescript": "6.0.3",
+    "vitest": "4.1.11"
   }
 }

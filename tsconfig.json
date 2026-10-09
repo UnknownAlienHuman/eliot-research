@@ -132,6 +132,9 @@
     },
     {
       "path": "apps/eliotr-web"
+    },
+    {
+      "path": "packages/owner-api-client"
     }
   ]
 }
