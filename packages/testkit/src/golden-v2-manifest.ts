@@ -363,4 +363,3 @@ export function parseGoldenReceiptReferences(raw: unknown): readonly GoldenRecei
   }
   return refs;
 }
-

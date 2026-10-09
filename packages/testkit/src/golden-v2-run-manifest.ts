@@ -127,4 +127,3 @@ export async function createGoldenRunManifest(
 export function areGoldenRunsComparable(left: GoldenRunManifest, right: GoldenRunManifest): boolean {
   return left.product_identity_sha256 === right.product_identity_sha256;
 }
-
