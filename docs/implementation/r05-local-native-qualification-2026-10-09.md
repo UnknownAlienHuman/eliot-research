@@ -139,7 +139,47 @@ in `native-canonical-receipt-canonical-timeout-recorded-result.json` and
 `native-canonical-enhanced-timeout-platform-qualification.json`. The final run
 uses the same explicit flag as Core; scientific conversion remains fixture data.
 
-Remaining acceptance includes production pause/resume, exact scientific `consumeResult`,
+## Existing scientific consumption — bounded local qualification
+
+Five additional native cases pass on Miniflare `5.20260926.1-alpha` and esbuild
+`0.28.1`, over committed `e14c1974` source with foreign C2/retrieval WIP excluded
+by the HEAD overlay. The new fixture uses the actual protocol-freeze handler,
+planning manifest, committed D1/R2 stage-0 readback, D1 navigation/current scope,
+W1 ledger, read/extract handler, external `prepareTask` and
+`readRecordedResult`/`consumeResult`. It retains actual W2, native Workflow,
+callback receipt routing, outbox, native Queue and inbox.
+
+| New case | Result |
+|---|---|
+| Existing scientific result consumption | PASS: one BLOCKED SUPPORT branch, server-derived unknowns and `UNASSESSED` authority in exact persisted branch bytes; original attempt commits at stage 9/revision 10. |
+| Arbitrary task output | PASS: `WORKFLOW_OUTPUT_CORRUPT`; native transport ACK does not advance stage 8 or create a successful branch. |
+| Scientific pause/resume after original expiry | PASS: original attempt, one task publication, one canonical result read, one `consumeResult` and one completed predecessor effect. |
+| Immutable configuration with scientific consumption | PASS: actual D1 immutable configuration store, Core attach/read and runtime binder; two exact configuration rereads preserve the original pointer through native settlement. |
+| Forged expected configuration digest | PASS: `WORKFLOW_AUTHORITY_STALE` before task publication; zero tasks and zero canonical result reads. |
+
+The scope is deliberately bounded. Frozen evidence is empty, SUPPORT is BLOCKED,
+stage 1–6 outputs and the stage-five retrieval lineage are fixture inputs, and
+the COMPUTER route callback is injected. Configuration pins follow the existing
+Core readiness fixture; runtime configuration objects are empty and provider/
+qualification references are fixture values. No production model, spend,
+project selection or provider qualification follows from this check. Initial
+admission, public HTTP/JWT, nonempty exact-evidence resolution, complete scientific
+pipeline, COMPUTER route, selected-profile native/live and release remain open.
+
+The stronger scientific path first rejected the transport fixture's synthetic
+issuer/subject; only fixture inputs were corrected to the existing strict Access
+issuer/`.access` subject schema. The configuration reader also rejected the
+store-only fixture's empty model selection list; the final bounded fixture uses
+the two existing Core readiness selections. Neither production guard was changed.
+Passing earlier transport/lifecycle cases were retained without repetition.
+
+Private receipts under the same checkpoint directory are:
+
+- `native-scientific-receipt-enhanced-errors-scientific-native-result_scientific-invalid-output.json`;
+- `native-scientific-receipt-enhanced-errors-scientific-paused-after-expiry.json`;
+- `native-scientific-receipt-enhanced-errors-pinned-scientific-pinned-native-result_scientific-pinned-identity-mismatch.json`.
+
+Remaining acceptance includes production pause/resume, complete scientific `consumeResult`,
 pinned production configuration, COMPUTER route, public HTTP/JWT, foreign/
 malformed/late events, timeout/result boundary, restart/completed predecessors,
 historical generation, selected-profile native/live and release receipts. Passing

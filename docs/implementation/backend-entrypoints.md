@@ -116,6 +116,16 @@ pause/resume after expiry and timeout with a recorded result both pass against
 canonical D1/R2/W2, each with one read and the original attempt. Complete scientific,
 production/public/live acceptance, #326 and implementation status remain open.
 
+Five later bounded native cases also exercise the existing scientific
+`prepareTask`/`readRecordedResult`/`consumeResult` with actual protocol freeze,
+read/extract, D1 navigation and W1/W2. Valid BLOCKED branch output settles the
+original attempt, arbitrary output is rejected, and pause/resume after expiry
+passes. Actual immutable D1 configuration/Core read/runtime binding passes;
+forged expected digest fails before task publication. Empty evidence, fixture
+stage-five lineage/configuration and injected COMPUTER route leave complete
+scientific, production-selected and public/live acceptance open. The detailed
+[qualification record](r05-local-native-qualification-2026-10-09.md) owns those limits.
+
 This is the canonical day-to-day backend router. It does not replace product architecture, work-packet
 ownership or release acceptance. It tells each role where to begin, which active PR owns the result,
 and where the concise donor/anti-duplication instructions live.

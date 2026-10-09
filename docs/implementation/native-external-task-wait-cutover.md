@@ -157,6 +157,15 @@ still injected. Production
 configuration, exact branch `consumeResult`, COMPUTER/public caller and live
 qualification remain separate mandatory gates.
 
+The later bounded scientific fixture uses the existing branch `consumeResult`
+with actual protocol freeze/read-extract, D1 navigation and W1/W2. Five native
+cases pass: BLOCKED scientific output, arbitrary-output rejection, pause/resume
+after expiry, actual immutable configuration binding and forged-digest rejection
+before task publication. Its frozen evidence is empty; retrieval lineage,
+configuration values and COMPUTER route are fixture boundaries. This reduces
+the local consumer gap but leaves complete scientific/production/public/live
+acceptance open; see the same qualification record for exact receipts and scope.
+
 Seven local native topology cases pass: buffered and duplicate events, foreign
 and malformed locators, event before recorded result, and both timeout result
 states. Two added-only cases pass for restart from prepare and pause/resume with

@@ -203,11 +203,34 @@ original W2 attempt. These are local fixture results. Exact branch `consumeResul
 pinned configuration, COMPUTER route, public HTTP/JWT, complete native and
 live/release acceptance remain pending. #326 is open and the Goal is active.
 
+The next local fixture adds five passing native cases through the existing
+scientific branch consumer and actual protocol-freeze/read-extract handlers,
+D1 navigation/current scope, W1/W2, callback, outbox, native Queue and inbox.
+BLOCKED SUPPORT remains `UNASSESSED`; arbitrary output cannot advance W2.
+Scientific pause/resume preserves the original attempt after expiry. An actual
+immutable D1 configuration/Core attach/read/runtime binder passes, while a
+forged expected configuration digest fails before publishing a task. The
+fixture has empty evidence, supplied stage-five lineage, diagnostic configuration
+pins and an injected COMPUTER route callback. It does not qualify production
+model/spend/project selections, public caller or the complete native pipeline.
+The [local record](r05-local-native-qualification-2026-10-09.md) retains exact
+receipts, fixture input repairs and the remaining acceptance boundary.
+
 The same continuation archives two directly verified malformed loose probe files
 from the Research root (891 bytes) into the private checkpoint directory with
 exact hash readback. It preserves the unique Unicode regeneration set, registered
 worktrees, active coordination log and all product WIP. This is bounded root
 cleanup, not completion of the broader cleanup requirement.
+
+The next safe cleanup archives three separate scratch directories from the
+Research root into the same private archive: `_codex_tmp_casefold`,
+`UserskleymAppDataLocalTempcodex-probe` and the loose `eliotr-core` shadow.
+All 89 files (2,897,741 bytes) retain exact SHA-256 readback; source paths are
+absent after verified moves. No bytes were deleted. The unique Unicode
+regeneration scripts/data remain recoverable. The seven registered secondary
+worktrees remain preserved: five heads are outside main and the two ancestral
+checkouts have uncommitted product work. The proposed clean Astro deletion is
+rejected under the repository's exact-head-in-main cleanup requirement.
 
 The assembled boundary checker passes. Source-budget readback is still FAIL:
 the working tree has nine violations, while actual HEAD plus exact R05-only
