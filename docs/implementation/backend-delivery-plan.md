@@ -7,13 +7,106 @@ acceptance volume, excluding website design. The Goal stays active across source
 checkpoints, publication and individual passport closure. The first checkpoint
 below is evidence of delivered prerequisites, not completion of the project.
 
-Fresh `origin/main` is `6717ba5d2ec6658e5ef59f08827aae38a064c96e`.
-The live GitHub inventory has 65 open PRs and three open Issues. The current
+October 9 publication readback confirmed `fa3363bd5826807f53885f91db7526a365e05995` with fetch divergence 0/0. Further reviewed source commits are recorded below; re-read the current Git ref before the next publication.
+The live GitHub inventory has 65 open PRs and two open Issues (last live inventory October 9). The current
 router/cards and latest passport discussions govern their dependencies and
 selected-profile requirements; historical PR heads are not merged wholesale.
 Ten Luna Max workers share the existing `main` checkout under disjoint ownership.
 The integrator owns assembly, shared cutovers, publication and acceptance records.
+
+October 9 continuation: Session immutable replay and Access-expiry/currentness
+repairs compile and pass scoped lint. Local binding replay/completed reopening
+passed 2/2, updated bootstrap/outer routing 6/6, native history 1/1, and the new
+WebSocket peer regression 1/1 after fixing constructor restoration. Franklin
+accepted exact Session source `3d32b3067f9081f1036723d3e9945d6ab08397bd`; it and
+the types/fixture correction are published on `main`. Browser
+reconnect/two-tab/hibernation/live transport is still unqualified. The current
+development Worker dry-run is 1242.23 KiB gzip. Seven source-package overages
+remain. #214's corrected relation codec has bounded source acceptance and remains
+unexported; source/span/context/target authority and pipeline integration are open.
+A trusted ER-23 V2 HOLDOUT pin/set is missing. Golden's independent promotion
+audit also requires actual per-case query/scope/product binding and adjudicated
+observations tied to committed artifacts. The bounded integrity repair is now
+published in `4f207230`; the integration adapter still denies missing trusted
+selection, and no production promotion acceptance is claimed.
+#244 required-set/drain integration and
+#231 native owner-authorized web capture remain open. October 9 fresh Dependabot
+readback after publication shows only http-cache-semantics #28 open (no patch
+listed); MCP SDK #32/client #33 are no longer open. The override/lock selects
+SDK 1.31.0 and client 2.2.0; frozen installation, peers and bounded issuer/source
+review pass. Legacy issuer-less persisted records remain unqualified. No alert is suppressed.
+Workers types pins are now 5.20260926.1. Native `rollingBack` is now validated at
+the native boundary without expanding the public enum: Research recovery denies
+`unknown`, and exhaustive binding rejects unavailable status before decisions.
+Franklin accepted exact status source `f8390849`; its focused regression passed
+1/1 with 13 unrelated tests skipped. The assembled working-tree Core compile
+passes after mapping the immutable native acquisition profile to its transport
+shape; this is not a clean committed-release gate. The earlier
+seven scoped Core test typing repairs pass
+compile/lint; the assembled test project remains pending. No passport or Goal
+closes on these checks.
 Website design remains with its independent owner.
+
+The provider-key guard (`8eab03ee`) and optional schema-marker receipt field
+(`615220cc`) retain Curie's bounded source ACCEPT and exact-blob confirmation;
+MCP dependency pins (`5fcc74cd`) retain Chandrasekhar's exact lock/source review.
+The MCP patch preserves issuer for new records, but legacy issuer-less OAuth
+credentials remain unqualified; no currently reachable ResearchSession outbound
+OAuth MCP client was found. No auth migration, credential read or rotation was
+performed. GitHub alert closure is not inferred from publication.
+Native capture's Core callback and deterministic Session scope/grant deadlines
+are published in `d5d82c0e` and `44a6b092`. Session requires the earliest Access,
+canonical scope and matching grant deadline; restored connections lacking the
+canonical deadline are rejected. Scope/grant expiry comes from one joined D1
+statement. Owning Core compilation and scoped lint pass; the new legacy-state
+counterexample passed once with two other tests skipped. Native capture retains
+three focused passing regressions and independent callback/closure review.
+Capture remains candidate-only; conversion/admission and explicit subsequent
+scope revision are not supplied by that checkpoint.
+
+`feeb91b8` makes source maintainability diagnostics advisory consistently in
+full and maintenance command paths while retaining actual emitted gates.
+Malformed or contradictory diagnostic statuses fail closed; the changed
+fake-only deployment ordering check passed 32 groups. S90 persisted-receipt
+completeness repair is published in `78d050aa`, with runner registration in
+`fa3363bd`. Complete computed manifests and contained artifact paths are checked
+before receipt-listed reads. Persisted Wasm receipts remain `NOT_MEASURED`
+because they lack the upload module ordering needed to recompute Wrangler gzip;
+fresh in-process measurement remains available.
+S94's application-schema catalogue attestor is published in `ee4d19c0` and its
+native isolated-D1 expected-manifest producer in `caeb6446`. Producer fake
+regression and independent source review pass. Actual local materialization,
+remote schema acceptance and deploy/private-provenance receipt integration
+remain pending; current wiring has syntax/scoped-lint evidence only.
+
+`e3843c14` publishes the shared ingest actor engine and Workflow owner adapter,
+including its barrel export. Existing HTTP context is adapted to the same engine;
+the Workflow adapter requires canonical ACTIVE owner authority around effects
+and within staging/admission hooks. Package compile, scoped lint and the one
+authority-drift regression pass. Core capture-to-conversion-to-admission wiring
+and subsequent explicit scope revision remain pending.
+
+`b326d728` publishes a dormant question-bound proposal prompt renderer with a
+closed two-file dependency set. `max_prompt_pair_bytes` measures the canonical
+rendered prompt pair; it is not a model response allowance. The helper does not
+select a model or invoke READ_AND_EXTRACT. Its activation awaits the recorded
+cardinality/stage-admission decision.
+
+Items source publication is withheld pending coherent review. Caller fence
+propagation and the stale-worker/after-effect lease regression pass; registry
+drift after provider effect and before settlement passes two focused negatives.
+Review additionally found unfenced begin/materialization and missing manifest
+CAS, now under repair. Unpublished effects migration is numbered 0128, followed
+by the additive protocol/target marker 0129; historical 0127 is preserved and
+legacy aggregate receipts receive no fabricated per-item proof. Per-source
+receipts are not the full required-set promotion proof.
+
+Items generation membership/fencing, trusted Golden selection and #325/#214
+assembly continue under the active Goal. The conflicting #322/#242 lexical-order rules
+await an owner decision recorded in [backend-contract-conflicts.md](backend-contract-conflicts.md);
+their tests are not weakened to hide the discrepancy. READ-stage proposal
+cardinality is separately recorded in [read-extract-proposal-cutover.md](read-extract-proposal-cutover.md).
+Independent work continues.
 
 Active work covers #242, #325, #330, #231, #244, #282, #328/#285,
 #294 and #210, plus first-wave acceptance and workspace cleanup audits.

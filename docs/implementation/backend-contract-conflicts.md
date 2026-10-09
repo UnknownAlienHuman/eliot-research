@@ -26,3 +26,7 @@ The prior focused consolidation run reported four passing checks and one failure
 Owner review needs to settle whether the Q3 requirement governs planned lane order only, or mandates actual D1 LEX execution before SEM even for the managed hybrid product. The selected rule must identify any product-specific exception and align #242, #322, architecture prose, execution behavior and both regressions in one coherent change.
 
 Until that review, this acceptance criterion is deferred. Other retrieval, Session, acquisition, deployment and authority work can proceed independently.
+
+## C2 — READ_AND_EXTRACT proposal call cardinality
+
+Status: **OWNER_DECISION_PENDING** before activation. The concrete contract and stage-7 admission mismatch, normative sources and possible cutovers are recorded in [read-extract-proposal-cutover.md](read-extract-proposal-cutover.md). The existing deterministic direct plan continues without invented model calls, profiles or budgets; preparatory source work remains independent.

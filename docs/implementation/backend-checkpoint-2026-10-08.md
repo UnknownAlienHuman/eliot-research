@@ -8,6 +8,203 @@ evidence and were not merged wholesale. Frontend delivery has a separate owner.
 
 ## Full continuation after the first checkpoint
 
+### October 9 Session binding and connection authority
+
+The Session source is published in
+`3d32b3067f9081f1036723d3e9945d6ab08397bd`. Franklin accepted that exact SHA
+against `866297e8aa886f6de73317a85d19fb1fa47e944b` for the bounded 23-file source
+closure. The subsequent types/test-fixture commit is
+`84c369aa967c21bb143a1ab998d67af500d3fac1`; fetch and remote-ref readback confirm
+that head on `main`. Neither source acceptance nor publication qualifies #264's
+remaining browser, project-binding or live criteria.
+
+The source checkpoint pins `agents@0.27.0`, `@cloudflare/ai-chat@0.12.1`
+and `ai@7.0.136`. Owner Access verification precedes official SDK routing.
+Bootstrap reads canonical run status and the initial D1 binding before
+materializing presentation state; it never creates a second Workflow.
+Compatibility exports and the existing `session:<id>` storage remain readable.
+
+Idempotent initialization compares the immutable identity/generation tuple.
+For a completed run it checks canonical initial and final revisions separately,
+plus the final receipt/output binding. The bootstrap acknowledgement validates
+protocol, state and the revision appropriate to that state. The local native
+binding regression passed 2/2, including completed-run reopening from actual
+persisted deterministic W2 receipts; this is not real-model product acceptance.
+
+The outer transport replaces caller headers with verified Access expiry.
+Persisted connection state, pre-SDK connect/message/wake gates, and the Agent
+scheduler enforce expiry without taking ownership of the SDK alarm. Incoming
+resume/control frames recheck the canonical owner projection. A narrow adapter
+around public `Connection.send` gates SDK direct sends and broadcasts; it is
+coupled to the pinned SDK because no general pre-send authorization hook is
+documented. Outbound chunks do not independently re-read scope on every send;
+immediate mid-stream revocation remains a separate acceptance boundary.
+
+Core compilation/scoped lint passed. Updated bootstrap/outer-boundary tests
+passed 6/6. The native history fixture passed 1/1 after supplying the newly
+required internal expiry header. The new WebSocket regression passed 1/1 after
+correcting Worker-peer close acknowledgement and fixing constructor-time send
+guard restoration for native RPC before SDK startup. It checks broadcast/resume
+denial, matching expiry callback, eviction and no second Workflow. No successful browser close, reconnect,
+two-tab, real hibernation or live transport receipt is claimed here.
+
+Wrangler 4.143.1 local development dry-run emitted 5269.84 KiB, gzip
+1242.23 KiB before the final constructor-time guard delta. This is a working-tree bundle, not an
+attested staging/release artifact. Fresh maintainability diagnostics report
+seven package overages, including contracts; no source budget is promoted.
+The Goal remains active.
+
+The sharp toolchain override and lock now select the published 0.35.5 security
+patch for GHSA-wq5f-xc86-pv6w. Frozen installation and actual module resolution
+from Wrangler/Miniflare and Astro both verify 0.35.5. No alert suppression or
+unpublished http-cache-semantics fix is used. The three Workers types pins now
+select the published 5.20260926.1, satisfying Wrangler's ^5.20260926.1 peer.
+Lock-only resolution, frozen install, peer validation and the Core/Drive Exchange
+source compilation passed at that tooling checkpoint. A later owning Core build
+exposed the native `rollingBack` status in run control and the exhaustive Workflow
+binding. The subsequent boundary normalization repairs that failure; owning
+working-tree Core compilation passed after the acquisition-profile mapping fix.
+This tooling correction is not runtime qualification.
+
+The seven existing Core test typing corrections pass their scoped TypeScript,
+ESLint and whitespace checks: typed D1 environment fixtures, strict decoding of
+captured transport billing, project ownership in the immutable configuration
+snapshot, nullable D1 clock handling and the installed 1,000 ms retry-policy
+literal. No test or complete Core test-project run is claimed by those repairs.
+
+### Current integration boundaries
+
+October 9 fresh Dependabot readback after publication shows only
+http-cache-semantics #28 open, without a listed patch; MCP SDK #32/client #33
+are no longer open. The override/lock resolves SDK 1.31.0 and client 2.2.0.
+Frozen installation, peer validation and bounded issuer/reachability review
+pass. New records preserve their issuer, while legacy issuer-less OAuth
+storage remains unqualified; no reachable outbound OAuth MCP consumer was
+found in ResearchSession. No stored credentials were read or migrated.
+
+Franklin accepted the bounded raw-capture Workflow adapter source, retaining
+its one service-actor denial test. Core operation/deployment/current-scope
+composition and native acquisition wiring are now source-published in `d5d82c0e`,
+with Franklin's bounded callback ACCEPT and McClintock's dependency-closure
+review. Extraction/admission, explicit scope revision and live acquisition
+remain pending. Parfit accepted
+the bounded V2 repair that keeps contradiction refs empty until owner-resolved
+relation candidates exist; the one regression passed, and historical V1 remains
+readable. This is not completion of #214.
+
+The shared provider-key mutation guard retains 14 focused passing denial cases.
+S94 now carries the existing schema generation-marker readback in an optional
+v1 receipt field; its existing fake-only apply-ordering check passed 31 groups.
+Curie accepted both bounded source changes and their published blobs. Generation markers are not a
+complete remote schema proof, and no deployment was performed.
+
+### October 9 reviewed boundary publication
+
+The normal fast-forward push `84c369aa..f8390849` is verified by remote-ref
+readback and fetch (`HEAD...origin/main` is 0/0). The four commits are:
+
+- `8eab03ee933c0b0d8df4b6bd9b57a5c55d2fb0a0`: shared provider-key mutation
+  guard; 14 focused denial cases retained, Curie bounded ACCEPT and exact blobs.
+- `615220cc3bd2877e69a5c4905a578f130839965b`: optional schema generation
+  readback receipt; 31 fake-only apply-ordering groups retained, Curie bounded
+  ACCEPT and exact blobs. This does not qualify remote schema or Worker code.
+- `5fcc74cddd5964fe4eb5f8c01729078a237ae184`: MCP client 2.2.0/SDK 1.31.0
+  overrides and lock; installed links/peers and exact lock review retained.
+  New issuer records are preserved, while legacy issuer-less credentials remain
+  unqualified. No reachable ResearchSession outbound OAuth MCP consumer was found.
+- `f8390849421e1187ce10474a6910e6e423959bc3`: native status boundary;
+  `rollingBack` becomes `unknown` for Research recovery and fails unavailable in
+  exhaustive binding, with no public enum extension or Env cast. The one new
+  regression passed with 13 skipped; Franklin accepted the exact four-file SHA.
+
+Native transport/profile pass-through and the BROWSER configuration are now
+source-published in `d5d82c0e`. Curie accepted their bounded source; owning compilation
+and scoped lint passed, and the changed deployment verifier passed 14 fake-only
+groups including absent/wrong-type BROWSER rejection. No native call occurred.
+Core owner callback and scope/grant deadline integration are source-published.
+No Issue/PR was closed, and the full Goal remains active.
+
+### October 9 second reviewed publication
+
+Normal push `f8390849..4f207230` and exact remote-ref/fetch readback passed, with
+zero divergence. The six additional commits are:
+
+- `a064cfb2`: the #322/#242 lexical execution conflict, with both unchanged
+  negative acceptance expectations recorded for owner review.
+- `44a6b092`: canonical Session expiry cap and rejection of restored state
+  without an authority deadline. Chandrasekhar accepted the exact six-file
+  commit; shared persistence refactoring stayed outside that commit. The earlier
+  scope-first counterexample passed once, and the new restored-state rejection
+  passed once with two other tests skipped. Owning compilation/scoped lint pass.
+- `f4b15e46`: READ_AND_EXTRACT proposal cardinality and immutable cutover note;
+  no proposal policy or provider budget was selected.
+- `feeb91b8`: advisory source diagnostics in full/maintenance command paths,
+  with strict status parsing, preserved findings and emitted gates. Franklin
+  accepted the repaired source; 32 fake-only apply-ordering groups passed.
+- `d5d82c0e`: immutable native acquisition selection, bounded native transports,
+  owner-bound raw capture, Core wiring and Browser binding verification. The
+  exact 31-file closure contains only native hunks in four shared runtime files;
+  unrelated branch/query WIP remains unstaged. Core callback retains 3/3 focused
+  checks; no live/provider call, admission or scope expansion is established.
+- `4f207230`: Golden local integrity/evaluation repair with explicitly trusted
+  testkit dependency injection and a fail-closed production integration adapter.
+  Chandrasekhar accepted the seven frozen source blobs. ER-23 trusted V2 HOLDOUT
+  selection, product evidence and S93 qualification remain pending.
+
+S94 application-schema catalogue comparison is independently source-accepted
+and locally committed in `ee4d19c0`; its one fake regression is retained. Expected
+catalogue provenance and production wiring are pending. S90 persisted-receipt
+repair remains withheld for multipart gzip and path-containment corrections.
+
+The full persisted acquisition selection passes through Core and runtime without
+reselection. An absent field retains historical omission. The explicit corpus-only
+route checks frozen source-mode equality in execution and recovery. The three
+focused route cases and owning compilation/lint passed; independent Luna accepted
+this bounded source flow. A selected web mode without an owner capture capability
+fails with `WORKFLOW_CONFIGURATION_MISSING` inside the stage handler; once the
+attempt is started, the executor preserves `WORKFLOW_EFFECT_UNCERTAIN` and does
+not redispatch. Native owner-authorized web capture is not qualified.
+
+Golden promotion source is withheld after independent review. Byte integrity
+against a supplied manifest pin does not establish trusted HOLDOUT selection.
+Each case also needs its canonical executed question/scope/product binding, and
+the adjudicated observations must match committed product artifacts. No real V2
+HOLDOUT set or pin is fabricated. Existing V1 corpus and historical results remain
+unchanged; these source repairs and product qualification are still open.
+
+### October 9 contract and native Workflow publication
+
+Published `main` is `291da32bb9e7d3154178f8b658cd58bde1a4b2aa`, confirmed by
+fetch and `refs/heads/main` readback after a normal fast-forward from `d665ef49`.
+The Goal remains active; no passport closes on this source checkpoint.
+
+- #325: the generation-10 branch/query/finding schemas enforce exact plan,
+  scope, evidence, stop, budget, omission and blocked-role debt bindings.
+  V3 freeze rejects duplicate included handles in either conflicting-digest
+  order, including identical duplicates; historical V1 is unchanged.
+  Curie accepted exact contract source `ce4cff235f82a88a189328c1eaecad7c616ead48`.
+  Contracts compilation, scoped lint and artifact generation passed
+  (238 schemas, generation 10). The last changed freeze regression passed
+  1 case with 15 skipped; no final 16/16 aggregate is claimed. Typed relation
+  semantics in #214 and live/signed receipt authority remain pending.
+- #330: installed PURE ORIENT, INTERPRET, COMPILE_OBLIGATIONS and PLAN for
+  exploratory v1-v8 now use native completion persistence, retaining the W2
+  reader. The actual runtime factory, immutable run-configuration wrapper
+  and Core Cloudflare adapter are connected. Typed stale/cancel/denial
+  failures become `NonRetryableError`; retries require explicitly retryable
+  PURE work with intact references and a known-not-started dispatch.
+  Ohm accepted integration and retry control at the published SHA. Owning
+  compilation and scoped lint passed. The local native D1 completion/replay
+  file passed 5/5 before the integration repair; the new step denial fixture
+  separately passed 1/1. Those are bounded local checks, not a combined live
+  Cloudflare step or deployed Workflow qualification. Acquisition, v9,
+  production, provider and release acceptance remain pending.
+
+The authenticated SDK Session route/bootstrap, native acquisition, Items,
+typed relation integration and remaining source-budget repairs continue as
+owned working changes. The retained disabled backup baseline and historical
+uncertain run are not resumed.
+
 The owner resumed all remaining documented implementation and acceptance,
 excluding website design. The Goal remains active across these checkpoints.
 The existing `main` checkout is shared by ten Luna Max workers; the integrator
@@ -196,6 +393,37 @@ Installed dependency readback (`pnpm why`) places 4.2.0 under Astro 7.2.8 in the
 PWA dev dependencies; source search found no direct backend import. This is a
 frontend/toolchain handoff, and emitted-artifact exposure remains unverified.
 No lockfile or frontend dependency was changed by the backend checkpoint.
+
+## October 9 additional source publication and active repairs
+
+GitHub readback confirmed `fa3363bd5826807f53885f91db7526a365e05995` after
+publishing the application-schema attestor, conversion-context reader guard,
+complete emitted-budget receipt repair and runner registrations. Fetch was 0/0.
+Further reviewed source commits are `caeb6446` (native isolated D1 schema
+manifest producer), `e3843c14` (shared ingest actor and current Workflow owner
+adapter with export), and `b326d728` (dormant question-bound proposal renderer).
+
+The producer and ingest adapter retain independent bounded source acceptance;
+the renderer's committed dependency closure was checked by the integrator.
+Owning compile/scoped lint and their focused fake/authority regressions pass.
+The producer has not been run against native local D1 yet. Deployment wiring,
+persisted schema provenance and their receipt schema are being assembled.
+No remote schema, emitted release, provider or end-to-end acceptance is inferred.
+
+Items remains unpublished while the caller lease fence, registry currentness,
+legacy terminal compatibility and target-bound generation are assembled.
+The stale worker/after-effect lease regression passed once, as did two registry
+drift negatives. Independent review found an additional begin/materialization
+race requiring exact lease write predicates, manifest CAS and terminal manifest
+consistency. Effects migration 0128 preserves the former untracked 0125 bytes;
+protocol marker 0129 follows published 0127 and leaves old rows nullable without
+invented per-item backfill. Final SQL/source review and actual full required-set
+promotion remain pending.
+
+The Goal remains ACTIVE. No Issue or PR was closed in this continuation.
+The two concrete normative conflicts remain documented in
+[backend-contract-conflicts.md](backend-contract-conflicts.md) and
+[read-extract-proposal-cutover.md](read-extract-proposal-cutover.md).
 
 ## Workspace cleanup
 
