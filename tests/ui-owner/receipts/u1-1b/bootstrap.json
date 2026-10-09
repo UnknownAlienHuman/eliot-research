@@ -1,0 +1,77 @@
+{
+  "checkpoint": "U1.1b",
+  "date": "2026-10-09",
+  "status": "LOCAL_BUILD_AND_ROUTE_PARITY_VERIFIED",
+  "acceptance": "BOUNDED_BOOTSTRAP_ACCEPTED",
+  "graph": {
+    "client": "apps/eliotr-web/dist/client",
+    "worker": "apps/eliotr-web/dist/eliotr_core/index.js",
+    "source_config": "apps/eliotr-core/wrangler.jsonc",
+    "environment": "test",
+    "remote_bindings": false,
+    "second_worker": false
+  },
+  "versions": {
+    "react": "19.3.0",
+    "vite": "8.2.2",
+    "cloudflare_vite_plugin": "1.54.11",
+    "agents": "0.27.0",
+    "decorators_plugin": "8.0.2",
+    "typescript": "6.0.3",
+    "wrangler": "4.143.1",
+    "pnpm": "11.23.0",
+    "miniflare": "5.20260916.0-alpha"
+  },
+  "checks": [
+    "fixture Vite build exit0",
+    "integrated Vite build exit0",
+    "frozen install exit0",
+    "web/UI scoped typecheck exit0",
+    "web/config lint exit0",
+    "boundary checker PASS",
+    "owner-web focused boundary negatives PASS: backend imports, unknown package and TS reference; created-only exact-path cleanup preserves foreign fixtures",
+    "ER49 47 negative cases PASS",
+    "emitted receipt 6 focused cases PASS",
+    "anonymous generated API/Agents errors remain JSON",
+    "generated native direct DO get-messages410 SESSION_CHAT_HISTORY_DISABLED",
+    "backend exact emitted Session projection qualification: one focused PASS; source HTTP/injected AccessVerifier -> emitted namespace WS101, current canonical projection, forbidden chat1008, no mutation/create",
+    "wrong environment stops before build"
+  ],
+  "measured": {
+    "source_snapshot": "f5886f1de548ab2816ebda56621b39d5189047dd",
+    "worker_native_gzip_bytes": 1580144.64,
+    "client_initial_gzip_bytes": 68049,
+    "client_budget_bytes": 614400,
+    "worker_budget_bytes": 4194304,
+    "status_at_snapshot": "PASS",
+    "current_receipt": "STALE after subsequent source/inventory work; requalify final build"
+  },
+  "artifacts": [
+    {
+      "path": "apps/eliotr-web/dist/eliotr_core/index.js",
+      "sha256": "b18947f2b39d5a80b278503dd717c868fb4d1114dcd00bd084b6e94cccf0ec66"
+    },
+    {
+      "path": "apps/eliotr-web/dist/eliotr_core/wrangler.json",
+      "sha256": "948b1fa94f9efc3755d0fd3f9008d3302087b5aadc501ee0037c7354d4d4b5c3"
+    }
+  ],
+  "limitations": [
+    "No product design qualification yet",
+    "Exact emitted Session evidence uses raw auxiliary Worker and source handleHttp with injected AccessVerifier; emitted HTTP authentication and browser reconnect remain PENDING",
+    "No actual JWT, provider, native Workflow, staging or deployment acceptance",
+    "Health503 expected without seeded local schema",
+    "Raw authenticated reference screenshots remain private"
+  ],
+  "generated_session_qualification": {
+    "recorded_at": "2026-10-09T14:56:31.484Z",
+    "status": "BOUNDED_PASS",
+    "private_proof": ".eliotr-state/backend-full-20261008/generated-session-projection-proof.json",
+    "private_result": ".eliotr-state/backend-full-20261008/generated-session-projection-result.json",
+    "miniflare_pool": "5.20260926.1-alpha",
+    "graph_stable_after": true,
+    "passed": 1,
+    "failed": 0
+  },
+  "handoff": "C:/Development/Research/Agent_sync.md"
+}
