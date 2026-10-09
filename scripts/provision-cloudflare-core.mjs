@@ -16,6 +16,7 @@ import { validateDeploymentMigrationDirectories } from "./lib/deployment-migrati
 import { readConfiguredTransport, readCompositionCapabilityProfile } from "./check-launch-code.mjs";
 import { readActiveDeploymentIdentity, selectDeploymentGoogleTransport,
   selectDeploymentAiSearchNamespaces } from "./lib/deployment-maintenance.mjs";
+import { assertCoreWorkerRouteParity } from "./lib/core-worker-route-parity.mjs";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // Isolated state root for tests: ELIOTR_STATE_DIRECTORY overrides the shared
@@ -387,7 +388,7 @@ function buildGeneratedConfig(d1Results, publicRoute, accessRuntime, mcpAccessRu
     generated.workers_dev = true;
   }
   generated.preview_urls = false;
-  return generated;
+  return assertCoreWorkerRouteParity(canonicalConfig, generated);
 }
 
 function omitUnusedMcpPlaceholderVars(vars, preservedGoogleTransport, receiptMcpRuntime, coreMcpRuntime) {

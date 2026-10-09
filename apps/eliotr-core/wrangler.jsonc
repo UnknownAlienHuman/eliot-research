@@ -23,6 +23,8 @@
       "/mcp",
       "/agent-inbox",
       "/agent-inbox/*",
+      "/agents",
+      "/agents/*",
       "/api/*",
       "/federation/*",
       "/oauth/*"

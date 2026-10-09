@@ -10,6 +10,7 @@ await import("./test-launch-code.mjs");
 await import("./test-staging-isolation.mjs");
 await import("./test-deployment-migrations.mjs");
 await import("./test-deployment-assets.mjs");
+await import("./test-core-worker-route-parity.mjs");
 await import("./test-local-runtime.mjs");
 await import("./test-deployment-verification.mjs");
 await import("./test-deployment-schema-attestation.mjs");
