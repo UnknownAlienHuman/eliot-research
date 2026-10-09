@@ -425,6 +425,41 @@ The two concrete normative conflicts remain documented in
 [backend-contract-conflicts.md](backend-contract-conflicts.md) and
 [read-extract-proposal-cutover.md](read-extract-proposal-cutover.md).
 
+## October 9 further publication and concrete acceptance gaps
+
+Remote readback confirms `10021b4fb7e1a13a9226a2a86fcacf01b86c6ca9`.
+`ee5d1138` publishes the shared Core Workflow owner-authority reader and
+normalized-admission reservation/status currentness seam. `f81593a7` composes
+Workflow ingest through existing D1 authority, R2 staging, promotion verifier
+and current admission policy/expiry checks. Compile/scoped lint and independent
+source review pass; the new reservation-drift regression passes once.
+
+`10021b4f` publishes selective `/agents` and `/agents/*` Worker-first routing,
+generated-config parity validation and its normal-runner registration. Source
+review and focused checks pass. Generated deployment/Vite output, native edge,
+browser upgrade/reconnect and live readback are still pending. The latest live
+inventory has four open Issues (#334, #333, #319, #301) and 65 open PRs; none
+was closed in this continuation. #334's client-transcript mutation contour is
+assigned for a separate server-authoritative transport correction.
+
+The S94 eight-file wiring closure was published in `5ac44a85`; fake private
+evidence persistence and pre-upload schema mismatch refusal pass. Actual local
+isolated D1 materialization with Wrangler 4.143.1 passes: Core has 125 migrations
+and 1041 objects; Search has 4 migrations and 26 objects. The private manifest
+includes unpublished Items migrations 0128/0129 and is not a committed release
+attestation. SQLite 3.50.4 depth calibration/recovery passes; full target
+qualification is incomplete with 147 unresolved sites. Remote schema attestation,
+deploy and emitted release acceptance remain pending.
+
+The [managed-generation gap note](managed-generation-promotion-fence.md) records
+the required shadow key cutover and the missing target-wide denominator. The
+selected-snapshot helper remains unpublished; no replacement registry or pointer
+owner is introduced. [Issue #319's note](issue-319-cookie-and-log-verification.md)
+separates bounded source/docs findings from absent browser-cookie and persisted
+event-level log evidence. Concrete contract conflicts stay in
+[backend-contract-conflicts.md](backend-contract-conflicts.md). The Goal remains
+ACTIVE; independent implementation continues.
+
 ## Workspace cleanup
 
 Removed 3,358 validated compiler-cache files totaling 304,818,235 bytes from

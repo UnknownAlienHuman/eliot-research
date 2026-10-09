@@ -41,3 +41,15 @@ authority/policy seams and explicit subsequent scope cutover are recorded in
 [workflow-conversion-admission-cutover.md](workflow-conversion-admission-cutover.md).
 Automatic conversion is deferred; current-authority and admission infrastructure
 work continues independently.
+
+## C4 — Complete managed-generation membership
+
+Status: **IMPLEMENTATION_PENDING**. The prepared manifest proves equality to a
+selected retrieval snapshot, while #244 requires the complete target-wide
+required set. This is missing implementation evidence, not authorization to
+replace the SEARCH_DB pointer owner. The exact cutover, denominator and authority
+boundaries are recorded in [managed-generation-promotion-fence.md](managed-generation-promotion-fence.md).
+
+New item keys must be built in a selected shadow generation before promotion.
+The discovered ACTIVE-target dispatch defect is being repaired independently;
+that repair does not establish full required-set or promotion acceptance.

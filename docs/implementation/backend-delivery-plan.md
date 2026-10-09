@@ -7,8 +7,8 @@ acceptance volume, excluding website design. The Goal stays active across source
 checkpoints, publication and individual passport closure. The first checkpoint
 below is evidence of delivered prerequisites, not completion of the project.
 
-October 9 publication readback confirmed `fa3363bd5826807f53885f91db7526a365e05995` with fetch divergence 0/0. Further reviewed source commits are recorded below; re-read the current Git ref before the next publication.
-The live GitHub inventory has 65 open PRs and two open Issues (last live inventory October 9). The current
+October 9 publication readback confirmed `10021b4fb7e1a13a9226a2a86fcacf01b86c6ca9`. Further reviewed source commits are recorded below; re-read the current Git ref before the next publication.
+The live GitHub inventory has 65 open PRs and four open Issues (last live inventory October 9). The current
 router/cards and latest passport discussions govern their dependencies and
 selected-profile requirements; historical PR heads are not merged wholesale.
 Ten Luna Max workers share the existing `main` checkout under disjoint ownership.
@@ -75,9 +75,16 @@ because they lack the upload module ordering needed to recompute Wrangler gzip;
 fresh in-process measurement remains available.
 S94's application-schema catalogue attestor is published in `ee4d19c0` and its
 native isolated-D1 expected-manifest producer in `caeb6446`. Producer fake
-regression and independent source review pass. Actual local materialization,
-remote schema acceptance and deploy/private-provenance receipt integration
-remain pending; current wiring has syntax/scoped-lint evidence only.
+regression and independent source review pass. `5ac44a85` publishes the eight-file
+deploy/evidence/schema wiring closure. Private persistence and pre-upload mismatch
+regressions pass; mismatch produces no upload, authority write or saved receipt.
+One actual isolated local D1 materialization passes with Wrangler 4.143.1:
+Core has 125 migrations/1041 objects and Search has 4 migrations/26 objects.
+The private manifest also contains the unpublished Items migrations 0128/0129,
+so it is working-tree evidence, not a committed release attestation. SQLite 3.50.4
+depth calibration/recovery passes, but target qualification remains incomplete
+with 147 unresolved sites. Remote schema acceptance, deployment and emitted
+release acceptance remain pending.
 
 `e3843c14` publishes the shared ingest actor engine and Workflow owner adapter,
 including its barrel export. Existing HTTP context is adapted to the same engine;
@@ -85,6 +92,28 @@ the Workflow adapter requires canonical ACTIVE owner authority around effects
 and within staging/admission hooks. Package compile, scoped lint and the one
 authority-drift regression pass. Core capture-to-conversion-to-admission wiring
 and subsequent explicit scope revision remain pending.
+
+`ee5d1138` publishes the reusable Core Workflow owner-authority reader and the
+normalized-admission currentness callback. Independent exact-source review,
+owning compile/scoped lint and one new reservation-drift regression pass.
+`f81593a7` composes Workflow bundle ingest from the existing D1 authority, R2
+staging, promotion verifier and current admission-policy/expiry checks; Core
+compile/scoped lint and independent source review pass. Its runtime caller and
+the explicitly selected conversion request are still pending. Post-write
+observations detect authority drift but do not undo an already committed write.
+
+Fresh Issue inventory adds P0 [#333](https://github.com/UnknownAlienHuman/eliot-research/issues/333)
+(`/agents/*` Worker-first routing) and [#334](https://github.com/UnknownAlienHuman/eliot-research/issues/334)
+(server-authoritative read-only Session projection). Separate Luna workers own
+their backend corrections; browser/native/live acceptance is not inferred from
+source checks. Frontend design and PR #329 remain with the separate owner.
+
+`10021b4f` publishes #333's selective `/agents` and `/agents/*` Worker-first
+rules, generated-config parity guard and focused regression registration in
+the normal provisioner runner. Source review and scoped syntax/lint/regression
+checks pass. Real emitted deployment/Vite configuration and edge/browser/live
+readback remain pending; #333 remains open. #334's read-only transport correction
+is still in progress.
 
 `b326d728` publishes a dormant question-bound proposal prompt renderer with a
 closed two-file dependency set. `max_prompt_pair_bytes` measures the canonical

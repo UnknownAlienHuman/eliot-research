@@ -23,6 +23,8 @@ from the tables below, so an unlisted file is a bug, not an omission you may ign
 | [implementation-status.json](implementation-status.json) | The machine-readable registry. `pnpm check:implementation-status` validates it. |
 | [backend-entrypoints.md](backend-entrypoints.md) | Current backend router, dependency-ready cards, donor decisions and shared integration boundaries. |
 | [backend-delivery-plan.md](backend-delivery-plan.md) | Owner-resumed checkpoint, historical October 6 evidence and separate assembled-product acceptance. |
+| [backend-checkpoint-2026-10-08.md](backend-checkpoint-2026-10-08.md) | Published backend slices, scoped verification and remaining acceptance. |
+| [backend-contract-conflicts.md](backend-contract-conflicts.md) | Concrete contract conflicts and missing inputs for owner review. |
 | [product-resume-2026-10-02.md](product-resume-2026-10-02.md) | Dated product integration checkpoint with preserved decisions and pending acceptance. |
 | [product-resume-2026-10-03.md](product-resume-2026-10-03.md) | Owner configuration, immutable Research capture and functional integration checkpoint. |
 | [audit-2026-09-25-review.md](audit-2026-09-25-review.md) | Independent review of audit PR303: reproduced SQL/lint/CI findings, corrections, issue mapping and verification limits. |
@@ -40,6 +42,9 @@ from the tables below, so an unlisted file is a bug, not an omission you may ign
 |---|---|
 | [dependency-map.md](dependency-map.md) | Package direction, owners and state authority. |
 | [contract-index.md](contract-index.md) | Canonical schemas and the code file that owns each one. |
+| [read-extract-proposal-cutover.md](read-extract-proposal-cutover.md) | READ proposal cardinality and stage-admission conflict before activation. |
+| [workflow-conversion-admission-cutover.md](workflow-conversion-admission-cutover.md) | Required selected conversion inputs, current authority and explicit scope cutover. |
+| [managed-generation-promotion-fence.md](managed-generation-promotion-fence.md) | Shadow key cutover, complete required-set evidence and existing pointer authority. |
 | [rust-kernel-abi-versioning.md](rust-kernel-abi-versioning.md) | Versioned Rust/Wasm ABI and the consumer-newer compatibility guard. |
 | [runtime-contract.md](runtime-contract.md) | Bounded Worker, DO, Workflow, Queue, D1, R2 and AI Search behaviour. |
 | [failure-model.md](failure-model.md) | Retries, lost ACKs, tampering, stale generations, partial failure. |
@@ -64,6 +69,8 @@ from the tables below, so an unlisted file is a bug, not an omission you may ign
 | Document | Purpose |
 |---|---|
 | [cloudflare-runbook.md](cloudflare-runbook.md) | Provision, migrate, dry-run, deploy, verify, roll back. |
+| [issue-319-cookie-and-log-verification.md](issue-319-cookie-and-log-verification.md) | Source findings and pending browser/event evidence for cookie and URL-log policy. |
+| [http-cache-semantics-advisory.md](http-cache-semantics-advisory.md) | Current dependency advisory, absent patch evidence and permitted mitigation boundary. |
 | [cloudflare-usage-envelope.md](cloudflare-usage-envelope.md) | Usage envelope (80% guard), preflight admission receipt, SEALED/BLOCKED discipline. |
 | [local-launch.md](local-launch.md) | The owner loop that runs locally today, and its current limits. |
 | [owner-workspace-setup.md](owner-workspace-setup.md) | Operator-provisioned namespace bootstrap and first owner workspace setup. |
