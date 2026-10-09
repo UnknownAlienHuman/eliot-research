@@ -1,0 +1,218 @@
+/*
+ * U2-R Research fixture, semantic tokens only.
+ *
+ * No raw colour, no arbitrary radius, spacing or font size. Every value comes from the committed
+ * Material 3 role and Eliot foundation tokens in ../../tokens/theme.css. The page stays the single
+ * scroll owner; no nested scroll area is introduced.
+ */
+
+.er-research-fixture {
+  display: flex;
+  flex-direction: column;
+  gap: var(--eliot-space-section);
+  margin-inline: auto;
+  max-inline-size: var(--eliot-layout-reading-max);
+  padding: 0;
+  color: var(--md-sys-color-on-surface);
+  background-color: var(--md-sys-color-surface-container-lowest);
+  font-family: var(--eliot-type-font-family);
+  font-size: var(--eliot-type-body-medium-size);
+  line-height: var(--eliot-type-body-medium-line-height);
+}
+
+.er-research-fixture__heading {
+  margin: 0;
+  color: var(--md-sys-color-on-surface);
+  font-size: var(--eliot-type-title-large-size);
+  line-height: var(--eliot-type-title-large-line-height);
+  font-weight: var(--eliot-type-font-weight-medium);
+  letter-spacing: var(--eliot-type-letter-spacing-label);
+}
+
+.er-research-fixture__lead {
+  margin: 0;
+  max-inline-size: var(--eliot-type-reading-measure);
+  color: var(--md-sys-color-on-surface-variant);
+  font-size: var(--eliot-type-reading-size);
+  line-height: var(--eliot-type-reading-line-height);
+}
+
+.er-research-fixture__form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--eliot-space-block-control);
+}
+
+.er-research-fixture__form-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--eliot-space-inline-control);
+}
+
+.er-research-fixture__scope {
+  margin: 0;
+  color: var(--md-sys-color-on-surface-variant);
+  font-size: var(--eliot-type-label-medium-size);
+  line-height: var(--eliot-type-label-medium-line-height);
+  font-variant-numeric: var(--eliot-type-numerals);
+}
+
+/*
+ * Notices. A no-hit, a readback and an outcome-unknown each keep their own role so a reader can
+ * tell them apart at a glance instead of reading every line.
+ */
+.er-research-fixture__notice {
+  margin: 0;
+  padding: var(--eliot-space-panel);
+  border-radius: var(--eliot-shape-medium);
+  background-color: var(--md-sys-color-surface-container);
+  color: var(--md-sys-color-on-surface-variant);
+  font-size: var(--eliot-type-body-medium-size);
+  line-height: var(--eliot-type-body-medium-line-height);
+}
+
+.er-research-fixture__notice--error {
+  background-color: var(--md-sys-color-error-container);
+  color: var(--md-sys-color-on-error-container);
+}
+
+/* Four separate budgets stay visibly parallel, with only the reported one receiving weight. */
+.er-research-fixture__budgets {
+  display: flex;
+  flex-direction: column;
+  gap: var(--eliot-space-block-control);
+  padding: var(--eliot-space-panel);
+  border-radius: var(--eliot-shape-medium);
+  background-color: var(--md-sys-color-surface-container-low);
+}
+
+.er-research-fixture__budgets h3 {
+  margin: 0;
+  color: var(--md-sys-color-on-surface);
+  font-size: var(--eliot-type-title-small-size);
+  line-height: var(--eliot-type-title-small-line-height);
+}
+
+.er-research-fixture__budgets ul {
+  display: flex;
+  flex-direction: column;
+  gap: var(--eliot-space-block-control);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.er-research-fixture__budgets li {
+  color: var(--md-sys-color-on-surface-variant);
+  font-size: var(--eliot-type-body-medium-size);
+  line-height: var(--eliot-type-body-medium-line-height);
+}
+
+.er-research-fixture__budgets li.is-reported {
+  color: var(--md-sys-color-on-surface);
+  font-weight: var(--eliot-type-font-weight-medium);
+}
+
+.er-research-fixture__budget-note {
+  margin: 0;
+  color: var(--md-sys-color-on-surface-variant);
+  font-size: var(--eliot-type-body-small-size);
+  line-height: var(--eliot-type-body-small-line-height);
+}
+
+/* The snapshot sample is bounded by an outline, never a second surface. */
+.er-research-fixture__snapshot {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--eliot-space-block-control);
+  padding: var(--eliot-space-panel);
+  border: var(--eliot-divider-width) solid var(--md-sys-color-outline-variant);
+  border-radius: var(--eliot-shape-medium);
+}
+
+.er-research-fixture__snapshot h3 {
+  margin: 0;
+  color: var(--md-sys-color-on-surface);
+  font-size: var(--eliot-type-title-small-size);
+  line-height: var(--eliot-type-title-small-line-height);
+}
+
+.er-research-fixture__snapshot p {
+  margin: 0;
+  color: var(--md-sys-color-on-surface-variant);
+  font-size: var(--eliot-type-body-medium-size);
+  line-height: var(--eliot-type-body-medium-line-height);
+}
+
+.er-research-fixture__snapshot-index {
+  color: var(--md-sys-color-on-surface-variant);
+  font-size: var(--eliot-type-label-small-size);
+  line-height: var(--eliot-type-label-small-line-height);
+  font-variant-numeric: var(--eliot-type-numerals);
+}
+
+.er-research-fixture__report {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--eliot-space-block-control);
+  padding: var(--eliot-space-panel);
+  border-radius: var(--eliot-shape-large);
+  background-color: var(--md-sys-color-surface-container-lowest);
+}
+
+.er-research-fixture__report h3 {
+  margin: 0;
+  color: var(--md-sys-color-on-surface);
+  font-size: var(--eliot-type-title-medium-size);
+  line-height: var(--eliot-type-title-medium-line-height);
+}
+
+.er-research-fixture__report-lead {
+  margin: 0;
+  color: var(--md-sys-color-on-surface-variant);
+  font-size: var(--eliot-type-body-medium-size);
+  line-height: var(--eliot-type-body-medium-line-height);
+}
+
+.er-research-fixture__report-body {
+  margin: 0;
+  max-inline-size: var(--eliot-type-reading-measure);
+  color: var(--md-sys-color-on-surface);
+  font-size: var(--eliot-type-reading-size);
+  line-height: var(--eliot-type-reading-line-height);
+}
+
+.er-research-fixture__evidence {
+  display: flex;
+  flex-direction: column;
+  gap: var(--eliot-space-block-control);
+  padding: var(--eliot-space-panel);
+  border-left: var(--eliot-focus-width) solid var(--md-sys-color-primary);
+  border-radius: var(--eliot-shape-extra-small);
+  background-color: var(--md-sys-color-surface-container);
+}
+
+.er-research-fixture__evidence h4 {
+  margin: 0;
+  color: var(--md-sys-color-on-surface);
+  font-size: var(--eliot-type-label-large-size);
+  line-height: var(--eliot-type-label-large-line-height);
+  font-weight: var(--eliot-type-font-weight-medium);
+}
+
+.er-research-fixture__evidence p {
+  margin: 0;
+  max-inline-size: var(--eliot-type-reading-measure);
+  color: var(--md-sys-color-on-surface-variant);
+  font-size: var(--eliot-type-body-medium-size);
+  line-height: var(--eliot-type-body-medium-line-height);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .er-research-fixture {
+    transition-duration: var(--eliot-motion-effects);
+  }
+}
