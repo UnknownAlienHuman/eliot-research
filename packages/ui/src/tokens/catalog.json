@@ -1,0 +1,145 @@
+{
+  "protocol": "eliotr.ui-token-catalog.v1",
+  "checkpoint": "U1.2",
+  "source_css": "packages/ui/src/tokens/theme.css",
+  "source_sha256": "420bef555549c79d31fd2d2ef2f5b138a254e13ebeeb8f8445d1bb665258562b",
+  "source_bytes": 17701,
+  "design_reference": {
+    "artifact": ".eliotr-state/frontend-reference-20261009/design-mcp.json",
+    "endpoint": "https://design.googleapis.com/mcp",
+    "tool": "generate_color_scheme",
+    "primary_key": "#1a73e8",
+    "color_scheme_variant": "TONAL_SPOT",
+    "contrast_level": 0,
+    "generated_at_utc": "2026-10-09T13:41:15.568Z"
+  },
+  "consumed_roles": [
+    {
+      "pair": "primary/on-primary",
+      "semantic_use": "high-emphasis action, focus ring and selection; never status, readiness or confidence",
+      "light": {
+        "primary": "#435e91",
+        "on-primary": "#ffffff"
+      },
+      "dark": {
+        "primary": "#adc7ff",
+        "on-primary": "#0f2f60"
+      }
+    },
+    {
+      "pair": "surface/on-surface",
+      "semantic_use": "reading center and page background; report body text",
+      "light": {
+        "surface": "#f9f9ff",
+        "on-surface": "#1a1b20"
+      },
+      "dark": {
+        "surface": "#111318",
+        "on-surface": "#e2e2e9"
+      }
+    },
+    {
+      "pair": "surface-container/on-surface-variant",
+      "semantic_use": "Eliot scope, counts and state metadata that stay independent of report truth",
+      "light": {
+        "surface-container": "#ededf4",
+        "on-surface-variant": "#44474f"
+      },
+      "dark": {
+        "surface-container": "#1e1f25",
+        "on-surface-variant": "#c4c6d0"
+      }
+    },
+    {
+      "pair": "surface-container-high/on-surface",
+      "semantic_use": "contextual evidence panel, present only while a citation is selected",
+      "light": {
+        "surface-container-high": "#e8e7ee",
+        "on-surface": "#1a1b20"
+      },
+      "dark": {
+        "surface-container-high": "#282a2f",
+        "on-surface": "#e2e2e9"
+      }
+    },
+    {
+      "pair": "outline/surface",
+      "semantic_use": "essential control outline against surface, minimum3; outline-variant is low-emphasis separation only",
+      "light": {
+        "outline": "#74777f",
+        "surface": "#f9f9ff"
+      },
+      "dark": {
+        "outline": "#8e9099",
+        "surface": "#111318"
+      }
+    },
+    {
+      "pair": "error/on-error",
+      "semantic_use": "failure and refusal; never success or evidence support",
+      "light": {
+        "error": "#ba1a1a",
+        "on-error": "#ffffff"
+      },
+      "dark": {
+        "error": "#ffb4ab",
+        "on-error": "#690005"
+      }
+    }
+  ],
+  "forced_colors": {
+    "mode": "@media (forced-colors: active)",
+    "policy": "operating-system palette only; no third invented palette",
+    "roles": {
+      "primary": "LinkText",
+      "on-primary": "Canvas",
+      "primary-container": "Highlight",
+      "on-primary-container": "HighlightText",
+      "surface": "Canvas",
+      "on-surface": "CanvasText",
+      "outline": "CanvasText",
+      "outline-variant": "GrayText",
+      "error": "CanvasText",
+      "on-error": "Canvas"
+    }
+  },
+  "foundation_tokens": [
+    "--eliot-type-font-family",
+    "--eliot-type-font-family-mono",
+    "--eliot-type-numerals",
+    "--eliot-type-reading-size",
+    "--eliot-type-reading-line-height",
+    "--eliot-type-reading-measure",
+    "--eliot-space-inline-control",
+    "--eliot-space-block-control",
+    "--eliot-space-panel",
+    "--eliot-space-reading",
+    "--eliot-space-section",
+    "--eliot-space-touch-target",
+    "--eliot-size-touch-target",
+    "--eliot-icon-standard-size",
+    "--eliot-shape-small",
+    "--eliot-shape-medium",
+    "--eliot-shape-large",
+    "--eliot-shape-extra-large",
+    "--eliot-shape-full",
+    "--eliot-focus-width",
+    "--eliot-focus-offset",
+    "--eliot-divider-width",
+    "--eliot-state-hover-opacity",
+    "--eliot-state-focus-opacity",
+    "--eliot-state-pressed-opacity",
+    "--eliot-state-disabled-opacity",
+    "--eliot-motion-effects",
+    "--eliot-motion-spatial",
+    "--eliot-motion-standard-easing",
+    "--eliot-layout-rail-size",
+    "--eliot-layout-source-width",
+    "--eliot-layout-context-width",
+    "--eliot-layout-topbar-size",
+    "--eliot-layout-reading-max",
+    "--eliot-layout-breakpoint-medium",
+    "--eliot-layout-breakpoint-expanded"
+  ],
+  "source_normalization": "utf8-lf"
+}
