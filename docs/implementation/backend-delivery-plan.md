@@ -8,8 +8,8 @@ checkpoints, publication and individual passport closure. The first checkpoint
 below is evidence of delivered prerequisites, not completion of the project.
 
 October 9 publication readback and fetch divergence confirm
-`3cff6b34ad8492fdbc64efb6eca6fddf3f1cf9e7` at 0/0 after fast-forwarding the
-newly merged #329 documentation. Reviewed source commits
+`2adbc42d08eccc0210d31304006bb7e65aeee3db` at 0/0 after fast-forwarding
+the concurrent frontend documentation in `a9a33031`. Reviewed source commits
 are recorded below; re-read the current Git ref before the next publication.
 The live GitHub inventory has 65 open PRs and four open Issues (last live inventory October 9). The current
 router/cards and latest passport discussions govern their dependencies and
@@ -160,7 +160,8 @@ and Leibniz, recursive read-only verification confirms all 26 descendants
 archived, every spawn edge closed and zero current agents. No Issue/PR closes
 on these source checkpoints; the overall Goal remains ACTIVE.
 
-The next #325 source closure remains prepared and unpublished. Lorentz repaired
+`2adbc42d08eccc0210d31304006bb7e65aeee3db` publishes the exact 26-file
+#325 branch-library source closure. Lorentz repaired
 V2 plan/result/question binding before role-model dispatch; owning compile/scoped
 lint pass and the new parser negative passes 1/1 with nine skipped. The integrator
 replaced excerpt-only freeze readback with exact committed handle/source/content/
@@ -168,17 +169,28 @@ scope binding and permits fresh resolution receipts. Root/branch projection
 identity now remains stable across receipt/time changes while rejecting source
 substitution. Three new binding cases pass before the shared-helper extraction;
 the final new projection case passes 1/1 with three skipped. Runtime compilation
-and scoped lint pass. Independent review of the whole library closure is pending;
-current working-tree compilation does not prove a committed release.
+and scoped lint pass. Feynman's complete library review accepted all other
+boundaries and identified one duplicate-handle receipt comparison defect.
+Faraday (`opencode-go2/step-5-preview-free`, `high`) repaired it by comparing
+stable source-bound material, permitting fresh receipts and retaining the
+first occurrence in the ordered input. Kepler independently accepted the
+context/helper source. The integrator corrected the review's claim that receipt
+retention was independent of input order. The new context regression passes
+3/3; owning compilation and scoped lint pass. Exact committed blobs and remote
+readback match the reviewed manifest. These source checks do not establish a
+clean release or native pipeline acceptance.
 
 C5 records missing immutable branch-query limits in
 [branch-query-budget-selection.md](branch-query-budget-selection.md). The prepared
 planner's guessed budget tuple is removed; V9 refuses missing explicit budget
 selection before query execution. The scope profile does not supply the complete
 tuple, so no producer, operating profile or activation is invented. C1/C2 and
-actual #325/#214 runtime acceptance remain open. Old agent sessions stay closed;
-the fresh writer was closed/archived and the fresh independent reviewer owns one
-bounded leaf, without children.
+actual #325/#214 runtime acceptance remain open. Faraday and Kepler were closed
+and archived after completion. Dalton is the sole active leaf, on Step 5 Go2,
+and owns one new Core-to-ResearchSession native transport test without children.
+The declared context is larger; comparative quality and external rankings are
+unverified. The trial required corrections to Windows command usage, one test
+fixture and two descriptions; source acceptance came from checked artifacts.
 
 `345346578fe8e47071c63babf5aaf1225e5debe1` publishes #214's private,
 unexported relation alias catalogue. Malformed excerpt Unicode is rejected

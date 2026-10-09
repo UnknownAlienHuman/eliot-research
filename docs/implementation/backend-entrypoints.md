@@ -22,6 +22,10 @@ excluded. Refer to [the active delivery plan](backend-delivery-plan.md) and
 Native, selected-profile and release acceptance remains pending until its
 required receipts exist; a source checkpoint does not establish those gates.
 
+The transition is complete for the assigned Luna leaves. Branch-library source
+closure is published in `2adbc42d`; one Step 5 Go2 leaf owns native Session
+transport acceptance. C1/C2/C5 still defer their named pipeline cutovers.
+
 This is the canonical day-to-day backend router. It does not replace product architecture, work-packet
 ownership or release acceptance. It tells each role where to begin, which active PR owns the result,
 and where the concise donor/anti-duplication instructions live.
