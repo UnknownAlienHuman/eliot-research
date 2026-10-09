@@ -5,8 +5,11 @@
   "owner_authorization_ref": "tests/ui-owner/receipts/owner-authorization.json",
   "base_sha": "783c7a0ae6fcd3ca7d95dd7c166f2f84d9f9cf8c",
   "history_base_sha": "c37e56e0ebdfc7f6d294879008a4036d1b95b985",
-  "state": "ACTIVE",
-  "evidence_refs": [],
+  "state": "HANDED_OFF",
+  "evidence_refs": [
+    "git:ff15da4f752810d02cf25ecbac25be80a88a9a7d",
+    "tests/ui-owner/receipts/u1-d/client-citations.json"
+  ],
   "blocker_refs": [],
   "claim_id": "c3-ec-citations-20261009",
   "checkpoint_id": "C3-EC",
@@ -31,5 +34,7 @@
       "checkpoint_id": "C1.4",
       "commit_sha": "4f7c99546bd7adfcf766bdc1a398a94a8e20fedb"
     }
-  ]
+  ],
+  "handoff_reason": "COMPLETED",
+  "handoff_receipt_ref": "tests/ui-owner/receipts/u1-d/client-citations.json"
 }

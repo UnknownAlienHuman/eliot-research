@@ -1,0 +1,17 @@
+{
+  "protocol": "eliotr.ui-review-receipt.v1",
+  "checkpoint": "ER-49",
+  "status": "NORMAL_PASS",
+  "source_commit": "ab196b867d2ef3057b5cbce9a901e42ef0930149",
+  "checker_session": 82084,
+  "checkpoints": 52,
+  "claims": 39,
+  "active": 7,
+  "history_commits": 113,
+  "semantic_approval": "NOT_EVALUATED",
+  "publication": "Fresh origin/main/ls-remote exactab196 after normalFF from463; all6 backend target/remote/original685 blobs equal",
+  "limitations": [
+    "Finite source/history frontier only; full product UI remains incomplete"
+  ],
+  "retained_failure": "Original immutable685 checker35490 failed because two C1 claims were combined in one source commit. Unpublished history split into distinct priorclaimed exact2 commits without changing product blobs; original685 retained in backup ref."
+}

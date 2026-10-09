@@ -1,0 +1,27 @@
+{
+  "protocol": "eliotr.ui-review-receipt.v1",
+  "checkpoint": "C3-EC",
+  "status": "ACCEPTED_INTERNAL_CLIENT",
+  "source_commit": "ff15da4f752810d02cf25ecbac25be80a88a9a7d",
+  "scope": [
+    "packages/owner-api-client/src/evidence/citations/bytes.ts",
+    "packages/owner-api-client/src/evidence/citations/bytes.test.ts",
+    "packages/owner-api-client/src/evidence/citations/audit.ts",
+    "packages/owner-api-client/src/evidence/citations/audit.test.ts",
+    "packages/owner-api-client/src/evidence/citations/citations.ts",
+    "packages/owner-api-client/src/evidence/citations/citations.test.ts",
+    "packages/owner-api-client/src/evidence/citations/reauthorization.ts",
+    "packages/owner-api-client/src/evidence/citations/reauthorization.test.ts"
+  ],
+  "behavior": "Exact inherited evidence/citation wire with strict V1/V2 ordered outcomes and projections; POST-empty citation reauthorization through shared owner CSRF; exact identity/digest/UTF8/epoch fences",
+  "checks": {
+    "tests": "Original44 retained, changed reauthorization scope10PASS including one actual legacy transport case; no original44 blanket repeat",
+    "compiler": "Owning TypeScript6.0.3 zero diagnostics622 outputs",
+    "audit": "Root confirmed actual legacy parity; original GET-default defect fixed. Inherited zero citation list and original-handle audit binding preserved",
+    "lint": "Exact eight source/tests qualified; final changed reauth test lintPASS",
+    "whitespace": "Extra EOF blankline normalized only; no semantic change/retest"
+  },
+  "limitations": [
+    "Internal client source only; C3-E composed exports and product U4-E/FINAL-UI remain pending"
+  ]
+}
