@@ -58,6 +58,26 @@ export interface IngestServiceDependencies {
   readonly now?: () => number;
 }
 
+/** Minimal authenticated identity consumed by the shared ingest engine. */
+export interface IngestActor {
+  readonly principal_ref: string;
+  readonly credential_generation: string;
+}
+
+/** Context-free operations for trusted application and Workflow adapters. */
+export interface IngestActorService {
+  prepareBundle(actor: IngestActor, request: PrepareBundleUploadRequest): Promise<PrepareBundleUploadResult>;
+  uploadBundlePart(actor: IngestActor, request: UploadBundlePartRequest): Promise<UploadBundlePartResult>;
+  completeBundleFile(actor: IngestActor, request: CompleteBundleFileRequest): Promise<CompleteBundleFileResult>;
+  commitBundle(actor: IngestActor, request: CommitBundleUploadRequest): Promise<BundleAdmissionReceipt>;
+  getBundleStatus(actor: IngestActor, operationId: string): Promise<BundleIngestStatus>;
+  getBundleRecovery(actor: IngestActor, operationId: string): Promise<BundleIngestRecovery>;
+  discoverBundle(
+    actor: IngestActor,
+    request: Parameters<OwnerApi["discoverBundle"]>[1],
+  ): ReturnType<OwnerApi["discoverBundle"]>;
+}
+
 function requireOperation(
   operation: PreparedIngestOperation | null,
 ): asserts operation is PreparedIngestOperation {
@@ -153,16 +173,13 @@ function terminalReceipt(
 }
 
 // IMPLEMENTED_NOT_LIVE: ER-14/ER-21/ER-29 ingest requires remote R2/D1/Queue receipts.
-export function createIngestService(dependencies: IngestServiceDependencies): Pick<
-  OwnerApi,
-  "prepareBundle" | "uploadBundlePart" | "completeBundleFile" | "commitBundle" | "getBundleStatus" | "getBundleRecovery" | "discoverBundle"
-> {
+export function createIngestActorService(dependencies: IngestServiceDependencies): IngestActorService {
   const clock = dependencies.now ?? Date.now;
   return {
-    async prepareBundle(context, request: PrepareBundleUploadRequest): Promise<PrepareBundleUploadResult> {
+    async prepareBundle(actor, request: PrepareBundleUploadRequest): Promise<PrepareBundleUploadResult> {
       const prepared = await dependencies.authority.prepare({
-        principal_ref: context.principal_ref,
-        origin_authentication_receipt_ref: context.credential_generation,
+        principal_ref: actor.principal_ref,
+        origin_authentication_receipt_ref: actor.credential_generation,
         idempotency_key: request.idempotency_key,
         manifest: request.manifest,
         file_hashes: request.file_hashes,
@@ -213,10 +230,10 @@ export function createIngestService(dependencies: IngestServiceDependencies): Pi
       };
     },
 
-    async uploadBundlePart(context, request: UploadBundlePartRequest): Promise<UploadBundlePartResult> {
+    async uploadBundlePart(actor, request: UploadBundlePartRequest): Promise<UploadBundlePartResult> {
       const operation = await dependencies.authority.loadForPrincipal(
         request.operation_id,
-        context.principal_ref,
+        actor.principal_ref,
       );
       requireOperation(operation);
       requireSession(operation, request.multipart_session_ref);
@@ -238,10 +255,10 @@ export function createIngestService(dependencies: IngestServiceDependencies): Pi
       };
     },
 
-    async completeBundleFile(context, request: CompleteBundleFileRequest): Promise<CompleteBundleFileResult> {
+    async completeBundleFile(actor, request: CompleteBundleFileRequest): Promise<CompleteBundleFileResult> {
       const operation = await dependencies.authority.loadForPrincipal(
         request.operation_id,
-        context.principal_ref,
+        actor.principal_ref,
       );
       requireOperation(operation);
       requireSession(operation, request.multipart_session_ref);
@@ -261,10 +278,10 @@ export function createIngestService(dependencies: IngestServiceDependencies): Pi
       };
     },
 
-    async commitBundle(context, request: CommitBundleUploadRequest): Promise<BundleAdmissionReceipt> {
+    async commitBundle(actor, request: CommitBundleUploadRequest): Promise<BundleAdmissionReceipt> {
       let operation = await dependencies.authority.loadForPrincipal(
         request.operation_id,
-        context.principal_ref,
+        actor.principal_ref,
       );
       requireOperation(operation);
       requireSession(operation, request.multipart_session_ref);
@@ -355,17 +372,17 @@ export function createIngestService(dependencies: IngestServiceDependencies): Pi
       });
     },
 
-    async getBundleRecovery(context, operationId) {
-      const operation = await dependencies.authority.loadForPrincipal(operationId, context.principal_ref);
+    async getBundleRecovery(actor, operationId) {
+      const operation = await dependencies.authority.loadForPrincipal(operationId, actor.principal_ref);
       requireOperation(operation);
       // loadForPrincipal verifies the current owner and exact admission policy. No R2 effects,
       // copied credentials, new reservation, or authority inferred from the supplied operation ID.
       return recovery(operation);
     },
 
-    async discoverBundle(context, request) {
+    async discoverBundle(actor, request) {
       const operation = await dependencies.authority.loadBySourceRevisionForPrincipal(
-        request.manifest.origin.source_revision_ref, context.principal_ref);
+        request.manifest.origin.source_revision_ref, actor.principal_ref);
       requireOperation(operation);
       if (request.total_bytes !== operation.total_bytes ||
           await canonicalDigest(request.manifest) !== operation.manifest_sha256 ||
@@ -375,7 +392,7 @@ export function createIngestService(dependencies: IngestServiceDependencies): Pi
       }
       // Re-read authorization after digest work; a withdrawal/expiry during discovery cannot
       // disclose a reservation key. The response is still not authority for subsequent writes.
-      const current = await dependencies.authority.loadForPrincipal(operation.operation_id, context.principal_ref);
+      const current = await dependencies.authority.loadForPrincipal(operation.operation_id, actor.principal_ref);
       requireOperation(current);
       if (current.input_fingerprint !== operation.input_fingerprint) {
         throw new IngestServiceError("INGEST_RECOVERY_INPUT_MISMATCH", 409, "The original reservation changed during discovery.");
@@ -383,13 +400,39 @@ export function createIngestService(dependencies: IngestServiceDependencies): Pi
       return recovery(current);
     },
 
-    async getBundleStatus(context, operationId) {
+    async getBundleStatus(actor, operationId) {
       const operation = await dependencies.authority.loadForPrincipal(
         operationId,
-        context.principal_ref,
+        actor.principal_ref,
       );
       requireOperation(operation);
       return status(operation);
     },
+  };
+}
+
+type IngestHttpContext = Parameters<OwnerApi["prepareBundle"]>[0];
+
+function ingestActor(context: IngestHttpContext): IngestActor {
+  return {
+    principal_ref: context.principal_ref,
+    credential_generation: context.credential_generation,
+  };
+}
+
+/** Preserve the OwnerApi HTTP contract as an adapter over the same actor engine. */
+export function createIngestService(dependencies: IngestServiceDependencies): Pick<
+  OwnerApi,
+  "prepareBundle" | "uploadBundlePart" | "completeBundleFile" | "commitBundle" | "getBundleStatus" | "getBundleRecovery" | "discoverBundle"
+> {
+  const service = createIngestActorService(dependencies);
+  return {
+    prepareBundle: (context, request) => service.prepareBundle(ingestActor(context), request),
+    uploadBundlePart: (context, request) => service.uploadBundlePart(ingestActor(context), request),
+    completeBundleFile: (context, request) => service.completeBundleFile(ingestActor(context), request),
+    commitBundle: (context, request) => service.commitBundle(ingestActor(context), request),
+    getBundleStatus: (context, operationId) => service.getBundleStatus(ingestActor(context), operationId),
+    getBundleRecovery: (context, operationId) => service.getBundleRecovery(ingestActor(context), operationId),
+    discoverBundle: (context, request) => service.discoverBundle(ingestActor(context), request),
   };
 }

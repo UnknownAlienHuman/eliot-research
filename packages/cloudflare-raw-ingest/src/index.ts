@@ -8,6 +8,7 @@ export * from "./raw-normalized-candidate-reader.js";
 export * from "./raw-normalized-admission.js";
 export * from "./source-admission-service.js";
 export * from "./ingest-service.js";
+export * from "./ingest-workflow-owner-service.js";
 export { RawNormalizedAdmissionError, createRawNormalizedAdmissionService } from "./raw-normalized-admission-service.js";
 export type { RawNormalizedAdmissionActor, RawNormalizedAdmissionBundlePort, RawNormalizedAdmissionRequestPorts } from "./raw-normalized-admission-service.js";
 export { IngestHttpInputError, dispatchIngestOperation, rawNormalizedAdmissionRequest, prepareBundleRequest, discoverBundleRequest, completeBundleRequest, commitBundleRequest } from "./normalized-ingest-http.js";
