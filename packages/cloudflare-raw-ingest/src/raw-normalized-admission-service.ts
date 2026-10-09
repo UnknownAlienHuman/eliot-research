@@ -41,6 +41,7 @@ export interface RawNormalizedAdmissionBundlePort {
 export interface RawNormalizedAdmissionRequestPorts {
   readonly owner: RawNormalizedAdmissionBundlePort;
   readCapture(captureId: string): Promise<RawCaptureReceipt | null>;
+  assertCurrentAuthority?(): Promise<void>;
   readConversion(
     capture: RawCaptureReceipt,
     conversionOperationId: string,
@@ -210,6 +211,14 @@ export function createRawNormalizedAdmissionService(input: {
   readonly now?: () => number;
 }) {
   const now = input.now ?? Date.now;
+  async function assertWorkflowAuthority(ports: RawNormalizedAdmissionRequestPorts): Promise<void> {
+    try {
+      await ports.assertCurrentAuthority?.();
+    } catch (cause) {
+      if (cause instanceof RawNormalizedAdmissionError) throw cause;
+      throw new RawNormalizedAdmissionError("RAW_NORMALIZED_AUTHORITY_STALE", 409, "workflow authority is no longer current", false, cause);
+    }
+  }
   async function load(operationId: string): Promise<AdmissionRow | null> {
     return input.database.prepare(`${SELECT}WHERE admission_operation_id=?1 LIMIT 1`).bind(operationId).first<AdmissionRow>();
   }
@@ -236,6 +245,7 @@ export function createRawNormalizedAdmissionService(input: {
     if (!currentPolicy.authorized_principal_refs.includes(actor.principal_ref) || !currentPolicy.allowed_ownership_modes.includes("immutable_import") || row.policy_snapshot_sha256 !== currentPolicySha || String(row.policy_revision) !== String(currentPolicy.revision)) {
       throw new RawNormalizedAdmissionError("RAW_NORMALIZED_AUTHORITY_STALE", 409, "admission policy is no longer current");
     }
+    await assertWorkflowAuthority(ports);
     const witness = json<SnapshotViewWitness>(row.snapshot_view_json, "snapshot view");
     const storedPolicy = json<IngestAdmissionPolicySnapshot>(row.policy_snapshot_json, "policy snapshot");
     if (await canonicalDigest(storedPolicy) !== currentPolicySha || row.policy_snapshot_sha256 !== currentPolicySha) {
@@ -255,13 +265,15 @@ export function createRawNormalizedAdmissionService(input: {
     }
     return captureReceipt;
   }
-  async function update(rowId: string, fields: { readonly state?: string; readonly ingest_operation_id?: string; readonly reason_codes_json?: string; readonly receipt_json?: string | null }): Promise<void> {
+  async function update(rowId: string, fields: { readonly state?: string; readonly ingest_operation_id?: string; readonly reason_codes_json?: string; readonly receipt_json?: string | null }, assertCurrent: () => Promise<void>): Promise<void> {
+    await assertCurrent();
     const sets: string[] = ["updated_at=?2"]; const values: unknown[] = [rowId, new Date(now()).toISOString()];
     if (fields.state !== undefined) { sets.push("state=?3"); values.push(fields.state); }
     if (fields.ingest_operation_id !== undefined) { sets.push(`ingest_operation_id=?${values.length + 1}`); values.push(fields.ingest_operation_id); }
     if (fields.reason_codes_json !== undefined) { sets.push(`reason_codes_json=?${values.length + 1}`); values.push(fields.reason_codes_json); }
     if (fields.receipt_json !== undefined) { sets.push(`receipt_json=?${values.length + 1}`); values.push(fields.receipt_json); }
     await input.database.prepare(`UPDATE raw_normalized_admission SET ${sets.join(",")} WHERE admission_operation_id=?1 AND state NOT IN ('COMMITTED','QUARANTINED','REJECTED')`).bind(...values).run();
+    await assertCurrent();
   }
   async function admit(actor: RawNormalizedAdmissionActor, captureId: string, request: RawNormalizedAdmissionRequest, ports: RawNormalizedAdmissionRequestPorts): Promise<RawNormalizedAdmissionResult> {
     const ownerPort = ports.owner;
@@ -312,6 +324,7 @@ export function createRawNormalizedAdmissionService(input: {
       }
       const currentPolicy = await policySnapshot(input.database, capture.source_namespace_id, policy.revision);
       if (!currentPolicy.authorized_principal_refs.includes(actor.principal_ref) || !currentPolicy.allowed_ownership_modes.includes("immutable_import") || await canonicalDigest(currentPolicy) !== policySha) throw new RawNormalizedAdmissionError("RAW_NORMALIZED_AUTHORITY_STALE", 409, "admission policy changed during conversion readback");
+      await assertWorkflowAuthority(ports);
     };
     const conversion = await ports.readConversion(captureReceipt, conversionId, assertCurrent, actor.signal);
     if (conversion === null) throw new RawNormalizedAdmissionError("RAW_NORMALIZED_CONVERSION_UNAVAILABLE", 409, "complete conversion candidate is unavailable");
@@ -320,6 +333,7 @@ export function createRawNormalizedAdmissionService(input: {
     const inputFingerprint = await canonicalDigest([prepared.candidate.candidate_ref, witness.source_view_ref, policySha, capture.content_sha256, conversionId]);
     const createdAt = new Date(now()); const expiresAt = new Date(createdAt.getTime() + TTL_MS).toISOString();
     if (prior === null) {
+      await assertCurrent();
       try {
         await input.database.prepare("INSERT INTO raw_normalized_admission(admission_operation_id,principal_ref,capture_id,conversion_operation_id,idempotency_key,input_fingerprint,candidate_ref,source_revision_ref,source_view_ref,snapshot_view_json,snapshot_view_sha256,policy_snapshot_json,policy_snapshot_sha256,policy_revision,state,reason_codes_json,created_at,updated_at,expires_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,'PREPARING','[]',?15,?15,?16)")
           .bind(stableAdmissionId, actor.principal_ref, cid, conversionId, idem, inputFingerprint, prepared.candidate.candidate_ref, capture.source_revision_ref, witness.source_view_ref, canonicalJson(witness), await canonicalDigest(witness), canonicalJson(policy), policySha, policy.revision, createdAt.toISOString(), expiresAt).run();
@@ -329,13 +343,16 @@ export function createRawNormalizedAdmissionService(input: {
         if (raced.principal_ref !== actor.principal_ref || raced.capture_id !== cid || raced.conversion_operation_id !== conversionId || raced.idempotency_key !== idem) throw new RawNormalizedAdmissionError("RAW_NORMALIZED_IDEMPOTENCY_CONFLICT", 409, "admission identity is bound to different input");
         return admit(actor, cid, request, ports);
       }
+      // Keep this outside the INSERT race handler: authority drift after reservation
+      // must stop before any bundle effect, never enter recovery recursion.
+      await assertCurrent();
     }
     try {
       let preparedBundle: PrepareBundleUploadResult;
       if (prior !== null && typeof prior.ingest_operation_id === "string") {
         const recovery = await ownerPort.getBundleRecovery(prior.ingest_operation_id);
         if (recovery.status.receipt !== undefined) {
-          await update(stableAdmissionId, { state: receiptState(recovery.status.receipt.decision), reason_codes_json: canonicalJson(recovery.status.receipt.reason_codes), receipt_json: canonicalJson(recovery.status.receipt) });
+          await update(stableAdmissionId, { state: receiptState(recovery.status.receipt.decision), reason_codes_json: canonicalJson(recovery.status.receipt.reason_codes), receipt_json: canonicalJson(recovery.status.receipt) }, assertCurrent);
         const row = await load(stableAdmissionId); if (row === null) throw new RawNormalizedAdmissionError("RAW_NORMALIZED_STATE_INVALID", 503, "admission readback is missing", true); return storedResult(row, ownerPort);
         }
         if (recovery.status.staging_session_ref === undefined) throw new RawNormalizedAdmissionError("RAW_NORMALIZED_STATE_INVALID", 503, "recovery session is missing", true);
@@ -346,15 +363,15 @@ export function createRawNormalizedAdmissionService(input: {
         preparedBundle = await ownerPort.prepareBundle(prepared.request);
       }
       if (preparedBundle.disposition === "DUPLICATE" && preparedBundle.existing_receipt !== undefined) {
-        await update(stableAdmissionId, { state: receiptState(preparedBundle.existing_receipt.decision), ingest_operation_id: preparedBundle.operation_id, reason_codes_json: canonicalJson(preparedBundle.reason_codes), receipt_json: canonicalJson(preparedBundle.existing_receipt) });
+        await update(stableAdmissionId, { state: receiptState(preparedBundle.existing_receipt.decision), ingest_operation_id: preparedBundle.operation_id, reason_codes_json: canonicalJson(preparedBundle.reason_codes), receipt_json: canonicalJson(preparedBundle.existing_receipt) }, assertCurrent);
         const row = await load(stableAdmissionId); if (row === null) throw new RawNormalizedAdmissionError("RAW_NORMALIZED_STATE_INVALID", 503, "admission readback is missing", true); return storedResult(row, ownerPort);
       }
       if (preparedBundle.disposition === "REJECTED") {
-        await update(stableAdmissionId, { state: "REJECTED", reason_codes_json: canonicalJson(preparedBundle.reason_codes) });
+        await update(stableAdmissionId, { state: "REJECTED", reason_codes_json: canonicalJson(preparedBundle.reason_codes) }, assertCurrent);
         const row = await load(stableAdmissionId); if (row === null) throw new RawNormalizedAdmissionError("RAW_NORMALIZED_STATE_INVALID", 503, "admission rejection readback is missing", true); return storedResult(row, ownerPort);
       }
       if (preparedBundle.multipart_session_ref === undefined || preparedBundle.files === undefined) throw new RawNormalizedAdmissionError("RAW_NORMALIZED_STATE_INVALID", 503, "normalized staging session is incomplete", true);
-      await update(stableAdmissionId, { state: "UPLOAD_REQUIRED", ingest_operation_id: preparedBundle.operation_id });
+      await update(stableAdmissionId, { state: "UPLOAD_REQUIRED", ingest_operation_id: preparedBundle.operation_id }, assertCurrent);
       const bytesByPath: Readonly<Record<string, Uint8Array>> = { "content.md": conversion.output.bytes, "manifest.json": prepared.candidate.manifest_bytes, "hashes.sha256": prepared.candidate.hashes_bytes };
       for (const file of preparedBundle.files) {
         const bytes = bytesByPath[file.path]; if (bytes === undefined) throw new RawNormalizedAdmissionError("RAW_NORMALIZED_STATE_INVALID", 503, "staging requested an unknown candidate file", true);
@@ -371,11 +388,11 @@ export function createRawNormalizedAdmissionService(input: {
       await assertCurrent();
       const admissionReceipt = await ownerPort.commitBundle({ operation_id: preparedBundle.operation_id, multipart_session_ref: preparedBundle.multipart_session_ref, manifest_sha256: preparedBundle.manifest_sha256 });
       const terminalState = receiptState(admissionReceipt.decision);
-      await update(stableAdmissionId, { state: terminalState, reason_codes_json: canonicalJson(admissionReceipt.reason_codes), receipt_json: canonicalJson(admissionReceipt) });
+      await update(stableAdmissionId, { state: terminalState, reason_codes_json: canonicalJson(admissionReceipt.reason_codes), receipt_json: canonicalJson(admissionReceipt) }, assertCurrent);
       const row = await load(stableAdmissionId); if (row === null) throw new RawNormalizedAdmissionError("RAW_NORMALIZED_STATE_INVALID", 503, "admission completion readback is missing", true); return storedResult(row, ownerPort);
     } catch (cause) {
       if (cause instanceof RawNormalizedAdmissionError) throw cause;
-      try { await update(stableAdmissionId, { state: "UNKNOWN", reason_codes_json: canonicalJson(["ADMISSION_OUTCOME_UNKNOWN"]) }); } catch { /* status remains recoverable through existing ingest operation */ }
+      try { await update(stableAdmissionId, { state: "UNKNOWN", reason_codes_json: canonicalJson(["ADMISSION_OUTCOME_UNKNOWN"]) }, assertCurrent); } catch { /* status remains recoverable through existing ingest operation */ }
       throw new RawNormalizedAdmissionError("RAW_NORMALIZED_OUTCOME_UNKNOWN", 503, "raw normalized admission outcome is uncertain; inspect durable status", true, cause);
     }
   }
