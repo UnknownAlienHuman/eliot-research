@@ -177,7 +177,7 @@ export const BranchQueryLegResultSchema = z.object({
   if (duplicate(value.resolved_handle_refs.map((item) => `${item.handle_ref.id}:${item.handle_ref.revision}`))) {
     context.addIssue({ code: "custom", path: ["resolved_handle_refs"], message: "query leg contains duplicate handles" });
   }
-  if (duplicate(value.omitted_candidates.map((item) => `${item.candidate_id}:${item.reason_code}`))) {
+  if (duplicate(value.omitted_candidates.map((item) => JSON.stringify([item.candidate_id, item.reason_code])))) {
     context.addIssue({ code: "custom", path: ["omitted_candidates"], message: "query leg omissions are duplicated" });
   }
   if (value.stop_reason === "NO_HITS" && value.resolved_handle_refs.length !== 0) {

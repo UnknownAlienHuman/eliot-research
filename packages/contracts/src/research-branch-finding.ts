@@ -3,7 +3,8 @@ import { IdentifierSchema, Sha256Schema, VersionedRefSchema } from "./common.js"
 import { ResolvedEvidenceSchema } from "./evidence.js";
 import { EvidenceFreezeSchema, ResearchDebtSchema } from "./research.js";
 import { BranchQueryPlanSchema, branchQueryLegsMatchPlan, branchQueryLegOutcomeIsConsistent } from "./research-branch-query.js";
-import { ResearchBranchRoleSchema, branchDebtsMatchBlockedRoles } from "./research-branch-role.js";
+import { ResearchBranchRoleSchema } from "./research-branch-role.js";
+import { branchDebtsMatchBlockedRoles, sameStrings } from "./research-branch-invariants.js";
 
 function refKey(ref: { readonly id: string; readonly revision: number }): string {
   return `${ref.id}:${ref.revision}`;
@@ -110,7 +111,7 @@ const FrozenRetrievalLegSchema = z.object({
       new Set(value.resolved_handle_refs.map((item) => refKey(item.handle_ref))).size !== value.resolved_handle_refs.length ||
       (value.status === "COMPLETED" && (value.trace_ref === undefined || value.failure_code !== undefined)) ||
       (value.status === "FAILED" && (value.failure_code === undefined || value.trace_ref !== undefined || value.resolved_handle_refs.length !== 0)) ||
-      new Set(value.omitted_candidates.map((item) => `${item.candidate_id}:${item.reason_code}`)).size !== value.omitted_candidates.length ||
+      new Set(value.omitted_candidates.map((item) => JSON.stringify([item.candidate_id, item.reason_code]))).size !== value.omitted_candidates.length ||
       !branchQueryLegOutcomeIsConsistent(value)) {
     context.addIssue({ code: "custom", path: ["status"], message: "frozen query leg status/provenance is inconsistent" });
   }
@@ -169,7 +170,7 @@ export const EvidenceFreezeBranchReconciliationSummarySchema = z.object({
     context.addIssue({ code: "custom", path: ["checkpoint_ref"], message: "frozen reconciliation summary identity or uniqueness is invalid" });
   }
   if (value.unmet_required_roles.some((role) => !value.required_roles.includes(role)) ||
-      [...value.omissions.map((item) => item.role)].sort().join("\n") !== [...value.required_roles].sort().join("\n") ||
+      !sameStrings(value.omissions.map((item) => item.role), value.required_roles) ||
       !branchDebtsMatchBlockedRoles(value.research_debts, value.unmet_required_roles)) {
     context.addIssue({ code: "custom", path: ["research_debts"], message: "frozen debts do not correspond to blocked required roles" });
   }
@@ -204,9 +205,8 @@ function validateBranchFindingsProvenance(
       value.reconciliation_ref.revision !== summary.checkpoint_ref.revision ||
       value.reconciliation_digest !== summary.identity_digest ||
       new Set(roleNames).size !== roleNames.length ||
-      [...roleNames].sort().join("\n") !== [...summary.required_roles].sort().join("\n") ||
-      [...value.roles.filter((role) => role.status === "BLOCKED").map((role) => role.role)].sort().join("\n") !==
-        [...summary.unmet_required_roles].sort().join("\n") ||
+      !sameStrings(roleNames, summary.required_roles) ||
+      !sameStrings(value.roles.filter((role) => role.status === "BLOCKED").map((role) => role.role), summary.unmet_required_roles) ||
       JSON.stringify([...expectedOmissions].sort((left, right) => left.role.localeCompare(right.role))) !==
         JSON.stringify([...summary.omissions].sort((left, right) => left.role.localeCompare(right.role))) ||
       value.roles.some((role) => role.query_plan.role !== role.role ||
@@ -226,8 +226,8 @@ function validateBranchFindingsProvenance(
           role.retrieval_legs.some((leg) => leg.resolved_handle_refs.length > 0)) ||
         role.finding_refs.length > 64 || new Set(role.finding_refs.map(refKey)).size !== role.finding_refs.length ||
         new Set(role.omitted_candidate_refs).size !== role.omitted_candidate_refs.length ||
-        [...new Set(role.retrieval_legs.flatMap((leg) => leg.omitted_candidates.map((item) => item.candidate_id)))].sort().join("\n") !==
-          [...role.omitted_candidate_refs].sort().join("\n") ||
+        !sameStrings([...new Set(role.retrieval_legs.flatMap((leg) => leg.omitted_candidates.map((item) => item.candidate_id)))],
+          role.omitted_candidate_refs) ||
         new Set(role.retrieval_legs.map((leg) => leg.query_id)).size !== role.retrieval_legs.length ||
         role.retrieval_legs.some((leg) => leg.scope_snapshot_ref.id !== role.scope_snapshot_ref.id ||
           leg.scope_snapshot_ref.revision !== role.scope_snapshot_ref.revision ||
@@ -253,7 +253,7 @@ function validateBranchFindingsProvenance(
       summary.research_debts.some((debt) => {
         const findings = value.findings.filter((finding) => finding.role === debt.blocked_refs[0]);
         const handles = [...new Set(findings.flatMap((finding) => finding.evidence_handle_refs.map(refKey)))].sort();
-        return [...debt.basis_and_evidence_refs].sort().join("\n") !== handles.join("\n");
+        return !sameStrings(debt.basis_and_evidence_refs, handles);
       })) {
     context.addIssue({ code: "custom", path: ["roles"], message: "frozen readiness, counter status or debt evidence differs from findings" });
   }
@@ -328,8 +328,8 @@ export const ResearchEvidenceFreezeV3Schema = z.object({
       value.branch_findings.resolved_evidence.some((item) => refKey(item.handle.scope_snapshot_ref) !== refKey(value.freeze.scope_snapshot_ref)) ||
       value.branch_findings.findings.some((finding) => finding.evidence_handle_refs.some((ref) => !resolved.has(refKey(ref)))) ||
       value.freeze.freeze_ref.id.length === 0 ||
-      [...value.freeze.unresolved_contradiction_refs].sort().join("\n") !== [...reconciliation.unresolved_contradiction_refs].sort().join("\n") ||
-      freezeDebts.join("\n") !== summaryDebts.join("\n")) {
+      !sameStrings(value.freeze.unresolved_contradiction_refs, reconciliation.unresolved_contradiction_refs) ||
+      !sameStrings(freezeDebts, summaryDebts)) {
     context.addIssue({ code: "custom", path: ["branch_findings"], message: "v3 branch findings are outside the frozen exact evidence set" });
   }
 });

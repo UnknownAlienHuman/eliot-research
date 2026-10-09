@@ -375,6 +375,33 @@ describe("branch parent and outcome integrity", () => {
     };
     expect(ResearchBranchResultV2Schema.safeParse(ready).success).toBe(true);
     expect(ResearchBranchResultV2Schema.safeParse({ ...ready, evidence_handle_refs: [] }).success).toBe(false);
+    expect(ResearchBranchResultV2Schema.safeParse({ ...ready, status: "BLOCKED", findings: [] }).success).toBe(false);
+  });
+
+  it("rejects delimiter collisions in question identity and frozen omission sets", () => {
+    const { plan, analysis } = parentCheckpointFixture();
+    const branch = analysis.branch_results[0];
+    if (branch === undefined) throw new Error("fixture branch missing");
+    const changedPlan = { ...plan,
+      root_question: { ...plan.root_question, question_ref: { id: "a\nb", revision: 1 } },
+      branch_question: { ...plan.branch_question, question_ref: { id: "c", revision: 1 } },
+      question_refs: [{ id: "a\nb", revision: 1 }, { id: "c", revision: 1 }],
+    };
+    const changedBranch = { ...branch, query_plan: changedPlan, question_ids: ["a\nb", "c"] };
+    expect(ResearchBranchResultV2Schema.safeParse(changedBranch).success).toBe(true);
+    expect(ResearchBranchResultV2Schema.safeParse({ ...changedBranch, question_ids: ["a", "b\nc"] }).success).toBe(false);
+    const frozen = EvidenceFreezeBranchFindingsProvenanceSchema.parse(frozenProvenance(true));
+    const support = frozen.roles[0];
+    const supportLeg = support?.retrieval_legs[0];
+    const supportOmissions = frozen.reconciliation_summary.omissions[0];
+    if (support === undefined || supportLeg === undefined || supportOmissions === undefined) throw new Error("fixture provenance missing");
+    supportLeg.omitted_candidates = ["a\nb", "c"].map((candidate_id) => ({ candidate_id, reason_code: "SCAN_LIMIT" }));
+    support.omitted_candidate_refs = ["a\nb", "c"];
+    supportOmissions.omitted_candidate_refs = ["a\nb", "c"];
+    expect(EvidenceFreezeBranchFindingsProvenanceSchema.safeParse(frozen).success).toBe(true);
+    support.omitted_candidate_refs = ["a", "b\nc"];
+    supportOmissions.omitted_candidate_refs = ["a", "b\nc"];
+    expect(EvidenceFreezeBranchFindingsProvenanceSchema.safeParse(frozen).success).toBe(false);
   });
 
   it("binds exact query omissions, required plan membership and blocked debts", () => {

@@ -2,7 +2,8 @@ import { z } from "zod";
 import { IdentifierSchema, Sha256Schema, VersionedRefSchema } from "./common.js";
 import { BranchFindingCandidateSchema } from "./research-branch-finding.js";
 import { BranchQueryPlanSchema, BranchQueryResultSchema, branchQueryResultMatchesPlan, type BranchQueryPlan } from "./research-branch-query.js";
-import { ResearchBranchRoleSchema, branchDebtsMatchBlockedRoles } from "./research-branch-role.js";
+import { ResearchBranchRoleSchema } from "./research-branch-role.js";
+import { branchDebtsMatchBlockedRoles, sameStrings } from "./research-branch-invariants.js";
 import { ResearchDebtSchema } from "./research.js";
 
 export { ResearchBranchRoleSchema } from "./research-branch-role.js";
@@ -271,8 +272,8 @@ export const ResearchBranchResultV2Schema = z.object({
   if (duplicate(value.question_ids) || duplicate(value.hypothesis_ids) || duplicate(value.observation_refs) ||
       duplicate(value.failed_probe_refs) || duplicate(handleKeys) || duplicate(value.findings.map((item) => refKey(item.finding_ref))) ||
       handleKeys.some((key) => !queryKeys.includes(key)) || findingKeys.some((key) => !handleKeys.includes(key)) ||
-      [...value.question_ids].sort().join("\n") !== value.query_plan.question_refs.map((ref) => ref.id).sort().join("\n") ||
-      [...value.hypothesis_ids].sort().join("\n") !== [...value.query_plan.hypothesis_refs].sort().join("\n")) {
+      !sameStrings(value.question_ids, value.query_plan.question_refs.map((ref) => ref.id)) ||
+      !sameStrings(value.hypothesis_ids, value.query_plan.hypothesis_refs)) {
     context.addIssue({ code: "custom", path: ["evidence_handle_refs"], message: "v2 branch result contains foreign or duplicate references" });
   }
   if (value.status === "CANDIDATE_READY" &&
@@ -282,8 +283,9 @@ export const ResearchBranchResultV2Schema = z.object({
   if (value.status === "BLOCKED" && value.failed_probe_refs.length === 0) {
     context.addIssue({ code: "custom", path: ["failed_probe_refs"], message: "blocked v2 branch requires a failed probe" });
   }
-  if (value.status === "BLOCKED" && value.findings.some((finding) => finding.state === "CANDIDATE")) {
-    context.addIssue({ code: "custom", path: ["findings"], message: "blocked branch cannot retain a candidate finding" });
+  if (value.status === "BLOCKED" && (value.evidence_handle_refs.length !== 0 ||
+      value.findings.some((finding) => finding.state === "CANDIDATE"))) {
+    context.addIssue({ code: "custom", path: ["findings"], message: "blocked branch cannot retain selected evidence or a candidate finding" });
   }
   if (value.findings.some((finding) => finding.role !== value.role || !value.question_ids.includes(finding.question_ref.id))) {
     context.addIssue({ code: "custom", path: ["findings"], message: "finding is not bound to this branch question" });
@@ -365,8 +367,7 @@ export const ResearchBranchReconciliationCheckpointV2Schema = z.object({
       !branchDebtsMatchBlockedRoles(value.research_debts, value.unmet_required_roles) ||
       value.research_debts.some((debt) => {
         const result = value.branch_results.find((item) => item.role === debt.blocked_refs[0]);
-        return result === undefined || [...debt.basis_and_evidence_refs].sort().join("\n") !==
-          result.evidence_handle_refs.map(refKey).sort().join("\n");
+        return result === undefined || !sameStrings(debt.basis_and_evidence_refs, result.evidence_handle_refs.map(refKey));
       })) {
     context.addIssue({ code: "custom", path: ["research_debts"], message: "v2 debts or contradictions are duplicated or invalid" });
   }
