@@ -110,7 +110,7 @@ function validateReadOptions({ maxResponseBytes, timeoutMs }) {
   }
 }
 
-const CATALOGUE_QUERY = `WITH application_schema AS (
+export const DEPLOYMENT_SCHEMA_CATALOGUE_QUERY = `WITH application_schema AS (
   SELECT type, name, tbl_name, sql
   FROM sqlite_master
   WHERE substr(name, 1, 7) <> 'sqlite_'
@@ -126,7 +126,7 @@ SELECT row_kind, type, name, tbl_name, sql, object_count
 FROM catalogue_rows
 ORDER BY row_kind, type, name, tbl_name, sql`;
 
-function decodeCatalogueRows(rows) {
+export function decodeDeploymentSchemaCatalogueRows(rows) {
   if (!Array.isArray(rows) || rows.length < 1 || rows.length > MAX_OBJECTS + 1) {
     fail("catalogue result is absent or oversized");
   }
@@ -169,7 +169,7 @@ export async function readDeploymentApplicationSchemaCatalogue(env, input, conte
   if (typeof fetchImpl !== "function" || typeof readJson !== "function") fail("invalid read adapter");
 
   const url = `${target.api_base}/accounts/${encodeURIComponent(target.account_id)}/d1/database/${encodeURIComponent(target.database_id)}/query`;
-  const body = JSON.stringify({ sql: CATALOGUE_QUERY, params: [] });
+  const body = JSON.stringify({ sql: DEPLOYMENT_SCHEMA_CATALOGUE_QUERY, params: [] });
   const headers = {
     Authorization: `Bearer ${env.CLOUDFLARE_API_TOKEN}`,
     "Content-Type": "application/json",
@@ -189,7 +189,7 @@ export async function readDeploymentApplicationSchemaCatalogue(env, input, conte
       result.meta.changed_db !== false || result.meta.rows_written !== 0) {
     fail("D1 catalogue query failed or was not read-only");
   }
-  const objects = decodeCatalogueRows(result.results);
+  const objects = decodeDeploymentSchemaCatalogueRows(result.results);
   const catalogueSha256 = deploymentSchemaCatalogueSha256(objects);
   return Object.freeze({
     protocol: DEPLOYMENT_SCHEMA_CATALOGUE_PROTOCOL,
