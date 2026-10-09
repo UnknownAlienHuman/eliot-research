@@ -1,0 +1,15 @@
+{
+  "protocol": "eliotr.ui-review-receipt.v1",
+  "checkpoint": "C2-P",
+  "status": "ACCEPTED_INTERNAL_EXPORTS",
+  "source_predecessor": "18f440eb924c5da26908c974267d8e9d4492853b",
+  "scope": "Finite Sources barrel exports for accepted explicit import factories and consumed types",
+  "behavior": "Export accepted raw/bundle factories/types through existing source barrel. No duplicated implementation or unqualified evidence/studio/projection SDK root export.",
+  "checks": {
+    "compiler": "Owning accepted client TS6.0.3 zero590; actual web Sources graph zero778 with accepted import graph included",
+    "lint": "Finite barrel PASS"
+  },
+  "limitations": [
+    "Exports only; U3I presentation/root import options and U3X remain open."
+  ]
+}

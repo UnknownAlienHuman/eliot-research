@@ -19,3 +19,11 @@ export type { NavigationSection, NavigationExpansionTarget } from './document/na
 export { createErasureOperations } from './erasure/erasure';
 export type { ErasureOperations } from './erasure/erasure';
 export type { ErasurePrepareView, ErasureStatusView } from './erasure/decoders';
+export { createRawFileApi } from './import/raw';
+export type { RawFileApi, RawUploadFile, RawFileSelection, RawFileCaptureReceipt, RawSourceVersionTarget, RawMarkdownConversionResult, RawNormalizedAdmissionResult, RawNormalizedAdmissionStatus } from './import/raw';
+export { createBundleInputApi } from './import/bundle-input';
+export type { BundleInputApi, BundleBytePort, BundleFile, BrowserBundle } from './import/bundle-input';
+export { createBundleWireApi } from './import/bundle-wire';
+export type { BundleWireApi, ImportIdentity, ImportStatus } from './import/bundle-wire';
+export { createBundleImportApi } from './import/bundle';
+export type { BundleImportApi, BrowserBundleImport, ImportProgress, ImportOptions } from './import/bundle';

@@ -1,0 +1,20 @@
+{
+  "protocol": "eliotr.ui-review-receipt.v1",
+  "checkpoint": "C1.3",
+  "status": "ACCEPTED_INTERNAL_CLIENT",
+  "source_commit": "127a10792183b72f4087804173546010ce0349fe",
+  "scope": [
+    "packages/owner-api-client/src/transport/client.ts",
+    "packages/owner-api-client/src/transport/client.test.ts"
+  ],
+  "behavior": "Exact POST-empty canonical artifact/section reauthorization route through existing protected owner policy and caller legacy error identity. Actual Identifier1..256 and positive canonical safe revision; no generic POST byte API, range, body/header/status overrides or206 widening.",
+  "checks": {
+    "tests": "6 distinct cases qualified: prior5 proposal cases retained, parsernegative+new256Unicode/slash/257/leadingzero/unsafe revision bounds2PASS15SKIP after correction",
+    "compiler": "Owning TS6.0.3 zero diagnostics590 outputs; accepted web graph with import exports zero diagnostics778 outputs",
+    "lint": "Exact4 source/test plus finite source barrel PASS",
+    "history": "New exact2 priorclaim committed603a2d55 before restoredsource; actual603 checker8930 NORMALPASS. Original41240 unclaimed proposalFAIL preserved."
+  },
+  "limitations": [
+    "Internal client source only. Native/staging reauthorization and product report root remain pending."
+  ]
+}
