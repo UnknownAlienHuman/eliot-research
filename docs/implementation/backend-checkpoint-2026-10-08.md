@@ -11,7 +11,7 @@ evidence and were not merged wholesale. Frontend delivery has a separate owner.
 ### Latest October 9 reviewed publication
 
 Remote `main` readback and fetch divergence are exact/0:0 at
-`00c85244d362aa89b2f146286a31dffc10a8ed98`. Earlier reviewed publications are
+`03f6ff6b135586e0a2f8fd3fe55ea87bb0649a92`. Earlier reviewed publications are
 `eda91106` (durable Items effects, lease/target fences, terminal materialization
 CAS and additive 0128/0129), `779a080d` (eight-file digest/UTF-8 maintenance),
 and `73612d40` (ten-file prompt/context envelope closure). Items has local
@@ -32,6 +32,26 @@ are retained; this is not a fresh 11/11 full-file run. Descartes independently
 accepted the six exact source/protocol blobs and committed-blob equality passed.
 Browser, reconnect, two-tab, hibernation/eviction and live qualification are pending.
 
+`c98eb83ee0ba18a4f547833cf40826e3c383c249` extends #333's routing closure.
+The actual Wrangler/workerd Assets fixture passes its new case 1/1, including
+real HTTP WebSocket upgrade denial and byte-identical static assets. Generated
+route parity is now checked before a deployment-input pin can be issued. Its
+new negative passes 1/1; build/schema fake fixtures pass, and the seven failing
+build-input compatibility cases pass after restoring required migration roots.
+The ignored existing generated config has stale route rules and is rejected;
+its contents do not establish the deployed config. Windows symlink coverage is
+pending after EPERM. Authenticated Worker-to-DO, Vite output, browser and live
+acceptance remain pending. Leibniz accepted all six exact committed blobs.
+
+`03f6ff6b` publishes the two-file, unexported #214 relation-candidate contract.
+CLAIM targets reuse existing claim ID/digest fields; malformed Unicode cannot
+reach the fact-text digest, and `source_references_verified` remains false.
+Owning compilation/scoped lint pass; only the new regressions were run
+(2 passed, 4 skipped). Locke repaired the pair, and Leibniz accepted both exact
+committed blobs. Source/span/context/target authority, aliases and pipeline
+integration remain pending. Direct HYPOTHESIS coverage was not added by this
+checkpoint; no full #214 acceptance is claimed.
+
 The unpublished retrieval settlement readback repair has six focused passing
 cases and compilation/scoped-lint evidence. Its shared service also activates
 the unresolved C1 managed-primary policy, so the closure remains withheld.
@@ -41,8 +61,10 @@ Both limitations are recorded in [backend-contract-conflicts.md](backend-contrac
 
 At the owner's request, all 23 old direct/nested sessions were closed and
 archived. One fresh Luna Max reviewer completed this Session audit and was also
-closed/archived. Recursive read-only verification now finds 24 archived
-descendants, every spawn edge closed and zero current agents. No Issue or PR
+closed/archived. That historical checkpoint contained 24 archived descendants.
+The subsequent Locke and Leibniz leaves are also closed/archived. Current
+recursive read-only verification finds all 26 descendants archived, every
+spawn edge closed and zero current agents. No Issue or PR
 closed, and the overall Goal remains ACTIVE.
 
 ### October 9 Session binding and connection authority

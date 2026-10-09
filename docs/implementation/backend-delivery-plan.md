@@ -7,7 +7,9 @@ acceptance volume, excluding website design. The Goal stays active across source
 checkpoints, publication and individual passport closure. The first checkpoint
 below is evidence of delivered prerequisites, not completion of the project.
 
-October 9 publication readback confirmed `10021b4fb7e1a13a9226a2a86fcacf01b86c6ca9`. Further reviewed source commits are recorded below; re-read the current Git ref before the next publication.
+October 9 publication readback and fetch divergence confirm
+`03f6ff6b135586e0a2f8fd3fe55ea87bb0649a92` at 0/0. Reviewed source commits
+are recorded below; re-read the current Git ref before the next publication.
 The live GitHub inventory has 65 open PRs and four open Issues (last live inventory October 9). The current
 router/cards and latest passport discussions govern their dependencies and
 selected-profile requirements; historical PR heads are not merged wholesale.
@@ -129,6 +131,29 @@ reviewed blobs, and the committed blobs match. Browser/reconnect/two-tab/hiberna
 and live qualification remain pending; #334 stays open. The fresh reviewer was
 closed and archived after acceptance: all 24 recorded descendant sessions are
 archived, every edge is closed and current agents are zero.
+
+`c98eb83ee0ba18a4f547833cf40826e3c383c249` extends #333 with an actual
+Wrangler/workerd Assets-routing fixture and rejects generated route drift before
+issuing the deployment-input pin. Native routing and the new pin negative pass
+1/1 each; dependent build/schema fake fixtures pass. Seven previously failing
+build-input fixture cases pass after restoring their required migration roots.
+The existing ignored generated config lacks both `/agents` rules and is now
+rejected; this does not prove that config was deployed. Windows symlink coverage
+is pending after EPERM. Authenticated Worker-to-DO, Vite output, browser and live
+acceptance remain pending. Leibniz accepted all six exact committed blobs.
+
+`03f6ff6b` publishes #214's unexported typed relation-candidate contract. CLAIM
+targets reuse canonical claim ID/digest fields; malformed Unicode is rejected
+before fact-text encoding/digest, and source references remain unverified.
+Owning compilation/scoped lint pass, and only the two new regressions were run
+(2 passed, 4 skipped). Locke repaired the pair and Leibniz independently accepted
+both exact committed blobs. Source/span/context/target authority, aliases and
+pipeline integration remain pending; this does not close #214.
+
+The 24-session inventory above is historical. After closing and archiving Locke
+and Leibniz, recursive read-only verification confirms all 26 descendants
+archived, every spawn edge closed and zero current agents. No Issue/PR closes
+on these source checkpoints; the overall Goal remains ACTIVE.
 
 `b326d728` publishes a dormant question-bound proposal prompt renderer with a
 closed two-file dependency set. `max_prompt_pair_bytes` measures the canonical
