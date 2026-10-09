@@ -1,0 +1,101 @@
+.connections-fixture {
+  display: grid;
+  gap: var(--eliot-space-panel);
+  padding: var(--eliot-space-panel);
+  background: var(--md-sys-color-surface-container-low);
+  color: var(--md-sys-color-on-surface);
+  border-radius: var(--eliot-shape-medium);
+}
+
+.connections-fixture__title {
+  margin: var(--eliot-shape-none);
+  font-size: var(--eliot-type-title-medium-size);
+  line-height: var(--eliot-type-title-medium-line-height);
+}
+
+.connections-fixture__note {
+  margin: var(--eliot-shape-none);
+  color: var(--md-sys-color-on-surface-variant);
+  font-size: var(--eliot-type-body-medium-size);
+  line-height: var(--eliot-type-body-medium-line-height);
+}
+
+.connections-fixture__rows {
+  display: grid;
+  gap: var(--eliot-shape-none);
+  margin: var(--eliot-shape-none);
+  padding: var(--eliot-shape-none);
+  list-style: none;
+}
+
+.connections-fixture__row {
+  display: grid;
+  gap: var(--eliot-space-block-control);
+  padding-block: var(--eliot-space-panel);
+  border-block-end: var(--eliot-divider-width) solid var(--md-sys-color-outline-variant);
+}
+
+.connections-fixture__label {
+  font-size: var(--eliot-type-body-medium-size);
+  line-height: var(--eliot-type-body-medium-line-height);
+}
+
+.connections-fixture__row-state {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--eliot-space-block-control);
+}
+
+/* Every confirmed row is explicitly marked as a sample. */
+.connections-fixture__sample {
+  padding-block: var(--eliot-shape-none);
+  padding-inline: var(--eliot-space-block-control);
+  color: var(--md-sys-color-on-secondary-container);
+  background: var(--md-sys-color-secondary-container);
+  border-radius: var(--eliot-shape-extra-small);
+  font-size: var(--eliot-type-label-small-size);
+  line-height: var(--eliot-type-label-small-line-height);
+}
+
+.connections-fixture__detail {
+  color: var(--md-sys-color-on-surface-variant);
+  font-size: var(--eliot-type-label-medium-size);
+  line-height: var(--eliot-type-label-medium-line-height);
+}
+
+.connections-fixture__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--eliot-space-inline-control);
+}
+
+.connections-fixture__diagnostic {
+  display: grid;
+  gap: var(--eliot-space-block-control);
+  margin: var(--eliot-shape-none);
+}
+
+.connections-fixture__diagnostic-label {
+  color: var(--md-sys-color-on-surface-variant);
+  font-size: var(--eliot-type-label-small-size);
+  line-height: var(--eliot-type-label-small-line-height);
+}
+
+.connections-fixture__diagnostic-value {
+  font-family: var(--eliot-type-font-family-mono);
+  font-size: var(--eliot-type-label-medium-size);
+  line-height: var(--eliot-type-label-medium-line-height);
+  overflow-wrap: break-word;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .connections-fixture {
+    transition-duration: var(--eliot-motion-effects);
+  }
+}
+
+@media (forced-colors: active) {
+  .connections-fixture__sample {
+    border: var(--eliot-divider-width) solid currentcolor;
+  }
+}
