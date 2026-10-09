@@ -12,6 +12,7 @@ await import("./test-deployment-migrations.mjs");
 await import("./test-deployment-assets.mjs");
 await import("./test-local-runtime.mjs");
 await import("./test-deployment-verification.mjs");
+await import("./test-deployment-schema-attestation.mjs");
 await import("./test-research-backend-fingerprint.mjs");
 await import("./test-research-deployment-authority.mjs");
 await import("./test-deployment-orchestration.mjs");
