@@ -1,0 +1,11 @@
+{
+  "manager_identity": "frontend-manager",
+  "manager_context_id": "01a120c9-2637-7952-b6c9-be07b395b4fd",
+  "observed_date": "2026-10-09",
+  "owner_evidence": "codex://threads/01a120c9-2637-7952-b6c9-be07b395b4fd",
+  "authorized_program": "Complete Eliot Research frontend design through the existing frontend playbook, coordinate disjoint backend work in Agent_sync.md, and publish to main.",
+  "delegation": { "model": "opencode-go/step-5-preview-free", "reasoning": "high", "agents": "5-10" },
+  "reference": "Current authenticated NotebookLM and official Material 3 / M3 Expressive.",
+  "release": "No deployment, cutover, account mutation or legacy deletion requested.",
+  "acceptance": "Internal U1-D and U2-X remain manager gates; complete integrated interface is presented at FINAL-UI."
+}

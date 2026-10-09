@@ -1,0 +1,14 @@
+{
+  "checkpoint": "U1-R",
+  "status": "PREPARATORY",
+  "date": "2026-10-09",
+  "live_reference": "https://notebook.google.com/",
+  "theme_observed": "dark",
+  "actual_viewports": [{ "width": 2458, "height": 1244 }, { "width": 1280, "height": 720 }],
+  "observed": ["library opening", "populated Sources", "long titles", "empty/selected scope", "add source modal", "modal focus return", "useful report", "numbered citation", "source context", "source collapse/expand", "Studio note opening/return", "initial loading", "central scroll owner"],
+  "retain": ["tonal supporting panes", "primary reading hierarchy", "compact question composer", "native selection", "explicit collapse and return"],
+  "improve": ["scope visible near question", "capture/admission/readiness distinct", "exact revision and evidence context", "single-task compact routes", "no permanent empty context pane", "independent Connections facts"],
+  "reject": ["hidden reasoning UI", "unsupported generators", "brand pixel copy", "false readiness", "primary color as confidence"],
+  "pending": ["reference 1440/1024/768/390 due ineffective viewport capability", "reference light theme", "reference failed/degraded/active generation", "owner-web responsive/theme/a11y/CSP/performance acceptance"],
+  "mandatory_negative": "Reference observations came from live authenticated browser interactions; no old screenshots, random gallery or component demo substituted."
+}

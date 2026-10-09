@@ -1,0 +1,12 @@
+{
+  "storage": "PRIVATE_GITIGNORED_BUILD_ARTIFACTS",
+  "directory": ".eliotr-state/frontend-reference-20261009",
+  "raw_authenticated_images_committed": false,
+  "redaction": "Upper account toolbar excluded with screenshot clip at y=64; synthetic comparison sources only; no unrelated account/source material committed.",
+  "captures": [
+    { "file": "notebook-dark-citation.jpg", "viewport": [2458, 1244], "clip": [0, 64, 2458, 1180], "sha256": "4df4584b9d26deb322391dd437f73885e666be692236acb9e9829338e0a89092", "bytes": 199151 },
+    { "file": "notebook-add-source.jpg", "viewport": [2458, 1244], "clip": [0, 64, 2458, 1180], "sha256": "730a44433eec9626e662963a0c5e9595c5a9611e9427630ab28b6a80f071d41b", "bytes": 155066 },
+    { "file": "notebook-collapse.jpg", "viewport": [2458, 1244], "clip": [0, 64, 2458, 1180], "sha256": "10355b1bfd04f9ddd12fd9863f3ee3bf0296b9fe800507f86dc8c85e0137afe5", "bytes": 184847 },
+    { "file": "notebook-1280-dark.jpg", "viewport": [1280, 720], "clip": [0, 64, 1280, 656], "sha256": "2d4217aea2192fba7537a950fd1b8c07891a719035ea83e2cd384e95a1d2f54e", "bytes": 67207 }
+  ]
+}

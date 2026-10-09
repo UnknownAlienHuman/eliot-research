@@ -1,0 +1,12 @@
+{
+  "date": "2026-10-09",
+  "browser": "Codex in-app browser, authenticated real NotebookLM/Gemini Notebook session",
+  "os": "Windows",
+  "browser_version": "PENDING exact version readback",
+  "viewport_tool": { "status": "FAILED_OVERRIDE", "attempts": ["set 1440x900 then DOM measured2458x1244", "reload measured2458x1244", "set390x844 then new tab measured1280x720"], "recovery": "Stopped repeated attempts; exact reference widths PENDING; local harness will use independent pinned browser viewport contexts." },
+  "google_design_mcp": { "endpoint": "https://design.googleapis.com/mcp", "server": "StatelessServer/ESF", "status": "PASS", "tools": ["generate_color_scheme", "search_fonts", "describe_font", "search_icons", "icons_instructions"], "successful_calls": 14, "artifact": ".eliotr-state/frontend-reference-20261009/design-mcp.json", "reported_output_digest": "547fe6376625da0064433f595e62c3983bd11ca6e42742864b6bed2a9a782312", "file_digest": "c33143aac9fd72dc1ef0e8c1393ca449187040ed0a65785d5ea3805aa925d87a" },
+  "codebase_memory": { "version": "0.9.0", "project": "eliot-research", "indexed_sha": "0b7c307e9e7c267bda712e6ae41b87b555e9fc01", "successful": ["search_graph total157", "query_graph render12rows", "get_code_snippet erasure-panel.render225-251"], "semantic_edges": "PENDING; semantic_results was empty; no reindex performed" },
+  "eliot_compile_packet_l3": "PENDING: current runtime tool namespace absent; no substitute packet claimed",
+  "storybook": "PENDING bootstrap/harness",
+  "product_qualification": "PENDING; reference/tool success alone does not qualify owner-web"
+}
