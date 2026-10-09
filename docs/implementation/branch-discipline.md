@@ -1,8 +1,8 @@
 ---
 title: "Eliot Research branch discipline"
 protocol: "eliotr.branch-discipline.v2"
-version: "2.0"
-date: 2026-09-19
+version: "2.1"
+date: 2026-10-08
 status: "normative"
 ---
 
@@ -11,14 +11,27 @@ status: "normative"
 ## Owner-directed implementation
 
 The owner's S27 instruction supersedes the former branch ceiling, dated launch reservations, and
-age-based deletion procedure. Work directly on `main`; do not create implementation branches or
-additional local worktrees. One agent holds one checkpoint at a time. Claim exact paths and base SHA
-in the existing theme PR, test the change, publish without rewriting history, and record its acceptance.
-Preserve concurrent main changes; do not force an implementation update over them.
+age-based deletion procedure. Ordinary owner-directed source implementation works directly on `main`:
+do not create an ad hoc task branch or additional worktree. One agent holds one checkpoint at a time,
+claims exact paths and base SHA in the active task, tests the change, publishes without rewriting
+history, and records its acceptance. Preserve concurrent main changes; do not force an implementation
+update over them.
+
+There is one explicit exception. The owner may authorize a named manager packet or review PR to use
+exactly one dedicated manager worktree/branch instead of direct main. That authorization must name the
+packet or PR, base SHA, write scope, manager and stop condition. Leaf subagents work only inside the
+manager's delegated disjoint paths and do not create another branch, worktree, package root, manifest,
+barrel or shared fixture. The manager serializes shared files and publishes one coherent result.
+
+A review branch/worktree is an isolation mechanism, not authority expansion. It does not lift an owner
+implementation stop, make blocked dependencies complete, grant paths outside the packet, authorize
+Cloudflare/provider/account mutation, permit deployment, or establish merge readiness. Planning-only
+branches remain documentation/evidence until their executable gates pass and the owner separately
+authorizes source work or merge.
 
 Existing planning and salvage PRs remain specifications/evidence, not permission to merge stale trees.
-An open theme is not automatically unfinished in every detail: compare each checkpoint against main.
-Keep a theme open until all of its mandatory code acceptance is met; live acceptance stays separate.
+An open theme is not automatically unfinished in every detail: compare each checkpoint against current
+main. Keep a theme open until all mandatory code acceptance is met; live acceptance stays separate.
 
 ## Cleanup authority
 
@@ -47,8 +60,8 @@ cross-resource lock. A branch-head race after observation is rejected by the Git
 `.github/workflows/branch-hygiene.yml` runs on main, hourly, and manually. The planner, executable API
 rechecks, and real local Git lease behavior are covered by `node scripts/test-branch-hygiene.mjs`.
 The job reports confirmed deletions and preserved/skipped work; branch count is informational only.
-It does not replace data/security/runtime checks or qualify product launch. No implementation branch
-or worktree is created by the cleanup job.
+It does not replace data/security/runtime checks or qualify product launch. The cleanup job creates no
+implementation branch or worktree.
 
 Archive explicitly required non-integrated evidence before an operator-directed removal. Never infer
 that a branch is disposable merely because its PR was closed or its commit is old.
