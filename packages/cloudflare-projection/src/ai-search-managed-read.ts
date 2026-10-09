@@ -1,5 +1,7 @@
 import { decodeAiSearchSearchResult, type AiSearchAdapter, type AiSearchInstanceLike, type AiSearchNamespaceLike } from "@eliotr/platform-cloudflare";
+import { compileQueryPlan } from "@eliotr/retrieval";
 import { createAiSearchScopeFilter, type AiSearchScopeFilter } from "./ai-search-scope-filter.js";
+import { AI_SEARCH_RERANKING_MODEL } from "./ai-search-profile.js";
 import { decodeAiSearchGenerationRegistrySnapshot } from "./ai-search-generation-registry-codec.js";
 import type { AiSearchGenerationRegistryService } from "./ai-search-generation-registry-contract.js";
 import { createD1AiSearchGenerationRegistryStore } from "./ai-search-generation-registry-d1.js";
@@ -13,6 +15,7 @@ export const AI_SEARCH_MANAGED_QUERY_MAX_BYTES = 64 * 1024;
 export const AI_SEARCH_MANAGED_SCOPE_MAX_MEMBERS = 10_000;
 export type AiSearchManagedReadErrorCode =
   | "AI_SEARCH_MANAGED_INPUT_INVALID" | "AI_SEARCH_MANAGED_NOT_PROMOTED"
+  | "AI_SEARCH_MANAGED_CAPABILITY_UNAVAILABLE"
   | "AI_SEARCH_MANAGED_REGISTRY_READ_FAILED" | "AI_SEARCH_MANAGED_REGISTRY_INVALID"
   | "AI_SEARCH_MANAGED_REGISTRY_CHANGED" | "AI_SEARCH_MANAGED_PROVIDER_CALL_FAILED"
   | "AI_SEARCH_MANAGED_PROVIDER_RESPONSE_INVALID";
@@ -27,22 +30,30 @@ export interface AiSearchManagedSearchAuthority {
   readonly namespace: string; readonly instance_id: string; readonly index_generation: string;
   readonly registry_revision: number; readonly registry_artifact_sha256: string; readonly active: boolean;
   readonly index_method: IndexMethod; readonly max_results: number; readonly max_preview_bytes: number;
-  readonly match_threshold: number; readonly fusion_method?: "rrf" | "max"; readonly keyword_match_mode?: "and" | "or";
+  readonly match_threshold: number; readonly reranking?: boolean;
+  readonly fusion_method?: "rrf" | "max"; readonly keyword_match_mode?: "and" | "or";
 }
 export interface AiSearchManagedSearchPolicy { readonly expected_namespace: string; readonly max_preview_bytes: number; readonly match_threshold: number }
 export interface AiSearchManagedSearchRequest {
-  readonly query: string; readonly ai_search_options: Readonly<{ retrieval: Readonly<{
+  readonly query: string; readonly ai_search_options: Readonly<{
+    query_rewrite: Readonly<{ enabled: false }>;
+    cache: Readonly<{ enabled: false }>;
+    reranking: Readonly<{ enabled: boolean; model?: string }>;
+    retrieval: Readonly<{
     retrieval_type: "vector" | "keyword" | "hybrid"; match_threshold: number; max_num_results: number;
     context_expansion: 0 | 1 | 2 | 3; fusion_method?: "rrf" | "max"; keyword_match_mode?: "and" | "or";
+    return_on_failure: false;
     boost_by: readonly never[]; metadata_only: false; filters: AiSearchScopeFilter;
-  }> }>;
+    }>;
+  }>;
 }
 export interface AiSearchManagedSearchPort { readonly search: AiSearchAdapter["search"] }
 
 const MAX_RESULTS = 50, MAX_PREVIEW_BYTES = 64 * 1024;
 const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/u, INSTANCE_ID = /^[a-z0-9_]+(?:-[a-z0-9_]+)*$/u, SHA256 = /^[a-f0-9]{64}$/u;
-const AUTHORITY_KEYS = new Set(["active", "fusion_method", "index_generation", "index_method", "instance_id", "keyword_match_mode", "match_threshold", "max_preview_bytes", "max_results", "namespace", "registry_artifact_sha256", "registry_revision"]);
+const AUTHORITY_KEYS = new Set(["active", "fusion_method", "index_generation", "index_method", "instance_id", "keyword_match_mode", "match_threshold", "max_preview_bytes", "max_results", "namespace", "registry_artifact_sha256", "registry_revision", "reranking"]);
 const POLICY_KEYS = new Set(["expected_namespace", "match_threshold", "max_preview_bytes"]), INDEX_KEYS = new Set(["keyword", "vector"]);
+const RETRIEVAL_BUDGET_KEYS = new Set(["candidate_limit", "evidence_limit", "max_evidence_bytes", "scan_limit"]);
 
 function failure(code: AiSearchManagedReadErrorCode, message: string, retryable = false, cause?: unknown): never {
   throw new AiSearchManagedReadError(code, message, retryable, cause);
@@ -78,6 +89,7 @@ function authority(input: AiSearchManagedSearchAuthority): AiSearchManagedSearch
   if (typeof value.active !== "boolean") failure("AI_SEARCH_MANAGED_INPUT_INVALID", "authority.active must be boolean");
   const method = object(value.index_method, "authority.index_method", INDEX_KEYS);
   if (typeof method.vector !== "boolean" || typeof method.keyword !== "boolean" || (!method.vector && !method.keyword)) failure("AI_SEARCH_MANAGED_INPUT_INVALID", "authority.index_method is invalid");
+  if (value.reranking !== undefined && typeof value.reranking !== "boolean") failure("AI_SEARCH_MANAGED_INPUT_INVALID", "authority.reranking must be boolean");
   const maxResults = integer(value.max_results, "authority.max_results", 1, MAX_RESULTS), maxPreview = integer(value.max_preview_bytes, "authority.max_preview_bytes", 0, MAX_PREVIEW_BYTES);
   if (typeof value.match_threshold !== "number" || !Number.isFinite(value.match_threshold) || value.match_threshold < 0 || value.match_threshold > 1) failure("AI_SEARCH_MANAGED_INPUT_INVALID", "authority.match_threshold must be in [0, 1]");
   if (value.fusion_method !== undefined && value.fusion_method !== "rrf" && value.fusion_method !== "max") failure("AI_SEARCH_MANAGED_INPUT_INVALID", "authority.fusion_method is unsupported");
@@ -87,6 +99,7 @@ function authority(input: AiSearchManagedSearchAuthority): AiSearchManagedSearch
     registry_artifact_sha256: value.registry_artifact_sha256, active: value.active,
     index_method: Object.freeze({ vector: method.vector, keyword: method.keyword }), max_results: maxResults,
     max_preview_bytes: maxPreview, match_threshold: value.match_threshold,
+    reranking: value.reranking === true,
     ...(value.fusion_method === undefined ? {} : { fusion_method: value.fusion_method }),
     ...(value.keyword_match_mode === undefined ? {} : { keyword_match_mode: value.keyword_match_mode }),
   });
@@ -108,23 +121,36 @@ function requestQuery(request: ManagedRequest): string {
   });
   return request.raw_query;
 }
+function requestCandidateLimit(request: ManagedRequest): number | undefined {
+  if (request.budgets === undefined) return undefined;
+  const budgets = object(request.budgets, "retrieval request.budgets", RETRIEVAL_BUDGET_KEYS);
+  if (Object.keys(budgets).length !== RETRIEVAL_BUDGET_KEYS.size) {
+    failure("AI_SEARCH_MANAGED_INPUT_INVALID", "retrieval request.budgets is incomplete");
+  }
+  const candidateLimit = integer(budgets.candidate_limit, "retrieval request.budgets.candidate_limit", 0, 512);
+  integer(budgets.scan_limit, "retrieval request.budgets.scan_limit", 1, 4_096);
+  integer(budgets.evidence_limit, "retrieval request.budgets.evidence_limit", 1, 64);
+  integer(budgets.max_evidence_bytes, "retrieval request.budgets.max_evidence_bytes", 1, 64 * 1024);
+  return candidateLimit;
+}
 function retrievalType(lanes: ManagedLanes, method: IndexMethod): "vector" | "keyword" | "hybrid" {
   if (!Array.isArray(lanes) || lanes.length < 1 || lanes.length > 2) failure("AI_SEARCH_MANAGED_INPUT_INVALID", "managed search requires one or two lanes");
   const seen = new Set<string>();
   for (const lane of lanes) {
     if (lane !== "SEM" && lane !== "LEX") failure("AI_SEARCH_MANAGED_INPUT_INVALID", "managed search admits only SEM and LEX");
     if (seen.has(lane)) failure("AI_SEARCH_MANAGED_INPUT_INVALID", `managed search contains duplicate lane ${lane}`);
-    if ((lane === "SEM" && !method.vector) || (lane === "LEX" && !method.keyword)) failure("AI_SEARCH_MANAGED_INPUT_INVALID", `active profile does not support lane ${lane}`);
+    if ((lane === "SEM" && !method.vector) || (lane === "LEX" && !method.keyword)) failure("AI_SEARCH_MANAGED_CAPABILITY_UNAVAILABLE", "active profile does not support lane " + lane);
     seen.add(lane);
   }
-  return seen.size === 2 ? "hybrid" : seen.has("SEM") ? "vector" : "keyword";
+  if (seen.size === 2 || (method.vector && method.keyword && seen.has("SEM"))) return "hybrid";
+  return seen.has("SEM") ? "vector" : "keyword";
 }
 function expansion(value: ManagedExpansion): 0 | 1 | 2 | 3 {
   if (!Number.isInteger(value) || value < 0 || value > 3) failure("AI_SEARCH_MANAGED_INPUT_INVALID", "context expansion must be in [0, 3]");
   return value;
 }
 function routingFingerprint(value: AiSearchManagedSearchAuthority): string {
-  return JSON.stringify([value.namespace, value.instance_id, value.index_generation, value.index_method, value.max_results, value.max_preview_bytes, value.match_threshold, value.fusion_method ?? null, value.keyword_match_mode ?? null]);
+  return JSON.stringify([value.namespace, value.instance_id, value.index_generation, value.index_method, value.max_results, value.max_preview_bytes, value.match_threshold, value.reranking, value.fusion_method ?? null, value.keyword_match_mode ?? null]);
 }
 function namespaceBinding(namespace: AiSearchNamespaceLike): void {
   if (typeof namespace !== "object" || namespace === null || typeof namespace.get !== "function") failure("AI_SEARCH_MANAGED_INPUT_INVALID", "AI Search namespace binding is invalid");
@@ -143,6 +169,7 @@ export async function resolveAiSearchManagedSearchAuthority(rawSnapshot: unknown
     registry_revision: snapshot.artifact.revision, registry_artifact_sha256: snapshot.artifact_sha256, active: true,
     index_method: record.profile.index_method, max_results: record.profile.max_num_results,
     max_preview_bytes: rules.max_preview_bytes, match_threshold: rules.match_threshold,
+    reranking: record.profile.reranking,
     ...(record.profile.fusion_method === undefined ? {} : { fusion_method: record.profile.fusion_method }),
     ...(record.profile.keyword_match_mode === undefined ? {} : { keyword_match_mode: record.profile.keyword_match_mode }),
   });
@@ -150,6 +177,17 @@ export async function resolveAiSearchManagedSearchAuthority(rawSnapshot: unknown
 export function compileAiSearchManagedSearchRequest(request: ManagedRequest, lanes: ManagedLanes, contextExpansion: ManagedExpansion, inputAuthority: AiSearchManagedSearchAuthority): AiSearchManagedSearchRequest {
   const active = authority(inputAuthority);
   if (!active.active) failure("AI_SEARCH_MANAGED_NOT_PROMOTED", "managed generation is not promoted");
+  let plan: ReturnType<typeof compileQueryPlan>;
+  try { plan = compileQueryPlan(request); }
+  catch (cause) { failure("AI_SEARCH_MANAGED_INPUT_INVALID", "retrieval request has no supported query plan", false, cause); }
+  const candidateLimit = requestCandidateLimit(request);
+  const providerCandidateLimit = Math.min(
+    MAX_RESULTS,
+    active.max_results,
+    plan.max_candidates_before_policy_recheck,
+    candidateLimit ?? Number.MAX_SAFE_INTEGER,
+  );
+  const rerankingEnabled = plan.rerank && active.reranking === true;
   const type = retrievalType(lanes, active.index_method), query = requestQuery(request);
   if (type === "hybrid" && active.fusion_method === undefined) failure("AI_SEARCH_MANAGED_INPUT_INVALID", "hybrid active profile omits fusion_method");
   if (type !== "vector" && active.keyword_match_mode === undefined) failure("AI_SEARCH_MANAGED_INPUT_INVALID", "keyword active profile omits keyword_match_mode");
@@ -163,18 +201,32 @@ export function compileAiSearchManagedSearchRequest(request: ManagedRequest, lan
   const retrieval = Object.freeze({
     filters,
     retrieval_type: type, match_threshold: active.match_threshold,
-    max_num_results: Math.min(request.requested_limit, active.max_results), context_expansion: expansion(contextExpansion),
+    max_num_results: providerCandidateLimit, context_expansion: expansion(contextExpansion),
+    return_on_failure: false as const,
     ...(type === "hybrid" ? { fusion_method: active.fusion_method } : {}),
     ...(type === "vector" ? {} : { keyword_match_mode: active.keyword_match_mode }),
     boost_by: Object.freeze([]) as readonly never[], metadata_only: false as const,
   });
-  return Object.freeze({ query, ai_search_options: Object.freeze({ retrieval }) });
+  return Object.freeze({
+    query,
+    ai_search_options: Object.freeze({
+      query_rewrite: Object.freeze({ enabled: false as const }),
+      cache: Object.freeze({ enabled: false as const }),
+      retrieval,
+      reranking: Object.freeze({
+        enabled: rerankingEnabled,
+        ...(rerankingEnabled ? { model: AI_SEARCH_RERANKING_MODEL } : {}),
+      }),
+    }),
+  });
 }
 export function createAiSearchManagedSearchPort(namespace: AiSearchNamespaceLike, inputAuthority: AiSearchManagedSearchAuthority): AiSearchManagedSearchPort {
   namespaceBinding(namespace); const active = authority(inputAuthority);
   return Object.freeze({ async search(request: ManagedRequest, lanes: ManagedLanes, contextExpansion: ManagedExpansion) {
     const compiled = compileAiSearchManagedSearchRequest(request, lanes, contextExpansion, active);
-    if (request.scope_snapshot.member_source_revision_refs.length === 0) return Object.freeze([]);
+    const rerankRequested = compileQueryPlan(request).rerank;
+    if (compiled.ai_search_options.retrieval.max_num_results === 0 ||
+        request.scope_snapshot.member_source_revision_refs.length === 0) return Object.freeze([]);
     let instance: AiSearchInstanceLike;
     try {
       instance = namespace.get(active.instance_id);
@@ -184,14 +236,28 @@ export function createAiSearchManagedSearchPort(namespace: AiSearchNamespaceLike
     try { raw = await instance.search(compiled); }
     catch (cause) { failure("AI_SEARCH_MANAGED_PROVIDER_CALL_FAILED", "promoted instance search failed", true, cause); }
     try {
-      const candidates = decodeAiSearchSearchResult(request, raw, {
+      const providerCandidateLimit = compiled.ai_search_options.retrieval.max_num_results;
+      const decodeRequest = request.requested_limit < providerCandidateLimit
+        ? { ...request, requested_limit: providerCandidateLimit }
+        : request;
+      const candidates = decodeAiSearchSearchResult(decodeRequest, raw, {
         expected_index_generation: active.index_generation, requested_lanes: lanes,
-        max_results: Math.min(request.requested_limit, active.max_results), max_preview_bytes: active.max_preview_bytes,
+        max_results: providerCandidateLimit,
+        max_preview_bytes: active.max_preview_bytes,
       });
       return Object.freeze(candidates.map((candidate) => Object.freeze({
         ...candidate, metadata: Object.freeze({
           ...candidate.metadata, provider_namespace: active.namespace, active_registry_revision: active.registry_revision,
           active_registry_artifact_sha256: active.registry_artifact_sha256,
+          provider_submitted_query: compiled.query,
+          provider_retrieval_type: compiled.ai_search_options.retrieval.retrieval_type,
+          provider_rerank_requested: rerankRequested,
+          provider_rerank_enabled: compiled.ai_search_options.reranking.enabled,
+          provider_rerank_succeeded: compiled.ai_search_options.reranking.enabled &&
+            candidate.metadata["provider_reranking_score"] !== undefined,
+          ...(compiled.ai_search_options.reranking.model === undefined
+            ? {}
+            : { provider_rerank_model: compiled.ai_search_options.reranking.model }),
         }),
       })));
     } catch (cause) {

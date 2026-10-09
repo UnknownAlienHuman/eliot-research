@@ -18,6 +18,19 @@ export interface RetrievalRequest {
   readonly requested_limit: number;
   readonly deadline_ms: number;
   readonly cancellation_ref?: string;
+  readonly budgets?: RetrievalRequestBudgets;
+}
+
+/** Aggregate per-query/branch-leg bounds; callers pass their complete budget without lane apportionment. */
+export interface RetrievalRequestBudgets {
+  /** Cap candidate rows admitted from all executed lanes into fusion for this query. */
+  readonly candidate_limit: number;
+  /** Cap exact-resolution ranked-tail candidates; does not cap provider or diversity scans. */
+  readonly scan_limit: number;
+  /** Cap exact evidence items included in the returned pack, also bounded by requested_limit. */
+  readonly evidence_limit: number;
+  /** Cap UTF-8 bytes included in the returned pack; over-limit materialization is measured then stops resolution. */
+  readonly max_evidence_bytes: number;
 }
 
 export interface DirectLookupPort {
@@ -35,6 +48,7 @@ export interface LexicalSearchPort {
 }
 
 export interface ManagedSearchPort {
+  /** Implementations apply the remaining aggregate candidate budget before provider I/O. */
   search(request: RetrievalRequest, lanes: readonly ("SEM" | "LEX" | "LITERAL")[], contextExpansion: 0 | 1 | 2 | 3): Promise<readonly LocatorCandidate[]>;
 }
 
