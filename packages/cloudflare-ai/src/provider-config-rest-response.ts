@@ -1,3 +1,7 @@
+import {
+  readResponseBodyWithinBytes,
+  RuntimeLimitError,
+} from "@eliotr/platform-cloudflare";
 import { canonicalModelGatewayJson } from "./model-gateway-request.js";
 import {
   ProviderConfigRestError,
@@ -67,28 +71,32 @@ async function readJson(
   response: Response,
   effect: ProviderConfigRestEffect,
 ): Promise<unknown> {
-  const declared = response.headers.get("content-length");
-  if (declared !== null && !/^(?:0|[1-9][0-9]*)$/u.test(declared)) {
-    providerConfigRestFailure(
-      "PROVIDER_CONFIG_RESPONSE_INVALID",
-      "Cloudflare provider-config response has malformed content-length",
-      { effect },
-    );
-  }
-  if (declared !== null && Number(declared) > MAX_RESPONSE_BYTES) {
-    providerConfigRestFailure(
-      "PROVIDER_CONFIG_RESPONSE_TOO_LARGE",
-      "Cloudflare provider-config response exceeds its byte bound",
-      { effect },
-    );
-  }
   let bytes: Uint8Array;
   try {
-    bytes = response.body === null
-      ? encoder.encode(await response.text())
-      : await readStream(response.body, effect);
+    bytes = await readResponseBodyWithinBytes(response, {
+      label: "cloudflare.provider-config.response",
+      max_bytes: MAX_RESPONSE_BYTES,
+    });
   } catch (error) {
     if (error instanceof ProviderConfigRestError) throw error;
+    if (error instanceof RuntimeLimitError) {
+      switch (error.code) {
+        case "LIMIT_EXCEEDED":
+        case "STREAM_CHUNK_LIMIT_EXCEEDED":
+          return providerConfigRestFailure(
+            "PROVIDER_CONFIG_RESPONSE_TOO_LARGE",
+            "Cloudflare provider-config response exceeds its byte bound",
+            { effect },
+          );
+        case "INVALID_CONTENT_LENGTH":
+        case "STREAM_CHUNK_INVALID":
+          return providerConfigRestFailure(
+            "PROVIDER_CONFIG_RESPONSE_INVALID",
+            "Cloudflare provider-config response body is invalid",
+            { effect },
+          );
+      }
+    }
     providerConfigRestFailure(
       "PROVIDER_CONFIG_TRANSPORT_FAILED",
       "Cloudflare provider-config response could not be read",
@@ -119,51 +127,6 @@ async function readJson(
       { effect },
     );
   }
-}
-
-async function readStream(
-  stream: ReadableStream<Uint8Array>,
-  effect: ProviderConfigRestEffect,
-): Promise<Uint8Array> {
-  const reader = stream.getReader();
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  for (;;) {
-    const part = await reader.read();
-    if (part.done) break;
-    if (!(part.value instanceof Uint8Array)) {
-      await cancelQuietly(reader, "invalid response chunk");
-      providerConfigRestFailure(
-        "PROVIDER_CONFIG_RESPONSE_INVALID",
-        "Cloudflare provider-config response returned a non-byte chunk",
-        { effect },
-      );
-    }
-    total += part.value.byteLength;
-    if (total > MAX_RESPONSE_BYTES) {
-      await cancelQuietly(reader, "response too large");
-      providerConfigRestFailure(
-        "PROVIDER_CONFIG_RESPONSE_TOO_LARGE",
-        "Cloudflare provider-config response exceeds its byte bound",
-        { effect },
-      );
-    }
-    chunks.push(part.value);
-  }
-  const result = new Uint8Array(total);
-  let offset = 0;
-  for (const chunk of chunks) {
-    result.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return result;
-}
-
-async function cancelQuietly(
-  reader: ReadableStreamDefaultReader<Uint8Array>,
-  reason: string,
-): Promise<void> {
-  try { await reader.cancel(reason); } catch { /* preserve primary failure */ }
 }
 
 function exactObject(raw: unknown, effect: ProviderConfigRestEffect): Record<string, unknown> {

@@ -49,22 +49,12 @@ export class DynamicRouteRestError extends Error {
   }
 }
 
-export interface DynamicRouteRestHeaders {
-  get(name: string): string | null;
-}
-
-export interface DynamicRouteRestBodyReader {
-  read(): Promise<Readonly<{ done: boolean; value?: Uint8Array }>>;
-  cancel(reason?: unknown): Promise<void>;
-}
-
-export interface DynamicRouteRestResponse {
-  readonly ok: boolean;
-  readonly status: number;
-  readonly headers: DynamicRouteRestHeaders;
-  readonly body: Readonly<{ getReader(): DynamicRouteRestBodyReader }> | null;
-  text(): Promise<string>;
-}
+export type DynamicRouteRestHeaders = Headers;
+export type DynamicRouteRestBodyReader = ReadableStreamDefaultReader<Uint8Array>;
+export type DynamicRouteRestResponse = Pick<
+  Response,
+  "body" | "headers" | "ok" | "status" | "text"
+>;
 
 export interface DynamicRouteRestFetchPort {
   fetch(

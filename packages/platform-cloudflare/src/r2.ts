@@ -1,7 +1,11 @@
 import type { ObjectResidencyKey } from "@eliotr/contracts";
 import { ObjectResidencyKeySchema } from "@eliotr/contracts";
 import { serializeObjectResidencyKey } from "@eliotr/domain";
-import { RUNTIME_LIMITS, assertWithinBytes } from "./runtime-limits.js";
+import {
+  readStreamWithinBytes,
+  RUNTIME_LIMITS,
+  RuntimeLimitError,
+} from "./runtime-limits.js";
 
 const SHA256 = /^[a-f0-9]{64}$/u;
 const SAFE_PATH_SEGMENT = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
@@ -544,33 +548,25 @@ export async function bufferBounded(
   body: ReadableStream<Uint8Array>,
   limit = RUNTIME_LIMITS.buffered_r2_bytes,
 ): Promise<Uint8Array> {
-  const reader = body.getReader();
-  const parts: Uint8Array[] = [];
-  let total = 0;
-  let completed = false;
   try {
-    while (true) {
-      const next = await reader.read();
-      if (next.done) {
-        completed = true;
-        break;
+    return await readStreamWithinBytes(body, {
+      label: "buffered R2 object",
+      max_bytes: limit,
+      max_chunks: MAX_STREAM_CHUNKS,
+    });
+  } catch (error) {
+    if (error instanceof RuntimeLimitError) {
+      switch (error.code) {
+        case "STREAM_CHUNK_INVALID":
+          return fail("R2_STREAM_INVALID", "R2 body yielded a non-byte chunk", false, error);
+        case "LIMIT_EXCEEDED":
+          return fail("R2_STREAM_LIMIT_EXCEEDED", "R2 body exceeds its expected byte envelope", false, error);
+        case "STREAM_CHUNK_LIMIT_EXCEEDED":
+          return fail("R2_STREAM_LIMIT_EXCEEDED", "R2 body exceeds the stream chunk-count limit", false, error);
+        default:
+          throw error;
       }
-      if (!(next.value instanceof Uint8Array)) fail("R2_STREAM_INVALID", "R2 body yielded a non-byte chunk");
-      total += next.value.byteLength;
-      assertWithinBytes("buffered R2 object", total, limit);
-      parts.push(next.value.slice());
     }
-  } finally {
-    if (!completed) {
-      try { await reader.cancel(); } catch { /* preserve the original bounded-read failure */ }
-    }
-    reader.releaseLock();
+    throw error;
   }
-  const output = new Uint8Array(total);
-  let offset = 0;
-  for (const part of parts) {
-    output.set(part, offset);
-    offset += part.byteLength;
-  }
-  return output;
 }

@@ -1,4 +1,8 @@
 import {
+  readResponseBodyWithinBytes,
+  RuntimeLimitError,
+} from "@eliotr/platform-cloudflare";
+import {
   canonicalModelGatewayJson,
 } from "./model-gateway-request.js";
 import {
@@ -72,39 +76,32 @@ async function readJson(
   response: Response,
   effect: CustomProviderRestEffect,
 ): Promise<unknown> {
-  const declared = response.headers.get("content-length");
-  if (declared !== null && !/^(?:0|[1-9][0-9]*)$/u.test(declared)) {
-    customProviderRestFailure(
-      "CUSTOM_PROVIDER_RESPONSE_INVALID",
-      "Cloudflare custom-provider response has malformed content-length",
-      { effect },
-    );
-  }
-  if (declared !== null && Number(declared) > MAX_RESPONSE_BYTES) {
-    customProviderRestFailure(
-      "CUSTOM_PROVIDER_RESPONSE_TOO_LARGE",
-      "Cloudflare custom-provider response exceeds its byte bound",
-      { effect },
-    );
-  }
-
   let bytes: Uint8Array;
   try {
-    if (response.body === null) {
-      const text = await response.text();
-      bytes = encoder.encode(text);
-      if (bytes.byteLength > MAX_RESPONSE_BYTES) {
-        customProviderRestFailure(
-          "CUSTOM_PROVIDER_RESPONSE_TOO_LARGE",
-          "Cloudflare custom-provider response exceeds its byte bound",
-          { effect },
-        );
-      }
-    } else {
-      bytes = await readStream(response.body, effect);
-    }
+    bytes = await readResponseBodyWithinBytes(response, {
+      label: "cloudflare.custom-provider.response",
+      max_bytes: MAX_RESPONSE_BYTES,
+    });
   } catch (error) {
     if (error instanceof CustomProviderRestError) throw error;
+    if (error instanceof RuntimeLimitError) {
+      switch (error.code) {
+        case "LIMIT_EXCEEDED":
+        case "STREAM_CHUNK_LIMIT_EXCEEDED":
+          return customProviderRestFailure(
+            "CUSTOM_PROVIDER_RESPONSE_TOO_LARGE",
+            "Cloudflare custom-provider response exceeds its byte bound",
+            { effect },
+          );
+        case "INVALID_CONTENT_LENGTH":
+        case "STREAM_CHUNK_INVALID":
+          return customProviderRestFailure(
+            "CUSTOM_PROVIDER_RESPONSE_INVALID",
+            "Cloudflare custom-provider response body is invalid",
+            { effect },
+          );
+      }
+    }
     customProviderRestFailure(
       "CUSTOM_PROVIDER_TRANSPORT_FAILED",
       "Cloudflare custom-provider response body could not be read",
@@ -131,51 +128,6 @@ async function readJson(
       { effect },
     );
   }
-}
-
-async function readStream(
-  stream: ReadableStream<Uint8Array>,
-  effect: CustomProviderRestEffect,
-): Promise<Uint8Array> {
-  const reader = stream.getReader();
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  for (;;) {
-    const chunk = await reader.read();
-    if (chunk.done) break;
-    if (!(chunk.value instanceof Uint8Array)) {
-      await cancelQuietly(reader, "invalid response chunk");
-      customProviderRestFailure(
-        "CUSTOM_PROVIDER_RESPONSE_INVALID",
-        "Cloudflare custom-provider response returned a non-byte chunk",
-        { effect },
-      );
-    }
-    total += chunk.value.byteLength;
-    if (total > MAX_RESPONSE_BYTES) {
-      await cancelQuietly(reader, "response too large");
-      customProviderRestFailure(
-        "CUSTOM_PROVIDER_RESPONSE_TOO_LARGE",
-        "Cloudflare custom-provider response exceeds its byte bound",
-        { effect },
-      );
-    }
-    chunks.push(chunk.value);
-  }
-  const bytes = new Uint8Array(total);
-  let offset = 0;
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return bytes;
-}
-
-async function cancelQuietly(
-  reader: ReadableStreamDefaultReader<Uint8Array>,
-  reason: string,
-): Promise<void> {
-  try { await reader.cancel(reason); } catch { /* preserve the primary failure */ }
 }
 
 function decodeMessages(

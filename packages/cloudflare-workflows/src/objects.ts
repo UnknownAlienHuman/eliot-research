@@ -1,6 +1,7 @@
 import { serializeObjectResidencyKey } from "@eliotr/domain";
+import { readStreamWithinBytes, RuntimeLimitError } from "@eliotr/platform-cloudflare";
 import {
-  digest, fail, MAX_WORKFLOW_OUTPUT_BYTES, WorkflowCheckpointError, WorkflowObjectSchema,
+  digest, fail, WorkflowCheckpointError, WorkflowObjectSchema,
   type WorkflowObject,
 } from "./types.js";
 
@@ -22,25 +23,26 @@ export async function readWorkflowObject(bucket: R2Bucket, expected: WorkflowObj
     .catch(() => fail("WORKFLOW_OUTPUT_UNAVAILABLE"));
   if (object === null) fail("WORKFLOW_OUTPUT_UNAVAILABLE");
   if (!("body" in object) || !matches(object, expected, immutable)) fail("WORKFLOW_OUTPUT_CORRUPT");
-  const reader = object.body.getReader();
-  const bytes = new Uint8Array(expected.byte_length);
-  let length = 0;
+  let bytes: Uint8Array;
   try {
-    for (;;) {
-      const part = await reader.read();
-      if (part.done) break;
-      length += part.value.byteLength;
-      if (length > expected.byte_length || length > MAX_WORKFLOW_OUTPUT_BYTES) {
-        await reader.cancel();
-        fail("WORKFLOW_OUTPUT_CORRUPT");
-      }
-      bytes.set(part.value, length - part.value.byteLength);
-    }
+    bytes = await readStreamWithinBytes(object.body, {
+      label: "workflow.output.object",
+      max_bytes: Math.max(expected.byte_length, 1),
+      max_chunks: 4096,
+    });
   } catch (error) {
+    if (error instanceof RuntimeLimitError) {
+      switch (error.code) {
+        case "LIMIT_EXCEEDED":
+        case "STREAM_CHUNK_LIMIT_EXCEEDED":
+        case "STREAM_CHUNK_INVALID":
+          fail("WORKFLOW_OUTPUT_CORRUPT");
+      }
+    }
     if (error instanceof WorkflowCheckpointError) throw error;
     fail("WORKFLOW_OUTPUT_UNAVAILABLE");
-  } finally { reader.releaseLock(); }
-  if (length !== expected.byte_length) fail("WORKFLOW_OUTPUT_CORRUPT");
+  }
+  if (bytes.byteLength !== expected.byte_length) fail("WORKFLOW_OUTPUT_CORRUPT");
   if (await digest(bytes) !== expected.sha256) fail("WORKFLOW_OUTPUT_CORRUPT");
   return bytes;
 }

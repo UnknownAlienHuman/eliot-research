@@ -153,7 +153,7 @@ function jsonResponse(
   return new Response(text, {
     status,
     headers: { "content-type": "application/json", ...headers },
-  }) as unknown as DynamicRouteRestResponse;
+  });
 }
 
 async function createRequest(): Promise<DynamicRouteCreateRequest> {

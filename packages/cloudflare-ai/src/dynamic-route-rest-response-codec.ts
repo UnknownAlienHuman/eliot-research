@@ -1,3 +1,7 @@
+import {
+  readResponseBodyWithinBytes,
+  RuntimeLimitError,
+} from "@eliotr/platform-cloudflare";
 import { canonicalModelGatewayJson } from "./model-gateway-request.js";
 import {
   DYNAMIC_ROUTE_REST_RESPONSE_MAX_BYTES,
@@ -28,67 +32,38 @@ export async function readDynamicRouteRestJson(
   response: DynamicRouteRestResponse,
   ambiguousEffect: DynamicRouteRestAmbiguousEffect,
 ): Promise<unknown> {
-  const declaredLength = response.headers.get("content-length");
-  if (declaredLength !== null) {
-    if (!/^(?:0|[1-9][0-9]*)$/u.test(declaredLength)) {
-      dynamicRouteRestFailure(
-        "DYNAMIC_ROUTE_REST_RESPONSE_INVALID",
-        "Cloudflare response contains a malformed content-length",
-        { ambiguous_effect: ambiguousEffect },
-      );
-    }
-    if (Number(declaredLength) > DYNAMIC_ROUTE_REST_RESPONSE_MAX_BYTES) {
-      dynamicRouteRestFailure(
-        "DYNAMIC_ROUTE_REST_RESPONSE_TOO_LARGE",
-        "Cloudflare response exceeds the byte envelope",
-        { ambiguous_effect: ambiguousEffect },
-      );
-    }
-  }
-
   let bytes: Uint8Array;
-  if (response.body === null) {
-    const text = await response.text();
-    bytes = encoder.encode(text);
-    if (bytes.byteLength > DYNAMIC_ROUTE_REST_RESPONSE_MAX_BYTES) {
-      dynamicRouteRestFailure(
-        "DYNAMIC_ROUTE_REST_RESPONSE_TOO_LARGE",
-        "Cloudflare response exceeds the byte envelope",
-        { ambiguous_effect: ambiguousEffect },
-      );
-    }
-  } else {
-    const reader = response.body.getReader();
-    const chunks: Uint8Array[] = [];
-    let total = 0;
-    for (;;) {
-      const chunk = await reader.read();
-      if (chunk.done) break;
-      if (!(chunk.value instanceof Uint8Array)) {
-        await reader.cancel("invalid response chunk");
-        dynamicRouteRestFailure(
-          "DYNAMIC_ROUTE_REST_RESPONSE_INVALID",
-          "Cloudflare response stream returned a non-byte chunk",
-          { ambiguous_effect: ambiguousEffect },
-        );
+  try {
+    // A null native Response body is empty, matching the former text() fallback.
+    bytes = await readResponseBodyWithinBytes(response, {
+      label: "cloudflare.dynamic-route.response",
+      max_bytes: DYNAMIC_ROUTE_REST_RESPONSE_MAX_BYTES,
+    });
+  } catch (error) {
+    if (error instanceof RuntimeLimitError) {
+      switch (error.code) {
+        case "LIMIT_EXCEEDED":
+        case "STREAM_CHUNK_LIMIT_EXCEEDED":
+          return dynamicRouteRestFailure(
+            "DYNAMIC_ROUTE_REST_RESPONSE_TOO_LARGE",
+            "Cloudflare response exceeds the byte envelope",
+            { ambiguous_effect: ambiguousEffect },
+          );
+        case "INVALID_CONTENT_LENGTH":
+          return dynamicRouteRestFailure(
+            "DYNAMIC_ROUTE_REST_RESPONSE_INVALID",
+            "Cloudflare response contains a malformed content-length",
+            { ambiguous_effect: ambiguousEffect },
+          );
+        case "STREAM_CHUNK_INVALID":
+          return dynamicRouteRestFailure(
+            "DYNAMIC_ROUTE_REST_RESPONSE_INVALID",
+            "Cloudflare response stream returned a non-byte chunk",
+            { ambiguous_effect: ambiguousEffect },
+          );
       }
-      total += chunk.value.byteLength;
-      if (total > DYNAMIC_ROUTE_REST_RESPONSE_MAX_BYTES) {
-        await reader.cancel("response byte envelope exceeded");
-        dynamicRouteRestFailure(
-          "DYNAMIC_ROUTE_REST_RESPONSE_TOO_LARGE",
-          "Cloudflare response exceeds the byte envelope",
-          { ambiguous_effect: ambiguousEffect },
-        );
-      }
-      chunks.push(chunk.value);
     }
-    bytes = new Uint8Array(total);
-    let offset = 0;
-    for (const chunk of chunks) {
-      bytes.set(chunk, offset);
-      offset += chunk.byteLength;
-    }
+    throw error;
   }
 
   let text: string;
