@@ -21,7 +21,9 @@
       "commit_sha": "7bf931b112c4f4e0e5b2ed436b1e69e1da267668"
     }
   ],
-  "state": "ACTIVE",
-  "evidence_refs": [],
+  "state": "HANDED_OFF",
+  "handoff_reason": "COMPLETED",
+  "handoff_receipt_ref": "tests/ui-owner/receipts/u1-d/client-body.json",
+  "evidence_refs": ["git:e1a400533ef113b486165b96fa7fa8be53866cce; tests/ui-owner/receipts/u1-d/client-body.json; 18body 2newproblemreader 12retaineddecoder owningcompile lint PASS"],
   "blocker_refs": []
 }

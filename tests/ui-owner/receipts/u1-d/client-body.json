@@ -1,0 +1,13 @@
+{
+  "protocol": "eliotr.client-body-receipt.v1",
+  "checkpoint": "C1.2",
+  "source_commit": "e1a400533ef113b486165b96fa7fa8be53866cce",
+  "claim": "docs/agent-work/frontend-owner-claims/ER-48/c1-2-bounded-body-20261009.json",
+  "status": "ACCEPTED_PURE_BOUNDED_READERS",
+  "checks": "18 new body cases PASS; two new real problem-reader cases PASS with12 retained decoder cases skipped; prior12 decoder PASS unchanged; owning compiler and exact4file lint PASS",
+  "negative": "Whole206/range200 rejected before consumption; exact safe range total/coordinates/length/strongvalidator and identityencoding required; malformedUTF8, wrongmedia and oversized independent16KiB problem reject; hostile non-settling read/cancel settles with exact abortcause and listener/lock cleanup",
+  "manager_integration": "Leaf stopped on repeated parse repair failure. Actual-source audit found broken helper closure, required Content-Range space rejection, readonly cause overwrite and unbounded pending read. Manager replaced exact two body files and added real problem consumer; no permissive workaround or unverified acceptance",
+  "limitations": "Endpoint-specific admitted revision/digest/conditional policy belongs to later clients. This pure reader supplies no identity/admission/provider authority or automatic retry",
+  "private_audit": ".eliotr-state/frontend-ui-proposals/c1-2-integration-audit.md",
+  "pending": ["C1.3 injected fetch/deadline/session observations", "C1.4 compatibility", "C2-C3 endpoints", "U3-U5 integration"]
+}
