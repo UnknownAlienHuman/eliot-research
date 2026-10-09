@@ -45,6 +45,7 @@ from the tables below, so an unlisted file is a bug, not an omission you may ign
 | [read-extract-proposal-cutover.md](read-extract-proposal-cutover.md) | READ proposal cardinality and stage-admission conflict before activation. |
 | [workflow-conversion-admission-cutover.md](workflow-conversion-admission-cutover.md) | Required selected conversion inputs, current authority and explicit scope cutover. |
 | [managed-generation-promotion-fence.md](managed-generation-promotion-fence.md) | Shadow key cutover, complete required-set evidence and existing pointer authority. |
+| [research-session-projection-protocol.md](research-session-projection-protocol.md) | Strict read-only Agent RPC snapshot contract and pending lifecycle qualification. |
 | [rust-kernel-abi-versioning.md](rust-kernel-abi-versioning.md) | Versioned Rust/Wasm ABI and the consumer-newer compatibility guard. |
 | [runtime-contract.md](runtime-contract.md) | Bounded Worker, DO, Workflow, Queue, D1, R2 and AI Search behaviour. |
 | [failure-model.md](failure-model.md) | Retries, lost ACKs, tampering, stale generations, partial failure. |

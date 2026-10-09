@@ -1,6 +1,7 @@
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { cloudflareTest, readD1Migrations } from "@cloudflare/vitest-plugin";
+import agents from "agents/vite";
 import { defineConfig } from "vitest/config";
 import { loadCompiledWorkspaceModule } from "../../scripts/lib/compiled-workspace-module.mjs";
 import {
@@ -51,11 +52,11 @@ export default defineConfig(async () => {
   return {
     test: {
       projects: [
-        { plugins: [workerPlugin()], test: {
+        { plugins: [agents(), workerPlugin()], test: {
           name: "core-default", include: ["src/**/*.test.ts", "test/**/*.test.ts"],
           exclude: ["test/research-current-dispatch.test.ts"],
         } },
-        { plugins: [workerPlugin({ ...compiled.vars, ELIOTR_MODEL_GATEWAY_TOKEN: "local-admission-not-a-credential",
+        { plugins: [agents(), workerPlugin({ ...compiled.vars, ELIOTR_MODEL_GATEWAY_TOKEN: "local-admission-not-a-credential",
           AI_GATEWAY_REASONING_URL: `https://gateway.ai.cloudflare.com/v1/${"a".repeat(32)}/eliotr-reasoning` })],
           test: { name: "research-current-dispatch-native", include: ["test/research-current-dispatch.test.ts"] } },
       ],

@@ -1,7 +1,6 @@
-// IMPLEMENTED_NOT_LIVE: ER-24 ResearchSession projects canonical Workflow/D1 status through authenticated AIChatAgent transport; DO stage execution is retired; native hibernation/reconnect and live transport acceptance remain pending.
-import { AIChatAgent } from "@cloudflare/ai-chat";
+// IMPLEMENTED_NOT_LIVE: ER-24 ResearchSession exposes a read-only Agent RPC projection over canonical Workflow/D1 status; native, browser, multi-tab and live qualification remain pending.
+import { Agent, callable, getCurrentAgent } from "agents";
 import type { Connection, ConnectionContext } from "agents";
-import { createUIMessageStream, createUIMessageStreamResponse } from "ai";
 import {
   WorkflowCheckpointStore,
   WorkflowObjectSchema,
@@ -17,13 +16,20 @@ import { requireResearchDeploymentCompatibility } from "./research-deployment-co
 export type { McpFastSearchQueryResult } from "./research-query-execution-result.js";
 import {
   SESSION_CHAT_BINDING_KEY,
+  RESEARCH_SESSION_PROJECTION_PROTOCOL,
+  isResearchSessionProjection,
   readCurrentSessionChatProjection,
+  SessionProjectionReadError,
   sameSessionChatBinding,
   sessionChatBindingFor,
   sessionIdForAgentRequest,
-  sessionProjectionRequest,
 } from "./research-session-chat-authority.js";
-import type { SessionChatAuthorization, SessionChatBinding, SessionChatConnectionState } from "./research-session-chat-authority.js";
+import type {
+  ResearchSessionProjection,
+  SessionChatAuthorization,
+  SessionChatBinding,
+  SessionChatConnectionState,
+} from "./research-session-chat-authority.js";
 import { readCurrentSessionAuthority, readCurrentSessionAuthorityWithExpiry } from "./research-session-current-authority.js";
 import {
   createSessionConnectionSendGuard,
@@ -47,7 +53,7 @@ export type { ResearchQueryOptions } from "./research-run-service.js";
 export const RESEARCH_SESSION_PROTOCOL = "eliotr.research-session.v1";
 interface SessionRecord { protocol: typeof RESEARCH_SESSION_PROTOCOL; session_id: string; investigation_id: string; investigation_revision: number; operation_id: string; idempotency_key: string; handler_generation: string; principal_ref: string; credential_generation: string; deployment_generation: string; state: "ACTIVE" | "CANCELLED" | "ENGINE_COMPLETED"; receipt_refs: readonly string[]; output_manifest_ref: string | null; updated_at: string; }
 function callerOf(request: Request, body?: Record<string, unknown>): WorkflowPrincipal { const pick = (name: string, fallback?: unknown) => request.headers.get(name) ?? (typeof fallback === "string" ? fallback : undefined); const principal_ref = pick("x-research-principal", body?.principal_ref); const credential_generation = pick("x-research-credential", body?.credential_generation); const deployment_generation = pick("x-research-deployment", body?.deployment_generation); if (typeof principal_ref !== "string" || typeof credential_generation !== "string" || typeof deployment_generation !== "string") fail("RESEARCH_INPUT_INVALID", "research session caller identity is required"); return { principal_ref, credential_generation, deployment_generation }; }
-function sessionRunContext(request: Request, caller: WorkflowPrincipal): AuthenticatedRequestContext { return { request, principal_ref: caller.principal_ref, client_class: "owner_pwa", credential_generation: caller.credential_generation, trace_id: request.headers.get("cf-ray") ?? crypto.randomUUID() }; }
+function sessionRunContext(request: Request, caller: WorkflowPrincipal, traceFallback: string = crypto.randomUUID()): AuthenticatedRequestContext { return { request, principal_ref: caller.principal_ref, client_class: "owner_pwa", credential_generation: caller.credential_generation, trace_id: request.headers.get("cf-ray") ?? traceFallback }; }
 function sessionReopenRequired(request: Request, sessionId: string, operationId: string): Response { return json(request, { code: "SESSION_AUTHORITY_STALE", reason_code: "SESSION_REOPEN_REQUIRED", protocol: RESEARCH_SESSION_PROTOCOL, session_id: sessionId, operation_id: operationId, state: "BLOCKED", disposition: "REOPEN_REQUIRED", trace_id: request.headers.get("cf-ray") ?? crypto.randomUUID(), retryable: false }, 409); }
 function json(request: Request, value: unknown, status = 200): Response { return new Response(JSON.stringify(value), { status, headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" } }); }
 function problem(request: Request, status: number, code: string, retryable = status === 503): Response { return json(request, { code, trace_id: request.headers.get("cf-ray") ?? crypto.randomUUID(), retryable }, status); }
@@ -57,18 +63,52 @@ function workflowProblem(request: Request, error: WorkflowCheckpointError): Resp
   return problem(request, error.code === "WORKFLOW_INPUT_INVALID" ? 400 : conflict ? 409 : 503,
     code, error.failure?.retryable === true);
 }
-export class ResearchSession extends AIChatAgent<Env> {
+function isProjectionRpcRequest(frame: unknown): boolean {
+  if (typeof frame !== "string") return false;
+  let value: unknown;
+  try { value = JSON.parse(frame); }
+  catch { return false; }
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const request = value as Record<string, unknown>;
+  return Object.keys(request).length === 4 &&
+    ["type", "id", "method", "args"].every((key) => Object.hasOwn(request, key)) &&
+    request.type === "rpc" && typeof request.id === "string" && request.id.length > 0 && request.id.length <= 256 &&
+    request.method === "readResearchSessionProjection" && Array.isArray(request.args) && request.args.length === 0;
+}
+function isProjectionRpcResponse(message: string | ArrayBuffer | ArrayBufferView | Blob): boolean {
+  if (typeof message !== "string") return false;
+  let value: unknown;
+  try { value = JSON.parse(message); }
+  catch { return false; }
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const response = value as Record<string, unknown>;
+  return Object.keys(response).length === 5 &&
+    ["type", "id", "success", "done", "result"].every((key) => Object.hasOwn(response, key)) &&
+    response.type === "rpc" && typeof response.id === "string" && response.id.length > 0 && response.id.length <= 256 &&
+    response.success === true && response.done === true && isResearchSessionProjection(response.result);
+}
+function projectionErrorResponse(request: Request, error: unknown): Response {
+  if (!(error instanceof SessionProjectionReadError)) {
+    return problem(request, 503, "SESSION_SETTLEMENT_UNCERTAIN");
+  }
+  const codes = new Set(["SESSION_NOT_FOUND", "SESSION_FOREIGN", "SESSION_AUTHORITY_STALE",
+    "SESSION_SETTLEMENT_UNCERTAIN", "SESSION_CONFLICT", "RESEARCH_INPUT_INVALID"]);
+  const code = codes.has(error.code) ? error.code : "SESSION_AUTHORITY_STALE";
+  const status = error.status === 400 || error.status === 403 || error.status === 404 ||
+    error.status === 409 || error.status === 422 || error.status === 503 ? error.status : 409;
+  return problem(request, status, code, status === 503);
+}
+export class ResearchSession extends Agent<Env> {
   private readonly guardConnectionSend = createSessionConnectionSendGuard();
+  private readonly guardedProjectionConnections = new WeakSet<Connection<SessionChatConnectionState>>();
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
-    // Reattach synchronous send guards as soon as restored sockets are visible,
-    // including native RPC entry points which do not start the SDK lifecycle.
+    // Reattach guards after hibernation, before restored RPC connections can send.
     for (const connection of this.getConnections<SessionChatConnectionState>()) {
+      this.guardProjectionConnectionSend(connection);
       this.guardConnectionSend(connection);
       requireCurrentSessionConnection(connection);
     }
-    // AIChatAgent intercepts resume/chat before the subclass onMessage hook.
-    // Wrap the installed lifecycle hooks so expiry applies to every SDK frame.
     const connect = this.onConnect.bind(this);
     this.onConnect = async (connection: Connection<SessionChatConnectionState>, context) => {
       if (sessionAccessExpiresAt(context.request) === null) { connection.close(1008, "SESSION_AUTHORITY_STALE"); return; }
@@ -92,8 +132,14 @@ export class ResearchSession extends AIChatAgent<Env> {
     };
     const message = this.onMessage.bind(this);
     this.onMessage = async (connection: Connection<SessionChatConnectionState>, frame) => {
+      this.guardProjectionConnectionSend(connection);
       this.guardConnectionSend(connection);
-      if (await this.authorizeConnectedChat(connection)) await message(connection, frame);
+      if (!requireCurrentSessionConnection(connection)) return;
+      if (!isProjectionRpcRequest(frame)) {
+        connection.close(1008, "SESSION_PROJECTION_READ_ONLY");
+        return;
+      }
+      await message(connection, frame);
     };
     const start = this.onStart.bind(this);
     this.onStart = async (props) => {
@@ -105,15 +151,27 @@ export class ResearchSession extends AIChatAgent<Env> {
       await start(props);
     };
   }
+  public override shouldSendProtocolMessages(connection: Connection, _context: ConnectionContext): boolean {
+    this.guardProjectionConnectionSend(connection as Connection<SessionChatConnectionState>);
+    return false;
+  }
+  public override validateStateChange(_state: unknown, source: Connection | "server"): void {
+    if (source !== "server") throw new Error("SESSION_PROJECTION_READ_ONLY");
+  }
+  private guardProjectionConnectionSend(connection: Connection<SessionChatConnectionState>): void {
+    if (this.guardedProjectionConnections.has(connection)) return;
+    const send = connection.send.bind(connection);
+    connection.send = (message) => {
+      if (!isProjectionRpcResponse(message) || !requireCurrentSessionConnection(connection)) return;
+      Reflect.apply(send, connection, [message]);
+    };
+    this.guardedProjectionConnections.add(connection);
+  }
   public expireResearchSessionConnections(expected?: { connection_id: string; expires_at: string }): void {
     for (const connection of this.getConnections<SessionChatConnectionState>()) {
       if (expected === undefined || (connection.id === expected.connection_id &&
           sessionConnectionDeadline(connection.state)?.expires_at === expected.expires_at)) requireCurrentSessionConnection(connection);
     }
-  }
-  public override broadcast(message: Parameters<AIChatAgent<Env>["broadcast"]>[0], without?: string[]): void {
-    for (const connection of this.getConnections<SessionChatConnectionState>()) this.guardConnectionSend(connection);
-    super.broadcast(message, without);
   }
   private load(id: string): Promise<SessionRecord | null> { return this.ctx.storage.get<SessionRecord>(`session:${id}`).then((value) => value ?? null); }
   private save(record: SessionRecord): Promise<void> { if (new TextEncoder().encode(JSON.stringify(record)).byteLength > 256 * 1024) fail("RESEARCH_INPUT_LIMIT", "session state exceeds its persist bound", 413); return this.ctx.storage.put(`session:${record.session_id}`, record); }
@@ -143,10 +201,6 @@ export class ResearchSession extends AIChatAgent<Env> {
     });
   }
   private async authorizeChatRequest(request: Request, sessionId: string): Promise<SessionChatAuthorization | Response> {
-    const projection = await this.execute(sessionProjectionRequest(request, sessionId), sessionId);
-    const projectionBody = await projection.clone().json().catch(() => null) as { code?: unknown } | null;
-    if (projection.status !== 200 && projectionBody?.code !== "SESSION_CANCELLED") return projection;
-
     const record = await this.load(sessionId);
     if (record === null) return problem(request, 404, "SESSION_NOT_FOUND");
     let caller: WorkflowPrincipal;
@@ -160,18 +214,24 @@ export class ResearchSession extends AIChatAgent<Env> {
 
     const env = this.env;
     if (!env?.CORE_DB || !env.SEARCH_DB) return problem(request, 503, "SESSION_SETTLEMENT_UNCERTAIN");
+    const accessExpiresAt = sessionAccessExpiresAt(request);
+    if (accessExpiresAt === null) return problem(request, 409, "SESSION_AUTHORITY_STALE");
     const authority = await readCurrentSessionAuthorityWithExpiry(env, caller, record.investigation_id);
     if (authority.status === "STALE") return problem(request, 409, "SESSION_AUTHORITY_STALE");
     if (authority.status === "UNAVAILABLE") return problem(request, 503, "SESSION_SETTLEMENT_UNCERTAIN");
 
     const expected = sessionChatBindingFor(record);
+    const existing = await this.ctx.storage.get<unknown>(SESSION_CHAT_BINDING_KEY);
+    if (existing !== undefined && !sameSessionChatBinding(existing, expected)) return problem(request, 409, "SESSION_CONFLICT");
+    try { await this.readCurrentChatProjection(expected, accessExpiresAt); }
+    catch (error) { return projectionErrorResponse(request, error); }
     const binding = await this.ctx.storage.transaction(async (transaction) => {
-      const existing = await transaction.get<unknown>(SESSION_CHAT_BINDING_KEY);
-      if (existing === undefined) {
+      const current = await transaction.get<unknown>(SESSION_CHAT_BINDING_KEY);
+      if (current === undefined) {
         await transaction.put(SESSION_CHAT_BINDING_KEY, expected);
         return expected;
       }
-      return sameSessionChatBinding(existing, expected) ? expected : null;
+      return sameSessionChatBinding(current, expected) ? expected : null;
     });
     if (binding === null) return problem(request, 409, "SESSION_CONFLICT");
     return {
@@ -180,32 +240,49 @@ export class ResearchSession extends AIChatAgent<Env> {
       grant_expires_at: authority.grant_expires_at,
     };
   }
-  private async readCurrentChatProjection(binding: SessionChatBinding): Promise<unknown> {
+  private async readCurrentChatProjection(
+    binding: SessionChatBinding,
+    accessExpiresAt: string,
+  ): Promise<ResearchSessionProjection> {
     return readCurrentSessionChatProjection(
       binding,
-      this.env?.CORE_DB,
-      (request, sessionId) => this.execute(request, sessionId),
-      RESEARCH_SESSION_PROTOCOL,
+      accessExpiresAt,
+      (request) => this.fetch(request),
     );
   }
-  private async authorizeConnectedChat(connection: Connection<SessionChatConnectionState>): Promise<boolean> {
-    if (!requireCurrentSessionConnection(connection)) return false;
+  private async readConnectedProjection(
+    connection: Connection<SessionChatConnectionState>,
+  ): Promise<ResearchSessionProjection> {
+    if (!requireCurrentSessionConnection(connection)) throw new Error("SESSION_AUTHORITY_STALE");
     const binding = connection.state?.research_session;
+    const accessExpiresAt = connection.state?.research_access_expires_at;
     try {
       const record = binding === undefined ? null : await this.load(binding.session_id);
-      if (binding === undefined || record === null || !sameSessionChatBinding(binding, sessionChatBindingFor(record))) {
-        connection.close(1008, "SESSION_AUTHORITY_STALE");
-        return false;
+      if (binding === undefined || typeof accessExpiresAt !== "string" || record === null ||
+          !sameSessionChatBinding(binding, sessionChatBindingFor(record))) {
+        throw new Error("SESSION_AUTHORITY_STALE");
       }
-      // SDK resume/control frames do not reach onChatMessage; authorize their reads here.
-      await this.readCurrentChatProjection(binding);
-      return requireCurrentSessionConnection(connection);
+      const projection = await this.readCurrentChatProjection(binding, accessExpiresAt);
+      if (!requireCurrentSessionConnection(connection)) throw new Error("SESSION_AUTHORITY_STALE");
+      return projection;
     } catch {
+      connection.close(1008, "SESSION_AUTHORITY_STALE");
+      throw new Error("SESSION_AUTHORITY_STALE");
+    }
+  }
+  private async authorizeConnectedChat(connection: Connection<SessionChatConnectionState>): Promise<boolean> {
+    try { await this.readConnectedProjection(connection); return true; }
+    catch {
       connection.close(1008, "SESSION_AUTHORITY_STALE");
       return false;
     }
   }
-  public override maxPersistedMessages = 200;
+  @callable({ description: "Read the current canonical research session projection." })
+  public async readResearchSessionProjection(): Promise<ResearchSessionProjection> {
+    const current = getCurrentAgent<ResearchSession>();
+    if (current.agent !== this || current.connection === undefined) throw new Error("SESSION_AUTHORITY_STALE");
+    return this.readConnectedProjection(current.connection as Connection<SessionChatConnectionState>);
+  }
   private async bindChatConnection(
     connection: Connection<SessionChatConnectionState>,
     context: ConnectionContext,
@@ -248,25 +325,12 @@ export class ResearchSession extends AIChatAgent<Env> {
     });
     return true;
   }
-  public override async onChatMessage(): Promise<Response> {
-    const bindings = Array.from(this.getConnections<SessionChatConnectionState>(), (connection) =>
-      connection.state?.research_session);
-    const binding = bindings[0];
-    if (binding === undefined || bindings.some((candidate) =>
-      candidate === undefined || !sameSessionChatBinding(candidate, binding))) {
-      throw new Error("SESSION_AUTHORITY_STALE");
-    }
-    const projection = await this.readCurrentChatProjection(binding);
-    const stream = createUIMessageStream({
-      execute: ({ writer }) => {
-        writer.write({ type: "data-research-run", data: projection });
-      },
-    });
-    return createUIMessageStreamResponse({ stream });
-  }
 public override async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
     try {
+      if (url.pathname.endsWith("/get-messages")) {
+        return problem(request, 410, "SESSION_CHAT_HISTORY_DISABLED", false);
+      }
       if (url.pathname === "/status") {
         if (request.headers.get("upgrade")?.toLowerCase() === "websocket") {
           if (sessionAccessExpiresAt(request) === null) return problem(request, 409, "SESSION_AUTHORITY_STALE");
@@ -274,18 +338,22 @@ public override async fetch(request: Request): Promise<Response> {
           if (sessionId === null) return problem(request, 400, "RESEARCH_INPUT_INVALID");
           const binding = await this.authorizeChatRequest(request, sessionId);
           if (binding instanceof Response) return binding;
-          // AIChatAgent emits resume frames from its fetch path before onConnect; authority is checked first.
+          // Validate the owner binding before the Agent accepts the read-only RPC socket.
           return await super.fetch(request);
         }
         return json(request, { protocol: RESEARCH_SESSION_PROTOCOL, state: "READY",
           persisted_state_authoritative: true, durable_copy_location: "DO storage + D1 Core + R2 checkpoints" });
       }
       if (url.pathname === "/session/start" && request.method === "POST") return await this.start(request);
-      const match = url.pathname.match(/^\/session\/([^/]+)(\/(run|cancel))?$/u);
+      const match = url.pathname.match(/^\/session\/([^/]+)(\/(run|cancel|projection))?$/u);
       const sessionId = match?.[1];
       if (sessionId !== undefined) {
         checkId(sessionId, "session_id");
         if (request.method === "GET" && (match?.[2] ?? null) === null) return await this.read(request, sessionId);
+        if (request.method === "GET" && match?.[3] === "projection") {
+          if (sessionAccessExpiresAt(request) === null) return problem(request, 409, "SESSION_AUTHORITY_STALE");
+          return await this.project(request, sessionId);
+        }
         if (request.method === "POST" && match?.[3] === "run") return await this.execute(request, sessionId);
         if (request.method === "POST" && match?.[3] === "cancel") return await this.cancel(request, sessionId);
       }
@@ -293,12 +361,15 @@ public override async fetch(request: Request): Promise<Response> {
         url.pathname.startsWith("/agents/") || url.pathname.endsWith("/get-messages") ||
         /^\/session\/[^/]+\/chat(?:\/|$)/u.test(url.pathname);
       if (!isAgentRequest) return problem(request, 501, "SESSION_IMPLEMENTATION_PENDING");
+      if (request.headers.get("upgrade")?.toLowerCase() !== "websocket") {
+        return problem(request, 410, "SESSION_PROJECTION_PROTOCOL_REQUIRED", false);
+      }
       if (sessionAccessExpiresAt(request) === null) return problem(request, 409, "SESSION_AUTHORITY_STALE");
       const chatSessionId = sessionIdForAgentRequest(url, (value) => ID_RE.test(value));
       if (chatSessionId === null) return problem(request, 400, "RESEARCH_INPUT_INVALID");
       const binding = await this.authorizeChatRequest(request, chatSessionId);
       if (binding instanceof Response) return binding;
-      // Disconnect and stream-abort remain presentation-only; domain cancel uses /session/:sid/cancel.
+      // Socket disposal remains presentation-only; domain cancel uses /session/:sid/cancel.
       return await super.fetch(request);
     } catch (error) {
       if (error instanceof ResearchServiceError) return problem(request, error.status, error.code, error.retryable);
@@ -308,6 +379,105 @@ public override async fetch(request: Request): Promise<Response> {
       if (code.startsWith("WORKFLOW_") || code.startsWith("LEDGER_")) return problem(request, 503, "SESSION_SETTLEMENT_UNCERTAIN");
       return problem(request, 500, "INTERNAL_ERROR");
     }
+  }
+  private async project(request: Request, sid: string): Promise<Response> {
+    const stored = await this.load(sid);
+    if (stored === null) return problem(request, 404, "SESSION_NOT_FOUND");
+    let caller: WorkflowPrincipal;
+    try { caller = callerOf(request); }
+    catch { return problem(request, 400, "RESEARCH_INPUT_INVALID"); }
+    if (caller.principal_ref !== stored.principal_ref) return problem(request, 403, "SESSION_FOREIGN");
+    if (caller.credential_generation !== stored.credential_generation) return problem(request, 409, "SESSION_AUTHORITY_STALE");
+    const env = this.env;
+    if (!env?.CORE_DB || !env.SEARCH_DB || !env.WORK_BUCKET) return problem(request, 503, "SESSION_SETTLEMENT_UNCERTAIN");
+    try { await requireResearchDeploymentCompatibility(env.CORE_DB, stored.deployment_generation, caller.deployment_generation); }
+    catch { return problem(request, 409, "SESSION_AUTHORITY_STALE"); }
+
+    const principal: WorkflowPrincipal = {
+      principal_ref: stored.principal_ref,
+      credential_generation: stored.credential_generation,
+      deployment_generation: stored.deployment_generation,
+    };
+    const checkpoints = new WorkflowCheckpointStore(env.CORE_DB);
+    const persisted = await checkpoints.readRunStatus(stored.operation_id, principal, "owner-read");
+    if (persisted === null) {
+      const authority = await readCurrentSessionAuthority(env, caller, stored.investigation_id);
+      if (authority === "STALE") return problem(request, 409, "SESSION_AUTHORITY_STALE");
+      if (authority === "UNAVAILABLE") return problem(request, 503, "SESSION_SETTLEMENT_UNCERTAIN");
+      return sessionReopenRequired(request, sid, stored.operation_id);
+    }
+
+    const status = await readResearchRunStatus(
+      env,
+      sessionRunContext(request, caller, stored.operation_id),
+      stored.operation_id,
+    );
+    if (status.workflow_instance_id !== stored.operation_id || status.investigation_ref.id !== stored.investigation_id) {
+      return problem(request, 409, "SESSION_AUTHORITY_STALE");
+    }
+    if (status.execution_state === "ACTIVE") {
+      if (stored.state !== "ACTIVE" || persisted.state !== "ACTIVE") return problem(request, 409, "SESSION_CONFLICT");
+      if (status.engine_status === undefined || status.engine_status === "unknown") {
+        return sessionReopenRequired(request, sid, stored.operation_id);
+      }
+      if (!Number.isSafeInteger(status.next_stage_index) || status.next_stage_index < 0) {
+        return problem(request, 503, "SESSION_SETTLEMENT_UNCERTAIN");
+      }
+      return json(request, {
+        protocol: RESEARCH_SESSION_PROJECTION_PROTOCOL,
+        session_id: sid,
+        operation_id: stored.operation_id,
+        state: "ACTIVE",
+        investigation_ref: status.investigation_ref,
+        run_status: {
+          execution_state: "ACTIVE",
+          engine_status: status.engine_status,
+          next_stage_index: status.next_stage_index,
+        },
+      });
+    }
+    if (status.execution_state === "CANCELLED") {
+      if (stored.state === "ENGINE_COMPLETED") return problem(request, 409, "SESSION_CONFLICT");
+      if (persisted.state !== "CANCELLED" || persisted.investigation_id !== stored.investigation_id ||
+          persisted.cancellation_receipt_ref === null ||
+          status.cancellation_receipt_ref !== persisted.cancellation_receipt_ref) {
+        return problem(request, 503, "SESSION_SETTLEMENT_UNCERTAIN");
+      }
+      return json(request, {
+        protocol: RESEARCH_SESSION_PROJECTION_PROTOCOL,
+        session_id: sid,
+        operation_id: stored.operation_id,
+        state: "CANCELLED",
+        investigation_ref: status.investigation_ref,
+        cancellation_receipt_ref: persisted.cancellation_receipt_ref,
+      });
+    }
+    if (stored.state === "CANCELLED") return problem(request, 409, "SESSION_CONFLICT");
+    const finalReceipt = persisted.final_receipt;
+    if (persisted.state !== "ENGINE_COMPLETED" || finalReceipt == null ||
+        persisted.investigation_id !== stored.investigation_id ||
+        persisted.current_revision !== status.investigation_ref.revision ||
+        finalReceipt.engine_state !== "ENGINE_COMPLETED" || finalReceipt.stage !== "MATERIALIZE" ||
+        finalReceipt.investigation_ref.id !== stored.investigation_id ||
+        finalReceipt.investigation_ref.revision !== persisted.current_revision) {
+      return problem(request, 503, "SESSION_SETTLEMENT_UNCERTAIN");
+    }
+    if (new TextEncoder().encode(JSON.stringify(finalReceipt)).byteLength > MAX_WORKFLOW_RECEIPT_BYTES ||
+        "completion_disposition" in finalReceipt) return problem(request, 409, "WORKFLOW_INPUT_INVALID");
+    if (stored.state === "ENGINE_COMPLETED" &&
+        (stored.receipt_refs.at(-1) !== finalReceipt.receipt_ref ||
+          stored.output_manifest_ref !== finalReceipt.output_manifest.object_ref)) {
+      return problem(request, 409, "SESSION_CONFLICT");
+    }
+    return json(request, {
+      protocol: RESEARCH_SESSION_PROJECTION_PROTOCOL,
+      session_id: sid,
+      operation_id: stored.operation_id,
+      state: "ENGINE_COMPLETED",
+      investigation_ref: finalReceipt.investigation_ref,
+      completion_receipt_ref: finalReceipt.receipt_ref,
+      output_manifest_ref: finalReceipt.output_manifest.object_ref,
+    });
   }
   private async start(request: Request): Promise<Response> {
     let body: unknown;
