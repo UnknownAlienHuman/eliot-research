@@ -230,7 +230,7 @@ function assertCitationBindingRow(row: CitationBindingRow): void {
 export async function loadCitationSettlement(
   database: D1Database,
   receipt: Pick<CitationResolutionReceipt, "receipt_ref">,
-  attempt: CitationResolutionAttemptBinding,
+  attempt?: CitationResolutionAttemptBinding,
 ): Promise<CitationSettlement | null> {
   let results: D1Result<unknown>[];
   try {
@@ -246,11 +246,11 @@ export async function loadCitationSettlement(
         "SELECT receipt_id, receipt_revision, verified, created_at FROM citation_resolution_guard " +
         "WHERE receipt_id = ?1 AND receipt_revision = ?2 LIMIT 1",
       ).bind(receipt.receipt_ref.id, receipt.receipt_ref.revision),
-      database.prepare(
+      ...(attempt === undefined ? [] : [database.prepare(
         "SELECT operation_id, stage_index, attempt_ref, request_sha256, receipt_id, " +
         "receipt_revision, receipt_sha256, bound_at FROM research_workflow_citation_binding " +
         "WHERE operation_id = ?1 AND stage_index = 15 LIMIT 1",
-      ).bind(attempt.operation_id),
+      ).bind(attempt.operation_id)]),
     ]);
   } catch (cause) {
     fail("EVIDENCE_SETTLEMENT_UNCERTAIN", "citation settlement readback failed", {
@@ -258,14 +258,15 @@ export async function loadCitationSettlement(
       cause,
     });
   }
-  if (results.length !== 3) {
+  if (results.length !== (attempt === undefined ? 2 : 3)) {
     fail("EVIDENCE_SETTLEMENT_UNCERTAIN", "citation settlement readback is incomplete", {
       retryable: true,
     });
   }
   const receiptRow = firstBatchRow<CitationReceiptRow>(results[0], "citation receipt");
   const guardRow = firstBatchRow<CitationGuardRow>(results[1], "citation guard");
-  const bindingRow = firstBatchRow<CitationBindingRow>(results[2], "citation workflow binding");
+  const bindingRow = attempt === undefined ? null
+    : firstBatchRow<CitationBindingRow>(results[2], "citation workflow binding");
   if (receiptRow === null) {
     if (guardRow !== null || bindingRow !== null) {
       fail("EVIDENCE_SETTLEMENT_UNCERTAIN", "citation settlement has orphaned rows", { retryable: true });

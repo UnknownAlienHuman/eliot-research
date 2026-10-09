@@ -9,7 +9,6 @@ import {
   citationGuardInsert,
   citationReceiptInsert,
   citationResolutionReceiptDigestPayload,
-  loadCitationReceipt,
   loadCitationSettlement,
 } from "./citation-attempt-registry.js";
 import { canonicalEvidenceJson, evidenceSha256 } from "./canonical.js";
@@ -58,22 +57,21 @@ export async function persistCitationResolutionReceipt(
   let persistedReceipt = receipt;
   let persistedReceiptJson = input.receipt_json;
   let persistedReceiptSha256 = input.receipt_sha256;
-  if (input.attempt_binding !== undefined) {
-    const historical = await loadCitationSettlement(database, receipt, input.attempt_binding);
-    if (historical !== null) {
-      assertHistoricalCitationReceipt(historical, input, receipt);
-      persistedReceipt = historical.receipt;
-      persistedReceiptJson = historical.receipt_json;
-      persistedReceiptSha256 = historical.receipt_sha256;
-      if (historical.binding !== null) {
-        return assertBoundCitationSettlement(
-          historical,
-          persistedReceipt,
-          persistedReceiptJson,
-          persistedReceiptSha256,
-          input,
-        );
-      }
+  const historical = await loadCitationSettlement(database, receipt, input.attempt_binding);
+  if (historical !== null) {
+    assertHistoricalCitationReceipt(historical, input, receipt);
+    persistedReceipt = historical.receipt;
+    persistedReceiptJson = historical.receipt_json;
+    persistedReceiptSha256 = historical.receipt_sha256;
+    if (input.attempt_binding === undefined) return historical.receipt;
+    if (historical.binding !== null) {
+      return assertBoundCitationSettlement(
+        historical,
+        persistedReceipt,
+        persistedReceiptJson,
+        persistedReceiptSha256,
+        input,
+      );
     }
   }
 
@@ -125,8 +123,11 @@ export async function persistCitationResolutionReceipt(
         cause,
       });
     }
-    const raced = await loadCitationReceipt(database, receipt);
-    if (raced !== null && canonicalEvidenceJson(raced) === canonicalEvidenceJson(receipt)) return raced;
+    const raced = await loadCitationSettlement(database, receipt);
+    if (raced !== null) {
+      assertHistoricalCitationReceipt(raced, input, receipt);
+      return raced.receipt;
+    }
     fail("EVIDENCE_SETTLEMENT_UNCERTAIN", "citation resolution receipt transaction failed", {
       retryable: true,
       cause,
@@ -149,11 +150,12 @@ export async function persistCitationResolutionReceipt(
     );
   }
 
-  const readback = await loadCitationReceipt(database, receipt);
-  if (readback === null || canonicalEvidenceJson(readback) !== canonicalEvidenceJson(receipt)) {
+  const readback = await loadCitationSettlement(database, receipt);
+  if (readback === null) {
     fail("EVIDENCE_SETTLEMENT_UNCERTAIN", "citation resolution receipt readback mismatch", {
       retryable: true,
     });
   }
-  return readback;
+  assertHistoricalCitationReceipt(readback, input, receipt);
+  return readback.receipt;
 }
