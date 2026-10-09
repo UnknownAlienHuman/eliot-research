@@ -5,11 +5,13 @@ extraction/legacy compatibility. ER-49 owns static checkpoint definitions and cl
 
 ## Read before editing
 
-A manager first reads `docs/agent-work/frontend-autonomous-manager-runbook.md`. A leaf reads only:
+A manager first reads `docs/agent-work/frontend-material-agent-playbook.md`, then
+`docs/agent-work/frontend-autonomous-manager-runbook.md`. A UI leaf reads only:
 
 1. exact checkpoint in `docs/agent-work/frontend-owner-execution-map.md`;
-2. `docs/agent-work/ER-47-owner-web-interface.md`;
-3. `docs/agent-work/frontend-notebooklm-material-reference.md` for U1-R and rendered-product review;
+2. the applicable sections of `docs/agent-work/frontend-material-agent-playbook.md`;
+3. `docs/agent-work/ER-47-owner-web-interface.md`;
+4. `docs/agent-work/frontend-notebooklm-material-reference.md` for U1-R and rendered-product review;
 4. `docs/agent-work/frontend-current-contract-amendment-2026-10-09.md` when named by the checkpoint;
 5. affected catalog/story/scenario and exact client/DTO contract;
 6. its exact claim after ER-49 acceptance.
@@ -29,6 +31,13 @@ Conditional references:
 | performance | `frontend-performance-acceptance.md` |
 
 Do not preload complete frontend corpus for a small checkpoint.
+
+## Mandatory UI tool order
+
+For rendered UI work: exact checkpoint → Material agent playbook → U1-R receipt → Storybook `docs-list`/
+`docs-show` → accepted catalog/story → implementation → real Chrome inspection → Storybook `test-run` → scoped
+Playwright interaction/a11y/visual checks → receipt. Google Design MCP is mandatory for U1.2 proposals. Random
+design search and undocumented component props are prohibited.
 
 ## Manager, leaf and claim boundaries
 
@@ -56,8 +65,9 @@ When a durable owner comment authorizes a tranche, the manager selects and execu
 checkpoint without asking whether to continue. It repairs routine compile/test/dependency/layout/a11y/CSP/visual
 failures, prepares bounded B-U/B-C handoffs, reviews rendered output and advances until the tranche human gate.
 
-The manager asks the owner only for U1-D, U2-X, a real contract/security/ownership conflict, or unauthorized
-deploy/account/irreversible action. After two materially different failed approaches it writes a failure audit
+The manager does not ask the owner at U1-D or U2-X. It asks only for a real contract/security/ownership
+conflict, unavailable required authenticated browser after recovery attempts, unauthorized deploy/account/
+irreversible action, or FINAL-UI after U5-X. After two materially different failed approaches it writes a failure audit
 and changes approach instead of adding another local patch. Progress comments are limited to tranche start, a
 human gate, an exhausted hard blocker and tranche completion.
 

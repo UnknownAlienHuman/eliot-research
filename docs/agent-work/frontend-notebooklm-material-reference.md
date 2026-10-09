@@ -5,6 +5,7 @@
 usability approval. The owner reviews the finished integrated interface after U5-X and before merge/deploy.
 **Reference product:** the current live Google NotebookLM web application opened in an actual browser session.
 **Design system:** current official Material 3 and Material 3 Expressive guidance.
+**Exact implementation procedure:** [frontend-material-agent-playbook.md](frontend-material-agent-playbook.md).
 
 This protocol exists because reading design prose or installing shadcn components does not create a good
 product. The manager and UI leaves must inspect the real reference product, understand why it works, then build
@@ -39,16 +40,20 @@ Inspect at minimum:
 Record an observation matrix, screenshots, viewport/browser identity and measured geometry. The evidence is a
 reference study, not a pixel-copy specification.
 
-## 2. Official Google reference material
+Commit only private-data-free receipts under `tests/ui-owner/receipts/u1-r/**` as defined by the Material UI
+agent playbook. Raw authenticated screenshots remain private artifacts unless fully redacted and explicitly
+accepted.
 
-Read current official Google sources in addition to the live product:
+## 2. Official reference material
 
-- NotebookLM three-area redesign: `https://blog.google/innovation-and-ai/models-and-research/google-labs/notebooklm-new-features-december-2024/`
-- Material 3: `https://m3.material.io/`
-- Material 3 motion and Expressive motion schemes: `https://m3.material.io/styles/motion/overview/how-it-works`
+Read current official sources in addition to the live product. The complete allowlist, exact URLs and tool
+commands are in `frontend-material-agent-playbook.md`. Minimum required pages are Material color roles,
+typography, canonical adaptive layouts, components, motion physics/M3 Expressive, Google Design MCP, Chrome
+DevTools MCP, Storybook AI/MCP and Playwright visual/accessibility guidance.
 
 The live product wins over dated screenshots for current behavior. Official Material guidance wins over a
-third-party component library's defaults.
+third-party component library's defaults. Random dashboards, design galleries and community “Material” kits
+do not define Eliot.
 
 ## 3. What Eliot keeps from NotebookLM
 

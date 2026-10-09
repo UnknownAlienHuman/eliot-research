@@ -4,6 +4,7 @@
 [ADR-0016](../adr/0016-react-cloudflare-owner-ui.md).
 
 **Ownership:** ER-47 for `apps/eliotr-web`, `packages/ui`, and bounded UI tests/scripts.
+**Agent procedure:** [frontend-material-agent-playbook.md](../agent-work/frontend-material-agent-playbook.md).
 
 **Does not apply to:** backend authority, public documentation sites, or isolated `/agent-inbox/` transport
 except where it consumes approved non-private visual primitives.

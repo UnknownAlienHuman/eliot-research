@@ -58,7 +58,7 @@ No second frontend service, Pages project, API Worker, database or generic agent
 | Navigation/reads | React Router SPA + memory-only TanStack Query |
 | Styling/UI | Tailwind v4 syntax + one source-owned `@eliotr/ui` Material 3 system |
 | Primitives | native semantics first; Base UI candidate vs React Aria for one external composite family |
-| Review/tests | stable CSF catalog + Playwright + bounded visual receipts + explicit human gates |
+| Review/tests | stable CSF catalog + Playwright + bounded visual receipts + internal U1-D/U2-X and FINAL-UI owner review |
 | Progressive Research | polling/readback baseline; optional versioned public-event reader through ER-21/24 |
 | Realtime | Agents SDK only for separately approved durable surface |
 
@@ -236,7 +236,7 @@ U2-S Sources fixtures
 U2-R Research/progress/report/evidence fixtures
 U2-T Studio fixtures
 U2-C Connections fixtures
-→ U2-X integrated fixture journey + no-hint owner walkthrough
+→ U2-X integrated fixture journey + fresh-context no-hint internal audit
 ```
 
 U2-X uses a fresh-context independent tester for project/source/question/exact-evidence/artifact/Connections
@@ -262,7 +262,7 @@ Each claim names exact legacy compatibility files and leaves one maintained deco
 ```text
 C3-RC configuration
 C3-RR runs/status/control
-C3-RP optional public-progress reader
+C3-RP strict no-argument ResearchSession projection adapter
 C3-RH history/changes
 → manager gate C3-R
 
@@ -274,7 +274,8 @@ C3-S Studio/Wiki/artifacts
 C3-C Connections
 ```
 
-If no server event contract exists, C3-RP closes `NOT_APPLICABLE` and polling remains.
+C3-RP implements only the accepted `readResearchSessionProjection()` snapshot adapter. Canonical HTTP
+polling/status/history/readback remains detailed progress authority; no generic chat/event reader is created.
 
 ### U3 Sources real wiring
 
@@ -354,9 +355,9 @@ ER-49 DAG/claim/source-history/recovery mutation tests
 B-C/B-U frozen root-registration evidence
 scoped/root TS/ESLint/tests
 stories interaction/a11y/CSP
-U1-D rendered direction + owner approval
+U1-D rendered direction + manager decision receipt
 Playwright route/keyboard/network/overflow/page lifecycle/first paint
-U2-X no-hint owner walkthrough
+U2-X fresh-context no-hint internal audit
 range validator/representation/currentness negatives
 progress gap/reconnect/readback/no-run-replay
 bounded visual + P1-P10
