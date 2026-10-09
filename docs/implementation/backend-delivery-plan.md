@@ -17,6 +17,9 @@ No frontend, backup/export/restore, deployment, paid qualification or replay of
 the historical uncertain Research run is included. Native/live release criteria
 remain separate from compilation and scoped source checks.
 
+Current commits, bounded verification and remaining acceptance are recorded in
+[the October 8 source checkpoint](backend-checkpoint-2026-10-08.md).
+
 ## Historical October 6 stop and evidence
 
 Current bounded work, refreshed on 2026-10-06 for the assembled #294 checkpoint

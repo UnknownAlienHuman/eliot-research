@@ -15,6 +15,7 @@ the existing `main` checkout with disjoint write sets for #209, #321/#331,
 audit handoff protocol; this owner-directed run creates no additional worktree.
 No backup/export/restore, deployment, paid qualification or historical uncertain-run
 replay is included. Refer to [the current checkpoint](backend-delivery-plan.md)
+and [October 8 source evidence](backend-checkpoint-2026-10-08.md)
 for source/check results; deferred native and release criteria remain pending.
 
 This is the canonical day-to-day backend router. It does not replace product architecture, work-packet
@@ -55,7 +56,10 @@ One manager owns one worktree and one bounded checkpoint at a time.
 | E | [#332](https://github.com/UnknownAlienHuman/eliot-research/pull/332) | Ledger event read bound to the head frontier actually observed |
 | F | [#282](https://github.com/UnknownAlienHuman/eliot-research/pull/282) | Real emitted Worker/owner-web build budgets before formatting or size claims |
 
-Current bounded source-branch state:
+Current owner-directed source state is recorded in
+[the October 8 checkpoint](backend-checkpoint-2026-10-08.md). Compilation,
+source/native reproductions and exact-SHA review are reported separately there.
+The earlier audit handoff state below is retained as historical evidence:
 
 ```text
 #320 reconciled to current main; scoped workspace checks pending
