@@ -30,5 +30,10 @@ export function classifyCitationReceiptSettlement(
   if (receipt.rejected.some((item) => !LEGACY_PROVEN_CITATION_REJECTIONS.has(item.reason_code))) {
     return "UNCERTAIN";
   }
+  // V1 permits requested members with neither a resolution nor a rejection.
+  // Their absence cannot establish that verification settled or evidence failed.
+  if (receipt.resolved_count + receipt.rejected.length !== receipt.requested_count) {
+    return "UNCERTAIN";
+  }
   return receipt.rejected.length > 0 ? "PROVEN_INVALID" : "SETTLED";
 }
