@@ -3,6 +3,31 @@
 Status: implemented in source, not deployed or live-qualified. Common task semantics remain in
 [the computer-agent runbook](muse-operator-runbook.md); this document covers the browser transport only.
 
+October 9 bounded authentication qualification: the four existing `research.agent-task`
+operations, qualification confirmation and dispatch pull/accept/decline classify a
+verified service JWT as `trusted_agent`, matching their existing delegated-service
+authority. The seven federation operations retain `federation_client`; unrecognized
+service operations retain that default. Actual RSA/JWKS tokens reproduced the previous
+class mismatch for both the task and COMPUTER operations. Five focused cases pass for
+those eight operations, all seven federation operations, allowlist rejection and
+owner-token denial. Core source/test-project compilation and scoped lint also pass.
+
+Separate local Workerd qualification exercised actual `handleHttp`, signed owner
+challenge issuance, signed service WEB_INBOX confirmation, task pull, result and an
+identical duplicate callback. Real D1 grant/connection/qualification/route readers,
+R2, native Workflow, outbox/Queue/inbox and scientific `consumeResult` preserve the
+original attempt and commit Stage 8 once (next stage 9, revision 10). The callback
+receipt remains `RESULT_RECORDED` with `workflow_settled: false`; only canonical
+native readback establishes settlement. Missing WEB_INBOX qualification fails before
+task SQL. Earlier signed HTTP negatives reject an unlisted service, an owner token,
+missing Origin and Cookie before D1; missing WEB_INBOX capability also denies task SQL.
+
+The JWKS, initial admission, stages 1–6/retrieval lineage, budget and configuration
+profile are fixture inputs, and evidence is empty. The branch remains `UNASSESSED`.
+COMPUTER dispatch acceptance, selected production profiles/providers, nonempty exact
+evidence, the complete scientific pipeline, deployed Access/browser qualification
+and live/release acceptance remain open. These local results do not change that status.
+
 ## Deployment contour
 
 Build `@eliotr/pwa` normally. Its pre-build step compiles:

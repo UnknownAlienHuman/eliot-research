@@ -5,6 +5,7 @@ import {
   type AccessVerifier,
 } from "@eliotr/cloudflare-access";
 import type { AuthenticatedRequestContext, RouteDefinition } from "@eliotr/interfaces";
+import { isAgentTaskHttpOperation } from "@eliotr/cloudflare-http-protocol/agent-task-inbox-input.js";
 import type { Env } from "./env.js";
 import { OWNER_E2E_AUDIENCE, OWNER_E2E_ISSUER, parseServicePrincipals, resolveOwnerE2ETestFetch } from "./env.js";
 import { HttpRequestError } from "./http-errors.js";
@@ -14,6 +15,12 @@ interface AccessVerifierCache {
 }
 const traceIds = new WeakMap<Request, string>();
 const SAFE_TRACE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
+const COMPUTER_AGENT_SERVICE_OPERATIONS = new Set([
+  "computer-agent-qualifications.confirm",
+  "research.computer-agent-dispatches.pull",
+  "research.computer-agent-dispatches.accept",
+  "research.computer-agent-dispatches.decline",
+]);
 let accessVerifierCache: AccessVerifierCache | undefined;
 export function traceId(request: Request): string {
   const existing = traceIds.get(request);
@@ -76,7 +83,8 @@ export function authorize(
     request,
     principal_ref: identity.principal_ref,
     client_class: service
-      ? route.auth === "service" ? "federation_client" : "trusted_agent"
+      ? route.auth === "service" && !isAgentTaskHttpOperation(route.operation) &&
+        !COMPUTER_AGENT_SERVICE_OPERATIONS.has(route.operation) ? "federation_client" : "trusted_agent"
       : "owner_pwa",
     credential_generation: identity.credential_generation,
     trace_id: traceId(request),
