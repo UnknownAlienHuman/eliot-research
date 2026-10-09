@@ -402,8 +402,8 @@
   --color-surface-container: var(--md-sys-color-surface-container);
   --color-outline-variant: var(--md-sys-color-outline-variant);
   --font-sans: var(--eliot-type-font-family);
-  --breakpoint-medium: var(--eliot-layout-breakpoint-medium);
-  --breakpoint-expanded: var(--eliot-layout-breakpoint-expanded);
+  --breakpoint-medium: 48rem;
+  --breakpoint-expanded: 64rem;
 }
 
 /* Source-owned token catalogue. Each sample uses the documented role pair. */
