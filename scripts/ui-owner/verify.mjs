@@ -295,7 +295,8 @@ async function main(args) {
     if (!Array.isArray(stories) || !stories.length) throw new Error("Unknown story scenario");
     const paths = [...new Set(stories.map(story => requireKnownStory(story, catalog, index).importPath))];
     for (const path of paths) if (typeof path !== "string" || !/^\.\/src\/[\w/-]+\.stories\.tsx$/u.test(path) || path.includes("..")) throw new Error("Unsafe live story import path");
-    return execFileSync(process.execPath, [resolve(dirname(uiRequire.resolve("vitest/package.json")), "vitest.mjs"), "run", "--config", ".storybook/vitest.config.ts", ...paths], { cwd: resolve(ROOT, "packages/ui"), encoding: "utf8" });
+    const names = stories.map(story => requireKnownStory(story, catalog, index).name.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&") + "$" ).join("|");
+    return execFileSync(process.execPath, [resolve(dirname(uiRequire.resolve("vitest/package.json")), "vitest.mjs"), "run", "--config", ".storybook/vitest.config.ts", "--testNamePattern", names, ...paths], { cwd: resolve(ROOT, "packages/ui"), encoding: "utf8" });
   }
   throw new Error("Usage: node scripts/ui-owner/verify.mjs design|props|history|stories|browser|a11y|visual|receipt|csp [--base-url URL --scenario ID --story ID --output PRIVATE_PATH --baseline REVIEWED_RECEIPT --browser PINNED_EXECUTABLE]");
 }
