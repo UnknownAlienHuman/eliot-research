@@ -1,0 +1,63 @@
+{
+  "protocol": "eliotr.ui-review-receipt.v1",
+  "checkpoint": "U2-X",
+  "status": "ACCEPTED_INTERNAL_FIXTURE",
+  "source_commits": {
+    "U2-S": "ff85ee4827366bac620750010f2e648c51d3bea9",
+    "U2-R": "273577c9ae45a1bf94ebcb5be77906c1f15ded92",
+    "U2-T": "0cd674968809e64526f411d228802f10457cf492",
+    "U2-C": "a86901bc9e5523a0047f20509c5d218b62c2c997"
+  },
+  "reference": "U1-R current NotebookLM study, accepted Material roles and U1-D shell direction",
+  "evidence": [
+    "tests/ui-owner/receipts/u2-x/viewport-journey.json",
+    "tests/ui-owner/receipts/u2-x/states.json",
+    "tests/ui-owner/receipts/u2-x/u2-s.json",
+    "tests/ui-owner/receipts/u2-x/u2-r.json",
+    "tests/ui-owner/receipts/u2-x/u2-t.json",
+    "tests/ui-owner/receipts/u2-x/u2-c.json"
+  ],
+  "fresh_context": {
+    "reviewer": "01a1221c-7ef0-7981-8ca4-2d7491c64442",
+    "scope": "No-hint synthetic project/source/question/sample exact-evidence/context/Studio/Connections journey at1440EN and390RU; final bounded390RU keyboard/clear/live-region probe",
+    "status": "PASS",
+    "privateFinal": ".eliotr-state/ui-owner/u2-independent/result-fu-fin.json",
+    "sha256": "f6613b9c6196c687eba5a66118a9ee772d820b2b42cc811a9a0569679d3baa83",
+    "screenshots": [
+      {
+        "file": "fu-fin-f1-set.png",
+        "sha256": "c9af48b3628ab84c0d3474ed1abfb23844991710bc976989fe8a5a7e220d1d25"
+      },
+      {
+        "file": "fu-fin-f2-pre-tab.png",
+        "sha256": "4bb8a485dfcf2b1d17bf974ad13b9b0cb780ba9e9412760182463e0550bf01c5"
+      },
+      {
+        "file": "fu-fin-f3-after-enter.png",
+        "sha256": "742031e25328e5f3bededbad498e37791f31f2e80a55d39bcbcd69417eecb140"
+      },
+      {
+        "file": "fu-fin-f4-after-clear.png",
+        "sha256": "f1077abe132ea91594243c33193cfad118f7bef077a210d89c385d2fc4db77d9"
+      }
+    ]
+  },
+  "audit_corrections": [
+    "Initial getByText Ask matched a heading; exact button-role click agrees with Enter.",
+    "Empty or already recorded question disables submit; populated pre-submit question enables it. Manager CUA390EN and scoped browser4contexts demonstrate actual Tab focus.",
+    "Privacy guard remains hidden outside verification; no stalled visible live region."
+  ],
+  "repairs": [
+    "Visible unadmitted source reason with aria-describedby.",
+    "Explicit no-answer preview copy, recorded question and frozen source count.",
+    "Clear empties field and returns focus."
+  ],
+  "retained_checks": "20contexts/80screens;60state renders; Connections12state repair; Sources12reason followups; Research4clarity followups and1focused story after final source change. Owning compiler/lint/design PASS. Passing unrelated suites retained.",
+  "negative": "No reparenting/nested scroll/keyboard trap across retained matrix. No direct API/provider call in fixtures, no fabricated answer or altered historical scope. No autoaccept of visual pixels.",
+  "limitations": [
+    "Fixture UX only; real U3-U5 wiring remains required.",
+    "Native screen reader, actual200percentzoom, fullWorkerCSP/performance/bundle, staging/live/release remain PENDING.",
+    "No deployment/cutover/legacy deletion authorized."
+  ],
+  "goal": "ACTIVE"
+}

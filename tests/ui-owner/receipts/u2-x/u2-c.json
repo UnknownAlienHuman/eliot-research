@@ -1,0 +1,70 @@
+{
+  "protocol": "eliotr.ui-review-receipt.v1",
+  "checkpoint": "U2-C",
+  "claim_id": "u2-c-connections-fixture-20261009",
+  "predecessors": [
+    {
+      "checkpoint_id": "U1.2",
+      "commit_sha": "6aa4504d78b7fbeb4c1182eb7ecece52016b97db"
+    },
+    {
+      "checkpoint_id": "U1.3",
+      "commit_sha": "06e7a3b09978a95311d03fd3aec4706ce3a68d22"
+    },
+    {
+      "checkpoint_id": "U1.4",
+      "commit_sha": "60e2550071795db3ab207a0beba491eee13d002a"
+    },
+    {
+      "checkpoint_id": "U1.5",
+      "commit_sha": "328913e8c67110780387fc3464362adb21ff340e",
+      "approval_ref": "tests/ui-owner/receipts/u1-d/shell.json"
+    }
+  ],
+  "source_commit": "a86901bc9e5523a0047f20509c5d218b62c2c997",
+  "status": "ACCEPTED_INTERNAL_FIXTURE",
+  "source_dirty": "EMPTY exact claimed paths at manager acceptance",
+  "versions": {
+    "React": "19.3.0",
+    "TypeScript": "6.0.3",
+    "Storybook": "10.6.1",
+    "Vitest": "4.1.11",
+    "Playwright": "1.63.0",
+    "Chrome": "155.0.8059.40",
+    "Node": "25.6.1",
+    "OS": "Windows10.0.26300",
+    "Axe": "4.14.0"
+  },
+  "reference": "tests/ui-owner/receipts/u1-r/reference-study.md and observation-matrix.json; retain question/source/evidence hierarchy, explicit source scope, supporting panes and Material roles; Eliot excludes unsupported generators and transcript",
+  "design": "Accepted semantic tokens/local symbols reused; new palette/font/icon generation unnecessary",
+  "catalog": "packages/ui/src/catalog/catalog.json",
+  "stories": [
+    "packages/ui/src/stories/connections/fixtures/Connections.stories.tsx"
+  ],
+  "commands": {
+    "compiler": "pnpm exec tsc -b apps/eliotr-web/tsconfig.json --pretty false: PASS",
+    "lint": "Exact UI patterns/stories and app integration ESLint: PASS",
+    "design": "node scripts/ui-owner/verify.mjs design: 44files +seedednegativePASS",
+    "stories": "Four real interaction journeys PASS; exact Sources controlled-dialog followupPASS, Research/Studio two affected journeys +six new uncertainty/budget/cancellation storiesPASS",
+    "browser": "viewport-journey.json:20width/locale/theme contexts,80screens; states.json:60state renders; Connections repaired CSS qualified in12exact state followups"
+  },
+  "mandatory_negative": "Check affects onlyserverand historicalobservation; clearsampleobservation leavesotherfactsunchanged; signinonlysession; configurationneverConnected",
+  "findings": {
+    "console": "PASS noerrors",
+    "network": "PASS noexternal/APIrequests infixture",
+    "a11y": "PASS WCAG2A/AA+2.1AA Axe",
+    "focusBack": "PASS localcontextfirst, dialogopenerreturn, destinationheadingfocus",
+    "scroll": "PASS singleverticalscrollownerperpane, nonestedscroll, nooverflow320-1440",
+    "roots": "PASS persistedfeatureDOMnodes andparentsacrossroutes/breakpoints",
+    "independentAudit": "PASS fresh-context browser flow with corrected role clicks; final390RU confirms enabled populated submit, polite acknowledgement and empty/focused Clear"
+  },
+  "evidence": [
+    "tests/ui-owner/receipts/u2-x/viewport-journey.json",
+    "tests/ui-owner/receipts/u2-x/states.json"
+  ],
+  "screenshots": "Private .eliotr-state/ui-owner/u2-review andu2-states; SHA256digests in citedmatrices; rawsyntheticscreenshots notcommitted; newbaseline notautoaccepted",
+  "limitations": [
+    "Fixtureonly, realU3-U5wiringpending",
+    "Native screenreader,actual200percentzoom, highcontrast fullmatrix, fullWorkerCSP/performance/bundle, staging/live/releasePENDING"
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "protocol": "eliotr.ui-review-receipt.v1",
+  "checkpoint": "C1.3",
+  "claim_id": "c1-3-binary-upload-20261009",
+  "status": "ACCEPTED_INTERNAL_CLIENT",
+  "source_commit": "d119d806b9088d75711caed55b39276f3c021d67",
+  "scope": "Explicit bounded binary upload over the existing request policy",
+  "behavior": "POST/PUT only; caller supplies bytes, positive maximumBytes and MIME. Clone before the first await. Preserve same-origin path, protected headers, CSRF, idempotency, deadlines, epoch fencing, problem and JSON decoding. Ordinary JSON retains string-only bodies; no retry or generated identity.",
+  "checks": {
+    "tests": "Existing12 transport PASS plus6 upload coverage: initial17PASS/1test-expectationFAIL; test corrected to actual API_STATUS_INVALID, exactcase1PASS/5skipped. Other passing cases retained.",
+    "compiler": "TypeScript6.0.3 owning C1/C2-L/R/N/Reader virtual solution PASS0diagnostics394outputs; unfinished feature leaves excluded and no checkout outputs written",
+    "lint": "Exact2 transport files PASS"
+  },
+  "negative": "Caller mutation cannot change transmitted bytes; oversized or invalid method/media rejected before dispatch; stale epoch cannot return protected output; endpoint status policy retained.",
+  "limitations": [
+    "This accepts transport capability only. Import operations, browser lifecycle and full product/release qualification remain pending."
+  ]
+}

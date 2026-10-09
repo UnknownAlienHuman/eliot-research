@@ -1,0 +1,673 @@
+{
+  "status": "PASS",
+  "browser": "155.0.8059.40",
+  "results": [
+    {
+      "width": 1440,
+      "theme": "light",
+      "scenario": "product-sources--useful",
+      "metrics": {
+        "overflow": false,
+        "violations": []
+      },
+      "screenshot": "1440-light-product-sources--useful.png",
+      "sha256": "ae3174de255a1d82dce08dd27cf474cfb75d247d9d21893e3597fa085703dc9e"
+    },
+    {
+      "width": 1440,
+      "theme": "light",
+      "scenario": "product-sources--loading",
+      "metrics": {
+        "overflow": false,
+        "violations": []
+      },
+      "screenshot": "1440-light-product-sources--loading.png",
+      "sha256": "29119473a7c5b0a6afdf0f8a239c4ed683c0f4d498617fd614db23ab49a8bee2"
+    },
+    {
+      "width": 1440,
+      "theme": "light",
+      "scenario": "product-sources--empty",
+      "metrics": {
+        "overflow": false,
+        "violations": []
+      },
+      "screenshot": "1440-light-product-sources--empty.png",
+      "sha256": "ec4312a19e2bb34cc5203833d4c72f1abbbd2440103d34bfb0d5cca083fc5eff"
+    },
+    {
+      "width": 1440,
+      "theme": "light",
+      "scenario": "product-sources--degraded",
+      "metrics": {
+        "overflow": false,
+        "violations": []
+      },
+      "screenshot": "1440-light-product-sources--degraded.png",
+      "sha256": "27b3cf24301ee58c1e8d017a093185dd81451a7261cb9c964cd7eb14075dc081"
+    },
+    {
+      "width": 1440,
+      "theme": "light",
+      "scenario": "product-sources--error",
+      "metrics": {
+        "overflow": false,
+        "violations": []
+      },
+      "screenshot": "1440-light-product-sources--error.png",
+      "sha256": "c243ece94e779d5c6850b201e1f8483c1b231ee1391bd937c5a8597b2d254210"
+    },
+    {
+      "width": 1440,
+      "theme": "light",
+      "scenario": "product-sources--long-russian",
+      "metrics": {
+        "overflow": false,
+        "violations": []
+      },
+      "screenshot": "1440-light-product-sources--long-russian.png",
+      "sha256": "ec1c41adba14e5b1b31557367e2627e1f8b28b0d32fa58f8af8b87aaffefceba"
+    },
+    {
+      "width": 1440,
+      "theme": "light",
+      "scenario": "product-research--useful",
+      "metrics": {
+        "overflow": false,
+        "violations": []
+      },
+      "screenshot": "1440-light-product-research--useful.png",
+      "sha256": "becba704758abb9817d79fb3196b589f721500235b61d36dfb063e3239d70fa4"
+    },
+    {
+      "width": 1440,
+      "theme": "light",
+      "scenario": "product-research--loading",
+      "metrics": {
+        "overflow": false,
+        "violations": []
+      },
+      "screenshot": "1440-light-product-research--loading.png",
+      "sha256": "7a15a21dfd0e04719c12bea2b463fed174256f4b866ae42db34649ec0571abc3"
+    },
+    {
+      "width": 1440,
+      "theme": "light",
+      "scenario": "product-research--empty",
+      "metrics": {
+        "overflow": false,
+        "violations": []
+      },
+      "screenshot": "1440-light-product-research--empty.png",
+      "sha256": "16cb7e70cff019a4571b73948bac5dbdde24560102758bf871c5bc5b56a457ae"
+    },
+    {
+      "width": 1440,
+      "theme": "light",
+      "scenario": "product-research--degraded",
+      "metrics": {
+        "overflow": false,
+        "violations": []
+      },
+      "screenshot": "1440-light-product-research--degraded.png",
+      "sha256": "af947f3025475690f077b3bab7e65c5f5a9860f62f1991af08e7688ddf9ff306"
+    },
+    {
+      "width": 1440,
+      "theme": "light",
+      "scenario": "product-research--error",
+      "metrics": {
+        "overflow": false,
+        "violations": []
+      },
+      "screenshot": "1440-light-product-research--error.png",
+      "sha256": "6ebe9e1ce3f6eb7837731f40f4eff39796fb91853ba4a7d1a5effded3edb1672"
+    },
+    {
+      "width": 1440,
+      "theme": "light",
+      "scenario": "product-research--long-russian",
+      "metrics": {
+        "overflow": false,
+        "violations": []
+      },
+      "screenshot": "1440-light-product-research--long-russian.png",
+      "sha256": "126257a4a2d1028d0c809604b5e9c69dce8ebb98c27ec214d992d6ce82eef043"
+    },
+    {
+      "width": 1440,
+      "theme": "light",
+      "scenario": "product-research--outcome-unknown",
+      "metrics": {
+        "overflow": false,
+        "violations": []
+      },
+      "screenshot": "1440-light-product-research--outcome-unknown.png",
+      "sha256": "391cccfd60f3cdcca5c548d3d1320b24e74c569fcdd715e832d4f5662616721d"
+    },
+    {
+      "width": 1440,
+      "theme": "light",
+      "scenario": "product-research--candidate-limit",
+      "metrics": {
+        "overflow": false,
+        "violations": []
+      },
+      "screenshot": "1440-light-product-research--candidate-limit.png",
+      "sha256": "77ca1f70ab716b356b3dc73b2ff81617333ca051656be578794c7bc2c5a3f6f5"
+    },
+    {
+      "width": 1440,
+      "theme": "light",
+      "scenario": "product-research--scan-limit",
+      "metrics": {
+        "overflow": false,
+        "violations": []
+      },
+      "screenshot": "1440-light-product-research--scan-limit.png",
+      "sha256": "01b112d372919b91d8d25f10f351c88bcde52572caef62faea94e1600bc3ad03"
+    },
+    {
+      "width": 1440,
+      "theme": "light",
+      "scenario": "product-research--evidence-limit",
+      "metrics": {
+        "overflow": false,
+        "violations": []
+      },
+      "screenshot": "1440-light-product-research--evidence-limit.png",
+      "sha256": "9653a828f75c0da873fa92b0d452f9fa6f4295d01f7af8b2304cbe84598e61ab"
+    },
+    {
+      "width": 1440,
+      "theme": "light",
+      "scenario": "product-research--context-limit",
+      "metrics": {
+        "overflow": false,
+        "violations": []
+      },
+      "screenshot": "1440-light-product-research--context-limit.png",
+      "sha256": "cf186063c45795acf11ffb7890dadf8c1645bba7e9aa15fb88f9de6cec210a8f"
+    },
+    {
+      "width": 1440,
+      "theme": "light",
+      "scenario": "product-studio--useful",
+      "metrics": {
+        "overflow": false,
+        "violations": []
+      },
+      "screenshot": "1440-light-product-studio--useful.png",
+      "sha256": "76c9d279cdaed61aa726f6032645582d4998c4ab4087f316fd34a2e940be13a9"
+    },
+    {
+      "width": 1440,
+      "theme": "light",
+      "scenario": "product-studio--loading",
+      "metrics": {
+        "overflow": false,
+        "violations": []
+      },
+      "screenshot": "1440-light-product-studio--loading.png",
+      "sha256": "6529423e283c20f0ea7d6c638d93406bdb25511f9552bf9c638a84ee4d25f537"
+    },
+    {
+      "width": 1440,
+      "theme": "light",
+      "scenario": "product-studio--empty",
+      "metrics": {
+        "overflow": false,
+        "violations": []
+      },
+      "screenshot": "1440-light-product-studio--empty.png",
+      "sha256": "646bb9837cfadad06c6505687e128dd564b56ebaae13a14a010362c06cfb8499"
+    },
+    {
+      "width": 1440,
+      "theme": "light",
+      "scenario": "product-studio--degraded",
+      "metrics": {
+        "overflow": false,
+        "violations": []
+      },
+      "screenshot": "1440-light-product-studio--degraded.png",
+      "sha256": "e46232962ad2b8f419c03cfe2090990101089c1e99b42b2622335451bb65296d"
+    },
+    {
+      "width": 1440,
+      "theme": "light",
+      "scenario": "product-studio--error",
+      "metrics": {
+        "overflow": false,
+        "violations": []
+      },
+      "screenshot": "1440-light-product-studio--error.png",
+      "sha256": "745dc72b5fdb3db85f09162826a42753acb2af7508ecb279074988d798d63062"
+    },
+    {
+      "width": 1440,
+      "theme": "light",
+      "scenario": "product-studio--long-russian",
+      "metrics": {
+        "overflow": false,
+        "violations": []
+      },
+      "screenshot": "1440-light-product-studio--long-russian.png",
+      "sha256": "4d9cb60bfd4ac80aeecc34ecbcce7dacede269c967f344f04cb41e732393732c"
+    },
+    {
+      "width": 1440,
+      "theme": "light",
+      "scenario": "product-studio--cancelled",
+      "metrics": {
+        "overflow": false,
+        "violations": []
+      },
+      "screenshot": "1440-light-product-studio--cancelled.png",
+      "sha256": "35e1580f3855d5a3c14fb7df8bffa4aa3e4c2f3a0ab08e4c503e54d61a72c490"
+    },
+    {
+      "width": 390,
+      "theme": "dark",
+      "scenario": "product-sources--useful",
+      "metrics": {
+        "overflow": false,
+        "violations": []
+      },
+      "screenshot": "390-dark-product-sources--useful.png",
+      "sha256": "11674eb39129946e7e282b7314e1439624f848a90b53011e776823b026c79ca3"
+    },
+    {
+      "width": 390,
+      "theme": "dark",
+      "scenario": "product-sources--loading",
+      "metrics": {
+        "overflow": false,
+        "violations": []
+      },
+      "screenshot": "390-dark-product-sources--loading.png",
+      "sha256": "f5a94a4783960f2a7826262e6188236dd872c84aef56a394c68fff29eeea6523"
+    },
+    {
+      "width": 390,
+      "theme": "dark",
+      "scenario": "product-sources--empty",
+      "metrics": {
+        "overflow": false,
+        "violations": []
+      },
+      "screenshot": "390-dark-product-sources--empty.png",
+      "sha256": "02788526ddf4947559fd6f39a1ba22653165d15425d6b804edd594ad25f99d9c"
+    },
+    {
+      "width": 390,
+      "theme": "dark",
+      "scenario": "product-sources--degraded",
+      "metrics": {
+        "overflow": false,
+        "violations": []
+      },
+      "screenshot": "390-dark-product-sources--degraded.png",
+      "sha256": "fd444df0637f09471e9be7292e953b91a0ce7ae19c2a60b85081276ab65f22da"
+    },
+    {
+      "width": 390,
+      "theme": "dark",
+      "scenario": "product-sources--error",
+      "metrics": {
+        "overflow": false,
+        "violations": []
+      },
+      "screenshot": "390-dark-product-sources--error.png",
+      "sha256": "2325c8f549e1ef2a97861a69c6e1b578f644ff367a53d46d16975bc94dd831b5"
+    },
+    {
+      "width": 390,
+      "theme": "dark",
+      "scenario": "product-sources--long-russian",
+      "metrics": {
+        "overflow": false,
+        "violations": []
+      },
+      "screenshot": "390-dark-product-sources--long-russian.png",
+      "sha256": "9301ec802e045674e2855bcc792039fe5a40bc770520c65d39f707363a4d2dde"
+    },
+    {
+      "width": 390,
+      "theme": "dark",
+      "scenario": "product-research--useful",
+      "metrics": {
+        "overflow": false,
+        "violations": []
+      },
+      "screenshot": "390-dark-product-research--useful.png",
+      "sha256": "0e292e7f0f35755b03a07996d6095af293cfaf50045aa1a0f42e6d5b8865c1ef"
+    },
+    {
+      "width": 390,
+      "theme": "dark",
+      "scenario": "product-research--loading",
+      "metrics": {
+        "overflow": false,
+        "violations": []
+      },
+      "screenshot": "390-dark-product-research--loading.png",
+      "sha256": "1631a3b32d45cd23470142c0822c111d7561d087bd0550cb7502a18b39c60004"
+    },
+    {
+      "width": 390,
+      "theme": "dark",
+      "scenario": "product-research--empty",
+      "metrics": {
+        "overflow": false,
+        "violations": []
+      },
+      "screenshot": "390-dark-product-research--empty.png",
+      "sha256": "cc1295efef30fe36fc1c4db78c2af88ef3b60a8e548b9e65384350544c7ff775"
+    },
+    {
+      "width": 390,
+      "theme": "dark",
+      "scenario": "product-research--degraded",
+      "metrics": {
+        "overflow": false,
+        "violations": []
+      },
+      "screenshot": "390-dark-product-research--degraded.png",
+      "sha256": "b3d13d96f1ef89eacdba8d0c2c4422d283c7840857acf6f91a175d566c27aa61"
+    },
+    {
+      "width": 390,
+      "theme": "dark",
+      "scenario": "product-research--error",
+      "metrics": {
+        "overflow": false,
+        "violations": []
+      },
+      "screenshot": "390-dark-product-research--error.png",
+      "sha256": "e0e3fdf8ddc3f347c809eb4d5c36714e6658ed229f8018e1bcd1fb0daec03ab8"
+    },
+    {
+      "width": 390,
+      "theme": "dark",
+      "scenario": "product-research--long-russian",
+      "metrics": {
+        "overflow": false,
+        "violations": []
+      },
+      "screenshot": "390-dark-product-research--long-russian.png",
+      "sha256": "0864887e1e10ee71f67b03b1e2a803dd7d989af0ac1c6617560fe47e07081cc0"
+    },
+    {
+      "width": 390,
+      "theme": "dark",
+      "scenario": "product-research--outcome-unknown",
+      "metrics": {
+        "overflow": false,
+        "violations": []
+      },
+      "screenshot": "390-dark-product-research--outcome-unknown.png",
+      "sha256": "9eb56d052c4eb08c3c61b3b635e44135f332291a99faac354f58db4797932897"
+    },
+    {
+      "width": 390,
+      "theme": "dark",
+      "scenario": "product-research--candidate-limit",
+      "metrics": {
+        "overflow": false,
+        "violations": []
+      },
+      "screenshot": "390-dark-product-research--candidate-limit.png",
+      "sha256": "050cac4559d0780f509313225cd9a6b8f375b282072a1da5d9abcfcf485b92b0"
+    },
+    {
+      "width": 390,
+      "theme": "dark",
+      "scenario": "product-research--scan-limit",
+      "metrics": {
+        "overflow": false,
+        "violations": []
+      },
+      "screenshot": "390-dark-product-research--scan-limit.png",
+      "sha256": "2ef88e8b341c635cc3e058e493eb063a48951204d94f26e564f37799ce42d48c"
+    },
+    {
+      "width": 390,
+      "theme": "dark",
+      "scenario": "product-research--evidence-limit",
+      "metrics": {
+        "overflow": false,
+        "violations": []
+      },
+      "screenshot": "390-dark-product-research--evidence-limit.png",
+      "sha256": "39fe4923c21cb2b7df9decc07e9678671ba3c67911eccb1b3e80621fde0ce235"
+    },
+    {
+      "width": 390,
+      "theme": "dark",
+      "scenario": "product-research--context-limit",
+      "metrics": {
+        "overflow": false,
+        "violations": []
+      },
+      "screenshot": "390-dark-product-research--context-limit.png",
+      "sha256": "21fb6d0beb8befe59294e6b6e232702c66cf13515c3987af049478eea720330e"
+    },
+    {
+      "width": 390,
+      "theme": "dark",
+      "scenario": "product-studio--useful",
+      "metrics": {
+        "overflow": false,
+        "violations": []
+      },
+      "screenshot": "390-dark-product-studio--useful.png",
+      "sha256": "37d2bc6e46c04a400b452423bafd4aa92d7f6fb44ee377e52a54b2a74b98efe9"
+    },
+    {
+      "width": 390,
+      "theme": "dark",
+      "scenario": "product-studio--loading",
+      "metrics": {
+        "overflow": false,
+        "violations": []
+      },
+      "screenshot": "390-dark-product-studio--loading.png",
+      "sha256": "93c50cdd6abe7268ee7a37b48d9e59cdab6f7a16b866b99bf11e8a0efcf8ce39"
+    },
+    {
+      "width": 390,
+      "theme": "dark",
+      "scenario": "product-studio--empty",
+      "metrics": {
+        "overflow": false,
+        "violations": []
+      },
+      "screenshot": "390-dark-product-studio--empty.png",
+      "sha256": "cd348b8e42d6ba9899e11e3831e28f35d6e4f0042f52cf10f7a4e37d9d1ba3ed"
+    },
+    {
+      "width": 390,
+      "theme": "dark",
+      "scenario": "product-studio--degraded",
+      "metrics": {
+        "overflow": false,
+        "violations": []
+      },
+      "screenshot": "390-dark-product-studio--degraded.png",
+      "sha256": "c79f9db97841795d82e3f76b64b526912560041333b6d7350ebf5825338b556b"
+    },
+    {
+      "width": 390,
+      "theme": "dark",
+      "scenario": "product-studio--error",
+      "metrics": {
+        "overflow": false,
+        "violations": []
+      },
+      "screenshot": "390-dark-product-studio--error.png",
+      "sha256": "e1f4442760974f99ce1f90cac1aa0b7eb7343a565a84b8bc02b1411c14ec9c1e"
+    },
+    {
+      "width": 390,
+      "theme": "dark",
+      "scenario": "product-studio--long-russian",
+      "metrics": {
+        "overflow": false,
+        "violations": []
+      },
+      "screenshot": "390-dark-product-studio--long-russian.png",
+      "sha256": "f28a01b387b8f14a8eb905e54bd7aba784c4dbc4d2f5139b9f1e95336f47180f"
+    },
+    {
+      "width": 390,
+      "theme": "dark",
+      "scenario": "product-studio--cancelled",
+      "metrics": {
+        "overflow": false,
+        "violations": []
+      },
+      "screenshot": "390-dark-product-studio--cancelled.png",
+      "sha256": "c67a5babf3a1dde40095c6baa53423202806a7c7b932c608ffdb01db209f216c"
+    },
+    {
+      "width": 1440,
+      "theme": "light",
+      "scenario": "product-connections--useful",
+      "metrics": {
+        "overflow": false,
+        "violations": []
+      },
+      "screenshot": "1440-light-product-connections--useful.png",
+      "sha256": "884d94a7315261c3099ae46c6ea6db02a6cc544f346fb9389cefcab7c1a13240"
+    },
+    {
+      "width": 1440,
+      "theme": "light",
+      "scenario": "product-connections--loading",
+      "metrics": {
+        "overflow": false,
+        "violations": []
+      },
+      "screenshot": "1440-light-product-connections--loading.png",
+      "sha256": "da6d634a303d14ab31d00df0baeb52a813dd6b47993c994e783c65792115f0d6"
+    },
+    {
+      "width": 1440,
+      "theme": "light",
+      "scenario": "product-connections--empty",
+      "metrics": {
+        "overflow": false,
+        "violations": []
+      },
+      "screenshot": "1440-light-product-connections--empty.png",
+      "sha256": "6ebd9723a4ac467a13897ba656c4b0862505e74857a7b503bd75e1c481b96cae"
+    },
+    {
+      "width": 1440,
+      "theme": "light",
+      "scenario": "product-connections--degraded",
+      "metrics": {
+        "overflow": false,
+        "violations": []
+      },
+      "screenshot": "1440-light-product-connections--degraded.png",
+      "sha256": "ada581b378ab926e001bb441b1723db48e7aff5c60c001a333de5ebb7f1960b5"
+    },
+    {
+      "width": 1440,
+      "theme": "light",
+      "scenario": "product-connections--error",
+      "metrics": {
+        "overflow": false,
+        "violations": []
+      },
+      "screenshot": "1440-light-product-connections--error.png",
+      "sha256": "8093ce904f61867d28c92b7acd2af39209203fc88ad4fc4aa1e9e0e4dd1ab7cd"
+    },
+    {
+      "width": 1440,
+      "theme": "light",
+      "scenario": "product-connections--long-russian",
+      "metrics": {
+        "overflow": false,
+        "violations": []
+      },
+      "screenshot": "1440-light-product-connections--long-russian.png",
+      "sha256": "f9d73073a859de5c683ac59c44efd4275997a0ee5966628a29546ebdadb83372"
+    },
+    {
+      "width": 390,
+      "theme": "dark",
+      "scenario": "product-connections--useful",
+      "metrics": {
+        "overflow": false,
+        "violations": []
+      },
+      "screenshot": "390-dark-product-connections--useful.png",
+      "sha256": "f14f87c30ee9ba334f1bb017b426295dc748bdc575611ddc1cb40eb18521c75c"
+    },
+    {
+      "width": 390,
+      "theme": "dark",
+      "scenario": "product-connections--loading",
+      "metrics": {
+        "overflow": false,
+        "violations": []
+      },
+      "screenshot": "390-dark-product-connections--loading.png",
+      "sha256": "36d1433bbc611ef629e32d8b3bd7dfad1c94d89a536e5ffa882dd1283c43c286"
+    },
+    {
+      "width": 390,
+      "theme": "dark",
+      "scenario": "product-connections--empty",
+      "metrics": {
+        "overflow": false,
+        "violations": []
+      },
+      "screenshot": "390-dark-product-connections--empty.png",
+      "sha256": "7cbef9ca4466d62460829b7f6650c05542212bde4c183fe9b72ece32ffd0e80b"
+    },
+    {
+      "width": 390,
+      "theme": "dark",
+      "scenario": "product-connections--degraded",
+      "metrics": {
+        "overflow": false,
+        "violations": []
+      },
+      "screenshot": "390-dark-product-connections--degraded.png",
+      "sha256": "eb975ea30a45b8f87211c42290562c673d0b45a4b0fd2b489a745cb25135c7d5"
+    },
+    {
+      "width": 390,
+      "theme": "dark",
+      "scenario": "product-connections--error",
+      "metrics": {
+        "overflow": false,
+        "violations": []
+      },
+      "screenshot": "390-dark-product-connections--error.png",
+      "sha256": "6e8f4e3ef31fe4cc513455ee60b495576435acf80eebfbfc714bb6b40c99fca6"
+    },
+    {
+      "width": 390,
+      "theme": "dark",
+      "scenario": "product-connections--long-russian",
+      "metrics": {
+        "overflow": false,
+        "violations": []
+      },
+      "screenshot": "390-dark-product-connections--long-russian.png",
+      "sha256": "b11ec432020a1b517e620712a35a368f0c7332485a6fe7a29fa414ac245cde7b"
+    }
+  ],
+  "repair": "Long Russian diagnostic min-content overflow repaired. Retained48 other-screen states plus exact12 Connections states after repair; all60PASS.",
+  "source_commits": {
+    "U2-S": "a67a8b7022239a8c193eb579f9743167029b6feb",
+    "U2-R": "e3a39aeddf73901bf2ee2ab5f37d4232776499ee",
+    "U2-T": "0cd674968809e64526f411d228802f10457cf492",
+    "U2-C": "e16426967c30453488a707c9d1fa552954d4e6f2"
+  }
+}

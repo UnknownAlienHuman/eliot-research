@@ -5,8 +5,10 @@
   "owner_authorization_ref": "tests/ui-owner/receipts/owner-authorization.json",
   "base_sha": "22cc042ce07cd3a89897eb98d29a6431b5d15d0b",
   "history_base_sha": "c37e56e0ebdfc7f6d294879008a4036d1b95b985",
-  "state": "ACTIVE",
-  "evidence_refs": [],
+  "state": "HANDED_OFF",
+  "evidence_refs": [
+    "git:d119d806b9088d75711caed55b39276f3c021d67;18casecoverage, scopedowningcompiler andexact2lintPASS; transportonly"
+  ],
   "blocker_refs": [],
   "claim_id": "c1-3-binary-upload-20261009",
   "checkpoint_id": "C1.3",
@@ -25,5 +27,7 @@
       "checkpoint_id": "C1.2",
       "commit_sha": "e1a400533ef113b486165b96fa7fa8be53866cce"
     }
-  ]
+  ],
+  "handoff_reason": "COMPLETED",
+  "handoff_receipt_ref": "tests/ui-owner/receipts/u1-d/client-binary.json"
 }

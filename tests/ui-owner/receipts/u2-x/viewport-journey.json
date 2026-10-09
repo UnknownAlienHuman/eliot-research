@@ -1,0 +1,1630 @@
+{
+  "checkpoint": "U2",
+  "status": "PASS",
+  "browser": "155.0.8059.40",
+  "playwright": "1.63.0",
+  "inputs": [
+    {
+      "path": "packages/ui/src/patterns/sources/fixtures/SourcesFixture.tsx",
+      "sha256": "34ca045203a8db0403d83331b6f3131a6f12a74a5cf726f0bc0f7e282897c27d"
+    },
+    {
+      "path": "packages/ui/src/patterns/sources/fixtures/sources-fixture.css",
+      "sha256": "8b341365673a6c6ab4794e7a36e8e18801bbda9c9fd4719d08382e0890e875ee"
+    },
+    {
+      "path": "packages/ui/src/patterns/research/fixtures/ResearchFixture.tsx",
+      "sha256": "63a12d9225942bf622157ebee3f397909d76bd6f1904a7db43dc8b54a24910ba"
+    },
+    {
+      "path": "packages/ui/src/patterns/research/fixtures/research-fixture.css",
+      "sha256": "0f2010ed14262dc3caace16adb6e15520dc191a25c483db76c565c2aa6953779"
+    },
+    {
+      "path": "packages/ui/src/patterns/studio/fixtures/StudioFixture.tsx",
+      "sha256": "b2cd83d9264313951c424fe5e593bdc3a20613dab7c12e7fa3a5b13f6fdb2185"
+    },
+    {
+      "path": "packages/ui/src/patterns/studio/fixtures/studio-fixture.css",
+      "sha256": "515920c071a67ae7ab757d0bcbd3f99923fb6874da270b1db301fca799b49c7f"
+    },
+    {
+      "path": "packages/ui/src/patterns/connections/fixtures/ConnectionsFixture.tsx",
+      "sha256": "887efa48b9458adaf2205fb5721649e037ac9e0989491744c47fe021ca135a34"
+    },
+    {
+      "path": "packages/ui/src/patterns/connections/fixtures/connections-fixture.css",
+      "sha256": "09b7859b9f9ba1f9c86e9e3177e8b3d2f5d04f8d57948271d6585e07731de940"
+    },
+    {
+      "path": "apps/eliotr-web/src/app/FixtureWorkspace.tsx",
+      "sha256": "e74384880656ca06a54775bf5a1573b0593203dbe3f3669714f57e3e1ce1d3d5"
+    },
+    {
+      "path": "apps/eliotr-web/src/app/fixture-workspace.css",
+      "sha256": "38689d814c40caa9e22f17b0b7bc9f047bbe586ba6f7353ba6ddd5e12cb096a7"
+    },
+    {
+      "path": "apps/eliotr-web/src/app/Shell.tsx",
+      "sha256": "514fcee42ec3f69fe7ab3f3c5a375657e2b8ef35d1f12e9d0c3fe01782931457"
+    }
+  ],
+  "results": [
+    {
+      "width": 1440,
+      "locale": "en",
+      "theme": "light",
+      "checks": [
+        {
+          "screen": "sources",
+          "metrics": {
+            "overflow": false,
+            "internalOverflow": [],
+            "panes": [
+              {
+                "overflow": "auto",
+                "nested": 0
+              }
+            ],
+            "stable": true,
+            "axe": []
+          },
+          "screenshot": {
+            "file": "1440-en-light-sources.png",
+            "sha256": "c2bd9150db13c24f7212f4f2a0b98deebebea04ae55529f5a4466f52fb0adaab"
+          }
+        },
+        {
+          "screen": "research",
+          "metrics": {
+            "overflow": false,
+            "internalOverflow": [],
+            "panes": [
+              {
+                "overflow": "auto",
+                "nested": 0
+              },
+              {
+                "overflow": "auto",
+                "nested": 0
+              }
+            ],
+            "stable": true,
+            "axe": []
+          },
+          "screenshot": {
+            "file": "1440-en-light-research.png",
+            "sha256": "8bb8a5915c0e865ed8fe2dbd878a36411adb896c4be106a039c1bb6ae18b5f0f"
+          }
+        },
+        {
+          "screen": "studio",
+          "metrics": {
+            "overflow": false,
+            "internalOverflow": [],
+            "panes": [
+              {
+                "overflow": "auto",
+                "nested": 0
+              }
+            ],
+            "stable": true,
+            "axe": []
+          },
+          "screenshot": {
+            "file": "1440-en-light-studio.png",
+            "sha256": "af6a89cdf740dae6fb7d12073c94bc4760c9a6680ba517072e90529e57ef9a8d"
+          }
+        },
+        {
+          "screen": "connections",
+          "metrics": {
+            "overflow": false,
+            "internalOverflow": [],
+            "panes": [
+              {
+                "overflow": "auto",
+                "nested": 0
+              }
+            ],
+            "stable": true,
+            "axe": []
+          },
+          "screenshot": {
+            "file": "1440-en-light-connections.png",
+            "sha256": "6cec3a66d8d0a600adf4966ebb435380b6d2b28aa0ba61ad7ae218406493d7b0"
+          }
+        }
+      ],
+      "journey": "PASS",
+      "roots": "STABLE",
+      "errors": [],
+      "network": []
+    },
+    {
+      "width": 1440,
+      "locale": "en",
+      "theme": "dark",
+      "checks": [
+        {
+          "screen": "sources",
+          "metrics": {
+            "overflow": false,
+            "internalOverflow": [],
+            "panes": [
+              {
+                "overflow": "auto",
+                "nested": 0
+              }
+            ],
+            "stable": true,
+            "axe": []
+          },
+          "screenshot": {
+            "file": "1440-en-dark-sources.png",
+            "sha256": "4a355ee68f3a2af746b5999f226d3989f3aa9d774745b63b71cdf26113bcbb80"
+          }
+        },
+        {
+          "screen": "research",
+          "metrics": {
+            "overflow": false,
+            "internalOverflow": [],
+            "panes": [
+              {
+                "overflow": "auto",
+                "nested": 0
+              },
+              {
+                "overflow": "auto",
+                "nested": 0
+              }
+            ],
+            "stable": true,
+            "axe": []
+          },
+          "screenshot": {
+            "file": "1440-en-dark-research.png",
+            "sha256": "2bece2781f227d306b646a4ef32c76702de464013c00bf934a583ba82876b54e"
+          }
+        },
+        {
+          "screen": "studio",
+          "metrics": {
+            "overflow": false,
+            "internalOverflow": [],
+            "panes": [
+              {
+                "overflow": "auto",
+                "nested": 0
+              }
+            ],
+            "stable": true,
+            "axe": []
+          },
+          "screenshot": {
+            "file": "1440-en-dark-studio.png",
+            "sha256": "fbd4ad884666de63d8534df140aa4279cc009d8bc312bd971e4e2ff4823f7029"
+          }
+        },
+        {
+          "screen": "connections",
+          "metrics": {
+            "overflow": false,
+            "internalOverflow": [],
+            "panes": [
+              {
+                "overflow": "auto",
+                "nested": 0
+              }
+            ],
+            "stable": true,
+            "axe": []
+          },
+          "screenshot": {
+            "file": "1440-en-dark-connections.png",
+            "sha256": "1dc75a7cd468263ce69e64c7754e6863259a3d576b5ac93b9a64cb6d0cf4d4e6"
+          }
+        }
+      ],
+      "journey": "PASS",
+      "roots": "STABLE",
+      "errors": [],
+      "network": []
+    },
+    {
+      "width": 1440,
+      "locale": "ru",
+      "theme": "light",
+      "checks": [
+        {
+          "screen": "sources",
+          "metrics": {
+            "overflow": false,
+            "internalOverflow": [],
+            "panes": [
+              {
+                "overflow": "auto",
+                "nested": 0
+              }
+            ],
+            "stable": true,
+            "axe": []
+          },
+          "screenshot": {
+            "file": "1440-ru-light-sources.png",
+            "sha256": "6fe0358ece6d1308e7b14e50ea9e33707f6a8404ac38e04781623948f80fce3a"
+          }
+        },
+        {
+          "screen": "research",
+          "metrics": {
+            "overflow": false,
+            "internalOverflow": [],
+            "panes": [
+              {
+                "overflow": "auto",
+                "nested": 0
+              },
+              {
+                "overflow": "auto",
+                "nested": 0
+              }
+            ],
+            "stable": true,
+            "axe": []
+          },
+          "screenshot": {
+            "file": "1440-ru-light-research.png",
+            "sha256": "3ef9d0eccef1dd7a28234e7d85e4bf8b70436d8161bac6da07e39d298c3ad13f"
+          }
+        },
+        {
+          "screen": "studio",
+          "metrics": {
+            "overflow": false,
+            "internalOverflow": [],
+            "panes": [
+              {
+                "overflow": "auto",
+                "nested": 0
+              }
+            ],
+            "stable": true,
+            "axe": []
+          },
+          "screenshot": {
+            "file": "1440-ru-light-studio.png",
+            "sha256": "aa81ae2dd81da51cac980aa10bb2c42775710a8055f0ef373061c17380a4b08d"
+          }
+        },
+        {
+          "screen": "connections",
+          "metrics": {
+            "overflow": false,
+            "internalOverflow": [],
+            "panes": [
+              {
+                "overflow": "auto",
+                "nested": 0
+              }
+            ],
+            "stable": true,
+            "axe": []
+          },
+          "screenshot": {
+            "file": "1440-ru-light-connections.png",
+            "sha256": "eb388f56656910c7c2f8f51e7bca5b4f8305c0a26fb41c17e9404eedc8207e4c"
+          }
+        }
+      ],
+      "journey": "PASS",
+      "roots": "STABLE",
+      "errors": [],
+      "network": []
+    },
+    {
+      "width": 1440,
+      "locale": "ru",
+      "theme": "dark",
+      "checks": [
+        {
+          "screen": "sources",
+          "metrics": {
+            "overflow": false,
+            "internalOverflow": [],
+            "panes": [
+              {
+                "overflow": "auto",
+                "nested": 0
+              }
+            ],
+            "stable": true,
+            "axe": []
+          },
+          "screenshot": {
+            "file": "1440-ru-dark-sources.png",
+            "sha256": "daed91bda97fb6ce0307e645fdeb7d1791bf8af95916de7d21794b786cdd2cc9"
+          }
+        },
+        {
+          "screen": "research",
+          "metrics": {
+            "overflow": false,
+            "internalOverflow": [],
+            "panes": [
+              {
+                "overflow": "auto",
+                "nested": 0
+              },
+              {
+                "overflow": "auto",
+                "nested": 0
+              }
+            ],
+            "stable": true,
+            "axe": []
+          },
+          "screenshot": {
+            "file": "1440-ru-dark-research.png",
+            "sha256": "b5cc7f802f1c8eef902d4ff4469a32c121e47d284a74c5cc498bc76586c39b33"
+          }
+        },
+        {
+          "screen": "studio",
+          "metrics": {
+            "overflow": false,
+            "internalOverflow": [],
+            "panes": [
+              {
+                "overflow": "auto",
+                "nested": 0
+              }
+            ],
+            "stable": true,
+            "axe": []
+          },
+          "screenshot": {
+            "file": "1440-ru-dark-studio.png",
+            "sha256": "f4155eb1551b3961245d61ce05c111641f738902ba762f9c23203a6c1a5a53ac"
+          }
+        },
+        {
+          "screen": "connections",
+          "metrics": {
+            "overflow": false,
+            "internalOverflow": [],
+            "panes": [
+              {
+                "overflow": "auto",
+                "nested": 0
+              }
+            ],
+            "stable": true,
+            "axe": []
+          },
+          "screenshot": {
+            "file": "1440-ru-dark-connections.png",
+            "sha256": "3804b7c4d299342413dc57a3747aec92c4cf732230bb64804e3fc45ff3071581"
+          }
+        }
+      ],
+      "journey": "PASS",
+      "roots": "STABLE",
+      "errors": [],
+      "network": []
+    },
+    {
+      "width": 1024,
+      "locale": "en",
+      "theme": "light",
+      "checks": [
+        {
+          "screen": "sources",
+          "metrics": {
+            "overflow": false,
+            "internalOverflow": [],
+            "panes": [
+              {
+                "overflow": "auto",
+                "nested": 0
+              }
+            ],
+            "stable": true,
+            "axe": []
+          }
+        },
+        {
+          "screen": "research",
+          "metrics": {
+            "overflow": false,
+            "internalOverflow": [],
+            "panes": [
+              {
+                "overflow": "auto",
+                "nested": 0
+              }
+            ],
+            "stable": true,
+            "axe": []
+          }
+        },
+        {
+          "screen": "studio",
+          "metrics": {
+            "overflow": false,
+            "internalOverflow": [],
+            "panes": [
+              {
+                "overflow": "auto",
+                "nested": 0
+              }
+            ],
+            "stable": true,
+            "axe": []
+          }
+        },
+        {
+          "screen": "connections",
+          "metrics": {
+            "overflow": false,
+            "internalOverflow": [],
+            "panes": [
+              {
+                "overflow": "auto",
+                "nested": 0
+              }
+            ],
+            "stable": true,
+            "axe": []
+          }
+        }
+      ],
+      "journey": "PASS",
+      "roots": "STABLE",
+      "errors": [],
+      "network": []
+    },
+    {
+      "width": 1024,
+      "locale": "en",
+      "theme": "dark",
+      "checks": [
+        {
+          "screen": "sources",
+          "metrics": {
+            "overflow": false,
+            "internalOverflow": [],
+            "panes": [
+              {
+                "overflow": "auto",
+                "nested": 0
+              }
+            ],
+            "stable": true,
+            "axe": []
+          }
+        },
+        {
+          "screen": "research",
+          "metrics": {
+            "overflow": false,
+            "internalOverflow": [],
+            "panes": [
+              {
+                "overflow": "auto",
+                "nested": 0
+              }
+            ],
+            "stable": true,
+            "axe": []
+          }
+        },
+        {
+          "screen": "studio",
+          "metrics": {
+            "overflow": false,
+            "internalOverflow": [],
+            "panes": [
+              {
+                "overflow": "auto",
+                "nested": 0
+              }
+            ],
+            "stable": true,
+            "axe": []
+          }
+        },
+        {
+          "screen": "connections",
+          "metrics": {
+            "overflow": false,
+            "internalOverflow": [],
+            "panes": [
+              {
+                "overflow": "auto",
+                "nested": 0
+              }
+            ],
+            "stable": true,
+            "axe": []
+          }
+        }
+      ],
+      "journey": "PASS",
+      "roots": "STABLE",
+      "errors": [],
+      "network": []
+    },
+    {
+      "width": 1024,
+      "locale": "ru",
+      "theme": "light",
+      "checks": [
+        {
+          "screen": "sources",
+          "metrics": {
+            "overflow": false,
+            "internalOverflow": [],
+            "panes": [
+              {
+                "overflow": "auto",
+                "nested": 0
+              }
+            ],
+            "stable": true,
+            "axe": []
+          }
+        },
+        {
+          "screen": "research",
+          "metrics": {
+            "overflow": false,
+            "internalOverflow": [],
+            "panes": [
+              {
+                "overflow": "auto",
+                "nested": 0
+              }
+            ],
+            "stable": true,
+            "axe": []
+          }
+        },
+        {
+          "screen": "studio",
+          "metrics": {
+            "overflow": false,
+            "internalOverflow": [],
+            "panes": [
+              {
+                "overflow": "auto",
+                "nested": 0
+              }
+            ],
+            "stable": true,
+            "axe": []
+          }
+        },
+        {
+          "screen": "connections",
+          "metrics": {
+            "overflow": false,
+            "internalOverflow": [],
+            "panes": [
+              {
+                "overflow": "auto",
+                "nested": 0
+              }
+            ],
+            "stable": true,
+            "axe": []
+          }
+        }
+      ],
+      "journey": "PASS",
+      "roots": "STABLE",
+      "errors": [],
+      "network": []
+    },
+    {
+      "width": 1024,
+      "locale": "ru",
+      "theme": "dark",
+      "checks": [
+        {
+          "screen": "sources",
+          "metrics": {
+            "overflow": false,
+            "internalOverflow": [],
+            "panes": [
+              {
+                "overflow": "auto",
+                "nested": 0
+              }
+            ],
+            "stable": true,
+            "axe": []
+          }
+        },
+        {
+          "screen": "research",
+          "metrics": {
+            "overflow": false,
+            "internalOverflow": [],
+            "panes": [
+              {
+                "overflow": "auto",
+                "nested": 0
+              }
+            ],
+            "stable": true,
+            "axe": []
+          }
+        },
+        {
+          "screen": "studio",
+          "metrics": {
+            "overflow": false,
+            "internalOverflow": [],
+            "panes": [
+              {
+                "overflow": "auto",
+                "nested": 0
+              }
+            ],
+            "stable": true,
+            "axe": []
+          }
+        },
+        {
+          "screen": "connections",
+          "metrics": {
+            "overflow": false,
+            "internalOverflow": [],
+            "panes": [
+              {
+                "overflow": "auto",
+                "nested": 0
+              }
+            ],
+            "stable": true,
+            "axe": []
+          }
+        }
+      ],
+      "journey": "PASS",
+      "roots": "STABLE",
+      "errors": [],
+      "network": []
+    },
+    {
+      "width": 768,
+      "locale": "en",
+      "theme": "light",
+      "checks": [
+        {
+          "screen": "sources",
+          "metrics": {
+            "overflow": false,
+            "internalOverflow": [],
+            "panes": [
+              {
+                "overflow": "auto",
+                "nested": 0
+              }
+            ],
+            "stable": true,
+            "axe": []
+          }
+        },
+        {
+          "screen": "research",
+          "metrics": {
+            "overflow": false,
+            "internalOverflow": [],
+            "panes": [
+              {
+                "overflow": "auto",
+                "nested": 0
+              }
+            ],
+            "stable": true,
+            "axe": []
+          }
+        },
+        {
+          "screen": "studio",
+          "metrics": {
+            "overflow": false,
+            "internalOverflow": [],
+            "panes": [
+              {
+                "overflow": "auto",
+                "nested": 0
+              }
+            ],
+            "stable": true,
+            "axe": []
+          }
+        },
+        {
+          "screen": "connections",
+          "metrics": {
+            "overflow": false,
+            "internalOverflow": [],
+            "panes": [
+              {
+                "overflow": "auto",
+                "nested": 0
+              }
+            ],
+            "stable": true,
+            "axe": []
+          }
+        }
+      ],
+      "journey": "PASS",
+      "roots": "STABLE",
+      "errors": [],
+      "network": []
+    },
+    {
+      "width": 768,
+      "locale": "en",
+      "theme": "dark",
+      "checks": [
+        {
+          "screen": "sources",
+          "metrics": {
+            "overflow": false,
+            "internalOverflow": [],
+            "panes": [
+              {
+                "overflow": "auto",
+                "nested": 0
+              }
+            ],
+            "stable": true,
+            "axe": []
+          }
+        },
+        {
+          "screen": "research",
+          "metrics": {
+            "overflow": false,
+            "internalOverflow": [],
+            "panes": [
+              {
+                "overflow": "auto",
+                "nested": 0
+              }
+            ],
+            "stable": true,
+            "axe": []
+          }
+        },
+        {
+          "screen": "studio",
+          "metrics": {
+            "overflow": false,
+            "internalOverflow": [],
+            "panes": [
+              {
+                "overflow": "auto",
+                "nested": 0
+              }
+            ],
+            "stable": true,
+            "axe": []
+          }
+        },
+        {
+          "screen": "connections",
+          "metrics": {
+            "overflow": false,
+            "internalOverflow": [],
+            "panes": [
+              {
+                "overflow": "auto",
+                "nested": 0
+              }
+            ],
+            "stable": true,
+            "axe": []
+          }
+        }
+      ],
+      "journey": "PASS",
+      "roots": "STABLE",
+      "errors": [],
+      "network": []
+    },
+    {
+      "width": 768,
+      "locale": "ru",
+      "theme": "light",
+      "checks": [
+        {
+          "screen": "sources",
+          "metrics": {
+            "overflow": false,
+            "internalOverflow": [],
+            "panes": [
+              {
+                "overflow": "auto",
+                "nested": 0
+              }
+            ],
+            "stable": true,
+            "axe": []
+          }
+        },
+        {
+          "screen": "research",
+          "metrics": {
+            "overflow": false,
+            "internalOverflow": [],
+            "panes": [
+              {
+                "overflow": "auto",
+                "nested": 0
+              }
+            ],
+            "stable": true,
+            "axe": []
+          }
+        },
+        {
+          "screen": "studio",
+          "metrics": {
+            "overflow": false,
+            "internalOverflow": [],
+            "panes": [
+              {
+                "overflow": "auto",
+                "nested": 0
+              }
+            ],
+            "stable": true,
+            "axe": []
+          }
+        },
+        {
+          "screen": "connections",
+          "metrics": {
+            "overflow": false,
+            "internalOverflow": [],
+            "panes": [
+              {
+                "overflow": "auto",
+                "nested": 0
+              }
+            ],
+            "stable": true,
+            "axe": []
+          }
+        }
+      ],
+      "journey": "PASS",
+      "roots": "STABLE",
+      "errors": [],
+      "network": []
+    },
+    {
+      "width": 768,
+      "locale": "ru",
+      "theme": "dark",
+      "checks": [
+        {
+          "screen": "sources",
+          "metrics": {
+            "overflow": false,
+            "internalOverflow": [],
+            "panes": [
+              {
+                "overflow": "auto",
+                "nested": 0
+              }
+            ],
+            "stable": true,
+            "axe": []
+          }
+        },
+        {
+          "screen": "research",
+          "metrics": {
+            "overflow": false,
+            "internalOverflow": [],
+            "panes": [
+              {
+                "overflow": "auto",
+                "nested": 0
+              }
+            ],
+            "stable": true,
+            "axe": []
+          }
+        },
+        {
+          "screen": "studio",
+          "metrics": {
+            "overflow": false,
+            "internalOverflow": [],
+            "panes": [
+              {
+                "overflow": "auto",
+                "nested": 0
+              }
+            ],
+            "stable": true,
+            "axe": []
+          }
+        },
+        {
+          "screen": "connections",
+          "metrics": {
+            "overflow": false,
+            "internalOverflow": [],
+            "panes": [
+              {
+                "overflow": "auto",
+                "nested": 0
+              }
+            ],
+            "stable": true,
+            "axe": []
+          }
+        }
+      ],
+      "journey": "PASS",
+      "roots": "STABLE",
+      "errors": [],
+      "network": []
+    },
+    {
+      "width": 390,
+      "locale": "en",
+      "theme": "light",
+      "checks": [
+        {
+          "screen": "sources",
+          "metrics": {
+            "overflow": false,
+            "internalOverflow": [],
+            "panes": [
+              {
+                "overflow": "auto",
+                "nested": 0
+              }
+            ],
+            "stable": true,
+            "axe": []
+          },
+          "screenshot": {
+            "file": "390-en-light-sources.png",
+            "sha256": "6956619708937d0b6f7d324814563c69d17deccf1a242a31f134963a6fca796b"
+          }
+        },
+        {
+          "screen": "research",
+          "metrics": {
+            "overflow": false,
+            "internalOverflow": [],
+            "panes": [
+              {
+                "overflow": "auto",
+                "nested": 0
+              }
+            ],
+            "stable": true,
+            "axe": []
+          },
+          "screenshot": {
+            "file": "390-en-light-research.png",
+            "sha256": "c55a7ed16fa7a6168c037d8f83778a3e9de64c3cd73489f6ba502cf9a2e0aabe"
+          }
+        },
+        {
+          "screen": "studio",
+          "metrics": {
+            "overflow": false,
+            "internalOverflow": [],
+            "panes": [
+              {
+                "overflow": "auto",
+                "nested": 0
+              }
+            ],
+            "stable": true,
+            "axe": []
+          },
+          "screenshot": {
+            "file": "390-en-light-studio.png",
+            "sha256": "50861c5adbe1886e1dbd30502bae11d46819246daf8f3ac24eb9e9455a21919e"
+          }
+        },
+        {
+          "screen": "connections",
+          "metrics": {
+            "overflow": false,
+            "internalOverflow": [],
+            "panes": [
+              {
+                "overflow": "auto",
+                "nested": 0
+              }
+            ],
+            "stable": true,
+            "axe": []
+          },
+          "screenshot": {
+            "file": "390-en-light-connections.png",
+            "sha256": "d4d489f221d7328b214ef454785305fd6f4d462775d6a090746b13aaec7e3119"
+          }
+        }
+      ],
+      "journey": "PASS",
+      "roots": "STABLE",
+      "errors": [],
+      "network": []
+    },
+    {
+      "width": 390,
+      "locale": "en",
+      "theme": "dark",
+      "checks": [
+        {
+          "screen": "sources",
+          "metrics": {
+            "overflow": false,
+            "internalOverflow": [],
+            "panes": [
+              {
+                "overflow": "auto",
+                "nested": 0
+              }
+            ],
+            "stable": true,
+            "axe": []
+          },
+          "screenshot": {
+            "file": "390-en-dark-sources.png",
+            "sha256": "272e24b7d69e36aae82eaea78ed03060f4fe3f0fee1ec71a984109de28ee9f4d"
+          }
+        },
+        {
+          "screen": "research",
+          "metrics": {
+            "overflow": false,
+            "internalOverflow": [],
+            "panes": [
+              {
+                "overflow": "auto",
+                "nested": 0
+              }
+            ],
+            "stable": true,
+            "axe": []
+          },
+          "screenshot": {
+            "file": "390-en-dark-research.png",
+            "sha256": "f53bd6d8cc813e05e60b3c6c7acb2799fcd40ffe3a9f6a3c529b84b4e183357a"
+          }
+        },
+        {
+          "screen": "studio",
+          "metrics": {
+            "overflow": false,
+            "internalOverflow": [],
+            "panes": [
+              {
+                "overflow": "auto",
+                "nested": 0
+              }
+            ],
+            "stable": true,
+            "axe": []
+          },
+          "screenshot": {
+            "file": "390-en-dark-studio.png",
+            "sha256": "94e5ab853c15d58b649e6b3554b03e6d55c49de9822c5788f354ebc987dfb157"
+          }
+        },
+        {
+          "screen": "connections",
+          "metrics": {
+            "overflow": false,
+            "internalOverflow": [],
+            "panes": [
+              {
+                "overflow": "auto",
+                "nested": 0
+              }
+            ],
+            "stable": true,
+            "axe": []
+          },
+          "screenshot": {
+            "file": "390-en-dark-connections.png",
+            "sha256": "97ff18ee77a5428d6fe03de1b8378fcc0d130604739a8b5e40a304283d1140a3"
+          }
+        }
+      ],
+      "journey": "PASS",
+      "roots": "STABLE",
+      "errors": [],
+      "network": []
+    },
+    {
+      "width": 390,
+      "locale": "ru",
+      "theme": "light",
+      "checks": [
+        {
+          "screen": "sources",
+          "metrics": {
+            "overflow": false,
+            "internalOverflow": [],
+            "panes": [
+              {
+                "overflow": "auto",
+                "nested": 0
+              }
+            ],
+            "stable": true,
+            "axe": []
+          },
+          "screenshot": {
+            "file": "390-ru-light-sources.png",
+            "sha256": "70730f12e24e4eb48ec00249eb7c48bb7d233a66b6856be4a45dd7ed67a9d69e"
+          }
+        },
+        {
+          "screen": "research",
+          "metrics": {
+            "overflow": false,
+            "internalOverflow": [],
+            "panes": [
+              {
+                "overflow": "auto",
+                "nested": 0
+              }
+            ],
+            "stable": true,
+            "axe": []
+          },
+          "screenshot": {
+            "file": "390-ru-light-research.png",
+            "sha256": "87238d2674f678083738e95bbb9fb69b4a6dfa0dbe1ad1ef55a30c99eee6b9d4"
+          }
+        },
+        {
+          "screen": "studio",
+          "metrics": {
+            "overflow": false,
+            "internalOverflow": [],
+            "panes": [
+              {
+                "overflow": "auto",
+                "nested": 0
+              }
+            ],
+            "stable": true,
+            "axe": []
+          },
+          "screenshot": {
+            "file": "390-ru-light-studio.png",
+            "sha256": "6b4119a54ad4c3ade5160dfd10970758b326ec938c90841bf899117e326641b5"
+          }
+        },
+        {
+          "screen": "connections",
+          "metrics": {
+            "overflow": false,
+            "internalOverflow": [],
+            "panes": [
+              {
+                "overflow": "auto",
+                "nested": 0
+              }
+            ],
+            "stable": true,
+            "axe": []
+          },
+          "screenshot": {
+            "file": "390-ru-light-connections.png",
+            "sha256": "5f88818045e123e62b3909d343d6c305b7a078e91d2fe9b903a048ce67e6978c"
+          }
+        }
+      ],
+      "journey": "PASS",
+      "roots": "STABLE",
+      "errors": [],
+      "network": []
+    },
+    {
+      "width": 390,
+      "locale": "ru",
+      "theme": "dark",
+      "checks": [
+        {
+          "screen": "sources",
+          "metrics": {
+            "overflow": false,
+            "internalOverflow": [],
+            "panes": [
+              {
+                "overflow": "auto",
+                "nested": 0
+              }
+            ],
+            "stable": true,
+            "axe": []
+          },
+          "screenshot": {
+            "file": "390-ru-dark-sources.png",
+            "sha256": "9d9955b1f122e39e7124e189dbf02a860b6d22efda3a10541c4f052c4fd6ad0e"
+          }
+        },
+        {
+          "screen": "research",
+          "metrics": {
+            "overflow": false,
+            "internalOverflow": [],
+            "panes": [
+              {
+                "overflow": "auto",
+                "nested": 0
+              }
+            ],
+            "stable": true,
+            "axe": []
+          },
+          "screenshot": {
+            "file": "390-ru-dark-research.png",
+            "sha256": "8a933a0fc65ba95fe8da853bb15ec3fd4257d57dd43edfd45276a01bb722311d"
+          }
+        },
+        {
+          "screen": "studio",
+          "metrics": {
+            "overflow": false,
+            "internalOverflow": [],
+            "panes": [
+              {
+                "overflow": "auto",
+                "nested": 0
+              }
+            ],
+            "stable": true,
+            "axe": []
+          },
+          "screenshot": {
+            "file": "390-ru-dark-studio.png",
+            "sha256": "1907bf896f4d51ee44b83d9410b4f8a0e481d2d7accd5a1b9656333c5b3c8de2"
+          }
+        },
+        {
+          "screen": "connections",
+          "metrics": {
+            "overflow": false,
+            "internalOverflow": [],
+            "panes": [
+              {
+                "overflow": "auto",
+                "nested": 0
+              }
+            ],
+            "stable": true,
+            "axe": []
+          },
+          "screenshot": {
+            "file": "390-ru-dark-connections.png",
+            "sha256": "e0f8da7c4ba96f999598c6ac3709aad92a29c1a910b63f4612f98707f049760d"
+          }
+        }
+      ],
+      "journey": "PASS",
+      "roots": "STABLE",
+      "errors": [],
+      "network": []
+    },
+    {
+      "width": 320,
+      "locale": "en",
+      "theme": "light",
+      "checks": [
+        {
+          "screen": "sources",
+          "metrics": {
+            "overflow": false,
+            "internalOverflow": [],
+            "panes": [
+              {
+                "overflow": "auto",
+                "nested": 0
+              }
+            ],
+            "stable": true,
+            "axe": []
+          }
+        },
+        {
+          "screen": "research",
+          "metrics": {
+            "overflow": false,
+            "internalOverflow": [],
+            "panes": [
+              {
+                "overflow": "auto",
+                "nested": 0
+              }
+            ],
+            "stable": true,
+            "axe": []
+          }
+        },
+        {
+          "screen": "studio",
+          "metrics": {
+            "overflow": false,
+            "internalOverflow": [],
+            "panes": [
+              {
+                "overflow": "auto",
+                "nested": 0
+              }
+            ],
+            "stable": true,
+            "axe": []
+          }
+        },
+        {
+          "screen": "connections",
+          "metrics": {
+            "overflow": false,
+            "internalOverflow": [],
+            "panes": [
+              {
+                "overflow": "auto",
+                "nested": 0
+              }
+            ],
+            "stable": true,
+            "axe": []
+          }
+        }
+      ],
+      "journey": "PASS",
+      "roots": "STABLE",
+      "errors": [],
+      "network": []
+    },
+    {
+      "width": 320,
+      "locale": "en",
+      "theme": "dark",
+      "checks": [
+        {
+          "screen": "sources",
+          "metrics": {
+            "overflow": false,
+            "internalOverflow": [],
+            "panes": [
+              {
+                "overflow": "auto",
+                "nested": 0
+              }
+            ],
+            "stable": true,
+            "axe": []
+          }
+        },
+        {
+          "screen": "research",
+          "metrics": {
+            "overflow": false,
+            "internalOverflow": [],
+            "panes": [
+              {
+                "overflow": "auto",
+                "nested": 0
+              }
+            ],
+            "stable": true,
+            "axe": []
+          }
+        },
+        {
+          "screen": "studio",
+          "metrics": {
+            "overflow": false,
+            "internalOverflow": [],
+            "panes": [
+              {
+                "overflow": "auto",
+                "nested": 0
+              }
+            ],
+            "stable": true,
+            "axe": []
+          }
+        },
+        {
+          "screen": "connections",
+          "metrics": {
+            "overflow": false,
+            "internalOverflow": [],
+            "panes": [
+              {
+                "overflow": "auto",
+                "nested": 0
+              }
+            ],
+            "stable": true,
+            "axe": []
+          }
+        }
+      ],
+      "journey": "PASS",
+      "roots": "STABLE",
+      "errors": [],
+      "network": []
+    },
+    {
+      "width": 320,
+      "locale": "ru",
+      "theme": "light",
+      "checks": [
+        {
+          "screen": "sources",
+          "metrics": {
+            "overflow": false,
+            "internalOverflow": [],
+            "panes": [
+              {
+                "overflow": "auto",
+                "nested": 0
+              }
+            ],
+            "stable": true,
+            "axe": []
+          }
+        },
+        {
+          "screen": "research",
+          "metrics": {
+            "overflow": false,
+            "internalOverflow": [],
+            "panes": [
+              {
+                "overflow": "auto",
+                "nested": 0
+              }
+            ],
+            "stable": true,
+            "axe": []
+          }
+        },
+        {
+          "screen": "studio",
+          "metrics": {
+            "overflow": false,
+            "internalOverflow": [],
+            "panes": [
+              {
+                "overflow": "auto",
+                "nested": 0
+              }
+            ],
+            "stable": true,
+            "axe": []
+          }
+        },
+        {
+          "screen": "connections",
+          "metrics": {
+            "overflow": false,
+            "internalOverflow": [],
+            "panes": [
+              {
+                "overflow": "auto",
+                "nested": 0
+              }
+            ],
+            "stable": true,
+            "axe": []
+          }
+        }
+      ],
+      "journey": "PASS",
+      "roots": "STABLE",
+      "errors": [],
+      "network": []
+    },
+    {
+      "width": 320,
+      "locale": "ru",
+      "theme": "dark",
+      "checks": [
+        {
+          "screen": "sources",
+          "metrics": {
+            "overflow": false,
+            "internalOverflow": [],
+            "panes": [
+              {
+                "overflow": "auto",
+                "nested": 0
+              }
+            ],
+            "stable": true,
+            "axe": []
+          }
+        },
+        {
+          "screen": "research",
+          "metrics": {
+            "overflow": false,
+            "internalOverflow": [],
+            "panes": [
+              {
+                "overflow": "auto",
+                "nested": 0
+              }
+            ],
+            "stable": true,
+            "axe": []
+          }
+        },
+        {
+          "screen": "studio",
+          "metrics": {
+            "overflow": false,
+            "internalOverflow": [],
+            "panes": [
+              {
+                "overflow": "auto",
+                "nested": 0
+              }
+            ],
+            "stable": true,
+            "axe": []
+          }
+        },
+        {
+          "screen": "connections",
+          "metrics": {
+            "overflow": false,
+            "internalOverflow": [],
+            "panes": [
+              {
+                "overflow": "auto",
+                "nested": 0
+              }
+            ],
+            "stable": true,
+            "axe": []
+          }
+        }
+      ],
+      "journey": "PASS",
+      "roots": "STABLE",
+      "errors": [],
+      "network": []
+    }
+  ],
+  "limits": [
+    "Fixture only; no backend/provider effect",
+    "Native screenreader, actual200percent zoom, fullWorker CSP and live remain pending",
+    "New visual evidence requires named manager review; no baseline autoacceptance"
+  ],
+  "source_commit": "c41b69bef119fa2619e7a930c1068b3ca35cbb7f",
+  "source_commits": {
+    "U2-S": "a67a8b7022239a8c193eb579f9743167029b6feb",
+    "U2-R": "e3a39aeddf73901bf2ee2ab5f37d4232776499ee",
+    "U2-T": "0cd674968809e64526f411d228802f10457cf492",
+    "U2-C": "e16426967c30453488a707c9d1fa552954d4e6f2"
+  }
+}
