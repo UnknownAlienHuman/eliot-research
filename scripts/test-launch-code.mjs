@@ -4,8 +4,13 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { assertLaunchCodeComplete, launchCodeBlockers, readCompositionCapabilityProfile, readConfiguredTransport } from "./check-launch-code.mjs";
 import { deployCloudflare } from "./deploy-cloudflare.mjs";
-const composition = (slices = "", operations = "") =>
-  `function createApplication() { return { disabled_slices: [${slices}] }; } ${operations}`;
+const requiredSlices = ["RETRIEVAL", "RESEARCH", "FEDERATION", "WIKI", "ERASURE"];
+const composition = (slices = "", operations = "", partial = "", enabled) => {
+  const active = enabled ?? requiredSlices.filter((slice) =>
+    !slices.includes(JSON.stringify(slice)) && !partial.includes(JSON.stringify(slice)));
+  return `function createApplication() { return { enabled_slices: ${JSON.stringify(active)},
+    partial_slices: [${partial}], disabled_slices: [${slices}] }; } ${operations}`;
+};
 const profile = { protocol: "eliotr.release-profile.v1", google_external_transport: "gemini-mcp" };
 assert.equal(readConfiguredTransport({ vars: { GOOGLE_EXTERNAL_TRANSPORT: "gemini-mcp" }, env: {
   test: { vars: { GOOGLE_EXTERNAL_TRANSPORT: "drive-exchange" } },
@@ -34,6 +39,20 @@ for (const slice of ["RETRIEVAL", "RESEARCH", "FEDERATION", "WIKI", "ERASURE"]) 
 assert.deepEqual(launchCodeBlockers({ ...complete, release_profile: { ...profile, google_external_transport: "drive-exchange" }, entries: [
   ...complete.entries, { id: "pending-drive-exchange", path: "test-drive.ts", state: "LIVE_QUALIFIED" },
 ] }, composition(JSON.stringify("DRIVE_EXCHANGE"))), ["disabled required slice: DRIVE_EXCHANGE"]);
+for (const slice of requiredSlices) {
+  assert.deepEqual(launchCodeBlockers(complete, composition("", "const renamedRefusal = () => {};", JSON.stringify(slice))),
+    [`partial required slice: ${slice}`], "partial product cannot pass after refusal helper is renamed");
+  assert.deepEqual(launchCodeBlockers(complete, composition("", "", "", requiredSlices.filter((value) => value !== slice))),
+    [`missing required slice: ${slice}`], "omitted mandatory product cannot pass a complete method registry");
+}
+assert.deepEqual(launchCodeBlockers(complete, composition("", "", '"OPTIONAL_EXPERIMENT"')), []);
+assert.throws(() => launchCodeBlockers(complete, composition('"WIKI"', "", '"WIKI"')), /conflicting capability states/u);
+assert.throws(() => launchCodeBlockers(complete, composition("", "", '"WIKI"', requiredSlices)), /conflicting capability states/u);
+for (const input of [composition("", "", "...dynamic"), composition("", "", '"WIKI", "WIKI"'),
+  composition() + "const duplicate = { enabled_slices: [] };",
+  composition().replace("partial_slices: []", "partial_slices: compute()")]) {
+  assert.throws(() => launchCodeBlockers(complete, input));
+}
 assert.deepEqual(launchCodeBlockers(complete, composition(JSON.stringify("DRIVE_EXCHANGE"))), []);
 assert.deepEqual(launchCodeBlockers(complete, composition('"OPTIONAL_EXPERIMENT"')), []);
 assert.deepEqual(launchCodeBlockers(complete, composition('', '// unavailable("comment.only")')), []);
@@ -92,7 +111,7 @@ const profileRead = async (changed = sourceMap) => readCompositionCapabilityProf
   } });
 const capabilityProfile = await profileRead();
 assert.equal(capabilityProfile.protocol, "eliotr.capabilities.v1");
-assert.equal(capabilityProfile.routes.length, 115);
+assert.equal(capabilityProfile.routes.length, 116);
 assert.ok(capabilityProfile.routes.some((route) => route.path === "/api/v1/system/capabilities"));
 for (const expected of [
   { method: "GET", path: "/api/v1/projects/:project_id/model-provider-key", operation: "project.provider-key-configuration.read",

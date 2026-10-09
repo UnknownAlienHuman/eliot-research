@@ -1,5 +1,27 @@
 # Backend delivery plan
 
+## Full continuation, October 8
+
+The owner explicitly resumed the entire remaining documented implementation and
+acceptance volume, excluding website design. The Goal stays active across source
+checkpoints, publication and individual passport closure. The first checkpoint
+below is evidence of delivered prerequisites, not completion of the project.
+
+Fresh `origin/main` is `6717ba5d2ec6658e5ef59f08827aae38a064c96e`.
+The live GitHub inventory has 65 open PRs and three open Issues. The current
+router/cards and latest passport discussions govern their dependencies and
+selected-profile requirements; historical PR heads are not merged wholesale.
+Ten Luna Max workers share the existing `main` checkout under disjoint ownership.
+The integrator owns assembly, shared cutovers, publication and acceptance records.
+Website design remains with its independent owner.
+
+Active work covers #242, #325, #330, #231, #244, #282, #328/#285,
+#294 and #210, plus first-wave acceptance and workspace cleanup audits.
+Native/live/paid/release criteria remain pending until their actual evidence
+exists. Issue/PR closure requires its passport acceptance; a source checkpoint
+does not qualify a deployed contour. Explicitly canceled backup/export/restore
+work remains disabled, and the historical uncertain run is not replayed.
+
 ## Owner-resumed backend implementation, October 8
 
 The owner resumed backend development on 2026-10-08 and assigned the frontend to a

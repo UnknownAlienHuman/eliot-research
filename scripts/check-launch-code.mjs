@@ -53,7 +53,7 @@ export function launchCodeBlockers(registry, composition) {
   const ts = require("typescript");
   const source = ts.createSourceFile("composition-root.ts", composition, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
   if (source.parseDiagnostics.length) throw new Error("Launch composition cannot be parsed");
-  let declarations = 0;
+  const sliceDeclarations = new Map();
   const visit = (node) => {
     if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "unavailable") {
       if (node.arguments.length !== 1 || !ts.isStringLiteral(node.arguments[0])) {
@@ -62,25 +62,43 @@ export function launchCodeBlockers(registry, composition) {
       blockers.push(node.arguments[0].text);
     }
     if (ts.isPropertyAssignment(node) &&
-        (ts.isIdentifier(node.name) || ts.isStringLiteral(node.name)) && node.name.text === "disabled_slices") {
-      declarations += 1;
-      if (!ts.isArrayLiteralExpression(node.initializer)) throw new Error("Dynamic disabled slices require launch-gate review");
+        (ts.isIdentifier(node.name) || ts.isStringLiteral(node.name)) &&
+        ["enabled_slices", "partial_slices", "disabled_slices"].includes(node.name.text)) {
+      const field = node.name.text;
+      if (sliceDeclarations.has(field)) throw new Error(`Duplicate ${field} declaration`);
+      if (!ts.isArrayLiteralExpression(node.initializer) || node.initializer.elements.length > 64) {
+        throw new Error(`Dynamic or oversized ${field} requires launch-gate review`);
+      }
       const seen = new Set();
       for (const item of node.initializer.elements) {
         if (!ts.isStringLiteral(item) || !/^[A-Z][A-Z0-9_]{0,63}$/u.test(item.text) || seen.has(item.text)) {
-          throw new Error("Invalid or duplicate disabled slice");
+          throw new Error(`Invalid or duplicate ${field} slice`);
         }
         seen.add(item.text);
-        if (COMMON_REQUIRED_SLICES.has(item.text) ||
-            (item.text === "DRIVE_EXCHANGE" && selectedTransport === "drive-exchange")) {
-          blockers.push(`disabled required slice: ${item.text}`);
+        if (field !== "enabled_slices" && (COMMON_REQUIRED_SLICES.has(item.text) ||
+            (item.text === "DRIVE_EXCHANGE" && selectedTransport === "drive-exchange"))) {
+          blockers.push(`${field === "partial_slices" ? "partial" : "disabled"} required slice: ${item.text}`);
         }
       }
+      sliceDeclarations.set(field, seen);
     }
     ts.forEachChild(node, visit);
   };
   visit(source);
-  if (declarations !== 1) throw new Error("Expected exactly one explicit disabled_slices declaration");
+  if (sliceDeclarations.size !== 3) throw new Error("Expected explicit enabled_slices, partial_slices and disabled_slices declarations");
+  const declared = new Set();
+  for (const slices of sliceDeclarations.values()) {
+    for (const slice of slices) {
+      if (declared.has(slice)) throw new Error(`Slice ${slice} has conflicting capability states`);
+      declared.add(slice);
+    }
+  }
+  for (const slice of COMMON_REQUIRED_SLICES) {
+    if (!declared.has(slice)) blockers.push(`missing required slice: ${slice}`);
+  }
+  if (selectedTransport === "drive-exchange" && !declared.has("DRIVE_EXCHANGE")) {
+    blockers.push("missing required slice: DRIVE_EXCHANGE");
+  }
   // ADR-0007: Google is optional; only a selected integration adds its own gate.
   if (selectedTransport !== "disabled") {
     const requirement = PROFILE_REQUIREMENTS[selectedTransport];
