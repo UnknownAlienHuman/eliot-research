@@ -1,0 +1,15 @@
+{
+  "protocol": "eliotr.ui-review-receipt.v1",
+  "status": "ACCEPTED_INTERNAL_CLIENT",
+  "checkpoint": "C3-C",
+  "source_commit": "70fc1bd31c6d079037513da32812ac4d3c3dad6b",
+  "behavior": "Required real Legacy HTTP/error/epoch ports and explicit clock/mint/model collaborator; exact health/session/grant/provider/Google/client diagnostics, no invented owner session ID or connectivity.",
+  "checks": {
+    "tests": "77 total cases PASS (retained50, repaired26, newpreflight1)",
+    "lint": "Exact14 PASS plus finalchanged2testfilesPASS",
+    "compiler": "Owning TS6.0.3 PASS0diag550outputs; rootweb/runtime graph PASS0diag690outputs after explicit public typeannotations"
+  },
+  "limitations": [
+    "Internal client gate only. Runtime/bootstrap security5cases PASS via bounded same-origin fixtures; real UI integration/browser/Worker/CSP and FINAL-UI remain open."
+  ]
+}

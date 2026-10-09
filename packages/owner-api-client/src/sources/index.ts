@@ -12,3 +12,10 @@ export { createOwnerNamespaceResumeCoordinator, ownerNamespaceNeedsResume } from
 export type { OwnerNamespaceResumeBinding, OwnerNamespaceResumeResult, OwnerNamespaceResumePorts } from './namespaces/resume';
 export { createReaderApi, MAX_DOCUMENT_BYTES } from './document/reader';
 export type { AdmittedDocument, ReaderApi, ReaderPorts, ReaderDigest } from './document/reader';
+export { createOrientationApi } from './document/orientation';
+export type { OrientationView, OrientationApi } from './document/orientation';
+export { createNavigationApi } from './document/navigation';
+export type { NavigationSection, NavigationExpansionTarget } from './document/navigation';
+export { createErasureOperations } from './erasure/erasure';
+export type { ErasureOperations } from './erasure/erasure';
+export type { ErasurePrepareView, ErasureStatusView } from './erasure/decoders';
