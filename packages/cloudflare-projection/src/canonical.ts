@@ -135,7 +135,45 @@ export async function stableProjectionId(
   return `${prefix}-${digest.slice(0, 48)}`;
 }
 
+export async function projectionExecutionOperationId(
+  context: ProjectionSourceContext,
+  projectionGeneration: string,
+): Promise<string> {
+  return stableProjectionId(
+    "projection-execute",
+    context.intent_ref.id,
+    String(context.intent_ref.revision),
+    projectionGeneration,
+  );
+}
+
 export async function projectionGeneration(
+  context: ProjectionSourceContext,
+  profile: ProjectionExecutionProfile,
+): Promise<string> {
+  const projectMembershipIds = [...new Set(context.project_membership_ids)].sort();
+  return stableProjectionId(
+    "projection",
+    "managed-items.v2",
+    context.source_revision.source_revision_ref,
+    context.source_revision.content_sha256,
+    context.source_revision.object_residency_key_digest,
+    profile.projector_profile,
+    profile.managed_instance_id,
+    profile.managed_generation,
+    canonicalProjectionJson({
+      source_title: context.source_title,
+      source_class: context.source_class,
+      instruction_taint: context.instruction_taint,
+      project_membership_ids: projectMembershipIds,
+      target_item_utf8_bytes: profile.target_item_utf8_bytes,
+      maximum_item_utf8_bytes: profile.maximum_item_utf8_bytes,
+    }),
+  );
+}
+
+/** Computes the pre-managed-items identity for lookup of historical rows only. */
+export async function legacyProjectionGeneration(
   context: ProjectionSourceContext,
   profile: ProjectionExecutionProfile,
 ): Promise<string> {

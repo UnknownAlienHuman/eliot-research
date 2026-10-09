@@ -14,9 +14,11 @@ import type {
   ManagedProjectionReceipt,
   ProjectionAuthorityPort,
   ProjectionExecutionProfile,
+  ProjectionSearchReceipt,
   ProjectionSettlement,
   ProjectionSourceContext,
   ProjectionTerminalReceipt,
+  ProjectionWorkReceipt,
 } from "./types.js";
 
 const A = "3f468ef0dde323a1504435da3aa02d387fc1e9f4f1475b5b3323112017806714";
@@ -119,6 +121,8 @@ function fixture(input: {
   readonly prior?: ProjectionTerminalReceipt | null;
   readonly managed?: ManagedProjectionReceipt;
   readonly sharded?: boolean;
+  readonly work_receipt?: Partial<ProjectionWorkReceipt>;
+  readonly search_receipt?: Partial<ProjectionSearchReceipt>;
 } = {}) {
   const events: string[] = [];
   let settlement: ProjectionSettlement | undefined;
@@ -184,10 +188,14 @@ function fixture(input: {
       }),
     },
     work: {
-      materialize: vi.fn(async (_context: ProjectionSourceContext, _generation: string, projection: { readonly items: readonly ProjectionItem[] }) => {
+      materialize: vi.fn(async (_context: ProjectionSourceContext, _generation: string, projection: {
+        readonly items: readonly ProjectionItem[];
+        readonly item_set_digest: string;
+      }) => {
         events.push("work");
         return {
           ...workReceipt,
+          item_set_digest: projection.item_set_digest,
           item_count: projection.items.length,
           item_receipts: projection.items.map((item) => ({
             item_key: item.item_key,
@@ -196,11 +204,21 @@ function fixture(input: {
             size_bytes: new TextEncoder().encode(item.section_text).byteLength,
             etag: "etag-1",
           })),
+          ...input.work_receipt,
         };
       }),
     },
     search: {
-      activate: vi.fn(async () => { events.push("search"); return searchReceipt; }),
+      activate: vi.fn(async (_context, generation, projection) => {
+        events.push("search");
+        return {
+          ...searchReceipt,
+          item_set_digest: projection.item_set_digest,
+          item_count: projection.items.length,
+          projection_generation: generation,
+          ...input.search_receipt,
+        };
+      }),
     },
     managed: {
       index: vi.fn(async () => { events.push("managed"); return input.managed ?? defaultManaged; }),
@@ -244,6 +262,23 @@ describe("projection execution coordinator", () => {
       outcome: "PARTIAL",
       reason_codes: ["MANAGED_INDEX_READBACK_FAILED"],
     });
+  });
+
+  it("rejects a Work receipt whose required item set differs before Search activation", async () => {
+    const f = fixture({ work_receipt: { item_set_digest: "0".repeat(64) } });
+
+    await expect(createProjectionExecutionHandler(f.dependencies).execute(message)).rejects.toThrow();
+    expect(f.dependencies.authority.recordMaterialized).not.toHaveBeenCalled();
+    expect(f.dependencies.search.activate).not.toHaveBeenCalled();
+    expect(f.dependencies.managed.index).not.toHaveBeenCalled();
+  });
+
+  it("does not invoke managed indexing when the D1 Search receipt has another generation digest", async () => {
+    const f = fixture({ search_receipt: { item_set_digest: "0".repeat(64) } });
+
+    await expect(createProjectionExecutionHandler(f.dependencies).execute(message)).rejects.toThrow();
+    expect(f.dependencies.search.activate).toHaveBeenCalledOnce();
+    expect(f.dependencies.managed.index).not.toHaveBeenCalled();
   });
 
   it("requires a sharded workflow without creating projection or index side effects", async () => {

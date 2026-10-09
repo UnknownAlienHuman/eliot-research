@@ -6,23 +6,35 @@ import {
   assertImmutableAiSearchProfile,
   createAiSearchGenerationRegistryService,
   createD1AiSearchGenerationRegistryStore,
+  sameAiSearchGenerationRegistrySnapshot,
+  type AiSearchGenerationState,
   type AiSearchGenerationRegistrySnapshot,
 } from "@eliotr/cloudflare-projection/ai-search";
 import {
   createD1ProjectionAuthority,
   createD1ProjectionSearchPort,
-  createManagedProjectionPort,
   createProjectionExecutionHandler as createExecutor,
   createR2ProjectionContentPort,
   createR2ProjectionWorkPort,
-  type ProjectionAiSearchNamespace,
+  projectionFail,
+  type ProjectionManagedItemAuthorityPort,
+  type ManagedProjectionPort,
   type ProjectionExecutionProfile,
 } from "@eliotr/cloudflare-projection";
+import { createManagedProjectionPort, type ProjectionAiSearchNamespace } from "./managed-index.js";
 import {
   createD1ExecutionLeaseStore,
   type AiSearchNamespaceLike,
   type DeliveryHandler,
 } from "@eliotr/platform-cloudflare";
+
+type ManagedExecutionFence = Parameters<ManagedProjectionPort["index"]>[3];
+type CurrentManagedTargetReader = (fence: ManagedExecutionFence) => Promise<boolean>;
+
+interface ProjectionGenerationCurrentnessGuard {
+  readonly isCurrentSnapshot: () => Promise<boolean>;
+  readonly isCurrentTarget: CurrentManagedTargetReader;
+}
 
 export interface ProjectionExecutionDeliveryBindings {
   readonly core_database: D1Database;
@@ -64,18 +76,130 @@ export function projectionManagedGenerationIsActive(
   return true;
 }
 
+const PROJECTION_EXECUTION_TARGET_STATES: ReadonlySet<AiSearchGenerationState> =
+  new Set(["ACTIVE", "DECLARED", "SHADOW_BUILDING", "SHADOW_COMPLETE"]);
+
+// ACTIVE remains current for exact non-INTENT readback; the managed writer separately blocks new uploads there.
+function projectionManagedGenerationTargetIsEligible(
+  snapshot: AiSearchGenerationRegistrySnapshot | null,
+): boolean {
+  if (snapshot === null) return false;
+  const target = snapshot.artifact.registry.generations.find(
+    (record) => record.generation === AI_SEARCH_PRIMARY_GENERATION,
+  );
+  if (
+    target === undefined ||
+    target.namespace !== AI_SEARCH_PRIMARY_NAMESPACE ||
+    !PROJECTION_EXECUTION_TARGET_STATES.has(target.state)
+  ) {
+    return false;
+  }
+  try {
+    assertImmutableAiSearchProfile(
+      target.profile,
+      AI_SEARCH_PRIMARY_PROJECTION_PROFILE,
+    );
+  } catch {
+    return false;
+  }
+  return true;
+}
+
+function projectionManagedGenerationSnapshotIsCurrent(
+  expected: AiSearchGenerationRegistrySnapshot | null,
+  observed: AiSearchGenerationRegistrySnapshot | null,
+  expectedActive: boolean,
+): boolean {
+  if (
+    !projectionManagedGenerationTargetIsEligible(expected) ||
+    !projectionManagedGenerationTargetIsEligible(observed) ||
+    observed === null ||
+    !sameAiSearchGenerationRegistrySnapshot(expected, observed)
+  ) return false;
+
+  // The canonical artifact digest binds the full generation descriptor, immutable profile, and active head.
+  const observedActive = projectionManagedGenerationIsActive(observed);
+  return observedActive === expectedActive;
+}
+
+/**
+ * Keeps Search registry currentness at the Core terminal boundary as well as the provider boundary.
+ * The helper is exported from this module for focused tests and is not re-exported by the package barrel.
+ */
+export function createCurrentnessGuardedProjectionAuthority(
+  authority: ProjectionManagedItemAuthorityPort,
+  currentness: ProjectionGenerationCurrentnessGuard,
+): ProjectionManagedItemAuthorityPort {
+  const snapshotIsCurrent = async (): Promise<boolean> => {
+    try {
+      return await currentness.isCurrentSnapshot();
+    } catch {
+      return false;
+    }
+  };
+
+  const assertTargetCurrent = async (fence: ManagedExecutionFence): Promise<void> => {
+    let current: boolean;
+    try {
+      current = await currentness.isCurrentTarget(fence);
+    } catch (cause) {
+      projectionFail(
+        "PROJECTION_AUTHORITY_CONFLICT",
+        "AI Search generation currentness could not be verified before Core settlement",
+        false,
+        cause,
+      );
+    }
+    if (!current) {
+      projectionFail(
+        "PROJECTION_AUTHORITY_CONFLICT",
+        "AI Search generation registry changed before Core settlement",
+      );
+    }
+  };
+
+  return {
+    ...authority,
+    async readTerminal(context, projectionGeneration, profile) {
+      if (!(await snapshotIsCurrent())) return null;
+      const terminal = await authority.readTerminal(context, projectionGeneration, profile);
+      if (!(await snapshotIsCurrent())) return null;
+      return terminal;
+    },
+    async settle(context, projectionGeneration, profile, settlement, fence) {
+      await assertTargetCurrent(fence);
+      const terminal = await authority.settle(
+        context,
+        projectionGeneration,
+        profile,
+        settlement,
+        fence,
+      );
+      await assertTargetCurrent(fence);
+      return terminal;
+    },
+  };
+}
+
 function projectionExecutor(
   bindings: ProjectionExecutionDeliveryBindings,
   profile: ProjectionExecutionProfile,
+  currentness: ProjectionGenerationCurrentnessGuard,
 ) {
+  const authority = createCurrentnessGuardedProjectionAuthority(
+    createD1ProjectionAuthority({ database: bindings.core_database }),
+    currentness,
+  );
   return createExecutor({
-    authority: createD1ProjectionAuthority({ database: bindings.core_database }),
+    authority,
     content: createR2ProjectionContentPort({ evidence_bucket: bindings.evidence_bucket }),
     work: createR2ProjectionWorkPort({ work_bucket: bindings.work_bucket }),
     search: createD1ProjectionSearchPort(bindings.search_database),
     managed: createManagedProjectionPort({
       namespace: bindings.ai_search as unknown as ProjectionAiSearchNamespace,
       profile,
+      authority,
+      isCurrentTarget: currentness.isCurrentTarget,
     }),
     leases: createD1ExecutionLeaseStore(bindings.core_database),
     profile,
@@ -91,10 +215,28 @@ export function createProjectionExecutionDeliveryHandler(
   );
   return async (message) => {
     const snapshot = await registry.read(AI_SEARCH_PRIMARY_NAMESPACE);
+    if (!projectionManagedGenerationTargetIsEligible(snapshot)) {
+      projectionFail(
+        "PROJECTION_AUTHORITY_CONFLICT",
+        "AI Search generation registry lacks the exact eligible configured target",
+      );
+    }
     const profile: ProjectionExecutionProfile = Object.freeze({
       ...PROJECTION_EXECUTION_PROFILE,
       managed_generation_active: projectionManagedGenerationIsActive(snapshot),
     });
-    return projectionExecutor(bindings, profile).execute(message);
+    const isCurrentSnapshot = async (): Promise<boolean> => {
+      const current = await registry.read(AI_SEARCH_PRIMARY_NAMESPACE);
+      return projectionManagedGenerationSnapshotIsCurrent(
+        snapshot,
+        current,
+        profile.managed_generation_active,
+      );
+    };
+    const currentness: ProjectionGenerationCurrentnessGuard = {
+      isCurrentSnapshot,
+      isCurrentTarget: async (_fence) => isCurrentSnapshot(),
+    };
+    return projectionExecutor(bindings, profile, currentness).execute(message);
   };
 }

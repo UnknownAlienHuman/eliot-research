@@ -3,23 +3,96 @@ import {
   type ExecutionFence,
 } from "@eliotr/platform-cloudflare";
 import { projectNormalizedMarkdown, StructuralProjectionError } from "@eliotr/retrieval";
+import type { ProjectionItem } from "@eliotr/contracts";
 import {
+  assertProjectionIdentifier,
+  assertProjectionSha256,
   profileIsValid,
   projectionGeneration,
   projectionFail,
   stableProjectionId,
+  utf8ProjectionLength,
   type ProjectionRuntimeError,
 } from "./canonical.js";
 import type {
   ManagedProjectionReceipt,
   ProjectionExecutionHandler,
   ProjectionExecutorDependencies,
+  ProjectionSearchReceipt,
   ProjectionSettlement,
   ProjectionSourceContext,
+  ProjectionWorkReceipt,
 } from "./types.js";
 
 const DEFAULT_WORKER_ID = "eliotr-projection-executor";
 const DEFAULT_LEASE_MS = 5 * 60_000;
+
+function verifyWorkSet(
+  receipt: ProjectionWorkReceipt,
+  projection: {
+    readonly items: readonly ProjectionItem[];
+    readonly item_set_digest: string;
+  },
+): void {
+  const expectedKeys = new Map(projection.items.map((item) => [item.item_key, item]));
+  if (
+    expectedKeys.size !== projection.items.length ||
+    receipt.item_count !== projection.items.length ||
+    receipt.item_set_digest !== projection.item_set_digest ||
+    !Array.isArray(receipt.item_receipts) ||
+    receipt.item_receipts.length !== projection.items.length
+  ) {
+    projectionFail(
+      "PROJECTION_AUTHORITY_CONFLICT",
+      "Work receipt count or desired-set digest differs from the projected generation",
+    );
+  }
+
+  const observedKeys = new Set<string>();
+  for (const itemReceipt of receipt.item_receipts) {
+    const expected = expectedKeys.get(itemReceipt.item_key);
+    if (
+      expected === undefined ||
+      observedKeys.has(itemReceipt.item_key) ||
+      itemReceipt.readback_sha256 !== expected.content_sha256 ||
+      itemReceipt.size_bytes !== utf8ProjectionLength(expected.section_text)
+    ) {
+      projectionFail(
+        "PROJECTION_AUTHORITY_CONFLICT",
+        "Work item readback differs from the projected desired set",
+      );
+    }
+    observedKeys.add(itemReceipt.item_key);
+  }
+  if (observedKeys.size !== expectedKeys.size) {
+    projectionFail(
+      "PROJECTION_AUTHORITY_CONFLICT",
+      "Work receipt is missing a projected desired item",
+    );
+  }
+}
+
+function verifySearchSet(
+  receipt: ProjectionSearchReceipt,
+  projection: {
+    readonly items: readonly ProjectionItem[];
+    readonly item_set_digest: string;
+  },
+  generation: string,
+): void {
+  if (
+    receipt.item_count !== projection.items.length ||
+    receipt.item_set_digest !== projection.item_set_digest ||
+    receipt.projection_generation !== generation
+  ) {
+    projectionFail(
+      "PROJECTION_AUTHORITY_CONFLICT",
+      "D1 Search receipt differs from the projected desired generation",
+    );
+  }
+  assertProjectionIdentifier(receipt.receipt_ref, "D1 Search receipt_ref");
+  assertProjectionSha256(receipt.readback_digest, "D1 Search readback_digest");
+}
 
 function deliveryFailure(error: unknown): never {
   if (error instanceof DeliveryRuntimeError) throw error;
@@ -82,11 +155,12 @@ async function settleSharded(
   dependencies: ProjectionExecutorDependencies,
   context: ProjectionSourceContext,
   generation: string,
+  fence: ExecutionFence,
 ): Promise<{ readonly receipt_ref: string }> {
   const terminal = await dependencies.authority.settle(context, generation, dependencies.profile, {
     outcome: "PARTIAL",
     reason_codes: ["SHARDED_WORKFLOW_REQUIRED"],
-  });
+  }, fence);
   return { receipt_ref: terminal.receipt_ref };
 }
 
@@ -141,13 +215,13 @@ export function createProjectionExecutionHandler(
       };
 
       try {
-        await dependencies.authority.begin(context, generation, dependencies.profile);
+        await dependencies.authority.begin(context, generation, dependencies.profile, fence);
         const content = await dependencies.content.read(
           context,
           dependencies.profile.maximum_markdown_bytes,
         );
         if (content.disposition === "SHARDED_WORKFLOW_REQUIRED") {
-          const result = await settleSharded(dependencies, context, generation);
+          const result = await settleSharded(dependencies, context, generation, fence);
           try { await dependencies.leases.complete(fence, result.receipt_ref, now()); }
           catch { /* the durable terminal receipt is authority */ }
           return result;
@@ -171,19 +245,22 @@ export function createProjectionExecutionHandler(
           );
         }
         if (projection.items.length > dependencies.profile.maximum_synchronous_items) {
-          const result = await settleSharded(dependencies, context, generation);
+          const result = await settleSharded(dependencies, context, generation, fence);
           try { await dependencies.leases.complete(fence, result.receipt_ref, now()); }
           catch { /* the durable terminal receipt is authority */ }
           return result;
         }
 
         const work = await dependencies.work.materialize(context, generation, projection);
-        await dependencies.authority.recordMaterialized(context, generation, work);
+        verifyWorkSet(work, projection);
+        await dependencies.authority.recordMaterialized(context, generation, work, fence);
         const d1Search = await dependencies.search.activate(context, generation, projection);
+        verifySearchSet(d1Search, projection, generation);
         const managed = await dependencies.managed.index(
           context,
           generation,
           projection.items,
+          fence,
         );
         const baseSettlement = managedSettlement(managed, []);
         const settlement: ProjectionSettlement = {
@@ -191,7 +268,7 @@ export function createProjectionExecutionHandler(
           work,
           d1_search: d1Search,
         };
-        const terminal = await dependencies.authority.settle(context, generation, dependencies.profile, settlement);
+        const terminal = await dependencies.authority.settle(context, generation, dependencies.profile, settlement, fence);
         try { await dependencies.leases.complete(fence, terminal.receipt_ref, now()); }
         catch { /* exact terminal readback outranks coordination state */ }
         return { receipt_ref: terminal.receipt_ref };

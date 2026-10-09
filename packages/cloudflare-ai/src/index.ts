@@ -1,4 +1,5 @@
 export * from "@eliotr/cloudflare-projection/ai-search";
+export * from "./managed-index.js";
 export {
   ModelGatewayExecutionError,
   type CompiledModelGatewayPrompt,

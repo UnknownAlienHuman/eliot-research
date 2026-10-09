@@ -6,6 +6,7 @@ import type {
 } from "@eliotr/contracts";
 import type {
   DeliveryMessage,
+  ExecutionFence,
   ExecutionLeaseStore,
 } from "@eliotr/platform-cloudflare";
 import type {
@@ -120,6 +121,31 @@ export type ManagedProjectionReceipt =
       readonly reason_codes: readonly string[];
     };
 
+export interface ProjectionManagedItemGenerationTarget {
+  readonly managed_instance_id: string;
+  readonly managed_generation: string;
+}
+
+export interface ProjectionManagedItemGenerationProof {
+  readonly status: "ITEMS_READBACK_VERIFIED_WRITERS_DRAINED";
+  readonly source_revision_ref: string;
+  readonly projection_generation: string;
+  readonly job_id: string;
+  readonly projection_terminal_state: "COMPLETED" | "PARTIAL";
+  readonly managed_instance_id: string;
+  readonly managed_generation: string;
+  readonly managed_receipt_ref: string;
+  readonly item_count: number;
+  readonly item_set_digest: string;
+  readonly readback_digest: string;
+  readonly writer_drain: {
+    readonly operation_id: string;
+    readonly lease_generation: number;
+    readonly state: "COMPLETED";
+    readonly terminal_receipt_ref: string;
+  };
+}
+
 export interface ProjectionSettlement {
   readonly outcome: "SUCCEEDED" | "PARTIAL";
   readonly reason_codes: readonly string[];
@@ -139,19 +165,105 @@ export interface ProjectionAuthorityPort {
     context: ProjectionSourceContext,
     projectionGeneration: string,
     profile: ProjectionExecutionProfile,
+    fence: ExecutionFence,
   ): Promise<void>;
   recordMaterialized(
     context: ProjectionSourceContext,
     projectionGeneration: string,
     receipt: ProjectionWorkReceipt,
+    fence: ExecutionFence,
   ): Promise<void>;
   settle(
     context: ProjectionSourceContext,
     projectionGeneration: string,
     profile: ProjectionExecutionProfile,
     settlement: ProjectionSettlement,
+    fence: ExecutionFence,
   ): Promise<ProjectionTerminalReceipt>;
+  prepareManagedItems?(
+    context: ProjectionSourceContext,
+    projectionGeneration: string,
+    profile: ProjectionExecutionProfile,
+    items: readonly {
+      readonly desired_index: number;
+      readonly item_key: string;
+      readonly provider_key: string;
+      readonly provider_source: "builtin";
+      readonly managed_instance_id: string;
+      readonly managed_generation: string;
+      readonly section_content_sha256: string;
+      readonly normalized_start_byte: number;
+      readonly normalized_end_byte: number;
+      readonly document_sha256: string;
+      readonly document_size_bytes: number;
+      readonly metadata: Readonly<Record<string, string>>;
+    }[],
+    fence: ExecutionFence,
+  ): Promise<readonly {
+    readonly item_key: string;
+    readonly state: "INTENT" | "DISPATCHED" | "UNKNOWN" | "READBACK_VERIFIED";
+    readonly provider_item_id: string | null;
+    readonly receipt: {
+      readonly item_key: string;
+      readonly provider_item_id: string;
+      readonly provider_key: string;
+      readonly file_size: number;
+      readonly chunks_count: number;
+      readonly content_sha256: string;
+      readonly readback_sha256: string;
+    } | null;
+  }[]>;
+  beginManagedItemDispatch?(
+    context: ProjectionSourceContext,
+    projectionGeneration: string,
+    itemKey: string,
+    fence: ExecutionFence,
+  ): Promise<boolean>;
+  recordManagedItemProviderId?(
+    context: ProjectionSourceContext,
+    projectionGeneration: string,
+    itemKey: string,
+    providerItemId: string,
+    fence: ExecutionFence,
+  ): Promise<void>;
+  recordManagedItemReceipt?(
+    context: ProjectionSourceContext,
+    projectionGeneration: string,
+    receipt: {
+      readonly item_key: string;
+      readonly provider_item_id: string;
+      readonly provider_key: string;
+      readonly file_size: number;
+      readonly chunks_count: number;
+      readonly content_sha256: string;
+      readonly readback_sha256: string;
+    },
+    fence: ExecutionFence,
+  ): Promise<void>;
+  markManagedItemUnknown?(
+    context: ProjectionSourceContext,
+    projectionGeneration: string,
+    itemKey: string,
+    fence: ExecutionFence,
+  ): Promise<void>;
+  readManagedItemGenerationProof?(
+    context: ProjectionSourceContext,
+    projectionGeneration: string,
+    target: ProjectionManagedItemGenerationTarget,
+  ): Promise<ProjectionManagedItemGenerationProof>;
 }
+
+export type ProjectionManagedItemAuthorityPort = ProjectionAuthorityPort & Required<
+  Pick<
+    ProjectionAuthorityPort,
+    | "prepareManagedItems"
+    | "beginManagedItemDispatch"
+    | "recordManagedItemProviderId"
+    | "recordManagedItemReceipt"
+    | "markManagedItemUnknown"
+    | "readManagedItemGenerationProof"
+  >
+>;
 
 export interface ProjectionContentPort {
   read(
@@ -181,6 +293,7 @@ export interface ManagedProjectionPort {
     context: ProjectionSourceContext,
     projectionGeneration: string,
     items: readonly ProjectionItem[],
+    fence: ExecutionFence,
   ): Promise<ManagedProjectionReceipt>;
 }
 
