@@ -1,0 +1,46 @@
+{
+  "protocol": "eliotr.frontend-tooling-registration.v1",
+  "recorded_at": "2026-10-09",
+  "manager_context": "01a120c9-2637-7952-b6c9-be07b395b4fd",
+  "client_skeleton_source": "56a46e669ee90ebdb926e594e1339df293124024",
+  "registration_tooling_source": "a8c5f1e50855dccd52ae9fce035189bc2947f5b4",
+  "C0.4": "ACCEPTED package-local skeleton only; import without DOM globals and compiler passed",
+  "B-C": "ACCEPTED bounded root registration; frozen install, whole root tsc-b and boundary gate exit0",
+  "negative_evidence": {
+    "owner_client": "PASS real renderer import and DOM global rejection; created-only exact fixture cleanup",
+    "unknown_workspace": "PASS retained owner-web negative at registration base; unknown source root and missing boundary rule rejected",
+    "legacy_policy": "Existing legacy/backend dependency policy retained"
+  },
+  "tooling": {
+    "storybook": "10.6.1",
+    "addon_vitest": "10.6.1",
+    "vitest_and_browser_provider": "4.1.11",
+    "playwright": "1.63.0",
+    "axe": "4.14.0",
+    "browser": "Chrome 155.0.8059.40",
+    "os": "Windows 10.0.26300",
+    "registry_verified": "2026-10-09"
+  },
+  "dependency_remediation": {
+    "removed": "@storybook/test-runner0.26.0 and its obsolete uuid8/nyc/sprintf-js chains",
+    "patched": "existing miniflare5.20260916.0-alpha > undici7.29.1 exact override",
+    "unresolved": "existing PWA dev http-cache-semantics4.2.0 has no reviewed patch",
+    "emitted_runtime_reachability": "NOT_PROVEN by dependency ancestry",
+    "github_alert_closure": "PENDING live readback"
+  },
+  "verification": {
+    "pnpm_resolution_and_frozen_install": "PASS retained serialized install",
+    "root_tsc_b": "PASS 2026-10-09; dirty backend worktree included, no product or native acceptance inferred",
+    "check_boundaries": "PASS",
+    "ui_compiler_and_lint": "PASS",
+    "storybook_browser_tests": "PASS 10 of 10 stories on local Chrome",
+    "token_tests": "PASS 5 meaningful qualification cases",
+    "research_characterization": "PASS 7 cases, owning compiler and lint"
+  },
+  "limits": [
+    "The owner client exports no feature API yet.",
+    "Generated Session/native evidence retains its original source/config/runtime digests and is historical after transitive changes.",
+    "Direction fixtures are preparatory and U1-D is not accepted.",
+    "Production CSP, integrated journey, native/staging/live and release remain PENDING."
+  ]
+}
