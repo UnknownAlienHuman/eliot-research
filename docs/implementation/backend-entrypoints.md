@@ -126,6 +126,13 @@ stage-five lineage/configuration and injected COMPUTER route leave complete
 scientific, production-selected and public/live acceptance open. The detailed
 [qualification record](r05-local-native-qualification-2026-10-09.md) owns those limits.
 
+Three further named local native cases replace the injected route callback with
+actual D1 COMPUTER connection/project-route/run-binding services and exact reads.
+The bound result passes; missing binding and foreign grant create no task or
+native settlement. Authenticated contexts remain injected and COMPUTER dispatch,
+connection qualification, production profiles and public HTTP/JWT remain open.
+Earlier passing scientific sources/cases are retained without repetition.
+
 This is the canonical day-to-day backend router. It does not replace product architecture, work-packet
 ownership or release acceptance. It tells each role where to begin, which active PR owns the result,
 and where the concise donor/anti-duplication instructions live.

@@ -179,6 +179,32 @@ Private receipts under the same checkpoint directory are:
 - `native-scientific-receipt-enhanced-errors-scientific-paused-after-expiry.json`;
 - `native-scientific-receipt-enhanced-errors-pinned-scientific-pinned-native-result_scientific-pinned-identity-mismatch.json`.
 
+## Existing COMPUTER route services — bounded local qualification
+
+Three new named cases pass on the same Miniflare/esbuild versions, using a
+separate private fixture that preserves the earlier scientific fixture sources.
+It creates the connection, project `ORIGINATING_MATCH` route and immutable run
+binding through their existing D1 services. Exact binding readback checks the
+stored canonical bytes/digest, grant, actor, connection and route revision.
+The existing route reader runs at both task preparation and scientific result
+consumption; Core's existing stale/uncertain error mapping is retained.
+
+| New case | Result |
+|---|---|
+| COMPUTER route with immutable configuration and native result | PASS: two exact route reads and two configuration rereads; original attempt settles at stage 9/revision 10 with one task, result read, scientific consumption, predecessor effect and native settlement. |
+| Missing immutable run binding | PASS: `WORKFLOW_AUTHORITY_STALE`, no task inserted and no native settlement; stage 8 remains current. |
+| Foreign grant against the persisted run binding | PASS: the same fail-closed result before task insertion. |
+
+Authenticated owner/service contexts are still injected, the connection has no
+claimed computer capabilities, and no dispatch or connection qualification runs.
+Empty evidence, supplied retrieval/predecessor outputs and diagnostic configuration
+remain explicit boundaries. This qualifies the local connection/route/binding
+service seam; public HTTP/JWT, production COMPUTER dispatch/provider selection,
+complete scientific/native/live and release acceptance remain open.
+The receipt is
+`native-computer-receipt-enhanced-errors-pinned-computer-pinned-native-result_computer-missing-route-binding_computer-foreign-grant.json`
+under the same private checkpoint directory. Earlier passing cases were not rerun.
+
 Remaining acceptance includes production pause/resume, complete scientific `consumeResult`,
 pinned production configuration, COMPUTER route, public HTTP/JWT, foreign/
 malformed/late events, timeout/result boundary, restart/completed predecessors,

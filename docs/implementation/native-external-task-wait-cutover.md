@@ -166,6 +166,13 @@ configuration values and COMPUTER route are fixture boundaries. This reduces
 the local consumer gap but leaves complete scientific/production/public/live
 acceptance open; see the same qualification record for exact receipts and scope.
 
+Three subsequent local cases replace the injected route check with actual D1
+COMPUTER connection/project-route/run-binding services. Exact route rereads at
+prepare and scientific consumption pass with the original attempt; missing
+binding and foreign grant fail before task insertion. Public authentication,
+connection qualification and COMPUTER dispatch remain unqualified. Prior passing
+scientific cases and their fixture sources are retained without rerunning them.
+
 Seven local native topology cases pass: buffered and duplicate events, foreign
 and malformed locators, event before recorded result, and both timeout result
 states. Two added-only cases pass for restart from prepare and pause/resume with

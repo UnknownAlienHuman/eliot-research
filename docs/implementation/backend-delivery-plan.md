@@ -216,6 +216,14 @@ model/spend/project selections, public caller or the complete native pipeline.
 The [local record](r05-local-native-qualification-2026-10-09.md) retains exact
 receipts, fixture input repairs and the remaining acceptance boundary.
 
+Three new named local native cases also pass through actual COMPUTER connection,
+project-route and immutable run-binding services. The positive case rechecks the
+exact route twice and preserves the original attempt alongside the configuration
+binder. Missing binding and foreign grant fail before task insertion. Separate
+private fixture sources preserve the previous scientific fixture; passing cases
+are not repeated. Authenticated contexts remain injected, so public HTTP/JWT,
+COMPUTER dispatch/qualification and production/native/live/release remain open.
+
 The same continuation archives two directly verified malformed loose probe files
 from the Research root (891 bytes) into the private checkpoint directory with
 exact hash readback. It preserves the unique Unicode regeneration set, registered
