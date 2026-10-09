@@ -566,3 +566,12 @@ BEGIN
     )
   ) THEN RAISE(ABORT, 'WORKFLOW_CONFLICT') END;
 END;
+
+-- Preserve the original V1 bytes even while a legacy row initializes history.
+CREATE TRIGGER research_workflow_first_failure_immutable
+BEFORE UPDATE OF first_failure_json ON research_workflow_run
+WHEN OLD.first_failure_json IS NOT NULL
+  AND NEW.first_failure_json IS NOT OLD.first_failure_json
+BEGIN
+  SELECT RAISE(ABORT, 'WORKFLOW_CONFLICT');
+END;

@@ -1,6 +1,5 @@
 import {
   parseWorkflowCheckpointErrorMessage,
-  workflowFailureCause,
   WORKFLOW_FAILURE_CODES,
   type WorkflowFailureCompatible,
   type WorkflowRunStatus,
@@ -81,6 +80,18 @@ function failureContext(value: WorkflowFailureCompatible): ResearchRunFailureCon
     } : {}) };
 }
 
+function sameFailureContext(left: ResearchRunFailureContext, right: ResearchRunFailureContext): boolean {
+  return left.code === right.code && left.phase === right.phase && left.stage === right.stage &&
+    left.retryable === right.retryable && left.protocol === right.protocol &&
+    left.dispatch_state === right.dispatch_state && left.references_intact === right.references_intact &&
+    left.recovery_action === right.recovery_action;
+}
+
+const UNQUALIFIED_OUTER_FAILURE_CODES = new Set<ResearchRunFailureCode>([
+  "WORKFLOW_EFFECT_UNCERTAIN",
+  "WORKFLOW_PREPARATION_FAILED",
+]);
+
 /** Historical diagnostics do not turn an active, recovered or completed run into a failed run. */
 export function researchRunFailure(status: WorkflowRunStatus,
   engine: ResearchEngineObservation | undefined): ResearchRunFailure | undefined {
@@ -92,18 +103,19 @@ export function researchRunFailure(status: WorkflowRunStatus,
   const first = history?.first_cause ?? status.first_failure;
   if (first === null) return native;
   const latest = status.latest_failure;
-  const nativeConsequence = native?.code !== first.code && native?.code !== "WORKFLOW_EFFECT_UNCERTAIN" &&
-    native?.code !== "WORKFLOW_PREPARATION_FAILED" ? native : undefined;
+  const firstContext = failureContext(first);
   const consequences: ResearchRunFailureContext[] = history?.consequences.map(failureContext) ?? [];
   if (consequences.length === 0 && latest !== null &&
-      JSON.stringify(workflowFailureCause(latest)) !== JSON.stringify(workflowFailureCause(first))) {
+      !sameFailureContext(failureContext(latest), firstContext)) {
     consequences.push(failureContext(latest));
   }
-  if (consequences.length === 0 && nativeConsequence !== undefined && consequences.length < 16) {
-    const alreadyRetained = consequences.some((item) => JSON.stringify(item) === JSON.stringify(nativeConsequence));
-    if (!alreadyRetained) consequences.push(nativeConsequence);
+  const nativeIsUnqualifiedOuterFallback = engine.failure === undefined && native !== undefined &&
+    UNQUALIFIED_OUTER_FAILURE_CODES.has(native.code);
+  if (native !== undefined && !nativeIsUnqualifiedOuterFallback && consequences.length < 16 &&
+      ![firstContext, ...consequences].some((item) => sameFailureContext(item, native))) {
+    consequences.push(native);
   }
-  return { ...failureContext(first),
+  return { ...firstContext,
     ...(consequences.length === 0 ? {} : {
       consequence: consequences[consequences.length - 1],
       consequences,

@@ -15,7 +15,7 @@ async function failureRow(db: D1Database, operationId: string) {
     FROM research_workflow_run WHERE operation_id=?1`).bind(operationId).first<{
       first_failure_json: string | null;
       latest_failure_json: string | null;
-      failure_history_json: string;
+      failure_history_json: string | null;
     }>();
   if (row === null) throw new Error("workflow failure row is missing");
   return row;
@@ -131,5 +131,34 @@ describe("persisted workflow failure shape contract", () => {
     expect(decodeWorkflowFailure(stored.first_failure_json)?.code).toBe(failure.code);
     await recordWorkflowFailure(fixture.db, fixture.request.operation_id, principal, failure);
     expect(await failureRow(fixture.db, fixture.request.operation_id)).toEqual(stored);
+  });
+
+  it("refuses replacing a legacy first cause while initializing matching new history", async () => {
+    const fixture = await workflowFixture("failure-legacy-bootstrap");
+    await new WorkflowCheckpointStore(fixture.db).ensureRun(fixture.request, principal);
+    const original = { code: "EVIDENCE_FREEZE_EVIDENCE_INVALID", phase: "STAGE",
+      stage: fixture.request.stage, retryable: false };
+    await fixture.db.prepare(`UPDATE research_workflow_run SET first_failure_json=?1,latest_failure_json=?1
+      WHERE operation_id=?2`).bind(JSON.stringify(original), fixture.request.operation_id).run();
+    const before = await failureRow(fixture.db, fixture.request.operation_id);
+    expect(before.failure_history_json).toBeNull();
+    const forged = { ...original, code: "WORKFLOW_BUDGET_STOP" };
+    const history = { protocol: "eliotr.workflow-failure-history.v1", first_cause: {
+      protocol: "eliotr.workflow-failure-outcome.v1", ...forged,
+      dispatch_state: "OUTCOME_UNKNOWN", references_intact: "UNKNOWN", recovery_action: "RECONCILE",
+    }, consequences: [] };
+    await expect(fixture.db.prepare(`UPDATE research_workflow_run
+      SET first_failure_json=?1,latest_failure_json=?1,failure_history_json=?2 WHERE operation_id=?3`)
+      .bind(JSON.stringify(forged), JSON.stringify(history), fixture.request.operation_id).run()).rejects.toThrow();
+    expect(await failureRow(fixture.db, fixture.request.operation_id)).toEqual(before);
+    await recordWorkflowFailure(fixture.db, fixture.request.operation_id, principal, {
+      ...original, code: "WORKFLOW_BUDGET_STOP",
+    });
+    const accepted = await failureRow(fixture.db, fixture.request.operation_id);
+    expect(accepted.first_failure_json).toBe(before.first_failure_json);
+    const acceptedHistory = decodeWorkflowFailureHistory(accepted.failure_history_json,
+      decodeWorkflowFailure(accepted.first_failure_json), decodeWorkflowFailure(accepted.latest_failure_json));
+    expect(acceptedHistory.first_cause?.code).toBe(original.code);
+    expect(acceptedHistory.consequences.at(-1)?.code).toBe("WORKFLOW_BUDGET_STOP");
   });
 });

@@ -353,7 +353,7 @@ describe("native research workflow failure fallback", () => {
     expect(named.failure_code).toBe("WORKFLOW_PREPARATION_FAILED");
   });
 
-  it("gives retained D1 first and latest failures priority over the native fallback", async () => {
+  it("does not duplicate a native context already at the retained tail", async () => {
     const nativeFailure: WorkflowFailure = {
       code: "MODEL_GATEWAY_UPSTREAM_REJECTED",
       phase: "STAGE",
@@ -376,12 +376,7 @@ describe("native research workflow failure fallback", () => {
       stage: "ORIENT",
       retryable: false,
     };
-    const latest: WorkflowFailure = {
-      code: "EVIDENCE_SETTLEMENT_UNCERTAIN",
-      phase: "RECOVERY",
-      stage: "RECONCILE",
-      retryable: false,
-    };
+    const latest = nativeFailure;
     const run = {
       state: "ACTIVE",
       next_stage_index: RESEARCH_WORKFLOW_STAGES.indexOf("RECONCILE"),
@@ -393,6 +388,58 @@ describe("native research workflow failure fallback", () => {
       ...first,
       consequence: latest,
       consequences: [latest],
+    });
+  });
+
+  it("R00 native context: appends a distinct context after persisted first cause and consequences", () => {
+    const first = workflowFailure({ code: "EVIDENCE_FREEZE_SCOPE_STALE", retryable: false }, "STAGE", "FREEZE_EVIDENCE");
+    const retained = workflowFailure({ code: "EVIDENCE_FREEZE_SETTLEMENT_UNCERTAIN", retryable: false }, "RECOVERY", "RECONCILE");
+    const native = workflowFailure({ code: "EVIDENCE_FREEZE_SCOPE_STALE", retryable: false }, "STAGE", "VERIFY");
+    const status = {
+      state: "ACTIVE",
+      next_stage_index: RESEARCH_WORKFLOW_STAGES.indexOf("RECONCILE"),
+      first_failure: workflowFailureCause(first),
+      latest_failure: workflowFailureCause(retained),
+      failure_history: {
+        protocol: "eliotr.workflow-failure-history.v1",
+        first_cause: first,
+        consequences: [retained],
+      },
+    } as unknown as WorkflowRunStatus;
+
+    expect(researchRunFailure(status, {
+      status: "errored",
+      failure_code: "WORKFLOW_EFFECT_UNCERTAIN",
+      failure: native,
+    })).toEqual({
+      ...first,
+      consequence: native,
+      consequences: [retained, native],
+    });
+  });
+
+  it("R00 native context: skips an unqualified generic outer fallback", () => {
+    const first = workflowFailure({ code: "EVIDENCE_FREEZE_SCOPE_STALE", retryable: false }, "STAGE", "FREEZE_EVIDENCE");
+    const retained = workflowFailure({ code: "EVIDENCE_FREEZE_SETTLEMENT_UNCERTAIN", retryable: false }, "RECOVERY", "RECONCILE");
+    const status = {
+      state: "ACTIVE",
+      next_stage_index: RESEARCH_WORKFLOW_STAGES.indexOf("RECONCILE"),
+      first_failure: workflowFailureCause(first),
+      latest_failure: workflowFailureCause(retained),
+      failure_history: {
+        protocol: "eliotr.workflow-failure-history.v1",
+        first_cause: first,
+        consequences: [retained],
+      },
+    } as unknown as WorkflowRunStatus;
+
+    expect(researchRunFailure(status, {
+      status: "errored",
+      failure_code: "WORKFLOW_EFFECT_UNCERTAIN",
+    })).toEqual({
+      ...first,
+      consequence: retained,
+      consequences: [retained],
     });
   });
 

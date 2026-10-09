@@ -178,7 +178,11 @@ export function decodeWorkflowFailureHistory(
   });
 }
 
-/** Bounded diagnostic metadata on the existing run; it cannot authorize or advance execution. */
+/**
+ * Retain distinct diagnostic contexts in their first-retention order on the run.
+ * Exact context replay is idempotent; this is not a chronological occurrence log.
+ * It cannot authorize or advance execution or replace the investigation ledger.
+ */
 export async function recordWorkflowFailure(
   database: D1Database,
   operationId: string,
