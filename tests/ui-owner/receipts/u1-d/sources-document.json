@@ -1,0 +1,16 @@
+{
+  "protocol": "eliotr.ui-review-receipt.v1",
+  "checkpoint": "U3-D",
+  "status": "ACCEPTED_INTERNAL_UI_SOURCE",
+  "source_commit": "819f13e734478ec88f6bab7d3e90f951de857a97",
+  "behavior": "Revision/deployment-bound reader with bounded safe Markdown subset, readable measure, escaped text, safe absolute links, no raw HTML/remote images. Unsupported complex syntax remains literal; bounds fallback preserves exact text.",
+  "checks": {
+    "compiler": "Owning TS6.0.3 zero diagnostics657 outputs",
+    "lint": "Exact4 PASS",
+    "stories": "Prior qualified cases retained; affected bounds/hostile brackets, real byte/digest/RU-dark fixtures verified",
+    "rendered": "Actual10 document cases at1440/1024/768/390/320 PASS; no overflow/axe/console/network failures"
+  },
+  "limitations": [
+    "Bounded Markdown subset, not complete CommonMark; section fixture coordinates synthetic within bytes. Root/live/CSP/native screenreader/U3X remain open."
+  ]
+}

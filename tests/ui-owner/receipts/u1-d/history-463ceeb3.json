@@ -1,0 +1,26 @@
+{
+  "protocol": "eliotr.ui-review-receipt.v1",
+  "checkpoint": "ER-49",
+  "status": "ACCEPTED_INTERNAL_HISTORY",
+  "head": "463ceeb31a0bcff363b118a197d537aedfe5b9db",
+  "history_base": "c37e56e0ebdfc7f6d294879008a4036d1b95b985",
+  "checker": {
+    "session": 84213,
+    "status": "PASS",
+    "checkpoints": 52,
+    "claims": 36,
+    "active": 9,
+    "history_commits": 108,
+    "semantic_approval": "NOT_EVALUATED"
+  },
+  "retained_failure": {
+    "session": 41240,
+    "status": "FAIL",
+    "code": "WORKTREE_SOURCE_WITHOUT_PRIOR_CLAIM",
+    "path": "packages/owner-api-client/src/legacy/http.test.ts",
+    "repair": "Exact4 initially clean C1 proposal bytes preserved privately and restoredHEAD; excluded from sourceGO/publication until fresh claims and updated gate."
+  },
+  "limitations": [
+    "Finite source/history coherence only. No UI/product/live/FINALUI acceptance implied."
+  ]
+}

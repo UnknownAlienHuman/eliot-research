@@ -1,0 +1,16 @@
+{
+  "protocol": "eliotr.ui-review-receipt.v1",
+  "checkpoint": "C2-I",
+  "status": "ACCEPTED_INTERNAL_CLIENT",
+  "source_commit": "18f440eb924c5da26908c974267d8e9d4492853b",
+  "scope": "Exact10 explicit raw/bundle import client source and tests",
+  "behavior": "Explicit capture/conversion/admission and bundle prepare/upload/commit; frozen binary inputs, existing durable identities and caller-selected conversion request. Uncertain outcomes reconcile existing operations; no automatic conversion or scope expansion.",
+  "checks": {
+    "tests": "42 bounded cases PASS: raw13/wire11 retained, input6/recovery6/attempt6 repaired using real dispatch and wire decoder",
+    "compiler": "Owning TS6.0.3 zero diagnostics590 outputs",
+    "lint": "Exact10 PASS"
+  },
+  "limitations": [
+    "Client source only; UI/root/Worker/provider/live/U3X remain open. Bundle run performs existing prepare/upload/commit together; no new split commit seam."
+  ]
+}

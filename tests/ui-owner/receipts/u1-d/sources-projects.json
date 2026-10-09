@@ -1,0 +1,16 @@
+{
+  "protocol": "eliotr.ui-review-receipt.v1",
+  "checkpoint": "U3-P",
+  "status": "ACCEPTED_INTERNAL_UI_SOURCE",
+  "source_commit": "80e88e19204bdefdba88c309cc38f8db0048db20",
+  "behavior": "Actual projects/library/readiness/revision DTOs; independent currentness/readiness; versions foreground saved dates with raw refs in disclosure; supplied root callback owns reading.",
+  "checks": {
+    "compiler": "Owning TS6.0.3 zero diagnostics657 outputs",
+    "lint": "Exact5 PASS",
+    "stories": "Prior11 plus new long RU/dark and affected reader callback checks qualified",
+    "rendered": "Actual1440/1024/768/390/320:15 initial PASS,5 dark contrast FAIL preserved; corrected5 dark PASS. No overflow/axe/console/network failures"
+  },
+  "limitations": [
+    "Source/stories only; root integrated UI/CSP/native screen reader/live/U3X remain open."
+  ]
+}
