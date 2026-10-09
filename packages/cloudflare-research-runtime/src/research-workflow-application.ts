@@ -11,6 +11,7 @@ import {
   retainWorkflowFailure,
   WorkflowCheckpointError,
   workflowFailure,
+  type WorkflowFailureOutcome,
   type ResearchWorkflowRunParams,
   type WorkflowPrincipal,
 } from "@eliotr/cloudflare-workflows";
@@ -69,6 +70,8 @@ export interface ResearchWorkflowApplicationCallbacks<QualificationRenewalMarker
   }>) => Promise<ResearchStageHandlerFactory>;
   readonly is_native_non_retryable_output_corrupt: (error: unknown) => boolean;
   readonly throw_native_non_retryable_output_corrupt: (code: "WORKFLOW_OUTPUT_CORRUPT") => never;
+  readonly is_native_non_retryable_failure: (error: unknown) => boolean;
+  readonly throw_native_non_retryable_failure: (code: WorkflowFailureOutcome["code"]) => never;
 }
 
 export interface ResearchWorkflowApplicationInput<QualificationRenewalMarker extends string> {
@@ -228,11 +231,16 @@ export async function executeResearchWorkflowApplication<QualificationRenewalMar
       principal,
       execute_checkpoint: (request, runPrincipal) =>
         executor.execute(request, runPrincipal, handlers(request.stage)),
+      native_handler: (stage) => handlers.native(stage),
+      native_stage_policy: (request, runPrincipal) => executor.nativeStagePolicy(request, runPrincipal),
+      execute_native: (request, runPrincipal, handler, policy) =>
+        executor.executeNative(request, runPrincipal, handler, policy),
       stage_timeout_ms: (stage) => isResearchModelStage(stage) ? researchStageBudgetLeaseMs(stage) : undefined,
       set_active_stage: (stage) => { activeStage = stage; },
       set_step_pending: (pending) => { nativeStepPending = pending; },
       invalid_receipt: () => failWorkflow("WORKFLOW_OUTPUT_CORRUPT"),
       non_retryable_output_corrupt: callbacks.throw_native_non_retryable_output_corrupt,
+      non_retryable_native_failure: callbacks.throw_native_non_retryable_failure,
     });
     if (new TextEncoder().encode(JSON.stringify(result)).byteLength > MAX_WORKFLOW_RECEIPT_BYTES) {
       failWorkflow("WORKFLOW_INPUT_INVALID");
@@ -248,6 +256,7 @@ export async function executeResearchWorkflowApplication<QualificationRenewalMar
       await retainWorkflowFailure(environment.CORE_DB, params.operation_id, principal, failure);
     }
     if (callbacks.is_native_non_retryable_output_corrupt(error)) throw error;
+    if (callbacks.is_native_non_retryable_failure(error)) throw error;
     if (error instanceof WorkflowCheckpointError && error.code === "WORKFLOW_OUTPUT_CORRUPT") {
       callbacks.throw_native_non_retryable_output_corrupt(error.code);
     }

@@ -1,4 +1,4 @@
-import { fail, type WorkflowStartedAttemptRecovery } from "@eliotr/cloudflare-workflows";
+import { fail, type WorkflowNativeStageHandler, type WorkflowStartedAttemptRecovery } from "@eliotr/cloudflare-workflows";
 import type { ResearchModelGatewayRuntimeConfig, ResearchModelSpendPolicy } from "@eliotr/cloudflare-research";
 import {
   bindResearchSelectedModelTransport,
@@ -143,12 +143,24 @@ export function bindHandlersToRunConfiguration(
     };
   };
   const recoverStartedAttempt = handlers.recoverStartedAttempt;
-  if (recoverStartedAttempt === undefined) return wrapped;
+  const native = (stage: Parameters<ResearchStageHandlerFactory["native"]>[0]) => {
+    const handler: WorkflowNativeStageHandler | undefined = handlers.native(stage);
+    if (handler === undefined) return undefined;
+    return async (call: Parameters<typeof handler>[0]) => {
+      if (call.request.operation_id !== actor.operation_id ||
+          call.request.investigation_ref.id !== actor.investigation_id ||
+          call.principal.principal_ref !== actor.principal_ref ||
+          call.principal.deployment_generation !== actor.deployment_generation) fail("WORKFLOW_AUTHORITY_STALE");
+      await revalidate();
+      return handler(call);
+    };
+  };
+  if (recoverStartedAttempt === undefined) return Object.assign(wrapped, { native });
   const recovery: WorkflowStartedAttemptRecovery = async (call) => {
     if (call.request.operation_id !== actor.operation_id || call.principal_ref !== actor.principal_ref ||
         call.deployment_generation !== actor.deployment_generation) fail("WORKFLOW_AUTHORITY_STALE");
     await revalidate();
     return recoverStartedAttempt(call);
   };
-  return Object.assign(wrapped, { recoverStartedAttempt: recovery });
+  return Object.assign(wrapped, { native, recoverStartedAttempt: recovery });
 }

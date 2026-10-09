@@ -122,6 +122,11 @@ export class ResearchWorkflow extends WorkflowEntrypoint<Env, ResearchWorkflowPa
         throw_native_non_retryable_output_corrupt: (code) => {
           throw new NonRetryableError(code, "WorkflowCheckpointError");
         },
+        is_native_non_retryable_failure: (error) =>
+          error instanceof NonRetryableError && error.name === "WorkflowCheckpointError",
+        throw_native_non_retryable_failure: (code) => {
+          throw new NonRetryableError(code, "WorkflowCheckpointError");
+        },
       },
     });
   }

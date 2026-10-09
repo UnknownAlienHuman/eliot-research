@@ -1,7 +1,7 @@
 import type { WorkflowStep } from "cloudflare:workers";
 import type { ResearchWorkflowStage } from "@eliotr/contracts";
 import { RESEARCH_WORKFLOW_STAGES } from "@eliotr/domain";
-import { retainWorkflowFailure, workflowFailure } from "./failures.js";
+import { retainWorkflowFailure, workflowFailure, type WorkflowFailureOutcome } from "./failures.js";
 import {
   executeResearchWorkflowSequence,
   type ResearchWorkflowSequenceParams,
@@ -103,6 +103,26 @@ export interface ResearchWorkflowNativeStepExecutionInput {
   readonly set_step_pending: (pending: boolean) => void;
   readonly invalid_receipt: () => never;
   readonly non_retryable_output_corrupt: (code: "WORKFLOW_OUTPUT_CORRUPT") => never;
+  readonly non_retryable_native_failure: (code: WorkflowFailureOutcome["code"]) => never;
+}
+
+const NATIVE_TERMINAL_FAILURE_SUFFIXES = [
+  "_INVALID", "_INVALIDATED", "_STALE", "_DENIED", "_CANCELLED", "_STOP", "_OUT_OF_ORDER",
+  "_CONFLICT", "_MISSING", "_EXPIRED", "_CORRUPT", "_REJECTED", "_NOT_FOUND", "_NOT_LIVE",
+  "_MISMATCH", "_UNSUPPORTED", "_REQUIRED", "_INTEGRITY",
+] as const;
+
+function isNativeTerminalFailureCode(code: WorkflowFailureOutcome["code"]): boolean {
+  return NATIVE_TERMINAL_FAILURE_SUFFIXES.some((suffix) => code.endsWith(suffix));
+}
+
+function mayRetryNativeFailure(
+  effectClass: WorkflowNativeStagePolicy["effect_class"],
+  failure: WorkflowFailureOutcome,
+): boolean {
+  return effectClass === "PURE_COMPUTE" && failure.retryable &&
+    failure.dispatch_state === "NOT_STARTED" && failure.references_intact === "INTACT" &&
+    failure.recovery_action !== "RECONCILE" && !isNativeTerminalFailureCode(failure.code);
 }
 
 /** Runs ordered checkpoint callbacks inside native Workflow steps with the existing retry and retention behavior. */
@@ -135,13 +155,16 @@ export async function executeResearchWorkflowNativeSteps(
           if (failure.code === "WORKFLOW_OUTPUT_CORRUPT") {
             input.non_retryable_output_corrupt(failure.code);
           }
+          if (native !== null && !mayRetryNativeFailure(native.policy.effect_class, failure)) {
+            input.non_retryable_native_failure(failure.code);
+          }
           throw error;
         }
       };
       const stepName = `w2-stage-${String(index).padStart(2, "0")}-${stage}`;
       input.set_step_pending(true);
       const timeout = input.stage_timeout_ms(stage);
-      const retries = native === null
+      const retries = native === null || native.policy.effect_class !== "PURE_COMPUTE"
         ? { limit: 0, delay: 0 }
         : { limit: native.policy.retry_limit, delay: native.policy.retry_delay_ms, backoff: "constant" as const };
       const rawCompletion = timeout === undefined

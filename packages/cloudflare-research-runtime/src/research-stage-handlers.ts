@@ -1,5 +1,6 @@
 import { requireOwnerScopeProfile } from "@eliotr/cloudflare-navigation";
 import type { NavigationReadAuthority } from "@eliotr/cloudflare-evidence";
+import type { ResearchWorkflowStage } from "@eliotr/contracts";
 import type { InvestigationLedgerStore } from "@eliotr/research";
 import { createD1ScopeProfilePort } from "@eliotr/retrieval";
 import type { WorkflowStartedAttemptRecovery } from "@eliotr/cloudflare-workflows";
@@ -7,9 +8,11 @@ import type { AiSearchNamespaceLike } from "@eliotr/platform-cloudflare";
 import {
   createFreezeProtocolAndScopeStageHandler,
   deterministicWorkflowStageBytes,
+  deterministicWorkflowNativeStageBytes,
   fail,
   type MonotoneHandlerFactory,
   type WorkflowStageHandler,
+  type WorkflowNativeStageHandler,
   createEvidenceFreezeSynthesisHandler,
   createResearchMaterializeStageHandler,
   type ResearchMaterializeStageDependencies,
@@ -110,8 +113,19 @@ export type ResearchStageHandlerFactoryMode =
   | { readonly kind: "legacy-deterministic" };
 
 export type ResearchStageHandlerFactory = MonotoneHandlerFactory & {
+  readonly native: (stage: ResearchWorkflowStage) => WorkflowNativeStageHandler | undefined;
   readonly recoverStartedAttempt?: WorkflowStartedAttemptRecovery;
 };
+
+const NATIVE_DETERMINISTIC_HANDLER_GENERATIONS = new Set([
+  "research-handlers.exploratory.v1", "research-handlers.exploratory.v2",
+  "research-handlers.exploratory.v3", "research-handlers.exploratory.v4",
+  "research-handlers.exploratory.v5", "research-handlers.exploratory.v6",
+  "research-handlers.exploratory.v7", "research-handlers.exploratory.v8",
+]);
+const NATIVE_DETERMINISTIC_STAGES = new Set<ResearchWorkflowStage>([
+  "ORIENT", "INTERPRET", "COMPILE_OBLIGATIONS", "PLAN",
+]);
 
 function branchGeneration(generation: unknown): boolean {
   return generation === SERVER_OWNED_BRANCH_HANDLER_GENERATION ||
@@ -267,6 +281,23 @@ export function createResearchStageHandlerFactory(
     return ({ request, input_bytes, attempt_ref }) =>
       deterministicWorkflowStageBytes(request.operation_id, request.stage, input_bytes, attempt_ref);
   }) as ResearchStageHandlerFactory;
+
+  Object.defineProperty(factory, "native", {
+    configurable: false,
+    enumerable: true,
+    value: (stage: ResearchWorkflowStage): WorkflowNativeStageHandler | undefined => {
+      if (mode.kind !== "server-owned-exploratory" || mode.generation === undefined ||
+          !NATIVE_DETERMINISTIC_HANDLER_GENERATIONS.has(mode.generation) ||
+          !NATIVE_DETERMINISTIC_STAGES.has(stage)) return undefined;
+      return async (input) => {
+        if (input.request.handler_generation !== mode.generation || input.request.stage !== stage) {
+          fail("WORKFLOW_AUTHORITY_STALE");
+        }
+        return deterministicWorkflowNativeStageBytes(input.request.operation_id, stage, input.input_bytes);
+      };
+    },
+    writable: false,
+  });
 
   if (explicitSemantic) {
     const recoverStartedAttempt: WorkflowStartedAttemptRecovery = async (input) => {
