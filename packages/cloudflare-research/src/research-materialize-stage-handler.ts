@@ -79,12 +79,15 @@ export function createResearchMaterializeStageHandler(
   dependencies: ResearchMaterializeStageDependencies,
 ): WorkflowStageHandler {
   return async ({ request, principal, input_bytes, attempt_ref }) => {
-    if (request.stage !== "MATERIALIZE") fail("WORKFLOW_INPUT_INVALID");
-    const context = await dependencies.context.read({ request, principal, input_bytes });
+    if (request.stage !== "MATERIALIZE" || !(input_bytes instanceof Uint8Array)) fail("WORKFLOW_INPUT_INVALID");
+    const persistedInputBytes = new Uint8Array(input_bytes);
+    if (request.input_manifest.byte_length !== persistedInputBytes.byteLength ||
+        request.input_manifest.sha256 !== await requestDigest(persistedInputBytes)) fail("WORKFLOW_OUTPUT_CORRUPT");
+    const context = await dependencies.context.read({ request, principal, input_bytes: new Uint8Array(persistedInputBytes) });
     if (context.operation_id !== request.operation_id) fail("WORKFLOW_AUTHORITY_STALE");
     const coverageReceipt = dependencies.read_coverage_receipt === undefined
       ? undefined
-      : await dependencies.read_coverage_receipt({ request, principal, context, input_bytes: new Uint8Array(input_bytes) });
+      : await dependencies.read_coverage_receipt({ request, principal, context, input_bytes: new Uint8Array(persistedInputBytes) });
     const synthesis = await readCommittedResearchSynthesisOutput({
       database: dependencies.database,
       work_bucket: dependencies.work_bucket,
@@ -106,7 +109,7 @@ export function createResearchMaterializeStageHandler(
     if (dependencies.read_claim_audit !== undefined && normalizedSynthesis === undefined) fail("WORKFLOW_OUTPUT_CORRUPT");
     const claimAudit = dependencies.read_claim_audit === undefined || normalizedSynthesis === undefined ? undefined
       : await dependencies.read_claim_audit({ request, principal, context,
-        input_bytes: new Uint8Array(input_bytes), synthesis_readback: synthesis, normalized_synthesis: normalizedSynthesis });
+        input_bytes: new Uint8Array(persistedInputBytes), synthesis_readback: synthesis, normalized_synthesis: normalizedSynthesis });
     const metadata = await dependencies.metadata({ request, principal, context });
     if (Object.hasOwn(metadata, "claim_audit")) fail("WORKFLOW_INPUT_INVALID");
     const stageRequestSha256 = await requestDigest(new TextEncoder().encode(JSON.stringify(request)));

@@ -179,15 +179,17 @@ export function createResearchVerificationStageHandler(
 ): WorkflowStageHandler {
   const v2Config = snapshotV2Config(dependencies.v2_config);
   return async ({ request, principal, input_bytes, attempt_ref }) => {
-    if (request.stage !== "VERIFY") fail("WORKFLOW_INPUT_INVALID");
+    if (request.stage !== "VERIFY" || !(input_bytes instanceof Uint8Array)) fail("WORKFLOW_INPUT_INVALID");
+    const persistedInputBytes = new Uint8Array(input_bytes);
     let phase: VerificationFailurePhase = "COMMITTED_INPUT";
     try {
       const request_sha256 = await digest(new TextEncoder().encode(JSON.stringify(request)));
-      if (request.input_manifest.sha256 !== await digest(input_bytes)) failCorrupt();
+      if (request.input_manifest.byte_length !== persistedInputBytes.byteLength ||
+          request.input_manifest.sha256 !== await digest(persistedInputBytes)) failCorrupt();
       const synthesisStage = await committedSynthesisInput(dependencies.database, request);
       phase = "CONTEXT";
       let context: EvidenceFreezeSynthesisContext;
-      try { context = await dependencies.context.read({ request, principal, input_bytes }); }
+      try { context = await dependencies.context.read({ request, principal, input_bytes: new Uint8Array(persistedInputBytes) }); }
       catch { return failAuthority(); }
       requireContext(request, principal, context);
       phase = "SYNTHESIS_READ";
