@@ -185,6 +185,15 @@ empty evidence bound this result. COMPUTER dispatch, nonempty exact evidence,
 selected production profiles/providers, complete scientific/native/live/release
 remain mandatory separate gates; see the same qualification record.
 
+Three added-only local cases use a nonempty exact handle. Fresh D1/R2 resolution
+creates a new timestamp-bound verification receipt, so consumer identity now
+uses the existing immutable source-bound material and exact authorization
+receipt rather than verification-receipt equality. The positive native case
+settles the original attempt once and remains `UNASSESSED`. Forged source content
+binding and changed R2 bytes fail before Stage-8 commitment. Explicit source
+admission/scope/retrieval-lineage/budget/configuration fixtures bound this result;
+complete scientific, production-selected/native/live/release acceptance stays open.
+
 The separate ResearchSession HTTP extraction retains the existing native-waiting
 projection and bootstrap behavior. Owning compilation, exact lint, AST preservation
 and independent final-source review pass. Three existing scoped regression results

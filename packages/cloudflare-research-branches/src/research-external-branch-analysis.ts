@@ -44,6 +44,7 @@ import {
   type BranchExecutionContext,
   type ResearchBranchExecutionDependencies,
 } from "./research-branch-execution-context.js";
+import { sourceBoundEvidenceIdentity } from "./research-branch-evidence-identity.js";
 
 const TASK_KIND = "RESEARCH_BRANCH_ANALYSIS" as const;
 const OUTPUT_PROTOCOL = "eliotr.external-branch-analysis.v1" as const;
@@ -264,14 +265,9 @@ async function currentSelectedEvidence(
       expected_scope_snapshot_ref: context.protocol.scope_snapshot_ref,
       access: dependencies.navigation.access,
     });
-    if (!sameRef(resolved.handle.handle_ref, expected.handle.handle_ref) ||
-        !sameRef(resolved.handle.scope_snapshot_ref, context.protocol.scope_snapshot_ref) ||
-        resolved.handle.source_revision_ref !== expected.handle.source_revision_ref ||
-        resolved.handle.terminal_state !== "LIVE" ||
-        resolved.handle.excerpt_sha256 !== expected.handle.excerpt_sha256 ||
-        resolved.handle.excerpt_byte_length !== expected.handle.excerpt_byte_length ||
-        resolved.exact_excerpt !== expected.exact_excerpt ||
-        resolved.verification_receipt_ref !== expected.verification_receipt_ref ||
+    // A fresh exact read records a new resolution receipt and timestamp. Compare
+    // immutable evidence material while retaining the original grant receipt.
+    if (sourceBoundEvidenceIdentity(resolved) !== sourceBoundEvidenceIdentity(expected) ||
         resolved.authorization_receipt_ref !== expected.authorization_receipt_ref) corrupt();
   }
 }

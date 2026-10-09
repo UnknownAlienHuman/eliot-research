@@ -259,6 +259,47 @@ the three passing cases. No product parser, grant, qualification, Origin or Cook
 guard was weakened. The raw failure receipt is preserved; prior native suites were
 not rerun.
 
+## Nonempty exact evidence — consumer repair and local negatives
+
+A separate added-only fixture supplies one admitted source revision and one
+78-byte UTF-8 normalized Markdown object with real R2 checksum and immutable
+metadata. Its initial source-admission rows, nonempty scope and stage-five lineage
+are explicit fixture inputs. Actual D1 authority, exact handle materialization,
+R2 conditional read, canonical resolution receipts, signed HTTP callback and
+native Queue/Workflow consumption run through existing product services.
+
+The positive case reproduced `WORKFLOW_OUTPUT_CORRUPT` in
+`currentSelectedEvidence`. Resolver receipt identity includes the resolution
+timestamp, so an unchanged handle obtains a fresh verification receipt on
+reopening. The consumer now uses the existing source-bound evidence identity,
+which retains the full immutable handle, exact bytes, source content digest,
+scope digest, credential generation and taint/effect ceilings. Exact authorization
+receipt equality remains required; resolver/currentness/checksum checks are intact.
+
+| Added case | Bounded result |
+|---|---|
+| Nonempty selected handle with fresh exact resolution | PASS: two resolution receipts, one original committed Stage-8 attempt, stage 9/revision 10, one callback delivery/Queue read/consumer settlement; disposition remains `UNASSESSED`. |
+| Forged frozen source content binding | PASS: `WORKFLOW_OUTPUT_CORRUPT`, two resolution receipts but no consumer settlement or Stage-8 checkpoint; stage 8/revision 9 and original attempt remain. |
+| Normalized R2 bytes changed after callback | PASS: typed `EVIDENCE_OBJECT_INTEGRITY` from actual materialization, no fresh successful resolution or Stage-8 checkpoint; stage 8/revision 9 and original attempt remain. |
+
+TypeScript 6.0.3 owning virtual compilation passes with zero diagnostics and
+2700 outputs; exact lint and independent final-hash source review pass. Private receipts:
+`native-exact-evidence-receipt-20261009.json`,
+`native-exact-forged-source-binding-receipt-20261009.json`,
+`native-exact-corrupt-r2-object-receipt-20261009.json` and
+`native-exact-evidence-graph-compile.json`. The positive baseline failure is
+retained separately. Two initial seed failures exposed missing owner read policy/
+project membership and an incorrect R2 key; the private seed now uses the existing
+authority rows and canonical key builder. No production guard was weakened.
+The R2 negative initially asserted a typed code against native status's human
+message; only that failed case was repeated after checking the retained typed
+local diagnostic. Earlier passing suites and the positive case were not repeated.
+
+Miniflare 5.20260926.1-alpha and esbuild 0.28.1 qualify the local private graph.
+Complete ingest/admission, actual stage-five retrieval, earlier scientific stages,
+production profile/provider, COMPUTER dispatch, complete native/live and release
+remain open. These three cases do not promote implementation status or close #326.
+
 ## ResearchSession HTTP extraction — bounded regression result
 
 The existing `project`, `start`, `read`, `execute` and `cancel` handlers now live in
@@ -283,6 +324,11 @@ and `session-projection-refactor-followup.json` in the checkpoint directory.
 The source-budget scan exits successfully in advisory mode with eight observations;
 it is not a green budget gate. Session's file overage is removed, while Core and
 other package totals remain over their limits. The Goal and #326 remain open.
+
+The coordinated frontend unpublished-history repair maps Session local commit
+`40f08d27` to `d6b21d493b461685046ce6689786328ee09a2675` with an identical full
+tree and all six reviewed blobs. The private runtime/compile receipts retain
+their original identities; this delivery mapping does not rerun their checks.
 
 Remaining acceptance includes production pause/resume, complete scientific `consumeResult`,
 pinned production configuration, COMPUTER dispatch, selected public HTTP/JWT, foreign/

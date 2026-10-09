@@ -248,6 +248,34 @@ not a new complete native qualification. The source-budget scan is advisory
 with eight observations; Session's file overage is removed, but Core's package
 total and other package overages remain. No budget or release promotion follows.
 
+The next nonempty-evidence native case reproduced a real consumer defect:
+`currentSelectedEvidence` compared a new timestamp-bound verification receipt
+with the frozen earlier receipt. The existing source-bound identity helper now
+compares immutable handle/content/scope/credential/authority material; exact
+authorization receipt equality and actual current resolver/byte checks remain.
+The positive signed HTTP/D1/R2/outbox/Queue/native case passes with two real
+resolution receipts, the original single committed attempt and `UNASSESSED`.
+Two new negatives pass: forged source content binding and post-callback R2
+corruption leave stage 8/revision 9, one uncommitted attempt and zero Stage-8
+checkpoints. Owning TypeScript 6.0.3 compilation passes with zero diagnostics and
+2700 virtual outputs; exact lint and independent final-hash source review pass. Source admission/initial nonempty scope,
+stage-five lineage, earlier synthetic predecessors and budget/configuration
+values remain explicit inputs. This does not qualify complete ingest, retrieval,
+production profile/provider, COMPUTER dispatch or scientific/native/live/release.
+Earlier passing cases were preserved; only the R2-negative fixture assertion
+was repaired and repeated because native status exposes an error message while
+the local diagnostic retains its typed code.
+
+The frontend manager found `b10c4b4a` combined fourteen source paths across four
+claims. The coordinated unpublished-only repair splits them into four commits
+and preserves every subsequent source tree. Session `40f08d27` maps to
+`d6b21d493b461685046ce6689786328ee09a2675` with the identical complete tree and
+six reviewed blobs. Final old/new tips also have identical full trees; real
+index bytes and concurrent dirty work were preserved, with an original-tip
+recovery ref retained. Runtime/compile receipts keep the original recorded SHA;
+history acceptance and ordinary remote publication remain separate transitions.
+No pushed ancestor, checker rule, source behavior or test result was rewritten.
+
 The same continuation archives two directly verified malformed loose probe files
 from the Research root (891 bytes) into the private checkpoint directory with
 exact hash readback. It preserves the unique Unicode regeneration set, registered

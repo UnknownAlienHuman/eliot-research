@@ -144,6 +144,16 @@ retrieval/predecessor/budget/configuration fixtures and empty evidence remain
 explicit limits. COMPUTER dispatch, nonempty exact evidence, production-selected
 profiles/providers, full scientific/native/live/release acceptance remain open.
 
+Three new local cases extend the signed HTTP/native fixture with nonempty exact
+evidence. The positive case first reproduced `WORKFLOW_OUTPUT_CORRUPT`: fresh
+resolution creates a new verification receipt. The consumer now compares the
+existing complete source-bound evidence identity and retains exact authorization
+receipt equality. Actual D1/R2 resolution settles the original Stage-8 attempt
+once, retaining `UNASSESSED`; forged source binding and changed R2 bytes cannot
+advance the stage. Owning compile/lint and independent final-source review pass. Admission/scope/stage-five lineage
+and budget/configuration values are fixtures, so complete ingest/retrieval,
+selected scientific/native/live/release acceptance remain open.
+
 The bounded ResearchSession HTTP extraction preserves all five existing handler
 bodies, six helpers and retained DO members; persistence remains private through
 per-call closures. The two source files are 393/362 physical lines. AST preservation,
@@ -151,6 +161,12 @@ TypeScript 6.0.3 owning compilation (zero diagnostics, 4937 virtual outputs), ex
 lint, three retained scoped regression results and independent exact-source review
 pass. This removes the Session file overage; Core package totals and emitted,
 complete scientific/native/live/release acceptance remain open.
+
+The frontend's unpublished mixed-claim commit was split under one coordinated
+history-repair window. Original Session commit `40f08d27` maps to `d6b21d49` with
+the same complete tree and reviewed blobs; the final repaired frontier also has
+an identical full tree. Runtime receipts keep their original recorded SHA.
+This mapping is delivery provenance, not a rerun or new acceptance gate.
 
 This is the canonical day-to-day backend router. It does not replace product architecture, work-packet
 ownership or release acceptance. It tells each role where to begin, which active PR owns the result,
