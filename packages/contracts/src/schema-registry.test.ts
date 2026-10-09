@@ -12,6 +12,8 @@ import * as computerAgentDispatch from "./computer-agent-dispatch.js";
 import * as computerAgentQualification from "./computer-agent-qualification.js";
 import * as computerAgentRoute from "./computer-agent-route.js";
 import * as researchBranch from "./research-branch.js";
+import * as researchBranchQuery from "./research-branch-query.js";
+import * as researchBranchFinding from "./research-branch-finding.js";
 import * as researchProviderKey from "./research-provider-key.js";
 import * as researchProviderKeyModelUse from "./research-provider-key-model-use.js";
 import * as publicContracts from "./index.js";
@@ -99,17 +101,23 @@ describe("ER-01 public contract registry", () => {
       ["computer-agent", computerAgentQualification],
       ["computer-agent", computerAgentRoute],
       ["research", researchBranch],
+      ["research", researchBranchQuery],
+      ["research", researchBranchFinding],
       ["research", researchProviderKey],
       ["research", researchProviderKeyModelUse],
     ] as const;
     for (const [family, schemaModule] of additiveSchemaFamilies) {
       for (const [exportName, candidate] of Object.entries(schemaModule)) {
         if (!(candidate instanceof z.ZodType)) continue;
+        const schemaVersion = [
+          "ResearchReadExtractCheckpointV2Schema", "ResearchBranchResultV2Schema",
+          "ResearchBranchAnalysisCheckpointV2Schema", "ResearchBranchReconciliationCheckpointV2Schema",
+        ].includes(exportName) ? 2 : exportName === "ResearchEvidenceFreezeV3Schema" ? 3 : 1;
         expect(requireContractSchemaDescriptor(exportName)).toMatchObject({
           family,
-          schema_version: 1,
+          schema_version: schemaVersion,
           schema_generation: 1,
-          schema_id: buildContractSchemaId(family, exportName, 1, 1),
+          schema_id: buildContractSchemaId(family, exportName, schemaVersion, 1),
         });
       }
     }

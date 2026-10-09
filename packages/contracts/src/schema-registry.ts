@@ -24,6 +24,8 @@ import * as publication from "./publication.js";
 import * as registryContracts from "./registry-contracts.js";
 import * as research from "./research.js";
 import * as researchBranch from "./research-branch.js";
+import * as researchBranchFinding from "./research-branch-finding.js";
+import * as researchBranchQuery from "./research-branch-query.js";
 import * as researchProviderKey from "./research-provider-key.js";
 import * as researchProviderKeyModelUse from "./research-provider-key-model-use.js";
 import * as residency from "./residency.js";
@@ -44,7 +46,7 @@ import {
   type ContractStructuralStrictness,
 } from "./registry-contracts.js";
 
-export const CONTRACT_SCHEMA_REGISTRY_GENERATION = 9 as const;
+export const CONTRACT_SCHEMA_REGISTRY_GENERATION = 10 as const;
 
 export type ContractJsonPrimitive = string | number | boolean | null;
 export type ContractJsonValue =
@@ -94,6 +96,8 @@ const SCHEMA_MODULES: readonly SchemaModule[] = [
   { family: "registry", exports: registryContracts },
   { family: "research", exports: research },
   { family: "research", exports: researchBranch },
+  { family: "research", exports: researchBranchFinding },
+  { family: "research", exports: researchBranchQuery },
   { family: "research", exports: researchProviderKey },
   { family: "research", exports: researchProviderKeyModelUse },
   { family: "residency", exports: residency },
@@ -311,9 +315,12 @@ function buildRegistry(): readonly ContractSchemaDescriptor[] {
         ? { schema_version: 1, schema_generation: 2 }
         : exportName === "InquiryProtocolProfileSchema"
           ? { schema_version: 1, schema_generation: 2 }
-          : ["CoordinateMapEntrySchema", "CoordinateMapSchema", "CitationResolutionReceiptSchema", "CitationResolutionReceiptV2Schema"].includes(exportName)
+          : ["CoordinateMapEntrySchema", "CoordinateMapSchema", "CitationResolutionReceiptSchema", "CitationResolutionReceiptV2Schema",
+            "ResearchReadExtractCheckpointV2Schema", "ResearchBranchResultV2Schema", "ResearchBranchAnalysisCheckpointV2Schema", "ResearchBranchReconciliationCheckpointV2Schema"].includes(exportName)
             ? { schema_version: 2, schema_generation: 1 }
-            : familyVersion;
+            : exportName === "ResearchEvidenceFreezeV3Schema"
+              ? { schema_version: 3, schema_generation: 1 }
+              : familyVersion;
       const schemaId = buildContractSchemaId(
         module.family,
         exportName,

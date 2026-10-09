@@ -16,6 +16,8 @@ export * from "./coordinate-map.js";
 export * from "./retrieval.js";
 export * from "./research.js";
 export * from "./research-branch.js";
+export * from "./research-branch-query.js";
+export * from "./research-branch-finding.js";
 export * from "./policy.js";
 export * from "./operations.js";
 export * from "./erasure.js";

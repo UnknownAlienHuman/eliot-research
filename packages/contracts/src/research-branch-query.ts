@@ -1,0 +1,223 @@
+import { z } from "zod";
+import { IdentifierSchema, Sha256Schema, VersionedRefSchema } from "./common.js";
+import { ResolvedEvidenceSchema } from "./evidence.js";
+import { RetrievalTraceSchema } from "./retrieval.js";
+import { ResearchBranchRoleSchema } from "./research-branch-role.js";
+
+const MAX_QUERY_LEGS = 4;
+const MAX_QUERY_CHARS = 2_048;
+
+function duplicate(values: readonly string[]): boolean {
+  return new Set(values).size !== values.length;
+}
+
+function normalizedQuery(value: string): string {
+  return value.trim().replace(/\s+/gu, " ").toLocaleLowerCase("en-US");
+}
+
+export const BranchQuestionBindingSchema = z.object({
+  question_ref: VersionedRefSchema,
+  text: z.string().min(1).max(8_192),
+  text_sha256: Sha256Schema,
+}).strict().superRefine((value, context) => {
+  if (value.question_ref.revision !== 1) {
+    context.addIssue({ code: "custom", path: ["question_ref", "revision"], message: "question revision is unsupported" });
+  }
+});
+export type BranchQuestionBinding = z.infer<typeof BranchQuestionBindingSchema>;
+
+export const BranchQueryProposalLegSchema = z.object({
+  query: z.string().min(1).max(MAX_QUERY_CHARS),
+  literal_probes: z.array(z.string().min(1).max(256)).max(16),
+}).strict().superRefine((value, context) => {
+  if (value.query.trim().length === 0) {
+    context.addIssue({ code: "custom", path: ["query"], message: "query is blank" });
+  }
+  if (value.literal_probes.some((probe) => probe.trim().length === 0)) {
+    context.addIssue({ code: "custom", path: ["literal_probes"], message: "literal probe is blank" });
+  }
+  if (duplicate(value.literal_probes.map(normalizedQuery))) {
+    context.addIssue({ code: "custom", path: ["literal_probes"], message: "literal probes contain duplicates" });
+  }
+});
+export type BranchQueryProposalLeg = z.infer<typeof BranchQueryProposalLegSchema>;
+
+/** Untrusted model proposal. The server binds it to the exact root and branch questions. */
+export const BranchQueryProposalSchema = z.object({
+  protocol: z.literal("eliotr.research.branch-query-proposal.v1"),
+  role: ResearchBranchRoleSchema,
+  root_question_ref: VersionedRefSchema,
+  root_question_sha256: Sha256Schema,
+  branch_question_ref: VersionedRefSchema,
+  branch_question_sha256: Sha256Schema,
+  query_legs: z.array(BranchQueryProposalLegSchema).min(1).max(MAX_QUERY_LEGS),
+}).strict().superRefine((value, context) => {
+  if (value.root_question_ref.revision !== 1 || value.branch_question_ref.revision !== 1) {
+    context.addIssue({ code: "custom", path: ["root_question_ref"], message: "question revision is unsupported" });
+  }
+  if (duplicate(value.query_legs.map((leg) => normalizedQuery(leg.query)))) {
+    context.addIssue({ code: "custom", path: ["query_legs"], message: "query proposal contains duplicate queries" });
+  }
+});
+export type BranchQueryProposal = z.infer<typeof BranchQueryProposalSchema>;
+
+export const BranchQueryPlanLegSchema = BranchQueryProposalLegSchema.extend({
+  query_id: IdentifierSchema,
+  query_sha256: Sha256Schema,
+}).strict();
+export type BranchQueryPlanLeg = z.infer<typeof BranchQueryPlanLegSchema>;
+
+export const BranchQueryPlanSchema = z.object({
+  protocol: z.literal("eliotr.research.branch-query-plan.v1"),
+  query_plan_ref: VersionedRefSchema,
+  identity_digest: Sha256Schema,
+  branch_ref: VersionedRefSchema,
+  role: ResearchBranchRoleSchema,
+  planning_manifest_ref: VersionedRefSchema,
+  planning_manifest_digest: Sha256Schema,
+  inquiry_protocol_ref: VersionedRefSchema,
+  protocol_digest: Sha256Schema,
+  scope_snapshot_ref: VersionedRefSchema,
+  scope_snapshot_digest: Sha256Schema,
+  root_question: BranchQuestionBindingSchema,
+  branch_question: BranchQuestionBindingSchema,
+  question_refs: z.array(VersionedRefSchema).min(2).max(32),
+  hypothesis_refs: z.array(IdentifierSchema).max(32),
+  query_legs: z.array(BranchQueryPlanLegSchema).min(1).max(MAX_QUERY_LEGS),
+  retrieval_product: z.enum(["FAST_SEARCH", "RESEARCH"]),
+  budgets: z.object({
+    candidate_limit: z.number().int().min(1).max(512),
+    scan_limit: z.number().int().min(1).max(4_096),
+    evidence_limit: z.number().int().min(1).max(64),
+    max_evidence_bytes: z.number().int().min(1).max(64 * 1024),
+    max_query_legs: z.number().int().min(1).max(MAX_QUERY_LEGS),
+  }).strict(),
+  required: z.boolean(),
+  stop_rule: z.enum(["FIRST_ADMISSIBLE_EVIDENCE", "EXHAUST_QUERY_LEGS"]),
+  proposal_disposition: z.enum(["NOT_PROPOSED", "ACCEPTED", "REJECTED_INVALID", "REJECTED_UNBOUND"]),
+  plan_generation: z.literal("server.branch-query-planner.v1"),
+}).strict().superRefine((value, context) => {
+  if (value.query_plan_ref.id !== `eliotr.research.branch-query-plan-${value.identity_digest}` || value.query_plan_ref.revision !== 1) {
+    context.addIssue({ code: "custom", path: ["query_plan_ref"], message: "query plan identity mismatch" });
+  }
+  if (value.branch_ref.revision !== 1 || value.question_refs.some((ref) => ref.revision !== 1)) {
+    context.addIssue({ code: "custom", path: ["branch_ref"], message: "branch or question revision is unsupported" });
+  }
+  if (value.query_legs.length > value.budgets.max_query_legs ||
+      duplicate(value.query_legs.map((leg) => leg.query_id)) ||
+      duplicate(value.query_legs.map((leg) => normalizedQuery(leg.query)))) {
+    context.addIssue({ code: "custom", path: ["query_legs"], message: "query legs exceed bounds or contain duplicates" });
+  }
+  if (value.budgets.evidence_limit < 1 || value.question_refs.length < 2) {
+    context.addIssue({ code: "custom", path: ["budgets"], message: "query plan bounds are invalid" });
+  }
+  if (value.root_question.question_ref.id === value.branch_question.question_ref.id ||
+      !value.question_refs.some((ref) => ref.id === value.root_question.question_ref.id) ||
+      !value.question_refs.some((ref) => ref.id === value.branch_question.question_ref.id)) {
+    context.addIssue({ code: "custom", path: ["question_refs"], message: "root and branch questions are not both bound" });
+  }
+});
+export type BranchQueryPlan = z.infer<typeof BranchQueryPlanSchema>;
+
+const BranchQueryResolvedHandleSchema = z.object({
+  handle_ref: VersionedRefSchema,
+  excerpt_sha256: Sha256Schema,
+  excerpt_byte_length: z.number().int().nonnegative().max(8 * 1024 * 1024),
+}).strict();
+
+export const BranchQueryLegResultSchema = z.object({
+  status: z.enum(["COMPLETED", "FAILED"]),
+  query_id: IdentifierSchema,
+  query_sha256: Sha256Schema,
+  retrieval_request_digest: Sha256Schema,
+  scope_snapshot_ref: VersionedRefSchema,
+  scope_snapshot_digest: Sha256Schema,
+  trace: RetrievalTraceSchema.optional(),
+  failure_code: IdentifierSchema.optional(),
+  resolved_handle_refs: z.array(BranchQueryResolvedHandleSchema).max(64),
+  omitted_candidates: z.array(z.object({ candidate_id: IdentifierSchema, reason_code: IdentifierSchema }).strict()).max(512),
+  stop_reason: z.enum(["LEG_COMPLETED", "NO_HITS", "CANDIDATE_BUDGET", "SCAN_BUDGET", "EVIDENCE_BUDGET", "CANCELLED", "LEG_FAILED"]),
+}).strict().superRefine((value, context) => {
+  if ((value.status === "COMPLETED" && (value.trace === undefined || value.failure_code !== undefined)) ||
+      (value.status === "FAILED" && (value.failure_code === undefined || value.resolved_handle_refs.length > 0 || value.stop_reason !== "LEG_FAILED"))) {
+    context.addIssue({ code: "custom", path: ["status"], message: "query leg completion/failure fields are inconsistent" });
+  }
+  if (value.trace !== undefined && (value.trace.trace_ref.revision !== 1 ||
+      value.trace.scope_snapshot.snapshot_id !== value.scope_snapshot_ref.id ||
+      value.trace.scope_snapshot.revision !== value.scope_snapshot_ref.revision ||
+      value.trace.scope_snapshot.digest !== value.scope_snapshot_digest)) {
+    context.addIssue({ code: "custom", path: ["trace"], message: "query trace is not bound to the held scope" });
+  }
+  if (duplicate(value.resolved_handle_refs.map((item) => `${item.handle_ref.id}:${item.handle_ref.revision}`))) {
+    context.addIssue({ code: "custom", path: ["resolved_handle_refs"], message: "query leg contains duplicate handles" });
+  }
+  if (value.stop_reason === "NO_HITS" && value.resolved_handle_refs.length !== 0) {
+    context.addIssue({ code: "custom", path: ["stop_reason"], message: "no-hit stop contains resolved evidence" });
+  }
+});
+export type BranchQueryLegResult = z.infer<typeof BranchQueryLegResultSchema>;
+
+const BranchQueryResultFields = {
+  query_result_ref: VersionedRefSchema,
+  identity_digest: Sha256Schema,
+  query_plan_ref: VersionedRefSchema,
+  query_plan_digest: Sha256Schema,
+  role: ResearchBranchRoleSchema,
+  scope_snapshot_ref: VersionedRefSchema,
+  scope_snapshot_digest: Sha256Schema,
+  query_legs: z.array(BranchQueryLegResultSchema).min(1).max(MAX_QUERY_LEGS),
+  resolved_evidence: z.array(ResolvedEvidenceSchema).max(64),
+  omitted_candidate_refs: z.array(IdentifierSchema).max(2_048),
+  total_utf8_bytes: z.number().int().nonnegative().max(64 * 1024),
+  stop_reason: z.enum(["PLAN_COMPLETED", "FIRST_ADMISSIBLE_EVIDENCE", "NO_HITS", "BUDGET_EXHAUSTED", "ALL_LEGS_FAILED"]),
+} as const;
+
+function validateBranchQueryResult(
+  value: z.infer<z.ZodObject<typeof BranchQueryResultFields>>,
+  context: z.RefinementCtx,
+  failureDisposition: "NONE" | "PARTIAL" | "ALL_FAILED",
+): void {
+  if (value.query_result_ref.id !== `eliotr.research.branch-query-result-${value.identity_digest}` || value.query_result_ref.revision !== 1 ||
+      value.query_plan_ref.revision !== 1 || value.query_legs.some((leg) =>
+        leg.scope_snapshot_ref.id !== value.scope_snapshot_ref.id ||
+        leg.scope_snapshot_ref.revision !== value.scope_snapshot_ref.revision ||
+        leg.scope_snapshot_digest !== value.scope_snapshot_digest)) {
+    context.addIssue({ code: "custom", path: ["query_result_ref"], message: "query result identity or scope binding mismatch" });
+  }
+  const resolved = new Map(value.resolved_evidence.map((item) => [
+    `${item.handle.handle_ref.id}:${item.handle.handle_ref.revision}`,
+    item,
+  ]));
+  const legRefs = value.query_legs.flatMap((leg) => leg.resolved_handle_refs);
+  const queriedRefs = new Set(legRefs.map((item) => `${item.handle_ref.id}:${item.handle_ref.revision}`));
+  if (duplicate(value.resolved_evidence.map((item) => `${item.handle.handle_ref.id}:${item.handle.handle_ref.revision}`)) ||
+      duplicate(value.query_legs.map((leg) => leg.query_id)) ||
+      [...resolved.keys()].some((ref) => !queriedRefs.has(ref)) ||
+      legRefs.some((item) => {
+        const evidence = resolved.get(`${item.handle_ref.id}:${item.handle_ref.revision}`);
+        return evidence === undefined || evidence.handle.excerpt_sha256 !== item.excerpt_sha256 ||
+          new TextEncoder().encode(evidence.exact_excerpt).byteLength !== item.excerpt_byte_length;
+      })) {
+    context.addIssue({ code: "custom", path: ["resolved_evidence"], message: "exact evidence does not match query leg handles" });
+  }
+  const bytes = value.resolved_evidence.reduce((sum, item) => sum + new TextEncoder().encode(item.exact_excerpt).byteLength, 0);
+  if (bytes !== value.total_utf8_bytes) {
+    context.addIssue({ code: "custom", path: ["total_utf8_bytes"], message: "resolved evidence byte total mismatch" });
+  }
+  if (value.stop_reason === "NO_HITS" && value.resolved_evidence.length !== 0) {
+    context.addIssue({ code: "custom", path: ["stop_reason"], message: "no-hit result contains evidence" });
+  }
+  const failed = value.query_legs.filter((leg) => leg.status === "FAILED").length;
+  const expected = failed === 0 ? "NONE" : failed === value.query_legs.length ? "ALL_FAILED" : "PARTIAL";
+  if (failureDisposition !== expected) {
+    context.addIssue({ code: "custom", path: ["failure_disposition"], message: "failure disposition does not match query legs" });
+  }
+}
+
+/** New, not-yet-published query result separates leg failure from why execution stopped. */
+export const BranchQueryResultSchema = z.object({
+  protocol: z.literal("eliotr.research.branch-query-result.v1"),
+  ...BranchQueryResultFields,
+  failure_disposition: z.enum(["NONE", "PARTIAL", "ALL_FAILED"]),
+}).strict().superRefine((value, context) => validateBranchQueryResult(value, context, value.failure_disposition));
+export type BranchQueryResult = z.infer<typeof BranchQueryResultSchema>;

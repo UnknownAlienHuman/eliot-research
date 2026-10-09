@@ -91,6 +91,106 @@
       "structural_strictness": "CLOSED_OBJECT"
     },
     {
+      "export_name": "BranchFindingCandidateSchema",
+      "family": "research",
+      "json_schema_sha256": "1a072e8fca467bb31d3b48b3aba4fdf56cf75af7b9c4785fc67b83f052dfed2d",
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:research:branch-finding-candidate:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "BranchFindingDraftSchema",
+      "family": "research",
+      "json_schema_sha256": "2d787333c71e65f6e07dc542fffa15e42077c6bf3f970368964416c7fb005d41",
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:research:branch-finding-draft:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "BranchFindingKindSchema",
+      "family": "research",
+      "json_schema_sha256": "59eeb1aae1ec2641fe474aacad86bb43f8510709f3e03d3b3b8fdbbc72e7041b",
+      "kind": "ENUM",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:research:branch-finding-kind:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "NON_OBJECT"
+    },
+    {
+      "export_name": "BranchQueryLegResultSchema",
+      "family": "research",
+      "json_schema_sha256": "9dcdb1943f8f21118f89c57004bd5dfc518a1ce8fda1668e1bbabe24ea3e0913",
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:research:branch-query-leg-result:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "BranchQueryPlanLegSchema",
+      "family": "research",
+      "json_schema_sha256": "91d45b96e1b9c892f9a449ef0e791dfa50ed4735248d77b9709ea12694696871",
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:research:branch-query-plan-leg:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "BranchQueryPlanSchema",
+      "family": "research",
+      "json_schema_sha256": "9a33633edb1594e917b4caac6185eb49e5dca1600be763af8766df8fc8f8d100",
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:research:branch-query-plan:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "BranchQueryProposalLegSchema",
+      "family": "research",
+      "json_schema_sha256": "8c3a75318f5debad9a8bffa45ea898b208c86dd1f8c00e1ffebfd74744fdf813",
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:research:branch-query-proposal-leg:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "BranchQueryProposalSchema",
+      "family": "research",
+      "json_schema_sha256": "75cfa185d9120b88783653f90a5266d219ea09edb296a3240246a71c2e157095",
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:research:branch-query-proposal:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "BranchQueryResultSchema",
+      "family": "research",
+      "json_schema_sha256": "fb4ae7bed3568ea358aac8ad70cd7f2399ac1adaa9d4b1d7cf73fce8b3ce68d2",
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:research:branch-query-result:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "BranchQuestionBindingSchema",
+      "family": "research",
+      "json_schema_sha256": "b6342274e47a52a30a02dae73ea69a4b754344c6a605639d3b2a76c1f35909f7",
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:research:branch-question-binding:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
       "export_name": "BudgetReservationSchema",
       "family": "operations",
       "json_schema_sha256": "840c7fcd72c4eb29f8a7671bbc1b6a2acd33e18c72d8601cec0bf3939489411b",
@@ -971,6 +1071,36 @@
       "structural_strictness": "CLOSED_OBJECT"
     },
     {
+      "export_name": "EvidenceFreezeBranchFindingsProvenanceSchema",
+      "family": "research",
+      "json_schema_sha256": "276e4b7e57bdab76f77e0d0cd1e2c25131098644fab739b1e30f2b61fad8dfd0",
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:research:evidence-freeze-branch-findings-provenance:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "EvidenceFreezeBranchFindingsSchema",
+      "family": "research",
+      "json_schema_sha256": "82110aa56795aee3e705a65d7a06f5557d4515566a6a5e28dab8a59fcc278a87",
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:research:evidence-freeze-branch-findings:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "EvidenceFreezeBranchReconciliationSummarySchema",
+      "family": "research",
+      "json_schema_sha256": "a0e9a4b03a237dd9d6025ee3145ec64ecdd7c867270f7a741f2c101e41d8a122",
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:research:evidence-freeze-branch-reconciliation-summary:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
       "export_name": "EvidenceFreezeSchema",
       "family": "research",
       "json_schema_sha256": "b67f0348969ba5368055af30a2ba3235331cce66d7793e9484466748947bb6c5",
@@ -1651,6 +1781,16 @@
       "structural_strictness": "CLOSED_OBJECT"
     },
     {
+      "export_name": "ResearchBranchAnalysisCheckpointV2Schema",
+      "family": "research",
+      "json_schema_sha256": "9089bf9ae4ba8fceac3b3e153eddb89c31c51de0c5bf5abdc8a476f6b3ea332c",
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:research:research-branch-analysis-checkpoint-v2:v2:g1",
+      "schema_version": 2,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
       "export_name": "ResearchBranchEvidenceItemSchema",
       "family": "research",
       "json_schema_sha256": "b352d3d1588cb8c97f0815deae345b3be542659d7f69b6223dc992e47c33e895",
@@ -1671,6 +1811,16 @@
       "structural_strictness": "CLOSED_OBJECT"
     },
     {
+      "export_name": "ResearchBranchReconciliationCheckpointV2Schema",
+      "family": "research",
+      "json_schema_sha256": "e363fe4ac246fb1c21f571226628685dadc946eba25088dfbdef6be2c74459a5",
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:research:research-branch-reconciliation-checkpoint-v2:v2:g1",
+      "schema_version": 2,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
       "export_name": "ResearchBranchResultSchema",
       "family": "research",
       "json_schema_sha256": "c8458fd03159cf706125fcb9b7e8eae7165b0decd02bb09845ef91e48014f3cc",
@@ -1678,6 +1828,16 @@
       "schema_generation": 1,
       "schema_id": "urn:eliotr:contracts:research:research-branch-result:v1:g1",
       "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "ResearchBranchResultV2Schema",
+      "family": "research",
+      "json_schema_sha256": "4e2e8277293abb27a5a2dee5616b4c6ee2433cfe2451f28ac951073e64aadf4a",
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:research:research-branch-result-v2:v2:g1",
+      "schema_version": 2,
       "structural_strictness": "CLOSED_OBJECT"
     },
     {
@@ -1708,6 +1868,16 @@
       "schema_generation": 1,
       "schema_id": "urn:eliotr:contracts:research:research-debt:v1:g1",
       "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "ResearchEvidenceFreezeV3Schema",
+      "family": "research",
+      "json_schema_sha256": "65ef723f3af41902001e2c96d39f921b637e50268aaf816ff8a84b5993a368e8",
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:research:research-evidence-freeze-v3:v3:g1",
+      "schema_version": 3,
       "structural_strictness": "CLOSED_OBJECT"
     },
     {
@@ -1838,6 +2008,16 @@
       "schema_generation": 1,
       "schema_id": "urn:eliotr:contracts:research:research-read-extract-checkpoint:v1:g1",
       "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "ResearchReadExtractCheckpointV2Schema",
+      "family": "research",
+      "json_schema_sha256": "f249d3722e456c253b0b90edc6dc22c3ed0afbf7ce6a9996a643d5b4cfaf7891",
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:research:research-read-extract-checkpoint-v2:v2:g1",
+      "schema_version": 2,
       "structural_strictness": "CLOSED_OBJECT"
     },
     {
@@ -2203,6 +2383,6 @@
   ],
   "json_schema_dialect": "https://json-schema.org/draft/2020-12/schema",
   "protocol": "eliotr.contract-schema-index.v1",
-  "registry_generation": 9,
-  "schema_count": 220
+  "registry_generation": 10,
+  "schema_count": 238
 }
