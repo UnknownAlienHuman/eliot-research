@@ -173,6 +173,25 @@ binding and foreign grant fail before task insertion. Public authentication,
 connection qualification and COMPUTER dispatch remain unqualified. Prior passing
 scientific cases and their fixture sources are retained without rerunning them.
 
+The next three local cases use actual RSA/JWKS owner/service authentication and
+`handleHttp` for WEB_INBOX challenge issuance/confirmation, task pull/result and
+duplicate callback. The capable-but-unqualified connection fails before task SQL.
+The qualified callback records delivery without claiming workflow settlement;
+actual Queue/native canonical readback commits the original Stage-8 attempt once,
+with exact route/configuration rereads. The existing eight agent service operations
+receive the class their downstream authority requires; federation remains unchanged.
+Local JWKS, initial admission, retrieval/predecessor/budget/configuration inputs and
+empty evidence bound this result. COMPUTER dispatch, nonempty exact evidence,
+selected production profiles/providers, complete scientific/native/live/release
+remain mandatory separate gates; see the same qualification record.
+
+The separate ResearchSession HTTP extraction retains the existing native-waiting
+projection and bootstrap behavior. Owning compilation, exact lint, AST preservation
+and independent final-source review pass. Three existing scoped regression results
+pass across the retained initial locator result and two failed-case-only repairs.
+The DO's private persistence and public RPC surface remain unchanged. This is a
+bounded projection regression gate, not additional native Workflow qualification.
+
 Seven local native topology cases pass: buffered and duplicate events, foreign
 and malformed locators, event before recorded result, and both timeout result
 states. Two added-only cases pass for restart from prepare and pause/resume with

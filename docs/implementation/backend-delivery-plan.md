@@ -224,6 +224,30 @@ private fixture sources preserve the previous scientific fixture; passing cases
 are not repeated. Authenticated contexts remain injected, so public HTTP/JWT,
 COMPUTER dispatch/qualification and production/native/live/release remain open.
 
+Three later signed HTTP cases replace injected authentication for the existing
+WEB_INBOX owner issue/service confirm/task pull/result/duplicate path. Real D1
+grant, connection, qualification and route readers, R2, native Workflow and
+outbox/Queue/inbox settle the original Stage-8 attempt once; a capable unqualified
+connection fails before task SQL. The existing eight agent service operations now
+receive their required delegated-service class; all seven federation operations
+retain theirs. RSA/JWKS regression, scoped compiler/lint and exact-source review
+pass. Local JWKS/admission/retrieval/predecessor/budget/configuration fixtures and
+empty evidence remain boundaries, so COMPUTER dispatch, nonempty exact evidence,
+production profiles/providers, complete scientific/native/live and release stay
+open. Earlier passing fixtures/cases are preserved without repetition.
+
+ResearchSession now delegates its five existing HTTP projections to one module,
+using per-call closures over private persistence. AST comparison retains all
+handler/helper bodies and every other DO member, with no public RPC expansion.
+The final sources are 393/362 physical lines. Owning TypeScript 6.0.3 compilation
+passes with zero diagnostics and 4937 virtual outputs; exact lint and independent
+final-hash review pass. The existing locator regression passed initially; after
+restoring two retained imports, only the two failed bootstrap/native-projection
+cases were repeated and passed. These are three bounded regression results,
+not a new complete native qualification. The source-budget scan is advisory
+with eight observations; Session's file overage is removed, but Core's package
+total and other package overages remain. No budget or release promotion follows.
+
 The same continuation archives two directly verified malformed loose probe files
 from the Research root (891 bytes) into the private checkpoint directory with
 exact hash readback. It preserves the unique Unicode regeneration set, registered

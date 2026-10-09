@@ -205,8 +205,87 @@ The receipt is
 `native-computer-receipt-enhanced-errors-pinned-computer-pinned-native-result_computer-missing-route-binding_computer-foreign-grant.json`
 under the same private checkpoint directory. Earlier passing cases were not rerun.
 
+## Signed HTTP and WEB_INBOX qualification — bounded local result
+
+The next private fixture preserves all earlier passing sources and composes the
+existing `handleHttp` route dispatcher with real RSA/JWKS verification. Initial
+service identity comes from the verifier; the same exact credential generation
+is used by qualification, the scope grant, task lease and callback. The existing
+connection service declares WEB_INBOX; qualification is obtained through actual
+owner issue and service confirmation HTTP routes, never fabricated receipt rows.
+
+| New case | Result |
+|---|---|
+| WEB_INBOX-capable connection without qualification | PASS: `EXTERNAL_AGENT_TASK_DENIED`, ten D1 prepares, zero task SQL and zero batches. |
+| Signed owner issue and signed service confirmation | PASS: exact connection/revision/transport/deployment and credential generation become READY through the existing diagnostic service. |
+| Signed task pull, result and duplicate callback followed by native delivery | PASS: duplicate receipt is identical; one original task/attempt, result read, scientific consumption, predecessor effect, Queue event and native settlement; two route and configuration reads; canonical next stage 9/revision 10. |
+
+The HTTP callback remains `RESULT_RECORDED` and `workflow_settled: false`.
+Canonical native readback, including exact persisted R2 branch bytes/digest,
+establishes settlement. The BLOCKED branch remains `UNASSESSED` with empty evidence.
+Five earlier HTTP negatives also pass: signed unlisted service, signed owner on
+a service route, missing Origin and Cookie are denied before D1; missing WEB_INBOX
+capability is denied before task SQL. Their receipt records the preceding
+four-operation auth postimage, whose task classification and browser guards are
+unchanged by the subsequent extension to COMPUTER operations.
+
+Actual signed-token regressions reproduced the generic service-to-federation
+classification defect for task and COMPUTER routes. The repaired exact set covers
+four task operations, qualification confirmation and dispatch pull/accept/decline.
+All seven federation operations and unrecognized service defaults retain their
+class. Five signed-token cases, TypeScript 6.0.3 Core source/test-project compilation
+(zero diagnostics, 4273 virtual outputs), exact lint and independent final-source
+review pass. The source and owning inbox document are in local commit `034469c6`;
+remote publication is a separate coordinated transition.
+
+Miniflare 5.20260926.1-alpha and esbuild 0.28.1 run the private graph with
+`nodejs_compat` and enhanced error serialization. This is local Workerd acceptance,
+not emitted production Worker or deployed Access/browser qualification. JWKS,
+initial admission, stages 1–6/retrieval lineage, budget and configuration values
+remain fixture inputs. COMPUTER dispatch acceptance, nonempty exact evidence,
+production-selected profiles/providers, the complete scientific pipeline, selected
+native/live and release remain open. No implementation-status or #326 promotion
+follows from these results.
+
+Receipts under the same private checkpoint directory:
+
+- `native-public-http-negative-receipt-20261009.json`;
+- `native-public-qualified-receipt-20261009.json`;
+- `computer-service-principal-source-review-20261009.json`.
+
+The private runner's first positive attempt read the HTTP `{data,...}` envelope
+as a raw qualification object; correcting its existing response decoding produced
+the three passing cases. No product parser, grant, qualification, Origin or Cookie
+guard was weakened. The raw failure receipt is preserved; prior native suites were
+not rerun.
+
+## ResearchSession HTTP extraction — bounded regression result
+
+The existing `project`, `start`, `read`, `execute` and `cancel` handlers now live in
+`research-session-http-projection.ts`. The DO forwards their existing arguments
+through a private host factory whose closures call private load/save/terminal
+settlement. AST comparison verifies five exact bodies modulo host references,
+six exact helpers, unchanged retained DO members and unchanged wrapper signatures.
+No public persistence or additional callable RPC was introduced.
+
+The final files contain 393/362 physical lines under the repository checker.
+TypeScript 6.0.3 owning virtual compilation passes with zero diagnostics and 4937
+outputs; exact lint and independent review of both final SHA-256 values pass.
+The existing locator regression passed on the first run. Bootstrap and native
+waiting projection initially failed because two retained imports were missing;
+after restoring those imports, only the two failures were rerun, both passing.
+The original passing case was retained. These three results do not qualify a
+complete Workflow, production JWT/Access, browser or live deployment.
+
+Private evidence: `session-projection-root-final-ast-proof.json`,
+`session-projection-graph-compile.json`, `session-projection-refactor-result.json`
+and `session-projection-refactor-followup.json` in the checkpoint directory.
+The source-budget scan exits successfully in advisory mode with eight observations;
+it is not a green budget gate. Session's file overage is removed, while Core and
+other package totals remain over their limits. The Goal and #326 remain open.
+
 Remaining acceptance includes production pause/resume, complete scientific `consumeResult`,
-pinned production configuration, COMPUTER route, public HTTP/JWT, foreign/
+pinned production configuration, COMPUTER dispatch, selected public HTTP/JWT, foreign/
 malformed/late events, timeout/result boundary, restart/completed predecessors,
 historical generation, selected-profile native/live and release receipts. Passing
 bounded source or fixture cases do not close those gates.

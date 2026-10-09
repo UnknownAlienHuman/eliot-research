@@ -133,6 +133,25 @@ native settlement. Authenticated contexts remain injected and COMPUTER dispatch,
 connection qualification, production profiles and public HTTP/JWT remain open.
 Earlier passing scientific sources/cases are retained without repetition.
 
+Three subsequent local signed HTTP cases exercise existing owner challenge
+issuance, service WEB_INBOX confirmation, task pull/result and an identical
+duplicate callback through `handleHttp`. The original task/attempt settles once
+through actual D1/R2/outbox/Queue/inbox/native Workflow, with two current route
+and configuration reads; a capable but unqualified connection is denied before
+task SQL. The service-class repair covers the existing eight agent operations
+and preserves all seven federation operations. Local JWKS, initial admission,
+retrieval/predecessor/budget/configuration fixtures and empty evidence remain
+explicit limits. COMPUTER dispatch, nonempty exact evidence, production-selected
+profiles/providers, full scientific/native/live/release acceptance remain open.
+
+The bounded ResearchSession HTTP extraction preserves all five existing handler
+bodies, six helpers and retained DO members; persistence remains private through
+per-call closures. The two source files are 393/362 physical lines. AST preservation,
+TypeScript 6.0.3 owning compilation (zero diagnostics, 4937 virtual outputs), exact
+lint, three retained scoped regression results and independent exact-source review
+pass. This removes the Session file overage; Core package totals and emitted,
+complete scientific/native/live/release acceptance remain open.
+
 This is the canonical day-to-day backend router. It does not replace product architecture, work-packet
 ownership or release acceptance. It tells each role where to begin, which active PR owns the result,
 and where the concise donor/anti-duplication instructions live.
