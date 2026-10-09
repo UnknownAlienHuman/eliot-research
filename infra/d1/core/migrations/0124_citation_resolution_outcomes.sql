@@ -137,6 +137,12 @@ BEGIN
                     json_extract(outcome.value, '$.excerpt_sha256')
                   AND json_extract(projection.value, '$.verification_receipt_ref') =
                     json_extract(outcome.value, '$.verification_receipt_ref')
+                  AND projection.key = (
+                    SELECT COUNT(*)
+                    FROM json_each(receipt.outcomes_json) prior_outcome
+                    WHERE prior_outcome.key < outcome.key
+                      AND json_extract(prior_outcome.value, '$.outcome') = 'RESOLVED'
+                  )
               ) <> 1
           )
           AND NOT EXISTS (
@@ -180,6 +186,14 @@ BEGIN
                     json_extract(outcome.value, '$.handle_ref.revision')
                   AND json_extract(projection.value, '$.reason_code') =
                     json_extract(outcome.value, '$.outcome')
+                  AND projection.key = (
+                    SELECT COUNT(*)
+                    FROM json_each(receipt.outcomes_json) prior_outcome
+                    WHERE prior_outcome.key < outcome.key
+                      AND json_extract(prior_outcome.value, '$.outcome') IN (
+                        'INVALID_REFERENCE','AUTHORITY_REVOKED','CONTENT_MISMATCH'
+                      )
+                  )
               ) <> 1
           )
           AND receipt.resolved_count = json_array_length(receipt.resolved_json)
