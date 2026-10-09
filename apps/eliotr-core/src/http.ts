@@ -61,7 +61,8 @@ function resolveRoute(request: Request, pathname: string): {
   };
 }
 function isApiPath(pathname: string): boolean {
-  return pathname.startsWith("/api/") ||
+  return pathname.startsWith("/agents/") || pathname === "/agents" ||
+    pathname.startsWith("/api/") ||
     pathname.startsWith("/federation/") ||
     pathname.startsWith("/oauth/");
 }

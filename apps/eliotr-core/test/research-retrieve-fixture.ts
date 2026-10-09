@@ -12,9 +12,9 @@ import { createRetrieveBranchesStageHandler, type RetrieveBranchesStageDependenc
 import type { ScopeSnapshot, VersionedRef } from "@eliotr/contracts";
 import { importAndProject, prepareQ1Namespace, type Q1Namespace, type Q1Runtime } from "./retrieval-q1-fixture.js";
 
-export const runtime = env as unknown as Q1Runtime;
+export const runtime = env as unknown as Q1Runtime & { readonly DEPLOYMENT_GENERATION: string };
 export const access = { principal_ref: "retrieve-branches-owner", client_class: "owner_pwa" as const, credential_generation: "retrieve-branches-credential-v1" };
-export const principal: WorkflowPrincipal = { ...access, deployment_generation: "retrieve-branches-deployment-v1" };
+export const principal: WorkflowPrincipal = { ...access, deployment_generation: runtime.DEPLOYMENT_GENERATION };
 export const profile = { version: "retrieval-scope-v1", max_sources: 64, max_results: 16 } as const;
 
 export interface Fixture {

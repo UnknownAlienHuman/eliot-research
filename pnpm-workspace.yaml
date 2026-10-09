@@ -4,8 +4,15 @@ packages:
 
 # pnpm 11 removed onlyBuiltDependencies. Review lifecycle-script access explicitly.
 allowBuilds:
+  core-js-pure: false
   esbuild: true
   workerd: true
 
+minimumReleaseAgeExclude:
+  - '@ai-sdk/gateway@4.0.110'
+  - '@ai-sdk/provider-utils@5.0.58'
+  - '@ai-sdk/provider@4.0.26'
+  - ai@7.0.136
+
 overrides:
-  sharp: 0.35.4
+  sharp: 0.35.5

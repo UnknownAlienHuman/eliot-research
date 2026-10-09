@@ -9,6 +9,8 @@ export interface RouteDefinition {
 }
 
 export const ROUTES: readonly RouteDefinition[] = [
+  { method: "GET", path: "/agents/research-session/:session_id", operation: "research.session.transport", auth: "owner", maximum_request_bytes: 0, response_mode: "stream" },
+  { method: "GET", path: "/agents/research-session/:session_id/get-messages", operation: "research.session.transport", auth: "owner", maximum_request_bytes: 0, response_mode: "stream" },
   { method: "GET", path: "/api/v1/system/session", operation: "system.session", auth: "owner", maximum_request_bytes: 0, response_mode: "json" },
   { method: "GET", path: "/healthz", operation: "system.health.public", auth: "public", maximum_request_bytes: 0, response_mode: "json" },
   { method: "GET", path: "/api/v1/system/health", operation: "system.health", auth: "owner_or_service", maximum_request_bytes: 0, response_mode: "json" },

@@ -12,9 +12,10 @@ import { canonicalEvidenceJson } from "@eliotr/cloudflare-evidence";
 
 export const runtime = env as unknown as {
   CORE_DB: D1Database; SEARCH_DB: D1Database; WORK_BUCKET: R2Bucket; CORE_MIGRATIONS: { name: string; queries: string[] }[];
+  DEPLOYMENT_GENERATION: string;
 };
 export const principal: WorkflowPrincipal = {
-  principal_ref: "workflow-owner", credential_generation: "workflow-credential", deployment_generation: "workflow-deployment",
+  principal_ref: "workflow-owner", credential_generation: "workflow-credential", deployment_generation: runtime.DEPLOYMENT_GENERATION,
 };
 export async function workflowFixture(tag: string, lane: "confirmatory" | "exploratory" = "confirmatory") {
   await reset();
@@ -46,7 +47,7 @@ export async function workflowFixture(tag: string, lane: "confirmatory" | "explo
   const hash = await digest(bytes);
   await db.batch([
     db.prepare("INSERT INTO investigation_current_policy VALUES ('workflow-policy','workflow-policy-authority','ACTIVE',?1)").bind(now),
-    db.prepare("INSERT INTO investigation_current_deployment(deployment_generation,state,created_at) VALUES ('workflow-deployment','ACTIVE',?1)").bind(now),
+    db.prepare("INSERT INTO investigation_current_deployment(deployment_generation,state,created_at) VALUES (?1,'ACTIVE',?2)").bind(principal.deployment_generation, now),
     db.prepare(`INSERT INTO scope_snapshot (snapshot_id, revision, resolved_scope_expression_json,
       participant_generations_json, member_source_revision_refs_json, source_owner_generations_json,
       policy_authority_ref, disclosure_closure_digest, purge_ledger_revision, snapshot_digest, created_at, expires_at)

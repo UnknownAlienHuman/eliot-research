@@ -6,6 +6,7 @@ import type {
 import type { AccessIdentity } from "@eliotr/cloudflare-access";
 import { apiResult, HttpRequestError, requireNoQuery, type HttpDependencies } from "./http.js";
 import { handleClientGrantHttp } from "./client-grant-http.js";
+import { handleResearchSessionTransport } from "./research-session-transport.js";
 import { handleGoogleOAuthBegin } from "./google-oauth-begin.js";
 import { handleGoogleOAuthCallback } from "./google-oauth-callback.js";
 import { handleGoogleConnectionDisconnect, handleGoogleConnectionStatus, handleGoogleOAuthReconnectBegin } from "./google-oauth-lifecycle.js";
@@ -84,6 +85,8 @@ export async function dispatchHttpSpecialRoute(input: {
     );
   }
   switch (input.match.route.operation) {
+    case "research.session.transport":
+      return handleResearchSessionTransport(input.request, input.env, input.context);
     case "system.ai-search.functional-probe":
       return handleAiSearchFunctionalProbeHttp({
         request: input.request,

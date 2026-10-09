@@ -1,14 +1,12 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { evictDurableObject } from "cloudflare:test";
 import { ORIENTATION_PROFILE } from "@eliotr/cloudflare-navigation";
 import {
   INSTALLED_INQUIRY_PROTOCOL_REFS,
   RESEARCH_RUN_REQUEST_V2,
-  decodeProtocolScopeCheckpoint,
   digest,
   WorkflowCheckpointStore,
 } from "@eliotr/cloudflare-research";
-import { retrievalRequestDigest } from "@eliotr/retrieval";
 import { body, count, db, principal, run, runtime, seedSource, setupOrientationDatabase, verifier } from "./orientation-fixture.js";
 import { principal as workflowPrincipal, workflowFixture } from "./research-workflow-fixture.js";
 import { admissionTestEnvironment, admissionTestScopeExpression, terminateAdmissionWorkflows } from "./research-admission-fixture.js";
@@ -72,6 +70,17 @@ function doStub(name: string) {
 }
 function doHeaders(who = principal) {
   return { "x-research-principal": who, "x-research-credential": "credential-v1", "x-research-deployment": runtime.DEPLOYMENT_GENERATION };
+}
+function mockWaitingNativeWorkflow() {
+  const workflow = runtime.RESEARCH_WORKFLOW;
+  const get = vi.spyOn(workflow, "get").mockImplementation(async (id) => ({
+    id,
+    status: async () => ({ status: "waiting" }),
+  } as never));
+  const create = vi.spyOn(workflow, "create").mockImplementation(async () => {
+    throw new Error("ResearchSession /run must not create a Workflow instance");
+  });
+  return { get, create, restore: () => { get.mockRestore(); create.mockRestore(); } };
 }
 function sessionStartBody(tag: string, who = principal) {
   const hash = "a".repeat(64);
@@ -324,7 +333,7 @@ describe("ResearchSession DO over real DO storage and D1/R2", () => {
     expect((await stub.fetch(new Request("https://do/session/start", { method: "POST", headers: { "content-type": "application/json", ...doHeaders() }, body: JSON.stringify(staleBody) }))).status).toBe(409);
     expect((await stub.fetch(new Request("https://do/status", {}))).status).toBe(200);
   });
-  it("recovers a durably registered historical v2 run through all 18 DO checkpoints", async () => {
+  it("projects a registered historical v2 run without advancing canonical checkpoints", async () => {
     const f = await prepareHistoricalV2Workflow("do-v2-recovery");
     const { db: fixtureDb, request: legacyRequest, initial_manifest: manifest, scope, session_headers: headers, session_body: sessionBody } = f;
     const manifestRow = await fixtureDb.prepare(`SELECT initial_manifest_json, handler_generation, scope_snapshot_id,
@@ -341,36 +350,36 @@ describe("ResearchSession DO over real DO storage and D1/R2", () => {
     const started = await stub.fetch(new Request("https://do/session/start", { method: "POST", headers, body: JSON.stringify(sessionBody) }));
     expect(started.status).toBe(200);
     await started.json();
-    const before = await workflowCounts();
-    const first = await stub.fetch(new Request(`https://do/session/${sessionBody.session_id}/run`, { method: "POST", headers }));
-    const firstJson = (await first.json()) as { state?: string; receipt_refs?: string[]; code?: string };
-    expect(first.status, JSON.stringify(firstJson)).toBe(200);
-    expect(firstJson.state, JSON.stringify(firstJson)).toBe("ENGINE_COMPLETED");
-    expect(Array.isArray(firstJson.receipt_refs), JSON.stringify(firstJson)).toBe(true);
-    if (first.status !== 200 || firstJson.state !== "ENGINE_COMPLETED" || !Array.isArray(firstJson.receipt_refs)) throw new Error(`unexpected first DO response: ${JSON.stringify(firstJson)}`);
-    expect(firstJson.receipt_refs).toHaveLength(18);
-    for (const ref of firstJson.receipt_refs) expect(ref.length).toBeLessThanOrEqual(256);
-    const receipts = await fixtureDb.prepare(`SELECT stage_index, receipt_json FROM research_workflow_checkpoint
-      WHERE operation_id = ?1 ORDER BY stage_index`).bind(legacyRequest.operation_id)
-      .all<{ stage_index: number; receipt_json: string }>();
-    expect(receipts.results).toHaveLength(18);
-    for (const receipt of receipts.results) {
-      expect(new TextEncoder().encode(receipt.receipt_json).byteLength).toBeLessThanOrEqual(65_536);
-      expect(receipt.receipt_json).not.toContain("completion_disposition");
-      expect(receipt.receipt_json).not.toContain("persisted output");
+    const native = mockWaitingNativeWorkflow();
+    try {
+      const before = await workflowCounts();
+      const first = await stub.fetch(new Request(`https://do/session/${sessionBody.session_id}/run`, { method: "POST", headers }));
+      const firstJson = await first.json() as {
+        state?: string;
+        operation_id?: string;
+        run_status?: { execution_state?: string; engine_status?: string; next_stage_index?: number; failure?: unknown };
+      };
+      expect(first.status, JSON.stringify(firstJson)).toBe(200);
+      expect(firstJson).toMatchObject({
+        state: "ACTIVE",
+        operation_id: legacyRequest.operation_id,
+        run_status: { execution_state: "ACTIVE", engine_status: "waiting", next_stage_index: 0 },
+      });
+      expect(firstJson.run_status).not.toHaveProperty("failure");
+      expect(native.get).toHaveBeenCalledWith(legacyRequest.operation_id);
+      expect(native.create).not.toHaveBeenCalled();
+      expect(await workflowCounts()).toEqual(before);
+
+      const second = await stub.fetch(new Request(`https://do/session/${sessionBody.session_id}/run`, { method: "POST", headers }));
+      const secondJson = await second.json();
+      expect(second.status, JSON.stringify(secondJson)).toBe(200);
+      expect(secondJson).toEqual(firstJson);
+      expect(await workflowCounts()).toEqual(before);
+    } finally {
+      native.restore();
     }
-    const completedCounts = await workflowCounts();
-    expect(completedCounts.attempts - before.attempts).toBe(18);
-    expect(completedCounts.checkpoints - before.checkpoints).toBe(18);
-    expect(completedCounts.outbox - before.outbox).toBe(18);
-    expect(completedCounts.events - before.events).toBe(18);
-    const second = await stub.fetch(new Request(`https://do/session/${sessionBody.session_id}/run`, { method: "POST", headers }));
-    const secondJson = await second.json();
-    expect(second.status, JSON.stringify(secondJson)).toBe(200);
-    expect(secondJson).toEqual(firstJson);
-    expect(await workflowCounts()).toEqual(completedCounts);
   }, 30_000);
-  it("executes exploratory.v1 DO checkpoints from a durably registered manifest and replays them", async () => {
+  it("projects the persisted exploratory generation without DO stage execution", async () => {
     const f = await workflowFixture("do-exploratory-valid", "exploratory");
     expect(f.request.handler_generation).toBe(SERVER_OWNED_RESEARCH_HANDLER_GENERATION);
     const workflowStore = new WorkflowCheckpointStore(f.db);
@@ -400,40 +409,39 @@ describe("ResearchSession DO over real DO storage and D1/R2", () => {
     const start = await stub.fetch(new Request("https://do/session/start", { method: "POST", headers, body: JSON.stringify(sessionBody) }));
     const startJson = await start.json();
     expect(start.status, JSON.stringify(startJson)).toBe(200);
-    const first = await stub.fetch(new Request(`https://do/session/${sessionBody.session_id}/run`, { method: "POST", headers }));
-    const firstJson = await first.json() as { protocol?: string; state?: string; receipt_refs?: string[]; output_manifest_ref?: string; code?: string };
-    expect(first.status, JSON.stringify(firstJson)).toBe(200);
-    expect(firstJson.state, JSON.stringify(firstJson)).toBe("ENGINE_COMPLETED");
-    expect(Array.isArray(firstJson.receipt_refs), JSON.stringify(firstJson)).toBe(true);
-    if (first.status !== 200 || firstJson.state !== "ENGINE_COMPLETED" || !Array.isArray(firstJson.receipt_refs)) throw new Error(`unexpected exploratory.v1 DO response: ${JSON.stringify(firstJson)}`);
-    expect(firstJson.receipt_refs).toHaveLength(18);
-    const generation = await f.db.prepare("SELECT handler_generation FROM research_workflow_run WHERE operation_id = ?1")
-      .bind(f.request.operation_id).first<{ handler_generation: string }>();
-    expect(generation?.handler_generation).toBe(SERVER_OWNED_RESEARCH_HANDLER_GENERATION);
-    const stageZero = await f.db.prepare("SELECT receipt_json FROM research_workflow_checkpoint WHERE operation_id = ?1 AND stage_index = 0")
-      .bind(f.request.operation_id).first<{ receipt_json: string }>();
-    expect(stageZero).not.toBeNull();
-    if (stageZero === null) throw new Error("missing exploratory.v1 DO stage-0 checkpoint");
-    const receipt = JSON.parse(stageZero.receipt_json) as { output_manifest?: { object_ref?: string } };
-    const stageObjectRef = receipt.output_manifest?.object_ref;
-    expect(typeof stageObjectRef).toBe("string");
-    if (typeof stageObjectRef !== "string") throw new Error("missing exploratory.v1 DO stage-0 object ref");
-    const stageObject = await f.bucket.get(stageObjectRef);
-    expect(stageObject).not.toBeNull();
-    if (stageObject === null) throw new Error("missing exploratory.v1 DO stage-0 object");
-    const checkpoint = decodeProtocolScopeCheckpoint(new Uint8Array(await stageObject.arrayBuffer()));
-    expect(checkpoint.workflow_stage).toBe("FREEZE_PROTOCOL_AND_SCOPE");
-    expect(checkpoint.external_acquisition).toBe("none");
-    expect(checkpoint.protocol_profile.lane).toBe("exploratory");
-    const after = await workflowCounts();
-    expect(after).toEqual({ attempts: 18, checkpoints: 18, outbox: 18, events: 18 });
-    const second = await stub.fetch(new Request(`https://do/session/${sessionBody.session_id}/run`, { method: "POST", headers }));
-    const secondJson = await second.json();
-    expect(second.status, JSON.stringify(secondJson)).toBe(200);
-    expect(secondJson).toEqual(firstJson);
-    expect(await workflowCounts()).toEqual(after);
+    const native = mockWaitingNativeWorkflow();
+    try {
+      const before = await workflowCounts();
+      const first = await stub.fetch(new Request(`https://do/session/${sessionBody.session_id}/run`, { method: "POST", headers }));
+      const firstJson = await first.json() as {
+        state?: string;
+        operation_id?: string;
+        run_status?: { execution_state?: string; engine_status?: string; next_stage_index?: number; failure?: unknown };
+      };
+      expect(first.status, JSON.stringify(firstJson)).toBe(200);
+      expect(firstJson).toMatchObject({
+        state: "ACTIVE",
+        operation_id: f.request.operation_id,
+        run_status: { execution_state: "ACTIVE", engine_status: "waiting", next_stage_index: 0 },
+      });
+      expect(firstJson.run_status).not.toHaveProperty("failure");
+      const generation = await f.db.prepare("SELECT handler_generation FROM research_workflow_run WHERE operation_id = ?1")
+        .bind(f.request.operation_id).first<{ handler_generation: string }>();
+      expect(generation?.handler_generation).toBe(SERVER_OWNED_RESEARCH_HANDLER_GENERATION);
+      expect(native.get).toHaveBeenCalledWith(f.request.operation_id);
+      expect(native.create).not.toHaveBeenCalled();
+      expect(await workflowCounts()).toEqual(before);
+
+      const second = await stub.fetch(new Request(`https://do/session/${sessionBody.session_id}/run`, { method: "POST", headers }));
+      const secondJson = await second.json();
+      expect(second.status, JSON.stringify(secondJson)).toBe(200);
+      expect(secondJson).toEqual(firstJson);
+      expect(await workflowCounts()).toEqual(before);
+    } finally {
+      native.restore();
+    }
   }, 30_000);
-  it("refuses DO execution when the durable workflow manifest is missing despite a present portfolio", async () => {
+  it("blocks an orphan active session when its canonical Workflow record is missing", async () => {
     const f = await workflowFixture("do-exploratory", "exploratory");
     expect(f.request.handler_generation).toBe(SERVER_OWNED_RESEARCH_HANDLER_GENERATION);
     const portfolioRef = f.request.input_manifest.object_ref;
@@ -463,6 +471,10 @@ describe("ResearchSession DO over real DO storage and D1/R2", () => {
     expect(start.status, JSON.stringify(startJson)).toBe(200);
     const before = await workflowCounts();
     const modelAttemptsBefore = await count("research_model_attempt");
+    const nativeGet = vi.spyOn(runtime.RESEARCH_WORKFLOW, "get");
+    const nativeCreate = vi.spyOn(runtime.RESEARCH_WORKFLOW, "create").mockImplementation(async () => {
+      throw new Error("orphan ResearchSession /run must not create a Workflow instance");
+    });
     let r2HeadCalls = 0;
     let r2GetCalls = 0;
     const originalHead = f.bucket.head;
@@ -480,13 +492,23 @@ describe("ResearchSession DO over real DO storage and D1/R2", () => {
     let response: Response;
     try {
       response = await stub.fetch(new Request(`https://do/session/${sessionBody.session_id}/run`, { method: "POST", headers }));
+      expect(nativeGet).not.toHaveBeenCalled();
+      expect(nativeCreate).not.toHaveBeenCalled();
     } finally {
       f.bucket.head = originalHead;
       f.bucket.get = originalGet;
+      nativeGet.mockRestore();
+      nativeCreate.mockRestore();
     }
-    const responseJson = await response.json() as { code?: string; retryable?: boolean };
-    expect(response.status, JSON.stringify(responseJson)).toBe(503);
-    expect(responseJson).toMatchObject({ code: "SESSION_SETTLEMENT_UNCERTAIN", retryable: true });
+    const responseJson = await response.json() as { code?: string; reason_code?: string; state?: string; disposition?: string; retryable?: boolean };
+    expect(response.status, JSON.stringify(responseJson)).toBe(409);
+    expect(responseJson).toMatchObject({
+      code: "SESSION_AUTHORITY_STALE",
+      reason_code: "SESSION_REOPEN_REQUIRED",
+      state: "BLOCKED",
+      disposition: "REOPEN_REQUIRED",
+      retryable: false,
+    });
     expect(r2HeadCalls).toBe(0);
     expect(r2GetCalls).toBe(0);
     expect(await workflowCounts()).toEqual(before);
@@ -496,9 +518,9 @@ describe("ResearchSession DO over real DO storage and D1/R2", () => {
     expect(read.status, JSON.stringify(readJson)).toBe(200);
     expect(readJson.state).toBe("ACTIVE");
   }, 30_000);
-  it("recovers historical v2 through the DO with current owner scope and indexed exact evidence", async () => {
+  it("projects historical v2 under current owner scope without reading indexed evidence", async () => {
     const f = await prepareIndexedHistoricalV2Workflow("do-v2-indexed", "Pinned");
-    const { db: fixtureDb, bucket, request, scope, initial_manifest: initialManifest,
+    const { db: fixtureDb, request, scope, initial_manifest: initialManifest,
       session_headers: headers, session_body: sessionBody } = f;
     const profile = await fixtureDb.prepare("SELECT max_results FROM retrieval_scope_profile WHERE snapshot_id=?1 AND revision=?2")
       .bind(scope.snapshot_id, scope.revision).first<{ max_results: number }>();
@@ -519,51 +541,54 @@ describe("ResearchSession DO over real DO storage and D1/R2", () => {
     expect(start.status).toBe(200);
     await start.json();
 
-    const first = await stub.fetch(new Request(`https://do/session/${sessionBody.session_id}/run`, { method: "POST", headers }));
-    const firstJson = await first.json() as { state?: string; receipt_refs?: string[]; code?: string };
-    expect(first.status, JSON.stringify(firstJson)).toBe(200);
-    expect(firstJson.state, JSON.stringify(firstJson)).toBe("ENGINE_COMPLETED");
-    expect(firstJson.receipt_refs).toHaveLength(18);
-    const rows = await fixtureDb.prepare("SELECT receipt_json FROM research_workflow_checkpoint WHERE operation_id = ?1 ORDER BY stage_index")
-      .bind(request.operation_id).all<{ receipt_json: string }>();
-    expect(rows.results).toHaveLength(18);
-    for (const row of rows.results) expect(new TextEncoder().encode(row.receipt_json).byteLength).toBeLessThanOrEqual(65536);
-
-    const stageFive = await fixtureDb.prepare("SELECT receipt_json FROM research_workflow_checkpoint WHERE operation_id = ?1 AND stage_index = 5")
-      .bind(request.operation_id).first<{ receipt_json: string }>();
-    expect(stageFive).not.toBeNull();
-    if (stageFive === null) throw new Error("missing persisted retrieval checkpoint");
-    const stageReceipt = JSON.parse(stageFive.receipt_json) as { output_manifest?: { object_ref?: string } };
-    const stageObjectRef = stageReceipt.output_manifest?.object_ref;
-    expect(typeof stageObjectRef).toBe("string");
-    if (typeof stageObjectRef !== "string") throw new Error("missing persisted retrieval output ref");
-    const stageObject = await bucket.get(stageObjectRef);
-    expect(stageObject).not.toBeNull();
-    if (stageObject === null) throw new Error("missing persisted retrieval output");
-    const retrieval = JSON.parse(new TextDecoder().decode(new Uint8Array(await stageObject.arrayBuffer()))) as {
-      workflow_stage?: string;
-      retrieval_request_digest?: string;
-      evidence_pack?: { resolved_evidence?: readonly { exact_excerpt?: string; handle?: { scope_snapshot_ref?: { id?: string; revision?: number } } }[] };
-      trace?: { scope_snapshot?: { digest?: string } };
+    let r2HeadCalls = 0;
+    let r2GetCalls = 0;
+    const originalHead = f.bucket.head;
+    const originalGet = f.bucket.get;
+    const head = originalHead.bind(f.bucket);
+    const get = originalGet.bind(f.bucket);
+    f.bucket.head = async (...args: Parameters<R2Bucket["head"]>) => {
+      r2HeadCalls += 1;
+      return head(...args);
     };
-    expect(retrieval.workflow_stage).toBe("RETRIEVE_BRANCHES");
-    expect(retrieval.evidence_pack?.resolved_evidence).toHaveLength(1);
-    expect(retrieval.evidence_pack?.resolved_evidence?.[0]?.exact_excerpt).toBe("# Evidence\n\nPinned content.\n");
-    expect(retrieval.evidence_pack?.resolved_evidence?.[0]?.handle?.scope_snapshot_ref)
-      .toEqual({ id: f.scope.snapshot_id, revision: f.scope.revision });
-    expect(typeof retrieval.trace?.scope_snapshot?.digest).toBe("string");
-    if (typeof retrieval.trace?.scope_snapshot?.digest !== "string") throw new Error("missing retrieval scope digest");
-    expect(retrieval.retrieval_request_digest).toBe(await retrievalRequestDigest({
-      raw_query: "Pinned", product: "FAST_SEARCH", literals: [], requested_limit: 1,
-      scope_digest: retrieval.trace.scope_snapshot.digest,
-    }));
+    f.bucket.get = (async (...args: Parameters<R2Bucket["get"]>) => {
+      r2GetCalls += 1;
+      return get(...args);
+    }) as R2Bucket["get"];
+    const native = mockWaitingNativeWorkflow();
+    try {
+      const counts = await workflowCounts();
+      const first = await stub.fetch(new Request(`https://do/session/${sessionBody.session_id}/run`, { method: "POST", headers }));
+      const firstJson = await first.json() as {
+        state?: string;
+        operation_id?: string;
+        run_status?: { execution_state?: string; engine_status?: string; next_stage_index?: number; failure?: unknown };
+      };
+      expect(first.status, JSON.stringify(firstJson)).toBe(200);
+      expect(firstJson).toMatchObject({
+        state: "ACTIVE",
+        operation_id: request.operation_id,
+        run_status: { execution_state: "ACTIVE", engine_status: "waiting", next_stage_index: 1 },
+      });
+      expect(firstJson.run_status).not.toHaveProperty("failure");
+      expect(native.get).toHaveBeenCalledWith(request.operation_id);
+      expect(native.create).not.toHaveBeenCalled();
+      expect(r2HeadCalls).toBe(0);
+      expect(r2GetCalls).toBe(0);
+      expect(await workflowCounts()).toEqual(counts);
 
-    const counts = await workflowCounts();
-    const replay = await stub.fetch(new Request(`https://do/session/${sessionBody.session_id}/run`, { method: "POST", headers }));
-    const replayJson = await replay.json();
-    expect(replay.status, JSON.stringify(replayJson)).toBe(200);
-    expect(replayJson).toEqual(firstJson);
-    expect(await workflowCounts()).toEqual(counts);
+      const replay = await stub.fetch(new Request(`https://do/session/${sessionBody.session_id}/run`, { method: "POST", headers }));
+      const replayJson = await replay.json();
+      expect(replay.status, JSON.stringify(replayJson)).toBe(200);
+      expect(replayJson).toEqual(firstJson);
+      expect(r2HeadCalls).toBe(0);
+      expect(r2GetCalls).toBe(0);
+      expect(await workflowCounts()).toEqual(counts);
+    } finally {
+      native.restore();
+      f.bucket.head = originalHead;
+      f.bucket.get = originalGet;
+    }
   }, 30_000);
 });
 
