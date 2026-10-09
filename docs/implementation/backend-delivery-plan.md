@@ -40,21 +40,38 @@ Aristotle accepted the source, and the integrator verified complete blob hashes
 and the canonical store's emitted field set. Both commits are local, pending
 the coordinated publication; neither establishes #326 native wait or release.
 
-Dalton's new Core-to-Session transport test is present and passes owning test
-project compilation and scoped lint. Its native suite could not collect because
-Agents 0.27.0's Babel factory resolves the decorator plugin by bare name from
-Core. The same failure occurs in the existing bootstrap test. Frontend accepted
-the separate Core-manifest handoff: exact development dependency 8.0.2 is ready,
-and ER-00 owns lock reconciliation/install. Native retry waits for installer
-release. The planned native fixture injects AccessVerifier for the canonical
-fixture principal and simulates only Workflow status `waiting`; actual JWT,
-native Workflow, browser/reconnect/hibernation and live acceptance remain open.
-Dalton, Aristotle, Halley and Bohr are closed and archived; one Step 5 leaf owns
-only the Workflow-kind parser pair. Bohr's suggested single-file R05 recipe was
+Dalton's new Core-to-Session transport fixture and the existing bootstrap fixture
+pass owning test-project compilation and scoped lint. Core's exact decorator
+development dependency 8.0.2 is committed in `0c4f39a1`; frontend reconciled the
+lockfile and released installation after frozen verification. The retained
+two-file native run passed four cases and failed one stale error-code assertion.
+After correcting that assertion to `RESEARCH_AUTHORITY_STALE`, the sole failed
+case passed, with two unrelated cases skipped. Plain Agent GET and chat-history
+GET correctly remain 410. This is bounded local Worker/DO/D1/SDK acceptance:
+AccessVerifier is injected and Workflow status `waiting` is simulated, with no
+Workflow creation. Actual JWT, native Workflow, browser/reconnect/two-tab/
+hibernation and live acceptance remain open. Passing suites were not repeated
+by backend. Frontend corrected its execution record to acknowledge its repeated
+Core invocations and prohibited further backend test runs by its integrator.
+
+Boole's Workflow-kind parser pair now rejects supplied unknown discriminants
+before topology selection, retaining omitted/explicit `RESEARCH` normalization
+and exhaustive decoder behavior. Owning compile, scoped lint and six focused
+cases pass; Socrates accepted both exact parser blobs and both exact Session
+test blobs in a read-only source review. Bounded local commits follow the shared
+index window; normal publication still waits coherent frontend B-U/U1.1b.
+This parser repair does not implement native wait. Read-only recursive inventory
+confirmed all 37 previous backend descendants archived and all spawn edges
+closed; the fresh reviewer is also closed/archived after acceptance, and one
+writer owns only a new internal R05 locator codec/test pair. That codec
+does not activate a handler generation, native wait, callback or Queue route.
+Bohr's suggested single-file R05 recipe was
 rejected: it treated the compatibility recover path as the required native wake,
 omitted the mandatory outbox and assumed a `step` field absent from the handler
 contract. Root is verifying the existing intent/outbox and Queue seams before
-implementing the new topology; no code follows that rejected recipe.
+implementing the new topology; no code follows that rejected recipe. The actual
+topology, callback/outbox/Queue seams and lease-expiry settlement fence are mapped
+in [native-external-task-wait-cutover.md](native-external-task-wait-cutover.md).
 
 The model trial has no demonstrated quality advantage over Luna. Useful
 artifacts required root corrections for Windows commands, assertion coverage

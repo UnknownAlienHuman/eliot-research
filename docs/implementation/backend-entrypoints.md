@@ -23,17 +23,22 @@ Native, selected-profile and release acceptance remains pending until its
 required receipts exist; a source checkpoint does not establish those gates.
 
 The transition is complete for the assigned Luna leaves. Branch-library source
-closure is published in `2adbc42d`; one Step 5 Go2 leaf owns native Session
-transport acceptance. C1/C2/C5 still defer their named pipeline cutovers.
+closure is published in `2adbc42d`; bounded local Session transport acceptance
+now has five passing cases across the retained run and one failed-case-only
+repair. C1/C2/C5 still defer their named pipeline cutovers.
 
 Current shared-checkout continuation: remote remains `0b7c307e`; local frontend
 bootstrap `0073cd74` plus backend SQL/receipt fixes `98d6a5ed` and `f551ea32` wait
 for coherent B-U/U1.1b before normal push. SQL depth recovery and five receipt
 boundary cases pass with source review; these do not qualify the native pipeline.
-The new native Session fixture compiles, but its collection needs the agreed Core
-decorator dependency and frontend-owned lock/install. Native retry waits for
-installer release. Workflow-kind parser repair is the current leaf; root owns
-the R05 integration mapping. Completed reviewers/writers are closed and archived.
+The Core decorator dependency is committed in `0c4f39a1`; frontend released the
+reconciled/frozen installation. Native fixture acceptance injects AccessVerifier
+and simulates Workflow status `waiting`; real JWT/native Workflow/browser/live
+acceptance remains pending. Workflow-kind parser compile/lint and six focused
+cases pass. Socrates accepted the exact parser and Session test pairs read-only
+and is closed/archived; bounded local commits follow the shared index window.
+Root owns [R05 topology/outbox integration](native-external-task-wait-cutover.md); neither repair
+qualifies native wait. All 37 previous backend descendants are closed/archived.
 
 This is the canonical day-to-day backend router. It does not replace product architecture, work-packet
 ownership or release acceptance. It tells each role where to begin, which active PR owns the result,
