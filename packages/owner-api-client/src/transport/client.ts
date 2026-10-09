@@ -35,6 +35,13 @@ export interface RequestOptions {
   readonly protectedHeaders?: readonly ProtectedHeader[];
   readonly acceptedStatuses?: readonly number[];
 }
+export interface BinaryUploadOptions extends Omit<RequestOptions, "method" | "body"> {
+  readonly method: "POST" | "PUT";
+  readonly bytes: Uint8Array;
+  readonly maximumBytes: number;
+  /** Frozen MIME type selected by the endpoint; no transport-selected format. */
+  readonly contentType: string;
+}
 export interface RangeRequestOptions extends ObjectRangeOptions { readonly conditional: "if-match" | "if-range" }
 function failure(code: string, message: string, cause?: unknown, status = 503) {
   return new OwnerClientError({ code, message, cause, status });
@@ -63,7 +70,7 @@ export function createOwnerApiClient(ports: OwnerClientPorts) {
   const epoch = ports.epoch ?? ownedEpoch;
   let disposed = false;
   const active = new Set<() => void>();
-  async function request<T>(path: string, options: RequestOptions, accept: string, consume: (response: Response, signal: AbortSignal) => Promise<T>, extra: readonly ProtectedHeader[] = []): Promise<T> {
+  async function request<T>(path: string, options: RequestOptions, accept: string, consume: (response: Response, signal: AbortSignal) => Promise<T>, extra: readonly ProtectedHeader[] = [], upload?: { readonly bytes: Uint8Array<ArrayBuffer>; readonly contentType: string }): Promise<T> {
     assertSameOriginApiPath(path);
     const milliseconds = timeout(options.timeoutMs ?? defaultTimeout);
     const captured = epoch.capture();
@@ -75,6 +82,7 @@ export function createOwnerApiClient(ports: OwnerClientPorts) {
     const required: ProtectedHeader[] = [{ name: "accept", value: accept }, ...extra];
     if (method !== "GET") required.push({ name: "x-eliotr-csrf", value: "1" });
     if (options.body !== undefined) required.push({ name: "content-type", value: "application/json" });
+    if (upload !== undefined) required.push({ name: "content-type", value: upload.contentType });
     if (options.idempotencyKey !== undefined) {
       if (!/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/u.test(options.idempotencyKey)) throw failure("API_REQUEST_INVALID", "Invalid frozen operation identity", undefined, 400);
       required.push({ name: "idempotency-key", value: options.idempotencyKey });
@@ -116,7 +124,8 @@ export function createOwnerApiClient(ports: OwnerClientPorts) {
       scheduled = true;
       current();
       // A root-relative path always uses the browser's own origin, even with a hostile base option.
-      const fetching = ports.fetch(path, { method, ...(options.body === undefined ? {} : { body: options.body }), headers, signal: controller.signal, credentials: "same-origin", redirect: "manual", cache: "no-store" });
+      const body = upload?.bytes ?? options.body;
+      const fetching = ports.fetch(path, { method, ...(body === undefined ? {} : { body }), headers, signal: controller.signal, credentials: "same-origin", redirect: "manual", cache: "no-store" });
       void fetching.then(late => { if (controller.signal.aborted) discard(late); }, () => {});
       response = await Promise.race([fetching, cancelled]);
       current();
@@ -150,6 +159,26 @@ export function createOwnerApiClient(ports: OwnerClientPorts) {
     requestJson(path: string, options: RequestOptions = {}) {
       const statuses = Object.freeze([...(options.acceptedStatuses ?? [200])]);
       return request(path, options, "application/json", (response, signal) => readJsonBody(response, signal, undefined, statuses));
+    },
+    async requestBinaryJson(path: string, input: BinaryUploadOptions) {
+      if (!["POST", "PUT"].includes(input.method) || !(input.bytes instanceof Uint8Array) ||
+          !Number.isSafeInteger(input.maximumBytes) || input.maximumBytes < 1 || input.bytes.byteLength > input.maximumBytes ||
+          typeof input.contentType !== "string" || input.contentType.length > 256 ||
+          !/^[!#$%&'*+.^_\x60|~0-9A-Za-z-]+\/[!#$%&'*+.^_\x60|~0-9A-Za-z-]+$/u.test(input.contentType)) {
+        throw failure("API_UPLOAD_INVALID", "Expected bounded bytes and an explicit upload media type", undefined, 400);
+      }
+      // Clone before the first await. Caller mutation never changes dispatched bytes.
+      const bytes = new Uint8Array(input.bytes);
+      const statuses = Object.freeze([...(input.acceptedStatuses ?? [200])]);
+      const options: RequestOptions = {
+        method: input.method,
+        ...(input.signal === undefined ? {} : { signal: input.signal }),
+        ...(input.timeoutMs === undefined ? {} : { timeoutMs: input.timeoutMs }),
+        ...(input.headers === undefined ? {} : { headers: input.headers }),
+        ...(input.idempotencyKey === undefined ? {} : { idempotencyKey: input.idempotencyKey }),
+        ...(input.protectedHeaders === undefined ? {} : { protectedHeaders: input.protectedHeaders }),
+      };
+      return request(path, options, "application/json", (response, signal) => readJsonBody(response, signal, undefined, statuses), [], { bytes, contentType: input.contentType });
     },
     requestWholeObject(path: string, input: WholeObjectOptions, options: Pick<RequestOptions, "signal" | "timeoutMs" | "headers"> = {}) {
       const object = Object.freeze({ ...input });
