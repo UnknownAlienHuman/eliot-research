@@ -1,4 +1,5 @@
 import { ExternalAgentTaskError } from "@eliotr/cloudflare-workflows";
+import { ResearchWorkflowStageSchema } from "@eliotr/contracts";
 import type { AuthenticatedRequestContext } from "@eliotr/interfaces";
 
 const SHA256 = /^[a-f0-9]{64}$/u;
@@ -73,7 +74,8 @@ export function parseExternalAgentResultReceipt(value: unknown): ExternalAgentRe
   const leaseId = string(receipt.lease_id, "lease_id", 128);
   const idempotencyKey = string(receipt.idempotency_key, "idempotency_key", 256);
   const submittedAt = string(receipt.submitted_at, "submitted_at", 64);
-  if (!TASK_ID.test(taskId) || !OPERATION_ID.test(operationId) || !SHA256.test(requestSha) ||
+  if (receipt.protocol !== "eliotr.external-agent-result-receipt.v1" ||
+      !TASK_ID.test(taskId) || !OPERATION_ID.test(operationId) || !SHA256.test(requestSha) ||
       taskId !== `external-task:${requestSha}` || !SHA256.test(resultSha) ||
       !Number.isSafeInteger(receipt.stage_index) || (receipt.stage_index as number) < 0 ||
       (receipt.stage_index as number) > 17 || !Number.isFinite(Date.parse(submittedAt)) ||
@@ -90,6 +92,9 @@ export function parseExternalAgentResultReceipt(value: unknown): ExternalAgentRe
     return corrupt("External-agent result receipt identity is corrupt");
   }
   const stageIndex = receipt.stage_index as number;
+  if (ResearchWorkflowStageSchema.options[stageIndex] !== stage) {
+    return corrupt("External-agent result stage binding is corrupt");
+  }
   const nextStage = receipt.workflow_next_stage_index as number;
   const expectedSettlement = receipt.workflow_state === "ENGINE_COMPLETED" || nextStage > stageIndex;
   if (receipt.workflow_settled !== expectedSettlement ||
