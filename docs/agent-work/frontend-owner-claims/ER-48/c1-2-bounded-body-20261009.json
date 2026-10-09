@@ -1,0 +1,27 @@
+{
+  "protocol": "eliotr.frontend-owner-claim.v1",
+  "claim_id": "c1-2-bounded-body-20261009",
+  "checkpoint_id": "C1.2",
+  "packet_id": "ER-48",
+  "manager_identity": "frontend-manager",
+  "manager_context_id": "01a120c9-2637-7952-b6c9-be07b395b4fd",
+  "leaf_identity": "01a120cd-7350-7f81-97a8-bc730b908330",
+  "owner_authorization_ref": "tests/ui-owner/receipts/owner-authorization.json",
+  "base_sha": "9c2a968029eaaeb1e0ba6379333e5112d8dc7c10",
+  "history_base_sha": "c37e56e0ebdfc7f6d294879008a4036d1b95b985",
+  "write_paths": [
+    "packages/owner-api-client/src/transport/body.ts",
+    "packages/owner-api-client/src/transport/body.test.ts",
+    "packages/owner-api-client/src/transport/problem.ts",
+    "packages/owner-api-client/src/transport/problem.test.ts"
+  ],
+  "predecessor_refs": [
+    {
+      "checkpoint_id": "C1.1",
+      "commit_sha": "7bf931b112c4f4e0e5b2ed436b1e69e1da267668"
+    }
+  ],
+  "state": "ACTIVE",
+  "evidence_refs": [],
+  "blocker_refs": []
+}
