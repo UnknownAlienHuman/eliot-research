@@ -160,6 +160,13 @@ describe("branch plan and scope pairing", () => {
       },
     };
     expect(ResearchEvidenceFreezeV3Schema.safeParse(frozen).success).toBe(true);
+    for (const digests of [["b".repeat(64), SHA], [SHA, "b".repeat(64)], [SHA, SHA]]) {
+      expect(ResearchEvidenceFreezeV3Schema.safeParse({ ...frozen,
+        freeze: { ...frozen.freeze, included_evidence: digests.map((digest) => ({
+          handle_ref: queriedHandle.handle_ref, digest,
+        })) },
+      }).success).toBe(false);
+    }
     expect(ResearchEvidenceFreezeV3Schema.safeParse({ ...frozen,
       freeze: { ...frozen.freeze, scope_snapshot_ref: foreign },
     }).success).toBe(false);

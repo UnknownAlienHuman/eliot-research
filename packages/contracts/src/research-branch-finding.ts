@@ -323,7 +323,8 @@ export const ResearchEvidenceFreezeV3Schema = z.object({
   const reconciliation = value.branch_findings.reconciliation_summary;
   const freezeDebts = value.freeze.open_research_debt_refs.map(refKey).sort();
   const summaryDebts = reconciliation.research_debts.map((debt) => refKey(debt.debt_ref)).sort();
-  if ([...resolved].some(([ref, digest]) => included.get(ref) !== digest) ||
+  if (included.size !== value.freeze.included_evidence.length ||
+      [...resolved].some(([ref, digest]) => included.get(ref) !== digest) ||
       refKey(reconciliation.scope_snapshot_ref) !== refKey(value.freeze.scope_snapshot_ref) ||
       value.branch_findings.resolved_evidence.some((item) => refKey(item.handle.scope_snapshot_ref) !== refKey(value.freeze.scope_snapshot_ref)) ||
       value.branch_findings.findings.some((finding) => finding.evidence_handle_refs.some((ref) => !resolved.has(refKey(ref)))) ||
