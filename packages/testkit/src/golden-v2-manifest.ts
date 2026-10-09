@@ -126,6 +126,8 @@ export interface GoldenCaseRunEvidence {
 }
 
 export interface GoldenRunResultV2 extends GoldenRunResult {
+  readonly observed_unknowns: readonly string[];
+  readonly failures: readonly string[];
   readonly case_sha256: string;
   readonly run_manifest_sha256: string;
   readonly expected_query_product: QueryProduct;

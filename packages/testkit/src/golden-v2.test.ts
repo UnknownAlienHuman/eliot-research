@@ -263,6 +263,17 @@ describe("Golden v2 manifest binding and hard gates", () => {
     })).rejects.toThrow("EVALUATION_RECEIPT_MISMATCH");
   });
 
+  it("rejects truthy non-boolean passed with a recomputed receipt", async () => {
+    const state = await prepare();
+    const good = state.results[0];
+    if (good === undefined) throw new Error("missing Golden v2 result");
+    const results = [{ ...good, passed: "false" }] as unknown as typeof state.results;
+    const receipt = await createGoldenEvaluationReceipt(state.expected, state.run, results);
+    expect(receipt.passed).toBe(false);
+    await expect(assertGoldenV2PromotionGate(state.expected, state.run, results, receipt))
+      .rejects.toThrow("GOLDEN_PROMOTION_BLOCKED");
+  });
+
   it("re-adjudicates digest-bound atoms, handles, and coverage before accepting a self-recomputed receipt", async () => {
     const state = await prepare();
     const good = state.results[0];

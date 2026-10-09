@@ -21,9 +21,8 @@ import {
 import { goldenExpectedCaseEntry, verifyGoldenExpectedCaseSet } from "./golden-v2-case-set.js";
 import { goldenProductIdentityInput } from "./golden-v2-run-manifest.js";
 import { adjudicateGoldenCaseMetrics, validateGoldenMetrics } from "./golden-v2-metrics.js";
+import { goldenRunDiagnosticsFor } from "./golden-run-diagnostics.js";
 import {
-  MAX_GOLDEN_ATOMS,
-  MAX_GOLDEN_ATOM_CHARS,
   adjudicateGoldenCase,
   evaluateGoldenRun,
   type ObservedExtraction,
@@ -97,18 +96,12 @@ export async function evaluateGoldenRunV2(input: {
     const baseCase = baseById.get(golden.case_id);
     const baseResult = evaluatedById.get(golden.case_id);
     const expected = input.expected.cases.find((entry) => entry.case_id === golden.case_id);
-    if (baseCase === undefined || baseResult === undefined || expected === undefined) {
+    const baseDiagnostics = baseResult === undefined ? undefined : goldenRunDiagnosticsFor(baseResult);
+    if (baseCase === undefined || baseResult === undefined || baseDiagnostics === undefined || expected === undefined) {
       throw new Error(`GOLDEN_EVALUATION_INTERNAL_MISMATCH:${golden.case_id}`);
     }
-    const failures = [...baseResult.failures];
-    const canonicalUnknownIds = new Set<string>();
-    for (const value of baseResult.observed_unknowns) {
-      const declared = golden.acceptable_unknowns.find((entry) => entry.accepted_surface_forms.includes(value));
-      if (declared !== undefined && canonicalUnknownIds.has(declared.unknown_id)) {
-        failures.push("DUPLICATE_UNKNOWN_ID:" + golden.case_id + ":" + declared.unknown_id);
-      }
-      if (declared !== undefined) canonicalUnknownIds.add(declared.unknown_id);
-    }
+    const failures = [...baseDiagnostics.failures];
+    failures.push(...duplicateUnknownIdFailures(golden.case_id, golden.acceptable_unknowns, baseDiagnostics.observed_unknowns));
     const evidence = input.evidence.get(golden.case_id);
     const metricAdjudication = adjudicateGoldenCaseMetrics(golden.case_id, expected.metric_requirements, evidence?.metrics);
     failures.push(...metricAdjudication.failures);
@@ -133,6 +126,7 @@ export async function evaluateGoldenRunV2(input: {
     }
     results.push(deepFreeze({
       ...baseResult,
+      observed_unknowns: [...baseDiagnostics.observed_unknowns],
       passed: baseResult.passed && failures.length === 0,
       failures,
       case_sha256: expected.case_sha256,
@@ -153,24 +147,19 @@ function runManifestPayload(run: GoldenRunManifest): unknown {
   return payload;
 }
 
-function unknownPromotionFailures(
+function duplicateUnknownIdFailures(
   caseId: string,
   acceptable: readonly GoldenAcceptedUnknownV2[],
   raw: unknown,
 ): string[] {
-  if (!Array.isArray(raw)) return ["MALFORMED_UNKNOWN_CONTAINER:" + caseId];
-  if (raw.length > MAX_GOLDEN_ATOMS) return ["OVERSIZED_UNKNOWN_CONTAINER:" + caseId];
+  if (!Array.isArray(raw)) return [];
   const seenValues = new Set<string>();
   const seenIds = new Set<string>();
   const failures: string[] = [];
   for (let index = 0; index < raw.length; index += 1) {
     const value: unknown = raw[index];
-    if (typeof value !== "string" || value.trim().length === 0 || value.length > MAX_GOLDEN_ATOM_CHARS) {
-      failures.push("MALFORMED_UNKNOWN:" + caseId + ":" + String(index));
-      continue;
-    }
+    if (typeof value !== "string") continue;
     if (seenValues.has(value)) {
-      failures.push("DUPLICATE_UNKNOWN:" + caseId + ":" + value);
       continue;
     }
     seenValues.add(value);
@@ -235,7 +224,8 @@ async function promotionFailures(
       !Array.isArray(result.observed_unknowns) ||
       !Array.isArray(result.observed_forbidden_collapses) ||
       !Array.isArray(result.resolved_handle_refs) ||
-      typeof result.coverage_kind !== "string"
+      typeof result.coverage_kind !== "string" ||
+      typeof result.passed !== "boolean"
     ) {
       failures.push("MALFORMED_GOLDEN_RESULT:" + result.case_id);
       continue;
@@ -253,7 +243,7 @@ async function promotionFailures(
     ) {
       failures.push(`RESULT_PRODUCT_IDENTITY_MISMATCH:${result.case_id}`);
     }
-    if (!result.passed || result.failures.length > 0 || result.observed_forbidden_collapses.length > 0) {
+    if (result.passed !== true || result.failures.length > 0 || result.observed_forbidden_collapses.length > 0) {
       failures.push(`CASE_HARD_FAILURE:${result.case_id}`);
     }
     if (entry !== undefined) {
@@ -276,7 +266,7 @@ async function promotionFailures(
       } catch {
         failures.push("MALFORMED_GOLDEN_RESULT:" + result.case_id);
       }
-      failures.push(...unknownPromotionFailures(result.case_id, entry.acceptable_unknowns, result.observed_unknowns));
+      failures.push(...duplicateUnknownIdFailures(result.case_id, entry.acceptable_unknowns, result.observed_unknowns));
       failures.push(...validateGoldenMetrics(result.case_id, entry.metric_requirements, result.metrics));
     }
     let receiptRefs: readonly GoldenReceiptReference[] = [];

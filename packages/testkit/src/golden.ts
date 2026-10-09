@@ -1,5 +1,6 @@
 // IMPLEMENTED_NOT_LIVE: ER-23 deterministic Golden Corpus loader/adjudication with collapsing-extractor negative and RU/EN/code/table cases; live model/provider qualification NOT_EXECUTED.
 import type { QueryProduct, ScopeExpression, VersionedRef } from "@eliotr/contracts";
+import { goldenRunDiagnosticsFor, retainGoldenRunDiagnostics } from "./golden-run-diagnostics.js";
 
 export interface GoldenSourceFixture {
   readonly source_revision_ref: string;
@@ -44,10 +45,8 @@ export interface GoldenRunResult {
   readonly passed: boolean;
   readonly observed_atoms: readonly string[];
   readonly observed_forbidden_collapses: readonly string[];
-  readonly observed_unknowns: readonly string[];
   readonly resolved_handle_refs: readonly VersionedRef[];
   readonly coverage_kind: string;
-  readonly failures: readonly string[];
   readonly diagnostics_ref: string;
 }
 
@@ -233,13 +232,7 @@ export function parseGoldenCase(raw: unknown): GoldenCase {
   for (const entry of handlesRaw) {
     handles.push(parseVersionedRef(entry, `handle:${caseId}`));
   }
-  const unknowns = parseStringArray(raw["acceptable_unknowns"], "acceptable_unknowns", 0, MAX_GOLDEN_ATOMS, MAX_GOLDEN_ATOM_CHARS, false);
-  if (unknowns.some((entry) => entry.trim().length === 0)) {
-    throw new Error("EMPTY_CASE_FIELD:acceptable_unknowns:empty item");
-  }
-  if (new Set(unknowns).size !== unknowns.length) {
-    throw new Error(`DUPLICATE_CASE_FIELD:acceptable_unknowns:${caseId}`);
-  }
+  const unknowns = parseStringArray(raw["acceptable_unknowns"], "acceptable_unknowns", 0, MAX_GOLDEN_ATOMS, MAX_GOLDEN_ATOM_CHARS, true);
   const coverage = asString(raw["coverage_requirement"]);
   if (coverage === null || !(COVERAGE_LEVELS as readonly string[]).includes(coverage)) {
     throw new Error(`MALFORMED_CASE:coverage_requirement:${caseId}`);
@@ -459,30 +452,34 @@ export function evaluateGoldenRun(
   return cases.map((golden) => {
     const observed = observations.get(golden.case_id);
     if (observed === undefined) {
-      return {
+      const result: GoldenRunResult = {
         case_id: golden.case_id,
         passed: false,
         observed_atoms: [],
         observed_forbidden_collapses: [],
-        observed_unknowns: [],
         resolved_handle_refs: [],
         coverage_kind: "none",
-        failures: [`MISSING_OBSERVATION:${golden.case_id}`],
         diagnostics_ref: `missing-observation-${golden.case_id}`,
       };
+      retainGoldenRunDiagnostics(result, {
+        passed: false,
+        failures: [`MISSING_OBSERVATION:${golden.case_id}`],
+        observed_unknowns: [],
+      });
+      return result;
     }
     const verdict = adjudicateGoldenCaseInternal(golden, observed);
-    return {
+    const result: GoldenRunResult = {
       case_id: golden.case_id,
       passed: verdict.passed,
       observed_atoms: [...observed.atoms],
       observed_forbidden_collapses: [...observed.forbidden],
-      observed_unknowns: [...verdict.observed_unknowns],
       resolved_handle_refs: [...observed.handles],
       coverage_kind: observed.coverage,
-      failures: [...verdict.failures],
       diagnostics_ref: verdict.passed ? `pass-${golden.case_id}` : `fail-${golden.case_id}`,
     };
+    retainGoldenRunDiagnostics(result, verdict);
+    return result;
   });
 }
 
@@ -495,18 +492,18 @@ export function runCollapsingExtractor(cases: readonly GoldenCase[]): readonly G
       unknowns: [],
       coverage: "sampled",
     };
-    const verdict = adjudicateGoldenCase(golden, observed);
-    return {
+    const verdict = adjudicateGoldenCaseInternal(golden, observed);
+    const result: GoldenRunResult = {
       case_id: golden.case_id,
       passed: verdict.passed,
       observed_atoms: [],
       observed_forbidden_collapses: [...observed.forbidden],
-      observed_unknowns: [],
       resolved_handle_refs: [],
       coverage_kind: observed.coverage,
-      failures: [...verdict.failures],
       diagnostics_ref: `collapsing-${golden.case_id}`,
     };
+    retainGoldenRunDiagnostics(result, verdict);
+    return result;
   });
 }
 
@@ -519,12 +516,6 @@ export function validateGoldenCases(cases: readonly GoldenCase[]): readonly stri
     if (testCase.source_revision_refs.length === 0) errors.push(`NO_SOURCE_REVISIONS:${testCase.case_id}`);
     if (testCase.forbidden_collapses.length === 0) errors.push(`NO_FORBIDDEN_COLLAPSES:${testCase.case_id}`);
     if (testCase.question.trim().length === 0) errors.push(`EMPTY_QUESTION:${testCase.case_id}`);
-    if (testCase.acceptable_unknowns.some((value) => value.trim().length === 0)) {
-      errors.push(`MALFORMED_ACCEPTABLE_UNKNOWN:${testCase.case_id}`);
-    }
-    if (new Set(testCase.acceptable_unknowns).size !== testCase.acceptable_unknowns.length) {
-      errors.push(`DUPLICATE_ACCEPTABLE_UNKNOWN:${testCase.case_id}`);
-    }
     if (testCase.coverage_requirement === "complete_scope" && testCase.expected_product === "LOCATE") {
       errors.push(`LOCATE_CANNOT_PROVE_COMPLETE_SCOPE:${testCase.case_id}`);
     }
@@ -536,11 +527,13 @@ export function assertGoldenPromotionGate(results: readonly GoldenRunResult[]): 
   if (results.length === 0) {
     throw new Error("GOLDEN_PROMOTION_BLOCKED:EMPTY_RESULT_SET");
   }
-  const failed = results.filter((result) =>
-    !result.passed ||
-    result.failures.length > 0 ||
-    result.observed_forbidden_collapses.length > 0
-  );
+  const failed = results.filter((result) => {
+    const diagnostics = goldenRunDiagnosticsFor(result);
+    return !result.passed ||
+      diagnostics?.passed === false ||
+      (diagnostics?.failures.length ?? 0) > 0 ||
+      result.observed_forbidden_collapses.length > 0;
+  });
   if (failed.length > 0) {
     throw new Error(`GOLDEN_PROMOTION_BLOCKED:${failed.map((result) => result.case_id).join(",")}`);
   }

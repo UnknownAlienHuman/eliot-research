@@ -70,10 +70,8 @@ describe("Golden Corpus gates", () => {
       passed: false,
       observed_atoms: [],
       observed_forbidden_collapses: ["recommendation-to-decision"],
-      observed_unknowns: [],
       resolved_handle_refs: [],
       coverage_kind: "complete_scope",
-      failures: ["FORBIDDEN_COLLAPSE:case-1:recommendation-to-decision"],
       diagnostics_ref: "diag-1",
     }])).toThrow("GOLDEN_PROMOTION_BLOCKED");
   });
@@ -155,8 +153,7 @@ describe("Golden Corpus gates", () => {
       unknowns: "not-an-array" as unknown as readonly string[],
       coverage: "sampled",
     }]]));
-    expect(malformed[0]?.failures).toContain("MALFORMED_UNKNOWN_CONTAINER:GC-001-recommendation-vs-decision");
-    expect(malformed[0]?.observed_unknowns).toEqual([]);
+    expect(malformed[0]?.passed).toBe(false);
 
     const oversized = evaluateGoldenRun([recommendationCase], new Map([[recommendationCase.case_id, {
       atoms: [],
@@ -165,8 +162,37 @@ describe("Golden Corpus gates", () => {
       unknowns: Array.from({ length: 33 }, (_, index) => `unknown-${String(index)}`),
       coverage: "sampled",
     }]]));
-    expect(oversized[0]?.failures).toContain("OVERSIZED_UNKNOWN_CONTAINER:GC-001-recommendation-vs-decision:33");
-    expect(oversized[0]?.observed_unknowns).toEqual([]);
+    expect(oversized[0]?.passed).toBe(false);
+  });
+
+  it("keeps the historical v1 result wire shape while retaining adjudication diagnostics internally", () => {
+    const results = evaluateGoldenRun([recommendationCase], new Map([[recommendationCase.case_id, {
+      atoms: [...recommendationCase.required_atoms],
+      forbidden: [],
+      handles: [...recommendationCase.required_evidence_handle_refs],
+      unknowns: ["not declared"],
+      coverage: "complete_scope",
+    }]]));
+    const result = results[0];
+    if (result === undefined) throw new Error("missing Golden v1 result");
+    const wire = JSON.parse(JSON.stringify(result)) as Record<string, unknown>;
+    expect(wire).toEqual({
+      case_id: recommendationCase.case_id,
+      passed: false,
+      observed_atoms: [...recommendationCase.required_atoms],
+      observed_forbidden_collapses: [],
+      resolved_handle_refs: [...recommendationCase.required_evidence_handle_refs],
+      coverage_kind: "complete_scope",
+      diagnostics_ref: `fail-${recommendationCase.case_id}`,
+    });
+    Object.assign(result, { passed: true });
+    expect(() => assertGoldenPromotionGate(results)).toThrow("GOLDEN_PROMOTION_BLOCKED");
+  });
+
+  it("preserves historical v1 parsing of blank and duplicate acceptable unknowns", () => {
+    const parsed = parseGoldenCase({ ...validCase, acceptable_unknowns: ["", " ", ""] });
+    expect(parsed.acceptable_unknowns).toEqual(["", " ", ""]);
+    expect(validateGoldenCases([parsed])).toEqual([]);
   });
 
   it("rejects malformed, empty, and oversized cases", () => {
