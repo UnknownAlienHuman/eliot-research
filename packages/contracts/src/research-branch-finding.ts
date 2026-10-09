@@ -2,7 +2,7 @@ import { z } from "zod";
 import { IdentifierSchema, Sha256Schema, VersionedRefSchema } from "./common.js";
 import { ResolvedEvidenceSchema } from "./evidence.js";
 import { EvidenceFreezeSchema, ResearchDebtSchema } from "./research.js";
-import { BranchQueryPlanSchema } from "./research-branch-query.js";
+import { BranchQueryPlanSchema, branchQueryLegsMatchPlan } from "./research-branch-query.js";
 import { ResearchBranchRoleSchema } from "./research-branch-role.js";
 
 function refKey(ref: { readonly id: string; readonly revision: number }): string {
@@ -206,6 +206,14 @@ function validateBranchFindingsProvenance(
         role.query_result_ref.revision !== 1 || role.scope_snapshot_ref.id !== role.query_plan.scope_snapshot_ref.id ||
         role.scope_snapshot_ref.revision !== role.query_plan.scope_snapshot_ref.revision ||
         role.scope_snapshot_digest !== role.query_plan.scope_snapshot_digest ||
+        refKey(role.scope_snapshot_ref) !== refKey(summary.scope_snapshot_ref) ||
+        refKey(role.query_plan.planning_manifest_ref) !== refKey(summary.planning_manifest_ref) ||
+        role.query_plan.planning_manifest_digest !== summary.planning_manifest_digest ||
+        refKey(role.query_plan.inquiry_protocol_ref) !== refKey(summary.inquiry_protocol_ref) ||
+        role.query_plan.protocol_digest !== summary.protocol_digest ||
+        value.roles.some((other) => other.scope_snapshot_digest !== role.scope_snapshot_digest) ||
+        !branchQueryLegsMatchPlan(role.query_plan, role.retrieval_legs, role.stop_reason,
+          role.retrieval_legs.some((leg) => leg.resolved_handle_refs.length > 0)) ||
         role.finding_refs.length > 64 || new Set(role.finding_refs.map(refKey)).size !== role.finding_refs.length ||
         new Set(role.omitted_candidate_refs).size !== role.omitted_candidate_refs.length ||
         new Set(role.retrieval_legs.map((leg) => leg.query_id)).size !== role.retrieval_legs.length ||
@@ -263,7 +271,11 @@ export const EvidenceFreezeBranchFindingsSchema = z.object({
         const item = evidenceByRef.get(refKey(frozen.handle_ref));
         return item === undefined || frozen.excerpt_sha256 !== item.handle.excerpt_sha256 ||
           frozen.excerpt_byte_length !== new TextEncoder().encode(item.exact_excerpt).byteLength;
-      })) {
+      }) ||
+      value.resolved_evidence.some((item) => refKey(item.handle.scope_snapshot_ref) !==
+          refKey(value.reconciliation_summary.scope_snapshot_ref) ||
+        value.roles.some((role) => item.scope_snapshot_digest !== role.scope_snapshot_digest) ||
+        item.handle.excerpt_byte_length !== new TextEncoder().encode(item.exact_excerpt).byteLength)) {
     context.addIssue({ code: "custom", path: ["resolved_evidence"], message: "frozen exact evidence does not match branch query provenance" });
   }
 });
@@ -284,6 +296,8 @@ export const ResearchEvidenceFreezeV3Schema = z.object({
   const freezeDebts = value.freeze.open_research_debt_refs.map(refKey).sort();
   const summaryDebts = reconciliation.research_debts.map((debt) => refKey(debt.debt_ref)).sort();
   if ([...resolved].some(([ref, digest]) => included.get(ref) !== digest) ||
+      refKey(reconciliation.scope_snapshot_ref) !== refKey(value.freeze.scope_snapshot_ref) ||
+      value.branch_findings.resolved_evidence.some((item) => refKey(item.handle.scope_snapshot_ref) !== refKey(value.freeze.scope_snapshot_ref)) ||
       value.branch_findings.findings.some((finding) => finding.evidence_handle_refs.some((ref) => !resolved.has(refKey(ref)))) ||
       value.freeze.freeze_ref.id.length === 0 ||
       [...value.freeze.unresolved_contradiction_refs].sort().join("\n") !== [...reconciliation.unresolved_contradiction_refs].sort().join("\n") ||

@@ -192,6 +192,10 @@ function validateBranchQueryResult(
   const queriedRefs = new Set(legRefs.map((item) => `${item.handle_ref.id}:${item.handle_ref.revision}`));
   if (duplicate(value.resolved_evidence.map((item) => `${item.handle.handle_ref.id}:${item.handle.handle_ref.revision}`)) ||
       duplicate(value.query_legs.map((leg) => leg.query_id)) ||
+      value.resolved_evidence.some((item) => item.handle.scope_snapshot_ref.id !== value.scope_snapshot_ref.id ||
+        item.handle.scope_snapshot_ref.revision !== value.scope_snapshot_ref.revision ||
+        item.scope_snapshot_digest !== value.scope_snapshot_digest ||
+        item.handle.excerpt_byte_length !== new TextEncoder().encode(item.exact_excerpt).byteLength) ||
       [...resolved.keys()].some((ref) => !queriedRefs.has(ref)) ||
       legRefs.some((item) => {
         const evidence = resolved.get(`${item.handle_ref.id}:${item.handle_ref.revision}`);
@@ -221,3 +225,27 @@ export const BranchQueryResultSchema = z.object({
   failure_disposition: z.enum(["NONE", "PARTIAL", "ALL_FAILED"]),
 }).strict().superRefine((value, context) => validateBranchQueryResult(value, context, value.failure_disposition));
 export type BranchQueryResult = z.infer<typeof BranchQueryResultSchema>;
+
+/** Exact pairing for checkpoints: a stopped plan may retain only an ordered prefix of its legs. */
+export function branchQueryResultMatchesPlan(plan: BranchQueryPlan, result: BranchQueryResult): boolean {
+  return plan.role === result.role && plan.query_plan_ref.id === result.query_plan_ref.id &&
+    plan.query_plan_ref.revision === result.query_plan_ref.revision && plan.identity_digest === result.query_plan_digest &&
+    plan.scope_snapshot_ref.id === result.scope_snapshot_ref.id &&
+    plan.scope_snapshot_ref.revision === result.scope_snapshot_ref.revision && plan.scope_snapshot_digest === result.scope_snapshot_digest &&
+    branchQueryLegsMatchPlan(plan, result.query_legs, result.stop_reason, result.resolved_evidence.length > 0);
+}
+
+export function branchQueryLegsMatchPlan(
+  plan: BranchQueryPlan,
+  legs: readonly Pick<BranchQueryLegResult, "query_id" | "query_sha256">[],
+  stop: BranchQueryResult["stop_reason"],
+  hasEvidence: boolean,
+): boolean {
+  const fullPlanStop = ["PLAN_COMPLETED", "NO_HITS", "ALL_LEGS_FAILED"].includes(stop);
+  return legs.length <= plan.query_legs.length && (!fullPlanStop || legs.length === plan.query_legs.length) &&
+    (stop !== "FIRST_ADMISSIBLE_EVIDENCE" || (plan.stop_rule === "FIRST_ADMISSIBLE_EVIDENCE" && hasEvidence)) &&
+    legs.every((leg, index) => {
+      const planned = plan.query_legs[index];
+      return planned !== undefined && leg.query_id === planned.query_id && leg.query_sha256 === planned.query_sha256;
+    });
+}

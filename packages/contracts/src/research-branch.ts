@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { IdentifierSchema, Sha256Schema, VersionedRefSchema } from "./common.js";
 import { BranchFindingCandidateSchema } from "./research-branch-finding.js";
-import { BranchQueryPlanSchema, BranchQueryResultSchema } from "./research-branch-query.js";
+import { BranchQueryPlanSchema, BranchQueryResultSchema, branchQueryResultMatchesPlan } from "./research-branch-query.js";
 import { ResearchBranchRoleSchema } from "./research-branch-role.js";
 import { ResearchDebtSchema } from "./research.js";
 
@@ -93,7 +93,7 @@ export const ResearchReadExtractCheckpointV2Schema = z.object({
   })));
   if (duplicate(roles) || duplicate(value.evidence.map((item) => refKey(item.handle_ref))) ||
       duplicate(value.omitted_candidate_refs) ||
-      value.role_queries.some(({ query_plan, query_result }) => query_plan.role !== query_result.role ||
+      value.role_queries.some(({ query_plan, query_result }) => !branchQueryResultMatchesPlan(query_plan, query_result) ||
         query_plan.planning_manifest_ref.id !== value.planning_manifest_ref.id ||
         query_plan.planning_manifest_ref.revision !== value.planning_manifest_ref.revision ||
         query_plan.planning_manifest_digest !== value.planning_manifest_digest ||
@@ -102,7 +102,8 @@ export const ResearchReadExtractCheckpointV2Schema = z.object({
         query_plan.scope_snapshot_digest !== query_result.scope_snapshot_digest ||
         query_result.scope_snapshot_ref.id !== value.scope_snapshot_ref.id ||
         query_result.scope_snapshot_ref.revision !== value.scope_snapshot_ref.revision) ||
-      queryEvidence.some((item) => evidenceByRef.get(item.ref) !== item.digest)) {
+      queryEvidence.some((item) => evidenceByRef.get(item.ref) !== item.digest) ||
+      [...evidenceByRef.keys()].some((ref) => !queryEvidence.some((item) => item.ref === ref))) {
     context.addIssue({ code: "custom", path: ["role_queries"], message: "v2 read/extract query provenance or evidence is inconsistent" });
   }
 });
@@ -250,9 +251,7 @@ export const ResearchBranchResultV2Schema = z.object({
       value.branch_ref.id !== value.query_plan.branch_ref.id || value.branch_ref.revision !== value.query_plan.branch_ref.revision) {
     context.addIssue({ code: "custom", path: ["result_ref"], message: "v2 branch result identity mismatch" });
   }
-  if (value.query_plan.role !== value.role || value.query_result.role !== value.role ||
-      value.query_result.query_plan_ref.id !== value.query_plan.query_plan_ref.id ||
-      value.query_result.query_plan_digest !== value.query_plan.identity_digest) {
+  if (value.query_plan.role !== value.role || !branchQueryResultMatchesPlan(value.query_plan, value.query_result)) {
     context.addIssue({ code: "custom", path: ["query_plan"], message: "branch query provenance does not match result" });
   }
   const handleKeys = value.evidence_handle_refs.map(refKey);

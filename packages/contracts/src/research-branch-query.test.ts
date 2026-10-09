@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { RetrievalLaneSchema } from "./retrieval.js";
-import { BranchQueryResultSchema } from "./research-branch-query.js";
+import { BranchQueryPlanSchema, BranchQueryResultSchema } from "./research-branch-query.js";
+import { ResearchBranchResultV2Schema, ResearchReadExtractCheckpointV2Schema } from "./research-branch.js";
 import { ResolvedEvidenceSchema } from "./evidence.js";
-import { EvidenceFreezeBranchFindingsProvenanceSchema, EvidenceFreezeBranchFindingsSchema } from "./research-branch-finding.js";
+import { EvidenceFreezeBranchFindingsProvenanceSchema, EvidenceFreezeBranchFindingsSchema, ResearchEvidenceFreezeV3Schema } from "./research-branch-finding.js";
 
 const SHA = "a".repeat(64);
 const scopeRef = { id: "scope-1", revision: 1 };
@@ -97,6 +98,85 @@ describe("BranchQueryResult failure disposition", () => {
       failure_disposition: "ALL_FAILED",
       stop_reason: "BUDGET_EXHAUSTED",
     }).success).toBe(true);
+  });
+});
+
+describe("branch plan and scope pairing", () => {
+  it("rejects a foreign paired plan and incomplete completed query legs", () => {
+    const plan = BranchQueryPlanSchema.parse(frozenProvenance(true).roles[0]?.query_plan);
+    const queryResult = BranchQueryResultSchema.parse({
+      protocol: "eliotr.research.branch-query-result.v1",
+      query_result_ref: { id: `eliotr.research.branch-query-result-${SHA}`, revision: 1 }, identity_digest: SHA,
+      query_plan_ref: plan.query_plan_ref, query_plan_digest: plan.identity_digest, role: plan.role,
+      scope_snapshot_ref: scopeRef, scope_snapshot_digest: SHA, query_legs: [leg("query-SUPPORT", "COMPLETED")],
+      resolved_evidence: [], omitted_candidate_refs: [], total_utf8_bytes: 0, stop_reason: "NO_HITS", failure_disposition: "NONE",
+    });
+    const read = {
+      protocol: "eliotr.research.read-extract.v2",
+      checkpoint_ref: { id: `eliotr.research.read-extract-v2-${SHA}`, revision: 1 }, identity_digest: SHA,
+      operation_id: "operation-1", investigation_ref: { id: "investigation-1", revision: 1 }, principal_ref: "principal-1",
+      scope_snapshot_ref: scopeRef, inquiry_protocol_ref: plan.inquiry_protocol_ref, protocol_digest: SHA,
+      planning_manifest_ref: plan.planning_manifest_ref, planning_manifest_digest: SHA,
+      role_queries: [{ query_plan: plan, query_result: queryResult }], evidence: [], omitted_candidate_refs: [],
+      created_at: "2026-01-01T00:00:00.000Z",
+    };
+    expect(ResearchReadExtractCheckpointV2Schema.safeParse(read).success).toBe(true);
+    expect(ResearchReadExtractCheckpointV2Schema.safeParse({ ...read, role_queries: [{ query_plan: plan,
+      query_result: { ...queryResult, query_plan_ref: { id: "foreign-plan", revision: 1 } },
+    }] }).success).toBe(false);
+    const branch = {
+      protocol: "eliotr.research.branch-result.v2", branch_ref: plan.branch_ref,
+      result_ref: { id: `eliotr.research.branch-result-v2-${SHA}`, revision: 1 }, identity_digest: SHA, role: plan.role,
+      status: "BLOCKED", question_ids: [], hypothesis_ids: [], evidence_handle_refs: [], observation_refs: [],
+      unknowns: [], limitations: [], failed_probe_refs: ["probe-1"], authoritative_disposition: "UNASSESSED",
+      query_plan: plan, query_result: queryResult, findings: [],
+    };
+    expect(ResearchBranchResultV2Schema.safeParse(branch).success).toBe(true);
+    expect(ResearchBranchResultV2Schema.safeParse({ ...branch,
+      query_result: { ...queryResult, query_legs: [leg("foreign-leg", "COMPLETED")] },
+    }).success).toBe(false);
+    const provenance = EvidenceFreezeBranchFindingsProvenanceSchema.parse(frozenProvenance(true));
+    const support = provenance.roles[0];
+    if (support === undefined) throw new Error("fixture SUPPORT role missing");
+    support.query_plan.budgets.max_query_legs = 2;
+    support.query_plan.query_legs.push({ query_id: "query-second", query_sha256: SHA, query: "second query", literal_probes: [] });
+    expect(EvidenceFreezeBranchFindingsProvenanceSchema.safeParse(provenance).success).toBe(false);
+  });
+
+  it("rejects evidence and reconciliation scopes outside the committed freeze scope", () => {
+    const findings = EvidenceFreezeBranchFindingsSchema.parse({
+      ...frozenProvenance(true), resolved_evidence: [evidence()], identity_digest: SHA,
+    });
+    const foreign = { id: "scope-foreign", revision: 1 };
+    const frozen = {
+      protocol: "eliotr.research.evidence-freeze.v3", identity_digest: SHA, branch_findings: findings,
+      freeze: {
+        freeze_ref: { id: "freeze-1", revision: 1 }, scope_snapshot_ref: scopeRef,
+        coverage_denominator_ref: { id: "denominator-1", revision: 1 }, contract_protocol_digest: SHA, lane_digest: SHA,
+        included_evidence: [{ handle_ref: queriedHandle.handle_ref, digest: SHA }], excluded_evidence: [],
+        unresolved_contradiction_refs: [], open_research_debt_refs: [], provider_model_prompt_tool_generations: {},
+        frozen_at: "2026-01-01T00:00:00.000Z",
+      },
+    };
+    expect(ResearchEvidenceFreezeV3Schema.safeParse(frozen).success).toBe(true);
+    expect(ResearchEvidenceFreezeV3Schema.safeParse({ ...frozen,
+      freeze: { ...frozen.freeze, scope_snapshot_ref: foreign },
+    }).success).toBe(false);
+    const provenance = EvidenceFreezeBranchFindingsProvenanceSchema.parse(frozenProvenance(true));
+    for (const role of provenance.roles) {
+      role.scope_snapshot_ref = foreign;
+      role.query_plan.scope_snapshot_ref = foreign;
+      for (const query of role.retrieval_legs) query.scope_snapshot_ref = foreign;
+    }
+    expect(EvidenceFreezeBranchFindingsProvenanceSchema.safeParse(provenance).success).toBe(false);
+    const resolved = evidence();
+    resolved.handle.scope_snapshot_ref = foreign;
+    const baseline = result({ query_legs: [leg("query-1", "COMPLETED"), leg("query-2", "FAILED")],
+      failure_disposition: "PARTIAL", stop_reason: "PLAN_COMPLETED" });
+    if (!baseline.success) throw baseline.error;
+    expect(BranchQueryResultSchema.safeParse({ ...baseline.data, resolved_evidence: [resolved], total_utf8_bytes: 4,
+      query_legs: [{ ...leg("query-1", "COMPLETED"), stop_reason: "LEG_COMPLETED", resolved_handle_refs: [queriedHandle] }, leg("query-2", "FAILED")],
+    }).success).toBe(false);
   });
 });
 
