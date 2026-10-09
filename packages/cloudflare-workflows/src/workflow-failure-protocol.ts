@@ -75,6 +75,11 @@ export const WORKFLOW_FAILURE_CODES = [
   "EVIDENCE_IDENTITY_CONFLICT",
   "EVIDENCE_SETTLEMENT_UNCERTAIN",
   "CITATION_SET_INVALID",
+  "EVIDENCE_FREEZE_INPUT_INVALID",
+  "EVIDENCE_FREEZE_SCOPE_STALE",
+  "EVIDENCE_FREEZE_EVIDENCE_INVALID",
+  "EVIDENCE_FREEZE_AUTHORITY_INVALID",
+  "EVIDENCE_FREEZE_SETTLEMENT_UNCERTAIN",
 ] as const;
 
 export const WorkflowFailureSchema = z.object({
@@ -85,3 +90,51 @@ export const WorkflowFailureSchema = z.object({
 }).strict().refine((value) => value.phase === "PREPARATION" ? value.stage === undefined : value.stage !== undefined)
   .refine((value) => !value.retryable || (value.phase === "PREPARATION" && value.code === "WORKFLOW_STORAGE_UNAVAILABLE"));
 export type WorkflowFailure = z.infer<typeof WorkflowFailureSchema>;
+
+/** Existing Eliot dispatch-state vocabulary, kept independent from retryability. */
+export const WorkflowFailureDispatchStateSchema = z.enum([
+  "NOT_STARTED",
+  "OUTCOME_UNKNOWN",
+  "RESPONSE_RECEIVED",
+]);
+export type WorkflowFailureDispatchState = z.infer<typeof WorkflowFailureDispatchStateSchema>;
+
+export const WorkflowFailureReferencesIntactSchema = z.enum(["INTACT", "UNKNOWN"]);
+export type WorkflowFailureReferencesIntact = z.infer<typeof WorkflowFailureReferencesIntactSchema>;
+
+export const WorkflowFailureRecoveryActionSchema = z.enum(["NONE", "READBACK", "RECONCILE"]);
+export type WorkflowFailureRecoveryAction = z.infer<typeof WorkflowFailureRecoveryActionSchema>;
+
+/** Versioned safe diagnostic; retryable is a hint, never permission to repeat an unknown effect. */
+export const WorkflowFailureOutcomeSchema = z.object({
+  protocol: z.literal("eliotr.workflow-failure-outcome.v1"),
+  code: z.enum(WORKFLOW_FAILURE_CODES),
+  phase: z.enum(["PREPARATION", "STAGE", "RECOVERY"]),
+  stage: ResearchWorkflowStageSchema.optional(),
+  retryable: z.boolean(),
+  dispatch_state: WorkflowFailureDispatchStateSchema,
+  references_intact: WorkflowFailureReferencesIntactSchema,
+  recovery_action: WorkflowFailureRecoveryActionSchema,
+}).strict().refine((value) => value.phase === "PREPARATION" ? value.stage === undefined : value.stage !== undefined)
+  .refine((value) => value.dispatch_state !== "OUTCOME_UNKNOWN" || (
+    value.references_intact === "UNKNOWN" && value.recovery_action !== "NONE"
+  ));
+export type WorkflowFailureOutcome = z.infer<typeof WorkflowFailureOutcomeSchema>;
+
+/** Persisted append-only first-cause plus consequence history; null represents a legacy empty row. */
+export const WorkflowFailureHistorySchema = z.object({
+  protocol: z.literal("eliotr.workflow-failure-history.v1"),
+  first_cause: WorkflowFailureOutcomeSchema.nullable(),
+  consequences: z.array(WorkflowFailureOutcomeSchema).max(16),
+}).strict().refine((value) => value.first_cause !== null || value.consequences.length === 0);
+type WorkflowFailureHistoryValue = z.infer<typeof WorkflowFailureHistorySchema>;
+export type WorkflowFailureHistory = Readonly<Omit<WorkflowFailureHistoryValue, "consequences">> & {
+  readonly consequences: readonly WorkflowFailureOutcome[];
+};
+
+/** Read old persisted/native V1 failures and the versioned outcome form without rewriting V1 bytes. */
+export const WorkflowFailureCompatibleSchema = z.union([
+  WorkflowFailureSchema,
+  WorkflowFailureOutcomeSchema,
+]);
+export type WorkflowFailureCompatible = z.infer<typeof WorkflowFailureCompatibleSchema>;

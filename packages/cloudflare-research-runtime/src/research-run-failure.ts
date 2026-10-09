@@ -1,7 +1,8 @@
 import {
   parseWorkflowCheckpointErrorMessage,
+  workflowFailureCause,
   WORKFLOW_FAILURE_CODES,
-  type WorkflowFailure,
+  type WorkflowFailureCompatible,
   type WorkflowRunStatus,
 } from "@eliotr/cloudflare-workflows";
 import type { ResearchEngineStatus, ResearchRunFailure, ResearchRunFailureContext, ResearchRunFailureCode } from "@eliotr/interfaces";
@@ -13,7 +14,7 @@ const RESEARCH_NATIVE_FAILURE_CODES = new Set<string>(WORKFLOW_FAILURE_CODES);
 export interface ResearchEngineObservation {
   readonly status: ResearchEngineStatus;
   readonly failure_code?: ResearchRunFailureCode;
-  readonly failure?: WorkflowFailure;
+  readonly failure?: WorkflowFailureCompatible;
 }
 export interface ResearchEngineObservationPorts {
   readonly get_workflow: (operationId: string) => Promise<WorkflowInstance>;
@@ -23,7 +24,7 @@ function readResearchEngineStatusValue(value: unknown): ResearchEngineStatus {
 }
 function readResearchNativeFailure(value: unknown): {
   readonly failure_code?: ResearchRunFailureCode;
-  readonly failure?: WorkflowFailure;
+  readonly failure?: WorkflowFailureCompatible;
 } | undefined {
   if (value === null || typeof value !== "object" || Array.isArray(value)) return undefined;
   const error = (value as { readonly error?: unknown }).error;
@@ -69,9 +70,15 @@ export async function readResearchEngineStatus(
   }
 }
 
-function failureContext(value: WorkflowFailure): ResearchRunFailureContext {
+function failureContext(value: WorkflowFailureCompatible): ResearchRunFailureContext {
   return { code: value.code, phase: value.phase, retryable: value.retryable,
-    ...(value.stage === undefined ? {} : { stage: value.stage }) };
+    ...(value.stage === undefined ? {} : { stage: value.stage }),
+    ...("protocol" in value ? {
+      protocol: value.protocol,
+      dispatch_state: value.dispatch_state,
+      references_intact: value.references_intact,
+      recovery_action: value.recovery_action,
+    } : {}) };
 }
 
 /** Historical diagnostics do not turn an active, recovered or completed run into a failed run. */
@@ -81,15 +88,25 @@ export function researchRunFailure(status: WorkflowRunStatus,
   const native: ResearchRunFailureContext | undefined = engine.failure === undefined
     ? engine.failure_code === undefined ? undefined : { code: engine.failure_code }
     : failureContext(engine.failure);
-  const first = status.first_failure;
+  const history = status.failure_history;
+  const first = history?.first_cause ?? status.first_failure;
   if (first === null) return native;
   const latest = status.latest_failure;
   const nativeConsequence = native?.code !== first.code && native?.code !== "WORKFLOW_EFFECT_UNCERTAIN" &&
     native?.code !== "WORKFLOW_PREPARATION_FAILED" ? native : undefined;
-  const consequence = latest !== null && JSON.stringify(latest) !== JSON.stringify(first)
-    ? failureContext(latest) : nativeConsequence;
+  const consequences: ResearchRunFailureContext[] = history?.consequences.map(failureContext) ?? [];
+  if (consequences.length === 0 && latest !== null &&
+      JSON.stringify(workflowFailureCause(latest)) !== JSON.stringify(workflowFailureCause(first))) {
+    consequences.push(failureContext(latest));
+  }
+  if (consequences.length === 0 && nativeConsequence !== undefined && consequences.length < 16) {
+    const alreadyRetained = consequences.some((item) => JSON.stringify(item) === JSON.stringify(nativeConsequence));
+    if (!alreadyRetained) consequences.push(nativeConsequence);
+  }
   return { ...failureContext(first),
-    retryable: first.retryable && consequence === undefined && native?.code === first.code,
-    ...(consequence === undefined ? {} : { consequence }),
+    ...(consequences.length === 0 ? {} : {
+      consequence: consequences[consequences.length - 1],
+      consequences,
+    }),
   };
 }

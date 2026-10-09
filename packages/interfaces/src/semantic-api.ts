@@ -177,18 +177,28 @@ export type ResearchRunFailureCode =
   | "EVIDENCE_HANDLE_NOT_LIVE"
   | "EVIDENCE_IDENTITY_CONFLICT"
   | "EVIDENCE_SETTLEMENT_UNCERTAIN"
-  | "CITATION_SET_INVALID";
+  | "CITATION_SET_INVALID"
+  | "EVIDENCE_FREEZE_INPUT_INVALID"
+  | "EVIDENCE_FREEZE_SCOPE_STALE"
+  | "EVIDENCE_FREEZE_EVIDENCE_INVALID"
+  | "EVIDENCE_FREEZE_AUTHORITY_INVALID"
+  | "EVIDENCE_FREEZE_SETTLEMENT_UNCERTAIN";
 
 export interface ResearchRunFailureContext {
   readonly code: ResearchRunFailureCode;
   readonly stage?: ResearchWorkflowStage;
   readonly phase?: "PREPARATION" | "STAGE" | "RECOVERY";
-  /** True only for known pre-dispatch transient preparation reads, never for a possibly paid effect. */
+  /** Read retryability does not authorize repeating an unknown provider effect. */
   readonly retryable?: boolean;
+  readonly protocol?: "eliotr.workflow-failure-outcome.v1";
+  readonly dispatch_state?: "NOT_STARTED" | "OUTCOME_UNKNOWN" | "RESPONSE_RECEIVED";
+  readonly references_intact?: "INTACT" | "UNKNOWN";
+  readonly recovery_action?: "NONE" | "READBACK" | "RECONCILE";
 }
 export interface ResearchRunFailure extends ResearchRunFailureContext {
   /** A later native/recovery error cannot overwrite the first retained cause. */
   readonly consequence?: ResearchRunFailureContext;
+  readonly consequences?: readonly ResearchRunFailureContext[];
 }
 
 export interface ResearchRunStatus {

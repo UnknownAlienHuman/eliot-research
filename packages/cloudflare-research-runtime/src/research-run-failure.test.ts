@@ -3,6 +3,7 @@ import { RESEARCH_WORKFLOW_STAGES } from "@eliotr/domain";
 import {
   parseWorkflowCheckpointErrorMessage,
   retainWorkflowFailure,
+  workflowFailureCause,
   workflowFailure,
   WorkflowCheckpointError,
   type WorkflowFailure,
@@ -77,6 +78,54 @@ function compositionFailure(input: ResearchSemanticCompositionDependencies): Err
 }
 
 describe("native research workflow failure fallback", () => {
+  it("preserves domain retryability independently from effect state and projects it conservatively to V1", () => {
+    const first = workflowFailure({
+      code: "EVIDENCE_FREEZE_SCOPE_STALE",
+      retryable: true,
+      dispatch_state: "OUTCOME_UNKNOWN",
+      references_intact: "UNKNOWN",
+      recovery_action: "RECONCILE",
+    }, "STAGE", "FREEZE_EVIDENCE");
+    const consequence = workflowFailure({
+      code: "EVIDENCE_FREEZE_SETTLEMENT_UNCERTAIN",
+      retryable: false,
+      dispatch_state: "OUTCOME_UNKNOWN",
+      references_intact: "UNKNOWN",
+      recovery_action: "RECONCILE",
+    }, "RECOVERY", "RECONCILE");
+    const native = new WorkflowCheckpointError("WORKFLOW_EFFECT_UNCERTAIN", first);
+    const status = {
+      state: "ACTIVE",
+      next_stage_index: RESEARCH_WORKFLOW_STAGES.indexOf("RECONCILE"),
+      first_failure: workflowFailureCause(first),
+      latest_failure: workflowFailureCause(consequence),
+      failure_history: {
+        protocol: "eliotr.workflow-failure-history.v1",
+        first_cause: first,
+        consequences: [consequence],
+      },
+    } as unknown as WorkflowRunStatus;
+    const projected = researchRunFailure(status, {
+      status: "errored",
+      failure_code: "WORKFLOW_EFFECT_UNCERTAIN",
+      failure: first,
+    });
+
+    expect(first).toMatchObject({
+      code: "EVIDENCE_FREEZE_SCOPE_STALE",
+      retryable: true,
+      dispatch_state: "OUTCOME_UNKNOWN",
+      recovery_action: "RECONCILE",
+    });
+    expect(workflowFailureCause(first)).toMatchObject({ code: first.code, retryable: false });
+    expect(parseWorkflowCheckpointErrorMessage(native.message)?.failure).toEqual(first);
+    expect(projected).toEqual({
+      ...first,
+      consequence,
+      consequences: [consequence],
+    });
+  });
+
   it("keeps missing configuration and stale qualification distinct through preparation status", async () => {
     const missingCapabilities = {
       ...semanticCompositionInput(),
@@ -91,7 +140,13 @@ describe("native research workflow failure fallback", () => {
 
     const missingFailure = workflowFailure(missing, "PREPARATION");
     expect(missingFailure).toEqual({
-      code: "WORKFLOW_CONFIGURATION_MISSING", phase: "PREPARATION", retryable: false,
+      protocol: "eliotr.workflow-failure-outcome.v1",
+      code: "WORKFLOW_CONFIGURATION_MISSING",
+      phase: "PREPARATION",
+      retryable: false,
+      dispatch_state: "NOT_STARTED",
+      references_intact: "UNKNOWN",
+      recovery_action: "NONE",
     });
     const wrapped = new WorkflowCheckpointError("WORKFLOW_CONFIGURATION_MISSING", missingFailure);
     const engine = await readResearchEngineStatus({
@@ -337,6 +392,7 @@ describe("native research workflow failure fallback", () => {
     expect(researchRunFailure(run, engine)).toEqual({
       ...first,
       consequence: latest,
+      consequences: [latest],
     });
   });
 
@@ -350,10 +406,14 @@ describe("native research workflow failure fallback", () => {
     const providerError = new Error(`${safe.name}: ${safe.message}`);
 
     expect(workflowFailure(providerError, "STAGE", "RECONCILE")).toEqual({
+      protocol: "eliotr.workflow-failure-outcome.v1",
       code: "WORKFLOW_EFFECT_UNCERTAIN",
       phase: "STAGE",
       stage: "RECONCILE",
       retryable: false,
+      dispatch_state: "OUTCOME_UNKNOWN",
+      references_intact: "UNKNOWN",
+      recovery_action: "RECONCILE",
     });
   });
 

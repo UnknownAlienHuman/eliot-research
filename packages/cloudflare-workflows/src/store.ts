@@ -1,13 +1,43 @@
 import { RESEARCH_WORKFLOW_STAGES } from "@eliotr/domain";
-import { decodeWorkflowFailure, type WorkflowFailure } from "./failures.js";
+import {
+  decodeWorkflowFailure,
+  decodeWorkflowFailureHistory,
+  type WorkflowFailureCompatible,
+  type WorkflowFailureHistory,
+} from "./failures.js";
 import {
   COMMAND_SQL, buildAppendCommand, decodeLedgerHead,
   type LedgerEvent, type LedgerHead, type LedgerHeadRow,
 } from "@eliotr/research";
 import {
   decodeReceipt, encodeReceipt, fail, parseRequest, textDigest, WorkflowCheckpointError,
-  type StageReceipt, type StageRequest, type WorkflowBudgetGrant, type WorkflowObject, type WorkflowPrincipal,
+  type StageReceipt, type StageRequest, type WorkflowBudgetGrant, type WorkflowErrorCode, type WorkflowObject,
+  type WorkflowPrincipal,
 } from "./types.js";
+
+const WORKFLOW_OUTER_ERROR_CODES = [
+  "WORKFLOW_INPUT_INVALID",
+  "WORKFLOW_CONFLICT",
+  "WORKFLOW_AUTHORITY_STALE",
+  "WORKFLOW_STAGE_OUT_OF_ORDER",
+  "WORKFLOW_CANCELLED",
+  "WORKFLOW_BUDGET_STOP",
+  "WORKFLOW_EFFECT_UNCERTAIN",
+  "WORKFLOW_OUTPUT_UNAVAILABLE",
+  "WORKFLOW_OUTPUT_CORRUPT",
+  "WORKFLOW_CONFIGURATION_MISSING",
+  "WORKFLOW_CONFIGURATION_INVALID",
+  "WORKFLOW_CREDENTIALS_MISSING",
+  "WORKFLOW_CREDENTIALS_INVALID",
+  "WORKFLOW_STORAGE_UNAVAILABLE",
+  "WORKFLOW_QUALIFICATION_STALE",
+  "WORKFLOW_PREPARATION_FAILED",
+] as const satisfies readonly WorkflowErrorCode[];
+const WORKFLOW_OUTER_ERROR_CODE_SET: ReadonlySet<string> = new Set(WORKFLOW_OUTER_ERROR_CODES);
+
+function isWorkflowErrorCode(value: unknown): value is WorkflowErrorCode {
+  return typeof value === "string" && WORKFLOW_OUTER_ERROR_CODE_SET.has(value);
+}
 
 interface RunRow {
   operation_id: string; investigation_id: string; initial_revision: number; current_revision: number;
@@ -16,7 +46,7 @@ interface RunRow {
   idempotency_key: string; handler_generation: string; initial_manifest_json: string;
   next_stage_index: number; state: "ACTIVE" | "CANCELLED" | "ENGINE_COMPLETED";
   cancellation_receipt_ref: string | null; ledger_revision?: number;
-  first_failure_json?: string | null; latest_failure_json?: string | null;
+  first_failure_json?: string | null; latest_failure_json?: string | null; failure_history_json?: string | null;
 }
 export interface AttemptRow {
   operation_id: string; stage_index: number; request_json: string; request_sha256: string;
@@ -24,8 +54,9 @@ export interface AttemptRow {
   state: "STARTED" | "OUTPUT_RECORDED" | "COMMITTED"; output_json: string | null;
 }
 export interface WorkflowRunStatus {
-  readonly first_failure: WorkflowFailure | null;
-  readonly latest_failure: WorkflowFailure | null;
+  readonly first_failure: WorkflowFailureCompatible | null;
+  readonly latest_failure: WorkflowFailureCompatible | null;
+  readonly failure_history: WorkflowFailureHistory;
   readonly operation_id: string;
   readonly investigation_id: string;
   readonly initial_revision: number;
@@ -63,10 +94,10 @@ interface StoredCurrentRunRow {
 }
 function mapFailure(error: unknown): never {
   if (error instanceof WorkflowCheckpointError) throw error;
-  const message = error instanceof Error ? error.message : "";
-  if (message.includes("WORKFLOW_STAGE_OUT_OF_ORDER")) fail("WORKFLOW_STAGE_OUT_OF_ORDER");
-  if (/WORKFLOW_AUTHORITY_STALE|LEDGER_/.test(message)) fail("WORKFLOW_AUTHORITY_STALE");
-  if (/WORKFLOW_CONFLICT|constraint|UNIQUE|CHECK/.test(message)) fail("WORKFLOW_CONFLICT");
+  const code = error !== null && typeof error === "object"
+    ? Object.getOwnPropertyDescriptor(error, "code")?.value
+    : undefined;
+  if (isWorkflowErrorCode(code)) fail(code);
   return fail("WORKFLOW_EFFECT_UNCERTAIN");
 }
 export function workflowStageIndex(request: StageRequest): number {
@@ -101,7 +132,7 @@ export class WorkflowCheckpointStore {
         this.db.prepare(
           "SELECT operation_id, investigation_id, initial_revision, current_revision, principal_ref, " +
           "credential_generation, deployment_generation, scope_snapshot_id, scope_snapshot_revision, " +
-          "next_stage_index, state, cancellation_receipt_ref, handler_generation, idempotency_key, first_failure_json, latest_failure_json, " +
+          "next_stage_index, state, cancellation_receipt_ref, handler_generation, idempotency_key, first_failure_json, latest_failure_json, failure_history_json, " +
           "policy_generation, policy_authority_ref, authorization_receipt_ref, purge_revision, initial_manifest_json " +
           "FROM research_workflow_run WHERE operation_id = ?1 AND principal_ref = ?2 LIMIT 1",
         ).bind(operationId, principal.principal_ref),
@@ -118,10 +149,12 @@ export class WorkflowCheckpointStore {
         ).bind(operationId, principal.principal_ref),
       ]);
     } catch {
-      fail("WORKFLOW_EFFECT_UNCERTAIN");
+      fail("WORKFLOW_STORAGE_UNAVAILABLE");
     }
-    if (snapshot.length !== 3 || snapshot.some((result) => result.success !== true ||
-        !Array.isArray(result.results) || result.results.length > 1)) {
+    if (snapshot.length !== 3 || snapshot.some((result) => result.success !== true)) {
+      fail("WORKFLOW_STORAGE_UNAVAILABLE");
+    }
+    if (snapshot.some((result) => !Array.isArray(result.results) || result.results.length > 1)) {
       fail("WORKFLOW_OUTPUT_CORRUPT");
     }
     const run = (snapshot[0]?.results[0] as RunRow | undefined) ?? null;
@@ -143,6 +176,9 @@ export class WorkflowCheckpointStore {
     if (run.state === "ACTIVE" && run.next_stage_index === RESEARCH_WORKFLOW_STAGES.length) {
       fail("WORKFLOW_OUTPUT_CORRUPT");
     }
+    const firstFailure = decodeWorkflowFailure(run.first_failure_json);
+    const latestFailure = decodeWorkflowFailure(run.latest_failure_json);
+    const failureHistory = decodeWorkflowFailureHistory(run.failure_history_json, firstFailure, latestFailure);
     // owner-read only reads owner-filtered metadata. The application must
     // independently authorize the current reader before disclosure or control.
     if (mode === "execution" && run.credential_generation === principal.credential_generation &&
@@ -168,18 +204,7 @@ export class WorkflowCheckpointStore {
     }
     if (run.state === "ENGINE_COMPLETED") {
       if (run.next_stage_index !== RESEARCH_WORKFLOW_STAGES.length) fail("WORKFLOW_OUTPUT_CORRUPT");
-      let committed: CommittedStageRequest | null;
-      try {
-        committed = await this.readCommittedStageRequest(operationId, "MATERIALIZE");
-      } catch (error) {
-        // The committed-stage helper predates this status reader and reports
-        // its own D1 read failure as authority-stale. At this boundary that
-        // is an unavailable read, while a missing row remains corruption.
-        if (error instanceof WorkflowCheckpointError && error.code === "WORKFLOW_AUTHORITY_STALE") {
-          fail("WORKFLOW_EFFECT_UNCERTAIN");
-        }
-        throw error;
-      }
+      const committed = await this.readCommittedStageRequest(operationId, "MATERIALIZE");
       if (committed === null) fail("WORKFLOW_OUTPUT_CORRUPT");
       let finalReceipt: StageReceipt | null;
       try { finalReceipt = await this.receipt(committed.request, committed.request_sha256); }
@@ -193,7 +218,7 @@ export class WorkflowCheckpointStore {
         fail("WORKFLOW_OUTPUT_CORRUPT");
       }
       return Object.freeze({
-        first_failure: decodeWorkflowFailure(run.first_failure_json), latest_failure: decodeWorkflowFailure(run.latest_failure_json),
+        first_failure: firstFailure, latest_failure: latestFailure, failure_history: failureHistory,
       operation_id: run.operation_id, investigation_id: run.investigation_id, initial_revision: run.initial_revision,
         current_revision: run.current_revision, principal_ref: run.principal_ref,
         credential_generation: run.credential_generation, deployment_generation: run.deployment_generation,
@@ -203,7 +228,7 @@ export class WorkflowCheckpointStore {
       });
     }
     return Object.freeze({
-      first_failure: decodeWorkflowFailure(run.first_failure_json), latest_failure: decodeWorkflowFailure(run.latest_failure_json),
+      first_failure: firstFailure, latest_failure: latestFailure, failure_history: failureHistory,
       operation_id: run.operation_id, investigation_id: run.investigation_id, initial_revision: run.initial_revision,
       current_revision: run.current_revision, principal_ref: run.principal_ref,
       credential_generation: run.credential_generation, deployment_generation: run.deployment_generation,
@@ -230,7 +255,7 @@ export class WorkflowCheckpointStore {
         "FROM research_workflow_attempt WHERE operation_id = ?1 AND stage_index = ?2 LIMIT 1",
       ).bind(operationId, stageIndex).first<StoredCommittedStageRequestRow>();
     } catch {
-      fail("WORKFLOW_AUTHORITY_STALE");
+      fail("WORKFLOW_STORAGE_UNAVAILABLE");
     }
     if (row === null || row.state !== "COMMITTED") return null;
     let request: StageRequest;
