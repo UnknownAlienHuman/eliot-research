@@ -10,6 +10,30 @@ import {
 } from "./types.js";
 import type { ResearchWorkflowStage } from "@eliotr/contracts";
 import { workflowFailure, retainWorkflowFailure, type WorkflowFailure } from "./failures.js";
+import { ExternalAgentTaskStore } from "./external-agent-task-store.js";
+
+/** Internal same-task publication port. It must not invoke an external computer/model effect. */
+export type WorkflowExternalTaskPrepare = (input: {
+  readonly request: StageRequest;
+  readonly principal: WorkflowPrincipal;
+  readonly input_bytes: Uint8Array;
+  readonly attempt_ref: string;
+  readonly request_sha256: string;
+  readonly budget_receipt_ref: string;
+}) => Promise<void>;
+
+export type WorkflowExternalTaskPreparation =
+  | { readonly kind: "COMMITTED"; readonly receipt: StageReceipt }
+  | {
+    readonly kind: "WAIT" | "SETTLE";
+    readonly operation_id: string;
+    readonly stage_index: 8;
+    readonly attempt_ref: string;
+    readonly request_sha256: string;
+    readonly budget_receipt_ref: string;
+    readonly budget_expires_at_ms: number;
+    readonly result_sha256: string | null;
+  };
 
 /** One reservation admits at most ONE handler invocation. Unknown execution is never auto-retried. */
 export function createWorkflowCheckpointExecutor(
@@ -69,6 +93,90 @@ export function createWorkflowCheckpointExecutor(
     return receipt;
   }
   return {
+    /** Durable preparation for an explicit native topology; existing generations do not call this seam. */
+    async prepareExternalTask(
+      raw: unknown,
+      actor: WorkflowPrincipal,
+      prepareTask: WorkflowExternalTaskPrepare,
+    ): Promise<WorkflowExternalTaskPreparation> {
+      const request = parseRequest(raw);
+      const principal = snapshotPrincipal(actor);
+      if (request.stage !== "ANALYZE_BRANCHES") fail("WORKFLOW_INPUT_INVALID");
+      try {
+        // A pre-aborted request follows the same cancellation path as the existing W2 executor.
+        if (principal.signal?.aborted) {
+          try { await store.cancel(request.operation_id, principal); } catch (error) {
+            if (!(error instanceof WorkflowCheckpointError) || error.code !== "WORKFLOW_CONFLICT") throw error;
+          }
+          fail("WORKFLOW_CANCELLED");
+        }
+        await ports.authorizeResidency(request, principal);
+        await store.ensureRun(request, principal);
+        const requestDigest = await textDigest(JSON.stringify(request));
+        const receipt = await store.receipt(request, requestDigest);
+        if (receipt !== null) return Object.freeze({ kind: "COMMITTED", receipt: await finishReadback(request, principal, receipt) });
+        let attempt = await store.attempt(request, requestDigest);
+        if (attempt !== null && (attempt.stage_index !== 8 || attempt.expected_revision !== request.investigation_ref.revision ||
+            typeof attempt.attempt_ref !== "string" || attempt.attempt_ref.length < 1 || attempt.attempt_ref.length > 128 ||
+            /[\u0000-\u001f\u007f]/u.test(attempt.attempt_ref))) fail("WORKFLOW_OUTPUT_CORRUPT");
+        if (attempt !== null && attempt.state !== "STARTED" && attempt.state !== "OUTPUT_RECORDED") {
+          fail("WORKFLOW_OUTPUT_CORRUPT");
+        }
+        // Known W2 output is settled by execute(), including its existing expired-budget authorization.
+        if (attempt?.state === "OUTPUT_RECORDED") {
+          await recoveryGuard(request, principal);
+          const budget = storedBudget(attempt);
+          return Object.freeze({ kind: "SETTLE", operation_id: request.operation_id, stage_index: 8,
+            attempt_ref: attempt.attempt_ref, request_sha256: requestDigest,
+            budget_receipt_ref: budget.receipt_ref, budget_expires_at_ms: budget.expires_at_ms, result_sha256: null });
+        }
+        if (attempt !== null) {
+          const recorded = await new ExternalAgentTaskStore(database).readRecordedResultReadback({
+            operation_id: request.operation_id, stage_index: 8, attempt_ref: attempt.attempt_ref, request_sha256: requestDigest,
+          });
+          if (recorded !== null) {
+            await recoveryGuard(request, principal);
+            const budget = storedBudget(attempt);
+            if (budget.expires_at_ms <= Date.now()) await store.requireRecoveryAuthorization(request, principal);
+            return Object.freeze({ kind: "SETTLE", operation_id: request.operation_id, stage_index: 8,
+              attempt_ref: attempt.attempt_ref, request_sha256: requestDigest,
+              budget_receipt_ref: budget.receipt_ref, budget_expires_at_ms: budget.expires_at_ms,
+              result_sha256: recorded.result_sha256 });
+          }
+        }
+        const budget = attempt === null
+          ? await guard(request, principal)
+          : await guard(request, principal, storedBudget(attempt));
+        const inputBytes = await readWorkflowObject(bucket, request.input_manifest, true);
+        await guard(request, principal, budget);
+        if (attempt === null) {
+          const nonce = crypto.randomUUID();
+          attempt = await store.reserve(request, requestDigest, nonce, budget);
+          if (attempt.attempt_ref !== nonce) fail("WORKFLOW_EFFECT_UNCERTAIN");
+        }
+        await guard(request, principal, budget);
+        try {
+          await prepareTask({ request: structuredClone(request), principal, input_bytes: inputBytes,
+            attempt_ref: attempt.attempt_ref, request_sha256: requestDigest, budget_receipt_ref: budget.receipt_ref });
+        } catch (error) {
+          if (principal.signal?.aborted) {
+            await retainWorkflowFailure(database, request.operation_id, principal, workflowFailure(error, "STAGE", request.stage));
+            await store.cancel(request.operation_id, principal);
+            fail("WORKFLOW_CANCELLED");
+          }
+          throw error;
+        }
+        await guard(request, principal, budget);
+        return Object.freeze({ kind: "WAIT", operation_id: request.operation_id, stage_index: 8,
+          attempt_ref: attempt.attempt_ref, request_sha256: requestDigest,
+          budget_receipt_ref: budget.receipt_ref, budget_expires_at_ms: budget.expires_at_ms, result_sha256: null });
+      } catch (error) {
+        const failure = workflowFailure(error, "STAGE", request.stage);
+        await retainWorkflowFailure(database, request.operation_id, principal, failure);
+        if (error instanceof WorkflowCheckpointError) throw new WorkflowCheckpointError(error.code, failure);
+        throw new WorkflowCheckpointError("WORKFLOW_EFFECT_UNCERTAIN", failure);
+      }
+    },
     async nativeStagePolicy(raw: unknown, actor: WorkflowPrincipal): Promise<WorkflowNativeStagePolicy | null> {
       const request = parseRequest(raw);
       const principal = snapshotPrincipal(actor);

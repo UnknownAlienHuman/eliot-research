@@ -299,7 +299,7 @@ export function extractSourceText(
   prepareDeclarationMetadata,
   targetBindingEvidence,
 ) {
-  const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
   if (source.parseDiagnostics.length) throw new Error("SOURCE_PARSE_FAILED");
   const evaluateRaw = staticEvaluator(source);
   const queries = [];

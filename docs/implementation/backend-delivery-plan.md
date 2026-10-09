@@ -25,10 +25,10 @@ task acceptance is verified separately from catalog and persisted model settings
 The integrator owns assembly, shared cutovers, publication and acceptance records
 in the existing `main` checkout.
 
-October 9 shared-checkout continuation: fetch retains remote `0b7c307e`.
-Frontend's local bootstrap proposal `0073cd74` is an ancestor of the two new
-backend commits, so normal push waits for coherent B-U/U1.1b; it must not publish
-that pending proposal by accident. `98d6a5ed` restores long static SQL addition
+October 9 shared-checkout continuation: normal publication reached `23f740e1`
+after the frontend's coherent B-U/U1.1b acknowledgement (`1e1c6213` source,
+`950bf86e` receipt). Its earlier bootstrap proposal `0073cd74` is now part of
+that accepted ancestry. `98d6a5ed` restores long static SQL addition
 chains with an iterative AST traversal and correct numeric/string grouping.
 The real delegated-artifact query, long chain, grouping, unknown suffix, shadow
 and nesting fixtures pass in six groups. Node syntax/scoped lint and the one
@@ -37,8 +37,8 @@ target qualification remains INCOMPLETE. Halley accepted both exact blobs.
 `f551ea32` validates the exact external-result receipt protocol and stage/index
 before recovery. Owning compile/scoped lint and five focused cases pass;
 Aristotle accepted the source, and the integrator verified complete blob hashes
-and the canonical store's emitted field set. Both commits are local, pending
-the coordinated publication; neither establishes #326 native wait or release.
+and the canonical store's emitted field set. Both commits are published;
+neither establishes #326 native wait or release.
 
 Dalton's new Core-to-Session transport fixture and the existing bootstrap fixture
 pass owning test-project compilation and scoped lint. Core's exact decorator
@@ -60,11 +60,11 @@ and exhaustive decoder behavior. Owning compile, scoped lint and six focused
 cases pass; Socrates accepted both exact parser blobs and both exact Session
 test blobs in a read-only source review. The parser pair is locally committed in
 `3f7d873a`, Session fixtures in `8c5fc604` and the integration mapping in
-`f5886f1d`; normal publication still waits coherent frontend B-U/U1.1b.
+`f5886f1d`; all are now published with the coherent frontend bootstrap.
 This parser repair does not implement native wait. Read-only recursive inventory
 confirmed all 37 previous backend descendants archived and all spawn edges
-closed; the fresh reviewer is also closed/archived after acceptance, and one
-writer owns only a new internal R05 locator codec/test pair. That codec
+closed; the fresh reviewer is also closed/archived after acceptance. The internal
+R05 locator codec/test pair is published in `23f740e1`. That codec
 does not activate a handler generation, native wait, callback or Queue route.
 Bohr's suggested single-file R05 recipe was
 rejected: it treated the compatibility recover path as the required native wake,
@@ -74,7 +74,7 @@ implementing the new topology; no code follows that rejected recipe. The actual
 topology, callback/outbox/Queue seams and lease-expiry settlement fence are mapped
 in [native-external-task-wait-cutover.md](native-external-task-wait-cutover.md).
 
-Canonical external-result readback is locally committed in `a2b38729`. The
+Canonical external-result readback is published in `a2b38729`. The
 existing `readRecordedResult` API and schema/row/strict decoder guards remain;
 `readRecordedResultReadback` additionally returns the digest of the original
 stored canonical JSON bytes. It does not hash a decoded reserialization or
@@ -82,6 +82,42 @@ authorize execution. Owning compilation, exact lint and six new focused cases
 pass; Helmholtz accepted the three actual working-tree blobs and is
 closed/archived. An intermediate claim about a missing schema check came from
 the old index and was discarded after exact working-tree review.
+
+Branch preparation and read-only result ports are locally committed in `79f66f54`
+after James's exact-source acceptance and owning compile/lint. The legacy
+handler/recovery sequence and `consumeResult` remain unchanged. The strict reader
+never publishes an absent task and checks the original stored-byte digest before
+consumption. W2's separate preparation method retains the same durable attempt,
+original deadline and guards. An abort during publication now durably cancels
+before surfacing `WORKFLOW_CANCELLED`. Mencius accepted its earlier source;
+Luna Max Russell accepted the final cancellation correction without rerunning checks.
+
+Migration 0130 is source-accepted by Luna Max Russell. It preserves the exact 0105
+legacy recovery query and adds only current, predeadline recorded-result settlement
+for `research-handlers.exploratory.external-wait.v1`. Original callback, lease,
+reservation and output/checkpoint guards remain. SQLite 3.50.4 depth-100 checks
+compile 631 Core schema shapes; five positive/eighteen negative native-view
+predicate cases pass with upstream authority views represented by explicit rows.
+Actual Workflow/currentness/R2/outbox/Queue/live acceptance remains pending.
+
+The SQL inventory regression from new UI TSX source was caused by forcing the
+ordinary TypeScript parser despite collecting `.tsx`. Filename dialect inference
+and a focused static/dynamic/JSX-nonauthority/malformed/CTS fixture pass syntax,
+lint and independent source review. The corrected depth compiler scans 1,089
+files and recovers 1,068 SQL queries with zero failures and 152 unresolved sites.
+Candidate-schema counts are Core 1,027/1,068 and Search 84/1,068, not unique
+target-qualified totals. Target qualification remains incomplete: 1,048 unknown
+targets and 85 unknown arities. Passing prior suites were not repeated.
+
+The Go2 Step 5 trial produced useful exact-source reviews, but dependency-chain
+analysis failed after three command/parsing errors; root completed and corrected
+the evidence. No superiority over Luna or external ranking claim is established.
+Exact lock ancestry before/after `0a211f6f` attributes new `uuid 8.3.2` and
+`sprintf-js 1.0.3` to UI's development-only test-runner chain, while vulnerable
+`undici 7.29.0` already existed under the web Vite/Miniflare development chain.
+The frontend sole lock/tooling writer owns remediation. Emitted reachability and
+alert closure require separate evidence; patchless legacy `http-cache-semantics`
+remains open.
 
 The frontend's generated Session handoff has one additional bounded local PASS:
 raw emitted ESM modules, an explicit auxiliary Worker namespace and the source

@@ -33,6 +33,13 @@ Historical runs and their manual recovery path remain compatible.
 - `prepareIntentWithOutboxMutation` / `appendIntentWithOutbox` already provide
   stable intent/outbox identity, atomic D1 mutation and exact readback. Reuse
   them after authoritative result readback; compute hashes outside the batch.
+- The branch adapter now separates `prepareTask` from `readRecordedResult`.
+  Its legacy handler/recovery sequence remains compatible; read-only consumption
+  returns null for an absent result without publishing a task. The expected digest
+  is checked against original stored-byte readback before existing `consumeResult`.
+  The W2 executor's separate preparation seam uses the same durable attempt and
+  original deadline, returning WAIT, SETTLE or a committed receipt for orchestration.
+  These source-accepted ports do not activate the native topology.
 - `handleScheduled` delivers existing outbox messages through `JOB_QUEUE`.
   `handleQueue` currently composes only the projection delivery handler. A wake
   topic needs explicit dispatch and canonical result/currentness readback before
@@ -54,6 +61,15 @@ checkpointed/succeeded action. `recoverResearchRun` returns early for active
 native states before creating that action. Calling the compatibility recovery
 API while the new Workflow is waiting therefore does not establish an expired
 attempt's settlement authority.
+
+Migration 0130 preserves that exact legacy predicate and adds a separate native
+known-result settlement view for `research-handlers.exploratory.external-wait.v1`.
+It requires the current active run/grant/project scope and exact stage-8 tuple,
+with the recorded timestamp strictly before both original lease and budget expiry.
+The existing output/checkpoint fences still own the ledger mutation. Its depth-100
+schema and focused view-predicate checks pass; native integration/currentness,
+exact result consumption and delayed-wake acceptance remain pending. The new
+generation is not yet admitted or selected by runtime composition.
 
 The migration must explicitly handle a result committed before expiry whose
 wake is delayed across expiry. Preserve current grant/route/scope/cancellation

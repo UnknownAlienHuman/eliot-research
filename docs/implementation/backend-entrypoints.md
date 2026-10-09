@@ -27,10 +27,10 @@ closure is published in `2adbc42d`; bounded local Session transport acceptance
 now has five passing cases across the retained run and one failed-case-only
 repair. C1/C2/C5 still defer their named pipeline cutovers.
 
-Current shared-checkout continuation: remote remains `0b7c307e`; local frontend
-bootstrap `0073cd74` plus backend SQL/receipt fixes `98d6a5ed` and `f551ea32` wait
-for coherent B-U/U1.1b before normal push. SQL depth recovery and five receipt
-boundary cases pass with source review; these do not qualify the native pipeline.
+Current shared-checkout continuation: normal publication reached `23f740e1`.
+Frontend B-U source `1e1c6213`, acceptance receipt `950bf86e`, tooling `0a211f6f`
+and the accepted backend prerequisites are published. SQL depth recovery and five
+receipt boundary cases pass with source review; these do not qualify the native pipeline.
 The Core decorator dependency is committed in `0c4f39a1`; frontend released the
 reconciled/frozen installation. Native fixture acceptance injects AccessVerifier
 and simulates Workflow status `waiting`; real JWT/native Workflow/browser/live
@@ -45,6 +45,17 @@ real local fixture's active `running` status. Neither result accepts actual
 ResearchWorkflow wait, emitted JWT/HTTP, browser, live or release behavior.
 Root owns [R05 topology/outbox integration](native-external-task-wait-cutover.md); neither repair
 qualifies native wait. All 37 previous backend descendants are closed/archived.
+
+Branch prepare/read ports are locally committed in `79f66f54`; owning compile,
+exact lint and independent source review pass. The separate W2 preparation seam
+and migration 0130 have source acceptance, with native assembly still pending.
+The migration preserves the exact legacy recovery predicate and permits only
+current, predeadline recorded-result settlement for the new descriptive generation.
+SQLite 3.50.4 depth-100 Core schema checks and five positive/eighteen negative
+view-predicate cases pass; upstream views in the latter fixture are explicit rows.
+The SQL extractor now respects `.tsx` filename dialects. Its focused parser
+fixture and corrected depth compiler pass; target qualification remains incomplete
+(1,048 unknown targets, 85 unknown arities and 152 unresolved sites).
 
 This is the canonical day-to-day backend router. It does not replace product architecture, work-packet
 ownership or release acceptance. It tells each role where to begin, which active PR owns the result,
