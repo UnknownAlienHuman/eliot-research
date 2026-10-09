@@ -1,0 +1,12 @@
+{
+  "protocol": "eliotr.owner-client-transport-acceptance.v1",
+  "checkpoint": "C1.4",
+  "claim_id": "c1-4-legacy-seam-20261009",
+  "status": "ACCEPTED_INTERNAL_LEGACY_SEAM",
+  "source_commit": "4f7c99546bd7adfcf766bdc1a398a94a8e20fedb",
+  "predecessor": "b3e3a681b9810c413a649878cc3d9ad8fff585a0",
+  "verification": "11 meaningful case coverage: initial nine passing cases retained; two failed cases repaired and affected destructured text case verified with exact filter (three PASS, eight skipped). Owning compiler and exact three-file lint PASS after manager repair.",
+  "behavior": "Injected fetch/origin/timers/external epoch and caller error factory; explicit browser EventTarget/event factory. Concurrent current failures emit once per epoch; late old failures cannot notify or close an advanced epoch; policy 403 emits nothing. Legacy JSON/status and bytes/text signatures preserved; whole-object rejects 206; malformed body and UTF-8 retain caller error class. No method this-binding, generated identity, retry, ambient event/fetch or external epoch disposal.",
+  "review": "Manager reviewed actual source, fixed readonly/exact-optional diagnostics, asynchronous validation rejection, invalid 204-with-JSON test fixture, and destructured text method binding. Nine passing cases were not blindly repeated.",
+  "limits": ["Explicit adapter seam only; existing legacy consumers are not yet routed through it", "Package root exports and C2/C3 extraction follow in serialized manager handoffs", "No real owner endpoint, provider, deployment or release qualification claimed"]
+}
