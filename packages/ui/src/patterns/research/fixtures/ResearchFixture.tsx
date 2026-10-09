@@ -16,12 +16,13 @@ const copy = {
     lead: 'Bring your sources together. Ask a focused question and follow the evidence.',
     questionLabel: 'Research question',
     questionPlaceholder: 'How do sources support a research claim?',
-    questionHint: 'The question stays in this browser session only.',
+    questionHint: 'Design preview: your question stays here. No answer is generated.',
     noScope: 'Choose at least one admitted source in Sources before asking.',
     reset: 'Clear sample request',
     refreshed: (count: number) => `Local sample refreshed ${count} time${count === 1 ? '' : 's'}. No live request was made.`,
     ask: 'Ask',
-    loading: 'Sample request recorded. Live progress is unavailable in this preview.',
+    loading: 'Sample question recorded. This preview does not generate answers. Open the sample report to explore its citations.',
+    recordedQuestion: 'Recorded question',
     readback: 'Progress is unknown until the next status readback. This notice says nothing about the run itself.',
     outcomeUnknown: 'The outcome of this request is not yet known. Check the status readback before drawing any conclusion.',
     noHits: 'No source matched this question. That is not proof the corpus has nothing to say.',
@@ -35,7 +36,7 @@ const copy = {
     showReport: 'Show sample report',
     hideReport: 'Hide sample report',
     reportHeading: 'Sample report',
-    reportLead: 'Local sample · original source scope · acceptance unknown',
+    reportLead: 'Local example · original source scope · not an answer to your recorded question · acceptance unknown',
     reportBody: 'An explicit source scope keeps a claim connected to the material that informed it. Review the original passage, keep uncertainty visible, and distinguish a saved draft from an accepted report.',
     evidenceHeading: 'Source passage',
     evidenceBody: '“Clarity starts with a clear relationship between the question, the source, and the claim.”',
@@ -57,12 +58,13 @@ const copy = {
     lead: 'Соберите источники вместе. Задайте точный вопрос и проследите связь с доказательствами.',
     questionLabel: 'Исследовательский вопрос',
     questionPlaceholder: 'Как источники помогают обосновать исследовательский вывод?',
-    questionHint: 'Вопрос остаётся только в этом сеансе браузера.',
+    questionHint: 'Макет дизайна: вопрос остаётся здесь. Ответ не генерируется.',
     noScope: 'Перед вопросом выберите хотя бы один допущенный источник в библиотеке.',
     reset: 'Убрать учебный запрос',
     refreshed: (count: number) => `Образец обновлён локально: ${count}. Запросов к серверу не было.`,
     ask: 'Спросить',
-    loading: 'Учебный запрос записан. Прогресс сервера в этом макете недоступен.',
+    loading: 'Учебный вопрос записан. Этот макет не генерирует ответы. Откройте образец отчёта, чтобы изучить его цитаты.',
+    recordedQuestion: 'Записанный вопрос',
     readback: 'Прогресс неизвестен до следующей проверки статуса. Это уведомление ничего не говорит о самом запуске.',
     outcomeUnknown: 'Исход этого запроса пока неизвестен. Проверьте статус, прежде чем делать какой-либо вывод.',
     noHits: 'Ни один источник не подошёл к этому вопросу. Это не доказательство, что в корпусе ничего нет.',
@@ -76,7 +78,7 @@ const copy = {
     showReport: 'Показать образец отчёта',
     hideReport: 'Скрыть образец отчёта',
     reportHeading: 'Образец отчёта',
-    reportLead: 'Локальный образец · первоначальный набор источников · принятие неизвестно',
+    reportLead: 'Локальный пример · первоначальный набор источников · не ответ на записанный вопрос · принятие неизвестно',
     reportBody: 'Явный набор источников сохраняет связь утверждения с материалами, на которых оно основано. Проверяйте первоначальный фрагмент, показывайте неопределённость и отличайте сохранённый черновик от принятого отчёта.',
     evidenceHeading: 'Фрагмент источника',
     evidenceBody: '«Ясность начинается с понятной связи между вопросом, источником и утверждением».',
@@ -142,6 +144,7 @@ export function ResearchFixture({
   const reportHeadingId = useId();
   const [question, setQuestion] = useState('');
   const [busy, setBusy] = useState(false);
+  const [submitted, setSubmitted] = useState<{ readonly question: string; readonly scopeCount: number }>();
   const [reportVisible, setReportVisible] = useState(false);
   const [citationOpen, setCitationOpen] = useState(false);
   const [snapshotIndex, setSnapshotIndex] = useState(0);
@@ -156,6 +159,7 @@ export function ResearchFixture({
       event.preventDefault();
       if (trimQuestion.length === 0 || frozenScopeCount === 0 || busy || state === 'loading') return;
       setBusy(true);
+      setSubmitted({ question: trimQuestion, scopeCount: frozenScopeCount });
       onAsk?.(trimQuestion, frozenScopeCount);
     },
     [busy, frozenScopeCount, onAsk, state, trimQuestion],
@@ -207,17 +211,20 @@ export function ResearchFixture({
           onChange={(event) => setQuestion(event.target.value)}
         />
         <span className='er-research-fixture__form-actions'>
-          <Button type='submit' loading={loading} disabled={loading || scopeCount === 0 || trimQuestion.length === 0}>{text.ask}</Button>
+          <Button type='submit' loading={state === 'loading'} disabled={loading || scopeCount === 0 || trimQuestion.length === 0}>{text.ask}</Button>
           <Button variant='tonal' onClick={toggleReport}>
             {reportVisible ? text.hideReport : text.showReport}
           </Button>
-          {busy && <Button variant='text' onClick={() => setBusy(false)}>{text.reset}</Button>}
+          {busy && <Button variant='text' onClick={() => { setBusy(false); setSubmitted(undefined); }}>{text.reset}</Button>}
         </span>
         <p className='er-research-fixture__scope'>{text.scopeCount(scopeCount)}</p>
         {scopeCount === 0 && <p className='er-research-fixture__scope'>{text.noScope}</p>}
       </form>
 
       {loading && <Status>{text.loading}</Status>}
+      {submitted && <p className='er-research-fixture__notice er-research-fixture__recorded'>
+        <strong>{text.recordedQuestion}: </strong>{submitted.question}<br />{text.scopeCount(submitted.scopeCount)}
+      </p>}
       {!loading && state === 'degraded' && <Status tone='error'>{text.degraded}</Status>}
       {!loading && state === 'complete' && <Status>{text.complete}</Status>}
       {!loading && state === 'error' && <Status tone='error'>{text.error}</Status>}

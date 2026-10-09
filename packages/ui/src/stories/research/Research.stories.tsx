@@ -66,7 +66,8 @@ export const InteractionJourney: Story = {
     await expect(ask).toBeEnabled();
     await userEvent.click(ask);
     await expect(ask).toBeDisabled();
-    await expect(canvas.getByText('Sample request recorded. Live progress is unavailable in this preview.')).toBeVisible();
+    await expect(canvas.getByText('Sample question recorded. This preview does not generate answers. Open the sample report to explore its citations.')).toBeVisible();
+    await expect(canvas.getByText('What changed?', { exact: false }).closest('p')).toHaveTextContent('3 sources in scope');
 
     // The report toggle is available in every state, including loading.
     const reportToggle = canvas.getByRole('button', { name: /show sample report/i });

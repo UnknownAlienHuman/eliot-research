@@ -29,6 +29,8 @@
   letter-spacing: var(--eliot-type-letter-spacing-label);
 }
 
+.er-research-fixture__recorded { overflow-wrap: anywhere; }
+
 .er-research-fixture__lead {
   margin: 0;
   max-inline-size: var(--eliot-type-reading-measure);
