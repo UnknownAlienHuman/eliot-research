@@ -112,6 +112,7 @@ export const BranchQueryPlanSchema = z.object({
     context.addIssue({ code: "custom", path: ["budgets"], message: "query plan bounds are invalid" });
   }
   if (value.root_question.question_ref.id === value.branch_question.question_ref.id ||
+      duplicate(value.question_refs.map((ref) => `${ref.id}:${ref.revision}`)) || duplicate(value.hypothesis_refs) ||
       !value.question_refs.some((ref) => ref.id === value.root_question.question_ref.id) ||
       !value.question_refs.some((ref) => ref.id === value.branch_question.question_ref.id)) {
     context.addIssue({ code: "custom", path: ["question_refs"], message: "root and branch questions are not both bound" });
@@ -137,13 +138,15 @@ export function branchQueryLegOutcomeIsConsistent(value: {
 }
 
 function branchQueryStopMatchesOutcome(
-  legs: readonly { readonly status: "COMPLETED" | "FAILED" }[],
+  legs: readonly Pick<BranchQueryLegResult, "status" | "resolved_handle_refs">[],
   stop: "PLAN_COMPLETED" | "FIRST_ADMISSIBLE_EVIDENCE" | "NO_HITS" | "BUDGET_EXHAUSTED" | "ALL_LEGS_FAILED",
   hasEvidence: boolean,
 ): boolean {
   if (stop === "ALL_LEGS_FAILED") return !hasEvidence && legs.length > 0 && legs.every((leg) => leg.status === "FAILED");
   if (stop === "NO_HITS") return !hasEvidence && legs.some((leg) => leg.status === "COMPLETED");
-  if (stop === "FIRST_ADMISSIBLE_EVIDENCE") return hasEvidence && legs.some((leg) => leg.status === "COMPLETED");
+  if (stop === "FIRST_ADMISSIBLE_EVIDENCE") return hasEvidence &&
+    legs.findIndex((leg) => leg.resolved_handle_refs.length > 0) === legs.length - 1 &&
+    legs[legs.length - 1]?.status === "COMPLETED";
   return true;
 }
 
@@ -173,6 +176,9 @@ export const BranchQueryLegResultSchema = z.object({
   }
   if (duplicate(value.resolved_handle_refs.map((item) => `${item.handle_ref.id}:${item.handle_ref.revision}`))) {
     context.addIssue({ code: "custom", path: ["resolved_handle_refs"], message: "query leg contains duplicate handles" });
+  }
+  if (duplicate(value.omitted_candidates.map((item) => `${item.candidate_id}:${item.reason_code}`))) {
+    context.addIssue({ code: "custom", path: ["omitted_candidates"], message: "query leg omissions are duplicated" });
   }
   if (value.stop_reason === "NO_HITS" && value.resolved_handle_refs.length !== 0) {
     context.addIssue({ code: "custom", path: ["stop_reason"], message: "no-hit stop contains resolved evidence" });
@@ -231,6 +237,11 @@ function validateBranchQueryResult(
   if (bytes !== value.total_utf8_bytes) {
     context.addIssue({ code: "custom", path: ["total_utf8_bytes"], message: "resolved evidence byte total mismatch" });
   }
+  const omitted = new Set(value.query_legs.flatMap((leg) => leg.omitted_candidates.map((item) => item.candidate_id)));
+  if (duplicate(value.omitted_candidate_refs) || omitted.size !== value.omitted_candidate_refs.length ||
+      value.omitted_candidate_refs.some((ref) => !omitted.has(ref))) {
+    context.addIssue({ code: "custom", path: ["omitted_candidate_refs"], message: "query omissions differ from executed legs" });
+  }
   if (!branchQueryStopMatchesOutcome(value.query_legs, value.stop_reason, value.resolved_evidence.length > 0)) {
     context.addIssue({ code: "custom", path: ["stop_reason"], message: "query stop reason contradicts leg outcomes or evidence" });
   }
@@ -260,14 +271,22 @@ export function branchQueryResultMatchesPlan(plan: BranchQueryPlan, result: Bran
 
 export function branchQueryLegsMatchPlan(
   plan: BranchQueryPlan,
-  legs: readonly Pick<BranchQueryLegResult, "query_id" | "query_sha256" | "status">[],
+  legs: readonly Pick<BranchQueryLegResult, "query_id" | "query_sha256" | "status" | "resolved_handle_refs">[],
   stop: BranchQueryResult["stop_reason"],
   hasEvidence: boolean,
 ): boolean {
   const fullPlanStop = ["PLAN_COMPLETED", "NO_HITS", "ALL_LEGS_FAILED"].includes(stop);
+  const handles = new Map(legs.flatMap((leg) => leg.resolved_handle_refs.map((item) =>
+    [`${item.handle_ref.id}:${item.handle_ref.revision}`, item] as const)));
+  const consistentHandles = legs.every((leg) => leg.resolved_handle_refs.every((item) => {
+    const bound = handles.get(`${item.handle_ref.id}:${item.handle_ref.revision}`);
+    return bound?.excerpt_sha256 === item.excerpt_sha256 && bound.excerpt_byte_length === item.excerpt_byte_length;
+  }));
   return legs.length > 0 && legs.length <= plan.query_legs.length && (!fullPlanStop || legs.length === plan.query_legs.length) &&
+    consistentHandles && handles.size <= plan.budgets.evidence_limit &&
+    [...handles.values()].reduce((bytes, item) => bytes + item.excerpt_byte_length, 0) <= plan.budgets.max_evidence_bytes &&
     branchQueryStopMatchesOutcome(legs, stop, hasEvidence) &&
-    (stop !== "FIRST_ADMISSIBLE_EVIDENCE" || (plan.stop_rule === "FIRST_ADMISSIBLE_EVIDENCE" && hasEvidence)) &&
+    (stop !== "FIRST_ADMISSIBLE_EVIDENCE" || plan.stop_rule === "FIRST_ADMISSIBLE_EVIDENCE") &&
     legs.every((leg, index) => {
       const planned = plan.query_legs[index];
       return planned !== undefined && leg.query_id === planned.query_id && leg.query_sha256 === planned.query_sha256;

@@ -2,7 +2,7 @@ import { z } from "zod";
 import { IdentifierSchema, Sha256Schema, VersionedRefSchema } from "./common.js";
 import { BranchFindingCandidateSchema } from "./research-branch-finding.js";
 import { BranchQueryPlanSchema, BranchQueryResultSchema, branchQueryResultMatchesPlan, type BranchQueryPlan } from "./research-branch-query.js";
-import { ResearchBranchRoleSchema } from "./research-branch-role.js";
+import { ResearchBranchRoleSchema, branchDebtsMatchBlockedRoles } from "./research-branch-role.js";
 import { ResearchDebtSchema } from "./research.js";
 
 export { ResearchBranchRoleSchema } from "./research-branch-role.js";
@@ -108,6 +108,8 @@ export const ResearchReadExtractCheckpointV2Schema = z.object({
   })));
   if (duplicate(roles) || duplicate(value.evidence.map((item) => refKey(item.handle_ref))) ||
       duplicate(value.omitted_candidate_refs) ||
+      new Set(value.role_queries.flatMap((item) => item.query_result.omitted_candidate_refs)).size !== value.omitted_candidate_refs.length ||
+      value.role_queries.some((item) => item.query_result.omitted_candidate_refs.some((ref) => !value.omitted_candidate_refs.includes(ref))) ||
       value.role_queries.some(({ query_plan, query_result }) => !branchQueryResultMatchesPlan(query_plan, query_result) ||
         !planMatchesCheckpoint(query_plan, value)) ||
       queryEvidence.some((item) => evidenceByRef.get(item.ref)?.excerpt_sha256 !== item.digest ||
@@ -268,7 +270,9 @@ export const ResearchBranchResultV2Schema = z.object({
   const queryKeys = value.query_result.resolved_evidence.map((item) => refKey(item.handle.handle_ref));
   if (duplicate(value.question_ids) || duplicate(value.hypothesis_ids) || duplicate(value.observation_refs) ||
       duplicate(value.failed_probe_refs) || duplicate(handleKeys) || duplicate(value.findings.map((item) => refKey(item.finding_ref))) ||
-      handleKeys.some((key) => !queryKeys.includes(key)) || findingKeys.some((key) => !queryKeys.includes(key))) {
+      handleKeys.some((key) => !queryKeys.includes(key)) || findingKeys.some((key) => !handleKeys.includes(key)) ||
+      [...value.question_ids].sort().join("\n") !== value.query_plan.question_refs.map((ref) => ref.id).sort().join("\n") ||
+      [...value.hypothesis_ids].sort().join("\n") !== [...value.query_plan.hypothesis_refs].sort().join("\n")) {
     context.addIssue({ code: "custom", path: ["evidence_handle_refs"], message: "v2 branch result contains foreign or duplicate references" });
   }
   if (value.status === "CANDIDATE_READY" &&
@@ -277,6 +281,9 @@ export const ResearchBranchResultV2Schema = z.object({
   }
   if (value.status === "BLOCKED" && value.failed_probe_refs.length === 0) {
     context.addIssue({ code: "custom", path: ["failed_probe_refs"], message: "blocked v2 branch requires a failed probe" });
+  }
+  if (value.status === "BLOCKED" && value.findings.some((finding) => finding.state === "CANDIDATE")) {
+    context.addIssue({ code: "custom", path: ["findings"], message: "blocked branch cannot retain a candidate finding" });
   }
   if (value.findings.some((finding) => finding.role !== value.role || !value.question_ids.includes(finding.question_ref.id))) {
     context.addIssue({ code: "custom", path: ["findings"], message: "finding is not bound to this branch question" });
@@ -312,7 +319,7 @@ export const ResearchBranchAnalysisCheckpointV2Schema = z.object({
   if (duplicate(value.required_roles) || duplicate(roles) ||
       roles.some((role) => role === "COUNTER" || !value.required_roles.includes(role)) ||
       value.required_roles.some((role) => role !== "COUNTER" && !roles.includes(role)) ||
-      value.branch_results.some((result) => !planMatchesCheckpoint(result.query_plan, value))) {
+      value.branch_results.some((result) => !result.query_plan.required || !planMatchesCheckpoint(result.query_plan, value))) {
     context.addIssue({ code: "custom", path: ["branch_results"], message: "v2 analysis roles are inconsistent" });
   }
 });
@@ -346,7 +353,7 @@ export const ResearchBranchReconciliationCheckpointV2Schema = z.object({
   const roles = value.branch_results.map((item) => item.role);
   if (required.size !== value.required_roles.length || duplicate(roles) || roles.some((role) => !required.has(role)) ||
       value.required_roles.some((role) => !roles.includes(role)) ||
-      value.branch_results.some((result) => !planMatchesCheckpoint(result.query_plan, value))) {
+      value.branch_results.some((result) => !result.query_plan.required || !planMatchesCheckpoint(result.query_plan, value))) {
     context.addIssue({ code: "custom", path: ["branch_results"], message: "v2 reconciliation roles are inconsistent" });
   }
   const blocked = value.branch_results.filter((item) => item.status === "BLOCKED").map((item) => item.role).sort();
@@ -355,7 +362,12 @@ export const ResearchBranchReconciliationCheckpointV2Schema = z.object({
     context.addIssue({ code: "custom", path: ["unmet_required_roles"], message: "v2 unmet roles are not derived from results" });
   }
   if (duplicate(value.unresolved_contradiction_refs) || duplicate(value.research_debts.map((item) => refKey(item.debt_ref))) ||
-      value.research_debts.some((item) => item.status !== "OPEN")) {
+      !branchDebtsMatchBlockedRoles(value.research_debts, value.unmet_required_roles) ||
+      value.research_debts.some((debt) => {
+        const result = value.branch_results.find((item) => item.role === debt.blocked_refs[0]);
+        return result === undefined || [...debt.basis_and_evidence_refs].sort().join("\n") !==
+          result.evidence_handle_refs.map(refKey).sort().join("\n");
+      })) {
     context.addIssue({ code: "custom", path: ["research_debts"], message: "v2 debts or contradictions are duplicated or invalid" });
   }
   const counter = value.branch_results.find((item) => item.role === "COUNTER");

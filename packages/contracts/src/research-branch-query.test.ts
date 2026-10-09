@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { RetrievalLaneSchema } from "./retrieval.js";
-import { BranchQueryPlanSchema, BranchQueryResultSchema, BranchQueryLegResultSchema } from "./research-branch-query.js";
+import { BranchQueryPlanSchema, BranchQueryResultSchema, BranchQueryLegResultSchema, branchQueryResultMatchesPlan } from "./research-branch-query.js";
 import { ResearchBranchResultV2Schema, ResearchReadExtractCheckpointV2Schema,
   ResearchBranchAnalysisCheckpointV2Schema, ResearchBranchReconciliationCheckpointV2Schema } from "./research-branch.js";
 import { ResolvedEvidenceSchema } from "./evidence.js";
@@ -128,7 +128,7 @@ describe("branch plan and scope pairing", () => {
     const branch = {
       protocol: "eliotr.research.branch-result.v2", branch_ref: plan.branch_ref,
       result_ref: { id: `eliotr.research.branch-result-v2-${SHA}`, revision: 1 }, identity_digest: SHA, role: plan.role,
-      status: "BLOCKED", question_ids: [], hypothesis_ids: [], evidence_handle_refs: [], observation_refs: [],
+      status: "BLOCKED", question_ids: plan.question_refs.map((ref) => ref.id), hypothesis_ids: [], evidence_handle_refs: [], observation_refs: [],
       unknowns: [], limitations: [], failed_probe_refs: ["probe-1"], authoritative_disposition: "UNASSESSED",
       query_plan: plan, query_result: queryResult, findings: [],
     };
@@ -231,7 +231,7 @@ function frozenProvenance(supportQueriedHandle: boolean) {
         trace_ref: { id: `trace-${role}`, revision: 1 }, trace_sha256: SHA, stop_reason: "LEG_COMPLETED",
         resolved_handle_refs: role === "SUPPORT" && !supportQueriedHandle ? [] : [queriedHandle], omitted_candidates: [],
       }],
-      finding_refs: role === "SUPPORT" ? [{ id: `eliotr.research.branch-finding-${SHA}`, revision: 1 }] : [],
+      finding_refs: [{ id: `eliotr.research.branch-finding-${role === "SUPPORT" ? SHA : "b".repeat(64)}`, revision: 1 }],
     };
   });
   const summary = {
@@ -251,6 +251,11 @@ function frozenProvenance(supportQueriedHandle: boolean) {
       protocol: "eliotr.research.branch-finding.v1", finding_ref: { id: `eliotr.research.branch-finding-${SHA}`, revision: 1 },
       identity_digest: SHA, role: "SUPPORT", question_ref: { id: "question-SUPPORT", revision: 1 }, question_sha256: SHA,
       kind: "SUPPORT", state: "CANDIDATE", statement: "supported claim", conditions: [], scope: "scope-1",
+      evidence_handle_refs: [queriedHandle.handle_ref], unknowns: [], limitations: [],
+    }, {
+      protocol: "eliotr.research.branch-finding.v1", finding_ref: { id: `eliotr.research.branch-finding-${"b".repeat(64)}`, revision: 1 },
+      identity_digest: "b".repeat(64), role: "COUNTER", question_ref: { id: "question-COUNTER", revision: 1 }, question_sha256: SHA,
+      kind: "COUNTEREVIDENCE", state: "CANDIDATE", statement: "opposing finding", conditions: [], scope: "scope-1",
       evidence_handle_refs: [queriedHandle.handle_ref], unknowns: [], limitations: [],
     }],
   };
@@ -301,7 +306,7 @@ function parentCheckpointFixture() {
   const branch = ResearchBranchResultV2Schema.parse({
     protocol: "eliotr.research.branch-result.v2", identity_digest: SHA,
     result_ref: { id: `eliotr.research.branch-result-v2-${SHA}`, revision: 1 }, branch_ref: plan.branch_ref,
-    role: plan.role, status: "BLOCKED", question_ids: [], hypothesis_ids: [], evidence_handle_refs: [], observation_refs: [],
+    role: plan.role, status: "BLOCKED", question_ids: plan.question_refs.map((ref) => ref.id), hypothesis_ids: [], evidence_handle_refs: [], observation_refs: [],
     unknowns: [], limitations: [], failed_probe_refs: ["probe-1"], authoritative_disposition: "UNASSESSED",
     query_plan: plan, query_result: query, findings: [],
   });
@@ -319,12 +324,107 @@ function parentCheckpointFixture() {
     ...header, protocol: "eliotr.research.branch-reconciliation.v2",
     checkpoint_ref: { id: `eliotr.research.branch-reconciliation-v2-${SHA}`, revision: 1 },
     branch_analysis_ref: analysis.checkpoint_ref, unmet_required_roles: [plan.role],
-    unresolved_contradiction_refs: [], research_debts: [], counter_search_status: "NOT_REQUIRED",
+    unresolved_contradiction_refs: [], research_debts: [{
+      debt_ref: { id: "debt-SUPPORT", revision: 1 }, kind: "epistemic", blocked_refs: [plan.role], basis_and_evidence_refs: [],
+      owner: "research-workflow", blocking_effect: "Required support is blocked.", next_probe: "Resolve exact support evidence.",
+      review_condition: "A current support finding is available.", status: "OPEN",
+    }], counter_search_status: "NOT_REQUIRED",
   });
   return { plan, query, analysis, reconciliation };
 }
 
 describe("branch parent and outcome integrity", () => {
+  it("stops on the first evidence leg and enforces plan evidence budgets", () => {
+    const { plan, query } = parentCheckpointFixture();
+    const fullPlan = BranchQueryPlanSchema.parse({ ...plan, stop_rule: "FIRST_ADMISSIBLE_EVIDENCE",
+      budgets: { ...plan.budgets, max_query_legs: 2 },
+      query_legs: [...plan.query_legs, { query_id: "query-second", query_sha256: SHA, query: "second", literal_probes: [] }],
+    });
+    const firstEvidence = { ...leg("query-SUPPORT", "COMPLETED"), stop_reason: "LEG_COMPLETED", resolved_handle_refs: [queriedHandle] };
+    const stopped = BranchQueryResultSchema.parse({ ...query, query_legs: [firstEvidence],
+      resolved_evidence: [evidence()], total_utf8_bytes: 4, stop_reason: "FIRST_ADMISSIBLE_EVIDENCE",
+    });
+    expect(branchQueryResultMatchesPlan(fullPlan, stopped)).toBe(true);
+    expect(branchQueryResultMatchesPlan(fullPlan, { ...stopped,
+      query_legs: [...stopped.query_legs, BranchQueryLegResultSchema.parse(leg("query-second", "COMPLETED"))],
+    })).toBe(false);
+    expect(BranchQueryResultSchema.safeParse({ ...stopped,
+      query_legs: [...stopped.query_legs, leg("query-second", "COMPLETED")],
+    }).success).toBe(false);
+    expect(branchQueryResultMatchesPlan({ ...fullPlan, budgets: { ...fullPlan.budgets, max_evidence_bytes: 3 } }, stopped)).toBe(false);
+    const twoHandles = BranchQueryResultSchema.parse({ ...stopped,
+      query_legs: [{ ...firstEvidence, resolved_handle_refs: [queriedHandle,
+        { ...queriedHandle, handle_ref: { id: "handle-second", revision: 1 } }] }],
+      resolved_evidence: [evidence(), { ...evidence(), handle: { ...evidence().handle, handle_ref: { id: "handle-second", revision: 1 } } }],
+      total_utf8_bytes: 8,
+    });
+    expect(branchQueryResultMatchesPlan({ ...fullPlan, budgets: { ...fullPlan.budgets, evidence_limit: 1 } }, twoHandles)).toBe(false);
+  });
+
+  it("rejects findings outside the branch-selected handles even when retrieval resolved them", () => {
+    const { plan, query, analysis } = parentCheckpointFixture();
+    const finding = frozenProvenance(true).findings[0];
+    const branch = analysis.branch_results[0];
+    if (finding === undefined || branch === undefined) throw new Error("fixture branch or finding missing");
+    const queryWithEvidence = { ...query,
+      query_legs: [{ ...leg("query-SUPPORT", "COMPLETED"), stop_reason: "LEG_COMPLETED", resolved_handle_refs: [queriedHandle] }],
+      resolved_evidence: [evidence()], total_utf8_bytes: 4, stop_reason: "PLAN_COMPLETED",
+    };
+    const ready = { ...branch, status: "CANDIDATE_READY", question_ids: plan.question_refs.map((ref) => ref.id),
+      evidence_handle_refs: [queriedHandle.handle_ref], findings: [finding], query_result: queryWithEvidence,
+    };
+    expect(ResearchBranchResultV2Schema.safeParse(ready).success).toBe(true);
+    expect(ResearchBranchResultV2Schema.safeParse({ ...ready, evidence_handle_refs: [] }).success).toBe(false);
+  });
+
+  it("binds exact query omissions, required plan membership and blocked debts", () => {
+    const { query, analysis, reconciliation } = parentCheckpointFixture();
+    const omitted = { candidate_id: "omitted-1", reason_code: "SCAN_LIMIT" };
+    const withOmission = { ...query, query_legs: [{ ...query.query_legs[0], omitted_candidates: [omitted] }], omitted_candidate_refs: [omitted.candidate_id] };
+    expect(BranchQueryResultSchema.safeParse(withOmission).success).toBe(true);
+    expect(BranchQueryResultSchema.safeParse({ ...withOmission, omitted_candidate_refs: [] }).success).toBe(false);
+    expect(BranchQueryResultSchema.safeParse({ ...withOmission,
+      query_legs: [{ ...query.query_legs[0], omitted_candidates: [omitted, omitted] }],
+    }).success).toBe(false);
+    const branch = analysis.branch_results[0];
+    if (branch === undefined) throw new Error("fixture branch missing");
+    expect(ResearchBranchAnalysisCheckpointV2Schema.safeParse({ ...analysis,
+      branch_results: [{ ...branch, query_plan: { ...branch.query_plan, required: false } }],
+    }).success).toBe(false);
+    expect(ResearchBranchReconciliationCheckpointV2Schema.safeParse({ ...reconciliation, research_debts: [] }).success).toBe(false);
+    const debt = reconciliation.research_debts[0];
+    if (debt === undefined) throw new Error("fixture debt missing");
+    for (const changed of [{ blocked_refs: ["COUNTER"] }, { basis_and_evidence_refs: ["foreign:1"] }, { status: "WAIVED" }]) {
+      expect(ResearchBranchReconciliationCheckpointV2Schema.safeParse({ ...reconciliation,
+        research_debts: [{ ...debt, ...changed }],
+      }).success).toBe(false);
+    }
+    expect(ResearchBranchResultV2Schema.safeParse({ ...branch, question_ids: [] }).success).toBe(false);
+    expect(ResearchBranchResultV2Schema.safeParse({ ...branch, hypothesis_ids: ["foreign"] }).success).toBe(false);
+  });
+
+  it("retains substantive frozen findings and derives counter status from its role", () => {
+    const frozen = EvidenceFreezeBranchFindingsProvenanceSchema.parse(frozenProvenance(true));
+    expect(EvidenceFreezeBranchFindingsProvenanceSchema.safeParse({ ...frozen,
+      reconciliation_summary: { ...frozen.reconciliation_summary, counter_search_status: "PARTIAL" },
+    }).success).toBe(false);
+    const counter = frozen.roles.find((role) => role.role === "COUNTER");
+    if (counter === undefined) throw new Error("fixture counter missing");
+    expect(EvidenceFreezeBranchFindingsProvenanceSchema.safeParse({ ...frozen,
+      roles: frozen.roles.map((role) => role.role === "COUNTER" ? { ...role, finding_refs: [] } : role),
+      findings: frozen.findings.filter((finding) => finding.role !== "COUNTER"),
+    }).success).toBe(false);
+    expect(EvidenceFreezeBranchFindingsProvenanceSchema.safeParse({ ...frozen,
+      roles: frozen.roles.map((role) => ({ ...role, query_plan: { ...role.query_plan, required: false } })),
+    }).success).toBe(false);
+    expect(EvidenceFreezeBranchFindingsProvenanceSchema.safeParse({ ...frozen,
+      roles: frozen.roles.map((role) => role.role === "COUNTER" ? { ...role, omitted_candidate_refs: ["foreign"] } : role),
+      reconciliation_summary: { ...frozen.reconciliation_summary,
+        omissions: frozen.reconciliation_summary.omissions.map((role) => role.role === "COUNTER" ? { ...role, omitted_candidate_refs: ["foreign"] } : role),
+      },
+    }).success).toBe(false);
+  });
+
   it("rejects nested plans from a foreign parent scope, planning manifest or protocol", () => {
     const { analysis, reconciliation } = parentCheckpointFixture();
     for (const changed of [

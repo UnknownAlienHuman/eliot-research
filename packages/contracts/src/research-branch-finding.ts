@@ -3,7 +3,7 @@ import { IdentifierSchema, Sha256Schema, VersionedRefSchema } from "./common.js"
 import { ResolvedEvidenceSchema } from "./evidence.js";
 import { EvidenceFreezeSchema, ResearchDebtSchema } from "./research.js";
 import { BranchQueryPlanSchema, branchQueryLegsMatchPlan, branchQueryLegOutcomeIsConsistent } from "./research-branch-query.js";
-import { ResearchBranchRoleSchema } from "./research-branch-role.js";
+import { ResearchBranchRoleSchema, branchDebtsMatchBlockedRoles } from "./research-branch-role.js";
 
 function refKey(ref: { readonly id: string; readonly revision: number }): string {
   return `${ref.id}:${ref.revision}`;
@@ -106,8 +106,11 @@ const FrozenRetrievalLegSchema = z.object({
   omitted_candidates: z.array(FrozenOmittedCandidateSchema).max(512),
 }).strict().superRefine((value, context) => {
   if ((value.trace_ref === undefined) !== (value.trace_sha256 === undefined) ||
+      (value.trace_ref !== undefined && value.trace_ref.revision !== 1) ||
+      new Set(value.resolved_handle_refs.map((item) => refKey(item.handle_ref))).size !== value.resolved_handle_refs.length ||
       (value.status === "COMPLETED" && (value.trace_ref === undefined || value.failure_code !== undefined)) ||
       (value.status === "FAILED" && (value.failure_code === undefined || value.trace_ref !== undefined || value.resolved_handle_refs.length !== 0)) ||
+      new Set(value.omitted_candidates.map((item) => `${item.candidate_id}:${item.reason_code}`)).size !== value.omitted_candidates.length ||
       !branchQueryLegOutcomeIsConsistent(value)) {
     context.addIssue({ code: "custom", path: ["status"], message: "frozen query leg status/provenance is inconsistent" });
   }
@@ -165,6 +168,11 @@ export const EvidenceFreezeBranchReconciliationSummarySchema = z.object({
       new Set(value.omissions.map((item) => item.role)).size !== value.omissions.length) {
     context.addIssue({ code: "custom", path: ["checkpoint_ref"], message: "frozen reconciliation summary identity or uniqueness is invalid" });
   }
+  if (value.unmet_required_roles.some((role) => !value.required_roles.includes(role)) ||
+      [...value.omissions.map((item) => item.role)].sort().join("\n") !== [...value.required_roles].sort().join("\n") ||
+      !branchDebtsMatchBlockedRoles(value.research_debts, value.unmet_required_roles)) {
+    context.addIssue({ code: "custom", path: ["research_debts"], message: "frozen debts do not correspond to blocked required roles" });
+  }
   const counterRequired = value.required_roles.includes("COUNTER");
   if ((!counterRequired && value.counter_search_status !== "NOT_REQUIRED") ||
       (counterRequired && value.counter_search_status === "NOT_REQUIRED")) {
@@ -202,6 +210,7 @@ function validateBranchFindingsProvenance(
       JSON.stringify([...expectedOmissions].sort((left, right) => left.role.localeCompare(right.role))) !==
         JSON.stringify([...summary.omissions].sort((left, right) => left.role.localeCompare(right.role))) ||
       value.roles.some((role) => role.query_plan.role !== role.role ||
+        role.query_plan.required !== summary.required_roles.includes(role.role) ||
         role.branch_ref.id !== role.query_plan.branch_ref.id || role.branch_ref.revision !== role.query_plan.branch_ref.revision ||
         role.query_result_ref.id !== `eliotr.research.branch-query-result-${role.query_result_digest}` ||
         role.query_result_ref.revision !== 1 || role.scope_snapshot_ref.id !== role.query_plan.scope_snapshot_ref.id ||
@@ -217,6 +226,8 @@ function validateBranchFindingsProvenance(
           role.retrieval_legs.some((leg) => leg.resolved_handle_refs.length > 0)) ||
         role.finding_refs.length > 64 || new Set(role.finding_refs.map(refKey)).size !== role.finding_refs.length ||
         new Set(role.omitted_candidate_refs).size !== role.omitted_candidate_refs.length ||
+        [...new Set(role.retrieval_legs.flatMap((leg) => leg.omitted_candidates.map((item) => item.candidate_id)))].sort().join("\n") !==
+          [...role.omitted_candidate_refs].sort().join("\n") ||
         new Set(role.retrieval_legs.map((leg) => leg.query_id)).size !== role.retrieval_legs.length ||
         role.retrieval_legs.some((leg) => leg.scope_snapshot_ref.id !== role.scope_snapshot_ref.id ||
           leg.scope_snapshot_ref.revision !== role.scope_snapshot_ref.revision ||
@@ -230,6 +241,22 @@ function validateBranchFindingsProvenance(
   const findingRefs = value.findings.map((finding) => refKey(finding.finding_ref));
   const declaredFindingRefs = value.roles.flatMap((role) => role.finding_refs.map(refKey));
   const roleByFinding = new Map(value.roles.flatMap((role) => role.finding_refs.map((ref) => [refKey(ref), role] as const)));
+  const counter = value.roles.find((role) => role.role === "COUNTER");
+  const expectedCounter = !summary.required_roles.includes("COUNTER") ? "NOT_REQUIRED" :
+    counter?.status === "CANDIDATE_READY" ? "COMPLETE" : "PARTIAL";
+  if (summary.counter_search_status !== expectedCounter ||
+      value.roles.some((role) => {
+        const findings = value.findings.filter((finding) => role.finding_refs.some((ref) => refKey(ref) === refKey(finding.finding_ref)));
+        return role.status === "CANDIDATE_READY" ? !findings.some((finding) => finding.state === "CANDIDATE") :
+          findings.some((finding) => finding.state === "CANDIDATE");
+      }) ||
+      summary.research_debts.some((debt) => {
+        const findings = value.findings.filter((finding) => finding.role === debt.blocked_refs[0]);
+        const handles = [...new Set(findings.flatMap((finding) => finding.evidence_handle_refs.map(refKey)))].sort();
+        return [...debt.basis_and_evidence_refs].sort().join("\n") !== handles.join("\n");
+      })) {
+    context.addIssue({ code: "custom", path: ["roles"], message: "frozen readiness, counter status or debt evidence differs from findings" });
+  }
   if (new Set(findingRefs).size !== findingRefs.length ||
       new Set(declaredFindingRefs).size !== declaredFindingRefs.length ||
       findingRefs.length !== declaredFindingRefs.length ||
