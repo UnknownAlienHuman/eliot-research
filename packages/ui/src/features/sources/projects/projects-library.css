@@ -1,0 +1,200 @@
+/* U3-P Projects Library feature surface. Committed semantic tokens only. */
+.er-projects-library {
+  display: grid;
+  background: var(--md-sys-color-surface);
+  color: var(--md-sys-color-on-surface);
+  gap: var(--eliot-space-section);
+  min-width: 0;
+  font-family: var(--eliot-type-font-family);
+}
+
+.er-projects-library__head {
+  display: grid;
+  gap: var(--eliot-space-block-control);
+  justify-items: start;
+}
+
+.er-projects-library__heading {
+  margin: 0;
+  color: var(--md-sys-color-on-surface);
+  font-family: var(--eliot-type-font-family);
+  font-size: var(--eliot-type-title-large-size);
+  font-weight: var(--eliot-type-font-weight-medium);
+  line-height: var(--eliot-type-title-large-line-height);
+}
+
+.er-projects-library__hint,
+.er-projects-library__selected,
+.er-projects-library__note {
+  margin: 0;
+  max-width: var(--eliot-type-reading-measure);
+  color: var(--md-sys-color-on-surface-variant);
+  font-family: var(--eliot-type-font-family);
+  font-size: var(--eliot-type-body-medium-size);
+  line-height: var(--eliot-type-body-medium-line-height);
+}
+
+.er-projects-library__selected {
+  color: var(--md-sys-color-on-surface);
+  font-weight: var(--eliot-type-font-weight-medium);
+}
+
+.er-projects-library__projects {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--eliot-space-inline-control);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.er-projects-library__project-empty {
+  color: var(--md-sys-color-on-surface-variant);
+  font-family: var(--eliot-type-font-family);
+  font-size: var(--eliot-type-body-medium-size);
+}
+
+.er-projects-library__body {
+  display: grid;
+  gap: var(--eliot-space-panel);
+}
+
+.er-projects-library__subheading,
+.er-projects-library__panel-heading {
+  margin: 0;
+  color: var(--md-sys-color-on-surface);
+  font-family: var(--eliot-type-font-family);
+  font-size: var(--eliot-type-title-medium-size);
+  font-weight: var(--eliot-type-font-weight-medium);
+  line-height: var(--eliot-type-title-medium-line-height);
+}
+
+.er-projects-library__sources,
+.er-projects-library__revisions {
+  display: grid;
+  gap: var(--eliot-space-panel);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.er-projects-library__source {
+  display: grid;
+  gap: var(--eliot-space-block-control);
+  padding: var(--eliot-space-panel);
+  border-block-end: var(--eliot-divider-width) solid var(--md-sys-color-outline-variant);
+}
+
+.er-projects-library__source-head {
+  display: flex;
+  align-items: center;
+  gap: var(--eliot-space-inline-control);
+}
+
+.er-projects-library__source-title {
+  margin: 0;
+  font-size: var(--eliot-type-body-large-size);
+  font-weight: var(--eliot-type-font-weight-regular);
+}
+
+.er-projects-library__facts {
+  font-family: var(--eliot-type-font-family);
+  font-size: var(--eliot-type-body-small-size);
+}
+
+.er-projects-library__facts summary {
+  color: var(--md-sys-color-on-surface-variant);
+  cursor: pointer;
+}
+
+.er-projects-library__facts dl {
+  display: grid;
+  grid-template-columns: minmax(0, auto) minmax(0, 1fr);
+  gap: var(--eliot-space-block-control);
+  margin: var(--eliot-space-block-control) 0 0;
+}
+
+.er-projects-library__facts dt {
+  color: var(--md-sys-color-on-surface-variant);
+}
+
+.er-projects-library__facts dd {
+  margin: 0;
+  color: var(--md-sys-color-on-surface);
+  font-family: var(--eliot-type-font-family-mono);
+  overflow-wrap: anywhere;
+}
+
+.er-projects-library__panels {
+  display: grid;
+  gap: var(--eliot-space-panel);
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, var(--eliot-layout-source-width)), 1fr));
+  align-items: start;
+}
+
+.er-projects-library__panel {
+  display: grid;
+  gap: var(--eliot-space-block-control);
+  padding: var(--eliot-space-panel);
+  background: var(--md-sys-color-surface-container-low);
+  border-radius: var(--eliot-shape-small);
+}
+
+.er-projects-library__readiness {
+  display: grid;
+  grid-template-columns: minmax(0, auto) minmax(0, 1fr);
+  gap: var(--eliot-space-block-control);
+  margin: 0;
+}
+
+.er-projects-library__readiness dt {
+  color: var(--md-sys-color-on-surface-variant);
+  font-family: var(--eliot-type-font-family);
+  font-size: var(--eliot-type-body-small-size);
+}
+
+.er-projects-library__readiness dd {
+  margin: 0;
+  color: var(--md-sys-color-on-surface);
+  font-family: var(--eliot-type-font-family);
+  font-size: var(--eliot-type-body-small-size);
+}
+
+.er-projects-library__readiness dd[data-state="unavailable"] {
+  color: var(--md-sys-color-error);
+}
+
+.er-projects-library__readiness dd[data-state="ready"] {
+  color: var(--md-sys-color-on-surface);
+}
+
+.er-projects-library__revision {
+  display: grid;
+  gap: var(--eliot-space-block-control);
+  font-family: var(--eliot-type-font-family);
+  font-size: var(--eliot-type-body-small-size);
+}
+
+.er-projects-library__revision-ref {
+  font-family: var(--eliot-type-font-family-mono);
+  color: var(--md-sys-color-on-surface);
+  overflow-wrap: anywhere;
+}
+
+.er-projects-library__revision-fact {
+  color: var(--md-sys-color-on-surface-variant);
+}
+
+.er-projects-library__actions {
+  display: flex;
+  gap: var(--eliot-space-inline-control);
+}
+
+.er-projects-library__version-head { display: flex; align-items: center; justify-content: space-between; gap: var(--eliot-space-panel); flex-wrap: wrap; }
+.er-projects-library__version-title { margin: 0; color: var(--md-sys-color-on-surface); font-size: var(--eliot-type-body-large-size); line-height: var(--eliot-type-body-large-line-height); }
+.er-projects-library__source[data-selected="true"] { background: var(--md-sys-color-surface-container-low); border-radius: var(--eliot-shape-medium); }
+.er-projects-library__source-title { flex: 1; min-width: 0; }
+.er-projects-library__source-title button { white-space: normal; text-align: start; }
+.er-projects-library__facts summary { min-height: var(--eliot-size-touch-target); align-content: center; }
+.er-projects-library__facts summary:focus-visible { outline: var(--eliot-focus-width) solid var(--md-sys-color-primary); outline-offset: var(--eliot-focus-offset); }
+@media (max-width: 48rem) { .er-projects-library__panels { grid-template-columns: minmax(0, 1fr); } }
