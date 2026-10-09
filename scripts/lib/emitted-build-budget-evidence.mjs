@@ -33,7 +33,12 @@ const SOURCE_BUDGET_DIAGNOSTIC_POLICY = "separate maintainability diagnostics; n
 const EMITTED_ARTIFACT_ROOTS = Object.freeze([
   "apps/eliotr-core/dist",
   "apps/eliotr-pwa/dist",
+  "apps/eliotr-web/dist",
 ]);
+// The owner-web candidate build is measured through this same receipt
+// authority. Its artifacts stay separate from the PWA release path so the
+// legacy release gate is unchanged.
+const OWNER_WEB_DIST_ROOT = "apps/eliotr-web/dist/client";
 // This process-local identity is not serialized into receipts. Persisted multipart
 // reports cannot reconstruct Wrangler's ordered module-byte input to gzip.
 const freshNativeWorkerMeasurements = new WeakSet();
@@ -594,6 +599,207 @@ export async function inspectPwaBuild(root, buildStartedAt) {
   };
 }
 
+export async function inspectWebBuild(root, buildStartedAt) {
+  const distRoot = resolve(root, OWNER_WEB_DIST_ROOT);
+  const files = (await listFiles(root, OWNER_WEB_DIST_ROOT)).filter((entry) =>
+    !entry.relative.split("/").some((part) => part.startsWith(".")),
+  );
+  const issues = [];
+  const graphFiles = files.filter((file) => isJavaScriptPath(file.relative));
+  if (graphFiles.length === 0) issues.push("The owner-web candidate build emitted no JavaScript");
+
+  const bytesByPath = new Map();
+  for (const file of files) bytesByPath.set(file.relative, await readFile(file.absolute));
+  const graph = new Map();
+  for (const file of graphFiles) {
+    try {
+      const source = (await readFile(file.absolute)).toString("utf8");
+      const edges = moduleEdges(source, file.relative);
+      const resolveAll = (values) => values
+        .map((value) => resolveLocalSpecifier(value, file.relative, distRoot))
+        .filter(isJavaScriptPath);
+      if (edges.unresolved.length) issues.push("Candidate module contains an unresolved load edge: " + file.relative);
+      const staticImports = resolveAll([...edges.staticImports, ...edges.workerImports]);
+      const dynamicImports = resolveAll(edges.dynamicImports);
+      for (const target of [...staticImports, ...dynamicImports]) {
+        if (!bytesByPath.has(target)) issues.push("Candidate module references a missing asset: " + target);
+      }
+      graph.set(file.relative, {
+        staticImports,
+        dynamicImports,
+        workerImports: [],
+        unresolved: edges.unresolved,
+      });
+    } catch (error) {
+      issues.push((error?.message ?? "JavaScript graph parse failed") + ": " + file.relative);
+    }
+  }
+
+  const htmlFiles = files.filter((file) => file.relative.toLowerCase().endsWith(".html"));
+  if (htmlFiles.length === 0) issues.push("The owner-web candidate build emitted no HTML entry");
+
+  const routeScripts = [];
+  for (const htmlFile of htmlFiles) {
+    try {
+      const scripts = parseHtmlScripts(
+        (await readFile(htmlFile.absolute)).toString("utf8"),
+        htmlFile.relative,
+        distRoot,
+      );
+      for (const rootEntry of scripts.roots) {
+        if (!bytesByPath.has(rootEntry.path)) {
+          issues.push("HTML references missing JavaScript: " + htmlFile.relative);
+        } else if (!isJavaScriptPath(rootEntry.path)) {
+          issues.push("HTML script reference is not a JavaScript asset: " + htmlFile.relative);
+        }
+      }
+      routeScripts.push({
+        htmlPath: htmlFile.relative,
+        entryPaths: [...new Set(scripts.roots.map((rootEntry) => rootEntry.path))],
+        inline: scripts.inline,
+      });
+    } catch (error) {
+      issues.push((error?.message ?? "HTML entry parse failed") + ": " + htmlFile.relative);
+    }
+  }
+
+  const referenced = new Set();
+  const routeSummaries = [];
+  for (const route of routeScripts) {
+    if (route.inline.length) issues.push("Owner-web candidate contains executable inline JavaScript");
+    if (route.entryPaths.length === 0 && route.inline.length === 0) {
+      issues.push("HTML entry has no executable JavaScript: " + route.htmlPath);
+      continue;
+    }
+    for (const inline of route.inline) {
+      const key = "inline:" + route.htmlPath;
+      graph.set(key, moduleEdges(inline.source, key + ".js"));
+      bytesByPath.set(key, Buffer.from(inline.source, "utf8"));
+    }
+    const initial = aggregateClosure(route.entryPaths, graph, false);
+    for (const path of initial) {
+      if (!bytesByPath.has(path)) {
+        issues.push("Reachable JavaScript references a missing asset: " + route.htmlPath);
+      }
+      referenced.add(path);
+    }
+    const resources = [...initial]
+      .filter((path) => bytesByPath.has(path))
+      .map((path) => ({
+        path,
+        rawBytes: bytesByPath.get(path).byteLength,
+        gzipBytes: gzipSync(bytesByPath.get(path), { level: 9 }).byteLength,
+      }));
+    routeSummaries.push({
+      htmlPath: route.htmlPath,
+      initialJavaScript: {
+        rawBytes: resources.reduce((sum, item) => sum + item.rawBytes, 0),
+        gzipBytes: resources.reduce((sum, item) => sum + item.gzipBytes, 0),
+        resources,
+      },
+    });
+  }
+
+  // The candidate total sums each emitted HTML entry's initial closure, so an
+  // extra entry cannot hide bytes from the measured candidate.
+  const initialGzipBytes = routeSummaries.reduce(
+    (sum, route) => sum + route.initialJavaScript.gzipBytes, 0);
+  const initialRawBytes = routeSummaries.reduce(
+    (sum, route) => sum + route.initialJavaScript.rawBytes, 0);
+  let buildOutputFresh = htmlFiles.length > 0 && graphFiles.length > 0;
+  for (const path of routeScripts.flatMap((route) => route.entryPaths)) {
+    const file = files.find((entry) => entry.relative === path);
+    if (!file || (await stat(file.absolute)).mtimeMs < Date.parse(buildStartedAt) - 1500) {
+      buildOutputFresh = false;
+    }
+  }
+  if (!buildOutputFresh) issues.push("A candidate owner-web entry predates this build");
+
+  const status = issues.length > 0
+    ? "NOT_MEASURED"
+    : initialGzipBytes > OWNER_WEB_INITIAL_GZIP_BUDGET_BYTES ? "FAIL" : "PASS";
+  return {
+    status,
+    threshold: {
+      gzipBytes: OWNER_WEB_INITIAL_GZIP_BUDGET_BYTES,
+      unit: "bytes",
+      display: "600 KiB gzip",
+    },
+    metric: {
+      rawBytes: initialRawBytes,
+      gzipBytes: initialGzipBytes,
+      gzipMethod: "node:zlib gzip level 9 over the static initial closure per emitted HTML entry",
+      routeCount: routeSummaries.length,
+      entryCount: routeScripts.flatMap((route) => route.entryPaths).length,
+    },
+    distRoot: OWNER_WEB_DIST_ROOT,
+    routes: routeSummaries,
+    referencedJavaScript: [...referenced],
+    allDistAssets: files.map((file) => file.relative),
+    artifactFiles: files.map((file) => ({
+      path: formatPathForReceipt(OWNER_WEB_DIST_ROOT, file.relative),
+      sha256: sha256(bytesByPath.get(file.relative)),
+      rawBytes: bytesByPath.get(file.relative).byteLength,
+    })),
+    issues,
+    buildOutputFresh,
+  };
+}
+
+export async function inspectWebWorkerBuild(root, buildStartedAt, output) {
+  const prefix = "apps/eliotr-web/dist/eliotr_core";
+  const report = parseWranglerBundleReport(output);
+  const issues = [...(report.issues ?? [])];
+  const files = (await listFiles(root, prefix)).filter(f => !f.relative.startsWith("."));
+  const configFile = files.find(f => f.relative === "wrangler.json");
+  const entry = files.find(f => f.relative === "index.js");
+  if (!configFile || !entry) throw new Error("Generated owner-web Worker/config is missing");
+  const config = JSON.parse(await readFile(configFile.absolute, "utf8"));
+  const expectedRoutes = ["/healthz", "/mcp", "/agent-inbox", "/agent-inbox/*", "/agents", "/agents/*", "/api/*", "/federation/*", "/oauth/*"];
+  if (config.targetEnvironment !== "test" || config.name !== "eliotr-core-test" || config.main !== "index.js" ||
+      resolve(config.configPath ?? "") !== resolve(root, "apps/eliotr-core/wrangler.jsonc") ||
+      config.assets?.directory !== "../client" || config.assets?.not_found_handling !== "single-page-application" ||
+      !isDeepStrictEqual(config.assets?.run_worker_first, expectedRoutes)) issues.push("Generated candidate loses existing Worker/test/asset routing identity");
+  if (config.vars?.DEPLOYMENT_GENERATION !== "test-generation" ||
+      config.vars?.AI_GATEWAY_REASONING_URL !== "https://example.invalid/reasoning" ||
+      config.vars?.AI_GATEWAY_RETRIEVAL_URL !== "https://example.invalid/retrieval") issues.push("Candidate contains a non-test deployment or provider binding");
+  for (const key of ["d1_databases", "r2_buckets", "workflows"]) for (const binding of config[key] ?? []) {
+    const name = binding.database_name ?? binding.bucket_name ?? binding.name;
+    if (typeof name !== "string" || !name.endsWith("-test") || binding.remote || binding.database_id) issues.push("Candidate contains an unqualified resource binding");
+  }
+  if (!isDeepStrictEqual(config.durable_objects?.bindings, [{ name: "RESEARCH_SESSION", class_name: "ResearchSession" }])) issues.push("Candidate changes the ResearchSession namespace");
+  const artifactFiles = [];
+  for (const file of files) {
+    if ((await stat(file.absolute)).mtimeMs < Date.parse(buildStartedAt) - 1500) issues.push("Generated Worker artifact predates candidate build");
+    const bytes = await readFile(file.absolute);
+    artifactFiles.push({ path: formatPathForReceipt(prefix, file.relative), sha256: sha256(bytes), rawBytes: bytes.byteLength });
+    if (file.relative.endsWith(".wasm")) issues.push("Candidate multipart Wasm requires native receipt qualification");
+  }
+  return { status: issues.length ? "NOT_MEASURED" : report.gzip.bytes > WORKER_GZIP_BUDGET_BYTES ? "FAIL" : "PASS",
+    threshold: { gzipBytes: WORKER_GZIP_BUDGET_BYTES }, nativeReport: report, artifactFiles, issues };
+}
+
+async function validateWebReceipt(root, receipt, currentIdentity) {
+  if (receipt.purpose !== "candidate" || receipt.build?.command !== "vite build --config vite.integrated.config.ts + wrangler deploy --dry-run --no-bundle" ||
+      receipt.build?.environmentProfile !== "CLOUDFLARE_ENV=test; remoteBindings=false; local candidate only" ||
+      receipt.build?.commandStatus !== 0 || receipt.source?.stableDuringBuild !== true ||
+      receipt.source?.fingerprintBeforeBuild !== receipt.source?.fingerprintAfterBuild ||
+      receipt.source?.fingerprintAfterBuild !== currentIdentity.fingerprint ||
+      receipt.source?.commitAfterBuild !== currentIdentity.commit || receipt.source?.lockfileSha256 !== currentIdentity.lockfileSha256 ||
+      !isDeepStrictEqual(receipt.build?.inputDigestsAfter, currentIdentity.buildInputDigests) ||
+      !isDeepStrictEqual(receipt.build?.inputDigests, receipt.build?.inputDigestsAfter)) return notMeasured("Candidate source/build identity is incomplete or inconsistent");
+  const client = await inspectWebBuild(root, receipt.build.startedAt);
+  const worker = await inspectWebWorkerBuild(root, receipt.build.startedAt, receipt.build.nativeSizeOutput);
+  if (!isDeepStrictEqual(client, receipt.ownerWeb) || !isDeepStrictEqual(worker, receipt.worker) ||
+      !isDeepStrictEqual(receipt.artifacts, [...worker.artifactFiles, ...client.artifactFiles])) return notMeasured("Candidate evidence differs from the exact generated graph");
+  const artifacts = await compareReceiptArtifacts(root, receipt, receipt.artifacts);
+  if (artifacts.status !== "PASS") return artifacts;
+  const issues = [...worker.issues, ...client.issues];
+  const status = issues.length ? "NOT_MEASURED" : worker.status === "FAIL" || client.status === "FAIL" ? "FAIL" : "PASS";
+  if (receipt.status !== status || !isDeepStrictEqual(receipt.issues, issues)) return notMeasured("Candidate budget outcome does not match measured artifacts");
+  return { status, issues };
+}
+
 function parseByteQuantity(value, unit) {
   const multiplier = BINARY_UNITS.get(String(unit).toUpperCase());
   if (!multiplier) throw new Error("Wrangler reported an unsupported size unit");
@@ -959,7 +1165,7 @@ function notMeasured(issue) {
   return { status: "NOT_MEASURED", issues: [issue] };
 }
 
-export async function validateReceipt(root, receipt, currentIdentity) {
+export async function validateReceipt(root, receipt, currentIdentity, options = {}) {
   if (!receipt) return { status: "NOT_MEASURED", issues: ["No emitted budget receipt exists"] };
   if (receipt.protocol !== RECEIPT_PROTOCOL) {
     return { status: "NOT_MEASURED", issues: ["Receipt protocol is missing or unsupported"] };
@@ -969,6 +1175,12 @@ export async function validateReceipt(root, receipt, currentIdentity) {
   }
   if (receipt.status === "STALE") return { status: "STALE", issues: ["Receipt already records a stale build"] };
   if (receipt.status === "NOT_MEASURED") return { status: "NOT_MEASURED", issues: ["Receipt did not measure all required artifacts"] };
+
+  if (receipt.graph === "owner-web") {
+    if (!options.ownerWeb) return notMeasured("Owner-web candidate cannot satisfy the legacy release gate");
+    try { return await validateWebReceipt(root, receipt, currentIdentity); }
+    catch { return notMeasured("Generated candidate graph could not be verified"); }
+  }
 
   if (receipt.status !== "PASS" && receipt.status !== "FAIL") {
     return notMeasured("Receipt has an unsupported measurement status");

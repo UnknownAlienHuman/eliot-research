@@ -1,6 +1,8 @@
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
+import process from "node:process";
 import { cloudflare } from "@cloudflare/vite-plugin";
+import agents from "agents/vite";
 import { defineConfig } from "vite";
 
 export default defineConfig(() => {
@@ -9,6 +11,7 @@ export default defineConfig(() => {
   }
   return {
     plugins: [
+      agents(),
       react(),
       cloudflare({ configPath: "../eliotr-core/wrangler.jsonc", remoteBindings: false }),
       tailwindcss(),

@@ -6,5 +6,6 @@
     "tsBuildInfoFile": "dist-types/.tsbuildinfo",
     "jsx": "react-jsx"
   },
+  "files": [],
   "include": ["src/**/*.ts", "src/**/*.tsx"]
 }

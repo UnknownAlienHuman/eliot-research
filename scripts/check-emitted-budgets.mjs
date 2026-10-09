@@ -7,6 +7,8 @@ import {
   DEFAULT_RECEIPT_PATH,
   inspectPwaBuild,
   inspectWorkerBuild,
+  inspectWebBuild,
+  inspectWebWorkerBuild,
   OWNER_WEB_INITIAL_GZIP_BUDGET_BYTES,
   RECEIPT_PROTOCOL,
   validateReceipt,
@@ -32,6 +34,13 @@ const INPUT_PATHS = [
   "apps/eliotr-pwa/vite.config.ts",
   "apps/eliotr-pwa/scripts/build-agent-inbox.mjs",
   ".eliotr-state/generated-types/eliotr-core.d.ts",
+  "apps/eliotr-web/package.json",
+  "apps/eliotr-web/tsconfig.json",
+  "apps/eliotr-web/vite.config.ts",
+  "apps/eliotr-web/vite.integrated.config.ts",
+  "apps/eliotr-web/index.html",
+  "packages/ui/package.json",
+  "packages/ui/tsconfig.json",
 ];
 
 function spawnPnpm(args, options = {}) {
@@ -46,10 +55,12 @@ function spawnPnpm(args, options = {}) {
 }
 
 function parseArguments(args) {
-  const options = { checkOnly: false, receiptPath: DEFAULT_RECEIPT_PATH, help: false };
+  const options = { checkOnly: false, receiptPath: DEFAULT_RECEIPT_PATH, help: false, ownerWeb: false };
   for (let index = 0; index < args.length; index += 1) {
     if (args[index] === "--check-only") {
       options.checkOnly = true;
+    } else if (args[index] === "--owner-web") {
+      options.ownerWeb = true;
     } else if (args[index] === "--receipt") {
       const value = args[index + 1];
       if (!value) throw new Error("--receipt requires a path");
@@ -60,6 +71,9 @@ function parseArguments(args) {
     } else {
       throw new Error("Unknown emitted budget option: " + args[index]);
     }
+  }
+  if (options.ownerWeb && options.receiptPath === DEFAULT_RECEIPT_PATH) {
+    options.receiptPath = "apps/eliotr-web/.wrangler/s90-emitted-budget-receipt.json";
   }
   return options;
 }
@@ -217,6 +231,7 @@ export async function runEmittedBudgetCheck(args = []) {
     console.log("Usage: node scripts/check-emitted-budgets.mjs [--check-only] [--receipt <path>]");
     return 0;
   }
+  if (options.ownerWeb) return runOwnerWebBudgetCheck(options);
   if (options.checkOnly) return checkExistingReceipt(options);
 
   const commandEvidence = await verifyBuildCommands();
@@ -366,6 +381,54 @@ export async function runEmittedBudgetCheck(args = []) {
     printSummary(receipt, options.receiptPath);
     return statusCode(receipt.status);
   }
+}
+
+async function runOwnerWebBudgetCheck(options) {
+  const inputDigests = await readBuildInputs();
+  const before = await captureSourceIdentity(ROOT, inputDigests);
+  if (options.checkOnly) {
+    const receipt = JSON.parse(await readFile(resolve(ROOT, options.receiptPath), "utf8"));
+    const result = await validateReceipt(ROOT, receipt, before, { ownerWeb: true });
+    console.log(JSON.stringify({ graph: "owner-web", ...result }));
+    return statusCode(result.status);
+  }
+  const startedAt = new Date().toISOString();
+  const webRoot = resolve(ROOT, "apps/eliotr-web");
+  const build = spawnSync(process.execPath, [resolve(ROOT, "node_modules/vite/bin/vite.js"), "build", "--config", "vite.integrated.config.ts"], {
+    cwd: webRoot, env: { ...process.env, CLOUDFLARE_ENV: "test" }, encoding: "utf8", maxBuffer: 32 * 1024 * 1024, windowsHide: true,
+  });
+  if (build.status !== 0) throw new Error("Owner-web integrated build failed");
+  const dryEnv = { ...process.env };
+  for (const key of ["CLOUDFLARE_ENV", "CLOUDFLARE_API_TOKEN", "CF_API_TOKEN", "CLOUDFLARE_API_KEY", "CF_API_KEY"]) delete dryEnv[key];
+  const dryRun = spawnSync(process.execPath, [resolve(ROOT, "node_modules/wrangler/bin/wrangler.js"), "deploy", "--dry-run", "--no-bundle",
+    "--config", resolve(webRoot, "dist/eliotr_core/wrangler.json"), "--outdir", resolve(ROOT, ".eliotr-state/frontend-owner-dry-run")], {
+    cwd: ROOT, env: dryEnv, encoding: "utf8", maxBuffer: 32 * 1024 * 1024, windowsHide: true,
+  });
+  if (dryRun.status !== 0) throw new Error("Owner-web native dry-run failed: " + (dryRun.stderr ?? "").slice(-600));
+  const nativeSizeOutput = ((dryRun.stdout ?? "") + "\n" + (dryRun.stderr ?? "")).split(/\r?\n/u)
+    .filter(line => /wrangler\s+\d+\.\d+\.\d+|Total Upload:|--dry-run:\s*exiting now|Read \d+ files?/iu.test(line)).join("\n");
+  const [worker, ownerWeb] = await Promise.all([inspectWebWorkerBuild(ROOT, startedAt, nativeSizeOutput), inspectWebBuild(ROOT, startedAt)]);
+  const inputDigestsAfter = await readBuildInputs();
+  const after = await captureSourceIdentity(ROOT, inputDigestsAfter);
+  const stable = before.fingerprint === after.fingerprint;
+  const issues = [...worker.issues, ...ownerWeb.issues];
+  const status = !stable ? "STALE" : issues.length ? "NOT_MEASURED" : worker.status === "FAIL" || ownerWeb.status === "FAIL" ? "FAIL" : "PASS";
+  const finishedAt = new Date().toISOString();
+  const receipt = { protocol: RECEIPT_PROTOCOL, graph: "owner-web", purpose: "candidate", createdAt: finishedAt, status,
+    source: { commit: before.commit, commitAfterBuild: after.commit, fingerprintBeforeBuild: before.fingerprint,
+      fingerprintAfterBuild: after.fingerprint, stableDuringBuild: stable, lockfileSha256: before.lockfileSha256 },
+    build: { command: "vite build --config vite.integrated.config.ts + wrangler deploy --dry-run --no-bundle", commandStatus: dryRun.status,
+      startedAt, finishedAt, environmentProfile: "CLOUDFLARE_ENV=test; remoteBindings=false; local candidate only",
+      inputDigests, inputDigestsAfter, nativeSizeOutput,
+      toolVersions: { node: process.version, vite: JSON.parse(await readFile(resolve(webRoot, "node_modules/vite/package.json"), "utf8")).version } },
+    worker, ownerWeb, artifacts: [...worker.artifactFiles, ...ownerWeb.artifactFiles], issues,
+  };
+  const checked = await validateReceipt(ROOT, receipt, after, { ownerWeb: true });
+  if (checked.status !== status) { receipt.status = checked.status; receipt.issues.push(...checked.issues); }
+  await writeReceipt(options.receiptPath, receipt);
+  console.log(JSON.stringify({ graph: "owner-web", status: receipt.status, workerGzipBytes: worker.nativeReport.gzip?.bytes,
+    initialJavaScriptGzipBytes: ownerWeb.metric.gzipBytes, receipt: options.receiptPath, issues: receipt.issues }));
+  return statusCode(receipt.status);
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

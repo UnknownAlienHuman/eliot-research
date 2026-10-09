@@ -2,7 +2,7 @@ import { defineConfig } from "vitest/config";
 
 export default defineConfig({
   test: {
-    include: ["packages/**/*.test.ts", "apps/eliotr-pwa/**/*.test.ts", "tests/**/*.test.ts", "infra/ai-search/**/*.test.mjs"],
+    include: ["packages/**/*.test.ts", "apps/eliotr-pwa/**/*.test.ts", "apps/eliotr-web/**/*.test.ts", "tests/**/*.test.ts", "infra/ai-search/**/*.test.mjs"],
     exclude: ["**/node_modules/**", "**/dist/**", "**/.wrangler/**", "packages/cloudflare-artifacts/test/**"],
     coverage: {
       provider: "v8",

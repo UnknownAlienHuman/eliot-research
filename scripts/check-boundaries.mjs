@@ -1,6 +1,7 @@
 import { readFile, readdir } from "node:fs/promises";
 import { extname, join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { discoverRegistrationDefects, parsePackageRuleKeys } from "./lib/boundary-registration-discovery.mjs";
 
 const ROOT = fileURLToPath(new URL("../", import.meta.url));
 const SOURCE_ROOTS = ["packages", "apps"];
@@ -297,6 +298,8 @@ const PACKAGE_RULES = new Map([
   ["packages/pwa-source-workspace", new Set(["@eliotr/contracts", "@eliotr/pwa-http-client"])],
   ["packages/pwa-research-workspace", new Set(["@eliotr/contracts", "@eliotr/pwa-http-client", "@eliotr/pwa-source-workspace"])],
   ["packages/pwa-knowledge-workspace", new Set(["@eliotr/contracts", "@eliotr/pwa-http-client", "@eliotr/pwa-source-workspace"])],
+  ["packages/ui", new Set(["react", "react-dom"])],
+  ["apps/eliotr-web", new Set(["@eliotr/ui", "@tanstack/react-query", "react", "react-dom", "react-router"])],
   ["apps/eliotr-pwa", new Set([...RESEARCH_UI_IMPORTS, "@eliotr/contracts", "@eliotr/pwa-http-client", "@eliotr/pwa-source-workspace", "@eliotr/pwa-source-workspace/navigation-expand-api", "@eliotr/pwa-research-workspace", "@eliotr/pwa-knowledge-workspace"])],
   ["apps/eliotr-core", new Set([
     "@eliotr/cloudflare-artifacts",
@@ -375,11 +378,21 @@ function importsOf(source) {
 }
 
 const errors = [];
+const gateSource = await readFile(fileURLToPath(import.meta.url), "utf8");
+errors.push(...await discoverRegistrationDefects(
+  ROOT,
+  SOURCE_ROOTS,
+  new Set(parsePackageRuleKeys(gateSource)),
+  (owner) => PACKAGE_RULES.get(owner),
+));
 for (const sourceRoot of SOURCE_ROOTS) {
   const fullRoot = join(ROOT, sourceRoot);
   for (const file of await walk(fullRoot)) {
     const owner = ownerFor(file);
-    if (!owner) continue;
+    if (!owner) {
+      errors.push(`${projectPath(file)} is source inside an unregistered workspace root; no boundary rule declares it`);
+      continue;
+    }
     const normalizedPath = projectPath(file);
     const source = await readFile(file, "utf8");
     for (const specifier of importsOf(source)) {

@@ -9,6 +9,7 @@ import { gzipSync } from "node:zlib";
 import {
   compareReceiptArtifacts,
   inspectPwaBuild,
+  inspectWebBuild,
   inspectWorkerBuild,
   OWNER_WEB_INITIAL_GZIP_BUDGET_BYTES,
   RECEIPT_PROTOCOL,
@@ -31,13 +32,14 @@ let cases = 0;
 const FOCUSED_NEGATIVE_FLAG = "--only-native-wasm-path-negative";
 const FOCUSED_NEGATIVE_CASE = "Wasm gzip replay and symlink/path inputs fail closed";
 const runnerArguments = process.argv.slice(2);
-if (runnerArguments.some((argument) => argument !== FOCUSED_NEGATIVE_FLAG)) {
-  throw new Error("Unknown receipt test option: " + runnerArguments.find((argument) => argument !== FOCUSED_NEGATIVE_FLAG));
+if (runnerArguments.some((argument) => ![FOCUSED_NEGATIVE_FLAG, "--only-owner-web"].includes(argument))) {
+  throw new Error("Unknown receipt test option");
 }
 const runOnlyFocusedNegative = runnerArguments.includes(FOCUSED_NEGATIVE_FLAG);
 
 async function check(name, action) {
   if (runOnlyFocusedNegative && name !== FOCUSED_NEGATIVE_CASE) return;
+  if (runnerArguments.includes("--only-owner-web") && !name.startsWith("Owner-web")) return;
   await action();
   cases += 1;
   console.log(`Emitted budget receipt: ${name}: PASS`);
@@ -327,6 +329,33 @@ await check(FOCUSED_NEGATIVE_CASE, async () => {
     await removeFixture(pathFixture.root);
     await rm(outsideDirectory, { recursive: true, force: true });
   }
+});
+
+await check("Owner-web measures static entry closure and fails missing/inline/escaping inputs", async () => {
+  const root = await mkdtemp(join(tmpdir(), "eliot-emitted-budget-receipt-"));
+  const dist = join(root, "apps/eliotr-web/dist/client");
+  try {
+    await mkdir(join(dist, "assets"), { recursive: true });
+    await writeFile(join(dist, "index.html"), '<script type="module" src="/assets/main.js"></script>');
+    await writeFile(join(dist, "assets/main.js"), 'import "./shared.js"; export const open = () => import("./lazy.js");');
+    await writeFile(join(dist, "assets/shared.js"), 'export const title = "Research";');
+    await writeFile(join(dist, "assets/lazy.js"), 'export const large = "' + "abcdef".repeat(10000) + '";');
+    const startedAt = new Date(Date.now() - 1000).toISOString();
+    const result = await inspectWebBuild(root, startedAt);
+    assert.equal(result.status, "PASS");
+    assert.deepEqual(result.referencedJavaScript, ["assets/main.js", "assets/shared.js"]);
+    assert.equal(result.artifactFiles.length, 4, "lazy files remain digest-bound even outside initial load");
+    await writeFile(join(dist, "index.html"), '<script type="module" src="/assets/missing.js"></script>');
+    assert.equal((await inspectWebBuild(root, startedAt)).status, "NOT_MEASURED");
+    await writeFile(join(dist, "index.html"), '<script type="module" src="/assets/main.js"></script><script>window.bad=true;</script>');
+    assert.equal((await inspectWebBuild(root, startedAt)).status, "NOT_MEASURED");
+    await writeFile(join(dist, "index.html"), '<script type="module" src="/assets/main.js"></script>');
+    await writeFile(join(dist, "assets/main.js"), 'import "../../../../private.js";');
+    assert.equal((await inspectWebBuild(root, startedAt)).status, "NOT_MEASURED");
+    const identity = { fingerprint: "current" };
+    const candidate = { protocol: RECEIPT_PROTOCOL, graph: "owner-web", status: "PASS", source: { fingerprintAfterBuild: "current" } };
+    assert.equal((await validateReceipt(root, candidate, identity)).status, "NOT_MEASURED", "candidate never satisfies legacy deployment receipt");
+  } finally { await removeFixture(root); }
 });
 
 console.log(`Emitted budget receipt: ${cases}/${cases} focused cases passed`);

@@ -82,4 +82,43 @@ export default tseslint.config(
       },
     },
   },
+  {
+    // Owner-web and UI are browser TypeScript/TSX and are not covered by the
+    // Node-only exception above. The DOM lib comes from tsconfig; ESLint still
+    // needs the globals declared or every React file is flagged as undefined.
+    // Browser globals belong to source only. The root Vite configs keep the
+    // Node ambient guard above and are intentionally not matched here.
+    files: ["apps/eliotr-web/src/**/*.ts", "apps/eliotr-web/src/**/*.tsx", "packages/ui/src/**/*.ts", "packages/ui/src/**/*.tsx"],
+    languageOptions: {
+      globals: {
+        AbortController: "readonly",
+        CustomEvent: "readonly",
+        Document: "readonly",
+        Element: "readonly",
+        Event: "readonly",
+        EventTarget: "readonly",
+        HTMLElement: "readonly",
+        IntersectionObserver: "readonly",
+        MutationObserver: "readonly",
+        Node: "readonly",
+        ResizeObserver: "readonly",
+        URL: "readonly",
+        Window: "readonly",
+        console: "readonly",
+        crypto: "readonly",
+        document: "readonly",
+        fetch: "readonly",
+        localStorage: "readonly",
+        location: "readonly",
+        navigator: "readonly",
+        requestAnimationFrame: "readonly",
+        sessionStorage: "readonly",
+        window: "readonly",
+      },
+    },
+    rules: {
+      "no-console": ["error", { allow: ["warn", "error"] }],
+      "no-restricted-globals": ["error", "process", "Buffer"],
+    },
+  },
 );

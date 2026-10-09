@@ -1,4 +1,4 @@
-import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { copyFile, lstat, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -41,6 +41,7 @@ async function proveCheckoutPathsArePortable() {
   try {
     for (const path of [
       "scripts",
+      "scripts/lib",
       "packages/domain/src",
       "packages/cloudflare-research/src",
       "packages/cloudflare-model-control/src",
@@ -53,6 +54,13 @@ async function proveCheckoutPathsArePortable() {
     for (const name of ["check-boundaries.mjs", "check-budgets.mjs"]) {
       await copyFile(resolve(root, "scripts", name), resolve(checkout, "scripts", name));
     }
+    for (const name of ["boundary-registration-discovery.mjs"]) {
+      await copyFile(resolve(root, "scripts", "lib", name), resolve(checkout, "scripts", "lib", name));
+    }
+    // Registration discovery reads the reference graph. An empty graph is the
+    // honest portable fixture; the live graph is proven by real repository runs.
+    await writeFile(resolve(checkout, "tsconfig.json"),
+      JSON.stringify({ files: [], references: [] }, null, 2) + "\n", "utf8");
     const fixture = resolve(checkout, "packages/domain/src/fixture.ts");
     await writeFile(fixture, "export const safe = 1;\n");
     const boundaries = resolve(checkout, "scripts/check-boundaries.mjs");
@@ -256,7 +264,156 @@ async function proveWorkPacketParityFailsClosed() {
   );
 }
 
-await proveCheckoutPathsArePortable();
-await proveForbiddenImportFailsClosed();
-await proveUnregisteredPendingStateFailsClosed();
-await proveWorkPacketParityFailsClosed();
+if (!process.argv.includes("--owner-web")) {
+  await proveCheckoutPathsArePortable();
+  await proveForbiddenImportFailsClosed();
+  await proveUnregisteredPendingStateFailsClosed();
+  await proveWorkPacketParityFailsClosed();
+}
+
+// Owner-web and UI are registered browser roots. Each fixture below fails
+// closed on a mis-declared direction, not on the mere presence of a file.
+// A recursively removed path must be a fixture this harness owns and must sit
+// inside the repository, so a bad path can never delete real source.
+async function fixtureStat(path) {
+  try { return await lstat(path); }
+  catch (error) { if (error.code === "ENOENT") return null; throw error; }
+}
+
+async function removeCreatedFile(path, content) {
+  const entry = await fixtureStat(path);
+  if (!entry) return;
+  if (!entry.isFile() || entry.isSymbolicLink() || await readFile(path, "utf8") !== content) {
+    throw new Error("Refusing cleanup of changed or foreign fixture: " + path);
+  }
+  await rm(path);
+}
+
+async function removeOwnedFixture(directory, createdFiles) {
+  const target = resolve(directory);
+  if (target !== resolve(root, "packages/__eliotr_unknown_root__")) {
+    throw new Error("Refusing cleanup outside the exact owned fixture: " + target);
+  }
+  async function inspect(path) {
+    const entry = await lstat(path);
+    if (!entry.isDirectory() || entry.isSymbolicLink()) {
+      throw new Error("Refusing fixture cleanup through a reparse point: " + path);
+    }
+    for (const name of await readdir(path)) {
+      const child = resolve(path, name);
+      if (child === resolve(target, "src")) await inspect(child);
+      else if (!createdFiles.has(child)) throw new Error("Foreign fixture entry: " + child);
+      else {
+        const file = await lstat(child);
+        if (!file.isFile() || file.isSymbolicLink() || await readFile(child, "utf8") !== createdFiles.get(child)) {
+          throw new Error("Changed fixture entry: " + child);
+        }
+      }
+    }
+  }
+  await inspect(target);
+  await rm(target, { recursive: true });
+}
+
+async function proveWebAndUiBoundariesFailClosed() {
+  const webDir = resolve(root, "apps/eliotr-web");
+  const uiDir = resolve(root, "packages/ui");
+  const webFixture = resolve(webDir, "src/__eliotr_web_direction__.tsx");
+  const uiFixture = resolve(uiDir, "src/__eliotr_ui_direction__.tsx");
+  const unknownRoot = resolve(root, "packages/__eliotr_unknown_root__");
+  if (await fixtureStat(unknownRoot)) throw new Error("Fixture root already exists; preserving it: " + unknownRoot);
+  const createdFiles = new Map();
+  let unknownCreated = false;
+  for (const dir of [resolve(webDir, "src"), resolve(uiDir, "src")]) {
+    await mkdir(dir, { recursive: true });
+  }
+  const cleanup = async () => {
+    for (const fixture of [webFixture, uiFixture]) {
+      if (createdFiles.has(fixture)) await removeCreatedFile(fixture, createdFiles.get(fixture));
+    }
+    if (unknownCreated) await removeOwnedFixture(unknownRoot, createdFiles);
+  };
+  async function createFile(path, content) {
+    await writeFile(path, content, { flag: "wx" });
+    createdFiles.set(path, content);
+  }
+
+  try {
+    // Owner-web may import React and its UI package, never a backend root.
+    await createFile(webFixture,
+      'import { runtime } from "@eliotr/cloudflare-research-runtime";\n' +
+      "export const useRuntime = () => runtime;\n");
+    runGateExpectingFailure("scripts/check-boundaries.mjs",
+      ["apps/eliotr-web/src/__eliotr_web_direction__.tsx violates dependency direction with @eliotr/cloudflare-research-runtime"],
+      "owner-web backend import rejection");
+    await removeCreatedFile(webFixture, createdFiles.get(webFixture));
+
+    // UI may import React only. A backend or owner-api dependency is a breach.
+    await createFile(uiFixture,
+      'import { contracts } from "@eliotr/contracts";\n' +
+      "export const useContracts = () => contracts;\n");
+    runGateExpectingFailure("scripts/check-boundaries.mjs",
+      ["packages/ui/src/__eliotr_ui_direction__.tsx violates dependency direction with @eliotr/contracts"],
+      "ui backend import rejection");
+    await removeCreatedFile(uiFixture, createdFiles.get(uiFixture));
+
+    // An unknown package inside a registered source root must fail closed.
+    await mkdir(unknownRoot);
+    unknownCreated = true;
+    await mkdir(resolve(unknownRoot, "src"));
+    await createFile(resolve(unknownRoot, "package.json"),
+      JSON.stringify({ name: "@eliotr/unknown-root-probe", private: true, version: "0.0.0" }) + "\n");
+    await createFile(resolve(unknownRoot, "src/index.ts"),
+      "export const probe = 1;\n");
+    runGateExpectingFailure("scripts/check-boundaries.mjs",
+      ["Workspace package @eliotr/unknown-root-probe has no boundary rule: packages/__eliotr_unknown_root__",
+        "packages/__eliotr_unknown_root__/src/index.ts is source inside an unregistered workspace root; no boundary rule declares it"],
+      "unknown workspace root rejection");
+    await removeOwnedFixture(unknownRoot, createdFiles);
+    unknownCreated = false;
+
+    // A TS reference without a matching boundary rule must fail closed.
+    const tsconfigPath = resolve(root, "tsconfig.json");
+    const originalTsconfig = await readFile(tsconfigPath, "utf8");
+    try {
+      const mutated = originalTsconfig.replace(
+        `      "path": "packages/ui"`,
+        `      "path": "packages/__eliotr_ts_only__"`,
+      );
+      if (mutated === originalTsconfig) {
+        throw new Error("ui TS reference fixture did not change tsconfig.json");
+      }
+      await writeFile(tsconfigPath, mutated, "utf8");
+      runGateExpectingFailure("scripts/check-boundaries.mjs",
+        ["TypeScript-referenced workspace root has no boundary rule: packages/__eliotr_ts_only__"],
+        "unreferenced TS boundary rejection");
+    } finally {
+      await writeFile(tsconfigPath, originalTsconfig, "utf8");
+    }
+
+    console.log("Owner-web and UI boundary negatives: PASS (backend imports, unknown root, TS reference).");
+  } finally {
+    await cleanup();
+  }
+}
+
+async function proveSourceBudgetEntrypoints() {
+  const uiDir = resolve(root, "packages/ui/src");
+  await mkdir(uiDir, { recursive: true });
+  const oversized = Array.from({ length: 601 }, () => "// ui budget fixture").join("\n");
+  const fixture = resolve(uiDir, "__eliotr_ui_budget__.ts");
+  let created = false;
+  try {
+    await writeFile(fixture, oversized, { flag: "wx" });
+    created = true;
+    runGateExpectingFailure("scripts/check-budgets.mjs",
+      ["packages/ui/src/__eliotr_ui_budget__.ts has 601 lines (max 600)"],
+      "ui source line budget rejection");
+    console.log("Owner-web and UI source budget negatives: PASS.");
+  } finally {
+    if (created) await removeCreatedFile(fixture, oversized);
+  }
+}
+
+await proveWebAndUiBoundariesFailClosed();
+await proveSourceBudgetEntrypoints();

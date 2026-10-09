@@ -126,6 +126,12 @@
     },
     {
       "path": "packages/cloudflare-http-protocol"
+    },
+    {
+      "path": "packages/ui"
+    },
+    {
+      "path": "apps/eliotr-web"
     }
   ]
 }
