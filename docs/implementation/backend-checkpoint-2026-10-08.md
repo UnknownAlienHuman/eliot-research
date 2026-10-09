@@ -8,6 +8,31 @@ evidence and were not merged wholesale. Frontend delivery has a separate owner.
 
 ## Full continuation after the first checkpoint
 
+### October 9 selected transport handoff
+
+Fresh fetch confirms the synthesis handoff `463ceeb3` is published; all four
+accepted backend blobs match remote main. The next isolated source candidate
+forwards the existing selected transport policy from semantic server assembly
+through installed/override synthesis and audit composition, and through the
+existing stage-pinned branch-role prompt. This closes an omission that otherwise
+plans the compatibility envelope while the gateway uses a provider-native one.
+No transport policy, parameters, provider or handler generation is selected here.
+
+Owning TypeScript 6.0.3 passes with zero diagnostics and 3,770 virtual outputs;
+four exact files pass lint. Four new construction-port regressions pass for
+installed/override policy handoff and legacy absent-policy compatibility. The
+first incomplete audit fixture failed strict normalization; that failure is
+retained separately, and the repaired fixture uses the existing normalization,
+verifier and audit-policy contracts. Existing successful compiler/native suites
+were not repeated. Independent Go2/high source review accepts the three exact
+candidate hashes and final regression hash; its temporary-diff and prose scope
+limitations are retained in the private audit receipt. Publication of this
+transport handoff is pending the coordinated main frontier.
+
+The three source postimages are isolated from preserved physical branch-query
+WIP. C1/C2/C5 and complete provider/native/scientific/live/release acceptance
+remain deferred. The Goal and original Issue/PR acceptance stay open.
+
 ### Latest October 9 reviewed publication
 
 Remote `main` readback and fetch divergence are exact/0:0 at

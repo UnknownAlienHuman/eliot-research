@@ -64,6 +64,7 @@ export interface ResearchSemanticInstalledSynthesisPrompt {
   readonly trusted_parameters: TrustedModelPromptParameters;
   /** Selected-model request limits are part of the immutable run configuration. */
   readonly request_capabilities?: ModelGatewayRequestCapabilitiesV1;
+  readonly selected_transport_policy?: ResearchModelPromptCompilerDependencies["selected_transport_policy"];
   readonly request_timeout_ms: number;
   readonly manifest_service?: never;
   readonly build_manifest_input?: never;
@@ -83,6 +84,7 @@ export interface ResearchSemanticInstalledAuditPrompt {
   readonly trusted_parameters: TrustedModelPromptParameters;
   /** Selected-model request limits are part of the immutable run configuration. */
   readonly request_capabilities?: ModelGatewayRequestCapabilitiesV1;
+  readonly selected_transport_policy?: ResearchModelPromptCompilerDependencies["selected_transport_policy"];
   readonly request_timeout_ms: number;
   readonly manifest_service?: never;
   readonly build_manifest_input?: never;

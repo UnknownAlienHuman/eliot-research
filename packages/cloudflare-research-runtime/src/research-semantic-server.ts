@@ -357,7 +357,7 @@ export async function assembleResearchSemanticServerHandlers(
           });
           const selected = stageModelBindings.branch_transport_for_stage?.(stage);
           if (selected === undefined) configurationInvalid();
-          return { ...prompt, request_capabilities: selected.request_capabilities };
+          return { ...prompt, request_capabilities: selected.request_capabilities, selected_transport_policy: selected.transport_policy };
         },
       }),
       pricing: rolePricing,
@@ -406,6 +406,7 @@ export async function assembleResearchSemanticServerHandlers(
           trusted_parameters: researchSemanticPromptParameters(config.synthesis.trusted_parameters),
           request_timeout_ms: config.synthesis.request_timeout_ms,
           ...(synthesisTransport === undefined ? {} : { request_capabilities: synthesisTransport.request_capabilities }),
+          ...(synthesisTransport === undefined ? {} : { selected_transport_policy: synthesisTransport.transport_policy }),
         },
         spend_authorization: spend.admissions,
         prepare: async (context, frozen) => {
@@ -419,6 +420,7 @@ export async function assembleResearchSemanticServerHandlers(
           trusted_parameters: researchSemanticPromptParameters(config.audit.trusted_parameters),
           request_timeout_ms: config.audit.request_timeout_ms,
           ...(auditTransport === undefined ? {} : { request_capabilities: auditTransport.request_capabilities }),
+          ...(auditTransport === undefined ? {} : { selected_transport_policy: auditTransport.transport_policy }),
         },
         spend_authorization: spend.admissions,
         prepare: async (context, audit) => {

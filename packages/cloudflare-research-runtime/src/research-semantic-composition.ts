@@ -106,6 +106,7 @@ function composeSynthesisPrompt(
       request_timeout_ms: prompt.request_timeout_ms,
       }),
       ...(prompt.request_capabilities === undefined ? {} : { request_capabilities: prompt.request_capabilities }),
+      ...(prompt.selected_transport_policy === undefined ? {} : { selected_transport_policy: prompt.selected_transport_policy }),
     });
   }
   return Object.freeze({
@@ -113,6 +114,7 @@ function composeSynthesisPrompt(
     build_manifest_input: prompt.build_manifest_input,
     resolve_trusted_parameters: prompt.resolve_trusted_parameters,
     ...(prompt.request_capabilities === undefined ? {} : { request_capabilities: prompt.request_capabilities }),
+    ...(prompt.selected_transport_policy === undefined ? {} : { selected_transport_policy: prompt.selected_transport_policy }),
     request_timeout_ms: prompt.request_timeout_ms,
   });
 }
@@ -140,6 +142,7 @@ function composeAuditPrompt(
       request_timeout_ms: prompt.request_timeout_ms,
       }),
       ...(prompt.request_capabilities === undefined ? {} : { request_capabilities: prompt.request_capabilities }),
+      ...(prompt.selected_transport_policy === undefined ? {} : { selected_transport_policy: prompt.selected_transport_policy }),
     });
   }
   return Object.freeze({
@@ -147,6 +150,7 @@ function composeAuditPrompt(
     build_manifest_input: prompt.build_manifest_input,
     resolve_trusted_parameters: prompt.resolve_trusted_parameters,
     ...(prompt.request_capabilities === undefined ? {} : { request_capabilities: prompt.request_capabilities }),
+    ...(prompt.selected_transport_policy === undefined ? {} : { selected_transport_policy: prompt.selected_transport_policy }),
     request_timeout_ms: prompt.request_timeout_ms,
   });
 }
