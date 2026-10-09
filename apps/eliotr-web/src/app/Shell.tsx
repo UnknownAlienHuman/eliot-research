@@ -4,6 +4,7 @@ import { Button, MaterialSymbol, Status } from "@eliotr/ui";
 import type { MaterialSymbolName } from "@eliotr/ui";
 import { destinations, workspacePath, decodeWorkspaceLocation } from "../routes/location";
 import type { PrivacyController } from "./privacy";
+import { FixtureWorkspace } from "./FixtureWorkspace";
 import "./shell.css";
 
 const copy = {
@@ -46,7 +47,7 @@ export function Shell({ privacy, fixture }: { readonly privacy: PrivacyControlle
       <nav className="er-shell-nav" aria-label={text.scope}>
         {destinations.map(item => <NavLink key={item} to={workspacePath(item)} className="er-shell-destination"><span><MaterialSymbol name={icons[item]} /></span>{text[item]}</NavLink>)}
       </nav>
-      <aside className="er-shell-sources" hidden={destination !== "research"} aria-label={text.sources}>
+      {fixture ? <FixtureWorkspace destination={destination} locale={locale} headingRef={heading} /> : <><aside className="er-shell-sources" hidden={destination !== "research"} aria-label={text.sources}>
         <h2>{text.sources}</h2><Status>{text.list}</Status><p>{text.sourceBody}</p>
         <NavLink className="er-shell-link" to="/sources">{text.sources}</NavLink>
       </aside>
@@ -57,6 +58,7 @@ export function Shell({ privacy, fixture }: { readonly privacy: PrivacyControlle
         <div className="er-shell-empty"><MaterialSymbol name={icons[destination]} /><h2>{body}</h2>{destination !== "connections" && <NavLink className="er-shell-link" to="/connections">{text.review}</NavLink>}</div>
         {fixture && <p className="er-shell-note">{text.note}</p>}
       </main>
+      </>}
     </div>
   );
 }

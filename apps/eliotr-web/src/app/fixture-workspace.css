@@ -1,0 +1,12 @@
+.er-fixture-workspace { display: contents; }
+.er-fixture-project { display: flex; align-items: center; gap: var(--eliot-space-panel); margin-block-end: var(--eliot-space-panel); }
+.er-fixture-project label { display: grid; gap: var(--eliot-space-block-control); min-width: 0; max-width: 100%; color: var(--md-sys-color-on-surface-variant); font-size: var(--eliot-type-label-medium-size); }
+.er-fixture-project select { width: 100%; min-width: 0; max-width: 100%; min-height: var(--eliot-size-touch-target); font: inherit; color: var(--md-sys-color-on-surface); background: var(--md-sys-color-surface-container); border: var(--eliot-divider-width) solid var(--md-sys-color-outline); border-radius: var(--eliot-shape-small); padding-inline: var(--eliot-space-inline-control); }
+.er-fixture-workspace .er-shell-reading > h1 { font-size: var(--eliot-type-headline-small-size); line-height: var(--eliot-type-headline-small-line-height); }
+.er-fixture-workspace .er-shell-reading > section { max-width: var(--eliot-layout-reading-max); margin-inline: auto; }
+.er-fixture-original { display: grid; gap: var(--eliot-space-block-control); margin-block-start: var(--eliot-space-section); color: var(--md-sys-color-on-surface-variant); font-size: var(--eliot-type-body-small-size); }
+.er-fixture-scope { margin-block-end: var(--eliot-space-panel) !important; color: var(--md-sys-color-on-surface-variant); font-size: var(--eliot-type-label-medium-size); }
+.er-fixture-note { margin-block-start: var(--eliot-space-section) !important; }
+.er-fixture-evidence-label { color: var(--md-sys-color-on-surface-variant); font-size: var(--eliot-type-label-medium-size); }
+.er-fixture-excerpt { margin: 0; padding-inline-start: var(--eliot-space-panel); border-inline-start: var(--eliot-focus-width) solid var(--md-sys-color-outline); font-size: var(--eliot-type-reading-size); line-height: var(--eliot-type-reading-line-height); }
+.er-fixture-context { padding: var(--eliot-space-panel); background: var(--md-sys-color-surface-container); border-radius: var(--eliot-shape-medium); }
