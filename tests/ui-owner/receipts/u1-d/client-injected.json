@@ -1,0 +1,11 @@
+{
+  "protocol": "eliotr.owner-client-transport-acceptance.v1",
+  "checkpoint": "C1.3",
+  "claim_id": "c1-3-injected-client-20261009",
+  "source_commit": "b3e3a681b9810c413a649878cc3d9ad8fff585a0",
+  "predecessors": ["7bf931b112c4f4e0e5b2ed436b1e69e1da267668", "e1a400533ef113b486165b96fa7fa8be53866cce"],
+  "verification": "17 focused client+epoch tests PASS; owning compiler and exact4file lint PASS. Network/caller/deadline/interrupted body causes distinct; first reason retained under hostile cancel; normal injected timer/listener cleanup; never-ending fetch/dispose settle; old-session success rejected; frozen media, protectedheaders and exact Range/conditional validated.",
+  "imports": "No React/Query/renderer/global event/global fetch or browser persistence. Construction requires explicit fetch, trusted origin, timers and optional epoch/observation ports; requests remain root-relative. No retry or generated operation identity.",
+  "review": "Manager reviewed actual source and repaired broken epoch/test draft; private causal audit .eliotr-state/frontend-bootstrap/c1-3-audit.md. Intermediate Step audit suggestions were checked against final control flow and rejected.",
+  "limits": ["Injected timer cancellation is an explicit trusted port, not inferred from type declarations", "C1.4 legacy integration and C2/C3 feature decoders remain pending", "No root exports changed and no full frontend/native/live/release acceptance claimed"]
+}

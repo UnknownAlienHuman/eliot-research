@@ -19,7 +19,9 @@
     { "checkpoint_id": "C1.1", "commit_sha": "7bf931b112c4f4e0e5b2ed436b1e69e1da267668" },
     { "checkpoint_id": "C1.2", "commit_sha": "e1a400533ef113b486165b96fa7fa8be53866cce" }
   ],
-  "state": "ACTIVE",
-  "evidence_refs": [],
+  "state": "HANDED_OFF",
+  "handoff_reason": "COMPLETED",
+  "handoff_receipt_ref": "tests/ui-owner/receipts/u1-d/client-injected.json",
+  "evidence_refs": ["git:b3e3a681b9810c413a649878cc3d9ad8fff585a0;17focusedcases owningcompiler exactlintPASS"],
   "blocker_refs": []
 }
