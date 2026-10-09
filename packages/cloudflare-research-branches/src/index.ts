@@ -3,6 +3,13 @@ export * from "./research-branch-execution-context.js";
 export * from "./research-branch-execution-results.js";
 export * from "./research-branch-execution-shared.js";
 export * from "./research-branch-role-model.js";
+export {
+  branchQueryPromptContextFromReadExtract,
+  createResearchBranchRolePromptDependencies,
+} from "./research-branch-role-prompt.js";
+export type { ResearchBranchRolePromptDependenciesInput } from "./research-branch-role-prompt.js";
+export { createResearchBranchRoleServerPromptInput } from "./research-branch-role-server-prompt.js";
+export type { ResearchBranchRoleServerPromptInput } from "./research-branch-role-server-prompt.js";
 export * from "./research-branch-role-output.js";
 export * from "./research-branch-role-preparation.js";
 export * from "./research-branch-role-server-preparation.js";

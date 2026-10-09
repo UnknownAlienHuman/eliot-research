@@ -3,6 +3,7 @@ import {
   EvidenceContextBlockSchema,
   ResolvedEvidenceSchema,
   SelectionIntegrityReceiptSchema,
+  VersionedRefSchema,
   type AllowedReferenceManifest,
   type EvidenceContextBlock,
   type ResolvedEvidence,
@@ -15,16 +16,35 @@ export interface ContextCompilationInput {
   readonly evidence: readonly ResolvedEvidence[];
   readonly modelRouteRef: string;
   readonly maxBytes: number;
+  /** Server-composed mandatory handles. Never derive these from candidate prose. */
+  readonly requiredHandleRefs?: readonly VersionedRef[];
+  /** UTF-8 bytes reserved for the server-owned message wrapper. */
+  readonly wrapperReserveUtf8Bytes?: number;
+  /** UTF-8 bytes reserved for the server-owned output schema. */
+  readonly schemaReserveUtf8Bytes?: number;
+  /** Returns the exact canonical model request body; when supplied, it replaces fixed reserves. */
+  readonly serializeRequestBody?: ContextRequestBodySerializer;
 }
 
 export interface CompiledEvidenceContext {
   readonly blocks: readonly EvidenceContextBlock[];
   readonly manifest_ref: VersionedRef;
+  /** Exact UTF-8 bytes of the serialized request when projected, otherwise blocks plus legacy reserves. */
   readonly total_utf8_bytes: number;
   readonly selection_receipt: SelectionIntegrityReceipt;
   readonly system_instructions: readonly string[];
   readonly source_text_in_system_fields: false;
 }
+
+/** Exact request projection supplied to the planner before candidate membership is finalized. */
+export interface ContextRequestProjection {
+  readonly blocks: readonly EvidenceContextBlock[];
+  readonly manifest_ref: VersionedRef;
+  readonly selection_receipt: SelectionIntegrityReceipt;
+  readonly system_instructions: readonly string[];
+}
+
+export type ContextRequestBodySerializer = (projection: ContextRequestProjection) => string;
 
 export interface EvidenceContextCompiler {
   compile(input: ContextCompilationInput): Promise<CompiledEvidenceContext>;
@@ -32,6 +52,68 @@ export interface EvidenceContextCompiler {
 
 export interface EvidenceContextCompilerDependencies {
   readonly now?: () => number;
+}
+
+export type ContextCompilationBlockerReason =
+  | "REQUIRED_HANDLE_NOT_ALLOWLISTED"
+  | "REQUIRED_HANDLE_STALE_OR_REVOKED"
+  | "REQUIRED_EVIDENCE_MISSING"
+  | "REQUIRED_EVIDENCE_INTEGRITY_FAILED"
+  | "REQUIRED_SOURCE_REVISION_NOT_ALLOWLISTED"
+  | "REQUIRED_SCOPE_SNAPSHOT_MISMATCH"
+  | "REQUIRED_CLIENT_FENCE_MISMATCH"
+  | "REQUIRED_CONTEXT_BYTE_BUDGET_EXCEEDED"
+  | "CONTEXT_ENVELOPE_BYTE_BUDGET_EXCEEDED";
+
+export interface ContextCompilationBlocker {
+  readonly handle_ref: VersionedRef | null;
+  readonly reason_code: ContextCompilationBlockerReason;
+}
+
+/** Required context failed closed. The existing selection receipt remains the membership record. */
+export class ContextCompilationBlockedError extends Error {
+  public readonly code = "CONTEXT_COMPILATION_BLOCKED" as const;
+  public readonly blockers: readonly ContextCompilationBlocker[];
+  public readonly selection_receipt: SelectionIntegrityReceipt;
+
+  public constructor(
+    blockers: readonly ContextCompilationBlocker[],
+    selectionReceipt: SelectionIntegrityReceipt,
+  ) {
+    super("Required evidence context could not be compiled");
+    this.name = "ContextCompilationBlockedError";
+    this.blockers = Object.freeze(blockers.map((blocker) => Object.freeze({
+      handle_ref: blocker.handle_ref === null ? null : Object.freeze({ ...blocker.handle_ref }),
+      reason_code: blocker.reason_code,
+    })));
+    this.selection_receipt = selectionReceipt;
+  }
+}
+
+interface PreparedEvidenceCandidate {
+  readonly index: number;
+  readonly ref: string;
+  readonly evidence: ResolvedEvidence | null;
+}
+
+interface ContextCandidatePlan {
+  readonly index: number;
+  readonly ref: string;
+  readonly required: boolean;
+  readonly evidence: ResolvedEvidence | null;
+  block?: EvidenceContextBlock;
+  rejectionReason?: string;
+}
+
+type PlannedEvidenceBlock = ContextCandidatePlan & { readonly block: EvidenceContextBlock };
+type RejectedContextCandidate = ContextCandidatePlan & { readonly rejectionReason: string };
+
+function hasBlock(plan: ContextCandidatePlan): plan is PlannedEvidenceBlock {
+  return plan.block !== undefined;
+}
+
+function hasRejection(plan: ContextCandidatePlan): plan is RejectedContextCandidate {
+  return plan.rejectionReason !== undefined;
 }
 
 const encoder = new TextEncoder();
@@ -58,13 +140,14 @@ function manifestDigestPayload(manifest: AllowedReferenceManifest): unknown {
   return payload;
 }
 
-async function verifyManifest(manifest: AllowedReferenceManifest, now: number): Promise<void> {
+async function verifyManifest(manifest: AllowedReferenceManifest, now: number): Promise<AllowedReferenceManifest> {
   const parsed = AllowedReferenceManifestSchema.parse(manifest);
   if (Date.parse(parsed.expires_at) <= now) throw new Error("REFERENCE_MANIFEST_EXPIRED");
   const digest = await sha256(canonical(manifestDigestPayload(parsed)));
   if (!SHA256.test(parsed.manifest_digest) || digest !== parsed.manifest_digest) {
     throw new Error("REFERENCE_MANIFEST_DIGEST_MISMATCH");
   }
+  return parsed;
 }
 
 async function verifyResolvedEvidence(value: ResolvedEvidence): Promise<ResolvedEvidence> {
@@ -91,6 +174,72 @@ function safeSystemInstructions(): readonly string[] {
   ];
 }
 
+function reserveBytes(value: number | undefined, label: string): number {
+  if (value === undefined) return 0;
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new RangeError(`${label} must be a non-negative safe integer`);
+  }
+  return value;
+}
+
+function serializedBlockListBytes(blocks: readonly EvidenceContextBlock[]): number {
+  return encoder.encode(JSON.stringify(blocks)).byteLength;
+}
+
+async function buildSelectionReceipt(input: {
+  readonly manifest: AllowedReferenceManifest;
+  readonly modelRouteRef: string;
+  readonly candidateRefs: readonly string[];
+  readonly admittedRefs: readonly string[];
+  readonly rejected: readonly { readonly ref: string; readonly reason_code: string }[];
+  readonly createdAt: string;
+  readonly policyGeneration?: string;
+}): Promise<SelectionIntegrityReceipt> {
+  const policyGeneration = input.policyGeneration ??
+    `policy-${(await sha256(canonical(input.manifest.provider_and_policy_generations))).slice(0, 32)}`;
+  const receiptPayload = {
+    manifest_ref: input.manifest.manifest_ref,
+    model_route_ref: input.modelRouteRef,
+    input_candidate_refs: input.candidateRefs,
+    admitted_candidate_refs: input.admittedRefs,
+    rejected_candidates: input.rejected,
+    policy_generation: policyGeneration,
+    created_at: input.createdAt,
+  };
+  const receiptDigest = await sha256(canonical(receiptPayload));
+  return SelectionIntegrityReceiptSchema.parse({
+    receipt_ref: { id: `selection-${receiptDigest.slice(0, 48)}`, revision: 1 },
+    operation_kind: "CONTEXT_COMPILE",
+    input_candidate_refs: input.candidateRefs,
+    admitted_candidate_refs: input.admittedRefs,
+    rejected_candidates: input.rejected,
+    untrusted_structure_changed_membership: false,
+    policy_generation: receiptPayload.policy_generation,
+    created_at: input.createdAt,
+  });
+}
+
+async function buildBlockedError(input: {
+  readonly manifest: AllowedReferenceManifest;
+  readonly modelRouteRef: string;
+  readonly candidateRefs: readonly string[];
+  readonly rejected: readonly { readonly ref: string; readonly reason_code: string }[];
+  readonly blockers: readonly ContextCompilationBlocker[];
+  readonly createdAt: string;
+  readonly policyGeneration?: string;
+}): Promise<ContextCompilationBlockedError> {
+  const selectionReceipt = await buildSelectionReceipt({
+    manifest: input.manifest,
+    modelRouteRef: input.modelRouteRef,
+    candidateRefs: input.candidateRefs,
+    admittedRefs: [],
+    rejected: input.rejected,
+    createdAt: input.createdAt,
+    ...(input.policyGeneration === undefined ? {} : { policyGeneration: input.policyGeneration }),
+  });
+  return new ContextCompilationBlockedError(input.blockers, selectionReceipt);
+}
+
 export function createEvidenceContextCompiler(
   dependencies: EvidenceContextCompilerDependencies = {},
 ): EvidenceContextCompiler {
@@ -100,55 +249,113 @@ export function createEvidenceContextCompiler(
       if (!Number.isSafeInteger(input.maxBytes) || input.maxBytes < 1) {
         throw new RangeError("maxBytes must be a positive safe integer");
       }
+      if (!Array.isArray(input.evidence)) throw new TypeError("evidence must be an array");
+      if (input.requiredHandleRefs !== undefined && !Array.isArray(input.requiredHandleRefs)) {
+        throw new TypeError("requiredHandleRefs must be an array");
+      }
+      if (input.serializeRequestBody !== undefined && typeof input.serializeRequestBody !== "function") {
+        throw new TypeError("serializeRequestBody must be a function");
+      }
+      const wrapperReserveUtf8Bytes = reserveBytes(input.wrapperReserveUtf8Bytes, "wrapperReserveUtf8Bytes");
+      const schemaReserveUtf8Bytes = reserveBytes(input.schemaReserveUtf8Bytes, "schemaReserveUtf8Bytes");
+      if (!Number.isSafeInteger(wrapperReserveUtf8Bytes + schemaReserveUtf8Bytes)) {
+        throw new RangeError("context byte reserves exceed the safe integer range");
+      }
+      const requiredHandleRefs = Object.freeze((input.requiredHandleRefs ?? []).map((rawRef) =>
+        VersionedRefSchema.parse(rawRef)));
+      const requiredByKey = new Map<string, VersionedRef>();
+      for (const ref of requiredHandleRefs) {
+        const key = refKey(ref);
+        if (requiredByKey.has(key)) throw new TypeError("requiredHandleRefs must be unique");
+        requiredByKey.set(key, ref);
+      }
+      const prepared: Readonly<{
+        manifest: AllowedReferenceManifest;
+        evidence: readonly PreparedEvidenceCandidate[];
+        modelRouteRef: string;
+        maxBytes: number;
+        requiredHandleRefs: readonly VersionedRef[];
+        wrapperReserveUtf8Bytes: number;
+        schemaReserveUtf8Bytes: number;
+        serializeRequestBody?: ContextRequestBodySerializer;
+      }> = Object.freeze({
+        manifest: AllowedReferenceManifestSchema.parse(input.manifest),
+        evidence: Object.freeze(input.evidence.map((rawEvidence, index) => {
+          const parsed = ResolvedEvidenceSchema.safeParse(rawEvidence);
+          return Object.freeze(parsed.success
+            ? { index, ref: refKey(parsed.data.handle.handle_ref), evidence: parsed.data }
+            : { index, ref: `invalid-evidence-${index + 1}`, evidence: null });
+        })),
+        modelRouteRef: input.modelRouteRef,
+        maxBytes: input.maxBytes,
+        requiredHandleRefs,
+        wrapperReserveUtf8Bytes,
+        schemaReserveUtf8Bytes,
+        ...(input.serializeRequestBody === undefined ? {} : { serializeRequestBody: input.serializeRequestBody }),
+      });
       const observedAt = now();
       if (!Number.isSafeInteger(observedAt) || observedAt < 0) {
         throw new RangeError("context compiler clock is invalid");
       }
-      await verifyManifest(input.manifest, observedAt);
-      const allowedHandles = new Set(input.manifest.allowed_evidence_handle_refs.map(refKey));
-      const allowedSources = new Set(input.manifest.allowed_source_revision_refs);
-      const staleOrRevoked = new Set(input.manifest.stale_or_revoked_entries);
-      const scopeKey = refKey(input.manifest.scope_snapshot_ref);
-      const candidateRefs: string[] = [];
-      const admittedRefs: string[] = [];
-      const rejected: { ref: string; reason_code: string }[] = [];
-      const blocks: EvidenceContextBlock[] = [];
-      let totalBytes = 0;
+      const manifest = await verifyManifest(prepared.manifest, observedAt);
+      const policyGeneration = `policy-${(await sha256(canonical(manifest.provider_and_policy_generations))).slice(0, 32)}`;
+      const allowedHandles = new Set(manifest.allowed_evidence_handle_refs.map(refKey));
+      const allowedSources = new Set(manifest.allowed_source_revision_refs);
+      const staleOrRevoked = new Set(manifest.stale_or_revoked_entries);
+      const scopeKey = refKey(manifest.scope_snapshot_ref);
+      const plans: ContextCandidatePlan[] = prepared.evidence.map((candidate) => ({
+        index: candidate.index,
+        ref: candidate.ref,
+        required: requiredByKey.has(candidate.ref),
+        evidence: candidate.evidence,
+        ...(candidate.evidence === null ? { rejectionReason: "EVIDENCE_CONTRACT_INVALID" } : {}),
+      }));
+      const parsedCandidateRefs = new Set(prepared.evidence
+        .filter((candidate) => candidate.evidence !== null)
+        .map((candidate) => candidate.ref));
+      const blockers: ContextCompilationBlocker[] = [];
+      const blockerKeys = new Set<string>();
+      const addBlocker = (handleRef: VersionedRef | null, reasonCode: ContextCompilationBlockerReason): void => {
+        const key = `${handleRef === null ? "<envelope>" : refKey(handleRef)}:${reasonCode}`;
+        if (blockerKeys.has(key)) return;
+        blockerKeys.add(key);
+        blockers.push({ handle_ref: handleRef, reason_code: reasonCode });
+      };
 
-      for (const rawEvidence of input.evidence) {
-        const parsed = ResolvedEvidenceSchema.safeParse(rawEvidence);
-        const candidateRef = parsed.success
-          ? refKey(parsed.data.handle.handle_ref)
-          : `invalid-evidence-${candidateRefs.length + 1}`;
-        candidateRefs.push(candidateRef);
-        if (!parsed.success) {
-          rejected.push({ ref: candidateRef, reason_code: "EVIDENCE_CONTRACT_INVALID" });
-          continue;
-        }
+      for (const plan of plans) {
+        if (plan.evidence === null) continue;
+        const candidateRef = plan.ref;
+        const requiredRef = plan.required ? requiredByKey.get(candidateRef) : undefined;
         let evidence: ResolvedEvidence;
-        try { evidence = await verifyResolvedEvidence(parsed.data); }
+        try { evidence = await verifyResolvedEvidence(plan.evidence); }
         catch {
-          rejected.push({ ref: candidateRef, reason_code: "EVIDENCE_INTEGRITY_FAILED" });
+          plan.rejectionReason = "EVIDENCE_INTEGRITY_FAILED";
+          if (requiredRef !== undefined) addBlocker(requiredRef, "REQUIRED_EVIDENCE_INTEGRITY_FAILED");
           continue;
         }
         if (!allowedHandles.has(candidateRef) || staleOrRevoked.has(candidateRef)) {
-          rejected.push({ ref: candidateRef, reason_code: "EVIDENCE_NOT_ALLOWLISTED" });
+          plan.rejectionReason = "EVIDENCE_NOT_ALLOWLISTED";
+          if (requiredRef !== undefined) addBlocker(requiredRef,
+            staleOrRevoked.has(candidateRef) ? "REQUIRED_HANDLE_STALE_OR_REVOKED" : "REQUIRED_HANDLE_NOT_ALLOWLISTED");
           continue;
         }
         if (!allowedSources.has(evidence.handle.source_revision_ref)) {
-          rejected.push({ ref: candidateRef, reason_code: "SOURCE_REVISION_NOT_ALLOWLISTED" });
+          plan.rejectionReason = "SOURCE_REVISION_NOT_ALLOWLISTED";
+          if (requiredRef !== undefined) addBlocker(requiredRef, "REQUIRED_SOURCE_REVISION_NOT_ALLOWLISTED");
           continue;
         }
         if (refKey(evidence.handle.scope_snapshot_ref) !== scopeKey) {
-          rejected.push({ ref: candidateRef, reason_code: "SCOPE_SNAPSHOT_MISMATCH" });
+          plan.rejectionReason = "SCOPE_SNAPSHOT_MISMATCH";
+          if (requiredRef !== undefined) addBlocker(requiredRef, "REQUIRED_SCOPE_SNAPSHOT_MISMATCH");
           continue;
         }
-        if (input.manifest.client_fence_ref !== undefined &&
-            input.manifest.client_fence_ref !== evidence.credential_generation) {
-          rejected.push({ ref: candidateRef, reason_code: "CLIENT_FENCE_MISMATCH" });
+        if (manifest.client_fence_ref !== undefined &&
+            manifest.client_fence_ref !== evidence.credential_generation) {
+          plan.rejectionReason = "CLIENT_FENCE_MISMATCH";
+          if (requiredRef !== undefined) addBlocker(requiredRef, "REQUIRED_CLIENT_FENCE_MISMATCH");
           continue;
         }
-        const block = EvidenceContextBlockSchema.parse({
+        plan.block = EvidenceContextBlockSchema.parse({
           evidence_handle_ref: evidence.handle.handle_ref,
           source_revision_ref: evidence.handle.source_revision_ref,
           instruction_taint: evidence.instruction_taint,
@@ -156,48 +363,208 @@ export function createEvidenceContextCompiler(
           quoted_content: evidence.exact_excerpt,
           excerpt_sha256: evidence.handle.excerpt_sha256,
         });
-        const blockBytes = encoder.encode(JSON.stringify(block)).byteLength;
-        if (totalBytes + blockBytes > input.maxBytes) {
-          rejected.push({ ref: candidateRef, reason_code: "CONTEXT_BYTE_BUDGET_EXCEEDED" });
-          continue;
-        }
-        blocks.push(block);
-        admittedRefs.push(candidateRef);
-        totalBytes += blockBytes;
       }
 
+      for (const requiredRef of prepared.requiredHandleRefs) {
+        const key = refKey(requiredRef);
+        if (parsedCandidateRefs.has(key)) continue;
+        let reason: ContextCompilationBlockerReason;
+        let receiptReason: string;
+        if (!allowedHandles.has(key)) {
+          reason = "REQUIRED_HANDLE_NOT_ALLOWLISTED";
+          receiptReason = reason;
+        } else if (staleOrRevoked.has(key)) {
+          reason = "REQUIRED_HANDLE_STALE_OR_REVOKED";
+          receiptReason = reason;
+        } else {
+          reason = "REQUIRED_EVIDENCE_MISSING";
+          receiptReason = reason;
+        }
+        appendRequiredReceiptCandidate(plans, key, receiptReason);
+        addBlocker(requiredRef, reason);
+      }
+
+      const baseBytes = prepared.wrapperReserveUtf8Bytes + prepared.schemaReserveUtf8Bytes;
+      const candidateRefs = plans.map((plan) => plan.ref);
       const createdAt = new Date(observedAt).toISOString();
-      const policyGenerationDigest = await sha256(canonical(input.manifest.provider_and_policy_generations));
-      const receiptPayload = {
-        manifest_ref: input.manifest.manifest_ref,
-        model_route_ref: input.modelRouteRef,
-        input_candidate_refs: candidateRefs,
-        admitted_candidate_refs: admittedRefs,
-        rejected_candidates: rejected,
-        policy_generation: `policy-${policyGenerationDigest.slice(0, 32)}`,
-        created_at: createdAt,
+      const systemInstructions = Object.freeze([...safeSystemInstructions()]);
+      const blockedRejections = (excludedIndex?: number): { readonly ref: string; readonly reason_code: string }[] => plans
+        .filter((plan): plan is RejectedContextCandidate => plan.index !== excludedIndex && hasRejection(plan))
+        .map((plan) => ({ ref: plan.ref, reason_code: plan.rejectionReason }));
+      const selectedRefs = (indexes: ReadonlySet<number>): string[] => plans
+        .filter((plan) => indexes.has(plan.index))
+        .map((plan) => plan.ref);
+      const blocksFor = (indexes: ReadonlySet<number>): EvidenceContextBlock[] => plans
+        .filter((plan): plan is PlannedEvidenceBlock => indexes.has(plan.index) && hasBlock(plan))
+        .map((plan) => plan.block);
+      const measureRequestBytes = (
+        blocks: readonly EvidenceContextBlock[],
+        selectionReceipt: SelectionIntegrityReceipt,
+      ): number => {
+        if (prepared.serializeRequestBody === undefined) {
+          return baseBytes + serializedBlockListBytes(blocks);
+        }
+        const serializedBody = prepared.serializeRequestBody(Object.freeze({
+          blocks: Object.freeze([...blocks]),
+          manifest_ref: manifest.manifest_ref,
+          selection_receipt: selectionReceipt,
+          system_instructions: systemInstructions,
+        }));
+        if (typeof serializedBody !== "string") {
+          throw new TypeError("serializeRequestBody must return a string");
+        }
+        return encoder.encode(serializedBody).byteLength;
       };
-      const receiptDigest = await sha256(canonical(receiptPayload));
-      const selectionReceipt = SelectionIntegrityReceiptSchema.parse({
-        receipt_ref: { id: `selection-${receiptDigest.slice(0, 48)}`, revision: 1 },
-        operation_kind: "CONTEXT_COMPILE",
-        input_candidate_refs: candidateRefs,
-        admitted_candidate_refs: admittedRefs,
-        rejected_candidates: rejected,
-        untrusted_structure_changed_membership: false,
-        policy_generation: receiptPayload.policy_generation,
-        created_at: createdAt,
+      if (blockers.length > 0) {
+        for (const plan of plans) {
+          if (plan.block !== undefined && plan.rejectionReason === undefined) {
+            plan.rejectionReason = "CONTEXT_BLOCKED_BY_REQUIRED_EVIDENCE";
+          }
+        }
+        throw await buildBlockedError({
+          manifest,
+          modelRouteRef: prepared.modelRouteRef,
+          candidateRefs,
+          rejected: blockedRejections(),
+          blockers,
+          createdAt,
+          policyGeneration,
+        });
+      }
+
+      const requiredPlans = plans.filter(
+        (plan): plan is PlannedEvidenceBlock => plan.required && hasBlock(plan),
+      );
+      const requiredBlocks = requiredPlans.map((plan) => plan.block);
+      if (prepared.serializeRequestBody === undefined &&
+          baseBytes + serializedBlockListBytes(requiredBlocks) > prepared.maxBytes) {
+        if (requiredPlans.length === 0) {
+          addBlocker(null, "CONTEXT_ENVELOPE_BYTE_BUDGET_EXCEEDED");
+          for (const plan of plans) {
+            if (plan.block !== undefined) plan.rejectionReason = "CONTEXT_BYTE_BUDGET_EXCEEDED";
+          }
+        } else {
+          for (const plan of requiredPlans) {
+            plan.rejectionReason = "REQUIRED_CONTEXT_BYTE_BUDGET_EXCEEDED";
+            const requiredRef = requiredByKey.get(plan.ref);
+            if (requiredRef === undefined) {
+              throw new Error("Required context plan lost its server-owned handle reference");
+            }
+            addBlocker(requiredRef, "REQUIRED_CONTEXT_BYTE_BUDGET_EXCEEDED");
+          }
+          for (const plan of plans) {
+            if (!plan.required && plan.block !== undefined) {
+              plan.rejectionReason = "CONTEXT_BLOCKED_BY_REQUIRED_EVIDENCE";
+            }
+          }
+        }
+        throw await buildBlockedError({
+          manifest,
+          modelRouteRef: prepared.modelRouteRef,
+          candidateRefs,
+          rejected: blockedRejections(),
+          blockers,
+          createdAt,
+          policyGeneration,
+        });
+      }
+
+      const selectedIndexes = new Set(requiredPlans.map((plan) => plan.index));
+      for (const plan of plans) {
+        if (!plan.required && plan.block !== undefined) {
+          plan.rejectionReason = "CONTEXT_BYTE_BUDGET_EXCEEDED";
+        }
+      }
+      for (const plan of plans) {
+        if (plan.required || plan.block === undefined) continue;
+        const trialIndexes = new Set(selectedIndexes);
+        trialIndexes.add(plan.index);
+        const trialBlocks = blocksFor(trialIndexes);
+        if (prepared.serializeRequestBody === undefined) {
+          if (baseBytes + serializedBlockListBytes(trialBlocks) > prepared.maxBytes) continue;
+        } else {
+          const trialReceipt = await buildSelectionReceipt({
+            manifest,
+            modelRouteRef: prepared.modelRouteRef,
+            candidateRefs,
+            admittedRefs: selectedRefs(trialIndexes),
+            rejected: blockedRejections(plan.index),
+            createdAt,
+            policyGeneration,
+          });
+          if (measureRequestBytes(trialBlocks, trialReceipt) > prepared.maxBytes) continue;
+        }
+        selectedIndexes.add(plan.index);
+        delete plan.rejectionReason;
+      }
+      const blocks = blocksFor(selectedIndexes);
+      const admittedRefs = selectedRefs(selectedIndexes);
+      const rejected = blockedRejections();
+      const selectionReceipt = await buildSelectionReceipt({
+        manifest,
+        modelRouteRef: prepared.modelRouteRef,
+        candidateRefs,
+        admittedRefs,
+        rejected,
+        createdAt,
+        policyGeneration,
       });
+      const totalBytes = measureRequestBytes(blocks, selectionReceipt);
+      if (totalBytes > prepared.maxBytes) {
+        if (requiredPlans.length === 0) {
+          addBlocker(null, "CONTEXT_ENVELOPE_BYTE_BUDGET_EXCEEDED");
+          for (const plan of plans) {
+            if (plan.block !== undefined) plan.rejectionReason = "CONTEXT_BYTE_BUDGET_EXCEEDED";
+          }
+        } else {
+          for (const plan of requiredPlans) {
+            plan.rejectionReason = "REQUIRED_CONTEXT_BYTE_BUDGET_EXCEEDED";
+            const requiredRef = requiredByKey.get(plan.ref);
+            if (requiredRef === undefined) {
+              throw new Error("Required context plan lost its server-owned handle reference");
+            }
+            addBlocker(requiredRef, "REQUIRED_CONTEXT_BYTE_BUDGET_EXCEEDED");
+          }
+          for (const plan of plans) {
+            if (!plan.required && plan.block !== undefined && selectedIndexes.has(plan.index)) {
+              plan.rejectionReason = "CONTEXT_BLOCKED_BY_REQUIRED_EVIDENCE";
+            }
+          }
+        }
+        throw await buildBlockedError({
+          manifest,
+          modelRouteRef: prepared.modelRouteRef,
+          candidateRefs,
+          rejected: blockedRejections(),
+          blockers,
+          createdAt,
+          policyGeneration,
+        });
+      }
       return {
         blocks,
-        manifest_ref: input.manifest.manifest_ref,
+        manifest_ref: manifest.manifest_ref,
         total_utf8_bytes: totalBytes,
         selection_receipt: selectionReceipt,
-        system_instructions: safeSystemInstructions(),
+        system_instructions: systemInstructions,
         source_text_in_system_fields: false,
       };
     },
   };
+}
+
+function appendRequiredReceiptCandidate(
+  plans: ContextCandidatePlan[],
+  ref: string,
+  receiptReason: string,
+): void {
+  plans.push({
+    index: plans.length,
+    ref,
+    required: true,
+    evidence: null,
+    rejectionReason: receiptReason,
+  });
 }
 
 export const CONTEXT_COMPILER_INVARIANTS = [

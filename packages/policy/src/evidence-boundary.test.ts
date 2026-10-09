@@ -2,11 +2,14 @@ import type {
   AllowedReferenceManifest,
   CitationResolutionReceipt,
   ClaimAuditItem,
+  EvidenceContextBlock,
   EvidenceHandle,
   ResolvedEvidence,
+  VersionedRef,
 } from "@eliotr/contracts";
+import { EvidenceContextBlockSchema } from "@eliotr/contracts";
 import { describe, expect, it } from "vitest";
-import { createEvidenceContextCompiler } from "./context-compiler.js";
+import { ContextCompilationBlockedError, createEvidenceContextCompiler } from "./context-compiler.js";
 import { evaluateOutputGate } from "./output-gate.js";
 
 const A = "a".repeat(64);
@@ -59,12 +62,12 @@ const evidence: ResolvedEvidence = {
   resolved_at: "2026-08-31T22:00:00.000Z",
 };
 
-async function manifest(): Promise<AllowedReferenceManifest> {
+async function manifest(allowedHandleRefs: readonly VersionedRef[] = [handle.handle_ref]): Promise<AllowedReferenceManifest> {
   const payload = {
     manifest_ref: { id: "manifest-1", revision: 1 },
     scope_snapshot_ref: { id: "scope-1", revision: 1 },
     allowed_source_revision_refs: ["revision-1"],
-    allowed_evidence_handle_refs: [handle.handle_ref],
+    allowed_evidence_handle_refs: [...allowedHandleRefs],
     allowed_tool_definition_refs: [],
     allowed_verifier_refs: [],
     permitted_anchor_and_precision_ceilings: ["normalized_byte_range"],
@@ -77,6 +80,29 @@ async function manifest(): Promise<AllowedReferenceManifest> {
     client_fence_ref: "credential-1",
   };
   return { ...payload, manifest_digest: await sha256(canonical(payload)) };
+}
+
+async function evidenceFor(handleId: string, exactExcerpt: string): Promise<ResolvedEvidence> {
+  const byteLength = encoder.encode(exactExcerpt).byteLength;
+  const nextHandle: EvidenceHandle = {
+    ...handle,
+    handle_ref: { id: handleId, revision: 1 },
+    anchor: { kind: "normalized_byte_range", start: 0, end: byteLength },
+    excerpt_sha256: await sha256(exactExcerpt),
+    excerpt_byte_length: byteLength,
+  };
+  return { ...evidence, handle: nextHandle, exact_excerpt: exactExcerpt };
+}
+
+function contextBlock(value: ResolvedEvidence): EvidenceContextBlock {
+  return EvidenceContextBlockSchema.parse({
+    evidence_handle_ref: value.handle.handle_ref,
+    source_revision_ref: value.handle.source_revision_ref,
+    instruction_taint: value.instruction_taint,
+    allowed_effects: value.allowed_effects,
+    quoted_content: value.exact_excerpt,
+    excerpt_sha256: value.handle.excerpt_sha256,
+  });
 }
 
 function claimAudit(): ClaimAuditItem {
@@ -150,6 +176,95 @@ describe("evidence context and output boundary", () => {
       ref: "evidence-1:1",
       reason_code: "EVIDENCE_INTEGRITY_FAILED",
     }]);
+  });
+
+  it("uses exact block-list bytes, backfills after oversized optionals, and blocks required context failures", async () => {
+    const oversized = await evidenceFor("evidence-large", `large-candidate-${"x".repeat(2048)}`);
+    const smallFirst = await evidenceFor("evidence-small-1", "first small candidate");
+    const smallSecond = await evidenceFor("evidence-small-2", "second small candidate");
+    const expectedBlocks = [contextBlock(smallFirst), contextBlock(smallSecond)];
+    const wrapperReserveUtf8Bytes = 7;
+    const schemaReserveUtf8Bytes = 11;
+    const exactListBytes = encoder.encode(JSON.stringify(expectedBlocks)).byteLength;
+    const maxBytes = exactListBytes + wrapperReserveUtf8Bytes + schemaReserveUtf8Bytes;
+    const compiler = createEvidenceContextCompiler({ now: () => NOW });
+    const result = await compiler.compile({
+      manifest: await manifest([
+        oversized.handle.handle_ref,
+        smallFirst.handle.handle_ref,
+        smallSecond.handle.handle_ref,
+      ]),
+      evidence: [oversized, smallFirst, smallSecond],
+      modelRouteRef: "model-route-1",
+      maxBytes,
+      wrapperReserveUtf8Bytes,
+      schemaReserveUtf8Bytes,
+    });
+
+    expect(result.blocks).toEqual(expectedBlocks);
+    expect(result.total_utf8_bytes).toBe(maxBytes);
+    expect(result.total_utf8_bytes).toBe(
+      encoder.encode(JSON.stringify(result.blocks)).byteLength + wrapperReserveUtf8Bytes + schemaReserveUtf8Bytes,
+    );
+    expect(result.selection_receipt.input_candidate_refs).toEqual([
+      "evidence-large:1", "evidence-small-1:1", "evidence-small-2:1",
+    ]);
+    expect(result.selection_receipt.admitted_candidate_refs).toEqual([
+      "evidence-small-1:1", "evidence-small-2:1",
+    ]);
+    expect(result.selection_receipt.rejected_candidates).toEqual([{
+      ref: "evidence-large:1",
+      reason_code: "CONTEXT_BYTE_BUDGET_EXCEEDED",
+    }]);
+    expect(result.system_instructions.join(" ")).not.toContain(oversized.exact_excerpt);
+
+    const missingRef = { id: "evidence-missing", revision: 1 };
+    const deniedRef = { id: "evidence-denied", revision: 1 };
+    const requiredTooLarge = await evidenceFor("evidence-required-large", "required evidence that cannot fit");
+    const requiredCases = [
+      {
+        ref: deniedRef,
+        allowed: [] as readonly VersionedRef[],
+        evidence: [] as readonly ResolvedEvidence[],
+        maxBytes: 4096,
+        reason: "REQUIRED_HANDLE_NOT_ALLOWLISTED",
+      },
+      {
+        ref: missingRef,
+        allowed: [missingRef],
+        evidence: [] as readonly ResolvedEvidence[],
+        maxBytes: 4096,
+        reason: "REQUIRED_EVIDENCE_MISSING",
+      },
+      {
+        ref: requiredTooLarge.handle.handle_ref,
+        allowed: [requiredTooLarge.handle.handle_ref],
+        evidence: [requiredTooLarge],
+        maxBytes: 2,
+        reason: "REQUIRED_CONTEXT_BYTE_BUDGET_EXCEEDED",
+      },
+    ] as const;
+
+    for (const requiredCase of requiredCases) {
+      let caught: unknown;
+      try {
+        await compiler.compile({
+          manifest: await manifest(requiredCase.allowed),
+          evidence: requiredCase.evidence,
+          modelRouteRef: "model-route-1",
+          maxBytes: requiredCase.maxBytes,
+          requiredHandleRefs: [requiredCase.ref],
+        });
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toBeInstanceOf(ContextCompilationBlockedError);
+      expect(caught).toMatchObject({
+        code: "CONTEXT_COMPILATION_BLOCKED",
+        blockers: [{ handle_ref: requiredCase.ref, reason_code: requiredCase.reason }],
+        selection_receipt: { operation_kind: "CONTEXT_COMPILE" },
+      });
+    }
   });
 
   it("requires the exact durable citation set instead of a caller percentage", () => {

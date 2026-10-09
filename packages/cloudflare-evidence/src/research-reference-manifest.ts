@@ -10,6 +10,7 @@ import type { NavigationReadAuthority } from "./navigation-storage-authority.js"
 import {
   createEvidenceContextCompiler,
   type CompiledEvidenceContext,
+  type ContextRequestBodySerializer,
   type ReferenceManifestStore,
 } from "@eliotr/policy";
 import type { EvidencePack } from "@eliotr/retrieval";
@@ -57,6 +58,12 @@ export interface BuildReferenceManifestInput {
   readonly manifest_ref: VersionedRef;
   readonly model_route_ref: string;
   readonly max_context_bytes: number;
+  /** Server-owned mandatory references; candidate prose cannot choose authority. */
+  readonly required_handle_refs?: readonly VersionedRef[];
+  readonly wrapper_reserve_utf8_bytes?: number;
+  readonly schema_reserve_utf8_bytes?: number;
+  /** Exact canonical request-body projection supplied by the model-prompt owner. */
+  readonly serialize_request_body?: ContextRequestBodySerializer;
 }
 
 export interface BuiltReferenceManifest {
@@ -229,6 +236,10 @@ export async function buildAllowedReferenceManifest(input: BuildReferenceManifes
     evidence: authoritative,
     modelRouteRef: input.model_route_ref,
     maxBytes: input.max_context_bytes,
+    ...(input.required_handle_refs === undefined ? {} : { requiredHandleRefs: input.required_handle_refs }),
+    ...(input.wrapper_reserve_utf8_bytes === undefined ? {} : { wrapperReserveUtf8Bytes: input.wrapper_reserve_utf8_bytes }),
+    ...(input.schema_reserve_utf8_bytes === undefined ? {} : { schemaReserveUtf8Bytes: input.schema_reserve_utf8_bytes }),
+    ...(input.serialize_request_body === undefined ? {} : { serializeRequestBody: input.serialize_request_body }),
   });
   return { manifest, compiled, resolved_evidence: authoritative, source_authorities: finalSources };
 }
