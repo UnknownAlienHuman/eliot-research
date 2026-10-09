@@ -1,0 +1,40 @@
+html, body, #root { margin: 0; min-height: 100%; }
+[hidden] { display: none !important; }
+#privacy-guard, .er-access { box-sizing: border-box; min-height: 100dvh; display: flex; flex-direction: column; align-items: start; justify-content: center; gap: var(--eliot-space-panel); padding: var(--eliot-space-reading); background: var(--md-sys-color-surface); color: var(--md-sys-color-on-surface); font-family: var(--eliot-type-font-family); }
+.er-access h1, .er-access p { margin: 0; max-width: var(--eliot-layout-reading-max); }
+.er-access h1 { font-size: var(--eliot-type-headline-medium-size); line-height: var(--eliot-type-headline-medium-line-height); }
+.er-shell { box-sizing: border-box; height: 100dvh; display: grid; grid-template-columns: var(--eliot-layout-rail-size) var(--eliot-layout-source-width) minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); grid-template-areas: "header header header" "nav sources reading"; gap: var(--eliot-space-panel); padding: var(--eliot-space-panel); background: var(--md-sys-color-surface); color: var(--md-sys-color-on-surface); font-family: var(--eliot-type-font-family); font-size: var(--eliot-type-body-large-size); line-height: var(--eliot-type-body-large-line-height); }
+.er-shell *, .er-shell *::before, .er-shell *::after { box-sizing: border-box; }
+.er-shell h1, .er-shell h2, .er-shell p { margin: 0; }
+.er-shell a { color: inherit; }
+.er-shell :focus-visible, .er-access :focus-visible { outline: var(--eliot-focus-width) solid var(--md-sys-color-primary); outline-offset: var(--eliot-focus-offset); }
+.er-shell-header { grid-area: header; display: flex; align-items: center; flex-wrap: wrap; gap: var(--eliot-space-panel); min-width: 0; padding-inline: var(--eliot-space-inline-control); }
+.er-shell-brand { display: inline-flex; align-items: center; gap: var(--eliot-space-inline-control); text-decoration: none; font-weight: var(--eliot-type-font-weight-medium); }
+.er-shell-preview { flex: 1; color: var(--md-sys-color-on-surface-variant); font-size: var(--eliot-type-label-medium-size); }
+.er-shell-header label { display: flex; align-items: center; flex-wrap: wrap; gap: var(--eliot-space-inline-control); font-size: var(--eliot-type-label-medium-size); }
+.er-shell-header select { min-height: var(--eliot-size-touch-target); max-width: 100%; font: inherit; color: inherit; background: var(--md-sys-color-surface-container); border: var(--eliot-divider-width) solid var(--md-sys-color-outline-variant); border-radius: var(--eliot-shape-small); padding-inline: var(--eliot-space-inline-control); }
+.er-shell-nav { grid-area: nav; display: flex; flex-direction: column; gap: var(--eliot-space-block-control); }
+.er-shell-destination { display: flex; flex-direction: column; align-items: center; text-align: center; gap: var(--eliot-space-block-control); padding-block: var(--eliot-space-inline-control); text-decoration: none; font-size: var(--eliot-type-label-small-size); overflow-wrap: anywhere; }
+.er-shell-destination > span { display: grid; place-items: center; width: var(--eliot-layout-nav-indicator-width); min-height: var(--eliot-size-touch-target); border-radius: var(--eliot-shape-full); }
+.er-shell-destination[aria-current="page"] > span { background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container); }
+.er-shell-sources { grid-area: sources; min-width: 0; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; align-items: start; gap: var(--eliot-space-panel); background: var(--md-sys-color-surface-container-low); border-radius: var(--eliot-shape-large); padding: var(--eliot-space-panel); }
+.er-shell-sources h2 { font-size: var(--eliot-type-title-large-size); }
+.er-shell-reading { grid-area: reading; min-width: 0; min-height: 0; overflow-y: auto; background: var(--md-sys-color-surface-container-lowest); border-radius: var(--eliot-shape-large); padding: var(--eliot-space-reading); }
+.er-shell[data-destination="sources"], .er-shell[data-destination="studio"], .er-shell[data-destination="connections"] { grid-template-columns: var(--eliot-layout-rail-size) minmax(0, 1fr); grid-template-areas: "header header" "nav reading"; }
+.er-shell-eyebrow, .er-shell-note { color: var(--md-sys-color-on-surface-variant); font-size: var(--eliot-type-label-medium-size); }
+.er-shell-reading h1 { margin-block: var(--eliot-space-inline-control) var(--eliot-space-panel); font-size: var(--eliot-type-display-small-size); line-height: var(--eliot-type-display-small-line-height); font-weight: var(--eliot-type-font-weight-medium); overflow-wrap: anywhere; }
+.er-shell-lead { max-width: var(--eliot-layout-reading-max); color: var(--md-sys-color-on-surface-variant); }
+.er-shell-empty { display: flex; flex-direction: column; align-items: start; gap: var(--eliot-space-panel); margin-block: var(--eliot-space-section); padding-block: var(--eliot-space-section); max-width: var(--eliot-layout-reading-max); }
+.er-shell-empty h2 { font-size: var(--eliot-type-headline-small-size); line-height: var(--eliot-type-headline-medium-line-height); font-weight: var(--eliot-type-font-weight-regular); }
+.er-shell-link { display: inline-flex; align-items: center; min-height: var(--eliot-size-touch-target); padding-inline: var(--eliot-space-inline-control); color: var(--md-sys-color-primary) !important; font-weight: var(--eliot-type-font-weight-medium); text-underline-offset: var(--eliot-space-block-control); }
+.er-shell-skip { position: absolute; transform: translateY(-200%); padding: var(--eliot-space-inline-control); background: var(--md-sys-color-primary-container); color: var(--md-sys-color-on-primary-container); isolation: isolate; }
+.er-shell-skip:focus { transform: none; }
+@media (max-width: 64rem) { .er-shell { grid-template-columns: var(--eliot-layout-rail-size) minmax(0, 1fr); grid-template-areas: "header header" "nav reading"; } .er-shell-sources { display: none; } }
+@media (max-width: 48rem) {
+  .er-shell, .er-shell[data-destination="sources"], .er-shell[data-destination="studio"], .er-shell[data-destination="connections"] { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr) auto; grid-template-areas: "header" "reading" "nav"; gap: var(--eliot-space-inline-control); padding: var(--eliot-space-inline-control); }
+  .er-shell-header { gap: var(--eliot-space-inline-control); }
+  .er-shell-preview { flex-basis: 100%; }
+  .er-shell-nav { flex-direction: row; justify-content: space-around; }
+  .er-shell-destination { flex: 1; min-width: 0; }
+  .er-shell-reading, #privacy-guard, .er-access { padding: var(--eliot-space-panel); }
+}

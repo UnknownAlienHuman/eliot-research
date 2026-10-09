@@ -12,6 +12,7 @@
     { "id": "material.dialog", "export": "Dialog", "consumer": "Explicit source review before action", "variants": [], "props": ["open", "title", "onClose", "children"], "stories": ["primitives-native--modal-interaction"], "focus": "native showModal/cancel; connected opener return; unmount cleanup; StrictMode remount" }
   ],
   "scenarios": {
+    "u1-shell": ["workspace-shell--strict-mode-journey"],
     "u1-primitives": ["primitives-native--primary", "primitives-native--tonal", "primitives-native--text", "primitives-native--loading", "primitives-native--disabled", "primitives-native--labelled-icon", "primitives-native--field-hint", "primitives-native--field-error", "primitives-native--neutral-status", "primitives-native--error-status", "primitives-native--long-russian", "primitives-native--modal-interaction"],
     "u1-direction": ["direction-workspace--useful", "direction-workspace--dark", "direction-workspace--long-russian", "direction-workspace--long-russian-dark", "direction-workspace--loading", "direction-workspace--degraded"],
     "u1-direction-journey": ["direction-workspace--fixture-journey"],
