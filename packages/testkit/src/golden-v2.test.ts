@@ -20,6 +20,7 @@ const DIGEST_B = "b".repeat(64);
 const DIGEST_C = "c".repeat(64);
 const DIGEST_D = "d".repeat(64);
 const DIGEST_E = "e".repeat(64);
+const PROFILE_REF = "model-profile-r1";
 
 function caseFixture(overrides: Record<string, unknown> = {}): GoldenCaseV2 {
   return parseGoldenCaseV2({
@@ -107,6 +108,32 @@ function receiptReferences(kinds: readonly GoldenReceiptKind[] = [
   }));
 }
 
+type GoldenAuthorityInput = {
+  readonly expected: Awaited<ReturnType<typeof createGoldenExpectedCaseSet>>;
+  readonly run: Awaited<ReturnType<typeof createGoldenRunManifest>>;
+  readonly product_outputs: readonly {
+    readonly case_id: string;
+    readonly receipt_ref: string;
+    readonly receipt_sha256: string;
+    readonly output_artifact_sha256: string;
+  }[];
+};
+
+function fixtureAuthority(
+  expectedProfileRef: string,
+  readSelectedProfileFromRunConfiguration: () => Promise<string>,
+  onReadback?: (input: GoldenAuthorityInput) => void,
+) {
+  return {
+    verifyProductExecutionReadback: async (input: GoldenAuthorityInput) => {
+      onReadback?.(input);
+      if (await readSelectedProfileFromRunConfiguration() !== expectedProfileRef) {
+        throw new Error("selected profile readback mismatch");
+      }
+    },
+  };
+}
+
 async function prepare(options: {
   readonly golden?: GoldenCaseV2;
   readonly unknowns?: unknown;
@@ -167,9 +194,64 @@ describe("Golden v2 manifest binding and hard gates", () => {
     expect(Object.isFrozen(state.expected.cases[0]?.metric_requirements)).toBe(true);
     expect(Object.isFrozen(state.run)).toBe(true);
     expect(Object.isFrozen(state.results)).toBe(true);
-    const receipt = await createGoldenEvaluationReceipt(state.expected, state.run, state.results);
+    const receipt = await createGoldenEvaluationReceipt(state.expected, state.run, state.results, fixtureAuthority(PROFILE_REF, async () => PROFILE_REF));
     expect(receipt.passed).toBe(true);
-    await expect(assertGoldenV2PromotionGate(state.expected, state.run, state.results, receipt)).resolves.toBeUndefined();
+    await expect(assertGoldenV2PromotionGate(state.expected, state.run, state.results, receipt, fixtureAuthority(PROFILE_REF, async () => PROFILE_REF))).resolves.toBeUndefined();
+  });
+
+  it("requires authoritative product readback for the selected profile and exact holdout identity", async () => {
+    const state = await prepare({ golden: caseFixture({ partition: "HOLDOUT" }) });
+    const calls: GoldenAuthorityInput[] = [];
+    let authoritativeProfileRef = PROFILE_REF;
+    const authority = fixtureAuthority(PROFILE_REF, async () => authoritativeProfileRef, (input) => { calls.push(input); });
+    const receipt = await createGoldenEvaluationReceipt(state.expected, state.run, state.results, authority);
+    await assertGoldenV2PromotionGate(state.expected, state.run, state.results, receipt, authority);
+    expect(calls).toHaveLength(2);
+    expect(calls[0]).toMatchObject({
+      expected: {
+        generation: state.expected.generation,
+        case_set_sha256: state.expected.case_set_sha256,
+        partition: state.expected.partition,
+        frozen_thresholds_sha256: state.expected.frozen_thresholds_sha256,
+      },
+      run: {
+        run_ref: state.run.run_ref,
+        scope_profile: "scope-r1",
+        product_identity_sha256: state.run.product_identity_sha256,
+        run_manifest_sha256: state.run.run_manifest_sha256,
+      },
+      product_outputs: [{
+        case_id: state.golden.case_id,
+        receipt_ref: "product_output-receipt-1",
+        receipt_sha256: DIGEST_B,
+        output_artifact_sha256: DIGEST_E,
+      }],
+    });
+    expect(calls[0]?.run).not.toHaveProperty("selected_profile_ref");
+    expect(Object.keys(state.run).sort()).toEqual([
+      "ai_search_generation", "cache_mode", "case_set_sha256", "chunker_generation", "code_sha",
+      "corpus_generation", "corpus_manifest_sha256", "environment", "execution_product",
+      "model_route_fingerprints", "parser_generation", "partition", "product_identity_sha256",
+      "product_plan_generation", "protocol", "prompt_generations", "purpose", "query_product",
+      "retrieval_policy_generation", "run_manifest_sha256", "run_ref", "schema_generations",
+      "scope_profile", "started_at", "thresholds_sha256",
+    ].sort());
+    expect(state.run).not.toHaveProperty("selected_profile_ref");
+    expect(await createGoldenRunManifest(runInput(state.expected), state.expected)).toEqual(state.run);
+    await expect(createGoldenRunManifest({
+      ...runInput(state.expected),
+      selected_profile_ref: PROFILE_REF,
+    }, state.expected)).rejects.toThrow("unknown field selected_profile_ref");
+
+    authoritativeProfileRef = "model-profile-r2";
+    await expect(assertGoldenV2PromotionGate(state.expected, state.run, state.results, receipt, authority))
+      .rejects.toThrow("PRODUCT_EXECUTION_AUTHORITY_READBACK_FAILED");
+
+    const missingAuthority = undefined as unknown as Parameters<typeof createGoldenEvaluationReceipt>[3];
+    const unverified = await createGoldenEvaluationReceipt(state.expected, state.run, state.results, missingAuthority);
+    expect(unverified.passed).toBe(false);
+    await expect(assertGoldenV2PromotionGate(state.expected, state.run, state.results, unverified, missingAuthority))
+      .rejects.toThrow("PRODUCT_EXECUTION_AUTHORITY_REQUIRED");
   });
 
   it("rejects skipped, duplicate, and foreign cases before producing a promotable run", async () => {
@@ -235,9 +317,9 @@ describe("Golden v2 manifest binding and hard gates", () => {
     });
     expect(results[0]?.passed).toBe(false);
     expect(results[0]?.failures).toContain("MISSING_OBSERVATION:case-v2-1");
-    const receipt = await createGoldenEvaluationReceipt(state.expected, state.run, results);
+    const receipt = await createGoldenEvaluationReceipt(state.expected, state.run, results, fixtureAuthority(PROFILE_REF, async () => PROFILE_REF));
     expect(receipt.passed).toBe(false);
-    await expect(assertGoldenV2PromotionGate(state.expected, state.run, results, receipt)).rejects.toThrow("GOLDEN_PROMOTION_BLOCKED");
+    await expect(assertGoldenV2PromotionGate(state.expected, state.run, results, receipt, fixtureAuthority(PROFILE_REF, async () => PROFILE_REF))).rejects.toThrow("GOLDEN_PROMOTION_BLOCKED");
   });
 
   it("reconciles result IDs and rechecks unknowns, metrics, receipts, and run binding at promotion", async () => {
@@ -253,14 +335,14 @@ describe("Golden v2 manifest binding and hard gates", () => {
       [{ ...good, failures: ["FORGED_HARD_FAILURE"], passed: true }],
     ];
     for (const results of cases) {
-      const receipt = await createGoldenEvaluationReceipt(state.expected, state.run, results);
-      await expect(assertGoldenV2PromotionGate(state.expected, state.run, results, receipt)).rejects.toThrow("GOLDEN_PROMOTION_BLOCKED");
+      const receipt = await createGoldenEvaluationReceipt(state.expected, state.run, results, fixtureAuthority(PROFILE_REF, async () => PROFILE_REF));
+      await expect(assertGoldenV2PromotionGate(state.expected, state.run, results, receipt, fixtureAuthority(PROFILE_REF, async () => PROFILE_REF))).rejects.toThrow("GOLDEN_PROMOTION_BLOCKED");
     }
-    const goodReceipt = await createGoldenEvaluationReceipt(state.expected, state.run, state.results);
+    const goodReceipt = await createGoldenEvaluationReceipt(state.expected, state.run, state.results, fixtureAuthority(PROFILE_REF, async () => PROFILE_REF));
     await expect(assertGoldenV2PromotionGate(state.expected, state.run, state.results, {
       ...goodReceipt,
       receipt_sha256: DIGEST_A,
-    })).rejects.toThrow("EVALUATION_RECEIPT_MISMATCH");
+    }, fixtureAuthority(PROFILE_REF, async () => PROFILE_REF))).rejects.toThrow("EVALUATION_RECEIPT_MISMATCH");
   });
 
   it("rejects truthy non-boolean passed with a recomputed receipt", async () => {
@@ -268,9 +350,9 @@ describe("Golden v2 manifest binding and hard gates", () => {
     const good = state.results[0];
     if (good === undefined) throw new Error("missing Golden v2 result");
     const results = [{ ...good, passed: "false" }] as unknown as typeof state.results;
-    const receipt = await createGoldenEvaluationReceipt(state.expected, state.run, results);
+    const receipt = await createGoldenEvaluationReceipt(state.expected, state.run, results, fixtureAuthority(PROFILE_REF, async () => PROFILE_REF));
     expect(receipt.passed).toBe(false);
-    await expect(assertGoldenV2PromotionGate(state.expected, state.run, results, receipt))
+    await expect(assertGoldenV2PromotionGate(state.expected, state.run, results, receipt, fixtureAuthority(PROFILE_REF, async () => PROFILE_REF)))
       .rejects.toThrow("GOLDEN_PROMOTION_BLOCKED");
   });
 
@@ -287,9 +369,9 @@ describe("Golden v2 manifest binding and hard gates", () => {
     ];
     for (const entry of expectedRequirementRemovals) {
       const expected = { ...state.expected, cases: [entry] };
-      const receipt = await createGoldenEvaluationReceipt(expected, state.run, state.results);
+      const receipt = await createGoldenEvaluationReceipt(expected, state.run, state.results, fixtureAuthority(PROFILE_REF, async () => PROFILE_REF));
       expect(receipt.passed).toBe(false);
-      await expect(assertGoldenV2PromotionGate(expected, state.run, state.results, receipt))
+      await expect(assertGoldenV2PromotionGate(expected, state.run, state.results, receipt, fixtureAuthority(PROFILE_REF, async () => PROFILE_REF)))
         .rejects.toThrow("GOLDEN_PROMOTION_BLOCKED");
     }
 
@@ -300,9 +382,9 @@ describe("Golden v2 manifest binding and hard gates", () => {
     ];
     for (const result of missingRetainedEvidence) {
       const results = [result];
-      const receipt = await createGoldenEvaluationReceipt(state.expected, state.run, results);
+      const receipt = await createGoldenEvaluationReceipt(state.expected, state.run, results, fixtureAuthority(PROFILE_REF, async () => PROFILE_REF));
       expect(receipt.passed).toBe(false);
-      await expect(assertGoldenV2PromotionGate(state.expected, state.run, results, receipt))
+      await expect(assertGoldenV2PromotionGate(state.expected, state.run, results, receipt, fixtureAuthority(PROFILE_REF, async () => PROFILE_REF)))
         .rejects.toThrow("GOLDEN_PROMOTION_BLOCKED");
     }
   });

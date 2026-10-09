@@ -138,6 +138,10 @@ export interface GoldenRunResultV2 extends GoldenRunResult {
   readonly metrics: GoldenCaseMetrics;
 }
 
+/**
+ * Local evaluation/integrity summary only. `passed` includes the trusted caller-supplied verifier
+ * result; it does not establish product authority or S93/T2/T3 acceptance.
+ */
 export interface GoldenEvaluationReceipt {
   readonly protocol: typeof GOLDEN_EVALUATION_RECEIPT_PROTOCOL;
   readonly expected_case_set_sha256: string;

@@ -27,6 +27,10 @@ import {
   evaluateGoldenRun,
   type ObservedExtraction,
 } from "./golden.js";
+
+export const GOLDEN_PROMOTION_MISSING_ER23_SELECTION_AUTHORITY =
+  "GOLDEN_AUTHORITY_ER23_TRUSTED_SELECTION_UNAVAILABLE" as const;
+
 function caseSetMismatch(expectedIds: readonly string[], actualIds: readonly string[], kind: string): string[] {
   const failures: string[] = [];
   const expected = new Set(expectedIds);
@@ -147,6 +151,29 @@ function runManifestPayload(run: GoldenRunManifest): unknown {
   return payload;
 }
 
+interface GoldenProductOutputReadback {
+  readonly case_id: string;
+  readonly receipt_ref: string;
+  readonly receipt_sha256: string;
+  readonly output_artifact_sha256: string;
+}
+
+/**
+ * Trusted caller-supplied dependency injection, not an authority issuer. These generic testkit
+ * helpers accept any implementation that resolves; the caller must ensure it performs the required
+ * source-authoritative checks. This seam alone does not establish ER-23 selection or S93 acceptance.
+ */
+interface GoldenPromotionAuthority {
+  /** Verify the selected profile and product output against caller-owned authoritative readbacks. */
+  verifyProductExecutionReadback(input: {
+    readonly expected: GoldenExpectedCaseSet;
+    readonly run: GoldenRunManifest;
+    /** Full adjudicated facts stay paired with the product-output readback boundary. */
+    readonly results: readonly GoldenRunResultV2[];
+    readonly product_outputs: readonly GoldenProductOutputReadback[];
+  }): Promise<void>;
+}
+
 function duplicateUnknownIdFailures(
   caseId: string,
   acceptable: readonly GoldenAcceptedUnknownV2[],
@@ -179,6 +206,7 @@ async function promotionFailures(
   expected: GoldenExpectedCaseSet,
   run: GoldenRunManifest,
   results: readonly GoldenRunResultV2[],
+  authority: GoldenPromotionAuthority,
 ): Promise<string[]> {
   const failures: string[] = [];
   if (!(await verifyGoldenExpectedCaseSet(expected))) return ["EXPECTED_CASE_SET_INVALID"];
@@ -212,6 +240,7 @@ async function promotionFailures(
     "RESULT",
   ));
   const expectedById = new Map(expected.cases.map((entry) => [entry.case_id, entry]));
+  const productOutputs: GoldenProductOutputReadback[] = [];
   for (const result of safeResults) {
     if (!isRecord(result) || typeof result.case_id !== "string") {
       failures.push("MALFORMED_GOLDEN_RESULT");
@@ -285,19 +314,44 @@ async function promotionFailures(
         failures.push("CASE_RECEIPT_MALFORMED:" + result.case_id);
         break;
       }
+      if (reference.kind === "PRODUCT_OUTPUT" && typeof result.output_artifact_sha256 === "string" &&
+          SHA256_HEX.test(result.output_artifact_sha256)) {
+        productOutputs.push({
+          case_id: result.case_id,
+          receipt_ref: reference.receipt_ref,
+          receipt_sha256: reference.receipt_sha256,
+          output_artifact_sha256: result.output_artifact_sha256,
+        });
+      }
     }
     if (typeof result.output_artifact_sha256 !== "string" || !SHA256_HEX.test(result.output_artifact_sha256)) {
       failures.push(`CASE_OUTPUT_DIGEST_MISSING:${result.case_id}`);
     }
   }
+  if (failures.length === 0) {
+    if (typeof authority?.verifyProductExecutionReadback !== "function") {
+      failures.push("PRODUCT_EXECUTION_AUTHORITY_REQUIRED");
+    } else {
+      try {
+        await authority.verifyProductExecutionReadback({ expected, run, results, product_outputs: productOutputs });
+      } catch (error) {
+        failures.push(error instanceof Error &&
+            (error.message.startsWith("GOLDEN_AUTHORITY_") || error.message.startsWith("GOLDEN_FROZEN_"))
+          ? error.message
+          : "PRODUCT_EXECUTION_AUTHORITY_READBACK_FAILED");
+      }
+    }
+  }
   return failures;
 }
 
-export async function createGoldenEvaluationReceipt(
+async function evaluateGoldenPromotion(
   expected: GoldenExpectedCaseSet,
   run: GoldenRunManifest,
   results: readonly GoldenRunResultV2[],
-): Promise<GoldenEvaluationReceipt> {
+  authority: GoldenPromotionAuthority,
+): Promise<{ readonly receipt: GoldenEvaluationReceipt; readonly failures: readonly string[] }> {
+  const failures = await promotionFailures(expected, run, results, authority);
   const orderedResults = [...results].sort((left, right) => left.case_id.localeCompare(right.case_id));
   const receiptBase = {
     protocol: GOLDEN_EVALUATION_RECEIPT_PROTOCOL,
@@ -307,35 +361,56 @@ export async function createGoldenEvaluationReceipt(
     result_set_sha256: await hashCanonical(orderedResults),
     partition: run.partition,
     result_count: results.length,
-    passed: (await promotionFailures(expected, run, results)).length === 0,
+    passed: failures.length === 0,
   };
-  return deepFreeze({
-    ...receiptBase,
-    receipt_sha256: await hashCanonical(receiptBase),
-  });
+  return {
+    receipt: deepFreeze({ ...receiptBase, receipt_sha256: await hashCanonical(receiptBase) }),
+    failures,
+  };
 }
 
+/**
+ * Creates a local evaluation/integrity receipt and requires the caller to supply a trusted
+ * verifier. Its `passed` bit is not by itself evidence of production promotion or S93/T2/T3
+ * acceptance.
+ */
+export async function createGoldenEvaluationReceipt(
+  expected: GoldenExpectedCaseSet,
+  run: GoldenRunManifest,
+  results: readonly GoldenRunResultV2[],
+  authority: GoldenPromotionAuthority,
+): Promise<GoldenEvaluationReceipt> {
+  return (await evaluateGoldenPromotion(expected, run, results, authority)).receipt;
+}
+
+/**
+ * Re-evaluates the generic testkit gate and requires trusted caller authority. A resolving callback
+ * is trusted as supplied; this helper is not an ER-23 selection verifier or S93 acceptance gate.
+ */
 export async function assertGoldenV2PromotionGate(
   expected: GoldenExpectedCaseSet,
   run: GoldenRunManifest,
   results: readonly GoldenRunResultV2[],
   receipt: GoldenEvaluationReceipt,
+  authority: GoldenPromotionAuthority,
 ): Promise<void> {
-  let expectedReceipt: GoldenEvaluationReceipt;
+  let evaluation: Awaited<ReturnType<typeof evaluateGoldenPromotion>>;
   try {
-    expectedReceipt = await createGoldenEvaluationReceipt(expected, run, results);
+    evaluation = await evaluateGoldenPromotion(expected, run, results, authority);
   } catch {
     throw new Error("GOLDEN_PROMOTION_BLOCKED:INVALID_RECEIPT_INPUT");
   }
+  if (evaluation.failures.length > 0) {
+    throw new Error(`GOLDEN_PROMOTION_BLOCKED:${evaluation.failures.join(",")}`);
+  }
   try {
-    if (canonicalJson(receipt) !== canonicalJson(expectedReceipt)) {
+    if (canonicalJson(receipt) !== canonicalJson(evaluation.receipt)) {
       throw new Error("GOLDEN_PROMOTION_BLOCKED:EVALUATION_RECEIPT_MISMATCH");
     }
   } catch {
     throw new Error("GOLDEN_PROMOTION_BLOCKED:EVALUATION_RECEIPT_MISMATCH");
   }
-  const failures = await promotionFailures(expected, run, results);
-  if (!receipt.passed || failures.length > 0) {
-    throw new Error(`GOLDEN_PROMOTION_BLOCKED:${failures.length > 0 ? failures.join(",") : "RECEIPT_NOT_PASSED"}`);
+  if (!receipt.passed) {
+    throw new Error("GOLDEN_PROMOTION_BLOCKED:RECEIPT_NOT_PASSED");
   }
 }
