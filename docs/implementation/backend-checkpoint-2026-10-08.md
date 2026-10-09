@@ -8,6 +8,43 @@ evidence and were not merged wholesale. Frontend delivery has a separate owner.
 
 ## Full continuation after the first checkpoint
 
+### Latest October 9 reviewed publication
+
+Remote `main` readback and fetch divergence are exact/0:0 at
+`00c85244d362aa89b2f146286a31dffc10a8ed98`. Earlier reviewed publications are
+`eda91106` (durable Items effects, lease/target fences, terminal materialization
+CAS and additive 0128/0129), `779a080d` (eight-file digest/UTF-8 maintenance),
+and `73612d40` (ten-file prompt/context envelope closure). Items has local
+target 6/6, controlled-clock 2/2, SQLite materialization/expiry 3/3, public
+terminal rollback 1/1 and actual production-0129 migration evidence. Complete
+target-wide membership/promotion and remote provider qualification remain pending.
+
+`00c85244` replaces the mutable AIChatAgent contour with the sole read-only
+`readResearchSessionProjection()` callable. The strict snapshot protocol is
+documented in [research-session-projection-protocol.md](research-session-projection-protocol.md).
+Pinned Agents 0.27.0 dispatch was traced through its actual WebSockets options
+and post-super wrappers; no preprocessing bypass was found. Official Agents
+Vite transformation and the Core-only ES2021 target are used in the harness.
+Owning compile/scoped lint, package boundaries and 43-contour status checks pass.
+Repeated native projection reads/disconnect pass 1/1; four exact changed/new
+denials pass 4/4, with seven other cases filtered. Earlier six relevant negatives
+are retained; this is not a fresh 11/11 full-file run. Descartes independently
+accepted the six exact source/protocol blobs and committed-blob equality passed.
+Browser, reconnect, two-tab, hibernation/eviction and live qualification are pending.
+
+The unpublished retrieval settlement readback repair has six focused passing
+cases and compilation/scoped-lint evidence. Its shared service also activates
+the unresolved C1 managed-primary policy, so the closure remains withheld.
+C4 lacks a target-wide canonical assignment rule and revision/digest fence;
+selected scope and observed job rows do not prove the complete denominator.
+Both limitations are recorded in [backend-contract-conflicts.md](backend-contract-conflicts.md).
+
+At the owner's request, all 23 old direct/nested sessions were closed and
+archived. One fresh Luna Max reviewer completed this Session audit and was also
+closed/archived. Recursive read-only verification now finds 24 archived
+descendants, every spawn edge closed and zero current agents. No Issue or PR
+closed, and the overall Goal remains ACTIVE.
+
 ### October 9 Session binding and connection authority
 
 The Session source is published in
@@ -410,7 +447,7 @@ The producer has not been run against native local D1 yet. Deployment wiring,
 persisted schema provenance and their receipt schema are being assembled.
 No remote schema, emitted release, provider or end-to-end acceptance is inferred.
 
-Items remains unpublished while the caller lease fence, registry currentness,
+Before the later `eda91106` closure, Items remained unpublished while the caller lease fence, registry currentness,
 legacy terminal compatibility and target-bound generation are assembled.
 The stale worker/after-effect lease regression passed once, as did two registry
 drift negatives. Independent review found an additional begin/materialization
@@ -420,7 +457,8 @@ protocol marker 0129 follows published 0127 and leaves old rows nullable without
 invented per-item backfill. Final SQL/source review and actual full required-set
 promotion remain pending.
 
-The Goal remains ACTIVE. No Issue or PR was closed in this continuation.
+The later source publication is recorded below; target-wide required-set
+promotion remains pending. The Goal remains ACTIVE. No Issue or PR was closed in this continuation.
 The two concrete normative conflicts remain documented in
 [backend-contract-conflicts.md](backend-contract-conflicts.md) and
 [read-extract-proposal-cutover.md](read-extract-proposal-cutover.md).

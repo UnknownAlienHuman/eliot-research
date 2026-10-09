@@ -11,8 +11,12 @@ October 9 publication readback confirmed `10021b4fb7e1a13a9226a2a86fcacf01b86c6c
 The live GitHub inventory has 65 open PRs and four open Issues (last live inventory October 9). The current
 router/cards and latest passport discussions govern their dependencies and
 selected-profile requirements; historical PR heads are not merged wholesale.
-Ten Luna Max workers share the existing `main` checkout under disjoint ownership.
-The integrator owns assembly, shared cutovers, publication and acceptance records.
+All 23 prior direct/nested agent sessions were closed and archived on October 9
+at the owner's request; read-only recursive verification found no unarchived
+descendant and every spawn edge closed. Fresh Luna Max leaves may be assigned
+under the ten-agent limit, without restoring those sessions or spawning children.
+The integrator owns assembly, shared cutovers, publication and acceptance records
+in the existing `main` checkout.
 
 October 9 continuation: Session immutable replay and Access-expiry/currentness
 repairs compile and pass scoped lint. Local binding replay/completed reopening
@@ -112,8 +116,19 @@ source checks. Frontend design and PR #329 remain with the separate owner.
 rules, generated-config parity guard and focused regression registration in
 the normal provisioner runner. Source review and scoped syntax/lint/regression
 checks pass. Real emitted deployment/Vite configuration and edge/browser/live
-readback remain pending; #333 remains open. #334's read-only transport correction
-is still in progress.
+readback remain pending; #333 remains open. `00c85244d362aa89b2f146286a31dffc10a8ed98`
+publishes #334's read-only Agent RPC projection and strict versioned schema.
+The official Agents Vite transform and Core ES2021 target make the pinned callable
+decorator work in the native harness without custom decorator machinery. The
+SDK dispatch trace confirms the exact outer filter runs before state/RPC
+processing. Repeated read/disconnect passes 1/1; the four changed strict denials
+pass 4/4 without a second malformed close barrier. Earlier transcript/clear/tool
+negatives are retained without rerunning them. Owning compile, scoped lint,
+boundaries and implementation-status checks pass; Descartes accepted all six
+reviewed blobs, and the committed blobs match. Browser/reconnect/two-tab/hibernation
+and live qualification remain pending; #334 stays open. The fresh reviewer was
+closed and archived after acceptance: all 24 recorded descendant sessions are
+archived, every edge is closed and current agents are zero.
 
 `b326d728` publishes a dormant question-bound proposal prompt renderer with a
 closed two-file dependency set. `max_prompt_pair_bytes` measures the canonical
@@ -121,14 +136,30 @@ rendered prompt pair; it is not a model response allowance. The helper does not
 select a model or invoke READ_AND_EXTRACT. Its activation awaits the recorded
 cardinality/stage-admission decision.
 
-Items source publication is withheld pending coherent review. Caller fence
-propagation and the stale-worker/after-effect lease regression pass; registry
-drift after provider effect and before settlement passes two focused negatives.
-Review additionally found unfenced begin/materialization and missing manifest
-CAS, now under repair. Unpublished effects migration is numbered 0128, followed
-by the additive protocol/target marker 0129; historical 0127 is preserved and
-legacy aggregate receipts receive no fabricated per-item proof. Per-source
-receipts are not the full required-set promotion proof.
+`eda91106f5910322c59911be3c2a51877b34039f` publishes the reviewed Items
+closure: durable per-item intent/dispatch/receipt/recovery, exact caller lease
+fences with D1 clock, materialization CAS, noncircular terminal proof and
+pre-dispatch configured-target validation. New INTENT dispatch to ACTIVE is
+denied while exact recovery remains available. Additive migrations 0128/0129
+retain historical NULL rows without fabricated proof. Local target, lease,
+SQLite materialization/expiry, public terminal rollback and actual production
+0129 migration fixtures pass. McClintock accepted the exact committed blobs.
+Target-wide membership/promotion and remote provider qualification remain pending
+as recorded in [managed-generation-promotion-fence.md](managed-generation-promotion-fence.md).
+
+`779a080d` publishes the accepted eight-file SHA-256/UTF-8 helper consolidation;
+it changes no retrieval lane policy or settlement activation. `73612d40` publishes
+the ten-file prompt/context closure: branch candidates remain untrusted, required
+evidence comes from the verified manifest, and exact selected transport-envelope
+bytes are measured before dispatch. Without a serializer, fallback accounting
+includes the serialized evidence-block list. Owning compilation, scoped lint,
+boundary checks and exact reviewed-blob confirmation pass. Remote readback and
+fetch divergence are exact/0:0 at `73612d40`; no release qualification is implied.
+
+The preserved retrieval settlement readback repair requires the winner/replay
+to be loaded and validated after persistence. Its six new local cases, package
+compilation and scoped lint pass. The shared service also contains the unresolved
+C1 lane-policy cutover; that source remains unpublished pending owner review.
 
 Items generation membership/fencing, trusted Golden selection and #325/#214
 assembly continue under the active Goal. The conflicting #322/#242 lexical-order rules

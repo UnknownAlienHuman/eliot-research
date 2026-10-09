@@ -1,10 +1,13 @@
 # Backend contract conflicts awaiting owner review
 
-Recorded 2026-10-09 against main `f8390849421e1187ce10474a6910e6e423959bc3` and the shared uncommitted implementation. These conflicts block only their named acceptance criteria. Independent backend work continues; the overall Goal remains active.
+Recorded 2026-10-09; refreshed against main `73612d40c915006cbb6bd0d818ded5edd9b732fc` and the shared uncommitted implementation. These conflicts block only their named acceptance criteria. Independent backend work continues; the overall Goal remains active.
 
 ## C1 — D1 lexical execution order versus managed hybrid primary
 
-Status: **OWNER_DECISION_PENDING**. Neither policy has been silently selected, and neither regression assertion has been weakened.
+Status: **OWNER_DECISION_PENDING**. Published main has not adopted the unresolved
+managed-primary cutover; neither regression assertion has been weakened. The
+unpublished working-tree service already selects SEM-primary behavior through
+`queryWithBudgetSettlement()`, so it cannot be published as a dormant API.
 
 The current specifications disagree about actual lane execution when a plan contains both LEX and SEM:
 
@@ -17,7 +20,7 @@ The current specifications disagree about actual lane execution when a plan cont
 
 The implementation exposes the disagreement rather than merely describing two compatible plan representations:
 
-- `packages/retrieval/src/service.ts`, lines 194–226: the plan is checked for direct-before-semantic order, but LEX is skipped when managed SEM is primary. D1 LEX executes after SEM only if SEM is unavailable.
+- `packages/retrieval/src/service.ts`, lines 230–267: the plan is checked for direct-before-semantic order, but LEX is skipped when managed SEM is primary. D1 LEX executes after SEM only if SEM is unavailable. The public `query()` calls this path at line 609.
 - `packages/retrieval/src/retrieval.test.ts`, line 289: Q3 asserts actual `IDENT → LEX → SEM` calls.
 - `packages/retrieval/src/managed-hybrid.test.ts`, line 437: managed hybrid asserts SEM primary and D1 LEX only after SEM becomes unavailable.
 
@@ -51,5 +54,8 @@ replace the SEARCH_DB pointer owner. The exact cutover, denominator and authorit
 boundaries are recorded in [managed-generation-promotion-fence.md](managed-generation-promotion-fence.md).
 
 New item keys must be built in a selected shadow generation before promotion.
-The discovered ACTIVE-target dispatch defect is being repaired independently;
-that repair does not establish full required-set or promotion acceptance.
+The ACTIVE-target dispatch defect and exact configured-target preflight are
+source-published in `eda91106`; full required-set and promotion acceptance
+remain pending. The October 9 audit found no published rule assigning the
+complete canonical source/revision set to a managed target. The gap note
+records the exact tables and missing membership/revision fence for owner review.

@@ -4,11 +4,18 @@ Recorded 2026-10-09 from PR #244, ER-16/ER-38 and the shared main worktree at `e
 
 ## New item keys require shadow cutover
 
-Status: **IMPLEMENTATION_IN_PROGRESS**.
+Status: **SOURCE_PUBLISHED**, with target-wide and native qualification pending.
 
 [PR #244](https://github.com/UnknownAlienHuman/eliot-research/pull/244) requires a new key layout to be built and qualified as a shadow generation before the existing expected-head promotion CAS. It forbids rewriting an ACTIVE generation in place. A separate physical AI Search instance is not required by that rule.
 
 The target-bound Core projection ID changes `ProjectionItem.item_key`: the structural projector hashes the projection generation, and the managed writer uses `<item_key>.md` as the provider key. The previous writer checked ACTIVE readiness only after upload. The correction must deny new-key dispatch to an ACTIVE target before provider I/O, retain exact readback recovery without resend, and preserve historical terminal replay. It must consume an existing selected shadow target; no generation, profile or instance is invented here.
+
+Commit `eda91106f5910322c59911be3c2a51877b34039f` publishes that guard,
+per-item durable progress, exact lease fencing and additive target markers.
+Production preflight requires a real configured target, its exact immutable
+profile and eligible registry state before executor/provider access. Source
+review and focused local regressions pass. This does not select or qualify a
+new shadow target or complete promotion.
 
 ## Complete required-set authority
 
@@ -19,6 +26,18 @@ PR #244 requires builder and promoter to share the complete required set, includ
 The prepared `packages/cloudflare-ai/src/managed-generation-source-manifest.ts` compares supplied per-source proofs to `ScopeSnapshot.member_source_revision_refs`. This establishes equality to that selected snapshot. It does not establish equality to all canonical source/item assignments for the target managed instance. Per-source terminal receipts and a settled-row scan cannot prove that an eligible source was omitted.
 
 The required integration is a complete-or-raise canonical enumeration of the target's assigned source revisions and desired items, bound to current owner, admission, membership and purge authority. Missing projection work must remain missing work. Caller arrays and configured counts cannot substitute for that denominator. The snapshot-based helper remains unpublished and is not used to promote a generation.
+
+The October 9 source audit found no published target-membership authority.
+`loadProjectionSourceContext` binds one outbox delivery through intent, job,
+source revision, ownership and admission; it does not enumerate a target-wide
+set. `projection_generation` and its item effects enumerate existing work, so
+they cannot identify a required source for which no projection job exists.
+The SEARCH_DB registry records generation/profile/count authority, without
+canonical source membership. Owner review therefore needs the exact rule for
+which revisions and membership/lifecycle states belong to
+`(namespace, managed_instance_id, managed_generation)`, including its
+revision/digest fence. No such rule is inferred from `instances.json`, a
+selected scope or observed rows.
 
 ## Preserve the documented pointer owner
 
