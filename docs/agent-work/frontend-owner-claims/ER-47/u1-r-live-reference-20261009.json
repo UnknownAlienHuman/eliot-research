@@ -22,7 +22,11 @@
       "approval_ref": "tests/ui-owner/receipts/u1-1b/bootstrap.json"
     }
   ],
-  "state": "ACTIVE",
-  "evidence_refs": [],
-  "blocker_refs": []
+  "state": "HANDED_OFF",
+  "evidence_refs": [
+    "git:f0418687cb184308c8a61df1e12b662f2aa1976e Live authenticated Notebook study and official Material buttons readback; private captures manifest; reference limits explicit"
+  ],
+  "blocker_refs": [],
+  "handoff_reason": "COMPLETED",
+  "handoff_receipt_ref": "git:f0418687cb184308c8a61df1e12b662f2aa1976e"
 }
