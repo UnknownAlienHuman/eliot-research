@@ -186,3 +186,13 @@ describe('legacy http seam', () => {
     expect((error as OwnerClientError).code).toBe('API_SESSION_CLOSED');
   });
 });
+
+describe("reauthorized section legacy error identity", () => {
+  it("retains the caller's typed failure and exact transport without direct fetch", async () => {
+    const epoch = createSessionEpoch();
+    const ports: LegacyHttpPorts = { fetch: async () => new Response(new Uint8Array([42]), { status: 206, headers: { "content-type": "application/octet-stream" } }), baseUrl: "https://owner.test", epoch, timers: { setTimeout: () => 0, clearTimeout() {} } };
+    const api = createLegacyHttpAdapter(ports, legacyError);
+    await expect(api.requestReauthorizedSectionBytes("/api/v1/research/artifact/artifact-1%3A1/sections/section-1%3A1/reauthorize")).rejects.toBeInstanceOf(LegacyError);
+    api.dispose();
+  });
+});

@@ -113,6 +113,7 @@ export interface LegacyHttpAdapter {
   requestApi(path: string, init?: RequestInit, timeoutMs?: number): Promise<unknown>;
   requestApiWithStatuses(path: string, init: RequestInit | undefined, acceptedStatuses: readonly number[], timeoutMs?: number): Promise<unknown>;
   requestApiBytes(path: string, signal?: AbortSignal, maximumBytes?: number, expectedContentType?: string): Promise<LegacyBytesResponse>;
+  requestReauthorizedSectionBytes(path: string, signal?: AbortSignal): Promise<LegacyBytesResponse>;
   requestApiText(path: string, signal?: AbortSignal, maximumBytes?: number): Promise<LegacyTextResponse>;
   dispose(): void;
 }
@@ -151,6 +152,9 @@ export function createLegacyHttpAdapter(ports: LegacyHttpPorts, errorFactory: Le
       return adapterCall(client.requestJson(path, withIdempotency({ ...normalizeLegacyInit(init, timeoutMs), acceptedStatuses }, init)));
     },
     requestApiBytes,
+    requestReauthorizedSectionBytes(path, signal) {
+      return adapterCall(client.requestReauthorizedSectionBytes(path, signal === undefined ? {} : { signal }));
+    },
     async requestApiText(path, signal, maximumBytes) {
       const response = await requestApiBytes(path, signal, maximumBytes, 'text/plain');
       let text: string;
