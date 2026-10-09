@@ -10,7 +10,9 @@ audit_pr: 327
 
 **Owner-resumed full continuation, 2026-10-08:** the owner assigned this chat all
 remaining documented implementation and acceptance except website design, with
-up to ten Luna Max workers. The named integrator and workers use the existing
+up to ten leaf workers. On October 9 the owner requested a gradual move from
+Luna Max to `opencode-go2/step-5-preview-free`, after each Luna finishes its
+assigned checkpoint. The named integrator and workers use the existing
 `main` checkout with disjoint write sets. The manager/worktree examples below
 describe the historical audit handoff protocol; this run creates no additional
 worktree. The Goal remains active across checkpoints and publication. Explicitly

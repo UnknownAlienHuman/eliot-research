@@ -11,7 +11,16 @@ evidence and were not merged wholesale. Frontend delivery has a separate owner.
 ### Latest October 9 reviewed publication
 
 Remote `main` readback and fetch divergence are exact/0:0 at
-`03f6ff6b135586e0a2f8fd3fe55ea87bb0649a92`. Earlier reviewed publications are
+`3cff6b34ad8492fdbc64efb6eca6fddf3f1cf9e7`, after preserving shared WIP and
+fast-forwarding #329's newly merged documentation. The latest source pair is
+`34534657` (private, unexported #214 relation alias catalogue) and `3cff6b34`
+(native capture fixture type/MIME constant). Anscombe's owning compile/scoped
+lint and two catalogue regressions pass. Kepler on the selected Step 5 route
+independently accepts their exact blobs without repeating passing suites.
+The assembled Core test-project compile and scoped fixture lint now pass.
+Catalogue authority/pipeline and capture/native/live acceptance remain pending.
+Both finished Luna sessions were closed and archived before Step 5 assignments.
+Earlier reviewed publications are
 `eda91106` (durable Items effects, lease/target fences, terminal materialization
 CAS and additive 0128/0129), `779a080d` (eight-file digest/UTF-8 maintenance),
 and `73612d40` (ten-file prompt/context envelope closure). Items has local
@@ -78,8 +87,8 @@ state remains unpublished; current compilation is not a clean release gate.
 At the owner's request, all 23 old direct/nested sessions were closed and
 archived. One fresh Luna Max reviewer completed this Session audit and was also
 closed/archived. That historical checkpoint contained 24 archived descendants.
-The subsequent Locke and Leibniz leaves are also closed/archived. Current
-recursive read-only verification finds all 26 descendants archived, every
+The subsequent Locke and Leibniz leaves are also closed/archived. That historical
+recursive read-only checkpoint found all 26 descendants archived, every
 spawn edge closed and zero current agents. No Issue or PR
 closed, and the overall Goal remains ACTIVE.
 

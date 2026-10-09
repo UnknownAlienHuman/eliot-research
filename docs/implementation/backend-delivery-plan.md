@@ -8,15 +8,20 @@ checkpoints, publication and individual passport closure. The first checkpoint
 below is evidence of delivered prerequisites, not completion of the project.
 
 October 9 publication readback and fetch divergence confirm
-`03f6ff6b135586e0a2f8fd3fe55ea87bb0649a92` at 0/0. Reviewed source commits
+`3cff6b34ad8492fdbc64efb6eca6fddf3f1cf9e7` at 0/0 after fast-forwarding the
+newly merged #329 documentation. Reviewed source commits
 are recorded below; re-read the current Git ref before the next publication.
 The live GitHub inventory has 65 open PRs and four open Issues (last live inventory October 9). The current
 router/cards and latest passport discussions govern their dependencies and
 selected-profile requirements; historical PR heads are not merged wholesale.
 All 23 prior direct/nested agent sessions were closed and archived on October 9
 at the owner's request; read-only recursive verification found no unarchived
-descendant and every spawn edge closed. Fresh Luna Max leaves may be assigned
+descendant and every spawn edge closed. Fresh leaves may be assigned
 under the ten-agent limit, without restoring those sessions or spawning children.
+On October 9 the owner requested a gradual transition to
+`opencode-go2/step-5-preview-free` after each Luna completes its assigned work.
+The live route supports `high` reasoning and declares a 1,000,000-token context;
+task acceptance is verified separately from catalog and persisted model settings.
 The integrator owns assembly, shared cutovers, publication and acceptance records
 in the existing `main` checkout.
 
@@ -174,6 +179,25 @@ tuple, so no producer, operating profile or activation is invented. C1/C2 and
 actual #325/#214 runtime acceptance remain open. Old agent sessions stay closed;
 the fresh writer was closed/archived and the fresh independent reviewer owns one
 bounded leaf, without children.
+
+`345346578fe8e47071c63babf5aaf1225e5debe1` publishes #214's private,
+unexported relation alias catalogue. Malformed excerpt Unicode is rejected
+before the query-result schema can encode it; aliases bind immutable original
+resolver facts and QUESTION/HYPOTHESIS targets. Source and target authority
+flags remain literal false. Anscombe completed owning compile/scoped lint and
+the two focused catalogue regressions. After finishing their tasks, Anscombe
+and Feynman were closed and archived before new Step 5 assignments. Kepler
+(`opencode-go2/step-5-preview-free`, `high`) independently accepted both exact
+catalogue blobs without repeating those passing checks. Source/span/context/
+target authority, CLAIM activation and pipeline integration remain pending.
+
+`3cff6b34` repairs the capture test fixture's widened MIME type with the existing
+native request type and constant. It changes no runtime or assertions. The
+assembled Core test-project compile and scoped file lint pass; Kepler accepted
+the exact fixture blob. This is a working-tree compilation result, not clean
+committed-release or real capture acceptance. Package-boundary and 43-contour
+registry checks pass; all 43 remain `IMPLEMENTED_NOT_LIVE`, with zero
+`LIVE_QUALIFIED`. The overall Goal remains active.
 
 `b326d728` publishes a dormant question-bound proposal prompt renderer with a
 closed two-file dependency set. `max_prompt_pair_bytes` measures the canonical
