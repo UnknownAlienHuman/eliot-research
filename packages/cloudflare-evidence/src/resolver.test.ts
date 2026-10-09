@@ -140,6 +140,10 @@ function fixture(options: {
     setSource(value: EvidenceSourceAuthority | null) { currentSource = value; },
     setSourceObjectDigest(value: string) { currentSourceObjectDigest = value; },
     setContentFailure(value: unknown) { contentFailure = value; },
+    setTerminalState(state: Exclude<EvidenceHandle["terminal_state"], "LIVE">) {
+      if (storedHandle === null) throw new Error("fixture handle has not been created");
+      storedHandle = { ...storedHandle, terminal_state: state, invalidation_ref: `terminal-${state}` };
+    },
     get handle() { return storedHandle; },
     get persistedCitationInput() { return persistedCitationInput; },
   };
@@ -296,6 +300,51 @@ describe("exact evidence resolver", () => {
     }]);
     expect(receipt.rejected).toEqual([]);
     expect(f.invalidations).toEqual([]);
+  });
+
+  it("keeps an unqualified terminal STALE handle uncertain and rejects a proven REDACTED handle", async () => {
+    const staleFixture = fixture();
+    const staleEvidence = await staleFixture.resolver.resolveCandidate({
+      candidate,
+      scope_snapshot_ref: { id: "scope-1", revision: 1 },
+      access,
+    });
+    staleFixture.setTerminalState("STALE");
+    const staleResult = await staleFixture.resolver.resolveCitationSet({
+      handle_refs: [staleEvidence.handle.handle_ref],
+      scope_snapshot_ref: { id: "scope-1", revision: 1 },
+      access,
+    });
+    const staleReceipt = CitationResolutionReceiptV2Schema.parse(staleResult.receipt);
+    expect(staleReceipt.outcomes).toEqual([{
+      handle_ref: staleEvidence.handle.handle_ref,
+      outcome: "VERIFY_UNAVAILABLE",
+    }]);
+    expect(staleReceipt.rejected).toEqual([]);
+    expect(staleFixture.invalidations).toEqual([]);
+
+    const redactedFixture = fixture();
+    const redactedEvidence = await redactedFixture.resolver.resolveCandidate({
+      candidate,
+      scope_snapshot_ref: { id: "scope-1", revision: 1 },
+      access,
+    });
+    redactedFixture.setTerminalState("REDACTED");
+    const redactedResult = await redactedFixture.resolver.resolveCitationSet({
+      handle_refs: [redactedEvidence.handle.handle_ref],
+      scope_snapshot_ref: { id: "scope-1", revision: 1 },
+      access,
+    });
+    const redactedReceipt = CitationResolutionReceiptV2Schema.parse(redactedResult.receipt);
+    expect(redactedReceipt.outcomes).toEqual([{
+      handle_ref: redactedEvidence.handle.handle_ref,
+      outcome: "AUTHORITY_REVOKED",
+    }]);
+    expect(redactedReceipt.rejected).toEqual([{
+      handle_ref: redactedEvidence.handle.handle_ref,
+      reason_code: "AUTHORITY_REVOKED",
+    }]);
+    expect(redactedFixture.invalidations).toEqual([]);
   });
 
   it("keeps unavailable and unknown verification out of rejected", async () => {
