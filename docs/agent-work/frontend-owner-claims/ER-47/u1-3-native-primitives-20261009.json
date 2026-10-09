@@ -1,0 +1,28 @@
+{
+  "protocol": "eliotr.frontend-owner-claim.v1",
+  "manager_identity": "frontend-manager",
+  "manager_context_id": "01a120c9-2637-7952-b6c9-be07b395b4fd",
+  "owner_authorization_ref": "tests/ui-owner/receipts/owner-authorization.json",
+  "base_sha": "70928d5052351c6a881cb9d8854b4387eefe2721",
+  "history_base_sha": "c37e56e0ebdfc7f6d294879008a4036d1b95b985",
+  "state": "ACTIVE",
+  "evidence_refs": [],
+  "blocker_refs": [],
+  "claim_id": "u1-3-native-primitives-20261009",
+  "checkpoint_id": "U1.3",
+  "packet_id": "ER-47",
+  "leaf_identity": "01a120cd-7481-73c3-8f69-2438727d839f",
+  "write_paths": [
+    "packages/ui/src/primitives/primitives.tsx",
+    "packages/ui/src/primitives/primitives.css",
+    "packages/ui/src/primitives/primitives.stories.tsx",
+    "packages/ui/src/primitives/focus.ts",
+    "packages/ui/src/primitives/primitives.test.ts"
+  ],
+  "predecessor_refs": [
+    {
+      "checkpoint_id": "U1.2",
+      "commit_sha": "b568b250b43698eff346ce901049e33cb3cba805"
+    }
+  ]
+}
