@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { IdentifierSchema, Sha256Schema, VersionedRefSchema } from "./common.js";
 import { BranchFindingCandidateSchema } from "./research-branch-finding.js";
-import { BranchQueryPlanSchema, BranchQueryResultSchema, branchQueryResultMatchesPlan } from "./research-branch-query.js";
+import { BranchQueryPlanSchema, BranchQueryResultSchema, branchQueryResultMatchesPlan, type BranchQueryPlan } from "./research-branch-query.js";
 import { ResearchBranchRoleSchema } from "./research-branch-role.js";
 import { ResearchDebtSchema } from "./research.js";
 
@@ -30,6 +30,20 @@ function refKey(value: { readonly id: string; readonly revision: number }): stri
 
 function duplicate(values: readonly string[]): boolean {
   return new Set(values).size !== values.length;
+}
+
+function planMatchesCheckpoint(plan: BranchQueryPlan, checkpoint: {
+  readonly scope_snapshot_ref: { readonly id: string; readonly revision: number };
+  readonly planning_manifest_ref: { readonly id: string; readonly revision: number };
+  readonly planning_manifest_digest: string;
+  readonly inquiry_protocol_ref: { readonly id: string; readonly revision: number };
+  readonly protocol_digest: string;
+}): boolean {
+  return refKey(plan.scope_snapshot_ref) === refKey(checkpoint.scope_snapshot_ref) &&
+    refKey(plan.planning_manifest_ref) === refKey(checkpoint.planning_manifest_ref) &&
+    plan.planning_manifest_digest === checkpoint.planning_manifest_digest &&
+    refKey(plan.inquiry_protocol_ref) === refKey(checkpoint.inquiry_protocol_ref) &&
+    plan.protocol_digest === checkpoint.protocol_digest;
 }
 
 export const ResearchReadExtractCheckpointSchema = z.object({
@@ -86,23 +100,18 @@ export const ResearchReadExtractCheckpointV2Schema = z.object({
     context.addIssue({ code: "custom", path: ["checkpoint_ref"], message: "v2 read/extract checkpoint identity mismatch" });
   }
   const roles = value.role_queries.map((item) => item.query_plan.role);
-  const evidenceByRef = new Map(value.evidence.map((item) => [refKey(item.handle_ref), item.excerpt_sha256]));
+  const evidenceByRef = new Map(value.evidence.map((item) => [refKey(item.handle_ref), item]));
   const queryEvidence = value.role_queries.flatMap((item) => item.query_result.resolved_evidence.map((evidence) => ({
     ref: refKey(evidence.handle.handle_ref),
     digest: evidence.handle.excerpt_sha256,
+    bytes: evidence.handle.excerpt_byte_length,
   })));
   if (duplicate(roles) || duplicate(value.evidence.map((item) => refKey(item.handle_ref))) ||
       duplicate(value.omitted_candidate_refs) ||
       value.role_queries.some(({ query_plan, query_result }) => !branchQueryResultMatchesPlan(query_plan, query_result) ||
-        query_plan.planning_manifest_ref.id !== value.planning_manifest_ref.id ||
-        query_plan.planning_manifest_ref.revision !== value.planning_manifest_ref.revision ||
-        query_plan.planning_manifest_digest !== value.planning_manifest_digest ||
-        query_plan.scope_snapshot_ref.id !== value.scope_snapshot_ref.id ||
-        query_plan.scope_snapshot_ref.revision !== value.scope_snapshot_ref.revision ||
-        query_plan.scope_snapshot_digest !== query_result.scope_snapshot_digest ||
-        query_result.scope_snapshot_ref.id !== value.scope_snapshot_ref.id ||
-        query_result.scope_snapshot_ref.revision !== value.scope_snapshot_ref.revision) ||
-      queryEvidence.some((item) => evidenceByRef.get(item.ref) !== item.digest) ||
+        !planMatchesCheckpoint(query_plan, value)) ||
+      queryEvidence.some((item) => evidenceByRef.get(item.ref)?.excerpt_sha256 !== item.digest ||
+        evidenceByRef.get(item.ref)?.excerpt_byte_length !== item.bytes) ||
       [...evidenceByRef.keys()].some((ref) => !queryEvidence.some((item) => item.ref === ref))) {
     context.addIssue({ code: "custom", path: ["role_queries"], message: "v2 read/extract query provenance or evidence is inconsistent" });
   }
@@ -301,7 +310,9 @@ export const ResearchBranchAnalysisCheckpointV2Schema = z.object({
   }
   const roles = value.branch_results.map((item) => item.role);
   if (duplicate(value.required_roles) || duplicate(roles) ||
-      roles.some((role) => role === "COUNTER" || !value.required_roles.includes(role))) {
+      roles.some((role) => role === "COUNTER" || !value.required_roles.includes(role)) ||
+      value.required_roles.some((role) => role !== "COUNTER" && !roles.includes(role)) ||
+      value.branch_results.some((result) => !planMatchesCheckpoint(result.query_plan, value))) {
     context.addIssue({ code: "custom", path: ["branch_results"], message: "v2 analysis roles are inconsistent" });
   }
 });
@@ -333,7 +344,9 @@ export const ResearchBranchReconciliationCheckpointV2Schema = z.object({
   }
   const required = new Set(value.required_roles);
   const roles = value.branch_results.map((item) => item.role);
-  if (required.size !== value.required_roles.length || duplicate(roles) || roles.some((role) => !required.has(role))) {
+  if (required.size !== value.required_roles.length || duplicate(roles) || roles.some((role) => !required.has(role)) ||
+      value.required_roles.some((role) => !roles.includes(role)) ||
+      value.branch_results.some((result) => !planMatchesCheckpoint(result.query_plan, value))) {
     context.addIssue({ code: "custom", path: ["branch_results"], message: "v2 reconciliation roles are inconsistent" });
   }
   const blocked = value.branch_results.filter((item) => item.status === "BLOCKED").map((item) => item.role).sort();

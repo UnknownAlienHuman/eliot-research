@@ -125,6 +125,28 @@ const BranchQueryResolvedHandleSchema = z.object({
   excerpt_byte_length: z.number().int().nonnegative().max(8 * 1024 * 1024),
 }).strict();
 
+/** A transport cancellation escapes the stage; it cannot be reported as a completed query leg. */
+export function branchQueryLegOutcomeIsConsistent(value: {
+  readonly status: "COMPLETED" | "FAILED";
+  readonly stop_reason: string;
+  readonly resolved_handle_refs: readonly unknown[];
+}): boolean {
+  if (value.status === "FAILED") return value.stop_reason === "LEG_FAILED" && value.resolved_handle_refs.length === 0;
+  return ["LEG_COMPLETED", "NO_HITS", "CANDIDATE_BUDGET", "SCAN_BUDGET", "EVIDENCE_BUDGET"].includes(value.stop_reason) &&
+    (value.stop_reason !== "NO_HITS" || value.resolved_handle_refs.length === 0);
+}
+
+function branchQueryStopMatchesOutcome(
+  legs: readonly { readonly status: "COMPLETED" | "FAILED" }[],
+  stop: "PLAN_COMPLETED" | "FIRST_ADMISSIBLE_EVIDENCE" | "NO_HITS" | "BUDGET_EXHAUSTED" | "ALL_LEGS_FAILED",
+  hasEvidence: boolean,
+): boolean {
+  if (stop === "ALL_LEGS_FAILED") return !hasEvidence && legs.length > 0 && legs.every((leg) => leg.status === "FAILED");
+  if (stop === "NO_HITS") return !hasEvidence && legs.some((leg) => leg.status === "COMPLETED");
+  if (stop === "FIRST_ADMISSIBLE_EVIDENCE") return hasEvidence && legs.some((leg) => leg.status === "COMPLETED");
+  return true;
+}
+
 export const BranchQueryLegResultSchema = z.object({
   status: z.enum(["COMPLETED", "FAILED"]),
   query_id: IdentifierSchema,
@@ -139,7 +161,8 @@ export const BranchQueryLegResultSchema = z.object({
   stop_reason: z.enum(["LEG_COMPLETED", "NO_HITS", "CANDIDATE_BUDGET", "SCAN_BUDGET", "EVIDENCE_BUDGET", "CANCELLED", "LEG_FAILED"]),
 }).strict().superRefine((value, context) => {
   if ((value.status === "COMPLETED" && (value.trace === undefined || value.failure_code !== undefined)) ||
-      (value.status === "FAILED" && (value.failure_code === undefined || value.resolved_handle_refs.length > 0 || value.stop_reason !== "LEG_FAILED"))) {
+      (value.status === "FAILED" && (value.failure_code === undefined || value.trace !== undefined)) ||
+      !branchQueryLegOutcomeIsConsistent(value)) {
     context.addIssue({ code: "custom", path: ["status"], message: "query leg completion/failure fields are inconsistent" });
   }
   if (value.trace !== undefined && (value.trace.trace_ref.revision !== 1 ||
@@ -208,8 +231,8 @@ function validateBranchQueryResult(
   if (bytes !== value.total_utf8_bytes) {
     context.addIssue({ code: "custom", path: ["total_utf8_bytes"], message: "resolved evidence byte total mismatch" });
   }
-  if (value.stop_reason === "NO_HITS" && value.resolved_evidence.length !== 0) {
-    context.addIssue({ code: "custom", path: ["stop_reason"], message: "no-hit result contains evidence" });
+  if (!branchQueryStopMatchesOutcome(value.query_legs, value.stop_reason, value.resolved_evidence.length > 0)) {
+    context.addIssue({ code: "custom", path: ["stop_reason"], message: "query stop reason contradicts leg outcomes or evidence" });
   }
   const failed = value.query_legs.filter((leg) => leg.status === "FAILED").length;
   const expected = failed === 0 ? "NONE" : failed === value.query_legs.length ? "ALL_FAILED" : "PARTIAL";
@@ -237,12 +260,13 @@ export function branchQueryResultMatchesPlan(plan: BranchQueryPlan, result: Bran
 
 export function branchQueryLegsMatchPlan(
   plan: BranchQueryPlan,
-  legs: readonly Pick<BranchQueryLegResult, "query_id" | "query_sha256">[],
+  legs: readonly Pick<BranchQueryLegResult, "query_id" | "query_sha256" | "status">[],
   stop: BranchQueryResult["stop_reason"],
   hasEvidence: boolean,
 ): boolean {
   const fullPlanStop = ["PLAN_COMPLETED", "NO_HITS", "ALL_LEGS_FAILED"].includes(stop);
-  return legs.length <= plan.query_legs.length && (!fullPlanStop || legs.length === plan.query_legs.length) &&
+  return legs.length > 0 && legs.length <= plan.query_legs.length && (!fullPlanStop || legs.length === plan.query_legs.length) &&
+    branchQueryStopMatchesOutcome(legs, stop, hasEvidence) &&
     (stop !== "FIRST_ADMISSIBLE_EVIDENCE" || (plan.stop_rule === "FIRST_ADMISSIBLE_EVIDENCE" && hasEvidence)) &&
     legs.every((leg, index) => {
       const planned = plan.query_legs[index];

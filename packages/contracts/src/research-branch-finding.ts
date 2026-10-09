@@ -2,7 +2,7 @@ import { z } from "zod";
 import { IdentifierSchema, Sha256Schema, VersionedRefSchema } from "./common.js";
 import { ResolvedEvidenceSchema } from "./evidence.js";
 import { EvidenceFreezeSchema, ResearchDebtSchema } from "./research.js";
-import { BranchQueryPlanSchema, branchQueryLegsMatchPlan } from "./research-branch-query.js";
+import { BranchQueryPlanSchema, branchQueryLegsMatchPlan, branchQueryLegOutcomeIsConsistent } from "./research-branch-query.js";
 import { ResearchBranchRoleSchema } from "./research-branch-role.js";
 
 function refKey(ref: { readonly id: string; readonly revision: number }): string {
@@ -107,7 +107,8 @@ const FrozenRetrievalLegSchema = z.object({
 }).strict().superRefine((value, context) => {
   if ((value.trace_ref === undefined) !== (value.trace_sha256 === undefined) ||
       (value.status === "COMPLETED" && (value.trace_ref === undefined || value.failure_code !== undefined)) ||
-      (value.status === "FAILED" && (value.failure_code === undefined || value.trace_ref !== undefined || value.resolved_handle_refs.length !== 0))) {
+      (value.status === "FAILED" && (value.failure_code === undefined || value.trace_ref !== undefined || value.resolved_handle_refs.length !== 0)) ||
+      !branchQueryLegOutcomeIsConsistent(value)) {
     context.addIssue({ code: "custom", path: ["status"], message: "frozen query leg status/provenance is inconsistent" });
   }
 });
