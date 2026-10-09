@@ -3,3 +3,4 @@ export * from "./runtime-limits.js"; export * from "./bindings.js"; export * fro
 export { createS3OffsiteCopyAdapter, type S3OffsiteCopyAdapterConfig } from "./backup-offsite-s3.js";
 export { encodeCanonicalBase64Bytes, decodeCanonicalBase64Bytes, type CanonicalBase64DecodeOptions } from "./canonical-base64-bytes.js";
 export { queueDeliveryMetric, scheduledOutboxMetric, type QueueDeliveryMetricInput, type ScheduledOutboxMetricInput } from "./delivery-metrics.js";
+export { createAiSearchScopeFilter, type AiSearchScopeFilter } from "./ai-search-scope-filter.js";

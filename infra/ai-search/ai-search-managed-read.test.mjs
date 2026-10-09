@@ -200,6 +200,7 @@ describe("Cloudflare AI Search managed relevance port", () => {
       query: "exact retrieval question",
       ai_search_options: {
         retrieval: {
+          filters: { source_revision_ref: { $in: [SOURCE] }, projection_generation: GENERATION },
           retrieval_type: "hybrid",
           match_threshold: 0,
           max_num_results: 12,
@@ -244,6 +245,7 @@ describe("Cloudflare AI Search managed relevance port", () => {
         keyword,
       ).ai_search_options.retrieval,
     ).toEqual({
+      filters: { source_revision_ref: { $in: [SOURCE] }, projection_generation: GENERATION },
       retrieval_type: "keyword",
       match_threshold: 0,
       max_num_results: 7,
@@ -283,6 +285,39 @@ describe("Cloudflare AI Search managed relevance port", () => {
     expect(Object.isFrozen(candidates)).toBe(true);
     expect(Object.isFrozen(candidates[0])).toBe(true);
     expect(Object.isFrozen(candidates[0].metadata)).toBe(true);
+  });
+
+  it("filters before top-k so a higher-ranked foreign project cannot hide the scoped source", async () => {
+    const allowed = providerResult().chunks[0];
+    const foreign = { ...allowed, id: "foreign-first", score: 0.99,
+      item: { ...allowed.item, metadata: { ...allowed.item.metadata, source_revision_ref: "other-project-revision" } } };
+    const retired = { ...allowed, id: "retired-first", score: 0.98,
+      item: { ...allowed.item, metadata: { ...allowed.item.metadata, projection_generation: "retired-generation" } } };
+    const search = vi.fn(async (input) => {
+      const { filters, max_num_results } = input.ai_search_options.retrieval;
+      expect(filters).toEqual({ source_revision_ref: { $in: [SOURCE] }, projection_generation: GENERATION });
+      return { search_query: input.query, chunks: [foreign, retired, allowed]
+        .filter((chunk) => filters.source_revision_ref.$in.includes(chunk.item.metadata.source_revision_ref) &&
+          chunk.item.metadata.projection_generation === filters.projection_generation)
+        .slice(0, max_num_results) };
+    });
+    const port = createAiSearchManagedSearchPort({ get: () => ({ search }) }, authority());
+    const candidates = await port.search(request({ requested_limit: 1 }), ["SEM"], 0);
+    expect(search).toHaveBeenCalledTimes(1);
+    expect(candidates.map((candidate) => candidate.source_revision_ref)).toEqual([SOURCE]);
+    expect(candidates[0].proof_state).toBe("UNRESOLVED_LOCATOR");
+  });
+
+  it("refuses an unrepresentable frozen scope before resolving or searching the provider", async () => {
+    const fixture = namespace();
+    const port = createAiSearchManagedSearchPort(fixture.binding, authority());
+    await expect(port.search(request({ scope_snapshot: { member_source_revision_refs: ["s".repeat(65)] } }), ["SEM"], 0))
+      .rejects.toEqual(expectManagedError("AI_SEARCH_MANAGED_INPUT_INVALID"));
+    const oversized = Array.from({ length: 64 }, (_, i) => `source-${i}-${"a".repeat(48)}`);
+    await expect(port.search(request({ scope_snapshot: { member_source_revision_refs: oversized } }), ["SEM"], 0))
+      .rejects.toEqual(expectManagedError("AI_SEARCH_MANAGED_INPUT_INVALID"));
+    expect(fixture.get).not.toHaveBeenCalled();
+    expect(fixture.search).not.toHaveBeenCalled();
   });
 
   it("returns an empty result without contacting the provider for an empty scope", async () => {

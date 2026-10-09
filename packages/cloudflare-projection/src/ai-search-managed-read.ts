@@ -1,4 +1,4 @@
-import { decodeAiSearchSearchResult, type AiSearchAdapter, type AiSearchInstanceLike, type AiSearchNamespaceLike } from "@eliotr/platform-cloudflare";
+import { createAiSearchScopeFilter, type AiSearchScopeFilter, decodeAiSearchSearchResult, type AiSearchAdapter, type AiSearchInstanceLike, type AiSearchNamespaceLike } from "@eliotr/platform-cloudflare";
 import { decodeAiSearchGenerationRegistrySnapshot } from "./ai-search-generation-registry-codec.js";
 import type { AiSearchGenerationRegistryService } from "./ai-search-generation-registry-contract.js";
 import { createD1AiSearchGenerationRegistryStore } from "./ai-search-generation-registry-d1.js";
@@ -33,7 +33,7 @@ export interface AiSearchManagedSearchRequest {
   readonly query: string; readonly ai_search_options: Readonly<{ retrieval: Readonly<{
     retrieval_type: "vector" | "keyword" | "hybrid"; match_threshold: number; max_num_results: number;
     context_expansion: 0 | 1 | 2 | 3; fusion_method?: "rrf" | "max"; keyword_match_mode?: "and" | "or";
-    boost_by: readonly never[]; metadata_only: false;
+    boost_by: readonly never[]; metadata_only: false; filters: AiSearchScopeFilter;
   }> }>;
 }
 export interface AiSearchManagedSearchPort { readonly search: AiSearchAdapter["search"] }
@@ -152,7 +152,15 @@ export function compileAiSearchManagedSearchRequest(request: ManagedRequest, lan
   const type = retrievalType(lanes, active.index_method), query = requestQuery(request);
   if (type === "hybrid" && active.fusion_method === undefined) failure("AI_SEARCH_MANAGED_INPUT_INVALID", "hybrid active profile omits fusion_method");
   if (type !== "vector" && active.keyword_match_mode === undefined) failure("AI_SEARCH_MANAGED_INPUT_INVALID", "keyword active profile omits keyword_match_mode");
+  let filters: AiSearchScopeFilter;
+  try {
+    filters = createAiSearchScopeFilter(request.scope_snapshot.member_source_revision_refs, active.index_generation);
+  } catch (cause) {
+    failure("AI_SEARCH_MANAGED_INPUT_INVALID",
+      "frozen scope cannot fit an exact single-query AI Search filter; split the request explicitly", false, cause);
+  }
   const retrieval = Object.freeze({
+    filters,
     retrieval_type: type, match_threshold: active.match_threshold,
     max_num_results: Math.min(request.requested_limit, active.max_results), context_expansion: expansion(contextExpansion),
     ...(type === "hybrid" ? { fusion_method: active.fusion_method } : {}),

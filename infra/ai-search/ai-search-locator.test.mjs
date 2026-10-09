@@ -118,6 +118,23 @@ describe("Cloudflare AI Search locator boundary", () => {
     expect("resolved_evidence" in (decoded[0] ?? {})).toBe(false);
   });
 
+  it("accepts only historical or explicit text query_kind envelopes", () => {
+    const decode = (raw) => decodeAiSearchSearchResult(request(), raw, options());
+    const historical = result([chunk()]);
+    const documentedText = result([chunk()], { query_kind: "text" });
+    const decoded = decode(historical);
+    expect(decode(documentedText)).toEqual(decoded);
+    expect(decode(JSON.parse(JSON.stringify(documentedText)))).toEqual(decoded);
+    expect(decode(result([]))).toEqual(decode(result([], { query_kind: "text" })));
+
+    expect(() => decode(result([], { query_kind: undefined }))).toThrow(/query_kind must be text/u);
+    expect(() => decode(result([], { query_kind: null }))).toThrow(/query_kind must be text/u);
+    expect(() => decode(result([], { query_kind: "image" }))).toThrow(/query_kind must be text/u);
+    expect(() => decode(result([], { query_kind: 1 }))).toThrow(/query_kind must be text/u);
+    expect(() => decode(result([], { query_kind: [] }))).toThrow(/query_kind must be text/u);
+    expect(() => decode(result([], { query_kind: "text", partial: true }))).toThrow(/unsupported field/u);
+  });
+
   it("maps one chunk with explicit rank and lane context", () => {
     const candidate = mapAiSearchChunkToLocator(request(), chunk({ scoring_details: { keyword_score: 1.25, keyword_rank: 7 } }), {
       expected_index_generation: GENERATION,
