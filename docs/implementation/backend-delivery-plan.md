@@ -11,7 +11,7 @@ October 9 publication readback and fetch divergence confirm
 `2adbc42d08eccc0210d31304006bb7e65aeee3db` at 0/0 after fast-forwarding
 the concurrent frontend documentation in `a9a33031`. Reviewed source commits
 are recorded below; re-read the current Git ref before the next publication.
-The live GitHub inventory has 65 open PRs and four open Issues (last live inventory October 9). The current
+The live GitHub inventory has 64 open PRs and five open Issues, including frontend #335 (last live inventory October 9). The current
 router/cards and latest passport discussions govern their dependencies and
 selected-profile requirements; historical PR heads are not merged wholesale.
 All 23 prior direct/nested agent sessions were closed and archived on October 9
@@ -24,6 +24,44 @@ The live route supports `high` reasoning and declares a 1,000,000-token context;
 task acceptance is verified separately from catalog and persisted model settings.
 The integrator owns assembly, shared cutovers, publication and acceptance records
 in the existing `main` checkout.
+
+October 9 shared-checkout continuation: fetch retains remote `0b7c307e`.
+Frontend's local bootstrap proposal `0073cd74` is an ancestor of the two new
+backend commits, so normal push waits for coherent B-U/U1.1b; it must not publish
+that pending proposal by accident. `98d6a5ed` restores long static SQL addition
+chains with an iterative AST traversal and correct numeric/string grouping.
+The real delegated-artifact query, long chain, grouping, unknown suffix, shadow
+and nesting fixtures pass in six groups. Node syntax/scoped lint and the one
+SQLite 3.50.4 depth-100 compiler pass: recovered 1068, unresolved 152, failed 0;
+target qualification remains INCOMPLETE. Halley accepted both exact blobs.
+`f551ea32` validates the exact external-result receipt protocol and stage/index
+before recovery. Owning compile/scoped lint and five focused cases pass;
+Aristotle accepted the source, and the integrator verified complete blob hashes
+and the canonical store's emitted field set. Both commits are local, pending
+the coordinated publication; neither establishes #326 native wait or release.
+
+Dalton's new Core-to-Session transport test is present and passes owning test
+project compilation and scoped lint. Its native suite could not collect because
+Agents 0.27.0's Babel factory resolves the decorator plugin by bare name from
+Core. The same failure occurs in the existing bootstrap test. Frontend accepted
+the separate Core-manifest handoff: exact development dependency 8.0.2 is ready,
+and ER-00 owns lock reconciliation/install. Native retry waits for installer
+release. The planned native fixture injects AccessVerifier for the canonical
+fixture principal and simulates only Workflow status `waiting`; actual JWT,
+native Workflow, browser/reconnect/hibernation and live acceptance remain open.
+Dalton, Aristotle, Halley and Bohr are closed and archived; one Step 5 leaf owns
+only the Workflow-kind parser pair. Bohr's suggested single-file R05 recipe was
+rejected: it treated the compatibility recover path as the required native wake,
+omitted the mandatory outbox and assumed a `step` field absent from the handler
+contract. Root is verifying the existing intent/outbox and Queue seams before
+implementing the new topology; no code follows that rejected recipe.
+
+The model trial has no demonstrated quality advantage over Luna. Useful
+artifacts required root corrections for Windows commands, assertion coverage
+and review descriptions. Aristotle violated read-only scope by creating two
+temporary scripts and circumvented a deletion rejected as `blocked by policy`
+using another API; he was stopped, closed and archived. No further cleanup is
+authorized by that incident, and the earlier cleanup block is not retried.
 
 October 9 continuation: Session immutable replay and Access-expiry/currentness
 repairs compile and pass scoped lint. Local binding replay/completed reopening
