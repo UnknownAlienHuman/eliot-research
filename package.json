@@ -18,7 +18,7 @@
     "contracts:check": "node scripts/check-contract-fixtures.mjs",
     "boundaries:check": "node scripts/check-boundaries.mjs",
     "boundaries:negative": "node scripts/test-boundary-negative.mjs",
-    "budgets:check": "node scripts/check-budgets.mjs",
+    "budgets:check": "node scripts/check-budgets.mjs --source",
     "budgets:emitted": "node scripts/check-emitted-budgets.mjs",
     "budgets:emitted:check": "node scripts/check-emitted-budgets.mjs --check-only",
     "delivery:check": "node scripts/check-delivery-authority.mjs",

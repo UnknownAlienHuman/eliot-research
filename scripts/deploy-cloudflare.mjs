@@ -362,16 +362,18 @@ export async function deployCloudflare({ confirmLive = false, secretsFilePath, e
     if (budget.error !== null || budget.stdout.length + budget.stderr.length > 64 * 1024) {
       throw new Error(`Maintenance source-budget command failed (${budget.error ?? "output limit"})`);
     }
-    if (budget.status === 0 && /(?:^|\r?\n)Source budgets: PASS(?:\r?\n|$)/u.test(budget.stdout)) {
-      sourceBudgetState = "PASS";
-    } else {
-      const failure = /(?:^|\r?\n)Source budgets: FAIL \((\d+) violations\)(?:\r?\n|$)/u.exec(budget.stdout);
-      if (budget.status !== 1 || failure === null) throw new Error("Maintenance source-budget result could not be classified");
-      sourceBudgetState = `FAIL (${failure[1]} violations)`;
-      sourceBudgetFindings = `${budget.stdout}${budget.stderr}`.trim().slice(0, 4096);
-      if (`${budget.stdout}${budget.stderr}`.trim().length > 4096) sourceBudgetFindings += " [truncated after 4096 characters]";
-      log(`${budget.stdout}${budget.stderr}`.trim());
+    const diagnosticStatusLines = `${budget.stdout}\n${budget.stderr}`.split(/\r?\n/u)
+      .filter((line) => /^\s*Source (?:maintainability|budgets)\b/u.test(line));
+    const diagnostic = diagnosticStatusLines.length === 1
+      ? /^Source maintainability: (ADVISORY \((?:\d+ observations|no threshold observations)\))$/u.exec(diagnosticStatusLines[0])
+      : null;
+    if (budget.status !== 0 || diagnostic === null) {
+      throw new Error("Maintenance source-budget result could not be classified");
     }
+    sourceBudgetState = diagnostic[1];
+    sourceBudgetFindings = `${budget.stdout}${budget.stderr}`.trim().slice(0, 4096);
+    if (`${budget.stdout}${budget.stderr}`.trim().length > 4096) sourceBudgetFindings += " [truncated after 4096 characters]";
+    log(`${budget.stdout}${budget.stderr}`.trim());
     exec("pnpm", ["--filter", "@eliotr/core", "typecheck"]);
     exec("pnpm", ["exec", "eslint", "scripts/deploy-cloudflare.mjs", "scripts/lib/deployment-maintenance.mjs",
       "scripts/lib/deployment-ai-search-bootstrap.mjs", "scripts/test-deployment-ai-search-bootstrap.mjs",
@@ -956,8 +958,8 @@ function buildMaintenanceNote(blockers, sourceBudgetState, sourceBudgetFindings,
   const primaryBindingState = maintenancePrimaryBindingBootstrap === null ? "" :
     "The fresh primary backup bucket creation receipt and exact VERSION_METADATA/BACKUP_PARTS_BUCKET Worker readback were pinned before upload and after synchronization; existing bindings remained preserved and RETRIEVAL/ERASURE stayed disabled. ";
   return `Worker/assets maintenance deployment only; this receipt does not qualify a full release. ${blockerText}. ` +
-    `Source-maintainability budget gate: ${sourceBudgetState ?? "NOT_EXECUTED"}. ` +
-    `${sourceBudgetFindings === null ? "No source-budget failure output was observed. " : `Source-budget findings: ${sourceBudgetFindings}. `}` +
+    `Source-maintainability diagnostics: ${sourceBudgetState ?? "NOT_EXECUTED"}. ` +
+    `${sourceBudgetFindings === null ? "No source-budget diagnostics were observed. " : `Source-budget findings: ${sourceBudgetFindings}. `}` +
     `D1 migrations were not applied; exact existing migration ledger readback: ${ledgerState}; ` +
     `required Core/Search schema generation readback: ${schemaState}. ` +
     routeState + aiGatewayState + aiSearchState + primaryBindingState +

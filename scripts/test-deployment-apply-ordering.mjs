@@ -343,7 +343,7 @@ function harness(overrides = {}) {
     readCapabilityProfile: async () => { buildEvents.push("read-candidate-capability-profile"); return candidateCapabilityProfile; },
     captureBudget: (command, args) => {
       calls.push(`${command} ${args.join(" ")}`);
-      return { status: 1, stdout: "Source budgets: FAIL (17 violations)\n", stderr: "", error: null };
+      return overrides.budgetReadback ?? { status: 0, stdout: "Source maintainability: ADVISORY (17 observations)\n", stderr: "", error: null };
     },
     readCapabilities: async () => {
       capabilityReads += 1;
@@ -926,10 +926,28 @@ await check("maintenance deploy records blockers and budget findings without cla
   assert.ok(test.capabilityReads() >= 3, "active and candidate capability profiles are read before authority sync");
   assert.ok(!test.calls.some((call) => call.includes("wrangler d1 migrations apply")));
   assert.ok(receipt.note.includes("fixture full-release blocker"));
-  assert.ok(receipt.note.includes("Source-maintainability budget gate: FAIL (17 violations)"));
+  assert.ok(receipt.note.includes("Source-maintainability diagnostics: ADVISORY (17 observations)"));
   assert.ok(receipt.note.includes("D1 migrations were not applied"));
-  assert.ok(logs.some((message) => message.includes("Source budgets: FAIL (17 violations)")));
+  assert.ok(logs.some((message) => message.includes("Source maintainability: ADVISORY (17 observations)")));
   assert.equal(test.receipts.length, 1);
+});
+
+await check("maintenance rejects contradictory or malformed source diagnostics before effects", async () => {
+  const valid = "Source maintainability: ADVISORY (17 observations)\n";
+  for (const budgetReadback of [
+    { status: 0, stdout: valid + "Source budgets: FAIL (4 violations)\n", stderr: "", error: null },
+    { status: 0, stdout: valid, stderr: "Source budgets: FAIL (4 violations)\n", error: null },
+    { status: 0, stdout: valid + "Source maintainability: BROKEN\n", stderr: "", error: null },
+    { status: 0, stdout: valid + "Source maintainability missing status\n", stderr: "", error: null },
+    { status: 0, stdout: valid + valid, stderr: "", error: null },
+    { status: 1, stdout: valid, stderr: "", error: null },
+  ]) {
+    const test = harness({ budgetReadback, options: { purpose: "MAINTENANCE" } });
+    await assert.rejects(deployCloudflare(test.options), /source-budget result could not be classified/u);
+    assert.ok(!test.calls.includes(deployCommand));
+    assert.equal(test.calls.filter((call) => call.startsWith("POST ")).length, 0);
+    assert.equal(test.receipts.length, 0);
+  }
 });
 
 await check("live maintenance can pin and preserve existing AI Gateway inventory through all deployment stages", async () => {
