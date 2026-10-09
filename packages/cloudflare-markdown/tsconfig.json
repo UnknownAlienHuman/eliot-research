@@ -11,5 +11,5 @@
   "include": [
     "src/**/*.ts"
   ],
-  "references": [{ "path": "../platform-cloudflare" }]
+  "references": [{ "path": "../contracts" }, { "path": "../platform-cloudflare" }]
 }

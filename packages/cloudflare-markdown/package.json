@@ -13,5 +13,5 @@
     "typecheck": "tsc -b --pretty false",
     "test": "vitest run --root ../.. packages/cloudflare-markdown --reporter=verbose"
   },
-  "dependencies": { "@eliotr/platform-cloudflare": "workspace:*" }
+  "dependencies": { "@eliotr/contracts": "workspace:*", "@eliotr/platform-cloudflare": "workspace:*" }
 }

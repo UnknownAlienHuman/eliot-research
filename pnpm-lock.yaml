@@ -404,6 +404,9 @@ importers:
 
   packages/cloudflare-markdown:
     dependencies:
+      '@eliotr/contracts':
+        specifier: workspace:*
+        version: link:../contracts
       '@eliotr/platform-cloudflare':
         specifier: workspace:*
         version: link:../platform-cloudflare

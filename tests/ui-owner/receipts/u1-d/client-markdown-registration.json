@@ -1,0 +1,19 @@
+{
+  "protocol": "eliotr.ui-review-receipt.v1",
+  "checkpoint": "B-C",
+  "status": "ACCEPTED_BOUNDED_CANONICAL_TYPE_REGISTRATION",
+  "canonical_source_commit": "751740df43b90e3c5d79ca519b30d0fff7b2917b",
+  "scope": ["packages/cloudflare-markdown/package.json", "packages/cloudflare-markdown/tsconfig.json", "pnpm-lock.yaml", "scripts/check-boundaries.mjs"],
+  "change": "Register direct contracts workspace dependency, TypeScript reference, exact lock importer and one dependency-direction permission for the existing Markdown wire types. Runtime and wire vocabulary remain defined by the canonical source handoff.",
+  "versions": {"pnpm": "11.23.0", "TypeScript": "6.0.3", "Node": "25.6.1"},
+  "checks": [
+    {"command": "pnpm install --lockfile-only --offline --ignore-scripts", "result": "PASS; importer-only three-line lock addition"},
+    {"command": "pnpm install --frozen-lockfile --offline --ignore-scripts", "result": "PASS; 46 workspaces, zero downloads"},
+    {"command": "pnpm exec tsc -b packages/cloudflare-markdown/tsconfig.json packages/interfaces/tsconfig.json --pretty false", "result": "PASS"},
+    {"command": "node scripts/check-boundaries.mjs", "result": "PASS"},
+    {"command": "pnpm exec eslint scripts/check-boundaries.mjs", "result": "PASS"},
+    {"command": "node .eliotr-state/frontend-bootstrap/markdown-boundary-negative.mjs", "result": "PASS; unrelated retrieval import fails with exact dependency-direction diagnostic"}
+  ],
+  "harness_repair": "Initial private harness lacked the apps directory required by the existing walker; repaired setup before the seeded negative. No product boundary failure.",
+  "limitations": ["This accepts type registration only. Import client, frontend wiring, native and release gates remain open."]
+}

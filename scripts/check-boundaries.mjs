@@ -278,7 +278,7 @@ const PACKAGE_RULES = new Map([
   ["packages/cloudflare-access", new Set(["@eliotr/platform-cloudflare"])],
   ["packages/cloudflare-workspace-mcp", new Set([...COMPUTER_AGENT_IMPORTS, "@eliotr/cloudflare-raw-ingest", "@eliotr/cloudflare-workflows", "@eliotr/interfaces", "@eliotr/cloudflare-access", "@eliotr/contracts", "@eliotr/platform-cloudflare", "zod"])],
   ["packages/cloudflare-raw-ingest", new Set(["@eliotr/contracts", "@eliotr/domain", "@eliotr/interfaces", "@eliotr/platform-cloudflare"])],
-  ["packages/cloudflare-markdown", new Set(["@eliotr/platform-cloudflare"])],
+  ["packages/cloudflare-markdown", new Set(["@eliotr/contracts", "@eliotr/platform-cloudflare"])],
   ["packages/cloudflare-erasure", new Set(["@eliotr/backup-o2", "@eliotr/contracts"])],
   ["packages/cloudflare-projection", new Set([
     "@eliotr/contracts",
