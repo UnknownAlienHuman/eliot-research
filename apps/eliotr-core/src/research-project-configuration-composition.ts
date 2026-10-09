@@ -74,6 +74,14 @@ export function createOwnerResearchProjectConfigurationService(
   });
 }
 
+export function mapResearchProjectModelConfigurationError(error: unknown): never {
+  if (error instanceof ResearchProjectModelConfigurationAuthorityError ||
+      error instanceof ResearchProjectModelConfigurationError) {
+    throw new HttpRequestError(error.code, error.status, error.message, error.retryable);
+  }
+  throw error;
+}
+
 /** Readiness uses the same selected immutable bundle that a new run captures. */
 export async function readOwnerProjectResearchReadiness(
   env: Env, context: AuthenticatedRequestContext, projectId: string | undefined,
@@ -94,11 +102,7 @@ export async function readOwnerProjectResearchReadiness(
         error.code === "RESEARCH_MODEL_CONFIGURATION_QUALIFICATION_REQUIRED") {
       return { ...await unavailable(), readiness_reason: "QUALIFICATION_UNAVAILABLE" as const };
     }
-    if (error instanceof ResearchProjectModelConfigurationAuthorityError ||
-        error instanceof ResearchProjectModelConfigurationError) {
-      throw new HttpRequestError(error.code, error.status, error.message, error.retryable);
-    }
-    throw error;
+    mapResearchProjectModelConfigurationError(error);
   }
   if (selected === null) return unavailable();
   const bundle = selected.configuration;

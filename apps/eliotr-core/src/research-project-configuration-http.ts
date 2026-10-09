@@ -1,15 +1,10 @@
 import type { AuthenticatedRequestContext } from "@eliotr/interfaces";
-import {
-  ResearchProjectModelConfigurationError,
-  RESEARCH_PROJECT_MODEL_CONFIGURATION_MAX_BYTES,
-} from "@eliotr/cloudflare-research";
+import { RESEARCH_PROJECT_MODEL_CONFIGURATION_MAX_BYTES } from "@eliotr/cloudflare-research";
 import { readJsonBodyWithinBytes } from "./bounded-json.js";
 import { apiResult, HttpRequestError } from "./http.js";
 import type { Env } from "./env.js";
-import {
-  ResearchProjectModelConfigurationAuthorityError,
-  type ResearchProjectModelConfigurationService,
-} from "./research-project-configuration.js";
+import type { ResearchProjectModelConfigurationService } from "./research-project-configuration.js";
+import { mapResearchProjectModelConfigurationError as mapError } from "./research-project-configuration-composition.js";
 
 export const RESEARCH_PROJECT_MODEL_CONFIGURATION_HTTP_MAX_BYTES =
   RESEARCH_PROJECT_MODEL_CONFIGURATION_MAX_BYTES;
@@ -68,17 +63,6 @@ function parseImportBody(value: unknown): { expected_revision: number | null; co
     invalid("Imported project model configuration must be an exact approved bundle");
   }
   return { expected_revision: expected as number | null, configuration: record.configuration };
-}
-
-function mapError(error: unknown): never {
-  if (error instanceof HttpRequestError) throw error;
-  if (error instanceof ResearchProjectModelConfigurationAuthorityError) {
-    throw new HttpRequestError(error.code, error.status, error.message, error.retryable);
-  }
-  if (error instanceof ResearchProjectModelConfigurationError) {
-    throw new HttpRequestError(error.code, error.status, error.message, error.retryable);
-  }
-  throw error;
 }
 
 /** GET saved qualified revisions; PUT may only select an immutable saved ref. */
