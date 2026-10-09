@@ -73,6 +73,18 @@ function complete(f, reason = "COMPLETED") {
 }
 
 try {
+  test("cache freshness observes changed worktree claim after same-head PASS", () => {
+    const f = fixture(); introduce(f); source(f);
+    assert.equal(check(f).status, "PASS");
+    write(f.root, claimFile, { ...f.claim, leaf_identity: "foreign-leaf" });
+    negative(f, "IMMUTABLE");
+  });
+  test("cache freshness observes a new unclaimed worktree source after PASS", () => {
+    const f = fixture(); introduce(f); source(f);
+    assert.equal(check(f).status, "PASS");
+    write(f.root, "packages/ui/src/b.ts", "export const foreign = true;\n");
+    negative(f, "WORKTREE_SOURCE_WITHOUT_PRIOR_CLAIM");
+  });
   test("strict JSON rejects escaped duplicate keys", () => {
     assert.throws(() => parseStrictJson('{"a":1,"\\u0061":2}'), /DUPLICATE_JSON_KEY/u);
     assert.throws(() => parseStrictJson('{"nested":{"x":1,"x":2}}'), /DUPLICATE_JSON_KEY/u);

@@ -87,11 +87,24 @@ export function parseStrictJson(text) {
   try { return JSON.parse(text); } catch { fail("JSON_SYNTAX"); }
 }
 
+// Cache only immutable Git object/ancestry reads inside one synchronous check.
+// Worktree files, refs, dirty/index reads and diagnostics are always read afresh.
+const immutableGitCache = new Map();
+function immutableGitRead(args) {
+  if (args.length === 4 && args[0] === "merge-base" && args[1] === "--is-ancestor") return SHA.test(args[2]) && SHA.test(args[3]);
+  if (args.length === 2 && args[0] === "show") return /^[a-f0-9]{40}:.+$/u.test(args[1]);
+  return args.length === 6 && args[0] === "ls-tree" && args[1] === "-r" && args[2] === "--name-only" && SHA.test(args[3]) && args[4] === "--";
+}
 function git(root, args, optional = false) {
+  const key = immutableGitRead(args) ? JSON.stringify([root, args]) : undefined;
+  if (key !== undefined && immutableGitCache.has(key)) return immutableGitCache.get(key);
   try {
-    return execFileSync("git", ["-c", "core.quotepath=false", "-C", root, ...args],
+    const output = execFileSync("git", ["-c", "core.quotepath=false", "-C", root, ...args],
       { encoding: "utf8", maxBuffer: 16 * MAX_BYTES, timeout: 30000, stdio: ["ignore", "pipe", "pipe"] }).trimEnd();
+    if (key !== undefined) immutableGitCache.set(key, output);
+    return output;
   } catch {
+    // Failures are not cached; the existing fail-closed behavior stays unchanged.
     if (optional) return null;
     fail("GIT_READ_FAILED", args[0]);
   }
@@ -341,6 +354,7 @@ function checkHistory(root, base, head) {
 }
 
 export function checkFrontend({ root = DEFAULT_ROOT, historyBase, head } = {}) {
+  immutableGitCache.clear();
   root = resolve(root);
   const registry = validateRegistry(parseStrictJson(readFileSync(resolve(root, REGISTRY), "utf8")), loadPackets(root));
   const observedHead = head ?? git(root, ["rev-parse", "HEAD"]);

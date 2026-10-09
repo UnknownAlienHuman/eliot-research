@@ -1,0 +1,20 @@
+{
+  "protocol": "eliotr.ui-review-receipt.v1",
+  "checkpoint": "ER-49",
+  "status": "ACCEPTED_INTERNAL_TOOLING",
+  "behavior": "Memoize only successful immutable full-SHA Git object/ancestry reads during one synchronous check; all refs/index/worktree reads and failed reads stay fresh.",
+  "checks": {
+    "policy": "Parser/constants and all policy functions text-identical; only Git read implementation and per-check cache reset changed",
+    "tests": "Actual49negative/regression cases PASS, including2new same-head working-claim and newly-unclaimed-source freshness cases",
+    "history": "PENDING one actual frontier check after this tooling commit"
+  },
+  "retainedFailure": {
+    "head": "2e144b17d639a5e08b94df63411b51bcf3e532f0",
+    "checker": "Original unchanged ae479800…",
+    "result": "FAIL WORKTREE_SOURCE_WITHOUT_PRIOR_CLAIM for import/.tmp-mark.mjs; preserved exact32439bytes in private recovery path"
+  },
+  "limitations": [
+    "No claim/path/scope/predecessor/history policy changed",
+    "No substantive UI/client/product/live/deployment acceptance inferred"
+  ]
+}
