@@ -27,6 +27,7 @@ export * from "./workspace-mcp.js";
 export * from "./mcp-diagnostic.js";
 export * from "./library.js";
 export * from "./library-readiness.js";
+export type { MarkdownConversionFormat, MarkdownConversionOptions, RawMarkdownConversionRequest } from "./markdown-conversion.js";
 export * from "./navigation.js";
 export * from "./publication.js";
 export * from "./model.js";

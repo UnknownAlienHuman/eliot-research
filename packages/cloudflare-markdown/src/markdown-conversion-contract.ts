@@ -1,3 +1,6 @@
+import type { MarkdownConversionFormat, MarkdownConversionOptions } from "@eliotr/contracts";
+export type { MarkdownConversionFormat, MarkdownConversionOptions } from "@eliotr/contracts";
+
 export const MARKDOWN_CONVERSION_MAX_NAME_BYTES = 512;
 export const MARKDOWN_CONVERSION_MAX_CONTEXT_BYTES = 256;
 export const MARKDOWN_CONVERSION_MAX_RESULT_ID_BYTES = 256;
@@ -6,15 +9,6 @@ export const MARKDOWN_CONVERSION_MAX_ERROR_BYTES = 512;
 export const MARKDOWN_CONVERSION_MAX_TIMEOUT_MS = 300_000;
 /** Existing application buffered-file ceiling; this is not a claim about a provider limit. */
 export const MARKDOWN_CONVERSION_MAX_BUFFERED_FILE_BYTES = 16 * 1024 * 1024;
-
-export type MarkdownConversionFormat = "markdown" | "text";
-
-export interface MarkdownConversionOptions {
-  readonly output?: { readonly format?: MarkdownConversionFormat };
-  readonly image?: { readonly descriptionLanguage?: "en" | "it" | "de" | "es" | "fr" | "pt" };
-  readonly html?: { readonly hostname?: string; readonly cssSelector?: string };
-  readonly pdf?: { readonly metadata?: boolean };
-}
 
 export interface MarkdownConversionContext {
   readonly operation_id: string;

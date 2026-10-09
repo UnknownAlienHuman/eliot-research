@@ -5,7 +5,9 @@ import type {
   SourceRevision,
   NormalizedBundleManifest,
   LibraryReadiness,
+  RawMarkdownConversionRequest,
 } from "@eliotr/contracts";
+export type { RawMarkdownConversionRequest } from "@eliotr/contracts";
 import type { AuthenticatedRequestContext } from "./http.js";
 import type { ErasureOwnerApi } from "./erasure-owner-api.js";
 import type { WorkspaceOwnerApi } from "./workspace-owner-api.js";
@@ -146,13 +148,6 @@ export interface RawFileCaptureResult {
   readonly captured_at: string;
 }
 
-export interface RawMarkdownConversionRequest {
-  readonly idempotency_key: string;
-  readonly max_output_bytes: number;
-  readonly max_tokens: number;
-  readonly timeout_ms: number;
-  readonly conversion_options?: Record<string, unknown>;
-}
 export interface RawMarkdownConversionResult {
   readonly protocol: "eliotr.raw-markdown-conversion.v1";
   readonly state: "STARTED" | "COMPLETE" | "FAILED" | "UNKNOWN";
