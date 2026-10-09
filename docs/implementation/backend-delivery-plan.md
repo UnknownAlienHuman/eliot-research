@@ -83,7 +83,7 @@ pass; Helmholtz accepted the three actual working-tree blobs and is
 closed/archived. An intermediate claim about a missing schema check came from
 the old index and was discarded after exact working-tree review.
 
-Branch preparation and read-only result ports are locally committed in `79f66f54`
+Branch preparation and read-only result ports are published in `79f66f54`
 after James's exact-source acceptance and owning compile/lint. The legacy
 handler/recovery sequence and `consumeResult` remain unchanged. The strict reader
 never publishes an absent task and checks the original stored-byte digest before
@@ -108,6 +108,29 @@ files and recovers 1,068 SQL queries with zero failures and 152 unresolved sites
 Candidate-schema counts are Core 1,027/1,068 and Search 84/1,068, not unique
 target-qualified totals. Target qualification remains incomplete: 1,048 unknown
 targets and 85 unknown arities. Passing prior suites were not repeated.
+
+Normal expected-head publication reached `531a830a`; fresh fetch, live
+`ls-remote` and the reviewed remote blobs match. The sibling native helper
+prepare/wait/settle source is accepted by Luna Max Laplace with compile/lint;
+it is unimported and native qualification remains pending. The new-generation
+callback now commits canonical result and existing intent/outbox in one D1 batch.
+Migration 0131 rejects orphan/foreign locator authority through the 0130
+settlement view and freezes its identity while preserving delivery lease changes.
+Luna Max Planck accepted all four actual source blobs. Seven focused cases pass
+across the retained six-case run and one added-case-only run; lost ACK,
+final-insert rollback, missing/replaced/expired lease, foreign digest and legacy
+compatibility are covered. The fixture uses explicit upstream authority rows.
+Actual Core depth-100 compilation passes 639 schema shapes and nineteen queries
+from the two owning files with no unresolved site. This bounded check does not
+replace repository-wide target qualification or native/currentness acceptance.
+Generation admission, orchestration/Queue composition and release remain pending.
+
+Kuhn's later Go2 Queue analysis was rejected: its SQL referenced columns not
+exposed by the settlement view and undefined aliases, and its proposed current
+task predicate would reject an otherwise authorized delayed known-result wake.
+No implementation uses that proposal. Plato delivered no helper source before
+shutdown and root takeover. All finished leaves are closed/archived; source
+review results do not establish a model-ranking advantage.
 
 The Go2 Step 5 trial produced useful exact-source reviews, but dependency-chain
 analysis failed after three command/parsing errors; root completed and corrected

@@ -30,9 +30,17 @@ Historical runs and their manual recovery path remain compatible.
   noncanonical bytes. The old result-only API remains compatible. Currentness,
   grant, route, cancellation and settlement checks still belong to the consumer;
   the structural reader does not establish those permissions.
-- `prepareIntentWithOutboxMutation` / `appendIntentWithOutbox` already provide
-  stable intent/outbox identity, atomic D1 mutation and exact readback. Reuse
-  them after authoritative result readback; compute hashes outside the batch.
+- The new-generation callback reuses `prepareIntentWithOutboxMutation` in the
+  same batch as the canonical result UPDATE. Hashes are computed before the
+  batch; migration 0131 fences the existing intent/outbox inserts against the
+  exact recorded result and 0130 settlement authority. Final-insert failure
+  rolls back the result; absent/replaced/expired leases cannot leave an orphan
+  wake. Reconciliation checks the original saved digest/timestamp and exact
+  outbox readback after validating result bytes, including after a lost ACK.
+  Legacy generations retain the original callback path. Seven focused cases,
+  exact source review, compile/lint and depth-100 actual Core schema/owning
+  query compilation pass; the focused fixture supplies upstream currentness
+  explicitly, so native callback/Queue acceptance remains pending.
 - The branch adapter now separates `prepareTask` from `readRecordedResult`.
   Its legacy handler/recovery sequence remains compatible; read-only consumption
   returns null for an absent result without publishing a task. The expected digest
@@ -40,6 +48,12 @@ Historical runs and their manual recovery path remain compatible.
   The W2 executor's separate preparation seam uses the same durable attempt and
   original deadline, returning WAIT, SETTLE or a committed receipt for orchestration.
   These source-accepted ports do not activate the native topology.
+- `native-external-task-step.ts` provides deterministic sibling prepare, wait
+  and settle steps with strict persisted metadata and receipt validation. WAIT
+  visits the cached wait step on resume; a transport error permits one canonical
+  reread, and foreign/malformed events fail. Its exact source review,
+  compile and lint pass. The helper is still unimported; it supplies no new
+  result, grant or budget authority and does not qualify native execution.
 - `handleScheduled` delivers existing outbox messages through `JOB_QUEUE`.
   `handleQueue` currently composes only the projection delivery handler. A wake
   topic needs explicit dispatch and canonical result/currentness readback before

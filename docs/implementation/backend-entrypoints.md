@@ -27,7 +27,7 @@ closure is published in `2adbc42d`; bounded local Session transport acceptance
 now has five passing cases across the retained run and one failed-case-only
 repair. C1/C2/C5 still defer their named pipeline cutovers.
 
-Current shared-checkout continuation: normal publication reached `23f740e1`.
+Current shared-checkout continuation: normal publication reached `531a830a`.
 Frontend B-U source `1e1c6213`, acceptance receipt `950bf86e`, tooling `0a211f6f`
 and the accepted backend prerequisites are published. SQL depth recovery and five
 receipt boundary cases pass with source review; these do not qualify the native pipeline.
@@ -46,7 +46,7 @@ ResearchWorkflow wait, emitted JWT/HTTP, browser, live or release behavior.
 Root owns [R05 topology/outbox integration](native-external-task-wait-cutover.md); neither repair
 qualifies native wait. All 37 previous backend descendants are closed/archived.
 
-Branch prepare/read ports are locally committed in `79f66f54`; owning compile,
+Branch prepare/read ports are published in `79f66f54`; owning compile,
 exact lint and independent source review pass. The separate W2 preparation seam
 and migration 0130 have source acceptance, with native assembly still pending.
 The migration preserves the exact legacy recovery predicate and permits only
@@ -56,6 +56,18 @@ view-predicate cases pass; upstream views in the latter fixture are explicit row
 The SQL extractor now respects `.tsx` filename dialects. Its focused parser
 fixture and corrected depth compiler pass; target qualification remains incomplete
 (1,048 unknown targets, 85 unknown arities and 152 unresolved sites).
+
+The sibling native prepare/wait/settle helper has exact source acceptance,
+owning compile and lint. It remains unimported. New-generation result recording
+now uses one D1 batch for the existing canonical result UPDATE and intent/outbox
+inserts. Migration 0131 binds locator authority to the exact recorded timestamp,
+digest and 0130 settlement view; a missing/replaced result cannot leave an orphan
+wake. Original result/outbox readback reconciles a lost ACK; legacy callbacks
+retain their original path. Exact source review, seven focused cases, depth-100
+Core schema (639 shapes) and nineteen owning-source queries pass. Upstream
+currentness in the focused fixture is explicit input. Runtime generation
+admission, native topology composition, Queue dispatch and native acceptance
+remain pending; no Issue, PR or Goal closure follows from these prerequisites.
 
 This is the canonical day-to-day backend router. It does not replace product architecture, work-packet
 ownership or release acceptance. It tells each role where to begin, which active PR owns the result,

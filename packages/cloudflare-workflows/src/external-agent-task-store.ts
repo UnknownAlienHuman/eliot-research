@@ -1,6 +1,7 @@
 import type { ProjectClientGrant, VersionedRef } from "@eliotr/contracts";
 import { RESEARCH_WORKFLOW_STAGES } from "@eliotr/domain";
 import { parseRequest, textDigest, type StageRequest } from "./types.js";
+import { commitExternalAgentResult, requireExternalAgentResultOutboxReadback } from "./external-agent-result-outbox.js";
 import {
   readExternalAgentRecordedResult,
   type ExternalAgentRecordedResultIdentity,
@@ -498,10 +499,9 @@ export class ExternalAgentTaskStore {
     const text = boundedCanonical(envelope, MAX_RESULT_BYTES, "Result envelope");
     const digest = await textDigest(text);
     try {
-      await this.#db.prepare("UPDATE research_external_agent_task SET state='RESULT_RECORDED'," +
-        "result_idempotency_key=?1,result_json=?2,result_sha256=?3,updated_at=?4 " +
-        "WHERE task_id=?5 AND state='LEASED' AND lease_id=?6 AND julianday(lease_expires_at)>julianday(?4)")
-        .bind(key, text, digest, submitted, row.task_id, value.lease_id).run();
+      await commitExternalAgentResult(this.#db, row, {
+        idempotency_key: key, json: text, sha256: digest, submitted_at: submitted, lease_id: value.lease_id,
+      });
     } catch (error) {
       const reconciled = await this.#bound(row.task_id, grant).catch(() => null);
       if (reconciled === null || reconciled.state !== "RESULT_RECORDED") storageFailure(error);
@@ -522,6 +522,7 @@ export class ExternalAgentTaskStore {
         envelope.request_sha256 !== row.request_sha256 || envelope.attempt_ref !== row.attempt_ref) {
       fail("EXTERNAL_AGENT_TASK_CONFLICT", 409, "A different result is already recorded for this task");
     }
+    await requireExternalAgentResultOutboxReadback(this.#db, row, row.result_sha256, envelope.submitted_at);
     const settlement = await this.#workflowSettlement(row);
     return Object.freeze({ protocol: "eliotr.external-agent-result-receipt.v1", task_id: row.task_id,
       operation_id: row.operation_id, stage_index: row.stage_index, stage: row.stage,
