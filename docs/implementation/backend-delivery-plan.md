@@ -155,6 +155,26 @@ and Leibniz, recursive read-only verification confirms all 26 descendants
 archived, every spawn edge closed and zero current agents. No Issue/PR closes
 on these source checkpoints; the overall Goal remains ACTIVE.
 
+The next #325 source closure remains prepared and unpublished. Lorentz repaired
+V2 plan/result/question binding before role-model dispatch; owning compile/scoped
+lint pass and the new parser negative passes 1/1 with nine skipped. The integrator
+replaced excerpt-only freeze readback with exact committed handle/source/content/
+scope binding and permits fresh resolution receipts. Root/branch projection
+identity now remains stable across receipt/time changes while rejecting source
+substitution. Three new binding cases pass before the shared-helper extraction;
+the final new projection case passes 1/1 with three skipped. Runtime compilation
+and scoped lint pass. Independent review of the whole library closure is pending;
+current working-tree compilation does not prove a committed release.
+
+C5 records missing immutable branch-query limits in
+[branch-query-budget-selection.md](branch-query-budget-selection.md). The prepared
+planner's guessed budget tuple is removed; V9 refuses missing explicit budget
+selection before query execution. The scope profile does not supply the complete
+tuple, so no producer, operating profile or activation is invented. C1/C2 and
+actual #325/#214 runtime acceptance remain open. Old agent sessions stay closed;
+the fresh writer was closed/archived and the fresh independent reviewer owns one
+bounded leaf, without children.
+
 `b326d728` publishes a dormant question-bound proposal prompt renderer with a
 closed two-file dependency set. `max_prompt_pair_bytes` measures the canonical
 rendered prompt pair; it is not a model response allowance. The helper does not

@@ -59,6 +59,22 @@ C4 lacks a target-wide canonical assignment rule and revision/digest fence;
 selected scope and observed job rows do not prove the complete denominator.
 Both limitations are recorded in [backend-contract-conflicts.md](backend-contract-conflicts.md).
 
+The prepared #325 library now validates the exact plan/result/question binding
+before role-model dispatch and compares frozen branch evidence against the
+committed stable handle/source/content/scope identity. Fresh resolution receipts
+and times remain admissible. Root/branch projection refs and digest remain stable
+across those receipt changes. Owning runtime compilation/scoped lint pass; the
+role-parser negative passes 1/1 with nine skipped, three frozen-binding cases
+pass before helper extraction, and the final projection negative/compatibility
+case passes 1/1 with three skipped. Full library source review and publication
+are pending, separately from native/runtime acceptance.
+
+The new [C5 budget gap](branch-query-budget-selection.md) records that the prepared
+planner's former 16/64/8/16 KiB/four-leg defaults had no identified selection.
+They are removed; V9 fails closed before query execution without explicit
+validated limits. No immutable producer or profile is fabricated. This source
+state remains unpublished; current compilation is not a clean release gate.
+
 At the owner's request, all 23 old direct/nested sessions were closed and
 archived. One fresh Luna Max reviewer completed this Session audit and was also
 closed/archived. That historical checkpoint contained 24 archived descendants.

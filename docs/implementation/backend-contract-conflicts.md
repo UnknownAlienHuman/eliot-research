@@ -59,3 +59,15 @@ source-published in `eda91106`; full required-set and promotion acceptance
 remain pending. The October 9 audit found no published rule assigning the
 complete canonical source/revision set to a managed target. The gap note
 records the exact tables and missing membership/revision fence for owner review.
+
+## C5 — Immutable branch-query budget selection
+
+Status: **INPUT_PENDING**. #325 requires explicit candidate/scan/evidence/byte
+budgets. The uncommitted planner previously chose 16/64/8/16 KiB/four legs with
+no identified normative selection. Those defaults have been removed from the
+prepared source. V9 now requires explicit validated budget input and denies a
+missing selection before invoking the query executor. The existing frozen
+scope profile records version, source count and result count; it does not
+select the complete branch-query budget. No production producer or new profile
+is invented. Exact source/contract boundaries and the pending immutable cutover
+are recorded in [branch-query-budget-selection.md](branch-query-budget-selection.md).

@@ -43,6 +43,7 @@ from the tables below, so an unlisted file is a bug, not an omission you may ign
 | [dependency-map.md](dependency-map.md) | Package direction, owners and state authority. |
 | [contract-index.md](contract-index.md) | Canonical schemas and the code file that owns each one. |
 | [read-extract-proposal-cutover.md](read-extract-proposal-cutover.md) | READ proposal cardinality and stage-admission conflict before activation. |
+| [branch-query-budget-selection.md](branch-query-budget-selection.md) | Missing immutable branch-query budget selection and denial without explicit limits. |
 | [workflow-conversion-admission-cutover.md](workflow-conversion-admission-cutover.md) | Required selected conversion inputs, current authority and explicit scope cutover. |
 | [managed-generation-promotion-fence.md](managed-generation-promotion-fence.md) | Shadow key cutover, complete required-set evidence and existing pointer authority. |
 | [research-session-projection-protocol.md](research-session-projection-protocol.md) | Strict read-only Agent RPC snapshot contract and pending lifecycle qualification. |
