@@ -31,9 +31,8 @@ const INPUT_PATHS = [
   "apps/eliotr-pwa/tsconfig.json",
   "apps/eliotr-pwa/vite.config.ts",
   "apps/eliotr-pwa/scripts/build-agent-inbox.mjs",
-  ".eliotr-state/generated-types/eliot-core.d.ts",
+  ".eliotr-state/generated-types/eliotr-core.d.ts",
 ];
-const OPTIONAL_BUILD_INPUT_PATHS = new Set([".eliotr-state/generated-types/eliot-core.d.ts"]);
 
 function spawnPnpm(args, options = {}) {
   return spawnSync(PNPM, args, {
@@ -71,12 +70,7 @@ function packageJson(path) {
 
 async function sha256File(path) {
   const { createHash } = await import("node:crypto");
-  try {
-    return createHash("sha256").update(await readFile(resolve(ROOT, path))).digest("hex");
-  } catch (error) {
-    if (error?.code === "ENOENT" && OPTIONAL_BUILD_INPUT_PATHS.has(path)) return null;
-    throw error;
-  }
+  return createHash("sha256").update(await readFile(resolve(ROOT, path))).digest("hex");
 }
 
 async function readBuildInputs() {

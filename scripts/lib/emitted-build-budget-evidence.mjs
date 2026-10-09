@@ -653,9 +653,24 @@ export async function inspectWorkerBuild(root, buildStartedAt, output) {
   }
 
   const measuredGzipBytes = report.gzip?.bytes ?? null;
-  const status = issues.length > 0 || measuredGzipBytes === null
-    ? "NOT_MEASURED"
-    : measuredGzipBytes > WORKER_GZIP_BUDGET_BYTES ? "FAIL" : "PASS";
+  const gzipPrecisionBytes = report.gzip?.precisionBytes ?? null;
+  const gzipLowerBoundBytes = measuredGzipBytes === null || gzipPrecisionBytes === null
+    ? null
+    : measuredGzipBytes - gzipPrecisionBytes;
+  const gzipUpperBoundBytes = measuredGzipBytes === null || gzipPrecisionBytes === null
+    ? null
+    : measuredGzipBytes + gzipPrecisionBytes;
+  let gzipBudgetStatus = "NOT_MEASURED";
+  if (gzipLowerBoundBytes !== null && gzipUpperBoundBytes !== null) {
+    if (gzipLowerBoundBytes > WORKER_GZIP_BUDGET_BYTES) {
+      gzipBudgetStatus = "FAIL";
+    } else if (gzipUpperBoundBytes <= WORKER_GZIP_BUDGET_BYTES) {
+      gzipBudgetStatus = "PASS";
+    } else {
+      issues.push("Wrangler gzip Total Upload rounding interval straddles the Worker gzip budget");
+    }
+  }
+  const status = issues.length > 0 ? "NOT_MEASURED" : gzipBudgetStatus;
   const artifactFiles = [entry, sourceMapArtifact, ...wasmFiles]
     .filter(Boolean)
     .map(({ path, sha256: digest, rawBytes }) => ({ path, sha256: digest, rawBytes }));
@@ -671,6 +686,10 @@ export async function inspectWorkerBuild(root, buildStartedAt, output) {
       rawReported: report.raw?.reported ?? null,
       gzipBytes: measuredGzipBytes,
       gzipReported: report.gzip?.reported ?? null,
+      gzipPrecisionBytes,
+      gzipRoundingIntervalBytes: gzipLowerBoundBytes === null || gzipUpperBoundBytes === null
+        ? null
+        : { lowerInclusive: gzipLowerBoundBytes, upperInclusive: gzipUpperBoundBytes },
       gzipMethod: "installed Wrangler native Total Upload aggregate over emitted modules and entry",
       rawReconciliation,
       knownAggregateRawBytes,
