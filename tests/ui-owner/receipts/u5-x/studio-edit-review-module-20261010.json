@@ -1,0 +1,234 @@
+{
+  "protocol": "eliotr.frontend-studio-edit-review-module.v1",
+  "status": "BROWSER_VERIFIED_BOUNDED_STUDIO_EDITOR",
+  "source_commit": "e8cfbf4816a6f1e7bb306b6f915cd9129e18cc6b",
+  "published_dependency_base": "5714881b06b1d8fb8f77f3b9510a881b7dc92220",
+  "manager_context_id": "01a120c9-2637-7952-b6c9-be07b395b4fd",
+  "owner_authorization_ref": "tests/ui-owner/receipts/owner-authorization.json",
+  "claim": {
+    "path": "docs/agent-work/frontend-owner-claims/ER-47/u5-s-studio-20261010.json",
+    "git_blob": "3697fa30cb4b95a9c89fa94f9df2c73033c80e51",
+    "state": "ACTIVE_UNCHANGED"
+  },
+  "source_inputs": [
+    {
+      "path": "packages/ui/src/features/studio/StudioFeature.tsx",
+      "git_blob": "59cfb559460f6b7f4d6394c5d5073bca0211ffd3",
+      "sha256": "539d363ff34c23c9400ecf2726c84ac419c6ba80ab7af49222a2fe4999a03921"
+    },
+    {
+      "path": "packages/ui/src/features/studio/studio.css",
+      "git_blob": "37d3719d4dc95b5e58c371a0d813954265b9fa6a",
+      "sha256": "e38586b5158e4576265d0fe9e9729eab217fcbb113eec68b6740ae9d8c23bd19"
+    },
+    {
+      "path": "packages/ui/src/stories/studio/live/StudioFeature.stories.tsx",
+      "git_blob": "18e52b50cc0945deed8c9ab029ab15f789bcdb24",
+      "sha256": "e34c1040986ce45441b4a5075e946d5a5014bd46dc6fad34e7d99bf7a094c0b1"
+    }
+  ],
+  "problem": "Create was offered before a closed disclosure containing its title, body and note.",
+  "change": "Expose a named visible Prepare a new draft editor, with title/body/note before its explicit Create action. Preserve verified body fallback, original page/COW lineage and separate publication confirmation.",
+  "backend_composition": {
+    "commit": "09a3f99019b730e8e2b639230ee7895eece0483d",
+    "handoff": {
+      "path": "C:\\Development\\Research\\eliot-research\\.eliotr-state\\backend-full-20261008\\owner-web-reuse282-source-handoff-20261010.json",
+      "sha256": "2d203e7c78f6100147468849f8a39d9aaf91353c65f783f7ef57d0c77633b18a"
+    },
+    "inputs": [
+      {
+        "path": "scripts/lib/emitted-build-budget-evidence.mjs",
+        "git_blob": "41fe4f358d30c21ef17255dc703257621f0763f1",
+        "sha256": "5d4f58f8219516150b2f48ec27b3569f7707a196f71a7f757f81cdbdb95ecacb"
+      },
+      {
+        "path": "scripts/lib/emitted-owner-web-reuse.mjs",
+        "git_blob": "92d40381b1d42b3ba5f1815ed6a28cf7c66c0e78",
+        "sha256": "33e68aa12d7904bf13a7e30e69b2404efdd4b48d456758f11ff38e215a8e4aa2"
+      },
+      {
+        "path": "scripts/check-emitted-budgets.mjs",
+        "git_blob": "dca5031cf6ff4fe8136962fcbf57c46264344779",
+        "sha256": "672be2bed81bbb1377f95edc347d6cf5e25b9e0608b1261b39abf81995474c31"
+      },
+      {
+        "path": "scripts/test-owner-web-emitted-reuse.mjs",
+        "git_blob": "433926accb8115e4acc4e0f69518bfb88a65a088",
+        "sha256": "082f98a2e045b39ceb28f3994e3cd75b9bf8aae48bc1dcc2779de1a721d9690b"
+      }
+    ],
+    "accepted_preimage_mapping": [
+      {
+        "path": "scripts/lib/emitted-build-budget-evidence.mjs",
+        "accepted_preimage": {
+          "git_blob": "41fe4f358d30c21ef17255dc703257621f0763f1",
+          "sha256": "5d4f58f8219516150b2f48ec27b3569f7707a196f71a7f757f81cdbdb95ecacb"
+        },
+        "eof_whitespace_only_repair": false,
+        "semantic_content_equal": true
+      },
+      {
+        "path": "scripts/lib/emitted-owner-web-reuse.mjs",
+        "accepted_preimage": {
+          "git_blob": "eca4d396d0a4b3f6394c603794a0be06f43d802e",
+          "sha256": "ae14d6f1d9e8210059a3085470f63d89fcbdc12d2af61aefea13805fbb92636d"
+        },
+        "eof_whitespace_only_repair": true,
+        "semantic_content_equal": true
+      },
+      {
+        "path": "scripts/check-emitted-budgets.mjs",
+        "accepted_preimage": {
+          "git_blob": "dca5031cf6ff4fe8136962fcbf57c46264344779",
+          "sha256": "672be2bed81bbb1377f95edc347d6cf5e25b9e0608b1261b39abf81995474c31"
+        },
+        "eof_whitespace_only_repair": false,
+        "semantic_content_equal": true
+      },
+      {
+        "path": "scripts/test-owner-web-emitted-reuse.mjs",
+        "accepted_preimage": {
+          "git_blob": "433926accb8115e4acc4e0f69518bfb88a65a088",
+          "sha256": "082f98a2e045b39ceb28f3994e3cd75b9bf8aae48bc1dcc2779de1a721d9690b"
+        },
+        "eof_whitespace_only_repair": false,
+        "semantic_content_equal": true
+      }
+    ],
+    "historical_focused_checks_repeated": false
+  },
+  "diagnostics": {
+    "compiler": {
+      "version": "6.0.3",
+      "roots": 276,
+      "inputs": 1142,
+      "diagnostics": 0
+    },
+    "build": {
+      "source": "e8cfbf4816a6f1e7bb306b6f915cd9129e18cc6b",
+      "recorded_inputs": 3017,
+      "artifacts": 9,
+      "all_js_gzip_bytes": 239551,
+      "config": "apps/eliotr-web/vite.config.ts"
+    },
+    "stories": {
+      "passed": 2,
+      "original_skipped": 12
+    },
+    "new_story_lint": "PASS"
+  },
+  "browser": {
+    "version": "155.0.8059.40",
+    "cases": [
+      {
+        "id": "desktop-en-light",
+        "width": 1440,
+        "locale": "en",
+        "mode": "normal",
+        "status": "PASS_BOUNDED_OBSERVATION",
+        "edits": 1,
+        "publications": 1
+      },
+      {
+        "id": "mobile390-ru-dark",
+        "width": 390,
+        "locale": "ru",
+        "mode": "normal",
+        "status": "PASS_BOUNDED_OBSERVATION",
+        "edits": 0,
+        "publications": 0
+      },
+      {
+        "id": "narrow320-en-light",
+        "width": 320,
+        "locale": "en",
+        "mode": "normal",
+        "status": "PASS_BOUNDED_OBSERVATION",
+        "edits": 0,
+        "publications": 0
+      },
+      {
+        "id": "missing-body-disabled",
+        "width": 1440,
+        "locale": "en",
+        "mode": "missing-body",
+        "status": "PASS_BOUNDED_OBSERVATION",
+        "edits": 0,
+        "publications": 0
+      },
+      {
+        "id": "stale-page-body-disabled",
+        "width": 1440,
+        "locale": "en",
+        "mode": "stale-body",
+        "status": "PASS_BOUNDED_OBSERVATION",
+        "edits": 0,
+        "publications": 0
+      },
+      {
+        "id": "changed-cow-http503-explicit-recovery",
+        "width": 1440,
+        "locale": "en",
+        "mode": "recovery-503",
+        "status": "PASS_BOUNDED_OBSERVATION",
+        "edits": 2,
+        "publications": 0
+      }
+    ],
+    "visual_inspection": "Actual desktop EN/light,390 RU/dark and320 EN/light editor screenshots inspected by manager; no page horizontal overflow; keyboard title/body/note/Create order observed."
+  },
+  "proofs": [
+    {
+      "path": ".eliotr-state/se-b2-20261010/compiler.json",
+      "sha256": "c052406a5d1dd840b07d771b258068b44cbbad1895982ccfa49981395036abe4"
+    },
+    {
+      "path": ".eliotr-state/se-b2-20261010/build.json",
+      "sha256": "ff75a20951e10fb59e5e180b3b8df4bf4fc8e4d442bbd93f9ced2626cbe04eb5"
+    },
+    {
+      "path": ".eliotr-state/se-b2-20261010/stories-direct.log",
+      "sha256": "2930d868a7315f0b2307a6cd7b8cb27baeb2adef0c7910d6ad1cb24ae5296b6d"
+    },
+    {
+      "path": ".eliotr-state/se-b2-20261010/lint.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": ".eliotr-state/se-b2-20261010/stories.log",
+      "sha256": "6c6df6ba79146242d96c890f7c76ae2f4a66647e295ae659ff29fef2ea49634b"
+    },
+    {
+      "path": ".eliotr-state/se-b2-20261010/focused-stories-prepared.json",
+      "sha256": "6b8e383130537bf69dc73310f2e1dd212bd26d0f9883e4e628b7ffc0aeefc28c"
+    },
+    {
+      "path": ".eliotr-state/frontend-ui-proposals/studio-edit-review-20261010/run-e8cfbf4816a6-2026-10-10T10-46-37-377Z/browser.json",
+      "sha256": "5be5338bbf98afd9b1f716a5b698f4f6577ddf6874224e9078556ebfcfbd8e5b"
+    }
+  ],
+  "retained_failures": [
+    "StudioCSS EOF blank line",
+    "Backend newhelper EOF blank line",
+    "se-b1 TS2769 unsupported TestingLibrary options; actual old-source Vite PASS retained",
+    "pnpm exec stopped by unsafe shared modules directory guard; direct installed Node/Vitest repaired invocation"
+  ],
+  "metadata_erratum": {
+    "status": "CORRECTED_UNUSED_CANONICAL_METADATA_ONLY",
+    "corrections": [
+      {
+        "path": "packages/ui/src/stories/studio/live/StudioFeature.stories.tsx",
+        "previous_optional_metadata_sha256": "68fc626f6ef76e6845844147d7d6e5c00d7bb68f87253bea6fa51cf589a0f81a",
+        "actual_canonical_git_sha256": "e34c1040986ce45441b4a5075e946d5a5014bd46dc6fad34e7d99bf7a094c0b1"
+      }
+    ],
+    "compiler_actual_read_git_blobs_already_correct": true,
+    "compiler_receipt_not_rewritten_or_rerun": true
+  },
+  "limits": [
+    "Bounded presentation module; U5-S claim remains ACTIVE unchanged",
+    "1024/768,forced-colors,physical IME/screenreader/zoom and fullP4 not qualified by these cases",
+    "Owning standalone Vite only; /agents and /agents/* parity both NOT_CHECKED; integrated Worker/live/C11/FINAL-UI remain open",
+    "Actual source/final Luna and singleton target history required by publication authorization, not inferred by this receipt"
+  ]
+}
