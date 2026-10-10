@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { expect, userEvent, within } from 'storybook/test';
 import {
@@ -150,5 +151,62 @@ export const CompletionIsNotAcceptance: Story = {
     expect(canvas.getByText('Engine completion is not report acceptance or publication.')).toBeInTheDocument();
     expect(canvas.getByText('18 stages completed · complete')).toBeInTheDocument();
     expect(canvas.queryByText(/Next stage 19|Stage 19/u)).not.toBeInTheDocument();
+  },
+};
+
+/** Controlled next-question drafts are local text while a run is held. */
+const CONTROLLED_CURRENT_QUESTION = 'Which claims are supported by the selected sources?';
+
+function ControlledNextQuestionDraftAdapter(props: ResearchRunFeatureProps) {
+  const [draftQuestion, setDraftQuestion] = useState('');
+  return <ResearchRunFeature
+    {...props}
+    draftQuestion={draftQuestion}
+    onDraftQuestionChange={setDraftQuestion}
+  />;
+}
+
+/** One catalog story: independent EN/RU local drafts while the same run is held. */
+export const ControlledNextQuestionDraft: Story = {
+  args: {
+    state: 'loading',
+    busy: true,
+    canSubmit: true,
+    question: CONTROLLED_CURRENT_QUESTION,
+    scope: SCOPE,
+    progress: PROGRESS_ACTIVE,
+  },
+  render: args => <>
+    <ControlledNextQuestionDraftAdapter {...args} locale="en" />
+    <ControlledNextQuestionDraftAdapter {...args} locale="ru" />
+  </>,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const englishDraft = canvas.getByRole('textbox', { name: 'Next question draft (unsent)' });
+    const russianDraft = canvas.getByRole('textbox', { name: 'Черновик следующего вопроса (не отправлен)' });
+    const englishText = 'Compare the evidence before the next question.';
+    const russianText = 'Сравните источники и укажите ограничения для следующего вопроса.';
+
+    expect(englishDraft).toBeEnabled();
+    expect(russianDraft).toBeEnabled();
+    expect(englishDraft).toHaveValue('');
+    expect(russianDraft).toHaveValue('');
+    expect(canvas.getAllByText(CONTROLLED_CURRENT_QUESTION)).toHaveLength(2);
+    // No other action callbacks are supplied: absence of every button also
+    // rules out a busy-labelled Ask control in either locale.
+    expect(canvas.queryAllByRole('button')).toHaveLength(0);
+
+    await userEvent.type(englishDraft, englishText);
+    expect(englishDraft).toHaveValue(englishText);
+    expect(russianDraft).toHaveValue('');
+    await userEvent.type(russianDraft, russianText);
+    expect(russianDraft).toHaveValue(russianText);
+    expect(englishDraft).toHaveValue(englishText);
+
+    expect(canvas.getAllByText(CONTROLLED_CURRENT_QUESTION)).toHaveLength(2);
+    for (const source of SCOPE) {
+      expect(canvas.getAllByText(source.label)).toHaveLength(2);
+    }
+    expect(canvas.queryAllByRole('button')).toHaveLength(0);
   },
 };

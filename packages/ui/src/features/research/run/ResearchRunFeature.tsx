@@ -49,6 +49,11 @@ export interface ResearchRunFeatureProps {
   readonly locale?: 'en' | 'ru';
   readonly state?: ResearchRunState;
   readonly question?: string;
+  /** Optional parent-owned unsaved draft; keep its owner above an intent-key remount. */
+  readonly draftQuestion?: string;
+  /** Controlled drafts change only through this callback; value-only mode is read-only. */
+  readonly onDraftQuestionChange?: (question: string) => void;
+  /** Frozen labels when question is supplied; otherwise next-question selection labels. */
   readonly scope?: readonly ResearchRunScopeSelection[];
   readonly progress?: ResearchRunProgress;
   readonly firstCause?: ResearchRunFirstCause;
@@ -118,8 +123,15 @@ const COPY: Record<'en' | 'ru', {
   heading: string;
   lead: string;
   questionLabel: string;
+  nextQuestionLabel: string;
   questionPlaceholder: string;
   questionHint: string;
+  nextQuestionHint: string;
+  heldQuestionHint: string;
+  currentQuestionLabel: string;
+  currentScopeHeading: string;
+  currentScopeEmpty: string;
+  currentScopeCount: (count: number) => string;
   scopeHeading: string;
   scopeEmpty: string;
   scopeCount: (count: number) => string;
@@ -156,8 +168,15 @@ const COPY: Record<'en' | 'ru', {
     heading: 'Research run',
     lead: 'Ask a question with the sources you choose.',
     questionLabel: 'Research question',
+    nextQuestionLabel: 'Next question draft (unsent)',
     questionPlaceholder: 'What does my selected scope support?',
     questionHint: 'The question is frozen when you ask it.',
+    nextQuestionHint: 'Draft your next question. This unsaved draft does not change the viewed run.',
+    heldQuestionHint: 'This draft is unsent and is not queued. Wait for the current action and explicitly release the current run before asking it.',
+    currentQuestionLabel: 'Current run question',
+    currentScopeHeading: 'Current run sources',
+    currentScopeEmpty: 'No source labels are shown here for the current run.',
+    currentScopeCount: function (count: number) { return 'Current run: ' + count + ' source labels shown'; },
     scopeHeading: 'Selected scope',
     scopeEmpty: 'No source is selected. Pick sources in Sources first.',
     scopeCount: function (count: number) { return count === 1 ? '1 source selected' : count + ' sources selected'; },
@@ -194,8 +213,15 @@ const COPY: Record<'en' | 'ru', {
     heading: 'Запуск исследования',
     lead: 'Задайте вопрос по выбранным источникам.',
     questionLabel: 'Вопрос исследования',
+    nextQuestionLabel: 'Черновик следующего вопроса (не отправлен)',
     questionPlaceholder: 'Что подтверждает выбранная область?',
     questionHint: 'Вопрос фиксируется в момент отправки.',
+    nextQuestionHint: 'Подготовьте следующий вопрос. Этот несохранённый черновик не меняет просматриваемый запуск.',
+    heldQuestionHint: 'Черновик не отправлен и не поставлен в очередь. Дождитесь завершения текущего действия и явно освободите текущий запуск перед отправкой.',
+    currentQuestionLabel: 'Вопрос текущего запуска',
+    currentScopeHeading: 'Источники текущего запуска',
+    currentScopeEmpty: 'Названия источников текущего запуска здесь не показаны.',
+    currentScopeCount: function (count: number) { return 'Текущий запуск: показано названий источников — ' + count; },
     scopeHeading: 'Выбранная область',
     scopeEmpty: 'Источник не выбран. Сначала выберите источники в разделе «Источники».',
     scopeCount: function (count: number) { return 'Выбрано источников: ' + count; },
@@ -252,6 +278,8 @@ export function ResearchRunFeature({
   locale = 'en',
   state = 'empty',
   question,
+  draftQuestion,
+  onDraftQuestionChange,
   scope,
   progress,
   firstCause,
@@ -263,8 +291,11 @@ export function ResearchRunFeature({
   onReadStatus,
   onRecover,
 }: ResearchRunFeatureProps) {
-  const [draft, setDraft] = useState<string>('');
+  const [localDraft, setLocalDraft] = useState<string>('');
   const [recorded, setRecorded] = useState<string | null>(question ?? null);
+  const controlledDraft = draftQuestion !== undefined;
+  const draft = draftQuestion ?? localDraft;
+  const recordedQuestion = controlledDraft ? question ?? null : recorded;
   const headingId = useId();
   const questionId = headingId + '-question';
   const copy = COPY[locale];
@@ -272,13 +303,18 @@ export function ResearchRunFeature({
   const selected = scope ?? [];
   const frozen = selected.slice();
   const unknownOutcome = firstCause !== undefined && firstCause.dispatch_state === 'OUTCOME_UNKNOWN';
-  const hasQuestion = question !== undefined || progress !== undefined || firstCause !== undefined;
+  const hasQuestion = question !== undefined || progress !== undefined || firstCause !== undefined
+    || (controlledDraft && snapshot !== undefined);
+  const draftHeld = hasQuestion || busy;
+  const controlledWithoutAsk = controlledDraft && onAsk === undefined;
 
   function submit() {
     const trimmed = draft.trim();
-    if (trimmed.length === 0 || busy || !canSubmit || hasQuestion) return;
-    setRecorded(trimmed);
-    setDraft('');
+    if (trimmed.length === 0 || busy || !canSubmit || hasQuestion || controlledWithoutAsk) return;
+    if (!controlledDraft) {
+      setRecorded(trimmed);
+      setLocalDraft('');
+    }
     if (onAsk !== undefined) onAsk(trimmed, frozen);
   }
 
@@ -287,19 +323,24 @@ export function ResearchRunFeature({
       <h2 className="er-research-run__heading" id={headingId}>{copy.heading}</h2>
       <p className="er-research-run__lead">{copy.lead}</p>
 
-      {!hasQuestion && <Field
+      {(controlledDraft || !hasQuestion) && <Field
         id={questionId}
-        label={copy.questionLabel}
-        hint={copy.questionHint}
+        label={controlledDraft && draftHeld ? copy.nextQuestionLabel : copy.questionLabel}
+        hint={controlledDraft && draftHeld ? copy.nextQuestionHint : copy.questionHint}
         placeholder={copy.questionPlaceholder}
         value={draft}
-        disabled={busy}
-        onChange={function (event: React.ChangeEvent<HTMLInputElement>) { setDraft(event.target.value); }}
+        disabled={!controlledDraft && busy}
+        readOnly={controlledDraft && onDraftQuestionChange === undefined}
+        onChange={function (event: React.ChangeEvent<HTMLInputElement>) {
+          const value = event.currentTarget.value;
+          if (!controlledDraft) setLocalDraft(value);
+          onDraftQuestionChange?.(value);
+        }}
       />}
       <div className="er-research-run__scope">
-        <h3 className="er-research-run__scope-heading">{copy.scopeHeading}</h3>
+        <h3 className="er-research-run__scope-heading">{controlledDraft && question !== undefined ? copy.currentScopeHeading : copy.scopeHeading}</h3>
         {selected.length === 0 ? (
-          <p className="er-research-run__scope-empty">{copy.scopeEmpty}</p>
+          <p className="er-research-run__scope-empty">{controlledDraft && question !== undefined ? copy.currentScopeEmpty : copy.scopeEmpty}</p>
         ) : (
           <ul className="er-research-run__scope-list">
             {selected.map(function (item) {
@@ -307,14 +348,14 @@ export function ResearchRunFeature({
             })}
           </ul>
         )}
-        <p className="er-research-run__scope-count">{copy.scopeCount(selected.length)}</p>
+        <p className="er-research-run__scope-count">{controlledDraft && question !== undefined ? copy.currentScopeCount(selected.length) : copy.scopeCount(selected.length)}</p>
       </div>
 
       <div className="er-research-run__actions">
         {!hasQuestion && <Button
           variant="primary"
           loading={busy}
-          disabled={busy || canSubmit === false || draft.trim().length === 0}
+          disabled={busy || canSubmit === false || draft.trim().length === 0 || controlledWithoutAsk}
           onClick={submit}
         >
           {busy ? copy.asking : copy.ask}
@@ -327,10 +368,12 @@ export function ResearchRunFeature({
         )}
       </div>
 
-      {recorded === null ? null : (
+      {controlledDraft && draftHeld ? <p className="er-research-run__caution">{copy.heldQuestionHint}</p> : null}
+
+      {recordedQuestion === null ? null : (
         <p className="er-research-run__recorded">
-          <span className="er-research-run__recorded-label">{copy.recordedQuestion}</span>
-          <span className="er-research-run__recorded-value">{recorded}</span>
+          <span className="er-research-run__recorded-label">{controlledDraft && hasQuestion ? copy.currentQuestionLabel : copy.recordedQuestion}</span>
+          <span className="er-research-run__recorded-value">{recordedQuestion}</span>
         </p>
       )}
 

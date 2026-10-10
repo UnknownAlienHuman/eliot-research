@@ -45,6 +45,9 @@ export function ResearchPanel({ apis, privacy, context, locale, scope, scopeCurr
     refetchIntervalInBackground: false,
   } : { queryKey: [...protectedQueryKey(context, 'research'), 'status-unselected'], queryFn: skipToken });
   const [busy, setBusy] = useState(false), [inputError, setInputError] = useState(false);
+  const [heldDraft, setHeldDraft] = useState<{ readonly context: SessionContext; readonly text: string } | undefined>(undefined);
+  const nextQuestionDraft = heldDraft !== undefined && heldDraft.context === context && privacy.isCurrent(context)
+    ? heldDraft.text : '';
   const running = useRef(false), mounted = useRef(true), controller = useRef<AbortController | undefined>(undefined);
   const read = () => client.getQueryData<ResearchMemory>(memoryKey) ?? {};
   const write = (update: (old: ResearchMemory) => ResearchMemory) => {
@@ -52,7 +55,13 @@ export function ResearchPanel({ apis, privacy, context, locale, scope, scopeCurr
   };
   useEffect(() => {
     mounted.current = true;
+    const clearStaleDraft = () => {
+      if (!privacy.isCurrent(context)) setHeldDraft(undefined);
+    };
+    const unsubscribe = privacy.subscribe(clearStaleDraft);
+    clearStaleDraft();
     return () => {
+      unsubscribe();
       mounted.current = false; controller.current?.abort();
       if (running.current && privacy.isCurrent(context)) client.setQueryData<ResearchMemory>(memoryKey, old =>
         old?.intent ? { ...old, intent: { ...old.intent, phase: 'unknown' } } : old);
@@ -79,7 +88,9 @@ export function ResearchPanel({ apis, privacy, context, locale, scope, scopeCurr
       const body = apis.research.runs.researchRunBody(question, scope.map(source => source.id));
       const intent: ResearchIntent = Object.freeze({ body, key: apis.sources.mintIntent(), question,
         scope: Object.freeze(scope.map(source => Object.freeze({ id: source.id, label: source.label }))), phase: 'pending' });
-      write(old => ({ ...old, intent })); setInputError(false);
+      write(old => ({ ...old, intent }));
+      if (read().intent?.key !== intent.key) return;
+      setInputError(false); setHeldDraft(undefined);
       run(signal => admit(intent, signal));
     } catch { setInputError(true); }
   };
@@ -113,6 +124,9 @@ export function ResearchPanel({ apis, privacy, context, locale, scope, scopeCurr
     {inputError && <Status tone="error">{text.input}</Status>}
     <ResearchRunFeature key={saved?.intent?.key ?? 'next-question'} locale={locale} state={state}
       scope={saved?.intent?.scope ?? scope} busy={busy}
+      draftQuestion={nextQuestionDraft} onDraftQuestionChange={value => {
+        if (mounted.current && privacy.isCurrent(context)) setHeldDraft({ context, text: value });
+      }}
       canSubmit={!saved?.intent && scopeCurrent && !configuration.isError && !configuration.isFetching && configuration.data !== undefined && configuration.data.run_readiness !== 'blocked'}
       {...(saved?.intent ? { question: saved.intent.question } : {})}
       {...(progress ? { progress, ...(progress.failure ? { firstCause: progress.failure } : {}) } : {})}
