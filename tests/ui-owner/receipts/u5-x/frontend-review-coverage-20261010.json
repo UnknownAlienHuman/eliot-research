@@ -15,7 +15,7 @@
     "qualified_frontend_frontier": "887de890208877727abcd3c4a3119e2d8475e315",
     "presentation_source": "637ec07f7133c7f1c1967de265f60da384df8873",
     "original_compiler_source": "0602fd91f368a29129dc8ff59434031de73497c2",
-    "merged_full_graph": "NOT_REQUALIFIED",
+    "merged_full_graph": "OWNING_WEB_UI_CLIENT_CONTRACTS_COMPILER_PASS_ONLY_AT_ddcd9096",
     "current_live_refs": "NOT_PROBED",
     "published_frontend_bindings": [
       {
@@ -77,7 +77,9 @@
     "current_owning_web_ui_client_contracts_graph": "COMPILER_PASS_AT_EXACT_SOURCE",
     "compiler_receipt": "tests/ui-owner/receipts/u3-x/finite-composed-lifecycle-module-20261010.json",
     "current_static_review": "PASS_WITH_EXACT_PRODUCTION_INPUT_EQUIVALENCE",
-    "worker_and_live_graph": "NOT_REQUALIFIED"
+    "worker_and_live_graph": "NOT_REQUALIFIED",
+    "retained_prior_merged_full_graph": "NOT_REQUALIFIED",
+    "graph_limit": "Core/Worker/integrated/generated/live graph not included"
   },
   "manager_requirements": [
     {
