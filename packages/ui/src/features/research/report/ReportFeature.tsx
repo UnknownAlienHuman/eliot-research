@@ -90,7 +90,7 @@ const EN_COPY: ReportFeatureCopy = {
   sectionsLabel: "Declared sections",
   sectionsCount: (count: number) => `${count} declared`,
   sectionOrdinal: (ordinal: number) => `Section ${ordinal}`,
-  openSection: "Open section",
+  openSection: "Open",
   technicalDetails: "Technical details",
   technicalObject: "Body object",
   technicalSectionRef: "Section reference",
@@ -100,7 +100,7 @@ const EN_COPY: ReportFeatureCopy = {
   freshnessPrevious: "Previous revisions",
   freshnessUnknown: "Unknown",
   freshnessUnresolved: "Freshness is unresolved. It is not evidence that the sources are current.",
-  readSection: "Read section",
+  readSection: "Read",
   readingSection: "Reading",
   sectionRead: "Read back",
   sectionUnread: "Not read back",
@@ -126,7 +126,7 @@ const RU_COPY: ReportFeatureCopy = {
   sectionsLabel: "Объявленные разделы",
   sectionsCount: (count: number) => `Объявлено: ${count}`,
   sectionOrdinal: (ordinal: number) => `Раздел ${ordinal}`,
-  openSection: "Открыть раздел",
+  openSection: "Открыть",
   technicalDetails: "Технические сведения",
   technicalObject: "Объект тела",
   technicalSectionRef: "Ссылка на раздел",
@@ -136,7 +136,7 @@ const RU_COPY: ReportFeatureCopy = {
   freshnessPrevious: "Предыдущие ревизии",
   freshnessUnknown: "Неизвестно",
   freshnessUnresolved: "Актуальность не определена. Это не доказательство того, что источники текущие.",
-  readSection: "Прочитать раздел",
+  readSection: "Прочитать",
   readingSection: "Чтение",
   sectionRead: "Прочитан",
   sectionUnread: "Не прочитан",
@@ -266,12 +266,12 @@ export function ReportFeature(props: ReportFeatureProps) {
                     disabled={isReading}
                     onClick={() => onReadSection(row.section)}
                   >
-                    {isReading ? copy.readingSection : copy.readSection}
+                    {isReading ? copy.readingSection : copy.readSection} · {copy.sectionOrdinal(index + 1)}
                   </Button>
                 ) : null}
                 {matchesDeclared(row) ? (
                   <Button variant="text" icon="file" onClick={() => onReadSection(row.section)}>
-                    {copy.openSection}
+                    {copy.openSection} · {copy.sectionOrdinal(index + 1)}
                   </Button>
                 ) : null}
                 <details className="er-report__section-details">

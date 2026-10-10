@@ -146,7 +146,7 @@ function oldCacheCount(environment: Environment, context: SessionContext) {
 export async function playFiniteExcerptLifecycle(test: ExcerptPlayContext) {
   const host = test.canvasElement.querySelector<HTMLElement>('[data-finite-excerpt]'), environment = host && environments.get(host);
   assert(environment && host, 'Finite excerpt fixture was not registered');
-  await test.userEvent.click(await test.canvas.findByRole('button', { name: 'Read section', exact: true }));
+  await test.userEvent.click(await test.canvas.findByRole('button', { name: 'Read · Section 1', exact: true }));
   await test.userEvent.click(await test.canvas.findByRole('button', { name: 'Open cited excerpt 1', exact: true }));
   await test.canvas.findByText(excerpt);
   assert(!test.canvas.queryByText('Supported'), 'Resolution was promoted into semantic support');

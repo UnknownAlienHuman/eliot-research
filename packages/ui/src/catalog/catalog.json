@@ -276,6 +276,8 @@
         "product-report--loading",
         "product-report--long-russian",
         "product-report--partial-rows-cannot-complete",
+        "product-report--section-actions-identify-exact-target",
+        "product-report--section-actions-identify-exact-target-ru",
         "product-report--useful"
       ]
     },

@@ -110,7 +110,7 @@ export const playResearchJourney = async ({ canvas, userEvent }: {
   await canvas.findByText('40 declared');
   const exportButton = canvas.getByRole('button', { name: 'Export report' });
   if (!(exportButton instanceof HTMLButtonElement) || !exportButton.disabled) throw new Error('Unread required sections permitted export');
-  await userEvent.click(canvas.getAllByRole('button', { name: 'Read section' })[0] as HTMLElement);
+  await userEvent.click(canvas.getByRole('button', { name: 'Read · Section 1' }));
   await canvas.findByText('A saved draft keeps the question and its evidence together.');
   if (!exportButton.disabled) throw new Error('One of forty sections incorrectly completed the report');
   await userEvent.click(await canvas.findByRole('button', { name: 'Open cited excerpt 1' }));

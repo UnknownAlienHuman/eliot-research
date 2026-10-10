@@ -180,16 +180,18 @@ export const CompleteAfterReadback: Story = {
   render: () => <CompleteReportHarness />,
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
+    const readName = (ordinal: number) => `${REPORT_COPY.en.readSection} · ${REPORT_COPY.en.sectionOrdinal(ordinal)}`;
+    const unreadButtons = () => [1, 2].flatMap((ordinal) => canvas.queryAllByRole("button", { name: readName(ordinal) }));
     readSpy.mockClear(); exportSpy.mockClear();
     await expect(canvas.getByRole("button", { name: "Export report" })).toBeDisabled();
-    const first = canvas.getAllByRole("button", { name: "Read section" })[0];
+    const first = canvas.getByRole("button", { name: readName(1) });
     if (!first) throw new globalThis.Error("First declared section is missing");
     await userEvent.click(first);
-    await waitFor(() => expect(canvas.getAllByRole("button", { name: "Read section" }).length).toBe(1));
-    const second = canvas.getAllByRole("button", { name: "Read section" })[0];
+    await waitFor(() => expect(unreadButtons().length).toBe(1));
+    const second = canvas.getByRole("button", { name: readName(2) });
     if (!second) throw new globalThis.Error("Second declared section is missing");
     await userEvent.click(second);
-    await waitFor(() => expect(canvas.queryAllByRole("button", { name: "Read section" }).length).toBe(0));
+    await waitFor(() => expect(unreadButtons().length).toBe(0));
     await expect(canvas.getByRole("button", { name: "Export report" })).toBeEnabled();
     await userEvent.click(canvas.getByRole("button", { name: "Export report" }));
     await expect(exportSpy).toHaveBeenCalledTimes(1);
@@ -216,4 +218,112 @@ export const ForeignArtifactCannotComplete: Story = {
   args: buildProps({ manifest: manifestFor([DECLARED_A]), sections: [{ section: DECLARED_A,
     read: { ...readBack(DECLARED_A), artifact_ref: DECLARED_A.section_ref } }] }),
   play: async ({ canvasElement }) => { await expect(within(canvasElement).getByRole("button", { name: "Export report" })).toBeDisabled(); },
+};
+
+/** Three accepted fixture rows keep the middle action distinct from its neighbours. */
+const SECTION_ACTION_ROWS: readonly ReportSectionRow[] = [
+  ...NO_SECTIONS,
+  ...RU_LONG_SECTIONS.slice(0, 1),
+];
+const sectionActionReadSpy = fn<(declared: DeclaredSection) => void>();
+const sectionActionExportSpy = fn();
+const sectionActionManifestSpy = fn();
+
+/** Hold the read, then supply the existing matching readback fixture through props. */
+function SectionActionsTargetHarness({ locale }: Pick<ReportFeatureProps, "locale">) {
+  const [rows, setRows] = useState<readonly ReportSectionRow[]>(SECTION_ACTION_ROWS);
+  const [readingRef, setReadingRef] = useState<ReportFeatureProps["readingRef"]>();
+  return <>
+    <ReportFeature {...buildProps({
+      locale,
+      copy: REPORT_COPY[locale],
+      manifest: manifestFor(SECTION_ACTION_ROWS.map((row) => row.section)),
+      sections: rows,
+      readingRef,
+      onReadSection: (declared) => {
+        sectionActionReadSpy(declared);
+        setReadingRef(`${declared.section_ref.id}:${declared.section_ref.revision}`);
+      },
+      onOpenManifest: sectionActionManifestSpy,
+      onExport: sectionActionExportSpy,
+    })} />
+    <button type="button" onClick={() => {
+      setRows((current) => current.map((row) => row.section === DECLARED_B
+        ? { section: row.section, read: readBack(row.section) }
+        : row));
+      setReadingRef(undefined);
+    }}>
+      Fixture: supply second-section readback
+    </button>
+  </>;
+}
+
+/** Visible ordinal labels select the exact declared section for both Read and Open. */
+export const SectionActionsIdentifyExactTarget: Story = {
+  args: buildProps({
+    manifest: manifestFor(SECTION_ACTION_ROWS.map((row) => row.section)),
+    sections: SECTION_ACTION_ROWS,
+  }),
+  render: (args) => <SectionActionsTargetHarness locale={args.locale} />,
+  play: async ({ canvasElement, args }) => {
+    sectionActionReadSpy.mockClear();
+    sectionActionExportSpy.mockClear();
+    sectionActionManifestSpy.mockClear();
+    const canvas = within(canvasElement);
+    const copy = REPORT_COPY[args.locale];
+    const report = within(canvas.getByRole("region", { name: copy.title }));
+    const readName = (ordinal: number) => `${copy.readSection} · ${copy.sectionOrdinal(ordinal)}`;
+    await expect(report.getByText(copy.sectionsCount(3))).toBeVisible();
+    const second = report.getByRole("button", { name: readName(2) });
+    await expect(second).toBeVisible();
+    await expect(second).toHaveTextContent(copy.sectionOrdinal(2));
+    await expect(second).toBeEnabled();
+    await expect(sectionActionReadSpy).not.toHaveBeenCalled();
+
+    second.focus();
+    await expect(second).toHaveFocus();
+    await userEvent.keyboard("{Enter}");
+    const readingSecond = await report.findByRole("button", {
+      name: `${copy.readingSection} · ${copy.sectionOrdinal(2)}`,
+    });
+    await expect(readingSecond).toBeDisabled();
+    for (const ordinal of [1, 3]) {
+      await expect(report.getByRole("button", { name: readName(ordinal) })).toBeEnabled();
+    }
+    await expect(sectionActionReadSpy.mock.calls).toEqual([[DECLARED_B]]);
+    await expect(report.getByRole("button", { name: copy.export })).toBeDisabled();
+
+    await userEvent.click(canvas.getByRole("button", {
+      name: "Fixture: supply second-section readback",
+    }));
+    const openSecond = await report.findByRole("button", {
+      name: `${copy.openSection} · ${copy.sectionOrdinal(2)}`,
+    });
+    await expect(openSecond).toBeVisible();
+    await expect(openSecond).toHaveTextContent(copy.sectionOrdinal(2));
+    await expect(openSecond).toBeEnabled();
+    await expect(sectionActionReadSpy.mock.calls).toEqual([[DECLARED_B]]);
+    for (const ordinal of [1, 3]) {
+      await expect(report.getByRole("button", { name: readName(ordinal) })).toBeEnabled();
+    }
+    await expect(report.getByRole("button", { name: copy.export })).toBeDisabled();
+
+    openSecond.focus();
+    await expect(openSecond).toHaveFocus();
+    await userEvent.keyboard("{Enter}");
+    await expect(sectionActionReadSpy.mock.calls).toEqual([[DECLARED_B], [DECLARED_B]]);
+    await expect(sectionActionExportSpy).not.toHaveBeenCalled();
+    await expect(sectionActionManifestSpy).not.toHaveBeenCalled();
+  },
+};
+
+
+export const SectionActionsIdentifyExactTargetRu: Story = {
+  ...SectionActionsIdentifyExactTarget,
+  args: buildProps({
+    locale: "ru",
+    copy: REPORT_COPY.ru,
+    manifest: manifestFor(SECTION_ACTION_ROWS.map((row) => row.section)),
+    sections: SECTION_ACTION_ROWS,
+  }),
 };
