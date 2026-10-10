@@ -280,3 +280,75 @@ it.each(nativeMutationFrames)("rejects native client mutation frame: $name", asy
     closeProjectionHarness(harness);
   }
 }, 30_000);
+
+it("isolates two native projection connections from client transcript injection", async () => {
+  const harness = await openProjectionHarness("peer-isolation");
+  let peer: WebSocket | undefined;
+  const peerFrames: unknown[] = [];
+  try {
+    expect(harness.beforeRun).not.toBeNull();
+    const response = await harness.stub.fetch(new Request(
+      `https://session.example/status?session_id=${encodeURIComponent(harness.sessionId)}`,
+      {
+        headers: {
+          ...harness.fixture.session_headers,
+          [ACCESS_EXPIRY_HEADER]: "2027-01-01T00:00:00.000Z",
+          upgrade: "websocket",
+        },
+      },
+    ));
+    expect(response.status).toBe(101);
+    peer = response.webSocket ?? undefined;
+    if (peer === undefined) throw new Error("peer projection upgrade returned no socket");
+    peer.accept({ allowHalfOpen: false });
+    peer.addEventListener("message", (event: MessageEvent) => peerFrames.push(event.data));
+    expect(await runInDurableObject(harness.stub, (_instance, state) => state.getWebSockets().length)).toBe(2);
+
+    const marker = `peer-transcript-${crypto.randomUUID()}`;
+    const closed = waitForClose(harness.socket);
+    harness.socket.send(JSON.stringify({
+      type: "cf_agent_chat_messages",
+      messages: [{ id: "attacker-message", role: "user", parts: [{ type: "text", text: marker }] }],
+    }));
+    expect(await closed).toEqual({ code: 1008, reason: "SESSION_PROJECTION_READ_ONLY" });
+    expect(peer.readyState).toBe(WebSocket.OPEN);
+
+    const id = "unaffected-peer-projection";
+    const reply = new Promise<unknown>((resolve, reject) => {
+      const onMessage = (event: MessageEvent) => {
+        clearTimeout(timeout);
+        try { resolve(JSON.parse(event.data as string)); }
+        catch (error) { reject(error); }
+      };
+      const timeout = setTimeout(() => {
+        peer?.removeEventListener("message", onMessage);
+        reject(new Error("peer projection RPC did not respond"));
+      }, 5_000);
+      peer?.addEventListener("message", onMessage, { once: true });
+    });
+    peer.send(JSON.stringify({ type: "rpc", id, method: "readResearchSessionProjection", args: [] }));
+    expect(await reply).toEqual({
+      type: "rpc", id, success: true, done: true,
+      result: {
+        protocol: "eliotr.research-session-projection.v1",
+        session_id: harness.sessionId,
+        operation_id: harness.fixture.request.operation_id,
+        state: "ACTIVE",
+        investigation_ref: {
+          id: harness.fixture.session_body.investigation_id,
+          revision: harness.fixture.session_body.investigation_revision,
+        },
+        run_status: {
+          execution_state: "ACTIVE", engine_status: "waiting",
+          next_stage_index: harness.beforeRun?.next_stage_index,
+        },
+      },
+    });
+    await expectProjectionUnchanged(harness, marker);
+    expect(peerFrames).toHaveLength(1);
+    expect(JSON.stringify(peerFrames)).not.toContain(marker);
+  } finally {
+    peer?.close();
+    closeProjectionHarness(harness);
+  }
+}, 30_000);
