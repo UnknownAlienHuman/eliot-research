@@ -1,0 +1,30 @@
+{
+  "protocol": "eliotr.frontend-owner-claim.v1",
+  "claim_id": "u5-s-labels-337-final-20261010",
+  "checkpoint_id": "U5-S",
+  "packet_id": "ER-47",
+  "manager_identity": "frontend-manager",
+  "manager_context_id": "01a120c9-2637-7952-b6c9-be07b395b4fd",
+  "leaf_identity": "frontend-manager-337-serialized",
+  "owner_authorization_ref": "tests/ui-owner/receipts/owner-authorization.json",
+  "base_sha": "56a871fe30f5adb40c307934fab489aa97717b8f",
+  "history_base_sha": "c37e56e0ebdfc7f6d294879008a4036d1b95b985",
+  "write_paths": [
+    "packages/ui/src/features/studio/StudioFeature.tsx"
+  ],
+  "predecessor_refs": [
+    {
+      "checkpoint_id": "C3-S",
+      "commit_sha": "18c36cdd4cf146e0aaa783f55f0fc8dc7dffc0d1",
+      "approval_ref": "tests/ui-owner/receipts/u1-d/client-studio.json"
+    },
+    {
+      "checkpoint_id": "U2-T",
+      "commit_sha": "0cd674968809e64526f411d228802f10457cf492",
+      "approval_ref": "tests/ui-owner/receipts/u2-x/u2-t.json"
+    }
+  ],
+  "state": "ACTIVE",
+  "evidence_refs": [],
+  "blocker_refs": []
+}
