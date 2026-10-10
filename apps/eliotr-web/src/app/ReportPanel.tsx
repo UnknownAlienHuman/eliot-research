@@ -14,8 +14,8 @@ import { ArtifactActions } from './ArtifactActions';
 const refKey = (ref: VersionedRef) => `${ref.id}:${ref.revision}`;
 const sameRef = (left: VersionedRef, right: VersionedRef) => left.id === right.id && left.revision === right.revision;
 const copy = {
-  en: { title: 'Saved report', back: 'Close report', outline: 'Sections and export', read: 'Read report again', reauthorize: 'Read with current access', access: 'This read uses a fresh authorization. The saved source scope is preserved.', section: (index: number) => `Section ${index + 1}`, evidence: 'Evidence for this section', noAudit: 'Semantic claim assessment was not executed for this section.', unknown: 'This section could not be read or verified.', exportError: 'A complete export could not be prepared. Read every declared section again.', reading: 'Reading the selected section.', noEvidence: 'No citations are declared for this section.', evidenceError: 'These exact evidence bytes could not be verified for the current scope.' },
-  ru: { title: 'Сохранённый отчёт', back: 'Закрыть отчёт', outline: 'Разделы и экспорт', read: 'Прочитать отчёт снова', reauthorize: 'Прочитать с текущим доступом', access: 'Чтение использует новое разрешение. Сохранённая область источников остаётся прежней.', section: (index: number) => `Раздел ${index + 1}`, evidence: 'Доказательства этого раздела', noAudit: 'Семантическая оценка утверждений для этого раздела не выполнялась.', unknown: 'Не удалось прочитать или проверить этот раздел.', exportError: 'Не удалось подготовить полный экспорт. Прочитайте все объявленные разделы ещё раз.', reading: 'Читаем выбранный раздел.', noEvidence: 'Для этого раздела не объявлены цитаты.', evidenceError: 'Не удалось проверить точные байты доказательства в текущей области доступа.' },
+  en: { title: 'Saved report', back: 'Close report', outline: 'Sections and export', backToSections: 'Back to sections', read: 'Read report again', reauthorize: 'Read with current access', access: 'This read uses a fresh authorization. The saved source scope is preserved.', section: (index: number) => `Section ${index + 1}`, evidence: 'Evidence for this section', noAudit: 'Semantic claim assessment was not executed for this section.', unknown: 'This section could not be read or verified.', exportError: 'A complete export could not be prepared. Read every declared section again.', reading: 'Reading the selected section.', noEvidence: 'No citations are declared for this section.', evidenceError: 'These exact evidence bytes could not be verified for the current scope.' },
+  ru: { title: 'Сохранённый отчёт', back: 'Закрыть отчёт', outline: 'Разделы и экспорт', backToSections: 'К разделам отчёта', read: 'Прочитать отчёт снова', reauthorize: 'Прочитать с текущим доступом', access: 'Чтение использует новое разрешение. Сохранённая область источников остаётся прежней.', section: (index: number) => `Раздел ${index + 1}`, evidence: 'Доказательства этого раздела', noAudit: 'Семантическая оценка утверждений для этого раздела не выполнялась.', unknown: 'Не удалось прочитать или проверить этот раздел.', exportError: 'Не удалось подготовить полный экспорт. Прочитайте все объявленные разделы ещё раз.', reading: 'Читаем выбранный раздел.', noEvidence: 'Для этого раздела не объявлены цитаты.', evidenceError: 'Не удалось проверить точные байты доказательства в текущей области доступа.' },
 } as const;
 
 /** One requested section at a time. Exact verified bytes remain in protected memory-only Query. */
@@ -44,6 +44,8 @@ export function ReportPanel({ apis, privacy, context, locale, artifactRef, onClo
   const [selected, setSelected] = useState<DeclaredSection>();
   const [picked, setPicked] = useState<CitedEvidence | ReauthorizedCitedEvidence>();
   const [exportError, setExportError] = useState(false);
+  const [outlineOpen, setOutlineOpen] = useState(true);
+  const outlineSummary = useRef<HTMLElement>(null);
   const sectionHeading = useRef<HTMLHeadingElement>(null);
   const active = artifact?.sections.find(row => selected && sameRef(row.section_ref, selected.section_ref) &&
     row.body_object_ref === selected.body_object_ref && row.body_sha256 === selected.body_sha256);
@@ -72,6 +74,7 @@ export function ReportPanel({ apis, privacy, context, locale, artifactRef, onClo
     if (!artifact || currentArtifact() !== artifact ||
       !artifact.sections.some(row => sameRef(row.section_ref, declared.section_ref) && row.body_object_ref === declared.body_object_ref && row.body_sha256 === declared.body_sha256)) return;
     setSelected(declared); setPicked(undefined); setExportError(false);
+    setOutlineOpen(false);
   };
   const exportReport = () => {
     if (!artifact || currentArtifact() !== artifact) return;
@@ -110,8 +113,9 @@ export function ReportPanel({ apis, privacy, context, locale, artifactRef, onClo
     {mode === 'author' && isWorkspaceRequestError(author.error) && author.error.status === 404 && author.error.code === 'ARTIFACT_DRAFT_READ_NOT_FOUND' &&
       <Button variant="tonal" onClick={() => { setSelected(undefined); setPicked(undefined); setMode('reauthorized'); }}>{text.reauthorize}</Button>}
     {grant && <p>{text.access}</p>}
-    <details className="er-live-report-outline" open={active === undefined}>
-    <summary>{text.outline}</summary>
+    <details className="er-live-report-outline" open={active === undefined || outlineOpen}
+      onToggle={event => { if (event.target === event.currentTarget) setOutlineOpen(event.currentTarget.open); }}>
+    <summary ref={outlineSummary}>{text.outline}</summary>
     <ReportFeature locale={locale} copy={REPORT_COPY[locale]} state={manifest.isPending ? 'loading' : manifest.isError ? 'error' : artifact ? 'useful' : 'empty'}
       {...(artifact ? { manifest: { artifact_ref: artifact.artifact_ref, title: text.title, created_at: artifact.created_at, sections: artifact.sections } } : {})}
       sections={rows} freshness={grant?.source_freshness.state ?? 'UNKNOWN'} onReadSection={readSection} onOpenManifest={() => { void manifest.refetch(); }} onExport={exportReport}
@@ -128,6 +132,9 @@ export function ReportPanel({ apis, privacy, context, locale, artifactRef, onClo
         {...(citations.isError || evidence.isError ? { errorMessage: text.evidenceError } : {})}
         onOpenExcerpt={citation => { if (privacy.isCurrent(context) && !citations.isError && citations.data?.cited_evidence.some(row => sameRef(row.handle_ref, citation.handle_ref) && row.excerpt_sha256 === citation.excerpt_sha256)) setPicked(citation); }}
         onRetry={() => { if (citations.isError) void citations.refetch(); else if (currentCitation) void evidence.refetch(); }} />
+      <div className="er-live-actions">
+        <Button variant="text" onClick={() => { setOutlineOpen(true); outlineSummary.current?.focus(); }}>{text.backToSections}</Button>
+      </div>
     </section>}
     {mode === 'author' && artifact && <ArtifactActions apis={apis} privacy={privacy} context={context}
       locale={locale} artifact={artifact} currentArtifact={currentArtifact}

@@ -84,10 +84,15 @@
   list-style: none;
 }
 
+.er-projects-library__sources {
+  gap: var(--eliot-space-block-control);
+}
+
 .er-projects-library__source {
   display: grid;
   gap: var(--eliot-space-block-control);
   padding: var(--eliot-space-panel);
+  padding-block: var(--eliot-space-block-control);
   border-block-end: var(--eliot-divider-width) solid var(--md-sys-color-outline-variant);
 }
 
