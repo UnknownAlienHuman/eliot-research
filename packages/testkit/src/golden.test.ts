@@ -165,6 +165,55 @@ describe("Golden Corpus gates", () => {
     expect(oversized[0]?.passed).toBe(false);
   });
 
+  it("PR328: rejects malformed unknown items without throwing", () => {
+    const validObservationParts = {
+      atoms: [...recommendationCase.required_atoms],
+      forbidden: [],
+      handles: [...recommendationCase.required_evidence_handle_refs],
+      coverage: "complete_scope" as const,
+    };
+    const blank = adjudicateGoldenCase(recommendationCase, {
+      ...validObservationParts,
+      unknowns: [" "],
+    });
+    expect(blank.passed).toBe(false);
+    expect(blank.failures).toContain("MALFORMED_UNKNOWN:GC-001-recommendation-vs-decision:0");
+
+    let nonString: ReturnType<typeof adjudicateGoldenCase> | undefined;
+    expect(() => {
+      nonString = adjudicateGoldenCase(recommendationCase, {
+        ...validObservationParts,
+        unknowns: [42] as unknown as readonly string[],
+      });
+    }).not.toThrow();
+    expect(nonString?.passed).toBe(false);
+    expect(nonString?.failures).toContain("MALFORMED_UNKNOWN:GC-001-recommendation-vs-decision:0");
+  });
+
+  it("PR328: refuses a repeated identical unknown observation", () => {
+    const acceptedUnknown = recommendationCase.acceptable_unknowns[0];
+    if (acceptedUnknown === undefined) throw new Error("missing accepted unknown fixture");
+    const observed = {
+      atoms: [...recommendationCase.required_atoms],
+      forbidden: [],
+      handles: [...recommendationCase.required_evidence_handle_refs],
+      unknowns: [acceptedUnknown, acceptedUnknown],
+      coverage: "complete_scope" as const,
+    };
+    const verdict = adjudicateGoldenCase(recommendationCase, observed);
+    expect(verdict.passed).toBe(false);
+    expect(verdict.failures).toContain(
+      `DUPLICATE_UNKNOWN:${recommendationCase.case_id}:${acceptedUnknown}`,
+    );
+
+    const results = evaluateGoldenRun(
+      [recommendationCase],
+      new Map([[recommendationCase.case_id, observed]]),
+    );
+    expect(results[0]?.passed).toBe(false);
+    expect(() => assertGoldenPromotionGate(results)).toThrow("GOLDEN_PROMOTION_BLOCKED");
+  });
+
   it("keeps the historical v1 result wire shape while retaining adjudication diagnostics internally", () => {
     const results = evaluateGoldenRun([recommendationCase], new Map([[recommendationCase.case_id, {
       atoms: [...recommendationCase.required_atoms],

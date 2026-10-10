@@ -294,6 +294,20 @@ describe("Golden v2 manifest binding and hard gates", () => {
     expect(malformed.results[0]?.observed_unknowns).toEqual([]);
   });
 
+  it("PR328: retains an accepted unknown form and its declared identity in the V2 result", async () => {
+    const state = await prepare({ unknowns: ["date not stated"] });
+    const result = state.results[0];
+    if (result === undefined) throw new Error("missing Golden v2 result");
+    const declaration = state.golden.acceptable_unknowns.find((entry) =>
+      entry.accepted_surface_forms.includes("date not stated"),
+    );
+
+    expect(declaration?.unknown_id).toBe("unverified-date");
+    expect(result.observed_unknowns).toEqual(["date not stated"]);
+    expect(result.failures).toEqual([]);
+    expect(result.passed).toBe(true);
+  });
+
   it("enforces source-family, latency, cost, and required receipt metrics", async () => {
     const overBudget = await prepare({ metrics: validMetrics({ latency_ms: 901, cost_micros: 25_001 }) });
     expect(overBudget.results[0]?.failures).toContain("LATENCY_BUDGET_EXCEEDED:case-v2-1");
