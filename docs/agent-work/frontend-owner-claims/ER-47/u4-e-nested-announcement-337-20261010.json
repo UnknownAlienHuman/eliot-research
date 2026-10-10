@@ -5,8 +5,10 @@
   "owner_authorization_ref": "tests/ui-owner/receipts/owner-authorization.json",
   "base_sha": "4d0d8a46796d37bd0ecffc8d4ef585a9bdc642ad",
   "history_base_sha": "c37e56e0ebdfc7f6d294879008a4036d1b95b985",
-  "state": "ACTIVE",
-  "evidence_refs": [],
+  "state": "HANDED_OFF",
+  "evidence_refs": [
+    "tests/ui-owner/receipts/u5-x/nested-operation-control-20261010.json"
+  ],
   "blocker_refs": [],
   "checkpoint_id": "U4-E",
   "claim_id": "u4-e-nested-announcement-337-20261010",
@@ -27,5 +29,7 @@
       "commit_sha": "273577c9ae45a1bf94ebcb5be77906c1f15ded92",
       "approval_ref": "tests/ui-owner/receipts/u2-x/u2-r.json"
     }
-  ]
+  ],
+  "handoff_reason": "COMPLETED",
+  "handoff_receipt_ref": "tests/ui-owner/receipts/u5-x/nested-operation-control-20261010.json"
 }

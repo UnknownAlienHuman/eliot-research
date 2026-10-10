@@ -1,0 +1,149 @@
+{
+  "protocol": "eliotr.frontend.nested-operation-control.v1",
+  "issue": "https://github.com/UnknownAlienHuman/eliot-research/issues/337",
+  "manager_context": "01a120c9-2637-7952-b6c9-be07b395b4fd",
+  "input_main": "4d0d8a46796d37bd0ecffc8d4ef585a9bdc642ad",
+  "source_commit": "ad74865a02d6c921f3c684d607271f93292c7a4b",
+  "status": "ACCEPTED_BOUNDED_NESTED_OPERATION_CONTROL",
+  "named_gap": "Addendum5 section6: nested operation surfaces announce actual action changes once, while cached and static facts remain quiet.",
+  "source_paths": [
+    "packages/ui/src/features/sources/erasure/ErasureFeature.tsx",
+    "packages/ui/src/stories/sources/erasure/ErasureFeature.stories.tsx",
+    "packages/ui/src/features/research/report/ReportFeature.tsx",
+    "packages/ui/src/stories/research/report/ReportFeature.stories.tsx",
+    "packages/ui/src/features/research/evidence/EvidenceFeature.tsx",
+    "packages/ui/src/stories/research/evidence/EvidenceFeature.stories.tsx",
+    "apps/eliotr-web/src/app/ArtifactActions.tsx",
+    "apps/eliotr-web/src/app/ArtifactActionsPreview.tsx",
+    "apps/eliotr-web/src/app/ErasurePanel.tsx",
+    "apps/eliotr-web/src/app/FiniteExcerptPreview.tsx",
+    "apps/eliotr-web/src/app/ImportBundlePreview.tsx",
+    "apps/eliotr-web/src/app/ImportPanel.tsx",
+    "apps/eliotr-web/src/app/OperationFeedback.tsx",
+    "apps/eliotr-web/src/app/ReportPanel.tsx",
+    "apps/eliotr-web/src/app/Shell.stories.tsx",
+    ".github/workflows/frontend-owner.yml"
+  ],
+  "ROOT_COMPOSITION": {
+    "owner": "frontend-manager",
+    "shared": [
+      "apps/eliotr-web/src/app/OperationFeedback.tsx",
+      "apps/eliotr-web/src/app/usePaneAnnouncement.ts"
+    ],
+    "U3-X": {
+      "paths": [
+        "apps/eliotr-web/src/app/ImportPanel.tsx",
+        "apps/eliotr-web/src/app/ErasurePanel.tsx"
+      ],
+      "negatives": [
+        "Closed dialogs have zero operation channels; reopened cached facts remain quiet",
+        "File/bundle view changes reset announcement identity",
+        "Unknown capture/process/bundle reconciliation retains original operation body/key and prevents duplicate effects"
+      ]
+    },
+    "U4-X": {
+      "paths": [
+        "apps/eliotr-web/src/app/ReportPanel.tsx",
+        "apps/eliotr-web/src/app/ArtifactActions.tsx"
+      ],
+      "negatives": [
+        "Citation list and selected excerpt reads have distinct messages",
+        "Read success requires the selected row/handle and verified accepted readback",
+        "Citation rails, Evidence outcomes, degraded Report facts and Erasure status facts have no competing live regions",
+        "Privacy/context loss disconnects channels and late reads cannot restore them"
+      ]
+    }
+  },
+  "verification": {
+    "typescript": {
+      "version": "6.0.3",
+      "observed_inputs": 1146,
+      "owning_roots": 280,
+      "outputs": 1110,
+      "diagnostics": 0
+    },
+    "lint": "PASS exact15 TypeScript files",
+    "new_cases": [
+      "Evidence Operation Announcements",
+      "Erasure Operation Announcements",
+      "Report Static Facts Quiet",
+      "Nested Bundle Operation",
+      "Nested Import Operation"
+    ],
+    "retained_cases": [
+      "Nested Erasure Operation",
+      "Nested Artifact Operation",
+      "Nested Evidence Operation"
+    ],
+    "retained_source": "02698ebf64c3475c203f5acd41d4ba738863b154",
+    "retained_equivalence": "Exact unchanged nested roots, fixtures, hook and feature blobs; only import-root/view and independent feature-story changes since retained execution",
+    "logs": [
+      {
+        "name": "stories-r2.log",
+        "sha256": "34d86077a768980d82e220e318183042ce431ba4f3d1660efbcb65543baf8c41"
+      },
+      {
+        "name": "stories-r3.log",
+        "sha256": "3c0b208cb80ae3551de2ddbb08d87acfc660172032e0a02caa35b58d62347aa1"
+      }
+    ],
+    "retained_failures": [
+      "compiler-r1 fixture typing and lint-r1 unused fixture setter",
+      "stories-r2: four failed fixtures; four passing outcomes retained"
+    ],
+    "repairs": "Hidden secondary feature callers avoid duplicate accessible landmarks; one sequential Report quiet-facts fixture; explicit Erasure signal; selected bundle channel capture and Import key={view}.",
+    "browser": {
+      "status": "PASS_BOUNDED_REPRESENTATIVE_REVIEW",
+      "source": "ad74865a02d6c921f3c684d607271f93292c7a4b",
+      "server": "Storybook10.6.1 private immutable snapshot-r3 on127.0.0.1:6121",
+      "observations": [
+        "Import unresolved original-operation status remains readable; open dialog has one polite/atomic operation channel",
+        "Closed import dialog has zero operation channels; reopening cached unresolved state has one empty channel",
+        "Saved bundle view has aligned native controls and no visible operation-message duplication",
+        "Report degraded facts remain visible with zero status/alert/live regions"
+      ],
+      "screenshots": [
+        {
+          "name": "import-r3.png",
+          "sha256": "94e1b448d2a6ac8016c19ca4b5c0e4aebff746d0df5d440d7526e14204815899"
+        },
+        {
+          "name": "bundle-r3.png",
+          "sha256": "ca0e993ea8facdc44c7ccd0ec0a9b323375eead19182f7ffe0108cfc3e362956"
+        },
+        {
+          "name": "report-r3.png",
+          "sha256": "27bc5cc52bfcdfe74717cc4e468352d3a115acd797ee5ed6b5d3a5d4a5f72fe7"
+        }
+      ],
+      "limitations": [
+        "Synthetic fixtures and representative desktop views only",
+        "No physical screen-reader or full FINAL-UI matrix"
+      ]
+    },
+    "current_head_ci": "PENDING_FIRST_AUTOMATIC_EXACT_HEAD_WORKFLOW"
+  },
+  "retained_gate_decisions": {
+    "receipt": "tests/ui-owner/receipts/u5-x/operation-announcements-20261010.json",
+    "commit": "4d0d8a46796d37bd0ecffc8d4ef585a9bdc642ad",
+    "U3-X": "ACCEPTED_NONPRODUCTION_SOURCES_BASELINE",
+    "U4-X": "BLOCKED_ADMISSION_EFFECT_PHASE_PRODUCER_AND_ER48",
+    "U5-X": "BLOCKED_WIKI_CONTINUATION_AND_U4_PREDECESSOR",
+    "FINAL-UI": "BLOCKED_PRODUCER_HANDOFFS_THEN_OWNER_REVIEW"
+  },
+  "external_handoffs": {
+    "admission": "Backend/ER48: lost POST acknowledgement without run identity needs accepted effect/phase and exact-key readback; workflow-failure-outcome.v1 covers acknowledged ResearchRunStatus.failure only",
+    "wiki": "Backend/ER48: wiki-proposals.v1 fixed20/lookahead21 with has_more has no accepted continuation/completeness contract"
+  },
+  "limits": [
+    "No product transport/query/key/body/CAS changes",
+    "No current generated Worker/assets pair, /agents parity or live acceptance",
+    "No backend build/native suite repeated",
+    "No physical screen-reader or FINAL-UI owner acceptance"
+  ],
+  "next": [
+    "Accepted admission producer/ER48 handoff",
+    "Accepted Wiki continuation/completeness handoff",
+    "One integrated FINAL-UI review after those dependencies"
+  ]
+}
