@@ -3,6 +3,7 @@ import { QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router';
 import type { ArtifactRevision } from '@eliotr/owner-api-client';
 import { Shell } from './Shell';
+import { paneAnnouncement, announcementUntil, unchangedChannel } from './announcementAssertions';
 import { createWorkspaceRuntime } from './runtime';
 import { createPrivacyController } from './privacy';
 import { clearWorkspaceQueries, createWorkspaceQueryClient } from '../query/client';
@@ -45,15 +46,18 @@ interface FixtureAudit {
   history: number;
   manifests: number;
   publications: number;
+  readonly releaseDiagnostic: () => void;
 }
 // Test observations stay out of the product DOM and do not replace any client or query result.
 const fixtureAudits = new WeakMap<HTMLElement, FixtureAudit>();
 
-function createEnvironment(scenario: Scenario) {
+function createEnvironment(scenario: Scenario, holdDiagnostic: boolean) {
+  let releaseDiagnostic = () => {};
+  const diagnosticGate = new Promise<void>(resolve => { releaseDiagnostic = () => resolve(); });
   const client = createWorkspaceQueryClient();
   const timers = { setTimeout: () => 0, clearTimeout() {} };
   const audit: FixtureAudit = {
-    scenario, calls: [], unexpected: [], mutations: 0, mints: 0,
+    scenario, calls: [], unexpected: [], mutations: 0, mints: 0, releaseDiagnostic,
     providers: 0, grants: 0, models: 0, readiness: 0, diagnostics: 0,
     proposals: 0, history: 0, manifests: 0, publications: 0,
   };
@@ -128,6 +132,7 @@ function createEnvironment(scenario: Scenario) {
     }
     if (url.pathname === '/api/v1/system/mcp-diagnostics') {
       audit.diagnostics += 1;
+      if (holdDiagnostic && audit.diagnostics === 2) await diagnosticGate;
       if (scenario === 'disclosure') return diagnosticError(audit.diagnostics === 1);
       return json({
         protocol: 'eliotr.mcp.client-diagnostic.v1', status: 'ISSUED',
@@ -212,8 +217,8 @@ function createEnvironment(scenario: Scenario) {
  * PRIVATE, UNEXECUTED proposal. Relative imports target eventual app-directory relocation.
  * Actual Shell -> LiveWorkspace -> Connections/Studio -> ReportPanel -> ArtifactActions.
  */
-export function FiniteTruthDisclosurePreview({ scenario = 'capability' }: { readonly scenario?: Scenario }) {
-  const [environment] = useState(() => createEnvironment(scenario));
+export function FiniteTruthDisclosurePreview({ scenario = 'capability', holdDiagnostic = false }: { readonly scenario?: Scenario; readonly holdDiagnostic?: boolean }) {
+  const [environment] = useState(() => createEnvironment(scenario, holdDiagnostic));
   useEffect(() => {
     const unsubscribe = environment.privacy.subscribe(() => {
       const snapshot = environment.privacy.getSnapshot();
@@ -407,4 +412,23 @@ export async function playBoundedRootDisclosure({ canvas, userEvent }: PlayConte
   const reportButtons = [...root.querySelectorAll('.er-live-report button')].map(button => button.textContent?.trim());
   assert(!reportButtons.includes('Revise this section') && !reportButtons.includes('Confirm owner acceptance'), 'Unrequested section or acceptance controls appeared');
   noRawMaterial(root);
+}
+
+/** Actual Connections query operation: one retained channel, no mutation and no credential copy. */
+export async function playConnectionAnnouncements({ canvas, userEvent }: PlayContext) {
+  const root = fixtureRoot(await canvas.findByRole('heading', { name: 'Connections', exact: true, level: 1 }), 'disclosure');
+  await chooseProject(root, userEvent);
+  const region = paneAnnouncement(root);
+  const failure = 'Some status checks failed. Review the affected rows.';
+  await announcementUntil(() => unchangedChannel(root, region, failure));
+  const audit = readOnlyAudit(root), before = { providers: audit.providers, grants: audit.grants, models: audit.models, readiness: audit.readiness };
+  const diagnostics = [...root.querySelectorAll<HTMLButtonElement>('.connections-feature button')].find(button => button.textContent?.trim() === 'Show diagnostics');
+  assert(diagnostics, 'Owning diagnostics action missing');
+  await userEvent.click(diagnostics);
+  await announcementUntil(() => unchangedChannel(root, region, 'Reading connection status.'));
+  assert(readOnlyAudit(root).diagnostics === 2, 'Diagnostics request did not occur exactly once');
+  audit.releaseDiagnostic();
+  await announcementUntil(() => unchangedChannel(root, region, failure));
+  assert(audit.providers === before.providers && audit.grants === before.grants && audit.models === before.models && audit.readiness === before.readiness, 'Diagnostics refreshed unrelated queries');
+  noRawMaterial(root); readOnlyAudit(root);
 }

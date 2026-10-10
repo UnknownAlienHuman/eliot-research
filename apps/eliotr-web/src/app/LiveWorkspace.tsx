@@ -2,7 +2,7 @@ import { useCallback, useLayoutEffect, useRef, useState, type Ref, type RefObjec
 import { skipToken, useQueries, useQuery, useQueryClient, type UseQueryResult } from "@tanstack/react-query";
 import { useLocation, useNavigate } from "react-router";
 import { WorkspaceLink } from "../routes/WorkspaceLink";
-import { Button, Dialog, DocumentReader, ProjectsLibraryFeature } from "@eliotr/ui";
+import { Button, Dialog, DocumentReader, OperationAnnouncement, ProjectsLibraryFeature } from "@eliotr/ui";
 import type { LibraryPage, ProjectListView, SourceRevisionPage } from "@eliotr/owner-api-client";
 import type { PrivacyController, SessionContext } from "./privacy";
 import type { BoundWorkspaceApis } from "./runtime";
@@ -18,6 +18,7 @@ import { NextQuestionScope, type NextQuestionSource } from "./NextQuestionScope"
 import { OWNER_RESEARCH_MAX_SELECTED_SOURCES as selectedSourceLimit } from '@eliotr/owner-api-client';
 import { ResearchPanel } from "./ResearchPanel";
 import { StudioPanel } from "./StudioPanel";
+import { usePaneAnnouncement } from "./usePaneAnnouncement";
 
 const copy = {
   en: { sources: "Sources", research: "Research", studio: "Studio", connections: "Connections", choose: "Choose a project to get started", detail: "Keep sources, questions and their evidence together.", next: "Next page", previous: "Previous page", versions: "Choose a version to read", document: "Source document", close: "Back to sources", untitled: "No project selected", researchPrompt: "Choose the sources for your next question", researchDetail: "The question will keep the exact source scope you choose.", studioEmpty: "Your saved work belongs here", studioDetail: "Reports and artifacts will keep the sources they were created from.", connectionsDetail: "Review owner access and research configuration.", review: "Review connections", selected: (count: number) => `${count} sources selected`, sourceScope: "For your next question", openSources: "Choose sources", version: (index: number) => `Version ${index + 1}`, scopeNote: "Readiness and recorded versions are separate observations." },
@@ -132,6 +133,11 @@ export function LiveWorkspace({ destination, locale, headingRef, apis, privacy, 
   </div>;
 }
 
+const sourceReadCopy = {
+  en: { projectsLoading: 'Reading projects.', projectsError: 'Projects could not be read.', libraryLoading: 'Reading project sources.', libraryError: 'Project sources could not be read.', readinessLoading: 'Reading search readiness.', readinessError: 'Search readiness could not be read.', readinessLoaded: 'Search readiness loaded.', revisionsLoading: 'Reading saved versions.', revisionsError: 'Saved versions could not be read.', revisionsLoaded: 'Saved versions loaded.' },
+  ru: { projectsLoading: 'Читаются проекты.', projectsError: 'Не удалось прочитать проекты.', libraryLoading: 'Читаются источники проекта.', libraryError: 'Не удалось прочитать источники проекта.', readinessLoading: 'Читается готовность поиска.', readinessError: 'Не удалось прочитать готовность поиска.', readinessLoaded: 'Готовность поиска прочитана.', revisionsLoading: 'Читаются сохранённые версии.', revisionsError: 'Не удалось прочитать сохранённые версии.', revisionsLoaded: 'Сохранённые версии прочитаны.' },
+} as const;
+
 function ActiveSources({ locale, apis, privacy, context, projectId, projects, after, onProject, projectSelectRef, sourceId, onSource, libraryPages, onLibraryPages, scope, onScope, onClearScope }: {
   readonly locale: "en" | "ru"; readonly apis: BoundWorkspaceApis; readonly privacy: PrivacyController;
   readonly context: SessionContext; readonly projectId: string | undefined;
@@ -175,7 +181,15 @@ function ActiveSources({ locale, apis, privacy, context, projectId, projects, af
   const selectSource = (id: string) => {
     if (library.data?.sources.some(row => row.id === id) && current.library() === library.data && privacy.isCurrent(context)) onSource(id);
   };
+  const feedback = sourceReadCopy[locale];
+  const announcement = usePaneAnnouncement([
+    projects.isFetching ? feedback.projectsLoading : projects.isError ? feedback.projectsError : '',
+    projectId ? library.isFetching ? feedback.libraryLoading : library.isError ? feedback.libraryError : '' : '',
+    source ? readiness.isFetching ? feedback.readinessLoading : readiness.isError ? feedback.readinessError : readiness.data ? feedback.readinessLoaded : '' : '',
+    source ? revisions.isFetching ? feedback.revisionsLoading : revisions.isError ? feedback.revisionsError : revisions.data ? feedback.revisionsLoaded : '' : '',
+  ].filter(Boolean).join(' '));
   return <>
+    <OperationAnnouncement>{announcement}</OperationAnnouncement>
     <ProjectsLibraryFeature locale={locale} projectSelectRef={projectSelectRef} state={pending ? "loading" : error ? "error" : "useful"}
       sourceActions={<>
         <ImportPanel locale={locale} apis={apis} privacy={privacy} context={context} />

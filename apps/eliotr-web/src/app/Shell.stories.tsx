@@ -1,9 +1,11 @@
 import { IntegrationRepairsPreview, playIntegrationRepairs, playReplacedSelection } from './IntegrationRepairsPreview';
 import { FiniteReadExportPreview, playReadsNoEffects, playFailedRequiredSectionNoExport } from "./FiniteReadExportPreview";
-import { FiniteTruthDisclosurePreview, playCapabilityConnectionTruth, playBoundedRootDisclosure } from "./FiniteTruthDisclosurePreview";
+import { FiniteTruthDisclosurePreview, playCapabilityConnectionTruth, playBoundedRootDisclosure, playConnectionAnnouncements } from "./FiniteTruthDisclosurePreview";
 import { FiniteExcerptPreview, playFiniteExcerptLifecycle } from "./FiniteExcerptPreview";
 import {
   FiniteReaderPreview,
+  playSourceStatusRetry,
+  playSourceStatusPrivacy,
   playStaleLibraryHolder,
   playStaleRevisionHolder,
   playPrivacyLateHistoryReplay,
@@ -20,8 +22,8 @@ import { Shell } from "./Shell";
 import { FixtureWorkspace } from "./FixtureWorkspace";
 import { createPrivacyController } from "./privacy";
 import { BundlePreview, playBundleJourney } from "./ImportBundlePreview";
-import { ResearchPreview, playResearchJourney } from "./ResearchPreview";
-import { StudioPreview, playStudioJourney } from "./StudioPreview";
+import { ResearchPreview, playResearchJourney, playResearchAnnouncements } from "./ResearchPreview";
+import { StudioPreview, playStudioJourney, playStudioAnnouncements } from "./StudioPreview";
 import { ArtifactActionsPreview, playArtifactActionsJourney } from "./ArtifactActionsPreview";
 import { WorkspaceLinkPreview, playWorkspaceLinkJourney } from "./WorkspaceLinkJourney";
 
@@ -329,3 +331,10 @@ export const LiveBoundedRootDisclosure = { render: () => <FiniteTruthDisclosureP
 
 export const CrossPageSelectionRecovery = { render: () => <IntegrationRepairsPreview />, play: playIntegrationRepairs };
 export const ReplacedSelectedPageRefused = { render: () => <IntegrationRepairsPreview stalePage />, play: playReplacedSelection };
+
+export const SourcesReadinessAnnouncement = { render: () => <FiniteReaderPreview readFailure="readiness" />, play: playSourceStatusRetry };
+export const SourcesVersionsAnnouncement = { render: () => <FiniteReaderPreview readFailure="revisions" />, play: playSourceStatusRetry };
+export const SourcesAnnouncementPrivacy = { render: () => <FiniteReaderPreview readFailure="both" />, play: playSourceStatusPrivacy };
+export const StudioOperationAnnouncements = { render: () => <StudioPreview />, play: playStudioAnnouncements };
+export const ResearchOperationAnnouncements = { render: () => <ResearchPreview />, play: playResearchAnnouncements };
+export const ConnectionsOperationAnnouncements = { render: () => <FiniteTruthDisclosurePreview scenario="disclosure" holdDiagnostic />, play: playConnectionAnnouncements };

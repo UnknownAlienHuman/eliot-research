@@ -3,6 +3,7 @@ import { QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter, useLocation, useNavigate, type NavigateFunction } from 'react-router';
 import type { LibraryPage, SourceRevisionPage } from '@eliotr/owner-api-client';
 import { Shell } from './Shell';
+import { paneAnnouncement, announcementUntil, unchangedChannel } from './announcementAssertions';
 import { createWorkspaceRuntime } from './runtime';
 import { createPrivacyController, type SessionContext } from './privacy';
 import { clearWorkspaceQueries, createWorkspaceQueryClient, protectedQueryKey } from '../query/client';
@@ -26,11 +27,13 @@ async function until(predicate: () => boolean, label: string) {
   throw new Error('Finite reader fixture timed out: ' + label);
 }
 
-function createFixture() {
+type ReadFailure = 'readiness' | 'revisions' | 'both';
+function createFixture(readFailure?: ReadFailure) {
   const client = createWorkspaceQueryClient(), gate = deferred();
   const timers = { setTimeout: () => 0, clearTimeout() {} };
   const digest = sha256(encode(documentText));
-  let contentCalls = 0, returned = 0;
+  let contentCalls = 0, returned = 0, readinessCalls = 0, revisionsCalls = 0;
+  const readinessGate = deferred(), revisionsGate = deferred();
   const route: { navigate: NavigateFunction | undefined; state: unknown } = { navigate: undefined, state: undefined };
   const json = (data: unknown) => new Response(JSON.stringify({ data, trace_id: 'live-trace-1', deployment_generation: generation }), { headers: { 'content-type': 'application/json' } });
   // Only this synthetic boundary ignores cancellation; runtime/client/reader remain real.
@@ -41,13 +44,27 @@ function createFixture() {
     if (url.pathname === '/api/v1/system/session') return json({ protocol: 'eliotr.owner-session.v1', principal_ref: 'live-owner', credential_generation: 'live-credential', client_class: 'owner_pwa', expires_at: '2027-01-01T00:00:00.000Z' });
     if (url.pathname === '/api/v1/research/projects') return json({ protocol: 'eliotr.project-owner-list.v1', projects: [{ protocol: 'eliotr.project-owner.v1', project_ref: { id: project, revision: 1 }, title: 'Evidence in context', revision: 1, owner_principal_ref: 'live-owner', deployment_generation: generation, source_ids: [source], created_at: stamp }] });
     if (url.pathname === '/api/v1/research/catalog') return json({ projects: [{ id: project, title: 'Evidence in context', generation }], sources: [{ id: source, title: sourceTitle, readiness_ref: 'readiness:source-live-1:observation-1' }] });
-    if (url.pathname === '/api/v1/library/readiness') return json({
+    if (url.pathname === '/api/v1/library/readiness') {
+      readinessCalls++;
+      if (readFailure === 'readiness' || readFailure === 'both') {
+        if (readinessCalls === 1) throw new TypeError('Synthetic readiness-only read failure');
+        await readinessGate.promise;
+      }
+      return json({
       protocol: 'eliotr.library-readiness.v1', source_id: source, source_revision_ref: revision,
       deployment_generation: generation, catalog_generation: '1', observed_at: stamp, quality_state: 'high_fidelity', readiness_basis: 'ACTIVE_VERIFIED',
       currentness: { verification: 'VERIFIED', value: { source_revision_ref: revision, owner_system_id: 'owner-system', source_owner_generation: 'owner-generation', source_view_ref: 'source-view', observation_freshness: 'current_confirmed', observed_at: stamp, gap_refs: [] } },
       channels: ['exact_ready', 'lexical_ready', 'semantic_ready'].map(channel => ({ channel, state: 'ready', source_revision_ref: revision, reason_codes: [], observed_at: stamp, generation: 'channel-1', receipt_ref: 'readiness-receipt' })),
     });
-    if (url.pathname === '/api/v1/library/revisions') return json({ protocol: 'eliotr.source-revisions.v1', source_id: source, head_revision_ref: revision, observed_at: stamp, readiness_basis: 'RECORDED_ONLY', revisions: [{ source_revision_ref: revision, content_sha256: await digest, captured_at: stamp, admitted_at: stamp, quality_state: 'high_fidelity', currentness_state: 'current_confirmed', readiness: [] }] });
+    }
+    if (url.pathname === '/api/v1/library/revisions') {
+      revisionsCalls++;
+      if (readFailure === 'revisions' || readFailure === 'both') {
+        if (revisionsCalls === 1) throw new TypeError('Synthetic versions-only read failure');
+        await revisionsGate.promise;
+      }
+      return json({ protocol: 'eliotr.source-revisions.v1', source_id: source, head_revision_ref: revision, observed_at: stamp, readiness_basis: 'RECORDED_ONLY', revisions: [{ source_revision_ref: revision, content_sha256: await digest, captured_at: stamp, admitted_at: stamp, quality_state: 'high_fidelity', currentness_state: 'current_confirmed', readiness: [] }] });
+    }
     if (url.pathname === '/api/v1/library/content' && url.searchParams.get('source_revision_ref') === revision) {
       contentCalls++; if (contentCalls !== 1) throw new Error('Reader fixture repeated the document request');
       await gate.promise;
@@ -87,7 +104,7 @@ function createFixture() {
     }
   };
   return { client, runtime, privacy, context, documentKey, replaceHolder, gate, route,
-    metrics: () => ({ contentCalls, returned }) };
+    readFailure, readinessGate, revisionsGate, metrics: () => ({ contentCalls, returned, readinessCalls, revisionsCalls }) };
 }
 type Environment = ReturnType<typeof createFixture>;
 const environments = new WeakMap<HTMLElement, Environment>();
@@ -100,15 +117,15 @@ function RoutedFixture({ environment }: { readonly environment: Environment }) {
   return <Shell privacy={environment.privacy} runtime={environment.runtime} fixture={false} />;
 }
 /** Relocate into src/app; private proposal, not executed qualification. */
-export function FiniteReaderPreview() {
-  const [environment] = useState(createFixture);
+export function FiniteReaderPreview({ readFailure }: { readonly readFailure?: ReadFailure }) {
+  const [environment] = useState(() => createFixture(readFailure));
   useEffect(() => {
     const unsubscribe = environment.privacy.subscribe(() => {
       const snapshot = environment.privacy.getSnapshot();
       if (snapshot.phase === 'available') environment.runtime.bind(snapshot.context);
     });
     void environment.privacy.refresh();
-    return () => { environment.gate.release(); unsubscribe(); environment.privacy.dispose(); environment.runtime.dispose(); environment.client.clear(); };
+    return () => { environment.gate.release(); environment.readinessGate.release(); environment.revisionsGate.release(); unsubscribe(); environment.privacy.dispose(); environment.runtime.dispose(); environment.client.clear(); };
   }, [environment]);
   return <div data-finite-reader ref={node => { if (node) environments.set(node, environment); }}>
     <QueryClientProvider client={environment.client}><MemoryRouter initialEntries={['/sources']}>
@@ -199,3 +216,49 @@ async function foreignRoute(test: ReaderPlayContext, field: 'projectId' | 'sourc
 }
 export const playSameEpochForeignProject = (test: ReaderPlayContext) => foreignRoute(test, 'projectId');
 export const playSameEpochForeignSource = (test: ReaderPlayContext) => foreignRoute(test, 'sourceId');
+
+/** Actual root/query retries: only the failed panel refetches, with the same source/project. */
+export async function playSourceStatusRetry(test: ReaderPlayContext) {
+  const environment = environmentFor(test.canvasElement), mode = environment.readFailure;
+  assert(mode === 'readiness' || mode === 'revisions', 'Retry story must own one failed panel');
+  const select = await test.canvas.findByRole('combobox', { name: 'Project', exact: true });
+  await test.userEvent.selectOptions(select, project);
+  const sourceButton = await test.canvas.findByRole('button', { name: sourceTitle, exact: true });
+  await test.userEvent.click(sourceButton);
+  const panel = test.canvasElement.querySelectorAll<HTMLElement>('.er-projects-library__panel')[mode === 'readiness' ? 0 : 1];
+  assert(panel, 'Owning source panel missing');
+  await until(() => environment.metrics().readinessCalls === 1 && environment.metrics().revisionsCalls === 1 && !!panel.querySelector('button.er-button--text'), 'owning panel error');
+  const region = paneAnnouncement(test.canvasElement);
+  const failure = mode === 'readiness' ? 'Search readiness could not be read.' : 'Saved versions could not be read.';
+  await announcementUntil(() => region.textContent?.includes(failure) === true);
+  const retry = panel.querySelector<HTMLButtonElement>('button.er-button--text'); assert(retry, 'Targeted retry missing');
+  await test.userEvent.click(retry);
+  const loading = mode === 'readiness' ? 'Reading search readiness.' : 'Reading saved versions.';
+  await announcementUntil(() => region.textContent?.includes(loading) === true);
+  assert(paneAnnouncement(test.canvasElement) === region, 'Retry replaced the operation region');
+  const pending = environment.metrics();
+  assert(pending.readinessCalls === (mode === 'readiness' ? 2 : 1) && pending.revisionsCalls === (mode === 'revisions' ? 2 : 1), 'Retry refreshed the unrelated panel');
+  if (mode === 'readiness') environment.readinessGate.release(); else environment.revisionsGate.release();
+  await announcementUntil(() => unchangedChannel(test.canvasElement, region, 'Search readiness loaded. Saved versions loaded.'));
+  const currentSelect = await test.canvas.findByRole('combobox', { name: 'Project', exact: true });
+  const currentSource = await test.canvas.findByRole('button', { name: sourceTitle, exact: true });
+  assert(currentSelect instanceof HTMLSelectElement && currentSelect.value === project && currentSource.getAttribute('aria-pressed') === 'true', 'Retry changed project/source identity');
+  assert(environment.metrics().contentCalls === 0, 'Status retry opened a document');
+}
+
+/** Two failed panels still produce one channel; a late retry cannot restore protected messages. */
+export async function playSourceStatusPrivacy(test: ReaderPlayContext) {
+  const environment = environmentFor(test.canvasElement);
+  await test.userEvent.selectOptions(await test.canvas.findByRole('combobox', { name: 'Project', exact: true }), project);
+  await test.userEvent.click(await test.canvas.findByRole('button', { name: sourceTitle, exact: true }));
+  const region = paneAnnouncement(test.canvasElement);
+  await announcementUntil(() => unchangedChannel(test.canvasElement, region, 'Search readiness could not be read. Saved versions could not be read.'));
+  const retry = test.canvasElement.querySelector<HTMLButtonElement>('.er-projects-library__panel button.er-button--text'); assert(retry, 'Readiness retry absent');
+  await test.userEvent.click(retry);
+  await announcementUntil(() => region.textContent?.includes('Reading search readiness.') === true);
+  environment.privacy.close(); environment.readinessGate.release(); environment.revisionsGate.release();
+  await until(() => !region.isConnected && environment.client.getQueryCache().getAll().length === 0, 'privacy removes status and protected cache');
+  await frame(); await frame();
+  assert(test.canvasElement.querySelectorAll('[role="status"], [aria-live], [role="alert"]').length === 0, 'Late read recreated an announcement');
+  assert(environment.metrics().readinessCalls === 2 && environment.metrics().revisionsCalls === 1 && environment.metrics().contentCalls === 0, 'Privacy retry duplicated or widened reads');
+}

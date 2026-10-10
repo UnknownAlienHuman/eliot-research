@@ -3,6 +3,7 @@ import { QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router';
 import type { WikiProposalReadView } from '@eliotr/owner-api-client';
 import { Shell } from './Shell';
+import { paneAnnouncement, announcementUntil, unchangedChannel } from './announcementAssertions';
 import { createWorkspaceRuntime } from './runtime';
 import { createPrivacyController } from './privacy';
 import { clearWorkspaceQueries, createWorkspaceQueryClient } from '../query/client';
@@ -13,6 +14,7 @@ const encode = (text: string) => new TextEncoder().encode(text);
 const digest = async (bytes: Uint8Array) => [...new Uint8Array(await crypto.subtle.digest('SHA-256', new Uint8Array(bytes).buffer))].map(value => value.toString(16).padStart(2, '0')).join('');
 
 /** Real client and protected memory; one durable edit and one publication each lose an ack. */
+const studioEnvironments = new WeakMap<HTMLElement, { privacy: ReturnType<typeof createPrivacyController>; client: ReturnType<typeof createWorkspaceQueryClient> }>();
 export function StudioPreview() {
   const [environment] = useState(() => {
     const client = createWorkspaceQueryClient(), timers = { setTimeout: () => 0, clearTimeout() {} };
@@ -85,7 +87,7 @@ export function StudioPreview() {
     void environment.privacy.refresh();
     return () => { unsubscribe(); environment.privacy.dispose(); environment.runtime.dispose(); environment.client.clear(); };
   }, [environment]);
-  return <QueryClientProvider client={environment.client}><MemoryRouter initialEntries={['/studio']}><Shell privacy={environment.privacy} runtime={environment.runtime} fixture={false} /></MemoryRouter></QueryClientProvider>;
+  return <div data-studio-announcements ref={node => { if (node) studioEnvironments.set(node, environment); }}><QueryClientProvider client={environment.client}><MemoryRouter initialEntries={['/studio']}><Shell privacy={environment.privacy} runtime={environment.runtime} fixture={false} /></MemoryRouter></QueryClientProvider></div>;
 }
 
 export const playStudioJourney = async ({ canvas, userEvent }: {
@@ -97,20 +99,66 @@ export const playStudioJourney = async ({ canvas, userEvent }: {
   await userEvent.click(await canvas.findByRole('button', { name: /Evidence scope in a saved page/u }));
   await canvas.findByText(baseBody, { selector: '.er-studio-live__body' });
   const edit = await canvas.findByRole('button', { name: 'Create a new draft from this page' }); edit.click(); edit.click();
-  await canvas.findByText('The last action has no confirmed outcome. Its original draft, content and request identity are preserved.');
+  await canvas.findByText('The last action has no confirmed outcome. Its original draft, content and request identity are preserved.', { selector: '.er-status > span' });
   await userEvent.click(canvas.getByRole('link', { name: 'Research', exact: true }));
   await canvas.findByRole('heading', { name: 'Research', exact: true });
   await userEvent.click(canvas.getByRole('link', { name: 'Studio', exact: true }));
   await userEvent.click(await canvas.findByRole('button', { name: 'Check the same action' }));
-  await canvas.findByText('A new draft revision was returned. The previous page was preserved.');
+  await canvas.findByText('A new draft revision was returned. The previous page was preserved.', { selector: '.er-status > span' });
   await canvas.findByText(baseBody, { selector: '.er-studio-live__body' });
   await userEvent.click(await canvas.findByRole('button', { name: 'Publish page' }));
   const publish = await canvas.findByRole('button', { name: 'Confirm publication' }); publish.click(); publish.click();
-  await canvas.findByText('The last action has no confirmed outcome. Its original draft, content and request identity are preserved.');
+  await canvas.findByText('The last action has no confirmed outcome. Its original draft, content and request identity are preserved.', { selector: '.er-status > span' });
   await userEvent.click(canvas.getByRole('link', { name: 'Research', exact: true }));
   await canvas.findByRole('heading', { name: 'Research', exact: true });
   await userEvent.click(canvas.getByRole('link', { name: 'Studio', exact: true }));
   await userEvent.click(await canvas.findByRole('button', { name: 'Check the same action' }));
-  await canvas.findByText('PUBLISHED');
+  await canvas.findByText('Published', { selector: 'dd' });
   if (canvas.queryByRole('button', { name: 'Publish page' }) || canvas.queryByRole('button', { name: 'Confirm publication' })) throw new Error('Canonical published readback exposed another publication');
 };
+
+export async function playStudioAnnouncements(test: Parameters<typeof playStudioJourney>[0]) {
+  const { canvas, userEvent } = test;
+  const selected = await canvas.findByRole('button', { name: /Evidence scope in a saved page/u });
+  const root = selected.closest<HTMLElement>('[data-studio-announcements]');
+  if (!root) throw new Error('Actual Studio root missing');
+  const region = paneAnnouncement(root);
+  await userEvent.click(selected);
+  await canvas.findByText(baseBody, { selector: '.er-studio-live__body' });
+  const edit = await canvas.findByRole('button', { name: 'Create a new draft from this page' }); edit.click(); edit.click();
+  await announcementUntil(() => unchangedChannel(root, region, 'The last action has no confirmed outcome. Its original draft, content and request identity are preserved.'));
+  await userEvent.click(await canvas.findByRole('button', { name: 'Check the same action' }));
+  await canvas.findByText(baseBody, { selector: '.er-studio-live__body' });
+  await announcementUntil(() => unchangedChannel(root, region, 'A new draft revision was returned. The previous page was preserved.'));
+  const successText = () => [...root.querySelectorAll('.er-status > span')].map(node => node.textContent);
+  const choose = async (index: 0 | 1) => {
+    await announcementUntil(() => root.querySelectorAll('.er-studio-live__item').length === 2);
+    const item = root.querySelectorAll<HTMLButtonElement>('.er-studio-live__item')[index];
+    if (!item) throw new Error('Saved proposal choice absent');
+    await userEvent.click(item);
+    await announcementUntil(() => root.querySelectorAll<HTMLButtonElement>('.er-studio-live__item')[index]?.getAttribute('aria-current') === 'true');
+  };
+  await choose(0);
+  await announcementUntil(() => unchangedChannel(root, region, 'Saved work loaded.'));
+  if (successText().some(text => text === 'A new draft revision was returned. The previous page was preserved.' || text === 'Publication confirmed for this Wiki page.')) throw new Error('Another proposal inherited an old success');
+  await choose(1);
+  await announcementUntil(() => unchangedChannel(root, region, 'A new draft revision was returned. The previous page was preserved.'));
+  await userEvent.click(await canvas.findByRole('button', { name: 'Publish page' }));
+  const publish = await canvas.findByRole('button', { name: 'Confirm publication' }); publish.click(); publish.click();
+  await announcementUntil(() => unchangedChannel(root, region, 'The last action has no confirmed outcome. Its original draft, content and request identity are preserved.'));
+  await userEvent.click(await canvas.findByRole('button', { name: 'Check the same action' }));
+  await announcementUntil(() => unchangedChannel(root, region, 'Publication confirmed for this Wiki page.'));
+  if (canvas.queryByRole('button', { name: 'Publish page' }) || canvas.queryByRole('button', { name: 'Confirm publication' })) throw new Error('Canonical readback allowed another publication');
+  if (successText().includes('A new draft revision was returned. The previous page was preserved.')) throw new Error('Published page retained the old edit success');
+  if (!root.querySelector('.er-studio-live__item[aria-current="true"]')?.textContent?.includes('Published')) throw new Error('Selected proposal list ignored canonical publication');
+  await choose(0);
+  await announcementUntil(() => unchangedChannel(root, region, 'Saved work loaded.'));
+  if (successText().some(text => text === 'Publication confirmed for this Wiki page.' || text === 'A new draft revision was returned. The previous page was preserved.')) throw new Error('Another proposal inherited publication success');
+  await choose(1);
+  await announcementUntil(() => unchangedChannel(root, region, 'Publication confirmed for this Wiki page.'));
+
+  const environment = studioEnvironments.get(root); if (!environment) throw new Error('Studio environment missing');
+  environment.privacy.close();
+  await announcementUntil(() => !region.isConnected && environment.client.getQueryCache().getAll().every(query => query.state.data === undefined), () => JSON.stringify({ connected: region.isConnected, phase: environment.privacy.getSnapshot().phase, cache: environment.client.getQueryCache().getAll().map(query => ({ key: query.queryKey, hasData: query.state.data !== undefined })) }));
+  if (root.querySelector('[aria-live], [role="status"], [role="alert"]')) throw new Error('Privacy retained the Studio operation region');
+}

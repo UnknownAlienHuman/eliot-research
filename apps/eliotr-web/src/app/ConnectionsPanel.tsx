@@ -1,15 +1,16 @@
 import { useId, useState } from "react";
 import { skipToken, useQuery, useQueryClient, type UseQueryResult } from "@tanstack/react-query";
-import { Button, ConnectionsFeature, Field } from "@eliotr/ui";
+import { Button, ConnectionsFeature, Field, OperationAnnouncement } from "@eliotr/ui";
 import type { ProjectListView } from "@eliotr/owner-api-client";
 import type { PrivacyController, SessionContext } from "./privacy";
 import type { BoundWorkspaceApis } from "./runtime";
 import { connectionsQueryOptions } from "../query/connections";
 import { protectedQueryKey } from "../query/client";
+import { usePaneAnnouncement } from "./usePaneAnnouncement";
 
 const copy = {
-  en: { choose: "Choose a project", project: "Project", next: "Next project page", previous: "Previous project page", operation: "Read a saved model operation", key: "Provider key operation", use: "Model operation", read: "Read saved status", hint: "Use the two references from your saved request. Reading status does not start another operation." },
-  ru: { choose: "Выберите проект", project: "Проект", next: "Следующая страница проектов", previous: "Предыдущая страница проектов", operation: "Прочитать сохранённую операцию модели", key: "Операция ключа провайдера", use: "Операция модели", read: "Прочитать сохранённый статус", hint: "Введите две ссылки из сохранённого запроса. Чтение статуса не запускает новую операцию." },
+  en: { reading: 'Reading connection status.', failed: 'Some status checks failed. Review the affected rows.', loaded: 'Connection status checks updated.', choose: "Choose a project", project: "Project", next: "Next project page", previous: "Previous project page", operation: "Read a saved model operation", key: "Provider key operation", use: "Model operation", read: "Read saved status", hint: "Use the two references from your saved request. Reading status does not start another operation." },
+  ru: { reading: 'Читается статус подключений.', failed: 'Некоторые проверки статуса завершились ошибкой. Проверьте соответствующие строки.', loaded: 'Проверки статуса подключений обновлены.', choose: "Выберите проект", project: "Проект", next: "Следующая страница проектов", previous: "Предыдущая страница проектов", operation: "Прочитать сохранённую операцию модели", key: "Операция ключа провайдера", use: "Операция модели", read: "Прочитать сохранённый статус", hint: "Введите две ссылки из сохранённого запроса. Чтение статуса не запускает новую операцию." },
 } as const;
 
 function rowState<T>(query: UseQueryResult<T, Error>, enabled = true): "idle" | "loading" | "loaded" | "failed" {
@@ -49,7 +50,11 @@ export function ConnectionsPanel({ locale, apis, privacy, context, projects, pro
   };
   const text = copy[locale];
   const projectSelectId = useId();
+  const observed = [...new Set(Object.values(facts))];
+  const announcement = usePaneAnnouncement(observed.some(query => query.isFetching) ? text.reading
+    : observed.some(query => query.isError) ? text.failed : health.data ? text.loaded : '');
   return <>
+    <OperationAnnouncement>{announcement}</OperationAnnouncement>
     <div className="er-field"><label className="er-field__label" htmlFor={projectSelectId}>{text.project}</label>
       <select id={projectSelectId} className="er-field__control" value={projectId ?? ""} onChange={event => {
         if (page?.projects.some(project => project.project_id === event.target.value)) onProject(event.target.value);

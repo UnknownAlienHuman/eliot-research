@@ -33,7 +33,7 @@ export function NextQuestionScope({ locale, page, projectSelected, isLoading, is
         onChange={event => onToggle(page, source.id, event.target.checked)} />
       <span>{source.title}</span>
     </label></li>)}</ul> : <Status tone={isError && !isLoading ? "error" : "neutral"}>{missingPage}</Status>}
-    <p role="status">{text.selected(selected.length)}</p>
+    <p>{text.selected(selected.length)}</p>
     {selected.length > 0 && <Button variant="text" onClick={onClear}>{text.clear}</Button>}
   </details>;
 }

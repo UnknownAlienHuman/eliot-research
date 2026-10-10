@@ -3,6 +3,7 @@ import { QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router';
 import type { ArtifactRevision } from '@eliotr/owner-api-client';
 import { Shell } from './Shell';
+import { paneAnnouncement, announcementUntil, unchangedChannel } from './announcementAssertions';
 import { createWorkspaceRuntime } from './runtime';
 import { createPrivacyController } from './privacy';
 import { clearWorkspaceQueries, createWorkspaceQueryClient } from '../query/client';
@@ -91,7 +92,7 @@ export const playResearchJourney = async ({ canvas, userEvent }: {
   readonly canvas: { findByRole(role: string, options: { readonly name: string; readonly exact?: boolean }): Promise<HTMLElement>;
     getByRole(role: string, options: { readonly name: string; readonly exact?: boolean }): HTMLElement;
     getAllByRole(role: string, options: { readonly name: string }): HTMLElement[];
-    findByText(text: string | RegExp): Promise<HTMLElement>; queryByText(text: string): HTMLElement | null };
+    findByText(text: string | RegExp, options?: { readonly selector: string }): Promise<HTMLElement>; queryByText(text: string): HTMLElement | null };
   readonly userEvent: { click(element: HTMLElement): Promise<void>; type(element: HTMLElement, text: string): Promise<void>; selectOptions(element: HTMLElement, value: string): Promise<void> };
 }) => {
   await userEvent.selectOptions(await canvas.findByRole('combobox', { name: 'Project', exact: true }), 'project-fixture');
@@ -100,7 +101,7 @@ export const playResearchJourney = async ({ canvas, userEvent }: {
   await userEvent.click(canvas.getByRole('link', { name: 'Research', exact: true }));
   await userEvent.type(await canvas.findByRole('textbox', { name: 'Research question' }), 'How does a saved question preserve its evidence?');
   const ask = await canvas.findByRole('button', { name: 'Ask', exact: true }); ask.click(); ask.click();
-  await canvas.findByText('The launch outcome is unknown. The original question and request identity are preserved.');
+  await canvas.findByText('The launch outcome is unknown. The original question and request identity are preserved.', { selector: '.er-status > span' });
   await userEvent.click(canvas.getByRole('link', { name: 'Studio', exact: true }));
   await canvas.findByRole('heading', { name: 'Studio', exact: true });
   await userEvent.click(canvas.getByRole('link', { name: 'Research', exact: true }));
@@ -117,3 +118,21 @@ export const playResearchJourney = async ({ canvas, userEvent }: {
   await canvas.findByText(excerpt);
   if (canvas.queryByText('Supported')) throw new Error('Verified citation was promoted to semantic claim support');
 };
+
+export async function playResearchAnnouncements({ canvas, userEvent }: Parameters<typeof playResearchJourney>[0]) {
+  await userEvent.selectOptions(await canvas.findByRole('combobox', { name: 'Project', exact: true }), 'project-fixture');
+  await userEvent.click(await canvas.findByText('Sources for your next question'));
+  await userEvent.click(await canvas.findByRole('checkbox', { name: 'How source versions preserve evidence' }));
+  await userEvent.click(canvas.getByRole('link', { name: 'Research', exact: true }));
+  const question = await canvas.findByRole('textbox', { name: 'Research question' });
+  const root = question.closest<HTMLElement>('main'); if (!root) throw new Error('Actual Research root absent');
+  const region = paneAnnouncement(root);
+  await announcementUntil(() => region.textContent === 'Recent research loaded.');
+  const before = region.textContent;
+  await userEvent.type(question, 'How does a saved question preserve its evidence?');
+  if (paneAnnouncement(root) !== region || region.textContent !== before) throw new Error('Typing created a static live region');
+  const ask = await canvas.findByRole('button', { name: 'Ask', exact: true }); ask.click(); ask.click();
+  await announcementUntil(() => unchangedChannel(root, region, 'The launch outcome is unknown. The original question and request identity are preserved.'));
+  await userEvent.click(await canvas.findByRole('button', { name: 'Reconcile this question' }));
+  await announcementUntil(() => unchangedChannel(root, region, 'The engine finished. Review its result.'));
+}

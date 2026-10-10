@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { skipToken, useQuery, useQueryClient } from '@tanstack/react-query';
 import { WorkspaceLink } from '../routes/WorkspaceLink';
-import { Button, ResearchRunFeature, Status } from '@eliotr/ui';
+import { Button, OperationAnnouncement, ResearchRunFeature, Status } from '@eliotr/ui';
 import type { ResearchRunLaunchView, VersionedRef } from '@eliotr/owner-api-client';
 import type { BoundWorkspaceApis } from './runtime';
 import type { PrivacyController, SessionContext } from './privacy';
@@ -9,6 +9,7 @@ import type { NextQuestionSource } from './NextQuestionScope';
 import { researchQueryOptions } from '../query/research';
 import { protectedQueryKey, runProtectedRead } from '../query/client';
 import { ReportPanel } from './ReportPanel';
+import { usePaneAnnouncement } from './usePaneAnnouncement';
 
 interface ResearchIntent {
   readonly body: string; readonly key: string; readonly question: string;
@@ -22,8 +23,8 @@ interface ResearchMemory {
   readonly artifact?: VersionedRef;
 }
 const copy = {
-  en: { scope: 'Choose sources', scopeStale: 'Review your selected sources again before asking a new question.', blocked: 'Research needs a current configuration check.', check: 'Check research readiness', connections: 'Review connections', history: 'Recent research', readHistory: 'Refresh recent research', openRun: 'Read this run', report: 'Open saved report', unknown: 'The launch outcome is unknown. The original question and request identity are preserved.', recover: 'Reconcile this question', same: 'While this workspace remains open, recovery reads the acknowledged run or reuses the original request and identity when its acknowledgement is missing.', next: 'Ask another question', input: 'The question could not be prepared. Review its text and source selection.', unavailable: 'Recent research could not be read. Try a fresh read.', noRuns: 'Your questions and saved reports will appear here.', incomplete: 'The engine has not provided a draft report yet.' },
-  ru: { scope: 'Выбрать источники', scopeStale: 'Перед новым вопросом проверьте выбранные источники ещё раз.', blocked: 'Нужна актуальная проверка настроек исследования.', check: 'Проверить готовность исследования', connections: 'Проверить подключения', history: 'Последние исследования', readHistory: 'Обновить последние исследования', openRun: 'Прочитать этот запуск', report: 'Открыть сохранённый отчёт', unknown: 'Исход запуска неизвестен. Исходный вопрос и идентификатор запроса сохранены.', recover: 'Проверить этот вопрос', same: 'Пока рабочая область открыта, читается подтверждённый запуск. Если подтверждение потеряно, повторяется исходный запрос с тем же идентификатором.', next: 'Задать другой вопрос', input: 'Не удалось подготовить вопрос. Проверьте текст и выбранные источники.', unavailable: 'Не удалось прочитать последние исследования. Повторите чтение.', noRuns: 'Здесь появятся ваши вопросы и сохранённые отчёты.', incomplete: 'Движок пока не предоставил черновик отчёта.' },
+  en: { statusUnavailable: 'The current run status could not be read.', working: 'Checking the current question.', runRead: 'Run status updated.', runFailed: 'The run reported a failure.', runComplete: 'The engine finished. Review its result.', cancelled: 'The run was cancelled.', historyLoaded: 'Recent research loaded.', scope: 'Choose sources', scopeStale: 'Review your selected sources again before asking a new question.', blocked: 'Research needs a current configuration check.', check: 'Check research readiness', connections: 'Review connections', history: 'Recent research', readHistory: 'Refresh recent research', openRun: 'Read this run', report: 'Open saved report', unknown: 'The launch outcome is unknown. The original question and request identity are preserved.', recover: 'Reconcile this question', same: 'While this workspace remains open, recovery reads the acknowledged run or reuses the original request and identity when its acknowledgement is missing.', next: 'Ask another question', input: 'The question could not be prepared. Review its text and source selection.', unavailable: 'Recent research could not be read. Try a fresh read.', noRuns: 'Your questions and saved reports will appear here.', incomplete: 'The engine has not provided a draft report yet.' },
+  ru: { statusUnavailable: 'Не удалось прочитать текущий статус запуска.', working: 'Проверяется текущий вопрос.', runRead: 'Статус запуска обновлён.', runFailed: 'Запуск сообщил об ошибке.', runComplete: 'Движок завершил работу. Проверьте результат.', cancelled: 'Запуск отменён.', historyLoaded: 'Последние исследования прочитаны.', scope: 'Выбрать источники', scopeStale: 'Перед новым вопросом проверьте выбранные источники ещё раз.', blocked: 'Нужна актуальная проверка настроек исследования.', check: 'Проверить готовность исследования', connections: 'Проверить подключения', history: 'Последние исследования', readHistory: 'Обновить последние исследования', openRun: 'Прочитать этот запуск', report: 'Открыть сохранённый отчёт', unknown: 'Исход запуска неизвестен. Исходный вопрос и идентификатор запроса сохранены.', recover: 'Проверить этот вопрос', same: 'Пока рабочая область открыта, читается подтверждённый запуск. Если подтверждение потеряно, повторяется исходный запрос с тем же идентификатором.', next: 'Задать другой вопрос', input: 'Не удалось подготовить вопрос. Проверьте текст и выбранные источники.', unavailable: 'Не удалось прочитать последние исследования. Повторите чтение.', noRuns: 'Здесь появятся ваши вопросы и сохранённые отчёты.', incomplete: 'Движок пока не предоставил черновик отчёта.' },
 } as const;
 
 /** One explicit intent owns admission. Polling, navigation and history never allocate a run. */
@@ -112,15 +113,24 @@ export function ResearchPanel({ apis, privacy, context, locale, scope, scopeCurr
     : progress?.execution_state === 'CANCELLED' ? 'cancelled'
     : progress?.failure ? 'error' : progress?.execution_state === 'ENGINE_COMPLETED' ? 'useful'
     : launch || busy ? 'loading' : 'empty';
+  const announcement = usePaneAnnouncement(busy ? text.working
+    : inputError ? text.input
+    : saved?.intent?.phase === 'unknown' ? text.unknown
+    : status.isError ? text.statusUnavailable
+    : progress?.failure ? text.runFailed
+    : progress?.execution_state === 'CANCELLED' ? text.cancelled
+    : progress?.execution_state === 'ENGINE_COMPLETED' ? text.runComplete
+    : progress ? text.runRead : history.isError ? text.unavailable : history.data ? text.historyLoaded : '');
   if (saved?.artifact) return <ReportPanel key={`${saved.artifact.id}:${saved.artifact.revision}`} locale={locale} apis={apis} privacy={privacy} context={context} artifactRef={saved.artifact}
     onOpenDraft={artifact => write(old => ({ ...old, artifact }))}
     onClose={() => write(old => { const { artifact: _artifact, ...rest } = old; return rest; })} />;
   return <>
+    <OperationAnnouncement>{announcement}</OperationAnnouncement>
     {!scopeCurrent && !saved?.intent && <p>{text.scopeStale} <WorkspaceLink className="er-shell-link" to="/sources">{text.scope}</WorkspaceLink></p>}
     {configuration.isError || !configuration.data || configuration.data.run_readiness === 'blocked' ? <div>
       <Status>{text.blocked}</Status><div className="er-live-actions"><Button variant="tonal" disabled={configuration.isFetching} onClick={() => { void configuration.refetch(); }}>{text.check}</Button><WorkspaceLink className="er-shell-link" to="/connections">{text.connections}</WorkspaceLink></div>
     </div> : null}
-    {inputError && <Status announce tone="error">{text.input}</Status>}
+    {inputError && <Status tone="error">{text.input}</Status>}
     <ResearchRunFeature key={saved?.intent?.key ?? 'next-question'} locale={locale} state={state}
       scope={saved?.intent?.scope ?? scope} busy={busy}
       questionHeld={saved?.intent !== undefined || saved?.observedLaunch !== undefined}
@@ -132,7 +142,7 @@ export function ResearchPanel({ apis, privacy, context, locale, scope, scopeCurr
       {...(progress ? { progress, ...(progress.failure ? { firstCause: progress.failure } : {}) } : {})}
       onAsk={ask} {...(launch ? { onReadStatus: () => { void status.refetch(); } } : {})}
       {...(saved?.intent?.phase === 'unknown' ? { onRecover: reconcile } : {})} />
-    {saved?.intent?.phase === 'unknown' && <div><Status announce>{text.unknown}</Status><p>{text.same}</p>
+    {saved?.intent?.phase === 'unknown' && <div><Status>{text.unknown}</Status><p>{text.same}</p>
       <Button variant="tonal" disabled={busy} onClick={reconcile}>{text.recover}</Button></div>}
     {terminal && <Button variant="text" onClick={() => {
       if (privacy.isCurrent(context) && !running.current) write(old => {
