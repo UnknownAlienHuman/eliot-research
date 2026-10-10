@@ -640,3 +640,48 @@ binds all four source hashes and the full raw manifest digest. Official Wrangler
 production Access, browser/reconnect/two-tab, hibernation/eviction, transcript/
 all-table invariance, full #333/#334, scientific/provider/live/release and the
 project Goal remain unaccepted.
+
+## Local forced hibernation — three retained failures, October 10
+
+All three private attempts retain their original sources, audits, child/process
+observations and teardown. V1 and R2 failed before eviction while the inspector
+read the platform-private `_cf_KV` and `_cf_METADATA` tables respectively.
+The official workerd source at `a68d28aab029fe2c509ce42b3af9fe689b26670a`
+(October 10) reserves the entire case-insensitive `_cf_` namespace. R3 therefore
+retains every listed schema and explicitly marks reserved contents
+`PLATFORM_PRIVATE_NOT_ASSESSED`; every nonreserved application table is read,
+and unrelated SQL failures remain fatal. That rule is a pinned source reference,
+not a claim that this commit identifies the installed workerd binary.
+
+After independent Luna/max source acceptance, one guarded R3 run reached the
+first forced eviction and obtained the second projection on the same socket.
+The warm/restored observations contain two frames, one completed Workflow,
+stage 18/revision 19 and 18 attempts/checkpoints. All 13 listed schemas and
+inspectable application rows compare equal; the business/grant readbacks before
+revocation also compare equal. These are partial observations from a failed
+process, not complete native acceptance.
+
+R3 failed at `revoke-hibernate`: the private assertion required D1
+`meta.changes === 1`, but the actual value was 4. Installed
+Miniflare `5.20260926.1-alpha` computes this metadata from the difference of
+SQLite `total_changes()`, which includes trigger writes. It does not identify
+the cardinality of the target grant row. Existing grant/epoch/provenance
+triggers were preserved; the failure does not prove four grant rows changed.
+The stale eviction/denial was not reached. Child exit 1/null signal, socket
+failure teardown 1000, resolved Miniflare disposal and closed JWKS are retained.
+
+After the third failure, native execution stopped for documentation and audit.
+[SQLite total_changes](https://www.sqlite.org/c3ref/total_changes.html) and
+[RETURNING](https://www.sqlite.org/lang_returning.html) were captured on
+October 10; RETURNING reports directly modified rows rather than trigger effects.
+The prepared R4 correction requires exactly one full returned grant row, followed
+by an independent full grant readback equal to the original row except for the
+explicit `research`-use removal. D1 metadata remains diagnostic. Syntax and six
+changed-helper refusal cases pass; R4 native remains unrun pending independent
+source acceptance. No product SQL, trigger or authority contract was changed.
+
+Private evidence includes `session-hibernation-r3-failure-proof-20261010.json`,
+the R3 source manifest/audit/process/child, and the R4 source manifest plus
+`hibernation-returning-r4-fixture-20261010.json`. Reserved contents, browser
+reconnect/two-tab, automatic production hibernation, official generated routing,
+staging/live and complete #333/#334 acceptance remain unassessed. Goal is active.

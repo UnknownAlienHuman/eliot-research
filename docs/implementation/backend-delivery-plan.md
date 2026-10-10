@@ -7,29 +7,36 @@ acceptance volume, excluding website design. The Goal stays active across source
 checkpoints, publication and individual passport closure. The first checkpoint
 below is evidence of delivered prerequisites, not completion of the project.
 
-### Current state, October 10, 2026
+### Delivery observation, October 10, 2026, 05:28 UTC
 
-Published GitHub `main` is `d6e7e08383c22679267ef3ad9894254b4efea029`;
-the shared local frontier is `9c6350039fbf9612abea2b47c804cbc8f95e3646`.
-The later local commits and working changes are not published acceptance.
-The frontend manager is the sole publisher; the concrete unpublished-history
-conflict and coordinated Git-window hold are recorded in `Agent_sync.md` and
-`Backend_conflicts.md` in the parent Research directory.
+The observed published delivery frontier is
+`ad13c2a8fb1988e695a67abd524ef65efb598854`. Its ordinary fast-forward publication
+and exact remote/blob readback were recorded at 05:28 UTC. Contracts/runtime
+initialization plus the bounded import gate are in `8c67b074`, Golden regressions
+in `85d8f332`, and the three status documents in `7b3f6756`. This is a dated
+source-delivery observation, not an attestation of a product build or deployment.
+The preserved shared local frontier is
+`9c6350039fbf9612abea2b47c804cbc8f95e3646`, with an empty index and protected WIP.
+The frontend manager published the independent accepted frontier without
+rewriting that local tail; its original mixed-claim history conflict remains
+separate in `Agent_sync.md` and `Backend_conflicts.md` in the parent directory.
 
-PRs #320, #321, #322, #323, #324, #327, #331 and #332 are closed after checking their
+PRs #320, #321, #322, #323, #324, #327, #328, #331 and #332 are closed after checking their
 own bounded stage criteria against published commits and saved scoped checks.
 Each closing comment records exact commit references, verification limits and
 downstream obligations. Stage closure does not wait for the entire project;
-the project Goal remains active. The fresh GitHub readback has 56 open PRs and
+the project Goal remains active. The post-#328 GitHub readback has 55 open PRs and
 five open Issues. Further completed stages are reviewed independently.
 
 Current whole-product build, deployed generation, remote migration frontier and
 selected-profile acceptance are not established by these closures. Historical
 build/deployment tuples and local custom-candidate receipts below retain their
 dates and scopes; they are not promoted to the current published product.
-The next source correction labels the August 28 normative operational-status
-fields as historical (#222); browser/generated routing and full Session
-acceptance remain with #333/#334 and their exact pending criteria.
+The August 28 normative operational-status fields are now explicitly historical
+(#222); the normative contracts remain authoritative. The next Session acceptance
+step is the corrected local hibernation grant-readback case after its independent
+source audit. Browser/generated routing and full Session acceptance remain with
+#333/#334 and their exact pending criteria.
 
 October 9 publication readback and fetch divergence confirm
 `2adbc42d08eccc0210d31304006bb7e65aeee3db` at 0/0 after fast-forwarding
