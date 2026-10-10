@@ -1,4 +1,5 @@
 import {
+  validateUnicodeText,
   VersionedRefSchema,
   WikiPageRevisionSchema,
   type VersionedRef,
@@ -117,20 +118,6 @@ function nonEmpty(value: unknown): value is string {
   return typeof value === "string" && value.length > 0 && value === value.trim() && value.length <= 256;
 }
 
-function hasLoneSurrogate(value: string): boolean {
-  for (let index = 0; index < value.length; index += 1) {
-    const code = value.charCodeAt(index);
-    if (code >= 0xd800 && code <= 0xdbff) {
-      const next = value.charCodeAt(index + 1);
-      if (!(next >= 0xdc00 && next <= 0xdfff)) return true;
-      index += 1;
-    } else if (code >= 0xdc00 && code <= 0xdfff) {
-      return true;
-    }
-  }
-  return false;
-}
-
 interface CanonicalState {
   nodes: number;
   readonly ancestors: WeakSet<object>;
@@ -143,7 +130,16 @@ function canonicalJson(value: unknown, state: CanonicalState, depth = 0): string
   state.nodes += 1;
   if (value === null) return "null";
   if (typeof value === "string") {
-    if (hasLoneSurrogate(value)) fail("WIKI_INPUT_INVALID", "wiki revision contains malformed Unicode");
+    // Wiki has no per-string cap; canonicalPage enforces its whole-page UTF-8 byte ceiling.
+    const text = validateUnicodeText(value, { unit: "utf16-code-units", maximum: value.length });
+    if (!text.valid) {
+      fail(
+        "WIKI_INPUT_INVALID",
+        text.reason === "too-long"
+          ? "wiki revision exceeds its canonical byte bound"
+          : "wiki revision contains malformed Unicode",
+      );
+    }
     return JSON.stringify(value);
   }
   if (typeof value === "boolean") return value ? "true" : "false";
