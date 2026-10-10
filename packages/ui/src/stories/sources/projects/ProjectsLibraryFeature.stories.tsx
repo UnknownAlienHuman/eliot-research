@@ -212,7 +212,9 @@ export const InteractionJourney: StoryObj<typeof ProjectsLibraryFeature> = {
     disclosure.click();
     assert(disclosure.isConnected, "Source disclosure must remain mounted.");
     assert(requireText(canvasElement, READINESS_REF).getClientRects().length > 0, "Opened source facts must expose the readiness reference.");
-    assert(requireText(canvasElement, "rev-0002-bbbb").getClientRects().length === 0, "Unopened version details must remain hidden.");
+    const versionDetails = requireText(canvasElement, "rev-0002-bbbb").closest("details");
+    assert(versionDetails instanceof HTMLDetailsElement && !versionDetails.open,
+      "Version facts must remain inside their closed native disclosure.");
     assert(requireText(canvasElement, "Currentness verified").getClientRects().length > 0, "Readiness currentness must stay visible.");
     assert(requireText(canvasElement, "High fidelity").getClientRects().length > 0, "Readiness quality must stay visible.");
     requireButton(canvasElement, "Read version 1").click();
