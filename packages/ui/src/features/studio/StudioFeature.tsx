@@ -75,6 +75,8 @@ export interface StudioFeatureCopy {
   readonly close: string;
   readonly loading: string;
   readonly empty: string;
+  readonly empty_list?: string;
+  readonly empty_reader?: string;
   readonly degraded: string;
   readonly error: string;
 }
@@ -270,11 +272,11 @@ export function StudioFeature({
           {state === "loading" || state === "degraded" ? (
             <Status>{copy.loading}</Status>
           ) : state === "empty" ? (
-            <Status>{copy.empty}</Status>
+            <Status>{copy.empty_list ?? copy.empty}</Status>
           ) : state === "error" ? (
             <Status tone="error">{copy.error}</Status>
           ) : proposals === undefined || proposals.items.length === 0 ? (
-            <Status>{copy.empty}</Status>
+            <Status>{copy.empty_list ?? copy.empty}</Status>
           ) : (
             <ul className="er-studio-live__items">
               {proposals.items.map((item) => (
@@ -302,7 +304,7 @@ export function StudioFeature({
 
         <div className="er-studio-live__reader" aria-label={copy.reader_label}>
           {selected === undefined || page === undefined ? (
-            <Status>{copy.empty}</Status>
+            <Status>{copy.empty_reader ?? copy.empty}</Status>
           ) : (
             <article className="er-studio-live__detail">
               <h3 className="er-studio-live__detail-title">{page.title}</h3>
@@ -485,6 +487,8 @@ const EN_COPY: StudioFeatureCopy = {
   close: "Close the review",
   loading: "Reading saved proposals.",
   empty: "No saved drafts or proposals are available yet.",
+  empty_list: "No saved proposals yet.",
+  empty_reader: "No proposal is selected.",
   degraded: "Some saved data could not be read. What is shown is what was verified.",
   error: "Saved proposals could not be read. Nothing was shown.",
 };
@@ -533,6 +537,8 @@ const RU_COPY: StudioFeatureCopy = {
   close: "Закрыть проверку",
   loading: "Читаем сохранённые предложения.",
   empty: "Сохранённых черновиков или предложений пока нет.",
+  empty_list: "Сохранённых предложений пока нет.",
+  empty_reader: "Предложение не выбрано.",
   degraded: "Часть сохранённых данных не прочитана. Показано только проверенное.",
   error: "Сохранённые предложения не прочитаны. Ничего не показано.",
 };
