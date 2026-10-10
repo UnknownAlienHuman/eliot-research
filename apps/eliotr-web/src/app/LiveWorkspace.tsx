@@ -96,10 +96,9 @@ export function LiveWorkspace({ destination, locale, headingRef, apis, privacy, 
       <WorkspaceLink className="er-shell-link" to="/sources">{text.openSources}</WorkspaceLink>
     </aside>
     <main className="er-shell-reading" id="workspace-main">
-      <p className="er-shell-eyebrow">{selected?.title ?? (destination === "studio" ? text.studioEmpty : destination === "connections" ? text.connectionsDetail : text.choose)}</p>
+      {destination !== "sources" && <p className="er-shell-eyebrow">{selected?.title ?? (destination === "studio" ? text.studioEmpty : destination === "connections" ? text.connectionsDetail : text.choose)}</p>}
       <h1 id="workspace-heading" ref={headingRef} tabIndex={-1}>{text[destination]}</h1>
       {destination === "sources" ? <>
-        <p className="er-shell-lead">{text.detail}</p>
         <ActiveSources key={selected?.project_id ?? "no-project"} locale={locale} apis={apis} privacy={privacy} context={context}
           projectId={selected?.project_id} projects={projects} after={after} onProject={chooseProject} projectSelectRef={restoreProjectSelectFocus}
           sourceId={sourceId} onSource={setSourceId}
@@ -164,9 +163,12 @@ function ActiveSources({ locale, apis, privacy, context, projectId, projects, af
     if (library.data?.sources.some(row => row.id === id) && current.library() === library.data && privacy.isCurrent(context)) onSource(id);
   };
   return <>
-    <ImportPanel locale={locale} apis={apis} privacy={privacy} context={context} />
-    <NextQuestionScope locale={locale} page={library.data} selected={scope} onToggle={onScope} onClear={onClearScope} />
     <ProjectsLibraryFeature locale={locale} projectSelectRef={projectSelectRef} state={pending ? "loading" : error ? "error" : "useful"}
+      sourceActions={<>
+        <ImportPanel locale={locale} apis={apis} privacy={privacy} context={context} />
+        <NextQuestionScope locale={locale} page={library.data} projectSelected={projectId !== undefined} isLoading={pending} isError={error}
+          selected={scope} onToggle={onScope} onClear={onClearScope} />
+      </>}
       projects={projects.data?.projects ?? []} selectedProjectId={projectId} onSelectProject={id => { if (projects.data?.projects.some(row => row.project_id === id)) onProject(id); }}
       library={library.data} readiness={readiness.data} readinessState={!source ? "idle" : readiness.isPending ? "loading" : readiness.isError ? "degraded" : "useful"}
       revisions={revisions.data} revisionsState={!source ? "idle" : revisions.isPending ? "loading" : revisions.isError ? "error" : "useful"}
