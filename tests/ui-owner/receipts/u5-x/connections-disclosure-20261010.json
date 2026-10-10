@@ -1,0 +1,95 @@
+{
+  "protocol": "eliotr.frontend.connections-disclosure.v1",
+  "source_commit": "62001666a1dba356e8aaee36fbb69821f95f74cf",
+  "input_main": "6a28822fcb8f1197ac4124695b7efd97b73ade89",
+  "scope": "Bounded public Connections diagnostic disclosure accessibility; does not close U4-X/U5-X/FINAL",
+  "change": [
+    "Details button reports expanded state and controls one persistent hidden target",
+    "Diagnostic content follows its control; expanding does not push action buttons down",
+    "Space collapses, Enter reopens; native focus stays on the toggle",
+    "Existing portable CI now includes Details Journey"
+  ],
+  "inputs": [
+    {
+      "path": "packages/ui/src/features/connections/ConnectionsFeature.tsx",
+      "sha256": "3de21527ea35f381ca31a7d761b3bfd5b1e62be465c046e9574a966809638a76"
+    },
+    {
+      "path": "packages/ui/src/stories/connections/live/ConnectionsFeature.stories.tsx",
+      "sha256": "e5159e2504d599331f71f60f6a701b990c6796306baeddb2fd36bac1e2699793"
+    },
+    {
+      "path": ".github/workflows/frontend-owner.yml",
+      "sha256": "f5ee9528a7f880a67eeca7952232e595e71907bbd29c090cc8a4fde0a0ce97a2",
+      "owner": "frontend-manager existing portable CI composition"
+    }
+  ],
+  "verification": {
+    "typescript": {
+      "version": "6.0.3",
+      "owning_roots": 277,
+      "inputs": 1143,
+      "diagnostics": 0,
+      "status": "PASS"
+    },
+    "lint": {
+      "status": "PASS",
+      "errors": 0,
+      "warnings": 0
+    },
+    "keyboard_story": {
+      "status": "PASS",
+      "cases": 1,
+      "viewport": [
+        390,
+        844
+      ],
+      "forced_colors": "active",
+      "reduced_motion": "reduce",
+      "log_sha256": "b868625c04ae913033f1223de1586704635719076633b381f020d970d4f55017",
+      "browser_version": "Chrome155.0.8059.40"
+    },
+    "rendered_russian": {
+      "viewport": [
+        320,
+        844
+      ],
+      "persistent_target": true,
+      "initial_hidden": true,
+      "expanded_visible": true,
+      "space_collapsed": true,
+      "enter_reopened": true,
+      "focus_retained": true,
+      "button_document_top_before": 1395.571533203125,
+      "button_document_top_after": 1395.5714721679688,
+      "console_errors_warnings": [],
+      "scope": "Actual modified feature with existing synthetic Storybook DTOs; no owner/backend requests"
+    },
+    "standalone_build": {
+      "status": "STATIC_BUILD_PASS",
+      "vite": "8.2.2",
+      "all_js_gzip_bytes": 242707,
+      "css_gzip_bytes": 18512,
+      "conservative_600kib": true,
+      "review_modules_absent": true,
+      "artifact_manifest_sha256": "3b25bb7baecbd8c4a198c910f4c042a4de43267c2cc2c50b7713dc9565264c19"
+    }
+  },
+  "unchanged": [
+    "API/schema/DTO/admission reconciliation/provider readiness/query retries/pending states",
+    "Material tokens and palette",
+    "Accepted U3 bounded source gate and previously retained evidence"
+  ],
+  "exclusions": [
+    "No backend positive/tests/checker replay",
+    "No Worker integrated build, /agents parity, live acceptance, deployment or cutover",
+    "No forced-colors screenshot baseline or full physical screen-reader qualification"
+  ],
+  "dependencies": [
+    "U4 versioned admission effect/phase and exact-key reconciliation handoff remains absent; Backend C21 confirms",
+    "U5 versioned proposal continuation or bounded-incomplete/complete product contract remains absent; no inferred cursor"
+  ],
+  "source_publication": "AUTHORIZED; one coherent source module with its CI regression guard",
+  "final_ui": "BLOCKED on unchanged U4/U5 producer gates",
+  "original_private_prelaunch_failure": "Vitest unexported CLI path failed before any test; exact installed CLI repaired, original launcher and failure retained"
+}

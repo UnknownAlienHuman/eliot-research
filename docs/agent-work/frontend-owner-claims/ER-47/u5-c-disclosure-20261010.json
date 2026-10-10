@@ -25,7 +25,11 @@
       "approval_ref": "tests/ui-owner/receipts/u2-x/u2-c.json"
     }
   ],
-  "state": "ACTIVE",
-  "evidence_refs": [],
-  "blocker_refs": []
+  "state": "HANDED_OFF",
+  "evidence_refs": [
+    "tests/ui-owner/receipts/u5-x/connections-disclosure-20261010.json"
+  ],
+  "blocker_refs": [],
+  "handoff_reason": "COMPLETED",
+  "handoff_receipt_ref": "tests/ui-owner/receipts/u5-x/connections-disclosure-20261010.json"
 }
