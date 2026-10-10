@@ -148,9 +148,9 @@ export const LiveSourcesJourney = {
       queryByRole(role: string): HTMLElement | null;
       findByText(text: RegExp): Promise<HTMLElement>;
     };
-    readonly userEvent: { click(element: HTMLElement): Promise<void> };
+    readonly userEvent: { click(element: HTMLElement): Promise<void>; selectOptions(element: HTMLElement, value: string): Promise<void> };
   }) => {
-    await userEvent.click(await canvas.findByRole("button", { name: "Evidence in context" }));
+    await userEvent.selectOptions(await canvas.findByRole("combobox", { name: "Project" }), "project-live-1");
     await userEvent.click(await canvas.findByRole("button", { name: "How source versions preserve evidence" }));
     const readiness = await canvas.findByRole("region", { name: "Search readiness" });
     const verified = await canvas.findByText(/Currentness verified/);
@@ -179,9 +179,9 @@ export const LiveErasureJourney = {
       queryByRole(role: string, options?: { readonly name: string }): HTMLElement | null;
       findByText(text: RegExp): Promise<HTMLElement>;
     };
-    readonly userEvent: { click(element: HTMLElement): Promise<void> };
+    readonly userEvent: { click(element: HTMLElement): Promise<void>; selectOptions(element: HTMLElement, value: string): Promise<void> };
   }) => {
-    await userEvent.click(await canvas.findByRole("button", { name: "Evidence in context" }));
+    await userEvent.selectOptions(await canvas.findByRole("combobox", { name: "Project" }), "project-live-1");
     await userEvent.click(await canvas.findByRole("button", { name: "How source versions preserve evidence" }));
     await userEvent.click(await canvas.findByText(/Manage selected source/));
     const opener = await canvas.findByRole("button", { name: "Review deletion" });
@@ -210,7 +210,7 @@ export const LiveErasureJourney = {
 export const LiveErasureReadbackFailure = {
   render: () => <LiveSourcesPreview erasureJourney erasureReadFailure />,
   play: async ({ canvas, userEvent }: Parameters<typeof LiveErasureJourney.play>[0]) => {
-    await userEvent.click(await canvas.findByRole("button", { name: "Evidence in context" }));
+    await userEvent.selectOptions(await canvas.findByRole("combobox", { name: "Project" }), "project-live-1");
     await userEvent.click(await canvas.findByRole("button", { name: "How source versions preserve evidence" }));
     await userEvent.click(await canvas.findByText(/Manage selected source/));
     await userEvent.click(await canvas.findByRole("button", { name: "Review deletion" }));
