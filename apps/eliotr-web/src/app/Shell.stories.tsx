@@ -1,3 +1,12 @@
+import {
+  FiniteReaderPreview,
+  playStaleLibraryHolder,
+  playStaleRevisionHolder,
+  playPrivacyLateHistoryReplay,
+  playSameEpochForeignProject,
+  playSameEpochForeignSource,
+} from "./FiniteReaderPreview";
+
 import { StrictMode, useEffect, useState } from "react";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { createWorkspaceRuntime } from "./runtime";
@@ -277,4 +286,29 @@ export const LiveImportJourney = {
     if (canvas.queryByRole('button', { name: 'Add to Library' })) throw new Error('Unknown processing exposed admission');
     if (canvas.queryByRole('button', { name: 'Capture the selected file' })) throw new Error('Unknown processing exposed new capture');
   },
+};
+
+export const LiveReaderStaleLibraryHolder = {
+  render: () => <FiniteReaderPreview key="reader-stale-library-holder" />,
+  play: playStaleLibraryHolder,
+};
+
+export const LiveReaderStaleRevisionHolder = {
+  render: () => <FiniteReaderPreview key="reader-stale-revision-holder" />,
+  play: playStaleRevisionHolder,
+};
+
+export const LiveReaderPrivacyLateHistoryReplay = {
+  render: () => <FiniteReaderPreview key="reader-privacy-late-history-replay" />,
+  play: playPrivacyLateHistoryReplay,
+};
+
+export const LiveReaderSameEpochForeignProject = {
+  render: () => <FiniteReaderPreview key="reader-same-epoch-foreign-project" />,
+  play: playSameEpochForeignProject,
+};
+
+export const LiveReaderSameEpochForeignSource = {
+  render: () => <FiniteReaderPreview key="reader-same-epoch-foreign-source" />,
+  play: playSameEpochForeignSource,
 };
