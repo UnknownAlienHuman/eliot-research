@@ -3,6 +3,11 @@
 New to the repository? Read [`docs/START-HERE.md`](../../START-HERE.md) first; this file covers only
 the launch-checkpoint procedure.
 
+For backend work, select the current dependency-ready card in
+[backend-entrypoints.md](../backend-entrypoints.md), then the owner-resumed delivery plan and active
+passport. Numbered launch plans preserve historical requirements and do not override that queue or
+current ownership. The current owner-web authorization is recorded in START-HERE and its execution map.
+
 Start from current `main`; read the selected existing theme PR as a specification, not a branch to merge. A
 task refresh changes documentation only; it launches no agent, implements no missing feature, and authorizes
 no deployment.

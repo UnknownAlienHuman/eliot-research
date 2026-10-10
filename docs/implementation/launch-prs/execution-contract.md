@@ -5,6 +5,10 @@ ELIOT_RESEARCH **29.1**, LANGUAGE_RUNTIME_CONTRACT **1.0**, and current accepted
 implementation assignment, not a claim that an unchecked feature exists. Use current main plus the active
 checkpoint; old PR comments are historical when contradicted by reviewed current authority.
 
+Start at [`docs/START-HERE.md`](../../START-HERE.md), then the current backend
+[entry points](../backend-entrypoints.md) and active passport. This historical launch procedure does
+not replace the current queue, ownership, verification phase or owner authorization.
+
 ## 1. Mandatory reading and authority
 
 Read `AGENTS.md`, `docs/START-HERE.md`, the selected ER packet, its explicit canonical sections, adjacent
