@@ -1,0 +1,140 @@
+/* ImportFlow - U3-I styles. Semantic tokens only; no raw visual values. */
+.er-import {
+  display: grid;
+  min-width: 0;
+  gap: var(--eliot-space-panel);
+  padding: var(--eliot-space-panel);
+  border-radius: var(--eliot-shape-large);
+  background: var(--md-sys-color-surface-container-low);
+  color: var(--md-sys-color-on-surface);
+  font-family: var(--eliot-type-font-family);
+}
+
+.er-import__head {
+  display: grid;
+  min-width: 0;
+  gap: var(--eliot-space-block-control);
+}
+
+.er-import__title {
+  margin: 0;
+  font-size: var(--eliot-type-title-large-size);
+  line-height: var(--eliot-type-title-large-line-height);
+  font-weight: var(--eliot-type-font-weight-medium);
+  letter-spacing: var(--eliot-type-letter-spacing-label);
+}
+
+.er-import__hint {
+  margin: 0;
+  max-width: var(--eliot-layout-reading-max);
+  color: var(--md-sys-color-on-surface-variant);
+  font-size: var(--eliot-type-body-medium-size);
+  line-height: var(--eliot-type-body-medium-line-height);
+}
+
+.er-import__tabs {
+  display: flex;
+  gap: var(--eliot-space-inline-control);
+  flex-wrap: wrap;
+}
+
+.er-import__review {
+  display: grid;
+  min-width: 0;
+  gap: var(--eliot-space-panel);
+  padding: var(--eliot-space-panel);
+  border-radius: var(--eliot-shape-medium);
+  background: var(--md-sys-color-surface-container);
+}
+
+.er-import__picker {
+  justify-self: start;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  overflow-wrap: anywhere;
+}
+
+.er-import__picker input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.er-import__picker:has(input:focus-visible) {
+  outline: var(--eliot-focus-width) solid var(--md-sys-color-primary);
+  outline-offset: var(--eliot-focus-offset);
+}
+
+.er-import__picker:has(input:disabled) {
+  opacity: var(--eliot-state-disabled-opacity);
+}
+
+.er-import__facts {
+  display: grid;
+  gap: var(--eliot-space-panel);
+  margin: 0;
+}
+
+.er-import__fact {
+  display: grid;
+  gap: var(--eliot-space-block-control);
+  min-width: 0;
+}
+
+.er-import__fact dt {
+  color: var(--md-sys-color-on-surface-variant);
+  font-size: var(--eliot-type-label-medium-size);
+  line-height: var(--eliot-type-label-medium-line-height);
+  font-weight: var(--eliot-type-font-weight-medium);
+}
+
+.er-import__fact dd {
+  margin: 0;
+  min-width: 0;
+  font-size: var(--eliot-type-body-medium-size);
+  line-height: var(--eliot-type-body-medium-line-height);
+  overflow-wrap: anywhere;
+}
+
+.er-import__files {
+  display: grid;
+  gap: var(--eliot-space-block-control);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.er-import__file {
+  display: grid;
+  gap: var(--eliot-space-block-control);
+  min-width: 0;
+  font-family: var(--eliot-type-font-family-mono);
+  font-size: var(--eliot-type-label-medium-size);
+  line-height: var(--eliot-type-label-medium-line-height);
+  overflow-wrap: anywhere;
+}
+
+.er-import__actions {
+  display: flex;
+  gap: var(--eliot-space-inline-control);
+  flex-wrap: wrap;
+}
+
+.er-import__note {
+  margin: 0;
+  max-width: var(--eliot-layout-reading-max);
+  color: var(--md-sys-color-on-surface-variant);
+  font-size: var(--eliot-type-body-medium-size);
+  line-height: var(--eliot-type-body-medium-line-height);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .er-import__review {
+    transition: none;
+  }
+}
