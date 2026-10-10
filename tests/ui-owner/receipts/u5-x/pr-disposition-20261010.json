@@ -1,0 +1,324 @@
+{
+  "protocol": "eliotr.pr-disposition.v1",
+  "reviewed_at": "2026-10-10T18:00:07.623Z",
+  "repository": "UnknownAlienHuman/eliot-research",
+  "source_inventory_main": "6d4ac645ec6c82190a1bb11374646f3d6bce92d9",
+  "current_main": "9ca22849a140cdbe50dd56ed5066c2fedc745fcd",
+  "root_review": "Read-only owning review of Newton Step matrix; all51 open PR heads and draft states checked fresh. No closure qualification inferred from a docs-only diff.",
+  "counts": {
+    "RETAINED_EVIDENCE_ONLY": 4,
+    "ACTIVE_IMPLEMENTATION": 38,
+    "RELEASE_OR_LIVE_GATE": 9,
+    "SUPERSEDED_BY_MAIN": 0
+  },
+  "closed_or_merged": [],
+  "rows": [
+    {
+      "pr": 176,
+      "head": "b6cf6a5dc6226eafb611b29929446cf5cb8417da",
+      "disposition": "RETAINED_EVIDENCE_ONLY",
+      "remaining_criterion": "PR body keeps draft until implementation and exact-head receipts satisfy all criteria; #281 promotion owner not accepted"
+    },
+    {
+      "pr": 214,
+      "head": "96d05cf9996963a4e3699c481f17893393467b6f",
+      "disposition": "ACTIVE_IMPLEMENTATION",
+      "remaining_criterion": "requires 9 named counter-search negatives incl. counterexample outside initial top-k; #209 vocabulary not accepted by main"
+    },
+    {
+      "pr": 230,
+      "head": "7fc53574a36c4d6401e0596ac4695c99af3635bd",
+      "disposition": "RETAINED_EVIDENCE_ONLY",
+      "remaining_criterion": "actual HTTP/W1/Workflow tests + exact SHA results; unsupported verifiers stay blocked"
+    },
+    {
+      "pr": 231,
+      "head": "c961638a7ef1ba0be4b49b4dccfa27d70c7f8227",
+      "disposition": "ACTIVE_IMPLEMENTATION",
+      "remaining_criterion": "13 named negatives incl. corpus-only zero Web calls, credential URL/redirect/body-limit, lost discovery ACK"
+    },
+    {
+      "pr": 232,
+      "head": "3eeed37649dfc74f0d1e3d7a9e4ac593f7879140",
+      "disposition": "ACTIVE_IMPLEMENTATION",
+      "remaining_criterion": "unapproved post-freeze insertion fails; idempotent reopen; named terminal cases"
+    },
+    {
+      "pr": 233,
+      "head": "d8d80a0115c3605522eedd20c0246b951ea7e92e",
+      "disposition": "ACTIVE_IMPLEMENTATION",
+      "remaining_criterion": "product conflict before model call, mandatory context overflow blocks honestly, bounded backfill"
+    },
+    {
+      "pr": 239,
+      "head": "213d69779c79b057b0059e5dbddf02470ddac781",
+      "disposition": "ACTIVE_IMPLEMENTATION",
+      "remaining_criterion": "full fidelity matrix TXT/MD/PDF/DOCX, exact replay one revision, owner/revoke after extraction fails closed, no second parser"
+    },
+    {
+      "pr": 240,
+      "head": "56c87a742d20d4517259943c058b5f4aa81af822",
+      "disposition": "ACTIVE_IMPLEMENTATION",
+      "remaining_criterion": "Unicode/repeated-text/code/tables/multi-page resolve expected bytes; max+1 bounds; forged handle fails"
+    },
+    {
+      "pr": 241,
+      "head": "60522f009fc4e10e2e7c97cfece391ddfc1e5f45",
+      "disposition": "RETAINED_EVIDENCE_ONLY",
+      "remaining_criterion": "ORIENT→route→section→evidence replay; shared-source projects isolated"
+    },
+    {
+      "pr": 242,
+      "head": "c921f78b9565c66870fec365e568614c7f9fa6dc",
+      "disposition": "ACTIVE_IMPLEMENTATION",
+      "remaining_criterion": "one managed hybrid call; empty scope zero provider calls; foreign top result cannot displace before top-k"
+    },
+    {
+      "pr": 244,
+      "head": "0018b1aee9c317f4b36ba2fae78797cd43818780",
+      "disposition": "ACTIVE_IMPLEMENTATION",
+      "remaining_criterion": "partial success/lost ACK/restart/exact no-op replay; B→validate→promote B→rollback to A"
+    },
+    {
+      "pr": 246,
+      "head": "a7b3673ed6a670791c9f7b0d73837ab5ef7abbd1",
+      "disposition": "ACTIVE_IMPLEMENTATION",
+      "remaining_criterion": "two concurrent same-head writers: exactly one wins; lost ACK resolves idempotently"
+    },
+    {
+      "pr": 247,
+      "head": "2b7e9b522d3c382da8d4946da746f0cb41fd3460",
+      "disposition": "ACTIVE_IMPLEMENTATION",
+      "remaining_criterion": "source A update marks only A-dependent outputs stale; duplicate/lost/delayed/out-of-order converge"
+    },
+    {
+      "pr": 248,
+      "head": "b11b761741b90b691dccaa89f547eeff225903c7",
+      "disposition": "ACTIVE_IMPLEMENTATION",
+      "remaining_criterion": "ordinary ingest makes no atom-model calls; semantic-collapse/fake-reference negatives fail"
+    },
+    {
+      "pr": 249,
+      "head": "67ce6b94273d820345bc7648cd77cf949f1c033a",
+      "disposition": "ACTIVE_IMPLEMENTATION",
+      "remaining_criterion": "9 named span/temporal/qualification negatives incl. different units/populations, forged alias, cycle"
+    },
+    {
+      "pr": 250,
+      "head": "9e50238fd38f8aa356e05e8f558f98b711c5756a",
+      "disposition": "RELEASE_OR_LIVE_GATE",
+      "remaining_criterion": "service creates own capture after owner-issued authorization; no privileged hidden fixtures"
+    },
+    {
+      "pr": 251,
+      "head": "5c8694b573dfc43eef1fdcd19c38bc82a1e27950",
+      "disposition": "RELEASE_OR_LIVE_GATE",
+      "remaining_criterion": "correct representation/status/parent independently verified; mismatch and revocation fail"
+    },
+    {
+      "pr": 252,
+      "head": "b3fdad828cd7f16e7d785922608b29a7528474a6",
+      "disposition": "RELEASE_OR_LIVE_GATE",
+      "remaining_criterion": "submit executes real work with matching result bytes/disposition"
+    },
+    {
+      "pr": 253,
+      "head": "1a3323828e593cbd60f73372512157c4dc255b8d",
+      "disposition": "RELEASE_OR_LIVE_GATE",
+      "remaining_criterion": "all wire operations exercise real local storage; injected server-encoding defects detected"
+    },
+    {
+      "pr": 255,
+      "head": "c1842f40ca84a4f157e6f1d9901085d381e06f5b",
+      "disposition": "ACTIVE_IMPLEMENTATION",
+      "remaining_criterion": "late writes/replay/lost ACK cannot resurrect data or delete foreign objects"
+    },
+    {
+      "pr": 256,
+      "head": "c91d2ba3f49e1d806fb27a858ec1ec9771343221",
+      "disposition": "ACTIVE_IMPLEMENTATION",
+      "remaining_criterion": "Cloudflare Queue owns retry exhaustion/DLQ; Eliot business settlement only"
+    },
+    {
+      "pr": 259,
+      "head": "d73a83e9357615106b9a371fdd7e4eab50098569",
+      "disposition": "ACTIVE_IMPLEMENTATION",
+      "remaining_criterion": "compatible A→B→A preserves heads and paid-effect identity; index rollback does not resurrect erased members"
+    },
+    {
+      "pr": 260,
+      "head": "34fc22500d403d401f09d6f007169d83fd3e92da",
+      "disposition": "RELEASE_OR_LIVE_GATE",
+      "remaining_criterion": "stale data yields candidates only; unchanged passes make no model calls"
+    },
+    {
+      "pr": 261,
+      "head": "51c002e4d30d82976a2ded185a071ebcbd1afd72",
+      "disposition": "ACTIVE_IMPLEMENTATION",
+      "remaining_criterion": "negative fixtures cause no forbidden effects/disclosure; positive paths remain usable"
+    },
+    {
+      "pr": 262,
+      "head": "23e1e4c652924d3338e1fa3587dfd12fd1768347",
+      "disposition": "ACTIVE_IMPLEMENTATION",
+      "remaining_criterion": "unauthorized/stale cutover, wrong residency, implicit unsaved capture fail"
+    },
+    {
+      "pr": 263,
+      "head": "aece92f3aca10266797e42b97f173203c013911d",
+      "disposition": "ACTIVE_IMPLEMENTATION",
+      "remaining_criterion": "native Workers Traces/Gateway readback + Eliot receipt correlation"
+    },
+    {
+      "pr": 264,
+      "head": "8e65ba745a5cdc99c4bf6342c03ed7a581d6a922",
+      "disposition": "ACTIVE_IMPLEMENTATION",
+      "remaining_criterion": "native hibernation/WebSocket receipt; AIChatAgent/WebSocketChatTransport generation"
+    },
+    {
+      "pr": 268,
+      "head": "f1cecf2a8df532e93c8573cb657d750d6a1585f5",
+      "disposition": "ACTIVE_IMPLEMENTATION",
+      "remaining_criterion": "real methods readable, reformatting stable, semantics/canonical data/SQL unchanged"
+    },
+    {
+      "pr": 270,
+      "head": "1dab965acfc1e2b4fa00e4ece13ee8f50b7d835d",
+      "disposition": "ACTIVE_IMPLEMENTATION",
+      "remaining_criterion": "K1/K2a persisted bytes/IDs/errors and lawful replay stable; changed domain/revision/parser/profile fail"
+    },
+    {
+      "pr": 271,
+      "head": "1ad0b4570d6557a7eef327ae8c08353bd3a43b52",
+      "disposition": "ACTIVE_IMPLEMENTATION",
+      "remaining_criterion": "TS/native/Wasm valid/stale/foreign/replay outcomes agree"
+    },
+    {
+      "pr": 272,
+      "head": "57815efb12bfaa8d2a6ea5ee40f5cdf0e5f99b9d",
+      "disposition": "ACTIVE_IMPLEMENTATION",
+      "remaining_criterion": "TS/native/Wasm algebra/currentness positive and negative cases agree"
+    },
+    {
+      "pr": 273,
+      "head": "06a278871ccdf8ffddb43accfee8938d563fffad",
+      "disposition": "ACTIVE_IMPLEMENTATION",
+      "remaining_criterion": "TS/native/Wasm decisions/reasons/identities agree without stronger authorization"
+    },
+    {
+      "pr": 274,
+      "head": "734192cd4d2041a0146a552ce02a7bc9c21dea3d",
+      "disposition": "ACTIVE_IMPLEMENTATION",
+      "remaining_criterion": "valid/degraded/corrupt/foreign TS/native/Wasm outcomes agree"
+    },
+    {
+      "pr": 275,
+      "head": "b4ef40a396e8cc665fc567008128b9db9878464d",
+      "disposition": "ACTIVE_IMPLEMENTATION",
+      "remaining_criterion": "TS/native/Wasm fixtures agree on bytes and errors, incl. boundary/foreign/corrupt"
+    },
+    {
+      "pr": 276,
+      "head": "66307c118fa57d23a00201f7c84dadcab6891a40",
+      "disposition": "ACTIVE_IMPLEMENTATION",
+      "remaining_criterion": "count/hash/range/denominator mutations detected; lawful replay valid"
+    },
+    {
+      "pr": 277,
+      "head": "61c8f52d5fce13a0bb93f56cdc980e40d5160ddc",
+      "disposition": "ACTIVE_IMPLEMENTATION",
+      "remaining_criterion": "missing support, stale authority, self-approval fail; TS/native/Wasm transitions agree"
+    },
+    {
+      "pr": 278,
+      "head": "4994a654f6349391e115adbea12efb19f4a74941",
+      "disposition": "ACTIVE_IMPLEMENTATION",
+      "remaining_criterion": "late dependencies and guard-removal cannot establish false completion"
+    },
+    {
+      "pr": 279,
+      "head": "30f41e84975a637d42da8f35d7ec7ebd9d556d06",
+      "disposition": "ACTIVE_IMPLEMENTATION",
+      "remaining_criterion": "forged/stale/foreign references fail; TS/native/Wasm agree"
+    },
+    {
+      "pr": 280,
+      "head": "f057975fc51007377d419aee3af294cb07072d0f",
+      "disposition": "ACTIVE_IMPLEMENTATION",
+      "remaining_criterion": "size/digest/UTF-8/trap/repeated-call safe with bounded memory and no leaked input"
+    },
+    {
+      "pr": 281,
+      "head": "4ba55a5fbeda27e6a60110c1ec8d2ad0ae519c84",
+      "disposition": "ACTIVE_IMPLEMENTATION",
+      "remaining_criterion": "per-unit SHAs/deep gates; old production decisions removed only after same caller tests pass"
+    },
+    {
+      "pr": 282,
+      "head": "dc8cf19d26f0e4216c874c51b8663f8c5db57768",
+      "disposition": "ACTIVE_IMPLEMENTATION",
+      "remaining_criterion": "stale/missing manifest fails as NOT_MEASURED; eager/shared/lazy owner-web JS not conflated; thresholds not raised"
+    },
+    {
+      "pr": 283,
+      "head": "a8de32812888d5071d1c68b7908abd0ecd703e04",
+      "disposition": "ACTIVE_IMPLEMENTATION",
+      "remaining_criterion": "every named operation evidenced, not one representative per broad group"
+    },
+    {
+      "pr": 285,
+      "head": "5732272cad380ccda370e759a499af82bd0eb3f2",
+      "disposition": "ACTIVE_IMPLEMENTATION",
+      "remaining_criterion": "exact case manifest, Golden v2, metrics, holdout"
+    },
+    {
+      "pr": 286,
+      "head": "9904596497b7d7087fb1f44739fb18b46f30b51a",
+      "disposition": "RELEASE_OR_LIVE_GATE",
+      "remaining_criterion": "actual code/schema/assets/Wasm match tested tree; private routes protected"
+    },
+    {
+      "pr": 287,
+      "head": "5cc4d96773f349f9273617f47e9106c1fabdf444",
+      "disposition": "RELEASE_OR_LIVE_GATE",
+      "remaining_criterion": "fake/stale/wrong-target receipts fail; actual external actions verified"
+    },
+    {
+      "pr": 288,
+      "head": "68698c54318d2c2a6b3458102b776ff5e274b8f0",
+      "disposition": "RELEASE_OR_LIVE_GATE",
+      "remaining_criterion": "reproducible per-operation measurements meet targets with explicit missing results"
+    },
+    {
+      "pr": 289,
+      "head": "04ae9fa58c3402cab5c873ae07fb1cf53a0cbb2e",
+      "disposition": "RELEASE_OR_LIVE_GATE",
+      "remaining_criterion": "canary, Access/budget, purge/rollback pass on exact identities"
+    },
+    {
+      "pr": 291,
+      "head": "71e282abf6eb4aa08155a0c802bc9ace7bab4ee8",
+      "disposition": "ACTIVE_IMPLEMENTATION",
+      "remaining_criterion": "65 and 299 admitted-source fixtures preserve full denominator; tail source beyond 64 found on qualified paths"
+    },
+    {
+      "pr": 325,
+      "head": "a1f52618b3266c4d102020f5c8db0449de17d274",
+      "disposition": "ACTIVE_IMPLEMENTATION",
+      "remaining_criterion": "different branch questions produce different bound inputs; every query leg carries exact scope/currentness"
+    },
+    {
+      "pr": 326,
+      "head": "a08d7d14e02be343004511a40924ffd9ff221802",
+      "disposition": "ACTIVE_IMPLEMENTATION",
+      "remaining_criterion": "at-most-one dispatch; D1 result remains authority"
+    },
+    {
+      "pr": 330,
+      "head": "2ffd22c917ecdc26aaf0af14faa8df7870b6fdf3",
+      "disposition": "ACTIVE_IMPLEMENTATION",
+      "remaining_criterion": "effect inventory per (stage, handler_generation, policy_generation); second engine removed"
+    }
+  ],
+  "s40_update": "9ca22849 delivers the coherent source module; PR232 stays ACTIVE_IMPLEMENTATION until genuine nonempty native lineage, terminal and versioned reopen criteria pass."
+}

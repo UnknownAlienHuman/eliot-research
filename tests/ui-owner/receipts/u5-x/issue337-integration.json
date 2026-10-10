@@ -1,0 +1,216 @@
+{
+  "protocol": "eliotr.frontend.issue337.integration.v1",
+  "issue": "https://github.com/UnknownAlienHuman/eliot-research/issues/337",
+  "manager_context": "01a120c9-2637-7952-b6c9-be07b395b4fd",
+  "input_main": "9ca22849a140cdbe50dd56ed5066c2fedc745fcd",
+  "source_commit": "cd9505dd73e7a89a97d0eb5e9592426b51ef4658",
+  "status": "ACCEPTED_BOUNDED_SOURCE_REPAIR_WITH_EXPLICIT_GATE_BLOCKERS",
+  "authorization": {
+    "source_main_publication": "AUTHORIZED",
+    "final_ui_owner_review": "REQUIRED",
+    "deployment_cutover_account_mutation_legacy_deletion": "NOT_AUTHORIZED"
+  },
+  "control": {
+    "sole_publisher": "frontend-manager",
+    "model": "opencode-go/step-5-preview-free",
+    "reasoning": "high",
+    "maximum_disjoint_write_leaves": 2,
+    "stale_active_claims_closed": 5,
+    "active_write_leaves_at_frontier": 0,
+    "claim_rule": "Each later defect opens one narrow reservation. No permanent ACTIVE maintenance umbrella."
+  },
+  "ROOT_COMPOSITION": {
+    "owner": "frontend-manager",
+    "paths": [
+      "apps/eliotr-web/src/app/ConnectionsPanel.tsx",
+      "apps/eliotr-web/src/app/IntegrationRepairsPreview.tsx",
+      "apps/eliotr-web/src/app/LiveWorkspace.tsx",
+      "apps/eliotr-web/src/app/NextQuestionScope.tsx",
+      "apps/eliotr-web/src/app/ReportPanel.tsx",
+      "apps/eliotr-web/src/app/ResearchPanel.tsx",
+      "apps/eliotr-web/src/app/Shell.stories.tsx"
+    ],
+    "client_barrel": "packages/owner-api-client/src/research/index.ts",
+    "cases": [
+      "Actual workspace two-page selection retains both source identities; lost admission acknowledgement plus failed history keeps exactly one original body/key.",
+      "Replacing a selected cached page prevents submission and produces zero mint/start effects.",
+      "Readiness and saved versions have independent owning refetch callbacks; failed data is hidden.",
+      "Citation-list failure owns rail replacement; a failed excerpt stays per row and matching handle retry uses its evidence query.",
+      "Connections row retry targets its query; global retry deduplicates failed queries; explicit refresh remains separate."
+    ]
+  },
+  "gates": {
+    "U3-X": {
+      "decision": "ACCEPTED",
+      "scope": "Non-production Sources internal review baseline only",
+      "basis": [
+        "Cross-page selection and replaced-page negative passed against actual workspace.",
+        "RUN shares the unchanged backend1000 scalar; client65/1000 positive and1001/duplicate/empty/mixed-project/UTF8 negatives passed. ORIENT64 is unchanged.",
+        "Independent readiness/versions retry source wiring reviewed. Unsupported Sections navigation is omitted in both locales.",
+        "Retain accepted S1-S5 currentness/late-read/foreign-history findings from the published bounded root coverage; reader/privacy paths are unchanged."
+      ],
+      "previous_receipt": {
+        "path": "tests/ui-owner/receipts/u5-x/frontend-review-coverage-20261010.json",
+        "commit": "9ca22849a140cdbe50dd56ed5066c2fedc745fcd"
+      }
+    },
+    "U4-X": {
+      "decision": "BLOCKED",
+      "owner": "Backend owner admission producer and ER48 client handoff, then frontend manager",
+      "dependency": "The current public admission problem response does not supply accepted effect/phase provenance. A status/code classifier cannot distinguish a pre-effect rejection from a lost or uncertain admission.",
+      "completed": [
+        "Exact body/key unknown recovery is independent of history.",
+        "One failed excerpt preserves other citations and can be retried.",
+        "Finite engine labels are localized; optional failure dt/dd pairs and retryability are omitted when absent."
+      ],
+      "baseline": "Canonical HTTP polling/readback; C11 snapshot projection is optional and non-blocking. Citation baseline is bounded per-citation verify/open. Strict V1/V2 resolution receipts are NOT integrated because the owner route/client read method is absent.",
+      "reload": "No private question/body/key persisted across full reload. Reload recovery remains unavailable; the interface may not mint a replacement intent while outcome is unknown."
+    },
+    "U5-X": {
+      "decision": "BLOCKED",
+      "owner": "Backend Wiki proposal producer and ER48 client, then frontend manager",
+      "dependency": "readWikiProposals can return has_more but has no accepted continuation/cursor or bounded-complete product disposition. U4-X is also a required predecessor.",
+      "completed": [
+        "The completed U5-S reservation is handed off.",
+        "Connections exposes at most one primary footer action and query-specific pending state.",
+        "Finite readiness/transport/risk/proposal enums are mapped to EN/RU labels."
+      ]
+    },
+    "FINAL-UI": {
+      "decision": "BLOCKED",
+      "dependency": "U4-X and U5-X producer handoffs, then one integrated owner review. Source publication does not constitute owner interface acceptance."
+    }
+  },
+  "handoffs": [
+    {
+      "id": "RUN1000_SHARED_BOUND",
+      "owner": "Backend source owner -> ER48/frontend manager",
+      "paths": [
+        "packages/contracts/src/scope.ts",
+        "packages/cloudflare-navigation/src/owner-scope-profile.ts",
+        "packages/owner-api-client/src/research/runs/authority.ts",
+        "apps/eliotr-web/src/app/LiveWorkspace.tsx"
+      ],
+      "input_commit": "9ca22849a140cdbe50dd56ed5066c2fedc745fcd",
+      "output": "Unchanged RUN1000 portable scalar consumed by client/root; no public schema/new quota/server increase.",
+      "decision": "SOURCE_ACCEPTED",
+      "backend_review_sha256": "5728322a6e3d2e36ac6cb164bbdc93fb1a450cb8dcd1541e11d65d8e550f2548"
+    },
+    {
+      "id": "ADMISSION_EFFECT_PROVENANCE",
+      "owner": "Backend owner Research admission / ER48",
+      "paths": [
+        "apps/eliotr-core/src/research-run-service.ts",
+        "packages/owner-api-client/src/research/runs/authority.ts",
+        "apps/eliotr-web/src/app/ResearchPanel.tsx"
+      ],
+      "input_commit": "cd9505dd73e7a89a97d0eb5e9592426b51ef4658",
+      "expected_output": "Accepted versioned effect/phase outcome and exact-key readback/reconciliation contract; no frontend inference from HTTP status alone.",
+      "decision": "BLOCKED"
+    },
+    {
+      "id": "STUDIO_CONTINUATION",
+      "owner": "Backend Wiki proposal producer / ER48",
+      "paths": [
+        "apps/eliotr-web/src/app/StudioPanel.tsx",
+        "packages/ui/src/features/studio/StudioFeature.tsx"
+      ],
+      "input_commit": "cd9505dd73e7a89a97d0eb5e9592426b51ef4658",
+      "expected_output": "Accepted versioned continuation or bounded-complete list semantics through producer/client/query/UI.",
+      "decision": "BLOCKED"
+    },
+    {
+      "id": "CITATION_RECEIPT_BASELINE",
+      "owner": "Backend citation producer / ER48",
+      "paths": [
+        "apps/eliotr-web/src/app/ReportPanel.tsx"
+      ],
+      "input_commit": "cd9505dd73e7a89a97d0eb5e9592426b51ef4658",
+      "expected_output": "Future owner HTTP receipt route and strict client read method before any claim of integrated V1/V2 outcomes.",
+      "decision": "DEFERRED_NONBLOCKING_VERIFY_OPEN_BASELINE"
+    }
+  ],
+  "verification": {
+    "owning_typescript": {
+      "version": "6.0.3",
+      "observed_inputs": 1143,
+      "owning_roots": 277,
+      "outputs": 1098,
+      "diagnostics": 0
+    },
+    "scoped_lint": "PASS",
+    "ci_config": "PASS:413files/0diagnostics and scoped lint; parsed exact-SHA workflow",
+    "source_equivalence": "Every290 owning Git input and853 installed external compiler inputs matched the clean source chain. Frontend/UI/client source bytes equal the tested r6 target; only coherent unrelated S40 source, claim history and separately checked CI differ.",
+    "authority_cases": {
+      "passed": 10,
+      "provenance": [
+        "unit-r3 nine successes retained unchanged",
+        "unit-r4 repaired negative passed; other nine skipped"
+      ],
+      "logs": [
+        {
+          "sha256": "8f87f863bc29ee83bc49c24755e82d55b690d267938a1e4e6001233498a90998",
+          "retained_private_file": "unit-r3.log"
+        },
+        {
+          "sha256": "18857c601db260985d6b83c089a5bb297b83612942138e5e4a06aad4d5a97a4d",
+          "retained_private_file": "unit-r4.log"
+        }
+      ]
+    },
+    "storybook_cases": {
+      "passed_across_focused_runs": 11,
+      "provenance": [
+        "story-r4 eight retained successes",
+        "story-r5 optional-failure facts success",
+        "story-r6 actual workspace two-case success"
+      ],
+      "logs": [
+        {
+          "sha256": "3f70c9f3004a24fd74f870dd97a522c2c37d6ea6202a6adc6db931c7146fe440",
+          "retained_private_file": "story-r4.log"
+        },
+        {
+          "sha256": "2fdff8b36787f9fde11b39531489488465f26e3063e35274a455ee016bb98928",
+          "retained_private_file": "story-r5.log"
+        },
+        {
+          "sha256": "d2b8d7d8ae480902d86c6bb05c07d4f61709e11a5621eef004656217e4616d0f",
+          "retained_private_file": "story-r6.log"
+        }
+      ]
+    },
+    "browser_review": "Actual source6107 synthetic Sources/Research reviewed at desktop and390x844 in EN/RU. Retains accepted Material tokens/shell. No live backend authority inferred.",
+    "reproduce": [
+      "pnpm install --frozen-lockfile",
+      "pnpm exec tsc -b apps/eliotr-web/tsconfig.json --pretty false",
+      "pnpm exec eslint apps/eliotr-web/src packages/owner-api-client/src packages/ui/src",
+      "pnpm exec vitest run --config vitest.config.ts packages/owner-api-client/src/research/runs/authority.test.ts",
+      "pnpm --dir packages/ui exec playwright install --with-deps chromium",
+      "The committed frontend-owner workflow runs the eleven focused Storybook cases using default installed Chromium or an explicit ELIOT_UI_BROWSER_EXECUTABLE override."
+    ],
+    "current_head_ci": "PENDING_FIRST_AUTOMATIC_RUN_AFTER_PUBLICATION"
+  },
+  "pr_disposition": {
+    "path": "tests/ui-owner/receipts/u5-x/pr-disposition-20261010.json",
+    "counts": {
+      "RETAINED_EVIDENCE_ONLY": 4,
+      "ACTIVE_IMPLEMENTATION": 38,
+      "RELEASE_OR_LIVE_GATE": 9,
+      "SUPERSEDED_BY_MAIN": 0
+    },
+    "closure": "No PR closed or merged. Zero SUPERSEDED_BY_MAIN claims."
+  },
+  "nonblocking_pending": [
+    "Authenticated staging/live ResearchSession transport",
+    "U6 deployment/cutover/release",
+    "Physical screen-reader qualification",
+    "Current generated Worker/assets /agents + /agents/* parity (#333)",
+    "Performance/full-capacity and Rust/Wasm qualification"
+  ],
+  "next_three_actions": [
+    "Backend publishes accepted admission outcome provenance handoff.",
+    "Backend resolves Studio has_more continuation/completeness contract.",
+    "Use current-head portable frontend CI and prepare the one FINAL-UI owner review after those dependencies."
+  ]
+}
