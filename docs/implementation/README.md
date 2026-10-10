@@ -25,6 +25,7 @@ from the tables below, so an unlisted file is a bug, not an omission you may ign
 | [backend-delivery-plan.md](backend-delivery-plan.md) | Owner-resumed checkpoint, historical October 6 evidence and separate assembled-product acceptance. |
 | [backend-checkpoint-2026-10-08.md](backend-checkpoint-2026-10-08.md) | Published backend slices, scoped verification and remaining acceptance. |
 | [r05-local-native-qualification-2026-10-09.md](r05-local-native-qualification-2026-10-09.md) | Bounded local R05 and Session native results, preserved failures and unqualified product/live gates. |
+| [s40-frozen-debt-source-2026-10-10.md](s40-frozen-debt-source-2026-10-10.md) | Installed denominator binding, frozen debt source checks and separate native/terminal/reopen acceptance. |
 | [backend-contract-conflicts.md](backend-contract-conflicts.md) | Concrete contract conflicts and missing inputs for owner review. |
 | [frontend-platform-migration.md](frontend-platform-migration.md) | React/Vite executable migration route. |
 | [frontend-stack-validation-2026-10-08.md](frontend-stack-validation-2026-10-08.md) | Stack, Cloudflare, primitive, binding and compatibility validation. |

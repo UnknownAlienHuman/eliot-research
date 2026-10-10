@@ -10,11 +10,13 @@ import {
   EvidenceGradeSchema,
   IdentifierSchema,
   InquiryLaneSchema,
+  ResearchDebtSchema,
   Sha256Schema,
   UnsupportedPrecisionItemSchema,
   VersionedRefSchema,
   type CitationResolutionReceipt,
   type CoverageReceipt,
+  type ResearchDebt,
   type VersionedRef,
 } from "@eliotr/contracts";
 import { validateCoverageReceipt as validateDomainCoverageReceipt } from "@eliotr/domain";
@@ -25,11 +27,13 @@ import type {
 } from "./research-citations-result.js";
 import { z } from "zod";
 
-const PROTOCOL = "eliotr.research.coverage.v2" as const;
+const PROTOCOL_V2 = "eliotr.research.coverage.v2" as const;
+const PROTOCOL = "eliotr.research.coverage.v3" as const;
 const CITATIONS_PROTOCOL = "eliotr.research.citations.v2" as const;
 const CITATIONS_STAGE = "RESOLVE_CITATIONS" as const;
 const STAGE = "CALCULATE_COVERAGE" as const;
 const MAX_REFS = 512;
+const MAX_OPEN_RESEARCH_DEBTS = 16;
 const MAX_CLAIMS = 512;
 const MAX_COVERAGE_LIMITATIONS = 32;
 const MAX_UNSUPPORTED_PRECISION = 32;
@@ -99,8 +103,7 @@ const StageFifteenLineageSchema = z.object({
   citation_resolution_receipt: CitationResolutionReceiptSchema,
 }).strict();
 
-const ResearchCoverageResultSchema = z.object({
-  protocol: z.literal(PROTOCOL),
+const ResearchCoverageResultBaseSchema = z.object({
   operation_id: IdentifierSchema,
   investigation_ref: VersionedRefSchema,
   stage: z.literal(STAGE),
@@ -118,6 +121,20 @@ const ResearchCoverageResultSchema = z.object({
   coverage_receipt: CoverageReceiptSchema,
 }).strict();
 
+const ResearchCoverageResultV2Schema = ResearchCoverageResultBaseSchema.extend({
+  protocol: z.literal(PROTOCOL_V2),
+}).strict();
+
+const ResearchCoverageResultV3Schema = ResearchCoverageResultBaseSchema.extend({
+  protocol: z.literal(PROTOCOL),
+  open_research_debts: z.array(ResearchDebtSchema).max(MAX_OPEN_RESEARCH_DEBTS),
+}).strict();
+
+const ResearchCoverageResultSchema = z.union([
+  ResearchCoverageResultV2Schema,
+  ResearchCoverageResultV3Schema,
+]);
+
 export type ResearchCoverageResult = z.infer<typeof ResearchCoverageResultSchema>;
 
 export interface ResearchCoverageResultInput {
@@ -132,6 +149,8 @@ export interface ResearchCoverageResultInput {
   readonly stage_fifteen_output_sha256: string;
   /** Server-produced coverage receipt; no model text is accepted. */
   readonly coverage_receipt: CoverageReceipt;
+  /** Exact OPEN debt snapshots resolved from the committed checkpoint named by the freeze. */
+  readonly open_research_debts: readonly ResearchDebt[];
 }
 
 type ResultErrorCode = "WORKFLOW_INPUT_INVALID" | "WORKFLOW_OUTPUT_CORRUPT";
@@ -287,10 +306,26 @@ function cloneCoverageReceipt(receipt: CoverageReceipt): CoverageReceipt {
   };
 }
 
+function cloneResearchDebt(debt: ResearchDebt): ResearchDebt {
+  return {
+    ...debt,
+    debt_ref: { ...debt.debt_ref },
+    blocked_refs: [...debt.blocked_refs],
+    basis_and_evidence_refs: [...debt.basis_and_evidence_refs],
+  };
+}
+
 async function validateResult(value: unknown, code: ResultErrorCode): Promise<ResearchCoverageResult> {
   const parsed = ResearchCoverageResultSchema.safeParse(value);
   if (!parsed.success) failResult(code);
   const result = parsed.data;
+
+  if (result.protocol === PROTOCOL &&
+      (result.open_research_debts.some((debt) => debt.status !== "OPEN" ||
+        debt.resolution_or_waiver_receipt_ref !== undefined) ||
+       !uniqueRefs(result.open_research_debts.map((debt) => debt.debt_ref)))) {
+    failResult(code);
+  }
 
   if (result.stage_fifteen.operation_id !== result.operation_id ||
       result.stage_fifteen.investigation_ref.id !== result.investigation_ref.id ||
@@ -318,7 +353,10 @@ async function validateResult(value: unknown, code: ResultErrorCode): Promise<Re
 }
 
 function resultFromInput(input: ResearchCoverageResultInput): unknown {
-  if (!isRecord(input) || !isRecord(input.citations)) failResult("WORKFLOW_INPUT_INVALID");
+  if (!isRecord(input) || !isRecord(input.citations) ||
+      !Array.isArray(input.open_research_debts) || input.open_research_debts.length > MAX_OPEN_RESEARCH_DEBTS) {
+    failResult("WORKFLOW_INPUT_INVALID");
+  }
   const citations = input.citations as ResearchCitationsResult;
   if (input.operation_id !== citations.operation_id) failResult("WORKFLOW_INPUT_INVALID");
 
@@ -346,6 +384,9 @@ function resultFromInput(input: ResearchCoverageResultInput): unknown {
     evidence_pack_ref: { ...citations.evidence_pack_ref },
     claims: citations.claims.map(cloneClaim),
     coverage_receipt: cloneCoverageReceipt(input.coverage_receipt),
+    open_research_debts: [...input.open_research_debts]
+      .sort((left, right) => refKey(left.debt_ref).localeCompare(refKey(right.debt_ref)))
+      .map(cloneResearchDebt),
   };
 }
 
@@ -372,7 +413,7 @@ export async function encodeResearchCoverageResult(
   return bytes;
 }
 
-/** Decode only canonical, strict, handle-only v2 coverage results. */
+/** Decode canonical, strict v2 legacy results and v3 results with frozen debt snapshots. */
 export async function decodeResearchCoverageResult(bytes: Uint8Array): Promise<ResearchCoverageResult> {
   if (!(bytes instanceof Uint8Array) || bytes.byteLength < 1 || bytes.byteLength > MAX_WORKFLOW_RECEIPT_BYTES) {
     failResult("WORKFLOW_OUTPUT_CORRUPT");

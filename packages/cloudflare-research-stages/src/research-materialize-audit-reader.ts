@@ -10,7 +10,11 @@ import {
   type ResearchSynthesisOutputReadback,
   type ResearchV2MaterializationCandidate,
 } from "@eliotr/cloudflare-research";
-import type { VersionedRef } from "@eliotr/contracts";
+import {
+  ResearchDebtSchema,
+  type ResearchDebt,
+  type VersionedRef,
+} from "@eliotr/contracts";
 import {
   fail,
   readCommittedStageLineage,
@@ -41,6 +45,7 @@ const AUDIT_STAGE = "AUDIT_CLAIMS" as const;
 const CITATIONS_STAGE = "RESOLVE_CITATIONS" as const;
 const COVERAGE_STAGE = "CALCULATE_COVERAGE" as const;
 const MATERIALIZE_STAGE = "MATERIALIZE" as const;
+const MAX_OPEN_RESEARCH_DEBTS = 16;
 
 function failCorrupt(): never {
   return fail("WORKFLOW_OUTPUT_CORRUPT");
@@ -68,6 +73,50 @@ function sameRefSet(left: readonly VersionedRef[], right: readonly VersionedRef[
   return new Set(leftKeys).size === leftKeys.length &&
     new Set(rightKeys).size === rightKeys.length &&
     leftKeys.every((key, index) => key === rightKeys[index]);
+}
+
+function readFrozenOpenResearchDebts(
+  context: EvidenceFreezeMaterializeContext,
+): readonly ResearchDebt[] {
+  const frozenRefs = context.freeze.open_research_debt_refs;
+  if (!Array.isArray(frozenRefs) || frozenRefs.length > MAX_OPEN_RESEARCH_DEBTS) failCorrupt();
+
+  const branchFindings = context.branch_findings;
+  if (branchFindings === undefined) {
+    if (frozenRefs.length !== 0) failCorrupt();
+    return [];
+  }
+
+  const candidates = branchFindings.reconciliation_summary.research_debts;
+  if (!Array.isArray(candidates) || candidates.length > MAX_OPEN_RESEARCH_DEBTS) failCorrupt();
+  const debts: ResearchDebt[] = [];
+  for (const candidate of candidates) {
+    const parsed = ResearchDebtSchema.safeParse(candidate);
+    if (!parsed.success || parsed.data.status !== "OPEN" ||
+        parsed.data.resolution_or_waiver_receipt_ref !== undefined) failCorrupt();
+    debts.push(parsed.data);
+  }
+
+  if (!sameRefSet(frozenRefs, debts.map((debt) => debt.debt_ref))) failCorrupt();
+  return debts.sort((left, right) => refKey(left.debt_ref).localeCompare(refKey(right.debt_ref)));
+}
+
+function requireCoverageDebtBinding(
+  context: EvidenceFreezeMaterializeContext,
+  coverage: ResearchCoverageResult,
+): void {
+  const frozenDebts = readFrozenOpenResearchDebts(context);
+  if (coverage.protocol === "eliotr.research.coverage.v2") {
+    // Legacy v2 has no debt payload, so it is compatible only with a debt-free freeze.
+    if (frozenDebts.length !== 0) failCorrupt();
+    return;
+  }
+
+  if (!sameRefSet(context.freeze.open_research_debt_refs,
+    coverage.open_research_debts.map((debt) => debt.debt_ref)) ||
+      canonicalEvidenceJson(frozenDebts) !== canonicalEvidenceJson(coverage.open_research_debts)) {
+    failCorrupt();
+  }
 }
 
 function sameManifest(left: unknown, right: unknown): boolean {
@@ -316,8 +365,7 @@ function requireCoverageBinding(
   coverageLineage: CommittedLineage,
   coverage: ResearchCoverageResult,
 ): void {
-  if (coverage.protocol !== "eliotr.research.coverage.v2" ||
-      coverage.operation_id !== request.operation_id ||
+  if (coverage.operation_id !== request.operation_id ||
       !sameRef(coverage.investigation_ref, coverageLineage.request.investigation_ref) ||
       coverage.stage !== COVERAGE_STAGE ||
       coverage.stage_attempt_ref !== coverageLineage.attempt_ref ||
@@ -339,6 +387,7 @@ function requireCoverageBinding(
         canonicalEvidenceJson(citations.claims.map(claimProjection))) {
     failCorrupt();
   }
+  requireCoverageDebtBinding(context, coverage);
 }
 
 export interface ResearchMaterializeAuditReaderInput {

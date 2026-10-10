@@ -5,12 +5,14 @@ import {
   type NavigationReadAuthority,
 } from "@eliotr/cloudflare-evidence";
 import {
+  ResearchDebtSchema,
   type CoverageReceipt,
+  type ResearchDebt,
   type VersionedRef,
 } from "@eliotr/contracts";
 import {
   createEvidenceFreezePostSynthesisContextReader,
-  CORPUS_EXPLORATORY_LOOKUP_DEFINITIONS,
+  installedInquiryProtocolDefinition,
   readCommittedProtocolScopeCheckpoint,
   type EvidenceFreezeCommittedReaders,
   type EvidenceFreezeSynthesisContext,
@@ -49,6 +51,8 @@ export interface ResearchCoverageStageDependencies {
   readonly navigation: NavigationReadAuthority;
   /** The post-synthesis reader must be created for CALCULATE_COVERAGE. */
   readonly context: EvidenceFreezeVerificationContextReader;
+  /** Reads the committed branch checkpoint whose identity is embedded by the freeze. */
+  readonly read_branch_reconciliation?: NonNullable<EvidenceFreezeCommittedReaders["read_branch_reconciliation"]>;
 }
 
 interface PreparedInvocation {
@@ -77,6 +81,14 @@ function failCorrupt(): never {
 
 function sameRef(left: VersionedRef, right: VersionedRef): boolean {
   return left.id === right.id && left.revision === right.revision;
+}
+
+function sameRefSet(left: readonly VersionedRef[], right: readonly VersionedRef[]): boolean {
+  if (left.length !== right.length) return false;
+  const leftKeys = left.map(refKey).sort();
+  const rightKeys = right.map(refKey).sort();
+  return new Set(leftKeys).size === leftKeys.length && new Set(rightKeys).size === rightKeys.length &&
+    leftKeys.every((key, index) => key === rightKeys[index]);
 }
 
 function refKey(value: VersionedRef): string {
@@ -204,23 +216,95 @@ function requireContextBinding(
       context.w1_head.deployment_generation !== principal.deployment_generation) return failAuthority();
 }
 
+function cloneResearchDebt(debt: ResearchDebt): ResearchDebt {
+  return {
+    ...debt,
+    debt_ref: { ...debt.debt_ref },
+    blocked_refs: [...debt.blocked_refs],
+    basis_and_evidence_refs: [...debt.basis_and_evidence_refs],
+  };
+}
+
+async function readFrozenOpenResearchDebts(
+  dependencies: ResearchCoverageStageDependencies,
+  invocation: PreparedInvocation,
+  context: EvidenceFreezeSynthesisContext,
+): Promise<readonly ResearchDebt[]> {
+  const frozenRefs = context.freeze.open_research_debt_refs;
+  const branchFindings = context.branch_findings;
+  if (branchFindings === undefined) {
+    if (frozenRefs.length !== 0) return failCorrupt();
+    return Object.freeze([]);
+  }
+  const readBranch = dependencies.read_branch_reconciliation;
+  if (readBranch === undefined) return failCorrupt();
+
+  let lineage: Awaited<ReturnType<NonNullable<EvidenceFreezeCommittedReaders["read_branch_reconciliation"]>>>;
+  try {
+    lineage = await readBranch({
+      operation_id: invocation.request.operation_id,
+      investigation_id: invocation.request.investigation_ref.id,
+      principal: invocation.principal,
+    });
+  } catch (error) {
+    if (error instanceof WorkflowCheckpointError) throw error;
+    return failCorrupt();
+  }
+  if (lineage === null) return failCorrupt();
+
+  const checkpoint = lineage.checkpoint;
+  if (!sameRef(checkpoint.checkpoint_ref, branchFindings.reconciliation_ref) ||
+      checkpoint.identity_digest !== branchFindings.reconciliation_digest ||
+      !Array.isArray(checkpoint.research_debts) || checkpoint.research_debts.length > 16) {
+    return failCorrupt();
+  }
+
+  const committedDebts: ResearchDebt[] = [];
+  for (const candidate of checkpoint.research_debts) {
+    const parsed = ResearchDebtSchema.safeParse(candidate);
+    if (!parsed.success || parsed.data.status !== "OPEN" ||
+        parsed.data.resolution_or_waiver_receipt_ref !== undefined) return failCorrupt();
+    committedDebts.push(parsed.data);
+  }
+  const frozenDebtSnapshots: ResearchDebt[] = [];
+  const frozenCandidates = branchFindings.reconciliation_summary.research_debts;
+  if (!Array.isArray(frozenCandidates) || frozenCandidates.length > 16) return failCorrupt();
+  for (const candidate of frozenCandidates) {
+    const parsed = ResearchDebtSchema.safeParse(candidate);
+    if (!parsed.success || parsed.data.status !== "OPEN" ||
+        parsed.data.resolution_or_waiver_receipt_ref !== undefined) return failCorrupt();
+    frozenDebtSnapshots.push(parsed.data);
+  }
+  if (!sameRefSet(frozenRefs, committedDebts.map((debt) => debt.debt_ref)) ||
+      !sameRefSet(frozenRefs, frozenDebtSnapshots.map((debt) => debt.debt_ref))) return failCorrupt();
+
+  const committedByRef = committedDebts.sort((left, right) => refKey(left.debt_ref).localeCompare(refKey(right.debt_ref)));
+  const frozenByRef = frozenDebtSnapshots.sort((left, right) => refKey(left.debt_ref).localeCompare(refKey(right.debt_ref)));
+  if (canonicalEvidenceJson(committedByRef) !== canonicalEvidenceJson(frozenByRef)) return failCorrupt();
+
+  return Object.freeze(frozenByRef.map(cloneResearchDebt));
+}
+
 function requireDenominatorBinding(
   context: EvidenceFreezeSynthesisContext,
   protocol: Awaited<ReturnType<typeof readCommittedProtocolScopeCheckpoint>>,
   navigation: NavigationReadAuthority,
 ): readonly string[] {
   const denominator = protocol.coverage_denominator;
+  let definition: ReturnType<typeof installedInquiryProtocolDefinition>;
+  try { definition = installedInquiryProtocolDefinition(protocol.profile_definition_ref); }
+  catch { return failAuthority(); }
   const expectedScope = { id: navigation.scope.snapshot_id, revision: navigation.scope.revision };
   if (!sameRef(denominator.frozen_scope_snapshot_ref, expectedScope) ||
       !sameRef(context.freeze.scope_snapshot_ref, expectedScope) ||
       !sameRef(context.freeze.coverage_denominator_ref, denominator.denominator_ref) ||
       !sameRef(context.stage_five.scope_snapshot_ref, expectedScope) ||
       !sameStringSet(denominator.eligible_source_revision_refs, navigation.scope.member_source_revision_refs) ||
-      denominator.required_source_classes.length !== 0 ||
-      denominator.required_question_branches.length !== 0 ||
+      !sameStringSet(denominator.required_source_classes, definition.required_source_classes) ||
+      !sameStringSet(denominator.required_question_branches, definition.required_question_branches) ||
       Object.keys(denominator.acquisition_method_generations).length !== 0 ||
       denominator.excluded_sources.length !== 0 ||
-      denominator.completeness_test_ref !== CORPUS_EXPLORATORY_LOOKUP_DEFINITIONS.completeness_test_ref) return failAuthority();
+      denominator.completeness_test_ref !== definition.completeness_test_ref) return failAuthority();
   return Object.freeze([...denominator.eligible_source_revision_refs].sort());
 }
 
@@ -402,6 +486,7 @@ async function executeCoverage(
     return failAuthority();
   }
   requireContextBinding(invocation.request, invocation.principal, citations, contextBefore);
+  const openResearchDebtsBefore = await readFrozenOpenResearchDebts(dependencies, invocation, contextBefore);
   const protocolCheckpointBefore = await readProtocol(dependencies, invocation);
   const eligibleRefs = requireDenominatorBinding(contextBefore, protocolCheckpointBefore, dependencies.navigation);
   const protocolBefore = await readAuthorities(dependencies, invocation, contextBefore, protocolCheckpointBefore, eligibleRefs);
@@ -420,6 +505,7 @@ async function executeCoverage(
       stage_request_sha256: requestSha256,
       stage_fifteen_output_sha256: invocation.request.input_manifest.sha256,
       coverage_receipt: coverageReceipt,
+      open_research_debts: openResearchDebtsBefore,
     } satisfies ResearchCoverageResultInput);
   } catch (error) {
     if (error instanceof WorkflowCheckpointError) return failCorrupt();
@@ -433,6 +519,7 @@ async function executeCoverage(
     return failAuthority();
   }
   requireContextBinding(invocation.request, invocation.principal, citations, contextAfter);
+  const openResearchDebtsAfter = await readFrozenOpenResearchDebts(dependencies, invocation, contextAfter);
   const predecessorAfter = await readCommittedStageLineage(checkpoints, invocation.request.operation_id, PREDECESSOR_STAGE);
   const protocolAfter = await readProtocol(dependencies, invocation);
   let finalGrant: Awaited<ReturnType<NavigationReadAuthority["current"]>>;
@@ -448,6 +535,7 @@ async function executeCoverage(
     return failAuthority();
   }
   if (stableContext(contextAfter) !== stableContext(contextBefore) ||
+      canonicalEvidenceJson(openResearchDebtsAfter) !== canonicalEvidenceJson(openResearchDebtsBefore) ||
       canonicalEvidenceJson(predecessorAfter) !== canonicalEvidenceJson(predecessor) ||
       stableProtocol(protocolAfter) !== stableProtocol(protocolBefore.protocol) ||
       canonicalEvidenceJson(finalGrant) !== protocolBefore.grant_fingerprint ||
@@ -489,6 +577,9 @@ export function createResearchCoverageStageHandlerFromFreeze(
     database: environment.database,
     work_bucket: environment.work_bucket,
     navigation,
+    ...(readers.read_branch_reconciliation === undefined
+      ? {}
+      : { read_branch_reconciliation: readers.read_branch_reconciliation }),
     context: createEvidenceFreezePostSynthesisContextReader(environment, navigation, readers, STAGE),
   });
 }

@@ -3,6 +3,7 @@ import {
 } from "@eliotr/cloudflare-evidence";
 import type {
   CoverageReceipt,
+  ResearchDebt,
   VersionedRef,
 } from "@eliotr/contracts";
 import type {
@@ -40,6 +41,8 @@ export type ResearchRunResultReaderInput = ResearchMaterializeOutputReaderInput;
  */
 export interface ResearchRunResultReadback extends ResearchRunResult {
   readonly coverage_receipt: CoverageReceipt;
+  /** Absent only for a legitimate stored coverage.v2 result written before debt consumption. */
+  readonly open_research_debts?: readonly ResearchDebt[];
   readonly materialization: ResearchMaterializeOutputReadback;
 }
 
@@ -333,6 +336,14 @@ export async function readCommittedResearchRunResult(
     completion_disposition: coverageReceipt.terminal_disposition,
     reopen_conditions: Object.freeze([...protocol.protocol_profile.reopen_conditions]),
     coverage_receipt: coverageReceipt,
+    ...(coverage.protocol === "eliotr.research.coverage.v3"
+      ? { open_research_debts: Object.freeze(coverage.open_research_debts.map((debt) => ({
+        ...debt,
+        debt_ref: { ...debt.debt_ref },
+        blocked_refs: [...debt.blocked_refs],
+        basis_and_evidence_refs: [...debt.basis_and_evidence_refs],
+      }))) }
+      : {}),
     materialization,
   });
 }
