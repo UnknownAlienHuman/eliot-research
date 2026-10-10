@@ -1,0 +1,23 @@
+{
+  "protocol": "eliotr.ui-review-receipt.v1",
+  "checkpoint": "C3-E",
+  "status": "ACCEPTED_INTERNAL_CLIENT_COMPOSITION",
+  "source_commit": "32163c05d9f7ae5cb1874119e2769262c028dec4",
+  "scope": [
+    "packages/owner-api-client/src/evidence/index.ts",
+    "packages/owner-api-client/src/index.ts"
+  ],
+  "behavior": "Finite named report and evidence/citation exports preserve one wire implementation. Citation resolution and semantic audit remain independent. Lazy required sections own export completeness.",
+  "checks": {
+    "compiler": "Actual owning TypeScript6.0.3 PASS0/718 including all accepted leaves and new barrels",
+    "lint": "Exact3 barrel paths PASS",
+    "prior": "Accepted leaf receipts retained without passing-suite reruns"
+  },
+  "predecessor_receipts": [
+    "client-report.json",
+    "client-citations.json"
+  ],
+  "limitations": [
+    "Client composition only; actual web Query/runtime binding and rendered U4/FINAL-UI remain pending. Native/staging/live/release not evaluated."
+  ]
+}

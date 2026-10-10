@@ -1,0 +1,25 @@
+{
+  "protocol": "eliotr.ui-review-receipt.v1",
+  "checkpoint": "C3-R",
+  "status": "ACCEPTED_INTERNAL_CLIENT_COMPOSITION",
+  "source_commit": "32163c05d9f7ae5cb1874119e2769262c028dec4",
+  "scope": [
+    "packages/owner-api-client/src/research/index.ts",
+    "packages/owner-api-client/src/index.ts"
+  ],
+  "behavior": "Finite named public exports compose accepted configuration, run authority, authenticated history/currentness and strict read-only session projection. HTTP status/history own progress, detailed failure and reconciliation; explicit projection adds no run/cancel/replay authority.",
+  "checks": {
+    "compiler": "Actual owning TypeScript6.0.3 PASS0/718 including all accepted leaves and new barrels",
+    "lint": "Exact3 barrel paths PASS",
+    "prior": "Accepted leaf receipts retained without passing-suite reruns"
+  },
+  "predecessor_receipts": [
+    "client-research-configuration.json",
+    "client-research-runs.json",
+    "client-research-history.json",
+    "client-session-projection.json"
+  ],
+  "limitations": [
+    "Client composition only; actual web Query/runtime binding and rendered U4/FINAL-UI remain pending. Native/staging/live/release not evaluated."
+  ]
+}
