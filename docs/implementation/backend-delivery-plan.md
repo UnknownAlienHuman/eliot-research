@@ -1814,8 +1814,10 @@ serialization. Owning virtual TypeScript 6.0.3 has zero diagnostics/3,770 output
 four-file lint and four new construction-port regressions pass. The initial
 strict audit-fixture failure is preserved, with fixture-only repair. Final
 Go2/high source review accepts the exact three candidate hashes; its temporary
-diff/prose limitations remain in the private receipt. Publication is not yet
-claimed. Physical
+diff/prose limitations remain in the private receipt. Fresh publication readback
+verifies `ab196b867d2ef3057b5cbce9a901e42ef0930149`: all six blobs equal the
+original accepted local `6852e491` candidate after the frontend's unpublished
+history repair. Original source/fixture/audit receipts remain unchanged. Physical
 branch-query/C5 WIP remains preserved and no runtime cutover is activated. These
 checks do not qualify canonical/native/provider/scientific/live/release behavior.
 
@@ -1844,3 +1846,32 @@ worktrees with unique/dirty evidence remain preserved. Source reviews were
 useful on Go2/high; delivery/scope corrections prevent any demonstrated quality
 advantage over Luna. Original Issue/PR and full scientific/native/live/release
 acceptance, final cleanup and the Goal stay open.
+
+The extra nested `C:\Development\Research\Research` directory is resolved.
+The frontend C3RP writer identified its wrong relative test path and recovered
+the canonical file. Backend reversibly archived the original 7,094-byte copy
+with SHA256 `f1eaf5893d3db2f2a6972b2bc65838c71b9015a47aba9d98bc829ea6b4c2d272`
+under `.codex-archive/20261010T001930Z-nested-research-source`, with its recovery
+receipt. Exact path/reparse/process/exclusive-lock/hash checks pass; seven empty
+directories were removed individually. Canonical source remains with frontend.
+This closes that cleanup conflict, not the remaining protected-worktree cleanup.
+
+One additional Worker-side native Session case passes against the same immutable
+`2607583d` custom Core candidate. The actual DO returns one exact projection RPC
+frame, denies a foreign upgrade with HTTP 409/no socket, and closes cleanly with
+1008 after exact grant-use revocation. Full grant-row readback replaces an invalid
+direct-row assumption about D1 `total_changes()` metadata. Run stage 18/revision
+19 and attempt/checkpoint counts remain unchanged; child exit 0 and resolved
+Miniflare disposal are required, observed results. Internal confirmatory
+owner/grant/policy fixtures remain explicit.
+
+Fresh current-probe Luna Max acceptance and four isolated error/teardown ports
+precede the one changed-byte native case. Original failed observations, the
+resumed Sol/model-gate sequencing error, and the separately accepted earlier v1
+remain preserved. The final verifier matches all 346 unique per-path seed inputs
+without depending on esbuild discovery order; only that metadata verifier reran.
+The [local qualification record](r05-local-native-qualification-2026-10-09.md#actual-product-session-rpc--worker-side-bounded-qualification)
+owns exact scope and receipts. Session-module equality at fetched `bc027c62`
+does not establish whole current-Core, signed public/Access, browser/hibernation,
+scientific/provider, official emitted/live/release or full #334 acceptance.
+Original Issue/PR and the project Goal remain open.

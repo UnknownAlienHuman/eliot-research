@@ -461,3 +461,56 @@ Private seed semantic TypeScript, actual DO RPC, product external-task native
 wait and full scientific positive, selected Access/provider/configuration,
 official emitted build, staging/live and release remain pending. The new
 confirmatory native execution does not close #326 or the Goal.
+
+## Actual product Session RPC — Worker-side bounded qualification
+
+One added native case passes against the same immutable `2607583d` custom Core
+candidate and SHA256 above. It binds the actual `ResearchSession` and
+`ResearchWorkflow`, genuine local D1 migrations and R2, and the existing
+deterministic confirmatory handler. The WebSocket client runs in a separate
+local Worker; Node receives HTTP JSON. Node 25.6.1, Wrangler 4.143.1,
+Miniflare 5.20260926.1-alpha and esbuild 0.28.1 retain the canonical August 28
+compatibility date and flags. This does not attest official Wrangler emission.
+
+| Observed boundary | Bounded result |
+|---|---|
+| Actual Session RPC | Exactly one successful `eliotr.research-session-projection.v1` frame with the completed operation's persisted investigation, receipt and output-manifest references. No scientific disposition is added. |
+| Foreign operation upgrade | HTTP 409 `SESSION_AUTHORITY_STALE`, with no socket returned. |
+| Current grant-use revocation | Exact full-row readback changes only the original grant's `allowed_use_json` from `["research"]` to `[]`; the socket closes cleanly with code 1008 and `SESSION_AUTHORITY_STALE`, ready state 3. |
+| Business readback and process | Completed run remains stage 18/revision 19 with 18 attempts and 18 checkpoints. Child exits 0 without a signal; `Miniflare.dispose()` resolves. These counts are not an all-table zero-effects proof. |
+
+The initial Worker-side assertion expected D1 `meta.changes` to equal one.
+Installed Miniflare uses the `total_changes()` delta, which includes the
+orientation/ledger epoch and historical-grant triggers. The harness now proves
+the exact grant's full before/after row instead. The original failed observation
+and process remain preserved; production D1 or authority guards were not changed.
+
+A later source audit found that a settled error observer did not prove actual
+socket teardown. The private probe now installs a fresh close observer before
+teardown, preserves both primary and teardown errors, and releases listeners and
+timers. Four isolated fake-socket cases pass for accept, socket, close and timeout
+errors; these are separate from native acceptance. Fresh Luna Max accepted the
+current probe SHA256
+`6115d8c112de607b93c6f40e3285301a694973ec2202247b7754040d9df18ec1`
+before the one changed-byte native run. The unchanged runtime/parent and the
+full-grant runner retain their original exact-source reviews.
+
+The earlier resumed auditor switched from Luna to Sol. Its verdict failed the
+model gate, but the root incorrectly launched the second run after that failed
+gate. That sequence and its process result remain separate; the later current
+run follows the accepted source gate. The earlier accepted v1 receipt is retained
+separately and is not evidence for the repaired probe. The final receipt verifier
+also preserves its initial order-sensitive input comparison failure: all 346
+unique per-path seed records match; esbuild discovery order differs. No native
+run was repeated for that metadata correction.
+
+Private receipts are `core-product-session-worker-v2-audit-20261009.json`,
+`core-product-session-worker-error-ports-20261009.json`,
+`core-product-session-worker-receipt-20261009.json` and
+`core-product-session-worker-v2-completion-proof-20261010.json` under the same
+checkpoint directory. Seven committed Session modules match the candidate at
+the fetched `bc027c62` frontier; this is not complete current-Core graph equality.
+Owner/grant/policy preconditions remain injected. Signed production HTTP/Access,
+browser lifecycle, hibernation/transcript, full #334, scientific/external-wait,
+selected providers, staging/live and release acceptance remain open. #326 and
+the project Goal remain open.
