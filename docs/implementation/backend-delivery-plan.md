@@ -7,11 +7,35 @@ acceptance volume, excluding website design. The Goal stays active across source
 checkpoints, publication and individual passport closure. The first checkpoint
 below is evidence of delivered prerequisites, not completion of the project.
 
+### Current state, October 10, 2026
+
+Published GitHub `main` is `d6e7e08383c22679267ef3ad9894254b4efea029`;
+the shared local frontier is `9c6350039fbf9612abea2b47c804cbc8f95e3646`.
+The later local commits and working changes are not published acceptance.
+The frontend manager is the sole publisher; the concrete unpublished-history
+conflict and coordinated Git-window hold are recorded in `Agent_sync.md` and
+`Backend_conflicts.md` in the parent Research directory.
+
+PRs #320, #321, #322, #323, #324, #327, #331 and #332 are closed after checking their
+own bounded stage criteria against published commits and saved scoped checks.
+Each closing comment records exact commit references, verification limits and
+downstream obligations. Stage closure does not wait for the entire project;
+the project Goal remains active. The fresh GitHub readback has 56 open PRs and
+five open Issues. Further completed stages are reviewed independently.
+
+Current whole-product build, deployed generation, remote migration frontier and
+selected-profile acceptance are not established by these closures. Historical
+build/deployment tuples and local custom-candidate receipts below retain their
+dates and scopes; they are not promoted to the current published product.
+The next source correction labels the August 28 normative operational-status
+fields as historical (#222); browser/generated routing and full Session
+acceptance remain with #333/#334 and their exact pending criteria.
+
 October 9 publication readback and fetch divergence confirm
 `2adbc42d08eccc0210d31304006bb7e65aeee3db` at 0/0 after fast-forwarding
 the concurrent frontend documentation in `a9a33031`. Reviewed source commits
 are recorded below; re-read the current Git ref before the next publication.
-The live GitHub inventory has 64 open PRs and five open Issues, including frontend #335 (last live inventory October 9). The current
+The October 9 GitHub inventory had 64 open PRs and five open Issues, including frontend #335. The current
 router/cards and latest passport discussions govern their dependencies and
 selected-profile requirements; historical PR heads are not merged wholesale.
 All 23 prior direct/nested agent sessions were closed and archived on October 9
@@ -1924,7 +1948,50 @@ two dirty source trees (3/25 paths). Full cleanup remains incomplete.
 
 The documentation index's two missing R05 links are corrected in `edf0a0b1`;
 the changed index gate and whitespace pass. Its scoped README commit is released
-to the sole frontend publisher. PR #327 reconciliation finds eight exact and
-sixteen changed documentation blobs; substantive preservation review remains
-pending, so the historical branch is neither merged wholesale nor closed.
+to the sole frontend publisher. PR #327's substantive 24-document reconciliation
+is now complete against immutable `25192c8c`: eight exact blobs, five Markdown
+hardbreak changes, one EOF-newline-only change and ten requirements preserved or
+explicitly superseded by current authority. Root verifies all 24 pairs and their
+unchanged bytes at `d0b9e941`. The former implementation review checklist survives
+in `backend-entrypoints.md` section 5. The stale Launch branch-reservation rule
+is corrected in `25192c8c`; publication readback remains separate. PR #327 stays
+open as the broader Research/code-integrity index.
 No Issue/PR or Goal is completed by these checkpoints.
+
+One signed public-JWT native attempt reached the actual configured Core verifier,
+owner Worker ServiceBinding route, ResearchSession and completed ResearchWorkflow
+on the same immutable custom candidate. Owner upgrade 101, two exact terminal
+projection RPCs, missing/invalid signature 401s and foreign 404 were observed.
+The full grant and stage/revision/count tuple remain unchanged in the retained
+Worker observation; clean close 1000 and resolved Miniflare/JWKS teardown are
+recorded. The original process nevertheless exits 1: the fixture supplied the
+service allowlist as JSON although `parseServicePrincipals` expects CSV, so the
+valid signed service token was denied at the allowlist before owner-class
+authorization. Its failed process/observation and exact source hashes are retained.
+This is not a passing original whole harness. Only the failed service case was
+rerun with correct CSV: expected `403 PRINCIPAL_CLASS_DENIED`, no socket,
+unchanged full grant rows and zero Workflow-run rows before and after. The
+separate exact-four Luna Max source gate and one guarded native repair pass;
+repair process exit 0/null signal, resolved Miniflare disposal and closed JWKS
+are recorded. The qualifier rechecks pinned source, dependency and original
+observation bytes after process exit. Its combined
+`core-product-session-public-jwt-reconciled-receipt-20261010.json` preserves
+original process exit 1 and reconciles earlier observed domain results offline,
+without a new Workflow or repetition of those earlier cases.
+
+The source gate now pins the whole 1,105-input seed closure: 345 unchanged prior
+dependencies, one new verified-identity seed and 759 explicit verifier/Env imports.
+Unknown additional/missing/changed inputs fail; the owning source verdict is bound
+to the full raw manifest digest. Fourteen route modules retain raw working/Git
+and CRLF-only comparison evidence. Luna Max first rejected the incomplete closure
+gate; the corrected exact-five source verdict passes. The public-JWT result still
+does not qualify official emission, production Access, browser/reconnect/two-tab,
+hibernation, transcript/all-table invariance, scientific/providers or release.
+
+Two inactive top-level Go2 Hume scratch files are additionally reversibly archived
+with exact hash readback: 1,317 bytes in
+`.codex-archive/20261010T024727Z-closed-go2-audit-scratch`. Their provenance is
+confirmed from the closed owner's tool calls. Active/owner-controlled frontend
+helpers and all seven protected worktrees are preserved. The latest bounded
+model trial records one accepted Go2 audit and two assignments without accepted
+results; it establishes no quality, speed or ranking superiority over Luna.

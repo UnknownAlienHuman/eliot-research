@@ -582,3 +582,61 @@ receipt. Source inference about exclusive closure causes is not broader runtime
 instrumentation. No hibernation/eviction, browser/reconnect/two-tab, signed public
 Access/JWT, complete #334, scientific/provider/official-build/live/release result
 is established. `IMPLEMENTED_NOT_LIVE`, original Issue/PR and Goal remain open.
+
+## Signed public JWT — retained native observation and service fixture repair
+
+The first signed-JWT run uses the actual configured Access verifier with an
+ephemeral local RS256/JWKS issuer, its development-only owner-E2E loopback hook,
+public Core Worker ServiceBinding ingress and the actual ResearchSession. Identity
+is verified separately in seed and Core. No injected AccessVerifier or direct
+DO bootstrap is used. The existing private confirmatory policy/scope/grant seed
+and immutable custom Core artifact remain explicit limitations.
+
+The real ResearchWorkflow completes stage 18/revision 19 with 18 attempts and
+18 checkpoints. The retained Worker observation records signed owner upgrade
+101, exactly two strict terminal projection RPCs, missing/signature-invalid 401s,
+foreign 404 and no denial sockets. Forged research/Agents authority headers do
+not substitute the verified owner. One full grant row and the canonical business
+tuple are unchanged; the socket closes cleanly with 1000/state 3. Both seed and
+Core fetch local JWKS; Miniflare disposal resolves and the JWKS server closes.
+
+The original process is **exit 1**, not PASS. It fails the service error-code
+assertion because the fixture encodes `ACCESS_SERVICE_PRINCIPALS` as a JSON array;
+the existing parser takes comma-separated names. The signed service token thus
+returns `ACCESS_SERVICE_PRINCIPAL_DENIED` before owner-class authorization.
+The expected `PRINCIPAL_CLASS_DENIED` is retained for a correctly configured
+service principal. Product authorization is unchanged. Original child/process,
+source manifest, audit and all source bytes remain preserved.
+
+Only this failed service case was rerun for native repair: the private runtime
+changes its isolated tag, probe path and that binding to the documented CSV.
+The probe reaches Core through the same ServiceBinding with a signed allowed
+service principal, expects 403/no socket/`PRINCIPAL_CLASS_DENIED`, reads unchanged
+grant rows and zero Workflow-run rows, and creates no Workflow. Earlier observed
+owner/RPC/other-negative results are rechecked from retained exact bytes. The
+separate exact-four Luna Max source gate and one guarded service-only native run
+pass: 403 `PRINCIPAL_CLASS_DENIED`, no socket, identical full grant rows, and
+Workflow-run counts zero before and after. The repair process exits 0 with no
+signal; Miniflare disposal resolves and the JWKS server closes. Source, original
+observations and dependency bytes are checked again after that process. The
+reconciled receipt retains the original failed process with exit 1; it never
+rewrites it as a process-zero result or repeats the earlier passing cases.
+
+The accepted source preparation separately records all 1,105 seed inputs:
+345 prior dependencies unchanged, one replacement seed and 759 explicit new
+verifier/Env dependencies. Exact set/object and pre/post byte equality reject
+unreviewed additions. The source verdict also pins the entire raw manifest.
+Fourteen public-route files retain independent working/Git raw hashes and
+CRLF-to-LF-only comparison hashes without changing product bytes. Source ACCEPT
+does not establish runtime acceptance; the first incomplete closure gate was
+rejected before any native run.
+
+Original evidence is `core-product-session-public-jwt-{source-manifest,source-audit,child,process}-20261010.json`;
+service repair evidence is `core-product-session-service-repair-{source-manifest,source-audit,child,process}-20261010.json`;
+the combined receipt is `core-product-session-public-jwt-reconciled-receipt-20261010.json`,
+all in the private checkpoint directory. The repair audit was recorded only
+after the actual Luna/max reviewer completed and was closed and archived; it
+binds all four source hashes and the full raw manifest digest. Official Wrangler/Vite emission,
+production Access, browser/reconnect/two-tab, hibernation/eviction, transcript/
+all-table invariance, full #333/#334, scientific/provider/live/release and the
+project Goal remain unaccepted.

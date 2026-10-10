@@ -3,7 +3,7 @@ title: "Eliot Research Cloud — standalone research-grade system on Cloudflare"
 short_name: "ERC"
 version: "29.1"
 date: 2026-08-28
-status: "standalone normative and implementation-ready contract; live deployment not completed"
+status: "standalone normative and implementation-ready contract; historical deployment status (2026-08-28): live deployment not completed"
 authority: "normative for the Eliot Research repository; external client architectures are optional compatibility profiles, not runtime dependencies"
 product_role: "external research federation: acquisition, evidence library, retrieval, controlled investigations, Wiki, and publication"
 eliot_compatibility_baseline:
@@ -21,7 +21,7 @@ supersedes:
   - "ELIOT_RESEARCH_CLOUDFLARE.md v24.1, blob da1eb64a03c73f0bd631a959a5113ab3be00c5c6"
   - "all previous Eliot Research Cloudflare profiles v13–v29"
   - "separate Cloudflare architecture audits, deltas, resource maps, and bridge registries"
-implementation_status: "ready for Slice 0 implementation; live Cloudflare and Google Drive write/readback remain mandatory gates"
+implementation_status: "historical readiness statement (2026-08-28): ready for Slice 0 implementation at that date; live Cloudflare and Google Drive write/readback remain mandatory gates"
 revision_29:
   - "made ERC a standalone external product rather than the ELIOT Researcher plane or module"
   - "isolated ELIOT integration behind one optional generated-schema adapter with no ELIOT runtime dependency"
@@ -46,6 +46,11 @@ revision_29_1:
   - "required explicit EvidenceFreeze reopen/revision before post-freeze material can affect synthesis"
   - "bound CoverageReceipt to the frozen denominator and made complete/sampled/unknown coverage explicit"
 ---
+
+> **Status note (2026-10-10):** The `status` deployment statement and the `implementation_status`
+> readiness statement above are historical 2026-08-28 records, not current deployment or
+> implementation state. The normative contract and its requirements remain authoritative.
+> Backend delivery state is tracked in [backend-delivery-plan.md](../implementation/backend-delivery-plan.md).
 
 ## Profile applicability — ADR-0006 (2026-09-09)
 
