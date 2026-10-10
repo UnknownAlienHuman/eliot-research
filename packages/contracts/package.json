@@ -6,7 +6,8 @@
   "sideEffects": false,
   "exports": {
     ".": "./src/index.ts",
-    "./registry": "./src/registry-index.ts"
+    "./registry": "./src/registry-index.ts",
+    "./runtime-config": "./src/runtime-config.ts"
   },
   "types": "./src/index.ts",
   "scripts": {
