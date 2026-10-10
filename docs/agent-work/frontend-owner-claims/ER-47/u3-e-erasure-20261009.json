@@ -5,8 +5,11 @@
   "owner_authorization_ref": "tests/ui-owner/receipts/owner-authorization.json",
   "base_sha": "544a65cf822603001cf1ed543367e9a20493bf5f",
   "history_base_sha": "c37e56e0ebdfc7f6d294879008a4036d1b95b985",
-  "state": "ACTIVE",
-  "evidence_refs": [],
+  "state": "HANDED_OFF",
+  "evidence_refs": [
+    "git:65d4d32b7e8f5ce6e54d1ebe52719b4be933ea23",
+    "tests/ui-owner/receipts/u3-x/erasure-feature.json"
+  ],
   "blocker_refs": [],
   "claim_id": "u3-e-erasure-20261009",
   "checkpoint_id": "U3-E",
@@ -27,5 +30,7 @@
       "checkpoint_id": "U2-S",
       "commit_sha": "ff85ee4827366bac620750010f2e648c51d3bea9"
     }
-  ]
+  ],
+  "handoff_reason": "COMPLETED",
+  "handoff_receipt_ref": "tests/ui-owner/receipts/u3-x/erasure-feature.json"
 }

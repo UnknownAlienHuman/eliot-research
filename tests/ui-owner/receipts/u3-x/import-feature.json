@@ -1,0 +1,140 @@
+{
+  "protocol": "eliotr.ui-review-receipt.v1",
+  "checkpoint": "U3-I",
+  "claim_id": "u3-i-explicit-import-20261009",
+  "status": "ACCEPTED_INTERNAL_FEATURE",
+  "source_commit": "b01b68b09b0f024bbf05bfba84308af033a02211",
+  "scope": [
+    "packages/ui/src/features/sources/import/ImportFlow.tsx",
+    "packages/ui/src/features/sources/import/import-flow.css",
+    "packages/ui/src/stories/sources/import/ImportFlow.stories.tsx"
+  ],
+  "source_blobs": {
+    "packages/ui/src/features/sources/import/ImportFlow.tsx": "33686a32da0461a3c7b6ca5cb816ab74ee5c890e",
+    "packages/ui/src/features/sources/import/import-flow.css": "2749cab6a65ecfbfb715cb21861278f7298d336c",
+    "packages/ui/src/stories/sources/import/ImportFlow.stories.tsx": "d51809e9a2425a0416829e2f3c7f2bfa7fe0a5e4"
+  },
+  "predecessors": [
+    {
+      "checkpoint_id": "C2-I",
+      "commit_sha": "18f440eb924c5da26908c974267d8e9d4492853b",
+      "approval_ref": "tests/ui-owner/receipts/u1-d/client-import.json"
+    },
+    {
+      "checkpoint_id": "U2-S",
+      "commit_sha": "ff85ee4827366bac620750010f2e648c51d3bea9"
+    }
+  ],
+  "behavior": "Explicit capture, caller-selected conversion request, separate admission and same-identity readback; frozen bundle-byte review, uncertainty prevents replacement effects. Labelled native file inputs use the Material tonal control, keyboard focus and localized copy; same-file selection remains possible.",
+  "story_checks": "Original10 PASS retained; changed UncertainOutcome1 PASS retained; actual root LiveImportJourney and LiveBundleJourney2 PASS after native-picker/reset changes. No blanket repeat.",
+  "browser_refs": [
+    ".eliotr-state/frontend-u3-import-current-20261010/review.json",
+    ".eliotr-state/frontend-u3-picker-final-20261010/review.json"
+  ],
+  "browser_result": "Current empty/uncertain/longRU15 PASS; final native picker5 PASS with stable inputs. Earlier34PASS/1overflowFAIL and repaired empty5PASS retained.",
+  "negative": "Unknown capture/conversion/admission and interrupted bundle do not expose a replacement operation. Missing explicit conversion request omits conversion.",
+  "owning_compiler": "Actual packages/ui/tsconfig.json and full accepted owner-client graph: TypeScript6.0.3 PASS0/849. Four unfinished U4/Studio leaves excluded; web root outside this qualification.",
+  "lint": "Current exact component/story scopes PASS",
+  "named_review": "Frontend manager inspected named actual screenshots. Earlier worker misread findings retained and corrected. No automatic baseline acceptance.",
+  "matrices": [
+    {
+      "path": ".eliotr-state/frontend-u3-import-current-20261010/review.json",
+      "browser": "155.0.8059.40",
+      "cases": 15,
+      "screenshots": [
+        {
+          "name": "1440-product-sources-import--empty.png",
+          "sha256": "b247fbaf8bb2b722cfaef60c7b4cb5554128e1397cdb40e6fee1922887b57977"
+        },
+        {
+          "name": "1440-product-sources-import--uncertain-outcome.png",
+          "sha256": "7ddffd703bbe9c7e2704470954742c98eb0ed89dfc635ba2a2be4b9e0c93762e"
+        },
+        {
+          "name": "1440-product-sources-import--long-russian.png",
+          "sha256": "aac3a630cb0a982b1513087da910adf34a0e2ffc20fc7743d5359e220b65491a"
+        },
+        {
+          "name": "1024-product-sources-import--empty.png",
+          "sha256": "6554ce5b456b05804599e14b3d4c997db1bb5a0f66edce11b78d9111e16f4cfa"
+        },
+        {
+          "name": "1024-product-sources-import--uncertain-outcome.png",
+          "sha256": "c25c82c02dfdecf696319ab087e128fe3e9c73ddc10cd32da4d572ce619ea1f6"
+        },
+        {
+          "name": "1024-product-sources-import--long-russian.png",
+          "sha256": "10e3153aee742d3172f014d101400f7e712e9f8ff3ef32040f2e5de6058c1f49"
+        },
+        {
+          "name": "768-product-sources-import--empty.png",
+          "sha256": "43b988d7c9664791a9d1ca4cd516c5d8e3db9f46194314752c24c734a63c20a4"
+        },
+        {
+          "name": "768-product-sources-import--uncertain-outcome.png",
+          "sha256": "47a60289bf7a0bb9bf182be183f7c2b46b46a7d63481ae74c0330f4a03c4f3a9"
+        },
+        {
+          "name": "768-product-sources-import--long-russian.png",
+          "sha256": "54d8151f0a26ae18cac078a7ca81961cc8d09264f9867dc3c8d55356beca4ccf"
+        },
+        {
+          "name": "390-product-sources-import--empty.png",
+          "sha256": "18192006c496b8369960f5bce60c52bd6910929de99d3b2d66919bea198f571c"
+        },
+        {
+          "name": "390-product-sources-import--uncertain-outcome.png",
+          "sha256": "0455a34871d9d828bf003b46cf34f75b6b7e9af33cdba82c532217f51701956b"
+        },
+        {
+          "name": "390-product-sources-import--long-russian.png",
+          "sha256": "e4c68277883da00b4e179788bbcfcfb1d2bb20c123707c243487f2777d66790b"
+        },
+        {
+          "name": "320-product-sources-import--empty.png",
+          "sha256": "7a216b95bbe2587690bf0a993a50e9013844cc06de1e142bd257a719a2e51b98"
+        },
+        {
+          "name": "320-product-sources-import--uncertain-outcome.png",
+          "sha256": "28458e97f26546064a3e609df7152e7c69a2c546b019373786717a6bdc0b4b13"
+        },
+        {
+          "name": "320-product-sources-import--long-russian.png",
+          "sha256": "9c5714226cc4c19afdbdaa8a080cfc9e67c3f660db6b57574911b2459f6a86d8"
+        }
+      ]
+    },
+    {
+      "path": ".eliotr-state/frontend-u3-picker-final-20261010/review.json",
+      "browser": "155.0.8059.40",
+      "cases": 5,
+      "screenshots": [
+        {
+          "name": "1440-product-sources-import--empty.png",
+          "sha256": "6aef6a38b6d9e11b26482e921f4b30796a0549635c3cf0d9744292059f683e2e"
+        },
+        {
+          "name": "1024-product-sources-import--empty.png",
+          "sha256": "180bd6c6dd4d02be4a29d1060815f79d5acb7e1baabd1d1a1eb4c72174c68431"
+        },
+        {
+          "name": "768-product-sources-import--empty.png",
+          "sha256": "25b84cb0ecdde8644b5b4c6ca3814d6dc132aa3c8faf2b540d0138bbef83a8c8"
+        },
+        {
+          "name": "390-product-sources-import--empty.png",
+          "sha256": "cdfd1d7567414fe792558ba3bb10d94869326a60831520d02c96d7ec96e8381c"
+        },
+        {
+          "name": "320-product-sources-import--empty.png",
+          "sha256": "71c6268ddfe64ccc07280c55b8d1bf26dd819324c6797a022ce733a35febfe42"
+        }
+      ]
+    }
+  ],
+  "normalization": "Exact commit helper normalizes trailing EOF whitespace only; no behavior change. Commit path/blob/hash/index/whitespace readback PASS.",
+  "limitations": [
+    "Feature source acceptance only. U3-X/U4-X/U5-X and FINAL-UI are not complete.",
+    "Full product CSP/performance, native screenreader/200percent zoom and staging/live/release remain pending."
+  ]
+}

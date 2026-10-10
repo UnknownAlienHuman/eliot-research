@@ -1,0 +1,172 @@
+{
+  "protocol": "eliotr.ui-review-receipt.v1",
+  "checkpoint": "U3-E",
+  "claim_id": "u3-e-erasure-20261009",
+  "status": "ACCEPTED_INTERNAL_FEATURE",
+  "source_commit": "65d4d32b7e8f5ce6e54d1ebe52719b4be933ea23",
+  "scope": [
+    "packages/ui/src/features/sources/erasure/ErasureFeature.tsx",
+    "packages/ui/src/features/sources/erasure/erasure.css",
+    "packages/ui/src/stories/sources/erasure/ErasureFeature.stories.tsx"
+  ],
+  "source_blobs": {
+    "packages/ui/src/features/sources/erasure/ErasureFeature.tsx": "b393d51be2f1dfd8b5092d0232d96a9200a40485",
+    "packages/ui/src/features/sources/erasure/erasure.css": "4b3231c8f92bc5e45b6a000601b0b3dfd7d5a31e",
+    "packages/ui/src/stories/sources/erasure/ErasureFeature.stories.tsx": "c9d331013264f4870c5bdfe65646ca0613042f37"
+  },
+  "predecessors": [
+    {
+      "checkpoint_id": "C2-E",
+      "commit_sha": "84073bc1c7f83584ec82acb99728ed585bfe27cf",
+      "approval_ref": "tests/ui-owner/receipts/u1-d/client-erasure.json"
+    },
+    {
+      "checkpoint_id": "U2-S",
+      "commit_sha": "ff85ee4827366bac620750010f2e648c51d3bea9"
+    }
+  ],
+  "behavior": "Exact server-prepared deletion review, separate partial/held/unknown/error states and matching completion proof; saved status hides destructive confirmation.",
+  "story_checks": "Original10 PASS retained. Root saved-identity ErasureJourney PASS retained; new failed-readback recovery1 PASS, no repeated destructive effect. Root integration remains independently pending.",
+  "browser_refs": [
+    ".eliotr-state/frontend-u3-erasure-rendered-20261010/review.json"
+  ],
+  "browser_result": "30 PASS stable inputs, including long Russian dark narrow. Named review corrected an unsubstantiated clipping finding; no speculative CSS change.",
+  "negative": "Partial/blocked/revoked/unknown status is never complete and saved status never exposes another destructive confirmation.",
+  "owning_compiler": "Actual packages/ui/tsconfig.json and full accepted owner-client graph: TypeScript6.0.3 PASS0/849. Four unfinished U4/Studio leaves excluded; web root outside this qualification.",
+  "lint": "Current exact component/story scopes PASS",
+  "named_review": "Frontend manager inspected named actual screenshots. Earlier worker misread findings retained and corrected. No automatic baseline acceptance.",
+  "matrices": [
+    {
+      "path": ".eliotr-state/frontend-u3-erasure-rendered-20261010/review.json",
+      "browser": "155.0.8059.40",
+      "cases": 30,
+      "screenshots": [
+        {
+          "name": "1440-product-erasure--useful.png",
+          "sha256": "e97cb1b5b37565ded57fc5e5078582cc53656f8e4b6b888ab82fad6a1cdbcbf6"
+        },
+        {
+          "name": "1440-product-erasure--loading.png",
+          "sha256": "b5b69988c9c57d9c03b36096103e5845a6a47945210ef53692aeb43bace9fd51"
+        },
+        {
+          "name": "1440-product-erasure--empty.png",
+          "sha256": "5d0c6f49fa434fcbbde4cb8d859a2db12d7d013b26497b55cc7b597576205d12"
+        },
+        {
+          "name": "1440-product-erasure--degraded.png",
+          "sha256": "070521a99b75609424b9d9052ae6b7c60b90d7adab4f0dad65ed6f61d5a0446c"
+        },
+        {
+          "name": "1440-product-erasure--error.png",
+          "sha256": "53ecaa1482cf1bff60254535533992d4f648cc14573cb53e208316054cd39455"
+        },
+        {
+          "name": "1440-product-erasure--long-russian-dark-narrow.png",
+          "sha256": "435ebdb323b9af305d64d2b9b1d948d10be06c9d77cf225930faa2a14e5c99dd"
+        },
+        {
+          "name": "1024-product-erasure--useful.png",
+          "sha256": "49fc3909ad44af5924f758067d858c71c975c7606236ebebad8539037fa62655"
+        },
+        {
+          "name": "1024-product-erasure--loading.png",
+          "sha256": "423bb56ef5894165f4955768b116d3f4f4f2699f61532e45ca43169abc9bfb55"
+        },
+        {
+          "name": "1024-product-erasure--empty.png",
+          "sha256": "5bbe682a59985d3a806947477b9353a0888a6c6e02750748640a24343f2febf6"
+        },
+        {
+          "name": "1024-product-erasure--degraded.png",
+          "sha256": "0cc03bac90d1010d9ea74f88b1bf5eb6ce3ae7848dee722fc2c903bca5b1b512"
+        },
+        {
+          "name": "1024-product-erasure--error.png",
+          "sha256": "cd4ffcbdd0faae9dfb7a4364a72f4387d2b67841055f4c7f27f13e0394ae8f4e"
+        },
+        {
+          "name": "1024-product-erasure--long-russian-dark-narrow.png",
+          "sha256": "249c4657eb1d74edb57986797cb9e95421c7e4cd800114c4ff57c22f932d9a58"
+        },
+        {
+          "name": "768-product-erasure--useful.png",
+          "sha256": "d822df0c2bcf17b56ba1ecfa1014f1ee20165b0e2926a13256965c3274f362f2"
+        },
+        {
+          "name": "768-product-erasure--loading.png",
+          "sha256": "489845f382603033bf21c3145059e976de18045f7935b50f1f8ff18c053e0ae8"
+        },
+        {
+          "name": "768-product-erasure--empty.png",
+          "sha256": "9b6256651e29bd75818ee2508a96379e2ca2a0da875b60e114a02b8f4ac63592"
+        },
+        {
+          "name": "768-product-erasure--degraded.png",
+          "sha256": "0e80ddaf75eba7489547971bea26be143cb8a89e75ffbd1e02fd3c4ef2a955c7"
+        },
+        {
+          "name": "768-product-erasure--error.png",
+          "sha256": "195033356f1dd864ac964b3cdd1117cab2e988792468737fa2edb7f6c701229a"
+        },
+        {
+          "name": "768-product-erasure--long-russian-dark-narrow.png",
+          "sha256": "21e6e9b5018fe7df442ca11396d243a15e26d4487f6cbdfabc898a19664daf02"
+        },
+        {
+          "name": "390-product-erasure--useful.png",
+          "sha256": "334439f22afeecbf721b54d926d62da9f98c376014c48266cce3246f95f290e1"
+        },
+        {
+          "name": "390-product-erasure--loading.png",
+          "sha256": "37fd60518b455f2266a47bb0a6f4a8d027dc3ec88511feefd21d2d764c3ca036"
+        },
+        {
+          "name": "390-product-erasure--empty.png",
+          "sha256": "3576ea62b958e8172b118fc2000cb9568a3f7cab3614943f4ff5881e14503791"
+        },
+        {
+          "name": "390-product-erasure--degraded.png",
+          "sha256": "5cb7a2f3bfdd616f97701c1b44cd19adb7fab4378e3cc8ab12894e68bb035585"
+        },
+        {
+          "name": "390-product-erasure--error.png",
+          "sha256": "d9e38bf439e26058ae5a23f9de61247cea5ca81a12536b00bdc8a7a719417b11"
+        },
+        {
+          "name": "390-product-erasure--long-russian-dark-narrow.png",
+          "sha256": "2e859efaf968853c5d43bd29e50f892f2106d243b484bcaf2762c4f78c06f5c6"
+        },
+        {
+          "name": "320-product-erasure--useful.png",
+          "sha256": "864229b2eab0a8b2402fa3cdd02327a1563e4006a6a3ed8a86e5f45e09a63623"
+        },
+        {
+          "name": "320-product-erasure--loading.png",
+          "sha256": "7ac6616cefdd96dc666e0aa9ccf77b110e03cccaf953fb984b02b96f5eea3d95"
+        },
+        {
+          "name": "320-product-erasure--empty.png",
+          "sha256": "fd02642d7e119c45795f414ef69b025b86cdfd0656687940cecf8c896e83a072"
+        },
+        {
+          "name": "320-product-erasure--degraded.png",
+          "sha256": "15d5dd2d88d489aa2f4d69d51b298a0e8624e4ec5c594c0f9e34967526db1972"
+        },
+        {
+          "name": "320-product-erasure--error.png",
+          "sha256": "e282a229b5164bace9f3858c51810b443824efb58c7c93ab70aefd98e4947387"
+        },
+        {
+          "name": "320-product-erasure--long-russian-dark-narrow.png",
+          "sha256": "962e2302909d2a1b4da74c0cffe2b785fac3d281c30abe7f3ccc9bc05b3f3417"
+        }
+      ]
+    }
+  ],
+  "normalization": "Exact commit helper normalizes trailing EOF whitespace only; no behavior change. Commit path/blob/hash/index/whitespace readback PASS.",
+  "limitations": [
+    "Feature source acceptance only. U3-X/U4-X/U5-X and FINAL-UI are not complete.",
+    "Full product CSP/performance, native screenreader/200percent zoom and staging/live/release remain pending."
+  ]
+}

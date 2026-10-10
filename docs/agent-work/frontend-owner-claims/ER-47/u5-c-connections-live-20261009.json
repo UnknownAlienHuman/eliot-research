@@ -5,8 +5,11 @@
   "owner_authorization_ref": "tests/ui-owner/receipts/owner-authorization.json",
   "base_sha": "7e376fb9a006d97fdc5fba4c41ee6860777128dd",
   "history_base_sha": "c37e56e0ebdfc7f6d294879008a4036d1b95b985",
-  "state": "ACTIVE",
-  "evidence_refs": [],
+  "state": "HANDED_OFF",
+  "evidence_refs": [
+    "git:00c4f9139f38473b5f956e39aca492c2e626f72f",
+    "tests/ui-owner/receipts/u5-x/connections-feature.json"
+  ],
   "blocker_refs": [],
   "claim_id": "u5-c-connections-live-20261009",
   "checkpoint_id": "U5-C",
@@ -28,5 +31,7 @@
       "commit_sha": "a86901bc9e5523a0047f20509c5d218b62c2c997",
       "approval_ref": "tests/ui-owner/receipts/u2-x/u2-c.json"
     }
-  ]
+  ],
+  "handoff_reason": "COMPLETED",
+  "handoff_receipt_ref": "tests/ui-owner/receipts/u5-x/connections-feature.json"
 }

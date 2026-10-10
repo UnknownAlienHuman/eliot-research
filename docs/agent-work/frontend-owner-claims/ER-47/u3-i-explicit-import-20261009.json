@@ -5,8 +5,11 @@
   "owner_authorization_ref": "tests/ui-owner/receipts/owner-authorization.json",
   "base_sha": "463ceeb31a0bcff363b118a197d537aedfe5b9db",
   "history_base_sha": "c37e56e0ebdfc7f6d294879008a4036d1b95b985",
-  "state": "ACTIVE",
-  "evidence_refs": [],
+  "state": "HANDED_OFF",
+  "evidence_refs": [
+    "git:b01b68b09b0f024bbf05bfba84308af033a02211",
+    "tests/ui-owner/receipts/u3-x/import-feature.json"
+  ],
   "blocker_refs": [],
   "claim_id": "u3-i-explicit-import-20261009",
   "checkpoint_id": "U3-I",
@@ -27,5 +30,7 @@
       "checkpoint_id": "U2-S",
       "commit_sha": "ff85ee4827366bac620750010f2e648c51d3bea9"
     }
-  ]
+  ],
+  "handoff_reason": "COMPLETED",
+  "handoff_receipt_ref": "tests/ui-owner/receipts/u3-x/import-feature.json"
 }

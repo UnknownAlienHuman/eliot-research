@@ -1,0 +1,229 @@
+{
+  "protocol": "eliotr.ui-review-receipt.v1",
+  "checkpoint": "U5-C",
+  "claim_id": "u5-c-connections-live-20261009",
+  "status": "ACCEPTED_INTERNAL_FEATURE",
+  "source_commit": "00c4f9139f38473b5f956e39aca492c2e626f72f",
+  "scope": [
+    "packages/ui/src/features/connections/ConnectionsFeature.tsx",
+    "packages/ui/src/features/connections/connections.css",
+    "packages/ui/src/stories/connections/live/ConnectionsFeature.stories.tsx"
+  ],
+  "source_blobs": {
+    "packages/ui/src/features/connections/ConnectionsFeature.tsx": "d07aba985662f500dbbb36b43bd913985d5a464f",
+    "packages/ui/src/features/connections/connections.css": "72d1c7b803ccf502726cdee8afddf5076e32f15f",
+    "packages/ui/src/stories/connections/live/ConnectionsFeature.stories.tsx": "c58bc6241ab435b2f66c985f9776d63dc5bdffee"
+  },
+  "predecessors": [
+    {
+      "checkpoint_id": "C3-C",
+      "commit_sha": "70fc1bd31c6d079037513da32812ac4d3c3dad6b",
+      "approval_ref": "tests/ui-owner/receipts/u1-d/client-connections.json"
+    },
+    {
+      "checkpoint_id": "U2-C",
+      "commit_sha": "a86901bc9e5523a0047f20509c5d218b62c2c997",
+      "approval_ref": "tests/ui-owner/receipts/u2-x/u2-c.json"
+    }
+  ],
+  "behavior": "Independent server, owner session, grant, provider configuration, model, readiness, transport and observed-client facts; valid empty provider list is Not configured. Calm labelled rows adapt to compact screens and committed dark tokens.",
+  "story_checks": "Original23 PASS retained; new valid-empty-provider story1 PASS retained. Scoped lint of current component/story PASS.",
+  "browser_refs": [
+    ".eliotr-state/frontend-u5-connections-refined-20261010/review.json",
+    ".eliotr-state/frontend-u5-provider-empty-20261010/review.json",
+    ".eliotr-state/frontend-u5-connections-dark-20261010/review.json"
+  ],
+  "browser_result": "Refined30 PASS, provider-empty5 PASS, added longRU dark5 PASS; stable inputs. Named desktop/compact/error/RU/dark images inspected.",
+  "negative": "Health/configuration alone never claims client connectivity; empty configuration is not a failed read and a provider failure does not overwrite health.",
+  "owning_compiler": "Actual packages/ui/tsconfig.json and full accepted owner-client graph: TypeScript6.0.3 PASS0/849. Four unfinished U4/Studio leaves excluded; web root outside this qualification.",
+  "lint": "Current exact component/story scopes PASS",
+  "named_review": "Frontend manager inspected named actual screenshots. Earlier worker misread findings retained and corrected. No automatic baseline acceptance.",
+  "matrices": [
+    {
+      "path": ".eliotr-state/frontend-u5-connections-refined-20261010/review.json",
+      "browser": "155.0.8059.40",
+      "cases": 30,
+      "screenshots": [
+        {
+          "name": "1440-product-connections-live--useful.png",
+          "sha256": "c32d0beda5767ffd56bb55b2aa3c336ab68e3e3ec35ddd08dec6a7f1383cdb6e"
+        },
+        {
+          "name": "1440-product-connections-live--empty.png",
+          "sha256": "d6c2f94c280bae691891ef9a25000143e7cc35e0ffe1dcb5553d122679ccbcb3"
+        },
+        {
+          "name": "1440-product-connections-live--loading.png",
+          "sha256": "ff749622e795a1848b604e62d4586b1611d00de8683a32ab023195bec09fb999"
+        },
+        {
+          "name": "1440-product-connections-live--degraded.png",
+          "sha256": "df96ee9682de2a4c209a94d5998e5cb7d1d75f51dc592f55f6d14bff914fc52a"
+        },
+        {
+          "name": "1440-product-connections-live--failed.png",
+          "sha256": "8a91e9fbeee417347f54cc2181c058e3e581445b76b01ff9bef213e7f3bdf4c3"
+        },
+        {
+          "name": "1440-product-connections-live--long-russian.png",
+          "sha256": "354caf2d41ddc9f62f029a823453670f6904cbb249f44ce583b53dc2c7268cc8"
+        },
+        {
+          "name": "1024-product-connections-live--useful.png",
+          "sha256": "a9628498b9b4d9fcc83593aabf183a2f64ab2d394154d7dd50b06c8110dd44a9"
+        },
+        {
+          "name": "1024-product-connections-live--empty.png",
+          "sha256": "1081a9b5a549efafc940fbeb01e8c856c5fe1ee03e380b5ba2f729caa61af510"
+        },
+        {
+          "name": "1024-product-connections-live--loading.png",
+          "sha256": "63ca16598ce3faa8dcb49d38c19b6be92ca61265a9a99ead24bcd2fe41702369"
+        },
+        {
+          "name": "1024-product-connections-live--degraded.png",
+          "sha256": "99632bc4dea3e0f467c33b874430b8b91870472fee09d48f1e338d9f00ef2038"
+        },
+        {
+          "name": "1024-product-connections-live--failed.png",
+          "sha256": "a3f871ee5a9d529d9c56bc9188a843851beb8ab996e68a0e17b5d3b457615161"
+        },
+        {
+          "name": "1024-product-connections-live--long-russian.png",
+          "sha256": "84e9368c6156fe4e3b298e7267835307048b2a28a70e1080913f2621a14cf6ea"
+        },
+        {
+          "name": "768-product-connections-live--useful.png",
+          "sha256": "a89af8626ca36f955063fad335f81ef54a16339dd2cbaeb6d018297caf1d0122"
+        },
+        {
+          "name": "768-product-connections-live--empty.png",
+          "sha256": "a61c9c0915ca32b4e086bac79aabe0c65efa3875d644cb54cddd671569e71ad3"
+        },
+        {
+          "name": "768-product-connections-live--loading.png",
+          "sha256": "ccca1110e391c22fc61243a6d738e10c6ac78377a6b95671aea775115f82da14"
+        },
+        {
+          "name": "768-product-connections-live--degraded.png",
+          "sha256": "4e19d080523f81edf98424295e069e02bb08ad660ea17779467724a2f3299b95"
+        },
+        {
+          "name": "768-product-connections-live--failed.png",
+          "sha256": "e689c388d4d2b5d304f15c9694158c3f563b5d133ad87321ba91648013c36e1e"
+        },
+        {
+          "name": "768-product-connections-live--long-russian.png",
+          "sha256": "c67e79e3f8d16868d63568c1c33f6e82d005a50b3f989c425ed34c6bcbc7acc3"
+        },
+        {
+          "name": "390-product-connections-live--useful.png",
+          "sha256": "c768bd0431b884e82f9dbbb27e3de5ff191f6d238075c182ace6d2a70cba1679"
+        },
+        {
+          "name": "390-product-connections-live--empty.png",
+          "sha256": "b672ae778833ea6f630512d5787e720ed94cfe689e18362d6ffb1e4b0514a891"
+        },
+        {
+          "name": "390-product-connections-live--loading.png",
+          "sha256": "ce65001bfb3cf7d83438d978b8bfc71fdb92c181aa0f3c1f154c7710eea4dcff"
+        },
+        {
+          "name": "390-product-connections-live--degraded.png",
+          "sha256": "c768bd0431b884e82f9dbbb27e3de5ff191f6d238075c182ace6d2a70cba1679"
+        },
+        {
+          "name": "390-product-connections-live--failed.png",
+          "sha256": "3b7f409641fccf36f8e318a1473070931f8d515c0bb41ea14e9aab8c2648293e"
+        },
+        {
+          "name": "390-product-connections-live--long-russian.png",
+          "sha256": "210d37911034e734e3d777ab78d59b8b3231119eee3d74d7d01b4b4a3a3a1e53"
+        },
+        {
+          "name": "320-product-connections-live--useful.png",
+          "sha256": "dad77af483c3460ae1c5e60d55e97939ec5ff6aa3564cc8be103bb65211b03c1"
+        },
+        {
+          "name": "320-product-connections-live--empty.png",
+          "sha256": "2cd5d65a3292ecfdc400a3bebf40a6a045d7075875160782a61c8f2d7bc8caec"
+        },
+        {
+          "name": "320-product-connections-live--loading.png",
+          "sha256": "763a0c731d9803a8a912ffc3be28a650470effac4cea348eee5f160149283b86"
+        },
+        {
+          "name": "320-product-connections-live--degraded.png",
+          "sha256": "dad77af483c3460ae1c5e60d55e97939ec5ff6aa3564cc8be103bb65211b03c1"
+        },
+        {
+          "name": "320-product-connections-live--failed.png",
+          "sha256": "129901025ad9d5e249bd29aac80f725d515140ec7c39e23e4f121a1b32d594ae"
+        },
+        {
+          "name": "320-product-connections-live--long-russian.png",
+          "sha256": "4db39fd4aba214e6247e46e0e438742d16a5dd5c99f8b2ff5782ae8699df7745"
+        }
+      ]
+    },
+    {
+      "path": ".eliotr-state/frontend-u5-provider-empty-20261010/review.json",
+      "browser": "155.0.8059.40",
+      "cases": 5,
+      "screenshots": [
+        {
+          "name": "1440-product-connections-live--provider-empty-list.png",
+          "sha256": "89b91511af0bac48a52c5d93023965eeaf444df13325d7f4eb211209bb1c1e72"
+        },
+        {
+          "name": "1024-product-connections-live--provider-empty-list.png",
+          "sha256": "3da67604994b95f712a1ba774f382cba3e65bebb579a38461507f69592059256"
+        },
+        {
+          "name": "768-product-connections-live--provider-empty-list.png",
+          "sha256": "ff404a7785c6096d869433297c84a0bfea7b308143e4dd65a427e845a450a712"
+        },
+        {
+          "name": "390-product-connections-live--provider-empty-list.png",
+          "sha256": "340822a15e27e4bd5c13df6c69806fa11df70542a0e00cbae1fd90407bc5b271"
+        },
+        {
+          "name": "320-product-connections-live--provider-empty-list.png",
+          "sha256": "75e97c044be50ebd65ad2a5432ac8c19218ac45a58b74b826d38c911be52d1c0"
+        }
+      ]
+    },
+    {
+      "path": ".eliotr-state/frontend-u5-connections-dark-20261010/review.json",
+      "browser": "155.0.8059.40",
+      "cases": 5,
+      "screenshots": [
+        {
+          "name": "1440-product-connections-live--long-russian-dark.png",
+          "sha256": "f1ce5bdc51a4c2eecdf2b6e12ac806f4c72baddb57dc00c9fb40a8fc6deb5b05"
+        },
+        {
+          "name": "1024-product-connections-live--long-russian-dark.png",
+          "sha256": "ee59c6338150d106eae7427a8f552be12ff83773498cc7707aab71f20b96118f"
+        },
+        {
+          "name": "768-product-connections-live--long-russian-dark.png",
+          "sha256": "58ff0d113a97961d2b1dca04052b30fee5eabde99be7d0b14ebf7335777dc466"
+        },
+        {
+          "name": "390-product-connections-live--long-russian-dark.png",
+          "sha256": "90c7dd1e5383ebce8ff9419d26e0bc061f168e0f3a85d9b9bf444854c0470827"
+        },
+        {
+          "name": "320-product-connections-live--long-russian-dark.png",
+          "sha256": "74216888ac70d294f874e474762213cff00677923571c6d33c5fa2504c180fc2"
+        }
+      ]
+    }
+  ],
+  "normalization": "Exact commit helper normalizes trailing EOF whitespace only; no behavior change. Commit path/blob/hash/index/whitespace readback PASS.",
+  "limitations": [
+    "Feature source acceptance only. U3-X/U4-X/U5-X and FINAL-UI are not complete.",
+    "Full product CSP/performance, native screenreader/200percent zoom and staging/live/release remain pending."
+  ]
+}
