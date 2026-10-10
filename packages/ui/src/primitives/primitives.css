@@ -187,6 +187,9 @@
 
 .er-dialog {
   box-sizing: border-box;
+  margin: auto;
+  max-block-size: calc(100dvh - 2 * var(--eliot-space-panel));
+  overflow: auto;
   border: none;
   border-radius: var(--eliot-shape-extra-large);
   background-color: var(--md-sys-color-surface-container-high);
