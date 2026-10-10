@@ -5,9 +5,9 @@ import { ProjectsLibraryFeature, type ProjectsLibraryFeatureProps } from "../../
 
 // Native assertions/callback recording follow app previews; no test-addon runtime import.
 const recordedActions = new WeakMap<(value: string) => void, string[]>();
-function recordAction(): (value: string) => void {
+function recordAction(): (value?: string) => void {
   const calls: string[] = [];
-  const action = (value: string) => { calls.push(value); };
+  const action = (value?: string) => { calls.push(value ?? "retry"); };
   recordedActions.set(action, calls);
   return action;
 }
@@ -40,10 +40,28 @@ function assertNoFalseAbsence(canvas: HTMLElement): void {
   assert(!text.includes("No sources in this project."), "Missing selection/page must not claim source absence.");
 }
 function requireStatus(canvas: HTMLElement, text: string): HTMLElement {
+  // Visible quiet Status element: static text keeps its meaning without announcing.
   const element = Array.from(canvas.getElementsByTagName("*"))
-    .find(candidate => candidate.getAttribute("role") === "status" && candidate.textContent?.includes(text));
-  assert(element instanceof HTMLElement, "Missing native status: " + text);
+    .find(candidate => candidate.getAttribute("role") !== "status" && candidate.textContent?.includes(text)
+      && candidate.getElementsByTagName("*").length === 0);
+  assert(element instanceof HTMLElement, "Missing visible status: " + text);
   return element;
+}
+
+/** No status, live region or alert may exist for this presentation-only reader. */
+function requireNoAnnouncingElement(canvas: HTMLElement): void {
+  const announcing = Array.from(canvas.querySelectorAll('[role="status"], [aria-live], [role="alert"]'));
+  assert(announcing.length === 0, "Feature must not create per-status announcements: " + String(announcing.map(node => node.textContent?.trim())));
+}
+
+/** Readiness is panel zero and saved versions is panel one, so retries stay panel-scoped. */
+function requirePanels(canvas: HTMLElement): { readonly readiness: HTMLElement; readonly versions: HTMLElement } {
+  const panels = Array.from(canvas.querySelectorAll(".er-projects-library__panel"));
+  assert(panels.length === 2, "Both readiness and versions panels must exist.");
+  const readiness = panels[0];
+  const versions = panels[1];
+  assert(readiness instanceof HTMLElement && versions instanceof HTMLElement, "Each panel must be an element.");
+  return { readiness, versions };
 }
 
 const SOURCE_ID = "src-0001-efgh";
@@ -225,4 +243,59 @@ export const InteractionJourney: StoryObj<typeof ProjectsLibraryFeature> = {
 export const LongRussianDark: StoryObj<typeof ProjectsLibraryFeature> = {
   args: base({ ...LongRussian.args }),
   render: args => <div data-theme="dark" lang="ru"><ProjectsLibraryFeature {...args} /></div>,
+};
+
+/**
+ * Readiness and versions fail together in one pane. Each panel keeps its own visible message,
+ * neither announces, and each retry invokes only its own callback.
+ */
+export const ReadinessAndVersionsFailed: StoryObj<typeof ProjectsLibraryFeature> = {
+  args: base({
+    readiness: undefined, readinessState: "degraded",
+    revisions: undefined, revisionsState: "error",
+    onRetryReadiness: recordAction(), onRetryRevisions: recordAction(),
+  }),
+  play: ({ canvasElement, args }) => {
+    const panels = requirePanels(canvasElement);
+    const retryReadiness = resetAction(args.onRetryReadiness);
+    const retryRevisions = resetAction(args.onRetryRevisions);
+    assert(requireStatus(panels.readiness, "Readiness is temporarily unavailable. You can still choose a project.").getClientRects().length > 0,
+      "Readiness failure must stay visible inside its own panel.");
+    // The versions panel reuses the existing library copy, so no new string is invented here.
+    assert(requireStatus(panels.versions, "Sources could not be loaded.").getClientRects().length > 0,
+      "Versions failure must stay visible inside its own panel.");
+    requireNoAnnouncingElement(canvasElement);
+    requireButton(panels.readiness, "Try again").click();
+    assert(retryReadiness.length === 1 && retryRevisions.length === 0,
+      "Only the readiness callback may answer the readiness panel retry.");
+    requireButton(panels.versions, "Try again").click();
+    assert(Number(retryRevisions.length) === 1 && retryReadiness.length === 1,
+      "Only the versions callback may answer the versions panel retry; readiness stays unchanged.");
+  },
+};
+
+/**
+ * The same simultaneous failure in Russian: both existing localized messages stay quiet and
+ * each keeps its own retry, so localization adds no announcement either.
+ */
+export const ReadinessAndVersionsFailedRussian: StoryObj<typeof ProjectsLibraryFeature> = {
+  args: { ...ReadinessAndVersionsFailed.args, locale: "ru",
+    onRetryReadiness: recordAction(), onRetryRevisions: recordAction() },
+  render: args => <div className="eliot-token-story" lang="ru"><ProjectsLibraryFeature {...args} /></div>,
+  play: ({ canvasElement, args }) => {
+    const panels = requirePanels(canvasElement);
+    const retryReadiness = resetAction(args.onRetryReadiness);
+    const retryRevisions = resetAction(args.onRetryRevisions);
+    assert(requireStatus(panels.readiness, "Готовность временно недоступна. Можно выбрать другой проект.").getClientRects().length > 0,
+      "Russian readiness failure must stay visible.");
+    assert(requireStatus(panels.versions, "Не удалось загрузить источники.").getClientRects().length > 0,
+      "Russian versions failure must stay visible.");
+    requireNoAnnouncingElement(canvasElement);
+    requireButton(panels.readiness, "Повторить").click();
+    assert(retryReadiness.length === 1 && retryRevisions.length === 0,
+      "Only the Russian readiness callback may answer the readiness panel retry.");
+    requireButton(panels.versions, "Повторить").click();
+    assert(Number(retryRevisions.length) === 1 && retryReadiness.length === 1,
+      "Only the Russian versions callback may answer the versions panel retry.");
+  },
 };
