@@ -24,6 +24,7 @@ from the tables below, so an unlisted file is a bug, not an omission you may ign
 | [backend-entrypoints.md](backend-entrypoints.md) | Current backend router, dependency-ready cards, donor decisions and shared integration boundaries. |
 | [backend-delivery-plan.md](backend-delivery-plan.md) | Owner-resumed checkpoint, historical October 6 evidence and separate assembled-product acceptance. |
 | [backend-checkpoint-2026-10-08.md](backend-checkpoint-2026-10-08.md) | Published backend slices, scoped verification and remaining acceptance. |
+| [r05-local-native-qualification-2026-10-09.md](r05-local-native-qualification-2026-10-09.md) | Bounded local R05 and Session native results, preserved failures and unqualified product/live gates. |
 | [backend-contract-conflicts.md](backend-contract-conflicts.md) | Concrete contract conflicts and missing inputs for owner review. |
 | [frontend-platform-migration.md](frontend-platform-migration.md) | React/Vite executable migration route. |
 | [frontend-stack-validation-2026-10-08.md](frontend-stack-validation-2026-10-08.md) | Stack, Cloudflare, primitive, binding and compatibility validation. |
@@ -54,6 +55,7 @@ from the tables below, so an unlisted file is a bug, not an omission you may ign
 | [read-extract-proposal-cutover.md](read-extract-proposal-cutover.md) | READ proposal cardinality and stage-admission conflict before activation. |
 | [branch-query-budget-selection.md](branch-query-budget-selection.md) | Missing immutable branch-query budget selection and denial without explicit limits. |
 | [workflow-conversion-admission-cutover.md](workflow-conversion-admission-cutover.md) | Required selected conversion inputs, current authority and explicit scope cutover. |
+| [native-external-task-wait-cutover.md](native-external-task-wait-cutover.md) | Native external-task prepare/wait/settle topology, callback/outbox authority and acceptance boundaries. |
 | [managed-generation-promotion-fence.md](managed-generation-promotion-fence.md) | Shadow key cutover, complete required-set evidence and existing pointer authority. |
 | [research-session-projection-protocol.md](research-session-projection-protocol.md) | Strict read-only Agent RPC snapshot contract and pending lifecycle qualification. |
 | [rust-kernel-abi-versioning.md](rust-kernel-abi-versioning.md) | Versioned Rust/Wasm ABI and the consumer-newer compatibility guard. |
