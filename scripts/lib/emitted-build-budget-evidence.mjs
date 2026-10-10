@@ -18,7 +18,7 @@ export const WORKER_GZIP_BUDGET_BYTES = 4 * KIB * KIB;
 export const OWNER_WEB_INITIAL_GZIP_BUDGET_BYTES = 600 * KIB;
 export const RECEIPT_PROTOCOL = "eliotr.emitted-build-budget-receipt.v1";
 export const DEFAULT_RECEIPT_PATH = "apps/eliotr-core/.wrangler/s90-emitted-budget-receipt.json";
-
+export const RETAINED_OWNER_WEB_REUSE_ARTIFACT_ROOT = ".eliotr-state/frontend-finite-composition-20261010/static-review-dist";
 const EXPECTED_BUILD_COMMANDS = Object.freeze({
   combined: "pnpm build:pwa && pnpm --filter @eliotr/core deploy:dry-run",
   emitted: "node scripts/check-emitted-budgets.mjs",
@@ -29,11 +29,12 @@ const EXPECTED_BUILD_COMMANDS = Object.freeze({
 });
 const EXPECTED_ENVIRONMENT_PROFILE =
   "local dry-run; top-level Wrangler config; no --remote; no explicit target environment";
-const SOURCE_BUDGET_DIAGNOSTIC_POLICY = "separate maintainability diagnostics; not runtime metrics";
+export const SOURCE_BUDGET_DIAGNOSTIC_POLICY = "separate maintainability diagnostics; not runtime metrics";
 const EMITTED_ARTIFACT_ROOTS = Object.freeze([
   "apps/eliotr-core/dist",
   "apps/eliotr-pwa/dist",
   "apps/eliotr-web/dist",
+  RETAINED_OWNER_WEB_REUSE_ARTIFACT_ROOT,
 ]);
 // The owner-web candidate build is measured through this same receipt
 // authority. Its artifacts stay separate from the PWA release path so the
@@ -43,7 +44,7 @@ const OWNER_WEB_DIST_ROOT = "apps/eliotr-web/dist/client";
 // reports cannot reconstruct Wrangler's ordered module-byte input to gzip.
 const freshNativeWorkerMeasurements = new WeakSet();
 
-function sha256(value) {
+export function sha256(value) {
   return createHash("sha256").update(value).digest("hex");
 }
 
@@ -61,7 +62,7 @@ function isAllowedEmittedArtifactPath(path) {
     path === artifactRoot || path.startsWith(artifactRoot + "/"));
 }
 
-async function resolveSafeEmittedArtifactPath(root, artifactPath) {
+export async function resolveSafeEmittedArtifactPath(root, artifactPath) {
   if (!isAllowedEmittedArtifactPath(artifactPath)) {
     throw new Error("Artifact path is outside the exact emitted build locations");
   }
@@ -116,7 +117,7 @@ function cleanModuleName(value) {
   return name.replace(/^(\.\.\/)+/u, "workspace/");
 }
 
-function runGit(root, args) {
+export function runGit(root, args) {
   return execFileSync("git", args, { cwd: root });
 }
 
@@ -193,7 +194,7 @@ async function listFiles(root, artifactDirectory) {
   return result.sort((left, right) => left.relative.localeCompare(right.relative));
 }
 
-function isJavaScriptPath(path) {
+export function isJavaScriptPath(path) {
   return [".js", ".mjs", ".cjs"].includes(extname(path).toLowerCase());
 }
 
@@ -305,7 +306,7 @@ function parseHtmlScripts(html, htmlPath, distRoot) {
   return { roots, inline };
 }
 
-function aggregateClosure(startPaths, graph, followDynamicImports) {
+export function aggregateClosure(startPaths, graph, followDynamicImports) {
   const seen = new Set();
   const pending = [...startPaths];
   while (pending.length > 0) {
@@ -599,10 +600,13 @@ export async function inspectPwaBuild(root, buildStartedAt) {
   };
 }
 
-export async function inspectWebBuild(root, buildStartedAt) {
-  const distRoot = resolve(root, OWNER_WEB_DIST_ROOT);
-  const files = (await listFiles(root, OWNER_WEB_DIST_ROOT)).filter((entry) =>
-    !entry.relative.split("/").some((part) => part.startsWith(".")),
+export async function inspectWebBuild(root, buildStartedAt, options = {}) {
+  const artifactRoot = options.artifactRoot ?? OWNER_WEB_DIST_ROOT;
+  const includeHidden = options.includeHidden === true;
+  const checkMtimeFreshness = options.checkMtimeFreshness !== false;
+  const distRoot = resolve(root, artifactRoot);
+  const files = (await listFiles(root, artifactRoot)).filter((entry) =>
+    includeHidden || !entry.relative.split("/").some((part) => part.startsWith(".")),
   );
   const issues = [];
   const graphFiles = files.filter((file) => isJavaScriptPath(file.relative));
@@ -653,11 +657,12 @@ export async function inspectWebBuild(root, buildStartedAt) {
           issues.push("HTML script reference is not a JavaScript asset: " + htmlFile.relative);
         }
       }
-      routeScripts.push({
+      const routeScript = {
         htmlPath: htmlFile.relative,
         entryPaths: [...new Set(scripts.roots.map((rootEntry) => rootEntry.path))],
         inline: scripts.inline,
-      });
+      };
+      routeScripts.push(routeScript);
     } catch (error) {
       issues.push((error?.message ?? "HTML entry parse failed") + ": " + htmlFile.relative);
     }
@@ -683,6 +688,7 @@ export async function inspectWebBuild(root, buildStartedAt) {
       }
       referenced.add(path);
     }
+
     const resources = [...initial]
       .filter((path) => bytesByPath.has(path))
       .map((path) => ({
@@ -690,14 +696,16 @@ export async function inspectWebBuild(root, buildStartedAt) {
         rawBytes: bytesByPath.get(path).byteLength,
         gzipBytes: gzipSync(bytesByPath.get(path), { level: 9 }).byteLength,
       }));
-    routeSummaries.push({
+    const routeSummary = {
       htmlPath: route.htmlPath,
       initialJavaScript: {
         rawBytes: resources.reduce((sum, item) => sum + item.rawBytes, 0),
         gzipBytes: resources.reduce((sum, item) => sum + item.gzipBytes, 0),
         resources,
       },
-    });
+    };
+
+    routeSummaries.push(routeSummary);
   }
 
   // The candidate total sums each emitted HTML entry's initial closure, so an
@@ -706,19 +714,21 @@ export async function inspectWebBuild(root, buildStartedAt) {
     (sum, route) => sum + route.initialJavaScript.gzipBytes, 0);
   const initialRawBytes = routeSummaries.reduce(
     (sum, route) => sum + route.initialJavaScript.rawBytes, 0);
-  let buildOutputFresh = htmlFiles.length > 0 && graphFiles.length > 0;
-  for (const path of routeScripts.flatMap((route) => route.entryPaths)) {
-    const file = files.find((entry) => entry.relative === path);
-    if (!file || (await stat(file.absolute)).mtimeMs < Date.parse(buildStartedAt) - 1500) {
-      buildOutputFresh = false;
+  let buildOutputFresh = checkMtimeFreshness ? htmlFiles.length > 0 && graphFiles.length > 0 : null;
+  if (checkMtimeFreshness) {
+    for (const path of routeScripts.flatMap((route) => route.entryPaths)) {
+      const file = files.find((entry) => entry.relative === path);
+      if (!file || (await stat(file.absolute)).mtimeMs < Date.parse(buildStartedAt) - 1500) {
+        buildOutputFresh = false;
+      }
     }
+    if (!buildOutputFresh) issues.push("A candidate owner-web entry predates this build");
   }
-  if (!buildOutputFresh) issues.push("A candidate owner-web entry predates this build");
 
   const status = issues.length > 0
     ? "NOT_MEASURED"
     : initialGzipBytes > OWNER_WEB_INITIAL_GZIP_BUDGET_BYTES ? "FAIL" : "PASS";
-  return {
+  const report = {
     status,
     threshold: {
       gzipBytes: OWNER_WEB_INITIAL_GZIP_BUDGET_BYTES,
@@ -732,18 +742,23 @@ export async function inspectWebBuild(root, buildStartedAt) {
       routeCount: routeSummaries.length,
       entryCount: routeScripts.flatMap((route) => route.entryPaths).length,
     },
-    distRoot: OWNER_WEB_DIST_ROOT,
+    distRoot: artifactRoot,
     routes: routeSummaries,
     referencedJavaScript: [...referenced],
     allDistAssets: files.map((file) => file.relative),
     artifactFiles: files.map((file) => ({
-      path: formatPathForReceipt(OWNER_WEB_DIST_ROOT, file.relative),
+      path: formatPathForReceipt(artifactRoot, file.relative),
       sha256: sha256(bytesByPath.get(file.relative)),
       rawBytes: bytesByPath.get(file.relative).byteLength,
     })),
     issues,
     buildOutputFresh,
   };
+  // The inspector owns parsing and closure; consumers may only project its result.
+  if (typeof options.analysisProjection === "function") {
+    return options.analysisProjection({ report, graph, bytesByPath, files, routeScripts, issues });
+  }
+  return report;
 }
 
 export async function inspectWebWorkerBuild(root, buildStartedAt, output) {
@@ -1169,6 +1184,9 @@ export async function validateReceipt(root, receipt, currentIdentity, options = 
   if (!receipt) return { status: "NOT_MEASURED", issues: ["No emitted budget receipt exists"] };
   if (receipt.protocol !== RECEIPT_PROTOCOL) {
     return { status: "NOT_MEASURED", issues: ["Receipt protocol is missing or unsupported"] };
+  }
+  if (receipt.graph === "owner-web" && receipt.purpose === "retained-vite-reuse") {
+    return notMeasured("Retained owner-web subreceipt omits Worker measurement and cannot satisfy the combined release gate");
   }
   if (!receipt.source || receipt.source.fingerprintAfterBuild !== currentIdentity.fingerprint) {
     return { status: "STALE", issues: ["Source or lockfile identity changed after the receipt was produced"] };

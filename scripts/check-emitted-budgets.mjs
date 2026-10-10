@@ -3,6 +3,10 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  inspectRetainedOwnerWebReuse,
+  RETAINED_OWNER_WEB_REUSE_PATHS,
+} from "./lib/emitted-owner-web-reuse.mjs";
+import {
   captureSourceIdentity,
   DEFAULT_RECEIPT_PATH,
   inspectPwaBuild,
@@ -55,12 +59,26 @@ function spawnPnpm(args, options = {}) {
 }
 
 function parseArguments(args) {
-  const options = { checkOnly: false, receiptPath: DEFAULT_RECEIPT_PATH, help: false, ownerWeb: false };
+  const options = {
+    checkOnly: false,
+    receiptPath: DEFAULT_RECEIPT_PATH,
+    help: false,
+    ownerWeb: false,
+    retainedOwnerWebReuse: false,
+    sourceTree: null,
+  };
   for (let index = 0; index < args.length; index += 1) {
     if (args[index] === "--check-only") {
       options.checkOnly = true;
     } else if (args[index] === "--owner-web") {
       options.ownerWeb = true;
+    } else if (args[index] === "--reuse-retained-owner-web") {
+      options.retainedOwnerWebReuse = true;
+    } else if (args[index] === "--source-tree") {
+      const value = args[index + 1];
+      if (!value) throw new Error("--source-tree requires an exact commit SHA");
+      options.sourceTree = value;
+      index += 1;
     } else if (args[index] === "--receipt") {
       const value = args[index + 1];
       if (!value) throw new Error("--receipt requires a path");
@@ -74,6 +92,15 @@ function parseArguments(args) {
   }
   if (options.ownerWeb && options.receiptPath === DEFAULT_RECEIPT_PATH) {
     options.receiptPath = "apps/eliotr-web/.wrangler/s90-emitted-budget-receipt.json";
+  }
+  if (options.retainedOwnerWebReuse) {
+    if (options.ownerWeb || options.checkOnly || options.receiptPath !== DEFAULT_RECEIPT_PATH ||
+        !/^[0-9a-f]{40}$/u.test(options.sourceTree ?? "")) {
+      throw new Error("Retained owner-web reuse requires only --reuse-retained-owner-web and an exact --source-tree SHA");
+    }
+    options.receiptPath = RETAINED_OWNER_WEB_REUSE_PATHS.receipt;
+  } else if (options.sourceTree !== null) {
+    throw new Error("--source-tree is available only with --reuse-retained-owner-web");
   }
   return options;
 }
@@ -224,13 +251,14 @@ export async function runEmittedBudgetCheck(args = []) {
     options = parseArguments(args);
   } catch (error) {
     console.error(error.message);
-    console.error("Usage: node scripts/check-emitted-budgets.mjs [--check-only] [--receipt <path>]");
+    console.error("Usage: node scripts/check-emitted-budgets.mjs [--check-only] [--receipt <path>] | --reuse-retained-owner-web --source-tree <commit-sha>");
     return 2;
   }
   if (options.help) {
-    console.log("Usage: node scripts/check-emitted-budgets.mjs [--check-only] [--receipt <path>]");
+    console.log("Usage: node scripts/check-emitted-budgets.mjs [--check-only] [--receipt <path>] | --reuse-retained-owner-web --source-tree <commit-sha>");
     return 0;
   }
+  if (options.retainedOwnerWebReuse) return runRetainedOwnerWebReuse(options);
   if (options.ownerWeb) return runOwnerWebBudgetCheck(options);
   if (options.checkOnly) return checkExistingReceipt(options);
 
@@ -428,6 +456,36 @@ async function runOwnerWebBudgetCheck(options) {
   await writeReceipt(options.receiptPath, receipt);
   console.log(JSON.stringify({ graph: "owner-web", status: receipt.status, workerGzipBytes: worker.nativeReport.gzip?.bytes,
     initialJavaScriptGzipBytes: ownerWeb.metric.gzipBytes, receipt: options.receiptPath, issues: receipt.issues }));
+  return statusCode(receipt.status);
+}
+
+async function runRetainedOwnerWebReuse(options) {
+  const receipt = await inspectRetainedOwnerWebReuse(ROOT, options.sourceTree);
+  await writeReceipt(options.receiptPath, receipt);
+  console.log(JSON.stringify({
+    protocol: receipt.protocol,
+    graph: receipt.graph,
+    purpose: receipt.purpose,
+    status: receipt.status,
+    receipt: options.receiptPath.replaceAll("\\", "/"),
+    sourceTree: receipt.source.selectedSourceTree,
+    sourceStableDuringBuild: receipt.source.stableDuringBuild,
+    selectedTreeMatchesListedInputs: receipt.source.selectedSourceTreeMatchesListedInputs,
+    sourceInputMismatches: receipt.source.sourceInputMismatches,
+    worker: { status: receipt.worker.status },
+    ownerWeb: {
+      status: receipt.ownerWeb.status,
+      inspectionStatus: receipt.ownerWeb.inspectionStatus,
+      closureEvidence: receipt.ownerWeb.closureEvidence,
+      eagerGzipBytes: receipt.ownerWeb.initialOwnerWebJavaScript?.gzipBytes ?? null,
+      sharedInitialGzipBytes: receipt.ownerWeb.sharedInitialJavaScript?.gzipBytes ?? null,
+      lazyGzipBytes: receipt.ownerWeb.lazyJavaScript?.gzipBytes ?? null,
+      agentInboxStatus: receipt.ownerWeb.agentInboxJavaScript?.status ?? "NOT_MEASURED",
+      allJavaScriptGzipBytes: receipt.ownerWeb.allDistJavaScript?.gzipBytes ?? null,
+      assetCount: receipt.ownerWeb.allAssets?.length ?? null,
+    },
+    issues: receipt.issues,
+  }, null, 2));
   return statusCode(receipt.status);
 }
 
