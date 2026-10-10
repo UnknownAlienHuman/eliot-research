@@ -66,6 +66,11 @@
   padding-inline: var(--eliot-space-block-control);
 }
 
+/* Keep the system-color token pairs together, including transparent label descendants. */
+@media (forced-colors: active) {
+  .er-button { forced-color-adjust: none; }
+}
+
 .er-icon-button {
   display: inline-flex;
   align-items: center;
