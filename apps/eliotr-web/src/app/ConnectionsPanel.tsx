@@ -41,6 +41,12 @@ export function ConnectionsPanel({ locale, apis, privacy, context, projects, pro
   const refresh = () => {
     if (privacy.isCurrent(context)) void client.invalidateQueries({ queryKey: key });
   };
+  const facts = { health, session, diagnostic, googleTransport: health, grant: grants, providerConfig: providers,
+    projectModel: models, researchReadiness: readiness, providerModelUse: operation };
+  const retry = () => {
+    if (!privacy.isCurrent(context)) return;
+    for (const query of new Set(Object.values(facts))) if (query.isError && !query.isFetching) void query.refetch();
+  };
   const text = copy[locale];
   const projectSelectId = useId();
   return <>
@@ -61,7 +67,13 @@ export function ConnectionsPanel({ locale, apis, privacy, context, projects, pro
       projectModel: rowState(models, active), researchReadiness: rowState(readiness, active), providerModelUse: rowState(operation, operationActive) }}
       health={health.data} session={session.data} grants={grants.data?.grants} providerConfigurations={providers.data?.configurations}
       projectModel={models.data} readiness={readiness.data} diagnostic={diagnostic.data ?? undefined} providerModelUse={operation.data}
-      onRefresh={refresh} onRetry={refresh} onOpenDiagnostics={() => { if (privacy.isCurrent(context)) void diagnostic.refetch(); }} />
+      pendingActions={{ refresh: [...new Set(Object.values(facts))].some(query => query.isFetching),
+        retry: [...new Set(Object.values(facts))].some(query => query.isError && query.isFetching),
+        diagnostics: diagnostic.isFetching }}
+      onRefresh={refresh} {...(Object.values(facts).some(query => query.isError) ? { onRetry: retry } : {})} onRetryRow={row => {
+        const query = facts[row];
+        if (privacy.isCurrent(context) && query.isError && !query.isFetching) void query.refetch();
+      }} onOpenDiagnostics={() => { if (privacy.isCurrent(context)) void diagnostic.refetch(); }} />
     {active && <details className="er-live-connection-operation"><summary>{text.operation}</summary>
       <p>{text.hint}</p>
       <form onSubmit={event => {

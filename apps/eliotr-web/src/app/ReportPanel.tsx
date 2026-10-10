@@ -134,8 +134,14 @@ export function ReportPanel({ apis, privacy, context, locale, artifactRef, onClo
       {citations.data?.semantic_verification === 'NOT_EXECUTED' && <p>{text.noAudit}</p>}
       <h3>{text.evidence}</h3><EvidenceFeature citations={evidenceRows}
         loading={citations.isFetching} emptyMessage={text.noEvidence} longLocale={locale}
-        {...(citations.isError || evidence.isError ? { errorMessage: text.evidenceError } : {})}
-        onOpenExcerpt={citation => { if (privacy.isCurrent(context) && !citations.isError && citations.data?.cited_evidence.some(row => sameRef(row.handle_ref, citation.handle_ref) && row.excerpt_sha256 === citation.excerpt_sha256)) setPicked(citation); }}
+        {...(citations.isError ? { errorMessage: text.evidenceError } : {})}
+        onOpenExcerpt={citation => {
+          if (privacy.isCurrent(context) && !citations.isError && citations.data?.cited_evidence.some(row =>
+            sameRef(row.handle_ref, citation.handle_ref) && row.excerpt_sha256 === citation.excerpt_sha256)) {
+            if (currentCitation && sameRef(currentCitation.handle_ref, citation.handle_ref) && evidence.isError) void evidence.refetch();
+            else setPicked(citation);
+          }
+        }}
         onRetry={() => { if (citations.isError) void citations.refetch(); else if (currentCitation) void evidence.refetch(); }} />
       <div className="er-live-actions">
         <Button variant="text" onClick={() => { setOutlineOpen(true); outlineSummary.current?.focus(); }}>{text.backToSections}</Button>

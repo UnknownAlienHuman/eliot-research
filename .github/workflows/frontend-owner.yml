@@ -1,0 +1,54 @@
+name: frontend-owner
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/eliotr-web/**'
+      - 'packages/ui/**'
+      - 'packages/owner-api-client/**'
+      - 'packages/contracts/**'
+      - 'pnpm-lock.yaml'
+      - '.github/workflows/frontend-owner.yml'
+  pull_request:
+    paths:
+      - 'apps/eliotr-web/**'
+      - 'packages/ui/**'
+      - 'packages/owner-api-client/**'
+      - 'packages/contracts/**'
+      - 'pnpm-lock.yaml'
+      - '.github/workflows/frontend-owner.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: frontend-owner-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frontend-owner:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 22.13.0
+      - run: corepack enable
+      - run: corepack prepare pnpm@11.23.0 --activate
+      - name: Install frozen dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Typecheck owner web
+        run: pnpm exec tsc -b apps/eliotr-web/tsconfig.json --pretty false
+      - name: Lint owner frontend
+        run: pnpm exec eslint apps/eliotr-web/src packages/owner-api-client/src packages/ui/src
+      - name: Research admission authority
+        run: pnpm exec vitest run --config vitest.config.ts packages/owner-api-client/src/research/runs/authority.test.ts --reporter=verbose
+      - name: Install UI browser
+        run: pnpm --dir packages/ui exec playwright install --with-deps chromium
+      - name: Focused Storybook integration
+        run: pnpm --dir packages/ui exec vitest run --config .storybook/vitest.config.ts --reporter=verbose --testNamePattern 'Cross Page Selection Recovery|Replaced Selected Page Refused|Sections Unsupported|Optional Failure Facts|Targeted Retry Hierarchy|Readiness Renewal Is Not Blocked|Readiness Blocked|Google Transport Is Routing Only|Diagnostic Issued|Diagnostic Expired'

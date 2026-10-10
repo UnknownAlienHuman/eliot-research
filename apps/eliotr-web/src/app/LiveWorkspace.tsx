@@ -1,5 +1,5 @@
 import { useCallback, useLayoutEffect, useRef, useState, type Ref, type RefObject } from "react";
-import { skipToken, useQuery, useQueryClient, type UseQueryResult } from "@tanstack/react-query";
+import { skipToken, useQueries, useQuery, useQueryClient, type UseQueryResult } from "@tanstack/react-query";
 import { useLocation, useNavigate } from "react-router";
 import { WorkspaceLink } from "../routes/WorkspaceLink";
 import { Button, Dialog, DocumentReader, ProjectsLibraryFeature } from "@eliotr/ui";
@@ -15,6 +15,7 @@ import { ErasurePanel } from "./ErasurePanel";
 import { ConnectionsPanel } from "./ConnectionsPanel";
 import { ImportPanel } from "./ImportPanel";
 import { NextQuestionScope, type NextQuestionSource } from "./NextQuestionScope";
+import { OWNER_RESEARCH_MAX_SELECTED_SOURCES as selectedSourceLimit } from '@eliotr/owner-api-client';
 import { ResearchPanel } from "./ResearchPanel";
 import { StudioPanel } from "./StudioPanel";
 
@@ -52,8 +53,20 @@ export function LiveWorkspace({ destination, locale, headingRef, apis, privacy, 
   const selected = projects.data?.projects.find(project => project.project_id === projectId);
   const library = useQuery(selected && projects.data ? options.library(projects.data, selected.project_id, cursor)
     : { queryKey: [...key, "library-unselected"], queryFn: skipToken });
-  const scopeCurrent = scope.length > 0 && scope.every(item => item.page === library.data &&
-    item.page.generation === context.deploymentGeneration && item.page.sources.some(source => source.id === item.id));
+  // Keep selected pages observed in protected memory across pagination.
+  const projectPage = projects.data;
+  useQueries({ queries: selected && projectPage
+    ? [...new Map(scope.map(item => [item.cursor ?? null, item])).values()].map(item => ({
+      ...options.library(projectPage, selected.project_id, item.cursor), refetchOnMount: false,
+    })) : [] });
+  const isScopeCurrent = () => scope.length > 0 && selected !== undefined && privacy.isCurrent(context) &&
+    client.getQueryData([...key, "projects", after ?? null]) === projects.data && scope.every(item => {
+      const observed = client.getQueryState<LibraryPage>([...key, "library", selected.project_id, item.cursor ?? null]);
+      return observed?.status === "success" && observed.fetchStatus === "idle" && !observed.isInvalidated &&
+        observed.data === item.page && item.page.generation === context.deploymentGeneration &&
+        item.page.sources.some(source => source.id === item.id);
+    });
+  const scopeCurrent = isScopeCurrent();
   const restoreProjectSelectFocus = useCallback((node: HTMLSelectElement | null) => {
     if (node === null) return;
     const target = projectSelectFocus.current;
@@ -85,7 +98,7 @@ export function LiveWorkspace({ destination, locale, headingRef, apis, privacy, 
     const source = page.sources.find(row => row.id === id);
     if (!source || page !== library.data || page.generation !== context.deploymentGeneration ||
       client.getQueryData([...key, "library", projectId, cursor ?? null]) !== page || !privacy.isCurrent(context)) return;
-    setScope(old => checked ? old.some(item => item.id === id) || old.length >= 64 ? old : [...old, { id, label: source.title, page }]
+    setScope(old => checked ? old.some(item => item.id === id) || old.length >= selectedSourceLimit ? old : [...old, { id, label: source.title, page, ...(cursor === undefined ? {} : { cursor }) }]
       : old.filter(item => item.id !== id));
   };
   const text = copy[locale];
@@ -113,7 +126,7 @@ export function LiveWorkspace({ destination, locale, headingRef, apis, privacy, 
         onPrevious={projectPages.length > 1 ? () => { setProjectId(undefined); setProjectPages(pages => pages.slice(0, -1)); } : undefined}
         onNext={projects.data?.next_project_id ? () => { const next = projects.data?.next_project_id; if (next) { setProjectId(undefined); setProjectPages(pages => [...pages, next]); } } : undefined} />
         : destination === "research" ? <ResearchPanel locale={locale} apis={apis} privacy={privacy} context={context} scope={scope} scopeCurrent={scopeCurrent}
-          isScopeCurrent={() => scopeCurrent && privacy.isCurrent(context) && client.getQueryData([...key, "library", projectId, cursor ?? null]) === library.data && client.getQueryData([...key, "projects", after ?? null]) === projects.data} />
+          isScopeCurrent={isScopeCurrent} />
         : <StudioPanel locale={locale} apis={apis} privacy={privacy} context={context} />}
     </main>
   </div>;
@@ -167,11 +180,11 @@ function ActiveSources({ locale, apis, privacy, context, projectId, projects, af
       sourceActions={<>
         <ImportPanel locale={locale} apis={apis} privacy={privacy} context={context} />
         <NextQuestionScope locale={locale} page={library.data} projectSelected={projectId !== undefined} isLoading={pending} isError={error}
-          selected={scope} onToggle={onScope} onClear={onClearScope} />
+          selected={scope} selectionLimit={selectedSourceLimit} onToggle={onScope} onClear={onClearScope} />
       </>}
       projects={projects.data?.projects ?? []} selectedProjectId={projectId} onSelectProject={id => { if (projects.data?.projects.some(row => row.project_id === id)) onProject(id); }}
-      library={library.data} readiness={readiness.data} readinessState={!source ? "idle" : readiness.isPending ? "loading" : readiness.isError ? "degraded" : "useful"}
-      revisions={revisions.data} revisionsState={!source ? "idle" : revisions.isPending ? "loading" : revisions.isError ? "error" : "useful"}
+      library={library.data} readiness={readiness.isError ? undefined : readiness.data} readinessState={!source ? "idle" : readiness.isPending ? "loading" : readiness.isError ? "degraded" : "useful"}
+      revisions={revisions.isError ? undefined : revisions.data} revisionsState={!source ? "idle" : revisions.isPending ? "loading" : revisions.isError ? "error" : "useful"}
       selectedSourceId={source?.id} onOpenSource={selectSource} onLoadRevisions={selectSource}
       onReadRevision={revisionRef => {
         if (source && revisions.data?.revisions.some(revision => revision.source_revision_ref === revisionRef) &&
@@ -179,7 +192,9 @@ function ActiveSources({ locale, apis, privacy, context, projectId, projects, af
           void navigate(location.pathname, { state: { sourceDocument: revisionRef, sourceId: source.id, projectId, cacheEpoch: context.cacheEpoch }, preventScrollReset: true });
         }
       }}
-      onRetry={() => { if (projects.isError) void projects.refetch(); else if (projectId) void library.refetch(); }} />
+      onRetry={() => { if (projects.isError) void projects.refetch(); else if (projectId) void library.refetch(); }}
+      onRetryReadiness={() => { if (source && privacy.isCurrent(context) && current.library() === library.data) void readiness.refetch(); }}
+      onRetryRevisions={() => { if (source && privacy.isCurrent(context) && current.library() === library.data) void revisions.refetch(); }} />
     <ErasurePanel locale={locale} apis={apis} privacy={privacy} context={context}
       selectedSourceId={source?.id} page={library.data} currentLibrary={current.library} />
     {projectId && <div className="er-live-pagination">

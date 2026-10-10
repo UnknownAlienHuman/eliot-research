@@ -1,6 +1,9 @@
+import { env } from "node:process";
 import { defineConfig } from "vitest/config";
 import { storybookTest } from "@storybook/addon-vitest/vitest-plugin";
 import { playwright } from "@vitest/browser-playwright";
+
+const executablePath = env.ELIOT_UI_BROWSER_EXECUTABLE?.trim();
 
 export default defineConfig({
   plugins: [storybookTest({ configDir: import.meta.dirname })],
@@ -10,7 +13,7 @@ export default defineConfig({
     browser: {
       enabled: true,
       headless: true,
-      provider: playwright({ launchOptions: { executablePath: "C:/Program Files/Google/Chrome/Application/chrome.exe" } }),
+      provider: playwright(executablePath ? { launchOptions: { executablePath } } : {}),
       instances: [{ browser: "chromium" }],
     },
     setupFiles: [".storybook/vitest.setup.ts"],

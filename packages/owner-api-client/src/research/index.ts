@@ -1,3 +1,4 @@
+export { OWNER_RESEARCH_MAX_SELECTED_SOURCES } from '@eliotr/contracts';
 export { createResearchModelConfigurationApi } from './configuration/models';
 export { createResearchConfigurationApi } from './configuration/readiness';
 export { createResearchRunWire } from './runs/wire';

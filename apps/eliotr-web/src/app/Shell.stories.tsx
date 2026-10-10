@@ -1,3 +1,4 @@
+import { IntegrationRepairsPreview, playIntegrationRepairs, playReplacedSelection } from './IntegrationRepairsPreview';
 import { FiniteReadExportPreview, playReadsNoEffects, playFailedRequiredSectionNoExport } from "./FiniteReadExportPreview";
 import { FiniteTruthDisclosurePreview, playCapabilityConnectionTruth, playBoundedRootDisclosure } from "./FiniteTruthDisclosurePreview";
 import { FiniteExcerptPreview, playFiniteExcerptLifecycle } from "./FiniteExcerptPreview";
@@ -325,3 +326,6 @@ export const LiveCanonicalReadsNoEffects = { render: () => <FiniteReadExportPrev
 export const LiveFailedRequiredSectionNoExport = { render: () => <FiniteReadExportPreview key="failed-required-section" scenario="failed-required-section-no-export" />, play: playFailedRequiredSectionNoExport };
 export const LiveCapabilityConnectionTruth = { render: () => <FiniteTruthDisclosurePreview key="capability-connection-truth" />, play: playCapabilityConnectionTruth };
 export const LiveBoundedRootDisclosure = { render: () => <FiniteTruthDisclosurePreview key="bounded-root-disclosure" scenario="disclosure" />, play: playBoundedRootDisclosure };
+
+export const CrossPageSelectionRecovery = { render: () => <IntegrationRepairsPreview />, play: playIntegrationRepairs };
+export const ReplacedSelectedPageRefused = { render: () => <IntegrationRepairsPreview stalePage />, play: playReplacedSelection };
