@@ -327,3 +327,21 @@ export const SectionActionsIdentifyExactTargetRu: Story = {
     sections: SECTION_ACTION_ROWS,
   }),
 };
+
+/** Static read facts stay readable; the owning ReportPanel announces actual operations. */
+function QuietReportHarness() {
+  const [degraded, setDegraded] = useState(false);
+  return <><button type="button" onClick={() => setDegraded(true)}>Read degraded facts</button><ReportFeature {...buildProps({ state: degraded ? 'degraded' : 'error', sections: [], freshness: 'UNKNOWN' })} /></>;
+}
+export const ReportStaticFactsQuiet: Story = {
+  args: buildProps(),
+  render: () => <QuietReportHarness />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await expect(canvas.getByText(REPORT_COPY.en.rejectedRead)).toBeVisible();
+    expect(canvasElement.querySelectorAll('[role="status"], [role="alert"], [aria-live]')).toHaveLength(0);
+    await userEvent.click(canvas.getByRole('button', { name: 'Read degraded facts' }));
+    await expect(canvas.getByText(REPORT_COPY.en.staleManifest)).toBeVisible();
+    expect(canvasElement.querySelectorAll('[role="status"], [role="alert"], [aria-live]')).toHaveLength(0);
+  },
+};

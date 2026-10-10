@@ -210,13 +210,13 @@ export function ReportFeature(props: ReportFeatureProps) {
       {state === "loading" ? <Status tone="neutral" icon="search">{copy.loading}</Status> : null}
       {state === "empty" ? <Status tone="neutral" icon="folder">{copy.empty}</Status> : null}
       {state === "degraded" ? (
-        <div className="er-report__degraded" role="status">
+        <div className="er-report__degraded">
           {props.interrupted === true ? <p>{copy.interruptedRead}</p> : null}
           {props.interrupted !== true ? <p>{copy.staleManifest}</p> : null}
         </div>
       ) : null}
       {state === "error" ? (
-        <div className="er-report__error" role="alert">
+        <div className="er-report__error">
           {rejectedSectionRef === undefined ? <p>{copy.rejectedRead}</p> : null}
           {rejectedSectionRef !== undefined ? <p>{copy.unverifiedBytes}</p> : null}
         </div>
