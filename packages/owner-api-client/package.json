@@ -6,6 +6,7 @@
   "sideEffects": false,
   "exports": {
     ".": "./src/index.ts",
+    "./runtime-config": "./src/runtime-config.ts",
     "./research-session-projection": "./src/research/session-projection/session.ts"
   },
   "types": "./src/index.ts",
