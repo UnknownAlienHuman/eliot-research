@@ -3,7 +3,9 @@
 Authority: ELIOT_RESEARCH v29.1; LANGUAGE_RUNTIME_CONTRACT v1.0; accepted ADRs, including
 [ADR-0006 Google external transport profiles](../../adr/0006-google-external-transport-profiles.md).
 Read [`docs/START-HERE.md`](../../START-HERE.md) if you are new, then
-[execution-contract.md](execution-contract.md). Each theme plan contains small numbered checkpoints
+[backend-entrypoints.md](../backend-entrypoints.md) and the active passport. The numbered plans below
+retain historical theme requirements; they do not create a competing execution queue. Use
+[execution-contract.md](execution-contract.md) for the applicable checkpoint acceptance. Each theme plan contains small numbered checkpoints
 with files, implementation steps, tests and observable pass conditions. Unchecked means not done, even
 when the surrounding package compiles. Plans live on their named PR heads until merged.
 
@@ -24,9 +26,11 @@ Derive current status with `gh pr list --state open` and the theme's own checkli
 | #96 | `08-recovery.md` | §§10,13.7–13.8,15–16,19; Steward/erasure/restore/release | O1 shared probe/evidence runner |
 | Rust (#97 closed; plan `09-rust.md` merged to main) | `09-rust.md` | language §§5–10; M2–M7 per-family migration | K1 missing identity parity |
 
-These are implementation queues, not nine running agents. Use the nine exact reserved names from
-`infra/github/branch-hygiene.json`, not variant branches. #98 carries the unfinished Library acceptance;
-#89 stays merged and is not reopened. Theme PRs target main, not a stacked speculative branch chain.
+These are historical theme plans, not nine running agents or reserved implementation branches.
+[branch-discipline.md](../branch-discipline.md) owns the current direct-main procedure and the explicit
+owner-authorized manager exception; branch-hygiene metadata grants no implementation reservation.
+Compare remaining theme requirements with current main and the active passport before claiming work.
+Historical theme PRs are specifications to reconcile, not trees to merge wholesale.
 
 ## Dependency graph without whole-PR cycles
 
