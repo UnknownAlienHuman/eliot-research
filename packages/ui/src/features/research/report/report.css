@@ -187,3 +187,8 @@
   line-height: var(--eliot-type-body-small-line-height);
   overflow-wrap: anywhere;
 }
+
+/* Report reading: preserve block rhythm after the shared reader's margin reset. */
+.er-live-report-section > .er-safe-markdown > * + * {
+  margin-block-start: var(--eliot-space-panel);
+}
