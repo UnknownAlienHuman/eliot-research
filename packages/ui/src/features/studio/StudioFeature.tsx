@@ -23,6 +23,15 @@ import type {
  */
 export type WikiProposalSummaryItem = WikiProposalListView["items"][number];
 
+const PROPOSAL_LABEL: Record<'en' | 'ru', Record<WikiProposalReadView['state'], string>> = {
+  en: { PROPOSED: 'Draft', PUBLISHED: 'Published' },
+  ru: { PROPOSED: 'Черновик', PUBLISHED: 'Опубликовано' },
+};
+const RISK_LABEL: Record<'en' | 'ru', Record<WikiProposalReadView['risk_class'], string>> = {
+  en: { D0_MECHANICAL: 'Mechanical change', D1_LOW_RISK_ADDITIVE: 'Addition with low risk', D2_ANALYTICAL: 'Analytical change', D3_AUTHORITY_SENSITIVE: 'Change requiring authority review' },
+  ru: { D0_MECHANICAL: 'Механическое изменение', D1_LOW_RISK_ADDITIVE: 'Дополнение с низким риском', D2_ANALYTICAL: 'Аналитическое изменение', D3_AUTHORITY_SENSITIVE: 'Изменение требует проверки полномочий' },
+};
+
 export type WikiSourceFreshness = WikiProposalReadView["source_freshness"];
 
 import "./studio.css";
@@ -289,8 +298,7 @@ export function StudioFeature({
                   >
                     <strong className="er-studio-live__item-title">{item.title}</strong>
                     <span className="er-studio-live__item-meta">
-                      {item.state === "PROPOSED" ? locale === "ru" ? "Черновик" : "Draft"
-                        : item.state === "PUBLISHED" ? locale === "ru" ? "Опубликовано" : "Published" : item.state}
+                      {PROPOSAL_LABEL[locale][item.state]}
                     </span>
                   </button>
                 </li>
@@ -313,11 +321,11 @@ export function StudioFeature({
               <dl className="er-studio-live__facts">
                 <div>
                   <dt>{copy.risk_label}</dt>
-                  <dd>{selected.risk_class}</dd>
+                  <dd>{RISK_LABEL[locale][selected.risk_class]}</dd>
                 </div>
                 <div>
                   <dt>{copy.publish_review}</dt>
-                  <dd>{selected.state}</dd>
+                  <dd>{PROPOSAL_LABEL[locale][selected.state]}</dd>
                 </div>
               </dl>
               </details>
