@@ -210,3 +210,24 @@ export const ControlledNextQuestionDraft: Story = {
     expect(canvas.queryAllByRole('button')).toHaveLength(0);
   },
 };
+
+export const OptionalFailureFacts: Story = {
+  render: () => <><ResearchRunFeature locale="en" state="error" firstCause={{ code: 'WORKFLOW_OUTPUT_UNAVAILABLE' }} />
+    <ResearchRunFeature locale="ru" state="error" firstCause={FIRST_CAUSE} progress={{ ...PROGRESS_ACTIVE, engine_status: 'waitingForPause' }} /></>,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    for (const list of canvasElement.querySelectorAll('.er-research-run__failure-list')) {
+      const children = [...list.children];
+      expect(children.length % 2).toBe(0);
+      children.forEach((child, i) => expect(child.tagName).toBe(i % 2 === 0 ? 'DT' : 'DD'));
+    }
+    expect(canvas.getByText(/Приостанавливается/u)).toBeVisible();
+    expect(canvas.queryByText(/waitingForPause/u)).not.toBeInTheDocument();
+    const failures = canvasElement.querySelectorAll('.er-research-run__failure');
+    if (!failures[0] || !failures[1]) throw new globalThis.Error('Both failure cases must render');
+    expect(failures[0]).not.toHaveTextContent('Can retry');
+    await userEvent.click(within(failures[1] as HTMLElement).getByText('Подробности'));
+    expect(canvas.getByText('Нет', { exact: true })).toBeVisible();
+    expect(canvasElement.querySelectorAll('[role="status"], [aria-live]')).toHaveLength(0);
+  },
+};

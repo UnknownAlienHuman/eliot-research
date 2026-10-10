@@ -73,6 +73,15 @@ export interface ResearchRunFeatureProps {
   readonly onRecover?: () => void;
 }
 
+const ENGINE_LABEL: Record<'en' | 'ru', Record<ResearchRunStatusView['engine_status'], string>> = {
+  en: { queued: 'Queued', running: 'Running', paused: 'Paused', errored: 'Failed', terminated: 'Stopped', complete: 'Finished', waiting: 'Waiting', waitingForPause: 'Pausing', unknown: 'Status unknown' },
+  ru: { queued: 'В очереди', running: 'Выполняется', paused: 'Приостановлено', errored: 'Ошибка', terminated: 'Остановлено', complete: 'Завершено', waiting: 'Ожидание', waitingForPause: 'Приостанавливается', unknown: 'Состояние неизвестно' },
+};
+const FAILURE_LABEL = {
+  en: { code: 'Code', stage: 'Stage', phase: 'Phase', retryable: 'Can retry', dispatch: 'Request outcome', references: 'References', recovery: 'Recovery', yes: 'Yes', no: 'No' },
+  ru: { code: 'Код', stage: 'Этап', phase: 'Фаза', retryable: 'Повтор возможен', dispatch: 'Результат запроса', references: 'Ссылки', recovery: 'Восстановление', yes: 'Да', no: 'Нет' },
+} as const;
+
 const SNAPSHOT_LABEL: Record<'en' | 'ru', Record<ResearchSessionProjection['state'], string>> = {
   en: {
     ACTIVE: 'A run is active',
@@ -390,7 +399,7 @@ export function ResearchRunFeature({
             <dd>
               {progress.execution_state === 'ENGINE_COMPLETED'
                 ? copy.completedStages(progress.next_stage_index)
-                : copy.nextStage(progress.next_stage_index)} · {progress.engine_status}
+                : copy.nextStage(progress.next_stage_index)} · {ENGINE_LABEL[locale][progress.engine_status]}
             </dd>
           </dl>
           <details>
@@ -438,33 +447,31 @@ export function ResearchRunFeature({
           <h3 className="er-research-run__failure-heading">{copy.firstCauseHeading}</h3>
           <details><summary>{copy.details}</summary>
           <dl className="er-research-run__failure-list">
-            <dt>code</dt>
+            <dt>{FAILURE_LABEL[locale].code}</dt>
             <dd>{firstCause.code}</dd>
             {firstCause.stage === undefined ? null : (
               <>
-                <dt>stage</dt>
+                <dt>{FAILURE_LABEL[locale].stage}</dt>
                 <dd>{firstCause.stage}</dd>
               </>
             )}
             {firstCause.phase === undefined ? null : (
               <>
-                <dt>phase</dt>
+                <dt>{FAILURE_LABEL[locale].phase}</dt>
                 <dd>{PHASE_LABEL[locale][firstCause.phase]}</dd>
               </>
             )}
-            <dt>retryable</dt>
-            <dd>{firstCause.retryable === true ? 'yes' : 'no'}</dd>
-            <dt>dispatch</dt>
+            {firstCause.retryable === undefined ? null : (
+              <><dt>{FAILURE_LABEL[locale].retryable}</dt><dd>{firstCause.retryable ? FAILURE_LABEL[locale].yes : FAILURE_LABEL[locale].no}</dd></>
+            )}
             {firstCause.dispatch_state === undefined ? null : (
-              <dd>{DISPATCH_LABEL[locale][firstCause.dispatch_state]}</dd>
+              <><dt>{FAILURE_LABEL[locale].dispatch}</dt><dd>{DISPATCH_LABEL[locale][firstCause.dispatch_state]}</dd></>
             )}
-            <dt>references</dt>
             {firstCause.references_intact === undefined ? null : (
-              <dd>{REFERENCES_LABEL[locale][firstCause.references_intact]}</dd>
+              <><dt>{FAILURE_LABEL[locale].references}</dt><dd>{REFERENCES_LABEL[locale][firstCause.references_intact]}</dd></>
             )}
-            <dt>recovery</dt>
             {firstCause.recovery_action === undefined ? null : (
-              <dd>{RECOVERY_LABEL[locale][firstCause.recovery_action]}</dd>
+              <><dt>{FAILURE_LABEL[locale].recovery}</dt><dd>{RECOVERY_LABEL[locale][firstCause.recovery_action]}</dd></>
             )}
           </dl>
           {(firstCause.consequences?.length ?? 0) === 0 ? null : (
