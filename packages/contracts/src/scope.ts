@@ -1,6 +1,9 @@
 import { z } from "zod";
 import { IdentifierSchema, IsoDateTimeSchema, NonNegativeIntegerSchema, PositiveIntegerSchema, Sha256Schema } from "./common.js";
 
+/** Existing owner Research RUN input bound; ORIENT and frozen scope profiles have separate bounds. */
+export const OWNER_RESEARCH_MAX_SELECTED_SOURCES = 1000;
+
 export type ScopeExpression =
   | { kind: "GLOBAL_LIBRARY" }
   | { kind: "PROJECT"; project_id: string }

@@ -8,7 +8,7 @@ import { ScopeServiceError } from "./scope-service.js";
 /** The existing exhaustive owner-loader ceiling, not the generic 50,000-member ceiling. */
 export const OWNER_RESEARCH_MAX_SOURCES = 4096;
 /** The generic scope parser's existing explicit-selection envelope. */
-export const OWNER_RESEARCH_MAX_SELECTED_SOURCES = 1000;
+export { OWNER_RESEARCH_MAX_SELECTED_SOURCES } from "@eliotr/contracts";
 export const OWNER_RESEARCH_SCOPE_PROFILE = Object.freeze({
   version: "retrieval-scope-v2", max_sources: OWNER_RESEARCH_MAX_SOURCES, max_results: ORIENTATION_MAX_RESULTS,
 });
