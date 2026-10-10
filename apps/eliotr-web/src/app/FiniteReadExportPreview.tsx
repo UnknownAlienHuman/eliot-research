@@ -269,7 +269,7 @@ async function until(predicate: () => boolean, message: string, timeout = 2000) 
 }
 function environmentFor(canvasElement: HTMLElement, scenario: Scenario) {
   const root = canvasElement.querySelector<HTMLElement>('[data-finite-read-export]');
-  check(root !== null, 'Finite read/export fixture was not mounted');
+  if (!root) throw new Error('Finite read/export fixture was not mounted');
   const environment = required(fixtures.get(root), 'Unmounted finite scenario');
   check(environment.scenario === scenario, 'Wrong finite scenario');
   return { root, environment };
