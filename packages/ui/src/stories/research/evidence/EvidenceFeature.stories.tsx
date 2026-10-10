@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { expect, userEvent, within } from 'storybook/test';
 import type {
@@ -269,5 +270,50 @@ export const OpenRequestsCurrentExcerpt: Story = {
 
     // After the callback the row keeps its own state, and the request is not silently retried.
     await expect(canvas.queryByRole('button', { name: 'Open cited excerpt 1' })).toBeNull();
+  },
+};
+
+const announcementRows: readonly EvidenceRow[] = [
+  baseRow({ state: 'loaded', opened: opened() }),
+  baseRow({ citation: { handle_ref: otherHandle, excerpt_sha256: digest }, outcome: { handle_ref: otherHandle, outcome: 'SOURCE_QUARANTINED' }, state: 'idle' }),
+  baseRow({ citation: { handle_ref: { id: 'failed-excerpt', revision: 1 }, excerpt_sha256: digest }, outcome: { handle_ref: { id: 'failed-excerpt', revision: 1 }, outcome: 'VERIFY_UNAVAILABLE' }, state: 'failed' }),
+];
+function EvidenceAnnouncementHarness() {
+  const [message, setMessage] = useState('');
+  const [phase, setPhase] = useState<'useful' | 'loading' | 'empty' | 'error'>('useful');
+  return <>
+    <button type="button" onClick={() => setMessage('The selected cited excerpt was verified.')}>Announce selected read</button>
+    <button type="button" onClick={() => setPhase(old => old === 'useful' ? 'loading' : old === 'loading' ? 'empty' : old === 'empty' ? 'error' : 'useful')}>Change citation view</button>
+    <div data-announced-evidence><EvidenceFeature citations={phase === 'empty' ? [] : announcementRows} loading={phase === 'loading'}
+      {...(phase === 'error' ? { errorMessage: 'The citation list could not be read.' } : {})} operationAnnouncement={message} /></div>
+    <div data-quiet-evidence hidden><EvidenceFeature citations={announcementRows} /></div>
+  </>;
+}
+/** Explicit caller text owns one region; cached outcomes and row failures remain readable facts. */
+export const EvidenceOperationAnnouncements: Story = {
+  args: { citations: announcementRows, operationAnnouncement: '' },
+  render: () => <EvidenceAnnouncementHarness />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement), announced = canvasElement.querySelector<HTMLElement>('[data-announced-evidence]');
+    const quiet = canvasElement.querySelector<HTMLElement>('[data-quiet-evidence]');
+    if (!announced || !quiet) throw new TypeError('Evidence caller roots absent');
+    const regions = (root: HTMLElement) => root.querySelectorAll('[role="status"], [role="alert"], [aria-live]');
+    expect(regions(quiet)).toHaveLength(0);
+    expect(regions(announced)).toHaveLength(1);
+    const channel = announced.querySelector<HTMLElement>('.er-operation-announcement');
+    if (!channel) throw new TypeError('Explicit Evidence operation channel absent');
+    await expect(channel).toHaveAttribute('aria-live', 'polite');
+    await expect(channel).toHaveAttribute('aria-atomic', 'true');
+    await expect(channel).toHaveTextContent('');
+    await userEvent.click(canvas.getByRole('button', { name: 'Announce selected read' }));
+    await expect(channel).toHaveTextContent('The selected cited excerpt was verified.');
+    for (let index = 0; index < 4; index++) {
+      await userEvent.click(canvas.getByRole('button', { name: 'Change citation view' }));
+      expect(announced.querySelector('.er-operation-announcement')).toBe(channel);
+      expect(regions(announced)).toHaveLength(1);
+      expect(regions(quiet)).toHaveLength(0);
+      await expect(channel).toHaveTextContent('The selected cited excerpt was verified.');
+    }
+    expect(canvasElement.querySelectorAll('.evidence__outcome[role], .evidence__pending[role], .evidence__failed[role]')).toHaveLength(0);
   },
 };

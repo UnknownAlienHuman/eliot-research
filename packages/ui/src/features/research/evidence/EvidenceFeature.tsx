@@ -1,5 +1,5 @@
 import { useId, useState } from "react";
-import { Button } from "../../../primitives/primitives";
+import { Button, OperationAnnouncement } from "../../../primitives/primitives";
 import "./evidence.css";
 
 /**
@@ -70,6 +70,13 @@ export interface EvidenceFeatureProps {
   readonly onOpenExcerpt?: (citation: CitedEvidence | ReauthorizedCitedEvidence) => void;
   readonly onRetry?: () => void;
   readonly longLocale?: "ru" | "en";
+  /**
+   * Optional one-per-call-site operation channel. Omitted renders no channel at all, so every fact
+   * in this feature stays quiet; an explicit string, including the empty string, enables exactly one
+   * persistent channel that reports only the operation this caller designates. The feature never
+   * derives this text locally, so cached rows never announce on mount.
+   */
+  readonly operationAnnouncement?: string;
 }
 
 export type ResolvedOutcome = Extract<CitationResolutionOutcome, { outcome: "RESOLVED" }>;
@@ -231,7 +238,7 @@ const EvidenceOutcomeLine = (props: { readonly outcome: CitationResolutionOutcom
       ? "This citation is neither confirmed nor rejected. It is not evidence about the claim either way."
       : "Readback confirmed. This still says nothing about whether the claim holds.";
   return (
-    <p className="evidence__outcome" role="status">
+    <p className="evidence__outcome">
       <span className={rejected ? "evidence__status evidence__status--error" : "evidence__status"}>
         {(russian ? OUTCOME_RU : OUTCOME_LABEL)[outcome.outcome]}
       </span>
@@ -261,7 +268,7 @@ const EvidenceClaimBlock = (props: { readonly claim: CitationAuditClaim; readonl
 
 
 export const EvidenceFeature = (props: EvidenceFeatureProps): React.ReactElement => {
-  const { citations, loading = false, emptyMessage, errorMessage, onOpenExcerpt, onRetry, longLocale } = props;
+  const { citations, loading = false, emptyMessage, errorMessage, onOpenExcerpt, onRetry, longLocale, operationAnnouncement } = props;
   const russian = longLocale === "ru";
   const title = russian ? "Доказательства" : "Evidence";
   const baseId = useId();
@@ -280,7 +287,8 @@ export const EvidenceFeature = (props: EvidenceFeatureProps): React.ReactElement
         <h2 className="evidence__title" id={`${baseId}-error`}>
           {title}
         </h2>
-        <p className="evidence__message" role="status">
+        {operationAnnouncement === undefined ? null : <OperationAnnouncement>{operationAnnouncement}</OperationAnnouncement>}
+        <p className="evidence__message">
           {errorMessage}
         </p>
         {onRetry === undefined ? null : (
@@ -298,6 +306,7 @@ export const EvidenceFeature = (props: EvidenceFeatureProps): React.ReactElement
         <h2 className="evidence__title" id={`${baseId}-loading`}>
           {title}
         </h2>
+        {operationAnnouncement === undefined ? null : <OperationAnnouncement>{operationAnnouncement}</OperationAnnouncement>}
         <p className="evidence__message">{russian ? "Читаем доказательства для этого раздела." : "Loading cited evidence for this section."}</p>
         <ul className="evidence__list evidence__list--skeleton">
           {[0, 1, 2].map((index) => (
@@ -314,6 +323,7 @@ export const EvidenceFeature = (props: EvidenceFeatureProps): React.ReactElement
         <h2 className="evidence__title" id={`${baseId}-empty`}>
           {title}
         </h2>
+        {operationAnnouncement === undefined ? null : <OperationAnnouncement>{operationAnnouncement}</OperationAnnouncement>}
         <p className="evidence__message">
           {emptyMessage ?? (russian ? "Для этого раздела нет доступных цитат." : "No cited evidence is available for this section.")}
         </p>
@@ -327,6 +337,7 @@ export const EvidenceFeature = (props: EvidenceFeatureProps): React.ReactElement
       <h2 className="evidence__title" id={`${baseId}-title`}>
         {title}
       </h2>
+      {operationAnnouncement === undefined ? null : <OperationAnnouncement>{operationAnnouncement}</OperationAnnouncement>}
       <p className="evidence__hint">
         {russian ? "Чтение цитаты проверяет её точные байты для этого сеанса. Оценка утверждения выполняется отдельно."
           : "Reading a citation confirms its bytes for this session. It never states whether a claim holds."}
@@ -362,12 +373,12 @@ export const EvidenceFeature = (props: EvidenceFeatureProps): React.ReactElement
 
               <div className="evidence__actions">
                 {state === "loading" ? (
-                  <span className="evidence__pending" role="status">
+                  <span className="evidence__pending">
                     {russian ? "Читаем фрагмент цитаты" : "Reading cited excerpt"}
                   </span>
                 ) : null}
                 {state === "failed" ? (
-                  <span className="evidence__failed" role="status">
+                  <span className="evidence__failed">
                     {russian ? "Не удалось прочитать фрагмент. Проверьте цитату снова перед использованием." : "This excerpt could not be read. Confirm the citation again before using it."}
                   </span>
                 ) : null}
