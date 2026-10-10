@@ -1,0 +1,303 @@
+{
+  "protocol": "eliotr.frontend-reading-navigation-module.v1",
+  "status": "VERIFIED_BOUNDED_READING_NAVIGATION_MODULE",
+  "source_commit": "b689f232bf4978a8315272a68780fd12a3937a39",
+  "published_dependency_base": "deb41e50855a30a011e1c89b2ff673c3568f7259",
+  "manager_context_id": "01a120c9-2637-7952-b6c9-be07b395b4fd",
+  "owner_authorization_ref": "tests/ui-owner/receipts/owner-authorization.json",
+  "claim": "docs/agent-work/frontend-owner-claims/ER-47/u3-p-reading-navigation-20261010.json",
+  "source_inputs": [
+    {
+      "path": "packages/ui/src/features/sources/projects/projects-library.css",
+      "git_blob": "64cecee247388a835fdcb18e2609337c79f32383",
+      "sha256": "b3cd5105fec1394764422e5635296e785c861f6653610caf0b05a5fa8e345bc9",
+      "mode": "100644"
+    },
+    {
+      "path": "apps/eliotr-web/src/app/ReportPanel.tsx",
+      "git_blob": "ca4ea4969240c48e105838098fcae467a1d91580",
+      "sha256": "03fbea4e72fe727029dfb3dc5830d18bacb492fa36d419b0287c5f300ef8f83f",
+      "mode": "100644"
+    }
+  ],
+  "problem": "Source list scanning uses excessive vertical spacing; reading a long report section lacks a local return to its existing outline.",
+  "change": "Use existing8px Material spacing roles only for Source list gap/row vertical padding. Add localized Back to sections at the report footer with native details state and summary focus; keep automatic outline disclosure whenever no section is active.",
+  "browser": {
+    "version": "155.0.8059.40",
+    "case_count": 4,
+    "sources": [
+      {
+        "viewport": {
+          "width": 1440,
+          "height": 960
+        },
+        "row_height": 121,
+        "row_padding_block": "8px",
+        "row_gap": "8px",
+        "controls": [
+          {
+            "tag": "BUTTON",
+            "height": 48,
+            "width": 155.75
+          },
+          {
+            "tag": "BUTTON",
+            "height": 48,
+            "width": 48
+          },
+          {
+            "tag": "SUMMARY",
+            "height": 48,
+            "width": 1208
+          }
+        ],
+        "rows": 20,
+        "project_focus_preserved": true,
+        "page_width": 1440,
+        "console_errors": 0,
+        "server_faults": 0
+      },
+      {
+        "viewport": {
+          "width": 390,
+          "height": 844
+        },
+        "row_height": 121,
+        "row_padding_block": "8px",
+        "row_gap": "8px",
+        "controls": [
+          {
+            "tag": "BUTTON",
+            "height": 48,
+            "width": 155.75
+          },
+          {
+            "tag": "BUTTON",
+            "height": 48,
+            "width": 48
+          },
+          {
+            "tag": "SUMMARY",
+            "height": 48,
+            "width": 294
+          }
+        ],
+        "rows": 20,
+        "project_focus_preserved": true,
+        "page_width": 390,
+        "console_errors": 0,
+        "server_faults": 0
+      }
+    ],
+    "reports": [
+      {
+        "viewport": {
+          "width": 1440,
+          "height": 960
+        },
+        "back_to_sections_no_requests": true,
+        "native_toggle": true,
+        "keyboard": true,
+        "second_section_focus": true,
+        "ru_label": true,
+        "idle_manifest503_visible": true,
+        "repeated_section_focus": true,
+        "repeated_section_no_requests": true,
+        "body_read_count": 2,
+        "research_run_count": 1,
+        "manifest503_auto_opens": true,
+        "page_width": 1440,
+        "expected_console_errors": [
+          "Failed to load resource: the server responded with a status of 503 (Service Unavailable)",
+          "Failed to load resource: the server responded with a status of 503 (Service Unavailable)"
+        ],
+        "server_faults": 0
+      },
+      {
+        "viewport": {
+          "width": 390,
+          "height": 844
+        },
+        "back_to_sections_no_requests": true,
+        "native_toggle": true,
+        "keyboard": true,
+        "second_section_focus": true,
+        "ru_label": true,
+        "idle_manifest503_visible": true,
+        "repeated_section_focus": true,
+        "repeated_section_no_requests": true,
+        "body_read_count": 2,
+        "research_run_count": 1,
+        "manifest503_auto_opens": true,
+        "page_width": 390,
+        "expected_console_errors": [
+          "Failed to load resource: the server responded with a status of 503 (Service Unavailable)",
+          "Failed to load resource: the server responded with a status of 503 (Service Unavailable)"
+        ],
+        "server_faults": 0
+      }
+    ],
+    "qualification": "Four cases on new repaired source/build; both audit regressions checked per Report viewport. Original source/build/browser and failed harness attempts retained separately."
+  },
+  "compiler": {
+    "version": "6.0.3",
+    "exit": 0,
+    "observed_inputs": 1141,
+    "expected_roots": 275,
+    "missing_roots": 0,
+    "outputs": 1090,
+    "diagnostics": 0
+  },
+  "lint": {
+    "protocol": "eliotr.frontend-scoped-lint-result.v1",
+    "status": "PASS",
+    "source_commit": "b689f232bf4978a8315272a68780fd12a3937a39",
+    "command": "node node_modules/eslint/bin/eslint.js apps/eliotr-web/src/app/ReportPanel.tsx",
+    "exit": 0,
+    "input": {
+      "path": "apps/eliotr-web/src/app/ReportPanel.tsx",
+      "git_blob": "ca4ea4969240c48e105838098fcae467a1d91580",
+      "sha256": "03fbea4e72fe727029dfb3dc5830d18bacb492fa36d419b0287c5f300ef8f83f",
+      "mode": "100644"
+    },
+    "tool_chunk": "4a9fdf",
+    "stdout": "",
+    "stderr": "",
+    "output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "scope": "Actual scoped lint on repaired shared file; source hash and immutable Git binding checked at finalization. Full lint tool/config/dependency read provenance not claimed."
+  },
+  "standalone_build": {
+    "vite": "8.2.2",
+    "config": "apps/eliotr-web/vite.config.ts",
+    "source_commit": "b689f232bf4978a8315272a68780fd12a3937a39",
+    "archive_sha256": "c80681af200ca1ee390cfb7521521311dc812cafb6b13d555892e8e19774ccea",
+    "observed_inputs": 322,
+    "artifacts": [
+      {
+        "path": ".vite/manifest.json",
+        "bytes": 1067,
+        "sha256": "5f41cfce4732ccef6d98f6c02ab510f3c76b9616860b677926bf079c55bc3cb8"
+      },
+      {
+        "path": "assets/bootstrap-CrfKKNEs.css",
+        "bytes": 50686,
+        "sha256": "07e1835ed3321eeeb9279b0933007787f33ce8bfcdfd4a01a9c19d74292963d9",
+        "gzip_bytes": 5325,
+        "brotli_bytes": 4763
+      },
+      {
+        "path": "assets/bootstrap-DOGy8aw3.js",
+        "bytes": 777086,
+        "sha256": "071cc5ef4332357c88e530e753979f0b33588a3a2078363ac808c0041c569a82",
+        "gzip_bytes": 215544,
+        "brotli_bytes": 180471
+      },
+      {
+        "path": "assets/client-DD1Jkd23.js",
+        "bytes": 74869,
+        "sha256": "a75fc3acd8d0482818a2ee6135905cea971e0e38619cbe78ef9ca928ec7052da",
+        "gzip_bytes": 21395,
+        "brotli_bytes": 19052
+      },
+      {
+        "path": "assets/index-BlysS7PD.css",
+        "bytes": 71310,
+        "sha256": "10f5824720a7c615c6a19f9e4a7d599a34c7a31a33ddbd701ea2b66dca5c1e26",
+        "gzip_bytes": 13092,
+        "brotli_bytes": 11129
+      },
+      {
+        "path": "assets/index-CIjujPF-.js",
+        "bytes": 3780,
+        "sha256": "b8a1f2174d0f5b43ba8ba80e19733a3c6644902960c1f9b2b853ffc82eafec56",
+        "gzip_bytes": 1769,
+        "brotli_bytes": 1557
+      },
+      {
+        "path": "favicon.svg",
+        "bytes": 350,
+        "sha256": "e8490bd5b835bd427a4120c45d58b7dbadabaa841caf0c2b468dbfe972393fcf"
+      },
+      {
+        "path": "index.html",
+        "bytes": 690,
+        "sha256": "2d20e3511379b657e13328215bf8ea88865cfe1e945d09cb09f9e8815c0383e4"
+      },
+      {
+        "path": "_headers",
+        "bytes": 313,
+        "sha256": "162f9302f3ddc5281bdb4772e5276e28a3f3acc83f44ea738cd016572c7c8a36"
+      }
+    ],
+    "all_emitted_js_gzip_bytes": 238708,
+    "ceiling_bytes": 614400,
+    "scope": "New owning standalone build for compact Sources and Report outline navigation, immutable source + installed dependencies reused; explicit nested theme CSS and Vite loads observed, not proof of every Tailwind scanner candidate or external runtime read; no Worker/parity/live acceptance"
+  },
+  "qualification": [
+    {
+      "path": ".eliotr-state/frontend-ui-proposals/reading-navigation-repaired-20261010/source-frontier.json",
+      "sha256": "06c91d039d4a6f39f054675cf3af427681250d88b427dd347a9b8de02d004e3f"
+    },
+    {
+      "path": ".eliotr-state/frontend-ui-proposals/reading-navigation-repaired-20261010/compiler.json",
+      "sha256": "ea0ae7db7a9a6697c94f3254e8a2188b3edd4bcce90c5612fce26671f40ab824"
+    },
+    {
+      "path": ".eliotr-state/frontend-ui-proposals/reading-navigation-repaired-20261010/build.json",
+      "sha256": "a0448dc82a2b917c8d53a94c1ad89124d6af726a57f0b86245b5db1c273fa93f"
+    },
+    {
+      "path": ".eliotr-state/frontend-ui-proposals/reading-navigation-repaired-20261010/browser-combined.json",
+      "sha256": "68d0d5b8391c8b2974d320c6f55c6584af7102a51840a72223e1ec0fb078ae37"
+    },
+    {
+      "path": ".eliotr-state/frontend-ui-proposals/reading-navigation-repaired-20261010/browser.json",
+      "sha256": "17e3c11d1639f6f0fcf94169ccfb279d92a4391bee4ebefd4e1dd6832f96e8ba"
+    },
+    {
+      "path": ".eliotr-state/frontend-ui-proposals/reading-navigation-repaired-20261010/browser.mjs",
+      "sha256": "60b838eec7a4ddb44a853fb6d47a3675dea3e278789224f84a52e01c6ae54869"
+    },
+    {
+      "path": ".eliotr-state/frontend-ui-proposals/reading-navigation-repaired-20261010/readingnav-wire.mjs",
+      "sha256": "d31621cbbf2e832cfb92caedd20eacd013de8d37b2a25dea352297f8ff5462b7"
+    },
+    {
+      "path": ".eliotr-state/frontend-ui-proposals/reading-navigation-repaired-20261010/code-understanding-proof.json",
+      "sha256": "ad1a18c051ba59d3829217bd73f7afd2e6b81f35536d81523313118f28d4e6bb"
+    },
+    {
+      "path": ".eliotr-state/frontend-ui-proposals/reading-navigation-repaired-20261010/lint.json",
+      "sha256": "1d9d99b26e51b416835e3a14000b43d31057b6efaa7681b86882120f8345fed6"
+    },
+    {
+      "path": ".eliotr-state/frontend-ui-proposals/reading-navigation-repaired-20261010/compile.mjs",
+      "sha256": "1056321bfd174770c878a7ce8f4c1674830ae6b8fe45da638a6623b2189b1b5f"
+    },
+    {
+      "path": ".eliotr-state/frontend-ui-proposals/reading-navigation-repaired-20261010/build.mjs",
+      "sha256": "03fca631043db7fd2a1d14ed60f9a4183966917f08523b0a4d960c5f5bac224c"
+    },
+    {
+      "path": ".eliotr-state/frontend-ui-proposals/reading-navigation-repaired-20261010/readingnav-luna-source-audit.md",
+      "sha256": "0ac7703bbe303ee773b534590185fe93f06f8cf9cb39acb18d350bb4f8e85996"
+    },
+    {
+      "path": ".eliotr-state/frontend-ui-proposals/reading-navigation-repaired-20261010/prior-source.json",
+      "sha256": "5114556e7fc97d906eef848a08a539bf92a9c1710c7171d0d635cc5794567002"
+    }
+  ],
+  "failed_attempts_preserved": [
+    "Original19d source audit found hidden no-active manifest errors and missing repeated-section heading focus; original owning receipts and source rejection retained.",
+    "Original locale selector failure and later harness-only success retained in prior directory. Repaired source changes justify this new owning qualification."
+  ],
+  "pending": [
+    "Full checkpoint/U5-X/FINAL-UI",
+    "Physical screenreader/native200percentzoom/pointer-onlychooser",
+    "Full Tailwind scanner/watch/tool provenance",
+    "Integrated Worker/generatedAssets/agentsroot+wildcardparity/live",
+    "C11 public full ResearchSessionBinding lookup",
+    "Full performance gates; no speedup or field claim"
+  ],
+  "scope": "Completed presentation module on existing read-only product UI using local fixture transport. No authority/client/backend/root/lock/install/index changes or physical/live/fullcheckpoint promotion."
+}
