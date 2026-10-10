@@ -677,11 +677,50 @@ October 10; RETURNING reports directly modified rows rather than trigger effects
 The prepared R4 correction requires exactly one full returned grant row, followed
 by an independent full grant readback equal to the original row except for the
 explicit `research`-use removal. D1 metadata remains diagnostic. Syntax and six
-changed-helper refusal cases pass; R4 native remains unrun pending independent
-source acceptance. No product SQL, trigger or authority contract was changed.
+changed-helper refusal cases pass. At that preparation checkpoint R4 native
+was unrun pending independent source acceptance; the later result follows below.
+No product SQL, trigger or authority contract was changed.
 
 Private evidence includes `session-hibernation-r3-failure-proof-20261010.json`,
 the R3 source manifest/audit/process/child, and the R4 source manifest plus
 `hibernation-returning-r4-fixture-20261010.json`. Reserved contents, browser
 reconnect/two-tab, automatic production hibernation, official generated routing,
 staging/live and complete #333/#334 acceptance remain unassessed. Goal is active.
+
+## Local forced hibernation — R4 bounded PASS, October 10, 05:57 UTC
+
+After independent Luna/max source acceptance, the guarded R4 qualifier completed
+with process and child exit 0/null signal. One Worker request kept the same socket
+through two forced evictions. Its warm/restored projection responses comprise
+exactly two RPC frames. After removing the grant's `research` use and forcing the
+second eviction, the socket closed cleanly with code 1008 and
+`SESSION_AUTHORITY_STALE`, without a third projection response.
+
+The grant mutation returned exactly one full row; an independent full SELECT
+returned exactly that row, equal to the original grant except for
+`allowed_use_json: []`. The observed D1 `meta.changes: 4` remains diagnostic and
+does not count grant rows. Before, restored and stale observations preserve one
+Workflow run, completed business stage 18/revision 19 and 18 attempts/checkpoints.
+All 13 listed schemas and all 10 inspectable application tables compare equal.
+The reserved `_cf_KV` / `_cf_METADATA` contents remain
+`PLATFORM_PRIVATE_NOT_ASSESSED`. Miniflare disposal resolved, JWKS closed and the
+post-run source gates passed. Earlier V1/R2/R3 failures remain unchanged.
+
+The immutable R4 receipt is
+`core-product-session-hibernation-r4-receipt-20261010.json`, SHA-256
+`8fbd974f8b14d96ad2d80a23cba1ec439edc3d28922ffb9d604d6906a9fd12d2`.
+Its source manifest is
+`core-product-session-hibernation-r4-source-manifest-20261010.json`, SHA-256
+`02f88d96550f1855f4e84612e1fe4e37b8bc2ae8db4746fdb1abf8d0e8199d33`.
+The completion proof is `session-hibernation-r4-completion-proof-20261010.json`.
+These files reside in the existing private checkpoint directory. Runtime versions
+are Miniflare `5.20260926.1-alpha`, Wrangler `4.143.1`, esbuild `0.28.1` and Node
+`25.6.1`; the run uses the immutable custom Core candidate `2607583d` with signed
+local JWKS/public Core ingress.
+
+This accepts only local forced hibernation and its stated storage/authority
+readbacks. Browser AgentClient, reconnect/two-tab, production automatic
+hibernation, official generated Worker source/build equality, staging/live,
+scientific/selected-profile/release and full #333/#334 acceptance remain pending.
+No previously successful suite, six-helper fixture set or frontend history
+checker was repeated. The next Session acceptance item remains #334; Goal active.

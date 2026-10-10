@@ -7,19 +7,22 @@ acceptance volume, excluding website design. The Goal stays active across source
 checkpoints, publication and individual passport closure. The first checkpoint
 below is evidence of delivered prerequisites, not completion of the project.
 
-### Delivery observation, October 10, 2026, 05:28 UTC
+### Delivery observation, October 10, 2026, 05:57 UTC
 
 The observed published delivery frontier is
-`ad13c2a8fb1988e695a67abd524ef65efb598854`. Its ordinary fast-forward publication
-and exact remote/blob readback were recorded at 05:28 UTC. Contracts/runtime
+`8c8b5748d87643f8d379394c59a5091a75693570`. Its ordinary fast-forward publication
+and exact remote/blob readback were recorded at 05:52 UTC. The earlier accepted
+module was published at `ad13c2a8` at 05:28 UTC. Contracts/runtime
 initialization plus the bounded import gate are in `8c67b074`, Golden regressions
 in `85d8f332`, and the three status documents in `7b3f6756`. This is a dated
 source-delivery observation, not an attestation of a product build or deployment.
-The preserved shared local frontier is
+The earlier local `9c635003` / C7 publisher-hold checkpoint is a separate
+historical snapshot, recorded in `Agent_sync.md` and `Backend_conflicts.md` in
+the parent directory. Later independent additive publications do not inherit
+that hold. Their receipts also confirm that the shared local HEAD remains
 `9c6350039fbf9612abea2b47c804cbc8f95e3646`, with an empty index and protected WIP.
-The frontend manager published the independent accepted frontier without
-rewriting that local tail; its original mixed-claim history conflict remains
-separate in `Agent_sync.md` and `Backend_conflicts.md` in the parent directory.
+That local tail and its unresolved history correction remain preserved; they
+were neither rewritten nor published by those ordinary fast-forward deliveries.
 
 PRs #320, #321, #322, #323, #324, #327, #328, #331 and #332 are closed after checking their
 own bounded stage criteria against published commits and saved scoped checks.
@@ -33,10 +36,13 @@ selected-profile acceptance are not established by these closures. Historical
 build/deployment tuples and local custom-candidate receipts below retain their
 dates and scopes; they are not promoted to the current published product.
 The August 28 normative operational-status fields are now explicitly historical
-(#222); the normative contracts remain authoritative. The next Session acceptance
-step is the corrected local hibernation grant-readback case after its independent
-source audit. Browser/generated routing and full Session acceptance remain with
-#333/#334 and their exact pending criteria.
+(#222); the normative contracts remain authoritative. Local R4 forced
+hibernation now has a bounded PASS: two evictions on one socket, unchanged
+business/application storage and a clean stale-authority denial after exact
+grant readback. The R05 qualification note records its receipt and exclusions.
+The next Session acceptance item is #334: generated product/browser, reconnect
+and two-tab behavior under its own remaining criteria. Generated routing remains
+with #333. Neither Issue is completed by the local custom-candidate R4 result.
 
 October 9 publication readback and fetch divergence confirm
 `2adbc42d08eccc0210d31304006bb7e65aeee3db` at 0/0 after fast-forwarding
