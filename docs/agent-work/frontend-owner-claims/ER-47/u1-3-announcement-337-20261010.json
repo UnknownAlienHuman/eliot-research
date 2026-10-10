@@ -1,0 +1,26 @@
+{
+  "protocol": "eliotr.frontend-owner-claim.v1",
+  "claim_id": "u1-3-announcement-337-20261010",
+  "checkpoint_id": "U1.3",
+  "packet_id": "ER-47",
+  "manager_identity": "frontend-manager",
+  "manager_context_id": "01a120c9-2637-7952-b6c9-be07b395b4fd",
+  "leaf_identity": "frontend-manager-primitive-integration",
+  "owner_authorization_ref": "tests/ui-owner/receipts/owner-authorization.json",
+  "base_sha": "053112190807449f44437c65a958241035dd9b52",
+  "history_base_sha": "c37e56e0ebdfc7f6d294879008a4036d1b95b985",
+  "write_paths": [
+    "packages/ui/src/primitives/primitives.tsx",
+    "packages/ui/src/primitives/primitives.css",
+    "packages/ui/src/primitives/primitives.stories.tsx"
+  ],
+  "predecessor_refs": [
+    {
+      "checkpoint_id": "U1.2",
+      "commit_sha": "6aa4504d78b7fbeb4c1182eb7ecece52016b97db"
+    }
+  ],
+  "state": "ACTIVE",
+  "evidence_refs": [],
+  "blocker_refs": []
+}
