@@ -235,7 +235,7 @@ export function FiniteTruthDisclosurePreview({ scenario = 'capability' }: { read
 
 interface PlayContext {
   readonly canvas: {
-    findByRole(role: string, options: { readonly name: string | RegExp; readonly exact?: boolean }): Promise<HTMLElement>;
+    findByRole(role: string, options: { readonly name: string | RegExp; readonly exact?: boolean; readonly level?: number }): Promise<HTMLElement>;
     getByRole(role: string, options: { readonly name: string; readonly exact?: boolean }): HTMLElement;
   };
   readonly userEvent: {
@@ -313,7 +313,7 @@ function commonFacts(root: HTMLElement) {
 
 /** Missing U5 case #4 only: empty configuration and independent capability facts through Shell. */
 export async function playCapabilityConnectionTruth({ canvas, userEvent }: PlayContext) {
-  const root = fixtureRoot(await canvas.findByRole('heading', { name: 'Connections', exact: true }), 'capability');
+  const root = fixtureRoot(await canvas.findByRole('heading', { name: 'Connections', exact: true, level: 1 }), 'capability');
   await chooseProject(root, userEvent);
   await waitForState(root, () => {
     commonFacts(root);
@@ -339,7 +339,7 @@ export async function playCapabilityConnectionTruth({ canvas, userEvent }: PlayC
 
 /** Missing U5 case #5 only: strict rejection and bounded disclosure; no publication/revision effect. */
 export async function playBoundedRootDisclosure({ canvas, userEvent }: PlayContext) {
-  const root = fixtureRoot(await canvas.findByRole('heading', { name: 'Connections', exact: true }), 'disclosure');
+  const root = fixtureRoot(await canvas.findByRole('heading', { name: 'Connections', exact: true, level: 1 }), 'disclosure');
   await chooseProject(root, userEvent);
   await waitForState(root, () => {
     commonFacts(root);

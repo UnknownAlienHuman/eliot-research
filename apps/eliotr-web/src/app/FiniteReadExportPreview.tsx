@@ -240,7 +240,7 @@ export function FiniteReadExportPreview({ scenario = 'reads-no-effects' }: { rea
       unsubscribe(); environment.privacy.dispose(); environment.runtime.dispose(); environment.client.clear(); restore();
     };
   }, [environment]);
-  return <div role="region" aria-label="Finite read/export fixture" ref={node => { if (node) fixtures.set(node, environment); }}>
+  return <div data-finite-read-export ref={node => { if (node) fixtures.set(node, environment); }}>
     <QueryClientProvider client={environment.client}><MemoryRouter initialEntries={['/research']}>
       <Shell privacy={environment.privacy} runtime={environment.runtime} fixture={false} />
     </MemoryRouter></QueryClientProvider>
@@ -250,6 +250,7 @@ export function FiniteReadExportPreview({ scenario = 'reads-no-effects' }: { rea
   </div>;
 }
 interface PlayContext {
+  readonly canvasElement: HTMLElement;
   readonly canvas: {
     findByRole(role: string, options: { readonly name: string; readonly exact?: boolean }): Promise<HTMLElement>;
     getByRole(role: string, options: { readonly name: string; readonly exact?: boolean }): HTMLElement;
@@ -266,8 +267,9 @@ async function until(predicate: () => boolean, message: string, timeout = 2000) 
   const deadline = performance.now() + timeout;
   while (!predicate()) { if (performance.now() >= deadline) throw new Error(message); await delay(20); }
 }
-function environmentFor(canvas: PlayContext['canvas'], scenario: Scenario) {
-  const root = canvas.getByRole('region', { name: 'Finite read/export fixture' });
+function environmentFor(canvasElement: HTMLElement, scenario: Scenario) {
+  const root = canvasElement.querySelector<HTMLElement>('[data-finite-read-export]');
+  check(root, 'Finite read/export fixture was not mounted');
   const environment = required(fixtures.get(root), 'Unmounted finite scenario');
   check(environment.scenario === scenario, 'Wrong finite scenario');
   return { root, environment };
@@ -283,8 +285,8 @@ function assertNoEffects(environment: Environment) {
   check(trace.unexpected.length === 0, 'Unexpected HTTP operation: ' + trace.unexpected.join(', '));
 }
 
-export async function playReadsNoEffects({ canvas, userEvent }: PlayContext) {
-  const { environment } = environmentFor(canvas, 'reads-no-effects'), { trace } = environment;
+export async function playReadsNoEffects({ canvasElement, canvas, userEvent }: PlayContext) {
+  const { environment } = environmentFor(canvasElement, 'reads-no-effects'), { trace } = environment;
   await userEvent.click(await canvas.findByRole('button', { name: 'Read this run', exact: true }));
   await until(() => environment.readStatus()?.execution_state === 'ACTIVE' && environment.client.isFetching() === 0,
     'Initial canonical status did not settle');
@@ -341,12 +343,12 @@ function exportButton(canvas: PlayContext['canvas']) {
   const button = canvas.getByRole('button', { name: 'Export report', exact: true });
   if (!(button instanceof HTMLButtonElement)) throw new Error('Export control is not a button'); return button;
 }
-export async function playFailedRequiredSectionNoExport({ canvas, userEvent }: PlayContext) {
-  const { root, environment } = environmentFor(canvas, 'failed-required-section-no-export'), { trace, client } = environment;
+export async function playFailedRequiredSectionNoExport({ canvasElement, canvas, userEvent }: PlayContext) {
+  const { root, environment } = environmentFor(canvasElement, 'failed-required-section-no-export'), { trace, client } = environment;
   await userEvent.click(await canvas.findByRole('button', { name: 'Open saved report', exact: true }));
   await canvas.findByText('2 declared');
   check(trace.sectionReads.length === 0 && exportButton(canvas).disabled, 'Manifest read eagerly completed required sections');
-  for (const section of ['required-alpha:1', 'required-beta:1']) {
+  for (const section of ['required-beta:1', 'required-alpha:1']) {
     await openOutline(root, userEvent); await userEvent.click(rowButton(root, section));
     await until(() => trace.sectionReads.includes(section) && client.isFetching() === 0, 'Required read did not settle: ' + section);
   }
@@ -365,7 +367,6 @@ export async function playFailedRequiredSectionNoExport({ canvas, userEvent }: P
   const delivered = new Uint8Array(await blob.arrayBuffer());
   check(delivered.byteLength === expected.bytes.byteLength && delivered.every((byte, index) => byte === expected.bytes[index]),
     'Actual ReportPanel delivery changed canonical assembled Markdown bytes');
-  await userEvent.click(rowButton(root, 'required-alpha:1'));
   await canvas.findByText('Alpha verified bytes remain bound to the saved report.');
   const previous = required(client.getQueryData<ArtifactSectionResponse>(held.key), 'Previously successful section absent');
   check(trace.sectionReads.length === 2, 'Selecting the cached section replaced the positive readback');

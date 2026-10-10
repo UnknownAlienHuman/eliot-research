@@ -116,7 +116,7 @@ export function FiniteReaderPreview() {
     </MemoryRouter></QueryClientProvider>
   </div>;
 }
-interface ReaderPlayContext {
+export interface ReaderPlayContext {
   readonly canvasElement: HTMLElement;
   readonly canvas: {
     findByRole(role: string, options: { readonly name: string; readonly exact?: boolean }): Promise<HTMLElement>;
