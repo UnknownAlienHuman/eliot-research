@@ -1,0 +1,322 @@
+{
+  "protocol": "eliotr.next-question-composer-module.v1",
+  "status": "VERIFIED_BOUNDED_NEXT_QUESTION_COMPOSER_MODULE",
+  "source_commit": "3805fbb852c2f0ad182d90b9acc270f494a3b9be",
+  "published_dependency_base": "12b48fb571d7fb0c939215086a0d6b75233ec0bf",
+  "manager_context_id": "01a120c9-2637-7952-b6c9-be07b395b4fd",
+  "owner_authorization_ref": "tests/ui-owner/receipts/owner-authorization.json",
+  "existing_active_claim": {
+    "path": "docs/agent-work/frontend-owner-claims/ER-47/u4-r-research-run-20261010.json",
+    "git_blob": "ee5ce048d5feee41349a77abbe838310d7eeeae8",
+    "state": "ACTIVE",
+    "whole_checkpoint_not_promoted": true
+  },
+  "source_inputs": [
+    {
+      "path": "packages/ui/src/features/research/run/ResearchRunFeature.tsx",
+      "git_blob": "0d4841b3a7f939a07aad13f5dd682b9bd3168d99",
+      "sha256": "dcb1c072bb0dc302f65f87a307191f27c705672dff5af966063e0c2f604c892d",
+      "mode": "100644"
+    },
+    {
+      "path": "apps/eliotr-web/src/app/ResearchPanel.tsx",
+      "git_blob": "fe89b672aeeaca9aa35bbaa68236be4e91fcdb8d",
+      "sha256": "5fa26cbb63e806ac3cc14395dadc0d7cbf663a41bb5d399ad4402ca8c010233a",
+      "mode": "100644"
+    },
+    {
+      "path": "packages/ui/src/stories/research/run/ResearchRunFeature.stories.tsx",
+      "git_blob": "906a8f51f7d8d6d559b709dd125d2908ad61ba63",
+      "sha256": "b0fbd1f984f8a397efae088ff9d33d14711da616712df997d171ad94820c2cc6",
+      "mode": "100644",
+      "proposal_sha256": "6d28bf80ab3e077405fc1ccd57aae9f0eb33752573469133c0f51d7e4f30d562"
+    }
+  ],
+  "problem": "The held Research run hides its question editor; a next question cannot be prepared independently of the current question, frozen sources and recovery identity.",
+  "change": "Opt-in parent-controlled ephemeral draft remains editable while a run is held. Current question and frozen scope stay distinct. Editing issues no request; explicit terminal release preserves the draft, then a separate Ask starts the next intent. Uncontrolled catalog consumers retain their behavior. Historical held views remain held through status failure.",
+  "source_safety": {
+    "context_tag": "Exact SessionContext object identity plus privacy.isCurrent before rendering; mounted/current guarded setter; subscription discards on invalidation",
+    "render_gate_verification": "Actual independent source audit ACCEPT",
+    "runtime": "Real401 authority loss masks draft; same principal/credential/deployment renewal has no old draft or intent. Exact same serialized-context object while Panel stays mounted first-frame runtime NOT_MEASURED; no claim from eventual-empty test."
+  },
+  "browser": {
+    "version": "155.0.8059.40",
+    "cases": [
+      {
+        "id": "normal-desktop",
+        "viewport": {
+          "width": 1440,
+          "height": 960
+        },
+        "status": "PASS",
+        "post_calls": 2,
+        "admitted_intents": 2,
+        "repeat_posts": 0,
+        "status_reads": 6,
+        "actual_socket_loss": false,
+        "body_key_recovery": false,
+        "historical_status_failure_held": false,
+        "route_unmount_discards_draft": false,
+        "terminal_release_preserves_draft": true,
+        "separate_ask": true,
+        "authority_loss_masks_draft": false,
+        "same_identity_renewal_empty": false,
+        "console_errors": 0
+      },
+      {
+        "id": "normal-narrow-ru",
+        "viewport": {
+          "width": 390,
+          "height": 844
+        },
+        "status": "PASS",
+        "post_calls": 2,
+        "admitted_intents": 2,
+        "repeat_posts": 0,
+        "status_reads": 6,
+        "actual_socket_loss": false,
+        "body_key_recovery": false,
+        "historical_status_failure_held": false,
+        "route_unmount_discards_draft": false,
+        "terminal_release_preserves_draft": true,
+        "separate_ask": true,
+        "authority_loss_masks_draft": false,
+        "same_identity_renewal_empty": false,
+        "console_errors": 0
+      },
+      {
+        "id": "dropped-ack",
+        "viewport": {
+          "width": 1440,
+          "height": 960
+        },
+        "status": "PASS",
+        "post_calls": 2,
+        "admitted_intents": 1,
+        "repeat_posts": 1,
+        "status_reads": 2,
+        "actual_socket_loss": true,
+        "body_key_recovery": true,
+        "historical_status_failure_held": true,
+        "route_unmount_discards_draft": true,
+        "terminal_release_preserves_draft": false,
+        "separate_ask": false,
+        "authority_loss_masks_draft": false,
+        "same_identity_renewal_empty": false,
+        "console_errors": 0
+      },
+      {
+        "id": "privacy-late-status",
+        "viewport": {
+          "width": 1440,
+          "height": 960
+        },
+        "status": "PASS",
+        "post_calls": 1,
+        "admitted_intents": 1,
+        "repeat_posts": 0,
+        "status_reads": 1,
+        "actual_socket_loss": false,
+        "body_key_recovery": false,
+        "historical_status_failure_held": false,
+        "route_unmount_discards_draft": false,
+        "terminal_release_preserves_draft": false,
+        "separate_ask": false,
+        "authority_loss_masks_draft": true,
+        "same_identity_renewal_empty": true,
+        "console_errors": 0
+      }
+    ],
+    "successful_cases_not_repeated": true,
+    "not_measured": [
+      "FullP4typing metrics/physicalIME/screenreader/nativezoom",
+      "Exact same serialized SessionContext object while existing Panel stays mounted; source audited render gate only",
+      "Worker/generatedconfig/agentsparity/live/C11/FINALUI"
+    ]
+  },
+  "compiler": {
+    "version": "6.0.3",
+    "exit": 0,
+    "roots": 275,
+    "observed_inputs": 1141,
+    "outputs": 1090,
+    "diagnostics": 0
+  },
+  "lint": {
+    "protocol": "eliotr.scoped-lint.v1",
+    "status": "PASS",
+    "source_commit": "3805fbb852c2f0ad182d90b9acc270f494a3b9be",
+    "files": [
+      "packages/ui/src/features/research/run/ResearchRunFeature.tsx",
+      "apps/eliotr-web/src/app/ResearchPanel.tsx",
+      "packages/ui/src/stories/research/run/ResearchRunFeature.stories.tsx"
+    ],
+    "evidence": {
+      "actual_tool_chunk": "90643a",
+      "exit_code": 0,
+      "output": "",
+      "inherited_verified_execution": true
+    },
+    "not_rerun": true
+  },
+  "standalone_build": {
+    "source_commit": "3805fbb852c2f0ad182d90b9acc270f494a3b9be",
+    "vite": "8.2.2",
+    "config": "apps/eliotr-web/vite.config.ts",
+    "output": "C:\\Development\\Research\\eliot-research\\.eliotr-state\\nq-b2-20261010\\dist",
+    "receipt_path": ".eliotr-state/nq-b2-20261010/build.json",
+    "receipt_sha256": "3472d50fa0b71a00ab4dd0a65af2dba51f2a7089ef8fe1e4b3e4dfccca2f98dd",
+    "archive_sha256": "8bb481ce8a5f49f0699ca4ac65f2ff2a47a88a3df8a2decd1492f279823a9c95",
+    "artifacts": [
+      {
+        "path": ".vite/manifest.json",
+        "bytes": 1058,
+        "sha256": "5d783834e1f69b82019fb85ba4a9ec0cc1408bdaf34fe7971e21890dbe2d1d3f"
+      },
+      {
+        "path": "assets/bootstrap-BgSftchh.js",
+        "bytes": 779448,
+        "sha256": "2a5547110dbb76658ff86b076ae94eafd9c9817f3304911d8c8db8d2378d9a70",
+        "gzip_bytes": 216241,
+        "brotli_bytes": 180992
+      },
+      {
+        "path": "assets/bootstrap-CrfKKNEs.css",
+        "bytes": 50686,
+        "sha256": "07e1835ed3321eeeb9279b0933007787f33ce8bfcdfd4a01a9c19d74292963d9",
+        "gzip_bytes": 5325,
+        "brotli_bytes": 4763
+      },
+      {
+        "path": "assets/client-DD1Jkd23.js",
+        "bytes": 74869,
+        "sha256": "a75fc3acd8d0482818a2ee6135905cea971e0e38619cbe78ef9ca928ec7052da",
+        "gzip_bytes": 21395,
+        "brotli_bytes": 19052
+      },
+      {
+        "path": "assets/index-BlysS7PD.css",
+        "bytes": 71310,
+        "sha256": "10f5824720a7c615c6a19f9e4a7d599a34c7a31a33ddbd701ea2b66dca5c1e26",
+        "gzip_bytes": 13092,
+        "brotli_bytes": 11129
+      },
+      {
+        "path": "assets/index-DBZ4jzy5.js",
+        "bytes": 3780,
+        "sha256": "6f5a06861e68055e505cd302e0ac6e9bcb269e74569b7764fe1edc8ff6d8c2fc",
+        "gzip_bytes": 1764,
+        "brotli_bytes": 1557
+      },
+      {
+        "path": "favicon.svg",
+        "bytes": 350,
+        "sha256": "e8490bd5b835bd427a4120c45d58b7dbadabaa841caf0c2b468dbfe972393fcf"
+      },
+      {
+        "path": "index.html",
+        "bytes": 690,
+        "sha256": "0515b1a3fa5447f64b09b58d1723e4b9c4c85ff91b7ed0716a8efcfd535cb4ab"
+      },
+      {
+        "path": "_headers",
+        "bytes": 313,
+        "sha256": "162f9302f3ddc5281bdb4772e5276e28a3f3acc83f44ea738cd016572c7c8a36"
+      }
+    ],
+    "recorded_inputs": 3016,
+    "snapshot_inputs": 326,
+    "installed_inputs": 2690,
+    "tailwind_watch_registrations": 5013,
+    "directory_membership_stable": true,
+    "all_emitted_js_gzip_bytes": 239400,
+    "ceiling_bytes": 614400,
+    "scope": "Genuinely changed owning standalone next-question composer source. Conservative source/public inventory, Vite loads and Tailwind addWatchFile registrations captured; negative globs/effectiveignore/exact scanner reads/transitive config/tool closure remain UNKNOWN. No Worker/generatedwrangler/agentsparity/live/fullP4/physical/C11/FINALUI promotion."
+  },
+  "evidence": [
+    {
+      "path": ".eliotr-state/frontend-ui-proposals/next-question-repaired-20261010/source-frontier.json",
+      "sha256": "8f73b39e69d6a7bb84697ea4c84d8dfac145a43af334a5764c0d598ad31843f1"
+    },
+    {
+      "path": ".eliotr-state/frontend-ui-proposals/next-question-repaired-20261010/compiler.json",
+      "sha256": "d1248a34ef7c04f75cd4bd8eb76271b4c29ea093c9b09f242d5f1181d52a384a"
+    },
+    {
+      "path": ".eliotr-state/frontend-ui-proposals/next-question-repaired-20261010/lint.json",
+      "sha256": "73dc432dfa238c3f05a44a961f5343268b13fb088d100bf62a48a318f54a45ca"
+    },
+    {
+      "path": ".eliotr-state/frontend-ui-proposals/next-question-repaired-20261010/browser-combined.json",
+      "sha256": "a2352dc68a91534e10f036242f2713e13ac9eb2d96c8432a0ce2216b95061aab"
+    },
+    {
+      "path": ".eliotr-state/frontend-ui-proposals/next-question-repaired-20261010/browser-partial-normal.json",
+      "sha256": "dc842b0d0daf293e8389916b1b805b4fa1f13e92fcb49362666608764a534fdb"
+    },
+    {
+      "path": ".eliotr-state/frontend-ui-proposals/next-question-repaired-20261010/browser.json",
+      "sha256": "a860efa379c1ed46189495b5c4f137d4a2ffad2540afb31d41f6e8d29ed4fd42"
+    },
+    {
+      "path": ".eliotr-state/frontend-ui-proposals/next-question-repaired-20261010/browser.mjs",
+      "sha256": "355387683e7f6951a9b5229168274d4563c3215e0ef759617d90f27eb828f0fc"
+    },
+    {
+      "path": ".eliotr-state/frontend-ui-proposals/next-question-repaired-20261010/browser-partial-normal.mjs",
+      "sha256": "504ac9af13c3035e240f94ac1b3a9d4ca0a15620cad831a292891fbf1bc6895c"
+    },
+    {
+      "path": ".eliotr-state/frontend-ui-proposals/next-question-repaired-20261010/review-server.mjs",
+      "sha256": "66c2e5b41c1a74ac8c3e1e311fdc1421031b3c3bfe7fa2ae591d0b3827e771d6"
+    },
+    {
+      "path": ".eliotr-state/frontend-ui-proposals/next-question-repaired-20261010/review-server-v2.mjs",
+      "sha256": "b68aa46d44ea9ce78ecac3d503c43ddd16c0f44758f5ebe49f03872ca890c892"
+    },
+    {
+      "path": ".eliotr-state/frontend-ui-proposals/next-question-repaired-20261010/next-question-wire.mjs",
+      "sha256": "ca40e217e77abdeefa77ecf32dcb30d71cebb3410ad1a0c5c8f275239e9be003"
+    },
+    {
+      "path": ".eliotr-state/frontend-ui-proposals/next-question-repaired-20261010/code-understanding-proof.json",
+      "sha256": "d62c24ae5b79ba13a0ab6ebed1ced127ce1c02ba66f95f96de243404c309a96b"
+    },
+    {
+      "path": ".eliotr-state/frontend-ui-proposals/next-question-repaired-20261010/luna-source-audit-3805.json",
+      "sha256": "73da0c0010c6fb44ced9c932e3ef74b33015ea97f26b426b5d8c4d274e5bfab3"
+    },
+    {
+      "path": ".eliotr-state/frontend-ui-proposals/next-question-repaired-20261010/lost-ack-root-diagnostic.json",
+      "sha256": "df6bbfd3975ce8d747a52bccf7123e0a9a285537afb82416941b8f76a0bf68a1"
+    }
+  ],
+  "build_recipe": [
+    {
+      "path": ".eliotr-state/nq-b2-20261010/build.mjs",
+      "sha256": "ee97e7a62b0b3a89993c7b951c097a089e890ebda9310d4ea0fdee5444f17c30"
+    },
+    {
+      "path": ".eliotr-state/nq-b2-20261010/capture.mjs",
+      "sha256": "14f8414cefb89db08688a284b40df2280c28e4ddd681877b4148e785b228f7b9"
+    },
+    {
+      "path": ".eliotr-state/nq-b2-20261010/repair-diagnosis.json",
+      "sha256": "d5b74cb2661f2bb614f4b23974ded56db52fb05d37980c3b7faf0f8cd7132cd1"
+    }
+  ],
+  "preserved_failures": [
+    "Original945b source historical admission guard gap rejected by independent audit",
+    "Owning snapshot Tailwind shared-source escape and live-directory-array comparison failure; compiler/lint success not repeated",
+    "Harness wrong selector and insufficient typing duration; both actual failures retained",
+    "Instant preheaders socket loss transparently retried by Chrome. Normalcases PASS retained; repaired incomplete-response socket model validated separately"
+  ],
+  "pending": [
+    "Full U4-R/U4-X/U5-X/FINAL-UI",
+    "Exact same serialized SessionContext same-mounted first-frame runtime",
+    "FullP4metrics/physicalIME/screenreader/nativezoom",
+    "Complete scanner/negativeglobs/effectiveignore/transitive tool closure",
+    "IntegratedWorker/generatedAssets/agentsroot+wildcardparity/live/C11"
+  ],
+  "scope": "Complete bounded next-question presentation module on unchanged public read-only/query/authority contracts. No frontend API/client/backend/root/lock/install/index mutations. Full checkpoints and production deployment remain separate."
+}
