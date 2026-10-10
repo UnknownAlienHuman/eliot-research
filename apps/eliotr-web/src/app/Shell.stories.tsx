@@ -1,3 +1,4 @@
+import { FiniteExcerptPreview, playFiniteExcerptLifecycle } from "./FiniteExcerptPreview";
 import {
   FiniteReaderPreview,
   playStaleLibraryHolder,
@@ -311,4 +312,9 @@ export const LiveReaderSameEpochForeignProject = {
 export const LiveReaderSameEpochForeignSource = {
   render: () => <FiniteReaderPreview key="reader-same-epoch-foreign-source" />,
   play: playSameEpochForeignSource,
+};
+
+export const LiveExcerptPrivacyLateResponse = {
+  render: () => <FiniteExcerptPreview key="excerpt-privacy-late-response" />,
+  play: playFiniteExcerptLifecycle,
 };
