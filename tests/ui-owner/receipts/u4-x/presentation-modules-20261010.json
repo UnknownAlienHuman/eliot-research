@@ -1,0 +1,123 @@
+{
+  "protocol": "eliotr.frontend-presentation-module-delivery.v1",
+  "status": "ACCEPTED_STANDALONE_PRESENTATION_SOURCE_ONLY",
+  "manager_identity": "frontend-manager",
+  "manager_context_id": "01a120c9-2637-7952-b6c9-be07b395b4fd",
+  "owner_authorization_ref": "tests/ui-owner/receipts/owner-authorization.json",
+  "published_baseline": "d6e7e08383c22679267ef3ad9894254b4efea029",
+  "source_frontier": "c8542b40564d89fa834ea83598b66a2a52fc6ecc",
+  "source_commits": [
+    "93e0bd6e5739623be17f9b4261ed9e00a21c447d",
+    "01357eab2d2a650cad0c54a8050bba35e13b55b8",
+    "c8542b40564d89fa834ea83598b66a2a52fc6ecc"
+  ],
+  "source_files": [
+    {
+      "path": "packages/ui/src/features/research/evidence/EvidenceFeature.tsx",
+      "git_blob": "2de6f1b4f2fcb447d24d1c9350cdc135071e767f",
+      "sha256": "6c6a0721b5d16ea0a6f950e556cf5853107d03f80a0b976b5f56bf346faeb04f"
+    },
+    {
+      "path": "packages/ui/src/features/research/evidence/evidence.css",
+      "git_blob": "0773d9a72cda62f70bd1263c219bc76a4088660f",
+      "sha256": "a739cc84b0c11d9ed73a5a60192fd08b3ff66cc8ae03ca5a4b2599c128fa15c7"
+    },
+    {
+      "path": "packages/ui/src/features/research/report/ReportFeature.tsx",
+      "git_blob": "06d60f2d81b20f92fd78939d303861f964b74a9d",
+      "sha256": "601f3839fc0d5a32ec4d161f610f2d028f05ed90c93607f0fcde717f1256567d"
+    },
+    {
+      "path": "packages/ui/src/features/research/report/report.css",
+      "git_blob": "3f45d80e884cb74109c75849dc6aa15fa70f9137",
+      "sha256": "fe42deec7c0f9636a98625408e54cc87932fff5b071abcab6957abfb29909c8e"
+    },
+    {
+      "path": "packages/ui/src/features/research/run/ResearchRunFeature.tsx",
+      "git_blob": "ffc7d14790fd1a9b60a3c0f3214cc8021ab32c78",
+      "sha256": "a7a031955290e1f43f62334227735940434c5e7ae6058cc3c7b59efa088c7f8e"
+    },
+    {
+      "path": "packages/ui/src/features/research/run/research-run.css",
+      "git_blob": "758924116cbeac87717bed4f9f1b6de468d322ff",
+      "sha256": "c3e592c71ce93dea408729210ea8aeba220a3852500c0ebd60c635bb4aa7d532"
+    },
+    {
+      "path": "packages/ui/src/stories/research/evidence/EvidenceFeature.stories.tsx",
+      "git_blob": "aae3d01f11a02c69e6c0bd034c9524a41d010f81",
+      "sha256": "aa95a0b7f2ac556404b761256855e28fbeadfab34982654a91094dbccdacd168"
+    },
+    {
+      "path": "packages/ui/src/stories/research/report/ReportFeature.stories.tsx",
+      "git_blob": "52b8b1712ed44b6d4f77edc6095fda4d077319dd",
+      "sha256": "cab091e6ff793117faf7b7f9fea22f85d3125793e0712ffff0c02ea18184f606"
+    },
+    {
+      "path": "packages/ui/src/stories/research/run/ResearchRunFeature.stories.tsx",
+      "git_blob": "025fdffb5e8d349a498cbfa7158bd51bd9b81ad2",
+      "sha256": "57288e56204327ff3003a795d35586f6f9615e728c4c11fe3da20054ac4cf79a"
+    }
+  ],
+  "source_proofs": [
+    {
+      "path": ".eliotr-state/frontend-ui-proposals/u4r-source-commit.json",
+      "sha256": "a23aea3abe778d7cdbb5d2aad849bf642a5299d1c55ab6f2c92395d480817e13"
+    },
+    {
+      "path": ".eliotr-state/frontend-ui-proposals/u4m-source-commit.json",
+      "sha256": "06431df1826ed4296cb0a18157f32d79adac5174689fcc31f2719c374d5eed7d"
+    },
+    {
+      "path": ".eliotr-state/frontend-ui-proposals/u4e-source-commit.json",
+      "sha256": "074ecd69b9e8fd1014257e6638e936efc84fca21dd49030ec0acdcfa18d1f39a"
+    }
+  ],
+  "retained_checks": [
+    {
+      "path": ".eliotr-state/frontend-ui-proposals/publish-prefix-module-scope-20261010.md",
+      "sha256": "033ea357d6f4e186984cfa1f08589f76af685e3d35e6a67f39b4f74cc56d157d"
+    },
+    {
+      "path": ".eliotr-state/frontend-ui-proposals/resume-u4-r-test-attribution.md",
+      "sha256": "cc037a04eab37ba0a5c1efc08f53a3054441f2b80cb65683aff73de551d7f4df"
+    },
+    {
+      "path": ".eliotr-state/frontend-ui-proposals/u4-u5-affected-leaves-20261010-B.log",
+      "sha256": "cc194efe4a0457ffdf0bff79f1d49fe4a27244e8797b7cd8abde1934efbabe27"
+    },
+    {
+      "path": ".eliotr-state/frontend-ui-proposals/evidence-current-20261010.receipt.json",
+      "sha256": "bb365b9b643513c472bbfab157f51732c485cd1d899c928ea49102c4cc171024"
+    },
+    {
+      "path": ".eliotr-state/frontend-ui-proposals/evidence-current-20261010.log",
+      "sha256": "b0f130288b26d2ffcc9673728e2befed88d65bedc86c185082dda82490643801"
+    }
+  ],
+  "versions": {
+    "Storybook": "10.6.1",
+    "Vitest": "4.1.11",
+    "Playwright": "1.63.0",
+    "Chrome": "155.0.8059.40",
+    "TypeScript": "6.0.3"
+  },
+  "reference_refs": [
+    "tests/ui-owner/receipts/u1-r/reference-study.md",
+    "tests/ui-owner/receipts/u1-r/observation-matrix.json"
+  ],
+  "module_behavior": [
+    "Research run props expose explicit progress, recovery and refresh controls; completion and acceptance stay separate.",
+    "Lazy Report sections distinguish unread, failed, partial, duplicate and foreign rows; export requires complete readback.",
+    "Evidence presentation separates citation resolution and claim support, with explicit excerpt opening and stale/revoked suppression."
+  ],
+  "browser_scope": "Retained state/theme Run, Report and Evidence subsets match their leaf source inputs. No findings recorded in those subsets. Studio aggregate/theme failures remain retained and Studio is excluded.",
+  "execution": "No accepted test/build/browser/backend suite repeated. New immutable frontier requires its own one-time static history qualification before publication.",
+  "pending": [
+    "Application/catalog/public-barrel integration and actual owner callbacks",
+    "U4-X/U5-X/FINAL-UI and physical accessibility gates",
+    "Integrated CSP startup/static security module prepared separately at local9c+WIP",
+    "Authenticated Agents browser transport, staging/live/U6 release"
+  ],
+  "history_note": "Three original commits preserved. Excluded local9c tail and equal-tree repair remain untouched; no local or remote history rewrite.",
+  "claims": "Existing leaf claims stay ACTIVE; this receipt does not assert checkpoint wiring completion or manager-gate acceptance."
+}
