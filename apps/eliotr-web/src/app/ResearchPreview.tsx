@@ -92,9 +92,9 @@ export const playResearchJourney = async ({ canvas, userEvent }: {
     getByRole(role: string, options: { readonly name: string; readonly exact?: boolean }): HTMLElement;
     getAllByRole(role: string, options: { readonly name: string }): HTMLElement[];
     findByText(text: string | RegExp): Promise<HTMLElement>; queryByText(text: string): HTMLElement | null };
-  readonly userEvent: { click(element: HTMLElement): Promise<void>; type(element: HTMLElement, text: string): Promise<void> };
+  readonly userEvent: { click(element: HTMLElement): Promise<void>; type(element: HTMLElement, text: string): Promise<void>; selectOptions(element: HTMLElement, value: string): Promise<void> };
 }) => {
-  await userEvent.click(await canvas.findByRole('button', { name: 'Evidence in context' }));
+  await userEvent.selectOptions(await canvas.findByRole('combobox', { name: 'Project', exact: true }), 'project-fixture');
   await userEvent.click(await canvas.findByText('Sources for your next question'));
   await userEvent.click(await canvas.findByRole('checkbox', { name: 'How source versions preserve evidence' }));
   await userEvent.click(canvas.getByRole('link', { name: 'Research', exact: true }));
