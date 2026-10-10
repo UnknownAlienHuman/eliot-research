@@ -3,28 +3,47 @@
   display: grid;
   background: var(--md-sys-color-surface);
   color: var(--md-sys-color-on-surface);
-  gap: var(--eliot-space-section);
+  gap: var(--eliot-space-panel);
   min-width: 0;
   font-family: var(--eliot-type-font-family);
 }
 
-.er-projects-library__head {
+.er-projects-library__project-context {
   display: grid;
-  gap: var(--eliot-space-block-control);
-  justify-items: start;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: var(--eliot-space-inline-control);
+  min-width: 0;
 }
 
-.er-projects-library__heading {
-  margin: 0;
+.er-projects-library__project-label {
+  color: var(--md-sys-color-on-surface-variant);
+  font-size: var(--eliot-type-body-medium-size);
+  line-height: var(--eliot-type-body-medium-line-height);
+}
+
+.er-projects-library__project-select {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  min-height: var(--eliot-size-touch-target);
+  padding: var(--eliot-space-block-control) var(--eliot-space-inline-control);
+  border: var(--eliot-divider-width) solid var(--md-sys-color-outline);
+  border-radius: var(--eliot-shape-small);
+  background: var(--md-sys-color-surface-container-low);
   color: var(--md-sys-color-on-surface);
   font-family: var(--eliot-type-font-family);
-  font-size: var(--eliot-type-title-large-size);
-  font-weight: var(--eliot-type-font-weight-medium);
-  line-height: var(--eliot-type-title-large-line-height);
+  font-size: var(--eliot-type-body-medium-size);
+  line-height: var(--eliot-type-body-medium-line-height);
+}
+
+.er-projects-library__project-select:focus-visible {
+  outline: var(--eliot-focus-width) solid var(--md-sys-color-primary);
+  outline-offset: var(--eliot-focus-offset);
 }
 
 .er-projects-library__hint,
-.er-projects-library__selected,
 .er-projects-library__note {
   margin: 0;
   max-width: var(--eliot-type-reading-measure);
@@ -34,21 +53,8 @@
   line-height: var(--eliot-type-body-medium-line-height);
 }
 
-.er-projects-library__selected {
-  color: var(--md-sys-color-on-surface);
-  font-weight: var(--eliot-type-font-weight-medium);
-}
-
-.er-projects-library__projects {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--eliot-space-inline-control);
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
 .er-projects-library__project-empty {
+  margin: 0;
   color: var(--md-sys-color-on-surface-variant);
   font-family: var(--eliot-type-font-family);
   font-size: var(--eliot-type-body-medium-size);

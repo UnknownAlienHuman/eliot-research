@@ -1,6 +1,7 @@
 // U3-P Projects Library feature surface. Presentation and local selection only.
 // Server state arrives as props from the app's query layer; this component never fetches,
 // never instantiates a factory or transport, and never derives readiness from a revision.
+import { useId, type Ref } from "react";
 import { Button, IconButton, Status } from "../../../primitives/primitives";
 import type { LibraryPage, LibraryReadinessView, SourceRevisionPage, ProjectListView } from "@eliotr/owner-api-client";
 import {
@@ -20,6 +21,7 @@ export interface ProjectsLibraryFeatureProps {
   readonly projects: ProjectListView["projects"];
   readonly selectedProjectId: string | undefined;
   readonly onSelectProject: (projectId: string) => void;
+  readonly projectSelectRef?: Ref<HTMLSelectElement>;
   readonly library: LibraryPage | undefined;
   readonly readiness: LibraryReadinessView | undefined;
   readonly readinessState: ProjectsLibraryPanelState;
@@ -33,10 +35,9 @@ export interface ProjectsLibraryFeatureProps {
 }
 
 type Copy = {
-  readonly heading: string;
-  readonly subtitle: string;
   readonly scope: string;
   readonly projectLabel: string;
+  readonly projectChoose: string;
   readonly projectEmpty: string;
   readonly sourcesLabel: string;
   readonly recordedOnly: string;
@@ -73,10 +74,9 @@ type Copy = {
 
 const COPY: Readonly<Record<"en" | "ru", Copy>> = {
   en: {
-    heading: "Sources in this project",
-    subtitle: "Choose a project to list its sources.",
     scope: "Versions preserve saved content. Search readiness is checked separately.",
     projectLabel: "Project",
+    projectChoose: "Choose a project",
     projectEmpty: "No projects are available yet.",
     sourcesLabel: "Sources",
     recordedOnly: "Saved versions do not establish current search readiness.",
@@ -106,15 +106,14 @@ const COPY: Readonly<Record<"en" | "ru", Copy>> = {
     revisionsAction: "Versions",
     loading: "Loading project sources...",
     empty: "No sources in this project.",
-    degraded: "Readiness is temporarily unavailable. The project list still works.",
+    degraded: "Readiness is temporarily unavailable. You can still choose a project.",
     error: "Sources could not be loaded.",
     retry: "Try again",
   },
   ru: {
-    heading: "Источники этого проекта",
-    subtitle: "Выберите проект, чтобы показать его источники.",
     scope: "Версии сохраняют содержимое. Готовность к поиску проверяется отдельно.",
     projectLabel: "Проект",
+    projectChoose: "Выберите проект",
     projectEmpty: "Пока нет доступных проектов.",
     sourcesLabel: "Источники",
     recordedOnly: "Сохранённые версии не подтверждают текущую готовность к поиску.",
@@ -144,7 +143,7 @@ const COPY: Readonly<Record<"en" | "ru", Copy>> = {
     revisionsAction: "Версии",
     loading: "Загрузка источников проекта...",
     empty: "В этом проекте нет источников.",
-    degraded: "Готовность временно недоступна. Список проектов работает.",
+    degraded: "Готовность временно недоступна. Можно выбрать другой проект.",
     error: "Не удалось загрузить источники.",
     retry: "Повторить",
   },
@@ -162,13 +161,14 @@ function panelStatus(
   copy: Copy,
 ): readonly [string, "neutral" | "error"] | undefined {
   if (state === "loading") return [copy.loading, "neutral"];
-  if (state === "empty") return [copy.empty, "neutral"];
   if (state === "degraded") return [copy.degraded, "neutral"];
   if (state === "error") return [copy.error, "error"];
   return undefined;
 }
 
 export function ProjectsLibraryFeature(props: ProjectsLibraryFeatureProps) {
+  const projectSelectId = useId();
+  const sourcesHeadingId = `${projectSelectId}-sources`;
   const copy = COPY[props.locale];
   const selected = selectProjectRow(props.projects, props.selectedProjectId);
   const rows = toSourceRows(props.library);
@@ -177,6 +177,10 @@ export function ProjectsLibraryFeature(props: ProjectsLibraryFeatureProps) {
   const status = panelStatus(props.state, copy);
   const readinessStatus = panelStatus(props.readinessState, copy);
   const revisionsStatus = panelStatus(props.revisionsState, copy);
+  const settled = props.state === "useful" || props.state === "empty";
+  const showProjectEmpty = settled && props.projects.length === 0;
+  const showProjectPrompt = settled && props.projects.length > 0 && selected === undefined && props.library === undefined;
+  const showSourceEmpty = settled && selected !== undefined && props.library !== undefined && rows.length === 0;
 
   const channelText = (presentation: ReadinessPresentation): string => {
     const key = CHANNEL_LABEL[presentation];
@@ -194,46 +198,49 @@ export function ProjectsLibraryFeature(props: ProjectsLibraryFeatureProps) {
   };
 
   return (
-    <section className="er-projects-library" aria-busy={props.state === "loading"}>
-      <header className="er-projects-library__head">
-        <h2 className="er-projects-library__heading">{copy.heading}</h2>
-        <p className="er-projects-library__hint">{copy.subtitle}</p>
-        {selected === undefined ? null : (
-          <p className="er-projects-library__selected">
-            {copy.projectLabel}: {selected.title}
-          </p>
-        )}
-      </header>
-
-      <ul className="er-projects-library__projects">
-        {props.projects.length === 0 ? <li className="er-projects-library__project-empty">{copy.projectEmpty}</li> : null}
-        {props.projects.map(project => (
-          <li key={project.project_id} className="er-projects-library__project">
-            <Button
-              variant={project.project_id === props.selectedProjectId ? "primary" : "tonal"}
-              aria-pressed={project.project_id === props.selectedProjectId}
-              onClick={() => props.onSelectProject(project.project_id)}
-            >
-              {project.title}
-            </Button>
-          </li>
-        ))}
-      </ul>
+    <section className="er-projects-library" aria-labelledby={sourcesHeadingId} aria-busy={props.state === "loading"}>
+      {props.projects.length === 0 ? (
+        showProjectEmpty ? <p className="er-projects-library__project-empty">{copy.projectEmpty}</p> : null
+      ) : (
+        <div className="er-projects-library__project-context">
+          <label className="er-projects-library__project-label" htmlFor={projectSelectId}>
+            {copy.projectLabel}
+          </label>
+          <select
+            className="er-projects-library__project-select"
+            id={projectSelectId}
+            ref={props.projectSelectRef}
+            value={selected?.projectId ?? ""}
+            onChange={event => {
+              const projectId = event.currentTarget.value;
+              if (projectId !== selected?.projectId && props.projects.some(project => project.project_id === projectId)) {
+                props.onSelectProject(projectId);
+              }
+            }}
+          >
+            <option value="" disabled>{copy.projectChoose}</option>
+            {props.projects.map(project => (
+              <option key={project.project_id} value={project.project_id}>{project.title}</option>
+            ))}
+          </select>
+        </div>
+      )}
 
       {status === undefined ? null : <Status tone={status[1]}>{status[0]}</Status>}
 
       <div className="er-projects-library__body">
-        <h3 className="er-projects-library__subheading">{copy.sourcesLabel}</h3>
-        {props.state === "useful" && rows.length === 0 ? <Status>{copy.empty}</Status> : null}
-        <ul className="er-projects-library__sources">
+        <h2 id={sourcesHeadingId} className="er-projects-library__subheading">{copy.sourcesLabel}</h2>
+        {showProjectPrompt ? <Status>{copy.projectChoose}</Status> : null}
+        {showSourceEmpty ? <Status>{copy.empty}</Status> : null}
+        <ul className="er-projects-library__sources" aria-labelledby={sourcesHeadingId}>
           {rows.map(row => (
             <li key={row.sourceId} className="er-projects-library__source" data-selected={row.sourceId === props.selectedSourceId}>
               <div className="er-projects-library__source-head">
-                <h4 className="er-projects-library__source-title">
+                <h3 className="er-projects-library__source-title">
                   <Button variant="text" aria-pressed={row.sourceId === props.selectedSourceId} onClick={() => props.onOpenSource(row.sourceId)}>
                     {row.title}
                   </Button>
-                </h4>
+                </h3>
                 <IconButton
                   label={`${copy.revisionsAction}: ${row.title}`}
                   icon="chevron"
