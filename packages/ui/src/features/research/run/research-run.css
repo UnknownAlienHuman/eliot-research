@@ -1,0 +1,139 @@
+/*
+ * U4-R Research run feature, semantic tokens only.
+ *
+ * No raw colour, arbitrary radius, spacing or font size. Every value comes from the committed
+ * Material 3 role and Eliot foundation tokens in ../../tokens/theme.css. The page stays the single
+ * scroll owner and no nested scroll area or splitter is introduced.
+ */
+
+.er-research-run {
+  display: flex;
+  flex-direction: column;
+  gap: var(--eliot-space-section);
+  color: var(--md-sys-color-on-surface);
+  background-color: var(--md-sys-color-surface-container-lowest);
+  font-family: var(--eliot-type-font-family);
+  font-size: var(--eliot-type-body-medium-size);
+  line-height: var(--eliot-type-body-medium-line-height);
+}
+
+.er-research-run__heading {
+  margin: 0;
+  color: var(--md-sys-color-on-surface);
+  font-size: var(--eliot-type-title-large-size);
+  line-height: var(--eliot-type-title-large-line-height);
+}
+
+.er-research-run__lead {
+  margin: 0;
+  color: var(--md-sys-color-on-surface-variant);
+}
+
+.er-research-run__scope,
+.er-research-run__progress,
+.er-research-run__snapshot {
+  display: flex;
+  flex-direction: column;
+  gap: var(--eliot-space-block-control);
+  padding-block: var(--eliot-space-panel);
+  border-block-start: var(--eliot-divider-width) solid var(--md-sys-color-outline-variant);
+}
+.er-research-run__unknown,
+.er-research-run__failure {
+  display: flex;
+  flex-direction: column;
+  gap: var(--eliot-space-block-control);
+  padding: var(--eliot-space-panel);
+  border-radius: var(--eliot-shape-medium);
+  background-color: var(--md-sys-color-surface-container-low);
+}
+
+.er-research-run__scope-heading,
+.er-research-run__progress-heading,
+.er-research-run__snapshot-heading,
+.er-research-run__failure-heading,
+.er-research-run__consequence-heading {
+  margin: 0;
+  font-size: var(--eliot-type-title-small-size);
+  line-height: var(--eliot-type-title-small-line-height);
+}
+
+.er-research-run__scope-list,
+.er-research-run__consequence-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--eliot-space-block-control);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.er-research-run__scope-item {
+  padding-block: var(--eliot-space-block-control);
+  border-block-end: var(--eliot-divider-width) solid var(--md-sys-color-outline-variant);
+}
+
+.er-research-run__scope-empty,
+.er-research-run__snapshot-none {
+  margin: 0;
+  color: var(--md-sys-color-on-surface-variant);
+}
+
+.er-research-run__scope-count,
+.er-research-run__answer,
+.er-research-run__unknown-note {
+  margin: 0;
+  color: var(--md-sys-color-on-surface-variant);
+  font-size: var(--eliot-type-label-medium-size);
+  line-height: var(--eliot-type-label-medium-line-height);
+}
+
+.er-research-run__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--eliot-space-inline-control);
+}
+
+.er-research-run__recorded,
+.er-research-run__progress-list,
+.er-research-run__failure-list {
+  display: grid;
+  gap: var(--eliot-space-block-control);
+  margin: 0;
+}
+
+.er-research-run__recorded-label {
+  color: var(--md-sys-color-on-surface-variant);
+  font-size: var(--eliot-type-label-small-size);
+  line-height: var(--eliot-type-label-small-line-height);
+}
+
+.er-research-run__caution {
+  margin: 0;
+  color: var(--md-sys-color-on-secondary-container);
+  background-color: var(--md-sys-color-secondary-container);
+  border-radius: var(--eliot-shape-extra-small);
+  padding-block: 0;
+  padding-inline: var(--eliot-space-block-control);
+  font-size: var(--eliot-type-label-medium-size);
+  line-height: var(--eliot-type-label-medium-line-height);
+}
+
+.er-research-run__no-transcript {
+  margin: 0;
+  color: var(--md-sys-color-on-surface-variant);
+  font-size: var(--eliot-type-label-small-size);
+  line-height: var(--eliot-type-label-small-line-height);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .er-research-run {
+    transition-duration: var(--eliot-motion-effects);
+  }
+}
+
+@media (forced-colors: active) {
+  .er-research-run__scope-item {
+    border-block-end-color: currentcolor;
+  }
+}
